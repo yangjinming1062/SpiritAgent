@@ -5,16 +5,7 @@ import type { PresentationDisplay } from '@ipc/contracts'
 import { useDesktopLifeStrings } from './desktop-life-strings'
 
 export function resolutionLabel(width: number, height: number): string {
-  let a = width
-  let b = height
-
-  while (b) {
-    const remainder = a % b
-    a = b
-    b = remainder
-  }
-
-  return `${width} × ${height} · ${width / a}:${height / a}`
+  return `${width} × ${height}`
 }
 
 export function DesktopLifeDisplayPicker({

@@ -185,6 +185,7 @@ export { useOutfitDesignSession } from './wardrobe/design-session'
 export {
   $outfitPolicy,
   $outfits,
+  $wardrobeStatus,
   deleteOutfit,
   hydrateWardrobe,
   retryOutfitDescription,

@@ -14,7 +14,6 @@ import {
   createDesktopVideoSet,
   deleteDesktopVideoSet,
   designDesktopVideoAction,
-  desktopDisplayResolution,
   type DesktopVideoAction,
   desktopVideoAspectMismatch,
   type DesktopVideoAspectMismatch,
@@ -39,30 +38,28 @@ import {
   uploadDesktopVideoAction
 } from '@/modules/desktop-videos'
 import { useResolvedMediaSrc } from '@/modules/media'
-import {
-  $activeScene,
-  $sceneLibrary,
-  $scenePage,
-  $sceneTotal,
-  loadSceneDetail,
-  loadSceneLibrary,
-  PAGE_SIZE,
-  type SceneAsset
-} from '@/modules/scene'
+import { $activeScene, $sceneLibrary, loadSceneDetail, loadSceneLibrary, type SceneAsset } from '@/modules/scene'
 import { PortraitLightbox } from '@/shared'
 import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useImageActions } from '@/shared/hooks/use-image-actions'
 import { captureAuthScope } from '@/shared/lib/authed-api'
-import { ArrowLeft } from '@/shared/lib/icons'
+import { ArrowLeft, Check, ChevronDown, Plus, RefreshCw, Settings } from '@/shared/lib/icons'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
-import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, PanelSelect, Toggle, WizardModal } from '@/shared/panel'
+import {
+  INPUT_CLASS,
+  BTN_GHOST as PANEL_BTN_GHOST,
+  BTN_PRIMARY as PANEL_BTN_PRIMARY,
+  BTN_SUBTLE as PANEL_BTN_SUBTLE,
+  PanelSelect,
+  Toggle,
+  WizardModal
+} from '@/shared/panel'
 import { fileApi, shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { notifyError } from '@/shared/store/notifications'
 import { $presentation } from '@/shared/store/presentation'
 import { useStrings } from '@/shared/strings'
-import { desktopMediaLayout } from '@client-shared/desktop-media-geometry'
 import { errorMessage } from '@runtime'
 
 import {
@@ -70,206 +67,21 @@ import {
   reconcileDesktopLifeDisplay,
   resolveDesktopLifeRecommendationDisplay
 } from './desktop-life-display'
+import { DesktopLifeReferences } from './desktop-life-materials'
+import { DesktopLifeCover, DesktopLifePreview, type DesktopLifePreviewStatus } from './desktop-life-preview'
 import { DesktopLifeDisplayPicker, DesktopLifeRecommendation, resolutionLabel } from './desktop-life-resolution'
 import { $desktopLifeUi, newDesktopLifeCreation, updateDesktopLifeUi } from './desktop-life-state'
+import { desktopLifeActionStatus, isActionPaused } from './desktop-life-status'
 import { useDesktopLifeStrings } from './desktop-life-strings'
+import styles from './desktop-life.module.css'
 
-function isActionPaused(action: DesktopVideoAction): boolean {
-  return action.status === 'processing' && action.stage === 'paused'
-}
+const BTN_PRIMARY = `${PANEL_BTN_PRIMARY} ${styles.primaryButton}`
+const BTN_SUBTLE = `${PANEL_BTN_SUBTLE} ${styles.secondaryButton}`
+const BTN_GHOST = `${PANEL_BTN_GHOST} ${styles.ghostButton}`
 
-function DesktopLifeCover({ url, target }: { url: string | null; target?: DesktopVideoSet }): React.JSX.Element {
-  const t = useDesktopLifeStrings()
-  const media = useResolvedMediaSrc({ type: 'image', url: url ?? '' })
-  const [size, setSize] = useState({ url, width: 0, height: 0 })
-
-  const frameWidth = target?.target_width ?? 16
-  const frameHeight = target?.target_height ?? 9
-
-  const layout = desktopMediaLayout(
-    size.url === url ? size.width : 0,
-    size.url === url ? size.height : 0,
-    frameWidth,
-    frameHeight
-  )
-
-  return media.status === 'ready' ? (
-    <div
-      className="relative isolate w-full overflow-hidden rounded-lg bg-black/20"
-      style={{ aspectRatio: frameWidth / frameHeight }}
-    >
-      <div
-        className="absolute -inset-8 -z-10 bg-cover bg-center blur-xl brightness-75"
-        style={{ backgroundImage: `url("${media.src}")` }}
-      />
-      <img
-        alt=""
-        className="object-center"
-        onLoad={event =>
-          setSize({ url, width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })
-        }
-        src={media.src}
-        style={{
-          position: 'absolute',
-          left: `${(layout.left / frameWidth) * 100}%`,
-          top: `${(layout.top / frameHeight) * 100}%`,
-          width: `${(layout.width / frameWidth) * 100}%`,
-          height: `${(layout.height / frameHeight) * 100}%`,
-          objectFit: layout.objectFit
-        }}
-      />
-    </div>
-  ) : (
-    <div
-      className="flex w-full items-center justify-center rounded-lg bg-black/10 text-xs text-muted"
-      style={{ aspectRatio: target ? target.target_width / target.target_height : 16 / 9 }}
-    >
-      {t.noPreview}
-    </div>
-  )
-}
-
-function DesktopLifePreview({
-  action,
-  set,
-  draft = false,
-  onImageReady
-}: {
-  action: DesktopVideoAction
-  set: DesktopVideoSet
-  draft?: boolean
-  onImageReady?: () => void
-}): React.JSX.Element {
-  const [attempt, setAttempt] = useState(0)
-
-  const mediaUrl = draft
-    ? action.draft?.candidate_video_url || action.draft?.image_url
-    : action.current?.video_url || action.current?.poster_url
-
-  return (
-    <ResolvedDesktopLifePreview
-      action={action}
-      draft={draft}
-      key={`${draft ? action.draft?.id : action.id}:${mediaUrl?.split(/[?#]/)[0] ?? ''}:${attempt}`}
-      onImageReady={onImageReady}
-      onRetry={() => setAttempt(value => value + 1)}
-      set={set}
-    />
-  )
-}
-
-function ResolvedDesktopLifePreview({
-  action,
-  set,
-  draft,
-  onImageReady,
-  onRetry
-}: {
-  action: DesktopVideoAction
-  set: DesktopVideoSet
-  draft: boolean
-  onImageReady?: () => void
-  onRetry: () => void
-}): React.JSX.Element {
-  const active = usePanelActivity()
-  const t = useDesktopLifeStrings()
-  const videoUrl = draft ? action.draft?.candidate_video_url : action.current?.video_url
-  const imageUrl = draft ? action.draft?.candidate_poster_url || action.draft?.image_url : action.current?.poster_url
-  const url = videoUrl || imageUrl || ''
-  const media = useResolvedMediaSrc({ type: videoUrl ? 'video' : 'image', url })
-  const posterMedia = useResolvedMediaSrc({ type: 'image', url: imageUrl || '' })
-  const [failed, setFailed] = useState(false)
-  const [size, setSize] = useState({ width: 0, height: 0 })
-  const video = useRef<HTMLVideoElement>(null)
-  const frameWidth = draft ? (action.draft?.target_width ?? set.target_width) : set.target_width
-  const frameHeight = draft ? (action.draft?.target_height ?? set.target_height) : set.target_height
-  const actualWidth = draft ? action.draft?.frame_width : action.current?.width
-  const actualHeight = draft ? action.draft?.frame_height : action.current?.height
-
-  const updateVideoSize = (event: React.SyntheticEvent<HTMLVideoElement>): void => {
-    setSize({ width: event.currentTarget.videoWidth, height: event.currentTarget.videoHeight })
-  }
-
-  const layout = desktopMediaLayout(
-    size.width || actualWidth || 0,
-    size.height || actualHeight || 0,
-    frameWidth,
-    frameHeight
-  )
-
-  const mediaStyle = {
-    position: 'absolute',
-    left: `${(layout.left / frameWidth) * 100}%`,
-    top: `${(layout.top / frameHeight) * 100}%`,
-    width: `${(layout.width / frameWidth) * 100}%`,
-    height: `${(layout.height / frameHeight) * 100}%`,
-    objectFit: layout.objectFit
-  } as const
-
-  useEffect(() => {
-    if (!active) {
-      video.current?.pause()
-    }
-  }, [active])
-
-  return (
-    <div className="flex flex-col gap-2">
-      <div
-        className="relative isolate flex w-full items-center justify-center overflow-hidden rounded-xl bg-black/20"
-        style={{ aspectRatio: frameWidth / frameHeight }}
-      >
-        {posterMedia.status === 'ready' && (
-          <div
-            className="absolute -inset-8 -z-10 bg-cover bg-center blur-xl brightness-75"
-            style={{ backgroundImage: `url("${posterMedia.src}")` }}
-          />
-        )}
-        {media.status === 'ready' && !failed ? (
-          videoUrl ? (
-            <video
-              className="object-center"
-              controls
-              loop={action.kind === 'loop'}
-              muted
-              onError={() => setFailed(true)}
-              onLoadedMetadata={updateVideoSize}
-              onResize={updateVideoSize}
-              playsInline
-              preload="metadata"
-              ref={video}
-              src={media.src}
-              style={mediaStyle}
-            />
-          ) : (
-            <img
-              alt={action.name}
-              className="object-center"
-              onError={() => setFailed(true)}
-              onLoad={event => {
-                setSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })
-                onImageReady?.()
-              }}
-              src={media.src}
-              style={mediaStyle}
-            />
-          )
-        ) : (
-          <div className="flex flex-col items-center gap-3 p-5 text-center text-sm text-muted">
-            <p>{failed || media.status === 'failed' ? t.previewFailed : url ? t.loading : t.noPreview}</p>
-            {(failed || media.status === 'failed') && (
-              <button className={BTN_SUBTLE} onClick={onRetry} type="button">
-                {t.retryPreview}
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-      {actualWidth && actualHeight ? (
-        <p className="text-xs text-muted">
-          {t.actualResolution}: {resolutionLabel(actualWidth, actualHeight)}
-        </p>
-      ) : null}
-    </div>
+function previewUsesDraft(action: DesktopVideoAction): boolean {
+  return Boolean(
+    action.draft && (action.draft.candidate_video_url || !action.draft.video_refinement || !action.current)
   )
 }
 
@@ -609,10 +421,7 @@ export function DesktopLifePage({
   const [imagePreviews, setImagePreviews] = useState<Record<string, boolean>>({})
   const scenes = useStore($sceneLibrary)
   const activeScene = useStore($activeScene)
-  const scenePage = useStore($scenePage)
-  const sceneTotal = useStore($sceneTotal)
   const outfits = useStore($outfits)
-  const [sceneQuery, setSceneQuery] = useState('')
   const [creationScene, setCreationScene] = useState<{ id: string; scene: SceneAsset | null } | null>(null)
   const [rename, setRename] = useState('')
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -1208,55 +1017,7 @@ export function DesktopLifePage({
     updateDesktopLifeUi({ selectedActionId: item.id, addActionOpen: false })
   }
 
-  const actionStatus = (item: DesktopVideoAction): string => {
-    const queue = item.draft?.video_queue ?? item.video_queue
-
-    if (queue) {
-      return queueStrings[queue.state]
-    }
-
-    if (item.draft?.submission_unknown) {
-      return t.resultPending
-    }
-
-    if (isActionPaused(item)) {
-      return t.paused
-    }
-
-    if (item.stage === 'image_review') {
-      return t.stepImage
-    }
-
-    if (item.status === 'processing') {
-      if (item.stage === 'image' || item.stage === 'image_upload') {
-        return t.generatingImage
-      }
-
-      if (['process', 'download', 'upload'].includes(item.stage)) {
-        return t.processingVideo
-      }
-
-      if (item.stage === 'video') {
-        return t.generatingVideo
-      }
-
-      return t.preparing
-    }
-
-    if (item.status === 'failed') {
-      return t.statuses.failed
-    }
-
-    if (item.status === 'review_pending' && item.draft?.candidate_video_url) {
-      return t.videoReviewPending
-    }
-
-    if (item.playable) {
-      return t.ready
-    }
-
-    return item.status === 'queued' ? t.notCreated : t.statuses[item.status]
-  }
+  const actionStatus = (item: DesktopVideoAction): string => desktopLifeActionStatus(item, t, queueStrings)
 
   const adoptCandidate = async (item: DesktopVideoAction): Promise<void> => {
     if (!selected) {
@@ -1295,22 +1056,95 @@ export function DesktopLifePage({
   }
 
   const renderSteps = (step: number): React.JSX.Element => (
-    <ol aria-label={t.createSet} className="grid grid-cols-4 gap-2 border-b border-line-hairline pb-4">
+    <ol aria-label={t.createSet} className={styles.steps}>
       {[t.stepIdea, t.stepImage, t.stepVideo, t.stepUse].map((label, index) => (
         <li
           aria-current={step === index ? 'step' : undefined}
-          className={`flex flex-col gap-2 text-xs sm:flex-row sm:items-center ${index === step ? 'font-medium text-accent' : 'text-muted'}`}
+          className={styles.step}
+          data-complete={index < step}
           key={label}
         >
-          <span
-            className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${index === step ? 'bg-accent/15' : 'bg-black/5'}`}
-          >
-            {index + 1}
+          <span aria-hidden="true" className={styles.stepNumber}>
+            {index < step ? <Check size={14} /> : index + 1}
           </span>
-          {label}
+          <span>{label}</span>
         </li>
       ))}
     </ol>
+  )
+
+  const previewStatus = (item: DesktopVideoAction): DesktopLifePreviewStatus | undefined => {
+    if (item.draft?.submission_unknown) {
+      return {
+        kind: 'unknown',
+        title: t.resultPending,
+        description: t.resultPendingHint,
+        actions: (
+          <button
+            className={BTN_SUBTLE}
+            disabled={loading || busy}
+            onClick={() => void refreshDesktopVideos()}
+            type="button"
+          >
+            <RefreshCw size={16} />
+            {t.refresh}
+          </button>
+        )
+      }
+    }
+
+    if (isActionPaused(item)) {
+      return { kind: 'paused', title: t.paused, description: t.resumeHint }
+    }
+
+    if (item.status === 'processing') {
+      return {
+        kind: 'working',
+        title: actionStatus(item),
+        description: t.leaveHint,
+        actions:
+          item.draft && !['upload', 'image_upload'].includes(item.stage) ? (
+            <button
+              className={BTN_SUBTLE}
+              disabled={busy}
+              onClick={() => void run(() => pauseDesktopVideoDraft(item))}
+              title={t.stopHint}
+              type="button"
+            >
+              {t.cancel}
+            </button>
+          ) : undefined
+      }
+    }
+
+    if (item.status === 'failed') {
+      return {
+        kind: 'error',
+        title: t.statuses.failed,
+        description: t.creationFailed,
+        detail: item.draft?.error || item.error || undefined
+      }
+    }
+
+    if (!item.current && !item.draft?.image_url && !item.draft?.candidate_video_url) {
+      return { kind: 'empty', title: t.noPreview, description: t.emptyPreviewHint }
+    }
+
+    return undefined
+  }
+
+  const renderMetadata = (target: DesktopVideoSet): React.JSX.Element => (
+    <div className={styles.metadata}>
+      <span>
+        {t.targetResolution}: {resolutionLabel(target.target_width, target.target_height)}
+      </span>
+      <DesktopLifeRecommendation display={recommendationDisplay} set={target} />
+      <span>
+        {recommendationDisplay
+          ? `${t.recommendationDisplay}: ${recommendationDisplay.label}`
+          : t.recommendationUnavailable}
+      </span>
+    </div>
   )
 
   const renderAction = (item: DesktopVideoAction): React.JSX.Element => {
@@ -1318,16 +1152,15 @@ export function DesktopLifePage({
       return <></>
     }
 
-    const processing = item.status === 'processing' && !isActionPaused(item)
+    const unknown = Boolean(item.draft?.submission_unknown)
+    const processing = item.status === 'processing' && !isActionPaused(item) && !unknown
     const imageReview = Boolean(item.stage === 'image_review' && item.draft?.image_url && !item.draft.image_confirmed)
 
     const candidate = Boolean(
       item.status === 'review_pending' && item.stage !== 'image_review' && item.draft?.candidate_video_url
     )
 
-    const previewDraft = Boolean(
-      item.draft && (item.draft.candidate_video_url || !item.draft.video_refinement || !item.current)
-    )
+    const previewDraft = previewUsesDraft(item)
 
     const showingCurrentVideo = Boolean(item.current?.video_url && !previewDraft)
 
@@ -1352,14 +1185,100 @@ export function DesktopLifePage({
 
     const canConfirm = item.draft && imagePreviews[`${item.draft.id}:${item.draft.image_url}`]
 
+    const controls =
+      unknown || processing ? null : candidate ? (
+        <>
+          <button
+            className={BTN_PRIMARY}
+            disabled={busy}
+            onClick={() => void run(() => adoptCandidate(item))}
+            type="button"
+          >
+            {item.key === 'idle' ? t.play : t.useCandidate}
+          </button>
+          <button className={BTN_SUBTLE} disabled={busy} onClick={() => setDiscardAction(item)} type="button">
+            {t.reject}
+          </button>
+          <button
+            className={BTN_SUBTLE}
+            disabled={busy}
+            onClick={() => setRefinement({ action: item, set: selected, source: 'candidate' })}
+            type="button"
+          >
+            {t.refineVideo}
+          </button>
+        </>
+      ) : imageReview ? (
+        <button
+          className={BTN_PRIMARY}
+          disabled={busy || !canConfirm}
+          onClick={() => void run(() => confirmDesktopVideoImage(item, selected))}
+          type="button"
+        >
+          {t.confirmImage}
+        </button>
+      ) : item.current && !item.draft && !item.needs_update ? (
+        <button
+          className={BTN_PRIMARY}
+          disabled={busy || !item.playable}
+          onClick={() =>
+            void run(async () => {
+              if (!currentMatches) {
+                const activated = await activateDesktopVideoSet(selected)
+
+                if (!activated) {
+                  return
+                }
+              }
+
+              if (item.key !== 'idle') {
+                await play(item)
+              } else if ($presentation.get().effectiveMode !== 'desktop') {
+                await shellApi().presentation.setMode('desktop')
+              }
+            })
+          }
+          type="button"
+        >
+          {currentMatches && item.key === 'idle' ? t.current : item.key === 'idle' ? t.play : t.playAction}
+        </button>
+      ) : (
+        <button
+          className={BTN_PRIMARY}
+          disabled={busy}
+          onClick={() =>
+            void run(() => {
+              if (isActionPaused(item) || item.draft?.video_refinement || item.draft?.source === 'external_upload') {
+                return resumeDesktopVideoDraft(item, selected)
+              }
+
+              if (!dependent && !item.draft?.image_confirmed) {
+                return makeImage(item, selected, note)
+              }
+
+              return makeVideo(item, selected, note)
+            })
+          }
+          type="button"
+        >
+          {isActionPaused(item)
+            ? t.resume
+            : item.status === 'failed'
+              ? t.retry
+              : dependent || item.draft?.image_confirmed
+                ? t.startAction
+                : t.generateImage}
+        </button>
+      )
+
     return (
-      <section className="flex flex-col gap-5" key={item.id}>
+      <section className={styles.detail} key={item.id}>
         {renderSteps(step)}
         <div>
           <h3 className="text-lg font-semibold text-strong">{actionName(item)}</h3>
-          <p className="mt-1 text-sm text-muted" role="status">
-            {actionStatus(item)}
-          </p>
+          {(imageReview || candidate || (!item.draft && item.playable)) && (
+            <p className="mt-2 text-sm text-muted">{candidate ? t.newVideo : actionStatus(item)}</p>
+          )}
         </div>
         {requiresBase ? (
           <div className="rounded-xl bg-accent/5 p-5">
@@ -1382,48 +1301,17 @@ export function DesktopLifePage({
                 }
               }}
               set={selected}
+              status={previewStatus(item)}
             />
+            {renderMetadata(selected)}
             {item.current && item.draft && <p className="text-sm text-muted">{t.savedCurrent}</p>}
-            {!candidate && (item.error || item.draft?.error) && (
-              <div className="rounded-xl bg-warning/10 p-4 text-sm text-body" role="status">
-                <p>{item.status === 'failed' ? t.creationFailed : t.unavailable}</p>
-                <details className="mt-2 text-xs text-muted">
-                  <summary className="cursor-pointer">{t.details}</summary>
-                  <p className="mt-2 break-words">{item.draft?.error || item.error}</p>
-                </details>
-              </div>
+            {!candidate && item.status !== 'failed' && !processing && !unknown && (item.error || item.draft?.error) && (
+              <p className="text-sm text-warning" role="status">
+                {t.unavailable}
+              </p>
             )}
             {item.needs_update && <p className="text-sm text-warning">{t.needsUpdate}</p>}
-            {processing ? (
-              <div className="flex flex-col gap-3 rounded-xl bg-accent/5 p-4" role="status">
-                <p className="text-sm font-medium text-strong">{actionStatus(item)}</p>
-                <p className="text-sm text-muted">{t.leaveHint}</p>
-                <p className="text-xs text-muted">{t.stopHint}</p>
-                {item.draft && !['upload', 'image_upload'].includes(item.stage) && (
-                  <button
-                    className={`${BTN_SUBTLE} self-start`}
-                    disabled={busy}
-                    onClick={() => void run(() => pauseDesktopVideoDraft(item))}
-                    type="button"
-                  >
-                    {t.cancel}
-                  </button>
-                )}
-              </div>
-            ) : item.draft?.submission_unknown ? (
-              <div className="rounded-xl bg-black/5 p-4">
-                <p className="text-sm font-medium text-strong">{t.resultPending}</p>
-                <p className="mt-2 text-sm leading-relaxed text-muted">{t.resultPendingHint}</p>
-                <button
-                  className={`${BTN_SUBTLE} mt-3`}
-                  disabled={loading || busy}
-                  onClick={() => void refreshDesktopVideos()}
-                  type="button"
-                >
-                  {t.refresh}
-                </button>
-              </div>
-            ) : candidate ? (
+            {unknown || processing ? null : candidate ? (
               <>
                 <div className="rounded-xl bg-accent/5 p-4 text-sm text-body" role="status">
                   <p>{t.videoReviewHint}</p>
@@ -1437,27 +1325,6 @@ export function DesktopLifePage({
                 {item.key === 'idle' && affected > 0 && (
                   <p className="rounded-lg bg-warning/10 p-3 text-sm text-warning">{t.updateImpact(affected)}</p>
                 )}
-                <div className="sticky bottom-0 flex flex-wrap gap-2 border-t border-line-hairline bg-surface-card py-4">
-                  <button
-                    className={BTN_PRIMARY}
-                    disabled={busy}
-                    onClick={() => void run(() => adoptCandidate(item))}
-                    type="button"
-                  >
-                    {item.key === 'idle' ? t.play : t.useCandidate}
-                  </button>
-                  <button className={BTN_SUBTLE} disabled={busy} onClick={() => setDiscardAction(item)} type="button">
-                    {t.reject}
-                  </button>
-                  <button
-                    className={BTN_SUBTLE}
-                    disabled={busy}
-                    onClick={() => setRefinement({ action: item, set: selected, source: 'candidate' })}
-                    type="button"
-                  >
-                    {t.refineVideo}
-                  </button>
-                </div>
               </>
             ) : imageReview ? (
               <>
@@ -1483,48 +1350,11 @@ export function DesktopLifePage({
                     {t.adjustImage}
                   </button>
                 </details>
-                <div className="sticky bottom-0 flex flex-wrap gap-2 border-t border-line-hairline bg-surface-card py-4">
-                  <button
-                    className={BTN_PRIMARY}
-                    disabled={busy || !canConfirm}
-                    onClick={() => void run(() => confirmDesktopVideoImage(item, selected))}
-                    type="button"
-                  >
-                    {t.confirmImage}
-                  </button>
-                </div>
               </>
             ) : item.current && !item.draft && !item.needs_update ? (
-              <div className="flex flex-col gap-3">
-                <p className="text-sm text-muted">{t.readyHint}</p>
-                <button
-                  className={`${BTN_PRIMARY} self-start`}
-                  disabled={busy || !item.playable}
-                  onClick={() =>
-                    void run(async () => {
-                      if (!currentMatches) {
-                        const activated = await activateDesktopVideoSet(selected)
-
-                        if (!activated) {
-                          return
-                        }
-                      }
-
-                      if (item.key !== 'idle') {
-                        await play(item)
-                      } else if ($presentation.get().effectiveMode !== 'desktop') {
-                        await shellApi().presentation.setMode('desktop')
-                      }
-                    })
-                  }
-                  type="button"
-                >
-                  {currentMatches && item.key === 'idle' ? t.current : item.key === 'idle' ? t.play : t.playAction}
-                </button>
-              </div>
+              <p className="text-sm text-muted">{t.readyHint}</p>
             ) : (
               <div className="flex flex-col gap-3">
-                {isActionPaused(item) && <p className="text-sm text-muted">{t.resumeHint}</p>}
                 {!isActionPaused(item) && !item.draft?.video_refinement && (
                   <label className="flex flex-col gap-2 text-sm text-body">
                     {t.feedback}
@@ -1537,36 +1367,6 @@ export function DesktopLifePage({
                     />
                   </label>
                 )}
-                <button
-                  className={`${BTN_PRIMARY} self-start`}
-                  disabled={busy}
-                  onClick={() =>
-                    void run(() => {
-                      if (
-                        isActionPaused(item) ||
-                        item.draft?.video_refinement ||
-                        item.draft?.source === 'external_upload'
-                      ) {
-                        return resumeDesktopVideoDraft(item, selected)
-                      }
-
-                      if (!dependent && !item.draft?.image_confirmed) {
-                        return makeImage(item, selected, isActionPaused(item) ? '' : note)
-                      }
-
-                      return makeVideo(item, selected, isActionPaused(item) ? '' : note)
-                    })
-                  }
-                  type="button"
-                >
-                  {isActionPaused(item)
-                    ? t.resume
-                    : item.status === 'failed'
-                      ? t.retry
-                      : dependent || item.draft?.image_confirmed
-                        ? t.startAction
-                        : t.generateImage}
-                </button>
               </div>
             )}
             {!processing && !candidate && (
@@ -1627,7 +1427,7 @@ export function DesktopLifePage({
                   {!dependent && (
                     <button
                       className={`${BTN_SUBTLE} self-start`}
-                      disabled={busy}
+                      disabled={busy || unknown}
                       onClick={() => void run(() => uploadImage(item))}
                       type="button"
                     >
@@ -1636,7 +1436,7 @@ export function DesktopLifePage({
                   )}
                   <button
                     className={`${BTN_SUBTLE} self-start`}
-                    disabled={busy || (imageReview && !canConfirm)}
+                    disabled={busy || unknown || (imageReview && !canConfirm)}
                     onClick={() =>
                       void run(() => (imageReview ? confirmForExternal(item) : Promise.resolve(openExternal(item))))
                     }
@@ -1677,6 +1477,7 @@ export function DesktopLifePage({
             )}
           </>
         )}
+        {!requiresBase && controls && <div className={styles.footer}>{controls}</div>}
       </section>
     )
   }
@@ -1689,7 +1490,6 @@ export function DesktopLifePage({
   const selectedOutfit = outfits.find(outfit => String(outfit.id) === create.outfitId)
   const materialReady = selectedScene?.status === 'ready' && selectedOutfit?.status === 'ready'
   const recommendationDisplay = resolveDesktopLifeRecommendationDisplay(presentation)
-  const recommendationResolution = desktopDisplayResolution(recommendationDisplay)
 
   const resolutionReady = readyDesktopLifeResolution(create, presentation) !== null
 
@@ -1699,7 +1499,7 @@ export function DesktopLifePage({
 
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4 sm:p-6"
+      className={styles.page}
       onScroll={event => {
         if (selectedSetId === null && !createOpen) {
           updateDesktopLifeUi({ libraryScrollTop: event.currentTarget.scrollTop })
@@ -1707,7 +1507,7 @@ export function DesktopLifePage({
       }}
       ref={scrollRef}
     >
-      <div className="mx-auto flex w-full max-w-4xl flex-col gap-5">
+      <div className={styles.content}>
         {(selected || createOpen) && (
           <button
             className={`${BTN_GHOST} self-start`}
@@ -1723,76 +1523,69 @@ export function DesktopLifePage({
             type="button"
           >
             <ArrowLeft size={15} />
-            {selectedActionId !== null && !createOpen ? t.returnToScene : t.back}
+            {selectedActionId !== null && !createOpen ? t.backToBackground : t.backToLibrary}
           </button>
         )}
-        <header className="flex flex-wrap items-start justify-between gap-3">
+        <header className={styles.header}>
           <div>
-            <h2 className="text-xl font-semibold text-strong">
-              {createOpen ? t.createSet : selected?.title || t.title}
-            </h2>
-            <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted">
-              {createOpen ? t.createHint : !selected ? t.hint : t.savedCurrent}
-            </p>
+            <h2 className={styles.heading}>{createOpen ? t.createSet : selected?.title || t.title}</h2>
+            {(!action || createOpen) && (
+              <p className={styles.intro}>
+                {createOpen ? t.createHint : !selected ? t.hint : idle?.playable ? t.readyHint : t.leaveHint}
+              </p>
+            )}
           </div>
           {!selected && !createOpen && (
             <button className={BTN_PRIMARY} disabled={busy} onClick={openCreate} type="button">
+              <Plus size={16} />
               {t.createSet}
             </button>
           )}
         </header>
-        {!createOpen && state && (
-          <section aria-label={t.preferences} className="space-y-4 rounded-xl border border-line-hairline p-4">
-            <div className="flex items-center justify-between gap-4">
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-strong">{t.autonomy}</p>
-                <p className="mt-1 text-xs leading-relaxed text-muted">{t.autonomyHint}</p>
+        {!createOpen && !selected && state && (
+          <details className={styles.settings}>
+            <summary>
+              <Settings size={16} />
+              {t.preferences}
+              <ChevronDown size={16} />
+            </summary>
+            <div className="mt-4 space-y-4">
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-strong">{t.autonomy}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-muted">{t.autonomyHint}</p>
+                </div>
+                <Toggle
+                  ariaLabel={t.autonomy}
+                  checked={state.autonomous_enabled}
+                  disabled={busy}
+                  onChange={() => void savePreferences({ autonomous_enabled: !state.autonomous_enabled })}
+                />
               </div>
-              <Toggle
-                ariaLabel={t.autonomy}
-                checked={state.autonomous_enabled}
-                disabled={busy}
-                onChange={() => void savePreferences({ autonomous_enabled: !state.autonomous_enabled })}
-              />
-            </div>
-            <div className="flex items-center justify-between gap-4">
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-strong">{t.pin}</p>
-                <p className="mt-1 text-xs leading-relaxed text-muted">{t.pinHint}</p>
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-strong">{t.pin}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-muted">{t.pinHint}</p>
+                </div>
+                <Toggle
+                  ariaLabel={t.pin}
+                  checked={state.pinned}
+                  disabled={busy}
+                  onChange={() => void savePreferences({ pinned: !state.pinned })}
+                />
               </div>
-              <Toggle
-                ariaLabel={t.pin}
-                checked={state.pinned}
-                disabled={busy}
-                onChange={() => void savePreferences({ pinned: !state.pinned })}
-              />
+              {state.pinned && (
+                <p className="text-xs text-muted" role="status">
+                  {t.pinnedHint}
+                </p>
+              )}
+              {preferencesSaving && (
+                <p aria-live="polite" className="text-xs text-muted">
+                  {t.preferencesSaving}
+                </p>
+              )}
             </div>
-            {state.pinned && (
-              <p className="text-xs text-muted" role="status">
-                {t.pinnedHint}
-              </p>
-            )}
-            {preferencesSaving && (
-              <p aria-live="polite" className="text-xs text-muted">
-                {t.preferencesSaving}
-              </p>
-            )}
-          </section>
-        )}
-        {!createOpen && (
-          <p className="text-sm text-muted">
-            {recommendationResolution && recommendationDisplay
-              ? `${t.recommendationDisplay}: ${recommendationDisplay.label} · ${resolutionLabel(recommendationResolution.width, recommendationResolution.height)}`
-              : t.recommendationUnavailable}
-          </p>
-        )}
-        {selected && !createOpen && (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm text-muted">
-              {t.targetResolution}: {resolutionLabel(selected.target_width, selected.target_height)}
-            </span>
-            <DesktopLifeRecommendation display={recommendationDisplay} set={selected} />
-          </div>
+          </details>
         )}
         {(error || state?.preparation_error) && (
           <div className="rounded-xl bg-warning/10 p-4 text-sm text-body" role="status">
@@ -1815,13 +1608,13 @@ export function DesktopLifePage({
           <>
             {renderSteps(0)}
             <form
-              className="flex flex-col gap-5"
+              className={styles.form}
               onSubmit={event => {
                 event.preventDefault()
                 const currentCreate = $desktopLifeUi.get().create
                 const target = readyDesktopLifeResolution(currentCreate, $presentation.get())
 
-                if (busy || !target) {
+                if (busy || !target || !materialReady) {
                   return
                 }
 
@@ -1871,8 +1664,22 @@ export function DesktopLifePage({
                 })
               }}
             >
+              <div aria-label={t.creationSource} className={styles.sourceChoice} role="group">
+                {(['ai', 'image_upload', 'video_upload'] as DesktopVideoSource[]).map(source => (
+                  <button
+                    aria-pressed={create.source === source}
+                    className={BTN_SUBTLE}
+                    disabled={busy}
+                    key={source}
+                    onClick={() => setCreate(current => ({ ...current, source, requestId: crypto.randomUUID() }))}
+                    type="button"
+                  >
+                    {source === 'ai' ? t.useAI : source === 'image_upload' ? t.imageSource : t.videoSource}
+                  </button>
+                ))}
+              </div>
               {create.source === 'ai' ? (
-                <label className="flex flex-col gap-3 text-sm font-medium text-strong">
+                <label className={styles.field}>
                   {t.idea}
                   <textarea
                     autoFocus
@@ -1901,148 +1708,50 @@ export function DesktopLifePage({
                   setCreate(current => reconcileDesktopLifeDisplay(current, $presentation.get(), targetDisplayId))
                 }}
               />
-              <section className="flex flex-col gap-3 rounded-xl bg-black/5 p-4">
-                <p className="text-sm text-body">{t.referencesHint}</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="flex min-w-0 flex-col gap-2">
-                    <DesktopLifeCover url={selectedScene?.assetUrl || null} />
-                    <span className="truncate text-sm text-body">
-                      {selectedScene?.title || create.sceneLabel || t.sceneMissing}
-                    </span>
-                  </div>
-                  <div className="flex min-w-0 flex-col gap-2">
-                    <DesktopLifeCover url={selectedOutfit?.fullbodyPath || null} />
-                    <span className="truncate text-sm text-body">{selectedOutfit?.name || t.outfitMissing}</span>
-                  </div>
+              <section className={styles.section}>
+                <div>
+                  <h3 className="text-sm font-medium text-strong">{t.referencesTitle}</h3>
                 </div>
-                {selectedScene?.status !== 'ready' && onPrepareMaterial && (
-                  <button
-                    className={`${BTN_SUBTLE} self-start`}
-                    onClick={() => onPrepareMaterial('scene')}
-                    type="button"
-                  >
-                    {t.prepareScene}
-                  </button>
-                )}
-                {selectedOutfit?.status !== 'ready' && onPrepareMaterial && (
-                  <button
-                    className={`${BTN_SUBTLE} self-start`}
-                    onClick={() => onPrepareMaterial('outfit')}
-                    type="button"
-                  >
-                    {t.prepareOutfit}
-                  </button>
-                )}
-                {!materialReady && <p className="text-xs text-muted">{t.continueMaterial}</p>}
-                <details>
-                  <summary className="cursor-pointer text-sm text-accent">{t.changeReferences}</summary>
-                  <div className="mt-4 flex flex-col gap-4">
-                    <label className="flex flex-col gap-2 text-sm text-body">
-                      {t.sceneLibrary}
-                      <div className="flex gap-2">
-                        <input
-                          aria-label={t.searchScenes}
-                          className={INPUT_CLASS}
-                          onChange={event => setSceneQuery(event.target.value)}
-                          placeholder={t.searchScenes}
-                          value={sceneQuery}
-                        />
-                        <button
-                          className={BTN_SUBTLE}
-                          onClick={() => void loadSceneLibrary(sceneQuery, 0)}
-                          type="button"
-                        >
-                          {t.search}
-                        </button>
-                      </div>
-                      <PanelSelect
-                        ariaLabel={t.sceneLibrary}
-                        onChange={value =>
-                          setCreate(current => ({
-                            ...current,
-                            sceneId: value,
-                            sceneLabel: scenes.find(scene => scene.id === value)?.title || '',
-                            requestId: crypto.randomUUID()
-                          }))
-                        }
-                        options={[
-                          { value: '', label: t.chooseScene },
-                          ...(create.sceneId && !scenes.some(scene => scene.id === create.sceneId)
-                            ? [
-                                {
-                                  value: create.sceneId,
-                                  label: selectedScene?.title || create.sceneLabel || t.sceneMissing
-                                }
-                              ]
-                            : []),
-                          ...scenes
-                            .filter(scene => scene.status === 'ready')
-                            .map(scene => ({ value: scene.id, label: scene.title }))
-                        ]}
-                        value={create.sceneId}
-                      />
-                      <div className="flex gap-2">
-                        <button
-                          className={BTN_GHOST}
-                          disabled={scenePage === 0}
-                          onClick={() => void loadSceneLibrary(sceneQuery, scenePage - 1)}
-                          type="button"
-                        >
-                          {t.previous}
-                        </button>
-                        <button
-                          className={BTN_GHOST}
-                          disabled={(scenePage + 1) * PAGE_SIZE >= sceneTotal}
-                          onClick={() => void loadSceneLibrary(sceneQuery, scenePage + 1)}
-                          type="button"
-                        >
-                          {t.next}
-                        </button>
-                      </div>
-                    </label>
-                    <label className="flex flex-col gap-2 text-sm text-body">
-                      {t.outfitLibrary}
-                      <PanelSelect
-                        ariaLabel={t.outfitLibrary}
-                        onChange={value =>
-                          setCreate(current => ({ ...current, outfitId: value, requestId: crypto.randomUUID() }))
-                        }
-                        options={[
-                          { value: '', label: t.chooseOutfit },
-                          ...outfits
-                            .filter(outfit => outfit.status === 'ready')
-                            .map(outfit => ({ value: String(outfit.id), label: outfit.name }))
-                        ]}
-                        value={create.outfitId}
-                      />
-                    </label>
-                    {onPrepareMaterial && (
-                      <div className="flex flex-wrap gap-2">
-                        <button className={BTN_GHOST} onClick={() => onPrepareMaterial('scene')} type="button">
-                          {t.prepareScene}
-                        </button>
-                        <button className={BTN_GHOST} onClick={() => onPrepareMaterial('outfit')} type="button">
-                          {t.prepareOutfit}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </details>
+                <DesktopLifeReferences
+                  disabled={busy}
+                  onPickOutfit={outfitId =>
+                    setCreate(current => ({ ...current, outfitId, requestId: crypto.randomUUID() }))
+                  }
+                  onPickScene={scene => {
+                    setCreationScene({ id: scene.id, scene })
+                    setCreate(current => ({
+                      ...current,
+                      sceneId: scene.id,
+                      sceneLabel: scene.title,
+                      requestId: crypto.randomUUID()
+                    }))
+                  }}
+                  onPrepareMaterial={onPrepareMaterial}
+                  outfit={selectedOutfit}
+                  outfitId={create.outfitId}
+                  scene={selectedScene}
+                  sceneId={create.sceneId}
+                  sceneLabel={create.sceneLabel}
+                />
               </section>
-              <details>
-                <summary className="cursor-pointer text-sm text-muted">{t.advanced}</summary>
-                <label className="mt-3 flex flex-col gap-2 text-sm text-body">
-                  {t.nameOptional}
-                  <input
-                    className={INPUT_CLASS}
-                    maxLength={160}
-                    onChange={event => setCreate(current => ({ ...current, name: event.target.value }))}
-                    placeholder={t.newSceneName}
-                    value={create.name}
-                  />
-                </label>
-              </details>
-              <div className="sticky bottom-0 flex flex-wrap items-center gap-3 border-t border-line-hairline bg-surface-card py-4">
+              <label className={styles.field}>
+                {t.nameOptional}
+                <input
+                  className={INPUT_CLASS}
+                  maxLength={160}
+                  onChange={event => setCreate(current => ({ ...current, name: event.target.value }))}
+                  placeholder={t.newSceneName}
+                  value={create.name}
+                />
+              </label>
+              <div className={styles.footer}>
+                <p className={styles.footerNote} role="status">
+                  {!resolutionReady
+                    ? t.screenUnavailable
+                    : !materialReady
+                      ? t.creationMissingMaterials
+                      : t.creationReady}
+                </p>
                 <button className={BTN_PRIMARY} disabled={busy || !materialReady || !resolutionReady} type="submit">
                   {busy
                     ? t.preparing
@@ -2052,23 +1761,6 @@ export function DesktopLifePage({
                         ? t.uploadImage
                         : t.selectVideo}
                 </button>
-                <details>
-                  <summary className="cursor-pointer text-sm text-muted">
-                    {create.source === 'ai' ? t.ownMedia : t.creationSource}
-                  </summary>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {(['ai', 'image_upload', 'video_upload'] as DesktopVideoSource[]).map(source => (
-                      <button
-                        className={BTN_GHOST}
-                        key={source}
-                        onClick={() => setCreate(current => ({ ...current, source, requestId: crypto.randomUUID() }))}
-                        type="button"
-                      >
-                        {source === 'ai' ? t.useAI : source === 'image_upload' ? t.uploadImage : t.externalTitle}
-                      </button>
-                    ))}
-                  </div>
-                </details>
               </div>
             </form>
           </>
@@ -2078,30 +1770,39 @@ export function DesktopLifePage({
           <>
             {idle && (
               <section className="flex flex-col gap-4">
-                {idle.current ? (
-                  <DesktopLifePreview action={idle} set={selected} />
-                ) : (
-                  <DesktopLifeCover target={selected} url={idle.draft?.image_url || selected.base_image_url} />
-                )}
+                {idle.draft?.candidate_video_url ? (
+                  <span className={`${styles.badge} self-start`}>{t.newVideo}</span>
+                ) : idle.stage === 'image_review' ? (
+                  <span className={`${styles.badge} self-start`}>{t.stepImage}</span>
+                ) : null}
+                <DesktopLifePreview
+                  action={idle}
+                  draft={previewUsesDraft(idle)}
+                  set={selected}
+                  status={previewStatus(idle)}
+                />
+                {renderMetadata(selected)}
+                {idle.current && idle.draft && <p className="text-sm text-muted">{t.savedCurrent}</p>}
                 <div className="flex flex-wrap items-center gap-3">
+                  {(idle.draft || !idle.playable || idle.needs_update) && (
+                    <button className={BTN_PRIMARY} disabled={busy} onClick={() => openAction(idle)} type="button">
+                      {t.continue}
+                    </button>
+                  )}
                   {idle.playable && (
                     <button
-                      className={BTN_PRIMARY}
+                      className={idle.draft ? BTN_SUBTLE : BTN_PRIMARY}
                       disabled={busy || currentMatches}
                       onClick={() => void run(activate)}
                       type="button"
                     >
-                      {currentMatches ? t.current : t.play}
-                    </button>
-                  )}
-                  {(idle.draft || !idle.playable || idle.needs_update) && (
-                    <button
-                      className={idle.playable ? BTN_SUBTLE : BTN_PRIMARY}
-                      disabled={busy}
-                      onClick={() => openAction(idle)}
-                      type="button"
-                    >
-                      {t.continue} · {actionStatus(idle)}
+                      {idle.draft
+                        ? currentMatches
+                          ? t.currentInUse
+                          : t.useCurrent
+                        : currentMatches
+                          ? t.current
+                          : t.play}
                     </button>
                   )}
                   {idle.current && !idle.draft && (
@@ -2125,14 +1826,9 @@ export function DesktopLifePage({
                 </button>
               </div>
               {displayedActions.length > 0 && (
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className={styles.actionGrid}>
                   {displayedActions.map(item => (
-                    <button
-                      className="flex flex-col gap-2 rounded-xl border border-line-hairline p-3 text-left hover:bg-black/5"
-                      key={item.id}
-                      onClick={() => openAction(item)}
-                      type="button"
-                    >
+                    <button className={styles.libraryCard} key={item.id} onClick={() => openAction(item)} type="button">
                       <DesktopLifeCover
                         target={selected}
                         url={
@@ -2172,7 +1868,7 @@ export function DesktopLifePage({
                 >
                   <input
                     aria-label={t.setName}
-                    className={`${INPUT_CLASS} flex-1`}
+                    className={`${INPUT_CLASS} min-w-0 flex-1`}
                     maxLength={160}
                     onChange={event => setRename(event.target.value)}
                     placeholder={selected.title}
@@ -2206,7 +1902,19 @@ export function DesktopLifePage({
                 <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-muted">{t.emptyHint}</p>
               </div>
             )}
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className={styles.toolbar}>
+              <h3 className="mr-auto text-sm font-medium text-strong">{t.libraryTitle}</h3>
+              <button
+                className={BTN_GHOST}
+                disabled={loading || busy}
+                onClick={() => void refreshDesktopVideos()}
+                type="button"
+              >
+                <RefreshCw size={16} />
+                {t.refresh}
+              </button>
+            </div>
+            <div className={styles.libraryGrid}>
               {sets.map(item => {
                 const idle = item.actions.find(action => action.key === 'idle')
 
@@ -2214,16 +1922,18 @@ export function DesktopLifePage({
                   action => action.draft || (action.key === 'idle' && !action.current)
                 )
 
+                const pendingAction =
+                  item.actions.find(action => action.draft?.submission_unknown) ??
+                  item.actions.find(action => action.status === 'processing' && !isActionPaused(action)) ??
+                  item.actions.find(action => action.status === 'review_pending' || action.stage === 'image_review') ??
+                  item.actions.find(isActionPaused) ??
+                  item.actions.find(action => action.draft)
+
+                const statusAction = pendingAction ?? idle
+
                 return (
-                  <article
-                    className="flex min-w-0 flex-col gap-3 rounded-2xl border border-line-hairline p-4"
-                    key={item.id}
-                  >
-                    <button
-                      className="flex w-full min-w-0 flex-col gap-3 text-left"
-                      onClick={() => setSelectedSetId(item.id)}
-                      type="button"
-                    >
+                  <article className={styles.libraryCard} data-current={item.is_current} key={item.id}>
+                    <button className={styles.cardLink} onClick={() => setSelectedSetId(item.id)} type="button">
                       <DesktopLifeCover
                         target={item}
                         url={
@@ -2234,13 +1944,18 @@ export function DesktopLifePage({
                         }
                       />
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <strong className="text-base text-strong">{item.title}</strong>
-                        {item.is_current && (
-                          <span className="rounded-full bg-accent/10 px-2 py-1 text-xs text-accent">{t.current}</span>
-                        )}
+                        <strong className={styles.cardTitle}>{item.title}</strong>
+                        {item.is_current && <span className={styles.badge}>{t.current}</span>}
                       </div>
-                      <span className="text-sm text-muted">
-                        {unfinished ? t.continue : idle?.playable ? t.ready : t.notCreated}
+                      <span className={styles.cardStatus}>
+                        {statusAction ? (
+                          <>
+                            {statusAction.key !== 'idle' && <>{actionName(statusAction)} · </>}
+                            {actionStatus(statusAction)}
+                          </>
+                        ) : (
+                          t.notCreated
+                        )}
                       </span>
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-xs text-muted">
@@ -2253,15 +1968,18 @@ export function DesktopLifePage({
                       className={`${BTN_SUBTLE} self-start`}
                       disabled={busy || (item.is_current && !unfinished)}
                       onClick={() => {
-                        if (idle?.playable && !item.is_current) {
+                        if (idle?.playable && !item.is_current && !unfinished) {
                           void run(() => activate(item))
                         } else {
-                          setSelectedSetId(item.id)
+                          updateDesktopLifeUi({
+                            selectedSetId: item.id,
+                            selectedActionId: pendingAction?.id ?? idle?.id ?? null
+                          })
                         }
                       }}
                       type="button"
                     >
-                      {idle?.playable && !item.is_current
+                      {idle?.playable && !item.is_current && !unfinished
                         ? t.play
                         : item.is_current && !unfinished
                           ? t.current
@@ -2270,16 +1988,6 @@ export function DesktopLifePage({
                   </article>
                 )
               })}
-            </div>
-            <div className="flex flex-col gap-4 text-sm text-body">
-              <button
-                className={`${BTN_GHOST} self-start`}
-                disabled={loading || busy}
-                onClick={() => void refreshDesktopVideos()}
-                type="button"
-              >
-                {t.refresh}
-              </button>
             </div>
           </>
         )}
@@ -2292,7 +2000,7 @@ export function DesktopLifePage({
           widthClass="max-w-2xl"
         >
           <p className="mb-4 text-sm leading-relaxed text-muted">{t.addHint}</p>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <div className={styles.actionGrid}>
             {selected.actions
               .filter(item => item.key !== 'idle')
               .map(item => (

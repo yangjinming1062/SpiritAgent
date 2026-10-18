@@ -1,5 +1,6 @@
 import { atom } from 'nanostores'
 
+import { captureAuthScope } from '@/shared/lib/authed-api'
 import { isClientErrorIpc } from '@/shared/lib/ipc-error'
 import { isRecord } from '@/shared/lib/is-record'
 import { log } from '@/shared/lib/log'
@@ -60,6 +61,7 @@ function isOutfitResponse(value: unknown): value is OutfitResponse {
 
 export const $outfits = atom<WardrobeOutfit[]>([])
 export const $outfitPolicy = atom<OutfitPolicy>(snapshot.get().policy)
+export const $wardrobeStatus = atom<'idle' | 'loading' | 'loaded' | 'error'>('idle')
 let revision = 0
 let policyRevision = 0
 
@@ -68,6 +70,7 @@ registerStorageClearHandler(() => {
   policyRevision += 1
   $outfits.set([])
   $outfitPolicy.set('llm_may_replace')
+  $wardrobeStatus.set('idle')
 })
 
 async function showOutfits(state: WardrobeSnapshot, version: number, cacheOnly: boolean): Promise<void> {
@@ -124,13 +127,17 @@ async function showOutfits(state: WardrobeSnapshot, version: number, cacheOnly: 
 }
 
 export async function hydrateWardrobe(): Promise<void> {
-  if ($auth.get().kind !== 'authenticated') {
+  const scope = captureAuthScope()
+
+  if (!scope) {
     return
   }
 
   const policyVersion = policyRevision
   const version = ++revision
-  const epoch = currentClearEpoch()
+  const current = (): boolean => version === revision && scope()
+
+  $wardrobeStatus.set('loading')
 
   if ($outfits.get().length === 0) {
     await showOutfits(snapshot.get(), version, true)
@@ -138,7 +145,7 @@ export async function hydrateWardrobe(): Promise<void> {
 
   const result = await authedResource('companion.get_outfits')
 
-  if (version !== revision || epoch !== currentClearEpoch()) {
+  if (!current()) {
     return
   }
 
@@ -146,6 +153,8 @@ export async function hydrateWardrobe(): Promise<void> {
     if (!result.ok && result.reason === 'err' && !isClientErrorIpc(result.error)) {
       log.warn('wardrobe', 'hydrateWardrobe failed', result.error)
     }
+
+    $wardrobeStatus.set('error')
 
     return
   }
@@ -157,6 +166,10 @@ export async function hydrateWardrobe(): Promise<void> {
 
   snapshot.set(state)
   await showOutfits(state, version, false)
+
+  if (current()) {
+    $wardrobeStatus.set('loaded')
+  }
 }
 
 export async function setOutfitPolicy(policy: OutfitPolicy): Promise<boolean> {
