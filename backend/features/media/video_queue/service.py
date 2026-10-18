@@ -111,9 +111,13 @@ async def enqueue_video_attempt(
     owner: VideoQueueOwner,
     frozen: FrozenMediaProvider,
     attempt_index: int,
-    request: VideoGenRequest,
+    request: VideoGenRequest | None,
+    *,
+    provider_task_id: str | None = None,
 ) -> str:
-    """同一生成代次的供应商尝试只登记一次，等待期间不提交供应商。"""
+    """同一尝试只登记一次；已有句柄直接进入查询，不重新提交制作。"""
+    if request is None and not provider_task_id:
+        raise ValueError("视频尝试须有制作输入或已知供应商句柄")
     config = await resolve_frozen_media_provider(owner.user_id, "video_gen", frozen)
     if config is None:
         raise VideoQueueStoppedError("视频服务配置已变更，请重新发起制作")
@@ -130,9 +134,10 @@ async def enqueue_video_attempt(
                 generation_id=owner.generation_id,
                 attempt_index=attempt_index,
                 frozen_json=frozen.model_dump_json(),
-                request_json=_REQUEST.dump_json(request).decode(),
+                request_json=_REQUEST.dump_json(request).decode() if request is not None else None,
                 model=frozen.model,
-                state="queued",
+                state="processing" if provider_task_id else "queued",
+                provider_task_id=provider_task_id,
                 revision=0,
                 enqueued_at=utc_now(),
                 cancel_requested=False,
@@ -151,7 +156,19 @@ async def enqueue_video_attempt(
         )
         if row is None or _owner(row) != owner or row.frozen_json != frozen.model_dump_json():
             raise VideoQueueStoppedError("视频制作任务的归属或冻结配置不一致")
-        if row.state == "paused":
+        if provider_task_id:
+            if row.provider_task_id and row.provider_task_id != provider_task_id:
+                raise VideoQueueStoppedError("原视频任务句柄不一致，请先核对制作结果")
+            if not row.provider_task_id:
+                if row.state in _TERMINAL:
+                    raise VideoQueueStoppedError("原视频尝试已结束，请先核对制作结果")
+                row.provider_task_id, row.request_json = provider_task_id, None
+                row.state, row.pause_requested = "processing", False
+                row.revision += 1
+            elif row.state == "paused":
+                row.state, row.pause_requested = "processing", False
+                row.revision += 1
+        elif row.state == "paused":
             row.state, row.pause_requested, row.enqueued_at = "queued", False, utc_now()
             row.revision += 1
         await db.commit()

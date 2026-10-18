@@ -374,7 +374,8 @@ export async function generateDesktopVideoAction(
   action: DesktopVideoAction,
   set: DesktopVideoSet,
   feedback = '',
-  aspectPolicy: DesktopVideoAspectPolicy = 'ask'
+  aspectPolicy: DesktopVideoAspectPolicy = 'ask',
+  videoFeedback?: string | null
 ): Promise<DesktopVideoAction> {
   const generated = await mutation('companion_desktop_videos.command_draft', {
     path: { action_id: action.id },
@@ -382,7 +383,8 @@ export async function generateDesktopVideoAction(
       command: 'generate-video',
       ...desktopActionGuard(action, set),
       feedback,
-      aspect_policy: aspectPolicy
+      aspect_policy: aspectPolicy,
+      ...(videoFeedback !== undefined ? { video_feedback: videoFeedback } : {})
     }
   })
 
@@ -515,6 +517,23 @@ export async function resumeDesktopVideoDraft(action: DesktopVideoAction, set: D
     path: { action_id: action.id },
     body: {
       command: 'resume',
+      draft_id: action.draft.id,
+      expected_base_version: set.base_version,
+      expected_resolution_revision: set.resolution_revision
+    }
+  })
+  await refreshDesktopVideos()
+}
+
+export async function retryDesktopVideoDraft(action: DesktopVideoAction, set: DesktopVideoSet): Promise<void> {
+  if (!action.draft) {
+    throw new Error('制作草稿已失效')
+  }
+
+  await mutation('companion_desktop_videos.command_draft', {
+    path: { action_id: action.id },
+    body: {
+      command: 'retry',
       draft_id: action.draft.id,
       expected_base_version: set.base_version,
       expected_resolution_revision: set.resolution_revision

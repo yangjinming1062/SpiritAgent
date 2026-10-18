@@ -64,6 +64,17 @@ from features.companion.persona_service import load_persona_definition
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
 from features.companion.visual_state import persona_snapshot
 from features.configuration.settings.values import get_user_setting
+from features.desktop_life.creation import (
+    DesktopCreationError,
+    begin_opening_repair,
+    ensure_creation_plan,
+    ensure_opening_repair,
+    opening_image_hash,
+    opening_passed,
+    opening_requirements,
+    opening_requirements_hash,
+    review_existing_opening,
+)
 from features.desktop_life.geometry import (
     desktop_aspect_matches,
     desktop_aspect_ratio,
@@ -75,6 +86,7 @@ from features.desktop_life.prompts import (
     DESKTOP_POSE_EDIT_TEMPLATE,
     DESKTOP_POSE_EXPAND_TEMPLATE,
     DESKTOP_POSE_IMAGE_TEMPLATE,
+    DESKTOP_POSE_VARIANT_TEMPLATE,
     DESKTOP_VIDEO_BASE,
     DESKTOP_VIDEO_LOOP,
     DESKTOP_VIDEO_MOTION_TEMPLATE,
@@ -97,6 +109,7 @@ from features.desktop_life.repository import (
     touch_desktop_state,
 )
 from features.desktop_life.schemas import (
+    DesktopOpeningReview,
     DesktopVideoAsset,
     DesktopVideoProgress,
     DesktopVisualSnapshot,
@@ -124,10 +137,15 @@ from features.media.chain import (
     video_failure_message,
     video_provider_failure_reason,
 )
-from features.media.character_images import ImageChainState, ImageExpansionInput, generate_character_images
+from features.media.character_images import (
+    CharacterImageInput,
+    ImageChainState,
+    ImageExpansionInput,
+    generate_character_images,
+)
 from features.media.contracts import RemovedActionVideoTask
 from features.media.identity_review import score_character_frames_with_references
-from features.media.image_generation import ImageGenerationError
+from features.media.image_generation import ImageGenerationError, ImageReviewUnavailableError
 from features.media.video_queue.contracts import VideoQueueInfo, VideoQueueOwner, VideoQueueStoppedError
 from features.media.video_queue.service import (
     acknowledge_video_attempt,
@@ -156,12 +174,23 @@ class DesktopVideoScript(BaseModel):
     reason: str = Field(max_length=200)
     motion_prompt: str = Field(max_length=2000)
     visual_description: str = Field(max_length=1500)
+    failure_kind: Literal["image", "duration", "unsupported"] | None = None
+    minimum_duration_seconds: int | None = Field(default=None, gt=0, le=600, strict=True)
 
 
 class DesktopVideoReview(BaseModel):
     model_config = ConfigDict(extra="forbid")
     verdict: str = Field(pattern=r"^(pass|review)$")
     reason: str = Field(max_length=500)
+
+
+class DesktopMotionError(DesktopCreationError):
+    def __init__(self, script: DesktopVideoScript) -> None:
+        super().__init__(
+            script.reason or "当前画面无法完成这个活动",
+            "activity_unsupported" if script.failure_kind == "unsupported" else "image_unsuitable",
+        )
+        self.script = script
 
 
 class DesktopCandidateResult(BaseModel):
@@ -272,7 +301,7 @@ def desktop_progress_can_resume(progress: DesktopVideoProgress) -> bool:
             and not alignment.stop_reason
             and alignment.next_index < len(alignment.providers),
         )
-    return False
+    return progress.creation_plan is not None or bool(progress.previous_pose_path)
 
 
 def _asset_hash(path: str) -> str:
@@ -756,6 +785,15 @@ async def _prepare_expansion(
     await _save_progress(user_id, action_id, progress, stage="image")
 
 
+def _opening_repair_reference(state: ImageChainState | None, identity_safe_path: str | None) -> str | None:
+    if identity_safe_path:
+        return identity_safe_path
+    inputs = state.inputs if state is not None else None
+    if isinstance(inputs, CharacterImageInput) and inputs.image_edit:
+        return inputs.identity_reference
+    return None
+
+
 async def _prepare_pose(
     user_id: int,
     action: DesktopVideoAction,
@@ -807,13 +845,17 @@ async def _prepare_pose(
     elif progress.geometry_mode == "target":
         progress.frame_width, progress.frame_height = progress.target_width, progress.target_height
         progress.aspect_ratio = desktop_aspect_ratio(progress.target_width, progress.target_height)
-    editing = bool(previous and not progress.regenerate_image)
+    editing = bool(previous)
     if editing:
         reference = await asyncio.to_thread(read_valid_image_data_uri, previous)
         if not reference:
             raise DesktopVideoStateError("要调整的画面无法读取")
         portrait, outfit = reference, None
-        prompt = DESKTOP_POSE_EDIT_TEMPLATE.format(feedback=progress.feedback, aspect_ratio=progress.aspect_ratio)
+        template = DESKTOP_POSE_VARIANT_TEMPLATE if progress.regenerate_image else DESKTOP_POSE_EDIT_TEMPLATE
+        prompt = template.format(
+            feedback=opening_requirements(progress),
+            aspect_ratio=progress.aspect_ratio,
+        )
     else:
         portrait, outfit = await _references(snapshot)
         if (
@@ -830,9 +872,7 @@ async def _prepare_pose(
                 portrait,
                 outfit,
             )
-        pose = progress.action_description
-        if progress.feedback:
-            pose += "\n本次画面要求：" + progress.feedback
+        pose = opening_requirements(progress)
         prompt = DESKTOP_POSE_IMAGE_TEMPLATE.format(
             references=desktop_source_reference_prompt(snapshot.identity_reference_role),
             pose=pose,
@@ -851,33 +891,60 @@ async def _prepare_pose(
         progress.image_chain_json = value.model_dump_json()
         await _save_progress(user_id, action.id, progress, stage="image")
 
-    paths = await generate_character_images(
-        prompt,
-        user_id=user_id,
-        storage_directory=directory,
-        reference_image=portrait,
-        secondary_reference_image=outfit,
-        identity_reference=portrait,
-        identity_reference_mode=(
-            "primary" if not editing and snapshot.identity_reference_role == "fullbody" else "portrait_and_outfit"
-        ),
-        identity_text="" if editing else render_character_identity(snapshot.identity),
-        image_edit=editing,
-        size=f"{progress.frame_width or progress.target_width}x{progress.frame_height or progress.target_height}",
-        aspect_ratio=progress.aspect_ratio,
-        target_width=progress.frame_width or progress.target_width,
-        target_height=progress.frame_height or progress.target_height,
-        nearest_resolution=True,
-        display_width=progress.target_width,
-        display_height=progress.target_height,
-        keep_aspect=progress.geometry_mode == "keep",
-        size_enforced=True,
-        state=state,
-        save_progress=save_image,
-        before_submit=before_submit,
-        task=AiTaskKey.desktop_life,
-        selection=progress.image_selection,
-    )
+    try:
+        paths = await generate_character_images(
+            prompt,
+            user_id=user_id,
+            storage_directory=directory,
+            reference_image=portrait,
+            secondary_reference_image=outfit,
+            identity_reference=portrait,
+            identity_reference_mode=(
+                "primary" if editing or snapshot.identity_reference_role == "fullbody" else "portrait_and_outfit"
+            ),
+            identity_text="" if editing else render_character_identity(snapshot.identity),
+            image_edit=editing,
+            goal_review="required",
+            size=f"{progress.frame_width or progress.target_width}x{progress.frame_height or progress.target_height}",
+            aspect_ratio=progress.aspect_ratio,
+            target_width=progress.frame_width or progress.target_width,
+            target_height=progress.frame_height or progress.target_height,
+            nearest_resolution=True,
+            display_width=progress.target_width,
+            display_height=progress.target_height,
+            keep_aspect=progress.geometry_mode == "keep",
+            size_enforced=True,
+            state=state,
+            save_progress=save_image,
+            before_submit=before_submit,
+            task=AiTaskKey.desktop_life,
+            selection=progress.image_selection,
+        )
+    except ImageGenerationError as exc:
+        if exc.result_unknown:
+            raise
+        if isinstance(exc, ImageReviewUnavailableError):
+            raise DesktopCreationError(str(exc), "review_unavailable") from exc
+        if state.stop_reason == "goal_review_invalid":
+            raise DesktopCreationError(str(exc), "review_invalid") from exc
+        reviewed = [candidate for candidate in state.candidates if candidate.evaluated and candidate.score is not None]
+        if not reviewed:
+            raise
+        identity_safe = max(
+            (candidate for candidate in reviewed if candidate.score >= MEDIA_IDENTITY_ACCEPT_SCORE),
+            key=lambda candidate: candidate.score,
+            default=None,
+        )
+        goal = state.goal_reviews.get(identity_safe.path) if identity_safe else None
+        begin_opening_repair(
+            progress,
+            reason=goal.reason if goal else "候选画面未通过身份或活动要求检查",
+            reference_path=_opening_repair_reference(state, identity_safe.path if identity_safe else None),
+            replace_base=action.key == "idle",
+        )
+        await _save_progress(user_id, action.id, progress, stage="repairing")
+        await _prepare_opening(user_id, action, snapshot, progress, directory)
+        return
     resolved = resolve_asset_reference(paths[0])
     if resolved is None:
         raise DesktopVideoStateError("起始画面无法读取")
@@ -897,7 +964,62 @@ async def _prepare_pose(
     progress.image_confirmed = False
     progress.motion_prompt = ""
     progress.image_origin = state.selected_origin()
+    candidate = state.best()
+    goal = state.goal_reviews.get(candidate.path) if candidate else None
+    with Image.open(resolved[0]) as original_image:
+        original_size = ImageOps.exif_transpose(original_image).size
+    if goal is not None and goal.verdict == "pass" and original_size == (progress.frame_width, progress.frame_height):
+        progress.opening_review = DesktopOpeningReview(
+            image_hash=await asyncio.to_thread(opening_image_hash, progress.pose_path),
+            requirements_hash=opening_requirements_hash(progress),
+            score=candidate.score,
+            verdict=goal.verdict,
+            reason=goal.reason,
+        )
     await _save_progress(user_id, action.id, progress, stage="image")
+
+
+async def _prepare_opening(
+    user_id: int,
+    action: DesktopVideoAction,
+    snapshot: DesktopVisualSnapshot,
+    progress: DesktopVideoProgress,
+    directory: str,
+) -> None:
+    async def before_submit() -> None:
+        await _require_active_job(user_id, action.id, progress.generation_id)
+
+    if progress.creation_plan is None:
+        await _save_progress(user_id, action.id, progress, stage="planning")
+        await ensure_creation_plan(user_id, snapshot, progress, kind=action.kind, before_submit=before_submit)
+        await _save_progress(user_id, action.id, progress, stage="prepare")
+    if progress.repair_reason and not progress.repair_description:
+        await _save_progress(user_id, action.id, progress, stage="repairing")
+        await ensure_opening_repair(user_id, progress, snapshot=snapshot, before_submit=before_submit)
+        await _save_progress(user_id, action.id, progress, stage="repairing")
+    await _prepare_pose(user_id, action, snapshot, progress, directory)
+    await _save_progress(user_id, action.id, progress, stage="checking")
+    review = await review_existing_opening(user_id, progress, before_submit=before_submit)
+    await _save_progress(user_id, action.id, progress, stage="checking")
+    if opening_passed(review):
+        return
+    if review.status != "complete":
+        raise DesktopCreationError(
+            "画面检查暂未完成，可以稍后继续" if review.status == "unavailable" else "画面检查未完成，可以重新准备画面",
+            "review_unavailable" if review.status == "unavailable" else "review_invalid",
+        )
+    begin_opening_repair(
+        progress,
+        reason=review.reason,
+        reference_path=_opening_repair_reference(
+            ImageChainState.model_validate_json(progress.image_chain_json) if progress.image_chain_json else None,
+            progress.pose_path if review.score is not None and review.score >= MEDIA_IDENTITY_ACCEPT_SCORE else None,
+        ),
+        separate_base=progress.continuity == "base" and action.key != "idle",
+        replace_base=action.key == "idle",
+    )
+    await _save_progress(user_id, action.id, progress, stage="repairing")
+    await _prepare_opening(user_id, action, snapshot, progress, directory)
 
 
 async def _check_confirmed_geometry(
@@ -944,10 +1066,13 @@ async def _prepare_motion(
             {
                 "persona": snapshot.persona,
                 "action": progress.action_description,
+                "creation_plan": progress.creation_plan.model_dump() if progress.creation_plan else None,
                 "kind": action.kind,
                 "quiet_companionship": action.key == "idle",
                 "duration_seconds": progress.duration_seconds,
                 "feedback": progress.feedback,
+                "video_feedback": progress.video_feedback,
+                "customization_priority": progress.customization_priority,
                 "continuity": progress.continuity,
                 "use_when": json.loads(action.use_when_json),
                 "avoid_when": json.loads(action.avoid_when_json),
@@ -960,7 +1085,7 @@ async def _prepare_motion(
     )
     script = DesktopVideoScript.model_validate(parse_llm_json(raw))
     if not script.feasible or not script.motion_prompt.strip():
-        raise DesktopVideoStateError(script.reason or "当前画面或时长无法完成这个活动，请调整画面或动作")
+        raise DesktopMotionError(script)
     progress.motion_prompt = script.motion_prompt
     progress.visual_description = script.visual_description
     await _save_progress(user_id, action.id, progress, stage="video")
@@ -1087,6 +1212,10 @@ async def _process_candidate(
             and progress.pose_path == progress.base_image_path
             else "fade",
             visual_description=progress.visual_description,
+            creation_plan=progress.creation_plan,
+            feedback=progress.feedback,
+            video_feedback=progress.video_feedback,
+            customization_priority=progress.customization_priority,
         )
     finally:
         if not external or fit_external:
@@ -1131,7 +1260,7 @@ async def _evaluate_candidate(
             uris,
             DESKTOP_VIDEO_REFINE_SCORE if progress.video_refinement else DESKTOP_VIDEO_SCORE,
             identity_text=json.dumps(
-                {"feedback": progress.feedback, "reference_frame_count": len(references)},
+                {"video_feedback": progress.video_adjustment, "reference_frame_count": len(references)},
                 ensure_ascii=False,
             )
             if progress.video_refinement
@@ -1145,23 +1274,32 @@ async def _evaluate_candidate(
             return
     if progress.review_verdict is None:
         try:
+            review_payload: dict[str, object] = {
+                "video_feedback": progress.video_adjustment if progress.video_refinement else progress.video_feedback,
+                "kind": action.kind,
+                "duration_seconds": progress.duration_seconds,
+                "frame_times_seconds": samples.times_seconds,
+                "reference_frame_count": len(references),
+                "reference_times_seconds": reference_times,
+                "output_language": language,
+            }
+            if progress.video_refinement is None:
+                review_payload.update(
+                    {
+                        "action": progress.action_description,
+                        "creation_plan": progress.creation_plan.model_dump() if progress.creation_plan else None,
+                        "motion_prompt": progress.motion_prompt,
+                        "feedback": progress.feedback,
+                        "customization_priority": progress.customization_priority,
+                        "quiet_companionship": action.key == "idle",
+                        "continuity": progress.continuity,
+                    },
+                )
             raw = await vision_chat(
                 user_id,
                 DESKTOP_VIDEO_REFINE_REVIEW if progress.video_refinement else DESKTOP_VIDEO_REVIEW,
                 json.dumps(
-                    {
-                        "action": progress.action_description,
-                        "motion_prompt": progress.motion_prompt,
-                        "feedback": progress.feedback,
-                        "kind": action.kind,
-                        "quiet_companionship": action.key == "idle",
-                        "duration_seconds": progress.duration_seconds,
-                        "frame_times_seconds": samples.times_seconds,
-                        "reference_frame_count": len(references),
-                        "reference_times_seconds": reference_times,
-                        "output_language": language,
-                        "continuity": progress.continuity,
-                    },
+                    review_payload,
                     ensure_ascii=False,
                 ),
                 reference_images=(*references, *uris),
@@ -1350,7 +1488,7 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
             or progress.candidate
             or _queued_video_request(progress)
         ):
-            await _prepare_pose(user_id, action, snapshot, progress, directory)
+            await _prepare_opening(user_id, action, snapshot, progress, directory)
             if progress.image_only or not progress.image_confirmed:
                 await _await_image(user_id, action_id, progress)
                 return
@@ -1369,7 +1507,7 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                     target_height=progress.target_height,
                     geometry_mode=progress.geometry_mode,
                     selection=progress.video_selection,
-                    feedback=progress.feedback,
+                    feedback=progress.video_adjustment,
                 )
             else:
                 seconds, providers = await resolve_desktop_video_plan(
@@ -1391,8 +1529,64 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
             progress.provider_task_id or progress.source_path or progress.download_url or progress.candidate
         ):
             await _check_confirmed_geometry(progress)
-        if progress.video_refinement is None and not progress.motion_prompt and not progress.candidate:
-            await _prepare_motion(user_id, action, snapshot, progress)
+        while (
+            progress.video_refinement is None
+            and not progress.motion_prompt
+            and not (
+                progress.candidate
+                or progress.provider_task_id
+                or progress.source_path
+                or progress.download_url
+                or _queued_video_request(progress)
+            )
+        ):
+            try:
+                await _prepare_motion(user_id, action, snapshot, progress)
+            except DesktopMotionError as exc:
+                if exc.script.failure_kind == "duration":
+                    minimum = exc.script.minimum_duration_seconds
+                    if progress.motion_replan_count or minimum is None or minimum > 15:
+                        raise DesktopCreationError(str(exc), "activity_unsupported") from exc
+                    progress.motion_replan_count = 1
+                    await _save_progress(user_id, action_id, progress, stage="planning")
+                    try:
+                        seconds, providers = await resolve_desktop_video_plan(
+                            user_id,
+                            kind=action.kind,
+                            duration_seconds=minimum,
+                            continuity=progress.continuity,
+                            aspect_ratio=progress.aspect_ratio,
+                            target_width=progress.target_width,
+                            target_height=progress.target_height,
+                            geometry_mode=progress.geometry_mode,
+                            selection=progress.video_selection,
+                        )
+                    except DesktopVideoStateError as planning_error:
+                        raise DesktopCreationError(str(planning_error), "activity_unsupported") from planning_error
+                    if seconds < minimum or seconds == progress.duration_seconds:
+                        raise DesktopCreationError(
+                            "当前视频时长不足以完成这个活动，请选择其他活动",
+                            "activity_unsupported",
+                        ) from exc
+                    progress.duration_seconds = seconds
+                    chain = MediaChainState(providers=providers)
+                    progress.video_chain_json = chain.model_dump_json()
+                    await _save_progress(user_id, action_id, progress, stage="video")
+                    continue
+                elif exc.script.failure_kind == "unsupported":
+                    raise
+                else:
+                    begin_opening_repair(
+                        progress,
+                        reason=str(exc),
+                        reference_path=progress.pose_path,
+                        separate_base=progress.continuity == "base" and action.key != "idle",
+                        replace_base=action.key == "idle",
+                    )
+                    await _save_progress(user_id, action_id, progress, stage="repairing")
+                    await _prepare_opening(user_id, action, snapshot, progress, directory)
+                    await _await_image(user_id, action_id, progress)
+                    return
         if progress.submission_unknown:
             raise DesktopVideoStateError(video_failure_message("result_unknown"))
         while True:
@@ -1474,6 +1668,17 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                 entity_id=action_id,
                 generation_id=chain.generation_id,
             )
+            if not chain.queue_request_id and progress.provider_task_id:
+                chain.queue_request_id = await enqueue_video_attempt(
+                    owner,
+                    chain.providers[index],
+                    index,
+                    None,
+                    provider_task_id=progress.provider_task_id,
+                )
+                chain.phase = "processing"
+                progress.video_chain_json = chain.model_dump_json()
+                await _save_progress(user_id, action_id, progress, stage="video")
             if not chain.queue_request_id:
                 if not allow_model_steps:
                     raise GenerationWorkPaused
@@ -1542,6 +1747,8 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                             else DESKTOP_VIDEO_ONCE,
                             motion=progress.motion_prompt,
                             feedback=progress.feedback.strip() or "无",
+                            video_feedback=progress.video_feedback.strip() or "无",
+                            customization_priority=progress.customization_priority,
                             aspect_ratio=desired_ratio,
                         ),
                         duration=progress.duration_seconds,
@@ -1668,11 +1875,15 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                 and saved.generation_id == generation_id
                 and row.status == "processing"
             ):
+                if isinstance(exc, DesktopCreationError) and exc.repair_reason:
+                    saved.repair_reason = exc.repair_reason
                 saved.submission_unknown = desktop_progress_has_unknown_submission(saved) or (
                     isinstance(exc, ImageGenerationError) and exc.result_unknown
                 )
                 saved.failure_reason = (
-                    "queue_stopped"
+                    exc.failure_reason
+                    if isinstance(exc, DesktopCreationError)
+                    else "queue_stopped"
                     if isinstance(exc, VideoQueueStoppedError)
                     else "result_unknown"
                     if saved.submission_unknown
@@ -1686,7 +1897,8 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                     saved.previous_pose_path
                     and not saved.pose_path
                     and not saved.submission_unknown
-                    and not saved.expand_image,
+                    and not saved.expand_image
+                    and saved.creation_plan is None,
                 )
                 if restored_image:
                     saved.pose_path = saved.previous_pose_path

@@ -5,7 +5,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import DesktopVideoAction, DesktopVideoSet
-from .repository import desktop_accepted_asset, desktop_progress, desktop_state
+from .repository import desktop_accepted_asset, desktop_asset_description, desktop_progress, desktop_state
 from .schemas import DesktopVisualSnapshot
 
 
@@ -76,7 +76,7 @@ async def activated_desktop_environment(db: AsyncSession, user_id: int) -> dict[
             "outfit_description": snapshot.outfit_description,
             "usage": "creation_provenance_only",
         },
-        "action": {"id": action.id, "name": action.name, "description": action.description}
+        "action": {"id": action.id, "name": action.name, "description": desktop_asset_description(action, asset)}
         if action is not None and asset is not None
         else None,
     }

@@ -204,6 +204,6 @@ async def desktop_video_refinement_request(
         reference = SETTINGS.public_base_url.strip().rstrip("/") + url
     else:
         reference = build_data_uri(data, resolved[1])
-    request = _request(progress.feedback, native_ratio, progress.duration_seconds, resolution, reference)
+    request = _request(progress.video_adjustment, native_ratio, progress.duration_seconds, resolution, reference)
     provider.validate_request(request)
     return request

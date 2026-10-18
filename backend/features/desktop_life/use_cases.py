@@ -64,6 +64,7 @@ from features.desktop_life.service import (
     refine_desktop_video,
     rename_desktop_video_set,
     resume_desktop_action,
+    retry_desktop_action,
     review_desktop_action,
     set_desktop_video_preferences,
     upload_desktop_action,
@@ -119,7 +120,8 @@ async def generate_action(
         return await generate_desktop_action(
             user_id,
             action_id,
-            feedback=body.feedback if body else "",
+            feedback=body.feedback if body else None,
+            video_feedback=body.video_feedback if body else None,
             aspect_policy=body.aspect_policy if body else "ask",
             expected_draft_id=body.expected_draft_id if body else None,
             expected_base_version=body.expected_base_version if body else None,
@@ -327,7 +329,7 @@ async def generate_image(
         return await generate_desktop_image(
             user_id,
             action_id,
-            feedback=body.feedback if body else "",
+            feedback=body.feedback if body else None,
             aspect_policy=body.aspect_policy if body else "ask",
             regenerate=body.regenerate if body else False,
             expected_draft_id=body.expected_draft_id if body else None,
@@ -409,6 +411,23 @@ async def pause_action(
 ) -> DesktopVideoActionResponse:
     try:
         return await pause_desktop_action(user_id, action_id, draft_id=body.draft_id)
+    except DesktopVideoError as exc:
+        raise _http_error(exc) from exc
+
+
+async def retry_action(
+    action_id: int,
+    user_id: int,
+    body: DesktopVideoDraftRequest,
+) -> DesktopVideoActionResponse:
+    try:
+        return await retry_desktop_action(
+            user_id,
+            action_id,
+            draft_id=body.draft_id,
+            expected_base_version=body.expected_base_version,
+            expected_resolution_revision=body.expected_resolution_revision,
+        )
     except DesktopVideoError as exc:
         raise _http_error(exc) from exc
 

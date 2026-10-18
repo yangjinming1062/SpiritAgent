@@ -31,6 +31,7 @@ from features.desktop_life.schemas import (
     DesktopVideoRefineRequest,
     DesktopVideoRenameSetRequest,
     DesktopVideoResumeCommand,
+    DesktopVideoRetryCommand,
     DesktopVideoSelectionRequest,
     DesktopVideoSetResponse,
     DesktopVideoStateResponse,
@@ -263,7 +264,8 @@ async def command_draft(
         | DesktopVideoConfirmImageCommand
         | DesktopVideoCancelCommand
         | DesktopVideoPauseCommand
-        | DesktopVideoResumeCommand,
+        | DesktopVideoResumeCommand
+        | DesktopVideoRetryCommand,
         Body(discriminator="command"),
     ],
 ) -> DesktopVideoActionResponse:
@@ -299,6 +301,8 @@ async def command_draft(
         )
     if isinstance(body, DesktopVideoPauseCommand):
         return await _desktop.pause_action(action_id=action_id, user_id=user.id, body=body)
+    if isinstance(body, DesktopVideoRetryCommand):
+        return await _desktop.retry_action(action_id=action_id, user_id=user.id, body=body)
     return await _desktop.resume_action(action_id=action_id, user_id=user.id, body=body)
 
 

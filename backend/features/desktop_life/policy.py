@@ -74,13 +74,17 @@ async def desktop_autonomous_block_reason(
         return "repeat_cooldown"
     current_set = await db.get(DesktopVideoSet, state.current_set_id)
     loop = await db.get(DesktopVideoAction, state.loop_action_id) if state.loop_action_id is not None else None
-    if current_set is None or loop is None or loop.key != "idle" or loop.accepted_asset_json is None:
+    if current_set is None or loop is None or not loop.enabled or loop.needs_update or loop.accepted_asset_json is None:
         return "base_mismatch"
+    if asset.continuity == "independent":
+        return None
     loop_asset = DesktopVideoAsset.model_validate_json(loop.accepted_asset_json)
     if (
-        asset.continuity != "base"
+        loop.key != "idle"
         or asset.base_version != current_set.base_version
+        or asset.base_image_path != current_set.base_image_path
         or loop_asset.base_version != current_set.base_version
+        or loop_asset.base_image_path != current_set.base_image_path
     ):
         return "base_mismatch"
     return None

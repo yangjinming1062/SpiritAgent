@@ -12,7 +12,7 @@ export function desktopLifeActionStatus(
   t: ReturnType<typeof useDesktopLifeStrings>,
   queueStrings: ReturnType<typeof useStrings>['common']['videoQueue']
 ): string {
-  if (action.draft?.submission_unknown) {
+  if (action.draft?.submission_unknown || action.draft?.recovery_action === 'wait') {
     return t.resultPending
   }
 
@@ -31,6 +31,18 @@ export function desktopLifeActionStatus(
   }
 
   if (action.status === 'processing') {
+    if (action.stage === 'planning') {
+      return t.planning
+    }
+
+    if (action.stage === 'checking') {
+      return t.checking
+    }
+
+    if (action.stage === 'repairing') {
+      return t.repairing
+    }
+
     if (action.stage === 'image' || action.stage === 'image_upload') {
       return t.generatingImage
     }

@@ -25,6 +25,7 @@ export {
   refreshDesktopVideos,
   renameDesktopVideoSet,
   resumeDesktopVideoDraft,
+  retryDesktopVideoDraft,
   reviewDesktopVideoAction,
   setDesktopVideoPreferences,
   uploadDesktopVideoAction

@@ -57,6 +57,26 @@ def desktop_visual_hash(snapshot: DesktopVisualSnapshot) -> str:
     return hashlib.sha256(json.dumps(visual, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
+class DesktopCreationPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    activity: str = Field(min_length=1, max_length=600)
+    opening_description: str = Field(min_length=1, max_length=1800)
+    required_props: list[str] = Field(default_factory=list, max_length=20)
+    motion_requirements: str = Field(min_length=1, max_length=1800)
+
+
+class DesktopOpeningReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    image_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    requirements_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    status: Literal["complete", "unavailable", "invalid"] = "complete"
+    score: int | None = Field(default=None, ge=0, le=100, strict=True)
+    verdict: Literal["pass", "review", "fail"] | None = None
+    reason: str = ""
+
+
 class DesktopVideoAsset(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -71,6 +91,10 @@ class DesktopVideoAsset(BaseModel):
     source: Literal["generated", "external_upload"] = "generated"
     transition: Literal["base", "fade"] = "fade"
     visual_description: str = Field(default="", max_length=1500)
+    creation_plan: DesktopCreationPlan | None = None
+    feedback: str = ""
+    video_feedback: str = ""
+    customization_priority: Literal["general", "video"] = "general"
     poster_path: str
     duration_ms: int = Field(gt=0)
     width: int = Field(gt=0)
@@ -113,6 +137,9 @@ class DesktopVideoProgress(BaseModel):
     expand_image: bool = False
     source: Literal["user_requested", "autonomous", "external_upload"]
     feedback: str = ""
+    video_feedback: str = ""
+    refinement_feedback: str | None = None
+    customization_priority: Literal["general", "video"] = "general"
     paused_by_user: bool = False
     image_confirmed: bool = False
     image_only: bool = False
@@ -128,6 +155,14 @@ class DesktopVideoProgress(BaseModel):
     force_review: bool = False
     visual_description: str = Field(default="", max_length=1500)
     action_description: str = ""
+    creation_plan: DesktopCreationPlan | None = None
+    opening_review: DesktopOpeningReview | None = None
+    repair_count: int = Field(default=0, ge=0, le=1, strict=True)
+    repair_reason: str = ""
+    repair_description: str = ""
+    previous_image_chain_json: str | None = None
+    previous_opening_review: DesktopOpeningReview | None = None
+    motion_replan_count: int = Field(default=0, ge=0, le=1, strict=True)
     duration_seconds: int
     continuity: Literal["independent", "base"] = "independent"
     base_version: int | None = Field(default=None, gt=0, strict=True)
@@ -152,6 +187,12 @@ class DesktopVideoProgress(BaseModel):
     review_reason: str = ""
     submission_unknown: bool = False
     failure_reason: str = ""
+
+    @property
+    def video_adjustment(self) -> str:
+        return (
+            self.refinement_feedback if self.refinement_feedback is not None else self.video_feedback or self.feedback
+        )
 
     @model_validator(mode="after")
     def valid_aligned_reference(self) -> "DesktopVideoProgress":
@@ -179,6 +220,8 @@ class DesktopVideoCurrentResponse(BaseModel):
     video_url: str
     poster_url: str
     image_url: str = ""
+    feedback: str = ""
+    video_feedback: str = ""
     duration_ms: int
     width: int
     height: int
@@ -201,9 +244,12 @@ class DesktopVideoDraftResponse(BaseModel):
     frame_width: int | None = None
     frame_height: int | None = None
     feedback: str = ""
+    video_feedback: str = ""
     submission_unknown: bool = False
     image_url: str = ""
     image_confirmed: bool = False
+    continuity: Literal["independent", "base"] = "independent"
+    recovery_action: Literal["retry", "wait", "choose_activity", "replace_upload"] | None = None
     candidate_video_url: str = ""
     candidate_poster_url: str = ""
     review_reason: str = ""
@@ -292,7 +338,8 @@ class DesktopVideoListResponse(BaseModel):
 
 class DesktopVideoGenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    feedback: str = Field(default="", max_length=600)
+    feedback: str | None = Field(default=None, max_length=1000)
+    video_feedback: str | None = Field(default=None, max_length=1000)
     expected_draft_id: str | None = None
     expected_base_version: int | None = Field(default=None, ge=0)
     expected_resolution_revision: int | None = Field(default=None, gt=0)
@@ -360,7 +407,7 @@ class DesktopVideoRenameSetRequest(BaseModel):
 
 class DesktopVideoImageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    feedback: str = Field(default="", max_length=1000)
+    feedback: str | None = Field(default=None, max_length=1000)
     regenerate: bool = False
     expected_draft_id: str | None = None
     expected_base_version: int | None = Field(default=None, ge=0)
@@ -535,6 +582,10 @@ class DesktopVideoPauseCommand(DesktopVideoDraftRequest):
 
 class DesktopVideoResumeCommand(DesktopVideoDraftRequest):
     command: Literal["resume"]
+
+
+class DesktopVideoRetryCommand(DesktopVideoDraftRequest):
+    command: Literal["retry"]
 
 
 class DesktopVideoDecisionRequest(DesktopVideoDraftRequest):

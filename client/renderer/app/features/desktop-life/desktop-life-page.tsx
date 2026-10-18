@@ -32,7 +32,7 @@ import {
   refineDesktopVideo,
   refreshDesktopVideos,
   renameDesktopVideoSet,
-  resumeDesktopVideoDraft,
+  retryDesktopVideoDraft,
   reviewDesktopVideoAction,
   setDesktopVideoPreferences,
   uploadDesktopVideoAction
@@ -187,7 +187,11 @@ function VideoRefinementModal({
   const t = useDesktopLifeStrings()
   const active = usePanelActivity()
   const sets = useStore($desktopVideoSets)
-  const [feedback, setFeedback] = useState('')
+
+  const [feedback, setFeedback] = useState(
+    (source === 'candidate' ? action.draft?.video_feedback : action.current?.video_feedback) ?? ''
+  )
+
   const [fitAspect, setFitAspect] = useState(false)
   const [previewAttempt, setPreviewAttempt] = useState(0)
   const [submitting, setSubmitting] = useState(false)
@@ -559,17 +563,26 @@ export function DesktopLifePage({
     const outfit =
       outfits.find(item => item.active && item.status === 'ready') ?? outfits.find(item => item.status === 'ready')
 
-    if ((!previous.sceneId && scene) || (!previous.outfitId && outfit)) {
+    const replaceScene =
+      !previous.sceneId ||
+      (creationScene?.id === previous.sceneId && (!creationScene.scene || creationScene.scene.status !== 'ready'))
+
+    const replaceOutfit =
+      !previous.outfitId ||
+      (outfits.length > 0 && !outfits.some(item => String(item.id) === previous.outfitId && item.status === 'ready'))
+
+    if ((replaceScene && scene) || (replaceOutfit && outfit)) {
       updateDesktopLifeUi({
         create: {
           ...previous,
-          sceneId: previous.sceneId || scene?.id || '',
-          sceneLabel: previous.sceneId ? previous.sceneLabel : scene?.title || '',
-          outfitId: previous.outfitId || (outfit ? String(outfit.id) : '')
+          sceneId: replaceScene && scene ? scene.id : previous.sceneId,
+          sceneLabel: replaceScene && scene ? scene.title : previous.sceneLabel,
+          outfitId: replaceOutfit && outfit ? String(outfit.id) : previous.outfitId,
+          requestId: crypto.randomUUID()
         }
       })
     }
-  }, [createOpen, activeScene, outfits, scenes])
+  }, [createOpen, activeScene, creationScene, outfits, scenes])
 
   useEffect(() => {
     if (!createOpen) {
@@ -689,12 +702,17 @@ export function DesktopLifePage({
     await withAspectChoice(policy => generateDesktopVideoImage(item, set, note, regenerate, policy))
   }
 
-  const makeVideo = async (item: DesktopVideoAction, set: DesktopVideoSet, note = ''): Promise<void> => {
+  const makeVideo = async (
+    item: DesktopVideoAction,
+    set: DesktopVideoSet,
+    note = '',
+    videoFeedback?: string | null
+  ): Promise<void> => {
     const scope = captureAuthScope()
     const isLive = beginAsync()
     const generation = aspectGeneration.current
     await withAspectChoice(async policy => {
-      const generated = await generateDesktopVideoAction(item, set, note, policy)
+      const generated = await generateDesktopVideoAction(item, set, note, policy, videoFeedback)
       const currentUi = $desktopLifeUi.get()
 
       if (
@@ -991,6 +1009,25 @@ export function DesktopLifePage({
     }
   }
 
+  const replaceUploadedVideo = async (action: DesktopVideoAction, set: DesktopVideoSet): Promise<void> => {
+    const scope = captureAuthScope()
+    const isLive = beginAsync()
+
+    if (!authSessionId || !scope) {
+      return
+    }
+
+    const [path] = await fileApi().selectPaths({
+      filters: [{ name: t.videoFilterName, extensions: ['mp4', 'mov'] }],
+      multiple: false,
+      title: t.selectVideo
+    })
+
+    if (path && scope() && isLive()) {
+      await withAspectChoice(policy => uploadDesktopVideoAction(action, set, path, authSessionId, 'video', policy))
+    }
+  }
+
   const activate = async (target: DesktopVideoSet | undefined = selected): Promise<void> => {
     if (!target) {
       return
@@ -1074,7 +1111,7 @@ export function DesktopLifePage({
   )
 
   const previewStatus = (item: DesktopVideoAction): DesktopLifePreviewStatus | undefined => {
-    if (item.draft?.submission_unknown) {
+    if (item.draft?.submission_unknown || item.draft?.recovery_action === 'wait') {
       return {
         kind: 'unknown',
         title: t.resultPending,
@@ -1121,7 +1158,12 @@ export function DesktopLifePage({
       return {
         kind: 'error',
         title: t.statuses.failed,
-        description: t.creationFailed,
+        description:
+          item.draft?.recovery_action === 'choose_activity'
+            ? t.chooseActivityHint
+            : item.draft?.recovery_action === 'replace_upload'
+              ? t.replaceUploadHint
+              : t.creationFailed,
         detail: item.draft?.error || item.error || undefined
       }
     }
@@ -1152,7 +1194,9 @@ export function DesktopLifePage({
       return <></>
     }
 
-    const unknown = Boolean(item.draft?.submission_unknown)
+    const unknown = Boolean(item.draft?.submission_unknown || item.draft?.recovery_action === 'wait')
+    const chooseActivity = item.draft?.recovery_action === 'choose_activity'
+    const replaceUpload = item.draft?.recovery_action === 'replace_upload'
     const processing = item.status === 'processing' && !isActionPaused(item) && !unknown
     const imageReview = Boolean(item.stage === 'image_review' && item.draft?.image_url && !item.draft.image_confirmed)
 
@@ -1175,12 +1219,17 @@ export function DesktopLifePage({
               : 1
             : 0
 
-    const dependent = item.key !== 'idle' && item.continuity === 'base'
-    const requiresBase = dependent && !selected.base_image_url
-    const note = feedback[item.id] ?? item.draft?.feedback ?? ''
+    const dependent = item.key !== 'idle' && (item.draft?.continuity ?? item.continuity) === 'base'
+    const requiresBase = dependent && !selected.base_image_url && !chooseActivity && !replaceUpload && !unknown
+    const persistedNote = item.draft?.feedback ?? item.current?.feedback ?? ''
+    const customizationReadOnly = unknown || isActionPaused(item) || candidate || chooseActivity || replaceUpload
+    const note = customizationReadOnly ? persistedNote : (feedback[item.id] ?? persistedNote)
+    const noteDirty = note !== persistedNote
+    const videoNote = item.draft?.video_feedback ?? item.current?.video_feedback ?? ''
+    const canRemakeVideo = !imageReview && Boolean(item.current || item.draft?.image_confirmed)
 
     const affected = selected.actions.filter(
-      action => action.id !== item.id && action.continuity === 'base' && (action.current || action.draft)
+      action => action.id !== item.id && (action.current?.continuity === 'base' || action.draft?.continuity === 'base')
     ).length
 
     const canConfirm = item.draft && imagePreviews[`${item.draft.id}:${item.draft.image_url}`]
@@ -1199,24 +1248,53 @@ export function DesktopLifePage({
           <button className={BTN_SUBTLE} disabled={busy} onClick={() => setDiscardAction(item)} type="button">
             {t.reject}
           </button>
+        </>
+      ) : chooseActivity ? (
+        <button
+          className={BTN_PRIMARY}
+          disabled={busy}
+          onClick={() => updateDesktopLifeUi({ selectedActionId: null, addActionOpen: true })}
+          type="button"
+        >
+          {t.chooseActivity}
+        </button>
+      ) : replaceUpload ? (
+        <button
+          className={BTN_PRIMARY}
+          disabled={busy}
+          onClick={() => void run(() => replaceUploadedVideo(item, selected))}
+          type="button"
+        >
+          {t.selectVideo}
+        </button>
+      ) : noteDirty ? (
+        <button
+          className={BTN_PRIMARY}
+          disabled={busy}
+          onClick={() => void run(() => makeImage(item, selected, note))}
+          type="button"
+        >
+          {t.applyCustomization}
+        </button>
+      ) : imageReview ? (
+        <>
+          <button
+            className={BTN_PRIMARY}
+            disabled={busy || !canConfirm}
+            onClick={() => void run(() => confirmDesktopVideoImage(item, selected))}
+            type="button"
+          >
+            {t.confirmImage}
+          </button>
           <button
             className={BTN_SUBTLE}
             disabled={busy}
-            onClick={() => setRefinement({ action: item, set: selected, source: 'candidate' })}
+            onClick={() => void run(() => makeImage(item, selected, note, true))}
             type="button"
           >
-            {t.refineVideo}
+            {t.anotherImage}
           </button>
         </>
-      ) : imageReview ? (
-        <button
-          className={BTN_PRIMARY}
-          disabled={busy || !canConfirm}
-          onClick={() => void run(() => confirmDesktopVideoImage(item, selected))}
-          type="button"
-        >
-          {t.confirmImage}
-        </button>
       ) : item.current && !item.draft && !item.needs_update ? (
         <button
           className={BTN_PRIMARY}
@@ -1248,12 +1326,11 @@ export function DesktopLifePage({
           disabled={busy}
           onClick={() =>
             void run(() => {
-              if (isActionPaused(item) || item.draft?.video_refinement || item.draft?.source === 'external_upload') {
-                return resumeDesktopVideoDraft(item, selected)
-              }
-
-              if (!dependent && !item.draft?.image_confirmed) {
-                return makeImage(item, selected, note)
+              if (
+                item.draft &&
+                (item.draft.recovery_action === 'retry' || isActionPaused(item) || item.status === 'failed')
+              ) {
+                return retryDesktopVideoDraft(item, selected)
               }
 
               return makeVideo(item, selected, note)
@@ -1263,11 +1340,11 @@ export function DesktopLifePage({
         >
           {isActionPaused(item)
             ? t.resume
-            : item.status === 'failed'
+            : item.draft?.recovery_action === 'retry' || item.status === 'failed'
               ? t.retry
-              : dependent || item.draft?.image_confirmed
-                ? t.startAction
-                : t.generateImage}
+              : item.key === 'idle'
+                ? t.generateImage
+                : t.startAction}
         </button>
       )
 
@@ -1327,104 +1404,101 @@ export function DesktopLifePage({
                 )}
               </>
             ) : imageReview ? (
-              <>
-                <p className="text-sm text-body">{t.imageReview}</p>
-                <details className="rounded-xl border border-line-hairline p-4">
-                  <summary className="cursor-pointer text-sm font-medium text-strong">{t.adjustImage}</summary>
-                  <label className="mt-3 flex flex-col gap-2 text-sm text-body">
-                    {t.adjustHint}
-                    <textarea
-                      className={`${INPUT_CLASS} min-h-24 resize-y`}
-                      maxLength={600}
-                      onChange={event => setFeedback(current => ({ ...current, [item.id]: event.target.value }))}
-                      rows={3}
-                      value={note}
-                    />
-                  </label>
-                  <button
-                    className={`${BTN_SUBTLE} mt-3`}
-                    disabled={busy || !note.trim()}
-                    onClick={() => void run(() => makeImage(item, selected, note))}
-                    type="button"
-                  >
-                    {t.adjustImage}
-                  </button>
-                </details>
-              </>
+              <p className="text-sm text-body">{t.imageReview}</p>
             ) : item.current && !item.draft && !item.needs_update ? (
               <p className="text-sm text-muted">{t.readyHint}</p>
-            ) : (
-              <div className="flex flex-col gap-3">
-                {!isActionPaused(item) && !item.draft?.video_refinement && (
-                  <label className="flex flex-col gap-2 text-sm text-body">
-                    {t.feedback}
-                    <textarea
-                      className={`${INPUT_CLASS} min-h-24 resize-y`}
-                      maxLength={600}
-                      onChange={event => setFeedback(current => ({ ...current, [item.id]: event.target.value }))}
-                      rows={3}
-                      value={note}
-                    />
-                  </label>
-                )}
-              </div>
-            )}
-            {!processing && !candidate && (
-              <details className="rounded-xl border border-line-hairline p-4">
-                <summary className="cursor-pointer text-sm font-medium text-strong">{t.more}</summary>
+            ) : null}
+            {!processing && (
+              <details
+                className="rounded-xl border border-line-hairline p-4"
+                open={Boolean(note.trim() || videoNote.trim() || noteDirty) || undefined}
+              >
+                <summary className="cursor-pointer text-sm font-medium text-strong">{t.advanced}</summary>
                 <div className="mt-4 flex flex-col gap-3">
-                  {showingCurrentVideo && (
+                  {(showingCurrentVideo || candidate) && (
                     <button
                       className={`${BTN_SUBTLE} self-start`}
                       disabled={busy || item.status === 'processing' || item.draft?.submission_unknown}
-                      onClick={() => setRefinement({ action: item, set: selected, source: 'current' })}
+                      onClick={() =>
+                        setRefinement({ action: item, set: selected, source: candidate ? 'candidate' : 'current' })
+                      }
                       type="button"
                     >
                       {t.refineVideo}
                     </button>
                   )}
-                  {item.current && !dependent && (
+                  {(note.trim() || noteDirty || (!candidate && !item.draft?.video_refinement && !unknown)) && (
                     <>
-                      <p className="text-sm text-muted">{t.recreateHint}</p>
-                      <textarea
-                        aria-label={t.feedback}
-                        className={`${INPUT_CLASS} min-h-20 resize-y`}
-                        maxLength={600}
-                        onChange={event => setFeedback(current => ({ ...current, [item.id]: event.target.value }))}
-                        rows={2}
-                        value={note}
-                      />
-                      <button
-                        className={`${BTN_SUBTLE} self-start`}
-                        disabled={busy || item.draft?.submission_unknown}
-                        onClick={() => void run(() => makeImage(item, selected, note))}
-                        type="button"
-                      >
-                        {t.adjustImage}
-                      </button>
+                      <label className="flex flex-col gap-2 text-sm text-body">
+                        {t.feedback}
+                        <textarea
+                          className={`${INPUT_CLASS} min-h-20 resize-y`}
+                          disabled={busy || customizationReadOnly}
+                          maxLength={1000}
+                          onChange={event => setFeedback(current => ({ ...current, [item.id]: event.target.value }))}
+                          rows={2}
+                          value={note}
+                        />
+                      </label>
+                      {(note.trim() || noteDirty) && (
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            className={BTN_SUBTLE}
+                            disabled={busy || customizationReadOnly}
+                            onClick={() => void run(() => makeImage(item, selected, note))}
+                            type="button"
+                          >
+                            {t.applyCustomization}
+                          </button>
+                          <button
+                            className={BTN_GHOST}
+                            disabled={busy || customizationReadOnly}
+                            onClick={() => setFeedback(current => ({ ...current, [item.id]: '' }))}
+                            type="button"
+                          >
+                            {t.clearCustomization}
+                          </button>
+                        </div>
+                      )}
                     </>
                   )}
-                  {(item.current || item.draft?.image_confirmed) && !item.draft?.video_refinement && (
+                  {videoNote.trim() && (
+                    <div className="flex flex-col gap-2 rounded-lg bg-accent/5 p-3">
+                      <p className="text-sm font-medium text-strong">{t.savedVideoRequirements}</p>
+                      <p className="whitespace-pre-wrap break-words text-sm text-body">{videoNote}</p>
+                      {!customizationReadOnly && canRemakeVideo && (
+                        <button
+                          className={`${BTN_SUBTLE} self-start`}
+                          disabled={busy || noteDirty}
+                          onClick={() => void run(() => makeVideo(item, selected, persistedNote, ''))}
+                          type="button"
+                        >
+                          {t.clearVideoRequirements}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {!candidate && canRemakeVideo && !item.draft?.video_refinement && (
                     <button
                       className={`${BTN_SUBTLE} self-start`}
-                      disabled={busy || item.draft?.submission_unknown}
+                      disabled={busy || unknown || chooseActivity || replaceUpload || noteDirty}
                       onClick={() => void run(() => makeVideo(item, selected, note))}
                       type="button"
                     >
                       {t.remakeVideo}
                     </button>
                   )}
-                  {!dependent && (
+                  {!candidate && !dependent && (
                     <button
                       className={`${BTN_SUBTLE} self-start`}
-                      disabled={busy || item.draft?.submission_unknown}
+                      disabled={busy || unknown || chooseActivity}
                       onClick={() => void run(() => makeImage(item, selected, note, true))}
                       type="button"
                     >
                       {t.regenerateImage}
                     </button>
                   )}
-                  {!dependent && (
+                  {!candidate && !dependent && (
                     <button
                       className={`${BTN_SUBTLE} self-start`}
                       disabled={busy || unknown}
@@ -1434,16 +1508,18 @@ export function DesktopLifePage({
                       {t.uploadImage}
                     </button>
                   )}
-                  <button
-                    className={`${BTN_SUBTLE} self-start`}
-                    disabled={busy || unknown || (imageReview && !canConfirm)}
-                    onClick={() =>
-                      void run(() => (imageReview ? confirmForExternal(item) : Promise.resolve(openExternal(item))))
-                    }
-                    type="button"
-                  >
-                    {imageReview ? t.confirmOnly : t.externalTitle}
-                  </button>
+                  {!candidate && (
+                    <button
+                      className={`${BTN_SUBTLE} self-start`}
+                      disabled={busy || unknown || noteDirty || (imageReview && !canConfirm)}
+                      onClick={() =>
+                        void run(() => (imageReview ? confirmForExternal(item) : Promise.resolve(openExternal(item))))
+                      }
+                      type="button"
+                    >
+                      {imageReview ? t.confirmOnly : t.externalTitle}
+                    </button>
+                  )}
                   {item.draft && (
                     <button
                       className={`${BTN_GHOST} self-start`}
@@ -1664,42 +1740,6 @@ export function DesktopLifePage({
                 })
               }}
             >
-              <div aria-label={t.creationSource} className={styles.sourceChoice} role="group">
-                {(['ai', 'image_upload', 'video_upload'] as DesktopVideoSource[]).map(source => (
-                  <button
-                    aria-pressed={create.source === source}
-                    className={BTN_SUBTLE}
-                    disabled={busy}
-                    key={source}
-                    onClick={() => setCreate(current => ({ ...current, source, requestId: crypto.randomUUID() }))}
-                    type="button"
-                  >
-                    {source === 'ai' ? t.useAI : source === 'image_upload' ? t.imageSource : t.videoSource}
-                  </button>
-                ))}
-              </div>
-              {create.source === 'ai' ? (
-                <label className={styles.field}>
-                  {t.idea}
-                  <textarea
-                    autoFocus
-                    className={`${INPUT_CLASS} min-h-28 resize-y font-normal`}
-                    maxLength={1000}
-                    onChange={event =>
-                      setCreate(current => ({
-                        ...current,
-                        feedback: event.target.value,
-                        requestId: crypto.randomUUID()
-                      }))
-                    }
-                    placeholder={t.ideaExample}
-                    rows={4}
-                    value={create.feedback}
-                  />
-                </label>
-              ) : (
-                <div className="rounded-xl bg-accent/5 p-4 text-sm text-body">{t.ownMediaHint}</div>
-              )}
               <DesktopLifeDisplayPicker
                 disabled={busy}
                 displayId={create.targetDisplayId}
@@ -1734,16 +1774,77 @@ export function DesktopLifePage({
                   sceneLabel={create.sceneLabel}
                 />
               </section>
-              <label className={styles.field}>
-                {t.nameOptional}
-                <input
-                  className={INPUT_CLASS}
-                  maxLength={160}
-                  onChange={event => setCreate(current => ({ ...current, name: event.target.value }))}
-                  placeholder={t.newSceneName}
-                  value={create.name}
-                />
-              </label>
+              <details
+                className="rounded-xl border border-line-hairline p-4"
+                open={Boolean(create.name.trim() || create.feedback.trim() || create.source !== 'ai') || undefined}
+              >
+                <summary className="cursor-pointer text-sm font-medium text-strong">{t.advanced}</summary>
+                <div className="mt-4 flex flex-col gap-4">
+                  <label className={styles.field}>
+                    {t.nameOptional}
+                    <input
+                      className={INPUT_CLASS}
+                      maxLength={160}
+                      onChange={event => setCreate(current => ({ ...current, name: event.target.value }))}
+                      placeholder={t.newSceneName}
+                      value={create.name}
+                    />
+                  </label>
+                  <div aria-label={t.creationSource} className={styles.sourceChoice} role="group">
+                    {(['ai', 'image_upload', 'video_upload'] as DesktopVideoSource[]).map(source => (
+                      <button
+                        aria-pressed={create.source === source}
+                        className={BTN_SUBTLE}
+                        disabled={busy}
+                        key={source}
+                        onClick={() => setCreate(current => ({ ...current, source, requestId: crypto.randomUUID() }))}
+                        type="button"
+                      >
+                        {source === 'ai' ? t.useAI : source === 'image_upload' ? t.imageSource : t.videoSource}
+                      </button>
+                    ))}
+                  </div>
+                  {create.source === 'ai' ? (
+                    <label className={styles.field}>
+                      {t.idea}
+                      <textarea
+                        className={`${INPUT_CLASS} min-h-28 resize-y font-normal`}
+                        maxLength={1000}
+                        onChange={event =>
+                          setCreate(current => ({
+                            ...current,
+                            feedback: event.target.value,
+                            requestId: crypto.randomUUID()
+                          }))
+                        }
+                        placeholder={t.ideaExample}
+                        rows={4}
+                        value={create.feedback}
+                      />
+                    </label>
+                  ) : (
+                    <div className="rounded-xl bg-accent/5 p-4 text-sm text-body">{t.ownMediaHint}</div>
+                  )}
+                  {(create.name.trim() || create.feedback.trim() || create.source !== 'ai') && (
+                    <button
+                      className={`${BTN_GHOST} self-start`}
+                      disabled={busy}
+                      onClick={() =>
+                        setCreate(current => ({
+                          ...current,
+                          name: '',
+                          feedback: '',
+                          source: 'ai',
+                          requestId: crypto.randomUUID()
+                        }))
+                      }
+                      type="button"
+                    >
+                      {t.clearCustomization}
+                    </button>
+                  )}
+                </div>
+              </details>
               <div className={styles.footer}>
                 <p className={styles.footerNote} role="status">
                   {!resolutionReady
@@ -1853,8 +1954,8 @@ export function DesktopLifePage({
                   </div>
                 ))}
             </section>
-            <details className="rounded-xl border border-line-hairline p-4">
-              <summary className="cursor-pointer text-sm text-body">{t.more}</summary>
+            <details className="rounded-xl border border-line-hairline p-4" open={Boolean(rename.trim()) || undefined}>
+              <summary className="cursor-pointer text-sm text-body">{t.advanced}</summary>
               <div className="mt-4 flex flex-col gap-4">
                 <form
                   className="flex flex-wrap gap-2"
@@ -2015,8 +2116,12 @@ export function DesktopLifePage({
                 </button>
               ))}
           </div>
-          <section className="mt-5 border-t border-line-hairline pt-4">
-            <h3 className="text-sm font-medium text-strong">{t.addCustom}</h3>
+          <details
+            className="mt-5 border-t border-line-hairline pt-4"
+            open={Boolean(design.name.trim() || design.description.trim()) || undefined}
+          >
+            <summary className="cursor-pointer text-sm font-medium text-strong">{t.advanced}</summary>
+            <h3 className="mt-3 text-sm font-medium text-strong">{t.addCustom}</h3>
             <form
               className="mt-4 flex flex-col gap-3"
               onSubmit={event => {
@@ -2111,8 +2216,18 @@ export function DesktopLifePage({
               >
                 {t.startAction}
               </button>
+              {(design.name.trim() || design.description.trim()) && (
+                <button
+                  className={`${BTN_GHOST} self-start`}
+                  disabled={busy}
+                  onClick={() => setDesign({ name: '', description: '', kind: 'loop', duration: 10 })}
+                  type="button"
+                >
+                  {t.clearCustomization}
+                </button>
+              )}
             </form>
-          </section>
+          </details>
         </WizardModal>
       )}
       {discardAction && (

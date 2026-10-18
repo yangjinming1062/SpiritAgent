@@ -16,7 +16,7 @@ export function resolveDesktopLifeRecommendationDisplay(presentation: Displays):
 export function reconcileDesktopLifeDisplay(
   creation: Creation,
   presentation: Displays,
-  displayId = creation.targetDisplayId ?? presentation.displayId
+  displayId = creation.targetDisplayId ?? resolveDesktopLifeRecommendationDisplay(presentation)?.id ?? null
 ): Creation {
   const changedDisplay = creation.targetDisplayId !== displayId
   const liveResolution = desktopDisplayResolution(presentation.displays.find(display => display.id === displayId))
