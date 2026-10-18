@@ -26,6 +26,15 @@ CONVERSATION_TABLES = frozenset(
 )
 ACTION_TABLES = frozenset({"companion_action_packs", "companion_actions"})
 DESKTOP_TABLES = frozenset({"desktop_video_sets", "desktop_video_actions", "desktop_video_states"})
+ACTION_LIBRARY_TABLES = (
+    ACTION_TABLES
+    | DESKTOP_TABLES
+    | {
+        "companion_outfits",
+        "action_definitions",
+        "action_sync_targets",
+    }
+)
 POST_TABLES = frozenset({"companion_posts", "companion_post_comments"})
 IDENTITY_TABLES = frozenset({"personas", "avatar_assets", "companion_character_cards"})
 # 导入勾选粒度：分组 ID → 表；Admin 与 API 共用，不在页面里再维护表名。
@@ -43,9 +52,9 @@ BACKUP_SECTIONS: dict[str, tuple[str, ...]] = {
     "memories": ("memories",),
     "posts": ("companion_posts", "companion_post_comments"),
     "diary": ("companion_diary_entries",),
-    "wardrobe": ("companion_outfits", "companion_action_packs", "companion_actions"),
+    "wardrobe": tuple(table for table in TABLES if table in ACTION_LIBRARY_TABLES),
     "scenes": ("companion_scenes",),
-    "desktop_life": ("desktop_video_sets", "desktop_video_actions", "desktop_video_states"),
+    "desktop_life": tuple(table for table in TABLES if table in ACTION_LIBRARY_TABLES),
     "automation": ("cron_jobs", "companion_intents"),
     "settings": ("user_model_configs", "custom_voices", "user_settings", "user_preferences"),
 }
@@ -54,8 +63,7 @@ BACKUP_SECTION_IDS = tuple(BACKUP_SECTIONS)
 ATOMIC_SECTION_GROUPS: tuple[frozenset[str], ...] = (
     IDENTITY_TABLES,
     CONVERSATION_TABLES,
-    ACTION_TABLES,
-    DESKTOP_TABLES,
+    ACTION_LIBRARY_TABLES,
     POST_TABLES,
 )
 # 预检时身份三表成组写入的顺序：先头像，再角色卡与人设。

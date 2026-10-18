@@ -8,6 +8,10 @@ from runtime.events.emit import emit_ws_event
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.accounts.models import lock_user_row
+from features.action_library.ports import read_source, synchronize_target
+from features.action_library.queries import variant_summaries
+from features.action_library.service import register_source_targets
 from features.actions.generation.script import VideoActionScriptEntry, parse_action_script_entry
 from features.actions.materials import accepted_action_asset
 from features.actions.media_contracts import (
@@ -69,6 +73,8 @@ async def _publish_ready(pack_id: int, results: dict[str, ActionResult]) -> None
     else:
         review_status, review_reason = "review", "动作封面不可用，请预览后手动启用"
     async with get_avatar_job_lock(user_id), SESSION_LOCAL() as db:
+        # 共享调度先锁账户再锁动作组，发布及登记意图须保持同一顺序。
+        await lock_user_row(db, user_id)
         pack = await db.get(CompanionActionPack, pack_id)
         if pack is None or pack.status != "processing":
             return
@@ -119,7 +125,13 @@ async def _publish_ready(pack_id: int, results: dict[str, ActionResult]) -> None
             and await character_snapshot_is_current(db, pack.user_id, context.identity)
         ):
             await _activate_locked(db, pack)
+        await db.flush()
+        action_source = await read_source(db, pack.user_id, "window", pack.id)
+        if action_source is None:
+            raise RuntimeError("动作组的共享动作来源无法读取")
+        await register_source_targets(db, action_source)
         await db.commit()
+    await synchronize_target(user_id, "window", pack_id)
 
 
 async def _publish_dynamic_catalog(pack_id: int) -> None:
@@ -177,6 +189,7 @@ def _pack_response(
         actions.append(
             response_model(
                 action=job.key,
+                definition_id=job.definition_id,
                 name=job.name,
                 status=job.status,
                 stage=job.stage,
@@ -193,7 +206,7 @@ def _pack_response(
                     and context.reference_alignment == "ready"
                     and _resumable_action_state(job, rejected_media.get(job.id, ())) is not None
                 ),
-                can_regenerate=not _job_result_unresolved(job),
+                can_regenerate=job.status != "not_generated" and not _job_result_unresolved(job),
                 current_media_url=signed_companion_asset_url(material.media_path) if material else None,
                 pending_review=pending_reviews.get(job.id),
                 feedback=context.action_feedback.get(job.key, "") if context else "",
@@ -243,12 +256,34 @@ def _pack_response(
 
 async def load_pack_response(db: AsyncSession, pack: CompanionActionPack) -> VideoPackResponse:
     jobs = (await db.scalars(select(CompanionAction).where(CompanionAction.pack_id == pack.id))).all()
-    return _pack_response(
+    response = _pack_response(
         pack,
         jobs,
         pending_reviews=await _pending_action_reviews(pack.user_id),
         rejected_media=await list_rejected_action_media(db, pack.user_id, [job.id for job in jobs]),
     )
+    await _populate_action_sync(db, pack.user_id, response)
+    return response
+
+
+async def _populate_action_sync(db: AsyncSession, user_id: int, response: VideoPackResponse) -> None:
+    for action in response.actions:
+        if action.definition_id is None:
+            continue
+        action.sync_targets = await variant_summaries(db, user_id, action.definition_id)
+        local = next(
+            (
+                target
+                for target in action.sync_targets
+                if target.target_kind == "window" and target.target_id == response.id
+            ),
+            None,
+        )
+        action.can_generate = local.can_generate if local is not None else False
+        if local is not None and local.status in {"blocked", "excluded"}:
+            action.can_generate = action.can_regenerate = action.can_retry = False
+        if local is not None and local.status == "blocked" and action.status == "not_generated":
+            action.status, action.error = "blocked", local.reason
 
 
 async def list_pack_responses(db: AsyncSession, user_id: int) -> list[VideoPackResponse]:
@@ -273,7 +308,7 @@ async def list_pack_responses(db: AsyncSession, user_id: int) -> list[VideoPackR
         user_id,
         [job.id for jobs in jobs_by_pack.values() for job in jobs],
     )
-    return [
+    responses = [
         _pack_response(
             pack,
             jobs_by_pack.get(pack.id, []),
@@ -282,6 +317,9 @@ async def list_pack_responses(db: AsyncSession, user_id: int) -> list[VideoPackR
         )
         for pack in packs
     ]
+    for response in responses:
+        await _populate_action_sync(db, user_id, response)
+    return responses
 
 
 async def _pending_action_reviews(user_id: int) -> dict[int, PendingActionReview]:

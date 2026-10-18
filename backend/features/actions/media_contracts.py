@@ -4,6 +4,7 @@ from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.constants import POSTGRES_INT4_MAX
 from pydantic import BaseModel, ConfigDict, Field
 
+from features.action_library.schemas import ActionVariantSummary
 from features.actions.schemas import PeekGeometry
 from features.media.video_queue.contracts import VideoQueueInfo
 
@@ -140,6 +141,9 @@ class ActionMediaResponse(BaseModel):
 
     media_type: Literal["image", "video"]
     action: str
+    definition_id: int | None = None
+    sync_targets: list[ActionVariantSummary] = Field(default_factory=list)
+    can_generate: bool = False
     # 动态动作的用户可见名称；系统动作为空，界面按槽位本地化。
     name: str = ""
     status: str

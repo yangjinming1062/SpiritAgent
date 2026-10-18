@@ -1,12 +1,73 @@
 """跨业务读取桌面生活运行态的公开快照。"""
 
+import asyncio
+
+from infrastructure.assets.asset_store import compute_file_sha256, resolve_asset_reference
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.action_library.identity import source_visual_key
+from features.action_library.schemas import ActionSourceSnapshot
+
 from .models import DesktopVideoAction, DesktopVideoSet
 from .repository import desktop_accepted_asset, desktop_asset_description, desktop_progress, desktop_state
 from .schemas import DesktopVisualSnapshot
+
+
+def _source_readiness(snapshot: DesktopVisualSnapshot, expected_key: str) -> str | None:
+    key = source_visual_key(
+        snapshot.identity_hash,
+        snapshot.outfit_hash,
+        portrait_hash=snapshot.portrait_hash,
+        identity_reference_role=snapshot.identity_reference_role,
+    )
+    if expected_key != key:
+        return "桌景冻结身份与着装来源不匹配"
+    for reference, expected_hash in (
+        (snapshot.identity_path, snapshot.identity_hash),
+        (snapshot.portrait_path, snapshot.portrait_hash),
+        (snapshot.outfit_path, snapshot.outfit_hash),
+        (snapshot.scene_path, snapshot.scene_hash),
+    ):
+        resolved = resolve_asset_reference(reference)
+        if resolved is None:
+            return "桌景冻结参考素材缺失，请恢复原素材"
+        try:
+            if compute_file_sha256(resolved[0]) != expected_hash:
+                return "桌景冻结参考素材已变化，请重新创建桌景"
+        except OSError:
+            return "桌景冻结参考素材无法读取，请恢复原素材"
+    return None
+
+
+async def desktop_action_source(
+    db: AsyncSession,
+    user_id: int,
+    set_id: int,
+) -> ActionSourceSnapshot | None:
+    suite = await db.scalar(
+        select(DesktopVideoSet).where(DesktopVideoSet.id == set_id, DesktopVideoSet.user_id == user_id),
+    )
+    if suite is None:
+        return None
+    snapshot = DesktopVisualSnapshot.model_validate_json(suite.context_json)
+    reason = await asyncio.to_thread(_source_readiness, snapshot, suite.source_visual_key)
+    return ActionSourceSnapshot(
+        user_id=user_id,
+        outfit_id=suite.outfit_id,
+        target_kind="desktop",
+        target_id=suite.id,
+        label=suite.title,
+        source_visual_key=suite.source_visual_key,
+        ready=reason is None,
+        blocked_reason=reason,
+        reference_paths=[snapshot.primary_reference_path, snapshot.outfit_path, snapshot.scene_path],
+        reference_roles=[snapshot.identity_reference_role, "outfit", "scene"],
+        identity=snapshot.identity,
+        outfit_description=snapshot.outfit_description,
+        persona=snapshot.persona,
+    )
 
 
 class DesktopStateSnapshot(BaseModel):

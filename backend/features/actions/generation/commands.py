@@ -1,6 +1,8 @@
 """动作制作：commands。"""
 
+import asyncio
 import contextlib
+import hashlib
 import json
 
 from infrastructure.ai.llm_client import resolve_vision_chain
@@ -11,6 +13,9 @@ from infrastructure.video_processing.process import MAX_CANVAS_HEIGHT, MAX_CANVA
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.accounts.models import lock_user_row
+from features.action_library.identity import source_visual_key
+from features.action_library.queries import definition_snapshot
 from features.actions.command_contracts import ActionPackSnapshot
 from features.actions.generation.state import GenerationContext
 from features.actions.models import (
@@ -21,7 +26,7 @@ from features.actions.models import (
     CompanionActionPack,
 )
 from features.actions.policy import get_action_accept_lock
-from features.appearance.avatar_service import get_avatar_job_lock
+from features.appearance.avatar_service import get_avatar_job_lock, read_portrait_bytes
 from features.appearance.character_card import (
     character_snapshot_is_current,
     render_character_profile,
@@ -65,6 +70,26 @@ from .references import (
 )
 from .tasks import _kick_build, _kick_generate, _queue_in_place_redo, kick_dynamic_action
 from .transactions import _activate_locked, _create_or_reset_pack, _remove_packs
+
+
+async def _freeze_source_visual_key(
+    identity_path: str,
+    portrait_path: str,
+    outfit_path: str,
+    identity_reference_role: str,
+) -> str:
+    sources = await asyncio.gather(
+        *(asyncio.to_thread(read_portrait_bytes, path) for path in (identity_path, portrait_path, outfit_path)),
+    )
+    if any(item is None for item in sources):
+        raise VideoPackStateError("冻结的身份或着装参考无法读取")
+    hashes = [hashlib.sha256(item[0]).hexdigest() for item in sources if item is not None]
+    return source_visual_key(
+        hashes[0],
+        hashes[2],
+        portrait_hash=hashes[1],
+        identity_reference_role=identity_reference_role,
+    )
 
 
 async def _system_action_row(
@@ -122,7 +147,14 @@ async def create_pack_from_clips(
             if len(data) > MAX_SOURCE_BYTES:
                 raise VideoPackError("动作片段超过大小上限")
 
-        pack = await _create_or_reset_pack(db, user_id, avatar=avatar, outfit=outfit, reference_hash=reference_hash)
+        pack = await _create_or_reset_pack(
+            db,
+            user_id,
+            avatar=avatar,
+            outfit=outfit,
+            reference_hash=reference_hash,
+            source_visual_key="",
+        )
         pack.canvas_spec = json.dumps({"width": canvas_w, "height": canvas_h})
         for action, (_data, content_type) in clips.items():
             media_type = "image" if content_type.startswith("image/") else "video"
@@ -205,6 +237,12 @@ async def create_pack_from_reference(
         identity = await require_character_snapshot(db, user_id)
         seed_path = avatar.seed_fullbody_url if avatar else ""
         identity_reference_role = "portrait" if outfit_identity_matches(outfit.source_json, seed_path) else "fullbody"
+        frozen_source_key = await _freeze_source_visual_key(
+            seed_path,
+            avatar.asset_url if avatar else "",
+            outfit.fullbody_url,
+            identity_reference_role,
+        )
         if not force:
             reusable = (
                 await db.execute(
@@ -220,6 +258,7 @@ async def create_pack_from_reference(
             reusable_context = _load_generation_context(reusable) if reusable is not None else None
             if (
                 reusable is not None
+                and reusable.source_visual_key == frozen_source_key
                 and reusable_context is not None
                 and reusable_context.identity == identity
                 and reusable_context.identity_reference_role == identity_reference_role
@@ -257,7 +296,14 @@ async def create_pack_from_reference(
         if not image_chain.providers:
             raise VideoPackStateError(image_chain.error or "请配置图像编辑供应商以生成动作姿态")
         require_action_matting_model()
-        pack = await _create_or_reset_pack(db, user_id, avatar=avatar, outfit=outfit, reference_hash=reference_hash)
+        pack = await _create_or_reset_pack(
+            db,
+            user_id,
+            avatar=avatar,
+            outfit=outfit,
+            reference_hash=reference_hash,
+            source_visual_key=frozen_source_key,
+        )
         directory = _pack_dir(pack)
         reference_path = await _copy_portrait_asset(
             outfit.fullbody_url,
@@ -333,6 +379,8 @@ async def retry_pack(
     kick_action_id: int | None = None
     async with get_avatar_job_lock(user_id):
         pack = await _get_pack(db, user_id, pack_id)
+        if pack is not None:
+            await db.refresh(pack, with_for_update=True)
         allowed_statuses = ("failed",) if action is None else ("ready", "processing", "failed")
         if pack is None or pack.status not in allowed_statuses or not pack.reference_path:
             raise VideoPackStateError("该动作包没有可继续的任务")
@@ -362,6 +410,21 @@ async def retry_pack(
         targets = jobs if action is None else [job for job in jobs if job.key == action]
         if action is not None and not targets:
             raise VideoPackNotFoundError("找不到对应的动作，请刷新后重试")
+        eligible = []
+        for job in targets:
+            if job.definition_id is not None:
+                definition = await definition_snapshot(db, user_id, job.definition_id)
+                if (
+                    definition is None
+                    or not pack.source_visual_key
+                    or definition.outfit_id != pack.outfit_id
+                    or definition.source_visual_key != pack.source_visual_key
+                ):
+                    if action is not None:
+                        raise VideoPackStateError("动作的冻结身份或着装来源已变化，无法继续制作此版本")
+                    continue
+            eligible.append(job)
+        targets = eligible
         if any(job.id in _ACTION_INFLIGHT for job in targets):
             raise VideoPackStateError("动作任务仍在收尾，请等待完成后继续")
         rejected_media = await list_rejected_action_media(db, user_id, [job.id for job in targets])
@@ -387,7 +450,7 @@ async def retry_pack(
             job.status, job.error = "queued", None
             kick_action_id = job.id
         else:
-            recoverable = [job for job in jobs if _can_resume_job(job, rejected_media.get(job.id, ()))]
+            recoverable = [job for job in targets if _can_resume_job(job, rejected_media.get(job.id, ()))]
             if (
                 not recoverable
                 and not context.reference_chain.can_retry_goal_review()
@@ -508,6 +571,7 @@ async def activate_pack(db: AsyncSession, user_id: int, pack_id: int) -> ActionP
 
 async def delete_pack(db: AsyncSession, user_id: int, pack_id: int) -> None:
     async with get_avatar_job_lock(user_id):
+        await lock_user_row(db, user_id)
         pack = await _get_pack(db, user_id, pack_id)
         if pack is None:
             raise VideoPackNotFoundError("找不到动作包")

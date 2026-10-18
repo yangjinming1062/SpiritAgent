@@ -32,6 +32,28 @@ async def _check(
     context: BackupContext,
 ) -> None:
     validate_desktop_owned_paths(payload, context.asset_owner_id)
+    if table == "desktop_video_sets" and context.mode == "merge" and payload.get("request_id"):
+        existing_set = await db.scalar(
+            select(DesktopVideoSet).where(
+                DesktopVideoSet.user_id == context.user_id,
+                DesktopVideoSet.request_id == payload["request_id"],
+            ),
+        )
+        if existing_set is not None and (
+            existing_set.outfit_id,
+            existing_set.source_visual_key,
+        ) != (payload.get("outfit_id"), payload["source_visual_key"]):
+            raise ValueError("合并的桌景与现有桌景不属于同一冻结着装来源。")
+    if table == "desktop_video_actions" and context.mode == "merge":
+        existing = await db.scalar(
+            select(DesktopVideoAction).where(
+                DesktopVideoAction.user_id == context.user_id,
+                DesktopVideoAction.set_id == payload["set_id"],
+                DesktopVideoAction.key == payload["key"],
+            ),
+        )
+        if existing is not None and existing.definition_id != payload.get("definition_id"):
+            raise ValueError("合并的桌景动作与现有动作不属于同一共享定义。")
     if table == "desktop_video_actions" and payload.get("generation_state_json") and payload.get("stage") != "complete":
         if (
             context.mode == "merge"
@@ -92,7 +114,7 @@ def backup_tables() -> tuple[BackupTable, ...]:
         BackupTable(
             "desktop_video_actions",
             DesktopVideoAction,
-            foreign_keys={"set_id": "desktop_video_sets"},
+            foreign_keys={"set_id": "desktop_video_sets", "definition_id": "action_definitions"},
             unique_keys=("set_id", "key"),
             strict_references=True,
             merge_unique_on_overwrite=True,

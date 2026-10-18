@@ -5,17 +5,18 @@ from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.accounts.models import lock_user_row
+from features.action_library.service import exclude_target
 from features.actions.asset_retirement import action_asset_paths, retire_action_assets
 from features.actions.design import accept_proposal
 from features.actions.generation.execution_state import _ACTION_INFLIGHT
 from features.actions.generation.queries import _job_result_unresolved
-from features.actions.models import REQUIRED_SYSTEM_SLOTS, CompanionAction
+from features.actions.models import REQUIRED_SYSTEM_SLOTS, CompanionAction, CompanionActionPack
 from features.actions.pipeline import schedule_accepted_proposal
-from features.actions.policy import get_action_accept_lock, get_daily_budget_status
+from features.actions.policy import get_action_accept_lock
 from features.actions.publishing import emit_catalog_changed, publish_action_catalog
 from features.actions.repository import get_action, get_active_pack, get_playback
 from features.actions.schemas import (
-    ActionBudgetStatus,
     ActionCatalogResponse,
     ActionDesignRequest,
     ActionDesignResult,
@@ -29,10 +30,10 @@ from features.media.review_service import reject_pending_action_reviews
 logger = get_logger(__name__)
 
 
-async def _republish_catalog(db: AsyncSession, user_id: int) -> None:
+async def _republish_catalog(db: AsyncSession, user_id: int, pack_id: int) -> None:
     """停用/删除后重发目录快照，客户端不再保留旧播放资格。"""
-    pack = await get_active_pack(db, user_id)
-    if pack is None:
+    pack = await db.get(CompanionActionPack, pack_id)
+    if pack is None or pack.user_id != user_id:
         return
     try:
         await publish_action_catalog(db, pack)
@@ -87,17 +88,13 @@ async def submit_playback_receipt(
     return CompanionOperationResponse(ok=True)
 
 
-async def get_budget_status(user_id: int, db: AsyncSession) -> ActionBudgetStatus:
-    return await get_daily_budget_status(db, user_id)
-
-
 async def _owned_action(db: AsyncSession, user_id: int, action_id: int) -> CompanionAction:
     action = await get_action(db, action_id)
     if action is None:
         raise RequestError(status_code=404, message="动作不存在")
-    pack = await get_active_pack(db, user_id)
-    if pack is None or action.pack_id != pack.id:
-        raise RequestError(status_code=403, message="动作不属于当前形象")
+    pack = await db.get(CompanionActionPack, action.pack_id)
+    if action.user_id != user_id or pack is None or pack.user_id != user_id:
+        raise RequestError(status_code=403, message="动作不属于当前账户")
     return action
 
 
@@ -108,13 +105,14 @@ async def set_action_enabled(action_id: int, enabled: bool, user_id: int, db: As
         raise RequestError(status_code=400, message="系统动作不可停用")
     action.enabled = enabled
     await db.commit()
-    await _republish_catalog(db, user_id)
+    await _republish_catalog(db, user_id, action.pack_id)
     return {"ok": True, "enabled": enabled}
 
 
 async def delete_action(action_id: int, user_id: int, db: AsyncSession) -> CompanionOperationResponse:
     await db.commit()
     async with get_action_accept_lock(user_id), get_avatar_job_lock(user_id):
+        await lock_user_row(db, user_id)
         action = await _owned_action(db, user_id, action_id)
         if action.system_slot in REQUIRED_SYSTEM_SLOTS:
             raise RequestError(status_code=400, message=f"必需系统动作（{action.system_slot}）不可删除")
@@ -127,7 +125,10 @@ async def delete_action(action_id: int, user_id: int, db: AsyncSession) -> Compa
             media_type=action.media_type,
         )
         await retire_action_assets(db, user_id, action_asset_paths(action))
+        pack_id = action.pack_id
+        if action.definition_id is not None:
+            await exclude_target(db, user_id, action.definition_id, "window", pack_id)
         await db.delete(action)
         await db.commit()
-        await _republish_catalog(db, user_id)
+        await _republish_catalog(db, user_id, pack_id)
     return CompanionOperationResponse(ok=True)

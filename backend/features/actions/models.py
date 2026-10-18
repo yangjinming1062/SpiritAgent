@@ -1,4 +1,4 @@
-"""动作资产 ORM：pack、action、提案与播放事实。三层身份 outfit_id → pack_id（冻结外观包）→ action_id；系统槽位见 SYSTEM_SLOTS，动态动作不可占用。"""
+"""窗口资产 ORM：pack、action 与播放事实。三层身份 outfit_id → pack_id（冻结外观包）→ action_id；系统槽位见 SYSTEM_SLOTS，动态动作不可占用。"""
 
 import hashlib
 from collections.abc import Iterable
@@ -62,6 +62,7 @@ class CompanionActionPack(ModelBase, TimestampMixin):
     avatar_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     outfit_id: Mapped[int | None] = mapped_column(ForeignKey("companion_outfits.id"), nullable=True, default=None)
     reference_path: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
+    source_visual_key: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
     reference_hash: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
     character_snapshot: Mapped[str] = mapped_column(Text, default="{}", server_default=text("'{}'"))
     outfit_snapshot: Mapped[str] = mapped_column(Text, default="{}", server_default=text("'{}'"))
@@ -91,6 +92,7 @@ class CompanionAction(ModelBase, TimestampMixin):
     __tablename__ = "companion_actions"
     __table_args__ = (
         UniqueConstraint("pack_id", "key", name="uq_companion_actions_pack_key"),
+        UniqueConstraint("pack_id", "definition_id", name="uq_companion_actions_pack_definition"),
         CheckConstraint("media_type IN ('image', 'video')", name="ck_companion_actions_media_type"),
         CheckConstraint(
             "media_type = 'video' OR (kind IS NULL AND target_duration_seconds IS NULL "
@@ -109,6 +111,11 @@ class CompanionAction(ModelBase, TimestampMixin):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     pack_id: Mapped[int] = mapped_column(
         ForeignKey("companion_action_packs.id", ondelete="CASCADE"),
+        index=True,
+    )
+    definition_id: Mapped[int | None] = mapped_column(
+        ForeignKey("action_definitions.id", ondelete="CASCADE"),
+        nullable=True,
         index=True,
     )
     key: Mapped[str] = mapped_column(String(32))
@@ -182,53 +189,6 @@ class ActionAssetRetirement(ModelBase):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     path: Mapped[str] = mapped_column(String(2048))
     retired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-
-
-class ActionCreation(ModelBase, TimestampMixin):
-    """动态动作制作额度账本；删除包或动作不撤销已使用额度。"""
-
-    __tablename__ = "action_creations"
-    __table_args__ = (UniqueConstraint("user_id", "creation_key", name="uq_action_creations_user_key"),)
-
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    source: Mapped[str] = mapped_column(String(16))
-    creation_key: Mapped[str] = mapped_column(String(96))
-    consumed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), index=True)
-    action_id: Mapped[int | None] = mapped_column(
-        ForeignKey("companion_actions.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-
-
-class ActionProposal(ModelBase, TimestampMixin):
-    """动作设计提案：语义指纹去重与近 7 天拒绝创意抑制；制作额度由独立账本管理。"""
-
-    __tablename__ = "action_proposals"
-    __table_args__ = (
-        UniqueConstraint("user_id", "source", "idempotency_key", name="uq_action_proposals_user_source_key"),
-    )
-
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    pack_id: Mapped[int] = mapped_column(
-        ForeignKey("companion_action_packs.id", ondelete="CASCADE"),
-        index=True,
-    )
-    source: Mapped[str] = mapped_column(String(16), default="autonomous", server_default=text("'autonomous'"))
-    reason: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
-    semantic_fingerprint: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"), index=True)
-    design_json: Mapped[str] = mapped_column(Text, default="{}", server_default=text("'{}'"))
-    status: Mapped[str] = mapped_column(
-        String(16),
-        default="pending",
-        server_default=text("'pending'"),
-        index=True,
-    )
-    review_decision: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    review_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # approve 时刻；制作额度由独立账本按滚动24小时结算。
-    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
-    idempotency_key: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
-    action_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class ActionPlayback(ModelBase, TimestampMixin):

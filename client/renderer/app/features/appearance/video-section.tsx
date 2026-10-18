@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useState } from 'react'
 
+import { ActionSyncStatus } from '@/app/components/action-sync-status'
 import {
   $outfits,
   $videoGenErrors,
@@ -39,6 +40,9 @@ interface ActionEntry {
   pendingReview: ActionWire['pending_review']
   hasReadyAsset: boolean
   canRetry: boolean
+  canGenerate: boolean
+  canRegenerate: boolean
+  syncTargets: ActionWire['sync_targets']
   mediaType: 'image' | 'video' | null
   motionPrompt: string
   feedback: string
@@ -125,6 +129,9 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
       pendingReview: entry.pending_review,
       hasReadyAsset: entry.has_ready_asset,
       canRetry: entry.can_retry,
+      canGenerate: entry.can_generate,
+      canRegenerate: entry.can_regenerate,
+      syncTargets: entry.sync_targets,
       mediaType: entry.media_type,
       motionPrompt: entry.media_type === 'video' ? entry.motion_prompt : '',
       feedback: entry.feedback ?? '',
@@ -146,6 +153,9 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
         pendingReview: null,
         hasReadyAsset: false,
         canRetry: false,
+        canGenerate: false,
+        canRegenerate: true,
+        syncTargets: [],
         mediaType: null,
         motionPrompt: '',
         peekGeometry: null
@@ -244,7 +254,14 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
   }, [authKind, packsReloadKey])
 
   // 包、单动作或先于列表到达的进度仍在途时，轮询收敛失败及遗漏的终态事件。
-  const anyPackGenerating = packs.some(videoPackIsGenerating) || Object.keys(genStages).length > 0
+  const anyPackGenerating =
+    packs.some(
+      pack =>
+        videoPackIsGenerating(pack) ||
+        pack.actions.some(action =>
+          action.sync_targets.some(target => ['queued', 'processing'].includes(target.status))
+        )
+    ) || Object.keys(genStages).length > 0
 
   useEffect(() => {
     if (!anyPackGenerating) {
@@ -268,7 +285,12 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
   }, [anyPackGenerating])
 
   const requestActionGeneration = (feedback: string): void => {
-    if (!selectedPack || !selectedAction || !selectedPack.can_regenerate || actionIsBusy) {
+    if (
+      !selectedPack ||
+      !selectedAction ||
+      (!selectedAction.canGenerate && (!selectedPack.can_regenerate || !selectedAction.canRegenerate)) ||
+      actionIsBusy
+    ) {
       return
     }
 
@@ -294,6 +316,22 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
   }
 
   const actionStatus = (action: ActionEntry): { label: string; hint?: string; className: string } => {
+    const ownVariant = action.syncTargets.find(
+      target => target.target_kind === 'window' && target.target_id === selectedPack?.id
+    )
+
+    if (
+      action.status !== 'result_unknown' &&
+      ownVariant &&
+      ['not_generated', 'blocked', 'disabled', 'excluded'].includes(ownVariant.status)
+    ) {
+      return {
+        label: dict.common.actionVariants.statuses[ownVariant.status],
+        hint: ownVariant.reason ?? undefined,
+        className: ownVariant.status === 'blocked' ? 'bg-amber-400' : 'bg-line-strong'
+      }
+    }
+
     if (action.videoQueue) {
       return { label: dict.common.videoQueue[action.videoQueue.state], className: 'bg-amber-400' }
     }
@@ -304,7 +342,7 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
         candidate =>
           candidate.action === action.key &&
           (candidate.status === 'result_unknown' ||
-            (candidate.can_regenerate === false && !isActionInProgress(candidate.status)))
+            (candidate.can_regenerate === false && !candidate.can_generate && !isActionInProgress(candidate.status)))
       )
     ) {
       return { label: t.videoActionResultUnknown, hint: t.videoActionResultUnknownHint, className: 'bg-amber-400' }
@@ -352,9 +390,16 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
 
   const selectedStatus = selectedAction ? actionStatus(selectedAction) : null
 
-  const canGenerateAction = !!selectedPack?.can_regenerate && !!selectedAction && !actionIsBusy
+  const canGenerateAction =
+    !!selectedAction &&
+    (selectedAction.canGenerate || (!!selectedPack?.can_regenerate && selectedAction.canRegenerate)) &&
+    !actionIsBusy
+
   const canResumeAction = selectedAction?.status === 'failed' && selectedAction.canRetry && !actionIsBusy
-  const actionGenerationLabel = selectedAction?.status === 'missing' ? t.videoGenMissingAction : t.videoRedoAction
+  const firstGeneration = !!selectedAction && !selectedAction.hasReadyAsset && selectedAction.canGenerate
+
+  const actionGenerationLabel =
+    firstGeneration || selectedAction?.status === 'missing' ? t.videoGenMissingAction : t.videoRedoAction
 
   return (
     <section
@@ -545,6 +590,12 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
                   ) : null}
                 </div>
 
+                {selectedAction.syncTargets.length > 0 ? (
+                  <div className="mt-3 shrink-0">
+                    <ActionSyncStatus targets={selectedAction.syncTargets} />
+                  </div>
+                ) : null}
+
                 {selectedAction.motionPrompt ? (
                   <details className="mt-2 text-xs text-muted">
                     <summary className="cursor-pointer">{dict.common.creationDetails}</summary>
@@ -593,7 +644,13 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
                       {canGenerateAction ? (
                         <button
                           className={BTN_SUBTLE}
-                          onClick={() => setEditing({ key: selectedAction.key, feedback: selectedAction.feedback })}
+                          onClick={() => {
+                            if (firstGeneration) {
+                              requestActionGeneration('')
+                            } else {
+                              setEditing({ key: selectedAction.key, feedback: selectedAction.feedback })
+                            }
+                          }}
                           type="button"
                         >
                           {actionGenerationLabel}

@@ -1,8 +1,5 @@
 """动作库读写：pack、action、目录版本与播放意图。"""
 
-import hashlib
-import json
-import unicodedata
 from datetime import datetime
 
 from sqlalchemy import select, update
@@ -13,31 +10,6 @@ from features.actions.models import ActionPlayback, CompanionAction, CompanionAc
 
 class StaleCatalogError(RuntimeError):
     """目录版本已被并发发布推进；`publish_action_catalog` 重读后重试，仍冲突才抛给调用方。"""
-
-
-class ActionNameConflictError(ValueError):
-    """遗留同名多动作不能静默合并、重命名或覆盖。"""
-
-
-def normalize_action_name(name: str) -> str:
-    return unicodedata.normalize("NFKC", name.strip()).casefold()
-
-
-async def get_action_by_name(db: AsyncSession, pack_id: int, name: str) -> CompanionAction | None:
-    expected = normalize_action_name(name)
-    matches = [
-        action
-        for action in await list_pack_actions(db, pack_id, enabled_only=False)
-        if not action.system_slot and normalize_action_name(action.name) == expected
-    ]
-    if len(matches) > 1:
-        raise ActionNameConflictError("存在多个同名动作，请先删除重复动作后重新提案")
-    return matches[0] if matches else None
-
-
-def make_semantic_fingerprint(name: str, motion: str) -> str:
-    raw = name.strip().lower() + "|" + motion.strip().lower()
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
 
 async def get_active_pack(db: AsyncSession, user_id: int) -> CompanionActionPack | None:
@@ -73,34 +45,6 @@ async def get_action(db: AsyncSession, action_id: int) -> CompanionAction | None
 
 async def get_playback(db: AsyncSession, play_id: str) -> ActionPlayback | None:
     return (await db.execute(select(ActionPlayback).where(ActionPlayback.play_id == play_id))).scalar_one_or_none()
-
-
-async def create_action(
-    db: AsyncSession,
-    *,
-    user_id: int,
-    pack_id: int,
-    key: str,
-    name: str,
-    kind: str,
-    motion_description: str,
-    use_when: list[str],
-    avoid_when: list[str],
-) -> CompanionAction:
-    """新建动作行；同包同 key 已有动作时由唯一约束拒绝，不覆盖其他提案的动作。"""
-    action = CompanionAction(
-        user_id=user_id,
-        pack_id=pack_id,
-        key=key,
-        name=name,
-        kind=kind,
-        motion_description=motion_description,
-        use_when=json.dumps(use_when, ensure_ascii=False),
-        avoid_when=json.dumps(avoid_when, ensure_ascii=False),
-    )
-    db.add(action)
-    await db.flush()
-    return action
 
 
 def clear_action_attempt(action: CompanionAction) -> None:

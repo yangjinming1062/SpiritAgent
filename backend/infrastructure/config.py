@@ -218,17 +218,7 @@ class Settings(BaseSettings):
         validation_alias="MEMORY_RECALL_MAX_CONTENT_CHARS",
     )
 
-    # 动作库：每日制作额度按用户本地日结算；评审不设日限额；创建/自动使用独立开关。
-    action_autonomous_create_daily_limit: int = Field(
-        default=2,
-        gt=0,
-        validation_alias="ACTION_AUTONOMOUS_CREATE_DAILY_LIMIT",
-    )
-    action_user_requested_create_daily_limit: int = Field(
-        default=3,
-        gt=0,
-        validation_alias="ACTION_USER_REQUESTED_CREATE_DAILY_LIMIT",
-    )
+    # 动作库：自主创建开关。
     action_autocreate_enabled: bool = Field(default=True, validation_alias="ACTION_AUTOCREATE_ENABLED")
 
     # 夜间整理窗口、规划与日记预算；调度器 tick 周期与用户 Cron 配额。

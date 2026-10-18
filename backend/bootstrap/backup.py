@@ -1,6 +1,7 @@
 """按备份依赖顺序登记业务贡献者，恢复编排只消费贡献契约。"""
 
 from features.accounts.backup import backup_tables as account_tables
+from features.action_library.backup import backup_tables as action_library_tables
 from features.actions.backup import backup_tables as action_tables
 from features.appearance.backup import backup_tables as appearance_tables
 from features.automation.backup import backup_tables as automation_tables
@@ -23,6 +24,7 @@ def register_backup_tables() -> None:
         *conversation_tables(),
         *configuration_tables(),
         *appearance_tables(),
+        *action_library_tables(),
         *action_tables(),
         *scene_tables(),
         *desktop_tables(),

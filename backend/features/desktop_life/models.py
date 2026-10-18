@@ -22,6 +22,7 @@ class DesktopVideoSet(ModelBase, TimestampMixin):
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
     source: Mapped[str] = mapped_column(String(24), default="ai", server_default=text("'ai'"))
     context_hash: Mapped[str] = mapped_column(String(64))
+    source_visual_key: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
     context_json: Mapped[str] = mapped_column(Text)
     title: Mapped[str] = mapped_column(String(160), default="", server_default=text("''"))
     target_width: Mapped[int] = mapped_column(Integer)
@@ -34,10 +35,18 @@ class DesktopVideoSet(ModelBase, TimestampMixin):
 
 class DesktopVideoAction(ModelBase, TimestampMixin):
     __tablename__ = "desktop_video_actions"
-    __table_args__ = (UniqueConstraint("set_id", "key", name="uq_desktop_video_actions_key"),)
+    __table_args__ = (
+        UniqueConstraint("set_id", "key", name="uq_desktop_video_actions_key"),
+        UniqueConstraint("set_id", "definition_id", name="uq_desktop_video_actions_definition"),
+    )
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     set_id: Mapped[int] = mapped_column(ForeignKey("desktop_video_sets.id", ondelete="CASCADE"), index=True)
+    definition_id: Mapped[int | None] = mapped_column(
+        ForeignKey("action_definitions.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     key: Mapped[str] = mapped_column(String(64))
     name: Mapped[str] = mapped_column(String(64))
     description: Mapped[str] = mapped_column(Text)
@@ -91,23 +100,6 @@ class DesktopVideoState(ModelBase, TimestampMixin):
     target_width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     target_height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     preparation_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-
-class DesktopVideoProposal(ModelBase, TimestampMixin):
-    __tablename__ = "desktop_video_proposals"
-    __table_args__ = (UniqueConstraint("set_id", "fingerprint", name="uq_desktop_video_proposals_fingerprint"),)
-
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    set_id: Mapped[int] = mapped_column(ForeignKey("desktop_video_sets.id", ondelete="CASCADE"), index=True)
-    action_id: Mapped[int | None] = mapped_column(
-        ForeignKey("desktop_video_actions.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    fingerprint: Mapped[str] = mapped_column(String(64))
-    design_json: Mapped[str] = mapped_column(Text)
-    source: Mapped[str] = mapped_column(String(24))
-    status: Mapped[str] = mapped_column(String(24), default="pending", server_default=text("'pending'"))
-    review_reason: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
 
 
 class DesktopVideoPlayback(ModelBase, TimestampMixin):

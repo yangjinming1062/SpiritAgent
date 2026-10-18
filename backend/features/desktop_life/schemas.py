@@ -7,8 +7,9 @@ from typing import Literal
 
 from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
 from infrastructure.constants import POSTGRES_INT4_MAX
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
+from features.action_library.schemas import ActionVariantSummary
 from features.media.identity_contracts import CharacterCardSnapshot, CharacterReferenceRole
 from features.media.video_queue.contracts import VideoQueueInfo
 
@@ -143,6 +144,7 @@ class DesktopVideoProgress(BaseModel):
     paused_by_user: bool = False
     image_confirmed: bool = False
     image_only: bool = False
+    auto_continue: bool = False
     aspect_ratio: str = Field(default="16:9", pattern=r"^[1-9]\d*:[1-9]\d*$")
     frame_width: int | None = Field(default=None, gt=0)
     frame_height: int | None = Field(default=None, gt=0)
@@ -261,6 +263,9 @@ class DesktopVideoDraftResponse(BaseModel):
 class DesktopVideoActionResponse(BaseModel):
     id: int
     set_id: int
+    definition_id: int | None = None
+    sync_targets: list[ActionVariantSummary] = Field(default_factory=list)
+    can_generate: bool = False
     current: DesktopVideoCurrentResponse | None = None
     draft: DesktopVideoDraftResponse | None = None
     playable: bool = False
@@ -272,7 +277,7 @@ class DesktopVideoActionResponse(BaseModel):
     kind: Literal["loop", "once"]
     duration_seconds: int
     target_duration_seconds: int
-    status: Literal["queued", "processing", "ready", "failed", "review_pending"]
+    status: Literal["not_generated", "queued", "processing", "ready", "failed", "review_pending", "blocked"]
     stage: str
     error: str | None = None
     video_queue: VideoQueueInfo | None = None
@@ -294,6 +299,8 @@ class DesktopVideoProposalResponse(BaseModel):
     proposal_id: int
     set_id: int
     action_id: int | None = None
+    definition_id: int | None = None
+    sync_targets: list[ActionVariantSummary] = Field(default_factory=list)
     status: str
     review_reason: str = ""
     name: str = ""
@@ -503,9 +510,11 @@ class DesktopVideoDesignRequest(BaseModel):
 
     @field_validator("name", "motion_description")
     @classmethod
-    def nonblank(cls, value: str) -> str:
+    def nonblank(cls, value: str, info: ValidationInfo) -> str:
         if not value.strip():
             raise ValueError("动作名称和描述不能为空")
+        if info.field_name == "motion_description" and len(value.strip()) < 10:
+            raise ValueError("动作描述至少需要10个字符")
         return value.strip()
 
     @field_validator("use_when", "avoid_when")

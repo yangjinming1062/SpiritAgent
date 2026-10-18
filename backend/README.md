@@ -67,7 +67,7 @@ ORM 留在数据所属模块。跨模块读取使用冻结 DTO 或只读快照�
 
 `system_settings` 和点键 `user_settings` 逐值 JSON 编码。用户设置只经 [settings/values.py](features/configuration/settings/values.py) 读写，消费方直接使用解码值。
 
-启动自动执行 `alembic upgrade head`，当前单一基线为 [0004_baseline.py](alembic/versions/0004_baseline.py)，空库直接创建完整结构。后续结构变更新建迁移，比对 ORM 类型、默认值与索引；autogenerate 不能完整核对部分索引的条件、方法及操作符类。
+启动自动执行 `alembic upgrade head`，从 [0004 基线](alembic/versions/0004_baseline.py) 顺序迁移至 [0005 共享动作目录](alembic/versions/0005_action_library.py)。结构变更新建迁移，比对 ORM 类型、默认值与索引；autogenerate 不能完整核对部分索引的条件、方法及操作符类。
 
 ### 装配与启停
 

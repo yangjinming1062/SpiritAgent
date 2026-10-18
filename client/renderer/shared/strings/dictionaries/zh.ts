@@ -5,6 +5,23 @@ export const dict = {
   },
 
   common: {
+    actionVariants: {
+      title: '各画面制作进度',
+      readyWithStatus: (status: string) => `可播放 · ${status}`,
+      remakeFailed: '重做失败',
+      kinds: { window: '着装', desktop: '桌面背景' },
+      statuses: {
+        not_generated: '待制作',
+        queued: '等待制作',
+        processing: '正在制作',
+        ready: '可播放',
+        review_pending: '待确认',
+        failed: '制作失败',
+        blocked: '暂时无法制作',
+        disabled: '已停用',
+        excluded: '已移除'
+      }
+    },
     videoQueue: {
       waiting: '视频排队中',
       rate_limited: '服务繁忙，等待重试',

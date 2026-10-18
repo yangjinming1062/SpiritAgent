@@ -1,28 +1,28 @@
 # 窗口动作
 
-拥有窗口动作提案、制作、冻结外观包、采纳、目录与播放账本。每套着装对应唯一动作组，约束定义在 [models.py](models.py)，重做在原动作上保存新尝试与候选。制作归 [PIPELINE](../../../docs/PIPELINE.md#动作资产制作)，额度、目录和回执归 [PROTOCOL](../../../docs/PROTOCOL.md#动作目录与播放)。桌面生活视频另由独立模块管理。
+拥有窗口动作制作、冻结外观包、采纳、目录与播放账本。每套着装对应唯一动作组，约束定义在 [models.py](models.py)，重做在原动作上保存新尝试与候选。自定义动作语义及评审归[共享目录](../action_library/README.md)，本模块独立制作透明角色版本；桌景版本由桌面生活模块管理。制作归 [PIPELINE](../../../docs/PIPELINE.md#动作资产制作)，目录和回执归 [PROTOCOL](../../../docs/PROTOCOL.md#动作目录与播放)。
 
 ## 模块入口
 
 | 入口 | 职责 |
 |---|---|
-| [design.py](design.py)、[review.py](review.py)、[pipeline.py](pipeline.py) | 受理、去重、独立评审、批准与恢复 |
+| [design.py](design.py)、[pipeline.py](pipeline.py) | 共享动作设计适配与窗口制作调度 |
 | [generation/commands.py](generation/commands.py) | 上传/参考创建、重试、启用与删除 |
 | [generation/planning.py](generation/planning.py)、[generation/pipeline.py](generation/pipeline.py) | 静态/运动规划与逐阶段制作 |
 | [generation/transactions.py](generation/transactions.py)、[generation/tasks.py](generation/tasks.py) | 事务内状态推进、单飞、恢复与关闭 |
 | [generation/references.py](generation/references.py)、[generation/catalog.py](generation/catalog.py)、[video_queue.py](video_queue.py) | 冻结身份、目录收尾、响应装配与视频提交前有效性检查 |
 | [repository.py](repository.py)、[materials.py](materials.py) | 包、动作和当前尝试/已采纳素材 |
 | [publishing.py](publishing.py)、[asset_retirement.py](asset_retirement.py) | 目录 CAS 发布、引用退役与补偿 |
-| [policy.py](policy.py)、[playback.py](playback.py)、[usage.py](usage.py) | 额度与开关、点播、回执和延迟意图 |
+| [policy.py](policy.py)、[playback.py](playback.py)、[usage.py](usage.py) | 创建开关、点播、回执和延迟意图 |
 | [lifecycle.py](lifecycle.py)、[backup.py](backup.py)、[asset_references.py](asset_references.py) | 任务、目录重建与资产引用贡献 |
 
 ## 提案处理
 
-受理与评审使用 `get_action_accept_lock(user_id)`，受理后的提交与任务启动分开；等待锁或模型时不持事务。规范化名称以 NFKC + casefold 确定身份，冻结设计不因同名重提改变。已有可播素材复用，在制不重复评审或占额，待复核返回复核项。独立重做先重查身份、开关、抠像模型并占额。制作额度账本独立于提案和包，删除不返额。
+自定义动作由共享目录统一受理与评审，受理后的提交与任务启动分开。窗口版本使用稳定 `definition_id`，同组同定义唯一，已有可播素材和在途任务均不重复提交。目标删除记录排除状态，重做保留旧素材；手动待制作目标由显式生成启动。制作前核对明确目标的冻结身份、着装、抠像模型及自主创建开关，无需切换当前穿着。
 
-## 评审输入与额度
+## 制作与恢复
 
-评审只读所属包冻结参考与实际提供的动作候选，模型复用 ID 必须来自候选集合。重启恢复 pending，deferred 仅在创建窗口内恢复，避免旧提案每次启动付费重审。新付费步骤重查抠像模型与维护状态，恢复边界归 [PIPELINE](../../../docs/PIPELINE.md#恢复与资产回收)。
+共享目录保存原始参考来源，本模块继续使用动作组对齐后的冻结参考和规格制作。新付费步骤重查抠像模型与维护状态，恢复边界归 [PIPELINE](../../../docs/PIPELINE.md#恢复与资产回收)。
 
 制作文件按用途拆分，共用逐动作状态机；图片与视频分支见 [系统动作与动态动作](../../../docs/PIPELINE.md#系统动作与动态动作)。姿态图准备完成后，视频提交与轮询交给公共视频队列；动作保存队列尝试引用及可公开的排队进度，重启按同次尝试续跑。实际提交前由本模块复核动作、冻结身份与抠像模型，远端结果保存后确认消费，再进入下载、抠像与评分。
 
@@ -34,4 +34,4 @@
 
 `emit_catalog_changed` 是目录事件的唯一发送入口，调用方在发布/激活事务内发送；CAS 发布规则归 [目录发布与并发](../../../docs/PIPELINE.md#目录发布与并发)。备份由本模块重建 manifest，不走正常 CAS 制作路径。生成任务按动作登记单飞，同包共享并发预算；任务计数在最后一个任务结束后释放包保护，结果未知的任务仍保留供核对。包收尾等待所有排队与制作动作取得结果，发布前再次核对素材与新入队动作。
 
-验证归 [Scripts](../../../scripts/README.md)。核对同名并发、幂等来源、重试占额、旧资产保留、冻结评审、CAS、播放回执和引用退役；制作与呈现分别验收。
+验证归 [Scripts](../../../scripts/README.md)。核对同名并发、共享定义绑定、手动首次生成、旧资产保留、非当前目标制作、CAS、播放回执和引用退役；制作与呈现分别验收。

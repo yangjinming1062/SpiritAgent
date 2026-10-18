@@ -168,6 +168,11 @@ def set_desktop_update_handler(handler: Callable[[int, int], Awaitable[None]]) -
     _UPDATE_HANDLER = handler
 
 
+async def notify_desktop_set_updated(user_id: int, set_id: int) -> None:
+    if _UPDATE_HANDLER is not None:
+        await _UPDATE_HANDLER(user_id, set_id)
+
+
 class DesktopVideoScript(BaseModel):
     model_config = ConfigDict(extra="forbid")
     feasible: bool = Field(strict=True)
@@ -1417,8 +1422,8 @@ async def _finish_job(user_id: int, action_id: int, progress: DesktopVideoProgre
             await touch_desktop_state(db, user_id)
         await db.commit()
     spawn_removed_action_task_cancellation(user_id, removed)
-    if published_set is not None and _UPDATE_HANDLER is not None:
-        await _UPDATE_HANDLER(user_id, published_set)
+    if published_set is not None:
+        await notify_desktop_set_updated(user_id, published_set)
 
 
 async def _pause_desktop_job(
@@ -1526,6 +1531,10 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
             or _queued_video_request(progress)
         ):
             await _prepare_opening(user_id, action, snapshot, progress, directory)
+            if progress.auto_continue:
+                progress.image_confirmed = True
+                progress.image_only = False
+                await _save_progress(user_id, action_id, progress, stage="video")
             if progress.image_only or not progress.image_confirmed:
                 await _await_image(user_id, action_id, progress)
                 return
@@ -1622,6 +1631,11 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                     )
                     await _save_progress(user_id, action_id, progress, stage="repairing")
                     await _prepare_opening(user_id, action, snapshot, progress, directory)
+                    if progress.auto_continue:
+                        progress.image_confirmed = True
+                        progress.image_only = False
+                        await _save_progress(user_id, action_id, progress, stage="video")
+                        continue
                     await _await_image(user_id, action_id, progress)
                     return
         if progress.submission_unknown:

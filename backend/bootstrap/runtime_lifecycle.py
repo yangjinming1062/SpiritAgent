@@ -16,6 +16,7 @@ from features.scenes.lifecycle import runtime_participants as scene_participants
 from features.updates.lifecycle import runtime_participants as update_participants
 from runtime.events.loop import drain_event_tasks, stop_event_loop
 from runtime.lifecycle import RUNTIME_LIFECYCLE, RuntimeParticipant
+from workflows.action_library import drain_shared_actions, prepare_shared_actions, resume_shared_actions
 from workflows.onboarding.initial_appearance import resume_initial_appearance
 from workflows.outfit_actions import resume_outfit_actions
 
@@ -26,6 +27,13 @@ def configure_runtime_lifecycle() -> None:
             *update_participants(),
             *video_queue_participants(),
             *media_participants(),
+            RuntimeParticipant(
+                "action_library",
+                prepare=prepare_shared_actions,
+                recover=resume_shared_actions,
+                resume_user=resume_shared_actions,
+                drain=drain_shared_actions,
+            ),
             *action_participants(),
             *desktop_life_participants(),
             *appearance_participants(),

@@ -2,7 +2,6 @@
 
 import asyncio
 from collections.abc import Coroutine
-from uuid import uuid4
 
 from infrastructure.ai.providers.base import ServiceType
 from infrastructure.ai.selection import ProviderSelection
@@ -11,13 +10,15 @@ from runtime.user_maintenance import is_user_in_maintenance, track_user_task
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.accounts.models import lock_user_row
+from features.action_library.queries import definition_snapshot
 from features.actions.asset_retirement import action_asset_paths, retire_action_assets
 from features.actions.generation.script import VideoActionSpec
 from features.actions.materials import accepted_action_asset
 from features.actions.media_contracts import ActionResult
 from features.actions.models import SYSTEM_ACTION_MEDIA_TYPES, CompanionAction, CompanionActionPack
-from features.actions.policy import ActionPolicyError, check_can_accept, consume_create_slot
-from features.actions.repository import clear_action_attempt, make_semantic_fingerprint
+from features.actions.policy import ActionPolicyError, check_can_accept
+from features.actions.repository import clear_action_attempt
 from features.media.chain import FrozenMediaProvider, MediaChainState
 from features.media.character_images import ImageChainState
 from features.media.review_service import reject_pending_action_reviews
@@ -127,7 +128,9 @@ async def _queue_in_place_redo(
     action: str,
     feedback: str,
 ) -> CompanionAction:
-    """同动作无结果时保留原尝试；动态动作沿用设计与身份，用户重做单独计额。"""
+    """同动作无结果时保留原尝试；动态动作沿用设计与身份，首次制作与重做均保留并发守卫。"""
+    await lock_user_row(db, pack.user_id)
+    await db.refresh(pack, with_for_update=True)
     job = (
         await db.execute(
             select(CompanionAction)
@@ -135,6 +138,15 @@ async def _queue_in_place_redo(
             .with_for_update(),
         )
     ).scalar_one_or_none()
+    if job is not None and job.definition_id is not None:
+        definition = await definition_snapshot(db, pack.user_id, job.definition_id)
+        if (
+            definition is None
+            or not pack.source_visual_key
+            or definition.outfit_id != pack.outfit_id
+            or definition.source_visual_key != pack.source_visual_key
+        ):
+            raise VideoPackStateError("动作的冻结身份或着装来源已变化，无法制作此版本")
     if job is not None and (_job_result_unresolved(job) or job.id in _ACTION_INFLIGHT):
         raise VideoPackStateError("动作仍在制作中，请等待完成后再重新生成")
     accepted = accepted_action_asset(job) if job is not None else None
@@ -185,19 +197,8 @@ async def _queue_in_place_redo(
     if not is_system:
         try:
             await check_can_accept(
-                db,
-                pack.user_id,
                 source="user_requested",
                 duration_seconds=requested_seconds,
-                pack_id=pack.id,
-                semantic_fingerprint=make_semantic_fingerprint(job.name, job.motion_description),
-            )
-            await consume_create_slot(
-                db,
-                pack.user_id,
-                source="user_requested",
-                creation_key=f"redo:{job.id}:{uuid4().hex}",
-                action_id=job.id,
             )
         except ActionPolicyError as exc:
             raise VideoPackStateError(str(exc)) from exc

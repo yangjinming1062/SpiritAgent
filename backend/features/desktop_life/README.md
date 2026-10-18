@@ -1,15 +1,17 @@
 # 桌面生活
 
-拥有独立桌景套装库、分步制作草稿、当前成品、动作提案及播放事实。体验归 [DESIGN](../../../docs/DESIGN.md#桌面生活视频)，跨模块契约归 [PROTOCOL](../../../docs/PROTOCOL.md#桌面生活视频与模式隔离)，参考、画幅、媒体及恢复要求归 [PIPELINE](../../../docs/PIPELINE.md#桌面生活视频)。
+拥有独立桌景套装库、分步制作草稿、当前成品及播放事实。自定义动作语义和评审归共享动作目录，本模块持有每套桌景的独立画面版本。体验归 [DESIGN](../../../docs/DESIGN.md#桌面生活视频)，跨模块契约归 [PROTOCOL](../../../docs/PROTOCOL.md#桌面生活视频与模式隔离)，参考、画幅、媒体及恢复要求归 [PIPELINE](../../../docs/PIPELINE.md#桌面生活视频)。
 
 | 入口 | 职责 |
 |---|---|
-| [service.py](service.py)、[repository.py](repository.py) | 套装、草稿确认、采用、基准失效与播放事务 |
+| [service.py](service.py)、[repository.py](repository.py)、[action_sync.py](action_sync.py) | 套装、共享动作目标事务、草稿确认、采用、基准失效与播放事务 |
 | [creation.py](creation.py)、[generation.py](generation.py)、[prompts.py](prompts.py)、[video_queue.py](video_queue.py) | 活动计划、画面检查与修复、冻结参考、图片调整、运动设计、视频制作、上传及提交前有效性检查 |
 | [queries.py](queries.py)、[use_cases.py](use_cases.py)、[tool_use_cases.py](tool_use_cases.py) | 冻结桌景上下文、HTTP 与工具公开操作 |
 | [lifecycle.py](lifecycle.py)、[backup.py](backup.py)、[backup_assets.py](backup_assets.py)、[asset_references.py](asset_references.py) | 任务恢复、备份和资产引用贡献 |
 
 所有状态写入共用账户行锁，进程内单飞只协调任务，模型等待在事务外。来源库通过公开快照读取；套装冻结参考的资产引用独立于来源条目生命周期。内容哈希用于校验，不代表套装身份，当前衣柜和场景指针不约束制作。
+
+共享动作按冻结原始身份与着装来源匹配桌景，独立版本首次登记为待制作，不持有供应商进度。新动作的持久制作意图归共享目录，存量占位只能经用户请求开始；套装创建提交后经注入端口补齐关联。同步版本的自动继续策略随草稿保存，仅在完整起始画面检查通过后确认图片并制作视频；用户单独制作图片仍等待确认。
 
 当前成品与唯一草稿分离，图片确认绑定实际输入图；修改图片使旧确认和运动脚本失效。具体活动计划、用户定制、系统修复资料与预算随草稿保存，采用后保留计划；成品描述向聊天、自主选择及复用评审提供具体活动和生效要求，制作入口仍读取预设或自定义目标。服务端按状态处理 `retry`，客户端只消费恢复动作。预设默认衔接与草稿、成品的实际衔接分离，共用图条件不足可在草稿中转独立画面。制作冻结资料、预算及并发校验归 PROTOCOL。采用基准同事务作废真正依赖旧基准的草稿、指令与派生资格，并记录后续更新待办；跨任务调度通过 bootstrap 注入回调，不能在事务内触发模型。创建事务先保存输入，前置检查失败仍可恢复。暂停先等待本地任务落盘，再重锁复核草稿；继续不能把上传来源改成新 AI 制作，恢复边界归 PROTOCOL。
 

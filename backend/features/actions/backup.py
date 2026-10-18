@@ -36,7 +36,11 @@ def backup_tables() -> tuple[BackupTable, ...]:
         BackupTable(
             "companion_actions",
             CompanionAction,
-            foreign_keys={"pack_id": "companion_action_packs", "outfit_id": "companion_outfits"},
+            foreign_keys={
+                "pack_id": "companion_action_packs",
+                "outfit_id": "companion_outfits",
+                "definition_id": "action_definitions",
+            },
             strict_references=True,
             prepare_payload=partial(_prepare, "companion_actions"),
             export_payload=_export_action,

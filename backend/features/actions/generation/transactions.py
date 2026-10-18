@@ -10,6 +10,8 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
+from features.action_library.queries import definition_snapshot
+from features.action_library.service import exclude_target, remove_container_targets
 from features.actions.asset_retirement import action_asset_paths, retire_action_assets
 from features.actions.materials import accept_action_asset, accepted_action_asset
 from features.actions.media_contracts import ActionResult
@@ -36,6 +38,7 @@ async def _create_or_reset_pack(
     avatar: AvatarSnapshot | None,
     outfit: OutfitSnapshot,
     reference_hash: str,
+    source_visual_key: str,
 ) -> CompanionActionPack:
     """每套着装保留唯一动作组；零就绪且所有尝试已结算时复用组与动作身份。"""
     pack = await db.scalar(
@@ -62,11 +65,28 @@ async def _create_or_reset_pack(
             raise VideoPackStateError("动作参考生成结果尚未确认，请先核对原任务")
         retired = _pack_assets(pack, list(jobs))
         for job in jobs:
+            invalid_source = False
+            if job.definition_id is not None:
+                definition = await definition_snapshot(db, user_id, job.definition_id)
+                invalid_source = (
+                    not source_visual_key
+                    or pack.source_visual_key != source_visual_key
+                    or definition is None
+                    or definition.outfit_id != outfit.id
+                    or definition.source_visual_key != source_visual_key
+                )
+                if invalid_source:
+                    await exclude_target(db, user_id, job.definition_id, "window", pack.id)
             await reject_pending_action_reviews(db, user_id=user_id, action_id=job.id, media_type=job.media_type)
             clear_action_attempt(job)
             job.metadata_revision += 1
-            job.status, job.stage, job.error = "failed", "design", None
+            job.status, job.stage, job.error = (
+                ("blocked", "invalid_source", "动作的冻结身份或着装来源已变化，无法在这个形象中制作")
+                if invalid_source
+                else ("failed", "design", None)
+            )
             job.reference_hash = reference_hash
+        pack.source_visual_key = source_visual_key
         pack.reference_path = pack.manifest_path = ""
         pack.cover_path = None
         pack.content_hash = ""
@@ -92,6 +112,7 @@ async def _create_or_reset_pack(
         outfit_id=outfit.id,
         status="processing",
         reference_hash=reference_hash,
+        source_visual_key=source_visual_key,
     )
     db.add(pack)
     await db.flush()
@@ -364,6 +385,7 @@ async def _remove_packs(
             candidates -= _pack_assets(other, jobs_by_pack.get(other.id, []))
     removed = removed_video_tasks(job for pack in targets for job in jobs_by_pack.get(pack.id, []))
     for pack in targets:
+        await remove_container_targets(db, user_id, "window", pack.id)
         for job in jobs_by_pack.get(pack.id, []):
             await db.delete(job)
         await db.delete(pack)

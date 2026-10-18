@@ -7,6 +7,23 @@ export const dict: Dictionary = {
   },
 
   common: {
+    actionVariants: {
+      title: 'Creation progress by view',
+      readyWithStatus: (status: string) => `Playable · ${status}`,
+      remakeFailed: 'Remake failed',
+      kinds: { window: 'Outfit', desktop: 'Desktop background' },
+      statuses: {
+        not_generated: 'Not created',
+        queued: 'Waiting to start',
+        processing: 'Creating',
+        ready: 'Playable',
+        review_pending: 'Awaiting review',
+        failed: 'Creation failed',
+        blocked: 'Creation unavailable',
+        disabled: 'Disabled',
+        excluded: 'Removed'
+      }
+    },
     videoQueue: {
       waiting: 'Video queued',
       rate_limited: 'Service busy, waiting to retry',

@@ -1,4 +1,4 @@
-/** 动作包生成流程 store：衣柜页发起生成、进度状态与包列表；可用清单与播放实例由 actions 维护；渲染层不得经本 store 触发付费（缺失动作由显式服务流程统一鉴权、去重、记账）。
+/** 动作包生成流程 store：衣柜页发起生成、进度状态与包列表；可用清单与播放实例由 actions 维护；缺失动作由显式服务流程统一鉴权和去重。
  * 着装及不同动作可并行生成；同一动作在结果确定前不重复提交。 */
 
 import { atom } from 'nanostores'
@@ -86,7 +86,9 @@ export function videoActionIsBusy(
 
     const entry = pack.actions.find(candidate => candidate.action === action)
 
-    return entry ? videoActionIsPending(entry.status) || entry.can_regenerate === false : pack.status === 'processing'
+    return entry
+      ? videoActionIsPending(entry.status) || (entry.can_regenerate === false && !entry.can_generate)
+      : pack.status === 'processing'
   })
 }
 
@@ -512,7 +514,10 @@ export async function generateVideoPack(
           relatedPacks.some(
             pack =>
               pack.status === 'processing' ||
-              pack.actions.some(action => videoActionIsPending(action.status) || action.can_regenerate === false)
+              pack.actions.some(
+                action =>
+                  videoActionIsPending(action.status) || (action.can_regenerate === false && !action.can_generate)
+              )
           )
 
   if (busy) {

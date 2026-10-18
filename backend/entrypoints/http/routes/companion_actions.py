@@ -1,11 +1,10 @@
-"""动作库 REST 入口：目录、提案、播放回执、额度状态与管理操作。"""
+"""动作库 REST 入口：目录、提案、播放回执与管理操作。"""
 
 from typing import Annotated
 
 from fastapi import Path
 from features.actions import use_cases as _actions
 from features.actions.schemas import (
-    ActionBudgetStatus,
     ActionCatalogResponse,
     ActionDesignRequest,
     ActionDesignResult,
@@ -47,11 +46,6 @@ async def submit_playback_receipt(
 ) -> CompanionOperationResponse:
     """播放回执：校验归属与状态；按 play_id 幂等聚合。"""
     return await _actions.submit_playback_receipt(play_id=play_id, receipt=receipt, user_id=user.id, db=db)
-
-
-@router.get("/budget", response_model=ActionBudgetStatus)
-async def get_budget_status(user: CurrentUser, db: DbSession) -> ActionBudgetStatus:
-    return await _actions.get_budget_status(user_id=user.id, db=db)
 
 
 class ActionUpdateRequest(BaseModel):

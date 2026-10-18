@@ -1,15 +1,14 @@
-"""动作上下文快照：陪伴会话每次模型调用前重建并追加到环境提示，夜间规划直接读取字段。可播放列表只含已启用且素材就绪的表达动作；不含额度数值，避免限额影响创建意图。"""
+"""当前形象可播素材与同着装共享设计的快照；登记和制作状态不冒充可播放能力。"""
 
 import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from infrastructure.text import resolve_prompt_text, safe_json_loads, utc_now
-from sqlalchemy import and_, or_, select
+from infrastructure.text import resolve_prompt_text, safe_json_loads
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.actions.models import ActionProposal
-from features.actions.policy import DEFERRED_PROPOSAL_WINDOW, is_expression_action
+from features.action_library.queries import definitions_for_source, variant_summaries
+from features.actions.policy import is_expression_action
 from features.actions.prompts import ACTION_CONTEXT_GUIDANCES
 from features.actions.repository import get_active_pack, list_pack_actions
 from features.actions.usage import ACTION_PROMPT_KEYS, action_to_dict
@@ -55,69 +54,46 @@ async def build_action_context(db: AsyncSession, user_id: int) -> ActionContextS
     actions_by_id = {action.id: action for action in actions}
     snapshot.ready_actions = [action_to_dict(action) for action in actions if is_expression_action(action)]
 
-    proposals = (
-        (
-            await db.execute(
-                select(ActionProposal)
-                .where(
-                    ActionProposal.user_id == user_id,
-                    ActionProposal.pack_id == pack.id,
-                    or_(
-                        ActionProposal.status.in_(("pending", "approved")),
-                        and_(
-                            ActionProposal.status == "deferred",
-                            ActionProposal.updated_at >= utc_now() - DEFERRED_PROPOSAL_WINDOW,
-                        ),
-                    ),
-                )
-                # 按最近一次状态变更倒序：复用旧行重审后再次暂缓的提案排在前面，不被截断挤掉。
-                .order_by(ActionProposal.updated_at.desc(), ActionProposal.id.desc()),
-            )
+    if not pack.source_visual_key:
+        return snapshot
+    definitions = await definitions_for_source(db, user_id, pack.outfit_id, pack.source_visual_key)
+    definitions_by_id = {definition.id: definition for definition in definitions}
+    for definition in definitions:
+        design = definition.model_dump(
+            include={"name", "motion_description", "use_when", "avoid_when", "clip_kind", "duration_seconds"},
         )
-        .scalars()
-        .all()
-    )
-    # 未完成提案保留真实制作状态；已成功或已删除动作不再出现在 in_flight。
-    for p in proposals:
-        action = actions_by_id.get(p.action_id) if p.action_id is not None else None
-        if p.status == "approved" and (action is None or action.status == "succeeded"):
+        if definition.status == "rejected":
+            snapshot.recent_rejections.append(
+                {
+                    "proposal_id": definition.id,
+                    "definition_id": definition.id,
+                    "design": design,
+                    "review_reason": definition.review_reason,
+                },
+            )
+            continue
+        if definition.status not in {"pending", "reviewing", "deferred", "approved", "reused"}:
+            continue
+        canonical = definitions_by_id.get(definition.reuse_definition_id or definition.id)
+        variants = await variant_summaries(db, user_id, canonical.id) if canonical is not None else []
+        local = next(
+            (variant for variant in variants if variant.target_kind == "window" and variant.target_id == pack.id),
+            None,
+        )
+        action = actions_by_id.get(local.action_id) if local is not None and local.action_id is not None else None
+        if local is not None and local.has_ready_asset and local.status not in {"disabled", "excluded", "blocked"}:
             continue
         snapshot.in_flight_proposals.append(
             {
-                "proposal_id": p.id,
-                "status": p.status,
-                "action_id": p.action_id,
-                "action_status": action.status if action is not None else None,
-                "review_reason": p.review_reason or "",
+                "proposal_id": definition.id,
+                "definition_id": definition.id,
+                "status": definition.status,
+                "action_id": action.id if action is not None else None,
+                "action_status": local.status if local is not None else None,
+                "review_reason": definition.review_reason,
                 "error": action.error if action is not None else None,
-                "design": json.loads(p.design_json or "{}"),
-            },
-        )
-
-    rejected = (
-        (
-            await db.execute(
-                select(ActionProposal)
-                .where(
-                    ActionProposal.user_id == user_id,
-                    ActionProposal.pack_id == pack.id,
-                    ActionProposal.status == "rejected",
-                )
-                # 拒绝行的 updated_at 即拒绝时刻，复用重审的旧提案按最近一次拒绝排序。
-                .order_by(ActionProposal.updated_at.desc(), ActionProposal.id.desc())
-                .limit(5),
-            )
-        )
-        .scalars()
-        .all()
-    )
-    for p in rejected:
-        design = json.loads(p.design_json or "{}")
-        snapshot.recent_rejections.append(
-            {
-                "proposal_id": p.id,
                 "design": design,
-                "review_reason": p.review_reason or "",
+                "sync_targets": [variant.model_dump() for variant in variants],
             },
         )
 

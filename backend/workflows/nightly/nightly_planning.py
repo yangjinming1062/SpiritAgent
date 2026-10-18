@@ -962,13 +962,12 @@ async def _execute_action_design(run: _ActionRun, args: dict[str, Any]) -> Actio
             )
         except ValidationError as exc:
             return _invalid_arguments(exc)
-        except Exception as exc:  # 将业务公开的状态或额度错误写入动作账本。
+        except Exception as exc:  # 将业务公开的状态错误写入动作账本。
             return ActionExecutionResult(status="failed", reason=str(exc))
-        if result.status == "reused":
-            return ActionExecutionResult(status="succeeded", fact=_fact(run, "action_reused", name=request.name))
-        if result.status != "pending":
+        if result.status not in {"pending", "reviewing", "approved", "reused"}:
             return ActionExecutionResult(status="failed", reason=result.review_reason or "桌面动作提案未受理")
-        return ActionExecutionResult(status="succeeded", fact=_fact(run, "action_proposed", name=request.name))
+        fact_key = "action_registered" if result.status in {"approved", "reused"} else "action_proposed"
+        return ActionExecutionResult(status="succeeded", fact=_fact(run, fact_key, name=request.name))
     try:
         # 只取能力说明列出的参数，其余字段与其他能力一样忽略。
         request = ActionDesignRequest.model_validate({key: value for key, value in args.items() if key in documented})
@@ -980,27 +979,17 @@ async def _execute_action_design(run: _ActionRun, args: dict[str, Any]) -> Actio
     async with SESSION_LOCAL() as db:
         acceptance = await accept_proposal(db, run.user_id, request, source="autonomous")
         result = acceptance.result
-        if result.outcome == "reused":
-            await db.commit()
-            return ActionExecutionResult(status="succeeded", fact=_fact(run, "action_reused", name=name))
-        if result.outcome != "pending_review":
+        if result.outcome not in {"pending_review", "reused"}:
             return ActionExecutionResult(
                 status="failed",
                 reason=result.message or "提案未受理",
             )
         await db.commit()
 
-    # 评审或重做异步执行；结论经 proposal 状态回流，夜间事实只叙述受理时的实际状态。
+    # 共享评审与各画面制作异步执行，夜间事实只叙述受理状态。
     schedule_accepted_proposal(acceptance, run.user_id)
-    if result.proposal_id is not None:
-        fact = _fact(run, "action_proposed", name=name)
-    elif acceptance.existing_action == "in_production":
-        fact = _fact(run, "action_in_production", name=name)
-    elif acceptance.existing_action == "awaiting_review":
-        fact = _fact(run, "action_awaiting_review", name=name)
-    else:
-        fact = _fact(run, "action_redo", name=name)
-    return ActionExecutionResult(status="succeeded", fact=fact)
+    fact_key = "action_registered" if result.outcome == "reused" else "action_proposed"
+    return ActionExecutionResult(status="succeeded", fact=_fact(run, fact_key, name=name))
 
 
 CapabilityExecutor = Callable[[_ActionRun, dict[str, Any]], Awaitable[ActionExecutionResult]]

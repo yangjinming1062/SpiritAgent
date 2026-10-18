@@ -11,6 +11,7 @@ from typing import Any
 from urllib.parse import unquote, urlsplit
 from uuid import uuid4
 
+from features.action_library.schemas import ActionSourceSnapshot
 from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.config import SETTINGS
 from infrastructure.temp_files import owned_temp_files
@@ -305,6 +306,9 @@ def validate_row_files(table: str, rows: list[dict[str, Any]], rewriter: UrlRewr
                 required.append(row.get("seed_fullbody_url"))
         elif table == "companion_outfits" and row.get("status") == "ready":
             required.append(row.get("fullbody_url"))
+        elif table == "action_definitions":
+            source = ActionSourceSnapshot.model_validate_json(row["review_source_json"])
+            required.extend(source.reference_paths)
         elif table == "companion_scenes":
             if row.get("status") == "ready":
                 required.append(row.get("media_path"))

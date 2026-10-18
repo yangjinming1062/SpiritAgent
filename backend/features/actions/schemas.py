@@ -1,10 +1,10 @@
-"""动作库跨边界 schema：工具入参、REST 响应、播放指令与回执。source / user_id / 预算日 / 系统槽位由服务端绑定。"""
+"""动作库跨边界 schema：工具入参、REST 响应、播放指令与回执。source / user_id / 系统槽位由服务端绑定。"""
 
 import json
 from typing import Annotated, Literal
 
 from infrastructure.constants import POSTGRES_INT4_MAX
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator, model_validator
 
 ABSOLUTE_MAX_DURATION_SECONDS = 15.0
 
@@ -78,6 +78,22 @@ class ActionDesignRequest(BaseModel):
     clip_kind: str = Field(pattern="^(loop|once)$")
     expected_pack_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)
 
+    @field_validator("name", "motion_description")
+    @classmethod
+    def nonblank_design_text(cls, value: str, info: ValidationInfo) -> str:
+        if not value.strip():
+            raise ValueError("动作名称与描述不能为空")
+        if info.field_name == "motion_description" and len(value.strip()) < 10:
+            raise ValueError("动作描述至少需要10个字符")
+        return value.strip()
+
+    @field_validator("use_when", "avoid_when")
+    @classmethod
+    def nonblank_conditions(cls, value: list[str]) -> list[str]:
+        if any(not item.strip() for item in value):
+            raise ValueError("动作条件不能为空")
+        return value
+
     @field_validator("duration_seconds")
     @classmethod
     def validate_integer_duration(cls, value: float) -> float:
@@ -92,6 +108,7 @@ class ActionDesignResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     outcome: str = Field(pattern="^(reused|pending_review|rejected)$")
+    definition_id: int | None = None
     proposal_id: int | None = None
     action_id: int | None = None
     message: str = ""
@@ -152,18 +169,3 @@ class ActionCatalogResponse(BaseModel):
     catalog_version: int
     appearance_epoch: int
     manifest_url: str | None = None
-
-
-class ActionBudgetStatus(BaseModel):
-    """当前用户动态动作制作额度状态（滚动24小时）。
-    上限实际值由后台配置给出，schema 不背书默认。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    budget_date: str
-    window_start: str
-    window_end: str
-    autonomous_create_used: int = 0
-    autonomous_create_limit: int = 0
-    user_requested_create_used: int = 0
-    user_requested_create_limit: int = 0

@@ -1,7 +1,6 @@
 """桌面生活的组合准备、动作评审与播放协调。"""
 
 import asyncio
-import hashlib
 import json
 from datetime import timedelta
 from pathlib import Path
@@ -9,8 +8,7 @@ from tempfile import TemporaryDirectory
 from typing import Literal
 from uuid import uuid4
 
-from infrastructure.ai.error_classifier import LlmCallBlockedError
-from infrastructure.ai.prompt_engineer import VisualReasoningError, chat, vision_chat
+from infrastructure.ai.prompt_engineer import VisualReasoningError, chat
 from infrastructure.ai.selection import ProviderSelection
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import (
@@ -31,11 +29,12 @@ from infrastructure.video_processing.desktop import extract_desktop_first_frame
 from infrastructure.video_processing.ffmpeg import VideoProcessError, probe_video
 from pydantic import BaseModel, ConfigDict, Field
 from runtime.paid_work import require_new_generation_call
-from runtime.user_maintenance import track_user_task
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.actions.repository import normalize_action_name
+from features.action_library.identity import source_visual_key
+from features.action_library.ports import read_source
+from features.action_library.service import register_source_targets, remove_container_targets
 from features.assets.lifecycle import (
     cleanup_asset_directories,
     cleanup_asset_directories_after_task,
@@ -56,6 +55,7 @@ from features.desktop_life.generation import (
     desktop_progress_can_resume,
     desktop_progress_has_unknown_submission,
     load_desktop_visual_snapshot,
+    notify_desktop_set_updated,
     pause_desktop_video_job,
     prepare_uploaded_desktop_image,
     resolve_desktop_video_plan,
@@ -67,10 +67,14 @@ from features.desktop_life.geometry import (
     probe_desktop_image,
     probe_desktop_video,
 )
-from features.desktop_life.models import DesktopVideoAction, DesktopVideoPlayback, DesktopVideoProposal, DesktopVideoSet
+from features.desktop_life.models import DesktopVideoAction, DesktopVideoPlayback, DesktopVideoSet
 from features.desktop_life.policy import DEFERRED_PLAY_INTENT_TTL_SECONDS, desktop_autonomous_block_reason
+from features.desktop_life.ports import (
+    design_shared_desktop_action,
+    desktop_set_created,
+    shared_desktop_proposal,
+)
 from features.desktop_life.prompts import (
-    DESKTOP_ACTION_REVIEW,
     DESKTOP_CONTEXT_GUIDANCE,
     DESKTOP_EXTERNAL_VIDEO_TEMPLATES,
     DESKTOP_IDLE_EXPRESSION,
@@ -81,7 +85,7 @@ from features.desktop_life.prompts import (
     DESKTOP_VIDEO_QUIET,
     desktop_source_reference_prompt,
 )
-from features.desktop_life.queries import activated_desktop_environment
+from features.desktop_life.queries import activated_desktop_environment, desktop_action_source
 from features.desktop_life.repository import (
     DesktopVideoAspectRatioError,
     DesktopVideoError,
@@ -93,6 +97,7 @@ from features.desktop_life.repository import (
     desktop_action,
     desktop_action_description,
     desktop_action_response,
+    desktop_action_response_with_sync,
     desktop_asset_description,
     desktop_failed_opening_review,
     desktop_image_origin,
@@ -144,7 +149,6 @@ from features.media.contracts import RemovedActionVideoTask
 
 logger = get_logger(__name__)
 _LOCKS: dict[int, asyncio.Lock] = {}
-_REVIEWS: dict[int, asyncio.Task[None]] = {}
 
 
 def _lock(user_id: int) -> asyncio.Lock:
@@ -204,7 +208,7 @@ async def list_desktop_video_sets(db: AsyncSession, user_id: int) -> DesktopVide
 
 
 async def get_desktop_action_response(db: AsyncSession, user_id: int, action_id: int) -> DesktopVideoActionResponse:
-    return desktop_action_response(await desktop_action(db, user_id, action_id, lock=True))
+    return await desktop_action_response_with_sync(db, await desktop_action(db, user_id, action_id, lock=True))
 
 
 async def get_desktop_external_prompt(
@@ -391,21 +395,7 @@ async def get_desktop_proposal_response(
     user_id: int,
     proposal_id: int,
 ) -> DesktopVideoProposalResponse:
-    row = await db.scalar(
-        select(DesktopVideoProposal).where(
-            DesktopVideoProposal.id == proposal_id,
-            DesktopVideoProposal.user_id == user_id,
-        ),
-    )
-    if row is None:
-        raise DesktopVideoNotFoundError("找不到对应的桌面动作提案")
-    return DesktopVideoProposalResponse(
-        proposal_id=row.id,
-        set_id=row.set_id,
-        action_id=row.action_id,
-        status=row.status,
-        review_reason=row.review_reason,
-    )
+    return await shared_desktop_proposal(db, user_id, proposal_id)
 
 
 async def _suite(db: AsyncSession, user_id: int, set_id: int) -> DesktopVideoSet:
@@ -436,6 +426,12 @@ async def _create_suite(
         avatar_id=snapshot.identity.avatar_id,
         outfit_id=snapshot.outfit_id,
         scene_id=snapshot.scene_id,
+        source_visual_key=source_visual_key(
+            snapshot.identity_hash,
+            snapshot.outfit_hash,
+            portrait_hash=snapshot.portrait_hash,
+            identity_reference_role=snapshot.identity_reference_role,
+        ),
         context_hash=desktop_context_hash(snapshot),
         context_json=snapshot.model_dump_json(),
         title=name,
@@ -492,6 +488,10 @@ async def _create_suite(
         )
     await db.flush()
     await touch_desktop_state(db, user_id)
+    action_source = await read_source(db, user_id, "desktop", row.id)
+    if action_source is None:
+        raise RuntimeError("新桌景的共享动作来源无法读取")
+    await register_source_targets(db, action_source)
     return row
 
 
@@ -542,6 +542,7 @@ async def create_desktop_video_set(user_id: int, request: DesktopVideoCreateSetR
             ):
                 raise DesktopVideoStateError("这个创建请求已经用于另一套画面")
         set_id = row.id
+    await desktop_set_created(user_id, set_id)
     if idle_id is not None:
         try:
             await generate_desktop_image(user_id, idle_id, feedback=request.feedback.strip())
@@ -592,9 +593,8 @@ async def delete_desktop_video_set(db: AsyncSession, user_id: int, set_id: int) 
     paths = asset_paths(row.context_json, user_id) | ({row.base_image_path} if row.base_image_path else set())
     directory = f"desktop/{set_id}"
     paths |= await collect_asset_directory_paths(user_id, directory)
-    proposals = await db.scalars(select(DesktopVideoProposal).where(DesktopVideoProposal.set_id == set_id))
-    paths |= asset_paths([proposal.design_json for proposal in proposals], user_id)
     removed_tasks = []
+    await remove_container_targets(db, user_id, "desktop", set_id)
     for action in actions:
         removed = desktop_removed_video_task(action)
         if removed is not None:
@@ -652,6 +652,7 @@ async def ensure_current_desktop_videos(
     target_height: int | None = None,
 ) -> DesktopVideoStateResponse:
     idle_id = None
+    created_set_id = None
     async with _lock(user_id), SESSION_LOCAL() as db:
         state = await desktop_state(db, user_id, create=True)
         if target_width is not None and target_height is not None and not state.default_created:
@@ -687,6 +688,7 @@ async def ensure_current_desktop_videos(
                 ),
             )
             await db.commit()
+            created_set_id = row.id
         elif allow_generation:
             idle_id = await db.scalar(
                 select(DesktopVideoAction.id)
@@ -699,6 +701,8 @@ async def ensure_current_desktop_videos(
                     DesktopVideoAction.generation_state_json.is_(None),
                 ),
             )
+    if created_set_id is not None:
+        await desktop_set_created(user_id, created_set_id)
     if idle_id is not None and allow_generation:
         try:
             await generate_desktop_image(user_id, idle_id, source=source)
@@ -820,10 +824,20 @@ async def generate_desktop_image(
     expected_resolution_revision: int | None = None,
     aspect_policy: str = "ask",
     source: str = "user_requested",
+    auto_continue: bool = False,
 ) -> DesktopVideoActionResponse:
     async with _lock(user_id), SESSION_LOCAL() as db:
         action = await desktop_action(db, user_id, action_id, lock=True)
         row = await _suite(db, user_id, action.set_id)
+        state = await desktop_state(db, user_id, create=True)
+        if source == "autonomous" and (not state.autonomous_enabled or not SETTINGS.action_autocreate_enabled):
+            raise DesktopVideoStateError("自主制作动作当前已关闭")
+        if action.definition_id is not None:
+            source_snapshot = await desktop_action_source(db, user_id, row.id)
+            if source_snapshot is None or not source_snapshot.ready:
+                raise DesktopVideoStateError(
+                    source_snapshot.blocked_reason if source_snapshot else "桌景冻结参考资料无法读取",
+                )
         old = desktop_progress(action)
         accepted = desktop_accepted_asset(action)
         if feedback is None:
@@ -845,7 +859,7 @@ async def generate_desktop_image(
         if action.key != "idle" and continuity == "base":
             continuity = "independent"
         if action.status == "processing" and action.stage != "paused":
-            return desktop_action_response(action)
+            return await desktop_action_response_with_sync(db, action)
         if old is not None and desktop_progress_has_unknown_submission(old):
             raise DesktopVideoStateError("供应商提交结果尚未确认，请先放弃本次制作再重新开始")
         exhausted_expansion = old is not None and old.expand_image and desktop_image_chain_exhausted(old)
@@ -866,6 +880,7 @@ async def generate_desktop_image(
             progress = old
             progress.paused_by_user = False
             progress.source = source
+            progress.auto_continue = auto_continue
             progress.failure_reason = ""
         else:
             retry_expansion = old is not None and old.expand_image and not regenerate
@@ -874,6 +889,8 @@ async def generate_desktop_image(
                 previous = old.previous_pose_path or old.source_image_path
             accepted = desktop_accepted_asset(action)
             previous = previous or (accepted.image_path if accepted else None)
+            if previous is None and auto_continue and action.definition_id is not None:
+                previous = row.base_image_path
             if not previous and action.key != "idle" and action.continuity == "base":
                 previous = row.base_image_path
             geometry_mode: Literal["target", "keep"] = "target"
@@ -941,6 +958,7 @@ async def generate_desktop_image(
                 base_version=row.base_version + 1 if continuity == "base" else None,
                 replace_base=action.key == "idle",
                 image_only=True,
+                auto_continue=auto_continue,
                 previous_pose_path=previous,
                 previous_image_origin=image_origin,
                 image_selection=ProviderSelection(origin=image_origin, mode=selection_mode),
@@ -964,7 +982,7 @@ async def generate_desktop_image(
         action.status, action.stage, action.error = "processing", "prepare", None
         await touch_desktop_state(db, user_id)
         await db.commit()
-        response = desktop_action_response(action)
+        response = await desktop_action_response_with_sync(db, action)
     if not resume:
         cancel_desktop_video_job(action_id)
         spawn_removed_action_task_cancellation(user_id, [removed_task] if removed_task else [])
@@ -1107,7 +1125,8 @@ async def upload_desktop_image(
     spawn_removed_action_task_cancellation(user_id, [removed_task] if removed_task else [])
     if progress.expand_image and action.status == "processing" and not progress.paused_by_user:
         schedule_desktop_video_job(user_id, action_id)
-    return desktop_action_response(action)
+    async with SESSION_LOCAL() as db:
+        return await get_desktop_action_response(db, user_id, action_id)
 
 
 async def confirm_desktop_image(
@@ -1137,7 +1156,7 @@ async def confirm_desktop_image(
         if desktop_progress_has_unknown_submission(progress):
             raise DesktopVideoStateError("供应商提交结果尚未确认，请先放弃本次制作再重新开始")
         if progress.image_confirmed and action.stage not in {"image_review", "image_confirmed"}:
-            return desktop_action_response(action)
+            return await desktop_action_response_with_sync(db, action)
         if action.stage not in {"image_review", "image_confirmed"}:
             raise DesktopVideoStateError("当前图片尚未准备好")
         progress.image_confirmed = True
@@ -1153,7 +1172,7 @@ async def confirm_desktop_image(
         action.generation_state_json = progress.model_dump_json()
         await touch_desktop_state(db, user_id)
         await db.commit()
-        response = desktop_action_response(action)
+        response = await desktop_action_response_with_sync(db, action)
     if generate_video:
         schedule_desktop_video_job(user_id, action_id)
     return response
@@ -1172,7 +1191,7 @@ async def pause_desktop_action(
             progress = desktop_progress(action)
             _validate_draft(row, progress, draft_id=draft_id)
             if progress is None or action.status != "processing" or action.stage == "paused":
-                return desktop_action_response(action)
+                return await desktop_action_response_with_sync(db, action)
             if action.stage == "image_upload":
                 raise DesktopVideoStateError("图片正在保存，请等待完成")
             generation_id = progress.generation_id
@@ -1188,7 +1207,7 @@ async def pause_desktop_action(
                 action.stage, action.error = "paused", None
                 await touch_desktop_state(db, user_id)
                 await db.commit()
-            return desktop_action_response(action)
+            return await desktop_action_response_with_sync(db, action)
 
 
 async def retry_desktop_action(
@@ -1214,13 +1233,13 @@ async def retry_desktop_action(
             raise DesktopVideoStateError("制作草稿已失效")
         running = action.status == "processing" and action.stage != "paused"
         if running or desktop_progress_has_unknown_submission(progress):
-            return desktop_action_response(action)
+            return await desktop_action_response_with_sync(db, action)
         if (
             action.stage in {"complete", "review", "image_review", "image_confirmed"}
             and not desktop_failed_opening_review(action, progress)
             or progress.failure_reason == "activity_unsupported"
         ):
-            return desktop_action_response(action)
+            return await desktop_action_response_with_sync(db, action)
         if (
             progress.source == "external_upload"
             and progress.video_refinement is None
@@ -1229,7 +1248,7 @@ async def retry_desktop_action(
                 or not (progress.source_path or progress.candidate)
             )
         ):
-            return desktop_action_response(action)
+            return await desktop_action_response_with_sync(db, action)
         restart_refinement = progress.video_refinement is not None and not desktop_progress_can_resume(progress)
         image = ImageChainState.model_validate_json(progress.image_chain_json) if progress.image_chain_json else None
         new_image = action.status == "failed" and (
@@ -1274,11 +1293,11 @@ async def retry_desktop_action(
             action.status, action.stage, action.error = "processing", "repairing", None
             await touch_desktop_state(db, user_id)
             await db.commit()
-            response = desktop_action_response(action)
+            response = await desktop_action_response_with_sync(db, action)
         else:
             response = None
         resumable = action.stage == "paused" or desktop_progress_can_resume(progress)
-        feedback, image_only = progress.feedback, progress.image_only
+        feedback, image_only, auto_continue = progress.feedback, progress.image_only, progress.auto_continue
     if restart_refinement:
         return await _restart_desktop_refinement(
             user_id,
@@ -1306,6 +1325,7 @@ async def retry_desktop_action(
             expected_draft_id=draft_id,
             expected_base_version=expected_base_version,
             expected_resolution_revision=expected_resolution_revision,
+            auto_continue=auto_continue,
         )
     return await generate_desktop_action(
         user_id,
@@ -1366,7 +1386,7 @@ async def _restart_desktop_refinement(
             resolution_revision=observed_resolution,
         )
         if action.status == "processing" and action.stage != "paused":
-            return desktop_action_response(action)
+            return await desktop_action_response_with_sync(db, action)
         if old is None or old.video_refinement is None or desktop_progress_has_unknown_submission(old):
             raise DesktopVideoStateError("视频调整状态已变化，请刷新后重试")
         require_new_generation_call(user_id)
@@ -1400,7 +1420,7 @@ async def _restart_desktop_refinement(
         await enqueue_asset_cleanup(db, user_id, old_paths - asset_paths(action.generation_state_json, user_id))
         await touch_desktop_state(db, user_id)
         await db.commit()
-        response = desktop_action_response(action)
+        response = await desktop_action_response_with_sync(db, action)
     cancel_desktop_video_job(action_id)
     spawn_removed_action_task_cancellation(user_id, [removed_task] if removed_task else [])
     schedule_desktop_video_job(user_id, action_id)
@@ -1429,7 +1449,7 @@ async def resume_desktop_action(
         if progress is None:
             raise DesktopVideoStateError("制作草稿已失效")
         if action.status == "processing" and action.stage != "paused":
-            return desktop_action_response(action)
+            return await desktop_action_response_with_sync(db, action)
         if desktop_progress_has_unknown_submission(progress):
             raise DesktopVideoStateError("供应商提交结果尚未确认，请先核对结果或放弃本次制作")
         if action.stage in {
@@ -1464,7 +1484,7 @@ async def resume_desktop_action(
         )
         await touch_desktop_state(db, user_id)
         await db.commit()
-        response = desktop_action_response(action)
+        response = await desktop_action_response_with_sync(db, action)
     schedule_desktop_video_job(user_id, action_id)
     return response
 
@@ -1482,7 +1502,13 @@ async def cancel_desktop_action(
         removed_task = desktop_removed_video_task(action)
         await enqueue_asset_cleanup(db, user_id, asset_paths(action.generation_state_json, user_id))
         action.generation_state_json = None
-        action.status = "ready" if desktop_accepted_asset(action) else "queued"
+        action.status = (
+            "ready"
+            if desktop_accepted_asset(action)
+            else "not_generated"
+            if action.definition_id is not None
+            else "queued"
+        )
         action.stage, action.error, action.update_pending = (
             "complete" if action.accepted_asset_json else "prepare",
             None,
@@ -1490,7 +1516,7 @@ async def cancel_desktop_action(
         )
         await touch_desktop_state(db, user_id)
         await db.commit()
-        response = desktop_action_response(action)
+        response = await desktop_action_response_with_sync(db, action)
     cancel_desktop_video_job(action_id)
     spawn_removed_action_task_cancellation(user_id, [removed_task] if removed_task else [])
     return response
@@ -1568,12 +1594,13 @@ async def generate_desktop_action(
     expected_resolution_revision: int | None = None,
     aspect_policy: str = "ask",
     pending_update: bool = False,
+    auto_continue: bool | None = None,
 ) -> DesktopVideoActionResponse:
     async with SESSION_LOCAL() as db:
         action = await desktop_action(db, user_id, action_id, lock=True)
         row = await _suite(db, user_id, action.set_id)
         if pending_update and (not action.enabled or not action.update_pending):
-            return desktop_action_response(action)
+            return await desktop_action_response_with_sync(db, action)
         progress = desktop_progress(action)
         _validate_draft(
             row,
@@ -1583,12 +1610,15 @@ async def generate_desktop_action(
             resolution_revision=expected_resolution_revision,
         )
         if action.status == "processing" and action.stage != "paused":
-            return desktop_action_response(action)
+            return await desktop_action_response_with_sync(db, action)
         if progress is not None and desktop_progress_has_unknown_submission(progress):
             raise DesktopVideoStateError("供应商提交结果尚未确认，请先等待结果或放弃本次制作")
         if progress is not None and action.stage == "image_review":
             raise DesktopVideoStateError("请先确认图片后再生成视频")
         accepted = desktop_accepted_asset(action)
+        continue_automatically = (
+            auto_continue if auto_continue is not None else action.definition_id is not None and accepted is None
+        )
         if feedback is None:
             feedback = (
                 progress.feedback
@@ -1690,6 +1720,7 @@ async def generate_desktop_action(
             expected_resolution_revision=expected_resolution_revision,
             aspect_policy=aspect_policy,
             source=source,
+            auto_continue=continue_automatically,
         )
     seconds, providers = (
         (duration, [])
@@ -1712,7 +1743,7 @@ async def generate_desktop_action(
         state = await desktop_state(db, user_id, create=True)
         old = desktop_progress(action)
         if pending_update and (not action.enabled or not action.update_pending):
-            return desktop_action_response(action)
+            return await desktop_action_response_with_sync(db, action)
         _validate_draft(
             row,
             old if action.stage != "complete" else None,
@@ -1730,7 +1761,7 @@ async def generate_desktop_action(
         if source == "autonomous" and (not state.autonomous_enabled or not SETTINGS.action_autocreate_enabled):
             raise DesktopVideoStateError("自主制作动作当前已关闭")
         if action.status == "processing" and action.stage != "paused":
-            return desktop_action_response(action)
+            return await desktop_action_response_with_sync(db, action)
         if old is not None and desktop_progress_has_unknown_submission(old):
             raise DesktopVideoStateError("供应商提交结果尚未确认，请先放弃本次制作再重新开始")
         if action.stage == "image_review":
@@ -1845,7 +1876,7 @@ async def generate_desktop_action(
         action.status, action.stage, action.error, action.update_pending = "processing", "video", None, False
         await touch_desktop_state(db, user_id)
         await db.commit()
-        response = desktop_action_response(action)
+        response = await desktop_action_response_with_sync(db, action)
     if not resume:
         cancel_desktop_video_job(action_id)
         spawn_removed_action_task_cancellation(user_id, [removed_task] if removed_task else [])
@@ -2046,7 +2077,7 @@ async def refine_desktop_video(
         await enqueue_asset_cleanup(db, user_id, old_paths - asset_paths(action.generation_state_json, user_id))
         await touch_desktop_state(db, user_id)
         await db.commit()
-        response = desktop_action_response(action)
+        response = await desktop_action_response_with_sync(db, action)
     cancel_desktop_video_job(action_id)
     spawn_removed_action_task_cancellation(user_id, [removed_task] if removed_task else [])
     schedule_desktop_video_job(user_id, action_id)
@@ -2306,7 +2337,8 @@ async def upload_desktop_action(
             raise DesktopVideoStateError("上传视频保存失败，请重试") from exc
     if action.status == "processing" and current is not None and not current.paused_by_user:
         schedule_desktop_video_job(user_id, action_id)
-    return desktop_action_response(action)
+    async with SESSION_LOCAL() as db:
+        return await get_desktop_action_response(db, user_id, action_id)
 
 
 async def review_desktop_action(
@@ -2326,7 +2358,7 @@ async def review_desktop_action(
         if action.stage == "complete" and progress and draft_id == progress.generation_id:
             if not accepted:
                 raise DesktopVideoStateError("该视频已被采用，不能拒绝同一草稿")
-            return desktop_action_response(action)
+            return await desktop_action_response_with_sync(db, action)
         _validate_draft(
             row,
             progress,
@@ -2353,15 +2385,21 @@ async def review_desktop_action(
             await enqueue_asset_cleanup(db, user_id, {progress.candidate.video_path, progress.candidate.poster_path})
             await enqueue_asset_cleanup(db, user_id, asset_paths(action.generation_state_json, user_id))
             action.generation_state_json = None
-            action.status = "ready" if action.accepted_asset_json else "queued"
+            action.status = (
+                "ready"
+                if action.accepted_asset_json
+                else "not_generated"
+                if action.definition_id is not None
+                else "queued"
+            )
             action.stage, action.error = "complete" if action.accepted_asset_json else "prepare", None
             await touch_desktop_state(db, user_id)
         await db.commit()
-        response = desktop_action_response(action)
+        response = await desktop_action_response_with_sync(db, action)
         set_id = action.set_id
     if accepted:
         spawn_removed_action_task_cancellation(user_id, removed_tasks)
-        await schedule_pending_desktop_updates(user_id, set_id)
+        await notify_desktop_set_updated(user_id, set_id)
     return response
 
 
@@ -2462,13 +2500,6 @@ async def record_desktop_playback(db: AsyncSession, user_id: int, play_id: str, 
     )
 
 
-class DesktopProposalVerdict(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    decision: str = Field(pattern=r"^(approve|reuse|defer|reject)$")
-    reason: str = Field(max_length=400)
-    reuse_action_id: int | None = None
-
-
 async def design_desktop_action(
     user_id: int,
     request: DesktopVideoDesignRequest,
@@ -2476,338 +2507,12 @@ async def design_desktop_action(
     source: str = "user_requested",
     require_desktop: bool = False,
 ) -> DesktopVideoProposalResponse:
-    retry_action_id: int | None = None
-    async with _lock(user_id), SESSION_LOCAL() as db:
-        if require_desktop:
-            _require_desktop_mode(user_id)
-        state = await desktop_state(db, user_id, lock=True)
-        if state is None or (state.current_set_id is None and request.expected_set_id is None):
-            raise DesktopVideoStateError("请先准备可用画面")
-        if source == "autonomous" and (not state.autonomous_enabled or not SETTINGS.action_autocreate_enabled):
-            raise DesktopVideoStateError("自主制作桌面动作当前已关闭")
-        target_id = request.expected_set_id or state.current_set_id
-        row = await _suite(db, user_id, target_id)
-        if source == "autonomous" and row.id != state.current_set_id:
-            raise DesktopVideoStateError("只能为当前显示的画面自主制作动作")
-        normalized = normalize_action_name(request.name)
-        key = "custom_" + hashlib.sha256(normalized.encode()).hexdigest()[:24]
-        existing_action = await db.scalar(
-            select(DesktopVideoAction).where(DesktopVideoAction.set_id == row.id, DesktopVideoAction.key == key),
-        )
-        if existing_action is not None:
-            proposal = await db.scalar(
-                select(DesktopVideoProposal)
-                .where(
-                    DesktopVideoProposal.user_id == user_id,
-                    DesktopVideoProposal.set_id == row.id,
-                    DesktopVideoProposal.action_id == existing_action.id,
-                )
-                .order_by(DesktopVideoProposal.id.desc())
-                .limit(1),
-            )
-            response = DesktopVideoProposalResponse(
-                proposal_id=proposal.id if proposal else 0,
-                set_id=row.id,
-                action_id=existing_action.id,
-                status=existing_action.status,
-                review_reason="同名动作沿用原设计，修改内容请使用新的动作名称",
-            )
-            if desktop_accepted_asset(existing_action) is not None and not existing_action.needs_update:
-                response.status = "reused"
-                return response
-            if (
-                not existing_action.needs_update
-                and existing_action.status not in {"queued", "failed"}
-                and existing_action.stage != "paused"
-            ):
-                return response
-            durations = {existing_action.duration_seconds}
-            if proposal is not None:
-                original = DesktopVideoDesignRequest.model_validate_json(proposal.design_json)
-                durations.add(original.duration_seconds)
-            if (
-                request.motion_description != existing_action.description
-                or request.kind != existing_action.kind
-                or request.duration_seconds not in durations
-                or request.use_when != json.loads(existing_action.use_when_json)
-                or request.avoid_when != json.loads(existing_action.avoid_when_json)
-                or request.continuity != existing_action.continuity
-                or request.allowed_triggers != json.loads(existing_action.allowed_triggers_json)
-            ):
-                return response
-            retry_action_id = existing_action.id
-        else:
-            semantic_design = request.model_dump(exclude={"reason", "expected_set_id"})
-            semantic_design["name"] = normalized
-            semantic_design["allowed_triggers"] = sorted(request.allowed_triggers)
-            fingerprint = hashlib.sha256(
-                json.dumps(
-                    semantic_design,
-                    sort_keys=True,
-                ).encode(),
-            ).hexdigest()
-            proposal = await db.scalar(
-                select(DesktopVideoProposal).where(
-                    DesktopVideoProposal.set_id == row.id,
-                    DesktopVideoProposal.fingerprint == fingerprint,
-                ),
-            )
-            if proposal is None:
-                proposal = DesktopVideoProposal(
-                    user_id=user_id,
-                    set_id=row.id,
-                    fingerprint=fingerprint,
-                    design_json=request.model_dump_json(),
-                    source=source,
-                    status="pending",
-                    review_reason="",
-                )
-                db.add(proposal)
-                await db.flush()
-                await touch_desktop_state(db, user_id)
-            elif proposal.status in {"rejected", "deferred"}:
-                if proposal.status == "rejected":
-                    return DesktopVideoProposalResponse(
-                        proposal_id=proposal.id,
-                        set_id=row.id,
-                        action_id=proposal.action_id,
-                        status=proposal.status,
-                        review_reason=proposal.review_reason,
-                    )
-                proposal.status, proposal.source = "pending", source
-            await db.commit()
-            response = DesktopVideoProposalResponse(
-                proposal_id=proposal.id,
-                set_id=row.id,
-                action_id=proposal.action_id,
-                status=proposal.status,
-                review_reason=proposal.review_reason,
-            )
-    if retry_action_id is not None:
-        try:
-            action = await generate_desktop_action(user_id, retry_action_id, source=source)
-        except (DesktopVideoError, LlmCallBlockedError, VisualReasoningError) as exc:
-            response.status, response.review_reason = "deferred", str(exc)
-            return response
-        response.status = action.status
-        if response.proposal_id:
-            async with _lock(user_id), SESSION_LOCAL() as db:
-                proposal = await db.scalar(
-                    select(DesktopVideoProposal).where(
-                        DesktopVideoProposal.id == response.proposal_id,
-                        DesktopVideoProposal.user_id == user_id,
-                        DesktopVideoProposal.action_id == retry_action_id,
-                    ),
-                )
-                if proposal is not None and proposal.status == "deferred":
-                    proposal.status = "approved"
-                    await touch_desktop_state(db, user_id)
-                    await db.commit()
-        return response
-    _schedule_desktop_review(user_id, response.proposal_id)
-    return response
-
-
-async def _review_desktop_proposal(user_id: int, proposal_id: int) -> None:
-    try:
-        async with SESSION_LOCAL() as db:
-            proposal = await db.scalar(
-                select(DesktopVideoProposal).where(
-                    DesktopVideoProposal.id == proposal_id,
-                    DesktopVideoProposal.user_id == user_id,
-                ),
-            )
-            if proposal is None or proposal.status != "pending":
-                return
-            row = await db.get(DesktopVideoSet, proposal.set_id)
-            snapshot = DesktopVisualSnapshot.model_validate_json(row.context_json)
-            reviewed_base_version, reviewed_base_path = row.base_version, row.base_image_path
-            request = DesktopVideoDesignRequest.model_validate_json(proposal.design_json)
-            use_base_reference = request.continuity == "base"
-            if use_base_reference and not row.base_image_path:
-                raise DesktopVideoStateError("请先制作安静相伴的基础画面，再设计与它衔接的活动")
-            portrait_path = row.base_image_path if use_base_reference else snapshot.primary_reference_path
-            language = resolve_language(await get_user_setting(db, user_id, "language"))
-            existing = list(
-                await db.scalars(
-                    select(DesktopVideoAction).where(
-                        DesktopVideoAction.set_id == row.id,
-                        DesktopVideoAction.enabled.is_(True),
-                        DesktopVideoAction.accepted_asset_json.is_not(None),
-                        DesktopVideoAction.needs_update.is_(False),
-                    ),
-                ),
-            )
-            existing_payload = [
-                {
-                    "id": action.id,
-                    "name": action.name,
-                    "description": desktop_asset_description(action, asset),
-                    "kind": action.kind,
-                    "duration_seconds": action.duration_seconds,
-                    "use_when": json.loads(action.use_when_json),
-                    "avoid_when": json.loads(action.avoid_when_json),
-                    "continuity": asset.continuity,
-                    "allowed_triggers": json.loads(action.allowed_triggers_json),
-                }
-                for action in existing
-                if (asset := desktop_accepted_asset(action)) is not None
-            ]
-
-        async def before_submit() -> None:
-            require_new_generation_call(user_id)
-            async with SESSION_LOCAL() as db:
-                current_suite = await _suite(db, user_id, proposal.set_id)
-                if (current_suite.base_version, current_suite.base_image_path) != (
-                    reviewed_base_version,
-                    reviewed_base_path,
-                ):
-                    raise LlmCallBlockedError("基础画面已更新，请基于新画面重新评审动作")
-                state = await desktop_state(db, user_id, create=True)
-                current_proposal = await db.get(DesktopVideoProposal, proposal_id)
-                if current_proposal is None or current_proposal.status != "pending":
-                    raise LlmCallBlockedError("这项动作设计已停止评审")
-                if proposal.source == "autonomous" and (
-                    not state.autonomous_enabled
-                    or not SETTINGS.action_autocreate_enabled
-                    or state.current_set_id != proposal.set_id
-                    or get_presentation_snapshot(user_id) is None
-                    or get_presentation_snapshot(user_id).mode != "desktop"
-                ):
-                    raise LlmCallBlockedError("自主制作当前已关闭")
-
-        portrait = await asyncio.to_thread(read_valid_image_data_uri, portrait_path)
-        outfit = (
-            portrait if use_base_reference else await asyncio.to_thread(read_valid_image_data_uri, snapshot.outfit_path)
-        )
-        if not portrait or not outfit:
-            raise DesktopVideoStateError("参考图片无法读取")
-        raw = await vision_chat(
-            user_id,
-            DESKTOP_ACTION_REVIEW,
-            json.dumps(
-                {
-                    "design": request.model_dump(exclude={"expected_set_id"}),
-                    "output_language": language,
-                    "identity": snapshot.identity.features.model_dump() if not use_base_reference else {},
-                    "persona": snapshot.persona,
-                    "outfit": snapshot.outfit_description if not use_base_reference else "",
-                    "environment": snapshot.scene_description if not use_base_reference else "以已确认图片中的环境为准",
-                    "reference_mode": "confirmed" if use_base_reference else "sources",
-                    "reference_identity_role": snapshot.identity_reference_role if not use_base_reference else None,
-                    "existing_actions": existing_payload,
-                },
-                ensure_ascii=False,
-            ),
-            reference_images=(portrait,) if use_base_reference else (portrait, outfit),
-            before_submit=before_submit,
-            task=AiTaskKey.desktop_life,
-        )
-        verdict = DesktopProposalVerdict.model_validate(parse_llm_json(raw))
-        if verdict.decision == "reuse" and verdict.reuse_action_id not in {action["id"] for action in existing_payload}:
-            raise DesktopVideoStateError("评审复用的动作不属于当前可用列表")
-        if verdict.decision != "reuse" and verdict.reuse_action_id is not None:
-            raise DesktopVideoStateError("评审结果包含不适用的复用动作")
-        action_id: int | None = None
-        async with _lock(user_id), SESSION_LOCAL() as db:
-            state = await desktop_state(db, user_id, create=True)
-            current_proposal = await db.get(DesktopVideoProposal, proposal_id)
-            if current_proposal is None or current_proposal.status != "pending":
-                return
-            current_suite = await _suite(db, user_id, current_proposal.set_id)
-            if (current_suite.base_version, current_suite.base_image_path) != (
-                reviewed_base_version,
-                reviewed_base_path,
-            ):
-                current_proposal.status = "deferred"
-                current_proposal.review_reason = "基础画面已更新，请基于新画面重新评审动作"
-                await touch_desktop_state(db, user_id)
-                await db.commit()
-                return
-            if current_proposal.source == "autonomous" and (
-                not state.autonomous_enabled
-                or not SETTINGS.action_autocreate_enabled
-                or state.current_set_id != current_proposal.set_id
-                or get_presentation_snapshot(user_id) is None
-                or get_presentation_snapshot(user_id).mode != "desktop"
-            ):
-                current_proposal.status = "deferred"
-                current_proposal.review_reason = "当前已停止自主制作，请手动重试"
-                await touch_desktop_state(db, user_id)
-                await db.commit()
-                return
-            current_proposal.review_reason = verdict.reason
-            if verdict.decision == "approve":
-                key = "custom_" + hashlib.sha256(normalize_action_name(request.name).encode()).hexdigest()[:24]
-                action = await db.scalar(
-                    select(DesktopVideoAction).where(
-                        DesktopVideoAction.set_id == current_proposal.set_id,
-                        DesktopVideoAction.key == key,
-                    ),
-                )
-                if action is None:
-                    action = DesktopVideoAction(
-                        user_id=user_id,
-                        set_id=current_proposal.set_id,
-                        key=key,
-                        name=request.name,
-                        description=request.motion_description,
-                        kind=request.kind,
-                        duration_seconds=request.duration_seconds,
-                        target_duration_seconds=request.duration_seconds,
-                        continuity=request.continuity,
-                        allowed_triggers_json=json.dumps(request.allowed_triggers),
-                        preset=False,
-                        use_when_json=json.dumps(request.use_when, ensure_ascii=False),
-                        avoid_when_json=json.dumps(request.avoid_when, ensure_ascii=False),
-                        enabled=True,
-                        status="queued",
-                        stage="prepare",
-                        attempt=0,
-                        version=0,
-                    )
-                    db.add(action)
-                    await db.flush()
-                current_proposal.action_id = action_id = action.id
-                current_proposal.status = "approved"
-            elif verdict.decision == "reuse":
-                current_proposal.action_id = verdict.reuse_action_id
-                current_proposal.status = "reused"
-            else:
-                current_proposal.status = "deferred" if verdict.decision == "defer" else "rejected"
-            await touch_desktop_state(db, user_id)
-            await db.commit()
-        if action_id is not None:
-            await generate_desktop_action(user_id, action_id, source=proposal.source)
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:
-        logger.warning("Desktop action proposal deferred", extra={"proposal_id": proposal_id}, exc_info=True)
-        async with SESSION_LOCAL() as db:
-            await desktop_state(db, user_id, lock=True)
-            row = await db.scalar(
-                select(DesktopVideoProposal).where(
-                    DesktopVideoProposal.id == proposal_id,
-                    DesktopVideoProposal.user_id == user_id,
-                ),
-            )
-            if row is not None and row.status == "pending":
-                row.status = "deferred"
-                row.review_reason = str(exc) if isinstance(exc, DesktopVideoError) else "评审或制作暂未完成，可稍后重试"
-                await touch_desktop_state(db, user_id)
-                await db.commit()
-
-
-def _schedule_desktop_review(user_id: int, proposal_id: int) -> None:
-    if not proposal_id or proposal_id in _REVIEWS:
-        return
-    task = asyncio.create_task(
-        _review_desktop_proposal(user_id, proposal_id),
-        name=f"desktop-review-{proposal_id}",
+    return await design_shared_desktop_action(
+        user_id,
+        request,
+        source=source,
+        require_desktop=require_desktop,
     )
-    _REVIEWS[proposal_id] = task
-    track_user_task(user_id, task)
-    task.add_done_callback(lambda _task: _REVIEWS.pop(proposal_id, None))
 
 
 async def build_desktop_action_context(db: AsyncSession, user_id: int, *, language: str) -> str:
@@ -2836,35 +2541,42 @@ async def build_desktop_action_context(db: AsyncSession, user_id: int, *, langua
         "preparing": [
             {
                 "action_id": action.id,
+                "definition_id": action.definition_id,
                 "name": action.name,
+                "description": action.description,
                 "status": action.status,
                 "stage": action.stage,
                 "error": action.error,
+                "sync_targets": [target.model_dump() for target in action.sync_targets],
             }
             for action in actions
             if action.status != "ready"
         ],
     }
-    proposals = list(
-        await db.scalars(
-            select(DesktopVideoProposal)
-            .where(
-                DesktopVideoProposal.user_id == user_id,
-                DesktopVideoProposal.set_id == (state.current.id if state.current else 0),
-            )
-            .order_by(DesktopVideoProposal.updated_at.desc())
-            .limit(5),
-        ),
-    )
     payload["proposals"] = [
         {
-            "proposal_id": proposal.id,
+            "proposal_id": proposal.proposal_id,
+            "definition_id": proposal.definition_id,
+            "name": proposal.name,
+            "description": proposal.description,
             "status": proposal.status,
             "action_id": proposal.action_id,
+            "action_status": next(
+                (
+                    target.status
+                    for target in proposal.sync_targets
+                    if target.target_kind == "desktop"
+                    and state.current is not None
+                    and target.target_id == state.current.id
+                ),
+                None,
+            ),
+            "sync_targets": [target.model_dump() for target in proposal.sync_targets],
             "reason": proposal.review_reason,
         }
-        for proposal in proposals
+        for proposal in (state.current.proposals if state.current else [])[:5]
     ]
+    payload["proposals_truncated"] = bool(state.current and len(state.current.proposals) > 5)
     return resolve_prompt_text(DESKTOP_CONTEXT_GUIDANCE, language) + "\n" + json.dumps(payload, ensure_ascii=False)
 
 
@@ -3029,29 +2741,3 @@ async def choose_idle_desktop_action(
             return {"expressed": False, "action_id": None, "reason": "presentation_changed"}
         await db.commit()
     return {"expressed": True, "action_id": command.action_id, "reason": choice.reason}
-
-
-async def drain_desktop_reviews() -> None:
-    tasks = list(_REVIEWS.values())
-    for task in tasks:
-        task.cancel()
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
-
-
-async def resume_desktop_reviews(user_id: int | None = None) -> None:
-    async with SESSION_LOCAL() as db:
-        query = select(DesktopVideoProposal).where(DesktopVideoProposal.status == "pending")
-        if user_id is not None:
-            query = query.where(DesktopVideoProposal.user_id == user_id)
-        rows = list(await db.scalars(query))
-    for row in rows:
-        async with SESSION_LOCAL() as db:
-            await desktop_state(db, row.user_id, lock=True)
-            current = await db.get(DesktopVideoProposal, row.id)
-            if current is None or current.status != "pending":
-                continue
-            current.status = "deferred"
-            current.review_reason = "评审已中断，请手动重试"
-            await touch_desktop_state(db, row.user_id)
-            await db.commit()

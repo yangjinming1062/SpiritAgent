@@ -1,5 +1,6 @@
 """Explicit business reference providers for account-scoped asset collection."""
 
+from features.action_library import asset_references as action_library
 from features.actions import asset_references as actions
 from features.appearance import asset_references as appearance
 from features.assets.contributions import AssetContribution, configure_asset_contributions
@@ -16,6 +17,7 @@ def register_asset_contributions() -> None:
         (
             AssetContribution("conversation", conversation.live_asset_paths),
             AssetContribution("appearance", appearance.live_asset_paths, cleanup=appearance.cleanup_obsolete_assets),
+            AssetContribution("action_library", action_library.live_asset_paths),
             AssetContribution(
                 "actions",
                 actions.live_asset_paths,

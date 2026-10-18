@@ -15,7 +15,9 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.accounts.models import lock_user_row
 from features.accounts.queries import list_user_ids
+from features.action_library.service import remove_container_targets
 from features.actions.asset_references import catalog_asset_paths
 from features.actions.generation.queries import _has_pending_work
 from features.actions.models import ActionAssetRetirement, CompanionAction, CompanionActionPack, removed_video_tasks
@@ -90,6 +92,7 @@ async def delete_outfit_action_packs(
     outfit_id: int,
 ) -> list[RemovedActionVideoTask]:
     """调用方持外观锁；在用、制作或结果未确定的动作组保留，其余同事务删除并立即登记回收。"""
+    await lock_user_row(db, user_id)
     packs = (
         await db.scalars(
             select(CompanionActionPack).where(
@@ -158,5 +161,6 @@ async def delete_outfit_action_packs(
     await enqueue_asset_cleanup(db, user_id, paths, expedite=True)
     removed = removed_video_tasks(actions)
     for pack in packs:
+        await remove_container_targets(db, user_id, "window", pack.id)
         await db.delete(pack)
     return removed

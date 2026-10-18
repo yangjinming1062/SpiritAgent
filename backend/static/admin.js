@@ -481,7 +481,7 @@ const BACKUP_SECTION_LABELS = Object.freeze({
 const BACKUP_SCOPE_HINTS = Object.freeze({
     all: '恢复备份中的全部数据类别。',
     identity: '恢复人设、头像与全身参考（含确认状态）、角色卡。音色需勾选设置，动作包与场景需分别恢复；缺少引导资料时继续完成对应步骤，不自动生成素材。',
-    custom: '只恢复勾选的类别，不动目标已有但未勾选的数据。',
+    custom: '只恢复勾选的类别。衣柜与桌景包含共同动作，勾选其中一项时会一起恢复；其他未勾选的数据保留。',
 });
 const BACKUP_MODE_LABELS = Object.freeze({ overwrite: '覆盖', merge: '合并' });
 const BACKUP_SCOPE_LABELS = Object.freeze({
@@ -1849,10 +1849,6 @@ const SETTINGS_SECTIONS = [
             ]],
             ['sub', '动作制作'],
             ['field', bool('action_autocreate_enabled', '允许伙伴自主创建新动作')],
-            ['grid', [
-                num('action_autonomous_create_daily_limit', '伙伴自主制作动作上限 (/天)', 1, { min: 1 }),
-                num('action_user_requested_create_daily_limit', '用户请求制作动作上限 (/天)', 1, { min: 1 }),
-            ]],
         ],
     },
     {

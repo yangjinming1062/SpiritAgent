@@ -3,7 +3,6 @@
 from runtime.lifecycle import RuntimeParticipant
 
 from .generation import drain_desktop_video_jobs, resume_desktop_video_jobs
-from .service import drain_desktop_reviews, resume_desktop_reviews
 
 
 def runtime_participants() -> tuple[RuntimeParticipant, ...]:
@@ -13,11 +12,5 @@ def runtime_participants() -> tuple[RuntimeParticipant, ...]:
             recover=resume_desktop_video_jobs,
             resume_user=resume_desktop_video_jobs,
             drain=drain_desktop_video_jobs,
-        ),
-        RuntimeParticipant(
-            "desktop_life.reviews",
-            recover=resume_desktop_reviews,
-            resume_user=resume_desktop_reviews,
-            drain=drain_desktop_reviews,
         ),
     )

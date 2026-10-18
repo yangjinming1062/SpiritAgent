@@ -6,10 +6,10 @@ from typing import Any
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.text import tool_error
 from pydantic import ValidationError
-from sqlalchemy import select
 
+from features.action_library.queries import definition_snapshot, targets_for_definition, variant_summaries
 from features.actions.design import accept_proposal
-from features.actions.models import ActionProposal
+from features.actions.materials import accepted_action_asset
 from features.actions.pipeline import schedule_accepted_proposal
 from features.actions.playback import request_playback
 from features.actions.policy import is_expression_action
@@ -83,27 +83,61 @@ async def action_inspect_tool(
 ) -> str:
     async with SESSION_LOCAL() as db:
         if proposal_id is not None:
-            proposal = (
-                await db.execute(
-                    select(ActionProposal).where(ActionProposal.id == proposal_id, ActionProposal.user_id == user_id),
-                )
-            ).scalar_one_or_none()
+            proposal = await definition_snapshot(db, user_id, proposal_id)
             if proposal is None:
                 return tool_error("找不到对应提案")
+            pack = await get_active_pack(db, user_id)
+            if (
+                pack is None
+                or not pack.source_visual_key
+                or proposal.outfit_id != pack.outfit_id
+                or proposal.source_visual_key != pack.source_visual_key
+            ):
+                return tool_error("动作不属于当前形象")
+            canonical = (
+                await definition_snapshot(db, user_id, proposal.reuse_definition_id)
+                if proposal.reuse_definition_id is not None
+                else proposal
+            )
+            if (
+                canonical is None
+                or canonical.outfit_id != pack.outfit_id
+                or canonical.source_visual_key != pack.source_visual_key
+            ):
+                return tool_error("动作资料已变化，请刷新后重试")
+            targets = await targets_for_definition(db, user_id, canonical.id)
+            target = next(
+                (item for item in targets if item.target_kind == "window" and item.target_id == pack.id),
+                None,
+            )
+            action = (
+                await get_action(db, target.action_id)
+                if target is not None and target.state != "excluded" and target.action_id is not None
+                else None
+            )
+            if action is not None and (action.user_id != user_id or action.pack_id != pack.id or action.system_slot):
+                return tool_error("动作不属于当前形象")
+            variants = await variant_summaries(db, user_id, canonical.id)
+            local = next(
+                (item for item in variants if item.target_kind == "window" and item.target_id == pack.id),
+                None,
+            )
             return json.dumps(
                 {
                     "kind": "proposal",
                     "id": proposal.id,
+                    "definition_id": proposal.id,
                     "status": proposal.status,
-                    "review_decision": proposal.review_decision,
                     "review_reason": proposal.review_reason,
-                    "action_id": proposal.action_id,
+                    "action_id": action.id if action is not None else None,
+                    "action_status": local.status if local is not None else None,
+                    "sync_targets": [item.model_dump() for item in variants],
                 },
                 ensure_ascii=False,
             )
         if action_id is not None:
             action = await get_action(db, action_id)
-            if action is None or action.pack_id is None or action.system_slot:
+            if action is None or action.user_id != user_id or action.system_slot:
                 return tool_error("找不到对应动作")
             pack = await get_active_pack(db, user_id)
             if pack is None or action.pack_id != pack.id:
@@ -113,7 +147,10 @@ async def action_inspect_tool(
                     "kind": "action",
                     "id": action.id,
                     "name": action.name,
-                    "status": "ready" if action.status == "succeeded" and action.media_path else action.status,
+                    "status": "ready" if accepted_action_asset(action) is not None else action.status,
+                    "production_status": action.status,
+                    "playable": is_expression_action(action),
+                    "definition_id": action.definition_id,
                     "enabled": action.enabled,
                     "stage": action.stage,
                     "error": action.error,

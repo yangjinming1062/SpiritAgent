@@ -14,6 +14,7 @@ from infrastructure.video_processing.desktop import extract_desktop_first_frame
 from infrastructure.video_processing.ffmpeg import VideoProcessError, probe_video
 from PIL import Image
 
+from features.action_library.identity import source_visual_key
 from features.desktop_life.schemas import (
     DESKTOP_MAX_EDGE,
     DesktopVideoAsset,
@@ -50,6 +51,12 @@ def restore_desktop_payload(table: str, payload: dict[str, Any], id_map: dict[st
         )
         payload["context_json"] = snapshot.model_dump_json()
         payload["context_hash"] = desktop_visual_hash(snapshot)
+        payload["source_visual_key"] = source_visual_key(
+            snapshot.identity_hash,
+            snapshot.outfit_hash,
+            portrait_hash=snapshot.portrait_hash,
+            identity_reference_role=snapshot.identity_reference_role,
+        )
         base_version = payload["base_version"]
         base_path = payload["base_image_path"]
         if (
@@ -99,8 +106,20 @@ def restore_desktop_payload(table: str, payload: dict[str, Any], id_map: dict[st
                 or any(not isinstance(item, str) or not item.strip() or len(item) > 120 for item in conditions)
             ):
                 raise ValueError("桌面生活动作使用条件无效。")
-        if payload.get("status") not in {"queued", "processing", "ready", "failed", "review_pending"}:
+        if payload.get("status") not in {
+            "not_generated",
+            "queued",
+            "processing",
+            "ready",
+            "failed",
+            "review_pending",
+            "blocked",
+        }:
             raise ValueError("桌面生活动作状态无效。")
+        if payload["status"] == "not_generated" and (
+            payload.get("generation_state_json") or payload.get("accepted_asset_json")
+        ):
+            raise ValueError("尚未制作的桌景动作不能包含制作进度或已采纳素材。")
         if payload.get("accepted_asset_json"):
             payload["accepted_asset_json"] = DesktopVideoAsset.model_validate_json(
                 payload["accepted_asset_json"],

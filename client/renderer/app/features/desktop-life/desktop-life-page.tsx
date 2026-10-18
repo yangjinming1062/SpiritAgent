@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
+import { ActionSyncStatus } from '@/app/components/action-sync-status'
 import { $outfits, hydrateWardrobe } from '@/modules/character'
 import {
   $desktopVideoError,
@@ -377,7 +378,8 @@ export function DesktopLifePage({
   onPrepareMaterial?: (kind: 'scene' | 'outfit') => void
 }): React.JSX.Element {
   const t = useDesktopLifeStrings()
-  const queueStrings = useStrings().common.videoQueue
+  const commonStrings = useStrings().common
+  const queueStrings = commonStrings.videoQueue
   const auth = useStore($auth)
   const panelActive = usePanelActivity()
   const presentation = useStore($presentation)
@@ -482,8 +484,11 @@ export function DesktopLifePage({
 
   const working = sets.some(
     item =>
-      item.actions.some(item => item.status === 'processing' && !isActionPaused(item)) ||
-      item.proposals.some(proposal => proposal.status === 'pending')
+      item.actions.some(
+        item =>
+          (item.status === 'processing' && !isActionPaused(item)) ||
+          item.sync_targets.some(target => ['queued', 'processing'].includes(target.status))
+      ) || item.proposals.some(proposal => proposal.status === 'pending')
   )
 
   useEffect(() => {
@@ -1054,7 +1059,8 @@ export function DesktopLifePage({
     updateDesktopLifeUi({ selectedActionId: item.id, addActionOpen: false })
   }
 
-  const actionStatus = (item: DesktopVideoAction): string => desktopLifeActionStatus(item, t, queueStrings)
+  const actionStatus = (item: DesktopVideoAction): string =>
+    desktopLifeActionStatus(item, t, queueStrings, commonStrings.actionVariants)
 
   const adoptCandidate = async (item: DesktopVideoAction): Promise<void> => {
     if (!selected) {
@@ -1234,8 +1240,16 @@ export function DesktopLifePage({
 
     const dependent = item.key !== 'idle' && (item.draft?.continuity ?? item.continuity) === 'base'
     const requiresBase = dependent && !selected.base_image_url && !chooseActivity && !replaceUpload && !unknown
+
+    const awaitingFirstGeneration =
+      item.definition_id !== null && ['not_generated', 'blocked'].includes(item.status) && !item.current && !item.draft
+
+    const unavailableFirstGeneration = awaitingFirstGeneration && !item.can_generate
     const persistedNote = item.draft?.feedback ?? item.current?.feedback ?? ''
-    const customizationReadOnly = unknown || isActionPaused(item) || candidate || chooseActivity || replaceUpload
+
+    const customizationReadOnly =
+      unknown || isActionPaused(item) || candidate || chooseActivity || replaceUpload || unavailableFirstGeneration
+
     const note = customizationReadOnly ? persistedNote : (feedback[item.id] ?? persistedNote)
     const noteDirty = note !== persistedNote
     const videoNote = item.draft?.video_feedback ?? item.current?.video_feedback ?? ''
@@ -1248,7 +1262,7 @@ export function DesktopLifePage({
     const canConfirm = item.draft && imagePreviews[`${item.draft.id}:${item.draft.image_url}`]
 
     const controls =
-      unknown || processing ? null : candidate ? (
+      unknown || processing || unavailableFirstGeneration ? null : candidate ? (
         <>
           <button
             className={BTN_PRIMARY}
@@ -1370,6 +1384,7 @@ export function DesktopLifePage({
             <p className="mt-2 text-sm text-muted">{candidate ? t.newVideo : actionStatus(item)}</p>
           )}
         </div>
+        <ActionSyncStatus targets={item.sync_targets} />
         {requiresBase ? (
           <div className="rounded-xl bg-accent/5 p-5">
             <h4 className="font-medium text-strong">{t.imageRequired}</h4>
@@ -1504,7 +1519,7 @@ export function DesktopLifePage({
                   {!candidate && !dependent && (
                     <button
                       className={`${BTN_SUBTLE} self-start`}
-                      disabled={busy || unknown || chooseActivity}
+                      disabled={busy || unknown || chooseActivity || unavailableFirstGeneration}
                       onClick={() => void run(() => makeImage(item, selected, note, true))}
                       type="button"
                     >
@@ -1583,8 +1598,10 @@ export function DesktopLifePage({
   const resolutionReady = readyDesktopLifeResolution(create, presentation) !== null
 
   const displayedActions =
-    selected?.actions.filter(item => item.key !== 'idle' && (item.current || item.draft || item.status === 'failed')) ??
-    []
+    selected?.actions.filter(
+      item =>
+        item.key !== 'idle' && (item.definition_id !== null || item.current || item.draft || item.status === 'failed')
+    ) ?? []
 
   return (
     <div

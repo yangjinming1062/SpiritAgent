@@ -12,6 +12,7 @@ from entrypoints.tools.builtin.scene_tool import register as register_scene
 from entrypoints.tools.builtin.send_message_tool import register as register_send_message
 from entrypoints.tools.builtin.video_generation_tool import register as register_video_generation
 from entrypoints.tools.builtin.web_tools import register as register_web
+from features.action_library.ports import configure_action_library_ports
 from features.actions.asset_retirement import delete_outfit_action_packs
 from features.actions.expression_catalog import available_expression_prompt_entries
 from features.actions.video_queue import inspect_video_queue_owner as inspect_action_video_owner
@@ -26,7 +27,12 @@ from features.companion.prompt_runtime import set_expression_catalog_reader
 from features.configuration.queries import user_ai_config
 from features.conversation.reply_media import deliver_video_result
 from features.desktop_life.generation import set_desktop_update_handler
-from features.desktop_life.service import schedule_pending_desktop_updates
+from features.desktop_life.ports import (
+    set_desktop_action_design_handler,
+    set_desktop_proposal_list_handler,
+    set_desktop_proposal_query_handler,
+    set_desktop_set_created_handler,
+)
 from features.desktop_life.video_queue import inspect_video_queue_owner as inspect_desktop_video_owner
 from features.journal.journal_indexes import delete_diary_record
 from features.media.delivery import set_video_result_handler
@@ -73,6 +79,17 @@ from runtime.desktop.jsonrpc import configure_event_serializer
 from runtime.events.contracts import COMPANION_TURN_EVENT
 from runtime.events.loop import register_internal_event_handler
 from runtime.tools.registry import REGISTRY
+from workflows.action_library import (
+    action_source_reader,
+    action_variant_reader,
+    design_shared_desktop_action,
+    schedule_action_definition,
+    shared_desktop_proposal,
+    shared_desktop_proposals,
+    synchronize_action_target,
+    synchronize_desktop_set,
+    update_desktop_actions,
+)
 from workflows.automation.companion_turns import execute_companion_turn
 from workflows.onboarding.character_ready import complete_character_initialization
 from workflows.onboarding.desktop_suite import prepare_default_desktop_suite
@@ -162,7 +179,17 @@ def wire_domain_hooks() -> None:
     set_character_ready_handler(complete_character_initialization)
     set_outfit_ready_handler(start_outfit_actions)
     set_scene_ready_handler(prepare_default_desktop_suite)
-    set_desktop_update_handler(schedule_pending_desktop_updates)
+    configure_action_library_ports(
+        source_reader=action_source_reader,
+        variant_reader=action_variant_reader,
+        definition_scheduler=schedule_action_definition,
+        target_sync_handler=synchronize_action_target,
+    )
+    set_desktop_action_design_handler(design_shared_desktop_action)
+    set_desktop_proposal_query_handler(shared_desktop_proposal)
+    set_desktop_proposal_list_handler(shared_desktop_proposals)
+    set_desktop_set_created_handler(synchronize_desktop_set)
+    set_desktop_update_handler(update_desktop_actions)
     set_appearance_readiness_reader(appearance_readiness)
     set_expression_catalog_reader(available_expression_prompt_entries)
     set_outfit_action_cleanup(delete_outfit_action_packs)

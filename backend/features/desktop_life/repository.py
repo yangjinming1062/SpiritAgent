@@ -10,30 +10,31 @@ from infrastructure.assets.asset_store import client_asset_url, resolve_asset_re
 from infrastructure.assets.references import asset_paths
 from infrastructure.text import ensure_utc, utc_now
 from runtime.events.emit import emit_ws_event
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.models import lock_user_row
+from features.action_library.ports import read_source
+from features.action_library.queries import variant_summaries
+from features.action_library.service import register_source_targets
 from features.assets.lifecycle import enqueue_asset_cleanup
 from features.desktop_life.models import (
     DesktopVideoAction,
     DesktopVideoPlayback,
-    DesktopVideoProposal,
     DesktopVideoSet,
     DesktopVideoState,
 )
 from features.desktop_life.policy import desktop_autonomous_block_reason
+from features.desktop_life.ports import shared_desktop_proposals
 from features.desktop_life.prompts import DESKTOP_PRESETS
 from features.desktop_life.schemas import (
     DesktopVideoActionResponse,
     DesktopVideoAsset,
     DesktopVideoCurrentResponse,
-    DesktopVideoDesignRequest,
     DesktopVideoDraftResponse,
     DesktopVideoPlayCommand,
     DesktopVideoPreferences,
     DesktopVideoProgress,
-    DesktopVideoProposalResponse,
     DesktopVideoReceipt,
     DesktopVideoSetResponse,
     DesktopVideoStateResponse,
@@ -219,6 +220,8 @@ def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionRes
     )
     return DesktopVideoActionResponse(
         id=action.id,
+        definition_id=action.definition_id,
+        can_generate=action.status == "not_generated" and progress is None and accepted is None and action.enabled,
         current=DesktopVideoCurrentResponse(
             video_url=client_asset_url(accepted.video_path),
             poster_url=client_asset_url(accepted.poster_path),
@@ -314,6 +317,30 @@ def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionRes
     )
 
 
+async def desktop_action_response_with_sync(
+    db: AsyncSession,
+    action: DesktopVideoAction,
+) -> DesktopVideoActionResponse:
+    response = desktop_action_response(action)
+    if action.definition_id is not None:
+        response.sync_targets = await variant_summaries(db, action.user_id, action.definition_id)
+        local = next(
+            (
+                target
+                for target in response.sync_targets
+                if target.target_kind == "desktop" and target.target_id == action.set_id
+            ),
+            None,
+        )
+        if (
+            local is not None
+            and response.status in {"blocked", "not_generated"}
+            and local.status in {"blocked", "not_generated"}
+        ):
+            response.status, response.can_generate, response.error = local.status, local.can_generate, local.reason
+    return response
+
+
 async def desktop_set_response(
     db: AsyncSession,
     row: DesktopVideoSet,
@@ -339,57 +366,37 @@ async def desktop_set_responses(
         .order_by(DesktopVideoAction.id),
     ):
         actions_by_set.setdefault(action.set_id, []).append(action)
-    recent_proposals = (
-        select(
-            DesktopVideoProposal.id,
-            func.row_number()
-            .over(partition_by=DesktopVideoProposal.set_id, order_by=DesktopVideoProposal.updated_at.desc())
-            .label("position"),
-        )
-        .where(tuple_(DesktopVideoProposal.set_id, DesktopVideoProposal.user_id).in_(owners))
-        .subquery()
-    )
-    proposals_by_set: dict[int, list[DesktopVideoProposal]] = {}
-    for proposal in await db.scalars(
-        select(DesktopVideoProposal)
-        .join(recent_proposals, DesktopVideoProposal.id == recent_proposals.c.id)
-        .where(recent_proposals.c.position <= 25)
-        .order_by(DesktopVideoProposal.updated_at.desc()),
-    ):
-        proposals_by_set.setdefault(proposal.set_id, []).append(proposal)
-    return [
-        _desktop_set_response(
-            row,
-            actions_by_set.get(row.id, []),
-            proposals_by_set.get(row.id, []),
-            current_id=current_id,
-        )
-        for row in rows
-    ]
+    responses = []
+    for row in rows:
+        response = _desktop_set_response(row, actions_by_set.get(row.id, []), current_id=current_id)
+        response.proposals = await shared_desktop_proposals(db, row.user_id, row.id)
+        for action in response.actions:
+            if action.definition_id is not None:
+                action.sync_targets = await variant_summaries(db, row.user_id, action.definition_id)
+                local = next(
+                    (
+                        target
+                        for target in action.sync_targets
+                        if target.target_kind == "desktop" and target.target_id == row.id
+                    ),
+                    None,
+                )
+                if (
+                    local is not None
+                    and action.status in {"blocked", "not_generated"}
+                    and local.status in {"blocked", "not_generated"}
+                ):
+                    action.status, action.can_generate, action.error = local.status, local.can_generate, local.reason
+        responses.append(response)
+    return responses
 
 
 def _desktop_set_response(
     row: DesktopVideoSet,
     actions: Sequence[DesktopVideoAction],
-    proposals: Sequence[DesktopVideoProposal],
     *,
     current_id: int | None,
 ) -> DesktopVideoSetResponse:
-    proposal_responses = []
-    for proposal in proposals:
-        design = DesktopVideoDesignRequest.model_validate_json(proposal.design_json)
-        proposal_responses.append(
-            DesktopVideoProposalResponse(
-                proposal_id=proposal.id,
-                set_id=row.id,
-                action_id=proposal.action_id,
-                status=proposal.status,
-                review_reason=proposal.review_reason,
-                name=design.name,
-                description=design.motion_description,
-                created_at=proposal.created_at,
-            ),
-        )
     return DesktopVideoSetResponse(
         id=row.id,
         title=row.title,
@@ -404,7 +411,6 @@ def _desktop_set_response(
         created_at=row.created_at,
         is_current=row.id == current_id,
         actions=[desktop_action_response(action) for action in actions],
-        proposals=proposal_responses,
         base_image_url=client_asset_url(row.base_image_path) if row.base_image_path else "",
         base_version=row.base_version,
     )
@@ -828,7 +834,13 @@ async def publish_desktop_asset(
                 dependent.needs_update = stale_asset
                 dependent.update_pending = stale_asset and dependent.enabled and pending is None
                 if pending is None:
-                    dependent.status = "ready" if current_asset else "queued"
+                    dependent.status = (
+                        "ready"
+                        if current_asset
+                        else "not_generated"
+                        if dependent.definition_id is not None
+                        else "queued"
+                    )
                     dependent.stage = "needs_update" if stale_asset else "complete" if current_asset else "prepare"
                     dependent.error = None
             state = await desktop_state(db, action.user_id)
@@ -875,6 +887,7 @@ async def publish_desktop_asset(
         completed = DesktopVideoProgress(
             generation_id=progress.generation_id,
             source=progress.source,
+            auto_continue=progress.auto_continue,
             feedback=progress.feedback,
             video_feedback=progress.video_feedback,
             refinement_feedback=progress.refinement_feedback,
@@ -931,4 +944,10 @@ async def publish_desktop_asset(
     if state.current_set_id == action.set_id and state.selected_action_id is None and action.key == "idle":
         state.selected_action_id = state.loop_action_id = action.id
         state.loop_changed_at = utc_now()
+    if base_changed:
+        await db.flush()
+        action_source = await read_source(db, action.user_id, "desktop", row.id)
+        if action_source is None:
+            raise RuntimeError("桌景基础画面的共享动作来源无法读取")
+        await register_source_targets(db, action_source)
     return removed_tasks

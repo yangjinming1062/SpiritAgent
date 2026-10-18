@@ -19,8 +19,21 @@ export function desktopLifeCreationStage(
 export function desktopLifeActionStatus(
   action: DesktopVideoAction,
   t: ReturnType<typeof useDesktopLifeStrings>,
-  queueStrings: ReturnType<typeof useStrings>['common']['videoQueue']
+  queueStrings: ReturnType<typeof useStrings>['common']['videoQueue'],
+  variantStrings: ReturnType<typeof useStrings>['common']['actionVariants']
 ): string {
+  const ownVariant = action.sync_targets.find(
+    target => target.target_kind === 'desktop' && target.target_id === action.set_id
+  )
+
+  if (
+    !action.draft &&
+    ownVariant &&
+    ['not_generated', 'queued', 'blocked', 'disabled', 'excluded'].includes(ownVariant.status)
+  ) {
+    return variantStrings.statuses[ownVariant.status]
+  }
+
   if (action.draft?.submission_unknown || action.draft?.recovery_action === 'wait') {
     return t.resultPending
   }
@@ -69,6 +82,10 @@ export function desktopLifeActionStatus(
 
   if (action.status === 'review_pending' && action.draft?.candidate_video_url) {
     return t.videoReviewPending
+  }
+
+  if (action.status === 'not_generated' || action.status === 'blocked') {
+    return variantStrings.statuses[action.status]
   }
 
   return action.playable ? t.ready : action.status === 'queued' ? t.notCreated : t.statuses[action.status]

@@ -77,11 +77,8 @@ NIGHTLY_FACT_TEXTS: dict[str, dict[str, str]] = {
         "desktop_outfit_wear": "将参考造型更新为已有外观「{name}」；当前播放画面未变",
         "desktop_outfit_create": "设计并保存了新参考造型「{name}」；当前播放画面未变",
         "desktop_scene": "将参考环境更新为「{title}」：{description}；当前播放画面未变",
-        "action_reused": "想要的新动作「{name}」已有现成的动作可以用",
         "action_proposed": "提出想学新动作「{name}」，还没有做好",
-        "action_in_production": "新动作「{name}」还在制作中，还没有做好",
-        "action_awaiting_review": "新动作「{name}」已经做好，要等用户确认后才能使用",
-        "action_redo": "请求重新制作动作「{name}」，还没有做好",
+        "action_registered": "登记了动作创意「{name}」，各画面的制作与可用状态分别确认",
     },
     "en": {
         "outfit_wear": "changed into the existing outfit “{name}”",
@@ -90,11 +87,8 @@ NIGHTLY_FACT_TEXTS: dict[str, dict[str, str]] = {
         "desktop_outfit_wear": "updated the reference styling to the existing outfit “{name}”; the video being played did not change",
         "desktop_outfit_create": "designed and saved new reference styling “{name}”; the video being played did not change",
         "desktop_scene": "updated the reference surroundings to “{title}”: {description}; the video being played did not change",
-        "action_reused": "an existing action already covers the wanted new move “{name}”",
         "action_proposed": "asked to learn the new move “{name}”; it is not ready yet",
-        "action_in_production": "the new move “{name}” is still being made and is not ready yet",
-        "action_awaiting_review": "the new move “{name}” is made but can be used only after the user approves it",
-        "action_redo": "asked to remake the move “{name}”; it is not ready yet",
+        "action_registered": "registered the move “{name}”; production and availability are confirmed separately for each view",
     },
 }
 

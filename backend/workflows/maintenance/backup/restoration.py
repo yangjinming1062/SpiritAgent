@@ -35,6 +35,7 @@ from workflows.maintenance.backup.file_packing import (
     validate_row_files,
 )
 from workflows.maintenance.backup.serializers import (
+    ACTION_LIBRARY_TABLES,
     ACTION_TABLES,
     ATOMIC_SECTION_GROUPS,
     CONVERSATION_TABLES,
@@ -71,15 +72,24 @@ OVERWRITE_DEPENDENT_REFERENCES: dict[str, tuple[tuple[str, str | None], ...]] = 
         ("companion_character_cards", "avatar_id"),
         ("companion_action_packs", "avatar_id"),
     ),
-    "companion_outfits": (("companion_action_packs", "outfit_id"),),
-    "companion_action_packs": (("companion_actions", "pack_id"),),
+    "companion_outfits": (("companion_action_packs", "outfit_id"), ("action_definitions", "outfit_id")),
+    "action_definitions": (
+        ("companion_actions", "definition_id"),
+        ("desktop_video_actions", "definition_id"),
+        ("action_sync_targets", "definition_id"),
+    ),
+    "companion_action_packs": (("companion_actions", "pack_id"), ("action_sync_targets", None)),
     "cron_jobs": (("companion_intents", "source_key"),),
     "conversations": (
         ("cron_jobs", "conversation_id"),
         ("memories", None),
     ),
     "companion_scenes": (("personas", "active_scene_id"),),
-    "desktop_video_sets": (("desktop_video_actions", "set_id"), ("desktop_video_states", "current_set_id")),
+    "desktop_video_sets": (
+        ("desktop_video_actions", "set_id"),
+        ("desktop_video_states", "current_set_id"),
+        ("action_sync_targets", None),
+    ),
     "desktop_video_actions": (
         ("desktop_video_states", "selected_action_id"),
         ("desktop_video_states", "loop_action_id"),
@@ -200,9 +210,7 @@ def load_backup_rows(
                 if group == CONVERSATION_TABLES
                 else "动态与评论必须同时恢复。"
                 if group == POST_TABLES
-                else "桌面生活组合、动作与偏好必须同时恢复。"
-                if group == DESKTOP_TABLES
-                else "动作包与动作必须同时恢复。"
+                else "着装、共享动作和两种模式的动作版本必须同时恢复。"
             )
             for table in sorted(present):
                 rows.pop(table)
@@ -307,9 +315,7 @@ async def _preflight_tables(
         for table in BACKUP_RESTORE_ORDER:
             if table not in rows:
                 continue
-            if table == "companion_actions":
-                continue
-            if table in {"desktop_video_actions", "desktop_video_states"}:
+            if table in ACTION_LIBRARY_TABLES - {"companion_outfits"}:
                 continue
             if table in CONVERSATION_TABLES - {"conversations"} and "conversations" in rows:
                 continue
@@ -322,12 +328,10 @@ async def _preflight_tables(
                 group = tuple(member for member in BACKUP_RESTORE_ORDER if member in CONVERSATION_TABLES)
             elif table == "avatar_assets" and IDENTITY_TABLES & set(rows):
                 group = tuple(member for member in IDENTITY_GROUP if member in rows)
-            elif table == "companion_action_packs":
-                group = ("companion_action_packs", "companion_actions")
+            elif table == "companion_outfits":
+                group = tuple(member for member in BACKUP_RESTORE_ORDER if member in ACTION_LIBRARY_TABLES)
             elif table == "companion_posts":
                 group = ("companion_posts", "companion_post_comments")
-            elif table == "desktop_video_sets":
-                group = ("desktop_video_sets", "desktop_video_actions", "desktop_video_states")
             else:
                 group = (table,)
             available_rows = {name: rows[name] for name in successful | set(group) if name in rows}
@@ -352,7 +356,7 @@ async def _preflight_tables(
                             # 预检行属于校验用户，包内资产仍按恢复后的真实归属判断。
                             asset_owner_id=target_user_id,
                         )
-                    if table == "companion_action_packs":
+                    if table == "companion_outfits":
                         await run_blocking(
                             validate_action_files,
                             available_rows,
@@ -368,7 +372,6 @@ async def _preflight_tables(
                             UrlRewriter({}),
                             write_files=False,
                         )
-                    if table == "desktop_video_sets":
                         await run_blocking(
                             validate_desktop_files,
                             available_rows,
@@ -448,11 +451,6 @@ async def _clear_compatible_rows(
     remaining = dict(compatible_rows)
     failures: list[BackupImportFailure] = []
 
-    def _drop_desktop(reason: str) -> None:
-        for member in sorted(DESKTOP_TABLES & set(remaining)):
-            records = remaining.pop(member)
-            failures.append(BackupImportFailure(member, len(records), reason))
-
     # 动态与评论同组保护：保留的日记仍引用动态时，在任何清理前阻止两表覆盖。
     if "companion_posts" in remaining and await _has_retained_dependent(
         db,
@@ -464,30 +462,31 @@ async def _clear_compatible_rows(
             records = remaining.pop(table, None)
             if records is not None:
                 failures.append(BackupImportFailure(table, len(records), "目标已有日记仍关联动态，无法单独覆盖动态。"))
-    if ACTION_TABLES.issubset(remaining):
-        action_failure = None
-        for parent, field in (("avatar_assets", "avatar_id"), ("companion_outfits", "outfit_id")):
-            if (
-                parent in remaining or any(row.get(field) is not None for row in remaining["companion_action_packs"])
-            ) and (await _has_retained_dependent(db, parent, target_user_id, remaining)):
-                action_failure = "动作包引用的身份或外观无法安全覆盖。"
-                break
-        if action_failure is None:
+    if ACTION_LIBRARY_TABLES.issubset(remaining):
+        library_failure = None
+        if "avatar_assets" in remaining and await _has_retained_dependent(
+            db,
+            "avatar_assets",
+            target_user_id,
+            remaining,
+        ):
+            library_failure = "动作版本引用的基础身份无法安全覆盖。"
+        if library_failure is None:
             try:
                 async with db.begin_nested():
-                    for table in ("companion_actions", "companion_action_packs"):
-                        await _delete_user_rows(db, table, target_user_id)
+                    for table in reversed(TABLES):
+                        if table in ACTION_LIBRARY_TABLES:
+                            await _delete_user_rows(db, table, target_user_id)
             except IntegrityError:
                 logger.warning(
-                    "backup action tables could not be cleared without affecting retained data",
+                    "shared action group could not be cleared without affecting retained data",
                     extra={"target_user_id": target_user_id},
                     exc_info=True,
                 )
-                action_failure = "现有动作包仍被其他内容引用，无法覆盖。"
-        if action_failure is not None:
-            for table in TABLES:
-                if table in ACTION_TABLES:
-                    failures.append(BackupImportFailure(table, len(remaining.pop(table)), action_failure))
+                library_failure = "共享动作仍被其他内容引用，无法成组覆盖。"
+        if library_failure is not None:
+            for table in sorted(ACTION_LIBRARY_TABLES):
+                failures.append(BackupImportFailure(table, len(remaining.pop(table)), library_failure))
 
     def _drop_identity(reason: str) -> None:
         for member in sorted(IDENTITY_TABLES & set(remaining)):
@@ -520,7 +519,7 @@ async def _clear_compatible_rows(
 
     # 身份未能写入时先摘掉依赖头像映射的动作类别，避免在清理阶段误删。
     if IDENTITY_TABLES & set(compatible_rows) and not set(remaining) >= IDENTITY_TABLES:
-        for table in ("companion_action_packs", "companion_actions"):
+        for table in sorted(ACTION_LIBRARY_TABLES):
             if table not in remaining:
                 continue
             remaining.pop(table)
@@ -533,7 +532,7 @@ async def _clear_compatible_rows(
             )
 
     for table in reversed(TABLES):
-        if table in ACTION_TABLES | DESKTOP_TABLES | IDENTITY_TABLES | CONVERSATION_TABLES:
+        if table in ACTION_LIBRARY_TABLES | IDENTITY_TABLES | CONVERSATION_TABLES:
             continue
         # user_preferences 就地更新用户行；messages 随 conversations 级联删除。
         if table not in remaining or table in {"user_preferences", "messages"}:
@@ -585,28 +584,14 @@ async def _clear_compatible_rows(
         if reason is not None:
             for member in sorted(CONVERSATION_TABLES):
                 failures.append(BackupImportFailure(member, len(remaining.pop(member)), reason))
-    # 覆盖清理后仍须成组：身份缺一即整组不写，避免角色卡引用未写入的头像。
-    if DESKTOP_TABLES.issubset(remaining):
-        try:
-            async with db.begin_nested():
-                for member in ("desktop_video_states", "desktop_video_actions", "desktop_video_sets"):
-                    await _delete_user_rows(db, member, target_user_id)
-        except IntegrityError:
-            logger.warning(
-                "desktop life could not be cleared without affecting retained data",
-                extra={"target_user_id": target_user_id},
-                exc_info=True,
-            )
-            _drop_desktop("目标桌面生活仍有无法安全覆盖的关联数据。")
-    for group in (IDENTITY_TABLES, ACTION_TABLES, DESKTOP_TABLES):
+    # 覆盖清理后仍须成组。
+    for group in (IDENTITY_TABLES, ACTION_LIBRARY_TABLES):
         present = group & set(remaining)
         if present and present != group:
             reason = (
                 IDENTITY_INCOMPLETE_REASON
                 if group == IDENTITY_TABLES
-                else "桌面生活组合、动作与偏好必须同时恢复。"
-                if group == DESKTOP_TABLES
-                else "动作包与动作必须同时恢复。"
+                else "着装、共享动作和两种模式的动作版本必须同时恢复。"
             )
             for table in sorted(present):
                 remaining.pop(table)
