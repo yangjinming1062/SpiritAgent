@@ -39,6 +39,11 @@ function detectRemoteDisplay(): null | string {
 export function applyChromiumSwitches(app: Pick<App, 'commandLine' | 'disableHardwareAcceleration'>): null | string {
   const remoteDisplayReason = detectRemoteDisplay()
 
+  if (process.platform === 'win32') {
+    // Chromium 的 GPU workaround 使用下划线开关；仅禁用视频叠加层，让视频与模糊底层参与页面合成。
+    app.commandLine.appendSwitch('disable_direct_composition_video_overlays')
+  }
+
   if (remoteDisplayReason) {
     app.disableHardwareAcceleration()
     app.commandLine.appendSwitch('disable-gpu-compositing')

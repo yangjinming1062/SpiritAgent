@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { backgroundMedia } from '@/shared/platform/desktop'
-import { desktopMediaObjectFit } from '@client-shared/desktop-media-geometry'
+import { desktopMediaLayout } from '@client-shared/desktop-media-geometry'
 import type { DesktopBackground, DesktopBackgroundPlayback } from '@ipc/contracts'
 
 interface VideoSlot {
@@ -66,7 +66,6 @@ function DesktopWallpaper() {
     let revision = -1
     let paused = false
     let fallbackPoster: string | null = null
-    let posterGeometryMode: 'target' | 'keep' = 'target'
     let fillPosterUrl: string | null = null
     let disposed = false
     let fadeTimer: ReturnType<typeof setTimeout> | null = null
@@ -181,19 +180,22 @@ function DesktopWallpaper() {
       slot.terminal = false
     }
 
-    const updatePosterFit = (): void => {
-      still.style.objectFit = desktopMediaObjectFit(
-        still.naturalWidth,
-        still.naturalHeight,
-        window.innerWidth,
-        window.innerHeight,
-        posterGeometryMode
-      )
+    const updateMediaLayout = (element: HTMLImageElement | HTMLVideoElement, width: number, height: number): void => {
+      const layout = desktopMediaLayout(width, height, window.innerWidth, window.innerHeight)
+
+      // 完整显示时媒体元素仅占实际内容区域，周围由模糊底层填充。
+      Object.assign(element.style, {
+        left: `${layout.left}px`,
+        top: `${layout.top}px`,
+        width: `${layout.width}px`,
+        height: `${layout.height}px`,
+        objectFit: layout.objectFit
+      })
     }
 
-    const showPoster = (url: string | null, geometryMode: 'target' | 'keep' = 'target'): void => {
-      posterGeometryMode = geometryMode
+    const updatePosterLayout = (): void => updateMediaLayout(still, still.naturalWidth, still.naturalHeight)
 
+    const showPoster = (url: string | null): void => {
       if (url) {
         setFill(url)
       } else if (!fillPosterUrl) {
@@ -202,27 +204,19 @@ function DesktopWallpaper() {
 
       if (url && active === null) {
         still.src = url
-        updatePosterFit()
+        updatePosterLayout()
         still.style.opacity = '1'
       } else {
         still.style.opacity = '0'
       }
     }
 
-    const updateVideoFit = (slot: VideoSlot): void => {
-      slot.element.style.objectFit = desktopMediaObjectFit(
-        slot.element.videoWidth,
-        slot.element.videoHeight,
-        slot.element.clientWidth || window.innerWidth,
-        slot.element.clientHeight || window.innerHeight,
-        slot.media?.geometryMode ?? 'target'
-      )
-      slot.element.style.objectPosition = 'center center'
-    }
+    const updateVideoLayout = (slot: VideoSlot): void =>
+      updateMediaLayout(slot.element, slot.element.videoWidth, slot.element.videoHeight)
 
-    const updateAllVideoFits = (): void => {
-      slots.forEach(updateVideoFit)
-      updatePosterFit()
+    const updateAllMediaLayouts = (): void => {
+      slots.forEach(updateVideoLayout)
+      updatePosterLayout()
     }
 
     const start = (slot: VideoSlot): void => {
@@ -317,7 +311,7 @@ function DesktopWallpaper() {
       slot.element.style.opacity = '1'
       slot.element.style.zIndex = '2'
       still.style.opacity = '0'
-      showPoster(slot.posterUrl, slot.media?.geometryMode)
+      showPoster(slot.posterUrl)
 
       for (let i = 0; i < slots.length; i += 1) {
         if (i !== index) {
@@ -477,7 +471,7 @@ function DesktopWallpaper() {
       }
 
       slot.ready = true
-      updateVideoFit(slot)
+      updateVideoLayout(slot)
       acknowledge(slot, 'first-frame')
 
       if (slot.media.kind === 'once' && active !== null && sharesBase(slots[active].media, slot.media)) {
@@ -517,6 +511,8 @@ function DesktopWallpaper() {
         }
       }
 
+      const resized = (): void => updateVideoLayout(slot)
+
       const ended = (): void => {
         if (active !== index) {
           return
@@ -549,12 +545,14 @@ function DesktopWallpaper() {
 
       slot.element.addEventListener('loadeddata', loaded)
       slot.element.addEventListener('playing', playing)
+      slot.element.addEventListener('resize', resized)
       slot.element.addEventListener('ended', ended)
       slot.element.addEventListener('error', failed)
 
       return () => {
         slot.element.removeEventListener('loadeddata', loaded)
         slot.element.removeEventListener('playing', playing)
+        slot.element.removeEventListener('resize', resized)
         slot.element.removeEventListener('ended', ended)
         slot.element.removeEventListener('error', failed)
       }
@@ -621,7 +619,7 @@ function DesktopWallpaper() {
             paused,
             reduceMotion: media.reduceMotion
           }
-          updateVideoFit(slot)
+          updateVideoLayout(slot)
         }
       }
 
@@ -634,7 +632,7 @@ function DesktopWallpaper() {
 
       if (existing !== -1 || (media.playId && settled.has(media.playId))) {
         if (existing !== -1 && active === null) {
-          showPoster(slots[existing].posterUrl, media.geometryMode)
+          showPoster(slots[existing].posterUrl)
         }
 
         if (active !== null) {
@@ -708,7 +706,7 @@ function DesktopWallpaper() {
           fallbackPoster = media.poster
             ? URL.createObjectURL(new Blob([new Uint8Array(media.poster.bytes)], { type: media.poster.mime }))
             : null
-          showPoster(fallbackPoster, media.geometryMode)
+          showPoster(fallbackPoster)
         }
 
         if (active !== null) {
@@ -767,7 +765,7 @@ function DesktopWallpaper() {
         slot.element.poster = slot.posterUrl
 
         if (active === null) {
-          showPoster(slot.posterUrl, media.geometryMode)
+          showPoster(slot.posterUrl)
         }
       }
 
@@ -789,8 +787,8 @@ function DesktopWallpaper() {
 
     const off = bridge.onMedia(receive)
 
-    window.addEventListener('resize', updateAllVideoFits)
-    still.addEventListener('load', updatePosterFit)
+    window.addEventListener('resize', updateAllMediaLayouts)
+    still.addEventListener('load', updatePosterLayout)
 
     void bridge.ready().catch(error => console.warn('Desktop background readiness failed', error))
 
@@ -799,14 +797,15 @@ function DesktopWallpaper() {
       clear()
       disposed = true
       listeners.forEach(remove => remove())
-      window.removeEventListener('resize', updateAllVideoFits)
-      still.removeEventListener('load', updatePosterFit)
+      window.removeEventListener('resize', updateAllMediaLayouts)
+      still.removeEventListener('load', updatePosterLayout)
     }
   }, [])
 
   const videoStyle = {
     position: 'absolute',
-    inset: 0,
+    left: 0,
+    top: 0,
     width: '100%',
     height: '100%',
     objectFit: 'contain',

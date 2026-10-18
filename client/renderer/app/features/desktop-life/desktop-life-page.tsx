@@ -62,7 +62,7 @@ import { $auth } from '@/shared/store/auth'
 import { notifyError } from '@/shared/store/notifications'
 import { $presentation } from '@/shared/store/presentation'
 import { useStrings } from '@/shared/strings'
-import { desktopMediaObjectFit } from '@client-shared/desktop-media-geometry'
+import { desktopMediaLayout } from '@client-shared/desktop-media-geometry'
 import { errorMessage } from '@runtime'
 
 import {
@@ -83,24 +83,15 @@ function DesktopLifeCover({ url, target }: { url: string | null; target?: Deskto
   const media = useResolvedMediaSrc({ type: 'image', url: url ?? '' })
   const [size, setSize] = useState({ url, width: 0, height: 0 })
 
-  const owner = target?.actions.find(
-    action =>
-      url !== null &&
-      [
-        action.draft?.image_url,
-        action.draft?.candidate_poster_url,
-        action.current?.poster_url,
-        action.current?.image_url
-      ].includes(url)
-  )
-
-  const geometryMode =
-    owner?.draft && url !== null && [owner.draft.image_url, owner.draft.candidate_poster_url].includes(url)
-      ? owner.draft.geometry_mode
-      : owner?.current?.geometry_mode
-
   const frameWidth = target?.target_width ?? 16
   const frameHeight = target?.target_height ?? 9
+
+  const layout = desktopMediaLayout(
+    size.url === url ? size.width : 0,
+    size.url === url ? size.height : 0,
+    frameWidth,
+    frameHeight
+  )
 
   return media.status === 'ready' ? (
     <div
@@ -113,19 +104,18 @@ function DesktopLifeCover({ url, target }: { url: string | null; target?: Deskto
       />
       <img
         alt=""
-        className="h-full w-full object-center"
+        className="object-center"
         onLoad={event =>
           setSize({ url, width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })
         }
         src={media.src}
         style={{
-          objectFit: desktopMediaObjectFit(
-            size.url === url ? size.width : 0,
-            size.height,
-            frameWidth,
-            frameHeight,
-            geometryMode ?? 'keep'
-          )
+          position: 'absolute',
+          left: `${(layout.left / frameWidth) * 100}%`,
+          top: `${(layout.top / frameHeight) * 100}%`,
+          width: `${(layout.width / frameWidth) * 100}%`,
+          height: `${(layout.height / frameHeight) * 100}%`,
+          objectFit: layout.objectFit
         }}
       />
     </div>
@@ -195,15 +185,26 @@ function ResolvedDesktopLifePreview({
   const frameHeight = draft ? (action.draft?.target_height ?? set.target_height) : set.target_height
   const actualWidth = draft ? action.draft?.frame_width : action.current?.width
   const actualHeight = draft ? action.draft?.frame_height : action.current?.height
-  const geometryMode = draft ? action.draft?.geometry_mode : action.current?.geometry_mode
 
-  const objectFit = desktopMediaObjectFit(
+  const updateVideoSize = (event: React.SyntheticEvent<HTMLVideoElement>): void => {
+    setSize({ width: event.currentTarget.videoWidth, height: event.currentTarget.videoHeight })
+  }
+
+  const layout = desktopMediaLayout(
     size.width || actualWidth || 0,
     size.height || actualHeight || 0,
     frameWidth,
-    frameHeight,
-    geometryMode ?? 'target'
+    frameHeight
   )
+
+  const mediaStyle = {
+    position: 'absolute',
+    left: `${(layout.left / frameWidth) * 100}%`,
+    top: `${(layout.top / frameHeight) * 100}%`,
+    width: `${(layout.width / frameWidth) * 100}%`,
+    height: `${(layout.height / frameHeight) * 100}%`,
+    objectFit: layout.objectFit
+  } as const
 
   useEffect(() => {
     if (!active) {
@@ -226,31 +227,30 @@ function ResolvedDesktopLifePreview({
         {media.status === 'ready' && !failed ? (
           videoUrl ? (
             <video
-              className="h-full w-full object-center"
+              className="object-center"
               controls
               loop={action.kind === 'loop'}
               muted
               onError={() => setFailed(true)}
-              onLoadedMetadata={event =>
-                setSize({ width: event.currentTarget.videoWidth, height: event.currentTarget.videoHeight })
-              }
+              onLoadedMetadata={updateVideoSize}
+              onResize={updateVideoSize}
               playsInline
               preload="metadata"
               ref={video}
               src={media.src}
-              style={{ objectFit }}
+              style={mediaStyle}
             />
           ) : (
             <img
               alt={action.name}
-              className="h-full w-full object-center"
+              className="object-center"
               onError={() => setFailed(true)}
               onLoad={event => {
                 setSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })
                 onImageReady?.()
               }}
               src={media.src}
-              style={{ objectFit }}
+              style={mediaStyle}
             />
           )
         ) : (
