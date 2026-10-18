@@ -7,7 +7,13 @@ from pathlib import Path
 from mutagen import File as AudioFile
 
 from infrastructure.constants import STT_MAX_AUDIO_BYTES
-from infrastructure.video_processing.ffmpeg import VideoProcessError, _binary, _run, ffmpeg_stdout
+from infrastructure.video_processing.ffmpeg import (
+    FFPROBE_TIMEOUT_SECONDS,
+    VideoProcessError,
+    _binary,
+    _run,
+    ffmpeg_stdout,
+)
 
 
 def audio_bytes_info(data: bytes) -> tuple[float, str]:
@@ -39,6 +45,7 @@ def probe_audio(path: Path) -> float:
             "json",
             str(path),
         ],
+        timeout=FFPROBE_TIMEOUT_SECONDS,
     )
     if proc.returncode:
         raise VideoProcessError("无法读取音频", internal="audio probe failed")
@@ -78,6 +85,7 @@ def voice_sample_wav_bytes(data: bytes, *, max_duration: float, max_bytes: int) 
         source.write_bytes(data)
         probe = _run(
             [_binary("ffprobe"), "-v", "error", "-show_entries", "stream=codec_type", "-of", "json", str(source)],
+            timeout=FFPROBE_TIMEOUT_SECONDS,
         )
         try:
             streams = json.loads(probe.stdout).get("streams", [])

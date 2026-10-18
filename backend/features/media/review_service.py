@@ -86,6 +86,30 @@ async def list_pending_media_reviews(user_id: int) -> list[MediaReviewSnapshot]:
         return [MediaReviewSnapshot.model_validate(row) for row in rows]
 
 
+async def list_rejected_action_media(
+    db: AsyncSession,
+    user_id: int,
+    action_ids: Collection[int],
+) -> dict[int, frozenset[str]]:
+    """恢复制作时按账户和动作核对已拒绝素材，不让残留候选重新进入复核。"""
+    if not action_ids:
+        return {}
+    action_id = CompanionMediaReview.publication["action_id"].as_integer()
+    rows = await db.execute(
+        select(action_id, CompanionMediaReview.media_url).where(
+            CompanionMediaReview.user_id == user_id,
+            CompanionMediaReview.status == "rejected",
+            CompanionMediaReview.publication["kind"].as_string() == "action",
+            action_id.in_(action_ids),
+            CompanionMediaReview.media_url != "",
+        ),
+    )
+    paths: dict[int, set[str]] = {}
+    for review_action_id, media_url in rows:
+        paths.setdefault(review_action_id, set()).add(media_url)
+    return {key: frozenset(values) for key, values in paths.items()}
+
+
 async def lock_media_review(db: AsyncSession, user_id: int, review_id: int) -> MediaReviewSnapshot | None:
     row = await db.scalar(
         select(CompanionMediaReview)

@@ -1,7 +1,6 @@
 """语义前景透明化：保留角色内部颜色；静止区域做有限时域稳定，边缘去背景污染。"""
 
 import tempfile
-import time
 from pathlib import Path
 
 import numpy as np
@@ -105,7 +104,6 @@ def matte_video(src: Path, dst: Path) -> None:
         )
         return
     matte = ForegroundMatte(require_matting_model())
-    deadline = time.monotonic() + 600
     with tempfile.TemporaryDirectory(prefix="video-matte-") as tmp:
         work = Path(tmp)
         frames = work / "frames"
@@ -115,8 +113,6 @@ def matte_video(src: Path, dst: Path) -> None:
         if not paths:
             raise VideoProcessError("视频未解码出有效画面")
         for path in paths:
-            if time.monotonic() > deadline:
-                raise VideoProcessError("视频抠像超时")
             with Image.open(path) as frame:
                 result = matte.apply(frame)
             result.save(path)

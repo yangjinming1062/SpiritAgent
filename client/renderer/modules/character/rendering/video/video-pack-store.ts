@@ -496,11 +496,16 @@ export async function generateVideoPack(
   )
 
   const retryPack = opts.retryPackId != null ? relatedPacks.find(pack => pack.id === opts.retryPackId) : null
+  const retryAction = retryPack?.actions.find(action => action.action === scope.action)
 
   // 恢复只推进后端明确允许续查的任务；同组未知结果不阻止其他已知任务安全恢复。
   const busy =
     opts.retryPackId != null
-      ? !retryPack?.can_retry || requestPending || videoPackIsGenerating(retryPack)
+      ? scope.action != null
+        ? retryAction?.status !== 'failed' ||
+          !retryAction.can_retry ||
+          videoActionIsBusy($videoPacks.get(), $videoGenRequests.get(), scope.outfitId, scope.packId, scope.action)
+        : !retryPack?.can_retry || requestPending || videoPackIsGenerating(retryPack)
       : scope.action != null
         ? videoActionIsBusy($videoPacks.get(), $videoGenRequests.get(), scope.outfitId, scope.packId, scope.action)
         : requestPending ||
@@ -538,7 +543,7 @@ export async function generateVideoPack(
     const res = opts.retryPackId
       ? await authedResource('companion.produce_video_pack', {
           path: { pack_id: opts.retryPackId },
-          body: { command: 'retry' }
+          body: { command: 'retry', action: opts.action }
         })
       : await authedResource('companion.post_video_pack', {
           body: {

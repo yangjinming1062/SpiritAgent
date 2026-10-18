@@ -25,7 +25,7 @@ from features.appearance.avatar_service import get_avatar_job_lock
 from features.appearance.character_card import character_snapshot_is_current
 from features.appearance.queries import outfit_snapshot
 from features.media.chain import MediaChainState
-from features.media.review_service import list_pending_media_reviews
+from features.media.review_service import list_pending_media_reviews, list_rejected_action_media
 
 from .execution_state import logger
 from .helpers import _reference_hash
@@ -39,6 +39,7 @@ from .queries import (
     _job_result_unresolved,
     _jobs_by_pack,
     _load_generation_context,
+    _resumable_action_state,
 )
 from .references import _require_new_paid_step
 from .transactions import _activate_locked, _mark_pack_failed, _publish_catalog
@@ -146,6 +147,7 @@ def _pack_response(
     jobs: Sequence[CompanionAction],
     *,
     pending_reviews: dict[int, PendingActionReview],
+    rejected_media: dict[int, frozenset[str]],
 ) -> VideoPackResponse:
     """列表与单包共用响应装配；资源 URL 仅在出口签名。"""
     context = _load_generation_context(pack)
@@ -184,6 +186,13 @@ def _pack_response(
                 else None,
                 media_url=signed_companion_asset_url(preview_path) if preview_path else None,
                 has_ready_asset=material is not None,
+                can_retry=(
+                    bool(pack.reference_path)
+                    and pack.status in ("ready", "processing", "failed")
+                    and context is not None
+                    and context.reference_alignment == "ready"
+                    and _resumable_action_state(job, rejected_media.get(job.id, ())) is not None
+                ),
                 can_regenerate=not _job_result_unresolved(job),
                 current_media_url=signed_companion_asset_url(material.media_path) if material else None,
                 pending_review=pending_reviews.get(job.id),
@@ -224,7 +233,7 @@ def _pack_response(
             and (context.reference_alignment != "running" or reference_review_pending)
             and (
                 reference_review_pending
-                or any(_can_resume_job(job) for job in jobs)
+                or any(_can_resume_job(job, rejected_media.get(job.id, ())) for job in jobs)
                 or _can_publish_jobs(jobs, context.must_actions)
             )
         ),
@@ -238,6 +247,7 @@ async def load_pack_response(db: AsyncSession, pack: CompanionActionPack) -> Vid
         pack,
         jobs,
         pending_reviews=await _pending_action_reviews(pack.user_id),
+        rejected_media=await list_rejected_action_media(db, pack.user_id, [job.id for job in jobs]),
     )
 
 
@@ -258,11 +268,17 @@ async def list_pack_responses(db: AsyncSession, user_id: int) -> list[VideoPackR
         return []
     jobs_by_pack = await _jobs_by_pack(db, CompanionAction.user_id == user_id)
     pending_reviews = await _pending_action_reviews(user_id)
+    rejected_media = await list_rejected_action_media(
+        db,
+        user_id,
+        [job.id for jobs in jobs_by_pack.values() for job in jobs],
+    )
     return [
         _pack_response(
             pack,
             jobs_by_pack.get(pack.id, []),
             pending_reviews=pending_reviews,
+            rejected_media=rejected_media,
         )
         for pack in packs
     ]

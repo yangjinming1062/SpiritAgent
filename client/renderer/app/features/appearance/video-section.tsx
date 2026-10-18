@@ -38,6 +38,7 @@ interface ActionEntry {
   mediaUrl: string | null
   pendingReview: ActionWire['pending_review']
   hasReadyAsset: boolean
+  canRetry: boolean
   mediaType: 'image' | 'video' | null
   motionPrompt: string
   feedback: string
@@ -123,6 +124,7 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
       mediaUrl: entry.current_media_url,
       pendingReview: entry.pending_review,
       hasReadyAsset: entry.has_ready_asset,
+      canRetry: entry.can_retry,
       mediaType: entry.media_type,
       motionPrompt: entry.media_type === 'video' ? entry.motion_prompt : '',
       feedback: entry.feedback ?? '',
@@ -143,6 +145,7 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
         mediaUrl: null,
         pendingReview: null,
         hasReadyAsset: false,
+        canRetry: false,
         mediaType: null,
         motionPrompt: '',
         peekGeometry: null
@@ -282,6 +285,14 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
     })
   }
 
+  const requestActionResume = (): void => {
+    if (!selectedPack || selectedAction?.status !== 'failed' || !selectedAction.canRetry || actionIsBusy) {
+      return
+    }
+
+    void generateVideoPack({ retryPackId: selectedPack.id, action: selectedAction.key })
+  }
+
   const actionStatus = (action: ActionEntry): { label: string; hint?: string; className: string } => {
     if (action.videoQueue) {
       return { label: dict.common.videoQueue[action.videoQueue.state], className: 'bg-amber-400' }
@@ -342,6 +353,8 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
   const selectedStatus = selectedAction ? actionStatus(selectedAction) : null
 
   const canGenerateAction = !!selectedPack?.can_regenerate && !!selectedAction && !actionIsBusy
+  const canResumeAction = selectedAction?.status === 'failed' && selectedAction.canRetry && !actionIsBusy
+  const actionGenerationLabel = selectedAction?.status === 'missing' ? t.videoGenMissingAction : t.videoRedoAction
 
   return (
     <section
@@ -543,6 +556,7 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
 
                 {editing?.key === selectedAction.key ? (
                   <div className="mt-3 space-y-2">
+                    <p className={HINT_TEXT}>{t.videoRedoActionHint}</p>
                     <label className={HINT_TEXT} htmlFor="video-action-feedback">
                       {t.videoFeedback}
                     </label>
@@ -563,19 +577,29 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
                         onClick={() => requestActionGeneration(editing.feedback)}
                         type="button"
                       >
-                        {selectedAction.hasReadyAsset ? t.videoRedoAction : t.videoGenMissingAction}
+                        {actionGenerationLabel}
                       </button>
                     </div>
                   </div>
-                ) : canGenerateAction ? (
-                  <div className="mt-3 flex justify-end">
-                    <button
-                      className={BTN_SUBTLE}
-                      onClick={() => setEditing({ key: selectedAction.key, feedback: selectedAction.feedback })}
-                      type="button"
-                    >
-                      {selectedAction.hasReadyAsset ? t.videoRedoAction : t.videoGenMissingAction}
-                    </button>
+                ) : canGenerateAction || canResumeAction ? (
+                  <div className="mt-3 space-y-2">
+                    {canResumeAction ? <p className={HINT_TEXT}>{t.videoResumeActionHint}</p> : null}
+                    <div className="flex justify-end gap-2">
+                      {canResumeAction ? (
+                        <button className={BTN_PRIMARY} onClick={requestActionResume} type="button">
+                          {t.videoResumeAction}
+                        </button>
+                      ) : null}
+                      {canGenerateAction ? (
+                        <button
+                          className={BTN_SUBTLE}
+                          onClick={() => setEditing({ key: selectedAction.key, feedback: selectedAction.feedback })}
+                          type="button"
+                        >
+                          {actionGenerationLabel}
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                 ) : null}
               </>

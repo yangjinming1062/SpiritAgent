@@ -37,6 +37,7 @@ from features.companion.persona_service import load_persona_definition
 from features.companion.visual_state import ensure_persona_snapshot
 from features.media.chain import FrozenMediaProvider, spawn_removed_action_task_cancellation
 from features.media.image_generation import resolve_image_gen_chain
+from features.media.review_service import list_rejected_action_media
 
 from .catalog import _publish_dynamic_catalog
 from .errors import VideoPackError, VideoPackNotFoundError, VideoPackStateError
@@ -52,6 +53,7 @@ from .queries import (
     _has_pending_work,
     _jobs_by_pack,
     _load_generation_context,
+    _resumable_action_state,
 )
 from .references import (
     _freeze_action_video_plan,
@@ -320,13 +322,22 @@ async def create_pack_from_reference(
     return ActionPackSnapshot.model_validate(pack)
 
 
-async def retry_pack(db: AsyncSession, user_id: int, pack_id: int) -> ActionPackSnapshot:
-    """只恢复已知任务或本地素材；不自动重发结果未知的生成请求。"""
+async def retry_pack(
+    db: AsyncSession,
+    user_id: int,
+    pack_id: int,
+    *,
+    action: str | None = None,
+) -> ActionPackSnapshot:
+    """整包恢复已知任务；指定动作时只续下载、后处理或已有候选收尾。"""
+    kick_action_id: int | None = None
     async with get_avatar_job_lock(user_id):
         pack = await _get_pack(db, user_id, pack_id)
-        if pack is None or pack.status != "failed" or not pack.reference_path:
+        allowed_statuses = ("failed",) if action is None else ("ready", "processing", "failed")
+        if pack is None or pack.status not in allowed_statuses or not pack.reference_path:
             raise VideoPackStateError("该动作包没有可继续的任务")
-        await _reject_concurrent_build(db, user_id, pack.outfit_id)
+        if action is None:
+            await _reject_concurrent_build(db, user_id, pack.outfit_id)
         outfit = await outfit_snapshot(db, pack.user_id, pack.outfit_id)
         avatar = await _active_avatar(db, user_id)
         if outfit is None or avatar is None or pack.avatar_id != avatar.id:
@@ -339,25 +350,62 @@ async def retry_pack(db: AsyncSession, user_id: int, pack_id: int) -> ActionPack
         if context.reference_chain.phase == "submitting" or context.reference_chain.stop_reason == "result_unknown":
             raise VideoPackStateError("参考图生成结果尚未确认，请先核对原任务")
         jobs = list(
-            (await db.execute(select(CompanionAction).where(CompanionAction.pack_id == pack_id))).scalars(),
+            (
+                await db.execute(
+                    select(CompanionAction)
+                    .where(CompanionAction.pack_id == pack_id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True),
+                )
+            ).scalars(),
         )
-        if any(job.id in _ACTION_INFLIGHT for job in jobs):
+        targets = jobs if action is None else [job for job in jobs if job.key == action]
+        if action is not None and not targets:
+            raise VideoPackNotFoundError("找不到对应的动作，请刷新后重试")
+        if any(job.id in _ACTION_INFLIGHT for job in targets):
             raise VideoPackStateError("动作任务仍在收尾，请等待完成后继续")
-        recoverable = [job for job in jobs if _can_resume_job(job)]
-        if (
-            not recoverable
-            and not context.reference_chain.can_retry_goal_review()
-            and not _can_publish_jobs(jobs, context.must_actions)
-        ):
-            raise VideoPackStateError("没有可继续的动作任务，请先核对原任务结果")
-        if recoverable:
+        rejected_media = await list_rejected_action_media(db, user_id, [job.id for job in targets])
+        if action is not None:
+            job = targets[0]
+            state = _resumable_action_state(job, rejected_media.get(job.id, ()))
+            if state is None or context.reference_alignment != "ready":
+                raise VideoPackStateError("该动作没有可恢复的制作进度，请核对原任务或重新生成")
             require_action_matting_model()
-        for job in recoverable:
+            # 继续制作只收尾已有视频，跳过尚未提交的供应商，避免检查后追加视频生成。
+            state.next_index = len(state.providers)
+            if state.phase == "storing":
+                state.stop_reason = ""
+            job.artifact_path = next(
+                (
+                    path
+                    for path in (job.artifact_path, state.source_path)
+                    if path and _artifact_abs_path(path).is_file()
+                ),
+                None,
+            )
+            job.generation_state_json = state.model_dump_json()
             job.status, job.error = "queued", None
-        pack.status, pack.error = "processing", None
+            kick_action_id = job.id
+        else:
+            recoverable = [job for job in jobs if _can_resume_job(job, rejected_media.get(job.id, ()))]
+            if (
+                not recoverable
+                and not context.reference_chain.can_retry_goal_review()
+                and not _can_publish_jobs(jobs, context.must_actions)
+            ):
+                raise VideoPackStateError("没有可继续的动作任务，请先核对原任务结果")
+            if recoverable:
+                require_action_matting_model()
+            for job in recoverable:
+                job.status, job.error = "queued", None
+        if pack.status == "failed":
+            pack.status, pack.error = "processing", None
         await db.commit()
         await db.refresh(pack)
-    _kick_generate(pack.id, user_id)
+    if kick_action_id is not None:
+        kick_dynamic_action(pack.id, kick_action_id, user_id)
+    else:
+        _kick_generate(pack.id, user_id)
     return ActionPackSnapshot.model_validate(pack)
 
 

@@ -999,7 +999,7 @@ async def produce_video_pack(
     try:
         if isinstance(body, VideoPackEnsureRequest):
             return await ensure_system_action_view(db, user.id, pack_id, body.action)
-        return await retry_pack_view(db, user.id, pack_id)
+        return await retry_pack_view(db, user.id, pack_id, action=body.action)
     except VideoPackError as exc:
         raise _video_pack_request_error(exc) from exc
 

@@ -114,6 +114,7 @@ class VideoPackRetryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     command: Literal["retry"]
+    action: str | None = Field(default=None, min_length=1, max_length=32)
 
 
 class VideoPackEnsureRequest(VideoPackEnsureSystemActionRequest):
@@ -149,6 +150,7 @@ class ActionMediaResponse(BaseModel):
     current_media_url: str | None = None
     pending_review: PendingActionReview | None = None
     has_ready_asset: bool = False
+    can_retry: bool = False
     can_regenerate: bool = False
     feedback: str = ""
     peek_geometry: PeekGeometry | None = None

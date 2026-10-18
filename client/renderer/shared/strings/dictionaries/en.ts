@@ -1239,13 +1239,17 @@ export const dict: Dictionary = {
       videoPeekCalibrationFailedHint:
         'The media is ready, but its peek layout did not pass validation. Regenerate to try again.',
       videoResume: 'Resume existing work',
+      videoResumeAction: 'Continue production',
+      videoResumeActionHint:
+        'Reuse the existing video and saved progress to finish production without generating a new video.',
       videoActivate: 'Wear this outfit',
       videoIdentityReviewHint: 'Check this action pack’s appearance; the current look stays available.',
       videoIdentityReviewActivate: 'Confirm appearance and wear',
       videoActive: 'Active',
       videoActionOnDemand: 'System actions are filled in by the service when needed; you can also generate here.',
       videoGenMissingAction: 'Generate this action',
-      videoRedoAction: 'Regenerate this action',
+      videoRedoAction: 'Regenerate',
+      videoRedoActionHint: 'Create new action media. This may incur new generation charges.',
       videoFeedback: 'Describe the desired pose or movement (optional)',
       videoGenAction: 'Prepare basic actions',
       videoRegenAction: 'Recreate basic actions',

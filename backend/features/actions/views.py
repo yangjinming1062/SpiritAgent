@@ -62,8 +62,14 @@ async def create_pack_from_reference_view(
     )
 
 
-async def retry_pack_view(db: AsyncSession, user_id: int, pack_id: int) -> VideoPackResponse:
-    return _summary(await _commands.retry_pack(db=db, user_id=user_id, pack_id=pack_id))
+async def retry_pack_view(
+    db: AsyncSession,
+    user_id: int,
+    pack_id: int,
+    *,
+    action: str | None = None,
+) -> VideoPackResponse:
+    return _summary(await _commands.retry_pack(db=db, user_id=user_id, pack_id=pack_id, action=action))
 
 
 async def ensure_system_action_view(db: AsyncSession, user_id: int, pack_id: int, action: str) -> VideoPackResponse:

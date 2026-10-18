@@ -1,12 +1,13 @@
 """动作制作：queries。"""
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 
 from sqlalchemy import ColumnElement, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.actions.generation.state import GenerationContext
 from features.actions.materials import accepted_action_asset
+from features.actions.media_contracts import ActionResult
 from features.actions.models import REQUIRED_SYSTEM_SLOTS, SYSTEM_SLOTS, CompanionAction, CompanionActionPack
 from features.appearance.queries import active_avatar_snapshot, active_outfit_id
 from features.appearance.query_contracts import AvatarSnapshot
@@ -14,6 +15,7 @@ from features.media.chain import MediaChainState
 from features.media.character_images import ImageChainState
 
 from .execution_state import _GEN_INFLIGHT
+from .helpers import _artifact_abs_path
 
 
 async def _active_avatar(db: AsyncSession, user_id: int) -> AvatarSnapshot | None:
@@ -64,17 +66,23 @@ def _job_result_unresolved(job: CompanionAction) -> bool:
     )
 
 
-def _can_resume_job(job: CompanionAction) -> bool:
+def _can_resume_job(job: CompanionAction, rejected_paths: Collection[str]) -> bool:
     if job.status in ("succeeded", "review", "result_unknown") or job.stage == "invalid_asset":
+        return False
+    if job.media_path in rejected_paths:
         return False
     if job.generation_state_json:
         state = MediaChainState.model_validate_json(job.generation_state_json)
+        if any(candidate.path in rejected_paths for candidate in state.candidates):
+            return False
         if (state.phase == "submitting" and not state.queue_request_id) or state.stop_reason == "result_unknown":
             return False
         if state.phase == "ready" and state.active_index is None and not state.needs_next() and state.best() is None:
             return False
     if job.pose_generation_state_json:
         pose = ImageChainState.model_validate_json(job.pose_generation_state_json)
+        if any(candidate.path in rejected_paths for candidate in pose.candidates):
+            return False
         if pose.phase == "submitting" or pose.stop_reason == "result_unknown":
             return False
     return bool(
@@ -85,6 +93,44 @@ def _can_resume_job(job: CompanionAction) -> bool:
         or job.stage == "script"
         or (job.stage == "pose" and job.pose_path),
     )
+
+
+def _resumable_action_state(job: CompanionAction, rejected_paths: Collection[str]) -> MediaChainState | None:
+    """只开放已有视频的下载、后处理或候选收尾，不启动新的生成尝试。"""
+    if (
+        job.status != "failed"
+        or job.media_type != "video"
+        or not job.script_json
+        or not job.generation_state_json
+        or not _can_resume_job(job, rejected_paths)
+        or _job_result_unresolved(job)
+    ):
+        return None
+    state = MediaChainState.model_validate_json(job.generation_state_json)
+    if not state.providers or state.stop_reason == "content_policy_blocked":
+        return None
+    if state.phase in ("ready", "evaluating", "complete") and (state.phase != "ready" or state.active_index is None):
+        candidate = (
+            next((item for item in state.candidates if item.attempt == state.active_index), None)
+            if state.phase == "evaluating"
+            else state.best()
+        )
+        if candidate is not None and 0 <= candidate.attempt < len(state.providers) and candidate.result_json:
+            result = ActionResult.model_validate_json(candidate.result_json)
+            if all(
+                _artifact_abs_path(path).is_file()
+                for path in (result.clip.path, result.cover_path, result.hitmask_path)
+            ):
+                return state
+    if state.phase != "storing" or state.active_index is None or not 0 <= state.active_index < len(state.providers):
+        return None
+    if state.stop_reason not in ("", "timeout", "result_download_failed", "unknown", "matting_unavailable"):
+        return None
+    if state.result_url or any(
+        path and _artifact_abs_path(path).is_file() for path in (job.artifact_path, state.source_path)
+    ):
+        return state
+    return None
 
 
 def _must_succeed_actions(context_must: list[str]) -> set[str]:

@@ -90,7 +90,15 @@ async def reject_reviewed_action(db: AsyncSession, user_id: int, action_id: int,
         and _is_current_review_asset(job, media_url)
     ):
         raise ActionReviewStateError("动作素材仍在保存，请稍后重试")
-    if job is not None and job.user_id == user_id and (job.status == "review") and (job.media_path == media_url):
+    # 复核项可先于动作终态提交；拒绝失败动作的候选也须作废当前尝试，避免恢复后重提。
+    if (
+        job is not None
+        and job.user_id == user_id
+        and (
+            (job.status == "review" and job.media_path == media_url)
+            or (job.status == "failed" and _is_current_review_asset(job, media_url))
+        )
+    ):
         unresolved = _job_result_unresolved(job)
         unresolved_state = (job.provider_task_id, job.artifact_path, job.pose_path)
         generation_state = (

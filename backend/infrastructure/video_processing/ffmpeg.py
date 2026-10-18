@@ -1,4 +1,8 @@
-"""FFmpeg / ffprobe 受控进程封装：固定二进制名、受限参数、超时与工作目录约束。不向客户端分发 FFmpeg，不执行任意脚本或用户字符串参数；所有参数由本包代码构造，外部输入只能进入取值受校验的参数槽。进程超时即杀，输出文件落在调用方给定的 data 目录内。"""
+"""FFmpeg / ffprobe 受控进程封装：固定二进制名与受限参数。
+
+媒体解码、编码及全片扫描不设耗时上限，仅元信息探测设置独立预算。
+不执行任意脚本或用户字符串参数，输出文件落在调用方给定的 data 目录内。
+"""
 
 import json
 import shutil
@@ -31,7 +35,7 @@ _ALPHA_PIX_FMTS: frozenset[str] = frozenset(
     },
 )
 
-_FFMPEG_TIMEOUT_SECONDS = 600.0
+FFPROBE_TIMEOUT_SECONDS = 600.0
 
 
 class VideoProcessError(RuntimeError):
@@ -49,7 +53,7 @@ class ActionMaterialRejectedError(VideoProcessError):
 
 
 class VideoToolUnavailableError(VideoProcessError):
-    """FFmpeg / ffprobe 缺失、无法启动或超时；说明本机环境故障，不能据此判定视频成品本身有问题。"""
+    """媒体工具缺失、无法启动或元信息探测超时；不能据此判定视频成品本身有问题。"""
 
 
 @dataclass(frozen=True)
@@ -78,16 +82,16 @@ def _binary(name: str) -> str:
     return resolved
 
 
-def _run(args: list[str]) -> subprocess.CompletedProcess[bytes]:
+def _run(args: list[str], *, timeout: float | None = None) -> subprocess.CompletedProcess[bytes]:
     try:
         return subprocess.run(  # 参数列表固定构造，不经 shell。
             args,
             capture_output=True,
-            timeout=_FFMPEG_TIMEOUT_SECONDS,
+            timeout=timeout,
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
-        raise VideoToolUnavailableError("视频处理超时", internal=str(exc)) from exc
+        raise VideoToolUnavailableError("媒体信息读取超时", internal=str(exc)) from exc
     except OSError as exc:
         raise VideoToolUnavailableError("视频处理进程启动失败", internal=str(exc)) from exc
 
@@ -104,7 +108,7 @@ def probe_video(path: Path) -> VideoProbe:
         "json",
         str(path),
     ]
-    proc = _run(args)
+    proc = _run(args, timeout=FFPROBE_TIMEOUT_SECONDS)
     if proc.returncode != 0:
         raise VideoProcessError("视频元信息读取失败", internal=proc.stderr.decode("utf-8", "replace")[:2000])
     payload = json.loads(proc.stdout.decode("utf-8", "replace"))
