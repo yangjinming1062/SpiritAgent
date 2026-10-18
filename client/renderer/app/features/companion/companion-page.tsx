@@ -43,7 +43,9 @@ function CompanionSession(): React.JSX.Element {
   const section = useStore($companionSection)
   const english = useStore($locale) === 'en'
   const route = useStore($appNavigation)
-  const boundedFeature = section === 'desktop-life' || section === 'appearance' || section === 'scene'
+
+  const boundedFeature =
+    section === 'desktop-life' || section === 'appearance' || section === 'scene' || section === 'memory'
 
   useEffect(() => {
     if (route.page === 'companion' && route.companionTask === 'create') {
@@ -108,7 +110,7 @@ function CompanionSession(): React.JSX.Element {
 
       case 'memory':
         return (
-          <>
+          <div className="flex min-h-0 flex-1 flex-col pb-4">
             <SettingsSectionIntro
               hint={
                 english
@@ -118,7 +120,7 @@ function CompanionSession(): React.JSX.Element {
               title={english ? 'Memories' : '记忆'}
             />
             <MemorySection />
-          </>
+          </div>
         )
     }
   }

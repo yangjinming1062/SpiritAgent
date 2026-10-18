@@ -21,6 +21,7 @@ import {
 import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
+import type { CompanionMemoryBrowser } from '@client-shared/ipc/ui-state'
 import type { MemoryCounts, MemoryItem } from '@protocol'
 
 import {
@@ -47,38 +48,42 @@ export function MemorySection(): React.ReactElement {
   }, [])
 
   return (
-    <section className="space-y-4">
-      <label className="block text-sm text-body">
-        {english ? 'Whose memories' : '查看谁的记忆'}
-        <PanelSelect
-          ariaLabel={dict.settings.memory.presetLabel}
-          onChange={next =>
-            updateCompanionEditors({
-              memory: {
-                ...$companionEditors.get().memory,
-                presetId: next,
-                section: next === 'companion' ? section : 'recall'
-              }
-            })
-          }
-          options={presets.map(preset => ({ value: preset.id, label: presetDisplayName(dict, preset) }))}
-          value={presetId}
-          widthClass="w-full"
-        />
-      </label>
-      {presetId === 'companion' && (
-        <CapsuleTabs
-          ariaLabel={english ? 'Memory type' : '记忆类型'}
-          onChange={next => updateCompanionEditors({ memory: { ...$companionEditors.get().memory, section: next } })}
-          options={[
-            { value: 'recall', label: english ? 'Remembered things' : '记住的事' },
-            { value: 'profile', label: dict.settings.memory.profile.title }
-          ]}
-          value={section}
-        />
-      )}
+    <section className="flex min-h-0 flex-1 flex-col gap-4">
+      <div className="flex shrink-0 flex-wrap items-end gap-3">
+        <label className="block min-w-40 flex-1 text-sm text-body">
+          {english ? 'Whose memories' : '查看谁的记忆'}
+          <PanelSelect
+            ariaLabel={dict.settings.memory.presetLabel}
+            onChange={next =>
+              updateCompanionEditors({
+                memory: {
+                  ...$companionEditors.get().memory,
+                  presetId: next,
+                  section: next === 'companion' ? section : 'recall'
+                }
+              })
+            }
+            options={presets.map(preset => ({ value: preset.id, label: presetDisplayName(dict, preset) }))}
+            value={presetId}
+            widthClass="w-full"
+          />
+        </label>
+        {presetId === 'companion' && (
+          <CapsuleTabs
+            ariaLabel={english ? 'Memory type' : '记忆类型'}
+            onChange={next => updateCompanionEditors({ memory: { ...$companionEditors.get().memory, section: next } })}
+            options={[
+              { value: 'recall', label: english ? 'Remembered things' : '记住的事' },
+              { value: 'profile', label: dict.settings.memory.profile.title }
+            ]}
+            value={section}
+          />
+        )}
+      </div>
       {section === 'profile' && presetId === 'companion' ? (
-        <UserProfileSection />
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <UserProfileSection />
+        </div>
       ) : (
         <RecallBrowser key={presetId} presetId={presetId} />
       )}
@@ -102,7 +107,7 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
   const [busy, setBusy] = useState(false)
   const loadId = useRef(0)
   const listRef = useRef<HTMLDivElement>(null)
-  const contentRef = useRef<HTMLDivElement>(null)
+  const editorRef = useRef<HTMLElement>(null)
   const begin = useAsyncGuard()
 
   const load = useCallback(
@@ -185,41 +190,40 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
     if (listRef.current) {
       listRef.current.scrollTop = memoryBrowser(presetId).scrollTop
     }
-  }, [browser.editorOpen, loading, presetId])
+  }, [loading, presetId])
 
   const selected = rows.find(row => row.id === browser.selectedId) ?? rows[0]
   const draftKey = selected ? `${presetId}:${selected.id}` : ''
   const draft = memory.drafts[draftKey]
   const conflict = !!draft && selected?.content_version !== draft.baseVersion
 
-  const pageScroller = (): HTMLElement | null => {
-    let element = contentRef.current?.parentElement ?? null
-
-    while (element) {
-      if (['auto', 'scroll'].includes(getComputedStyle(element).overflowY)) {
-        return element
-      }
-
-      element = element.parentElement
+  const changeFilter = (filter: Partial<Pick<CompanionMemoryBrowser, 'page' | 'query' | 'status'>>): void => {
+    if (listRef.current) {
+      listRef.current.scrollTop = 0
     }
 
-    return null
+    setSavedHint(null)
+    updateMemoryBrowser(presetId, { page: 0, ...filter, selectedId: null, editorOpen: false, scrollTop: 0 })
   }
 
   const selectRow = (id: number): void => {
-    updateMemoryBrowser(presetId, { selectedId: id, editorOpen: true, pageScrollTop: pageScroller()?.scrollTop ?? 0 })
-    window.requestAnimationFrame(() => document.getElementById(`memory-${id}`)?.focus({ preventScroll: true }))
-  }
-
-  const backToList = (): void => {
-    updateMemoryBrowser(presetId, { editorOpen: false })
+    updateMemoryBrowser(presetId, { selectedId: id, editorOpen: true })
+    setSavedHint(null)
     window.requestAnimationFrame(() => {
-      const scroller = pageScroller()
+      const list = listRef.current
+      const editor = editorRef.current
 
-      if (scroller) {
-        scroller.scrollTop = browser.pageScrollTop ?? 0
+      if (list && editor) {
+        list.scrollTop += editor.getBoundingClientRect().top - list.getBoundingClientRect().top
       }
 
+      document.getElementById(`memory-${id}`)?.focus({ preventScroll: true })
+    })
+  }
+
+  const closeEditor = (): void => {
+    updateMemoryBrowser(presetId, { editorOpen: false })
+    window.requestAnimationFrame(() => {
       listRef.current
         ?.querySelector<HTMLButtonElement>(`[data-memory-id="${selected?.id}"]`)
         ?.focus({ preventScroll: true })
@@ -382,56 +386,49 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
   }
 
   return (
-    <div className="@container space-y-3" ref={contentRef}>
-      <label className="block">
-        <span className="sr-only">{english ? 'Search memories' : '搜索记忆'}</span>
-        <input
-          className={INPUT_CLASS}
-          onChange={event => {
-            setSavedHint(null)
-            updateMemoryBrowser(presetId, {
-              query: event.target.value,
-              page: 0,
-              selectedId: null,
-              editorOpen: false,
-              scrollTop: 0
-            })
-          }}
-          placeholder={english ? 'Search remembered things' : '搜索记住的事'}
-          type="search"
-          value={query}
-        />
-      </label>
-      <CapsuleTabs
-        ariaLabel={t.tabAriaLabel}
-        onChange={next =>
-          updateMemoryBrowser(presetId, { status: next, page: 0, selectedId: null, editorOpen: false, scrollTop: 0 })
-        }
-        options={[
-          { label: t.tabActive(counts?.active ?? '…'), value: 'active' },
-          { label: t.tabCandidate(counts?.candidate ?? '…'), value: 'candidate' },
-          { label: t.tabInvalidated(counts?.invalidated ?? '…'), value: 'invalidated' },
-          { label: t.tabExpired(counts?.expired ?? '…'), value: 'expired' }
-        ]}
-        size="sm"
-        value={status}
-      />
-      <p className={HINT_TEXT}>{t.maintenanceHint}</p>
-      {hint && (
-        <div className="flex flex-wrap items-center gap-2">
-          <p aria-live="polite" className="text-xs text-amber-300/90">
-            {hint}
-          </p>
-          <button className={BTN_GHOST} onClick={() => void load()} type="button">
-            {dict.common.retry}
-          </button>
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <div className="shrink-0 space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="block min-w-40 flex-1">
+            <span className="sr-only">{english ? 'Search memories' : '搜索记忆'}</span>
+            <input
+              className={INPUT_CLASS}
+              onChange={event => changeFilter({ query: event.target.value })}
+              placeholder={english ? 'Search remembered things' : '搜索记住的事'}
+              type="search"
+              value={query}
+            />
+          </label>
+          <CapsuleTabs
+            ariaLabel={t.tabAriaLabel}
+            onChange={next => changeFilter({ status: next })}
+            options={[
+              { label: t.tabActive(counts?.active ?? '…'), value: 'active' },
+              { label: t.tabCandidate(counts?.candidate ?? '…'), value: 'candidate' },
+              { label: t.tabInvalidated(counts?.invalidated ?? '…'), value: 'invalidated' },
+              { label: t.tabExpired(counts?.expired ?? '…'), value: 'expired' }
+            ]}
+            size="sm"
+            value={status}
+          />
         </div>
-      )}
-      {savedHint && (
-        <p aria-live="polite" className={HINT_TEXT}>
-          {savedHint}
-        </p>
-      )}
+        <p className={HINT_TEXT}>{t.maintenanceHint}</p>
+        {hint && (
+          <div className="flex flex-wrap items-center gap-2">
+            <p aria-live="polite" className="text-xs text-amber-300/90">
+              {hint}
+            </p>
+            <button className={BTN_GHOST} onClick={() => void load()} type="button">
+              {dict.common.retry}
+            </button>
+          </div>
+        )}
+        {savedHint && (
+          <p aria-live="polite" className={HINT_TEXT}>
+            {savedHint}
+          </p>
+        )}
+      </div>
       {loading ? (
         <p className={HINT_TEXT}>{t.loading}</p>
       ) : rows.length === 0 ? (
@@ -439,164 +436,165 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
           <p className={HINT_TEXT}>{query ? (english ? 'No matching memories.' : '没有找到匹配的记忆。') : t.empty}</p>
         )
       ) : (
-        <div className="grid min-w-0 items-start gap-4 @min-[720px]:grid-cols-[minmax(220px,0.85fr)_minmax(0,1.4fr)]">
-          <div className={cn('min-w-0 space-y-3', browser.editorOpen && 'hidden @min-[720px]:block')}>
-            <div
-              className="max-h-[65vh] space-y-2 overflow-y-auto"
-              onScroll={event => updateMemoryBrowser(presetId, { scrollTop: event.currentTarget.scrollTop })}
-              ref={listRef}
-            >
-              {rows.map(row => (
-                <button
-                  aria-current={selected?.id === row.id ? 'true' : undefined}
+        <>
+          <div
+            className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain"
+            onScroll={event => updateMemoryBrowser(presetId, { scrollTop: event.currentTarget.scrollTop })}
+            ref={listRef}
+          >
+            {rows.map(row => {
+              const editing = browser.editorOpen && selected?.id === row.id
+
+              return (
+                <article
                   className={cn(
-                    'liquid-glass-card w-full rounded-xl border p-3 text-left',
-                    selected?.id === row.id ? 'border-accent' : 'border-transparent'
+                    'liquid-glass-card rounded-xl',
+                    editing && 'outline-1 -outline-offset-1 outline-accent'
                   )}
-                  data-memory-id={row.id}
                   key={row.id}
-                  onClick={() => selectRow(row.id)}
-                  type="button"
+                  ref={editing ? editorRef : undefined}
                 >
-                  <p className="line-clamp-3 whitespace-pre-wrap break-words text-sm leading-6 text-body">
-                    {row.content}
-                  </p>
-                  <p className={cn(HINT_TEXT, 'mt-2')}>
-                    {row.context?.replace(/^recall:/, '') || '—'} ·{' '}
-                    {row.updated_at ? new Date(row.updated_at).toLocaleDateString(english ? 'en' : 'zh-CN') : '—'}
-                  </p>
-                  {memory.drafts[`${presetId}:${row.id}`] && (
-                    <span className="text-xs text-accent">{english ? 'Unsaved changes' : '未保存修改'}</span>
+                  {editing ? (
+                    <div className="space-y-3 p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <label className="text-sm font-medium text-strong" htmlFor={`memory-${row.id}`}>
+                          {english ? 'Edit memory' : '编辑记忆'}
+                        </label>
+                        <div className="flex items-center gap-2">
+                          {draft && <span className={HINT_TEXT}>{english ? 'Unsaved changes' : '未保存修改'}</span>}
+                          <button className={BTN_GHOST} onClick={closeEditor} type="button">
+                            {english ? 'Collapse' : '收起'}
+                          </button>
+                        </div>
+                      </div>
+                      <textarea
+                        className={cn(INPUT_CLASS, 'min-h-40 resize-y')}
+                        disabled={busy}
+                        id={`memory-${row.id}`}
+                        onChange={event => {
+                          setSavedHint(null)
+                          setMemoryDraft('drafts', draftKey, editMemoryDraft(draft, event.target.value, row))
+                        }}
+                        rows={7}
+                        value={draft?.content ?? row.content ?? ''}
+                      />
+                      {status !== 'active' && (
+                        <p className={HINT_TEXT}>
+                          {english ? 'Saving makes this memory available again.' : '保存后，这条记忆会重新生效。'}
+                        </p>
+                      )}
+                      {conflict && (
+                        <div className="space-y-2 rounded-xl border border-line-hairline p-3">
+                          <p className="text-xs text-amber-300/90">
+                            {english
+                              ? 'This memory changed on another device. Latest content:'
+                              : '这条记忆已在其他设备修改，最新内容：'}
+                          </p>
+                          <p className="whitespace-pre-wrap break-words text-sm text-body">{row.content}</p>
+                          <button
+                            className={BTN_SUBTLE}
+                            disabled={busy}
+                            onClick={() => {
+                              if (draft) {
+                                setMemoryDraft('drafts', draftKey, {
+                                  ...draft,
+                                  baseContent: row.content ?? '',
+                                  baseVersion: row.content_version
+                                })
+                              }
+                            }}
+                            type="button"
+                          >
+                            {english ? 'Keep my edits after review' : '已核对，保留我的修改'}
+                          </button>
+                        </div>
+                      )}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          className={BTN_SUBTLE}
+                          disabled={busy || !draft?.content.trim() || conflict}
+                          onClick={() => void save()}
+                          type="button"
+                        >
+                          {busy
+                            ? dict.common.saving
+                            : status === 'active'
+                              ? english
+                                ? 'Save changes'
+                                : '保存修改'
+                              : english
+                                ? 'Save and remember again'
+                                : '保存并重新记住'}
+                        </button>
+                        <button
+                          className={BTN_GHOST}
+                          disabled={busy || !draft}
+                          onClick={() => setMemoryDraft('drafts', draftKey, undefined)}
+                          type="button"
+                        >
+                          {dict.common.cancel}
+                        </button>
+                        <button
+                          className={cn(BTN_GHOST, 'text-danger-fg')}
+                          disabled={busy}
+                          onClick={() => void forget()}
+                          type="button"
+                        >
+                          {english ? 'Forget this memory' : '忘记这条记忆'}
+                        </button>
+                      </div>
+                      <p className={cn(HINT_TEXT, 'break-words')}>
+                        {row.context?.replace(/^recall:/, '') || '—'} · {t.updated} {row.updated_at ?? '—'}
+                      </p>
+                      <MemoryDetails row={row} />
+                    </div>
+                  ) : (
+                    <button
+                      aria-expanded={false}
+                      className="w-full rounded-xl p-3 text-left focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2"
+                      data-memory-id={row.id}
+                      onClick={() => selectRow(row.id)}
+                      type="button"
+                    >
+                      <p className="line-clamp-3 whitespace-pre-wrap break-words text-sm leading-6 text-body">
+                        {row.content}
+                      </p>
+                      <p className={cn(HINT_TEXT, 'mt-2 break-words')}>
+                        {row.context?.replace(/^recall:/, '') || '—'} ·{' '}
+                        {row.updated_at ? new Date(row.updated_at).toLocaleDateString(english ? 'en' : 'zh-CN') : '—'}
+                      </p>
+                      {memory.drafts[`${presetId}:${row.id}`] && (
+                        <span className="text-xs text-accent">{english ? 'Unsaved changes' : '未保存修改'}</span>
+                      )}
+                    </button>
                   )}
-                </button>
-              ))}
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <button
-                className={BTN_SUBTLE}
-                disabled={page === 0}
-                onClick={() =>
-                  updateMemoryBrowser(presetId, { page: page - 1, selectedId: null, editorOpen: false, scrollTop: 0 })
-                }
-                type="button"
-              >
-                {english ? 'Previous' : '上一页'}
-              </button>
-              <span className={HINT_TEXT}>
-                {page + 1} / {Math.max(1, Math.ceil(total / PAGE_SIZE))} ·{' '}
-                {english ? `${total} memories` : `共 ${total} 条`}
-              </span>
-              <button
-                className={BTN_SUBTLE}
-                disabled={(page + 1) * PAGE_SIZE >= total}
-                onClick={() =>
-                  updateMemoryBrowser(presetId, { page: page + 1, selectedId: null, editorOpen: false, scrollTop: 0 })
-                }
-                type="button"
-              >
-                {english ? 'Next' : '下一页'}
-              </button>
-            </div>
+                </article>
+              )
+            })}
           </div>
-          {selected && (
-            <div
-              className={cn(
-                'liquid-glass-card min-w-0 space-y-3 rounded-2xl p-4',
-                !browser.editorOpen && 'hidden @min-[720px]:block'
-              )}
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+            <button
+              className={BTN_SUBTLE}
+              disabled={page === 0}
+              onClick={() => changeFilter({ page: page - 1 })}
+              type="button"
             >
-              <button className={cn(BTN_GHOST, '@min-[720px]:hidden')} onClick={backToList} type="button">
-                ← {english ? 'Back' : '返回'}
-              </button>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <label className="text-sm font-medium text-strong" htmlFor={`memory-${selected.id}`}>
-                  {english ? 'Memory content' : '记忆内容'}
-                </label>
-                {draft && <span className={HINT_TEXT}>{english ? 'Unsaved changes' : '未保存修改'}</span>}
-              </div>
-              <textarea
-                className={cn(INPUT_CLASS, 'min-h-40 resize-y')}
-                disabled={busy}
-                id={`memory-${selected.id}`}
-                onChange={event => {
-                  setSavedHint(null)
-                  setMemoryDraft('drafts', draftKey, editMemoryDraft(draft, event.target.value, selected))
-                }}
-                rows={7}
-                value={draft?.content ?? selected.content ?? ''}
-              />
-              {status !== 'active' && (
-                <p className={HINT_TEXT}>
-                  {english ? 'Saving makes this memory available again.' : '保存后，这条记忆会重新生效。'}
-                </p>
-              )}
-              {conflict && (
-                <div className="space-y-2 rounded-xl border border-line-hairline p-3">
-                  <p className="text-xs text-amber-300/90">
-                    {english
-                      ? 'This memory changed on another device. Latest content:'
-                      : '这条记忆已在其他设备修改，最新内容：'}
-                  </p>
-                  <p className="whitespace-pre-wrap break-words text-sm text-body">{selected.content}</p>
-                  <button
-                    className={BTN_SUBTLE}
-                    disabled={busy}
-                    onClick={() => {
-                      if (draft) {
-                        setMemoryDraft('drafts', draftKey, {
-                          ...draft,
-                          baseContent: selected.content ?? '',
-                          baseVersion: selected.content_version
-                        })
-                      }
-                    }}
-                    type="button"
-                  >
-                    {english ? 'Keep my edits after review' : '已核对，保留我的修改'}
-                  </button>
-                </div>
-              )}
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  className={BTN_SUBTLE}
-                  disabled={busy || !draft?.content.trim() || conflict}
-                  onClick={() => void save()}
-                  type="button"
-                >
-                  {busy
-                    ? dict.common.saving
-                    : status === 'active'
-                      ? english
-                        ? 'Save changes'
-                        : '保存修改'
-                      : english
-                        ? 'Save and remember again'
-                        : '保存并重新记住'}
-                </button>
-                <button
-                  className={BTN_GHOST}
-                  disabled={busy || !draft}
-                  onClick={() => setMemoryDraft('drafts', draftKey, undefined)}
-                  type="button"
-                >
-                  {dict.common.cancel}
-                </button>
-                <button
-                  className={cn(BTN_GHOST, 'text-danger-fg')}
-                  disabled={busy}
-                  onClick={() => void forget()}
-                  type="button"
-                >
-                  {english ? 'Forget this memory' : '忘记这条记忆'}
-                </button>
-              </div>
-              <p className={HINT_TEXT}>
-                {selected.context?.replace(/^recall:/, '') || '—'} · {t.updated} {selected.updated_at ?? '—'}
-              </p>
-              <MemoryDetails row={selected} />
-            </div>
-          )}
-        </div>
+              {english ? 'Previous' : '上一页'}
+            </button>
+            <span className={HINT_TEXT}>
+              {page + 1} / {Math.max(1, Math.ceil(total / PAGE_SIZE))} ·{' '}
+              {english ? `${total} memories` : `共 ${total} 条`}
+            </span>
+            <button
+              className={BTN_SUBTLE}
+              disabled={(page + 1) * PAGE_SIZE >= total}
+              onClick={() => changeFilter({ page: page + 1 })}
+              type="button"
+            >
+              {english ? 'Next' : '下一页'}
+            </button>
+          </div>
+        </>
       )}
     </div>
   )
