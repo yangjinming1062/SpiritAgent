@@ -75,17 +75,6 @@ export function SceneLibraryView({
       </SettingCard>
       <p className="text-[11px] leading-relaxed text-faint">{t.intro}</p>
 
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-strong">{t.historyTitle}</h2>
-          <p className="mt-0.5 text-[10px] text-faint">{total}</p>
-        </div>
-        <button className={cn(BTN_PRIMARY, 'shrink-0')} disabled={taskBusy} onClick={onCreate} type="button">
-          <Plus className="size-3.5" />
-          <span>{t.generateButton}</span>
-        </button>
-      </div>
-
       {pending ? (
         <SettingCard className="border border-accent-line/40">
           <button
@@ -133,6 +122,15 @@ export function SceneLibraryView({
         <button className={cn(BTN_SUBTLE, 'shrink-0 whitespace-nowrap px-3')} type="submit">
           <Search className="size-3.5" />
           <span>{t.searchButton}</span>
+        </button>
+        <button
+          className={cn(BTN_PRIMARY, 'shrink-0 whitespace-nowrap')}
+          disabled={taskBusy}
+          onClick={onCreate}
+          type="button"
+        >
+          <Plus className="size-3.5" />
+          <span>{t.generateButton}</span>
         </button>
       </form>
 

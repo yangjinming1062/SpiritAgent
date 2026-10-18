@@ -1296,7 +1296,6 @@ export const dict: Dictionary = {
       waitingUploadAction: 'Upload image',
       generateButton: 'Create background',
       generatingButton: 'Creating…',
-      historyTitle: 'My backgrounds',
       emptyLibrary: 'Your scene library is empty. Create or upload a scene to set up your living space.',
       emptySearch: 'No scenes match this search.',
       loading: 'Loading scene library…',

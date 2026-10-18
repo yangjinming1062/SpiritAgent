@@ -1216,7 +1216,6 @@ export const dict = {
       waitingUploadAction: '选择图片上传',
       generateButton: '创建背景',
       generatingButton: '创建中…',
-      historyTitle: '我的背景',
       emptyLibrary: '场景库还是空的，创建或上传一个场景开始布置生活空间。',
       emptySearch: '没有找到匹配的场景。',
       loading: '正在读取场景库…',
