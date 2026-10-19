@@ -7,6 +7,7 @@ from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets import asset_store
 from infrastructure.assets.asset_store import client_asset_url, dated_asset_directory, save_companion_asset_async
 from infrastructure.assets.write_protection import user_asset_lock
+from infrastructure.async_io import cancel_and_wait, run_blocking, settle_task
 from infrastructure.database import session_scope
 from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
@@ -93,7 +94,7 @@ async def prepare_reply_audio(user_id: int, reply: CompanionReply) -> None:
             if index not in pending:
                 continue
             try:
-                bubble.audio = await pending[index]
+                bubble.audio = await asyncio.shield(pending[index])
                 consumed.add(index)
             except Exception:
                 logger.warning("Proactive voice synthesis failed", extra={"bubble_index": index}, exc_info=True)
@@ -110,12 +111,20 @@ async def discard_reply_audio(reply: CompanionReply) -> None:
 
 async def _discard_unconsumed(pending: dict[int, asyncio.Task[ReplyAudio]], consumed: set[int]) -> None:
     """排空未消费任务；已成功但未进入消费体的结果属未提交音频，一律清理。"""
-    for task in pending.values():
-        task.cancel()
-    results = await asyncio.gather(*pending.values(), return_exceptions=True)
-    for index, result in zip(pending, results, strict=True):
-        if index not in consumed and isinstance(result, ReplyAudio):
-            await asyncio.to_thread(asset_store.unlink_companion_asset, result.url)
+    cancelled = False
+    try:
+        await cancel_and_wait(pending.values())
+    except asyncio.CancelledError:
+        cancelled = True
+    for index, task in pending.items():
+        if index not in consumed and not task.cancelled() and task.exception() is None:
+            result = task.result()
+            try:
+                await run_blocking(asset_store.unlink_companion_asset, result.url)
+            except asyncio.CancelledError:
+                cancelled = True
+    if cancelled:
+        raise asyncio.CancelledError
 
 
 async def _synthesize_reply_audio(
@@ -177,7 +186,7 @@ async def _synthesize_reply_audio(
                     path: str | None = None
                     committed = False
                     try:
-                        bubble.audio = await pending[index]
+                        bubble.audio = await asyncio.shield(pending[index])
                         path = bubble.audio.url
                         # 取到结果才算消费：取消丢弃的结果由排空清理回收。
                         consumed.add(index)
@@ -215,7 +224,7 @@ async def _synthesize_reply_audio(
                             try:
                                 await asyncio.shield(commit_task)
                             except asyncio.CancelledError:
-                                await commit_task
+                                await settle_task(commit_task)
                                 committed = True
                                 raise
                             committed = True
@@ -266,7 +275,4 @@ async def synthesize_reply_audio(
 
 async def cancel_reply_audio(user_id: int, message_ids: set[int]) -> None:
     tasks = {task for message_id in message_ids for task in _tasks.get((user_id, message_id), ())}
-    for task in tasks:
-        task.cancel()
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
+    await cancel_and_wait(tasks)

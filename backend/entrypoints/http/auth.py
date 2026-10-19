@@ -2,16 +2,18 @@ import secrets
 from collections.abc import AsyncIterator
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials
 from features.accounts.deps import (
-    authenticate_remote_session,
+    account_request_scope,
+    authenticate_request_session,
     get_current_admin_token,
     get_current_remote_session,
     get_current_session,
     get_current_user,
     get_optional_current_session,
 )
+from features.accounts.gateway import GatewayIdentity
 from features.accounts.security import BEARER_SCHEME, decode_bearer_token
 from features.accounts.snapshots import AccountIdentity, LoginIdentity, RemoteDeviceIdentity
 from infrastructure.database import DbSession
@@ -19,7 +21,7 @@ from runtime.business_actor import BusinessActor
 from runtime.chat_accounts import acquire_account_runtime, release_account_runtime
 from runtime.client_context import ChatRequestClientContext
 from runtime.desktop.connection import MANAGER
-from runtime.user_maintenance import begin_user_request, end_user_request
+from sqlalchemy.ext.asyncio import AsyncSession
 
 CurrentAdmin = Annotated[str, Depends(get_current_admin_token)]
 CurrentSession = Annotated[tuple[AccountIdentity, LoginIdentity], Depends(get_current_session)]
@@ -31,30 +33,58 @@ OptionalSession = Annotated[
 ]
 
 
+async def get_request_identity(
+    request: Request,
+    db: AsyncSession,
+    credentials: HTTPAuthorizationCredentials | None,
+    *,
+    content_only: bool = True,
+    stream_id: str | None = None,
+) -> GatewayIdentity:
+    user, identity = await authenticate_request_session(request, credentials, db, content_only=content_only)
+    if isinstance(identity, LoginIdentity):
+        raw_context = decode_bearer_token(credentials).get("ctx")
+        return GatewayIdentity(
+            user_id=user.id,
+            login_record_id=identity.id,
+            client_context=ChatRequestClientContext.model_validate(raw_context) if raw_context else None,
+            stream_id=stream_id,
+        )
+    return GatewayIdentity(
+        user_id=user.id,
+        device_id=identity.id,
+        client_context=ChatRequestClientContext(platform_hints="SpiritAgentRemote mobile browser"),
+        stream_id=stream_id,
+    )
+
+
 async def get_business_actor(
     request: Request,
     db: DbSession,
     credentials: HTTPAuthorizationCredentials | None = Depends(BEARER_SCHEME),
 ) -> AsyncIterator[BusinessActor]:
-    if credentials is not None:
-        user, login = await get_current_session(credentials, db)
-        raw_context = decode_bearer_token(credentials).get("ctx")
-        context = ChatRequestClientContext.model_validate(raw_context) if raw_context else None
-        origin_kind, origin_id = "desktop", str(login.id)
-    else:
-        user, device = await authenticate_remote_session(request, db, content_only=True)
-        context = ChatRequestClientContext(platform_hints="SpiritAgentRemote mobile browser")
-        origin_kind, origin_id = "remote", str(device.id)
-    if not await begin_user_request(user.id):
-        raise HTTPException(status_code=503, detail="用户数据正在维护，请稍后重试。")
-    lease_id = f"http:{secrets.token_hex(16)}"
-    account = acquire_account_runtime(user.id, lease_id)
-    try:
-        execution_context = context if origin_kind == "desktop" else MANAGER.desktop_client_context(user.id)
-        yield BusinessActor(user.id, origin_kind, origin_id, account, context, execution_context)
-    finally:
-        release_account_runtime(user.id, lease_id)
-        await end_user_request(user.id)
+    identity = await get_request_identity(request, db, credentials)
+    origin_kind = "remote" if identity.device_id is not None else "desktop"
+    origin_id = str(identity.device_id if identity.device_id is not None else identity.login_record_id)
+    async with account_request_scope(identity.user_id):
+        lease_id = f"http:{secrets.token_hex(16)}"
+        account = acquire_account_runtime(identity.user_id, lease_id)
+        try:
+            execution_context = (
+                identity.client_context
+                if origin_kind == "desktop"
+                else MANAGER.desktop_client_context(identity.user_id)
+            )
+            yield BusinessActor(
+                identity.user_id,
+                origin_kind,
+                origin_id,
+                account,
+                identity.client_context,
+                execution_context,
+            )
+        finally:
+            release_account_runtime(identity.user_id, lease_id)
 
 
 CurrentActor = Annotated[BusinessActor, Depends(get_business_actor)]

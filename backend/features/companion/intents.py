@@ -10,7 +10,7 @@ from infrastructure.database import session_scope
 from infrastructure.text import utc_now
 from runtime.events.contracts import COMPANION_TURN_EVENT
 from runtime.events.emit import emit_ws_event
-from runtime.user_maintenance import begin_user_request, end_user_request
+from runtime.user_maintenance import user_request_scope
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -347,12 +347,9 @@ async def queue_companion_intent(user_id: int, event: CompanionWakeEvent | None 
 
 async def claim_companion_intent(user_id: int) -> None:
     """后台认领入口：登记用户请求后再认领，维护期间跳过。"""
-    if not await begin_user_request(user_id):
-        return
-    try:
-        await queue_companion_intent(user_id)
-    finally:
-        await end_user_request(user_id)
+    async with user_request_scope(user_id) as acquired:
+        if acquired:
+            await queue_companion_intent(user_id)
 
 
 async def begin_companion_intent(user_id: int, request: CompanionTurnRequest) -> CompanionIntentView | None:

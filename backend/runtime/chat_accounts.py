@@ -3,6 +3,7 @@
 import asyncio
 from dataclasses import dataclass, field
 
+from infrastructure.async_io import cancel_and_wait, wait_for_task, wait_for_tasks
 from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
 
@@ -77,44 +78,49 @@ def release_unused_account_runtime(user_id: int) -> None:
     _ACCOUNTS.pop(user_id, None)
 
 
-async def _wait_turn_settlement(runtimes: list[RuntimeSession]) -> None:
+async def _wait_turn_settlement(runtimes: list[RuntimeSession], owner: asyncio.Task | None) -> None:
     # 主任务的完成回调可能创建收尾任务；分两轮等待，不取消持久状态回写。
     for settling in (False, True):
         tasks = [runtime.settlement_task if settling else runtime.chat_task for runtime in runtimes]
-        pending = [task for task in tasks if task is not None and task is not asyncio.current_task()]
+        pending = [
+            task for task in tasks if task is not None and task is not owner and task is not asyncio.current_task()
+        ]
         if pending:
-            await asyncio.gather(*(asyncio.shield(task) for task in pending), return_exceptions=True)
+            await wait_for_tasks(pending)
 
 
-async def _wait_admissions(user_id: int | None = None) -> None:
+async def _wait_admissions(user_id: int | None, owner: asyncio.Task | None) -> None:
     while pending := [
         task
         for account in tuple(_ACCOUNTS.values())
         if user_id is None or account.user_id == user_id
         for task in account.admission_tasks
-        if not task.done() and task is not asyncio.current_task()
+        if not task.done() and task is not owner and task is not asyncio.current_task()
     ]:
-        await asyncio.gather(*(asyncio.shield(task) for task in pending), return_exceptions=True)
+        await wait_for_tasks(pending)
+
+
+async def _wait_account_work(user_id: int | None = None) -> None:
+    owner = asyncio.current_task()
+
+    async def settle() -> None:
+        await _wait_admissions(user_id, owner)
+        accounts = tuple(account for account in _ACCOUNTS.values() if user_id is None or account.user_id == user_id)
+        await _wait_turn_settlement(
+            [runtime for account in accounts for runtime in account.runtime_sessions.values()],
+            owner,
+        )
+        if user_id is None:
+            await cancel_and_wait(
+                task for account in accounts for task in account.background_tasks if task is not owner
+            )
+
+    await wait_for_task(asyncio.create_task(settle(), name="conversation.accounts.settle"))
 
 
 async def wait_user_turns(user_id: int) -> None:
-    await _wait_admissions(user_id)
-    if (account := _ACCOUNTS.get(user_id)) is not None:
-        await _wait_turn_settlement(list(account.runtime_sessions.values()))
+    await _wait_account_work(user_id)
 
 
 async def drain_account_turns() -> None:
-    await _wait_admissions()
-    accounts = tuple(_ACCOUNTS.values())
-    await _wait_turn_settlement([runtime for account in accounts for runtime in account.runtime_sessions.values()])
-    pending = [
-        task
-        for account in accounts
-        for task in account.background_tasks
-        if not task.done() and task is not asyncio.current_task()
-    ]
-    for task in pending:
-        if not task.cancelling():
-            task.cancel()
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
+    await _wait_account_work()

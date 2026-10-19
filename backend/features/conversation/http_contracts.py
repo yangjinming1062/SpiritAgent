@@ -74,6 +74,10 @@ class PromptSubmitRequest(BusinessRequest):
         if any(value is not None for value in exclusive):
             if supplied & {"text", "batch", "attachments", "edit_message_id"}:
                 raise ValueError("retry and replacement reuse the original input")
+            if self.retry_message_id is not None and "replace_reply_message_id" in supplied:
+                raise ValueError("reply retries reuse the original message and attachments")
+            if self.replace_reply_message_id is not None and "retry_message_id" in supplied:
+                raise ValueError("answer replacement reuses the original turn")
         elif self.edit_message_id is not None:
             if self.text is None or supplied & {"batch", "attachments"}:
                 raise ValueError("message edits require text and retain original attachments")

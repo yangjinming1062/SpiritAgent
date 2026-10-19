@@ -19,7 +19,7 @@ from features.media.backup import restore_current_voices
 from features.media.contracts import RemovedActionVideoTask
 from features.media.voice_queries import custom_voice_tokens
 from features.topics.backup import validate_batch_merges
-from infrastructure.async_io import run_blocking
+from infrastructure.async_io import run_blocking, settle_task
 from infrastructure.backup import BACKUP_REGISTRY, BackupContext, BackupImportMode
 from infrastructure.config import SETTINGS
 from infrastructure.logger import get_logger
@@ -636,15 +636,8 @@ async def _copy_backup_files(
     except asyncio.CancelledError:
         # to_thread 包装任务不能取消：线程仍可能写盘，必须持有它直到实际退出再交还维护边界。
         stop.set()
-        while not task.done():
-            try:
-                await asyncio.shield(task)
-            except asyncio.CancelledError:
-                continue
-            except Exception:
-                break
         try:
-            task.result()
+            await settle_task(task)
         except InterruptedError:
             pass
         except Exception:

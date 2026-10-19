@@ -1,9 +1,10 @@
 """进程生命周期：启动顺序（迁移→配置水合→调度/事件/渠道→任务恢复）与停机顺序。"""
 
 import asyncio
-import contextlib
+import logging
 from collections.abc import AsyncGenerator, Awaitable
 from contextlib import asynccontextmanager
+from functools import partial
 from pathlib import Path
 
 from alembic import command
@@ -12,21 +13,23 @@ from entrypoints.scheduler.cron import start_scheduler
 from fastapi import FastAPI
 from features.accounts.queries import list_user_ids
 from features.actions.asset_retirement import cleanup_retired_action_assets
-from features.assets.lifecycle import cleanup_assets
+from features.assets.lifecycle import cleanup_user_assets
 from features.configuration.system_settings import load_and_apply_system_settings
 from features.media.video_jobs import cleanup_user_video_jobs
 from features.media.video_queue.service import cleanup_video_queue
 from features.posts.publication import gc_autonomous_publications
 from infrastructure.ai.providers.http import aclose_all
+from infrastructure.async_io import run_blocking
 from infrastructure.attachments import attachment_root
 from infrastructure.config import insecure_secret_settings
 from infrastructure.database import ENGINE, SESSION_LOCAL, database_url
 from infrastructure.logger import get_logger, setup_logging
 from infrastructure.temp_files import cleanup_expired
 from infrastructure.web.web_providers import aclose as aclose_web_providers
+from runtime.background import BackgroundTask
 from runtime.events.loop import start_event_loop
 from runtime.lifecycle import RUNTIME_LIFECYCLE
-from runtime.user_maintenance import begin_user_request, end_user_request
+from runtime.user_maintenance import user_request_scope
 
 from .runtime_lifecycle import configure_runtime_lifecycle
 
@@ -36,14 +39,14 @@ logger = get_logger(__name__)
 _LLM_CLIENT_CLOSE_TIMEOUT_SECONDS = 10.0
 
 
-async def _best_effort_shutdown(step: str, operation: Awaitable[object]) -> None:
-    """记录单个停机步骤的失败并继续释放后续资源。"""
+async def _best_effort(step: str, operation: Awaitable[object], *, level: int = logging.ERROR) -> None:
+    """隔离维护和停机各步骤的失败，继续处理后续资源；取消仍向上传播。"""
     try:
         await operation
     except asyncio.CancelledError:
         raise
     except Exception:
-        logger.error("Backend shutdown step failed", extra={"step": step}, exc_info=True)
+        logger.log(level, "Backend lifecycle step failed", extra={"step": step}, exc_info=True)
 
 
 def _run_migrations() -> None:
@@ -62,20 +65,19 @@ async def _cleanup_formal_assets(*, discover: bool) -> None:
     async with SESSION_LOCAL() as db:
         users = await list_user_ids(db)
     for user_id in users:
-        if not await begin_user_request(user_id):
-            continue
-        try:
-            await cleanup_user_video_jobs(user_id)
-        except Exception:
-            logger.warning("Abandoned video cleanup failed", extra={"user_id": user_id}, exc_info=True)
-        finally:
-            await end_user_request(user_id)
-    await cleanup_assets(discover=discover)
+        async with user_request_scope(user_id) as acquired:
+            if not acquired:
+                continue
+            try:
+                await cleanup_user_video_jobs(user_id)
+            except Exception:
+                logger.warning("Abandoned video cleanup failed", extra={"user_id": user_id}, exc_info=True)
+            await cleanup_user_assets(user_id, discover=discover)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
-    cleanup_task: asyncio.Task[None] | None = None
+    cleanup_task = BackgroundTask("backend.temp-file-cleanup")
     try:
         setup_logging()
         configure_runtime_lifecycle()
@@ -98,44 +100,35 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
             while True:
                 await asyncio.sleep(60)
                 minute += 1
-                try:
-                    await _cleanup_formal_assets(discover=minute % 60 == 0)
-                    if minute % 60 == 0:
-                        await cleanup_video_queue()
-                except Exception:
-                    logger.warning("Formal asset cleanup failed", exc_info=True)
+                await _best_effort(
+                    "formal assets",
+                    _cleanup_formal_assets(discover=minute % 60 == 0),
+                    level=logging.WARNING,
+                )
                 if minute % 60:
                     continue
-                try:
-                    await asyncio.to_thread(cleanup_expired)
-                except Exception:
-                    logger.warning("Temp file cleanup failed", exc_info=True)
-                try:
-                    await cleanup_retired_action_assets()
-                except Exception:
-                    logger.warning("Action asset cleanup failed", exc_info=True)
-                try:
-                    await gc_autonomous_publications()
-                except Exception:
-                    logger.warning("Publication cleanup failed", exc_info=True)
+                for step, operation in (
+                    ("video queue", cleanup_video_queue),
+                    ("temp files", partial(run_blocking, cleanup_expired)),
+                    ("retired actions", cleanup_retired_action_assets),
+                    ("publications", gc_autonomous_publications),
+                ):
+                    await _best_effort(step, operation(), level=logging.WARNING)
 
-        cleanup_task = asyncio.create_task(_cleanup_loop(), name="backend.temp-file-cleanup")
+        cleanup_task.start(_cleanup_loop())
         yield
     finally:
-        if cleanup_task is not None:
-            cleanup_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await cleanup_task
+        await cleanup_task.stop()
 
         # 先停所有任务生产入口再 drain，避免收敛期间派生的新任务逃过快照。
         await RUNTIME_LIFECYCLE.stop_producers()
 
         # 释放引擎前先 drain 模块级任务集合，避免 SIGTERM 把持有连接池的协程留在 commit 中途。
-        await _best_effort_shutdown("runtime tasks", RUNTIME_LIFECYCLE.drain())
+        await _best_effort("runtime tasks", RUNTIME_LIFECYCLE.drain())
 
-        await _best_effort_shutdown("database engine", ENGINE.dispose())
-        await _best_effort_shutdown("web providers", aclose_web_providers())
-        await _best_effort_shutdown(
+        await _best_effort("database engine", ENGINE.dispose())
+        await _best_effort("web providers", aclose_web_providers())
+        await _best_effort(
             "LLM clients",
             asyncio.wait_for(aclose_all(), timeout=_LLM_CLIENT_CLOSE_TIMEOUT_SECONDS),
         )

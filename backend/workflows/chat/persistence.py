@@ -22,6 +22,7 @@ from features.conversation.turn_store import (
 from infrastructure.ai.responses import message_to_response_items
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.usage import CacheUsageSummary
+from infrastructure.async_io import settle_task
 from infrastructure.constants import DEFAULT_SESSION_TITLE, TITLE_GENERATION_TEMPERATURE
 from infrastructure.database import session_scope
 from infrastructure.logger import get_logger
@@ -79,21 +80,14 @@ async def _wait_persistence_write(task: asyncio.Task[None]) -> None:
     """取消只终止回合，先等已交接写入真实收尾，避免解锁后仍有迟到写入。"""
     owner = asyncio.current_task()
     cancelled = owner is not None and owner.cancelling() > 0
-    while not task.done():
-        try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError:
-            cancelled = True
-        except Exception:
-            break
     try:
-        task.result()
+        await settle_task(task)
     except Exception as exc:
-        if cancelled:
+        if cancelled or (owner is not None and owner.cancelling() > 0):
             logger.warning("Interrupted turn persistence failed", extra={"task": task.get_name()}, exc_info=exc)
             raise asyncio.CancelledError from exc
         raise
-    if cancelled:
+    if cancelled or (owner is not None and owner.cancelling() > 0):
         raise asyncio.CancelledError
 
 

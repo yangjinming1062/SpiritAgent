@@ -10,7 +10,7 @@ from infrastructure.assets.references import asset_paths
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
-from runtime.user_maintenance import begin_user_request, end_user_request
+from runtime.user_maintenance import user_request_scope
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,12 +64,10 @@ async def cleanup_retired_action_assets() -> None:
     async with SESSION_LOCAL() as db:
         users = await list_user_ids(db)
     for user_id in users:
-        if not await begin_user_request(user_id):
-            continue
-        try:
+        async with user_request_scope(user_id) as acquired:
+            if not acquired:
+                continue
             await _cleanup_user_action_assets(user_id)
-        finally:
-            await end_user_request(user_id)
 
 
 async def _cleanup_user_action_assets(user_id: int) -> None:

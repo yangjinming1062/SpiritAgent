@@ -1,4 +1,6 @@
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from features.conversation.memory_scope import conversation_memory_scope
@@ -19,6 +21,20 @@ from workflows.chat.inputs import _reject_read_only_session, _require_owned_conv
 from workflows.chat.orchestrator import compress_session_history
 
 logger = get_logger(__name__)
+
+
+@asynccontextmanager
+async def compression_context(
+    user_id: int,
+    runtime: RuntimeSession,
+    *,
+    busy_message: str = "当前会话有正在生成的回复，请稍后再试",
+) -> AsyncIterator[ConversationSnapshot]:
+    _reject_read_only_session(runtime)
+    async with conversation_history_lock(runtime.session_id):
+        if runtime.busy:
+            raise RequestError(409, busy_message, code="turn_busy")
+        yield await _require_owned_conv(user_id, runtime.session_id)
 
 
 async def _do_compress_history(
@@ -53,6 +69,16 @@ async def _do_compress_history(
     }
 
 
+def compression_command_result(result: dict[str, Any]) -> SlashCommandResult:
+    compressed = result["compressed"]
+    return SlashCommandResult(
+        status="ok",
+        message=f"已压缩 {result['replaced_count']} 条早期消息" if compressed else "历史消息较少，无需压缩",
+        hydrate=compressed,
+        payload=result,
+    )
+
+
 @register_slash_command(
     name="clear",
     aliases=("清空", "清理", "reset"),
@@ -85,28 +111,16 @@ async def _slash_clear(ctx: SlashCommandContext) -> SlashCommandResult:
 )
 async def _slash_compress(ctx: SlashCommandContext) -> SlashCommandResult:
     """``/压缩`` 命令 handler：复用历史压缩用例。"""
-    _reject_read_only_session(ctx.runtime)
-    async with conversation_history_lock(ctx.session_id):
-        if ctx.runtime.busy:
-            raise RequestError(409, "请先停止当前生成再压缩会话", code="turn_busy")
-        conv = await _require_owned_conv(ctx.user_id, ctx.session_id)
+    async with compression_context(
+        ctx.user_id,
+        ctx.runtime,
+        busy_message="请先停止当前生成再压缩会话",
+    ) as conv:
         try:
             result = await _do_compress_history(conv, ctx.user_id, ctx.runtime, ctx.client_context)
         except RequestError as exc:
             return SlashCommandResult(status="error", message=exc.message, hydrate=False)
-    if not result["compressed"]:
-        return SlashCommandResult(
-            status="ok",
-            message="历史消息较少，无需压缩",
-            hydrate=False,
-            payload=result,
-        )
-    return SlashCommandResult(
-        status="ok",
-        message=f"已压缩 {result['replaced_count']} 条早期消息",
-        hydrate=True,
-        payload=result,
-    )
+    return compression_command_result(result)
 
 
 @register_slash_command(

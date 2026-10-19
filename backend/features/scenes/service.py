@@ -11,6 +11,7 @@ from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets import asset_store
 from infrastructure.assets.asset_store import build_data_uri, validate_image_bytes
 from infrastructure.assets.paths import parse_companion_asset_path
+from infrastructure.async_io import cancel_and_wait, cancel_tasks
 from infrastructure.config import SETTINGS
 from infrastructure.constants import SCENE_DOWNLOAD_MAX_BYTES
 from infrastructure.database import SESSION_LOCAL
@@ -101,6 +102,19 @@ async def _persona(db: AsyncSession, user_id: int) -> PersonaSnapshot:
     return persona
 
 
+async def _require_scene(db: AsyncSession, user_id: int, scene_id: int) -> CompanionScene:
+    row = await get_scene(db, user_id, scene_id)
+    if row is None:
+        raise SceneNotFoundError("找不到对应场景")
+    return row
+
+
+def _regeneration_asset_paths(row: CompanionScene) -> set[str]:
+    if not row.regeneration_state_json:
+        return set()
+    return SceneRegenerationState.model_validate_json(row.regeneration_state_json).image_chain.stored_paths()
+
+
 async def _event(db: AsyncSession, persona: PersonaSnapshot, event_type: str, scene_id: int | None = None) -> None:
     persona = await advance_scene_state(db, persona.user_id)
     emit_ws_event(
@@ -159,9 +173,7 @@ async def activate_scene(
     origin: str = SceneOrigin.USER_REQUEST.value,
 ) -> CompanionScene:
     async with _scene_lock(user_id):
-        row = await get_scene(db, user_id, scene_id)
-        if row is None:
-            raise SceneNotFoundError("找不到对应场景")
+        row = await _require_scene(db, user_id, scene_id)
         persona = await _persona(db, user_id)
         if persona.active_scene_id == scene_id:
             # 用户再次选择当前环境仍取消旧的自动切换意图，但不产生一次环境变化。
@@ -284,9 +296,7 @@ async def regenerate_scene(user_id: int, scene_id: int) -> CompanionScene:
     cleanup_paths: set[str] = set()
     regeneration_task_id: str | None = None
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
-        row = await get_scene(db, user_id, scene_id)
-        if row is None:
-            raise SceneNotFoundError("找不到对应场景")
+        row = await _require_scene(db, user_id, scene_id)
         if await get_pending_scene_task(db, user_id) is not None:
             raise SceneStateError("已有场景任务正在准备，请等待完成或取消后重试")
         if row.status == SceneStatus.FAILED.value and row.source == SceneSource.GENERATED.value:
@@ -311,9 +321,7 @@ async def regenerate_scene(user_id: int, scene_id: int) -> CompanionScene:
         elif row.status == SceneStatus.READY.value and row.media_path:
             if not row.title.strip() or not row.description.strip():
                 raise SceneStateError("请先补全场景标题和描述")
-            if row.regeneration_state_json:
-                previous = SceneRegenerationState.model_validate_json(row.regeneration_state_json)
-                cleanup_paths = previous.image_chain.stored_paths()
+            cleanup_paths = _regeneration_asset_paths(row)
             regeneration_task_id = str(uuid4())
             regeneration = SceneRegenerationState(
                 task_id=regeneration_task_id,
@@ -350,9 +358,7 @@ async def adopt_scene(user_id: int, scene_id: int | None, *, data: bytes) -> Com
         row = await schedule_scene_prompt(user_id)
         scene_id = row.id
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
-        row = await get_scene(db, user_id, scene_id)
-        if row is None:
-            raise SceneNotFoundError("找不到对应场景")
+        row = await _require_scene(db, user_id, scene_id)
         if row.status != "pending" or row.stage != "waiting_upload":
             raise SceneStateError("该场景不在等待上传状态")
         target = SceneImageSize.model_validate_json(row.target_size_json) if row.target_size_json else SCENE_IMAGE_SIZE
@@ -373,14 +379,10 @@ async def adopt_scene(user_id: int, scene_id: int | None, *, data: bytes) -> Com
 async def discard_scene(user_id: int, scene_id: int) -> CompanionScene:
     cleanup_paths: set[str] = set()
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
-        row = await get_scene(db, user_id, scene_id)
-        if row is None:
-            raise SceneNotFoundError("找不到对应场景")
+        row = await _require_scene(db, user_id, scene_id)
         persona = await _persona(db, user_id)
         if row.regeneration_status == "pending":
-            if row.regeneration_state_json:
-                state = SceneRegenerationState.model_validate_json(row.regeneration_state_json)
-                cleanup_paths = state.image_chain.stored_paths()
+            cleanup_paths = _regeneration_asset_paths(row)
             row.regeneration_status = "cancelled"
             row.regeneration_stage = "cancelled"
             row.regeneration_error = None
@@ -400,19 +402,15 @@ async def discard_scene(user_id: int, scene_id: int) -> CompanionScene:
         await db.commit()
         task = _INFLIGHT_TASKS.get((user_id, scene_id))
         _QUEUED_TASKS.pop((user_id, scene_id), None)
-        if task and not task.done():
-            task.cancel()
-    if task:
-        await asyncio.gather(task, return_exceptions=True)
+        cancel_tasks([task])
+    await cancel_and_wait([task])
     await cleanup_user_assets(user_id)
     return row
 
 
 async def delete_scene(user_id: int, scene_id: int) -> None:
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
-        row = await get_scene(db, user_id, scene_id)
-        if row is None:
-            raise SceneNotFoundError("找不到对应场景")
+        row = await _require_scene(db, user_id, scene_id)
         persona = await _persona(db, user_id)
         if persona.active_scene_id == scene_id:
             raise SceneStateError("当前场景不能删除，请先启用其他场景")
@@ -423,8 +421,7 @@ async def delete_scene(user_id: int, scene_id: int) -> None:
         paths = {row.media_path, row.upload_source_path} - {""}
         if row.generation_state_json:
             paths |= ImageChainState.model_validate_json(row.generation_state_json).stored_paths()
-        if row.regeneration_state_json:
-            paths |= SceneRegenerationState.model_validate_json(row.regeneration_state_json).image_chain.stored_paths()
+        paths |= _regeneration_asset_paths(row)
         await db.delete(row)
         await _event(db, persona, "companion.scene.updated", scene_id)
         await enqueue_asset_cleanup(db, user_id, paths)
@@ -435,17 +432,13 @@ async def delete_scene(user_id: int, scene_id: int) -> None:
 async def edit_scene_description(user_id: int, scene_id: int, description: SceneDescriptionRequest) -> CompanionScene:
     cleanup_paths: set[str] = set()
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
-        row = await get_scene(db, user_id, scene_id)
-        if row is None:
-            raise SceneNotFoundError("找不到对应场景")
+        row = await _require_scene(db, user_id, scene_id)
         if row.regeneration_status == "pending":
             raise SceneStateError("图片重新生成时不能编辑场景信息")
         if not row.media_path:
             raise SceneStateError("图片尚未保存")
         if row.regeneration_state_json:
-            cleanup_paths = SceneRegenerationState.model_validate_json(
-                row.regeneration_state_json,
-            ).image_chain.stored_paths()
+            cleanup_paths = _regeneration_asset_paths(row)
             row.regeneration_state_json = None
             row.regeneration_status = None
             row.regeneration_stage = None
@@ -470,9 +463,7 @@ async def edit_scene_description(user_id: int, scene_id: int, description: Scene
 async def retry_scene_description(user_id: int, scene_id: int) -> CompanionScene:
     regeneration_task_id: str | None = None
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
-        row = await get_scene(db, user_id, scene_id)
-        if row is None:
-            raise SceneNotFoundError("找不到对应场景")
+        row = await _require_scene(db, user_id, scene_id)
         if await get_pending_scene_task(db, user_id) is not None:
             raise SceneStateError("已有场景正在准备")
         if (
@@ -1034,10 +1025,7 @@ async def schedule_initial_scene(user_id: int) -> SceneSnapshot | None:
 
 async def drain_scene_jobs() -> None:
     _QUEUED_TASKS.clear()
-    tasks = list(_INFLIGHT_TASKS.values())
-    for task in tasks:
-        task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
+    await cancel_and_wait(list(_INFLIGHT_TASKS.values()))
     _INFLIGHT_TASKS.clear()
 
 

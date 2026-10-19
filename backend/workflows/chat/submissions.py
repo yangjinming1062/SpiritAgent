@@ -9,6 +9,7 @@ from uuid import UUID
 from features.companion.proactive_runtime import user_turn_activity
 from features.conversation.ai_routing import conversation_ai_task
 from features.conversation.edit import EditNotAllowedError
+from features.conversation.http_contracts import PromptSubmitRequest
 from features.conversation.replacement import ReplyReplacementNotAllowedError
 from features.conversation.request_contracts import ChatMessageRequest, ChatRequest
 from features.conversation.retry import ReplyRetryNotAllowedError
@@ -21,6 +22,7 @@ from features.conversation.submissions import (
     reserve_submission,
 )
 from features.conversation.turn_store import persist_extra_user_messages
+from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
@@ -35,8 +37,6 @@ from workflows.chat.emitter import ChatEventEmitter
 from workflows.chat.inputs import (
     _reject_read_only_session,
     _require_owned_conv,
-    _require_str,
-    _resolve_llm_config,
     _validate_attachments,
     conversation_history_lock,
 )
@@ -54,39 +54,26 @@ def create_submission_handler(
     actor: BusinessActor,
     require_runtime: Callable[[dict[str, Any]], Awaitable[RuntimeSession]],
     publish_history_change: PublishHistoryChange,
-) -> Callable[[dict[str, Any]], Awaitable[dict]]:
+) -> Callable[[str, PromptSubmitRequest], Awaitable[dict]]:
     user_id = actor.user_id
     publisher = UserEventPublisher(user_id)
     _require_runtime = require_runtime
 
     async def _submit_prompt(
         params: dict,
+        body: PromptSubmitRequest,
         runtime: RuntimeSession,
         admission: contextlib.ExitStack,
         fingerprint: str,
     ) -> dict:
-        response_preference = params.get("response_preference")
+        response_preference = body.response_preference
 
-        edit_message_id = params.get("edit_message_id")
-        retry_message_id = params.get("retry_message_id")
-        replace_reply_message_id = params.get("replace_reply_message_id")
-        if replace_reply_message_id is not None and any(
-            key in params for key in ("text", "batch", "attachments", "edit_message_id", "retry_message_id")
-        ):
-            raise RequestError(422, "answer replacement reuses the original turn")
-        if retry_message_id is not None and any(
-            key in params for key in ("text", "batch", "attachments", "edit_message_id", "replace_reply_message_id")
-        ):
-            raise RequestError(422, "reply retries reuse the original message and attachments")
-        if edit_message_id is not None and ("batch" in params or "attachments" in params):
-            raise RequestError(
-                422,
-                "message edits only accept text; original attachments are retained",
-            )
-
+        edit_message_id = body.edit_message_id
+        retry_message_id = body.retry_message_id
+        replace_reply_message_id = body.replace_reply_message_id
         precursor_user_message_ids: list[int] = []
         replacement = None
-        batch = params.get("batch")
+        batch = body.batch
         if replace_reply_message_id is not None:
             try:
                 replacement = await replacement_reply_input(user_id, runtime.session_id, replace_reply_message_id)
@@ -103,9 +90,8 @@ def create_submission_handler(
         elif batch is not None:
             validated_batch = []
             for item in batch:
-                t = item["text"]
-                att = _validate_attachments(item, runtime.session_id)
-                validated_batch.append({"text": t, "attachments": att})
+                att = _validate_attachments(item.attachments, runtime.session_id)
+                validated_batch.append({"text": item.text, "attachments": att})
             # 整批合为一个回合，附件上限按全批合计。
             if sum(len(item["attachments"] or ()) for item in validated_batch) > SETTINGS.max_attachments_per_turn:
                 raise RequestError(
@@ -125,8 +111,8 @@ def create_submission_handler(
                         precursor_items,
                     )
         else:
-            text = _require_str(params, "text")
-            attachments = _validate_attachments(params, runtime.session_id)
+            text = body.text or ""
+            attachments = _validate_attachments(body.attachments, runtime.session_id)
 
         req = ChatRequest(
             session_id=runtime.session_id,
@@ -240,7 +226,7 @@ def create_submission_handler(
             try:
                 await record_submission_state(user_id, params["request_id"], "running")
                 current_conv = await _require_owned_conv(user_id, req.session_id)
-                llm_config = await _resolve_llm_config(user_id, conversation_ai_task(current_conv))
+                llm_config = await load_user_llm_config(user_id, conversation_ai_task(current_conv))
                 await run_chat_turn(
                     req,
                     llm_config,
@@ -303,7 +289,7 @@ def create_submission_handler(
             "replace_reply_message_id": replace_reply_message_id,
         }
 
-    async def admit_prompt(params: dict) -> dict:
+    async def admit_prompt(params: dict, body: PromptSubmitRequest) -> dict:
         runtime = await _require_runtime(params)
         _reject_read_only_session(runtime)
         request_id = params["request_id"]
@@ -329,7 +315,7 @@ def create_submission_handler(
                             code="turn_busy",
                         )
                     await _require_owned_conv(user_id, runtime.session_id)
-                    replace_reply_message_id = params.get("replace_reply_message_id")
+                    replace_reply_message_id = body.replace_reply_message_id
                     receipt, created = await reserve_submission(
                         user_id,
                         runtime.conversation_id,
@@ -342,7 +328,7 @@ def create_submission_handler(
                     if not created:
                         return receipt.to_result()
                     try:
-                        return await _submit_prompt(params, runtime, admission, fingerprint)
+                        return await _submit_prompt(params, body, runtime, admission, fingerprint)
                     except BaseException:
                         if not runtime.busy:
                             runtime.active_turn = None
@@ -356,17 +342,17 @@ def create_submission_handler(
         except SubmissionConflictError as exc:
             raise RequestError(422, str(exc)) from exc
 
-    async def prompt_submit(params: dict) -> dict:
+    async def prompt_submit(session_id: str, body: PromptSubmitRequest) -> dict:
         try:
-            session_id = str(int(params["session_id"]))
+            session_id = str(int(session_id))
         except (TypeError, ValueError) as exc:
             raise RequestError(404, "会话不存在") from exc
         try:
-            request_id = str(UUID(params["request_id"]))
+            request_id = str(UUID(body.request_id))
         except (TypeError, ValueError) as exc:
             raise RequestError(422, "request_id must be a UUID") from exc
-        params = {**params, "session_id": session_id, "request_id": request_id}
-        admission = asyncio.create_task(admit_prompt(params))
+        params = {**body.model_dump(exclude_unset=True), "session_id": session_id, "request_id": request_id}
+        admission = asyncio.create_task(admit_prompt(params, body))
         actor.account.track_admission(admission, session_id, request_id)
         return await asyncio.shield(admission)
 

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import BinaryIO
 from urllib.parse import quote, urlsplit
 
-from infrastructure.async_io import run_blocking
+from infrastructure.async_io import cancel_and_wait, run_blocking
 from infrastructure.attachments import session_dir
 from infrastructure.config import SETTINGS
 from infrastructure.constants import ATTACHMENT_VIDEO_EXTENSIONS, VIDEO_INLINE_MAX_PER_REQUEST
@@ -403,9 +403,7 @@ async def copy_forked_media_attachments(db: AsyncSession, source_session_id: str
     except asyncio.CancelledError:
         # 线程无法中断：通知它在文件之间停止并等其退出，调用方随后撤销派生会话时目录才不会被它重建。
         stop.set()
-        copy_task.cancel()
-        with contextlib.suppress(Exception, asyncio.CancelledError):
-            await copy_task
+        await cancel_and_wait([copy_task])
         raise
     rewritten = 0
     for message in messages:

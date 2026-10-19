@@ -2,14 +2,14 @@
 
 from infrastructure.queries import get_or_404
 from infrastructure.request_errors import RequestError
-from infrastructure.text import apply_partial, utc_now
+from infrastructure.text import apply_partial
 from runtime.channels import terminate_remote_sessions, terminate_user_gateway
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
-from features.accounts.models import LoginRecord, User, lock_user_row
+from features.accounts.models import User, lock_user_row
 from features.accounts.remote.security import revoke_remote_grants
 from features.accounts.schemas import (
     RegenerateActivationRequest,
@@ -24,6 +24,7 @@ from features.accounts.security import (
     generate_activation_token,
     hash_activation_token,
 )
+from features.accounts.session_operations import revoke_active_logins
 
 
 async def list_users(db: AsyncSession) -> UserListResponse:
@@ -59,11 +60,7 @@ async def update_user(user_id: int, payload: UserUpdate, db: AsyncSession) -> Us
     apply_partial(user, payload, exclude={"base_url"})
     if not user.is_active:
         await revoke_remote_grants(db, user_id)
-        await db.execute(
-            update(LoginRecord)
-            .where(LoginRecord.user_id == user_id, LoginRecord.is_active.is_(True))
-            .values(is_active=False, logout_at=utc_now()),
-        )
+        await revoke_active_logins(db, user_id)
     await db.commit()
     if not user.is_active:
         await terminate_remote_sessions(user_id)

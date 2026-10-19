@@ -4,7 +4,7 @@ from datetime import timedelta
 from infrastructure.request_errors import RequestError
 from infrastructure.text import ensure_utc, utc_now
 from runtime.user_maintenance import is_user_in_maintenance
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.models import User, lock_user_row
@@ -20,6 +20,7 @@ from features.accounts.remote.schemas import (
 from features.accounts.remote.security import (
     PAIRING_TTL_SECONDS,
     REMOTE_SESSION_TTL_SECONDS,
+    cancel_pending_pairings,
     hash_remote_token,
     new_remote_token,
     remote_csrf_token,
@@ -53,15 +54,7 @@ async def create_pairing(user_id: int, db: AsyncSession) -> PairingResponse:
     )
     if active_user_id is None:
         raise RequestError(status_code=401, message="账户已停用。")
-    await db.execute(
-        update(RemotePairing)
-        .where(
-            RemotePairing.user_id == user_id,
-            RemotePairing.consumed_at.is_(None),
-            RemotePairing.cancelled_at.is_(None),
-        )
-        .values(cancelled_at=utc_now()),
-    )
+    await cancel_pending_pairings(db, user_id)
     token = new_remote_token()
     pairing = RemotePairing(
         user_id=user_id,

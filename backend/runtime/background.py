@@ -1,8 +1,9 @@
 import asyncio
-import contextlib
 import logging
 from collections.abc import Callable, Coroutine
 from typing import Any
+
+from infrastructure.async_io import cancel_and_wait
 
 from .task_supervisor import TASK_SUPERVISOR
 
@@ -23,11 +24,14 @@ class BackgroundTask:
         TASK_SUPERVISOR.register(self._task, owner=self._name, on_error=self._log_exception)
 
     async def stop(self) -> None:
-        if self._task and not self._task.done():
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-        self._task = None
+        task = self._task
+        try:
+            if task is not None and not task.done():
+                await cancel_and_wait((task,))
+                if not task.cancelled():
+                    task.result()
+        finally:
+            self._task = None
 
     def _log_exception(self, task: asyncio.Task) -> None:
         if task.cancelled() or task.exception() is None:

@@ -63,40 +63,44 @@ class ChatSchemaResponsesClient:
             return {**request, "extra_headers": {**headers, "Idempotency-Key": f"{key}:{endpoint}:{format_type}"}}
         return request
 
-    async def _chat_completion(self, request: dict[str, Any]) -> ChatCompletion:
+    async def _complete_with_format_fallback[T](
+        self,
+        request: dict[str, Any],
+        create: Callable[..., Awaitable[T]],
+        *,
+        endpoint: Literal["chat", "responses"],
+    ) -> T:
         # 仅在接口明确拒绝格式参数、尚未产生模型结果时降级；成功返回始终只消费一次。
+        format_key = "response_format" if endpoint == "chat" else "text"
         while True:
             try:
                 if self._before_submit is not None:
                     await self._before_submit()
-                format_type = request.get("response_format", {}).get("type", "plain")
-                return await self._client.chat.completions.create(
-                    **self._with_idempotency_key(request, "chat", format_type),
+                format_spec = (
+                    request.get("response_format", {})
+                    if endpoint == "chat"
+                    else request.get("text", {}).get("format", {})
                 )
+                return await create(**self._with_idempotency_key(request, endpoint, format_spec.get("type", "plain")))
             except APIStatusError as error:
-                if not self._unsupported_format(error) or "response_format" not in request:
+                if not self._unsupported_format(error) or format_key not in request:
                     raise
-                if request["response_format"]["type"] == "json_schema":
-                    request = {**request, "response_format": {"type": "json_object"}}
+                format_spec = request["response_format"] if endpoint == "chat" else request["text"]["format"]
+                if format_spec["type"] == "json_schema":
+                    fallback = {"type": "json_object"}
+                    request = {**request, format_key: fallback if endpoint == "chat" else {"format": fallback}}
                 else:
-                    request = {key: value for key, value in request.items() if key != "response_format"}
+                    request = {key: value for key, value in request.items() if key != format_key}
+
+    async def _chat_completion(self, request: dict[str, Any]) -> ChatCompletion:
+        return await self._complete_with_format_fallback(
+            request,
+            self._client.chat.completions.create,
+            endpoint="chat",
+        )
 
     async def _responses_completion(self, request: dict[str, Any]) -> Response:
-        while True:
-            try:
-                if self._before_submit is not None:
-                    await self._before_submit()
-                format_type = request.get("text", {}).get("format", {}).get("type", "plain")
-                return await self._client.responses.create(
-                    **self._with_idempotency_key(request, "responses", format_type),
-                )
-            except APIStatusError as error:
-                if not self._unsupported_format(error) or "text" not in request:
-                    raise
-                if request["text"]["format"]["type"] == "json_schema":
-                    request = {**request, "text": {"format": {"type": "json_object"}}}
-                else:
-                    request = {key: value for key, value in request.items() if key != "text"}
+        return await self._complete_with_format_fallback(request, self._client.responses.create, endpoint="responses")
 
     async def create(self, **kwargs: Any) -> Response:
         items = kwargs["input"]

@@ -321,14 +321,21 @@ async def desktop_action_response_with_sync(
     db: AsyncSession,
     action: DesktopVideoAction,
 ) -> DesktopVideoActionResponse:
-    response = desktop_action_response(action)
-    if action.definition_id is not None:
-        response.sync_targets = await variant_summaries(db, action.user_id, action.definition_id)
+    return await _populate_action_sync(db, action.user_id, desktop_action_response(action))
+
+
+async def _populate_action_sync(
+    db: AsyncSession,
+    user_id: int,
+    response: DesktopVideoActionResponse,
+) -> DesktopVideoActionResponse:
+    if response.definition_id is not None:
+        response.sync_targets = await variant_summaries(db, user_id, response.definition_id)
         local = next(
             (
                 target
                 for target in response.sync_targets
-                if target.target_kind == "desktop" and target.target_id == action.set_id
+                if target.target_kind == "desktop" and target.target_id == response.set_id
             ),
             None,
         )
@@ -371,22 +378,7 @@ async def desktop_set_responses(
         response = _desktop_set_response(row, actions_by_set.get(row.id, []), current_id=current_id)
         response.proposals = await shared_desktop_proposals(db, row.user_id, row.id)
         for action in response.actions:
-            if action.definition_id is not None:
-                action.sync_targets = await variant_summaries(db, row.user_id, action.definition_id)
-                local = next(
-                    (
-                        target
-                        for target in action.sync_targets
-                        if target.target_kind == "desktop" and target.target_id == row.id
-                    ),
-                    None,
-                )
-                if (
-                    local is not None
-                    and action.status in {"blocked", "not_generated"}
-                    and local.status in {"blocked", "not_generated"}
-                ):
-                    action.status, action.can_generate, action.error = local.status, local.can_generate, local.reason
+            await _populate_action_sync(db, row.user_id, action)
         responses.append(response)
     return responses
 
@@ -503,6 +495,16 @@ async def emit_desktop_play(
         expires_at=utc_now() + timedelta(seconds=30),
     )
     db.add(playback)
+    return await _emit_desktop_play_command(db, state, action, playback, asset)
+
+
+async def _emit_desktop_play_command(
+    db: AsyncSession,
+    state: DesktopVideoState,
+    action: DesktopVideoAction,
+    playback: DesktopVideoPlayback,
+    asset: DesktopVideoAsset,
+) -> DesktopVideoPlayCommand:
     current_set = await db.get(DesktopVideoSet, action.set_id)
     matches_base = (
         asset.continuity == "base"
@@ -527,7 +529,7 @@ async def emit_desktop_play(
     )
     emit_ws_event(
         db,
-        user_id=user_id,
+        user_id=playback.user_id,
         event_type="companion.desktop_video.play_requested",
         payload=command.model_dump(mode="json"),
     )
@@ -588,34 +590,7 @@ async def fulfill_desktop_play_intents(
             continue
         play.status, play.expires_at = "queued", utc_now() + timedelta(seconds=30)
         play.asset_version = action.version
-        current_set = await db.get(DesktopVideoSet, action.set_id)
-        matches_base = (
-            asset.continuity == "base"
-            and current_set is not None
-            and asset.base_version == current_set.base_version
-            and asset.base_image_path == current_set.base_image_path
-        )
-        command = DesktopVideoPlayCommand(
-            play_id=play.play_id,
-            set_id=action.set_id,
-            action_id=action.id,
-            set_epoch=state.set_epoch,
-            kind=action.kind,
-            expires_at=play.expires_at,
-            video_url=client_asset_url(asset.video_path),
-            poster_url=client_asset_url(asset.poster_path),
-            geometry_mode=asset.geometry_mode,
-            version=action.version,
-            transition=asset.transition if matches_base else "fade",
-            continuity=asset.continuity if matches_base else "independent",
-            base_version=asset.base_version if matches_base else None,
-        )
-        emit_ws_event(
-            db,
-            user_id=action.user_id,
-            event_type="companion.desktop_video.play_requested",
-            payload=command.model_dump(mode="json"),
-        )
+        await _emit_desktop_play_command(db, state, action, play, asset)
         emitted = True
     return emitted
 

@@ -6,7 +6,7 @@ from uuid import UUID
 from infrastructure.config import SETTINGS
 from infrastructure.constants import ATTACHMENT_VIDEO_EXTENSIONS, SCENE_DOWNLOAD_MAX_BYTES
 from infrastructure.request_errors import RequestError
-from infrastructure.uploads import UploadSource
+from infrastructure.uploads import UploadSource, read_capped_upload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.companion.schemas import CompanionOperationResponse
@@ -18,27 +18,30 @@ from features.desktop_life.repository import (
 )
 from features.desktop_life.schemas import (
     DesktopVideoActionResponse,
-    DesktopVideoCancelRequest,
+    DesktopVideoCancelCommand,
     DesktopVideoClaimRequest,
-    DesktopVideoConfirmImageRequest,
+    DesktopVideoConfirmImageCommand,
     DesktopVideoCreateSetRequest,
     DesktopVideoDecisionRequest,
     DesktopVideoDesignRequest,
-    DesktopVideoDraftRequest,
     DesktopVideoEnsureRequest,
     DesktopVideoExternalPromptRequest,
     DesktopVideoExternalPromptResponse,
-    DesktopVideoGenerateRequest,
-    DesktopVideoImageRequest,
+    DesktopVideoGenerateCommand,
+    DesktopVideoImageCommand,
     DesktopVideoListResponse,
+    DesktopVideoPauseCommand,
     DesktopVideoPlayCommand,
     DesktopVideoPlayRequest,
     DesktopVideoPreferences,
     DesktopVideoProposalResponse,
     DesktopVideoReceipt,
+    DesktopVideoRefineCommand,
     DesktopVideoRefinePreviewResponse,
     DesktopVideoRefineRequest,
     DesktopVideoRenameSetRequest,
+    DesktopVideoResumeCommand,
+    DesktopVideoRetryCommand,
     DesktopVideoSetResponse,
     DesktopVideoStateResponse,
 )
@@ -111,22 +114,71 @@ async def prepare_current(user_id: int, body: DesktopVideoEnsureRequest | None =
         raise _http_error(exc) from exc
 
 
-async def generate_action(
+async def command_draft(
     action_id: int,
     user_id: int,
-    body: DesktopVideoGenerateRequest | None = None,
+    body: DesktopVideoGenerateCommand
+    | DesktopVideoImageCommand
+    | DesktopVideoRefineCommand
+    | DesktopVideoConfirmImageCommand
+    | DesktopVideoCancelCommand
+    | DesktopVideoPauseCommand
+    | DesktopVideoResumeCommand
+    | DesktopVideoRetryCommand,
 ) -> DesktopVideoActionResponse:
     try:
-        return await generate_desktop_action(
+        if isinstance(body, DesktopVideoGenerateCommand):
+            return await generate_desktop_action(
+                user_id,
+                action_id,
+                feedback=body.feedback,
+                video_feedback=body.video_feedback,
+                aspect_policy=body.aspect_policy,
+                expected_draft_id=body.expected_draft_id,
+                expected_base_version=body.expected_base_version,
+                expected_resolution_revision=body.expected_resolution_revision,
+                source="user_requested",
+            )
+        if isinstance(body, DesktopVideoImageCommand):
+            return await generate_desktop_image(
+                user_id,
+                action_id,
+                feedback=body.feedback,
+                aspect_policy=body.aspect_policy,
+                regenerate=body.regenerate,
+                expected_draft_id=body.expected_draft_id,
+                expected_base_version=body.expected_base_version,
+                expected_resolution_revision=body.expected_resolution_revision,
+            )
+        if isinstance(body, DesktopVideoRefineCommand):
+            return await refine_desktop_video(user_id, action_id, body)
+        if isinstance(body, DesktopVideoConfirmImageCommand):
+            return await confirm_desktop_image(
+                user_id,
+                action_id,
+                draft_id=body.draft_id,
+                expected_base_version=body.expected_base_version,
+                expected_resolution_revision=body.expected_resolution_revision,
+                generate_video=body.generate_video,
+            )
+        if isinstance(body, DesktopVideoCancelCommand):
+            return await cancel_desktop_action(user_id, action_id, draft_id=body.draft_id)
+        if isinstance(body, DesktopVideoPauseCommand):
+            return await pause_desktop_action(user_id, action_id, draft_id=body.draft_id)
+        if isinstance(body, DesktopVideoRetryCommand):
+            return await retry_desktop_action(
+                user_id,
+                action_id,
+                draft_id=body.draft_id,
+                expected_base_version=body.expected_base_version,
+                expected_resolution_revision=body.expected_resolution_revision,
+            )
+        return await resume_desktop_action(
             user_id,
             action_id,
-            feedback=body.feedback if body else None,
-            video_feedback=body.video_feedback if body else None,
-            aspect_policy=body.aspect_policy if body else "ask",
-            expected_draft_id=body.expected_draft_id if body else None,
-            expected_base_version=body.expected_base_version if body else None,
-            expected_resolution_revision=body.expected_resolution_revision if body else None,
-            source="user_requested",
+            draft_id=body.draft_id,
+            expected_base_version=body.expected_base_version,
+            expected_resolution_revision=body.expected_resolution_revision,
         )
     except DesktopVideoError as exc:
         raise _http_error(exc) from exc
@@ -139,17 +191,6 @@ async def preview_video_refinement(
 ) -> DesktopVideoRefinePreviewResponse:
     try:
         return await preview_desktop_video_refinement(user_id, action_id, body)
-    except DesktopVideoError as exc:
-        raise _http_error(exc) from exc
-
-
-async def refine_video(
-    action_id: int,
-    user_id: int,
-    body: DesktopVideoRefineRequest,
-) -> DesktopVideoActionResponse:
-    try:
-        return await refine_desktop_video(user_id, action_id, body)
     except DesktopVideoError as exc:
         raise _http_error(exc) from exc
 
@@ -194,12 +235,11 @@ async def upload_action(
             message="仅支持 MP4 或 MOV 视频",
             code="unsupported_video_format",
         )
-    max_bytes = SETTINGS.video_attachment_max_bytes
-    if file.size is not None and file.size > max_bytes:
-        raise RequestError(status_code=413, message="视频文件超过大小上限", code="payload_too_large")
-    data = await file.read(max_bytes + 1)
-    if len(data) > max_bytes:
-        raise RequestError(status_code=413, message="视频文件超过大小上限", code="payload_too_large")
+    data = await read_capped_upload(
+        file,
+        SETTINGS.video_attachment_max_bytes,
+        RequestError(status_code=413, message="视频文件超过大小上限", code="payload_too_large"),
+    )
     try:
         return await upload_desktop_action(
             user_id,
@@ -320,26 +360,6 @@ async def activate_set(set_id: int, user_id: int, db: AsyncSession) -> DesktopVi
         raise _http_error(exc) from exc
 
 
-async def generate_image(
-    action_id: int,
-    user_id: int,
-    body: DesktopVideoImageRequest | None = None,
-) -> DesktopVideoActionResponse:
-    try:
-        return await generate_desktop_image(
-            user_id,
-            action_id,
-            feedback=body.feedback if body else None,
-            aspect_policy=body.aspect_policy if body else "ask",
-            regenerate=body.regenerate if body else False,
-            expected_draft_id=body.expected_draft_id if body else None,
-            expected_base_version=body.expected_base_version if body else None,
-            expected_resolution_revision=body.expected_resolution_revision if body else None,
-        )
-    except DesktopVideoError as exc:
-        raise _http_error(exc) from exc
-
-
 async def upload_image(
     action_id: int,
     user_id: int,
@@ -351,11 +371,14 @@ async def upload_image(
     expected_resolution_revision: int | None = None,
     aspect_policy: str = "ask",
 ) -> DesktopVideoActionResponse:
-    max_bytes = SCENE_DOWNLOAD_MAX_BYTES
-    data = await file.read(max_bytes + 1)
-    if not data or len(data) > max_bytes:
+    data = await read_capped_upload(
+        file,
+        SCENE_DOWNLOAD_MAX_BYTES,
+        RequestError(status_code=413, message="图片为空或超过大小限制", code="invalid_image_size"),
+    )
+    if not data:
         raise RequestError(
-            status_code=413 if data else 400,
+            status_code=400,
             message="图片为空或超过大小限制",
             code="invalid_image_size",
         )
@@ -370,80 +393,6 @@ async def upload_image(
             expected_base_version=expected_base_version,
             expected_resolution_revision=expected_resolution_revision,
             aspect_policy=aspect_policy,
-        )
-    except DesktopVideoError as exc:
-        raise _http_error(exc) from exc
-
-
-async def confirm_image(
-    action_id: int,
-    user_id: int,
-    body: DesktopVideoConfirmImageRequest,
-) -> DesktopVideoActionResponse:
-    try:
-        return await confirm_desktop_image(
-            user_id,
-            action_id,
-            draft_id=body.draft_id,
-            expected_base_version=body.expected_base_version,
-            expected_resolution_revision=body.expected_resolution_revision,
-            generate_video=body.generate_video,
-        )
-    except DesktopVideoError as exc:
-        raise _http_error(exc) from exc
-
-
-async def cancel_action(
-    action_id: int,
-    user_id: int,
-    body: DesktopVideoCancelRequest | None = None,
-) -> DesktopVideoActionResponse:
-    try:
-        return await cancel_desktop_action(user_id, action_id, draft_id=body.draft_id if body else None)
-    except DesktopVideoError as exc:
-        raise _http_error(exc) from exc
-
-
-async def pause_action(
-    action_id: int,
-    user_id: int,
-    body: DesktopVideoDraftRequest,
-) -> DesktopVideoActionResponse:
-    try:
-        return await pause_desktop_action(user_id, action_id, draft_id=body.draft_id)
-    except DesktopVideoError as exc:
-        raise _http_error(exc) from exc
-
-
-async def retry_action(
-    action_id: int,
-    user_id: int,
-    body: DesktopVideoDraftRequest,
-) -> DesktopVideoActionResponse:
-    try:
-        return await retry_desktop_action(
-            user_id,
-            action_id,
-            draft_id=body.draft_id,
-            expected_base_version=body.expected_base_version,
-            expected_resolution_revision=body.expected_resolution_revision,
-        )
-    except DesktopVideoError as exc:
-        raise _http_error(exc) from exc
-
-
-async def resume_action(
-    action_id: int,
-    user_id: int,
-    body: DesktopVideoDraftRequest,
-) -> DesktopVideoActionResponse:
-    try:
-        return await resume_desktop_action(
-            user_id,
-            action_id,
-            draft_id=body.draft_id,
-            expected_base_version=body.expected_base_version,
-            expected_resolution_revision=body.expected_resolution_revision,
         )
     except DesktopVideoError as exc:
         raise _http_error(exc) from exc

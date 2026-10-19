@@ -26,14 +26,12 @@ from infrastructure.assets.asset_store import (
     validate_image_bytes,
 )
 from infrastructure.assets.media_download import download_media_result
-from infrastructure.async_io import run_blocking
+from infrastructure.async_io import cancel_and_wait, cancel_tasks, run_blocking
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.media_geometry import (
-    MAX_DESKTOP_CROP_FRACTION,
     can_crop_to_aspect,
     centered_crop_box,
-    crop_fraction,
 )
 from infrastructure.text import parse_llm_json, resolve_language
 from infrastructure.video_processing.desktop import (
@@ -631,13 +629,7 @@ def _provider_ratio(provider: VideoGenProvider, source_ratio: str) -> str | None
             return source_ratio
         lower, upper = (Fraction(str(bound)).limit_denominator(1000) for bound in bounds)
         return source_ratio if lower <= value <= upper else None
-    ratios: list[tuple[float, str]] = []
-    for ratio in provider.aspect_ratios:
-        native = Fraction(ratio.replace(":", "/"))
-        loss = crop_fraction(native.numerator, native.denominator, value.numerator, value.denominator)
-        if loss <= MAX_DESKTOP_CROP_FRACTION + 1e-9:
-            ratios.append((loss, ratio))
-    return min(ratios, key=lambda item: item[0])[1] if ratios else None
+    return reference_video_ratio(provider, source_ratio)
 
 
 def _delivery_aspect(progress: DesktopVideoProgress) -> str:
@@ -1991,8 +1983,8 @@ def schedule_desktop_video_job(user_id: int, action_id: int, *, allow_model_step
 def cancel_desktop_video_job(action_id: int) -> None:
     _NEXT_JOBS.pop(action_id, None)
     task = _JOBS.get(action_id)
-    if task is not None and not task.done() and not task.cancelling():
-        task.cancel("discarded")
+    if task is not None:
+        cancel_tasks((task,), message="discarded")
 
 
 async def cancel_and_wait_desktop_video_jobs(action_ids: list[int]) -> None:
@@ -2000,17 +1992,13 @@ async def cancel_and_wait_desktop_video_jobs(action_ids: list[int]) -> None:
     for action_id in action_ids:
         tasks.update(_FINISHING_JOBS.get(action_id, ()))
     for action_id in action_ids:
-        cancel_desktop_video_job(action_id)
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
+        _NEXT_JOBS.pop(action_id, None)
+    await cancel_and_wait(tasks, message="discarded")
 
 
 async def pause_desktop_video_job(action_id: int) -> None:
     _NEXT_JOBS.pop(action_id, None)
-    task = _JOBS.get(action_id)
-    if task is not None and not task.done():
-        task.cancel("paused")
-        await asyncio.gather(task, return_exceptions=True)
+    await cancel_and_wait((_JOBS.get(action_id),), message="paused")
 
 
 async def resume_desktop_video_jobs(user_id: int | None = None) -> None:
@@ -2073,8 +2061,4 @@ async def resume_desktop_video_jobs(user_id: int | None = None) -> None:
 async def drain_desktop_video_jobs() -> None:
     _NEXT_JOBS.clear()
     tasks = set(_JOBS.values()).union(*_FINISHING_JOBS.values())
-    for task in tasks:
-        if not task.done() and not task.cancelling():
-            task.cancel()
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
+    await cancel_and_wait(tasks)

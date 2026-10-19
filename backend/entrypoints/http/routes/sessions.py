@@ -58,7 +58,7 @@ router = get_router(remote=True)
     openapi_extra=operation_policy(upload="chat"),
 )
 async def submit_turn(actor: CurrentActor, session_id: str, body: PromptSubmitRequest) -> PromptSubmitResult:
-    result = await chat_operations(actor).submit({**body.model_dump(exclude_unset=True), "session_id": session_id})
+    result = await chat_operations(actor).submit(session_id, body)
     return PromptSubmitResult.model_validate(result)
 
 

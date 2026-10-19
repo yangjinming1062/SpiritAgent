@@ -64,18 +64,22 @@ def require_remote_origin(request: Request) -> None:
         raise HTTPException(status_code=403, detail="仅允许页面同源请求。")
 
 
+async def cancel_pending_pairings(db: AsyncSession, user_id: int) -> None:
+    await db.execute(
+        update(RemotePairing)
+        .where(
+            RemotePairing.user_id == user_id,
+            RemotePairing.cancelled_at.is_(None),
+            RemotePairing.consumed_at.is_(None),
+        )
+        .values(cancelled_at=utc_now()),
+    )
+
+
 async def revoke_remote_grants(db: AsyncSession, user_id: int, device_id: int | None = None) -> None:
     query = update(RemoteSession).where(RemoteSession.user_id == user_id, RemoteSession.revoked_at.is_(None))
     if device_id is not None:
         query = query.where(RemoteSession.id == device_id)
     await db.execute(query.values(revoked_at=utc_now()))
     if device_id is None:
-        await db.execute(
-            update(RemotePairing)
-            .where(
-                RemotePairing.user_id == user_id,
-                RemotePairing.cancelled_at.is_(None),
-                RemotePairing.consumed_at.is_(None),
-            )
-            .values(cancelled_at=utc_now()),
-        )
+        await cancel_pending_pairings(db, user_id)

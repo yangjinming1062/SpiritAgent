@@ -493,6 +493,20 @@ async def call_llm_json[T](
     return await execute_with_fallback(llm_cfg.chain, ChatProvider, call, user_id=llm_cfg.user_id)
 
 
+async def _load_vision_config(
+    user_id: int | None,
+    task: AiTaskKey,
+    reference_images: tuple[str, ...],
+) -> UserLlmConfig:
+    if not reference_images or any(not uri for uri in reference_images):
+        raise ValueError("visual reasoning requires readable reference images")
+    async with SESSION_LOCAL() as chain_db:
+        chain = await resolve_vision_chain(chain_db, user_id, task=task)
+    if not chain:
+        raise VisualReasoningError("视觉分析服务未配置，请联系管理员")
+    return UserLlmConfig(chain[0], tuple(chain[1:]), user_id)
+
+
 async def vision_chat_json[T: BaseModel](
     user_id: int | None,
     system_prompt: str,
@@ -506,16 +520,11 @@ async def vision_chat_json[T: BaseModel](
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> T:
     """视觉结构输出沿用一次格式校正与供应商回退，校正不重新判断图片。"""
-    if not reference_images or any(not uri for uri in reference_images):
-        raise ValueError("visual reasoning requires readable reference images")
-    async with SESSION_LOCAL() as chain_db:
-        chain = await resolve_vision_chain(chain_db, user_id, task=task)
-    if not chain:
-        raise VisualReasoningError("视觉分析服务未配置，请联系管理员")
+    config = await _load_vision_config(user_id, task, reference_images)
     diagnostics: list[LlmAttemptDiagnostic] = []
     try:
         return await call_llm_json(
-            UserLlmConfig(chain[0], tuple(chain[1:]), user_id),
+            config,
             system_prompt,
             user_payload,
             schema=response_model.model_json_schema(),
@@ -556,12 +565,7 @@ async def vision_chat(
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> str:
     """带实际图像的视觉推理；独立短会话解析配置，无可用模型时明确失败。"""
-    if not reference_images or any(not uri for uri in reference_images):
-        raise ValueError("visual reasoning requires readable reference images")
-    async with SESSION_LOCAL() as chain_db:
-        chain = await resolve_vision_chain(chain_db, user_id, task=task)
-    if not chain:
-        raise VisualReasoningError("视觉分析服务未配置，请联系管理员")
+    config = await _load_vision_config(user_id, task, reference_images)
     content = [{"type": "input_image", "image_url": uri} for uri in reference_images]
     content.append({"type": "input_text", "text": user_payload})
     input_items = [{"role": "user", "content": content}]
@@ -587,7 +591,7 @@ async def vision_chat(
         return result
 
     try:
-        return await execute_with_fallback(chain, ChatProvider, _describe, user_id=user_id)
+        return await execute_with_fallback(config.chain, ChatProvider, _describe, user_id=user_id)
     except LlmCallBlockedError:
         raise
     except Exception as exc:

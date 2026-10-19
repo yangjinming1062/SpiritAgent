@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from infrastructure.assets.write_protection import user_asset_lock
+from infrastructure.async_io import settle_task
 from infrastructure.attachments import gc_session as attachments_gc_session
 from infrastructure.constants import SESSION_HISTORY_PRE_BUFFER, SESSION_HISTORY_TRUNCATE_THRESHOLD
 from infrastructure.database import SESSION_LOCAL
@@ -87,14 +88,9 @@ async def fork_conversation(user_id: int, session_id: str, source_message_id: in
 async def _settle_fork_cleanup(db: AsyncSession, conv_id: int) -> None:
     """废弃任务结束后才允许关闭数据库会话，期间取消延后传播。"""
     cleanup = asyncio.create_task(_discard_forked_conversation(db, conv_id))
-    cancelled = False
-    while not cleanup.done():
-        try:
-            await asyncio.shield(cleanup)
-        except asyncio.CancelledError:
-            cancelled = True
-    cleanup.result()
-    if cancelled:
+    owner = asyncio.current_task()
+    await settle_task(cleanup)
+    if owner is not None and owner.cancelling():
         raise asyncio.CancelledError
 
 

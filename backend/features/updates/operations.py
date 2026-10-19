@@ -217,8 +217,7 @@ async def create_version(admin: str, db: AsyncSession, file: UploadSource, relea
             stage.mkdir()
             # 上传包可达数百 MB：写盘与解压移出事件循环
             with open(zip_path, "wb") as f:
-                while chunk := await file.read(CHUNK_SIZE):
-                    await run_blocking(f.write, chunk)
+                await run_blocking(shutil.copyfileobj, file.file, f, CHUNK_SIZE)
 
             try:
                 await run_blocking(_extract_archive_entries, zip_path, stage)

@@ -20,6 +20,7 @@ from infrastructure.assets.asset_store import (
     signed_companion_asset_url,
     unlink_companion_asset,
 )
+from infrastructure.async_io import run_blocking
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.temp_files import save_file
@@ -443,21 +444,19 @@ async def persist_portrait_or_draft(
         return await persist_portrait_bytes(user_id, data, content_type)
     src_content_type = content_type.split(";", maxsplit=1)[0].strip().lower()
     final_ext = _UPLOAD_EXTS.get(src_content_type, "jpg")
-    task = asyncio.create_task(asyncio.to_thread(save_file, data, src_content_type, final_ext, user_id=user_id))
+    file_id: str | None = None
+
+    def save_draft() -> str:
+        nonlocal file_id
+        file_id, _public_url = save_file(data, src_content_type, final_ext, user_id=user_id)
+        return f"temp-media/{file_id}"
+
     try:
-        file_id, _public_url = await asyncio.shield(task)
+        return await run_blocking(save_draft)
     except asyncio.CancelledError:
-        settled = asyncio.gather(task, return_exceptions=True)
-        while not settled.done():
-            try:
-                await asyncio.shield(settled)
-            except asyncio.CancelledError:
-                continue
-        result = settled.result()[0]
-        if isinstance(result, tuple):
-            delete_portrait_file(f"temp-media/{result[0]}")
+        if file_id is not None:
+            delete_portrait_file(f"temp-media/{file_id}")
         raise
-    return f"temp-media/{file_id}"
 
 
 def validate_transparent_portrait(data: bytes) -> None:

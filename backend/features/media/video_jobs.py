@@ -22,6 +22,7 @@ from infrastructure.assets.media_download import download_media_result
 from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.assets.references import asset_paths
 from infrastructure.assets.write_protection import asset_write_context
+from infrastructure.async_io import cancel_and_wait
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
@@ -1092,10 +1093,7 @@ async def cleanup_user_video_jobs(user_id: int) -> None:
         )
     for job_id in ids:
         async with _result_lock(job_id):
-            task = _POLL_TASKS.get(job_id)
-            if task is not None and not task.done():
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
+            await cancel_and_wait((_POLL_TASKS.get(job_id),))
             async with SESSION_LOCAL() as db:
                 row = await db.get(VideoGenJob, job_id)
                 if row is None or row.user_id != user_id or row.cleanup_requested_at is None:

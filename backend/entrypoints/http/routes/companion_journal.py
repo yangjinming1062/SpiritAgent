@@ -7,7 +7,6 @@ from features.journal.journal_service import (
     has_unread_diary,
     list_diary,
     mark_diary_read,
-    response_for_diary,
     unread_diary_ids,
 )
 from features.journal.schemas import DiaryListResponse, DiaryReadRequest, DiaryUnreadResponse
@@ -32,7 +31,7 @@ async def get_diary(
 ) -> DiaryListResponse:
     unread_ids = await unread_diary_ids(db, user.id)
     rows = await list_diary(db, user.id, date_from=date_from, date_to=date_to, limit=limit)
-    return DiaryListResponse(entries=[response_for_diary(r) for r in rows], unread_diary_ids=unread_ids)
+    return DiaryListResponse(entries=rows, unread_diary_ids=unread_ids)
 
 
 @router.get(

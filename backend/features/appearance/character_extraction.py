@@ -3,6 +3,7 @@
 import asyncio
 from typing import Literal
 
+from infrastructure.async_io import cancel_and_wait
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
@@ -46,10 +47,7 @@ def schedule_character_extraction(user_id: int) -> None:
 
 async def drain_character_extractions() -> None:
     _reschedule.clear()
-    pending = list(_tasks.values())
-    for task in pending:
-        task.cancel()
-    await asyncio.gather(*pending, return_exceptions=True)
+    await cancel_and_wait(list(_tasks.values()))
 
 
 async def resume_character_extractions() -> None:

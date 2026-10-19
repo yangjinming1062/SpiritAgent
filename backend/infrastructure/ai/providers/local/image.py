@@ -21,6 +21,7 @@ from infrastructure.ai.providers.base import (
     ProviderError,
 )
 from infrastructure.ai.providers.http import ProviderResultUnknownError, get_http
+from infrastructure.async_io import cancel_and_wait, settle_task
 from infrastructure.constants import REMOTE_ASSET_DOWNLOAD_MAX_BYTES
 from infrastructure.logger import get_logger
 
@@ -346,11 +347,7 @@ class LocalImageGenProvider(ImageGenProvider):
         try:
             resp = await asyncio.shield(submission)
         except asyncio.CancelledError:
-            cancellation = asyncio.create_task(self._cancel_submission(submission, request_id))
-            try:
-                await asyncio.shield(cancellation)
-            except asyncio.CancelledError:
-                await asyncio.gather(cancellation, return_exceptions=True)
+            await settle_task(asyncio.create_task(self._cancel_submission(submission, request_id)))
             raise
         if resp.status_code >= 400:
             raise ProviderError(
@@ -370,11 +367,7 @@ class LocalImageGenProvider(ImageGenProvider):
             assets = await self._wait_and_fetch(prompt_id)
         except asyncio.CancelledError:
             # 只操作本次 prompt；服务未提供定向取消时仅移除本任务的排队项。
-            cancellation = asyncio.create_task(self._cancel_job(prompt_id))
-            try:
-                await asyncio.shield(cancellation)
-            except asyncio.CancelledError:
-                await asyncio.gather(cancellation, return_exceptions=True)
+            await settle_task(asyncio.create_task(self._cancel_job(prompt_id)))
             raise
         except (ProviderError, ProviderResultUnknownError):
             raise
@@ -403,9 +396,7 @@ class LocalImageGenProvider(ImageGenProvider):
                 exc_info=True,
             )
         finally:
-            if not submission.done():
-                submission.cancel()
-            await asyncio.gather(submission, return_exceptions=True)
+            await cancel_and_wait((submission,))
         await self._cancel_job(prompt_id)
 
     async def _cancel_job(self, prompt_id: str) -> None:

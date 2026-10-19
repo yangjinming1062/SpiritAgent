@@ -26,7 +26,7 @@ from infrastructure.constants import (
 from infrastructure.database import session_scope
 from infrastructure.request_errors import RequestError
 from infrastructure.text import ensure_utc, utc_now
-from infrastructure.uploads import UploadSource
+from infrastructure.uploads import UploadSource, read_capped_upload
 from infrastructure.video_processing.audio import audio_bytes_info, voice_sample_wav_bytes
 from infrastructure.video_processing.ffmpeg import VideoProcessError
 from runtime.events.emit import emit_ws_event
@@ -67,13 +67,13 @@ async def design_configuration(user_id: int, provider_name: str = "") -> Provide
 
 
 async def upload_voice_sample(user_id: int, file: UploadSource) -> VoiceSampleResponse:
-    if file.size is not None and file.size > STT_MAX_AUDIO_BYTES:
-        raise RequestError(status_code=413, message="声音样本不能超过 24 MiB")
-    data = await file.read(STT_MAX_AUDIO_BYTES + 1)
+    data = await read_capped_upload(
+        file,
+        STT_MAX_AUDIO_BYTES,
+        RequestError(status_code=413, message="声音样本不能超过 24 MiB"),
+    )
     if not data:
         raise RequestError(status_code=422, message="音频文件为空，请重新录制或上传")
-    if len(data) > STT_MAX_AUDIO_BYTES:
-        raise RequestError(status_code=413, message="声音样本不能超过 24 MiB")
     try:
         normalized, duration = await asyncio.to_thread(
             voice_sample_wav_bytes,

@@ -3,6 +3,7 @@
 import asyncio
 from pathlib import Path
 
+from infrastructure.async_io import run_blocking
 from infrastructure.config import SETTINGS
 from infrastructure.constants import ATTACHMENT_VIDEO_EXTENSIONS, STT_MAX_AUDIO_BYTES
 from infrastructure.logger import get_logger
@@ -74,7 +75,10 @@ async def upload_chat_audio(
         raise RequestError(status_code=415, message="Unsupported audio format")
     await db.commit()
 
+    saved: tuple[str, float] | None = None
+
     def save() -> tuple[str, float]:
+        nonlocal saved
         file_id, _ = save_audio_attachment(session_id, file.file, ext, STT_MAX_AUDIO_BYTES)
         path = resolve_audio_file(session_id, file_id)
         if path is None:
@@ -84,22 +88,14 @@ async def upload_chat_audio(
         except BaseException:
             path.unlink(missing_ok=True)
             raise
-        return (file_id, duration)
+        saved = (file_id, duration)
+        return saved
 
-    task = asyncio.create_task(asyncio.to_thread(save))
     try:
-        file_id, duration = await asyncio.shield(task)
+        file_id, duration = await run_blocking(save)
     except asyncio.CancelledError:
-        # 请求关闭临时源文件之前，先等复制线程结束并释放未交付产物。
-        while not task.done():
-            try:
-                await asyncio.shield(task)
-            except asyncio.CancelledError:
-                continue
-            except Exception:
-                break
-        if not task.cancelled() and task.exception() is None:
-            path = resolve_audio_file(session_id, task.result()[0])
+        if saved is not None:
+            path = resolve_audio_file(session_id, saved[0])
             if path is not None:
                 path.unlink(missing_ok=True)
         raise
@@ -176,24 +172,18 @@ async def upload_chat_video(
     await db.commit()
     await enforce_session_quota(db, session_id, size)
     await db.commit()
-    copy_task = asyncio.create_task(asyncio.to_thread(save_video_attachment, session_id, file.file, ext, max_bytes))
+    saved: tuple[str, int] | None = None
+
+    def save() -> tuple[str, int]:
+        nonlocal saved
+        saved = save_video_attachment(session_id, file.file, ext, max_bytes)
+        return saved
+
     try:
-        file_id, size = await asyncio.shield(copy_task)
+        file_id, size = await run_blocking(save)
     except asyncio.CancelledError:
-        # 重复取消也须等复制线程退出，避免关闭线程仍在读取的上传文件。
-        while not copy_task.done():
-            try:
-                await asyncio.shield(copy_task)
-            except asyncio.CancelledError:
-                continue
-            except Exception:
-                break
-        try:
-            result = copy_task.result()
-        except (Exception, asyncio.CancelledError):
-            result = None
-        if isinstance(result, tuple):
-            path = resolve_video_file(session_id, result[0])
+        if saved is not None:
+            path = resolve_video_file(session_id, saved[0])
             if path is not None:
                 path.unlink(missing_ok=True)
         raise

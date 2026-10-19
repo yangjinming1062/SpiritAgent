@@ -9,6 +9,7 @@ from datetime import timedelta
 from typing import Any
 
 import asyncpg
+from infrastructure.async_io import cancel_and_wait
 from infrastructure.correlation import begin_local_scope
 from infrastructure.database import session_scope
 from infrastructure.logger import get_logger
@@ -78,25 +79,15 @@ def _log_event_task_failure(task: asyncio.Task) -> None:
 async def interrupt_user_event_tasks(user_id: int, event_type: str) -> int:
     user_tasks = list(_event_tasks.get(event_type, {}).pop(user_id, ()))
     pending = [task for task in user_tasks if not task.done()]
-    for task in pending:
-        task.cancel()
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
+    await cancel_and_wait(pending)
     return len(pending)
 
 
 async def drain_event_tasks() -> None:
     """展平所有内部事件任务 → 取消并 await。"""
-    pending: list[asyncio.Task] = []
-    for user_tasks in _event_tasks.values():
-        for tasks in user_tasks.values():
-            pending.extend(tasks)
-    if not pending:
-        return
-    for t in pending:
-        if not t.done():
-            t.cancel()
-    await asyncio.gather(*pending, return_exceptions=True)
+    await cancel_and_wait(
+        task for user_tasks in _event_tasks.values() for tasks in user_tasks.values() for task in tasks
+    )
 
 
 def compute_backoff(retry_count: int) -> timedelta:
@@ -257,8 +248,7 @@ async def ws_event_loop(dsn: str) -> None:
                         while not conn.is_closed():
                             seen_version = await _process_events(seen_version)
                     finally:
-                        heartbeat_task.cancel()
-                        await asyncio.gather(heartbeat_task, return_exceptions=True)
+                        await cancel_and_wait((heartbeat_task,))
                         with contextlib.suppress(Exception):
                             async with asyncio.timeout(_LISTEN_HEARTBEAT_TIMEOUT_SECONDS):
                                 await conn.remove_listener("ws_events_channel", _listener)
@@ -272,8 +262,7 @@ async def ws_event_loop(dsn: str) -> None:
                 logger.warning("WS event loop LISTEN connection closed, reconnecting in 5s")
             await asyncio.sleep(5)
     finally:
-        flusher_task.cancel()
-        await asyncio.gather(flusher_task, return_exceptions=True)
+        await cancel_and_wait((flusher_task,))
         with contextlib.suppress(Exception):
             await _flush_gateway_delivered()
 

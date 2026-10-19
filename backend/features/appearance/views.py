@@ -20,6 +20,10 @@ async def generate_avatar_view(user_id: int, *, feedback: str | None = None) -> 
     return avatar_response(await _avatar.generate_avatar(user_id=user_id, feedback=feedback))
 
 
+async def regenerate_avatar_view(user_id: int, feedback: str | None, mode: ImageReviseMode) -> AvatarAssetResponse:
+    return avatar_response(await _avatar.regenerate_avatar(user_id=user_id, feedback=feedback, mode=mode))
+
+
 async def get_active_avatar_view(db: AsyncSession, user_id: int) -> AvatarAssetResponse | None:
     asset = await _avatar.get_active_avatar(db=db, user_id=user_id)
     return avatar_response(asset) if asset is not None else None

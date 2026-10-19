@@ -75,7 +75,9 @@ ORM 留在数据所属模块。跨模块读取使用冻结 DTO 或只读快照�
 
 [lifecycle.py](bootstrap/lifecycle.py) 依次执行安全配置检查与迁移、配置水合、模块准备、调度与事件启动、模块恢复、正式资产核查。各业务参与者及其顺序由 [runtime_lifecycle.py](bootstrap/runtime_lifecycle.py) 维护，新增恢复能力在该处登记。
 
-模块的准备、恢复、维护和关闭能力在 [runtime_lifecycle.py](bootstrap/runtime_lifecycle.py) 显式登记。停机关闭清理、调度与事件生产入口，收敛已受理回合和各模块任务，再释放数据库、Web 供应商和 LLM 连接池。[task_supervisor.py](runtime/task_supervisor.py) 统一登记所有者、账户、单飞任务和错误回报；任务状态机及付费恢复语义仍归业务模块。
+模块的准备、恢复、维护和关闭能力在 [runtime_lifecycle.py](bootstrap/runtime_lifecycle.py) 显式登记。停机关闭清理、调度与事件生产入口，收敛已受理回合和各模块任务，再释放数据库、Web 供应商和 LLM 连接池。[task_supervisor.py](runtime/task_supervisor.py) 统一登记所有者、账户、单飞任务和错误回报；任务状态机及付费恢复语义仍归业务模块。任务取消、等待与写盘线程收尾共用 [async_io.py](infrastructure/async_io.py)，重复取消等待方也须等目标释放资源后再传播。
+
+HTTP、调度与资产清理共用 [user_maintenance.py](runtime/user_maintenance.py) 的请求租约，退出时保护计数释放。启动与分钟清理按账户依次回收遗留视频和正式资产，维护中的账户留待下轮；小时清理逐项隔离失败，避免一项失败跳过其他清理。
 
 [chat_accounts.py](runtime/chat_accounts.py) 持有账户受理回合，会话互斥和工具调用关联不依附发起连接。连接持有身份权限、ACK、重放和断线宽限；桌面与 Remote 共用聊天用例，各自检查连接权限。`MANAGER`、账户运行态及等待表遵守单进程部署边界。
 

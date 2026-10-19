@@ -1,5 +1,6 @@
 import hmac
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
@@ -8,7 +9,7 @@ from infrastructure.database import SESSION_LOCAL, get_db
 from infrastructure.http_contracts import find_http_operation
 from infrastructure.logger import set_request_user_id
 from infrastructure.text import ensure_utc, utc_now
-from runtime.user_maintenance import begin_user_request, end_user_request, is_user_in_maintenance
+from runtime.user_maintenance import is_user_in_maintenance, user_request_scope
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -105,13 +106,41 @@ async def get_optional_current_session(
     if credentials is None and not request.cookies.get(REMOTE_COOKIE):
         return None
     try:
-        if credentials is None or not credentials.credentials:
-            return await authenticate_remote_session(request, db, content_only=True)
-        return await get_current_session(credentials, db)
+        return await authenticate_request_session(
+            request,
+            credentials if credentials is not None and credentials.credentials else None,
+            db,
+        )
     except HTTPException:
         # 鉴权失败被吞掉后路由仍继续（如按签名下发文件），读事务不能留到响应结束。
         await db.rollback()
         return None
+
+
+async def authenticate_request_session(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None,
+    db: AsyncSession,
+    *,
+    content_only: bool = True,
+) -> tuple[AccountIdentity, LoginIdentity | RemoteDeviceIdentity]:
+    return (
+        await get_current_session(credentials, db)
+        if credentials is not None
+        else await authenticate_remote_session(request, db, content_only=content_only)
+    )
+
+
+@asynccontextmanager
+async def account_request_scope(user_id: int) -> AsyncIterator[None]:
+    """鉴权后登记账户请求，维护开始后拒绝受理，并在退出时释放登记。"""
+    async with user_request_scope(user_id) as acquired:
+        if not acquired:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="用户数据正在维护，请稍后重试。",
+            )
+        yield
 
 
 async def get_current_user(
@@ -119,18 +148,9 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(BEARER_SCHEME),
     db: AsyncSession = Depends(get_db),
 ) -> AsyncIterator[AccountIdentity]:
-    session = (
-        await get_current_session(credentials, db)
-        if credentials is not None
-        else await authenticate_remote_session(request, db, content_only=True)
-    )
-    user = session[0]
-    if not await begin_user_request(user.id):
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="用户数据正在维护，请稍后重试。")
-    try:
+    user, _ = await authenticate_request_session(request, credentials, db)
+    async with account_request_scope(user.id):
         yield user
-    finally:
-        await end_user_request(user.id)
 
 
 async def authenticate_remote_session(
@@ -187,12 +207,8 @@ async def get_current_remote_session(
     db: AsyncSession = Depends(get_db),
 ) -> AsyncIterator[tuple[AccountIdentity, RemoteDeviceIdentity]]:
     session = await authenticate_remote_session(request, db)
-    if not await begin_user_request(session[0].id):
-        raise HTTPException(status_code=503, detail="用户数据正在维护，请稍后重试。")
-    try:
+    async with account_request_scope(session[0].id):
         yield session
-    finally:
-        await end_user_request(session[0].id)
 
 
 async def is_remote_session_active(user_id: int, device_id: int) -> bool:

@@ -6,6 +6,7 @@ from typing import Any
 from features.media.turn_state import MediaTurnState
 from features.scenes.turn_state import SceneTurnState
 from infrastructure.ai.user_config import UserLlmConfig
+from infrastructure.async_io import cancel_and_wait
 from infrastructure.logger import get_logger
 from infrastructure.redact import redact_sensitive_text
 from infrastructure.text import safe_json_loads, tool_error
@@ -324,14 +325,16 @@ async def _execute_tool_batch(
         [(tc["name"], tc["arguments"]) for tc in tool_calls_list],
     ):
         tasks = [asyncio.create_task(_run_tracked_tool(tc, ctx, progress)) for tc in tool_calls_list]
+        batch = asyncio.gather(*tasks)
         try:
             # 普通异常由单工具转换；撤权和取消必须停止整批，不能变成可继续执行的工具错误。
-            return await asyncio.gather(*tasks)
+            return await asyncio.shield(batch)
         finally:
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            try:
+                await cancel_and_wait(tasks)
+            finally:
+                if batch.done() and not batch.cancelled():
+                    batch.exception()
     return [await _run_tracked_tool(tc, ctx, progress) for tc in tool_calls_list]
 
 

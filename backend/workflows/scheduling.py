@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 from collections.abc import Callable, Coroutine
+from contextlib import AsyncExitStack
 from datetime import date, datetime, timedelta
 from functools import partial
 from typing import Any
@@ -47,7 +48,7 @@ from runtime.desktop.connection import MANAGER
 from runtime.events.outbox_gc import run_outbox_gc
 from runtime.memory_scope import MemoryScope
 from runtime.presets import COMPANION_PRESET_ID
-from runtime.user_maintenance import begin_user_request, end_user_request, is_user_in_maintenance, track_user_task
+from runtime.user_maintenance import is_user_in_maintenance, track_user_task, user_request_scope
 
 from workflows.automation.standard_turns import execute_standard_turn
 from workflows.nightly.nightly_activity import run_nightly_pipeline
@@ -283,16 +284,14 @@ async def _maybe_run_ignored_outreach() -> None:
             },
             ensure_ascii=False,
         )
-        if not await begin_user_request(uid):
-            continue
-        try:
+        async with user_request_scope(uid) as acquired:
+            if not acquired:
+                continue
             note_outreach_throttle(uid)
             async with session_scope() as db:
                 await enqueue_companion_intent(db, uid, prompt, source_key="checkin:ignored")
                 await db.commit()
             await queue_companion_intent(uid)
-        finally:
-            await end_user_request(uid)
         logger.info(
             "cron: ignored-outreach turn requested",
             extra={"user_id": uid, "ignored_minutes": ignored_minutes},
@@ -318,15 +317,13 @@ async def run_tick() -> None:
     due_jobs = due_jobs[:_MAX_DUE_PER_TICK]
     if not due_jobs:
         return
-    leases: dict[int, bool] = {}
-    for job in due_jobs:
-        uid = int(job.user_id)
-        if uid not in leases:
-            leases[uid] = await begin_user_request(uid)
-    try:
+    async with AsyncExitStack() as stack:
+        leases: dict[int, bool] = {}
+        for job in due_jobs:
+            uid = int(job.user_id)
+            if uid not in leases:
+                leases[uid] = await stack.enter_async_context(user_request_scope(uid))
         await _advance_due_jobs([job for job in due_jobs if leases[int(job.user_id)]], now)
-    finally:
-        await asyncio.gather(*(end_user_request(uid) for uid, acquired in leases.items() if acquired))
 
 
 async def _maybe_run_outbox_gc(now: datetime) -> None:

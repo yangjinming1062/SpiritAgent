@@ -10,12 +10,12 @@ from features.companion.proactive_runtime import (
 )
 from features.companion.should_act import should_act
 from infrastructure.ai.tasks import AiTaskKey
+from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.config import SETTINGS
 from infrastructure.logger import get_logger
 from infrastructure.text import coerce_hour_0_23, coerce_non_negative_float
 from runtime.events.contracts import COMPANION_TURN_EVENT
 from runtime.events.loop import interrupt_user_event_tasks
-from workflows.chat.inputs import _resolve_llm_config
 from workflows.companion_action_choice import choose_idle_action
 
 logger = get_logger(__name__)
@@ -98,7 +98,7 @@ async def companion_should_act(user_id: int, params: dict) -> dict:
 
     presentation = get_presentation_snapshot(user_id)
     contact_revision = get_user_proactive_record(user_id).contact_revision
-    llm_config = await _resolve_llm_config(user_id, AiTaskKey.proactive)
+    llm_config = await load_user_llm_config(user_id, AiTaskKey.proactive)
     res = await should_act(
         user_id=user_id,
         idle_seconds=idle_seconds,

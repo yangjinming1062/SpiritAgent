@@ -1,5 +1,7 @@
 """桌面登录与会话凭据的事务入口。"""
 
+from datetime import datetime
+
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.request_errors import RequestError
 from infrastructure.text import utc_now
@@ -10,6 +12,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from features.accounts.models import LoginRecord, User, lock_user_row
 from features.accounts.schemas import ActivateRequest, RefreshRequest, TokenResponse, UserInfo
 from features.accounts.security import create_access_token, decode_activation_code, hash_activation_token
+
+
+async def revoke_active_logins(db: AsyncSession, user_id: int, *, logout_at: datetime | None = None) -> None:
+    """在调用方事务内撤销账户全部桌面登录，时间可与新登录记录保持一致。"""
+    await db.execute(
+        update(LoginRecord)
+        .where(LoginRecord.user_id == user_id, LoginRecord.is_active.is_(True))
+        .values(is_active=False, logout_at=logout_at if logout_at is not None else utc_now()),
+    )
 
 
 async def activate_account(
@@ -32,11 +43,7 @@ async def activate_account(
     if is_user_in_maintenance(user.id):
         raise RequestError(status_code=503, message="用户数据正在维护，请稍后重试。")
     now = utc_now()
-    await db.execute(
-        update(LoginRecord)
-        .where(LoginRecord.user_id == user.id, LoginRecord.is_active.is_(True))
-        .values(is_active=False, logout_at=now),
-    )
+    await revoke_active_logins(db, user.id, logout_at=now)
     context = payload.client_context.model_dump(exclude_none=True) if payload.client_context else None
     token, expires_in, token_jti = create_access_token(user_id=user.id, username=user.username, client_context=context)
     db.add(

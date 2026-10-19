@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import shutil
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -144,8 +145,7 @@ async def import_user_backup(
 
         # 分块 spool，避免大压缩包整体驻留内存
         with open(zip_path, "wb") as out:
-            while chunk := await file.read(ARCHIVE_UPLOAD_CHUNK_BYTES):
-                await run_blocking(out.write, chunk)
+            await run_blocking(shutil.copyfileobj, file.file, out, ARCHIVE_UPLOAD_CHUNK_BYTES)
 
         try:
             await run_blocking(extract_backup_archive, zip_path, extract_root)

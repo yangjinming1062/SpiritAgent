@@ -19,7 +19,7 @@ from infrastructure.logger import get_logger
 from infrastructure.redact import redact_sensitive_text
 from infrastructure.text import resolve_language, resolve_prompt_text, utc_now
 from runtime.desktop.connection import MANAGER
-from runtime.user_maintenance import begin_user_request, end_user_request
+from runtime.user_maintenance import user_request_scope
 
 from workflows.chat.chat_emitter import HeadlessEmitter
 from workflows.chat.orchestrator import run_chat_turn
@@ -110,12 +110,11 @@ async def execute_companion_turn(user_id: int, payload: dict[str, object]) -> No
     except ValueError:
         logger.warning("Invalid companion turn event", extra={"user_id": user_id})
         return
-    if not MANAGER.is_connected(user_id) or not await begin_user_request(user_id):
+    if not MANAGER.is_connected(user_id):
         return
-    try:
-        await _execute_claimed_turn(user_id, trigger)
-    finally:
-        await end_user_request(user_id)
+    async with user_request_scope(user_id) as acquired:
+        if acquired:
+            await _execute_claimed_turn(user_id, trigger)
 
 
 async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> None:

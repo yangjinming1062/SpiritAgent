@@ -6,6 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from infrastructure.async_io import cancel_tasks, wait_for_tasks
+
 
 @dataclass
 class TaskOwnership:
@@ -76,24 +78,37 @@ class TaskSupervisor:
 
     async def quiesce_user(self, user_id: int) -> int:
         """取消可中断任务，等待已提交付费工作及其派生任务落地。"""
+        return await self._drain(user_id=user_id, respect_maintenance_policy=True)
+
+    async def _drain(
+        self,
+        *,
+        owner: str | None = None,
+        user_id: int | None = None,
+        only_user_tasks: bool = False,
+        respect_maintenance_policy: bool = False,
+    ) -> int:
         cancelled = 0
-        while pending := self.tasks(user_id=user_id):
-            for task in pending:
-                if self._tasks[task].cancel_on_maintenance and not task.cancelling():
-                    task.cancel()
-                    cancelled += 1
-            await asyncio.gather(*pending, return_exceptions=True)
+        interrupted = False
+        while pending := tuple(
+            task
+            for task in self.tasks(owner=owner, user_id=user_id)
+            if not only_user_tasks or self._tasks[task].user_id is not None
+        ):
+            cancelled += cancel_tasks(
+                task for task in pending if not respect_maintenance_policy or self._tasks[task].cancel_on_maintenance
+            )
+            try:
+                await wait_for_tasks(pending)
+            except asyncio.CancelledError:
+                interrupted = True
+        if interrupted:
+            raise asyncio.CancelledError
         return cancelled
 
     async def drain(self, *, owner: str | None = None, only_user_tasks: bool = False) -> None:
         """逐轮取消并等待，覆盖任务收尾期间派生的新工作。"""
-        while pending := tuple(
-            task for task in self.tasks(owner=owner) if not only_user_tasks or self._tasks[task].user_id is not None
-        ):
-            for task in pending:
-                if not task.cancelling():
-                    task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
+        await self._drain(owner=owner, only_user_tasks=only_user_tasks)
 
 
 TASK_SUPERVISOR = TaskSupervisor()

@@ -6,7 +6,7 @@ from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.constants import STT_MAX_AUDIO_BYTES, TTS_MAX_TEXT_CHARS
 from infrastructure.request_errors import RequestError
 from infrastructure.temp_files import get_file_path
-from infrastructure.uploads import UploadSource
+from infrastructure.uploads import UploadSource, read_capped_upload
 
 from features.media.http_contracts import MediaFile, ProviderOperationError, SpeechAudio, TtsRequest
 from features.media.speech import synthesize_speech
@@ -25,16 +25,6 @@ def _resolve_mime_type(content_type: str | None) -> str:
     if ct in ("audio/mp4", "audio/m4a", "video/mp4"):
         return "audio/mp4"
     return "audio/wav"
-
-
-async def _read_capped(file: UploadSource, max_bytes: int, too_large: RequestError) -> bytes:
-    """multipart 解析已把上传落到临时文件，``size`` 是实际字节数；读取仍按上限截断。"""
-    if file.size is not None and file.size > max_bytes:
-        raise too_large
-    data = await file.read(max_bytes + 1)
-    if len(data) > max_bytes:
-        raise too_large
-    return data
 
 
 async def serve_file(file_id: str) -> MediaFile:
@@ -58,7 +48,7 @@ async def speech_to_text(
             message="Missing audio file",
             code="missing_audio_file",
         )
-    file_bytes = await _read_capped(
+    file_bytes = await read_capped_upload(
         audio_file,
         STT_MAX_AUDIO_BYTES,
         RequestError(

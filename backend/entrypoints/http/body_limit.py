@@ -2,7 +2,7 @@
 
 from fastapi import HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials
-from features.accounts.deps import authenticate_remote_session, get_current_admin_token, get_current_session
+from features.accounts.deps import authenticate_request_session, get_current_admin_token
 from infrastructure.config import SETTINGS
 from infrastructure.constants import ATTACHMENT_DATA_URL_MAX_CHARS, SCENE_DOWNLOAD_MAX_BYTES, STT_MAX_AUDIO_BYTES
 from infrastructure.database import SESSION_LOCAL
@@ -52,10 +52,8 @@ async def _authenticate_upload(scope: Scope, *, admin_only: bool) -> None:
     async with SESSION_LOCAL() as db:
         if admin_only:
             await get_current_admin_token(credentials, db)
-        elif credentials is not None:
-            await get_current_session(credentials, db)
         else:
-            await authenticate_remote_session(request, db, content_only=True)
+            await authenticate_request_session(request, credentials, db)
 
 
 class BodyLimitMiddleware:

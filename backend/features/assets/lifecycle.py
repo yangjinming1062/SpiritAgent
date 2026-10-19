@@ -18,12 +18,11 @@ from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
-from runtime.user_maintenance import begin_user_request, end_user_request, track_user_task
+from runtime.user_maintenance import track_user_task
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.accounts.queries import list_user_ids
 from features.assets.contributions import cleanup_obsolete_references, forget_deleted_references, protected_asset_paths
 from features.assets.models import AssetCleanupPending
 from features.assets.references import (
@@ -262,17 +261,3 @@ async def cleanup_user_assets(user_id: int, *, discover: bool = False) -> int:
     except Exception:
         logger.warning("Asset cleanup deferred", extra={"user_id": user_id}, exc_info=True)
         return 0
-
-
-async def cleanup_assets(*, discover: bool = False) -> None:
-    async with SESSION_LOCAL() as db:
-        users = await list_user_ids(db)
-    for user_id in users:
-        if not await begin_user_request(user_id):
-            continue
-        try:
-            await cleanup_user_assets(user_id, discover=discover)
-        except Exception:
-            logger.warning("Asset cleanup failed", extra={"user_id": user_id}, exc_info=True)
-        finally:
-            await end_user_request(user_id)

@@ -5,6 +5,7 @@ import time
 from collections.abc import Awaitable, Callable
 from uuid import UUID
 
+from infrastructure.async_io import cancel_tasks
 from runtime.user_maintenance import track_user_task
 
 _operations: dict[tuple[int, str], asyncio.Task] = {}
@@ -61,6 +62,6 @@ def cancel_voice_operation(user_id: int, operation_id: str) -> bool:
     _cancelled_operations[key] = time.monotonic() + _CANCELLED_OPERATION_TTL_SECONDS
     while len(_cancelled_operations) > _CANCELLED_OPERATION_LIMIT:
         del _cancelled_operations[next(iter(_cancelled_operations))]
-    if task is not None and not task.done():
-        task.cancel()
+    if task is not None:
+        cancel_tasks((task,))
     return True

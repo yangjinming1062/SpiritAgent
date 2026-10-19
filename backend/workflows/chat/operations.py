@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from features.conversation.fork import SourceNotFoundError
-from features.conversation.http_contracts import SessionSnapshotResponse
+from features.conversation.http_contracts import PromptSubmitRequest, SessionSnapshotResponse
 from features.conversation.session_operations import (
     history_snapshot,
     last_submission,
@@ -19,6 +19,7 @@ from features.conversation.slash_commands import (
 from features.conversation.snapshots import ConversationSnapshot
 from features.conversation.submissions import get_submission
 from features.conversation.undo import UndoNotAllowedError
+from infrastructure.async_io import cancel_tasks
 from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
 from runtime.business_actor import BusinessActor
@@ -29,9 +30,8 @@ from runtime.conversation import (
 )
 from runtime.desktop.connection import MANAGER, UserEventPublisher
 
-from workflows.chat.history_commands import _do_compress_history
+from workflows.chat.history_commands import _do_compress_history, compression_command_result, compression_context
 from workflows.chat.inputs import (
-    _reject_read_only_session,
     _require_owned_conv,
     conversation_history_lock,
 )
@@ -44,7 +44,7 @@ logger = get_logger(__name__)
 @dataclass(frozen=True)
 class ChatOperations:
     snapshot: Callable[[dict[str, Any]], Awaitable[dict]]
-    submit: Callable[[dict[str, Any]], Awaitable[dict]]
+    submit: Callable[[str, PromptSubmitRequest], Awaitable[dict]]
     receipt: Callable[[dict[str, Any]], Awaitable[dict]]
     cancel: Callable[[dict[str, Any]], Awaitable[dict]]
     undo: Callable[[dict[str, Any]], Awaitable[dict]]
@@ -178,7 +178,7 @@ def chat_operations(actor: BusinessActor) -> ChatOperations:
             and not runtime.chat_task.cancelling()
         ):
             runtime.cancel_requested = True
-            runtime.chat_task.cancel()
+            cancel_tasks((runtime.chat_task,))
             cancelled = True
         return {"request_id": requested_id, "cancelled": cancelled}
 
@@ -189,24 +189,12 @@ def chat_operations(actor: BusinessActor) -> ChatOperations:
 
     async def session_compress_context(params: dict) -> dict:
         runtime = await _require_runtime(params)
-        _reject_read_only_session(runtime)
-        async with conversation_history_lock(runtime.session_id):
-            if runtime.busy:
-                raise RequestError(409, "当前会话有正在生成的回复，请稍后再试", code="turn_busy")
-            conv = await _require_owned_conv(user_id, runtime.session_id)
+        async with compression_context(user_id, runtime) as conv:
             result = await _do_compress_history(conv, user_id, runtime, actor.execution_context)
             if result["compressed"]:
                 await publish_history_change(
                     "command.result",
-                    {
-                        "command": "compress",
-                        "result": {
-                            "status": "ok",
-                            "message": f"已压缩 {result['replaced_count']} 条早期消息",
-                            "hydrate": True,
-                            "payload": result,
-                        },
-                    },
+                    {"command": "compress", "result": asdict(compression_command_result(result))},
                     session_id=runtime.session_id,
                 )
             return result

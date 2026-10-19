@@ -11,6 +11,7 @@ from features.accounts.gateway import GatewayIdentity
 from features.accounts.session_operations import is_login_active
 from features.companion.proactive_runtime import observe_companion_presence
 from features.conversation.session_operations import ensure_main_conversation
+from infrastructure.async_io import cancel_and_wait, cancel_tasks
 from infrastructure.config import SETTINGS
 from infrastructure.constants import JSONRPC_INVALID_PARAMS
 from infrastructure.correlation import REQUEST_ID_HEADER, adopt_inbound
@@ -85,15 +86,6 @@ def _user_lock(user_id: int) -> asyncio.Lock:
     return _USER_LOCKS.setdefault(user_id, asyncio.Lock())
 
 
-async def _cancel_tasks(tasks: list[asyncio.Task | None]) -> None:
-    pending = [task for task in tasks if task is not None and not task.done() and task is not asyncio.current_task()]
-    for task in pending:
-        if not task.cancelling():
-            task.cancel()
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
-
-
 async def drain() -> None:
     tasks: list[asyncio.Task | None] = list(_GRACE_TIMER_TASKS)
     for session in [
@@ -101,7 +93,7 @@ async def drain() -> None:
         *(peer for peers in _REMOTE_SESSIONS.values() for peer in peers.values()),
     ]:
         tasks.extend(session.background_tasks)
-    await _cancel_tasks(tasks)
+    await cancel_and_wait(tasks)
     await drain_account_turns()
     for user_id in list(_USER_SESSIONS):
         await terminate_user_gateway(user_id)
@@ -128,7 +120,7 @@ async def _terminate_user_gateway_locked(
         with contextlib.suppress(Exception):
             await websocket.close(code=1012 if is_user_in_maintenance(user_id) else 1008)
     observe_companion_presence(user_id, False, presentation_mode=None)
-    await _cancel_tasks([session.grace_timer_task, *session.background_tasks])
+    await cancel_and_wait([session.grace_timer_task, *session.background_tasks])
     await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
     await MANAGER.aunregister_dispatcher(user_id)
     REGISTRY.clear_runner_tools(user_id)
@@ -152,7 +144,7 @@ async def terminate_remote_sessions(user_id: int, device_id: int | None = None) 
             if session.websocket is not None:
                 with contextlib.suppress(Exception):
                     await session.websocket.close(code=1012 if is_user_in_maintenance(user_id) else 1008)
-            await _cancel_tasks([session.grace_timer_task, *session.background_tasks])
+            await cancel_and_wait([session.grace_timer_task, *session.background_tasks])
             await MANAGER.unregister_remote(user_id, connection_id)
             release_account_runtime(user_id, connection_id)
         if not _REMOTE_SESSIONS.get(user_id):
@@ -179,7 +171,7 @@ async def _expire_disconnected_remote(user_id: int, connection_id: str, session:
             _REMOTE_SESSIONS[user_id].pop(connection_id, None)
             if not _REMOTE_SESSIONS[user_id]:
                 _REMOTE_SESSIONS.pop(user_id)
-            await _cancel_tasks(list(session.background_tasks))
+            await cancel_and_wait(list(session.background_tasks))
             await MANAGER.unregister_remote(user_id, connection_id)
             release_account_runtime(user_id, connection_id)
     except asyncio.CancelledError:
@@ -237,7 +229,7 @@ async def _read_socket(websocket: WebSocket, session: UserGatewaySession) -> Non
                 return
     finally:
         # 请求归当前连接；已受理的聊天回合归账户，不随断连取消。
-        await _cancel_tasks(list(requests))
+        await cancel_and_wait(list(requests))
 
 
 async def handle_chat_websocket(websocket: WebSocket, ticket: GatewayIdentity) -> None:
@@ -255,7 +247,7 @@ async def handle_chat_websocket(websocket: WebSocket, ticket: GatewayIdentity) -
             await _terminate_user_gateway_locked(user_id)
             session = None
         elif session is not None and session.websocket is not None:
-            await _cancel_tasks(list(session.background_tasks))
+            await cancel_and_wait(list(session.background_tasks))
         try:
             await MANAGER.connect(websocket, user_id)
             await ensure_main_conversation(user_id)
@@ -272,7 +264,7 @@ async def handle_chat_websocket(websocket: WebSocket, ticket: GatewayIdentity) -
                 _register_session_handlers(session)
             else:
                 if session.grace_timer_task is not None:
-                    session.grace_timer_task.cancel()
+                    cancel_tasks((session.grace_timer_task,))
                     session.grace_timer_task = None
                 session.dispatcher.set_sender(_ws_sender(websocket))
                 session.websocket = websocket
@@ -342,7 +334,7 @@ async def handle_remote_websocket(websocket: WebSocket, identity: GatewayIdentit
                 _register_session_handlers(session)
             else:
                 if session.grace_timer_task is not None:
-                    session.grace_timer_task.cancel()
+                    cancel_tasks((session.grace_timer_task,))
                     session.grace_timer_task = None
                 session.dispatcher.set_sender(_ws_sender(websocket))
                 session.websocket = websocket

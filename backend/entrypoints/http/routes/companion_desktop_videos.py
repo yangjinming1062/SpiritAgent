@@ -269,41 +269,7 @@ async def command_draft(
         Body(discriminator="command"),
     ],
 ) -> DesktopVideoActionResponse:
-    if isinstance(body, DesktopVideoGenerateCommand):
-        return await _desktop.generate_action(
-            action_id=action_id,
-            user_id=user.id,
-            body=body,
-        )
-    if isinstance(body, DesktopVideoImageCommand):
-        return await _desktop.generate_image(
-            action_id=action_id,
-            user_id=user.id,
-            body=body,
-        )
-    if isinstance(body, DesktopVideoRefineCommand):
-        return await _desktop.refine_video(
-            action_id=action_id,
-            user_id=user.id,
-            body=body,
-        )
-    if isinstance(body, DesktopVideoConfirmImageCommand):
-        return await _desktop.confirm_image(
-            action_id=action_id,
-            user_id=user.id,
-            body=body,
-        )
-    if isinstance(body, DesktopVideoCancelCommand):
-        return await _desktop.cancel_action(
-            action_id=action_id,
-            user_id=user.id,
-            body=body,
-        )
-    if isinstance(body, DesktopVideoPauseCommand):
-        return await _desktop.pause_action(action_id=action_id, user_id=user.id, body=body)
-    if isinstance(body, DesktopVideoRetryCommand):
-        return await _desktop.retry_action(action_id=action_id, user_id=user.id, body=body)
-    return await _desktop.resume_action(action_id=action_id, user_id=user.id, body=body)
+    return await _desktop.command_draft(action_id=action_id, user_id=user.id, body=body)
 
 
 @router.post(

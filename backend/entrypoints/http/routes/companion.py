@@ -78,7 +78,6 @@ from features.appearance.schemas import (
     OutfitRegenerateRequest,
     OutfitResponse,
 )
-from features.appearance.use_cases import check_avatar_regeneration, regenerate_avatar_view
 from features.appearance.views import (
     accept_fullbody_candidate_view,
     adopt_avatar_seed_view,
@@ -95,6 +94,7 @@ from features.appearance.views import (
     get_active_avatar_view,
     list_avatar_history_view,
     regenerate_avatar_from_image_view,
+    regenerate_avatar_view,
     regenerate_outfit_draft_view,
     retry_outfit_description_view,
     select_avatar_view,
@@ -402,7 +402,6 @@ async def post_avatar(
                 presentation_content_type=presentation_type,
             )
         elif body.mode is not None:
-            await check_avatar_regeneration(user.id)
             asset = await regenerate_avatar_view(user.id, body.feedback, body.mode)
         else:
             asset = await generate_avatar_view(user_id=user.id, feedback=body.feedback)

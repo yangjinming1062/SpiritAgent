@@ -5,6 +5,7 @@ from typing import Any
 from uuid import uuid4
 
 from infrastructure.api_errors import api_error, redact_message
+from infrastructure.async_io import cancel_and_wait, cancel_tasks
 from infrastructure.constants import (
     JSON_RPC_VERSION,
     JSONRPC_INTERNAL_ERROR,
@@ -89,10 +90,7 @@ class JsonRpcDispatcher:
     async def stop_writer(self) -> None:
         tasks = [task for task in (self._writer_task, self._hold_timeout_task) if task is not None]
         self._writer_task = self._hold_timeout_task = None
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        await cancel_and_wait(tasks)
 
     def drain_delivered_ids(self) -> list[int]:
         ids = self._delivered_ids[:]
@@ -138,8 +136,7 @@ class JsonRpcDispatcher:
         task = self._hold_timeout_task
         self._hold_timeout_task = None
         # 超时任务自身触发 flush 时不能自我取消，否则 flush 在首个挂起点中断、hold 永不释放
-        if task is not None and task is not asyncio.current_task():
-            task.cancel()
+        cancel_tasks((task,))
 
     def enable_hold(self) -> None:
         """连接恢复前暂存事件，gateway.resume 重放或冲刷后恢复交付。"""
