@@ -61,7 +61,7 @@ def build_runner(repo_root: Path) -> None:
             ) from exc
     else:
         print("==> No runner tests/ directory — skipping pytest (project ships no test code)")
-    # setuptools 会复用 build/lib；从新鲜源码副本构建，避免旧目录迁移产物混入 wheel。
+    # setuptools 会复用 build/lib；使用独立源码副本，确保 wheel 仅包含当前包。
     with tempfile.TemporaryDirectory(prefix="spiritagent-runner-build-") as tmp:
         source = Path(tmp)
         shutil.copy2(runner_dir / "pyproject.toml", source / "pyproject.toml")

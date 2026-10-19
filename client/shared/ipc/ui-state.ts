@@ -20,7 +20,6 @@ export interface CompanionMemoryBrowser {
   selectedId: number | null
   editorOpen: boolean
   scrollTop: number
-  pageScrollTop?: number
 }
 
 export interface CompanionEditorUiSnapshot {
@@ -119,11 +118,7 @@ export function isCompanionEditorUiSnapshot(value: unknown): value is CompanionE
         typeof browser.editorOpen === 'boolean' &&
         typeof browser.scrollTop === 'number' &&
         Number.isFinite(browser.scrollTop) &&
-        browser.scrollTop >= 0 &&
-        (browser.pageScrollTop === undefined ||
-          (typeof browser.pageScrollTop === 'number' &&
-            Number.isFinite(browser.pageScrollTop) &&
-            browser.pageScrollTop >= 0))
+        browser.scrollTop >= 0
     ) &&
     isRecord(memory.drafts) &&
     Object.values(memory.drafts).every(validDraft) &&

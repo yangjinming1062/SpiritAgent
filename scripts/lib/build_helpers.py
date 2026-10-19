@@ -89,7 +89,7 @@ def _read_runner_pyproject_version(root: Path) -> str:
 
 
 def _select_runner_wheel(dist_dir: Path, version: str) -> Path:
-    """只接受与 pyproject 版本精确匹配的 wheel，避免 dist/ 历史 wheel 混入安装包。"""
+    """暂存产物必须是与 pyproject 版本精确匹配的唯一 wheel。"""
     exact = sorted(dist_dir.glob(f"spirit_agent-{version}-*.whl"))
     if not exact:
         available = sorted(p.name for p in dist_dir.glob("*.whl"))

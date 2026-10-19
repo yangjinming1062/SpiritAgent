@@ -1,4 +1,3 @@
-import json
 from datetime import date, datetime
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
@@ -172,36 +171,9 @@ class CompanionReply(BaseModel):
 
     @classmethod
     def from_saved_snapshot(cls, reply_json: str, content: str) -> "CompanionReply":
-        """补回已存快照丢失的首尾空白；原文仅因这些空白超限时保留合法快照正文。"""
+        """读取交付快照并核对其与原文的气泡、正文及演绎一致。"""
         reply = cls.model_validate_json(reply_json)
-        values = json.loads(content)
-        comparison_content = content
-        if isinstance(values, list) and len(values) == len(reply.bubbles):
-            shortened = False
-            for raw, delivered in zip(values, reply.bubbles, strict=True):
-                if (
-                    isinstance(raw, dict)
-                    and raw.get("type") == "text"
-                    and isinstance(raw.get("text"), str)
-                    and len(raw["text"]) > 16000
-                    and isinstance(delivered, TextBubble)
-                    and raw["text"].strip() == delivered.text
-                ):
-                    raw["text"] = delivered.text
-                    shortened = True
-            if shortened:
-                comparison_content = json.dumps(values, ensure_ascii=False)
-        source = CompanionReplyInput.model_validate_json(comparison_content)
-        if len(source.root) == len(reply.bubbles):
-            for raw, delivered in zip(source.root, reply.bubbles, strict=True):
-                if (
-                    isinstance(raw, TextBubble)
-                    and isinstance(delivered, TextBubble)
-                    and raw.text != delivered.text
-                    and raw.text.strip() == delivered.text
-                ):
-                    delivered.text = raw.text
-        reply.validate_content(comparison_content)
+        reply.validate_content(content)
         return reply
 
     def validate_content(self, content: str) -> None:

@@ -456,7 +456,7 @@ async def regenerate_outfit_draft(
 
     if mode == "edit":
         source_identity = source.identity_reference_path
-        if not source_identity or source_identity != avatar.seed_fullbody_url:
+        if source_identity != avatar.seed_fullbody_url:
             raise OutfitStateError("全身形象已变化，请按当前形象重新生成外观")
         # 编辑保持上一版图像的身份与造型；独立评分仍比较当前全身身份图。
         reference_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, original_url)
@@ -534,7 +534,7 @@ async def confirm_outfit(
         original_url = outfit.fullbody_url
         original_source = outfit.source_json
         source = OutfitSource.model_validate_json(original_source)
-        if source.character_card_revision is None or not source.identity_reference_path:
+        if source.character_card_revision is None:
             raise OutfitStateError("外观缺少身份来源，请重新生成或上传")
         await db.commit()
         draft = await asyncio.to_thread(read_portrait_bytes, original_url)
@@ -603,7 +603,7 @@ async def prepare_outfit_prompt(
     if image is not None:
         garment_text = await _describe_reference_garment(
             user_id,
-            OutfitSource(),
+            OutfitSource(identity_reference_path=avatar.seed_fullbody_url),
             image,
             content_type,
             requirement=effective_description,

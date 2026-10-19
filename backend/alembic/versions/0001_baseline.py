@@ -7,7 +7,7 @@ from alembic import op
 from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 
-revision: str = "0005"
+revision: str = "0001"
 down_revision: str | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -278,13 +278,6 @@ def upgrade() -> None:
         sa.Column("avoid_when_json", sa.Text(), server_default=sa.text("'[]'"), nullable=False),
         sa.Column("clip_kind", sa.String(8), nullable=False),
         sa.Column("duration_seconds", sa.Integer(), nullable=False),
-        sa.Column("desktop_continuity", sa.String(16), server_default=sa.text("'independent'"), nullable=False),
-        sa.Column(
-            "desktop_allowed_triggers_json",
-            sa.Text(),
-            server_default=sa.text('\'["chat", "manual"]\''),
-            nullable=False,
-        ),
         sa.Column("reason", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("source", sa.String(24), nullable=False),
         sa.Column("status", sa.String(24), server_default=sa.text("'pending'"), nullable=False),

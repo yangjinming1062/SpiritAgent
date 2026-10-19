@@ -33,9 +33,9 @@ class OutfitSource(BaseModel):
     feedback_history: list[str] = Field(default_factory=list)
     # 生成时的角色卡修订与全身身份图路径；确认、穿着和视频包据此判断外观是否仍对应当前身份。
     character_card_revision: int | None = None
-    identity_reference_path: str | None = None
+    identity_reference_path: str = Field(min_length=1)
 
-    @field_validator("reference_image_path", "reference_description", "identity_reference_path")
+    @field_validator("reference_image_path", "reference_description")
     @classmethod
     def _optional_text(cls, value: str | None) -> str | None:
         return value or None

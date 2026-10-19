@@ -179,8 +179,6 @@ export interface AppNavigationTarget {
   messageKey?: string
 }
 
-export type DesktopNavigation = AppNavigationTarget
-
 export function normalizeAppNavigation(raw: unknown): AppNavigationTarget {
   if (!raw || typeof raw !== 'object') {
     return {}

@@ -8,7 +8,7 @@ from infrastructure.ai.tasks import AI_TASKS
 from infrastructure.config import SETTINGS
 from infrastructure.logger import get_logger, setup_logging
 from pydantic import ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.configuration.ai_config import prepare_ai_config, public_ai_config, validate_ai_config
@@ -196,17 +196,6 @@ async def save_system_settings(db: AsyncSession, updates: dict[str, Any]) -> Non
                 else:
                     new_rows.append(SystemSetting(setting_key=key, setting_value=value))
             if new_rows:
-                max_id = await db.scalar(select(func.max(SystemSetting.id)))
-                if max_id is not None:
-                    # 外部导入（如 CSV 带显式 id 写入）不会推进自增序列，先对齐再插入，避免 nextval 撞已有主键。
-                    await db.execute(
-                        select(
-                            func.setval(
-                                func.pg_get_serial_sequence("system_settings", "id"),
-                                max_id,
-                            ),
-                        ),
-                    )
                 db.add_all(new_rows)
             await db.commit()
         except Exception:

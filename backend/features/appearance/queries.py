@@ -1,6 +1,5 @@
 """外观模块公开的身份引用与首次动作准备状态。"""
 
-from pydantic import ValidationError
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -67,10 +66,7 @@ async def outfit_snapshot(db: AsyncSession, user_id: int, outfit_id: int | None)
 
 def outfit_identity_matches(source_json: str, identity_reference_path: str) -> bool:
     """只核对全身来源；角色卡文字修订不改变身体身份。"""
-    try:
-        source = OutfitSource.model_validate_json(source_json)
-    except ValidationError:
-        return False
+    source = OutfitSource.model_validate_json(source_json)
     return bool(identity_reference_path) and source.identity_reference_path == identity_reference_path
 
 

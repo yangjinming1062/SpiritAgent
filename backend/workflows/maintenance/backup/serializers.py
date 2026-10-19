@@ -107,6 +107,8 @@ def _build_payload(table: str, raw: dict[str, Any], context: BackupContext) -> d
     columns = _columns(table)
     if unknown := raw.keys() - set(columns):
         raise ValueError(f"Unknown columns in {table}: {', '.join(sorted(unknown))}")
+    if missing := set(columns) - raw.keys():
+        raise ValueError(f"Missing columns in {table}: {', '.join(sorted(missing))}")
     payload = {key: value for key, value in raw.items() if key != "id"}
     for column in contributor.columns:
         value = payload.get(column.name)
@@ -158,7 +160,9 @@ async def insert_rows(
 
 def read_table_rows(extract_root: Path, table: str) -> list[dict[str, Any]]:
     payload = json.loads((extract_root / "db" / f"{table}.json").read_text(encoding="utf-8"))
-    rows = payload.get("rows") if isinstance(payload, dict) else None
+    if not isinstance(payload, dict) or set(payload) != {"table", "rows"} or payload["table"] != table:
+        raise ValueError(f"Invalid table envelope in {table}.json")
+    rows = payload["rows"]
     if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
         raise ValueError(f"Invalid rows in {table}.json")
     if table == "user_preferences":

@@ -25,7 +25,6 @@ from features.conversation.replies import (
     LinkBubbleInput,
     MediaBubble,
     MediaBubbleInput,
-    TextBubble,
 )
 from features.conversation.snapshots import MessageSnapshot
 
@@ -175,11 +174,7 @@ def visible_bubble_count() -> ColumnElement[int]:
 
 def _companion_context_items(message: Message | MessageSnapshot, *, dialogue_only: bool) -> list[dict[str, JsonValue]]:
     delivery = CompanionReply.from_saved_snapshot(message.reply_json or "", message.content or "")
-    values = json.loads(message.content or "")
-    for value, bubble in zip(values, delivery.bubbles, strict=True):
-        if isinstance(bubble, TextBubble):
-            value["text"] = bubble.text
-    source = CompanionReplyInput.model_validate(values)
+    source = CompanionReplyInput.model_validate_json(message.content or "")
     media = {b.media_id: b for b in delivery.bubbles if isinstance(b, MediaBubble)}
     links = {b.topic_id: b for b in delivery.bubbles if isinstance(b, LinkBubble)}
     return [

@@ -131,16 +131,6 @@ export type UndoResponse = ApiSchemas['SessionUndoResult']
 
 export type ActiveTurnSnapshot = ApiSchemas['ActiveTurnView']
 
-export interface PromptSubmissionState {
-  replace_reply_message_id?: number | null
-  result_message_id?: number | null
-  request_id: string
-  status: string
-  error?: string | null
-  message_ids?: number[]
-  retry_message_id?: number | null
-}
-
 export type PromptSubmissionResult = ApiSchemas['PromptSubmitResult']
 
 export type { SessionSnapshot } from './gateway'

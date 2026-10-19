@@ -18,12 +18,6 @@ def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: 
         restore_action_payload(table, payload, id_map, user_id)
 
 
-def _export_action(payload: dict[str, Any]) -> None:
-    if payload.get("media_type") == "image":
-        for name in ("kind", "target_duration_seconds", "actual_duration_ms", "frames", "loopable", "hitmask_fps"):
-            payload.pop(name, None)
-
-
 def backup_tables() -> tuple[BackupTable, ...]:
     return (
         BackupTable(
@@ -43,6 +37,5 @@ def backup_tables() -> tuple[BackupTable, ...]:
             },
             strict_references=True,
             prepare_payload=partial(_prepare, "companion_actions"),
-            export_payload=_export_action,
         ),
     )

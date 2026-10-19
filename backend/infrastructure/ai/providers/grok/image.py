@@ -12,7 +12,7 @@ from infrastructure.ai.providers.http import get_http
 
 
 class GrokImageGenProvider(ImageGenProvider):
-    """通过 xAI 的两个图像端点生图：/images/generations（纯文，返回 URL 列表，认 n 与 aspect_ratio）与 /images/edits（文+参考图，单图用 image，多图用 images，支持 URL 或 data URI）；base_url 含 /v1，原生 httpx 调用仅用相对路径以避免双前缀；返回原生结果 URL，由媒体层下载与转存；xAI 协议按 aspect_ratio 驱动，size 故意忽略。2.0 起按分辨率×质量计价：resolution 采用请求档位、默认 2k；quality 固定官方默认 medium。
+    """通过 xAI 的两个图像端点生图：/images/generations（纯文，返回 URL 列表，认 n 与 aspect_ratio）与 /images/edits（文+参考图，单图用 image，多图用 images，支持 URL 或 data URI）；base_url 含 /v1，原生 httpx 调用仅用相对路径以避免双前缀；返回原生结果 URL，由媒体层下载与转存；xAI 协议按 aspect_ratio 驱动，size 故意忽略。resolution 采用请求档位、默认 2k；quality 固定 medium。
 
     透明背景：grok-imagine-image-2.0 即使提示词直接要求透明背景，返回的仍是不带 Alpha
     通道的 RGB PNG，xAI Images API 亦无背景参数可映射；supports_transparent_background

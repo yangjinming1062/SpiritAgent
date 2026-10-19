@@ -64,9 +64,9 @@ uv run --no-project --python 3.13 python scripts/check_imports.py --fix
 
 不带 `--strict-imports` 时违规仅输出诊断、退出码为 0；`--fix` 只自动移除 future annotations，修改后重跑严格模式。
 
-默认跳过模块根目录的 `build/`、`dist/` 及各层 `.venv`、`__pycache__`，避免旧构建副本与当前源码导出表混用；显式传入文件仍逐个检查。实际 wheel 另由 `check_runner_package.py` 隔离安装校验。
+默认只检查源码，跳过模块根目录的 `build/`、`dist/` 及各层 `.venv`、`__pycache__`；显式传入文件仍逐个检查。实际 wheel 另由 `check_runner_package.py` 隔离安装校验。
 
-[`check_runner_architecture.py`](check_runner_architecture.py) 检查 Runner 的层间依赖、跨能力私有访问、模块导入环、旧根包引用，以及导入时注册和资源所有权。`contracts` 保持纯契约；基础设施显式接收配置，不读取调用作用域；运行时不导入具体能力，能力间通过注入端口协作，文件能力可依赖执行能力的公开租约 API。常量、类型别名和 `ContextVar` 绑定允许保留在模块级。该门禁已纳入 pre-commit，也可独立运行：
+[`check_runner_architecture.py`](check_runner_architecture.py) 检查 Runner 的层间依赖、跨能力私有访问、模块导入环、禁用的顶层包引用，以及导入时注册和资源所有权。`contracts` 保持纯契约；基础设施显式接收配置，不读取调用作用域；运行时不导入具体能力，能力间通过注入端口协作，文件能力可依赖执行能力的公开租约 API。常量、类型别名和 `ContextVar` 绑定允许保留在模块级。该门禁已纳入 pre-commit，也可独立运行：
 
 ```bash
 uv run --no-project --python 3.13 python scripts/check_runner_architecture.py
@@ -80,7 +80,7 @@ uv run --no-project --python 3.13 python scripts/check_runner_architecture.py
 uv run --no-project --python 3.13 python scripts/check_services_architecture.py
 ```
 
-[`check_services_architecture.py`](check_services_architecture.py) 覆盖导入解析、模块与业务实现环、目录方向、跨业务 ORM/私有入口、公开返回 ORM、入口 SQL 和旧根目录。纯 DTO、类型别名与静态词表不构成业务实现依赖。默认检查 Backend；`--backend <目录>` 可对临时样例验证规则。修改边界时同步 [Backend](../backend/README.md#模块依赖边界) 的数据归属与设计理由。
+[`check_services_architecture.py`](check_services_architecture.py) 覆盖导入解析、模块与业务实现环、目录方向、跨业务 ORM/私有入口、公开返回 ORM、入口 SQL 和禁用的顶层目录。纯 DTO、类型别名与静态词表不构成业务实现依赖。默认检查 Backend；`--backend <目录>` 可对临时样例验证规则。修改边界时同步 [Backend](../backend/README.md#模块依赖边界) 的数据归属与设计理由。
 
 ## 提示词调试
 
@@ -120,7 +120,7 @@ macOS `afterSign` 调用 [notarize.cjs](../client/scripts/notarize.cjs)，electr
 uv run --no-project --python 3.13 python scripts/build.py --version 1.2.3
 ```
 
-`--target mac|win` 默认按宿主推断，必须在对应系统构建；`--skip-runner` / `--skip-desktop` 仍要求同版本既有产物，`--output` 覆盖默认 `release/`。Runner 从临时源码副本构建，避免旧 `build/lib` 混入产物；正式暂存只接受目标版本唯一 wheel，核对包内 Python 文件清单与字节均和源码一致，并在仓库外的临时 venv 安装，校验模块入口、版本、依赖和静态工具定义。单独诊断：
+`--target mac|win` 默认按宿主推断，必须在对应系统构建；`--skip-runner` / `--skip-desktop` 仍要求同版本既有产物，`--output` 覆盖默认 `release/`。Runner 从独立临时源码副本构建；正式暂存只接受目标版本唯一 wheel，核对包内 Python 文件清单与字节均和源码一致，并在仓库外的临时 venv 安装，校验模块入口、版本、依赖和静态工具定义。单独诊断：
 
 ```bash
 uv run --no-project --python 3.13 python scripts/check_runner_package.py

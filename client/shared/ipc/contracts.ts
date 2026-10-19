@@ -10,7 +10,6 @@ import type {
   DesktopBackgroundPlayback,
   DesktopBackgroundRequest,
   DesktopCompanionActivityState,
-  DesktopNavigation,
   DockCatalog,
   DockState,
   DockTask,
@@ -37,7 +36,6 @@ export type {
   DesktopCompanionActivityState,
   DesktopMediaBytes,
   DesktopMediaReference,
-  DesktopNavigation,
   DockCatalog,
   DockCatalogItem,
   DockCatalogSource,
@@ -709,7 +707,7 @@ export interface IpcInvokeContract {
 export interface IpcEventContract {
   'spiritagent:presentation:changed': [payload: PresentationState]
   'spiritagent:dock:changed': [payload: DockState]
-  'spiritagent:desktop:navigate': [payload: DesktopNavigation]
+  'spiritagent:desktop:navigate': [payload: AppNavigationTarget]
   'spiritagent:background:media': [payload: DesktopBackground]
   'spiritagent:presentation:background-playback': [payload: DesktopBackgroundPlayback]
 

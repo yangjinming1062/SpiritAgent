@@ -15,9 +15,9 @@ import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
 import { getStrings } from '@/shared/strings'
 import type { ImageReviseMode } from '@protocol'
-import { errorMessage } from '@runtime'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
+import { ApiError } from '../../../../../shared/errors'
 import { pickAvatarImage, type PickedImage, resolvePortraitUrl } from '../avatar-image'
 
 import { hydrateWardrobe } from './wardrobe-store'
@@ -199,13 +199,7 @@ export function useOutfitDesignSession(
             return
           }
 
-          const rawError = errorMessage(err)
-
-          const timedOut =
-            (err instanceof Error && err.name === 'TimeoutError') ||
-            /^(?:Error invoking remote method '[^']+': )?TimeoutError:|^The operation was aborted due to timeout$/.test(
-              rawError
-            )
+          const timedOut = err instanceof ApiError && err.code === 'timeout'
 
           if (withDraft && (timedOut || ipcErrorStatus(err) === 409)) {
             setDraft({ id: withDraft.id, previewUrl: '' })

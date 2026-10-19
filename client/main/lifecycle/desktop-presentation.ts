@@ -9,7 +9,6 @@ import {
   type DesktopCompanionActivityState,
   type DesktopMediaBytes,
   type DesktopMediaReference,
-  type DesktopNavigation,
   IPC,
   type PresentationMode,
   type PresentationState,
@@ -1253,7 +1252,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         }
       })
     },
-    navigate: (payload: DesktopNavigation): boolean => {
+    navigate: (payload: AppNavigationTarget): boolean => {
       const interactive = windows.getInteractive()
 
       if (effectiveMode !== 'desktop' || !interactive || interactive.isDestroyed()) {

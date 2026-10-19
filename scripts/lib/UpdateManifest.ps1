@@ -204,7 +204,7 @@ function Build-UpdateZip {
     New-Item -ItemType Directory -Path $stageDir | Out-Null
 
     try {
-        # 仅拷贝当前版本产物与 manifest，剔除 win-unpacked/ 与旧构建残留。
+        # 更新包仅包含当前版本产物与 manifest，不包含 win-unpacked/。
         $versionPrefix = "SpiritAgent-$Version"
         Get-ChildItem -Path $DesktopReleaseDir -File | Where-Object {
             $_.Name -like "$versionPrefix*" -or
