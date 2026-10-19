@@ -4,13 +4,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { ApiResponse, HttpCallOptions } from '../shared/api'
 import { EVENT_POLICIES } from '../shared/api.generated'
-import { eventsAfterSnapshot } from '../shared/gateway'
+import { eventsAfterSnapshot, isRecord } from '../shared/gateway'
 import { createTurnCancellation, type TurnReference } from '../shared/turn-cancellation'
 
 import type { GatewayEvent, RemoteApi, RemoteGateway } from './api'
-import { ApiError, errorText, readImage, record } from './api'
+import { ApiError, errorText, readImage } from './api'
 import { activeReplyIsPersisted, advanceTurn, commandHistory, mergeMessages } from './chat-state'
-import { TopicLink } from './TopicLink'
+import { TopicFeedbackProvider, TopicLink } from './TopicLink'
 import type {
   ActiveTurn,
   ChatAttachment,
@@ -19,7 +19,18 @@ import type {
   SessionMessage,
   SystemPresetSummary
 } from './types'
-import { Empty, Media, Notice, PageHeader, pauseMedia, timestamp, useAlive, useTask, videoQueueText } from './ui'
+import {
+  Empty,
+  ImageInput,
+  Media,
+  Notice,
+  PageHeader,
+  pauseMedia,
+  timestamp,
+  useAlive,
+  useTask,
+  videoQueueText
+} from './ui'
 
 interface PendingPrompt {
   id: string
@@ -39,7 +50,7 @@ function readPendingPrompt(key: string): PendingPrompt | null {
   const value: unknown = JSON.parse(stored)
 
   if (
-    !record(value) ||
+    !isRecord(value) ||
     typeof value.id !== 'string' ||
     typeof value.text !== 'string' ||
     !Array.isArray(value.attachments) ||
@@ -53,7 +64,7 @@ function readPendingPrompt(key: string): PendingPrompt | null {
 
   const attachments: ChatAttachment[] = value.attachments.map((attachment: unknown) => {
     if (
-      !record(attachment) ||
+      !isRecord(attachment) ||
       (attachment.type !== 'image' && attachment.type !== 'video' && attachment.type !== 'audio') ||
       typeof attachment.url !== 'string'
     ) {
@@ -123,7 +134,7 @@ export function Chat({
     try {
       const stored: unknown = JSON.parse(localStorage.getItem(`remote:${userId}:${device}:read`) ?? '{}')
 
-      return record(stored)
+      return isRecord(stored)
         ? Object.fromEntries(
             Object.entries(stored).filter((entry): entry is [string, number] => typeof entry[1] === 'number')
           )
@@ -921,7 +932,15 @@ export function Chat({
     void run(() => resume(selected))
   }
 
-  return (
+  const visibleTurn = turn && !turn.replace_reply_message_id && !activeReplyIsPersisted(turn, messages) ? turn : null
+  const topicIds = [
+    ...messages.flatMap(message => (message.content_type === 'companion_reply' ? message.bubbles : [])),
+    ...(visibleTurn?.bubbles ?? [])
+  ]
+    .filter(bubble => bubble.type === 'link')
+    .map(bubble => bubble.topic_id)
+
+  const content = (
     <div className="chat-page">
       <header className="chat-header">
         <button
@@ -1012,7 +1031,6 @@ export function Chat({
             <Message
               api={api}
               device={device}
-              gateway={gateway}
               key={message.id ?? `message-${index}`}
               message={message}
               refresh={refreshMessages}
@@ -1026,25 +1044,25 @@ export function Chat({
               userId={userId}
             />
           ))}
-        {turn && !turn.replace_reply_message_id && !activeReplyIsPersisted(turn, messages) ? (
+        {visibleTurn ? (
           <div className="message assistant">
             <div className="bubble">
-              {turn.bubbles.map((bubble, index) => (
-                <Bubble api={api} bubble={bubble} gateway={gateway} key={index} refresh={refreshMessages} />
+              {visibleTurn.bubbles.map((bubble, index) => (
+                <Bubble api={api} bubble={bubble} key={index} refresh={refreshMessages} />
               ))}
-              {turn.text ? (
-                <p>{turn.text}</p>
-              ) : turn.bubbles.length === 0 ? (
+              {visibleTurn.text ? (
+                <p>{visibleTurn.text}</p>
+              ) : visibleTurn.bubbles.length === 0 ? (
                 <span className="typing">
                   <i />
                   <i />
                   <i />
                 </span>
               ) : null}
-              {turn.tools.length ? (
+              {visibleTurn.tools.length ? (
                 <details className="reasoning">
                   <summary>正在处理你的请求 · 查看进度</summary>
-                  {turn.tools.map(tool => (
+                  {visibleTurn.tools.map(tool => (
                     <p className="tool-progress" key={tool.call_id}>
                       {tool.status === 'complete' ? '✓' : '◌'} {tool.name}
                     </p>
@@ -1148,13 +1166,9 @@ export function Chat({
               <IconSend size={20} />
             </button>
           </div>
-          <input
-            accept="image/png,image/jpeg,image/webp,image/gif"
-            hidden
+          <ImageInput
             multiple
-            onChange={event => {
-              const files = [...(event.target.files ?? [])]
-              event.target.value = ''
+            onFiles={files => {
               const target = selected
               void run(async () => {
                 const images = await Promise.all(files.slice(0, 4).map(readImage))
@@ -1177,18 +1191,22 @@ export function Chat({
               })
             }}
             ref={fileRef}
-            type="file"
           />
         </form>
       )}
     </div>
+  )
+
+  return (
+    <TopicFeedbackProvider api={api} gateway={gateway} key={selected} topicIds={topicIds}>
+      {content}
+    </TopicFeedbackProvider>
   )
 }
 
 function Message({
   message,
   api,
-  gateway,
   refresh,
   userId,
   device,
@@ -1198,7 +1216,6 @@ function Message({
 }: {
   message: SessionMessage
   api: RemoteApi
-  gateway: RemoteGateway
   refresh: () => void
   userId: number
   device: number
@@ -1232,7 +1249,6 @@ function Message({
               api={api}
               bubble={bubble}
               device={device}
-              gateway={gateway}
               index={index}
               key={index}
               messageId={message.id}
@@ -1244,13 +1260,13 @@ function Message({
           <>
             {content ? <p>{content.replace(/(?:^|\n)MEDIA:\s*\S+/g, '')}</p> : null}
             {parts.map((part: unknown, index) =>
-              record(part) && part.type === 'input_text' && typeof part.text === 'string' ? (
+              isRecord(part) && part.type === 'input_text' && typeof part.text === 'string' ? (
                 <p key={index}>{part.text}</p>
-              ) : record(part) && part.type === 'input_image' && typeof part.image_url === 'string' ? (
+              ) : isRecord(part) && part.type === 'input_image' && typeof part.image_url === 'string' ? (
                 <Media key={index} refresh={refresh} type="image" url={part.image_url} />
-              ) : record(part) && part.type === 'input_video' && typeof part.video_url === 'string' ? (
+              ) : isRecord(part) && part.type === 'input_video' && typeof part.video_url === 'string' ? (
                 <Media key={index} refresh={refresh} type="video" url={part.video_url} />
-              ) : record(part) && part.type === 'input_audio' && typeof part.audio_url === 'string' ? (
+              ) : isRecord(part) && part.type === 'input_audio' && typeof part.audio_url === 'string' ? (
                 <div key={index}>
                   <Media refresh={refresh} type="audio" url={part.audio_url} />
                   {typeof part.transcript === 'string' ? <p>{part.transcript}</p> : null}
@@ -1281,7 +1297,6 @@ function Message({
 function Bubble({
   bubble,
   api,
-  gateway,
   refresh,
   messageId,
   index = 0,
@@ -1290,7 +1305,6 @@ function Bubble({
 }: {
   bubble: CompanionBubble
   api: RemoteApi
-  gateway: RemoteGateway
   refresh: () => void
   messageId?: number
   index?: number
@@ -1310,7 +1324,7 @@ function Bubble({
   }
 
   if (bubble.type === 'link') {
-    return <TopicLink api={api} bubble={bubble} gateway={gateway} key={bubble.topic_id} />
+    return <TopicLink bubble={bubble} key={bubble.topic_id} />
   }
 
   if (bubble.type === 'voice') {

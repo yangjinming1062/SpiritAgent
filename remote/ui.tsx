@@ -1,4 +1,4 @@
-import type { Dispatch, ReactElement, ReactNode, SetStateAction } from 'react'
+import type { Dispatch, ReactElement, ReactNode, Ref, SetStateAction } from 'react'
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 
 import type { VideoQueueState } from '@protocol'
@@ -193,6 +193,25 @@ export function pauseMedia(except?: HTMLMediaElement): void {
   })
 }
 
+export function useVisiblePolling(
+  enabled: boolean,
+  load: () => Promise<void>,
+  runLatest: (task: () => Promise<void>) => Promise<void>
+): void {
+  useEffect(() => {
+    if (!enabled) {
+      return
+    }
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void runLatest(load)
+      }
+    }, 5000)
+
+    return () => clearInterval(timer)
+  }, [enabled, load, runLatest])
+}
+
 export function Empty({ title, children }: { title: string; children?: ReactNode }): ReactElement {
   return (
     <div className="empty">
@@ -247,6 +266,33 @@ export function PageHeader({
       </div>
       {action}
     </header>
+  )
+}
+
+export function ImageInput({
+  ref,
+  multiple = false,
+  onFiles
+}: {
+  ref: Ref<HTMLInputElement>
+  multiple?: boolean
+  onFiles: (files: File[]) => void
+}): ReactElement {
+  return (
+    <input
+      accept="image/png,image/jpeg,image/webp,image/gif"
+      hidden
+      multiple={multiple}
+      onChange={event => {
+        const files = [...(event.target.files ?? [])]
+        event.target.value = ''
+        if (files.length) {
+          onFiles(multiple ? files : files.slice(0, 1))
+        }
+      }}
+      ref={ref}
+      type="file"
+    />
   )
 }
 

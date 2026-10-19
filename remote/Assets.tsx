@@ -11,6 +11,7 @@ import type { Outfit, Scene, VideoPack } from './types'
 import {
   Empty,
   focusAfterRender,
+  ImageInput,
   Media,
   Notice,
   PageHeader,
@@ -18,6 +19,7 @@ import {
   usePageScroll,
   usePageState,
   useTask,
+  useVisiblePolling,
   videoQueueText
 } from './ui'
 
@@ -94,6 +96,82 @@ function AssetSteps({
         </li>
       ))}
     </ol>
+  )
+}
+
+function AssetPolicyToggle({
+  checked,
+  description,
+  disabled,
+  loaded,
+  onChange,
+  saving,
+  title
+}: {
+  checked: boolean
+  description: string
+  disabled: boolean
+  loaded: boolean
+  onChange: (checked: boolean) => void
+  saving: boolean
+  title: string
+}): ReactElement {
+  return (
+    <label className="policy-toggle">
+      <input checked={checked} disabled={disabled} onChange={event => onChange(event.target.checked)} type="checkbox" />
+      <span>
+        <strong>{title}</strong>
+        <small>{description}</small>
+        <small aria-live="polite">{saving ? '保存中…' : !loaded ? '尚未加载' : checked ? '已开启' : '已关闭'}</small>
+      </span>
+    </label>
+  )
+}
+
+function AssetCard({
+  actionDisabled,
+  actionLabel,
+  active,
+  id,
+  imageAlt,
+  imageUrl,
+  kind,
+  onAction,
+  onPreview,
+  status,
+  title
+}: {
+  actionDisabled: boolean
+  actionLabel: string
+  active: boolean
+  id: number
+  imageAlt: string
+  imageUrl: string
+  kind: 'scene' | 'outfit'
+  onAction: () => void
+  onPreview: () => void
+  status: string
+  title: string
+}): ReactElement {
+  return (
+    <article className={`asset-card ${active ? 'active' : ''}`}>
+      <button
+        className="asset-card-preview"
+        data-outfit-id={kind === 'outfit' ? id : undefined}
+        data-scene-id={kind === 'scene' ? id : undefined}
+        onClick={onPreview}
+        type="button"
+      >
+        {imageUrl ? <img alt={imageAlt} loading="lazy" src={imageUrl} /> : <div className="asset-placeholder">✦</div>}
+        <div>
+          <strong>{title}</strong>
+          <small>{status}</small>
+        </div>
+      </button>
+      <button className="asset-card-action" disabled={actionDisabled} onClick={onAction} type="button">
+        {actionLabel}
+      </button>
+    </article>
   )
 }
 
@@ -324,12 +402,8 @@ function AssetCreator({
           ) : null}
         </details>
       ) : null}
-      <input
-        accept="image/png,image/jpeg,image/webp,image/gif"
-        hidden
-        onChange={event => {
-          const file = event.target.files?.[0]
-          event.target.value = ''
+      <ImageInput
+        onFiles={([file]) => {
           if (file) {
             void run(async () => {
               const next = await readImage(file)
@@ -340,7 +414,6 @@ function AssetCreator({
           }
         }}
         ref={picker}
-        type="file"
       />
     </section>
   )
@@ -401,19 +474,7 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
   }, [load, refresh, runLatest])
   const pending = Boolean(state?.pending || state?.regenerating)
 
-  useEffect(() => {
-    if (!pending) {
-      return
-    }
-
-    const timer = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        void runLatest(load)
-      }
-    }, 5000)
-
-    return () => clearInterval(timer)
-  }, [pending, load, runLatest])
+  useVisiblePolling(pending, load, runLatest)
 
   return (
     <>
@@ -456,40 +517,28 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
               <IconRefresh size={20} />
             </button>
           </div>
-          <label className="policy-toggle">
-            <input
-              checked={state?.policy === 'llm_may_replace'}
-              disabled={!state || busy}
-              onChange={event => {
-                const policy = event.target.checked ? 'llm_may_replace' : 'locked'
-                void run(async () => {
-                  setPolicySaving(true)
-                  try {
-                    await api.invoke('companion_scenes.patch_scene_policy', { body: { policy } })
-                    await load()
-                  } finally {
-                    if (alive()) {
-                      setPolicySaving(false)
-                    }
+          <AssetPolicyToggle
+            checked={state?.policy === 'llm_may_replace'}
+            description="伙伴可以自行创建并切换背景。"
+            disabled={!state || busy}
+            loaded={Boolean(state)}
+            onChange={checked => {
+              const policy = checked ? 'llm_may_replace' : 'locked'
+              void run(async () => {
+                setPolicySaving(true)
+                try {
+                  await api.invoke('companion_scenes.patch_scene_policy', { body: { policy } })
+                  await load()
+                } finally {
+                  if (alive()) {
+                    setPolicySaving(false)
                   }
-                })
-              }}
-              type="checkbox"
-            />
-            <span>
-              <strong>允许伙伴自主更换背景</strong>
-              <small>伙伴可以自行创建并切换背景。</small>
-              <small aria-live="polite">
-                {policySaving
-                  ? '保存中…'
-                  : !state
-                    ? '尚未加载'
-                    : state.policy === 'llm_may_replace'
-                      ? '已开启'
-                      : '已关闭'}
-              </small>
-            </span>
-          </label>
+                }
+              })
+            }}
+            saving={policySaving}
+            title="允许伙伴自主更换背景"
+          />
           {state?.active ? <p className="current-asset">当前背景：{state.active.title || '未命名背景'}</p> : null}
         </>
       ) : null}
@@ -553,62 +602,52 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
         <>
           <div className="asset-grid">
             {rows.map(row => (
-              <article className={`asset-card ${state?.active?.id === row.id ? 'active' : ''}`} key={row.id}>
-                <button
-                  className="asset-card-preview"
-                  data-scene-id={row.id}
-                  onClick={() => {
+              <AssetCard
+                actionDisabled={busy || state?.active?.id === row.id}
+                actionLabel={
+                  state?.active?.id === row.id ? '正在使用' : row.status === 'ready' ? '使用这个背景' : '继续制作'
+                }
+                active={state?.active?.id === row.id}
+                id={row.id}
+                imageAlt={row.title || '背景'}
+                imageUrl={row.url}
+                key={row.id}
+                kind="scene"
+                onAction={() => {
+                  if (row.status !== 'ready' || !row.url) {
                     setSelected(row)
-                    setCreating(false)
-                  }}
-                  type="button"
-                >
-                  {row.url ? (
-                    <img alt={row.title || '背景'} loading="lazy" src={row.url} />
-                  ) : (
-                    <div className="asset-placeholder">✦</div>
-                  )}
-                  <div>
-                    <strong>{row.title || '新的背景'}</strong>
-                    <small>
-                      {state?.active?.id === row.id
-                        ? '正在使用'
-                        : row.status === 'ready'
-                          ? '已就绪'
-                          : row.status === 'pending'
-                            ? '正在制作'
-                            : row.status === 'description_failed' || row.status === 'failed'
-                              ? '制作失败'
-                              : row.status === 'cancelled'
-                                ? '已取消'
-                                : '待完善'}
-                    </small>
-                  </div>
-                </button>
-                <button
-                  className="asset-card-action"
-                  disabled={busy || state?.active?.id === row.id}
-                  onClick={() => {
-                    if (row.status !== 'ready' || !row.url) {
-                      setSelected(row)
+                    return
+                  }
+                  void run(async () => {
+                    const image = new Image()
+                    image.src = row.url
+                    await image.decode()
+                    if (!alive()) {
                       return
                     }
-                    void run(async () => {
-                      const image = new Image()
-                      image.src = row.url
-                      await image.decode()
-                      if (!alive()) {
-                        return
-                      }
-                      await api.invoke('companion_scenes.post_scene_activate', { body: { scene_id: row.id } })
-                      await load()
-                    })
-                  }}
-                  type="button"
-                >
-                  {state?.active?.id === row.id ? '正在使用' : row.status === 'ready' ? '使用这个背景' : '继续制作'}
-                </button>
-              </article>
+                    await api.invoke('companion_scenes.post_scene_activate', { body: { scene_id: row.id } })
+                    await load()
+                  })
+                }}
+                onPreview={() => {
+                  setSelected(row)
+                  setCreating(false)
+                }}
+                status={
+                  state?.active?.id === row.id
+                    ? '正在使用'
+                    : row.status === 'ready'
+                      ? '已就绪'
+                      : row.status === 'pending'
+                        ? '正在制作'
+                        : row.status === 'description_failed' || row.status === 'failed'
+                          ? '制作失败'
+                          : row.status === 'cancelled'
+                            ? '已取消'
+                            : '待完善'
+                }
+                title={row.title || '新的背景'}
+              />
             ))}
           </div>
           {loaded && rows.length === 0 && !busy ? (
@@ -842,13 +881,8 @@ function SceneDetail({
           </button>
         </div>
       </details>
-      <input
-        accept="image/png,image/jpeg,image/webp,image/gif"
-        hidden
-        onChange={event => {
-          const file = event.target.files?.[0]
-          event.target.value = ''
-
+      <ImageInput
+        onFiles={([file]) => {
           if (file) {
             void run(async () => {
               const image = await readImage(file)
@@ -863,7 +897,6 @@ function SceneDetail({
           }
         }}
         ref={picker}
-        type="file"
       />
     </section>
   )
@@ -904,19 +937,7 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
     outfits.some(outfit => outfit.description_status === 'pending' || outfit.description_status === 'processing') ||
     packs.some(pack => pack.status === 'processing')
 
-  useEffect(() => {
-    if (!pending) {
-      return
-    }
-
-    const timer = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        void runLatest(load)
-      }
-    }, 5000)
-
-    return () => clearInterval(timer)
-  }, [load, pending, runLatest])
+  useVisiblePolling(pending, load, runLatest)
 
   const selected = outfits.find(outfit => outfit.id === selectedId)
   usePageScroll(`outfit.${creating ? 'create' : (selected?.id ?? 'list')}`, loaded)
@@ -951,34 +972,28 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
               <IconRefresh size={20} />
             </button>
           </div>
-          <label className="policy-toggle">
-            <input
-              checked={policy === 'llm_may_replace'}
-              disabled={busy || !loaded}
-              onChange={event => {
-                const value = event.target.checked ? 'llm_may_replace' : 'locked'
-                void run(async () => {
-                  setPolicySaving(true)
-                  try {
-                    await api.invoke('companion.patch_outfit_policy', { body: { policy: value } })
-                    await load()
-                  } finally {
-                    if (alive()) {
-                      setPolicySaving(false)
-                    }
+          <AssetPolicyToggle
+            checked={policy === 'llm_may_replace'}
+            description="伙伴可以夜间挑选已有衣服，也可以设计新衣服。"
+            disabled={busy || !loaded}
+            loaded={loaded}
+            onChange={checked => {
+              const value = checked ? 'llm_may_replace' : 'locked'
+              void run(async () => {
+                setPolicySaving(true)
+                try {
+                  await api.invoke('companion.patch_outfit_policy', { body: { policy: value } })
+                  await load()
+                } finally {
+                  if (alive()) {
+                    setPolicySaving(false)
                   }
-                })
-              }}
-              type="checkbox"
-            />
-            <span>
-              <strong>允许伙伴自主换装</strong>
-              <small>伙伴可以夜间挑选已有衣服，也可以设计新衣服。</small>
-              <small aria-live="polite">
-                {policySaving ? '保存中…' : !loaded ? '尚未加载' : policy === 'llm_may_replace' ? '已开启' : '已关闭'}
-              </small>
-            </span>
-          </label>
+                }
+              })
+            }}
+            saving={policySaving}
+            title="允许伙伴自主换装"
+          />
         </>
       ) : null}
       {creating ? (
@@ -1026,52 +1041,42 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
               const pack = packs.find(item => item.outfit_id === outfit.id && item.status === 'ready')
 
               return (
-                <article className={`asset-card ${outfit.active ? 'active' : ''}`} key={outfit.id}>
-                  <button
-                    className="asset-card-preview"
-                    data-outfit-id={outfit.id}
-                    onClick={() => {
+                <AssetCard
+                  actionDisabled={busy || outfit.active || outfit.status === 'expired'}
+                  actionLabel={
+                    outfit.active ? '正在穿着' : outfit.status === 'draft' ? '继续制作' : pack ? '穿这套' : '准备穿上'
+                  }
+                  active={outfit.active}
+                  id={outfit.id}
+                  imageAlt={outfit.name}
+                  imageUrl={outfit.fullbody_url}
+                  key={outfit.id}
+                  kind="outfit"
+                  onAction={() => {
+                    if (outfit.status !== 'ready' || !pack) {
                       setSelectedId(outfit.id)
-                      setCreating(false)
-                    }}
-                    type="button"
-                  >
-                    {outfit.fullbody_url ? (
-                      <img alt={outfit.name} loading="lazy" src={outfit.fullbody_url} />
-                    ) : (
-                      <div className="asset-placeholder">✦</div>
-                    )}
-                    <div>
-                      <strong>{outfit.name || '新外观'}</strong>
-                      <small>
-                        {outfit.active
-                          ? '正在穿着'
-                          : outfit.status === 'ready'
-                            ? '已入柜'
-                            : outfit.status === 'draft'
-                              ? '待确认'
-                              : '已过期'}
-                      </small>
-                    </div>
-                  </button>
-                  <button
-                    className="asset-card-action"
-                    disabled={busy || outfit.active || outfit.status === 'expired'}
-                    onClick={() => {
-                      if (outfit.status !== 'ready' || !pack) {
-                        setSelectedId(outfit.id)
-                        return
-                      }
-                      void run(async () => {
-                        await api.invoke('companion.put_video_pack_selection', { body: { pack_id: pack.id } })
-                        await load()
-                      })
-                    }}
-                    type="button"
-                  >
-                    {outfit.active ? '正在穿着' : outfit.status === 'draft' ? '继续制作' : pack ? '穿这套' : '准备穿上'}
-                  </button>
-                </article>
+                      return
+                    }
+                    void run(async () => {
+                      await api.invoke('companion.put_video_pack_selection', { body: { pack_id: pack.id } })
+                      await load()
+                    })
+                  }}
+                  onPreview={() => {
+                    setSelectedId(outfit.id)
+                    setCreating(false)
+                  }}
+                  status={
+                    outfit.active
+                      ? '正在穿着'
+                      : outfit.status === 'ready'
+                        ? '已入柜'
+                        : outfit.status === 'draft'
+                          ? '待确认'
+                          : '已过期'
+                  }
+                  title={outfit.name || '新外观'}
+                />
               )
             })}
           </div>
@@ -1294,13 +1299,8 @@ function OutfitDetail({
           </button>
         </div>
       </details>
-      <input
-        accept="image/png,image/jpeg,image/webp,image/gif"
-        hidden
-        onChange={event => {
-          const file = event.target.files?.[0]
-          event.target.value = ''
-
+      <ImageInput
+        onFiles={([file]) => {
           if (file) {
             void run(async () => {
               const image = await readImage(file)
@@ -1316,7 +1316,6 @@ function OutfitDetail({
           }
         }}
         ref={picker}
-        type="file"
       />
     </section>
   )

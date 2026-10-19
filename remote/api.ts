@@ -7,10 +7,6 @@ export type { GatewayEvent } from '../shared/gateway'
 
 import type { RemoteSession } from './types'
 
-export function record(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
 export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : '操作失败，请稍后重试'
 }

@@ -5,9 +5,10 @@
 | 入口 | 内部职责 |
 |---|---|
 | [api.ts](api.ts)、[App.tsx](App.tsx) | 身份、请求撤销与连接生命周期；退出或授权失效收敛全部资源 |
-| [Chat.tsx](Chat.tsx) | 会话列表、按预设新建与聊天；通过共享快照协调器缓冲事件，按会话水位合并，保留未确认提交标识并先查询回执 |
-| [Feed.tsx](Feed.tsx)、[Companion.tsx](Companion.tsx)、[Profile.tsx](Profile.tsx)、[Memory.tsx](Memory.tsx)、[Assets.tsx](Assets.tsx) | 动态／日记、伙伴常驻分类、资料与角色卡编辑、记忆表单及窗口背景／衣柜；创作、详情与列表分层，按原任务恢复制作 |
-| [ui.tsx](ui.tsx) | 页面任务、账户内草稿与媒体资源生命周期；加载失败只重试媒体加载 |
+| [Chat.tsx](Chat.tsx)、[TopicLink.tsx](TopicLink.tsx) | 会话列表、按预设新建与聊天；通过共享快照协调器缓冲事件，按会话水位合并，保留未确认提交标识并先查询回执；话题反馈按当前会话去重、每批最多 100 项读取并统一订阅，同一话题共用反馈与保存状态 |
+| [Feed.tsx](Feed.tsx) | 动态与日记分别读取和分页，共用渲染后校验当前页面、可见性与焦点的已读确认流程 |
+| [Companion.tsx](Companion.tsx)、[Profile.tsx](Profile.tsx)、[Memory.tsx](Memory.tsx)、[Assets.tsx](Assets.tsx) | 伙伴常驻分类、资料与角色卡编辑、记忆表单及窗口背景／衣柜；创作、详情与列表分层，按原任务恢复制作 |
+| [ui.tsx](ui.tsx)、[save-result.ts](save-result.ts) | 页面任务、账户内草稿、前台轮询、图片选择与媒体资源生命周期；保存失败后的回读核对共用流程，各表单定义提交值比对与冲突展示；媒体加载失败只重试媒体加载 |
 
 与 Client 共用根 `shared/` 的生成契约、HTTP 请求和 WS 协议核心，不导入桌面 store、IPC 或窗口组件。业务请求使用操作标识调用 `RemoteApi.invoke`，Cookie、CSRF、账户撤销和登录失效由该适配层处理；资源读取、保存及聊天提交、停止不受实时连接状态限制。`RemoteGateway` 仅提供事件、连接状态和会话快照协调，不暴露业务 RPC；重放成功时保留已有会话基线，失效时重读 HTTP 快照。异步回写须校验当前账户与页面代次；切页、隐藏与退出时停止录音并暂停音视频。`dist/` 由 Backend 部署，不随桌面安装包发布；检查与实机验收统一见 Scripts。
 

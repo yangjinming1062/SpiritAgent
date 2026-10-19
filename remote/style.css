@@ -838,9 +838,6 @@ dd {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.diary-preview .pill {
-  margin-top: 10px;
-}
 .diary-entry {
   background: #fff;
   border-radius: 17px;
@@ -858,21 +855,6 @@ dd {
   line-height: 2.1;
   font-size: 14px;
   color: #5e6d55;
-}
-.form-grid {
-  display: flex;
-  gap: 10px;
-}
-.form-grid label {
-  flex: 1;
-  font-size: 10px;
-  color: #91a081;
-  min-width: 0;
-}
-.form-grid select {
-  font-size: 12px;
-  margin-top: 7px;
-  padding: 10px 7px;
 }
 .search-input {
   margin-top: 17px;
@@ -1481,8 +1463,5 @@ dd {
   .creation-steps li {
     gap: 4px;
     font-size: 11px;
-  }
-  .form-grid {
-    flex-direction: column;
   }
 }

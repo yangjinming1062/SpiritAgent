@@ -6,6 +6,7 @@ import type { MemoryCounts, MemoryItem, SystemPresetSummary, UserProfileField } 
 import type { ApiInput } from '../shared/api'
 
 import type { RemoteApi } from './api'
+import { saveWithReadback } from './save-result'
 import { Empty, focusAfterRender, Notice, useAlive, usePageScroll, usePageState, useTask } from './ui'
 
 type Status = 'active' | 'candidate' | 'invalidated' | 'expired'
@@ -409,32 +410,21 @@ function MemoryEditor({
           disabled={busy || conflict || !draft.content.trim() || (!dirty && active)}
           onClick={() =>
             run(async () => {
-              let updated: MemoryItem
-              try {
-                updated = await api.invoke('resource_catalog.patch_memory', {
-                  path: { memory_id: row.id },
-                  body: {
-                    system_preset_id: preset,
-                    expected_version: draft.version,
-                    content: draft.content
-                  }
-                })
-              } catch (failure) {
-                if (!alive()) {
-                  throw failure
-                }
-                let latest: MemoryItem | null = null
-                try {
-                  latest = await findSavedMemory(api, preset, row, draft.content)
-                } catch {
-                  // 核对失败时保留原草稿与版本。
-                }
-                if (!latest || latest.content !== draft.content.trim()) {
-                  await onChanged()
-                  throw failure
-                }
-                updated = latest
-              }
+              const updated = await saveWithReadback({
+                write: () =>
+                  api.invoke('resource_catalog.patch_memory', {
+                    path: { memory_id: row.id },
+                    body: {
+                      system_preset_id: preset,
+                      expected_version: draft.version,
+                      content: draft.content
+                    }
+                  }),
+                read: () => findSavedMemory(api, preset, row, draft.content),
+                matches: latest => latest.content === draft.content.trim(),
+                isCurrent: alive,
+                onUnconfirmed: onChanged
+              })
               if (alive()) {
                 setDraft({ content: updated.content, baseContent: updated.content, version: updated.content_version })
                 setSaved(true)
@@ -556,37 +546,28 @@ function UserProfile({ api, refresh }: { api: RemoteApi; refresh: number }): Rea
         value: draft.values[key]?.trim() || null,
         expected_version: draft.versions[key] ?? 0
       }))
-      let updated: MemoryItem[]
-      try {
-        const result = await api.invoke('resource_catalog.patch_memory_profile', {
-          body: { system_preset_id: 'companion', changes }
-        })
-        updated = result.memories
-      } catch (failure) {
-        if (!alive()) {
-          throw failure
-        }
-        let latest: MemoryItem[] | null = null
-        try {
-          latest = await readProfile(api)
-        } catch {
-          // 核对失败不清理草稿，也不改变预期版本。
-        }
-        if (
-          !latest ||
-          !changedFields.every(({ key, context }) => {
+      const updated = await saveWithReadback({
+        write: async () => {
+          const result = await api.invoke('resource_catalog.patch_memory_profile', {
+            body: { system_preset_id: 'companion', changes }
+          })
+
+          return result.memories
+        },
+        read: () => readProfile(api),
+        matches: latest =>
+          changedFields.every(({ key, context }) => {
             const actual = latest.find(row => row.context === context)?.content ?? null
 
             return actual === (draft.values[key]?.trim() || null)
-          })
-        ) {
-          if (alive() && latest) {
+          }),
+        isCurrent: alive,
+        onUnconfirmed: latest => {
+          if (latest) {
             setRows(latest)
           }
-          throw failure
         }
-        updated = latest
-      }
+      })
       if (alive()) {
         setRows(updated)
         setDraft(null)

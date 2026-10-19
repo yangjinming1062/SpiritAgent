@@ -10,10 +10,12 @@ import type {
 } from '@protocol'
 
 import type { ApiResponse } from '../shared/api'
+import { isRecord } from '../shared/gateway'
 
 import type { RemoteApi } from './api'
-import { ApiError, record } from './api'
-import { Media, Notice, useAlive, usePageScroll, usePageState, useTask } from './ui'
+import { ApiError } from './api'
+import { saveWithReadback } from './save-result'
+import { Media, Notice, useAlive, usePageScroll, usePageState, useTask, useVisiblePolling } from './ui'
 
 const PERSONA_FIELDS: { key: PersonaEditableField; label: string; rows: number }[] = [
   { key: 'name', label: '名字', rows: 1 },
@@ -60,7 +62,7 @@ type Avatar = ApiResponse<'companion.get_avatar'>
 function definitionOf(persona: PersonaResponse): Record<string, unknown> {
   const value: unknown = JSON.parse(persona.definition_json)
 
-  return record(value) ? value : {}
+  return isRecord(value) ? value : {}
 }
 
 function editableValue(definition: Record<string, unknown>, key: PersonaEditableField): string | null {
@@ -110,31 +112,13 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
     void runLatest(load)
   }, [load, refresh, runLatest])
 
-  useEffect(() => {
-    const onFocus = () => {
-      if (document.visibilityState === 'visible') {
-        void runLatest(load)
-      }
+  const loadCard = useCallback(async () => {
+    const next = await api.invoke('companion.get_character_card_route')
+    if (alive()) {
+      setCard(next)
     }
-    window.addEventListener('focus', onFocus)
-    const timer = analyzing
-      ? setInterval(() => {
-          if (document.visibilityState === 'visible') {
-            void runLatest(async () => {
-              const next = await api.invoke('companion.get_character_card_route')
-              if (alive()) {
-                setCard(next)
-              }
-            })
-          }
-        }, 5000)
-      : undefined
-
-    return () => {
-      window.removeEventListener('focus', onFocus)
-      clearInterval(timer)
-    }
-  }, [alive, analyzing, api, load, runLatest])
+  }, [alive, api])
+  useVisiblePolling(analyzing, loadCard, runLatest)
   usePageScroll('companion.profile', persona !== null)
 
   const beginPersonaEdit = () => {
@@ -153,38 +137,29 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
       if (!draft) {
         return
       }
-      let updated: PersonaResponse
-      try {
-        updated = await api.invoke('companion.put_persona', {
-          body: {
-            definition_json: JSON.stringify(draft.values),
-            expected_fields: Object.fromEntries(PERSONA_FIELDS.map(({ key }) => [key, draft.base[key] ?? null]))
-          }
-        })
-      } catch (failure) {
-        if (!alive()) {
-          throw failure
-        }
-        let latest: PersonaResponse | null = null
-        try {
-          latest = await api.invoke('companion.get_persona')
-        } catch {
-          // 核对失败时保留编辑起点与原错误。
-        }
-        const latestDefinition = latest ? definitionOf(latest) : {}
-        if (
-          !latest ||
-          !PERSONA_FIELDS.every(
+      const updated = await saveWithReadback({
+        write: () =>
+          api.invoke('companion.put_persona', {
+            body: {
+              definition_json: JSON.stringify(draft.values),
+              expected_fields: Object.fromEntries(PERSONA_FIELDS.map(({ key }) => [key, draft.base[key] ?? null]))
+            }
+          }),
+        read: () => api.invoke('companion.get_persona'),
+        matches: latest => {
+          const latestDefinition = definitionOf(latest)
+
+          return PERSONA_FIELDS.every(
             ({ key }) => (editableValue(latestDefinition, key) ?? '') === (draft.values[key] ?? '').trim()
           )
-        ) {
-          if (alive() && latest) {
+        },
+        isCurrent: alive,
+        onUnconfirmed: latest => {
+          if (latest) {
             setPersona(latest)
           }
-          throw failure
         }
-        updated = latest
-      }
+      })
       if (alive()) {
         setPersona(updated)
         setDraft(null)
@@ -197,44 +172,33 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
       if (!cardDraft) {
         return
       }
-      let updated: CharacterCard
-      try {
-        updated = await api.invoke('companion.patch_character_card_route', {
-          body: {
-            expected_avatar_id: cardDraft.avatarId,
-            expected_revision: cardDraft.revision,
-            changes: cardDraft.changes
-          }
-        })
-      } catch (failure) {
-        if (!alive()) {
-          throw failure
-        }
-        let latest: CharacterCard | null | undefined
-        try {
-          latest = await api.invoke('companion.get_character_card_route')
-        } catch {
-          // 核对失败时保留草稿和修订号。
-        }
-        if (
-          !latest ||
-          latest.avatar_id !== cardDraft.avatarId ||
-          !FEATURE_FIELDS.every(({ key }) => {
+      const updated = await saveWithReadback({
+        write: () =>
+          api.invoke('companion.patch_character_card_route', {
+            body: {
+              expected_avatar_id: cardDraft.avatarId,
+              expected_revision: cardDraft.revision,
+              changes: cardDraft.changes
+            }
+          }),
+        read: () => api.invoke('companion.get_character_card_route'),
+        matches: latest =>
+          latest.avatar_id === cardDraft.avatarId &&
+          FEATURE_FIELDS.every(({ key }) => {
             if (!Object.hasOwn(cardDraft.changes, key)) {
               return true
             }
             const value = cardDraft.changes[key]
 
             return value === null ? latest.overrides[key] == null : latest.overrides[key] === value?.trim()
-          })
-        ) {
-          if (alive() && latest !== undefined) {
+          }),
+        isCurrent: alive,
+        onUnconfirmed: latest => {
+          if (latest !== undefined) {
             setCard(latest)
           }
-          throw failure
         }
-        updated = latest
-      }
+      })
       if (alive()) {
         setCard(updated)
         setCardDraft(null)

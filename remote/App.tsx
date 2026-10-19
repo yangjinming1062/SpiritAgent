@@ -3,9 +3,9 @@ import type { ReactElement } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { EVENT_POLICIES } from '../shared/api.generated'
-import type { GatewayNetworkEvent } from '../shared/gateway'
+import { type GatewayNetworkEvent, isRecord } from '../shared/gateway'
 
-import { ApiError, errorText, record, RemoteApi, RemoteGateway } from './api'
+import { ApiError, errorText, RemoteApi, RemoteGateway } from './api'
 import { Chat, clearChatState } from './Chat'
 import { Companion } from './Companion'
 import { Feed } from './Feed'
@@ -27,7 +27,6 @@ function resourceDomain(type: GatewayNetworkEvent['type']): 'companion' | 'diary
     case 'companion.diary.read':
       return 'diary'
     case 'memory.changed':
-    case 'companion.voice.updated':
     case 'companion.scene.updated':
     case 'companion.scene.activated':
     case 'companion.outfit.updated':
@@ -35,10 +34,7 @@ function resourceDomain(type: GatewayNetworkEvent['type']): 'companion' | 'diary
     case 'companion.video.activated':
     case 'companion.video.failed':
     case 'companion.video.progress':
-    case 'companion.action.job_updated':
-    case 'companion.action.catalog_changed':
     case 'companion.character_card.updated':
-    case 'companion.desktop_video.updated':
     case 'companion.topic_feedback.updated':
       return 'companion'
     default:
@@ -164,7 +160,7 @@ export function App(): ReactElement {
             localStorage.getItem(`remote:${next.user.id}:${next.device.id}:unread`) ?? '{}'
           )
 
-          if (record(stored)) {
+          if (isRecord(stored)) {
             setUnread({
               messages: stored.messages === true,
               feed: stored.feed === true,
