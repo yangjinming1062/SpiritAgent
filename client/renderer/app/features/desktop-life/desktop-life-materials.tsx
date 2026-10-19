@@ -18,6 +18,7 @@ import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useImageActions } from '@/shared/hooks/use-image-actions'
 import { captureAuthScope } from '@/shared/lib/authed-api'
+import { cycleTabFocus } from '@/shared/lib/focus-cycle'
 import { Check, ImageIcon, Loader2, Search, Shirt, Sparkles } from '@/shared/lib/icons'
 import { log } from '@/shared/lib/log'
 import { BTN_GHOST, BTN_SUBTLE, INPUT_CLASS, WizardModal } from '@/shared/panel'
@@ -127,24 +128,7 @@ function MaterialPicker({
     const dialog = contentRef.current?.closest<HTMLElement>('[role="dialog"]')
 
     const trapFocus = (event: KeyboardEvent): void => {
-      if (event.key !== 'Tab' || !dialog) {
-        return
-      }
-
-      const focusable = Array.from(
-        dialog.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [tabindex="0"]')
-      ).filter(element => element.getClientRects().length > 0)
-
-      const first = focusable[0]
-      const last = focusable.at(-1)
-
-      if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
-        event.preventDefault()
-        last?.focus()
-      } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
-        event.preventDefault()
-        first?.focus()
-      }
+      cycleTabFocus(event, dialog, 'button:not(:disabled), input:not(:disabled), [tabindex="0"]', true)
     }
 
     window.addEventListener('keydown', trapFocus, true)

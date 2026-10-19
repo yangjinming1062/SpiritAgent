@@ -6,6 +6,7 @@ import { setVoiceRecording } from '@/modules/speech'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { captureAuthScope } from '@/shared/lib/authed-api'
+import { blobToDataUrl } from '@/shared/lib/blob-data-url'
 import { log } from '@/shared/lib/log'
 import { mediaApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
@@ -22,23 +23,6 @@ export interface VoiceSample {
 }
 
 const MAX_SAMPLE_BYTES = 24 * 1024 * 1024
-
-function asDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        resolve(reader.result)
-      } else {
-        reject(new Error('Could not read audio'))
-      }
-    }
-
-    reader.onerror = () => reject(reader.error ?? new Error('Could not read audio'))
-    reader.readAsDataURL(blob)
-  })
-}
 
 export function useVoiceSample(active: boolean) {
   const auth = useStore($auth)
@@ -124,7 +108,7 @@ export function useVoiceSample(active: boolean) {
     setBusy(true)
 
     try {
-      const dataUrl = await asDataUrl(blob)
+      const dataUrl = await blobToDataUrl(blob)
 
       if (!isLive()) {
         return

@@ -1,4 +1,4 @@
-import { accountStorageKey, definePersistedAtom, storedJson } from '@/shared/lib/storage'
+import { accountStorageKey, definePersistedAtom } from '@/shared/lib/storage'
 import type {
   CompanionEditorUiSnapshot,
   CompanionMemoryBrowser,
@@ -114,6 +114,6 @@ export function completeMemoryDraft(
 
 window.addEventListener('storage', event => {
   if (event.key === accountStorageKey(KEY)) {
-    state.$atom.set(storedJson(KEY, FALLBACK, isCompanionEditorUiSnapshot))
+    state.reload()
   }
 })

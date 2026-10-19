@@ -144,6 +144,7 @@ interface PersistedAtomResult<T> {
   $atom: WritableAtom<T>
   set: (next: T | Partial<T>) => void
   reset: () => void
+  reload: () => void
   get: () => T
 }
 
@@ -249,6 +250,7 @@ export function definePersistedAtom<T extends object>(options: PersistedAtomOpti
   return {
     $atom: base.$atom,
     get: base.get,
+    reload: base.reload,
     reset: base.reset,
     set: next => base.set(next as T)
   }

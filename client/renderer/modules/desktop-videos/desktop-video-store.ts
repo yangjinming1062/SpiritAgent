@@ -370,6 +370,16 @@ export async function activateDesktopVideoSet(set: DesktopVideoSet): Promise<boo
   }
 }
 
+async function submitDesktopVideoDraft(
+  actionId: number,
+  body: ApiOperation<'companion_desktop_videos.command_draft'>['body']
+): Promise<DesktopVideoAction> {
+  const action = await mutation('companion_desktop_videos.command_draft', { path: { action_id: actionId }, body })
+  await refreshDesktopVideos()
+
+  return action
+}
+
 export async function generateDesktopVideoAction(
   action: DesktopVideoAction,
   set: DesktopVideoSet,
@@ -377,20 +387,13 @@ export async function generateDesktopVideoAction(
   aspectPolicy: DesktopVideoAspectPolicy = 'ask',
   videoFeedback?: string | null
 ): Promise<DesktopVideoAction> {
-  const generated = await mutation('companion_desktop_videos.command_draft', {
-    path: { action_id: action.id },
-    body: {
-      command: 'generate-video',
-      ...desktopActionGuard(action, set),
-      feedback,
-      aspect_policy: aspectPolicy,
-      ...(videoFeedback !== undefined ? { video_feedback: videoFeedback } : {})
-    }
+  return submitDesktopVideoDraft(action.id, {
+    command: 'generate-video',
+    ...desktopActionGuard(action, set),
+    feedback,
+    aspect_policy: aspectPolicy,
+    ...(videoFeedback !== undefined ? { video_feedback: videoFeedback } : {})
   })
-
-  await refreshDesktopVideos()
-
-  return generated
 }
 
 export async function generateDesktopVideoImage(
@@ -400,17 +403,13 @@ export async function generateDesktopVideoImage(
   regenerate = false,
   aspectPolicy: DesktopVideoAspectPolicy = 'ask'
 ): Promise<void> {
-  await mutation('companion_desktop_videos.command_draft', {
-    path: { action_id: action.id },
-    body: {
-      command: 'generate-image',
-      ...desktopActionGuard(action, set),
-      feedback,
-      regenerate,
-      aspect_policy: aspectPolicy
-    }
+  await submitDesktopVideoDraft(action.id, {
+    command: 'generate-image',
+    ...desktopActionGuard(action, set),
+    feedback,
+    regenerate,
+    aspect_policy: aspectPolicy
   })
-  await refreshDesktopVideos()
 }
 
 function videoRefinementInput(
@@ -449,11 +448,10 @@ export async function refineDesktopVideo(
   feedback: string,
   aspectPolicy: 'keep' | 'expand'
 ): Promise<void> {
-  await mutation('companion_desktop_videos.command_draft', {
-    path: { action_id: action.id },
-    body: { ...videoRefinementInput(action, set, source, feedback, aspectPolicy), command: 'refine-video' }
+  await submitDesktopVideoDraft(action.id, {
+    ...videoRefinementInput(action, set, source, feedback, aspectPolicy),
+    command: 'refine-video'
   })
-  await refreshDesktopVideos()
 }
 
 export async function confirmDesktopVideoImage(
@@ -465,17 +463,13 @@ export async function confirmDesktopVideoImage(
     throw new Error('图片草稿已失效')
   }
 
-  await mutation('companion_desktop_videos.command_draft', {
-    path: { action_id: action.id },
-    body: {
-      command: 'confirm-image',
-      draft_id: action.draft.id,
-      expected_base_version: set.base_version,
-      expected_resolution_revision: set.resolution_revision,
-      generate_video: generateVideo
-    }
+  await submitDesktopVideoDraft(action.id, {
+    command: 'confirm-image',
+    draft_id: action.draft.id,
+    expected_base_version: set.base_version,
+    expected_resolution_revision: set.resolution_revision,
+    generate_video: generateVideo
   })
-  await refreshDesktopVideos()
 }
 
 export async function cancelDesktopVideoDraft(action: DesktopVideoAction): Promise<void> {
@@ -483,14 +477,10 @@ export async function cancelDesktopVideoDraft(action: DesktopVideoAction): Promi
     return
   }
 
-  await mutation('companion_desktop_videos.command_draft', {
-    path: { action_id: action.id },
-    body: {
-      command: 'cancel',
-      draft_id: action.draft.id
-    }
+  await submitDesktopVideoDraft(action.id, {
+    command: 'cancel',
+    draft_id: action.draft.id
   })
-  await refreshDesktopVideos()
 }
 
 export async function pauseDesktopVideoDraft(action: DesktopVideoAction): Promise<void> {
@@ -498,14 +488,10 @@ export async function pauseDesktopVideoDraft(action: DesktopVideoAction): Promis
     return
   }
 
-  await mutation('companion_desktop_videos.command_draft', {
-    path: { action_id: action.id },
-    body: {
-      command: 'pause',
-      draft_id: action.draft.id
-    }
+  await submitDesktopVideoDraft(action.id, {
+    command: 'pause',
+    draft_id: action.draft.id
   })
-  await refreshDesktopVideos()
 }
 
 export async function resumeDesktopVideoDraft(action: DesktopVideoAction, set: DesktopVideoSet): Promise<void> {
@@ -513,16 +499,12 @@ export async function resumeDesktopVideoDraft(action: DesktopVideoAction, set: D
     throw new Error('制作草稿已失效')
   }
 
-  await mutation('companion_desktop_videos.command_draft', {
-    path: { action_id: action.id },
-    body: {
-      command: 'resume',
-      draft_id: action.draft.id,
-      expected_base_version: set.base_version,
-      expected_resolution_revision: set.resolution_revision
-    }
+  await submitDesktopVideoDraft(action.id, {
+    command: 'resume',
+    draft_id: action.draft.id,
+    expected_base_version: set.base_version,
+    expected_resolution_revision: set.resolution_revision
   })
-  await refreshDesktopVideos()
 }
 
 export async function retryDesktopVideoDraft(action: DesktopVideoAction, set: DesktopVideoSet): Promise<void> {
@@ -530,16 +512,12 @@ export async function retryDesktopVideoDraft(action: DesktopVideoAction, set: De
     throw new Error('制作草稿已失效')
   }
 
-  await mutation('companion_desktop_videos.command_draft', {
-    path: { action_id: action.id },
-    body: {
-      command: 'retry',
-      draft_id: action.draft.id,
-      expected_base_version: set.base_version,
-      expected_resolution_revision: set.resolution_revision
-    }
+  await submitDesktopVideoDraft(action.id, {
+    command: 'retry',
+    draft_id: action.draft.id,
+    expected_base_version: set.base_version,
+    expected_resolution_revision: set.resolution_revision
   })
-  await refreshDesktopVideos()
 }
 
 export async function getDesktopVideoPrompt(

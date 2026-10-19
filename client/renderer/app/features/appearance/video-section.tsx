@@ -31,6 +31,7 @@ import {
   ConfirmDialog,
   CreationActionBar,
   CreationFeedback,
+  type CreationFeedbackState,
   HINT_TEXT,
   INPUT_CLASS
 } from '@/shared/panel'
@@ -57,6 +58,14 @@ interface ActionEntry {
   feedback: string
   peekGeometry: ActionWire['peek_geometry']
   videoQueue: ActionWire['video_queue']
+}
+
+interface ActionPresentation {
+  label: string
+  hint?: string
+  className: string
+  state: CreationFeedbackState | 'success'
+  isGenerating: boolean
 }
 
 function isActionInProgress(status: string): boolean {
@@ -153,12 +162,14 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
   const selectedOutfit = outfits.find(outfit => outfit.id === outfitId) ?? null
   const selectedPack = selectedOutfit ? (packs.find(pack => pack.outfit_id === selectedOutfit.id) ?? null) : null
 
+  const scopedRequests = Object.values(genRequests).filter(scope =>
+    scope.outfitId != null ? scope.outfitId === outfitId : scope.packId === selectedPack?.id
+  )
+
+  const requestedActions = new Set(scopedRequests.map(scope => scope.action))
+
   // 整包操作等待本着装任务收敛；单动作操作只等待同一动作。
-  const scopedBusy =
-    (!!selectedPack && videoPackIsGenerating(selectedPack)) ||
-    Object.values(genRequests).some(scope =>
-      scope.outfitId != null ? scope.outfitId === outfitId : scope.packId === selectedPack?.id
-    )
+  const scopedBusy = (!!selectedPack && videoPackIsGenerating(selectedPack)) || scopedRequests.length > 0
 
   const initialVideoError = selectedOutfit?.initialVideoError ?? null
   // 列表加载失败不能按“尚未生成”展示，避免网络错误引导用户重复发起付费生成。
@@ -233,12 +244,12 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
   const actionIsBusy =
     !!selectedAction && videoActionIsBusy(packs, genRequests, outfitId, selectedPack?.id ?? null, selectedAction.key)
 
+  const packError = scopedGenError(genErrors, outfitId, selectedPack?.id ?? null, null)?.message ?? null
+
   const scopedError =
     (selectedAction
       ? scopedGenError(genErrors, outfitId, selectedPack?.id ?? null, selectedAction.key)?.message
-      : null) ??
-    scopedGenError(genErrors, outfitId, selectedPack?.id ?? null, null)?.message ??
-    null
+      : null) ?? packError
 
   const canRegeneratePack =
     !!selectedPack?.can_regenerate_pack && !selectedPack.actions.some(action => action.has_ready_asset) && !scopedBusy
@@ -375,109 +386,103 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
     void generateVideoPack({ retryPackId: selectedPack.id, action: selectedAction.key })
   }
 
-  const actionStatus = (action: ActionEntry): { label: string; hint?: string; className: string } => {
+  const actionStatus = (action: ActionEntry): ActionPresentation => {
     const ownVariant = action.syncTargets.find(
       target => target.target_kind === 'window' && target.target_id === selectedPack?.id
     )
 
-    if (
-      action.status !== 'result_unknown' &&
-      ownVariant &&
-      ['not_generated', 'blocked', 'disabled', 'excluded'].includes(ownVariant.status)
-    ) {
-      return {
-        label: dict.common.actionVariants.statuses[ownVariant.status],
-        hint: ownVariant.reason ?? undefined,
-        className: ownVariant.status === 'blocked' ? 'bg-amber-400' : 'bg-line-strong'
-      }
-    }
+    const variantUnavailable =
+      !!ownVariant && ['not_generated', 'blocked', 'disabled', 'excluded'].includes(ownVariant.status)
 
-    if (action.videoQueue) {
-      return { label: dict.common.videoQueue[action.videoQueue.state], className: 'bg-amber-400' }
-    }
+    const actionGenerating = isActionInProgress(action.status) || requestedActions.has(action.key)
+    const isGenerating = actionGenerating || requestedActions.has(null)
 
-    if (
-      action.status === 'result_unknown' ||
-      (!action.canRegenerate && !action.canGenerate && !isActionInProgress(action.status))
-    ) {
-      return { label: t.videoActionResultUnknown, hint: t.videoActionResultUnknownHint, className: 'bg-amber-400' }
-    }
-
-    if (
-      isActionInProgress(action.status) ||
-      Object.values(genRequests).some(
-        scope =>
-          (scope.outfitId != null ? scope.outfitId === outfitId : scope.packId === selectedPack?.id) &&
-          scope.action === action.key
-      )
-    ) {
-      return { label: t.videoActionGenerating, className: 'bg-amber-400' }
-    }
+    const resultUnknown =
+      (action.status === 'result_unknown' || !variantUnavailable) &&
+      !action.videoQueue &&
+      (action.status === 'result_unknown' ||
+        (!action.canRegenerate && !action.canGenerate && !isActionInProgress(action.status)))
 
     const requestError = scopedGenError(genErrors, outfitId, selectedPack?.id ?? null, action.key)?.message
 
-    if (requestError) {
-      return { label: t.videoActionFailed, hint: requestError, className: 'bg-danger-fg' }
-    }
+    const state: ActionPresentation['state'] =
+      resultUnknown || action.videoQueue?.state === 'blocked'
+        ? 'unknown'
+        : action.videoQueue
+          ? 'waiting'
+          : isGenerating
+            ? 'working'
+            : variantUnavailable
+              ? 'waiting'
+              : action.status === 'failed' || (requestError ?? packError)
+                ? 'error'
+                : action.pendingReview
+                  ? 'review'
+                  : action.hasReadyAsset
+                    ? 'success'
+                    : 'waiting'
 
-    if (action.status === 'review') {
-      return { label: t.videoActionReview, hint: t.videoActionReviewHint, className: 'bg-amber-400' }
-    }
+    const presentation = ((): Pick<ActionPresentation, 'label' | 'hint' | 'className'> => {
+      if (action.status !== 'result_unknown' && variantUnavailable && ownVariant) {
+        return {
+          label: dict.common.actionVariants.statuses[ownVariant.status],
+          hint: ownVariant.reason ?? undefined,
+          className: ownVariant.status === 'blocked' ? 'bg-amber-400' : 'bg-line-strong'
+        }
+      }
 
-    if ((action.key === 'peek_left' || action.key === 'peek_right') && action.mediaUrl && !action.peekGeometry) {
-      return { label: t.videoPeekCalibrationFailed, hint: t.videoPeekCalibrationFailedHint, className: 'bg-amber-400' }
-    }
+      if (action.videoQueue) {
+        return { label: dict.common.videoQueue[action.videoQueue.state], className: 'bg-amber-400' }
+      }
 
-    if (action.status === 'failed') {
-      return { label: t.videoActionFailed, hint: action.error ?? undefined, className: 'bg-danger-fg' }
-    }
+      if (resultUnknown) {
+        return { label: t.videoActionResultUnknown, hint: t.videoActionResultUnknownHint, className: 'bg-amber-400' }
+      }
 
-    if (action.mediaUrl) {
-      return { label: t.videoActionReady, className: 'bg-success' }
-    }
+      if (actionGenerating) {
+        return { label: t.videoActionGenerating, className: 'bg-amber-400' }
+      }
 
-    if (action.error) {
-      return { label: t.videoActionFailed, className: 'bg-danger-fg' }
-    }
+      if (requestError) {
+        return { label: t.videoActionFailed, hint: requestError, className: 'bg-danger-fg' }
+      }
 
-    return { label: t.videoActionOnDemandShort, hint: t.videoActionOnDemand, className: 'bg-line-strong' }
+      if (action.status === 'review') {
+        return { label: t.videoActionReview, hint: t.videoActionReviewHint, className: 'bg-amber-400' }
+      }
+
+      if ((action.key === 'peek_left' || action.key === 'peek_right') && action.mediaUrl && !action.peekGeometry) {
+        return {
+          label: t.videoPeekCalibrationFailed,
+          hint: t.videoPeekCalibrationFailedHint,
+          className: 'bg-amber-400'
+        }
+      }
+
+      if (action.status === 'failed') {
+        return { label: t.videoActionFailed, hint: action.error ?? undefined, className: 'bg-danger-fg' }
+      }
+
+      if (action.mediaUrl) {
+        return { label: t.videoActionReady, className: 'bg-success' }
+      }
+
+      if (action.error) {
+        return { label: t.videoActionFailed, className: 'bg-danger-fg' }
+      }
+
+      return { label: t.videoActionOnDemandShort, hint: t.videoActionOnDemand, className: 'bg-line-strong' }
+    })()
+
+    return { ...presentation, state, isGenerating }
   }
 
-  const selectedStatus = selectedAction ? actionStatus(selectedAction) : null
-
-  const selectedVariant = selectedAction?.syncTargets.find(
-    target => target.target_kind === 'window' && target.target_id === selectedPack?.id
-  )
+  const actionStatuses = Object.fromEntries(actions.map(action => [action.key, actionStatus(action)]))
+  const selectedStatus = selectedAction ? actionStatuses[selectedAction.key] : null
 
   const selectedStageKey = Object.entries(VIDEO_GEN_STAGE_TEXT_KEYS).find(
     ([stage]) => stage === selectedAction?.stage
   )?.[1]
-
-  const selectedIsGenerating =
-    !!selectedAction &&
-    (isActionInProgress(selectedAction.status) ||
-      Object.values(genRequests).some(
-        scope =>
-          (scope.outfitId != null ? scope.outfitId === outfitId : scope.packId === selectedPack?.id) &&
-          (scope.action == null || scope.action === selectedAction.key)
-      ))
-
-  const selectedState =
-    selectedStatus?.label === t.videoActionResultUnknown || selectedAction?.videoQueue?.state === 'blocked'
-      ? 'unknown'
-      : selectedAction?.videoQueue
-        ? 'waiting'
-        : selectedIsGenerating
-          ? 'working'
-          : selectedVariant && ['not_generated', 'blocked', 'disabled', 'excluded'].includes(selectedVariant.status)
-            ? 'waiting'
-            : selectedAction?.status === 'failed' || scopedError
-              ? 'error'
-              : selectedAction?.pendingReview
-                ? 'review'
-                : selectedAction?.hasReadyAsset
-                  ? 'success'
-                  : 'waiting'
 
   const canGenerateAction =
     !!selectedAction &&
@@ -599,7 +604,7 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
             </div>
             <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-1.5">
               {visibleActions.map(action => {
-                const status = actionStatus(action)
+                const status = actionStatuses[action.key]
                 const isSelected = selectedAction?.key === action.key
 
                 return (
@@ -718,10 +723,10 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
                   ) : null}
                 </div>
 
-                {selectedState !== 'success' && (
+                {selectedStatus.state !== 'success' && (
                   <CreationFeedback
                     actions={
-                      selectedState === 'unknown' ? (
+                      selectedStatus.state === 'unknown' ? (
                         <button
                           className={BTN_SUBTLE}
                           disabled={packsStatus === 'loading'}
@@ -733,11 +738,13 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
                       ) : undefined
                     }
                     className="mt-3 shrink-0"
-                    description={selectedStatus.hint ?? (selectedIsGenerating ? dict.creation.canLeave : undefined)}
-                    key={`${selectedPack.id}:${selectedAction.key}:${selectedState}`}
-                    state={selectedState}
+                    description={
+                      selectedStatus.hint ?? (selectedStatus.isGenerating ? dict.creation.canLeave : undefined)
+                    }
+                    key={`${selectedPack.id}:${selectedAction.key}:${selectedStatus.state}`}
+                    state={selectedStatus.state}
                     title={
-                      selectedIsGenerating && !selectedAction.videoQueue && selectedStageKey
+                      selectedStatus.isGenerating && !selectedAction.videoQueue && selectedStageKey
                         ? t[selectedStageKey]
                         : selectedStatus.label
                     }

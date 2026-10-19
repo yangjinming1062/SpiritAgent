@@ -1,7 +1,7 @@
 import { atom } from 'nanostores'
 
 import { isRecord } from '@/shared/lib/is-record'
-import { accountStorageKey, definePersistedAtom, storedJson } from '@/shared/lib/storage'
+import { accountStorageKey, definePersistedAtom } from '@/shared/lib/storage'
 
 export type ScenePageView = { kind: 'create' } | { kind: 'detail'; sceneId: string } | { kind: 'library' }
 
@@ -39,7 +39,7 @@ export const $sceneUiImportRevision = atom(0)
 
 window.addEventListener('storage', event => {
   if (event.key === accountStorageKey(KEY)) {
-    state.$atom.set(storedJson(KEY, FALLBACK, validState))
+    state.reload()
     $sceneUiImportRevision.set($sceneUiImportRevision.get() + 1)
   }
 })

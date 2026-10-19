@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { $videoPacks, systemActionNames } from '@/modules/character'
 import { ChatMediaCard } from '@/modules/conversation'
 import { useAsyncLoader } from '@/shared/hooks/use-async-loader'
+import { cycleTabFocus } from '@/shared/lib/focus-cycle'
 import { requestResource } from '@/shared/lib/resource-request'
 import { BTN_SUBTLE, SECTION_TITLE, WizardModal } from '@/shared/panel'
 import { $locale } from '@/shared/store/locale'
@@ -72,26 +73,11 @@ export function MediaReviewQueue(): React.JSX.Element {
       {open && (
         <div
           onKeyDownCapture={event => {
-            if (event.key !== 'Tab') {
-              return
-            }
-
-            const items = Array.from(
-              event.currentTarget.querySelectorAll<HTMLElement>(
-                'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), video[controls]'
-              )
-            ).filter(item => item.getClientRects().length > 0)
-
-            const first = items[0]
-            const last = items[items.length - 1]
-
-            if (event.shiftKey && document.activeElement === first) {
-              event.preventDefault()
-              last?.focus()
-            } else if (!event.shiftKey && document.activeElement === last) {
-              event.preventDefault()
-              first?.focus()
-            }
+            cycleTabFocus(
+              event,
+              event.currentTarget,
+              'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), video[controls]'
+            )
           }}
           ref={modal}
         >

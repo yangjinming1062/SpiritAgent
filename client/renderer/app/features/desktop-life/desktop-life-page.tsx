@@ -41,6 +41,7 @@ import { captureAuthScope } from '@/shared/lib/authed-api'
 import { ArrowLeft, Check, ChevronDown, Plus, RefreshCw, Settings } from '@/shared/lib/icons'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import {
+  ConfirmDialog,
   CreationActionBar,
   CreationFeedback,
   CreationWorkspace,
@@ -172,7 +173,7 @@ export function DesktopLifePage({
   const outfits = useStore($outfits)
   const [creationScene, setCreationScene] = useState<{ id: string; scene: SceneAsset | null } | null>(null)
   const [rename, setRename] = useState('')
-  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteSetId, setDeleteSetId] = useState<number | null>(null)
   const [discardAction, setDiscardAction] = useState<DesktopVideoAction | null>(null)
 
   const [refinement, setRefinement] = useState<{
@@ -275,7 +276,7 @@ export function DesktopLifePage({
     externalUploadRequest.current = false
     setImagePreviews({})
     setCreationScene(null)
-    setDeleteOpen(false)
+    setDeleteSetId(null)
     setDiscardAction(null)
     setRefinement(null)
     setBusy(false)
@@ -372,9 +373,9 @@ export function DesktopLifePage({
     }
   }, [createOpen, create.sceneId, authSessionId])
 
-  const run = async (operation: () => Promise<unknown>, title = t.processingRequest): Promise<void> => {
+  const perform = async (operation: () => Promise<unknown>, title = t.processingRequest): Promise<void> => {
     if (busy) {
-      return
+      throw new Error(t.processingRequest)
     }
 
     const isLive = beginAsync()
@@ -390,12 +391,18 @@ export function DesktopLifePage({
         notifyError(failure, t.title)
         void refreshDesktopVideos()
       }
+
+      throw failure
     } finally {
       if (isLive()) {
         setBusy(false)
       }
     }
   }
+
+  // 普通操作在页面呈现错误；确认弹窗直接等待 perform 的成功或失败。
+  const run = (operation: () => Promise<unknown>, title?: string): Promise<void> =>
+    perform(operation, title).catch(() => undefined)
 
   const savePreferences = async (change: Parameters<typeof setDesktopVideoPreferences>[0]): Promise<void> => {
     if (busy || preferencesSaving) {
@@ -1973,7 +1980,7 @@ export function DesktopLifePage({
                   <button
                     className={`${BTN_GHOST} self-start`}
                     disabled={busy}
-                    onClick={() => setDeleteOpen(true)}
+                    onClick={() => setDeleteSetId(selected.id)}
                     type="button"
                   >
                     {t.deleteSet}
@@ -2118,61 +2125,45 @@ export function DesktopLifePage({
         </WizardModal>
       )}
       {discardAction && (
-        <WizardModal
-          onClose={() => setDiscardAction(null)}
-          regionId="desktop-life-discard"
+        <ConfirmDialog
+          confirmLabel={t.discardConfirm}
+          description={t.discardHint}
+          key={`discard:${discardAction.id}:${discardAction.draft?.id ?? ''}`}
+          onConfirm={() => perform(() => cancelDesktopVideoDraft(discardAction))}
+          onOpenChange={open => {
+            if (!open) {
+              setDiscardAction(null)
+            }
+          }}
+          open
           title={t.discardDraft}
-          widthClass="max-w-md"
-        >
-          <p className="mb-4 text-sm leading-relaxed text-body">{t.discardHint}</p>
-          <div className="flex gap-2">
-            <button className={BTN_SUBTLE} disabled={busy} onClick={() => setDiscardAction(null)} type="button">
-              {t.close}
-            </button>
-            <button
-              className={BTN_PRIMARY}
-              disabled={busy}
-              onClick={() =>
-                void run(async () => {
-                  await cancelDesktopVideoDraft(discardAction)
-                  setDiscardAction(null)
-                })
-              }
-              type="button"
-            >
-              {t.discardConfirm}
-            </button>
-          </div>
-        </WizardModal>
+        />
       )}
-      {deleteOpen && selected && (
-        <WizardModal
-          onClose={() => setDeleteOpen(false)}
-          regionId="desktop-life-delete"
-          title={t.deleteSet}
-          widthClass="max-w-md"
-        >
-          <p className="mb-4 text-sm leading-relaxed text-body">{t.deleteHint}</p>
-          <div className="flex gap-2">
-            <button className={BTN_SUBTLE} disabled={busy} onClick={() => setDeleteOpen(false)} type="button">
-              {t.close}
-            </button>
-            <button
-              className={BTN_PRIMARY}
-              disabled={busy}
-              onClick={() =>
-                void run(async () => {
-                  await deleteDesktopVideoSet(selected.id)
-                  setSelectedSetId(null)
-                  setDeleteOpen(false)
-                })
+      {selected && deleteSetId === selected.id && (
+        <ConfirmDialog
+          confirmLabel={t.deleteSet}
+          description={t.deleteHint}
+          key={`delete:${selected.id}`}
+          onConfirm={async () => {
+            const isLive = beginAsync()
+            await perform(() => deleteDesktopVideoSet(selected.id))
+
+            if (isLive()) {
+              setDeleteSetId(current => (current === selected.id ? null : current))
+
+              if ($desktopLifeUi.get().selectedSetId === selected.id) {
+                setSelectedSetId(null)
               }
-              type="button"
-            >
-              {t.deleteSet}
-            </button>
-          </div>
-        </WizardModal>
+            }
+          }}
+          onOpenChange={open => {
+            if (!open) {
+              setDeleteSetId(null)
+            }
+          }}
+          open
+          title={t.deleteSet}
+        />
       )}
       {externalAction && (
         <WizardModal

@@ -2,7 +2,7 @@
 export function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
-    const fail = (): void => reject(new Error('read failed'))
+    const fail = (): void => reject(reader.error ?? new Error('read failed'))
 
     reader.onload = () => (typeof reader.result === 'string' ? resolve(reader.result) : fail())
     reader.onerror = fail

@@ -20,6 +20,7 @@ import {
 import { MediaViewerOverlay } from '@/modules/media'
 import { PanelActivityProvider } from '@/shared/context/panel-activity'
 import { useEscapeKey } from '@/shared/hooks/use-escape-key'
+import { cycleTabFocus } from '@/shared/lib/focus-cycle'
 import { ArrowLeft, List } from '@/shared/lib/icons'
 import { definePersistedBoolean, registerCompanionStorageKey } from '@/shared/lib/storage'
 import { $gatewayState } from '@/shared/store/gateway'
@@ -147,23 +148,8 @@ export function ConversationPage({
               className={styles.sidebar}
               id={sidebarId}
               onKeyDown={event => {
-                if (!narrow || event.key !== 'Tab') {
-                  return
-                }
-
-                const focusable = [
-                  ...event.currentTarget.querySelectorAll<HTMLElement>('button, input, [tabindex="0"]')
-                ].filter(element => !element.hasAttribute('disabled') && element.getClientRects().length > 0)
-
-                const first = focusable[0]
-                const last = focusable.at(-1)
-
-                if (event.shiftKey && document.activeElement === first) {
-                  event.preventDefault()
-                  last?.focus()
-                } else if (!event.shiftKey && document.activeElement === last) {
-                  event.preventDefault()
-                  first?.focus()
+                if (narrow) {
+                  cycleTabFocus(event, event.currentTarget, 'button, input, [tabindex="0"]')
                 }
               }}
               ref={sidebarRef}

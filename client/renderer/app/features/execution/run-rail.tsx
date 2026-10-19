@@ -5,6 +5,7 @@ import { type ReactNode, useEffect, useMemo, useRef } from 'react'
 
 import { createRunRailStores } from '@/app/features/execution/run-rail-store'
 import { ChatMediaCard, useConversationView } from '@/modules/conversation'
+import { cycleTabFocus } from '@/shared/lib/focus-cycle'
 import { X } from '@/shared/lib/icons'
 import { useStrings } from '@/shared/strings'
 
@@ -46,26 +47,11 @@ export function RunRail({
           return
         }
 
-        if (event.key !== 'Tab') {
-          return
-        }
-
-        const focusable = [
-          ...(railRef.current?.querySelectorAll<HTMLElement>(
-            'button, a[href], input, audio[controls], video[controls], [tabindex="0"]'
-          ) ?? [])
-        ].filter(element => !element.hasAttribute('disabled') && element.getClientRects().length > 0)
-
-        const first = focusable[0]
-        const last = focusable.at(-1)
-
-        if (event.shiftKey && document.activeElement === first) {
-          event.preventDefault()
-          last?.focus()
-        } else if (!event.shiftKey && document.activeElement === last) {
-          event.preventDefault()
-          first?.focus()
-        }
+        cycleTabFocus(
+          event,
+          railRef.current,
+          'button, a[href], input, audio[controls], video[controls], [tabindex="0"]'
+        )
       }}
       ref={railRef}
       role="dialog"
