@@ -88,7 +88,6 @@ export interface AccountSummary {
 
 export interface BackendSessionOptions {
   appVersion?: string
-  defaultBaseUrl?: null | string
   fetchImpl: FetchFunction
   log?: (chunk: string) => void
   now?: () => number
@@ -107,7 +106,6 @@ export interface SessionSnapshot {
 
 export interface BackendSession {
   activate: (payload?: { clientContext?: BackendClientContext; code?: string }) => Promise<null | SessionSnapshot>
-  client: () => BackendClient
   getSession: () => null | SessionSnapshot
   getSelectedAccountId: () => null | string
   getToken: () => null | string
@@ -219,14 +217,7 @@ function readStoredAccount(item: unknown, safeStorage?: null | SafeStorageApi): 
 }
 
 export function createBackendSession(options: BackendSessionOptions): BackendSession {
-  const {
-    appVersion = 'unknown',
-    defaultBaseUrl = null,
-    fetchImpl,
-    now = () => Date.now(),
-    safeStorage = null,
-    userDataDir
-  } = options
+  const { appVersion = 'unknown', fetchImpl, now = () => Date.now(), safeStorage = null, userDataDir } = options
 
   if (!userDataDir || typeof fetchImpl !== 'function') {
     throw new SessionError({ code: 'invalid-session-options', message: 'userDataDir and fetchImpl are required' })
@@ -240,8 +231,6 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
   const unreadableAccounts: unknown[] = []
   let activeAccountId: null | string = null
   let cached: null | ActiveSession = null
-  let backendClient: null | BackendClient = null
-  let backendClientBaseUrl: null | string = null
   let refreshTimer: NodeJS.Timeout | null = null
   let sessionEpoch = 0
   const enqueue = createSerialQueue()
@@ -310,8 +299,6 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
     sessionEpoch++
     clearRefreshTimer()
     cached = null
-    backendClient = null
-    backendClientBaseUrl = null
   }
 
   function snapshot(): null | SessionSnapshot {
@@ -338,23 +325,6 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
       id: account.id,
       username: account.user.username
     }))
-  }
-
-  function client(): BackendClient {
-    const baseUrl = cached?.baseUrl || defaultBaseUrl
-
-    if (!baseUrl) {
-      throw new SessionError({ code: 'no-base-url', message: 'Backend base URL is not configured.' })
-    }
-
-    if (backendClient && backendClientBaseUrl === baseUrl) {
-      return backendClient
-    }
-
-    backendClient = backendAt(baseUrl)
-    backendClientBaseUrl = baseUrl
-
-    return backendClient
   }
 
   function translateBackendError(error: unknown): never {
@@ -631,7 +601,6 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
 
   return {
     activate,
-    client,
     getSession: snapshot,
     getSelectedAccountId: () => {
       loadAccounts()

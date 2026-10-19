@@ -3,9 +3,8 @@ import type { IpcMain, WebContents } from 'electron'
 import { IPC, type RunnerConfigPatch } from '@ipc/contracts'
 import { errorMessage } from '@runtime'
 
-import { buildPrefsHydratedFromConfig } from '../shared/lib/config-sync'
+import { setClientLanguage } from '../shared/lib/client-language'
 import * as store from '../shared/lib/runner-config-store'
-import { broadcastToAllWindows } from '../shared/utils'
 
 interface RunnerConfigIpcDeps {
   ipcMain: IpcMain
@@ -44,22 +43,11 @@ export function registerRunnerConfigIpc({ ipcMain, isAuthorizedSender }: RunnerC
     }
 
     if (patch.path.length === 1 && patch.path[0] === 'language') {
-      if (op !== 'set' || (patch.value !== 'zh' && patch.value !== 'en')) {
+      if (op !== 'set') {
         return { error: 'Unsupported language', ok: false }
       }
 
-      const result = await store.mutate(
-        config => {
-          config.language = patch.value
-        },
-        { pushRunner: false }
-      )
-
-      if (result.ok) {
-        broadcastToAllWindows(IPC.event.prefsHydrated, buildPrefsHydratedFromConfig(store.read()))
-      }
-
-      return result
+      return setClientLanguage(patch.value)
     }
 
     return store.patch(patch.path, { op, value: patch.value })

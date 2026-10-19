@@ -16,7 +16,6 @@ export interface SessionRuntime {
 export interface SessionRuntimeDeps {
   createSession: (options: {
     appVersion: string
-    defaultBaseUrl: null | string
     fetchImpl: (url: string, options?: RequestInit) => Promise<Response>
     log: (chunk: string) => void
     safeStorage: SafeStorage
@@ -26,7 +25,6 @@ export interface SessionRuntimeDeps {
   fetchImpl: (url: string, options?: RequestInit) => Promise<Response>
   log: (chunk: string) => void
   onRestored: (snapshot: null | SessionSnapshotPort) => void
-  readStoredBackendUrl: () => null | string
   safeStorage: SafeStorage
   spiritagentHome: string
   userDataDir: string
@@ -44,7 +42,6 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
 
     session = deps.createSession({
       appVersion: deps.desktopVersion(),
-      defaultBaseUrl: deps.readStoredBackendUrl(),
       fetchImpl: deps.fetchImpl,
       log: deps.log,
       safeStorage: deps.safeStorage,

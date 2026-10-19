@@ -6,6 +6,7 @@ import type { BrowserWindow, Net } from 'electron'
 import { clipboard, dialog, nativeImage } from 'electron'
 
 import { DEFAULT_FETCH_TIMEOUT_MS } from '../security/hardening'
+import { createImageOperations } from '../shared/lib/image-operations'
 import { extensionForMimeType, mimeTypeForPath, parseDataUrl } from '../shared/mime'
 
 // 解析 `data:` / `file:` / http(s) URL 为字节流 + mime；右键菜单里复制/保存图片依赖这条公共路径。
@@ -58,34 +59,19 @@ interface ContextMenuHelpersOptions {
 }
 
 export function createContextMenuHelpers({ electronNet }: ContextMenuHelpersOptions) {
+  const { copyImage, saveImage } = createImageOperations({ clipboard, dialog, nativeImage })
+
   async function copyImageFromUrl(rawUrl: string): Promise<void> {
     const { buffer, mimeType } = await resourceBufferFromUrl(rawUrl, electronNet)
-    // 右键路径保留原字节；读空时报告 mime，转换职责在渲染层 image-clipboard
-    const image = nativeImage.createFromBuffer(buffer)
 
-    if (image.isEmpty()) {
-      throw new Error(`Could not read image (${mimeType || 'unknown'})`)
-    }
-
-    clipboard.writeImage(image)
+    copyImage(buffer, mimeType || 'unknown')
   }
 
   async function saveImageFromUrl(rawUrl: string, parentWindow: BrowserWindow): Promise<boolean> {
     const { buffer, mimeType } = await resourceBufferFromUrl(rawUrl, electronNet)
     const fallbackName = filenameFromUrl(rawUrl, `image${extensionForMimeType(mimeType) || '.png'}`)
 
-    const result = await dialog.showSaveDialog(parentWindow, {
-      defaultPath: fallbackName,
-      title: 'Save Image'
-    })
-
-    if (result.canceled || !result.filePath) {
-      return false
-    }
-
-    await fs.promises.writeFile(result.filePath, buffer)
-
-    return true
+    return saveImage(buffer, fallbackName, parentWindow)
   }
 
   return { copyImageFromUrl, saveImageFromUrl }

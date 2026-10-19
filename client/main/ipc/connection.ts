@@ -47,16 +47,24 @@ export function createBackendCaller({
   }
 }
 
-interface ConnectionIpcDeps {
+interface BackendAssetReaderDeps {
   assetDiskCache: AssetDiskCache
   assetFetchTimeoutMs: number
   ensureBackend: () => Promise<BackendConnection>
   fetchImpl?: typeof globalThis.fetch
+  getCurrentAuth: GetCurrentAuth
+  getSelectedAccountId: () => string | null
+}
+
+interface ConnectionIpcDeps {
+  assetDiskCache: AssetDiskCache
+  ensureBackend: () => Promise<BackendConnection>
   invokeApi: BackendHttp['invoke']
   getGateway: () => DesktopGateway | null
   getCurrentAuth: GetCurrentAuth
   getSelectedAccountId: () => string | null
   ipcMain: IpcMain
+  readAsset: ReturnType<typeof createBackendAssetReader>
 }
 
 type AssetRequest = Parameters<IpcInvokeContract['spiritagent:api:asset-buffer']>[0]
@@ -84,10 +92,7 @@ export function createBackendAssetReader({
   fetchImpl = globalThis.fetch,
   getCurrentAuth,
   getSelectedAccountId
-}: Pick<
-  ConnectionIpcDeps,
-  'assetDiskCache' | 'assetFetchTimeoutMs' | 'ensureBackend' | 'fetchImpl' | 'getCurrentAuth' | 'getSelectedAccountId'
->): (sender: WebContents, request?: AssetRequest) => Promise<CachedAsset> {
+}: BackendAssetReaderDeps): (sender: WebContents, request?: AssetRequest) => Promise<CachedAsset> {
   const callBackend = createBackendCaller({ ensureBackend, getCurrentAuth })
 
   async function readAsset(sender: WebContents, request?: AssetRequest): Promise<CachedAsset> {
@@ -159,25 +164,15 @@ export function createBackendAssetReader({
 
 export function registerConnectionIpc({
   assetDiskCache,
-  assetFetchTimeoutMs,
   ensureBackend,
-  fetchImpl = globalThis.fetch,
   invokeApi,
   getGateway,
   getCurrentAuth,
   getSelectedAccountId,
-  ipcMain
+  ipcMain,
+  readAsset
 }: ConnectionIpcDeps): void {
   const callBackend = createBackendCaller({ ensureBackend, getCurrentAuth })
-
-  const readAsset = createBackendAssetReader({
-    assetDiskCache,
-    assetFetchTimeoutMs,
-    ensureBackend,
-    fetchImpl,
-    getCurrentAuth,
-    getSelectedAccountId
-  })
 
   registerApiResult(ipcMain, IPC.invoke.api, async (event, request: SpiritAgentApiRequest) => {
     assertApiOperationAllowed(request?.operation)

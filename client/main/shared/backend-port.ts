@@ -22,7 +22,6 @@ export interface SessionSnapshotPort {
 
 /** 会话运行时需要的完整会话面（activate/restore/logout/refresh）。 */
 export interface BackendSessionPort {
-  client: () => BackendClientPort
   getSession: () => null | SessionSnapshotPort
   getToken: () => null | string
   activate: (payload?: { clientContext?: BackendClientContext; code?: string }) => Promise<null | SessionSnapshotPort>

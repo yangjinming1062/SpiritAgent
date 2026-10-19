@@ -114,6 +114,8 @@ renderer 测量 Dock 中产品图标后的完整托盘槽位与右侧滚动视�
 
 [runner-config.ts](ipc/runner-config.ts) 的整份配置与路径修改只接受主窗口或交互桌面；其他入口使用窄通道。`prefs.ts` 只允许 `companion.*` 点键，主题、技能与工具集走 `mutate`，云端水合走 `applyCloudMirror`，账户隔离清理走 `clearSyncedMirror`。
 
+托盘与设置页的语言修改共用 [client-language.ts](shared/lib/client-language.ts) 校验、保存和广播偏好，语言仅供桌面消费，不推送 Runner。
+
 [runner-config-store.ts](shared/lib/runner-config-store.ts) 串行落盘与推送；`patch` 拒绝原型链路径和非 JSON 值。普通修改失败回滚内存，云端水合与账户隔离清理即使落盘失败仍保留新内存值。云同步以 `flushQueued` 补跑在途编辑、`authEpoch` 隔离旧账户并抑制水合回环。白名单、所有权与冲突语义归 [配置契约](../../docs/PROTOCOL.md#配置所有权与云同步)。
 
 ## Runner 生命周期
@@ -151,7 +153,9 @@ Electron 网络经 `net.fetch`、`net.WebSocket` 保持系统代理与证书语�
 
 字节缓存键与落盘范围见 [Client](../README.md#资产与历史缓存)。账户隔离及取消由缓存各自的所有者实施。
 
-资产入口共用下载与鉴权处理，缓存返回字节和 MIME；仅 `apiAsset` 在返回时编码 data URL，`apiAssetBuffer` 直接返回字节。
+资产 IPC 与桌面背景复用同一资产读取器，缓存返回字节和 MIME；仅 `apiAsset` 在返回时编码 data URL，`apiAssetBuffer` 直接返回字节。
+
+图片复制与保存共用 [image-operations.ts](shared/lib/image-operations.ts) 的字节处理，资源读取和 URL 准入由各入口负责。
 
 收听记录由 [voice-playback.ts](ipc/voice-playback.ts) 校验鉴权会话与载荷，[voice-playback-store.ts](ipc/voice-playback-store.ts) 串行原子写盘并单向合并已听状态；跨窗口广播仅携带当前账户的记录，清理代次阻断旧写入。记录独立于历史快照，缓存生命周期见 [Client](../README.md#资产与历史缓存)；两者的账户代次与按会话串行写入由 [account-queue.ts](ipc/account-queue.ts) 共用。
 移除账户先等待旧下载与写入再删目录，同账户新请求等待清理；下载超时覆盖响应体读取。
@@ -160,7 +164,7 @@ HTTP 等待由操作契约与 [共享请求核心](../../shared/api.ts) 管理�
 
 ### 语音与附件
 
-- STT / TTS 经 [媒体入口](ipc/media.ts)调用云端，使用有界队列、并发和速率控制；TTS 内存与在途合并、磁盘命中不入队（即时返回），仅云端调用与落盘走队列，缓存命中不耗云端额度。
+- STT / TTS 与附件上传经 [媒体入口](ipc/media.ts)复用 [HTTP 入口](backend/http.ts)调用云端；语音使用有界队列、并发和速率控制。TTS 内存与在途合并、磁盘命中不入队（即时返回），仅云端调用与落盘走队列，缓存命中不耗云端额度。
 - 图片附件按[文件入口](ipc/files.ts)的尺寸与字节上限降采样。
 
 ## 构建产物

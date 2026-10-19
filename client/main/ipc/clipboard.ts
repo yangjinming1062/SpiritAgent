@@ -6,6 +6,7 @@ import type { BrowserWindow, Clipboard, Dialog, IpcMain, NativeImage } from 'ele
 import { IPC } from '@ipc/contracts'
 
 import { assertUserSelectedPath } from '../security/user-selected-paths'
+import { createImageOperations } from '../shared/lib/image-operations'
 import { extensionForMimeType, mimeTypeForPath, parseDataUrl } from '../shared/mime'
 
 interface ClipboardIpcDeps {
@@ -79,7 +80,8 @@ function ensureImageExtension(name: string, mimeType: string): string {
 }
 
 export function registerClipboardIpc({ electron, ipcMain }: ClipboardIpcDeps): void {
-  const { clipboard, dialog, getMainWindow, nativeImage } = electron
+  const { clipboard, getMainWindow } = electron
+  const { copyImage, saveImage } = createImageOperations(electron)
 
   ipcMain.handle(IPC.invoke.writeClipboard, (_event, text) => {
     clipboard.writeText(String(text || ''))
@@ -89,14 +91,8 @@ export function registerClipboardIpc({ electron, ipcMain }: ClipboardIpcDeps): v
 
   ipcMain.handle(IPC.invoke.copyImage, async (_event, payload?: { url?: string }) => {
     const { buffer, mimeType } = await imageBufferFromUrl(String(payload?.url || ''))
-    // 非 PNG/JPEG 可能读空；渲染层应先经 image-clipboard 转 PNG
-    const image = nativeImage.createFromBuffer(buffer)
 
-    if (image.isEmpty()) {
-      throw new Error(`Could not read image (${mimeType})`)
-    }
-
-    clipboard.writeImage(image)
+    copyImage(buffer, mimeType)
 
     return true
   })
@@ -110,16 +106,6 @@ export function registerClipboardIpc({ electron, ipcMain }: ClipboardIpcDeps): v
       ? ensureImageExtension(payload.defaultName.trim(), mimeType)
       : defaultFileName(rawUrl, mimeType)
 
-    const options = { defaultPath, title: 'Save Image' }
-
-    const result = parent ? await dialog.showSaveDialog(parent, options) : await dialog.showSaveDialog(options)
-
-    if (result.canceled || !result.filePath) {
-      return false
-    }
-
-    await fs.promises.writeFile(result.filePath, buffer)
-
-    return true
+    return saveImage(buffer, defaultPath, parent)
   })
 }

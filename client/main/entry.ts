@@ -82,7 +82,6 @@ import { ASSET_FETCH_TIMEOUT_MS, DEFAULT_CSP_POLICY, DEV_CSP_POLICY } from './se
 import { isSenderWindow } from './security/ipc-trust'
 import { resolveDesktopHome } from './security/paths'
 import type { BackendSessionPort } from './shared/backend-port'
-import { readStoredBackendUrl } from './shared/config'
 import { createConfigSync, uiThemeFromConfig } from './shared/lib/config-sync'
 import * as runnerConfigStore from './shared/lib/runner-config-store'
 import { broadcastToAllWindows, fileExists, sendToWindow } from './shared/utils'
@@ -328,7 +327,7 @@ presentation = createDesktopPresentation({
   authIdentity: () => sessionRuntime.ensureBackendSession().getSession()?.sessionId ?? null,
   authAccountId: () => sessionRuntime.ensureBackendSession().getSession()?.accountId ?? null,
   loadMedia: async (sender, reference) => {
-    const asset = await readDesktopAsset(sender, { ...reference, preferCache: true })
+    const asset = await readBackendAsset(sender, { ...reference, preferCache: true })
 
     return { bytes: new Uint8Array(asset.buffer), mime: asset.mime }
   },
@@ -389,7 +388,6 @@ const sessionRuntime = createSessionRuntime({
   fetchImpl: electronFetch,
   log: rememberLog,
   onRestored: snapshot => authBroadcaster.onSessionRestored(snapshot),
-  readStoredBackendUrl: () => readStoredBackendUrl(SPIRITAGENT_HOME),
   safeStorage,
   spiritagentHome: SPIRITAGENT_HOME,
   userDataDir: app.getPath('userData')
@@ -400,7 +398,7 @@ const assetDiskCache = createAssetDiskCache({
   spiritagentHome: SPIRITAGENT_HOME
 })
 
-const readDesktopAsset = createBackendAssetReader({
+const readBackendAsset = createBackendAssetReader({
   assetDiskCache,
   assetFetchTimeoutMs: ASSET_FETCH_TIMEOUT_MS,
   ensureBackend,
@@ -417,20 +415,19 @@ const voicePlaybackStore = createVoicePlaybackStore({ spiritagentHome: SPIRITAGE
 
 registerConnectionIpc({
   assetDiskCache,
-  assetFetchTimeoutMs: ASSET_FETCH_TIMEOUT_MS,
   ensureBackend,
-  fetchImpl: electronFetch,
   invokeApi: backendHttp.invoke,
   getGateway: () => gatewayRuntime ?? null,
   getCurrentAuth: () => sessionRuntime.getCurrentAuth(),
   getSelectedAccountId: () => sessionRuntime.ensureBackendSession().getSelectedAccountId(),
-  ipcMain
+  ipcMain,
+  readAsset: readBackendAsset
 })
 
 const mediaIpc = registerMediaIpc({
   spiritagentHome: SPIRITAGENT_HOME,
   ensureBackend,
-  fetchImpl: electronFetch,
+  invokeApi: backendHttp.invoke,
   getCurrentAuth: () => sessionRuntime.getCurrentAuth(),
   getSelectedAccountId: () => sessionRuntime.ensureBackendSession().getSelectedAccountId(),
   ipcMain,

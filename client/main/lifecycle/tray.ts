@@ -14,9 +14,9 @@ import { errorMessage } from '@runtime'
 
 import type { BackendSessionPort } from '../shared/backend-port'
 import { confirmAccountRemoval, showAccountRemovalError } from '../shared/lib/account-removal'
-import { buildPrefsHydratedFromConfig } from '../shared/lib/config-sync'
+import { setClientLanguage } from '../shared/lib/client-language'
 import * as runnerConfigStore from '../shared/lib/runner-config-store'
-import { broadcastToAllWindows, hideAndSkipTaskbar, isWindowShown, sendToWindow } from '../shared/utils'
+import { hideAndSkipTaskbar, isWindowShown, sendToWindow } from '../shared/utils'
 
 import type { DesktopPresentation } from './desktop-presentation'
 import type { SurfacesManager } from './surfaces'
@@ -216,16 +216,13 @@ async function setSystemLanguage(lang: 'en' | 'zh'): Promise<void> {
   }
 
   try {
-    const result = await runnerConfigStore.patch(['language'], { value: lang })
+    const result = await setClientLanguage(lang)
 
     if (result.error) {
       trayDeps?.rememberLog(`[tray] setSystemLanguage(${lang}) failed: ${result.error}`)
 
       return
     }
-
-    // 走与 config-sync 水合同源的渲染层偏好投影。
-    broadcastToAllWindows(IPC.event.prefsHydrated, buildPrefsHydratedFromConfig(runnerConfigStore.read()))
   } catch (err) {
     const message = errorMessage(err)
     trayDeps?.rememberLog(`[tray] setSystemLanguage(${lang}) failed: ${message}`)

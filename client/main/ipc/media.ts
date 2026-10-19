@@ -1,6 +1,6 @@
 import path from 'node:path'
 
-import type { IpcMain } from 'electron'
+import type { IpcMain, WebContents } from 'electron'
 
 import {
   type AttachmentVideoUploadPayload,
@@ -17,8 +17,8 @@ import {
 } from '@ipc/contracts'
 import { errorMessage, sleep } from '@runtime'
 
-import { type ApiTransport, createHttpClient } from '../../../shared/api'
 import { speechText } from '../../shared/speech-text'
+import type { BackendHttp } from '../backend/http'
 import { readUserSelectedFile } from '../security/hardening'
 import type { BackendConnection } from '../shared/backend-port'
 import * as store from '../shared/lib/runner-config-store'
@@ -147,12 +147,21 @@ class BoundedTtsQueue {
   }
 }
 
-function createMediaHttp(connection: BackendConnection, fetchImpl = globalThis.fetch): ApiTransport {
-  return createHttpClient({
-    fetch: fetchImpl,
-    baseUrl: connection.baseUrl,
-    headers: () => new Headers(connection.token ? { Authorization: `Bearer ${connection.token}` } : undefined)
-  })
+function createAudioUploadForm(dataUrl: unknown, filename: string, invalidMessage: string): FormData {
+  if (typeof dataUrl !== 'string' || dataUrl.length > Math.ceil((STT_MAX_AUDIO_BYTES * 4) / 3) + 256) {
+    throw new Error(invalidMessage)
+  }
+
+  const { data, mime } = parseDataUrl(dataUrl)
+
+  if (data.length === 0 || data.length > STT_MAX_AUDIO_BYTES || !mime.startsWith('audio/')) {
+    throw new Error(invalidMessage)
+  }
+
+  const form = new FormData()
+  form.append('file', new Blob([data], { type: mime }), path.basename(filename))
+
+  return form
 }
 
 function isAudioUploadResult(value: unknown): value is AudioUploadResult {
@@ -196,15 +205,15 @@ function makeLog(
 async function sttViaBackend({
   connection,
   data,
-  fetchImpl,
   filename,
+  invokeApi,
   language,
   mime
 }: {
   connection: BackendConnection
   data: Buffer
-  fetchImpl?: typeof globalThis.fetch
   filename?: string
+  invokeApi: BackendHttp['invoke']
   language?: string
   mime: string
 }): Promise<string> {
@@ -216,7 +225,9 @@ async function sttViaBackend({
 
   form.append('audio_file', blob, actualFilename)
 
-  const parsed = await createMediaHttp(connection, fetchImpl).invoke(
+  const parsed = await invokeApi(
+    connection.baseUrl,
+    connection.token || undefined,
     'media.speech_to_text',
     {
       body: form,
@@ -234,13 +245,13 @@ async function sttViaBackend({
 
 async function ttsViaBackend({
   connection,
-  fetchImpl,
+  invokeApi,
   language,
   text,
   voice
 }: {
   connection: BackendConnection
-  fetchImpl?: typeof globalThis.fetch
+  invokeApi: BackendHttp['invoke']
   language?: string
   text: string
   voice?: string
@@ -248,7 +259,9 @@ async function ttsViaBackend({
   let mimeType = 'audio/mpeg'
   let voiceOut: string | undefined
 
-  const bytes = await createMediaHttp(connection, fetchImpl).invoke(
+  const bytes = await invokeApi(
+    connection.baseUrl,
+    connection.token || undefined,
     'media.text_to_speech',
     {
       body: { text, ...(voice ? { voice } : {}), ...(language ? { language } : {}) }
@@ -303,9 +316,9 @@ function setCachedTts(key: string, value: { dataUrl: string; mimeType: string })
 interface MediaIpcDeps {
   spiritagentHome: string
   ensureBackend: () => Promise<BackendConnection>
-  fetchImpl?: typeof globalThis.fetch
   getCurrentAuth: GetCurrentAuth
   getSelectedAccountId: () => string | null
+  invokeApi: BackendHttp['invoke']
   ipcMain: IpcMain
   log?: (msg: string) => void
 }
@@ -313,9 +326,9 @@ interface MediaIpcDeps {
 export function registerMediaIpc({
   spiritagentHome,
   ensureBackend,
-  fetchImpl,
   getCurrentAuth,
   getSelectedAccountId,
+  invokeApi,
   ipcMain,
   log = () => {}
 }: MediaIpcDeps): { clearAccountCache: (accountId: string) => Promise<void> } {
@@ -331,6 +344,22 @@ export function registerMediaIpc({
     }
   }
 
+  const callUpload = async <T>(
+    sender: WebContents,
+    authSessionId: string,
+    upload: (connection: BackendConnection) => Promise<T>
+  ): Promise<T> => {
+    const result = await callBackend(sender, connection => {
+      assertUploadAccount(authSessionId)
+
+      return upload(connection)
+    })
+
+    assertUploadAccount(authSessionId)
+
+    return result
+  }
+
   registerApiResult(
     ipcMain,
     IPC.invoke.mediaAudioUpload,
@@ -338,37 +367,24 @@ export function registerMediaIpc({
       const authSessionId = payload?.authSessionId
       assertUploadAccount(authSessionId)
 
-      if (
-        typeof payload?.dataUrl !== 'string' ||
-        payload.dataUrl.length > Math.ceil((STT_MAX_AUDIO_BYTES * 4) / 3) + 256 ||
-        !/^\d+$/.test(payload.sessionId)
-      ) {
+      if (!/^\d+$/.test(payload.sessionId)) {
         throw new Error('Invalid audio upload')
       }
 
-      const { data, mime } = parseDataUrl(payload.dataUrl)
-
-      if (data.length === 0 || data.length > STT_MAX_AUDIO_BYTES || !mime.startsWith('audio/')) {
-        throw new Error('Invalid audio upload')
-      }
-
-      const form = new FormData()
-      form.append('file', new Blob([data], { type: mime }), path.basename(payload.filename))
+      const form = createAudioUploadForm(payload.dataUrl, payload.filename, 'Invalid audio upload')
       form.append('session_id', payload.sessionId)
 
-      const parsed = await callBackend(event.sender, connection => {
-        assertUploadAccount(authSessionId)
-
-        return createMediaHttp(connection, fetchImpl).invoke(
+      const parsed = await callUpload(event.sender, authSessionId, connection =>
+        invokeApi(
+          connection.baseUrl,
+          connection.token || undefined,
           'media.upload_chat_audio',
           {
             body: form
           },
           { timeoutMs: ATTACH_VIDEO_TIMEOUT_MS }
         )
-      })
-
-      assertUploadAccount(authSessionId)
+      )
 
       if (!isAudioUploadResult(parsed)) {
         throw new Error('Backend audio upload returned invalid metadata')
@@ -385,37 +401,23 @@ export function registerMediaIpc({
       const authSessionId = payload?.authSessionId
       assertUploadAccount(authSessionId)
 
-      if (
-        typeof payload?.dataUrl !== 'string' ||
-        payload.dataUrl.length > Math.ceil((STT_MAX_AUDIO_BYTES * 4) / 3) + 256 ||
-        typeof payload.filename !== 'string' ||
-        !payload.filename.trim()
-      ) {
+      if (typeof payload.filename !== 'string' || !payload.filename.trim()) {
         throw new Error('Invalid voice sample upload')
       }
 
-      const { data, mime } = parseDataUrl(payload.dataUrl)
+      const form = createAudioUploadForm(payload.dataUrl, payload.filename, 'Invalid voice sample upload')
 
-      if (data.length === 0 || data.length > STT_MAX_AUDIO_BYTES || !mime.startsWith('audio/')) {
-        throw new Error('Invalid voice sample upload')
-      }
-
-      const form = new FormData()
-      form.append('file', new Blob([data], { type: mime }), path.basename(payload.filename))
-
-      const parsed = await callBackend(event.sender, connection => {
-        assertUploadAccount(authSessionId)
-
-        return createMediaHttp(connection, fetchImpl).invoke(
+      const parsed = await callUpload(event.sender, authSessionId, connection =>
+        invokeApi(
+          connection.baseUrl,
+          connection.token || undefined,
           'media.upload_voice_reference',
           {
             body: form
           },
           { timeoutMs: ATTACH_VIDEO_TIMEOUT_MS }
         )
-      })
-
-      assertUploadAccount(authSessionId)
+      )
 
       if (
         !isAudioUploadResult(parsed) ||
@@ -463,8 +465,8 @@ export function registerMediaIpc({
         sttViaBackend({
           connection,
           data,
-          fetchImpl,
           filename: payload?.filename,
+          invokeApi,
           language: lang,
           mime
         })
@@ -576,7 +578,7 @@ export function registerMediaIpc({
         const result = await callBackend(event.sender, connection => {
           assertTtsAccount()
 
-          return ttsViaBackend({ connection, fetchImpl, language, text, voice })
+          return ttsViaBackend({ connection, invokeApi, language, text, voice })
         })
 
         assertTtsAccount()
@@ -656,19 +658,17 @@ export function registerMediaIpc({
       form.append('file', blob, path.basename(resolvedPath))
       form.append('session_id', payload.sessionId)
 
-      const parsed = await callBackend(event.sender, connection => {
-        assertUploadAccount(authSessionId)
-
-        return createMediaHttp(connection, fetchImpl).invoke(
+      const parsed = await callUpload(event.sender, authSessionId, connection =>
+        invokeApi(
+          connection.baseUrl,
+          connection.token || undefined,
           'media.upload_chat_video',
           {
             body: form
           },
           { timeoutMs: ATTACH_VIDEO_TIMEOUT_MS }
         )
-      })
-
-      assertUploadAccount(authSessionId)
+      )
 
       if (typeof parsed?.url !== 'string' || !parsed.url) {
         throw new Error('Backend video upload returned no url')
@@ -735,21 +735,17 @@ export function registerMediaIpc({
         throw new Error('Authentication changed during desktop video upload')
       }
 
-      const response = await callBackend(event.sender, connection => {
-        assertUploadAccount(authSessionId)
+      const response = await callUpload(event.sender, authSessionId, connection => {
+        const operation =
+          payload.mediaKind === 'image'
+            ? 'companion_desktop_videos.upload_image'
+            : 'companion_desktop_videos.upload_action'
 
-        const client = createMediaHttp(connection, fetchImpl)
         const input = { path: { action_id: payload.actionId }, body: form }
         const options = { timeoutMs: DESKTOP_VIDEO_UPLOAD_TIMEOUT_MS }
 
-        return payload.mediaKind === 'image'
-          ? client.invoke('companion_desktop_videos.upload_image', input, options)
-          : client.invoke('companion_desktop_videos.upload_action', input, options)
+        return invokeApi(connection.baseUrl, connection.token || undefined, operation, input, options)
       })
-
-      if (getCurrentAuth()?.sessionId !== authSessionId) {
-        throw new Error('Authentication changed during desktop video upload')
-      }
 
       return { response }
     }
