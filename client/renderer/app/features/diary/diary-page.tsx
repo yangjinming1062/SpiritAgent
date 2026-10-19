@@ -5,7 +5,6 @@ import type React from 'react'
 import { ReadingPage } from '@/app/components/reading-page'
 import { $persona } from '@/modules/character'
 import { $diaryByDate, $diaryLoading, hydrateDiary, markDiaryRead } from '@/modules/diary'
-import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { ArrowLeft, ArrowRight, BookOpen } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import { BTN_ICON, BTN_SUBTLE } from '@/shared/panel'
@@ -15,6 +14,7 @@ import { $locale } from '@/shared/store/locale'
 import { type Dictionary, useStrings } from '@/shared/strings'
 
 import { useReadingForeground } from '../use-reading-foreground'
+import { useReadingReceipt } from '../use-reading-receipt'
 
 import styles from './diary.module.css'
 
@@ -73,22 +73,14 @@ export function DiaryPage({ foreground: suppliedForeground }: { foreground?: boo
   const [loadFailed, setLoadFailed] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
   const [readSnapshot, setReadSnapshot] = useState<string[] | null>(null)
-  const [readBlocked, setReadBlocked] = useState(false)
-  const [confirmedReadIds, setConfirmedReadIds] = useState(new Set<string>())
-
-  const readRequest = useRef<Promise<boolean> | undefined>(undefined)
   const snapshotCaptured = useRef(false)
-  const beginAsync = useAsyncGuard()
 
   const foreground = useReadingForeground(suppliedForeground)
   const wasForeground = useRef(foreground)
 
   useEffect(() => {
-    readRequest.current = undefined
     snapshotCaptured.current = false
     setReadSnapshot(null)
-    setReadBlocked(false)
-    setConfirmedReadIds(new Set())
   }, [sessionId, reloadKey])
 
   useEffect(
@@ -105,12 +97,8 @@ export function DiaryPage({ foreground: suppliedForeground }: { foreground?: boo
     const restored = foreground && !wasForeground.current
     wasForeground.current = foreground
 
-    if (restored) {
-      setReadBlocked(false)
-
-      if (loadFailed) {
-        setReloadKey(key => key + 1)
-      }
+    if (restored && loadFailed) {
+      setReloadKey(key => key + 1)
     }
   }, [foreground, loadFailed])
 
@@ -153,46 +141,15 @@ export function DiaryPage({ foreground: suppliedForeground }: { foreground?: boo
   const firstDayOffset = days[0] ? (days[0].getDay() + 6) % 7 : 0
   const entry = diaryByDate[selectedDate]
 
-  useEffect(() => {
-    if (
-      authKind !== 'authenticated' ||
-      !foreground ||
-      loading ||
-      loadFailed ||
-      !snapshotCaptured.current ||
-      readSnapshot === null ||
-      readBlocked ||
-      readRequest.current !== undefined ||
-      document.visibilityState !== 'visible' ||
-      !document.hasFocus()
-    ) {
-      return
-    }
-
-    // 进入前的提醒统一确认；进入后发布的内容只确认当前实际展示的正文。
-    const ids = [...new Set([...readSnapshot, ...(entry ? [entry.id] : [])])].filter(id => !confirmedReadIds.has(id))
-
-    if (ids.length === 0) {
-      return
-    }
-
-    const isLive = beginAsync()
-    const request = markDiaryRead(ids)
-    readRequest.current = request
-    void request.then(ok => {
-      if (!isLive() || readRequest.current !== request) {
-        return
-      }
-
-      readRequest.current = undefined
-
-      if (ok) {
-        setConfirmedReadIds(current => new Set([...current, ...ids]))
-      } else {
-        setReadBlocked(true)
-      }
-    })
-  }, [authKind, foreground, loading, loadFailed, readSnapshot, readBlocked, entry, confirmedReadIds, beginAsync])
+  useReadingReceipt({
+    scope: sessionId ?? authKind,
+    refreshKey: reloadKey,
+    foreground,
+    snapshot: readSnapshot,
+    displayedIds: entry ? [entry.id] : [],
+    ready: authKind === 'authenticated' && !loading && !loadFailed,
+    markRead: markDiaryRead
+  })
 
   return (
     <ReadingPage hint={t.intro} title={tRail.diary}>

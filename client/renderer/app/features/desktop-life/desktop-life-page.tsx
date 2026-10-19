@@ -19,8 +19,6 @@ import {
   desktopVideoAspectMismatch,
   type DesktopVideoAspectMismatch,
   type DesktopVideoAspectPolicy,
-  type DesktopVideoPromptReference,
-  type DesktopVideoRefinementPreview,
   type DesktopVideoRefinementSource,
   type DesktopVideoSet,
   type DesktopVideoSource,
@@ -29,8 +27,6 @@ import {
   getDesktopVideoPrompt,
   pauseDesktopVideoDraft,
   playDesktopVideoAction,
-  previewDesktopVideoRefinement,
-  refineDesktopVideo,
   refreshDesktopVideos,
   renameDesktopVideoSet,
   retryDesktopVideoDraft,
@@ -38,47 +34,33 @@ import {
   setDesktopVideoPreferences,
   uploadDesktopVideoAction
 } from '@/modules/desktop-videos'
-import { useResolvedMediaSrc } from '@/modules/media'
 import { $activeScene, $sceneLibrary, loadSceneDetail, loadSceneLibrary, type SceneAsset } from '@/modules/scene'
 import { PortraitLightbox } from '@/shared'
 import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import { useImageActions } from '@/shared/hooks/use-image-actions'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { ArrowLeft, Check, ChevronDown, Plus, RefreshCw, Settings } from '@/shared/lib/icons'
-import { backendDetailMessage } from '@/shared/lib/ipc-error'
-import {
-  INPUT_CLASS,
-  BTN_GHOST as PANEL_BTN_GHOST,
-  BTN_PRIMARY as PANEL_BTN_PRIMARY,
-  BTN_SUBTLE as PANEL_BTN_SUBTLE,
-  PanelSelect,
-  Toggle,
-  WizardModal
-} from '@/shared/panel'
+import { INPUT_CLASS, PanelSelect, Toggle, WizardModal } from '@/shared/panel'
 import { fileApi, shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { notifyError } from '@/shared/store/notifications'
 import { $presentation } from '@/shared/store/presentation'
 import { useStrings } from '@/shared/strings'
-import { errorMessage } from '@runtime'
 
+import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE } from './desktop-life-buttons'
 import {
   readyDesktopLifeResolution,
   reconcileDesktopLifeDisplay,
   resolveDesktopLifeRecommendationDisplay
 } from './desktop-life-display'
-import { DesktopLifeReferences } from './desktop-life-materials'
+import { DesktopLifeReferences, ExternalReference } from './desktop-life-materials'
 import { DesktopLifeCover, DesktopLifePreview, type DesktopLifePreviewStatus } from './desktop-life-preview'
+import { VideoRefinementModal } from './desktop-life-refinement'
 import { DesktopLifeDisplayPicker, DesktopLifeRecommendation, resolutionLabel } from './desktop-life-resolution'
 import { $desktopLifeUi, newDesktopLifeCreation, updateDesktopLifeUi } from './desktop-life-state'
 import { desktopLifeActionStatus, desktopLifeCreationStage, isActionPaused } from './desktop-life-status'
 import { useDesktopLifeStrings } from './desktop-life-strings'
 import styles from './desktop-life.module.css'
-
-const BTN_PRIMARY = `${PANEL_BTN_PRIMARY} ${styles.primaryButton}`
-const BTN_SUBTLE = `${PANEL_BTN_SUBTLE} ${styles.secondaryButton}`
-const BTN_GHOST = `${PANEL_BTN_GHOST} ${styles.ghostButton}`
 
 function previewUsesDraft(action: DesktopVideoAction): boolean {
   return Boolean(
@@ -86,290 +68,8 @@ function previewUsesDraft(action: DesktopVideoAction): boolean {
   )
 }
 
-function ExternalReference({
-  reference,
-  onZoom
-}: {
-  reference: DesktopVideoPromptReference
-  onZoom: (url: string) => void
-}): React.JSX.Element {
-  const t = useDesktopLifeStrings()
-  const media = useResolvedMediaSrc({ type: 'image', url: reference.url })
-  const { copied, copy, error, reset } = useImageActions()
-  const [saved, setSaved] = useState(false)
-  const beginAsync = useAsyncGuard()
-
-  const save = async (): Promise<void> => {
-    if (media.status !== 'ready') {
-      return
-    }
-
-    const isLive = beginAsync()
-    reset()
-
-    try {
-      if ((await fileApi().saveImage({ defaultName: reference.label, url: media.src })) && isLive()) {
-        setSaved(true)
-      }
-    } catch (failure) {
-      if (isLive()) {
-        notifyError(failure, t.saveReference)
-      }
-    }
-  }
-
-  return (
-    <div className="flex min-w-0 flex-col gap-2 rounded-lg border border-line-hairline p-2">
-      <div className="flex h-24 shrink-0 items-center justify-center overflow-hidden rounded bg-black/10">
-        {media.status === 'ready' ? (
-          <button
-            aria-label={reference.label}
-            className="h-full w-full cursor-zoom-in"
-            onClick={() => onZoom(media.src)}
-            type="button"
-          >
-            <img alt={reference.label} className="h-full w-full object-contain" src={media.src} />
-          </button>
-        ) : (
-          <span className="text-xs text-muted">{reference.label}</span>
-        )}
-      </div>
-      <span className="truncate text-xs text-body" title={reference.label}>
-        {reference.label}
-      </span>
-      <div className="flex flex-wrap gap-1">
-        <button
-          aria-label={`${t.copyReference} ${reference.label}`}
-          className={BTN_GHOST}
-          disabled={media.status !== 'ready'}
-          onClick={() => {
-            if (media.status === 'ready') {
-              void copy(media.src)
-            }
-          }}
-          type="button"
-        >
-          {copied ? t.copied : t.copyReference}
-        </button>
-        <button
-          aria-label={`${t.saveReference} ${reference.label}`}
-          className={BTN_GHOST}
-          disabled={media.status !== 'ready'}
-          onClick={() => void save()}
-          type="button"
-        >
-          {saved ? t.referenceSaved : t.saveReference}
-        </button>
-      </div>
-      {error === 'copy' && (
-        <p className="text-xs text-rose-500" role="alert">
-          {t.copyReferenceFailed}
-        </p>
-      )}
-    </div>
-  )
-}
-
 function localFileName(filePath: string): string {
   return filePath.split(/[\\/]/).pop() || filePath
-}
-
-function VideoRefinementModal({
-  action,
-  set,
-  source,
-  onClose
-}: {
-  action: DesktopVideoAction
-  set: DesktopVideoSet
-  source: DesktopVideoRefinementSource
-  onClose: () => void
-}): React.JSX.Element {
-  const t = useDesktopLifeStrings()
-  const active = usePanelActivity()
-  const sets = useStore($desktopVideoSets)
-
-  const [feedback, setFeedback] = useState(
-    (source === 'candidate' ? action.draft?.video_feedback : action.current?.video_feedback) ?? ''
-  )
-
-  const [fitAspect, setFitAspect] = useState(false)
-  const [previewAttempt, setPreviewAttempt] = useState(0)
-  const [submitting, setSubmitting] = useState(false)
-  const submittingRequest = useRef(false)
-
-  const [checked, setChecked] = useState<{
-    key: string
-    result?: DesktopVideoRefinementPreview
-    error?: string
-  } | null>(null)
-
-  const beginAsync = useAsyncGuard()
-  const liveSet = sets.find(item => item.id === set.id)
-  const liveAction = liveSet?.actions.find(item => item.id === action.id)
-  const sourceUrl = source === 'candidate' ? action.draft?.candidate_video_url : action.current?.video_url
-
-  const liveSourceUrl = source === 'candidate' ? liveAction?.draft?.candidate_video_url : liveAction?.current?.video_url
-
-  const stale =
-    !liveSet ||
-    !liveAction ||
-    liveSet.base_version !== set.base_version ||
-    liveSet.resolution_revision !== set.resolution_revision ||
-    liveAction.version !== action.version ||
-    liveAction.draft?.id !== action.draft?.id ||
-    liveAction.status === 'processing' ||
-    liveSourceUrl?.split(/[?#]/)[0] !== sourceUrl?.split(/[?#]/)[0]
-
-  const inputKey = JSON.stringify([
-    set.id,
-    set.base_version,
-    set.resolution_revision,
-    action.id,
-    action.version,
-    action.draft?.id,
-    source,
-    sourceUrl?.split(/[?#]/)[0],
-    feedback,
-    fitAspect,
-    previewAttempt
-  ])
-
-  const preview = checked?.key === inputKey ? checked.result : undefined
-  const previewError = checked?.key === inputKey ? checked.error : undefined
-
-  useEffect(() => {
-    if (!active || stale) {
-      return
-    }
-
-    const scope = captureAuthScope()
-    const isLive = beginAsync()
-    let current = true
-
-    const timer = window.setTimeout(() => {
-      void previewDesktopVideoRefinement(action, set, source, feedback, fitAspect ? 'expand' : 'keep')
-        .then(result => {
-          if (current && scope?.() && isLive()) {
-            setChecked({ key: inputKey, result })
-          }
-        })
-        .catch((error: unknown) => {
-          if (current && scope?.() && isLive()) {
-            setChecked({ key: inputKey, error: backendDetailMessage(error, errorMessage(error)) })
-          }
-        })
-    }, 300)
-
-    return () => {
-      current = false
-      window.clearTimeout(timer)
-    }
-  }, [action, active, beginAsync, feedback, fitAspect, inputKey, set, source, stale])
-
-  const submit = async (): Promise<void> => {
-    if (submittingRequest.current || !active || stale || !preview || (!feedback.trim() && !fitAspect)) {
-      return
-    }
-
-    const scope = captureAuthScope()
-    const isLive = beginAsync()
-    submittingRequest.current = true
-    setSubmitting(true)
-
-    try {
-      await refineDesktopVideo(action, set, source, feedback, fitAspect ? 'expand' : 'keep')
-
-      if (scope?.() && isLive()) {
-        onClose()
-      }
-    } catch (failure) {
-      if (scope?.() && isLive()) {
-        notifyError(failure, t.refineVideo)
-        void refreshDesktopVideos()
-      }
-    } finally {
-      submittingRequest.current = false
-
-      if (scope?.() && isLive()) {
-        setSubmitting(false)
-      }
-    }
-  }
-
-  return (
-    <WizardModal
-      backdropClose={!submitting}
-      closeDisabled={submitting}
-      escClose={!submitting}
-      onClose={submitting ? () => undefined : onClose}
-      regionId="desktop-life-refine-video"
-      title={t.refineVideo}
-      widthClass="max-w-2xl"
-    >
-      <div className="flex flex-col gap-4">
-        <p className="text-sm text-muted">{source === 'candidate' ? t.refinementCandidate : t.refinementCurrent}</p>
-        <DesktopLifePreview action={action} draft={source === 'candidate'} set={set} />
-        <p className="text-sm leading-relaxed text-body">{t.refineVideoHint}</p>
-        <label className="flex flex-col gap-2 text-sm text-body">
-          {t.refineVideoFeedback}
-          <textarea
-            className={`${INPUT_CLASS} min-h-24 resize-y`}
-            disabled={submitting}
-            maxLength={600}
-            onChange={event => setFeedback(event.target.value)}
-            placeholder={t.refineVideoExample}
-            rows={3}
-            value={feedback}
-          />
-        </label>
-        <label className="flex items-center gap-2 text-sm text-body">
-          <input
-            checked={fitAspect}
-            disabled={submitting}
-            onChange={event => setFitAspect(event.target.checked)}
-            type="checkbox"
-          />
-          {t.fitVideoAspect}
-        </label>
-        {stale ? (
-          <p className="text-sm text-warning" role="alert">
-            {t.refinementStale}
-          </p>
-        ) : previewError ? (
-          <div className="flex flex-col items-start gap-2">
-            <p className="text-sm text-warning" role="alert">
-              {previewError}
-            </p>
-            <button className={BTN_SUBTLE} onClick={() => setPreviewAttempt(attempt => attempt + 1)} type="button">
-              {t.retryPrompt}
-            </button>
-          </div>
-        ) : preview ? (
-          <p className="text-sm text-body" role="status">
-            {t.refinementDuration(preview.duration_seconds)}
-          </p>
-        ) : (
-          <p className="text-sm text-muted" role="status">
-            {t.refinementPreviewLoading}
-          </p>
-        )}
-        <div className="flex flex-wrap gap-2">
-          <button
-            className={BTN_PRIMARY}
-            disabled={submitting || !active || stale || !preview || (!feedback.trim() && !fitAspect)}
-            onClick={() => void submit()}
-            type="button"
-          >
-            {submitting ? t.generatingVideo : t.startRefinement}
-          </button>
-          <button className={BTN_GHOST} disabled={submitting} onClick={onClose} type="button">
-            {t.cancelUpload}
-          </button>
-        </div>
-      </div>
-    </WizardModal>
-  )
 }
 
 export function DesktopLifePage({

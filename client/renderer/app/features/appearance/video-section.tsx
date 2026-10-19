@@ -338,12 +338,7 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
 
     if (
       action.status === 'result_unknown' ||
-      selectedPack?.actions.some(
-        candidate =>
-          candidate.action === action.key &&
-          (candidate.status === 'result_unknown' ||
-            (candidate.can_regenerate === false && !candidate.can_generate && !isActionInProgress(candidate.status)))
-      )
+      (!action.canRegenerate && !action.canGenerate && !isActionInProgress(action.status))
     ) {
       return { label: t.videoActionResultUnknown, hint: t.videoActionResultUnknownHint, className: 'bg-amber-400' }
     }

@@ -8,15 +8,18 @@ import { HashRouter } from 'react-router-dom'
 
 import { ProxyGatewayPump } from '@/app/runtime/proxy-runtime'
 import { useAccountLifecycle } from '@/app/workflows/account-lifecycle'
+import { useDesktopCompanionActivityPublisher } from '@/app/workflows/desktop-companion-activity'
 import { hydratePersona, hydratePortrait } from '@/modules/character'
 import { ErrorBoundary } from '@/shared/components/error-boundary'
 import { HapticsProvider } from '@/shared/components/haptics-provider'
 import { NotificationStack } from '@/shared/components/notifications'
 import { initGlassBudgetGuard } from '@/shared/lib/apply-no-blur'
 import { createGatewayView } from '@/shared/lib/gateway-view'
-import { CaptureWindowIdContext } from '@/shared/lib/interactive-regions'
+import { CaptureWindowIdContext, useWindowMouseCapture } from '@/shared/lib/interactive-regions'
+import { log } from '@/shared/lib/log'
 import { installUpdateBridge } from '@/shared/lib/update-bridge'
 import { ConfirmHost } from '@/shared/panel'
+import { shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { setPrimaryGateway } from '@/shared/store/gateway'
 import { setSurfaceRole } from '@/shared/store/surfaces'
@@ -25,7 +28,6 @@ import { AccountScopedRoot } from './account-scoped'
 import { initRenderer } from './init-renderer'
 
 function SurfaceAuthBootstrap(): null {
-  useAccountLifecycle()
   const auth = useStore($auth)
   const accountId = auth.kind === 'authenticated' ? auth.snapshot.accountId : null
 
@@ -52,14 +54,52 @@ function SurfaceAuthBootstrap(): null {
   return null
 }
 
-function SurfaceGlassBudgetGuard(): null {
+function SurfaceLifecycle({ role }: { role: 'main' | 'desktop' }): React.JSX.Element {
+  useAccountLifecycle()
   useEffect(() => initGlassBudgetGuard(), [])
+
+  return role === 'desktop' ? <DesktopLifecycle /> : <SurfaceAuthBootstrap />
+}
+
+function DesktopLifecycle(): null {
+  useDesktopCompanionActivityPublisher()
+  const auth = useStore($auth)
+  useWindowMouseCapture(1, {
+    releaseDelayMs: 0,
+    setIgnoreMouseEvents: payload => shellApi().presentation.setIgnoreMouseEvents(payload)
+  })
+
+  useEffect(() => {
+    if (auth.kind !== 'authenticated') {
+      return
+    }
+
+    const heartbeat = (): void => {
+      void shellApi()
+        .presentation.heartbeat()
+        .catch(error => log.warn('desktop', 'heartbeat failed', error))
+    }
+
+    void shellApi()
+      .presentation.reportReady()
+      .catch(error => log.warn('desktop', 'ready failed', error))
+    heartbeat()
+    const timer = window.setInterval(heartbeat, 1000)
+
+    return () => window.clearInterval(timer)
+  }, [auth.kind])
 
   return null
 }
 
-export function bootstrapSurface(label: string, RootComponent: React.ComponentType): void {
-  setSurfaceRole('main')
+export function bootstrapSurface(role: 'main' | 'desktop', RootComponent: React.ComponentType): void {
+  const label = role === 'main' ? 'main-root' : 'desktop'
+
+  if (role === 'desktop') {
+    document.documentElement.dataset.role = role
+  }
+
+  setSurfaceRole(role)
   initRenderer()
   const offUpdateBridge = installUpdateBridge()
 
@@ -82,8 +122,7 @@ export function bootstrapSurface(label: string, RootComponent: React.ComponentTy
         <ErrorBoundary label={label}>
           <HapticsProvider>
             <HashRouter>
-              <SurfaceGlassBudgetGuard />
-              <SurfaceAuthBootstrap />
+              <SurfaceLifecycle role={role} />
               <ProxyGatewayPump />
               <AccountScopedRoot RootComponent={RootComponent} />
               <NotificationStack />

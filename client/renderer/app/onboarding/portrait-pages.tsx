@@ -3,7 +3,13 @@ import { FullbodyReferencePanel, SelfSourceImageFlow } from '@/modules/character
 import { FolderOpen } from '@/shared/lib/icons'
 
 import type { Phase } from './back-transition'
-import { EditAvatarButton, PortraitPanel, RegenFeedbackInput, SpinnerWithText } from './onboarding-components'
+import {
+  EditAvatarButton,
+  ONBOARDING_PRIMARY_BUTTON,
+  PortraitPanel,
+  RegenFeedbackInput,
+  SpinnerWithText
+} from './onboarding-components'
 import type { OnboardingPortrait } from './use-onboarding-portrait'
 
 interface PortraitPagesProps {
@@ -131,7 +137,7 @@ export function PortraitPages({
               上一步
             </button>
             <button
-              className="inline-flex h-8 items-center justify-center rounded-lg bg-accent px-4 text-xs font-medium text-on-accent transition hover:bg-accent/85 disabled:pointer-events-none disabled:opacity-40"
+              className={ONBOARDING_PRIMARY_BUTTON}
               disabled={sealingPortrait}
               onClick={() => void startAiHatching()}
               type="button"
@@ -264,7 +270,7 @@ export function PortraitPages({
                   上一步
                 </button>
                 <button
-                  className="inline-flex h-8 items-center justify-center rounded-lg bg-accent px-4 text-xs font-medium text-on-accent transition hover:bg-accent/85 disabled:pointer-events-none disabled:opacity-40"
+                  className={ONBOARDING_PRIMARY_BUTTON}
                   disabled={
                     !portraitUrl || portraitPreviewId == null || portraitPreviewId !== activeAvatarId || sealingPortrait
                   }

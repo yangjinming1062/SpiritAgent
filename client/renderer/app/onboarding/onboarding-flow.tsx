@@ -16,7 +16,7 @@ import { $gatewayState } from '@/shared/store/gateway'
 
 import { computeBackTransition, type Phase, type VoiceStage } from './back-transition'
 import { playOnboardingAudio } from './onboarding-audio'
-import { DraggableDialog } from './onboarding-components'
+import { DraggableDialog, ONBOARDING_PRIMARY_BUTTON } from './onboarding-components'
 import { OnboardingDraft } from './onboarding-draft'
 import {
   type AnswerKind,
@@ -54,7 +54,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const [resumeAttempt, setResumeAttempt] = useState(0)
   const resumedRef = useRef(false)
   const savingCharacterRef = useRef(false)
-  const carriedHintRef = useRef<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const answersRef = useLatestRef(answers)
@@ -93,15 +92,10 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       return
     }
 
-    const carriedHint = carriedHintRef.current
-    carriedHintRef.current = null
     setInput(answersRef.current[current.key] ?? '')
     setAnswerKind(null)
-    setHint(carriedHint)
-
-    if (!carriedHint) {
-      void playOnboardingAudio(current.audioTag)
-    }
+    setHint(null)
+    void playOnboardingAudio(current.audioTag)
 
     return () => stopSpeaking()
   }, [phase, voiceStage, qIndex, currentList, answersRef])
@@ -404,7 +398,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             <div className="py-2 text-center">
               <p className="text-sm text-body">没能读取之前保存的进度，请检查网络后重试。</p>
               <button
-                className="mt-3 inline-flex h-8 items-center justify-center rounded-lg bg-accent px-4 text-xs font-medium text-on-accent transition hover:bg-accent/85 disabled:pointer-events-none disabled:opacity-40"
+                className={`mt-3 ${ONBOARDING_PRIMARY_BUTTON}`}
                 disabled={resumeState === 'retrying'}
                 onClick={() => {
                   setResumeState('retrying')

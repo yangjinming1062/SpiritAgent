@@ -1,8 +1,10 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 
 import { imageUrlForNativeClipboard } from '@/shared/lib/image-clipboard'
 import { log } from '@/shared/lib/log'
 import { fileApi } from '@/shared/platform/desktop'
+
+import { useAsyncGuard } from './use-async-guard'
 
 type ImageActionName = 'copy' | 'save'
 
@@ -17,30 +19,50 @@ export function useImageActions(): {
 } {
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState<ImageActionName | null>(null)
+  const revision = useRef(0)
+  const copyRevision = useRef(0)
+  const begin = useAsyncGuard()
 
   const reset = useCallback((): void => {
+    revision.current += 1
     setError(null)
     setCopied(false)
   }, [])
 
-  const run = async (name: ImageActionName, task: () => Promise<void>): Promise<void> => {
+  const run = async (name: ImageActionName, task: (isLive: () => boolean) => Promise<void>): Promise<void> => {
     reset()
+    const version = revision.current
+    const isLive = begin()
+    const isCurrent = (): boolean => isLive() && version === revision.current
 
     try {
-      await task()
+      await task(isLive)
+
+      if (isCurrent()) {
+        setCopied(name === 'copy')
+      }
     } catch (cause) {
       log.warn('image-actions', `${name} image failed`, cause)
-      setError(name)
+
+      if (isCurrent()) {
+        setError(name)
+      }
     }
   }
 
   return {
     copied,
-    copy: url =>
-      run('copy', async () => {
-        await fileApi().copyImage({ url: await imageUrlForNativeClipboard(url) })
-        setCopied(true)
-      }),
+    copy: url => {
+      const version = ++copyRevision.current
+
+      return run('copy', async isLive => {
+        const clipboardUrl = await imageUrlForNativeClipboard(url)
+
+        if (isLive() && version === copyRevision.current) {
+          await fileApi().copyImage({ url: clipboardUrl })
+        }
+      })
+    },
     error,
     reset,
     save: (url, defaultName) =>

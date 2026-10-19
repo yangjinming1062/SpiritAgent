@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { $chatSessionId, getConversationRuntime } from '@/modules/conversation'
 import { useAsyncLoader } from '@/shared/hooks/use-async-loader'
@@ -14,14 +14,9 @@ import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import type { SpiritAgentConfigResponse } from '@protocol'
 
-import { AgentDefaultsSection, type AgentFormState } from './inference/agent-defaults-section'
-import { type ChatFormState, ContextCompressionSection } from './inference/context-compression-section'
-import { type TemperatureFormState, TemperatureSection } from './inference/temperature-section'
-import { useFormSection } from './use-form-section'
+import { InferenceForm, type InferenceFormState } from './inference-form'
 
-type InferenceForm = AgentFormState & ChatFormState & TemperatureFormState
-
-const EMPTY: InferenceForm = {
+const EMPTY: InferenceFormState = {
   reasoning_effort: 'low',
   enable_background_review: true,
   enable_context_compression: true,
@@ -31,7 +26,7 @@ const EMPTY: InferenceForm = {
   compression_temperature: 0.0
 }
 
-const readInferenceState = (config: SpiritAgentConfigResponse): InferenceForm => ({
+const readInferenceState = (config: SpiritAgentConfigResponse): InferenceFormState => ({
   reasoning_effort: resolveReasoningEffort(config.agent?.reasoning_effort),
   enable_background_review: config.agent?.enable_background_review ?? EMPTY.enable_background_review,
   enable_context_compression: config.chat?.enable_context_compression ?? EMPTY.enable_context_compression,
@@ -41,7 +36,7 @@ const readInferenceState = (config: SpiritAgentConfigResponse): InferenceForm =>
   compression_temperature: config.chat?.compression_temperature ?? EMPTY.compression_temperature
 })
 
-const toConfig = (state: InferenceForm): SpiritAgentConfigResponse => ({
+const toConfig = (state: InferenceFormState): SpiritAgentConfigResponse => ({
   agent: {
     enable_background_review: state.enable_background_review,
     reasoning_effort: state.reasoning_effort,
@@ -55,7 +50,7 @@ const toConfig = (state: InferenceForm): SpiritAgentConfigResponse => ({
   }
 })
 
-const sameForm = (left: InferenceForm, right: InferenceForm): boolean =>
+const sameForm = (left: InferenceFormState, right: InferenceFormState): boolean =>
   left.reasoning_effort === right.reasoning_effort &&
   left.enable_background_review === right.enable_background_review &&
   left.enable_context_compression === right.enable_context_compression &&
@@ -69,11 +64,19 @@ export function InferencePage(): React.JSX.Element {
   const a = t.settings.inference
 
   const loader = useAsyncLoader<SpiritAgentConfigResponse>(() => getSpiritAgentConfig())
-  const form = useFormSection(EMPTY, readInferenceState)
-  const { reset } = form
+  const [original, setOriginal] = useState(EMPTY)
+  const [state, setState] = useState(EMPTY)
+
+  const reset = useCallback((config: SpiritAgentConfigResponse): void => {
+    const next = readInferenceState(config)
+
+    setOriginal(next)
+    setState(next)
+  }, [])
+
   const mountedRef = useRef(true)
-  const latestStateRef = useRef(form.state)
-  latestStateRef.current = form.state
+  const latestStateRef = useRef(state)
+  latestStateRef.current = state
 
   useEffect(() => {
     mountedRef.current = true
@@ -83,14 +86,13 @@ export function InferencePage(): React.JSX.Element {
     }
   }, [])
 
-  // 把加载结果灌进表单 —— loader.data 一旦变化即同步。
   useEffect(() => {
     if (loader.data) {
       reset(loader.data)
     }
   }, [loader.data, reset])
 
-  const persist = async (state: InferenceForm): Promise<void> => {
+  const persist = async (state: InferenceFormState): Promise<void> => {
     const isCurrent = captureAuthScope()
 
     if (!isCurrent) {
@@ -133,10 +135,10 @@ export function InferencePage(): React.JSX.Element {
   }
 
   const { status: saveStatus, retry: retrySave } = useAutoSave({
-    dirty: form.isDirty,
+    dirty: !sameForm(state, original),
     onError: error => notifyError(error, a.saveFailed),
     onSave: persist,
-    value: form.state
+    value: state
   })
 
   if (loader.isLoading) {
@@ -161,11 +163,7 @@ export function InferencePage(): React.JSX.Element {
     <div className="space-y-6">
       <SettingsSectionIntro hint={a.intro} title={a.heading} />
 
-      <AgentDefaultsSection state={form.state} t={a.agentDefaults} update={form.set} />
-
-      <ContextCompressionSection state={form.state} t={a.contextCompression} update={form.set} />
-
-      <TemperatureSection state={form.state} t={a.temperature} update={form.set} />
+      <InferenceForm state={state} update={patch => setState(current => ({ ...current, ...patch }))} />
 
       <div className="flex min-h-5 items-center justify-end gap-3 pt-2">
         {saveStatus === 'saving' && <span className={HINT_TEXT}>{t.common.saving}</span>}

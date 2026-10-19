@@ -1,5 +1,5 @@
-import { bootstrapDesktop } from '@/app/bootstrap/desktop'
+import { bootstrapSurface } from '@/app/bootstrap/surface'
 
 import { DesktopRoot } from './desktop-root'
 
-bootstrapDesktop(DesktopRoot)
+bootstrapSurface('desktop', DesktopRoot)

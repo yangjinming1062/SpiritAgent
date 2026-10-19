@@ -1,26 +1,16 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 
-import type { IconComponent } from '@/shared/lib/icons'
-import { ChevronDown, Loader2, Search, X } from '@/shared/lib/icons'
-import { probeInteractiveRegions, useInteractiveRegion } from '@/shared/lib/interactive-regions'
-import { log } from '@/shared/lib/log'
+import { Loader2, Search, X } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
 
-import { useEscapeKey } from '../hooks/use-escape-key'
-
 import {
-  BTN_DANGER,
   BTN_ICON,
-  BTN_PRIMARY,
-  BTN_SUBTLE,
   INPUT_CLASS,
   SETTINGS_INTRO_HINT,
   SETTINGS_INTRO_TITLE,
   SETTINGS_ROW_DESC,
-  SETTINGS_ROW_TITLE,
-  SURFACE_OVERLAY
+  SETTINGS_ROW_TITLE
 } from './palette'
 
 export function SettingsSectionIntro({ title, hint }: { title: string; hint?: string }): React.JSX.Element {
@@ -28,90 +18,6 @@ export function SettingsSectionIntro({ title, hint }: { title: string; hint?: st
     <div className="mb-4">
       <h2 className={SETTINGS_INTRO_TITLE}>{title}</h2>
       {hint ? <p className={SETTINGS_INTRO_HINT}>{hint}</p> : null}
-    </div>
-  )
-}
-
-export function CapsuleTabs<T extends string>({
-  ariaLabel,
-  onChange,
-  options,
-  size = 'md',
-  value,
-  disabled = false
-}: {
-  ariaLabel?: string
-  onChange: (next: T) => void
-  options: ReadonlyArray<{ value: T; label: string; icon?: IconComponent }>
-  size?: 'md' | 'sm'
-  value: T
-  disabled?: boolean
-}): React.JSX.Element {
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
-    if (disabled || (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft')) {
-      return
-    }
-
-    e.preventDefault()
-    const currentIndex = options.findIndex(option => option.value === value)
-
-    if (currentIndex === -1) {
-      return
-    }
-
-    const nextIndex =
-      e.key === 'ArrowRight'
-        ? (currentIndex + 1) % options.length
-        : (currentIndex - 1 + options.length) % options.length
-
-    onChange(options[nextIndex].value)
-  }
-
-  return (
-    <div
-      aria-label={ariaLabel}
-      className={cn(
-        'liquid-glass-pill inline-flex max-w-full items-center gap-1 overflow-x-auto rounded-full p-1',
-        disabled && 'pointer-events-none opacity-40'
-      )}
-      onKeyDown={handleKeyDown}
-      role="tablist"
-    >
-      {options.map(option => {
-        const active = option.value === value
-        const Icon = option.icon
-
-        return (
-          <button
-            aria-selected={active}
-            className={cn(
-              'group inline-flex shrink-0 items-center justify-center gap-1.5 rounded-full transition-all duration-200 select-none',
-              size === 'sm' ? 'px-3 py-1 text-[12px]' : 'px-3.5 py-1.5 text-[13px]',
-              active ? 'liquid-glass-tab-active font-medium text-strong' : 'font-normal text-muted hover:text-strong',
-              disabled && 'cursor-not-allowed opacity-40'
-            )}
-            disabled={disabled}
-            key={option.value}
-            onClick={() => !disabled && onChange(option.value)}
-            role="tab"
-            tabIndex={active ? 0 : -1}
-            type="button"
-          >
-            {Icon && (
-              <Icon
-                className={cn(
-                  'shrink-0 transition-colors',
-                  size === 'sm' ? 'size-3.5' : 'size-4',
-                  active
-                    ? 'text-accent drop-shadow-[0_0_6px_var(--ui-accent-soft)]'
-                    : 'text-muted group-hover:text-strong'
-                )}
-              />
-            )}
-            <span>{option.label}</span>
-          </button>
-        )
-      })}
     </div>
   )
 }
@@ -204,36 +110,6 @@ export function Toggle({
         )}
       />
     </button>
-  )
-}
-
-export function Segmented<T extends string>({
-  options,
-  value,
-  onChange
-}: {
-  options: ReadonlyArray<{ value: T; label: string }>
-  value: T
-  onChange: (next: T) => void
-}): React.JSX.Element {
-  return (
-    <div className="liquid-glass-pill flex gap-0.5 rounded-full p-0.5" role="tablist">
-      {options.map(o => (
-        <button
-          aria-selected={value === o.value}
-          className={cn(
-            'flex-1 rounded-full px-3 py-1.5 text-[12px] whitespace-nowrap transition',
-            value === o.value ? 'liquid-glass-tab-active font-medium text-strong' : 'text-muted hover:text-strong'
-          )}
-          key={o.value}
-          onClick={() => onChange(o.value)}
-          role="tab"
-          type="button"
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
   )
 }
 
@@ -335,200 +211,6 @@ export function EmptyState({
   )
 }
 
-export function PanelSelect<T extends string>({
-  value,
-  options,
-  onChange,
-  disabled = false,
-  widthClass = 'w-36',
-  ariaLabel
-}: {
-  value: T
-  options: ReadonlyArray<{ value: T; label: string }>
-  onChange: (next: T) => void
-  disabled?: boolean
-  widthClass?: string
-  ariaLabel?: string
-}): React.JSX.Element {
-  const [open, setOpen] = useState(false)
-  const [activeIndex, setActiveIndex] = useState(0)
-  const [dropUp, setDropUp] = useState(false)
-  const rootRef = useRef<HTMLDivElement>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const listRef = useRef<HTMLDivElement>(null)
-  const listId = useId()
-
-  const selected = options.find(o => o.value === value)
-
-  // 打开时把活动项定位到当前选中值，焦点交给列表框承接方向键；贴近窗口下缘时向上展开，避免弹层被窗口底边截断。
-  useLayoutEffect(() => {
-    if (!open) {
-      return
-    }
-
-    const root = rootRef.current
-    const list = listRef.current
-
-    if (root && list) {
-      const rect = root.getBoundingClientRect()
-      const spaceBelow = window.innerHeight - rect.bottom
-      setDropUp(spaceBelow < list.offsetHeight + 8 && rect.top > spaceBelow)
-      list.focus({ preventScroll: true })
-    }
-  }, [open])
-
-  // 指针悬停与键盘导航共用 activeIndex，滚动时保持活动项可见。
-  useEffect(() => {
-    if (!open) {
-      return
-    }
-
-    listRef.current?.querySelector(`[data-index='${activeIndex}']`)?.scrollIntoView({ block: 'nearest' })
-  }, [activeIndex, open])
-
-  const close = useCallback((): void => {
-    setOpen(false)
-    triggerRef.current?.focus()
-  }, [])
-
-  useEscapeKey(close, { enabled: open })
-
-  useEffect(() => {
-    if (!open) {
-      return
-    }
-
-    const onPointerDown = (e: PointerEvent): void => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpen(false)
-      }
-    }
-
-    document.addEventListener('pointerdown', onPointerDown, true)
-    window.addEventListener('resize', close)
-
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown, true)
-      window.removeEventListener('resize', close)
-    }
-  }, [close, open])
-
-  const commit = (index: number): void => {
-    const option = options[index]
-
-    if (!option) {
-      return
-    }
-
-    // 与原生 select 一致：值未变化时只收起弹层，不向消费方报告变更。
-    if (option.value !== value) {
-      onChange(option.value)
-    }
-
-    close()
-  }
-
-  const openList = (): void => {
-    if (options.length === 0) {
-      return
-    }
-
-    setActiveIndex(
-      Math.max(
-        0,
-        options.findIndex(o => o.value === value)
-      )
-    )
-    setOpen(true)
-  }
-
-  const onListKeyDown = (e: React.KeyboardEvent): void => {
-    if (e.key === 'Tab') {
-      e.preventDefault()
-      close()
-
-      return
-    }
-
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault()
-      setActiveIndex(i => (i + (e.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length)
-    } else if (e.key === 'Home') {
-      e.preventDefault()
-      setActiveIndex(0)
-    } else if (e.key === 'End') {
-      e.preventDefault()
-      setActiveIndex(options.length - 1)
-    } else if (e.key === 'Enter' || e.key === ' ') {
-      // 阻止默认：焦点回到触发钮后，按键的 click 激活不能把列表再打开。
-      e.preventDefault()
-      commit(activeIndex)
-    }
-  }
-
-  return (
-    <div className={cn('relative', widthClass)} ref={rootRef}>
-      <button
-        aria-controls={open ? listId : undefined}
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        aria-label={ariaLabel}
-        className="flex h-8 w-full items-center justify-between gap-2 rounded-lg border border-line-standard bg-fill-faint px-3 text-xs text-strong transition hover:bg-fill-hover disabled:pointer-events-none disabled:opacity-40"
-        disabled={disabled}
-        onClick={() => (open ? setOpen(false) : openList())}
-        onKeyDown={e => {
-          if (!open && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
-            e.preventDefault()
-            openList()
-          }
-        }}
-        ref={triggerRef}
-        type="button"
-      >
-        <span className="truncate">{selected?.label ?? value}</span>
-        <ChevronDown className={cn('size-3.5 shrink-0 text-faint transition-transform', open && 'rotate-180')} />
-      </button>
-      {open && (
-        <div
-          aria-activedescendant={`${listId}-opt-${activeIndex}`}
-          aria-label={ariaLabel}
-          className={cn(
-            'absolute right-0 z-50 max-h-64 min-w-full overflow-y-auto rounded-xl p-1',
-            SURFACE_OVERLAY,
-            dropUp ? 'bottom-full mb-1' : 'mt-1'
-          )}
-          id={listId}
-          onKeyDown={onListKeyDown}
-          ref={listRef}
-          role="listbox"
-          tabIndex={-1}
-        >
-          {options.map((o, index) => (
-            <button
-              aria-selected={o.value === value}
-              className={cn(
-                'flex h-7 w-full items-center rounded-lg px-2.5 text-left text-xs transition',
-                o.value === value ? 'bg-accent-soft font-medium text-accent' : 'text-muted',
-                index === activeIndex && o.value !== value && 'bg-fill-hover text-strong'
-              )}
-              data-index={index}
-              id={`${listId}-opt-${index}`}
-              key={o.value}
-              onClick={() => commit(index)}
-              onMouseMove={() => setActiveIndex(index)}
-              role="option"
-              tabIndex={-1}
-              type="button"
-            >
-              <span className="truncate">{o.label}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
 export function SearchField({
   value,
   onChange,
@@ -572,85 +254,6 @@ export function LoadingBlock({ label }: { label?: string }): React.JSX.Element {
     <div className="flex items-center justify-center gap-2 py-12 text-xs text-faint">
       <Spinner />
       {label}
-    </div>
-  )
-}
-
-interface ConfirmDialogProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  title: string
-  description?: string
-  confirmLabel: string
-  variant?: 'default' | 'destructive'
-  onConfirm: () => void | Promise<void>
-}
-
-// 二次确认弹窗：onConfirm 完成后关闭；抛错时只记日志并保留弹窗，用户提示由调用方负责。
-export function ConfirmDialog({
-  open,
-  onOpenChange,
-  title,
-  description,
-  confirmLabel,
-  variant = 'default',
-  onConfirm
-}: ConfirmDialogProps): React.JSX.Element {
-  const t = useStrings()
-  const [busy, setBusy] = useState(false)
-  const overlayRef = useRef<HTMLDivElement>(null)
-  const regionId = useId()
-
-  // 透明窗口（精灵窗、交互桌面）点击会穿透：登记在 early return 之前，关闭时 overlay 未挂载、getRect 为 null 自然退出（同 NotificationStack）。
-  useInteractiveRegion(`confirm-dialog:${regionId}`, overlayRef)
-
-  // 打开后立即探测一次，键盘唤起、鼠标未移动时也能直接点击按钮。
-  useLayoutEffect(() => {
-    if (open) {
-      probeInteractiveRegions()
-    }
-  }, [open])
-
-  useEscapeKey(() => onOpenChange(false), { enabled: open, busy })
-
-  if (!open) {
-    return <></>
-  }
-
-  return (
-    <div
-      className="fixed inset-0 z-[80] flex items-center justify-center p-6 [-webkit-app-region:no-drag]"
-      onPointerDown={e => {
-        if (!busy && e.target === e.currentTarget) {
-          onOpenChange(false)
-        }
-      }}
-      ref={overlayRef}
-    >
-      <div className={`w-full max-w-md rounded-2xl p-5 text-strong ${SURFACE_OVERLAY}`}>
-        <h3 className="text-sm font-semibold">{title}</h3>
-        {description && <p className="mt-2 text-xs leading-relaxed text-muted">{description}</p>}
-        <div className="mt-5 flex justify-end gap-2">
-          <button className={BTN_SUBTLE} disabled={busy} onClick={() => onOpenChange(false)} type="button">
-            {t.common.cancel}
-          </button>
-          <button
-            className={variant === 'destructive' ? BTN_DANGER : BTN_PRIMARY}
-            disabled={busy}
-            onClick={() => {
-              setBusy(true)
-
-              void Promise.resolve(onConfirm())
-                .then(() => onOpenChange(false))
-                .catch(error => log.warn('confirm-dialog', 'onConfirm failed', error))
-                .finally(() => setBusy(false))
-            }}
-            type="button"
-          >
-            {busy ? t.common.processing : confirmLabel}
-          </button>
-        </div>
-      </div>
     </div>
   )
 }

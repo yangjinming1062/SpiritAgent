@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { $outfits, $wardrobeStatus, hydrateWardrobe } from '@/modules/character'
+import type { DesktopVideoPromptReference } from '@/modules/desktop-videos'
 import { useResolvedMediaSrc } from '@/modules/media'
 import {
   $sceneLibrary,
@@ -15,12 +16,16 @@ import {
 } from '@/modules/scene'
 import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { useImageActions } from '@/shared/hooks/use-image-actions'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { Check, ImageIcon, Loader2, Search, Shirt, Sparkles } from '@/shared/lib/icons'
 import { log } from '@/shared/lib/log'
 import { BTN_GHOST, BTN_SUBTLE, INPUT_CLASS, WizardModal } from '@/shared/panel'
+import { fileApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
+import { notifyError } from '@/shared/store/notifications'
 
+import { BTN_GHOST as DESKTOP_LIFE_BTN_GHOST } from './desktop-life-buttons'
 import styles from './desktop-life-materials.module.css'
 import { useDesktopLifeStrings } from './desktop-life-strings'
 
@@ -467,5 +472,89 @@ export function DesktopLifeReferences({
         />
       )}
     </section>
+  )
+}
+
+export function ExternalReference({
+  reference,
+  onZoom
+}: {
+  reference: DesktopVideoPromptReference
+  onZoom: (url: string) => void
+}): React.JSX.Element {
+  const t = useDesktopLifeStrings()
+  const media = useResolvedMediaSrc({ type: 'image', url: reference.url })
+  const { copied, copy, error, reset } = useImageActions()
+  const [saved, setSaved] = useState(false)
+  const beginAsync = useAsyncGuard()
+
+  const save = async (): Promise<void> => {
+    if (media.status !== 'ready') {
+      return
+    }
+
+    const isLive = beginAsync()
+    reset()
+
+    try {
+      if ((await fileApi().saveImage({ defaultName: reference.label, url: media.src })) && isLive()) {
+        setSaved(true)
+      }
+    } catch (failure) {
+      if (isLive()) {
+        notifyError(failure, t.saveReference)
+      }
+    }
+  }
+
+  return (
+    <div className="flex min-w-0 flex-col gap-2 rounded-lg border border-line-hairline p-2">
+      <div className="flex h-24 shrink-0 items-center justify-center overflow-hidden rounded bg-black/10">
+        {media.status === 'ready' ? (
+          <button
+            aria-label={reference.label}
+            className="h-full w-full cursor-zoom-in"
+            onClick={() => onZoom(media.src)}
+            type="button"
+          >
+            <img alt={reference.label} className="h-full w-full object-contain" src={media.src} />
+          </button>
+        ) : (
+          <span className="text-xs text-muted">{reference.label}</span>
+        )}
+      </div>
+      <span className="truncate text-xs text-body" title={reference.label}>
+        {reference.label}
+      </span>
+      <div className="flex flex-wrap gap-1">
+        <button
+          aria-label={`${t.copyReference} ${reference.label}`}
+          className={DESKTOP_LIFE_BTN_GHOST}
+          disabled={media.status !== 'ready'}
+          onClick={() => {
+            if (media.status === 'ready') {
+              void copy(media.src)
+            }
+          }}
+          type="button"
+        >
+          {copied ? t.copied : t.copyReference}
+        </button>
+        <button
+          aria-label={`${t.saveReference} ${reference.label}`}
+          className={DESKTOP_LIFE_BTN_GHOST}
+          disabled={media.status !== 'ready'}
+          onClick={() => void save()}
+          type="button"
+        >
+          {saved ? t.referenceSaved : t.saveReference}
+        </button>
+      </div>
+      {error === 'copy' && (
+        <p className="text-xs text-rose-500" role="alert">
+          {t.copyReferenceFailed}
+        </p>
+      )}
+    </div>
   )
 }

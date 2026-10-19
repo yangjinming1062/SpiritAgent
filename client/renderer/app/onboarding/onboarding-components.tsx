@@ -7,6 +7,9 @@ import { usePointerDrag } from '@/shared/hooks/use-pointer-drag'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { INPUT_CLASS } from '@/shared/panel'
 
+export const ONBOARDING_PRIMARY_BUTTON =
+  'inline-flex h-8 items-center justify-center rounded-lg bg-accent px-4 text-xs font-medium text-on-accent transition hover:bg-accent/85 disabled:pointer-events-none disabled:opacity-40'
+
 export function PortraitPanel({
   avatarUrl,
   hint,

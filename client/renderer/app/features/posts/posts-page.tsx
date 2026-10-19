@@ -19,7 +19,6 @@ import {
   type PostCommentEntry,
   retryPostReply
 } from '@/modules/posts'
-import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { ChevronDown, Sparkles, Trash2 } from '@/shared/lib/icons'
 import { currentClearEpoch } from '@/shared/lib/storage'
 import { cn } from '@/shared/lib/utils'
@@ -31,6 +30,7 @@ import { notify } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
 import { useReadingForeground } from '../use-reading-foreground'
+import { useReadingReceipt } from '../use-reading-receipt'
 
 import { PostVideoRecovery } from './post-video-recovery'
 import styles from './posts.module.css'
@@ -76,6 +76,7 @@ function PostsContent({
   const persona = useStore($persona)
   const authState = useStore($auth)
   const authKind = authState.kind
+  const sessionId = authState.kind === 'authenticated' ? authState.snapshot.sessionId : null
   const locale = useStore($locale)
   const strings = useStrings()
   const t = strings.living.posts
@@ -83,11 +84,6 @@ function PostsContent({
   const [loadFailed, setLoadFailed] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
   const [readSnapshot, setReadSnapshot] = useState<string[] | null>(null)
-
-  const [readBlocked, setReadBlocked] = useState(false)
-  const [confirmedReadIds, setConfirmedReadIds] = useState(new Set<string>())
-  const readInFlight = useRef(false)
-  const beginAsync = useAsyncGuard()
 
   const foreground = useReadingForeground(suppliedForeground)
   const wasForeground = useRef(foreground)
@@ -112,13 +108,12 @@ function PostsContent({
     return () => {
       cancelled = true
     }
-  }, [authKind, reloadKey])
+  }, [authKind, sessionId, reloadKey])
 
   useEffect(() => {
     return $gatewayState.listen(state => {
       if (state === 'open') {
         setReloadKey(key => key + 1)
-        setReadBlocked(false)
       }
     })
   }, [])
@@ -128,45 +123,19 @@ function PostsContent({
     wasForeground.current = foreground
 
     if (restored) {
-      setReadBlocked(false)
       setReloadKey(key => key + 1)
     }
   }, [foreground])
 
-  // 首屏快照包括较早未读内容；后续事件只确认已进入本次渲染的动态。
-  useEffect(() => {
-    if (authKind !== 'authenticated' || !foreground || readSnapshot === null || readBlocked || readInFlight.current) {
-      return
-    }
-
-    // 浏览器焦点事件可能已到达，而 React 的可见性状态尚未更新。
-    if (document.visibilityState !== 'visible' || !document.hasFocus()) {
-      return
-    }
-
-    const ids = [...new Set([...readSnapshot, ...posts.map(post => post.id)])].filter(id => !confirmedReadIds.has(id))
-
-    if (ids.length === 0) {
-      return
-    }
-
-    const isLive = beginAsync()
-    readInFlight.current = true
-
-    void markPostsRead(ids).then(ok => {
-      if (!isLive()) {
-        return
-      }
-
-      readInFlight.current = false
-
-      if (ok) {
-        setConfirmedReadIds(current => new Set([...current, ...ids]))
-      } else {
-        setReadBlocked(true)
-      }
-    })
-  }, [authKind, foreground, readSnapshot, readBlocked, posts, confirmedReadIds, beginAsync])
+  useReadingReceipt({
+    scope: sessionId ?? authKind,
+    refreshKey: reloadKey,
+    foreground,
+    snapshot: readSnapshot,
+    displayedIds: posts.map(post => post.id),
+    ready: authKind === 'authenticated',
+    markRead: markPostsRead
+  })
 
   const formattedPosts = useMemo(() => {
     const formatter = new Intl.DateTimeFormat(locale)
@@ -184,34 +153,26 @@ function PostsContent({
       <PostVideoRecovery key={`${authState.snapshot.sessionId}:${reloadKey}`} />
     ) : null
 
-  if (loading && posts.length === 0) {
+  if (posts.length === 0) {
     return (
       <div className={styles.list}>
         {recovery}
-        <div className={cn('liquid-glass-card', styles.empty)} role="status">
-          <LoadingBlock label={t.loading} />
-        </div>
-      </div>
-    )
-  }
-
-  if (posts.length === 0) {
-    return loadFailed ? (
-      <div className={styles.list}>
-        {recovery}
-        <div className={cn('liquid-glass-card', styles.empty)} role="status">
-          <p>{t.loadFailed}</p>
-          <button className={cn(BTN_SUBTLE, 'mt-3')} onClick={() => setReloadKey(key => key + 1)} type="button">
-            {strings.common.retry}
-          </button>
-        </div>
-      </div>
-    ) : (
-      <div className={styles.list}>
-        {recovery}
-        <div className={cn('liquid-glass-card', styles.empty)}>
-          <Sparkles aria-hidden="true" className={styles.emptyIcon} size={28} />
-          <p>{t.empty}</p>
+        <div className={cn('liquid-glass-card', styles.empty)} role={loading || loadFailed ? 'status' : undefined}>
+          {loading ? (
+            <LoadingBlock label={t.loading} />
+          ) : loadFailed ? (
+            <>
+              <p>{t.loadFailed}</p>
+              <button className={cn(BTN_SUBTLE, 'mt-3')} onClick={() => setReloadKey(key => key + 1)} type="button">
+                {strings.common.retry}
+              </button>
+            </>
+          ) : (
+            <>
+              <Sparkles aria-hidden="true" className={styles.emptyIcon} size={28} />
+              <p>{t.empty}</p>
+            </>
+          )}
         </div>
       </div>
     )

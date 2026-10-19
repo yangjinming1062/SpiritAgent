@@ -58,7 +58,6 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
 
   const submit = useChatSubmit({
     externalPaths,
-    gatewayState,
     isReadOnlySession,
     onClearExternalPaths: () => {
       $externalPaths.set([])

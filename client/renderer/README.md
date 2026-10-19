@@ -16,7 +16,7 @@
 | 改动 | 入口 |
 |---|---|
 | 宿主与独立窗口 | [sprite-entry.tsx](sprite-entry.tsx)、[bootstrap/sprite.tsx](app/bootstrap/sprite.tsx)、[bootstrap/surface.tsx](app/bootstrap/surface.tsx) |
-| Windows 桌面与生活视频 | [bootstrap/desktop.tsx](app/bootstrap/desktop.tsx)、[windows/desktop](app/windows/desktop/)、[desktop-videos](modules/desktop-videos/) |
+| Windows 桌面与生活视频 | [bootstrap/surface.tsx](app/bootstrap/surface.tsx)、[windows/desktop](app/windows/desktop/)、[desktop-videos](modules/desktop-videos/) |
 | 网关与账户 | [host-runtime.ts](app/runtime/host-runtime.ts)、[gateway-event-router.ts](app/runtime/gateway-event-router.ts)、[account-lifecycle.ts](app/workflows/account-lifecycle.ts) |
 | 引导、激活与启动失败 | [onboarding](app/onboarding/) |
 | 角色、动作、拖拽与空间 | [modules/character](modules/character/)、[sprite-stage.tsx](app/components/sprite-stage.tsx) |
@@ -29,7 +29,7 @@
 
 ## 装配与状态归属
 
-`app/windows` 管精灵、主窗口与桌面外壳，`app/features` 按场景、外观、动态、日记、对话、执行轨迹及设置组织可复用页面；统一导航归 `app/navigation`。主窗口与桌面直接装配公共对话和设置，窗口内部实现不作为其他窗口的依赖。
+`app/windows` 管精灵、主窗口与桌面外壳，`app/features` 按场景、外观、动态、日记、对话、执行轨迹及设置组织可复用页面；统一导航归 `app/navigation`。主窗口与桌面共用 [surface.tsx](app/bootstrap/surface.tsx) 的账户、网关与 Provider 装配，并经 [app-content-page.tsx](app/components/app-content-page.tsx) 分派非聊天业务页；窗口内部实现不作为其他窗口的依赖。
 
 [bind-presentation.ts](app/bootstrap/bind-presentation.ts) 在渲染前绑定 [presentation-ports.ts](shared/presentation-ports.ts) 的窄端口，角色、语音和窗口能力显式注入，不依赖 barrel 副作用。新增端口用 `createPort`，未装配调用即抛错；订阅与注入随所有者释放。
 
@@ -66,7 +66,7 @@
 
 [desktop-video-wallpaper.ts](app/windows/desktop/desktop-video-wallpaper.ts) 消费显式启用的独立套装，负责播放认领、回执与默认套装准备；衣柜、场景库变化不触发套装切换或制作。套装和当前成品、制作草稿的语义见[桌面生活契约](../../docs/PROTOCOL.md#桌面生活视频与模式隔离)。外部制作窗口绑定草稿及基准，变化后须刷新。静态首帧只使用所属套装的确认图片，不能回退到当前场景库图片。
 
-[管理页](app/features/desktop-life/desktop-life-page.tsx) 的参考选择只更新创建草稿，素材加载结果由各自 store 持有，迟到回写守卫账户与请求代次。[预览](app/features/desktop-life/desktop-life-preview.tsx) 的草稿图片实例跟随完整资源 URL，视频保留同一资产的播放身份；图片确认资格来自实际草稿图的加载事件，当前成品封面回退不能解锁确认。页面交互与恢复体验归 [DESIGN](../../docs/DESIGN.md#桌面生活视频)。
+[管理页](app/features/desktop-life/desktop-life-page.tsx) 的参考选择只更新创建草稿，素材加载结果由各自 store 持有，迟到回写守卫账户与请求代次。[视频修改](app/features/desktop-life/desktop-life-refinement.tsx) 独立持有预览检查与提交状态，按素材和套装版本校验制作起点。[预览](app/features/desktop-life/desktop-life-preview.tsx) 的草稿图片实例跟随完整资源 URL，视频保留同一资产的播放身份；图片确认资格来自实际草稿图的加载事件，当前成品封面回退不能解锁确认。页面交互与恢复体验归 [DESIGN](../../docs/DESIGN.md#桌面生活视频)。
 
 [背景播放器](app/windows/desktop/desktop-background-entry.tsx) 双缓冲等待实际呈现的首帧；共同基准且允许自然衔接的短动作在循环接点切入，其余画面及上传视频的循环接点使用淡化。短动作返回仍有效的保留循环，套装或素材替换后不能返回旧画面。管理预览、封面、视频和过渡帧共用 [画幅布局](../shared/desktop-media-geometry.ts)，按实际媒体与视口确定裁切或居中内容区域，完整显示时让出模糊底层；规则归 [PIPELINE](../../docs/PIPELINE.md#桌面生活视频)。媒体加载失败保留当前画面，按主进程暂停状态控制播放并回收媒体 URL。套装启用前先预加载安静相伴，成功后才请求切换；主进程媒体桥同时守卫账户和选中路径。
 

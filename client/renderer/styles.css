@@ -945,7 +945,7 @@ html.no-blur .theme-tile {
   }
 }
 
-/* 全局禁用聚焦环（原生 outline 与 focus-visible:ring-*）。不放在 layer 内，无需 !important 即可压过 utilities。 */
+/* 默认禁用原生 outline 与 focus-visible:ring-*；局部控件按需提供可见焦点。不放在 layer 内，无需 !important 即可压过 utilities。 */
 *:focus,
 *:focus-visible {
   outline: none;
@@ -954,6 +954,11 @@ html.no-blur .theme-tile {
 *:focus-visible {
   --tw-ring-shadow: 0 0 #0000 !important;
   --tw-ring-offset-shadow: 0 0 #0000 !important;
+}
+
+.sa-panel-tab:focus-visible {
+  outline: 2px solid var(--ui-focus-line);
+  outline-offset: -2px;
 }
 
 button {

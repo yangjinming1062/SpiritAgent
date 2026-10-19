@@ -2,13 +2,10 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { AppContentPage } from '@/app/components/app-content-page'
 import { AccountMenu } from '@/app/features/accounts/account-menu'
-import { CompanionHub } from '@/app/features/companion/companion-page'
 import { ConversationPage } from '@/app/features/conversation/conversation-page'
 import { useDesktopLifeStrings } from '@/app/features/desktop-life/desktop-life-strings'
-import { DiaryPage } from '@/app/features/diary/diary-page'
-import { PostsPage } from '@/app/features/posts/posts-page'
-import { AppSettings } from '@/app/features/settings/app-settings'
 import { $appNavigationRevision, $appPage, applyAppNavigation, setAppPage } from '@/app/navigation/app-navigation'
 import { $persona, $portraitUrl, hydratePersona, hydratePortrait } from '@/modules/character'
 import {
@@ -23,6 +20,7 @@ import { $desktopVideoError, $desktopVideoState } from '@/modules/desktop-videos
 import { $diaryHasUnread, hydrateDiaryUnread } from '@/modules/diary'
 import { $postsHasUnread, hydratePostsUnread } from '@/modules/posts'
 import { hydrateScene } from '@/modules/scene'
+import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import { ArrowLeft, ArrowRight, MessageCircle, X } from '@/shared/lib/icons'
 import { isPointInteractive, useInteractiveRegion } from '@/shared/lib/interactive-regions'
@@ -69,6 +67,7 @@ export function DesktopRoot(): React.JSX.Element {
   const postsUnread = useStore($postsHasUnread)
   const diaryUnread = useStore($diaryHasUnread)
   const [unreadReveal, setUnreadReveal] = useState<{ key: string; request: number }>()
+  const beginAsync = useAsyncGuard()
   const revealRequest = useRef(0)
   const [windowFocused, setWindowFocused] = useState(() => document.hasFocus())
   const presentation = useStore($presentation)
@@ -254,15 +253,20 @@ export function DesktopRoot(): React.JSX.Element {
   useEffect(
     () =>
       shellApi().desktop.onNavigate(payload => {
+        const isLive = beginAsync()
         void applyAppNavigation(payload)
           .then(() => {
-            if (payload.messageKey) {
+            if (isLive() && payload.messageKey) {
               setUnreadReveal({ key: payload.messageKey, request: ++revealRequest.current })
             }
           })
-          .catch(error => notifyError(error, t.chat))
+          .catch(error => {
+            if (isLive()) {
+              notifyError(error, t.chat)
+            }
+          })
       }),
-    [t.chat]
+    [beginAsync, t.chat]
   )
 
   useEffect(() => {
@@ -373,35 +377,24 @@ export function DesktopRoot(): React.JSX.Element {
   const page = (id: DesktopApp, visible: boolean): React.ReactNode => {
     const reading = visible && activePanel === id
 
-    switch (id) {
-      case 'chat':
-        return (
-          <ConversationPage
-            active={mainChatActive}
-            companionSessionId={companionSessionId}
-            companionUnread={whisperHasUnread}
-            containerRef={rootRef}
-            foreground={foreground}
-            receiveExternalAttachments={visible && desktopVisible}
-            reveal={unreadReveal}
-            viewId="desktop-main"
-            visible={visible && desktopVisible}
-            windowId={1}
-          />
-        )
-
-      case 'posts':
-        return <PostsPage containerRef={rootRef} foreground={reading} mediaViewId="desktop-posts" />
-
-      case 'diary':
-        return <DiaryPage foreground={reading} />
-
-      case 'companion':
-        return <CompanionHub />
-
-      case 'settings':
-        return <AppSettings />
+    if (id === 'chat') {
+      return (
+        <ConversationPage
+          active={mainChatActive}
+          companionSessionId={companionSessionId}
+          companionUnread={whisperHasUnread}
+          containerRef={rootRef}
+          foreground={foreground}
+          receiveExternalAttachments={visible && desktopVisible}
+          reveal={unreadReveal}
+          viewId="desktop-main"
+          visible={visible && desktopVisible}
+          windowId={1}
+        />
+      )
     }
+
+    return <AppContentPage containerRef={rootRef} foreground={reading} mediaViewId="desktop-posts" page={id} />
   }
 
   if (auth.kind !== 'authenticated') {

@@ -3,6 +3,7 @@ import type { RefObject } from 'react'
 import { cn } from '@/shared/lib/utils'
 import { Chip, DatePicker, INPUT_CLASS } from '@/shared/panel'
 
+import { ONBOARDING_PRIMARY_BUTTON } from './onboarding-components'
 import type { AnswerKind, Question } from './onboarding-questions'
 
 interface QuestionPageProps {
@@ -133,11 +134,7 @@ export function QuestionPage({
                   跳过
                 </button>
               )}
-              <button
-                className="inline-flex h-8 items-center justify-center rounded-lg bg-accent px-4 text-xs font-medium text-on-accent transition hover:bg-accent/85 disabled:pointer-events-none disabled:opacity-40"
-                onClick={onSend}
-                type="button"
-              >
+              <button className={ONBOARDING_PRIMARY_BUTTON} onClick={onSend} type="button">
                 {qIndex === questionCount - 1 ? '完成' : '发送'}
               </button>
             </div>

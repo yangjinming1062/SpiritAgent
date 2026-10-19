@@ -37,12 +37,8 @@ const MEDIA_MIME_BY_EXT: Record<string, string> = {
   '.flac': 'audio/flac'
 }
 
-/** 把媒体 URL 解析为渲染端可用 src：data URL 零开销直用；本地路径读盘；其余走后端资产通道。 */
+/** 图片本地路径读盘，其余走后端资产通道。 */
 function resolveImageSrc(url: string): string | Promise<string | null> {
-  if (url.startsWith('data:')) {
-    return url
-  }
-
   const cached = imageSrcCache.get(url) ?? imageSrcRequests.get(url)
 
   if (cached) {
@@ -80,7 +76,7 @@ type MediaSrcState = { status: 'failed' } | { status: 'loading' } | { status: 'r
 
 const LOADING: MediaSrcState = { status: 'loading' }
 
-/** 把后端媒体 URL 解析为渲染端可用 src：图片走 data URL 通道；视频取字节转 blob URL，组件卸载时回收。 */
+/** data URL 直接使用；图片经共享缓存解析，影音取字节转 blob URL，组件卸载时回收。 */
 export function useResolvedMediaSrc(item: ChatMediaItem): MediaSrcState {
   const [resolved, setResolved] = useState<{ url: string; type: ChatMediaItem['type']; state: MediaSrcState } | null>(
     null
@@ -97,18 +93,12 @@ export function useResolvedMediaSrc(item: ChatMediaItem): MediaSrcState {
     }
     void (async () => {
       try {
-        if (item.type === 'image') {
-          const dataUrl = await resolveImageSrc(item.url)
+        let src: string | null
 
-          if (!isCurrent()) {
-            return
-          }
-
-          if (!dataUrl) {
-            throw new Error('Media asset returned no data')
-          }
-
-          setResolved({ url: item.url, type: item.type, state: { status: 'ready', src: dataUrl } })
+        if (item.url.startsWith('data:')) {
+          src = item.url
+        } else if (item.type === 'image') {
+          src = await resolveImageSrc(item.url)
         } else {
           const buf = await backendApi().apiAssetBuffer({ url: item.url, preferCache: true })
 
@@ -124,8 +114,18 @@ export function useResolvedMediaSrc(item: ChatMediaItem): MediaSrcState {
               type: MEDIA_MIME_BY_EXT[ext] || (item.type === 'audio' ? 'audio/mpeg' : 'video/mp4')
             })
           )
-          setResolved({ url: item.url, type: item.type, state: { status: 'ready', src: objectUrl } })
+          src = objectUrl
         }
+
+        if (!isCurrent()) {
+          return
+        }
+
+        if (!src) {
+          throw new Error('Media asset returned no data')
+        }
+
+        setResolved({ url: item.url, type: item.type, state: { status: 'ready', src } })
       } catch (err) {
         if (isCurrent()) {
           log.warn('media', 'Media source could not be loaded:', err)

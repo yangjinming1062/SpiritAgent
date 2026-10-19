@@ -2,18 +2,15 @@ import { useStore } from '@nanostores/react'
 import { type Dispatch, type SetStateAction, useCallback, useRef } from 'react'
 
 import { captureAuthScope } from '@/shared/lib/authed-api'
-import type { ConnectionState } from '@/shared/lib/gateway-protocol'
-import { log } from '@/shared/lib/log'
 import { parseSlashInput } from '@/shared/lib/slash-commands'
 import { currentClearEpoch } from '@/shared/lib/storage'
 import { confirmAction } from '@/shared/panel'
-import { fileApi } from '@/shared/platform/desktop'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { notify, notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
-import type { ChatAttachment } from '@protocol'
 import { errorMessage } from '@runtime'
 
+import { appendLine, prepareChatAttachmentContent } from './chat-attachment-content'
 import { basename } from './chat-path'
 import { submitConversationTurn } from './chat-requests'
 import type { ConversationRuntime } from './chat-runtime'
@@ -31,7 +28,6 @@ import { conversationVoiceSink } from './voice-link'
 
 interface UseChatSubmitOptions {
   externalPaths: string[]
-  gatewayState: ConnectionState
   isReadOnlySession: boolean
   onClearExternalPaths: () => void
   onPreCheckFail: (message: string) => void
@@ -49,8 +45,6 @@ export interface ChatSubmit {
   setText: Dispatch<SetStateAction<string>>
   text: string
 }
-
-const appendLine = (text: string, line: string): string => (text ? `${text}\n${line}` : line)
 
 export function useChatSubmit({
   externalPaths,
@@ -271,47 +265,9 @@ export function useChatSubmit({
       const submit = getStrings().chat.submit
       id = await ensureChatSession(controller)
       target = initialSessionId === null ? getConversationRuntime(id) : view.runtime
-      let fullText = trimmed
-      let promptText = trimmed
-      const attachments: ChatAttachment[] = []
-      const displayAttachments: ChatAttachment[] = []
-
-      if (currentPending?.type === 'image') {
-        // 本地图片优先以 data URL 附件直发多模态（后端转 input_image parts，视觉链路接手）；读取失败（不可读/超体量）才降级路径模式：@file: 指令进正文，LLM 走文件工具读取。
-        let dataUrl: string | null = currentPending.value.startsWith('data:') ? currentPending.value : null
-
-        if (!dataUrl) {
-          try {
-            dataUrl = await fileApi().readImageForAttach(currentPending.value)
-          } catch (err) {
-            log.warn('use-chat-submit', 'readImageForAttach failed', err)
-            /* 降级路径模式 */
-          }
-        }
-
-        if (dataUrl) {
-          attachments.push({ type: 'image', url: dataUrl })
-          displayAttachments.push({ type: 'image', url: dataUrl })
-        } else {
-          const ref = `@file:${currentPending.value}`
-          fullText = `${fullText}\n${ref}`.trim()
-          promptText = `${promptText}\n${ref}`.trim()
-          displayAttachments.push({ type: 'image', url: currentPending.value })
-        }
-      } else if (currentPending?.type === 'video' && currentPending.url) {
-        attachments.push({ type: 'video', url: currentPending.url })
-        displayAttachments.push({ type: 'video', url: currentPending.url })
-      } else if (currentPending?.type === 'file') {
-        const fileRef = submit.fileInlinePrefix(currentPending.fileName, currentPending.path)
-        fullText = appendLine(fullText, fileRef)
-        const fileDirective = `@file:${currentPending.path}`
-        promptText = appendLine(promptText, fileDirective)
-      } else if (currentPending?.type === 'folder') {
-        const folderRef = submit.folderInlinePrefix(currentPending.folderName, currentPending.path)
-        fullText = appendLine(fullText, folderRef)
-        const folderDirective = `@folder:${currentPending.path}`
-        promptText = appendLine(promptText, folderDirective)
-      }
+      const content = await prepareChatAttachmentContent(trimmed, currentPending)
+      let fullText = content.displayText
+      let promptText = content.promptText
 
       // 等待期间切走会话时不提交，正文与附件仍归来源会话的草稿。
       if (
@@ -338,35 +294,7 @@ export function useChatSubmit({
       externalPathsRef.current = []
       onClearExternalPaths()
 
-      // 展示层：媒体卡即内容，纯附件消息不留占位文案；仅附件与正文全空时兜底。
-      const placeholderFor = (attachment: PendingAttachment | null): { display: string; prompt: string } => {
-        if (!attachment) {
-          return { display: '', prompt: '' }
-        }
-
-        switch (attachment.type) {
-          case 'video':
-            return { display: submit.displayVideo, prompt: submit.promptVideo }
-
-          case 'image':
-            return { display: submit.displayImage, prompt: submit.promptImage }
-
-          case 'file':
-            return { display: submit.displayFile(attachment.fileName), prompt: submit.promptFile(attachment.path) }
-
-          case 'folder':
-            return {
-              display: submit.displayFolder(attachment.folderName),
-              prompt: submit.promptFolder(attachment.path)
-            }
-        }
-      }
-
-      const placeholder = placeholderFor(currentPending)
-      const displayPlaceholder = displayAttachments.length ? '' : placeholder.display
-      const promptFallback = placeholder.prompt
-
-      target.pushUserMessage(fullText || displayPlaceholder, displayAttachments.length ? displayAttachments : undefined)
+      target.pushUserMessage(fullText || content.displayFallback || '', content.displayAttachments)
       setText('')
       controller.$pending.set(null)
 
@@ -375,8 +303,8 @@ export function useChatSubmit({
       }
 
       target.pushPendingPrompt({
-        attachments: attachments.length ? attachments : undefined,
-        text: promptText || promptFallback
+        attachments: content.attachments,
+        text: promptText || content.promptFallback || ''
       })
       target.schedulePendingFlush()
     } catch (err) {

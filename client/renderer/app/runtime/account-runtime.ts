@@ -6,10 +6,6 @@ import { desktopEvents } from '@/shared/platform/desktop'
 import { applyAuthBroadcast, expireSession, hydrateAuth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
 
-interface OnboardingState {
-  complete?: boolean
-}
-
 export function createAccountLifecycleRuntime() {
   let disposed = false
   let started = false
@@ -34,10 +30,9 @@ export function createAccountLifecycleRuntime() {
     }
 
     let complete: boolean | undefined
-    let state: OnboardingState | undefined
 
     try {
-      state = await requestResource('onboarding.get_onboarding')
+      complete = (await requestResource('onboarding.get_onboarding')).complete
     } catch (error) {
       if (isCurrent()) {
         log.warn('account-lifecycle', 'onboarding state failed', error)
@@ -47,8 +42,6 @@ export function createAccountLifecycleRuntime() {
     if (!isCurrent()) {
       return
     }
-
-    complete = state?.complete
 
     // 查询失败保留已展示状态，网关连通后重查。
     unresolved = typeof complete !== 'boolean'

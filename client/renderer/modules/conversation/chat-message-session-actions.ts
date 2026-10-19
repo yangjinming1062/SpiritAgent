@@ -1,6 +1,8 @@
 import { useStore } from '@nanostores/react'
 import { atom, type WritableAtom } from 'nanostores'
 
+import { captureAuthScope } from '@/shared/lib/authed-api'
+import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { confirmAction, type ConfirmRequest } from '@/shared/panel'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
@@ -9,8 +11,17 @@ import { useConversationView } from './conversation-view'
 import { forkConversation, undoToMessage } from './session-list-store'
 
 // fork 与 undo 各持独立的在途标记，互不排他；同类操作同一时刻只允许一个 RPC 在飞。
-const $chatForkInFlight = atom<string | null>(null)
-const $chatUndoInFlight = atom<string | null>(null)
+interface SessionActionRequest {
+  messageId: string
+}
+
+const $chatForkInFlight = atom<SessionActionRequest | null>(null)
+const $chatUndoInFlight = atom<SessionActionRequest | null>(null)
+
+registerStorageClearHandler(() => {
+  $chatForkInFlight.set(null)
+  $chatUndoInFlight.set(null)
+})
 
 async function runSessionAction({
   confirm,
@@ -24,7 +35,7 @@ async function runSessionAction({
   /** 需二次确认时的弹窗内容（confirmAction），未提供则直接执行。 */
   confirm?: ConfirmRequest
   failedLabel: string
-  $inFlight: WritableAtom<string | null>
+  $inFlight: WritableAtom<SessionActionRequest | null>
   /** 当前气泡的本地 id；同类操作同一时刻只允许一个 RPC 在飞，并发点击靠此 id 排他。 */
   messageId: string
   run: (sessionId: string, sourceMessageId: number) => Promise<unknown>
@@ -32,7 +43,9 @@ async function runSessionAction({
   sourceMessageId: number
   sourceSessionId: string | null
 }): Promise<void> {
-  if (!sourceSessionId || $inFlight.get() !== null) {
+  const isCurrent = captureAuthScope()
+
+  if (!isCurrent || !sourceSessionId || $inFlight.get() !== null) {
     return
   }
 
@@ -41,19 +54,22 @@ async function runSessionAction({
   }
 
   // 确认弹窗等待期间可能已有同类操作起飞，复核排他标记。
-  if ($inFlight.get() !== null) {
+  if (!isCurrent() || $inFlight.get() !== null) {
     return
   }
 
-  $inFlight.set(messageId)
+  const request = { messageId }
+  $inFlight.set(request)
 
   try {
     // 返回 null 表示已换号或换网关，结果作废，不再提示。
     await run(sourceSessionId, sourceMessageId)
   } catch (err) {
-    notifyError(err, failedLabel)
+    if (isCurrent()) {
+      notifyError(err, failedLabel)
+    }
   } finally {
-    if ($inFlight.get() === messageId) {
+    if ($inFlight.get() === request) {
       $inFlight.set(null)
     }
   }
@@ -77,8 +93,8 @@ export function useMessageSessionActions({ messageId }: { messageId: string }): 
   const dict = useStrings()
 
   const sourceSessionId = useStore($chatSessionId)
-  const forkInFlight = useStore($chatForkInFlight)
-  const undoInFlight = useStore($chatUndoInFlight)
+  const forkInFlight = useStore($chatForkInFlight)?.messageId ?? null
+  const undoInFlight = useStore($chatUndoInFlight)?.messageId ?? null
 
   return {
     fork: {

@@ -89,7 +89,14 @@ export async function hydrateDiary(opts: { from?: string; to?: string } = {}): P
     }
 
     for (const entry of result.value.entries) {
-      if (!deletedIds.has(entry.id)) {
+      const current = next[entry.entry_date]
+
+      // 快照只替换读取前的条目；实时事件也可能用新 ID 替换同一天的日记。
+      if (
+        !deletedIds.has(entry.id) &&
+        (entryRevisions.get(entry.id) ?? 0) <= startedEvents &&
+        (!current || (entryRevisions.get(current.id) ?? 0) <= startedEvents)
+      ) {
         next[entry.entry_date] = toDiary(entry)
       }
     }

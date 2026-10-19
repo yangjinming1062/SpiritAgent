@@ -24,11 +24,11 @@ import { Check } from '@/shared/lib/icons'
 import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
 import {
+  CapsuleTabs,
   Disclosure,
   HINT_TEXT,
   PanelSelect,
   SECTION_TITLE,
-  Segmented,
   SettingCard,
   SettingRow,
   SettingsSectionIntro,
@@ -128,13 +128,14 @@ export function InteractionPage({ part = 'companionship' }: { part?: 'companions
           <SettingCard>
             <SettingRow description={t.responsePreferenceDesc} label={t.responsePreference} stacked>
               <div className="max-w-xs">
-                <Segmented<ResponsePreference>
+                <CapsuleTabs<ResponsePreference>
                   onChange={setResponsePreference}
                   options={[
                     { value: 'text', label: t.responsePreferenceText },
                     { value: 'voice', label: t.responsePreferenceVoice }
                   ]}
                   value={responsePreference}
+                  variant="segmented"
                 />
               </div>
             </SettingRow>

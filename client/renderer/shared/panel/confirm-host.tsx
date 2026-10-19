@@ -3,7 +3,7 @@ import { atom } from 'nanostores'
 
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 
-import { ConfirmDialog } from './components'
+import { ConfirmDialog } from './confirm-dialog'
 
 export interface ConfirmRequest {
   title: string
@@ -16,10 +16,10 @@ type PendingConfirm = ConfirmRequest & { resolve: (confirmed: boolean) => void }
 
 const $pendingConfirm = atom<PendingConfirm | null>(null)
 
-function settle(confirmed: boolean): void {
+function settle(confirmed: boolean, expected = $pendingConfirm.get()): void {
   const pending = $pendingConfirm.get()
 
-  if (pending) {
+  if (pending && pending === expected) {
     $pendingConfirm.set(null)
     pending.resolve(confirmed)
   }
@@ -44,10 +44,10 @@ export function ConfirmHost(): React.JSX.Element {
     <ConfirmDialog
       confirmLabel={pending?.confirmLabel ?? ''}
       description={pending?.description}
-      onConfirm={() => settle(true)}
+      onConfirm={() => settle(true, pending)}
       onOpenChange={open => {
         if (!open) {
-          settle(false)
+          settle(false, pending)
         }
       }}
       open={pending !== null}

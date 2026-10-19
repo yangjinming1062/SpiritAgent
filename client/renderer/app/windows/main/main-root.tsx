@@ -2,15 +2,12 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
+import { AppContentPage } from '@/app/components/app-content-page'
 import { PresentationModeButton } from '@/app/components/presentation-mode-switch'
 import { CompanionMenu } from '@/app/components/surface-companion/companion-menu'
 import { SurfaceCompanion } from '@/app/components/surface-companion/surface-companion'
-import { CompanionHub } from '@/app/features/companion/companion-page'
 import { ConversationPage } from '@/app/features/conversation/conversation-page'
-import { DiaryPage } from '@/app/features/diary/diary-page'
-import { PostsPage } from '@/app/features/posts/posts-page'
 import { SceneBackdrop } from '@/app/features/scene/scene-backdrop'
-import { AppSettings } from '@/app/features/settings/app-settings'
 import {
   $appNavigationRevision,
   $appNavigationTarget,
@@ -256,10 +253,9 @@ export function MainRoot(): React.JSX.Element {
                 />
               </div>
               <PanelActivityProvider active={active && page !== 'chat'}>
-                {page === 'posts' && <PostsPage containerRef={shellRef} foreground={active} mediaViewId="main-posts" />}
-                {page === 'diary' && <DiaryPage foreground={active} />}
-                {page === 'companion' && <CompanionHub />}
-                {page === 'settings' && <AppSettings />}
+                {page !== 'chat' && (
+                  <AppContentPage containerRef={shellRef} foreground={active} mediaViewId="main-posts" page={page} />
+                )}
               </PanelActivityProvider>
             </main>
           </div>
