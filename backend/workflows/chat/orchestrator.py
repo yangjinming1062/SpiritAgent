@@ -119,7 +119,7 @@ async def compress_session_history(
     memory_scope = conversation_memory_scope(conv, user_id)
     task = conversation_ai_task(conv)
     async with session_scope() as db:
-        effective_settings = merge_session_settings(await load_user_settings(db, user_id), session_settings, conv=conv)
+        effective_settings = merge_session_settings(await load_user_settings(db, user_id), session_settings)
         inputs = await build_turn_inputs(
             db,
             conv,
@@ -298,7 +298,6 @@ async def _run_chat_turn(
                 session_settings
                 if session_settings is not None
                 else safe_json_loads(conv.settings_json or "", default={}),
-                conv=conv,
             )
             # 主动回合在此一次加载历史：既取最近用户发言，也传给 build_turn_inputs 免二次读取。
             history: list[MessageSnapshot] | None = None
@@ -365,7 +364,7 @@ async def _run_chat_turn(
                 inputs.context["input"].append(user_text_item(req.message.content))
             inputs.context["source_message_ids"].extend([None] * (len(inputs.context["input"]) - runtime_item_start))
 
-        inference = resolve_inference_settings(effective_settings, conv=conv)
+        inference = resolve_inference_settings(effective_settings)
         compressed_context = inputs.context
         if (
             not final_reply_only

@@ -12,7 +12,7 @@ from features.accounts.queries import delete_account_record, require_account
 from features.accounts.schemas import UserBackupImportFailure, UserBackupImportResponse
 from features.companion.readiness import persona_is_complete
 from features.configuration.lock import configuration_lock
-from features.conversation.bootstrap import ensure_system_conversations_for_user
+from features.conversation.bootstrap import ensure_main_conversation_for_user
 from features.conversation.identifiers import conversation_ids
 from features.media.chain import spawn_removed_action_task_cancellation
 from features.media.video_queue.service import anonymize_user_video_queue
@@ -181,9 +181,8 @@ async def import_user_backup(
                     mode=mode,
                 )
                 if await persona_is_complete(db, user_id):
-                    await ensure_system_conversations_for_user(db, user_id)
-                else:
-                    await db.commit()
+                    await ensure_main_conversation_for_user(db, user_id, commit=False)
+                await db.commit()
             except (ValueError, OSError) as exc:
                 await db.rollback()
                 if restore_result is not None:

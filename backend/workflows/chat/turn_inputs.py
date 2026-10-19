@@ -11,7 +11,6 @@ from features.configuration.desktop_config import DEFAULT_CONFIG
 from features.configuration.settings.timezone import resolve_user_timezone
 from features.conversation.context_window import CHECKPOINT_SUBTYPE
 from features.conversation.formatting import companion_context_content, message_text
-from features.conversation.main_conversation import SPECIAL_KIND
 from features.conversation.request_contracts import ChatRequest
 from features.conversation.snapshots import ConversationSnapshot, MessageSnapshot
 from features.conversation.turn_access import context_messages, conversation_topic_ids
@@ -46,7 +45,7 @@ from infrastructure.text import (
 )
 from runtime.client_context import ChatRequestClientContext
 from runtime.memory_scope import MemoryScope, MemorySource
-from runtime.presets import COMPANION_PRESET_ID, InferenceDefaults, resolve_preset_meta
+from runtime.presets import COMPANION_PRESET_ID
 from runtime.tools.domains import apply_search_tools_catalog
 from runtime.tools.registry import REGISTRY, schema_name
 from runtime.tools.toolsets import disabled_backend_tool_names
@@ -89,55 +88,37 @@ def memory_query_text(req: ChatRequest, history: Sequence[MessageSnapshot], *, u
     return next((message_text(m) for m in reversed(history) if m.role == "user"), "")
 
 
-def _uses_preset_defaults(conv: ConversationSnapshot) -> bool:
-    return conv.kind == SPECIAL_KIND or (conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None)
+@dataclass(frozen=True)
+class InferenceSettings:
+    temperature: float
+    context_compression_threshold: float
+    reasoning_effort: ReasoningEffort
 
 
-def resolve_inference_settings(settings: dict[str, Any], *, conv: ConversationSnapshot) -> InferenceDefaults:
-    defaults = (
-        resolve_preset_meta(conv.system_preset_id).inference_defaults
-        if _uses_preset_defaults(conv)
-        else InferenceDefaults(
-            DEFAULT_CONFIG["agent"]["temperature"],
-            SETTINGS.context_compression_threshold,
-            DEFAULT_CONFIG["agent"]["reasoning_effort"],
-        )
-    )
+def resolve_inference_settings(settings: dict[str, Any]) -> InferenceSettings:
     reasoning = settings.get("agent.reasoning_effort")
     reasoning = _parse_reasoning_effort(reasoning) if isinstance(reasoning, str) else None
     threshold = parse_temperature(
         settings.get("chat.context_compression_threshold"),
         SETTINGS.context_compression_threshold,
     )
-    return InferenceDefaults(
-        temperature=parse_temperature(settings.get("agent.temperature"), defaults.temperature),
+    return InferenceSettings(
+        temperature=parse_temperature(settings.get("agent.temperature"), DEFAULT_CONFIG["agent"]["temperature"]),
         context_compression_threshold=threshold if threshold >= 0.3 else SETTINGS.context_compression_threshold,
-        reasoning_effort=reasoning or defaults.reasoning_effort,
+        reasoning_effort=reasoning or DEFAULT_CONFIG["agent"]["reasoning_effort"],
     )
 
 
 def merge_session_settings(
     user_settings: dict[str, Any],
     session_settings: dict[str, Any] | None,
-    *,
-    conv: ConversationSnapshot,
 ) -> dict[str, Any]:
-    """固定会话与陪伴用户会话使用预设默认值，其余继承全局设置；最后合并会话覆盖。"""
-    isolated = _uses_preset_defaults(conv)
-    merged = {
-        key: value for key, value in user_settings.items() if not isolated or not key.startswith(("agent.", "chat."))
-    }
-    if isolated:
-        merged.update(
-            {
-                f"chat.{key}": value
-                for key, value in DEFAULT_CONFIG["chat"].items()
-                if key not in {"enable_context_compression", "context_compression_threshold"}
-            },
-        )
+    """所有会话继承用户全局设置，最后合并当前会话的显式覆盖。"""
+    merged = dict(user_settings)
     if session_settings:
         for k, v in session_settings.items():
-            merged[SESSION_TO_GLOBAL_KEY_ALIASES[k]] = v
+            if v is not None:
+                merged[SESSION_TO_GLOBAL_KEY_ALIASES[k]] = v
     return merged
 
 
@@ -467,7 +448,7 @@ async def build_turn_inputs(
 
 
 def _parse_reasoning_effort(raw: str | None) -> ReasoningEffort | None:
-    """规范化持久化的 reasoning_effort：``None`` 或集合外的值表示「不传参」，API 拒绝未知值，仅透传枚举成员。"""
+    """规范化持久化的 reasoning_effort；未设置或集合外的值使用通用默认值。"""
     if not raw:
         return None
     raw = raw.strip().lower()

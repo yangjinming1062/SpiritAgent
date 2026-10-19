@@ -8,7 +8,8 @@
 |---|---|
 | [operations.py](operations.py)、[submissions.py](submissions.py)、[history_commands.py](history_commands.py) | HTTP 业务操作、账户受理、提交幂等与历史用例；连接控制留在 entrypoints |
 | [orchestrator.py](orchestrator.py) | `run_chat_turn`：会话互斥、轮数与取消收尾、委派、回退锁定及终态 |
-| [turn_inputs.py](turn_inputs.py) | 会话设置、历史转换、工具集合、资料域和 Token 估算 |
+| [turn_inputs.py](turn_inputs.py) | 所有会话共用的参数继承与解析、历史转换、工具集合、资料域和 Token 估算 |
+| [session_resources.py](session_resources.py) | 会话列表角色名投影与搜索、会话生效参数和账户运行态同步 |
 | [prompt_presets.py](prompt_presets.py)、[prompt_blocks.py](prompt_blocks.py)、[system_prompt.py](system_prompt.py) | 预设体、排除集合、共享块与每次调用前的环境/动作快照 |
 | [streaming.py](streaming.py) | 实际请求、日期与语音/媒体能力、流式和缓冲调用、回复恢复 |
 | [reply_delivery.py](reply_delivery.py)、[bubble.py](bubble.py)、[reply_links.py](reply_links.py) | 回复 schema、语音分句与校验、文本分泡、媒体地址来源 |

@@ -1,11 +1,10 @@
-from runtime.presets import resolve_preset_meta
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.conversation.models import Conversation
 
-# ``SPECIAL_KIND`` 对应系统预设对话：每用户按 ``SYSTEM_PRESET_CATALOG`` 各一条，system_preset_id 标注具体预设；主陪伴会话即 ``system_preset_id='companion'``。
+# 每个用户仅有一条陪伴主会话属于系统对话。
 SPECIAL_KIND = "special"
 STANDARD_KIND = "standard"
 
@@ -20,37 +19,35 @@ MEDIA_STATUS_SUBTYPE: str = "status_media"
 MEDIA_FAILURE_SUBTYPE: str = "status_media_failed"
 
 
-async def get_special_conversation(db: AsyncSession, user_id: int, preset_id: str) -> Conversation | None:
-    """获取用户某一系统预设的特殊对话；preset_id 取自 ``SYSTEM_PRESET_CATALOG``。"""
+async def get_main_conversation(db: AsyncSession, user_id: int) -> Conversation | None:
+    """获取用户唯一的陪伴主会话。"""
     return (
         await db.execute(
             select(Conversation).where(
                 Conversation.user_id == user_id,
                 Conversation.kind == SPECIAL_KIND,
-                Conversation.system_preset_id == preset_id,
+                Conversation.system_preset_id == "companion",
             ),
         )
     ).scalar_one_or_none()
 
 
-async def get_or_create_special_conversation(
+async def get_or_create_main_conversation(
     db: AsyncSession,
     user_id: int,
-    preset_id: str,
     *,
     commit: bool = True,
 ) -> Conversation:
-    """获取或创建系统预设对话；唯一索引与保存点处理竞态。commit=False 时由调用方提交外层事务。"""
-    conv = await get_special_conversation(db, user_id, preset_id)
+    """获取或创建陪伴主会话；唯一索引与保存点处理竞态，commit=False 由调用方提交。"""
+    conv = await get_main_conversation(db, user_id)
     if conv is not None:
         return conv
 
-    preset = resolve_preset_meta(preset_id)
     conv = Conversation(
         user_id=user_id,
         kind=SPECIAL_KIND,
-        system_preset_id=preset_id,
-        title=preset.name,
+        system_preset_id="companion",
+        title="",
         is_deletable=False,
         is_renamable=False,
     )
@@ -59,7 +56,7 @@ async def get_or_create_special_conversation(
             db.add(conv)
             await db.flush()
     except IntegrityError:
-        existing = await get_special_conversation(db, user_id, preset_id)
+        existing = await get_main_conversation(db, user_id)
         if existing is not None:
             return existing
         raise

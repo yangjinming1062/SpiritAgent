@@ -1265,7 +1265,7 @@ def upgrade() -> None:
         unique=True,
         postgresql_where=sa.text("active"),
     )
-    # 每用户每预设最多一条系统预设对话：防 ensure_system_conversations_for_user 并发重复插入。
+    # 系统对话并发创建由唯一索引收敛。
     op.create_index(
         "uq_conversations_user_preset",
         "conversations",

@@ -20,7 +20,7 @@ from features.conversation.edit import replace_user_message
 from features.conversation.fork import fork_conversation_from_message
 from features.conversation.formatting import message_text
 from features.conversation.history import build_session_messages, count_conversation_bubbles
-from features.conversation.main_conversation import CLEARED_STATUS_SUBTYPE, get_or_create_special_conversation
+from features.conversation.main_conversation import CLEARED_STATUS_SUBTYPE, get_or_create_main_conversation
 from features.conversation.models import Conversation, Message
 from features.conversation.replacement import ReplyReplacement, reply_replacement_target
 from features.conversation.reply_audio import cancel_reply_audio
@@ -56,7 +56,7 @@ async def get_conversation(user_id: int, session_id: str) -> ConversationSnapsho
 
 async def ensure_main_conversation(user_id: int) -> ConversationSnapshot:
     async with SESSION_LOCAL() as db:
-        return conversation_snapshot(await get_or_create_special_conversation(db, user_id, "companion"))
+        return conversation_snapshot(await get_or_create_main_conversation(db, user_id))
 
 
 async def create_conversation(user_id: int, preset_id: str) -> ConversationSnapshot:

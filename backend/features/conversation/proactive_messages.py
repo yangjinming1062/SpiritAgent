@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.topics.store import record_topic_usage
 
-from .main_conversation import get_or_create_special_conversation
+from .main_conversation import get_or_create_main_conversation
 from .models import Message
 from .replies import CompanionReply
 from .reply_audio import client_reply_bubbles
@@ -15,7 +15,7 @@ from .reply_media import bind_reply_videos
 
 async def append_companion_message(db: AsyncSession, user_id: int, reply: CompanionReply, content: str) -> None:
     reply.validate_content(content)
-    conversation = await get_or_create_special_conversation(db, user_id, "companion", commit=False)
+    conversation = await get_or_create_main_conversation(db, user_id, commit=False)
     message = Message(
         conversation_id=conversation.id,
         role="assistant",

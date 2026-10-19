@@ -821,7 +821,8 @@ export function Chat({
   }
 
   if (!selected) {
-    const listed = sessions.filter(session => session.id !== mainId)
+    const mainSession = sessions.find(session => session.id === mainId)
+    const listed = sessions.filter(session => session.kind !== 'special')
 
     return (
       <div className="page">
@@ -874,21 +875,24 @@ export function Chat({
           </section>
         ) : null}
         {mainId ? (
-          <button
-            className="companion-chat"
-            disabled={busy}
-            onClick={() => run(() => openSession(mainId))}
-            type="button"
-          >
-            <span className="avatar">✦</span>
-            <span>
-              <strong>我的伙伴</strong>
-              <small>陪伴、灵感，还有日常的每一件小事</small>
-            </span>
-            <span className="chevron">›</span>
-          </button>
+          <section>
+            <h2 className="section-label">系统对话</h2>
+            <button
+              className="companion-chat"
+              disabled={busy}
+              onClick={() => run(() => openSession(mainId))}
+              type="button"
+            >
+              <span className="avatar">✦</span>
+              <span>
+                <strong>{mainSession?.title?.trim() || '我的伙伴'}</strong>
+                <small>陪伴、灵感，还有日常的每一件小事</small>
+              </span>
+              <span className="chevron">›</span>
+            </button>
+          </section>
         ) : null}
-        <h2 className="section-label">最近对话</h2>
+        <h2 className="section-label">普通对话</h2>
         <div className="session-list">
           {listed.map(item => (
             <button
@@ -925,7 +929,8 @@ export function Chat({
     )
   }
 
-  const title = selected === mainId ? '我的伙伴' : sessions.find(item => item.id === selected)?.title || '新的对话'
+  const title =
+    sessions.find(item => item.id === selected)?.title?.trim() || (selected === mainId ? '我的伙伴' : '新的对话')
   const lastReplyMessageId = messages.findLast(item => item.role === 'assistant' || item.role === 'user')?.id
 
   const refreshMessages = () => {

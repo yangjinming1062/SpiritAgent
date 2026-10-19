@@ -10,7 +10,7 @@ from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
 from runtime.conversation import decode_session_settings
 from runtime.events.emit import emit_ws_event
-from runtime.presets import SYSTEM_PRESET_CATALOG, resolve_preset_meta
+from runtime.presets import resolve_preset_meta
 from runtime.turn_ownership import conversation_is_running, conversation_lock
 from sqlalchemy import BigInteger, String, asc, case, cast, desc, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,12 +57,13 @@ def _conversation_to_session_info(
     output_tok: int,
     tool_count: int,
     preview: str | None,
+    companion_name: str | None,
 ) -> DesktopSessionInfo:
     preset = resolve_preset_meta(conv.system_preset_id) if not conv.is_automation else None
     return DesktopSessionInfo(
         id=str(conv.id),
         kind=conv.kind,
-        title=conv.title,
+        title=companion_name if conv.kind == SPECIAL_KIND else conv.title,
         started_at=int(conv.created_at.timestamp() * 1000),
         last_active=int(conv.updated_at.timestamp() * 1000),
         message_count=msg_count,
@@ -95,6 +96,7 @@ async def list_sessions(
     order: Literal["recent", "created", "messages"] = "recent",
     include_subagents: bool = False,
     query: str | None = None,
+    companion_name: str | None = None,
 ) -> DesktopSessionListResponse:
     q = select(Conversation, _preview_subquery).where(Conversation.user_id == user_id)
 
@@ -129,6 +131,10 @@ async def list_sessions(
             .replace("_", f"{SQL_LIKE_ESCAPE_CHAR}_")
         )
         pattern = f"%{escaped}%"
+        display_title = case(
+            (Conversation.kind == SPECIAL_KIND, literal(companion_name, String())),
+            else_=Conversation.title,
+        )
         content_ids = (
             select(Message.conversation_id)
             .join(Conversation, Conversation.id == Message.conversation_id)
@@ -138,7 +144,7 @@ async def list_sessions(
         )
         q = q.where(
             or_(
-                Conversation.title.ilike(pattern, escape=SQL_LIKE_ESCAPE_CHAR),
+                display_title.ilike(pattern, escape=SQL_LIKE_ESCAPE_CHAR),
                 cast(Conversation.id, String).like(pattern, escape=SQL_LIKE_ESCAPE_CHAR),
                 Conversation.id.in_(content_ids),
             ),
@@ -152,28 +158,14 @@ async def list_sessions(
         # 归档视图按归档时间倒序，方便刚归档的先出现；order 参数对归档列表无意义。
         q = q.order_by(desc(Conversation.archived_at))
     else:
-        # 系统预设、手动置顶优先，再按所选字段排序和分页。
+        # 系统对话、手动置顶优先，再按所选字段排序和分页。
         order_col = {
             "recent": desc(Conversation.updated_at),
             "created": desc(Conversation.created_at),
             "messages": desc(func.coalesce(msg_stats.c.msg_count, 0)),
         }[order]
-        preset_rank = case(
-            (
-                Conversation.kind == SPECIAL_KIND,
-                case(
-                    *(
-                        (Conversation.system_preset_id == preset_id, rank)
-                        for rank, preset_id in enumerate(SYSTEM_PRESET_CATALOG)
-                    ),
-                    else_=99,
-                ),
-            ),
-            else_=99,
-        )
         q = q.order_by(
             desc(Conversation.kind == SPECIAL_KIND),
-            preset_rank,
             asc(Conversation.pinned_at.is_(None)),
             desc(Conversation.pinned_at),
             order_col,
@@ -192,6 +184,7 @@ async def list_sessions(
                 output_tok=int(ot or 0),
                 tool_count=int(tc or 0),
                 preview=preview,
+                companion_name=companion_name,
             ),
         )
 

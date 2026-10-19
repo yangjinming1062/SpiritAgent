@@ -40,6 +40,11 @@ def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: 
             raise ValueError("Only summary messages may have a summary boundary")
 
     if table == "conversations":
+        if payload.get("kind") == "special":
+            is_main = payload.get("system_preset_id") == "companion"
+            if not is_main:
+                payload["kind"] = "standard"
+            payload["is_deletable"] = payload["is_renamable"] = not is_main
         payload["parent_id"] = payload["forked_from_id"] = None
         if not isinstance(payload.get("context_after_message_id"), int) or payload["context_after_message_id"] < 0:
             raise ValueError("Invalid conversation context watermark")
@@ -122,7 +127,7 @@ async def restore_conversation_context(
     await db.flush()
 
 
-CONVERSATION_MERGE_CONFLICT_REASON = "固定会话已有历史，或任一侧上下文已清理，无法合并；请取消会话恢复或使用覆盖模式。"
+CONVERSATION_MERGE_CONFLICT_REASON = "系统对话已有历史，或任一侧上下文已清理，无法合并；请取消会话恢复或使用覆盖模式。"
 
 
 async def validate_conversation_merge(db: AsyncSession, existing: Conversation, raw: dict[str, Any]) -> None:
@@ -134,15 +139,15 @@ async def validate_conversation_merge(db: AsyncSession, existing: Conversation, 
         raise ValueError(CONVERSATION_MERGE_CONFLICT_REASON)
 
 
-async def validate_special_merges(db: AsyncSession, user_id: int, rows: list[dict[str, Any]]) -> None:
+async def validate_main_conversation_merge(db: AsyncSession, user_id: int, rows: list[dict[str, Any]]) -> None:
     for raw in rows:
-        if raw.get("kind") != "special" or not raw.get("system_preset_id"):
+        if raw.get("kind") != "special" or raw.get("system_preset_id") != "companion":
             continue
         existing = await db.scalar(
             select(Conversation).where(
                 Conversation.user_id == user_id,
                 Conversation.kind == "special",
-                Conversation.system_preset_id == raw["system_preset_id"],
+                Conversation.system_preset_id == "companion",
             ),
         )
         if existing is not None:
@@ -155,20 +160,20 @@ async def validate_automation_conversation(db: AsyncSession, conversation_id: in
         raise ValueError("Standard job requires an automation conversation")
 
 
-async def _find_special(
+async def _find_main_conversation(
     db: AsyncSession,
     raw: dict[str, Any],
     payload: dict[str, Any],
     context: BackupContext,
 ) -> int | None:
-    if payload.get("kind") != "special" or not payload.get("system_preset_id"):
+    if payload.get("kind") != "special" or payload.get("system_preset_id") != "companion":
         return None
     await db.flush()
     existing = await db.scalar(
         select(Conversation).where(
             Conversation.user_id == context.user_id,
             Conversation.kind == "special",
-            Conversation.system_preset_id == payload["system_preset_id"],
+            Conversation.system_preset_id == "companion",
         ),
     )
     if existing is not None:
@@ -237,7 +242,7 @@ def backup_tables() -> tuple[BackupTable, ...]:
             "conversations",
             Conversation,
             prepare_payload=partial(_prepare, "conversations"),
-            find_existing=_find_special,
+            find_existing=_find_main_conversation,
             after_rows=_lineages,
             custom_delete=_clear,
         ),

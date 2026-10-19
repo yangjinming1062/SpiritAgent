@@ -4,6 +4,7 @@ from typing import Any
 
 from infrastructure.constants import DEFAULT_LANGUAGE
 from infrastructure.text import resolve_language, resolve_prompt_text
+from runtime.events.emit import emit_ws_event
 from runtime.memory_scope import MemoryScope
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +17,7 @@ from features.companion.prompts import PERSONA_FIELD_LABELS, PERSONA_LABELS_TEXT
 from features.companion.query_contracts import PersonaSnapshot
 from features.companion.repository import get_or_create_persona_row
 from features.companion.schemas import OnboardingStateResponse
-from features.conversation.bootstrap import ensure_system_conversations_for_user
+from features.conversation.bootstrap import ensure_main_conversation_for_user
 from features.media.identity_contracts import CharacterCardSnapshot
 from features.media.identity_rendering import render_character_appearance
 from features.memory.memory_bootstrap import read_user_profile, record_user_profile
@@ -177,9 +178,10 @@ async def update_persona(
     persona.definition_json = json.dumps(cleaned, ensure_ascii=False)
     # persona_extras 不缓存：build_system_prompt_extras 运行期按 session language 从 definition_json 实时渲染，避免英语会话拿到 onboarding 烤进去的中文头部。
     persona.is_complete = True
+    session_id = await ensure_main_conversation_for_user(db, persona.user_id, commit=False)
+    if cleaned.get("name") != current_draft.get("name"):
+        emit_ws_event(db, user_id=user_id, event_type="session.list_changed", payload={"session_id": session_id})
     await db.commit()
-    # 每次保存人设都幂等补齐 SYSTEM_PRESET_CATALOG 中缺失的系统预设对话。
-    await ensure_system_conversations_for_user(db, persona.user_id)
     return persona
 
 

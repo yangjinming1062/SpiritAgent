@@ -93,14 +93,19 @@ function findCurrentSession(): SessionInfo | undefined {
   return findSessionInfo(id)
 }
 
-// 固定预设会话按当前界面语言显示预设名，界面语言变化时随之更新。
 export const $currentSessionTitle = computed(
-  [$chatSessionId, $sessions, $archivedSessions, $searchResults, $systemPresets, $locale],
+  [$chatSessionId, $companionSessionId, $sessions, $archivedSessions, $searchResults, $locale],
   () => {
     const info = findCurrentSession()
     const dict = getStrings()
+    const sessionId = $chatSessionId.get()
 
-    return (info && sessionDisplayTitle(dict, info, $systemPresets.get())) || dict.chat.defaultSessionTitle
+    return (
+      (info && sessionDisplayTitle(dict, info)) ||
+      (sessionId && sessionId === $companionSessionId.get()
+        ? dict.conversation.sessionSidebar.systemSessionFallback
+        : dict.chat.defaultSessionTitle)
+    )
   }
 )
 

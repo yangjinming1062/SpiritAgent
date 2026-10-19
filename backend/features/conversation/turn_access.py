@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.conversation.context_window import load_context_messages
 from features.conversation.formatting import message_text
-from features.conversation.main_conversation import get_or_create_special_conversation
+from features.conversation.main_conversation import get_or_create_main_conversation
 from features.conversation.memory_scope import conversation_memory_scope
 from features.conversation.models import Conversation, Message
 from features.conversation.snapshots import ConversationSnapshot, MessageSnapshot
@@ -56,14 +56,13 @@ async def turn_conversation(db: AsyncSession, session_id: str, user_id: int) -> 
     return conversation_snapshot(row) if row is not None else None
 
 
-async def ensure_special_conversation(
+async def ensure_main_conversation(
     db: AsyncSession,
     user_id: int,
-    preset_id: str,
     *,
     commit: bool = True,
 ) -> ConversationSnapshot:
-    row = await get_or_create_special_conversation(db, user_id, preset_id, commit=commit)
+    row = await get_or_create_main_conversation(db, user_id, commit=commit)
     return conversation_snapshot(row)
 
 

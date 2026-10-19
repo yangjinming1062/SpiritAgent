@@ -12,7 +12,7 @@ from features.assets.lifecycle import enqueue_asset_cleanup
 from features.assets.references import collect_live_asset_paths
 from features.companion.backup import advance_scene_versions, cron_source_keys, scene_versions
 from features.configuration.settings.timezone import resolve_user_timezone
-from features.conversation.backup import validate_special_merges
+from features.conversation.backup import validate_main_conversation_merge
 from features.desktop_life.backup import advance_playback_versions, desktop_video_tasks_for_removal, playback_versions
 from features.desktop_life.backup_assets import validate_desktop_files
 from features.media.backup import restore_current_voices
@@ -297,7 +297,7 @@ async def _preflight_tables(
     conversation_merge_conflict: str | None = None
     if mode == "merge":
         try:
-            await validate_special_merges(db, target_user_id, rows.get("conversations", []))
+            await validate_main_conversation_merge(db, target_user_id, rows.get("conversations", []))
             await validate_batch_merges(db, target_user_id, rows)
         except ValueError as exc:
             conversation_merge_conflict = str(exc)

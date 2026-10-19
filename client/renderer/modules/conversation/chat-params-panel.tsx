@@ -706,13 +706,13 @@ export function ChatParamsPanel({
         </div>
       )}
 
-      <div className="flex items-center justify-between border-t border-line-hairline pt-2 text-[10px]">
-        <span className="text-faint flex items-center gap-1.5 select-none" title={params.scopeNoteTitle}>
-          <span className="size-1.5 rounded-full bg-accent" />
+      <div className="flex items-center justify-between gap-2 border-t border-line-hairline pt-2 text-[10px]">
+        <span className="min-w-0 flex-1 text-faint flex items-center gap-1.5 select-none" title={params.scopeNoteTitle}>
+          <span className="size-1.5 shrink-0 rounded-full bg-accent" />
           <span>{params.scopeNote}</span>
         </span>
         <button
-          className="flex items-center gap-1 text-[11px] text-muted hover:text-strong transition cursor-pointer"
+          className="flex shrink-0 items-center gap-1 text-[11px] text-muted hover:text-strong transition cursor-pointer"
           disabled={!canEdit}
           onClick={handleResetDefaults}
           title={params.resetButtonTitle}

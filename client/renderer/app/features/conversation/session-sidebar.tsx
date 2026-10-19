@@ -63,8 +63,6 @@ import type { SessionInfo } from '@protocol'
 import { useConversationStrings } from './conversation-strings'
 import { presetIcon, PresetPickerModal } from './preset-picker-modal'
 
-const SPECIAL_PRESET_ORDER = ['copywriter', 'language_teacher']
-
 function buildSortOptions(
   t: ReturnType<typeof useStrings>['conversation']['sessionSidebar']
 ): { icon: IconComponent; label: string; value: SessionSort }[] {
@@ -103,10 +101,12 @@ function formatSessionTime(
 }
 
 export function SessionSidebar({
+  companionSessionId,
   companionUnread = false,
   headerAction,
   onSessionSelected
 }: {
+  companionSessionId: string | null
   companionUnread?: boolean
   headerAction?: React.ReactNode
   onSessionSelected?: () => void
@@ -190,24 +190,10 @@ export function SessionSidebar({
     onSessionSelected?.()
   }
 
-  // 固定对话只看 kind（PROTOCOL「会话种类与历史修改」）：普通会话与派生会话同样带预设，不能据此归入固定分组。
-  const isSpecialSession = (s: SessionInfo): boolean => s.kind === 'special'
-
-  const companionSessions = sessions.filter(s => isSpecialSession(s) && isCompanionSession(s))
-
-  const specialSessions = sessions
-    .filter(s => isSpecialSession(s) && !isCompanionSession(s))
-    .sort((a, b) => {
-      const aIdx = a.system_preset_id ? SPECIAL_PRESET_ORDER.indexOf(a.system_preset_id) : 99
-      const bIdx = b.system_preset_id ? SPECIAL_PRESET_ORDER.indexOf(b.system_preset_id) : 99
-
-      return (aIdx < 0 ? 99 : aIdx) - (bIdx < 0 ? 99 : bIdx)
-    })
-
-  // 用户常规会话（支持置顶与非置顶）
-  const regularSessions = sessions.filter(s => !isSpecialSession(s))
-  const pinnedRegularSessions = regularSessions.filter(s => s.pinned)
-  const unpinnedRegularSessions = regularSessions.filter(s => !s.pinned)
+  const systemSessions = sessions.filter(s => s.kind === 'special')
+  const ordinarySessions = sessions.filter(s => s.kind !== 'special')
+  const pinnedOrdinarySessions = ordinarySessions.filter(s => s.pinned)
+  const unpinnedOrdinarySessions = ordinarySessions.filter(s => !s.pinned)
 
   return (
     <aside className="flex h-full w-full min-h-0 flex-col overflow-hidden text-xs">
@@ -289,80 +275,63 @@ export function SessionSidebar({
                   key={s.id}
                   onSwitch={handleSelect}
                   session={s}
-                  unread={companionUnread && isCompanionSession(s)}
+                  unread={companionUnread && s.id === companionSessionId}
                 />
               ))
             )}
           </div>
         ) : (
           <>
-            {companionSessions.length > 0 && (
-              <div>
-                <div className="mb-1.5 px-1.5 text-[11px] font-semibold text-muted">
-                  {conversationStrings.companion}
-                </div>
-                {companionSessions.map(session => (
-                  <SessionRow
-                    isActive={session.id === activeSessionId}
-                    key={session.id}
-                    onSwitch={handleSelect}
-                    session={session}
-                    unread={companionUnread}
-                  />
-                ))}
-              </div>
-            )}
             <div>
               <div className="mb-1.5 flex items-center justify-between px-1.5 text-[11px] font-semibold text-muted tracking-wider">
-                <span>{t.fixedHeading}</span>
+                <span>{t.systemHeading}</span>
                 <span className="rounded bg-fill-faint px-1 py-0.2 text-[10px] text-muted">
-                  {specialSessions.length}
+                  {systemSessions.length}
                 </span>
               </div>
-              {loading && specialSessions.length === 0 ? (
-                <div className="py-3 text-center text-[11px] text-muted">{t.loadingSpecial}</div>
-              ) : specialSessions.length === 0 ? (
+              {loading && systemSessions.length === 0 ? (
+                <div className="py-3 text-center text-[11px] text-muted">{t.loadingSystem}</div>
+              ) : systemSessions.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-line-hairline p-3 text-center text-[11px] text-muted">
-                  {t.noSpecial}
+                  {t.noSystem}
                 </div>
               ) : (
                 <div className="space-y-0.5">
-                  {specialSessions.map(s => (
+                  {systemSessions.map(s => (
                     <SessionRow
                       isActive={s.id === activeSessionId}
                       key={s.id}
                       onSwitch={handleSelect}
                       session={s}
-                      unread={companionUnread && isCompanionSession(s)}
+                      unread={companionUnread && s.id === companionSessionId}
                     />
                   ))}
                 </div>
               )}
             </div>
 
-            {/* 常规对话：用户自建与置顶会话 */}
             <div className="pt-1">
               <div className="mb-1.5 flex items-center justify-between px-1.5 text-[11px] font-semibold text-muted tracking-wider">
-                <span>{t.regularHeading}</span>
-                {regularSessions.length > 0 && (
+                <span>{t.ordinaryHeading}</span>
+                {ordinarySessions.length > 0 && (
                   <span className="rounded bg-fill-faint px-1 py-0.2 text-[10px] text-muted">
-                    {regularSessions.length}
+                    {ordinarySessions.length}
                   </span>
                 )}
               </div>
 
               {loading && sessions.length === 0 ? (
                 <div className="py-4 text-center text-muted">{t.loadingSessions}</div>
-              ) : pinnedRegularSessions.length === 0 && unpinnedRegularSessions.length === 0 ? (
+              ) : pinnedOrdinarySessions.length === 0 && unpinnedOrdinarySessions.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-line-hairline p-4 text-center text-muted">
-                  {t.noRegular}
+                  {t.noOrdinary}
                 </div>
               ) : (
                 <div className="space-y-0.5">
-                  {pinnedRegularSessions.length > 0 && (
+                  {pinnedOrdinarySessions.length > 0 && (
                     <div className="px-1.5 pt-1 text-[11px] font-semibold text-muted">{conversationStrings.pinned}</div>
                   )}
-                  {pinnedRegularSessions.map(s => (
+                  {pinnedOrdinarySessions.map(s => (
                     <SessionRow
                       actions={
                         <>
@@ -390,13 +359,13 @@ export function SessionSidebar({
                       session={s}
                     />
                   ))}
-                  {pinnedRegularSessions.length > 0 && unpinnedRegularSessions.length > 0 && (
+                  {pinnedOrdinarySessions.length > 0 && unpinnedOrdinarySessions.length > 0 && (
                     <div className="my-1 border-t border-line-hairline opacity-40" />
                   )}
-                  {unpinnedRegularSessions.length > 0 && (
+                  {unpinnedOrdinarySessions.length > 0 && (
                     <div className="px-1.5 pt-1 text-[11px] font-semibold text-muted">{conversationStrings.recent}</div>
                   )}
-                  {unpinnedRegularSessions.map(s => (
+                  {unpinnedOrdinarySessions.map(s => (
                     <SessionRow
                       actions={
                         <>
@@ -503,17 +472,13 @@ function SessionRow({
   const pendingBatch = useStore(runtime.$pendingPromptBatch)
   const running = turnInFlight || pendingBatch.length > 0
   const unread = companionUnread || pending.some(message => message.sessionId === session.id)
-  const presets = useStore($systemPresets)
   const dict = useStrings()
   const tSidebar = dict.conversation.sessionSidebar
   const conversationStrings = useConversationStrings()
 
   useEffect(() => retainConversationRuntime(runtime), [runtime])
 
-  // 固定预设会话在任何列表里都显示当前界面语言的预设名（含搜索结果）。
-  const title =
-    sessionDisplayTitle(dict, session, presets) ??
-    (special ? tSidebar.specialStationFallback : tSidebar.newSessionFallback)
+  const title = sessionDisplayTitle(dict, session) ?? tSidebar.newSessionFallback
 
   const timeStr = formatSessionTime(session.last_active || session.started_at, tSidebar.time)
   const msgCount = session.message_count ?? 0

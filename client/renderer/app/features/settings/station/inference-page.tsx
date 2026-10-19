@@ -9,7 +9,6 @@ import { resolveReasoningEffort } from '@/shared/lib/reasoning-effort'
 import { requestResource } from '@/shared/lib/resource-request'
 import { BTN_SUBTLE, EmptyState, HINT_TEXT, LoadingBlock, SettingsSectionIntro } from '@/shared/panel'
 import { getSpiritAgentConfig, saveSpiritAgentConfig } from '@/shared/spiritagent'
-import { $gateway } from '@/shared/store/gateway'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import type { SpiritAgentConfigResponse } from '@protocol'
@@ -99,7 +98,6 @@ export function InferencePage(): React.JSX.Element {
       return
     }
 
-    const gateway = $gateway.get()
     const sessionId = $chatSessionId.get()
     const runtime = getConversationRuntime(sessionId)
     const visibleSettings = runtime.$sessionSettings.get()
@@ -113,24 +111,23 @@ export function InferencePage(): React.JSX.Element {
       reset(config)
     }
 
-    if (gateway?.connectionState === 'open' && $gateway.get() === gateway && sessionId) {
-      void requestResource('sessions.get_session', { path: { session_id: sessionId } })
-        .then(result => {
-          if (
-            isCurrent() &&
-            $gateway.get() === gateway &&
-            runtime.isCurrent() &&
-            $chatSessionId.get() === sessionId &&
-            runtime.$sessionSettings.get() === visibleSettings
-          ) {
-            runtime.hydrateSessionInfo(result.info)
-          }
-        })
-        .catch(error => {
-          if (isCurrent() && $gateway.get() === gateway) {
-            notifyError(error, t.chat.params.saveFailed)
-          }
-        })
+    if (sessionId) {
+      try {
+        const result = await requestResource('sessions.get_session', { path: { session_id: sessionId } })
+
+        if (
+          isCurrent() &&
+          runtime.isCurrent() &&
+          $chatSessionId.get() === sessionId &&
+          runtime.$sessionSettings.get() === visibleSettings
+        ) {
+          runtime.hydrateSessionInfo(result.info)
+        }
+      } catch (error) {
+        if (isCurrent()) {
+          notifyError(error, t.chat.params.saveFailed)
+        }
+      }
     }
   }
 

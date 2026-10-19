@@ -42,7 +42,7 @@ from runtime.conversation import SessionCreateResult
 from runtime.desktop.connection import UserEventPublisher
 from runtime.presets import SYSTEM_PRESET_CATALOG
 from workflows.chat.operations import chat_operations
-from workflows.chat.session_resources import patch_session_resource, session_resource
+from workflows.chat.session_resources import list_session_resources, patch_session_resource, session_resource
 
 from entrypoints.http.auth import CurrentActor, CurrentUser
 from entrypoints.http.rate_limit import limiter
@@ -171,7 +171,7 @@ async def list_sessions(
     include_subagents: bool = False,
     q: str | None = Query(default=None, max_length=512, pattern=r"^[^\x00]*$"),
 ) -> DesktopSessionListResponse:
-    return await session_management.list_sessions(
+    return await list_session_resources(
         user.id,
         db,
         limit=limit,

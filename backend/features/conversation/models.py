@@ -24,6 +24,7 @@ class Conversation(ModelBase, TimestampMixin):
     __table_args__ = (
         CheckConstraint("context_after_message_id >= 0", name="ck_conversations_context_watermark"),
         CheckConstraint("is_automation = (system_preset_id = 'automation')", name="ck_conversations_automation_preset"),
+        CheckConstraint("kind != 'special' OR system_preset_id = 'companion'", name="ck_conversations_main_preset"),
         Index(
             "uq_conversations_user_preset",
             "user_id",
@@ -46,7 +47,7 @@ class Conversation(ModelBase, TimestampMixin):
         nullable=True,
         index=True,
     )
-    # special=系统预设（system_preset_id 区分）/ standard=用户创建或任务型 Cron。
+    # special=唯一陪伴主会话；standard=用户创建或任务型 Cron。
     kind: Mapped[str] = mapped_column(String(32), default="standard", server_default=text("'standard'"))
     system_preset_id: Mapped[str] = mapped_column(String(32), index=True)
     memory_reviewed_message_id: Mapped[int] = mapped_column(Integer, default=0, server_default="0")

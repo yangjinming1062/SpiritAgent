@@ -403,20 +403,19 @@ export const dict: Dictionary = {
     inference: {
       heading: 'Inference & chat',
       intro:
-        'Configure defaults for ordinary conversations only. Each fixed conversation has scenario defaults and is configured within its own conversation window. Changes are saved automatically.',
+        'Configure default parameters, reasoning depth, and context compression for all conversations without their own settings. Changes are saved automatically.',
       loading: 'Loading…',
       saveFailed: 'Could not save inference & chat settings.',
       saved: 'Inference & chat settings saved.',
       loadFailed: "Couldn't load inference & chat settings",
       agentDefaults: {
         heading: 'Agent defaults',
-        intro: 'Applies to ordinary conversations without session overrides. Does not affect fixed conversations.',
+        intro: 'Applies to all conversations without their own parameter overrides.',
         reasoningEffort: 'Reasoning depth',
         reasoningEffortDesc:
           "How hard the model reasons each turn. Off disables reasoning; Minimal through Ultra go progressively deeper. Above the provider's ceiling, its highest supported level is used.",
         backgroundReview: 'Background memory consolidation',
-        backgroundReviewDesc:
-          'Extracts memories from ordinary conversations without changing memory consolidation in fixed conversations.',
+        backgroundReviewDesc: 'Extracts memories from conversation history in both system and ordinary conversations.',
         reasoningOptions: {
           none: 'Off',
           minimal: 'Minimal',
@@ -444,7 +443,7 @@ export const dict: Dictionary = {
           "Controls randomness and creativity in different scenarios. The UI uses a unified 0–1 scale; requests are auto-mapped to the provider's native range.",
         chatTemperature: 'Default conversation temperature',
         chatTemperatureDesc:
-          'Default generation temperature for ordinary conversations. Lower values are more deterministic, higher values more creative.',
+          'Default generation temperature for all conversations without their own override. Lower values are more deterministic, higher values more creative.',
         titleTemperature: 'Title generation temperature',
         titleTemperatureDesc:
           'Temperature for auto-generating session titles from the first turn. Keep low for accurate summarisation.',
@@ -1023,12 +1022,12 @@ export const dict: Dictionary = {
         'When context reaches the chosen ratio, older history is automatically summarised in the background to free up space and keep the conversation coherent.',
 
       saveFailed: 'Could not save session parameters. Please try again.',
-      resetConfirm: 'Session parameters reset to defaults',
+      resetConfirm: 'This conversation now follows global settings',
       compressSuccessMore: (count: number) => `Successfully tidied and compressed ${count} earlier messages`,
       compressNotNeeded: 'Not much history to compress yet',
 
       sessionScopeBadge: 'Current session',
-      sessionScopeBadgeTitle: 'Changes here apply only to this session — global defaults are not affected',
+      sessionScopeBadgeTitle: 'Overrides apply to this conversation. Reset to defaults to follow global settings.',
       closePanel: 'Close panel',
 
       statsUsed: 'Used',
@@ -1061,9 +1060,9 @@ export const dict: Dictionary = {
       reasoningLabel: 'Reasoning depth',
       reasoningFallbackLabel: 'Off',
 
-      scopeNote: 'Applies to this session only · auto-saved',
-      scopeNoteTitle: 'These settings apply to this session and are saved automatically',
-      resetButtonTitle: 'Reset this session parameters to defaults',
+      scopeNote: 'Overrides this conversation. Reset to follow global settings.',
+      scopeNoteTitle: 'Overrides apply to this conversation. Reset to defaults to follow global settings.',
+      resetButtonTitle: 'Clear this conversation’s overrides and follow global settings',
       resetButton: 'Reset to defaults'
     },
 
@@ -1082,7 +1081,7 @@ export const dict: Dictionary = {
       inputLabel: 'Conversation name',
       placeholder: 'Enter a name',
       hint: 'Enter to save · Esc to cancel',
-      forbidden: 'Fixed conversations cannot be renamed',
+      forbidden: 'System conversations cannot be renamed',
       failed: 'Rename failed, restored previous name'
     }
   },
@@ -1454,14 +1453,13 @@ export const dict: Dictionary = {
       searching: 'Searching…',
       noMatch: 'No matching conversations',
       badgeArchived: 'Archived',
-      fixedHeading: 'Fixed conversations',
-      specialHeading: 'Everyday assistance',
-      loadingSpecial: 'Loading preset conversations…',
-      noSpecial: 'No everyday assistance conversations',
-      regularHeading: 'Regular conversations',
+      systemHeading: 'System conversations',
+      loadingSystem: 'Loading system conversations…',
+      noSystem: 'No system conversations',
+      ordinaryHeading: 'Ordinary conversations',
       loadingSessions: 'Loading conversations…',
-      noRegular: 'No regular conversations yet — tap above to create one',
-      specialStationFallback: 'Everyday assistance',
+      noOrdinary: 'No ordinary conversations yet — tap above to create one',
+      systemSessionFallback: 'My companion',
       newSessionFallback: 'New conversation',
       messageCount: (n: number) => `${n} messages`,
       sortOptions: {

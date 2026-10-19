@@ -3,7 +3,6 @@ import type React from 'react'
 import { type RefObject, useEffect, useId, useRef, useState } from 'react'
 
 import { RunRail } from '@/app/features/execution/run-rail'
-import { $persona } from '@/modules/character'
 import {
   $chatSessionId,
   $currentSessionTitle,
@@ -61,7 +60,6 @@ export function ConversationPage({
 }: ConversationPageProps): React.JSX.Element {
   const sessionId = useStore($chatSessionId)
   const runtime = getConversationRuntime(sessionId)
-  const sessionKind = useStore(runtime.$chatSessionKind)
   const sessionPresetId = useStore(runtime.$chatSessionPresetId)
   const collapsed = useStore(sidebarCollapsed.$atom)
   const [narrow, setNarrow] = useState(false)
@@ -127,7 +125,6 @@ export function ConversationPage({
   })
 
   const companion = sessionPresetId === 'companion'
-  const fixedCompanion = companion && sessionKind === 'special' && sessionId === companionSessionId
 
   return (
     <PanelActivityProvider active={active && visible && foreground}>
@@ -156,6 +153,7 @@ export function ConversationPage({
               role={narrow ? 'dialog' : undefined}
             >
               <SessionSidebar
+                companionSessionId={companionSessionId}
                 companionUnread={companionUnread}
                 headerAction={
                   <button
@@ -188,7 +186,6 @@ export function ConversationPage({
         >
           <MainChat
             companion={companion}
-            fixedCompanion={fixedCompanion}
             headingActions={
               <button
                 aria-controls={sidebarId}
@@ -235,13 +232,11 @@ export function ConversationPage({
 
 function MainChat({
   companion,
-  fixedCompanion,
   headingActions,
   railAction,
   reveal
 }: {
   companion: boolean
-  fixedCompanion: boolean
   headingActions: React.ReactNode
   railAction: React.ReactNode
   reveal?: { key: string; request: number }
@@ -251,7 +246,6 @@ function MainChat({
   usePendingConversationFeed()
   const navigationError = useStore($sessionNavigationError)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const persona = useStore($persona)
   const title = useStore($currentSessionTitle)
   const sessionId = useStore($chatSessionId)
   const presets = useStore($systemPresets)
@@ -270,7 +264,7 @@ function MainChat({
         <div className={styles.heading}>
           {headingActions}
           <div className={styles.identity}>
-            <strong>{fixedCompanion ? persona?.name || title : title}</strong>
+            <strong>{title}</strong>
             <span>
               {readOnly ? t.readOnly : preset ? presetDisplayName(dict, preset) : companion ? t.companion : t.assistant}
             </span>

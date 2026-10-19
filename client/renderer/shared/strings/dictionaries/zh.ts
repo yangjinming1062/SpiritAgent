@@ -390,20 +390,19 @@ export const dict = {
     },
     inference: {
       heading: '推理与对话',
-      intro:
-        '仅配置普通对话的默认参数、思考深度与上下文压缩策略。每个固定对话使用独立场景默认值，并在其会话窗口内修改；设置修改后会自动保存。',
+      intro: '配置所有未单独设置的对话所用的默认参数、思考深度与上下文压缩策略，修改后自动保存。',
       loading: '加载中…',
       saveFailed: '无法保存推理与对话设置。',
       saved: '推理与对话设置已保存。',
       loadFailed: '推理与对话设置加载失败',
       agentDefaults: {
         heading: '智能体默认',
-        intro: '适用于未单独设置参数的普通对话；不影响任何固定对话。',
+        intro: '适用于所有未单独设置参数的对话。',
         reasoningEffort: '推理深度',
         reasoningEffortDesc:
           '模型每轮推理的强度。「关闭」不推理，从「极简」到「终极」逐级加深；超出供应商上限时自动使用其最高支持档。',
         backgroundReview: '后台记忆整理',
-        backgroundReviewDesc: '异步从普通对话历史中抽取记忆，不控制固定对话的记忆整理。',
+        backgroundReviewDesc: '异步从对话历史中抽取记忆，适用于系统对话和普通对话。',
         reasoningOptions: {
           none: '关闭',
           minimal: '极简',
@@ -427,8 +426,8 @@ export const dict = {
         heading: '模型温度',
         intro:
           '控制不同场景下的模型输出随机性与创造力。界面统一使用 0–1 刻度，发起请求时会自动映射到当前供应商的实际范围。',
-        chatTemperature: '普通对话默认温度',
-        chatTemperatureDesc: '普通对话的默认生成温度。较低的值更严谨稳定，较高的值更发散有创意。',
+        chatTemperature: '对话默认温度',
+        chatTemperatureDesc: '所有未单独设置的对话所用的生成温度。较低的值更严谨稳定，较高的值更发散有创意。',
         titleTemperature: '标题生成温度',
         titleTemperatureDesc: '根据首轮对话自动生成会话标题的温度。建议保持较低以保证概括准确性。',
         compressionTemperature: '上下文压缩温度',
@@ -968,12 +967,12 @@ export const dict = {
       thresholdSliderDescription: '当会话上下文达到设定比例时，后台自动总结早期历史，释放空间并保持对话连贯。',
 
       saveFailed: '会话参数保存失败，请重试。',
-      resetConfirm: '已恢复当前会话参数为默认配置',
+      resetConfirm: '当前对话已恢复跟随全局设置',
       compressSuccessMore: (count: number) => `已成功整理并压缩 ${count} 条历史会话`,
       compressNotNeeded: '当前历史消息较少，暂无需压缩',
 
       sessionScopeBadge: '当前会话',
-      sessionScopeBadgeTitle: '此面板修改仅保存在当前会话中，独立生效，不会改变全局默认配置',
+      sessionScopeBadgeTitle: '仅覆盖当前对话的参数，恢复默认后跟随全局设置',
       closePanel: '关闭面板',
 
       statsUsed: '当前已用',
@@ -1006,9 +1005,9 @@ export const dict = {
       reasoningLabel: '思考推理深度',
       reasoningFallbackLabel: '关闭',
 
-      scopeNote: '仅对当前会话生效 · 自动保存',
-      scopeNoteTitle: '此配置仅对当前会话生效，自动持久化保存',
-      resetButtonTitle: '将当前会话的对话参数重置为默认配置',
+      scopeNote: '仅覆盖当前对话；恢复默认后跟随全局',
+      scopeNoteTitle: '仅覆盖当前对话的参数，恢复默认后跟随全局设置',
+      resetButtonTitle: '清除当前对话的参数覆盖，重新跟随全局设置',
       resetButton: '恢复默认'
     },
 
@@ -1026,7 +1025,7 @@ export const dict = {
       inputLabel: '对话名称',
       placeholder: '输入对话名称',
       hint: 'Enter 保存 · Esc 取消',
-      forbidden: '固定对话不能改名',
+      forbidden: '系统对话不能改名',
       failed: '改名失败，已恢复原名称'
     }
   },
@@ -1370,14 +1369,13 @@ export const dict = {
       searching: '搜索中…',
       noMatch: '没有找到匹配会话',
       badgeArchived: '已归档',
-      fixedHeading: '固定对话',
-      specialHeading: '日常辅助',
-      loadingSpecial: '加载预设会话中…',
-      noSpecial: '暂无日常辅助会话',
-      regularHeading: '常规对话',
+      systemHeading: '系统对话',
+      loadingSystem: '加载系统对话中…',
+      noSystem: '暂无系统对话',
+      ordinaryHeading: '普通对话',
       loadingSessions: '加载会话中…',
-      noRegular: '暂无常规对话，点击上方新建',
-      specialStationFallback: '日常辅助',
+      noOrdinary: '暂无普通对话，点击上方新建',
+      systemSessionFallback: '我的伙伴',
       newSessionFallback: '新对话',
       messageCount: (n: number) => `${n} 条消息`,
       sortOptions: {
