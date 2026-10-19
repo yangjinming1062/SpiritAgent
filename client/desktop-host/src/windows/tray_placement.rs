@@ -32,10 +32,7 @@ impl RestoreTrayPlacement {
     pub(super) fn validate(&self, journal: &Journal) -> Result<()> {
         if !self.bounds.valid() || self.monitor != journal.desktop_bounds
             || self.dpi.is_some_and(|dpi| !(48..=960).contains(&dpi))
-            || !journal.shell.iter().any(|identity| {
-            identity.handle == self.identity.handle && identity.pid == self.identity.pid
-                && identity.created == self.identity.created && identity.class == self.identity.class
-        }) {
+            || !journal.shell.iter().any(|identity| identity.same_window(&self.identity)) {
             return Err("invalid system tray recovery placement".into());
         }
         Ok(())

@@ -1252,11 +1252,29 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
           throw new Error('Previous desktop recovery helper has not stopped')
         }
 
-        if (input.parentPid !== process.pid || input.windows.length < 1 || input.windows.length > 32) {
-          throw new Error('Desktop host requires the current Electron process and 1–32 windows')
+        if (
+          input.parentPid !== process.pid ||
+          input.windows.length !== 2 ||
+          input.windows.filter(window => window.role === 'background').length !== 1 ||
+          input.windows.filter(window => window.role === 'overlay').length !== 1
+        ) {
+          throw new Error('Desktop host requires the current Electron process, one background and one overlay')
         }
 
         const windows = input.windows.map(encodeWindow)
+
+        if (
+          windows.some(
+            window =>
+              window.bounds.x !== windows[0].bounds.x ||
+              window.bounds.y !== windows[0].bounds.y ||
+              window.bounds.width !== windows[0].bounds.width ||
+              window.bounds.height !== windows[0].bounds.height
+          )
+        ) {
+          throw new Error('Desktop windows must share the interaction display')
+        }
+
         state = 'starting'
         failureReported = false
         applicationBatch = null

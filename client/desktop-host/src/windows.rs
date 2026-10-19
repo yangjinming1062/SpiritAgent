@@ -192,12 +192,7 @@ fn stop_matching_host(journal: &Journal) -> Result<()> {
     if created(host.0)? != journal.host_created {
         return Err("restoration host process identity changed".into());
     }
-    let mut image = [0u16; 32_768];
-    let mut length = image.len() as u32;
-    if unsafe { QueryFullProcessImageNameW(host.0, 0, image.as_mut_ptr(), &mut length) } == 0 {
-        return Err(failure("restoration host executable identity"));
-    }
-    let image = fs::canonicalize(String::from_utf16_lossy(&image[..length as usize]))
+    let image = fs::canonicalize(process_image(host.0)?)
         .map_err(|error| format!("resolve restoration host executable: {error}"))?;
     let own_image = fs::canonicalize(std::env::current_exe().map_err(|error| error.to_string())?)
         .map_err(|error| format!("resolve guardian executable: {error}"))?;
@@ -240,6 +235,15 @@ fn created(handle: HANDLE) -> Result<u64> {
     Ok((u64::from(birth.dwHighDateTime) << 32) | u64::from(birth.dwLowDateTime))
 }
 
+fn process_image(handle: HANDLE) -> Result<String> {
+    let mut buffer = [0u16; 32_768];
+    let mut length = buffer.len() as u32;
+    if unsafe { QueryFullProcessImageNameW(handle, 0, buffer.as_mut_ptr(), &mut length) } == 0 {
+        return Err(failure("QueryFullProcessImageNameW"));
+    }
+    Ok(String::from_utf16_lossy(&buffer[..length as usize]))
+}
+
 fn parent(pid: u32) -> Result<u32> {
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
     if snapshot == INVALID_HANDLE_VALUE {
@@ -280,12 +284,7 @@ pub fn allow_foreground(parent_pid: u32, host_pid: u32) -> Result<()> {
     {
         return Err("foreground authorization process ownership changed".into());
     }
-    let mut image = [0u16; 32_768];
-    let mut length = image.len() as u32;
-    if unsafe { QueryFullProcessImageNameW(host_owner.0, 0, image.as_mut_ptr(), &mut length) } == 0 {
-        return Err(failure("foreground host executable identity"));
-    }
-    let host_image = fs::canonicalize(String::from_utf16_lossy(&image[..length as usize]))
+    let host_image = fs::canonicalize(process_image(host_owner.0)?)
         .map_err(|error| format!("resolve foreground host executable: {error}"))?;
     let own_image = fs::canonicalize(std::env::current_exe().map_err(|error| error.to_string())?)
         .map_err(|error| format!("resolve foreground grantor executable: {error}"))?;
@@ -328,16 +327,30 @@ fn window_pid(window: HWND) -> u32 {
 }
 
 fn process_named(pid: u32, names: &[&str]) -> bool {
-    let Ok(owner) = process(pid) else {
-        return false;
-    };
-    let mut path = [0u16; 32_768];
-    let mut length = path.len() as u32;
-    (unsafe { QueryFullProcessImageNameW(owner.0, 0, path.as_mut_ptr(), &mut length) }) != 0
-        && String::from_utf16_lossy(&path[..length as usize])
-            .rsplit(['\\', '/'])
-            .next()
-            .is_some_and(|name| names.iter().any(|expected| name.eq_ignore_ascii_case(expected)))
+    process(pid)
+        .and_then(|owner| process_image(owner.0))
+        .is_ok_and(|path| {
+            path.rsplit(['\\', '/'])
+                .next()
+                .is_some_and(|name| names.iter().any(|expected| name.eq_ignore_ascii_case(expected)))
+        })
+}
+
+fn normalize_target(value: &str) -> String {
+    value.replace('/', "\\").to_lowercase()
+}
+
+fn owned_by(mut window: HWND, owner: HWND) -> bool {
+    for _ in 0..32 {
+        if window == owner {
+            return true;
+        }
+        if window.is_null() {
+            return false;
+        }
+        window = unsafe { GetWindow(window, GW_OWNER) };
+    }
+    false
 }
 
 fn is_explorer(pid: u32) -> bool {
@@ -376,6 +389,13 @@ struct Identity {
 }
 
 impl Identity {
+    fn same_window(&self, other: &Self) -> bool {
+        self.handle == other.handle
+            && self.pid == other.pid
+            && self.created == other.created
+            && self.class == other.class
+    }
+
     fn capture(window: HWND) -> Result<Self> {
         if unsafe { IsWindow(window) } == 0 {
             return Err("invalid window handle".into());
@@ -538,12 +558,7 @@ fn validate_journal(journal: &Journal) -> Result<()> {
                 .shell
                 .iter()
                 .chain(journal.windows.iter().map(|window| &window.identity))
-                .any(|identity| {
-                    identity.handle == saved.identity.handle
-                        && identity.pid == saved.identity.pid
-                        && identity.created == saved.identity.created
-                        && identity.class == saved.identity.class
-                })
+                .any(|identity| identity.same_window(&saved.identity))
         {
             return Err("invalid recovery region ownership".into());
         }
@@ -579,6 +594,24 @@ fn validate_journal(journal: &Journal) -> Result<()> {
 }
 
 impl Journal {
+    fn capture_shell(&mut self, identity: Identity) -> Result<()> {
+        let placement = RestoreTrayPlacement::capture(&identity, self.desktop_bounds)?;
+        let region = SavedRegion::capture(&identity)?;
+        self.tray_placements.push(placement);
+        self.regions.push(region);
+        self.shell.push(identity);
+        Ok(())
+    }
+
+    fn restore_region(&self, saved: &SavedRegion) -> Result<()> {
+        match self.tray_placements.iter().find(|placement| {
+            placement.identity.same_window(&saved.identity)
+        }) {
+            Some(placement) => saved.restore_resized(placement.bounds),
+            None => saved.restore(),
+        }
+    }
+
     fn save(&self, path: &Path) -> Result<()> {
         validate_journal(self)?;
         let bytes = serde_json::to_vec(self).map_err(|error| error.to_string())?;
@@ -859,7 +892,7 @@ fn attach(saved: &RestoreWindow, layers: &DesktopLayers, bounds: Bounds) -> Resu
         return Err("desktop attachment window identity changed".into());
     }
     let window = saved.identity.window();
-    let layer = layers.background_parent.window();
+    let layer = layers.background_parent().window();
     let original_dpi = unsafe { GetWindowDpiAwarenessContext(window) };
     if original_dpi.is_null()
         || unsafe {
@@ -1070,13 +1103,7 @@ fn restore_locked(path: &Path, expected_session: Option<&str>) -> Result<bool> {
             {
                 continue;
             }
-            let restoring_region = match journal.tray_placements.iter().find(|placement| {
-                placement.identity.handle == saved.identity.handle
-            }) {
-                Some(placement) => saved.restore_resized(placement.bounds),
-                None => saved.restore(),
-            };
-            if let Err(error) = restoring_region {
+            if let Err(error) = journal.restore_region(saved) {
                 failures.push(error);
             }
         }
@@ -1269,13 +1296,12 @@ pub fn recover(path: &Path) -> Result<()> {
 struct Session {
     journal: Journal,
     layers: DesktopLayers,
-    targets: Vec<Bounds>,
     guardian: Child,
     path: PathBuf,
     last_heartbeat: Instant,
     lease_number: u64,
     foreground: Option<(bool, bool, bool)>,
-    overlay_geometry_pending: Vec<Option<Instant>>,
+    overlay_geometry_pending: Option<Instant>,
     child_order_pending: Option<Instant>,
     last_work_area: Option<Bounds>,
     workspace: Workspace,
@@ -1286,7 +1312,7 @@ struct Session {
     stopped: bool,
     restoring: RestoringSignal,
     tray: Tray,
-    last_tray: Option<Option<tray::SystemTray>>,
+    last_tray: Option<tray::SystemTray>,
     tray_style: Option<TrayStyle>,
     palette: Palette,
 }
@@ -1319,7 +1345,7 @@ impl Session {
             return Err("desktop windows must belong to the helper's real parent process".into());
         }
         let events = WinEvents::start()?;
-        if specs.is_empty() || specs.len() != 2 {
+        if specs.len() != 2 {
             return Err("desktop requires one background and one overlay".into());
         }
         if specs
@@ -1342,6 +1368,10 @@ impl Session {
         if specs.iter().any(|spec| spec.bounds != overlay.bounds) {
             return Err("desktop windows must share the interaction display".into());
         }
+        if !overlay.bounds.valid() {
+            return Err("desktop physical bounds are out of range".into());
+        }
+        let target = monitor_bounds(overlay.bounds)?;
         let mut workspace = Workspace::prepare(work_area, overlay.bounds, parent_pid, takeover)?;
         if read_journal(path)?.is_some() {
             return Err("an unrecovered desktop journal exists".into());
@@ -1350,7 +1380,6 @@ impl Session {
         let host_pid = unsafe { GetCurrentProcessId() };
         let host = process(host_pid)?;
         let mut windows = Vec::new();
-        let mut targets = Vec::new();
         for spec in specs {
             if spec.handle.len() > 16
                 || spec.handle.is_empty()
@@ -1368,11 +1397,6 @@ impl Session {
             {
                 return Err("invalid or duplicate desktop window handle".into());
             }
-            let bounds = spec.bounds;
-            if !bounds.valid() {
-                return Err("desktop physical bounds are out of range".into());
-            }
-            targets.push(monitor_bounds(bounds)?);
             let window = value as usize as HWND;
             let identity = Identity::capture(window)?;
             if identity.pid != parent_pid || identity.created != created(parent.0)? {
@@ -1404,21 +1428,18 @@ impl Session {
             parent_created: created(parent.0)?,
             host_pid,
             host_created: created(host.0)?,
-            shell: if takeover {
-                shell_windows(targets[0])?
-            } else {
-                Vec::new()
-            },
+            shell: Vec::new(),
             windows,
             appbar: workspace.appbar_restore(),
-            desktop_bounds: targets[0],
+            desktop_bounds: target,
             regions: Vec::new(),
             tray_style: None,
             tray_placements: Vec::new(),
         };
-        for identity in &journal.shell {
-            journal.tray_placements.push(RestoreTrayPlacement::capture(identity, journal.desktop_bounds)?);
-            journal.regions.push(SavedRegion::capture(identity)?);
+        if takeover {
+            for identity in shell_windows(target)? {
+                journal.capture_shell(identity)?;
+            }
         }
         let mut tray = Tray::new(&journal)?;
         let mut tray_style = TrayStyle::prepare(&journal, palette)?;
@@ -1510,23 +1531,23 @@ impl Session {
         let attached = (|| {
             require_session(path, &journal.session, &restoring)?;
             workspace.monitor()?;
-            monitor_bounds(targets[0])?;
+            monitor_bounds(target)?;
             journal.phase = JournalPhase::Attaching;
             journal.save(path)?;
             let layers = DesktopLayers::discover(takeover)?;
-            if !layers.icons.visible || !layers.background_parent.visible {
+            if !layers.icons.visible || !layers.background_parent().visible {
                 return Err("Explorer desktop layer is not visible".into());
             }
-            for (saved, target) in journal.windows.iter().zip(&targets) {
+            for saved in &journal.windows {
                 if saved.role.is_top_level() {
-                    set_top_level(saved, *target, false)?;
+                    set_top_level(saved, target, false)?;
                 } else {
-                    attach(saved, &layers, *target)?;
+                    attach(saved, &layers, target)?;
                 }
             }
             if takeover {
                 for item in &journal.shell {
-                    if !item.valid() || !tray::on_display(item.window(), targets[0])? {
+                    if !item.valid() || !tray::on_display(item.window(), target)? {
                         return Err("Explorer changed before shell takeover".into());
                     }
                 }
@@ -1549,7 +1570,6 @@ impl Session {
                 return Err(finish_failed_start(error, restored, &mut guardian, false));
             }
         };
-        let overlay_geometry_pending = vec![None; targets.len()];
         let applications = match Applications::new(&journal.session, parent_pid) {
             Ok(applications) => applications,
             Err(error) => {
@@ -1558,17 +1578,16 @@ impl Session {
             }
         };
         emit(json!({ "event": "system_tray", "tray": tray.state }));
-        let last_tray = Some(tray.state);
+        let last_tray = tray.state;
         Ok(Self {
             journal,
             layers,
-            targets,
             guardian,
             path: path.into(),
             last_heartbeat: Instant::now(),
             lease_number: 0,
             foreground: None,
-            overlay_geometry_pending,
+            overlay_geometry_pending: None,
             child_order_pending: None,
             last_work_area: None,
             workspace,
@@ -1601,16 +1620,16 @@ impl Session {
         if !self.takeover {
             return if layout.is_none() { Ok(()) } else { Err("native system tray is not enabled".into()) };
         }
-        self.tray.set_layout(layout, self.targets[0])?;
+        self.tray.set_layout(layout, self.journal.desktop_bounds)?;
         self.tray.apply(&self.journal, self.tray_style.as_ref())?;
         self.publish_tray();
         Ok(())
     }
 
     fn publish_tray(&mut self) {
-        if self.last_tray != Some(self.tray.state) {
+        if self.last_tray != self.tray.state {
             emit(json!({ "event": "system_tray", "tray": self.tray.state }));
-            self.last_tray = Some(self.tray.state);
+            self.last_tray = self.tray.state;
         }
     }
 
@@ -1642,7 +1661,7 @@ impl Session {
                 self.refresh_shell()?;
             }
             let changed = self.layers.order(&self.journal.windows)?;
-            let verification = self.layers.verify(&self.journal.windows, self.targets[0]);
+            let verification = self.layers.verify(&self.journal.windows, self.journal.desktop_bounds);
             if changed || verification.is_err() {
                 if self
                     .child_order_pending
@@ -1670,7 +1689,7 @@ impl Session {
 
     fn require_display(&self) -> Result<()> {
         self.workspace.monitor()?;
-        monitor_bounds(self.targets[0])?;
+        monitor_bounds(self.journal.desktop_bounds)?;
         Ok(())
     }
 
@@ -1745,7 +1764,7 @@ impl Session {
         if unsafe { GetCursorPos(&mut point) } == 0 {
             return false;
         }
-        let target = self.targets[0];
+        let target = self.journal.desktop_bounds;
         let rect = RECT {
             left: target.x,
             top: target.y,
@@ -1818,18 +1837,17 @@ impl Session {
         };
         let _transaction = MutexGuard::restoration()?;
         validate()?;
-        if saved.role == WindowRole::Overlay
-            && unsafe {
-                SetWindowPos(
-                    window,
-                    HWND_TOP,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-                )
-            } == 0
+        if unsafe {
+            SetWindowPos(
+                window,
+                HWND_TOP,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            )
+        } == 0
         {
             return Err(failure("bring desktop interface forward"));
         }
@@ -1841,7 +1859,7 @@ impl Session {
             return Err(failure("desktop focus query"));
         }
         if (info.hwndFocus == window || unsafe { IsChild(window, info.hwndFocus) } != 0)
-            && (saved.role != WindowRole::Overlay || foreground == window)
+            && foreground == window
         {
             return Ok(());
         }
@@ -1888,7 +1906,7 @@ impl Session {
             keys_up()?;
             unsafe {
                 SetLastError(0);
-                if saved.role == WindowRole::Overlay && SetForegroundWindow(window) == 0 {
+                if SetForegroundWindow(window) == 0 {
                     return Err(failure("activate desktop interface"));
                 }
                 SetFocus(window);
@@ -1902,7 +1920,7 @@ impl Session {
         drop(attached);
         focused?;
         validate()?;
-        if saved.role == WindowRole::Overlay && unsafe { GetForegroundWindow() } != window {
+        if unsafe { GetForegroundWindow() } != window {
             return Err("desktop interface did not become foreground".into());
         }
         let active_thread = unsafe { GetWindowThreadProcessId(GetForegroundWindow(), null_mut()) };
@@ -1946,9 +1964,9 @@ impl Session {
             let _transaction = MutexGuard::restoration()?;
             require_session(&self.path, &self.journal.session, &self.restoring)?;
             let replacement = DesktopLayers::discover(self.takeover)?;
-            for (saved, target) in self.journal.windows.iter().zip(&self.targets) {
+            for saved in &self.journal.windows {
                 if !saved.role.is_top_level() {
-                    attach(saved, &replacement, *target)?;
+                    attach(saved, &replacement, self.journal.desktop_bounds)?;
                 }
             }
             self.refresh_shell()?;
@@ -1983,15 +2001,10 @@ impl Session {
         let state = (active && !fullscreen, stage_available, fullscreen);
         // 显示与位置消息会交错；跨轮复验异步校正的结果，沿用显示器的两像素 DPI 容差。
         let mut overlays_changed = self.foreground.map(|value| value.2) != Some(fullscreen);
-        for ((saved, target), pending) in self
-            .journal
-            .windows
-            .iter()
-            .zip(&self.targets)
-            .zip(&mut self.overlay_geometry_pending)
-        {
+        let target = self.journal.desktop_bounds;
+        let pending = &mut self.overlay_geometry_pending;
+        for saved in &self.journal.windows {
             if !saved.role.is_top_level() {
-                *pending = None;
                 continue;
             }
             overlays_changed |=
@@ -2001,7 +2014,7 @@ impl Session {
                 continue;
             }
             let actual = rectangle(saved.identity.window())?;
-            if actual.within_tolerance(*target, 2) {
+            if actual.within_tolerance(target, 2) {
                 *pending = None;
             } else {
                 if pending.get_or_insert_with(Instant::now).elapsed() >= OVERLAY_GEOMETRY_TIMEOUT {
@@ -2015,7 +2028,7 @@ impl Session {
         if overlays_changed {
             let _transaction = MutexGuard::restoration()?;
             require_session(&self.path, &self.journal.session, &self.restoring)?;
-            for (saved, target) in self.journal.windows.iter().zip(&self.targets) {
+            for saved in &self.journal.windows {
                 if saved.role.is_top_level() {
                     visibility(&saved.identity, !fullscreen)?;
                     if !fullscreen
@@ -2077,8 +2090,8 @@ impl Session {
         let mut released = Vec::new();
         for item in &self.journal.shell {
             let saved_placement = self.journal.tray_placements.iter().find(|saved| saved.identity.handle == item.handle);
-            if !saved_placement.is_some_and(|saved| saved.monitor == self.targets[0])
-                && !tray::on_display(item.window(), self.targets[0])?
+            if !saved_placement.is_some_and(|saved| saved.monitor == self.journal.desktop_bounds)
+                && !tray::on_display(item.window(), self.journal.desktop_bounds)?
             {
                 if let Some(saved) = saved_placement {
                     saved.restore()?;
@@ -2089,10 +2102,7 @@ impl Session {
                     .iter()
                     .find(|saved| saved.identity.handle == item.handle)
                 {
-                    match saved_placement {
-                        Some(placement) => saved.restore_resized(placement.bounds)?,
-                        None => saved.restore()?,
-                    }
+                    self.journal.restore_region(saved)?;
                 }
                 visibility(item, item.visible)?;
                 released.push(item.handle);
@@ -2106,15 +2116,9 @@ impl Session {
             self.journal.tray_placements.retain(|saved| !released.contains(&saved.identity.handle));
             changed = true;
         }
-        for item in shell_windows(self.targets[0])? {
-            if !self.journal.shell.iter().any(|saved| {
-                saved.handle == item.handle
-                    && saved.pid == item.pid
-                    && saved.created == item.created
-            }) {
-                self.journal.regions.push(SavedRegion::capture(&item)?);
-                self.journal.tray_placements.push(RestoreTrayPlacement::capture(&item, self.targets[0])?);
-                self.journal.shell.push(item);
+        for item in shell_windows(self.journal.desktop_bounds)? {
+            if !self.journal.shell.iter().any(|saved| saved.same_window(&item)) {
+                self.journal.capture_shell(item)?;
                 changed = true;
             }
         }
@@ -2151,6 +2155,78 @@ impl Drop for Session {
     }
 }
 
+fn warn_jump_list(diagnostics: &[String]) {
+    for diagnostic in diagnostics {
+        emit(json!({ "event": "warning", "notify": false, "reason": format!("Jump List: {diagnostic}") }));
+    }
+}
+
+fn execute_command(
+    path: &Path,
+    session: &mut Option<Session>,
+    command: Command,
+) -> Result<serde_json::Value> {
+    match (command, session.as_mut()) {
+        (Command::Start { parent_pid, takeover, palette, windows, work_area, .. }, current) => {
+            if current.is_some() {
+                return Err("desktop host is already running".into());
+            }
+            *session = Some(Session::start(path, parent_pid, takeover, palette, &windows, work_area)?);
+            Ok(json!(null))
+        }
+        (Command::Stop { .. }, active) => active.map_or(Ok(()), Session::stop).map(|_| json!(null)),
+        (Command::CancelExternalInteraction { .. }, active) => {
+            if let Some(active) = active {
+                active.applications.cancel_interaction();
+            }
+            Ok(json!(null))
+        }
+        (_, None) => Err("desktop is not running".into()),
+        (Command::Heartbeat { .. }, Some(active)) => active.heartbeat().map(|_| json!(null)),
+        (Command::SetPalette { palette, .. }, Some(active)) => active.set_palette(palette).map(|_| json!(null)),
+        (Command::SetTrayLayout { layout, .. }, Some(active)) => active.set_tray_layout(layout).map(|_| json!(null)),
+        (Command::Focus { handle, .. }, Some(active)) => active.focus(&handle).map(|_| json!(null)),
+        (Command::RefreshApplications { .. }, Some(active)) => active
+            .refresh_applications(true)
+            .map(|_| json!(null)),
+        (Command::ActivateExternal { window_id, allow_remote, .. }, Some(active)) => active
+            .activate_external(&window_id, allow_remote)
+            .map(|activation_id| json!({ "activation_id": activation_id })),
+        (Command::AuthorizeExternalFocus { activation_id, granted, .. }, Some(active)) => {
+            require_session(&active.path, &active.journal.session, &active.restoring)?;
+            active.applications.authorize_focus(&activation_id, granted, &active.workspace)
+                .map(|status| json!({ "status": status.as_str() }))
+        }
+        (Command::LaunchExternal { target, app_id, .. }, Some(active)) => active
+            .launch_external(&target, &app_id)
+            .map(|_| json!(null)),
+        (Command::CloseExternal { window_ids, .. }, Some(active)) => active
+            .close_external(&window_ids)
+            .map(|_| json!(null)),
+        (Command::GetJumpListTasks { target, .. }, Some(active)) => {
+            let read = active.get_jump_list_tasks(&target)?;
+            warn_jump_list(&read.diagnostics);
+            Ok(json!({ "tasks": read.tasks }))
+        }
+        (Command::ActivateJumpListTask { target, task_id, expires_at, .. }, Some(active)) => {
+            let diagnostics = active.activate_jump_list_task(&target, &task_id, expires_at)?;
+            warn_jump_list(&diagnostics);
+            Ok(json!(null))
+        }
+    }
+}
+
+fn interrupt_session(active: Option<&mut Session>, marker: &str, reason: String) -> String {
+    let Some(active) = active else {
+        return reason;
+    };
+    active.cancel_operations();
+    match restore_interrupted(&active.path, &active.journal.session, marker, &active.restoring) {
+        Ok(_) => reason,
+        Err(error) => format!("{reason}; restoration: {error}"),
+    }
+}
+
 pub fn host(path: &Path) -> Result<()> {
     if unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) } == 0 {
         return Err(failure("SetProcessDpiAwarenessContext"));
@@ -2171,125 +2247,8 @@ pub fn host(path: &Path) -> Result<()> {
         match command {
             Ok(Ok(command)) => {
                 let id = command.id();
-                let mut exiting = false;
-                let result: Result<serde_json::Value> = match command {
-                    Command::Start {
-                        parent_pid,
-                        takeover,
-                        palette,
-                        windows,
-                        work_area,
-                        ..
-                    } => {
-                        if session.is_some() {
-                            Err("desktop host is already running".into())
-                        } else {
-                            Session::start(path, parent_pid, takeover, palette, &windows, work_area).map(
-                                |started| {
-                                    session = Some(started);
-                                    json!(null)
-                                },
-                            )
-                        }
-                    }
-                    Command::Heartbeat { .. } => session
-                        .as_mut()
-                        .ok_or_else(|| "desktop is not running".to_owned())
-                        .and_then(Session::heartbeat)
-                        .map(|_| json!(null)),
-                    Command::SetPalette { palette, .. } => session
-                        .as_mut()
-                        .ok_or_else(|| "desktop is not running".to_owned())
-                        .and_then(|active| active.set_palette(palette))
-                        .map(|_| json!(null)),
-                    Command::SetTrayLayout { layout, .. } => session
-                        .as_mut()
-                        .ok_or_else(|| "desktop is not running".to_owned())
-                        .and_then(|active| active.set_tray_layout(layout))
-                        .map(|_| json!(null)),
-                    Command::Focus { handle, .. } => session
-                        .as_ref()
-                        .ok_or_else(|| "desktop is not running".to_owned())
-                        .and_then(|active| active.focus(&handle))
-                        .map(|_| json!(null)),
-                    Command::RefreshApplications { .. } => session
-                        .as_mut()
-                        .ok_or_else(|| "desktop is not running".to_owned())
-                        .and_then(|active| active.refresh_applications(true))
-                        .map(|_| json!(null)),
-                    Command::ActivateExternal { window_id, allow_remote, .. } => session
-                        .as_mut()
-                        .ok_or_else(|| "desktop is not running".to_owned())
-                        .and_then(|active| active.activate_external(&window_id, allow_remote))
-                        .map(|activation_id| json!({ "activation_id": activation_id })),
-                    Command::CancelExternalInteraction { .. } => {
-                        if let Some(active) = session.as_mut() {
-                            active.applications.cancel_interaction();
-                        }
-                        Ok(json!(null))
-                    }
-                    Command::AuthorizeExternalFocus { activation_id, granted, .. } => session
-                        .as_mut()
-                        .ok_or_else(|| "desktop is not running".to_owned())
-                        .and_then(|active| {
-                            require_session(&active.path, &active.journal.session, &active.restoring)?;
-                            active.applications.authorize_focus(&activation_id, granted, &active.workspace)
-                        })
-                        .map(|status| json!({ "status": status.as_str() })),
-                    Command::LaunchExternal { target, app_id, .. } => session
-                        .as_mut()
-                        .ok_or_else(|| "desktop is not running".to_owned())
-                        .and_then(|active| active.launch_external(&target, &app_id))
-                        .map(|_| json!(null)),
-                    Command::CloseExternal { window_ids, .. } => session
-                        .as_mut()
-                        .ok_or_else(|| "desktop is not running".to_owned())
-                        .and_then(|active| active.close_external(&window_ids))
-                        .map(|_| json!(null)),
-                    Command::GetJumpListTasks { target, .. } => session
-                        .as_ref()
-                        .ok_or_else(|| "desktop is not running".to_owned())
-                        .and_then(|active| active.get_jump_list_tasks(&target))
-                        .map(|read| {
-                            for diagnostic in &read.diagnostics {
-                                emit(json!({
-                                    "event": "warning",
-                                    "notify": false,
-                                    "reason": format!("Jump List: {diagnostic}"),
-                                }));
-                            }
-                            json!({ "tasks": read.tasks })
-                        }),
-                    Command::ActivateJumpListTask {
-                        target,
-                        task_id,
-                        expires_at,
-                        ..
-                    } => session
-                        .as_mut()
-                        .ok_or_else(|| "desktop is not running".to_owned())
-                        .and_then(|active| {
-                            active.activate_jump_list_task(&target, &task_id, expires_at)
-                        })
-                        .map(|diagnostics| {
-                            for diagnostic in diagnostics {
-                                emit(json!({
-                                    "event": "warning",
-                                    "notify": false,
-                                    "reason": format!("Jump List: {diagnostic}"),
-                                }));
-                            }
-                            json!(null)
-                        }),
-                    Command::Stop { .. } => {
-                        exiting = true;
-                        session
-                            .as_mut()
-                            .map_or(Ok(()), Session::stop)
-                            .map(|_| json!(null))
-                    }
-                };
-                match result {
+                let exiting = matches!(command, Command::Stop { .. });
+                match execute_command(path, &mut session, command) {
                     Ok(result) => emit(json!({ "id": id, "ok": true, "result": result })),
                     Err(reason) => emit(json!({ "id": id, "ok": false, "reason": reason })),
                 }
@@ -2298,51 +2257,20 @@ pub fn host(path: &Path) -> Result<()> {
                 }
             }
             Ok(Err(reason)) => {
-                if let Some(active) = session.as_mut() {
-                    active.cancel_operations();
-                    if let Err(error) = restore_interrupted(
-                        path,
-                        &active.journal.session,
-                        "command_channel_failure",
-                        &active.restoring,
-                    ) {
-                        return Err(format!("{reason}; restoration: {error}"));
-                    }
-                }
-                return Err(reason);
+                return Err(interrupt_session(session.as_mut(), "command_channel_failure", reason));
             }
             Err(RecvTimeoutError::Disconnected) => {
-                if let Some(active) = session.as_mut() {
-                    active.cancel_operations();
-                    if let Err(error) = restore_interrupted(
-                        path,
-                        &active.journal.session,
-                        "command_channel_closed",
-                        &active.restoring,
-                    ) {
-                        return Err(format!(
-                            "desktop parent closed command channel; restoration: {error}"
-                        ));
-                    }
-                }
-                return Err("desktop parent closed command channel".into());
+                return Err(interrupt_session(
+                    session.as_mut(),
+                    "command_channel_closed",
+                    "desktop parent closed command channel".into(),
+                ));
             }
             Err(RecvTimeoutError::Timeout) => {}
         }
         if let Some(active) = session.as_mut() {
             if let Err(reason) = active.poll() {
-                active.cancel_operations();
-                return Err(
-                    match restore_interrupted(
-                        path,
-                        &active.journal.session,
-                        "host_failure",
-                        &active.restoring,
-                    ) {
-                        Ok(_) => reason,
-                        Err(error) => format!("{reason}; restoration: {error}"),
-                    },
-                );
+                return Err(interrupt_session(Some(active), "host_failure", reason));
             }
         }
     }

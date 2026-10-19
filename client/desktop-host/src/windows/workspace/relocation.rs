@@ -283,19 +283,6 @@ impl NativeTask {
     }
 }
 
-fn owned_by(mut window: HWND, root: HWND) -> bool {
-    for _ in 0..32 {
-        if window == root {
-            return true;
-        }
-        if window.is_null() {
-            break;
-        }
-        window = unsafe { GetWindow(window, GW_OWNER) };
-    }
-    false
-}
-
 pub(super) struct FocusPlacement {
     device: String,
     work_area: Option<Bounds>,
@@ -385,7 +372,7 @@ impl FocusReservation {
     }
 
     pub(in super::super) fn start(self, root: &Identity, target: &Identity, foreground_at_request: usize, workspace: &Workspace) -> Result<FocusRequest> {
-        if self.0.identity.handle != target.handle || self.0.identity.pid != target.pid || self.0.identity.created != target.created {
+        if !self.0.identity.same_window(target) {
             return Err("预留的程序窗口身份已改变。".into());
         }
         self.0.start(vec![NativeStep::Focus {

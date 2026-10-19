@@ -86,8 +86,25 @@ struct Mapping {
 }
 
 impl Mapping {
-    fn from_handle(handle: OwnedHandle) -> Result<Self> {
-        Self::from_handle_sized(handle, size_of::<State>())
+    fn create(name: &str, size: usize) -> Result<Self> {
+        let handle = unsafe {
+            CreateFileMappingW(
+                INVALID_HANDLE_VALUE,
+                null(),
+                PAGE_READWRITE,
+                0,
+                size as u32,
+                wide(name).as_ptr(),
+            )
+        };
+        if handle.is_null() {
+            return Err(failure("create native tray session"));
+        }
+        let handle = OwnedHandle(handle);
+        if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+            return Err("native tray session already exists".into());
+        }
+        Self::from_handle_sized(handle, size)
     }
 
     fn from_handle_sized(handle: OwnedHandle, size: usize) -> Result<Self> {
@@ -273,24 +290,7 @@ impl TrayStyle {
             target: target.clone(),
         };
         record.validate(journal)?;
-        let handle = unsafe {
-            CreateFileMappingW(
-                INVALID_HANDLE_VALUE,
-                null(),
-                PAGE_READWRITE,
-                0,
-                size_of::<State>() as u32,
-                wide(&record.channel).as_ptr(),
-            )
-        };
-        if handle.is_null() {
-            return Err(failure("create tray style session"));
-        }
-        let handle = OwnedHandle(handle);
-        if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
-            return Err("tray style session already exists".into());
-        }
-        let mapping = Mapping::from_handle(handle)?;
+        let mapping = Mapping::create(&record.channel, size_of::<State>())?;
         unsafe {
             mapping.view.Value.cast::<State>().write(State {
                 magic: MAGIC,
@@ -308,24 +308,7 @@ impl TrayStyle {
                 reserved: 0,
             });
         }
-        let handle = unsafe {
-            CreateFileMappingW(
-                INVALID_HANDLE_VALUE,
-                null(),
-                PAGE_READWRITE,
-                0,
-                size_of::<PlacementState>() as u32,
-                wide(&record.placement_channel()).as_ptr(),
-            )
-        };
-        if handle.is_null() {
-            return Err(failure("create tray placement session"));
-        }
-        let handle = OwnedHandle(handle);
-        if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
-            return Err("tray placement session already exists".into());
-        }
-        let placement = Mapping::from_handle_sized(handle, size_of::<PlacementState>())?;
+        let placement = Mapping::create(&record.placement_channel(), size_of::<PlacementState>())?;
         unsafe {
             placement.view.Value.cast::<PlacementState>().write(PlacementState {
                 magic: PLACEMENT_MAGIC,
@@ -363,11 +346,7 @@ impl TrayStyle {
     }
 
     pub(super) fn matches_target(&self, shell: &[Identity]) -> bool {
-        shell.first().is_some_and(|target| {
-            target.handle == self.record.target.handle
-                && target.pid == self.record.target.pid
-                && target.created == self.record.target.created
-        })
+        shell.first().is_some_and(|target| target.same_window(&self.record.target))
     }
 
     pub(super) fn set_placement(&self, bounds: Option<Bounds>) -> Result<()> {

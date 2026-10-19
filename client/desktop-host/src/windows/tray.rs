@@ -150,7 +150,7 @@ impl Drop for Probe {
 }
 
 pub(super) struct Tray {
-    owner: Option<u64>,
+    owner: Option<Identity>,
     raw: Option<Bounds>,
     probe: Option<Probe>,
     last_probe: Instant,
@@ -206,7 +206,7 @@ impl Tray {
             return Ok(());
         };
         let original = journal.tray_placements.iter()
-            .find(|saved| saved.identity.handle == identity.handle)
+            .find(|saved| saved.identity.same_window(identity))
             .ok_or("system tray has no recoverable placement")?;
         if !identity.valid()
             || !is_explorer(identity.pid)
@@ -214,8 +214,8 @@ impl Tray {
         {
             return Err("system tray taskbar identity changed".into());
         }
-        if self.owner != Some(identity.handle) {
-            self.owner = Some(identity.handle);
+        if !self.owner.as_ref().is_some_and(|owner| owner.same_window(identity)) {
+            self.owner = Some(identity.clone());
             self.raw = None;
             self.probe = None;
             self.last_taskbar = None;
@@ -248,11 +248,7 @@ impl Tray {
         } else if let Some(probe) = &mut self.probe {
             if let Some(result) = probe.poll()? {
                 self.probe = None;
-                if result.identity.handle != identity.handle
-                    || result.identity.pid != identity.pid
-                    || result.identity.created != identity.created
-                    || result.identity.class != identity.class
-                {
+                if !result.identity.same_window(identity) {
                     return Err("system tray query identity changed".into());
                 }
                 if result.stable
@@ -380,7 +376,7 @@ impl Tray {
                     style.set_placement(None)?;
                 }
                 // 先收起区域，再恢复 Shell 几何，避免切换时短暂露出完整任务栏。
-                if let Some(saved) = journal.regions.iter().find(|saved| saved.identity.handle == original.identity.handle) {
+                if let Some(saved) = journal.regions.iter().find(|saved| saved.identity.same_window(&original.identity)) {
                     saved.clip(None)?;
                 }
                 original.restore()?;
@@ -396,7 +392,7 @@ impl Tray {
             }
         }
         for saved in &journal.regions {
-            if journal.shell.iter().any(|identity| identity.handle == saved.identity.handle) {
+            if journal.shell.iter().any(|identity| identity.same_window(&saved.identity)) {
                 saved.clip(visible)?;
             }
         }

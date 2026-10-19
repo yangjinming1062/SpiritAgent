@@ -127,10 +127,6 @@ fn property_text(store: &IPropertyStore, key: &PROPERTYKEY) -> String {
     text.unwrap_or_default()
 }
 
-fn normalize(value: &str) -> String {
-    value.replace('/', "\\").to_lowercase()
-}
-
 fn explorer_program() -> String {
     std::env::var_os("SystemRoot")
         .map(PathBuf::from)
@@ -163,9 +159,9 @@ fn parse_task(bytes: &[u8], target: &str) -> Result<Option<JumpListTask>> {
         wide_text(|buffer| unsafe { link.GetPath(buffer, null_mut(), 0) }).unwrap_or_default();
     let app_target = target.strip_prefix("shell:appsfolder\\");
     let matches = if let Some(app_id_target) = app_target {
-        normalize(&app_id) == app_id_target || contains_utf16(bytes, app_id_target)
+        normalize_target(&app_id) == app_id_target || contains_utf16(bytes, app_id_target)
     } else {
-        normalize(&program) == target
+        normalize_target(&program) == target
     };
     if !matches {
         return Ok(None);
@@ -303,7 +299,7 @@ fn task_key(task: &JumpListTask) -> (Vec<String>, u8) {
             )
         });
     let mut key = vec![
-        normalize(&task.program),
+        normalize_target(&task.program),
         task.title.clone(),
         task.description.clone(),
     ];
@@ -326,7 +322,7 @@ fn task_key(task: &JumpListTask) -> (Vec<String>, u8) {
 
 pub(super) fn read_tasks(target: &str, session: &str) -> JumpListRead {
     let mut result = JumpListRead::default();
-    let target = normalize(target);
+    let target = normalize_target(target);
     let scan = (|| -> Result<()> {
         if !target.starts_with("shell:appsfolder\\") && !Path::new(&target).is_file() {
             return Err("Jump List 目标程序不存在".into());

@@ -5,11 +5,14 @@ pub(super) struct DesktopLayers {
     view: Identity,
     list: Identity,
     wallpaper: Identity,
-    pub(super) background_parent: Identity,
     pub(super) layered: bool,
 }
 
 impl DesktopLayers {
+    pub(super) fn background_parent(&self) -> &Identity {
+        if self.layered { &self.icons } else { &self.wallpaper }
+    }
+
     fn existing() -> Result<Option<Self>> {
         let icons = worker()?;
         let view = Identity::capture(child(icons.window(), "SHELLDLL_DefView"))?;
@@ -44,13 +47,11 @@ impl DesktopLayers {
             };
             parent
         };
-        let background_parent = if layered { icons.clone() } else { wallpaper.clone() };
         let layers = Self {
             icons,
             view,
             list,
             wallpaper,
-            background_parent,
             layered,
         };
         if !layers.valid() {
@@ -108,11 +109,9 @@ impl DesktopLayers {
             || !self.view.valid()
             || !self.list.valid()
             || !self.wallpaper.valid()
-            || !self.background_parent.valid()
             || self.view.pid != self.icons.pid
             || self.list.pid != self.icons.pid
             || self.wallpaper.pid != self.icons.pid
-            || self.background_parent.pid != self.icons.pid
             || unsafe { GetParent(self.view.window()) } != self.icons.window()
             || unsafe { GetParent(self.list.window()) } != self.view.window()
             || child(self.icons.window(), "SHELLDLL_DefView") != self.view.window()
@@ -125,8 +124,7 @@ impl DesktopLayers {
             while !next.is_null() && next != self.wallpaper.window() {
                 next = unsafe { GetWindow(next, GW_HWNDNEXT) };
             }
-            return self.background_parent.window() == self.icons.window()
-                && unsafe { GetParent(self.wallpaper.window()) } == self.icons.window()
+            return unsafe { GetParent(self.wallpaper.window()) } == self.icons.window()
                 && child(self.icons.window(), "WorkerW") == self.wallpaper.window()
                 && unsafe { IsWindowVisible(self.wallpaper.window()) } != 0
                 && next == self.wallpaper.window()
@@ -138,14 +136,14 @@ impl DesktopLayers {
                             != 0
                 };
         }
-        if !unsafe { GetParent(self.background_parent.window()) }.is_null()
-            || !child(self.background_parent.window(), "SHELLDLL_DefView").is_null()
+        if !unsafe { GetParent(self.wallpaper.window()) }.is_null()
+            || !child(self.wallpaper.window(), "SHELLDLL_DefView").is_null()
         {
             return false;
         }
         let mut next = unsafe { GetWindow(self.icons.window(), GW_HWNDNEXT) };
         while !next.is_null() {
-            if next == self.background_parent.window() {
+            if next == self.wallpaper.window() {
                 return true;
             }
             next = unsafe { GetWindow(next, GW_HWNDNEXT) };
@@ -162,7 +160,7 @@ impl DesktopLayers {
         for saved in windows.iter().filter(|saved| saved.role == WindowRole::Background) {
             let window = saved.identity.window();
             if !saved.identity.valid()
-                || unsafe { GetParent(window) } != self.background_parent.window()
+                || unsafe { GetParent(window) } != self.background_parent().window()
             {
                 return Err("desktop background left its wallpaper layer".into());
             }
@@ -196,7 +194,7 @@ impl DesktopLayers {
         let window = saved.identity.window();
         if !self.valid()
             || !saved.identity.valid()
-            || unsafe { GetParent(window) } != self.background_parent.window()
+            || unsafe { GetParent(window) } != self.background_parent().window()
             || !rectangle(window)?.within_tolerance(target, 2)
             || unsafe { GetWindowLongPtrW(window, GWL_EXSTYLE) as u32 & WS_EX_TRANSPARENT == 0 }
         {

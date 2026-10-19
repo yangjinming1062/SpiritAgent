@@ -21,15 +21,11 @@ pub(super) struct LaunchRequest {
     app_id: String,
 }
 
-fn normalize(value: &str) -> String {
-    value.replace('/', "\\").to_lowercase()
-}
-
 fn validate_target(target: &str) -> Result<()> {
     if target.is_empty() || target.len() > 32_768 || target.contains('\0') {
         return Err("程序目标无效。".into());
     }
-    if let Some(id) = normalize(target).strip_prefix("shell:appsfolder\\") {
+    if let Some(id) = normalize_target(target).strip_prefix("shell:appsfolder\\") {
         let valid = id.split_once('!').is_some_and(|(family, app)| {
             family.rsplit_once('_').is_some_and(|(name, publisher)| {
                 !name.is_empty()
@@ -73,7 +69,7 @@ impl LaunchRequest {
             target: target.into(),
             arguments: String::new(),
             directory: String::new(),
-            app_id: normalize(app_id),
+            app_id: normalize_target(app_id),
         })
     }
 
@@ -97,7 +93,7 @@ impl LaunchRequest {
         if cancelled.load(Ordering::Acquire) {
             return Err("桌面会话已结束。".into());
         }
-        if normalize(&self.target).starts_with("shell:appsfolder\\") {
+        if normalize_target(&self.target).starts_with("shell:appsfolder\\") {
             let id = wide(&self.target[17..]);
             let arguments = wide(&self.arguments);
             let manager: IApplicationActivationManager = unsafe {
@@ -248,7 +244,7 @@ impl PendingLaunch {
     }
 
     fn new_application_window(&self, tracked: &TrackedWindow) -> bool {
-        if normalize(&tracked.value.app_id) != self.app_id
+        if normalize_target(&tracked.value.app_id) != self.app_id
             || self.baseline.contains(&(
                 tracked.identity.window() as usize,
                 tracked.identity.pid,
@@ -316,7 +312,7 @@ impl PendingLaunch {
         if candidate.is_none() {
             let mut existing = windows
                 .values()
-                .filter(|tracked| normalize(&tracked.value.app_id) == self.app_id);
+                .filter(|tracked| normalize_target(&tracked.value.app_id) == self.app_id);
             candidate = existing.next();
             if existing.next().is_some() {
                 return Err("已提交打开，但匹配到多个程序窗口，未能定位窗口。".into());

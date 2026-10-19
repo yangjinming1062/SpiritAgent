@@ -128,12 +128,7 @@ fn application_target(identity: &Identity) -> Option<String> {
         return None;
     }
     let owner = process(identity.pid).ok()?;
-    let mut buffer = [0u16; 32_768];
-    let mut length = buffer.len() as u32;
-    if unsafe { QueryFullProcessImageNameW(owner.0, 0, buffer.as_mut_ptr(), &mut length) } == 0 {
-        return None;
-    }
-    let target = String::from_utf16_lossy(&buffer[..length as usize]);
+    let target = process_image(owner.0).ok()?;
     (target.len() < 16_384).then_some(target)
 }
 
@@ -141,19 +136,6 @@ fn title(window: HWND) -> String {
     let mut buffer = [0u16; 513];
     let size = unsafe { GetWindowTextW(window, buffer.as_mut_ptr(), buffer.len() as i32) };
     String::from_utf16_lossy(&buffer[..size.max(0) as usize])
-}
-
-fn owned_by(mut window: HWND, owner: HWND) -> bool {
-    for _ in 0..32 {
-        if window == owner {
-            return true;
-        }
-        if window.is_null() {
-            return false;
-        }
-        window = unsafe { GetWindow(window, GW_OWNER) };
-    }
-    false
 }
 
 fn last_input() -> Option<u32> {
