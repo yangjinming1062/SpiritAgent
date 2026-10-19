@@ -12,7 +12,7 @@ from infrastructure.assets.asset_store import compute_file_sha256
 from infrastructure.constants import REMOTE_ASSET_DOWNLOAD_MAX_BYTES
 from infrastructure.logger import get_logger
 from infrastructure.video_processing.ffmpeg import ActionMaterialRejectedError, VideoProcessError
-from infrastructure.video_processing.matting import ForegroundMatte, require_matting_model
+from infrastructure.video_processing.matting import matte_image, require_matting_model
 from infrastructure.video_processing.process import (
     HITMASK_ALPHA_THRESHOLD,
     HITMASK_GRID_H,
@@ -46,7 +46,7 @@ def prepare_transparent_image(data: bytes) -> bytes:
     except ActionMaterialRejectedError:
         model = require_matting_model()
         try:
-            image = ForegroundMatte(model).apply(image)
+            image = matte_image(image, model)
         except VideoProcessError:
             raise
         except Exception as exc:

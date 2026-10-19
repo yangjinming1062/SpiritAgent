@@ -8,7 +8,7 @@ from PIL import Image
 
 from infrastructure.logger import get_logger
 from infrastructure.video_processing.ffmpeg import ActionMaterialRejectedError
-from infrastructure.video_processing.matting import ForegroundMatte, require_matting_model
+from infrastructure.video_processing.matting import matte_image, require_matting_model
 
 logger = get_logger(__name__)
 
@@ -72,7 +72,7 @@ def prepare_action_frame(data: bytes, *, preserve_resolution: bool = False) -> b
         raise ActionMaterialRejectedError("动作姿态图缺少可见角色")
     method = "native_alpha"
     if alpha_min > ACTION_ALPHA_THRESHOLD:
-        image = ForegroundMatte(require_matting_model()).apply(image)
+        image = matte_image(image, require_matting_model())
         method = "isnet"
     alpha = image.getchannel("A")
     alpha_min, alpha_max = alpha.getextrema()

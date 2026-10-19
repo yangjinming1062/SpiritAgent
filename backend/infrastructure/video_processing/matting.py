@@ -1,12 +1,13 @@
-"""语义前景透明化：保留角色内部颜色；静止区域做有限时域稳定，边缘去背景污染。"""
+"""角色透明化：静态图细化 alpha 与前景颜色；视频分割保留有限时域稳定。"""
 
+import math
 import tempfile
 from pathlib import Path
 
 import numpy as np
 import onnxruntime as ort
 from numpy.typing import NDArray
-from PIL import Image
+from PIL import Image, ImageFilter
 
 from infrastructure.config import SETTINGS
 from infrastructure.video_processing.ffmpeg import (
@@ -18,6 +19,7 @@ from infrastructure.video_processing.ffmpeg import (
 )
 
 Array = NDArray[np.float32]
+_IMAGE_MATTING_MAX_PIXELS = 1_000_000
 
 
 def require_matting_model() -> Path:
@@ -64,6 +66,72 @@ class ForegroundMatte:
             rgb = np.where(edge[..., None], np.clip(foreground, 0, 1), rgb)
         rgba = np.concatenate((rgb, alpha[..., None]), axis=2)
         return Image.fromarray(np.round(rgba * 255).astype(np.uint8))
+
+
+def _refine_image_edges(image: Image.Image, segmented: Image.Image) -> Image.Image:
+    """分割只提供已知区域；静态图边缘另估计覆盖率与未混入背景的前景颜色。"""
+    # 首次导入会编译数值内核，只在图片处理线程中加载，避免阻塞服务启动。
+    from pymatting import estimate_alpha_cf, estimate_foreground_ml
+
+    mask = segmented.getchannel("A")
+    bounds = mask.point(lambda value: 255 if value > 5 else 0).getbbox()
+    if bounds is None:
+        raise VideoProcessError("图片抠像未找到可见前景")
+    padding = max(3, math.ceil(max(image.size) / 200)) + 3
+    left, top, right, bottom = bounds
+    bounds = (
+        max(0, left - padding),
+        max(0, top - padding),
+        min(image.width, right + padding),
+        min(image.height, bottom + padding),
+    )
+    source = image.convert("RGB").crop(bounds)
+    region_mask = mask.crop(bounds)
+    scale = min(1.0, math.sqrt(_IMAGE_MATTING_MAX_PIXELS / (source.width * source.height)))
+    size = (int(source.width * scale), int(source.height * scale))
+    if min(size) < 3:
+        raise VideoProcessError("角色图片过于细长或尺寸过小，无法可靠处理透明边缘")
+    work = source.resize(size, Image.Resampling.LANCZOS) if size != source.size else source
+    work_mask = region_mask.resize(size, Image.Resampling.BILINEAR)
+    radius = max(1, round(max(size) / 200))
+    erosion = ImageFilter.MinFilter(2 * radius + 1)
+    # 收缩确定前景，把漏入的背景和抗锯齿发丝留给像素估计。
+    foreground = np.asarray(work_mask.point(lambda value: 255 if value >= 250 else 0).filter(erosion)) > 0
+    # 确定背景不收缩，保留肢体、把手及发丝之间的细窄空隙。
+    background = np.asarray(work_mask) <= 5
+    if not foreground.any() or not background.any():
+        raise VideoProcessError("图片透明边缘缺少可靠前景或背景，请更换清晰完整的图片")
+    trimap = np.full((size[1], size[0]), 0.5, dtype=np.float64)
+    trimap[foreground], trimap[background] = 1.0, 0.0
+    try:
+        alpha = estimate_alpha_cf(
+            np.asarray(work, dtype=np.float64) / 255,
+            trimap,
+            cg_kwargs={"maxiter": 2000},
+        )
+        if alpha.shape != trimap.shape or not np.isfinite(alpha).all():
+            raise ValueError("invalid image alpha")
+        alpha = np.asarray(
+            Image.fromarray(alpha.astype(np.float32)).resize(source.size, Image.Resampling.BILINEAR),
+        ).clip(0, 1)
+        original = np.asarray(source, dtype=np.float32) / 255
+        colors = estimate_foreground_ml(original, alpha)
+        if colors.shape != original.shape or not np.isfinite(colors).all():
+            raise ValueError("invalid image foreground")
+    except (ValueError, RuntimeError, np.linalg.LinAlgError) as exc:
+        raise VideoProcessError("图片透明边缘处理失败，请重试已有图片", internal=str(exc)) from exc
+    # 不对确定的不透明主体做颜色重建，避免改变白色衣物、道具及实体细节。
+    colors[alpha >= 1 - 1e-6] = original[alpha >= 1 - 1e-6]
+    colors[alpha == 0] = 0
+    rgba = np.concatenate((np.clip(colors, 0, 1), alpha[..., None]), axis=2)
+    result = segmented.copy()
+    result.paste(Image.fromarray(np.round(rgba * 255).astype(np.uint8)), bounds[:2])
+    return result
+
+
+def matte_image(image: Image.Image, model_path: Path) -> Image.Image:
+    """静态图片以 ISNet 建立三分图，再求解 alpha 与前景颜色；保留原画布。"""
+    return _refine_image_edges(image, ForegroundMatte(model_path).apply(image))
 
 
 def matte_video(src: Path, dst: Path) -> None:

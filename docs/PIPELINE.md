@@ -266,7 +266,8 @@ AI 制作按具体活动规划 → 静态图及检查 → 用户确认 → 运�
 
 ### 透明化与一致性
 
-- [matting](../backend/infrastructure/video_processing/matting.py)负责透明视频解码与 ISNet 抠像；逐帧抠像以及 [FFmpeg](../backend/infrastructure/video_processing/ffmpeg.py) 抽帧、完整解码与编码不设总耗时上限，按实际处理结果收尾。取消或停机通过 [run_blocking](../backend/infrastructure/async_io.py) 等待当前同步处理退出后再释放临时资源；元信息探测保留独立超时预算。视频供应商未承诺原生 alpha，模型缺失时拒绝付费生成。
+- [matting](../backend/infrastructure/video_processing/matting.py)负责透明视频解码与 ISNet 抠像。不透明的静态角色图以分割结果建立确定前景、确定背景和待估计边缘，再用 PyMatting 求解 alpha 与前景颜色，避免发丝间残留背景或边缘混色；不按白色阈值删除衣物和道具，确定的不透明主体保留原 RGB。细化仅处理前景邻域，并限制求解像素数；输出保持原画布，已有有效原生透明图直通。数值内核首次编译放在图片处理线程中，不阻塞服务启动；求解失败明确报错，沿原图片尝试恢复，不重新生图。
+- 视频沿语义分割及有限时域稳定处理；逐帧抠像以及 [FFmpeg](../backend/infrastructure/video_processing/ffmpeg.py) 抽帧、完整解码与编码不设总耗时上限，按实际处理结果收尾。取消或停机通过 [run_blocking](../backend/infrastructure/async_io.py) 等待当前同步处理退出后再释放临时资源；元信息探测保留独立超时预算。视频供应商未承诺原生 alpha，模型缺失时拒绝付费生成。
 - 画面门禁见 [quality](../backend/infrastructure/video_processing/quality.py)（可解码性、alpha、覆盖率、轮廓、贴边）。
 - 发布前身份复核见[身份评分与发布复核](#身份评分与发布复核)；复核不背书动作语义，也不能保证未抽样帧完全无走样。
 - WebM alpha 须用 `libvpx-vp9` 显式解码，容器声明不能代替像素校验。
