@@ -241,15 +241,22 @@ class UrlRewriter:
         self._walk(value, depth, apply=False)
 
     # 单一遍历骨架：rewrite（apply=True）重建容器，scan（apply=False）只收集副作用。
-    def _walk(self, value: Any, depth: int, *, apply: bool) -> Any:
+    def _walk(self, value: Any, depth: int, *, apply: bool, asset_keys: bool = False) -> Any:
         if depth > _MAX_JSON_DEPTH:
             raise ValueError("备份资料嵌套过深，无法安全校验媒体归属。")
         if isinstance(value, dict):
             result: dict[Any, Any] = {}
-            for key, item in value.items():  # 只扫值，不扫键
-                walked = self._walk(item, depth + 1, apply=apply)
+            for key, item in value.items():
+                # 图片目标检查按候选路径索引，须与候选素材一同映射。
+                mapped_key = self._walk(key, depth + 1, apply=apply) if asset_keys else key
+                walked = self._walk(
+                    item,
+                    depth + 1,
+                    apply=apply,
+                    asset_keys=key in {"goal_reviews", "goal_review_failures"},
+                )
                 if apply:
-                    result[key] = walked
+                    result[mapped_key] = walked
             return result if apply else None
         if isinstance(value, list):
             items: list[Any] = []

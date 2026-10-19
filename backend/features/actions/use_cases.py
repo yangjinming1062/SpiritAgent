@@ -100,6 +100,7 @@ async def _owned_action(db: AsyncSession, user_id: int, action_id: int) -> Compa
 
 async def set_action_enabled(action_id: int, enabled: bool, user_id: int, db: AsyncSession) -> dict[str, bool]:
     """停用立即从自主选择与播放目录排除；系统槽位不可停用（产品必需能力）。变更后同步发布目录，客户端不再保留已停用动作的播放资格。"""
+    await lock_user_row(db, user_id)
     action = await _owned_action(db, user_id, action_id)
     if action.system_slot and (not enabled):
         raise RequestError(status_code=400, message="系统动作不可停用")

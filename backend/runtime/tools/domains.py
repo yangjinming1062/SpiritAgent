@@ -72,18 +72,14 @@ DOMAIN_CATALOG: tuple[ToolDomain, ...] = (
     ),
     ToolDomain(
         id="actions",
-        description_zh="角色动作与完整画面中的活动",
-        description_en="Character actions and activity in full-scene videos",
-        aliases=("actions", "action", "动作", "表演", "动作库", "desktop", "桌面生活"),
+        description_zh="伙伴动作与活动表达",
+        description_en="Companion actions and expressive activities",
+        aliases=("actions", "action", "动作", "表演", "动作库", "活动"),
         extra_tools=(
             "action_search",
             "action_design",
             "action_inspect",
             "action_play",
-            "desktop_action_search",
-            "desktop_action_design",
-            "desktop_action_inspect",
-            "desktop_action_play",
         ),
     ),
     ToolDomain(

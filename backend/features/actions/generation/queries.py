@@ -9,6 +9,7 @@ from features.actions.generation.state import GenerationContext
 from features.actions.materials import accepted_action_asset
 from features.actions.media_contracts import ActionResult
 from features.actions.models import REQUIRED_SYSTEM_SLOTS, SYSTEM_SLOTS, CompanionAction, CompanionActionPack
+from features.actions.policy import is_unsubmitted_video_plan
 from features.appearance.queries import active_avatar_snapshot, active_outfit_id
 from features.appearance.query_contracts import AvatarSnapshot
 from features.media.chain import MediaChainState
@@ -85,6 +86,8 @@ def _can_resume_job(job: CompanionAction, rejected_paths: Collection[str]) -> bo
             return False
         if pose.phase == "submitting" or pose.stop_reason == "result_unknown":
             return False
+        if pose.phase == "complete" and pose.best() is None:
+            return False
     return bool(
         job.provider_task_id
         or job.artifact_path
@@ -92,6 +95,52 @@ def _can_resume_job(job: CompanionAction, rejected_paths: Collection[str]) -> bo
         or job.pose_generation_state_json
         or job.stage == "script"
         or (job.stage == "pose" and job.pose_path),
+    )
+
+
+def _can_resume_pose_preparation(job: CompanionAction, rejected_paths: Collection[str]) -> bool:
+    """共享动作续用已知图片结果与检查，通过准备后才允许首次视频提交。"""
+    if (
+        job.definition_id is None
+        or job.status != "failed"
+        or job.media_type != "video"
+        or not job.script_json
+        or not job.pose_generation_state_json
+        or not job.generation_state_json
+        or _job_result_unresolved(job)
+        or not _can_resume_job(job, rejected_paths)
+    ):
+        return False
+    video = MediaChainState.model_validate_json(job.generation_state_json)
+    if not is_unsubmitted_video_plan(
+        video,
+        provider_task_id=job.provider_task_id,
+        artifact_path=job.artifact_path,
+        result_json=job.result_json,
+        media_path=job.media_path,
+    ):
+        return False
+    pose = ImageChainState.model_validate_json(job.pose_generation_state_json)
+    best = pose.best()
+    if pose.phase == "complete":
+        return best is not None and _artifact_abs_path(best.path).is_file()
+    unreviewed = [candidate for candidate in pose.candidates if not candidate.evaluated]
+    if any(
+        candidate.score is not None
+        or candidate.path in pose.goal_reviews
+        or (
+            (failure := pose.goal_review_failures.get(candidate.path)) is not None
+            and (failure.status != "unavailable" or failure.score is not None or failure.verdict is not None)
+        )
+        for candidate in unreviewed
+    ):
+        return False
+    if not all(_artifact_abs_path(item.path).is_file() for item in pose.candidates):
+        return False
+    if pose.phase == "storing" and not pose.stop_reason and pose.pending_urls:
+        return True
+    return bool(unreviewed) and (
+        pose.can_retry_goal_review() or pose.phase in {"storing", "evaluating"} and not pose.stop_reason
     )
 
 

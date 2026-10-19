@@ -80,7 +80,7 @@ from .helpers import (
     _image_data_uri,
     _pack_dir,
 )
-from .planning import _prepare_action_video_plan
+from .planning import _action_spec, _prepare_action_video_plan
 from .references import _require_new_paid_step, require_action_matting_model
 from .transactions import _advance_job, _emit_pack_event, _save_action_materials, _save_action_state
 
@@ -230,7 +230,11 @@ async def _prepare_action_pose(
     prompt = (
         build_action_image_prompt(entry, context.identity)
         if isinstance(entry, ImageActionScriptEntry)
-        else build_pose_prompt(entry, context.identity)
+        else build_pose_prompt(
+            entry,
+            context.identity,
+            activity_target=_action_spec(job).semantics_or() if job.definition_id is not None else "",
+        )
     )
     paths = await generate_character_images(
         prompt,
@@ -242,6 +246,8 @@ async def _prepare_action_pose(
         size=FULLBODY_SIZE,
         image_edit=True,
         prefer_transparent_background=True,
+        prepare_action_frame=job.definition_id is not None,
+        goal_review="required" if job.definition_id is not None else "none",
         state=pose_state,
         save_progress=save_pose,
         before_submit=lambda: _require_new_paid_step(pack, context),

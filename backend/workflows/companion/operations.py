@@ -1,10 +1,7 @@
 import time
 
-from features.actions.playback import request_playback
-from features.actions.schemas import ActionPlayRequest
 from features.companion.affect_emit import emit_companion_message
 from features.companion.disturbance import get_disturbance_tier
-from features.companion.idle_expression import check_idle_expression
 from features.companion.intents import queue_companion_intent
 from features.companion.proactive_runtime import (
     get_presentation_snapshot,
@@ -12,15 +9,14 @@ from features.companion.proactive_runtime import (
     observe_companion_presence,
 )
 from features.companion.should_act import should_act
-from features.desktop_life.service import choose_idle_desktop_action
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.config import SETTINGS
-from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import coerce_hour_0_23, coerce_non_negative_float
 from runtime.events.contracts import COMPANION_TURN_EVENT
 from runtime.events.loop import interrupt_user_event_tasks
 from workflows.chat.inputs import _resolve_llm_config
+from workflows.companion_action_choice import choose_idle_action
 
 logger = get_logger(__name__)
 
@@ -59,44 +55,7 @@ async def companion_idle_expression(user_id: int, params: dict) -> dict:
 
     idle_seconds = coerce_non_negative_float(params.get("idle_seconds"))
     local_hour = coerce_hour_0_23(params.get("local_hour"))
-    presentation = get_presentation_snapshot(user_id)
-    contact_revision = get_user_proactive_record(user_id).contact_revision
-    if presentation is not None and presentation.mode == "desktop":
-        return await choose_idle_desktop_action(user_id, idle_seconds, local_hour, trigger=trigger)
-    if trigger == "user_return":
-        return {"expressed": False, "action_id": None, "reason": "desktop required"}
-    llm_config = await _resolve_llm_config(user_id, AiTaskKey.proactive)
-    result = await check_idle_expression(user_id, idle_seconds, local_hour, llm_config)
-    if (
-        presentation != get_presentation_snapshot(user_id)
-        or contact_revision != get_user_proactive_record(user_id).contact_revision
-        or await get_disturbance_tier(user_id) != "autonomous"
-    ):
-        return {"expressed": False, "action_id": None, "reason": "presentation changed"}
-    if result.expressed and result.action_id is not None:
-        async with SESSION_LOCAL() as db:
-            play = await request_playback(
-                db,
-                user_id,
-                ActionPlayRequest(action_id=result.action_id, reason="idle expression"),
-                source="autonomous",
-            )
-            if (
-                presentation != get_presentation_snapshot(user_id)
-                or contact_revision != get_user_proactive_record(user_id).contact_revision
-            ):
-                return {"expressed": False, "action_id": None, "reason": "presentation changed"}
-            await db.commit()
-        return {
-            "expressed": play.outcome == "queued",
-            "action_id": result.action_id,
-            "reason": play.message or result.reason,
-        }
-    return {
-        "expressed": False,
-        "action_id": None,
-        "reason": result.reason,
-    }
+    return await choose_idle_action(user_id, idle_seconds, local_hour, trigger=trigger)
 
 
 async def companion_signal(user_id: int, params: dict) -> dict[str, bool]:

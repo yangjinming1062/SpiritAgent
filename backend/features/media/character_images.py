@@ -18,6 +18,7 @@ from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets import asset_store
 from infrastructure.assets.asset_store import build_data_uri
 from infrastructure.assets.paths import parse_companion_asset_path
+from infrastructure.async_io import run_blocking
 from infrastructure.constants import REMOTE_ASSET_DOWNLOAD_MAX_BYTES
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.image_expansion import expansion_canvas, finish_expansion
@@ -29,6 +30,7 @@ from infrastructure.media_geometry import (
 )
 from infrastructure.network import download_capped
 from infrastructure.video_processing.ffmpeg import VideoProcessError
+from infrastructure.video_processing.frames import prepare_action_frame as prepare_window_action_frame
 from infrastructure.video_processing.image import prepare_transparent_image
 from PIL import Image, ImageOps
 from pydantic import BaseModel, ConfigDict, Field
@@ -96,6 +98,7 @@ class CharacterImageInput(BaseModel):
     max_image_bytes: int = Field(default=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, gt=0)
     size_enforced: bool = False
     prefer_transparent_background: bool = False
+    prepare_action_frame: bool = False
     expansion: ImageExpansionInput | None = None
 
 
@@ -474,6 +477,7 @@ async def generate_character_images(
     max_image_bytes: int = REMOTE_ASSET_DOWNLOAD_MAX_BYTES,
     size_enforced: bool = False,
     prefer_transparent_background: bool = False,
+    prepare_action_frame: bool = False,
     expansion: ImageExpansionInput | None = None,
     selection: ProviderSelection | None = None,
     nearest_resolution: bool = False,
@@ -523,6 +527,7 @@ async def generate_character_images(
             max_image_bytes=max_image_bytes,
             size_enforced=size_enforced,
             prefer_transparent_background=prefer_transparent_background,
+            prepare_action_frame=prepare_action_frame,
             expansion=expansion,
         )
         async with SESSION_LOCAL() as db:
@@ -811,6 +816,9 @@ async def _run_image_chain(
                             if isinstance(inputs, CharacterImageInput) and inputs.prefer_transparent_background:
                                 data = await asyncio.to_thread(prepare_transparent_image, data)
                                 ext = "png"
+                            if isinstance(inputs, CharacterImageInput) and inputs.prepare_action_frame:
+                                data = await run_blocking(prepare_window_action_frame, data)
+                                ext = "png"
                             state.pending_path = asset_store.image_chain_asset_path(
                                 user_id,
                                 state.generation_id,
@@ -897,6 +905,7 @@ async def _run_image_chain(
                                 generation_prompt=inputs.prompt,
                                 identity_reference_mode=inputs.identity_reference_mode,
                                 identity_text=inputs.identity_text,
+                                prepared_action_frame=inputs.prepare_action_frame,
                                 task=task,
                                 before_submit=before_submit,
                             )

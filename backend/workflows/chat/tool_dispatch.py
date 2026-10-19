@@ -3,7 +3,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from features.companion.proactive_runtime import get_presentation_snapshot
 from features.media.turn_state import MediaTurnState
 from features.scenes.turn_state import SceneTurnState
 from infrastructure.ai.user_config import UserLlmConfig
@@ -15,7 +14,6 @@ from runtime.desktop.connection import MANAGER
 from runtime.desktop.ipc import dispatch_device_call
 from runtime.memory_scope import MemoryScope
 from runtime.tools.model_tools import coerce_tool_args
-from runtime.tools.presentation import unavailable_presentation_tool_names
 from runtime.tools.registry import REGISTRY, RESERVED_KEYS
 from runtime.tools.tool_dispatch_helpers import (
     is_multimodal_tool_result,
@@ -28,6 +26,7 @@ from runtime.tools.tool_result_classification import file_mutation_result_landed
 from workflows.chat.chat_emitter import Emitter
 from workflows.chat.message_sanitization import parse_tool_call_arguments
 from workflows.chat.native_memory import NativeMemory
+from workflows.companion_actions import ActionViewSnapshot
 
 logger = get_logger(__name__)
 
@@ -55,6 +54,7 @@ class _ToolDispatchContext:
     proactive_turn: bool
     user_message: str
     unavailable_tool_names: frozenset[str] = frozenset()
+    action_view: ActionViewSnapshot | None = None
 
 
 @dataclass
@@ -204,9 +204,7 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext, progress: _B
     await ctx.emitter.send_json({"type": "tool_start", "name": name, "call_id": tc["call_id"]})
 
     try:
-        presentation = get_presentation_snapshot(ctx.user_id)
-        mode_excluded = unavailable_presentation_tool_names(presentation.mode if presentation else None)
-        if name in ctx.excluded_tool_names | ctx.unavailable_tool_names | mode_excluded:
+        if name in ctx.excluded_tool_names | ctx.unavailable_tool_names:
             return make_tool_result_message(name, tool_error(_unavailable_tool_message(name, ctx)), tc["call_id"])
         parsed_args = parse_tool_call_arguments(tc["arguments"], name)
         if parsed_args is None:
@@ -256,6 +254,7 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext, progress: _B
                     tool_call_id=tc["call_id"],
                     proactive_turn=ctx.proactive_turn,
                     user_message=ctx.user_message,
+                    action_view=ctx.action_view,
                 )
                 result_str = (
                     await ctx.delegate_executor(result, ctx.user_id, ctx.llm_config)

@@ -54,6 +54,7 @@ from .queries import (
     _active_outfit_id,
     _can_publish_jobs,
     _can_resume_job,
+    _can_resume_pose_preparation,
     _get_pack,
     _has_pending_work,
     _jobs_by_pack,
@@ -375,7 +376,7 @@ async def retry_pack(
     *,
     action: str | None = None,
 ) -> ActionPackSnapshot:
-    """整包恢复已知任务；指定动作时只续下载、后处理或已有候选收尾。"""
+    """整包恢复已知任务；指定动作准备已有姿态结果或收尾已有视频。"""
     kick_action_id: int | None = None
     async with get_avatar_job_lock(user_id):
         pack = await _get_pack(db, user_id, pack_id)
@@ -431,22 +432,24 @@ async def retry_pack(
         if action is not None:
             job = targets[0]
             state = _resumable_action_state(job, rejected_media.get(job.id, ()))
-            if state is None or context.reference_alignment != "ready":
+            pose_review = _can_resume_pose_preparation(job, rejected_media.get(job.id, ()))
+            if (state is None and not pose_review) or context.reference_alignment != "ready":
                 raise VideoPackStateError("该动作没有可恢复的制作进度，请核对原任务或重新生成")
             require_action_matting_model()
-            # 继续制作只收尾已有视频，跳过尚未提交的供应商，避免检查后追加视频生成。
-            state.next_index = len(state.providers)
-            if state.phase == "storing":
-                state.stop_reason = ""
-            job.artifact_path = next(
-                (
-                    path
-                    for path in (job.artifact_path, state.source_path)
-                    if path and _artifact_abs_path(path).is_file()
-                ),
-                None,
-            )
-            job.generation_state_json = state.model_dump_json()
+            if not pose_review and state is not None:
+                # 已有视频只收尾已有结果，姿态检查通过后才允许首次视频提交。
+                state.next_index = len(state.providers)
+                if state.phase == "storing":
+                    state.stop_reason = ""
+                job.artifact_path = next(
+                    (
+                        path
+                        for path in (job.artifact_path, state.source_path)
+                        if path and _artifact_abs_path(path).is_file()
+                    ),
+                    None,
+                )
+                job.generation_state_json = state.model_dump_json()
             job.status, job.error = "queued", None
             kick_action_id = job.id
         else:
@@ -548,6 +551,7 @@ async def ensure_system_action(
 
 async def activate_pack(db: AsyncSession, user_id: int, pack_id: int) -> ActionPackSnapshot:
     async with get_avatar_job_lock(user_id):
+        await lock_user_row(db, user_id)
         pack = await _get_pack(db, user_id, pack_id)
         if pack is None:
             raise VideoPackNotFoundError("找不到动作包")

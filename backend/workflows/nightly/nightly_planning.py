@@ -11,19 +11,15 @@ from typing import Any, Literal, TypeGuard
 from zoneinfo import ZoneInfo
 
 from features.accounts.queries import nightly_account
-from features.actions.context import build_action_context
-from features.actions.design import accept_proposal
-from features.actions.pipeline import schedule_accepted_proposal
-from features.actions.schemas import ActionDesignRequest
+from features.action_library.schemas import ActionDefinitionDesign, ActionSourceSnapshot
+from features.action_library.service import accept_definition
 from features.appearance.character_card import load_character_snapshot
 from features.appearance.nightly import create_and_confirm_outfit, get_outfit, list_outfits, wear_outfit
 from features.automation.cron_jobs import create_job, remove_job
 from features.companion.planning_queries import PersonaPlanningSnapshot, planning_persona
-from features.companion.proactive_runtime import get_presentation_snapshot
+from features.companion.proactive_runtime import PresentationSnapshot, get_presentation_snapshot
 from features.configuration.settings.values import load_user_settings
-from features.desktop_life.queries import activated_desktop_environment
-from features.desktop_life.schemas import DesktopVideoDesignRequest
-from features.desktop_life.service import design_desktop_action, get_desktop_video_state
+from features.desktop_life.queries import activated_desktop_environment, desktop_state_snapshot
 from features.media.identity_rendering import render_character_appearance
 from features.media.image_generation import resolve_image_gen_chain
 from features.memory.contracts import MemoryListItem
@@ -42,6 +38,7 @@ from infrastructure.ai.llm_client import resolve_provider_chain
 from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, LlmJsonValidationError, call_llm_json
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import load_user_llm_config
+from infrastructure.config import SETTINGS
 from infrastructure.constants import NIGHTLY_REASONING_EFFORT
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
@@ -51,6 +48,9 @@ from runtime.memory_scope import MemoryScope
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from workflows.action_library import action_source_reader, schedule_action_definition
+from workflows.companion_action_prompts import ACTION_DESIGN_MOTION_DESCRIPTION
+from workflows.companion_actions import build_action_view
 from workflows.nightly.models import NightlyActivityAction, NightlyActivityLog
 from workflows.nightly.output_contracts import NightlyPlanOutput
 from workflows.nightly.prompts import (
@@ -242,8 +242,11 @@ class PlanningContext(BaseModel):
     persona: PersonaContext
     scene: SceneContext
     wardrobe: list[WardrobeItem] = Field(default_factory=list)
-    # 动作库摘要：当前包就绪动作、在途提案与近期拒绝，供 action.design 评估缺口。
+    # 模型只读取当前可播能力，制作目标由代码单独冻结。
     actions: dict[str, Any] = Field(default_factory=dict)
+    action_target: ActionSourceSnapshot | None = Field(default=None, exclude=True)
+    action_presentation: PresentationSnapshot | None = Field(default=None, exclude=True)
+    action_design_enabled: bool = Field(default=False, exclude=True)
     recent_autonomous_actions: list[RecentActionSummary] = Field(default_factory=list)
     recent_posts: list[RecentPostSummary] = Field(default_factory=list)
     available_capabilities: list[NightlyCapability] = Field(default_factory=list)
@@ -267,8 +270,6 @@ def _planning_context_payload(context: PlanningContext) -> dict[str, Any]:
     """模型读取规划资料，执行目标绑定保留在代码上下文。"""
     payload = context.model_dump(exclude_none=True)
     payload["outfits"] = payload.pop("wardrobe", [])
-    if payload["actions"].get("presentation_mode") == "desktop":
-        payload["actions"].pop("expected_set_id", None)
     return payload
 
 
@@ -334,33 +335,17 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
     NightlyCapability(
         name="action.design",
         phase=25,
-        description="为当前画面提出一个可反复使用的新动作。"
-        "按 autonomous_context.actions.presentation_mode 查看已有动作：window 查看 library、in_flight_proposals 与 recent_rejections；"
-        "desktop 查看 ready_actions。已有提案的 design 是原设计，review_reason 是评审理由，status 与 action_status 分别说明评审和制作进展。"
-        "确有缺口才使用；无明确价值时选择不使用。"
-        "name 是动作显示名称；motion_description 围绕一个可辨认的表达目标，写清主要运动部位、稳定支撑，复杂动作再说明必要步骤、停顿与收束。"
-        "安静保持可以是完整目标，未设计专门的呼吸动作时只需身体结构适用部位近乎不可察的局部呼吸，头肩、身体位置与重心保持安定，眨眼可偶发也可省略；"
-        "不为填满片长添加摇摆、手势或同步起伏。主动动作的速度、幅度和必要次数按目标需要安排，次级运动有实际带动原因。"
-        "use_when / avoid_when 说明何时适用或避免；reason 说明为何需要新动作。"
-        "duration_seconds 按完成可见过程与必要停留选择 1–15 的整秒数，长期陪伴不等于拉长单个片段；"
-        "clip_kind 为 loop（持续状态或接点连续的运动）或 once（完整动作自然收束）。"
-        "loop 的姿态、接触和物品可见状态都须能自然相接；不能自然闭合的可见状态变化选 once 或只取可持续阶段。"
-        "保持状态无需另编一个往复动作，目标本身需要的重复运动保留，不为闭合额外往返、倒放或重置可见状态。"
-        "once 制作后仍可重复使用。两种模式都保持已确认身份与造型，制作无声画面。"
-        "window 的独立角色画面按 action_outfit 设计单主体原地运动，固定镜头、全身入画、透明背景；片段中的着装不随今晚更新参考造型而变化，因此不依赖换装动作。"
-        "desktop 的新动作独立制作画面，按 actions.environment.creation_reference 的冻结造型与环境构思相容的姿态、器物关系和构图；"
-        "current.description 只说明当前成品可见内容，不能据此把新活动说成已经发生。保持稳定镜头，固定身份与造型，活动和空间须可实现。"
-        "这是自主设计，不是用户明确要求或邀请；依赖用户回应的活动只用于相应交流条件。"
-        "受理仅表示申请成功，评审和制作随后进行；"
-        "后续动态或联系不能以依赖此项为依据宣称动作已做好或已表演。",
+        description="提出一个有明确用途、可反复使用的新动作，先查看 actions.ready_actions 是否已有合适表达。"
+        "确有缺口才使用，没有具体价值时可以不设计；共享定义由系统统一去重和评审。"
+        "自主创意不代表用户提出过同样要求。受理、制作完成与实际表演分别确认，后续内容不能将申请写成已做好或已表演。",
         arguments={
             "name": "string（1–64 字符）：动作的简短显示名称，不是动作标识或运动脚本。",
-            "motion_description": "string（10–600 字符）：一个表达目标所需的可见状态，主要运动部位、稳定支撑及必要过程；安静保持可贯穿全片，循环不额外添加往复。独立角色原地完成，桌面新画面按冻结参考安排相容活动与构图；保持身体结构与造型。",
+            "motion_description": "string（10–600 字符）：" + ACTION_DESIGN_MOTION_DESCRIPTION,
             "use_when": "list[string]（可选，最多 8 项，每项最多 120 字符）：适合使用该动作的交流情境，省略或空列表表示没有补充适用条件。",
             "avoid_when": "list[string]（可选，最多 8 项，每项最多 120 字符）：应避免使用该动作的情境，省略或空列表表示没有补充避免条件。",
             "reason": "string（1–400 字符）：现有动作无法满足的表达需要，以及本次新增动作的具体价值。",
-            "duration_seconds": "integer（1–15）：单个动作片段的时长，单位为秒；按可见过程与必要停留选择，长期陪伴不等于更长的单片段。完成后的时间可安定停留。",
-            "clip_kind": "string：loop 表示姿态、接触及物品可见状态在接点自然连续的持续状态或运动，不为循环另编往返或重置；不能自然闭合时选 once 或仅设计可持续阶段。once 是有自然收束的完整动作，制作后也可重复使用。",
+            "duration_seconds": "integer（可选，默认4，1–15）：单个动作片段的时长，单位为秒；按可见过程与必要停留选择，长期陪伴不等于更长的单片段。完成后的时间可安定停留。",
+            "clip_kind": "string（可选，默认once）：loop 表示姿态、接触及物品可见状态在接点自然连续的持续状态或运动，不为循环另编往返或重置；不能自然闭合时选 once 或仅设计可持续阶段。once 是有自然收束的完整动作，制作后也可重复使用。",
         },
         paid=True,
     ),
@@ -454,8 +439,8 @@ def _capability_availability(
         ),
         "outreach.schedule": (True, ""),
         "action.design": (
-            bool(context.actions.get("pack_id") or context.actions.get("expected_set_id")) and providers.video,
-            "当前形象还没有可用的动作素材，或视频供应商不可用",
+            context.action_design_enabled and providers.video,
+            "自主创建已关闭、当前形象缺少可用的冻结参考，或视频供应商不可用",
         ),
     }
     available: list[NightlyCapability] = []
@@ -505,36 +490,34 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
             )
         ).all()
         recent_posts = await recent_post_summaries(db, user_id, limit=20)
-        # 动作库摘要在会话生命周期内读取，避免 session 关闭后重开未托管事务。
-        presentation = get_presentation_snapshot(user_id)
+        action_view = await build_action_view(db, user_id, presentation=presentation, lock=True)
+        action_target = await action_source_reader(
+            db,
+            user_id,
+            presentation.mode if presentation is not None else "window",
+            action_view.target_id,
+        )
+        action_snapshot = {"ready_actions": [item.to_dict() for item in action_view.items]}
+        action_design_enabled = bool(
+            SETTINGS.action_autocreate_enabled
+            and action_target is not None
+            and action_target.ready
+            and action_target.outfit_id is not None
+            and action_target.source_visual_key,
+        )
+        if action_target is not None and action_target.target_kind == "desktop":
+            desktop_state = await desktop_state_snapshot(db, user_id)
+            action_design_enabled = action_design_enabled and bool(
+                desktop_state is not None and desktop_state.autonomous_enabled,
+            )
+        scene_environment = scene.environment
         if presentation is not None and presentation.mode == "desktop":
-            desktop_state = await get_desktop_video_state(db, user_id)
             desktop_environment = await activated_desktop_environment(db, user_id)
-            action_snapshot: dict[str, Any] = {
-                "presentation_mode": "desktop",
-                "environment": desktop_environment,
-                "expected_set_id": desktop_state.current.id if desktop_state.current else None,
-                "ready_actions": [
-                    {"id": action.id, "name": action.name, "description": action.description, "kind": action.kind}
-                    for action in (desktop_state.current.actions if desktop_state.current else [])
-                    if action.playable
-                ],
-            }
-        else:
-            window_actions = await build_action_context(db, user_id)
-            action_snapshot = {
-                "presentation_mode": "window",
-                "pack_id": window_actions.pack_id,
-                "catalog_version": window_actions.catalog_version,
-                "action_outfit": window_actions.outfit_description,
-                "library": window_actions.ready_actions,
-                "in_flight_proposals": window_actions.in_flight_proposals,
-                "recent_rejections": window_actions.recent_rejections,
-            }
+            scene_environment = {"current": desktop_environment.get("current")}
 
     language = resolve_language(settings.get("language"))
     definition = dict(persona.definition) if persona is not None else {}
-    if character is not None and not (presentation is not None and presentation.mode == "desktop"):
+    if character is not None:
         definition["fixed_features"] = render_character_appearance(character, language=language)
     context = PlanningContext(
         policies=_policies(persona),
@@ -550,7 +533,7 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
             current_mood=persona.current_mood if persona is not None else None,
         ),
         scene=SceneContext(
-            environment=scene.environment,
+            environment=scene_environment,
             library=[{"id": row.id, "title": row.title, "description": row.description} for row in scene_rows],
             generation_pending=scene.generation_pending,
         ),
@@ -565,6 +548,9 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
             for outfit in outfits
         ],
         actions=action_snapshot,
+        action_target=action_target,
+        action_presentation=presentation,
+        action_design_enabled=action_design_enabled,
         recent_autonomous_actions=[
             RecentActionSummary(
                 date=row.target_date.isoformat(),
@@ -619,9 +605,17 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
             continue
         args = dict(raw.get("arguments") if isinstance(raw.get("arguments"), dict) else {})
         if capability_name == "action.design":
-            args["target_presentation_mode"] = context.actions["presentation_mode"]
-            if context.actions["presentation_mode"] == "desktop" and context.actions.get("expected_set_id"):
-                args["expected_set_id"] = context.actions["expected_set_id"]
+            args = {key: value for key, value in args.items() if key in spec.arguments}
+            target = context.action_target
+            if target is None:
+                continue
+            args["target"] = {
+                "kind": target.target_kind,
+                "id": target.target_id,
+                "outfit_id": target.outfit_id,
+                "source_visual_key": target.source_visual_key,
+                "presentation": context.action_presentation.model_dump() if context.action_presentation else None,
+            }
         if spec.paid:
             paid_count += 1
         if spec.exclusive_group:
@@ -749,7 +743,11 @@ async def _runtime_block_reason(user_id: int, capability: str, resume: dict[str,
 
 
 def _fact(run: _ActionRun, key: str, **values: str) -> str:
-    if run.context.actions.get("presentation_mode") == "desktop" and key in {"outfit_wear", "outfit_create", "scene"}:
+    if (
+        run.context.action_target is not None
+        and run.context.action_target.target_kind == "desktop"
+        and key in {"outfit_wear", "outfit_create", "scene"}
+    ):
         key = f"desktop_{key}"
     return NIGHTLY_FACT_TEXTS[resolve_language(run.context.language)][key].format(**values)
 
@@ -931,65 +929,57 @@ async def _execute_outreach_schedule(run: _ActionRun, args: dict[str, Any]) -> A
     )
 
 
+def _action_presentation_matches(target: dict[str, Any], current: PresentationSnapshot | None) -> bool:
+    expected = target.get("presentation")
+    return (expected is None or current is not None and current.model_dump() == expected) and (
+        current is None or current.mode == target["kind"]
+    )
+
+
 async def _execute_action_design(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
-    """夜间动作设计：受理提案 → 独立评审 → approve 后入队生成。事实只叙述受理或重试，不将异步制作写成完成。"""
-    target_mode = args["target_presentation_mode"]
-    presentation = get_presentation_snapshot(run.user_id)
-    current_mode = presentation.mode if presentation is not None else "window"
-    if target_mode != current_mode:
-        return ActionExecutionResult(
-            status="blocked",
-            reason="presentation mode changed; planned action was not rerouted",
-        )
+    """沿计划冻结目标受理共同设计；可播能力及目标绑定不由模型指定。"""
+    target = args.get("target")
+    if not isinstance(target, dict) or target.get("kind") not in {"window", "desktop"}:
+        return ActionExecutionResult(status="blocked", reason="planned action target unavailable")
+    if not _action_presentation_matches(target, get_presentation_snapshot(run.user_id)):
+        return ActionExecutionResult(status="blocked", reason="presentation changed; planned action was not rerouted")
     documented = _CAPABILITY_BY_NAME["action.design"].arguments
-    if target_mode == "desktop":
-        try:
-            request = DesktopVideoDesignRequest(
-                name=args.get("name", ""),
-                motion_description=args.get("motion_description", ""),
-                kind="loop" if args.get("clip_kind") == "loop" else "once",
-                duration_seconds=args.get("duration_seconds", 6),
-                use_when=args.get("use_when", []),
-                avoid_when=args.get("avoid_when", []),
-                reason=args.get("reason", ""),
-                expected_set_id=args.get("expected_set_id"),
-            )
-            result = await design_desktop_action(
-                run.user_id,
-                request,
-                source="autonomous",
-                require_desktop=True,
-            )
-        except ValidationError as exc:
-            return _invalid_arguments(exc)
-        except Exception as exc:  # 将业务公开的状态错误写入动作账本。
-            return ActionExecutionResult(status="failed", reason=str(exc))
-        if result.status not in {"pending", "reviewing", "approved", "reused"}:
-            return ActionExecutionResult(status="failed", reason=result.review_reason or "桌面动作提案未受理")
-        fact_key = "action_registered" if result.status in {"approved", "reused"} else "action_proposed"
-        return ActionExecutionResult(status="succeeded", fact=_fact(run, fact_key, name=request.name))
     try:
-        # 只取能力说明列出的参数，其余字段与其他能力一样忽略。
-        request = ActionDesignRequest.model_validate({key: value for key, value in args.items() if key in documented})
+        request = ActionDefinitionDesign.model_validate(
+            {key: value for key, value in args.items() if key in documented},
+        )
     except ValidationError as exc:
         return _invalid_arguments(exc)
-    name = request.name
-
-    # 提案绑定执行时启用的动作包；没有可用包时 accept_proposal 拒绝受理。
     async with SESSION_LOCAL() as db:
-        acceptance = await accept_proposal(db, run.user_id, request, source="autonomous")
-        result = acceptance.result
-        if result.outcome not in {"pending_review", "reused"}:
+        source = await action_source_reader(db, run.user_id, target["kind"], target.get("id"))
+        if source is None or (source.outfit_id, source.source_visual_key) != (
+            target.get("outfit_id"),
+            target.get("source_visual_key"),
+        ):
+            return ActionExecutionResult(status="blocked", reason="planned frozen source changed")
+        if target["kind"] == "desktop":
+            state = await desktop_state_snapshot(db, run.user_id)
+            if state is None or not state.autonomous_enabled:
+                return ActionExecutionResult(status="blocked", reason="autonomous action creation disabled")
+        if not _action_presentation_matches(target, get_presentation_snapshot(run.user_id)):
             return ActionExecutionResult(
-                status="failed",
-                reason=result.message or "提案未受理",
+                status="blocked",
+                reason="presentation changed; planned action was not rerouted",
             )
+        acceptance = await accept_definition(
+            db,
+            run.user_id,
+            request,
+            source="autonomous",
+            origin_kind=target["kind"],
+            expected_target_id=source.target_id,
+        )
+        if acceptance.status == "rejected":
+            return ActionExecutionResult(status="failed", reason=acceptance.message)
         await db.commit()
-
-    # 共享评审与各画面制作异步执行，夜间事实只叙述受理状态。
-    schedule_accepted_proposal(acceptance, run.user_id)
-    fact_key = "action_registered" if result.outcome == "reused" else "action_proposed"
-    return ActionExecutionResult(status="succeeded", fact=_fact(run, fact_key, name=name))
+    schedule_action_definition(run.user_id, acceptance.definition_id)
+    fact_key = "action_registered" if acceptance.status in {"approved", "reused"} else "action_proposed"
+    return ActionExecutionResult(status="succeeded", fact=_fact(run, fact_key, name=request.name))
 
 
 CapabilityExecutor = Callable[[_ActionRun, dict[str, Any]], Awaitable[ActionExecutionResult]]

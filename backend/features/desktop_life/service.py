@@ -8,9 +8,8 @@ from tempfile import TemporaryDirectory
 from typing import Literal
 from uuid import uuid4
 
-from infrastructure.ai.prompt_engineer import VisualReasoningError, chat
+from infrastructure.ai.prompt_engineer import VisualReasoningError
 from infrastructure.ai.selection import ProviderSelection
-from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import (
     read_valid_image_data_uri,
     resolve_asset_reference,
@@ -24,10 +23,9 @@ from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.media_geometry import can_crop_to_aspect
-from infrastructure.text import parse_llm_json, resolve_language, resolve_prompt_text, utc_now
+from infrastructure.text import resolve_language, utc_now
 from infrastructure.video_processing.desktop import extract_desktop_first_frame
 from infrastructure.video_processing.ffmpeg import VideoProcessError, probe_video
-from pydantic import BaseModel, ConfigDict, Field
 from runtime.paid_work import require_new_generation_call
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,9 +41,7 @@ from features.assets.lifecycle import (
 )
 from features.companion.disturbance import get_disturbance_tier
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
-from features.companion.prompt_runtime import load_companion_prompt_context
 from features.configuration.settings.values import get_user_setting
-from features.conversation.context_window import load_recent_context_window
 from features.desktop_life.creation import begin_opening_repair
 from features.desktop_life.generation import (
     cancel_and_wait_desktop_video_jobs,
@@ -68,16 +64,14 @@ from features.desktop_life.geometry import (
     probe_desktop_video,
 )
 from features.desktop_life.models import DesktopVideoAction, DesktopVideoPlayback, DesktopVideoSet
-from features.desktop_life.policy import DEFERRED_PLAY_INTENT_TTL_SECONDS, desktop_autonomous_block_reason
+from features.desktop_life.policy import DEFERRED_PLAY_INTENT_TTL_SECONDS
 from features.desktop_life.ports import (
     design_shared_desktop_action,
     desktop_set_created,
     shared_desktop_proposal,
 )
 from features.desktop_life.prompts import (
-    DESKTOP_CONTEXT_GUIDANCE,
     DESKTOP_EXTERNAL_VIDEO_TEMPLATES,
-    DESKTOP_IDLE_EXPRESSION,
     DESKTOP_PRESETS,
     DESKTOP_VIDEO_BASE,
     DESKTOP_VIDEO_LOOP,
@@ -85,7 +79,7 @@ from features.desktop_life.prompts import (
     DESKTOP_VIDEO_QUIET,
     desktop_source_reference_prompt,
 )
-from features.desktop_life.queries import activated_desktop_environment, desktop_action_source
+from features.desktop_life.queries import desktop_action_source
 from features.desktop_life.repository import (
     DesktopVideoAspectRatioError,
     DesktopVideoError,
@@ -98,7 +92,6 @@ from features.desktop_life.repository import (
     desktop_action_description,
     desktop_action_response,
     desktop_action_response_with_sync,
-    desktop_asset_description,
     desktop_failed_opening_review,
     desktop_image_origin,
     desktop_preferences,
@@ -2513,231 +2506,3 @@ async def design_desktop_action(
         source=source,
         require_desktop=require_desktop,
     )
-
-
-async def build_desktop_action_context(db: AsyncSession, user_id: int, *, language: str) -> str:
-    state = await get_desktop_video_state(db, user_id)
-    actions = state.current.actions if state.current else []
-    payload = {
-        "pinned": state.pinned,
-        "autonomous_enabled": state.autonomous_enabled,
-        "current_action_id": state.selected_action_id,
-        "preparation_error": state.preparation_error,
-        "ready_actions": [
-            {
-                "id": action.id,
-                "name": action.name,
-                "description": action.description,
-                "kind": action.kind,
-                "duration_seconds": action.duration_seconds,
-                "use_when": action.use_when,
-                "avoid_when": action.avoid_when,
-                "allowed_triggers": action.allowed_triggers,
-                "continuity": action.continuity,
-            }
-            for action in actions
-            if action.playable
-        ],
-        "preparing": [
-            {
-                "action_id": action.id,
-                "definition_id": action.definition_id,
-                "name": action.name,
-                "description": action.description,
-                "status": action.status,
-                "stage": action.stage,
-                "error": action.error,
-                "sync_targets": [target.model_dump() for target in action.sync_targets],
-            }
-            for action in actions
-            if action.status != "ready"
-        ],
-    }
-    payload["proposals"] = [
-        {
-            "proposal_id": proposal.proposal_id,
-            "definition_id": proposal.definition_id,
-            "name": proposal.name,
-            "description": proposal.description,
-            "status": proposal.status,
-            "action_id": proposal.action_id,
-            "action_status": next(
-                (
-                    target.status
-                    for target in proposal.sync_targets
-                    if target.target_kind == "desktop"
-                    and state.current is not None
-                    and target.target_id == state.current.id
-                ),
-                None,
-            ),
-            "sync_targets": [target.model_dump() for target in proposal.sync_targets],
-            "reason": proposal.review_reason,
-        }
-        for proposal in (state.current.proposals if state.current else [])[:5]
-    ]
-    payload["proposals_truncated"] = bool(state.current and len(state.current.proposals) > 5)
-    return resolve_prompt_text(DESKTOP_CONTEXT_GUIDANCE, language) + "\n" + json.dumps(payload, ensure_ascii=False)
-
-
-class DesktopIdleChoice(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    action_id: int | None = None
-    reason: str = Field(default="", max_length=400)
-
-
-async def choose_idle_desktop_action(
-    user_id: int,
-    idle_seconds: float,
-    local_hour: int,
-    *,
-    trigger: Literal["periodic", "user_return"] = "periodic",
-) -> dict[str, object]:
-    presentation = get_presentation_snapshot(user_id)
-    record = get_user_proactive_record(user_id)
-    contact_revision = record.contact_revision
-    if presentation is None or presentation.mode != "desktop" or not record.available or record.busy_count:
-        return {"expressed": False, "action_id": None, "reason": "unavailable"}
-    async with SESSION_LOCAL() as db:
-        state = await get_desktop_video_state(db, user_id)
-        persisted_state = await desktop_state(db, user_id)
-        if (
-            state.current is None
-            or persisted_state is None
-            or state.pinned
-            or not state.autonomous_enabled
-            or await get_disturbance_tier(user_id, db=db) != "autonomous"
-        ):
-            return {"expressed": False, "action_id": None, "reason": "disabled"}
-        recent_context = await load_recent_context_window(db, user_id)
-        desktop_environment = await activated_desktop_environment(db, user_id)
-        actions: list[dict[str, object]] = []
-        for action in state.current.actions:
-            if (
-                not action.enabled
-                or not action.playable
-                or action.id == state.selected_action_id
-                or trigger not in action.allowed_triggers
-            ):
-                continue
-            stored_action = await desktop_action(db, user_id, action.id)
-            asset = desktop_accepted_asset(stored_action)
-            if (
-                asset is None
-                or await desktop_autonomous_block_reason(
-                    db,
-                    persisted_state,
-                    stored_action,
-                    asset,
-                    presentation_revision=presentation.revision,
-                )
-                is not None
-            ):
-                continue
-            actions.append(
-                {
-                    "id": action.id,
-                    "name": action.name,
-                    "description": desktop_asset_description(stored_action, asset),
-                    "kind": action.kind,
-                    "use_when": action.use_when,
-                    "avoid_when": action.avoid_when,
-                    "allowed_triggers": action.allowed_triggers,
-                    "continuity": action.continuity,
-                    "duration_seconds": action.duration_seconds,
-                },
-            )
-    if not actions:
-        return {"expressed": False, "action_id": None, "reason": "not_ready"}
-    context = await load_companion_prompt_context(user_id)
-    if context is None:
-        return {"expressed": False, "action_id": None, "reason": "not_ready"}
-    raw = await chat(
-        user_id,
-        DESKTOP_IDLE_EXPRESSION,
-        json.dumps(
-            {
-                "persona": context.persona_extras,
-                "output_language": context.language,
-                "current_mood": context.current_mood,
-                "current_time": context.current_time,
-                "long_term_memories": context.memories_block,
-                "recent_context": recent_context,
-                "environment": {
-                    "current": desktop_environment.get("current"),
-                    "action": desktop_environment.get("action"),
-                },
-                "idle_seconds": idle_seconds,
-                "trigger": trigger,
-                "local_hour": local_hour,
-                "current_action_id": state.selected_action_id,
-                "actions": actions,
-            },
-            ensure_ascii=False,
-        ),
-        task=AiTaskKey.proactive,
-    )
-    choice = DesktopIdleChoice.model_validate(parse_llm_json(raw))
-    if (
-        choice.action_id is None
-        or choice.action_id == state.selected_action_id
-        or choice.action_id not in {action["id"] for action in actions}
-        or presentation != get_presentation_snapshot(user_id)
-        or contact_revision != get_user_proactive_record(user_id).contact_revision
-        or not get_user_proactive_record(user_id).available
-        or get_user_proactive_record(user_id).busy_count
-        or await get_disturbance_tier(user_id) != "autonomous"
-    ):
-        return {"expressed": False, "action_id": None, "reason": choice.reason or "keep_current"}
-    async with SESSION_LOCAL() as db:
-        current_state = await desktop_state(db, user_id, lock=True)
-        if (
-            current_state is None
-            or current_state.version != state.version
-            or current_state.current_set_id != state.current.id
-            or presentation != get_presentation_snapshot(user_id)
-            or contact_revision != get_user_proactive_record(user_id).contact_revision
-            or not get_user_proactive_record(user_id).available
-            or get_user_proactive_record(user_id).busy_count
-            or await get_disturbance_tier(user_id, db=db) != "autonomous"
-        ):
-            return {"expressed": False, "action_id": None, "reason": "state_changed"}
-        action = await desktop_action(db, user_id, choice.action_id, lock=True)
-        asset = desktop_accepted_asset(action)
-        if (
-            not action.enabled
-            or asset is None
-            or trigger not in desktop_action_response(action).allowed_triggers
-            or await desktop_autonomous_block_reason(
-                db,
-                current_state,
-                action,
-                asset,
-                presentation_revision=presentation.revision,
-            )
-            is not None
-        ):
-            return {"expressed": False, "action_id": None, "reason": "no_longer_eligible"}
-        try:
-            command = await play_desktop_action(
-                db,
-                user_id,
-                DesktopVideoPlayRequest(
-                    action_id=choice.action_id,
-                    expected_set_id=state.current.id,
-                    reason=choice.reason,
-                ),
-                source="autonomous",
-            )
-        except DesktopVideoStateError:
-            return {"expressed": False, "action_id": None, "reason": "state_changed"}
-        if (
-            presentation != get_presentation_snapshot(user_id)
-            or contact_revision != get_user_proactive_record(user_id).contact_revision
-            or not get_user_proactive_record(user_id).available
-            or get_user_proactive_record(user_id).busy_count
-            or await get_disturbance_tier(user_id, db=db) != "autonomous"
-        ):
-            return {"expressed": False, "action_id": None, "reason": "presentation_changed"}
-        await db.commit()
-    return {"expressed": True, "action_id": command.action_id, "reason": choice.reason}

@@ -296,8 +296,6 @@ async def design_shared_desktop_action(
                 clip_kind=request.kind,
                 duration_seconds=request.duration_seconds,
                 reason=request.reason,
-                desktop_continuity=request.continuity,
-                desktop_allowed_triggers=request.allowed_triggers,
             ),
             source=source,
             origin_kind="desktop",

@@ -7,6 +7,7 @@ from infrastructure.config import SETTINGS
 from features.actions.materials import accepted_action_asset
 from features.actions.models import CompanionAction
 from features.actions.schemas import ABSOLUTE_MAX_DURATION_SECONDS
+from features.media.chain import MediaChainState
 
 PLAY_INTENT_TTL_SECONDS = 30
 # 制作完成前保存的表达意图有效期：过期只入库，不补播。
@@ -14,6 +15,34 @@ DEFERRED_PLAY_INTENT_TTL_SECONDS = 15 * 60
 
 # 账户内动作制作命令串行；共享定义另由账户行锁与唯一约束去重。
 _ACCEPT_LOCKS: dict[int, asyncio.Lock] = {}
+
+
+def is_unsubmitted_video_plan(
+    state: MediaChainState,
+    *,
+    provider_task_id: str | None = None,
+    artifact_path: str | None = None,
+    result_json: str | None = None,
+    media_path: str | None = None,
+) -> bool:
+    """仅有冻结供应商计划，尚无任何视频尝试或产物。"""
+    return (
+        bool(state.providers)
+        and state.phase == "ready"
+        and state.next_index == 0
+        and state.active_index is None
+        and not state.stop_reason
+        and not state.candidates
+        and not state.queue_request_id
+        and state.video_queue is None
+        and not state.result_url
+        and not state.source_path
+        and state.call_seconds == 0
+        and not provider_task_id
+        and not artifact_path
+        and not result_json
+        and not media_path
+    )
 
 
 class ActionPolicyError(RuntimeError):

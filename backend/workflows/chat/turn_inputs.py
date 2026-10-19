@@ -6,7 +6,6 @@ from typing import Any, Literal, get_args
 from features.appearance.character_card import load_character_snapshot
 from features.companion.disturbance import get_disturbance_tier
 from features.companion.persona_service import build_system_prompt_extras, load_persona_definition, render_extras
-from features.companion.proactive_runtime import get_presentation_snapshot
 from features.companion.visual_state import persona_snapshot
 from features.configuration.desktop_config import DEFAULT_CONFIG
 from features.configuration.settings.timezone import resolve_user_timezone
@@ -49,7 +48,6 @@ from runtime.client_context import ChatRequestClientContext
 from runtime.memory_scope import MemoryScope, MemorySource
 from runtime.presets import COMPANION_PRESET_ID, InferenceDefaults, resolve_preset_meta
 from runtime.tools.domains import apply_search_tools_catalog
-from runtime.tools.presentation import unavailable_presentation_tool_names
 from runtime.tools.registry import REGISTRY, schema_name
 from runtime.tools.toolsets import disabled_backend_tool_names
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -59,6 +57,7 @@ from workflows.chat.prompt_blocks import AgentPromptConfig
 from workflows.chat.prompt_presets import preset_excluded_tool_names
 from workflows.chat.system_prompt import build_system_prompt
 from workflows.chat.tool_dispatch import INTERRUPTED_RUNNING_ERROR
+from workflows.tool_availability import unavailable_action_tool_names
 
 
 @dataclass(frozen=True)
@@ -354,13 +353,12 @@ async def build_turn_inputs(
         excluded_tool_names | preset_excluded_tool_names(preset_id) | disabled_backend_tool_names(user_settings)
     )
     # 排除后重算 search_tools 的业务域清单，只列出本回合实际可解锁的能力。
-    presentation = get_presentation_snapshot(user_id)
-    mode_excluded = unavailable_presentation_tool_names(presentation.mode if presentation else None)
+    action_excluded = await unavailable_action_tool_names(db, user_id)
     all_schemas = apply_search_tools_catalog(
         [
             schema
             for schema in REGISTRY.get_all_schemas(user_id, user_settings=user_settings)
-            if schema_name(schema) not in excluded_tool_names | mode_excluded
+            if schema_name(schema) not in excluded_tool_names | action_excluded
         ],
     )
     persona = await persona_snapshot(db, user_id) if is_companion else None

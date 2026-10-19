@@ -26,6 +26,12 @@ class IdleExpressionRequest(CompanionRequest):
     local_hour: int | None = Field(default=None, ge=-1, le=23)
 
 
+class IdleExpressionResult(BaseModel):
+    expressed: bool
+    action_id: int | None = None
+    reason: str = ""
+
+
 class ShouldActRequest(CompanionRequest):
     kind: Literal["periodic_provision"] = "periodic_provision"
     idle_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False)

@@ -2,17 +2,21 @@
 
 import json
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Literal
 
 from infrastructure.ai.error_classifier import LlmCallBlockedError
 from infrastructure.ai.llm_client import MissingLlmConfigError
 from infrastructure.ai.models import ModelModality
 from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, LlmJsonValidationError, call_llm_json, vision_chat
+from infrastructure.ai.providers._reference import resolve_reference_bytes
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import UserLlmConfig, load_user_llm_config
+from infrastructure.assets.asset_store import build_data_uri
+from infrastructure.async_io import run_blocking
 from infrastructure.logger import get_logger
 from infrastructure.text import parse_llm_json
+from infrastructure.video_processing.frames import action_frame_review_input, measure_action_frame
 from pydantic import BaseModel, ConfigDict, Field
 
 from features.media.chain import MEDIA_IDENTITY_ACCEPT_SCORE
@@ -81,6 +85,7 @@ async def review_character_image_goal(
     identity_reference_mode: Literal["primary", "portrait_and_outfit"],
     secondary_uri: str | None = None,
     identity_text: str = "",
+    prepared_action_frame: bool = False,
     task: AiTaskKey,
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> CharacterImageReviewResult:
@@ -128,6 +133,12 @@ async def review_character_image_goal(
         return result
 
     try:
+        geometry = None
+        if prepared_action_frame:
+            candidate_data, _mime = await resolve_reference_bytes(candidate_uri)
+            geometry = asdict(await run_blocking(measure_action_frame, candidate_data))
+            diagnostic = await run_blocking(action_frame_review_input, candidate_data)
+            images = (*images[:-1], build_data_uri(diagnostic, "image/png"))
         llm_config = await require_image_goal_review_config(user_id, task)
         result = await call_llm_json(
             llm_config,
@@ -135,7 +146,12 @@ async def review_character_image_goal(
                 reference_roles=reference_roles,
                 accept_score=MEDIA_IDENTITY_ACCEPT_SCORE,
             ),
-            {"image_count": len(images), "identity": identity_text, "generation_prompt": generation_prompt},
+            {
+                "image_count": len(images),
+                "identity": identity_text,
+                "generation_prompt": generation_prompt,
+                "image_geometry": geometry,
+            },
             schema=_CharacterImageReview.model_json_schema(),
             schema_name="character_image_goal_review",
             parse_output=parse_output,

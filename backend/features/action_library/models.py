@@ -31,16 +31,6 @@ class ActionDefinition(ModelBase, TimestampMixin):
     clip_kind: Mapped[str] = mapped_column(String(8))
     duration_seconds: Mapped[int] = mapped_column(Integer)
     reason: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
-    desktop_continuity: Mapped[str] = mapped_column(
-        String(16),
-        default="independent",
-        server_default=text("'independent'"),
-    )
-    desktop_allowed_triggers_json: Mapped[str] = mapped_column(
-        Text,
-        default='["chat", "manual"]',
-        server_default=text('\'["chat", "manual"]\''),
-    )
     source: Mapped[str] = mapped_column(String(24))
     status: Mapped[str] = mapped_column(String(24), default="pending", server_default=text("'pending'"), index=True)
     review_reason: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))

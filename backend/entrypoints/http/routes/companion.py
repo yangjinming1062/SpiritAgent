@@ -101,11 +101,11 @@ from features.appearance.views import (
 )
 from features.companion.http_contracts import (
     IdleExpressionRequest,
+    IdleExpressionResult,
     InteractionStatsRequest,
     InteractionStatsResult,
     ShouldActRequest,
 )
-from features.companion.idle_expression import IdleExpressionResult
 from features.companion.interaction_stats import record_interaction
 from features.companion.persona_service import (
     PersonaConflictError,

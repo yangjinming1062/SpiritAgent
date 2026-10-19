@@ -1,13 +1,20 @@
 """共享定义与版本状态的只读投影；目标素材仍从所属模块读取。"""
 
 import json
+from collections.abc import Collection
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import ActionDefinition, ActionSyncTarget
 from .ports import read_variant
-from .schemas import ActionDefinitionSnapshot, ActionSourceSnapshot, ActionTargetSnapshot, ActionVariantSummary
+from .schemas import (
+    ActionDefinitionSnapshot,
+    ActionSourceSnapshot,
+    ActionTargetKind,
+    ActionTargetSnapshot,
+    ActionVariantSummary,
+)
 
 
 def definition_view(row: ActionDefinition) -> ActionDefinitionSnapshot:
@@ -27,8 +34,6 @@ def definition_view(row: ActionDefinition) -> ActionDefinitionSnapshot:
         status=row.status,
         review_reason=row.review_reason,
         reuse_definition_id=row.reuse_definition_id,
-        desktop_continuity=row.desktop_continuity,
-        desktop_allowed_triggers=json.loads(row.desktop_allowed_triggers_json),
     )
 
 
@@ -63,14 +68,34 @@ async def definitions_for_source(
 
 
 async def targets_for_definition(db: AsyncSession, user_id: int, definition_id: int) -> list[ActionTargetSnapshot]:
+    return await targets_for_definitions(db, user_id, (definition_id,))
+
+
+async def targets_for_definitions(
+    db: AsyncSession,
+    user_id: int,
+    definition_ids: Collection[int],
+    *,
+    target_kind: ActionTargetKind | None = None,
+    target_id: int | None = None,
+    refresh: bool = False,
+) -> list[ActionTargetSnapshot]:
+    """refresh 覆盖已加载行；同事务写入者须先 flush，再请求数据库当前值。"""
+    if not definition_ids:
+        return []
+    statement = select(ActionSyncTarget).where(
+        ActionSyncTarget.user_id == user_id,
+        ActionSyncTarget.definition_id.in_(definition_ids),
+    )
+    if target_kind is not None:
+        statement = statement.where(ActionSyncTarget.target_kind == target_kind)
+    if target_id is not None:
+        statement = statement.where(ActionSyncTarget.target_id == target_id)
+    if refresh:
+        statement = statement.execution_options(populate_existing=True)
     rows = (
         await db.scalars(
-            select(ActionSyncTarget)
-            .where(
-                ActionSyncTarget.user_id == user_id,
-                ActionSyncTarget.definition_id == definition_id,
-            )
-            .order_by(ActionSyncTarget.target_kind, ActionSyncTarget.target_id),
+            statement.order_by(ActionSyncTarget.target_kind, ActionSyncTarget.target_id),
         )
     ).all()
     return [ActionTargetSnapshot.model_validate(row) for row in rows]

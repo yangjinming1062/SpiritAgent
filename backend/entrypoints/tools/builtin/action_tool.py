@@ -1,25 +1,34 @@
-"""动作库 LLM 工具：检索、设计提案、状态查询与播放。source、授权、系统槽位与目标包由服务端绑定；工具结果不进入聊天视频自动送达链。"""
+"""伙伴统一动作工具；账户与本轮呈现视图由派发层注入。"""
 
+import json
 from typing import Any
 
-from features.actions import tool_use_cases as _actions
-from features.actions.prompts import (
+from features.actions.schemas import ABSOLUTE_MAX_DURATION_SECONDS
+from runtime.tools.registry import ToolsRegistry
+from workflows.companion_action_prompts import (
+    ACTION_DESIGN_MOTION_DESCRIPTION,
     ACTION_DESIGN_TOOL_DESCRIPTION,
     ACTION_INSPECT_TOOL_DESCRIPTION,
     ACTION_PLAY_TOOL_DESCRIPTION,
     ACTION_SEARCH_TOOL_DESCRIPTION,
 )
-from features.actions.schemas import ABSOLUTE_MAX_DURATION_SECONDS
-from runtime.tools.registry import ToolsRegistry
+from workflows.companion_actions import (
+    ActionViewSnapshot,
+    design_action_reference,
+    inspect_action_reference,
+    play_action_reference,
+    search_action_reference,
+)
 
 
 async def action_search_tool(
     user_id: int,
     query: str = "",
     limit: int = 10,
+    action_view: ActionViewSnapshot | None = None,
     **_: Any,
 ) -> str:
-    return await _actions.action_search_tool(user_id=user_id, query=query, limit=limit, **_)
+    return json.dumps(await search_action_reference(user_id, action_view, query=query, limit=limit), ensure_ascii=False)
 
 
 async def action_design_tool(
@@ -29,12 +38,13 @@ async def action_design_tool(
     use_when: list[str] | None = None,
     avoid_when: list[str] | None = None,
     reason: str = "",
-    duration_seconds: float = 4,
+    duration_seconds: int = 4,
     clip_kind: str = "once",
     proactive_turn: bool = False,
+    action_view: ActionViewSnapshot | None = None,
     **_: Any,
 ) -> str:
-    return await _actions.action_design_tool(
+    result = await design_action_reference(
         name=name,
         motion_description=motion_description,
         user_id=user_id,
@@ -44,27 +54,38 @@ async def action_design_tool(
         duration_seconds=duration_seconds,
         clip_kind=clip_kind,
         proactive_turn=proactive_turn,
-        **_,
+        action_view=action_view,
     )
+    return json.dumps(result, ensure_ascii=False)
 
 
 async def action_inspect_tool(
     user_id: int,
-    proposal_id: int | None = None,
-    action_id: int | None = None,
+    action_ref: str | None = None,
+    definition_id: int | None = None,
+    action_view: ActionViewSnapshot | None = None,
     **_: Any,
 ) -> str:
-    return await _actions.action_inspect_tool(user_id=user_id, proposal_id=proposal_id, action_id=action_id, **_)
+    result = await inspect_action_reference(user_id, action_view, action_ref=action_ref, definition_id=definition_id)
+    return json.dumps(result, ensure_ascii=False)
 
 
 async def action_play_tool(
-    action_id: int,
+    action_ref: str,
     user_id: int,
     reason: str = "",
+    proactive_turn: bool = False,
+    action_view: ActionViewSnapshot | None = None,
     **_: Any,
 ) -> str:
-    """LLM 统一动作播放入口；对话与非对话均由此转入 request_playback。"""
-    return await _actions.action_play_tool(action_id=action_id, user_id=user_id, reason=reason, **_)
+    result = await play_action_reference(
+        user_id,
+        action_ref,
+        action_view,
+        reason=reason,
+        source="autonomous" if proactive_turn else "chat_expression",
+    )
+    return json.dumps(result, ensure_ascii=False)
 
 
 def register(registry: ToolsRegistry) -> None:
@@ -95,11 +116,7 @@ def register(registry: ToolsRegistry) -> None:
                     "type": "string",
                     "minLength": 10,
                     "maxLength": 600,
-                    "description": (
-                        "角色独立完成一个表达目标所需的主要运动部位、方向、节奏、稳定支撑与必要衔接；"
-                        "保持姿态也可以是完整表达，不为填满时长额外编排律动。次数和频率按目标必要性安排。"
-                        "未专门设计呼吸动作时，安静状态的呼吸仅在胸腹或结构适用的局部微小变化，头肩、身体位置与重心安定。"
-                    ),
+                    "description": ACTION_DESIGN_MOTION_DESCRIPTION,
                 },
                 "use_when": {
                     "type": "array",
@@ -125,7 +142,7 @@ def register(registry: ToolsRegistry) -> None:
                     "type": "string",
                     "enum": ["loop", "once"],
                     "default": "once",
-                    "description": "loop 持续保持状态或运动首尾自然衔接，接触关系与已有物品的可见状态也须连续，不为循环强加往复；once 完成一次表达并自然收束。",
+                    "description": "loop 持续保持状态或自然连续的运动，首尾姿态、接触及道具位置和可见状态均须相接；翻到新页等不能自然闭合的过程使用 once，或只设计可持续的阅读阶段，不靠倒放或重置闭合。once 完成一次表达并自然收束。",
                 },
             },
             ["name", "motion_description"],
@@ -134,8 +151,17 @@ def register(registry: ToolsRegistry) -> None:
             "action_inspect",
             action_inspect_tool,
             {
-                "proposal_id": {"type": "integer", "minimum": 1, "description": "action_design 返回的提案 ID。"},
-                "action_id": {"type": "integer", "minimum": 1, "description": "动作 ID。"},
+                "definition_id": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "action_design 返回的动作设计标识，与 action_ref 二选一。",
+                },
+                "action_ref": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "description": "当前清单中的 action_ref，与 definition_id 二选一。",
+                },
             },
             [],
         ),
@@ -143,14 +169,15 @@ def register(registry: ToolsRegistry) -> None:
             "action_play",
             action_play_tool,
             {
-                "action_id": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "description": "当前形象中的 action_id（来自动作列表、action_search 或 action_inspect），不是 proposal_id。",
+                "action_ref": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "description": "来自动作清单、action_search 或 action_inspect 的当前 action_ref。",
                 },
                 "reason": {"type": "string", "maxLength": 200, "description": "本次表演的简短情境依据。"},
             },
-            ["action_id"],
+            ["action_ref"],
         ),
     ]
     descriptions = {

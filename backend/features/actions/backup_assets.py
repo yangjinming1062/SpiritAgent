@@ -28,6 +28,7 @@ from features.actions.materials import (
     parse_accepted_action_asset_json,
 )
 from features.actions.models import CompanionAction, CompanionActionPack, make_action_reference_hash
+from features.actions.policy import is_unsubmitted_video_plan
 from features.actions.publishing import build_catalog_manifest
 from features.media.chain import MediaChainState
 from features.media.identity_contracts import CharacterCardSnapshot
@@ -80,9 +81,19 @@ def restore_action_payload(
             payload["error"] = "恢复的动作任务需要手动处理；请先核对已有生成结果"
         if payload.get("generation_state_json"):
             state = MediaChainState.model_validate_json(payload["generation_state_json"])
+            unsubmitted_plan = is_unsubmitted_video_plan(
+                state,
+                provider_task_id=payload.get("provider_task_id"),
+                artifact_path=payload.get("artifact_path"),
+                result_json=payload.get("result_json"),
+                media_path=payload.get("media_path"),
+            )
             state.generation_id = uuid4().hex
             state.queue_request_id, state.video_queue = None, None
-            state.phase, state.active_index, state.stop_reason = "complete", None, "restored"
+            # 未提交的视频保留冻结计划；恢复后的失败状态仍要求用户显式继续。
+            state.phase, state.active_index, state.stop_reason = (
+                ("ready", None, "") if unsubmitted_plan else ("complete", None, "restored")
+            )
             payload["generation_state_json"] = state.model_dump_json()
         payload["provider_task_id"] = None
         # 原队列独立收尾；恢复只保留已付费产物，不继承其他实例的远端占用。

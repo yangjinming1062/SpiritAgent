@@ -17,6 +17,7 @@ from features.actions.prompts import (
     ACTION_IMAGE_TEMPLATE,
     PEEK_ACTION_POSE_DESCRIPTION,
     PEEK_GEOMETRY_INSTRUCTIONS,
+    VIDEO_ACTION_POSE_GOAL_TEMPLATE,
     VIDEO_ACTION_POSE_TEMPLATE,
     VIDEO_ACTION_SCRIPT_INSTRUCTIONS,
     VIDEO_PROMPT_IDLE_REQUIREMENTS,
@@ -28,7 +29,6 @@ from features.actions.prompts import (
 )
 from features.actions.schemas import ABSOLUTE_MAX_DURATION_SECONDS, PeekGeometry
 from features.appearance.character_card import (
-    render_character_identity,
     render_character_profile,
     render_character_video_identity,
 )
@@ -215,7 +215,7 @@ def build_action_image_prompt(entry: ImageActionScriptEntry, identity: Character
     return (
         ACTION_IMAGE_TEMPLATE.format(pose=entry.image_prompt, margin_percent=ACTION_FRAME_MARGIN * 100)
         + "\n"
-        + render_character_identity(identity)
+        + render_character_profile(identity)
     )
 
 
@@ -340,13 +340,19 @@ def build_video_prompt(
     return prompt + "\n" + render_character_video_identity(identity)
 
 
-def build_pose_prompt(entry: VideoActionScriptEntry, identity: CharacterCardSnapshot) -> str:
+def build_pose_prompt(
+    entry: VideoActionScriptEntry,
+    identity: CharacterCardSnapshot,
+    *,
+    activity_target: str = "",
+) -> str:
     return (
         VIDEO_ACTION_POSE_TEMPLATE.format(
             action=entry.motion_prompt,
             pose=entry.pose_prompt,
             margin_percent=ACTION_FRAME_MARGIN * 100,
         )
+        + ("\n" + VIDEO_ACTION_POSE_GOAL_TEMPLATE.format(goal=activity_target) if activity_target else "")
         + "\n"
-        + render_character_identity(identity)
+        + render_character_profile(identity)
     )

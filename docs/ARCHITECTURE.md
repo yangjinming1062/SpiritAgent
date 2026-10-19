@@ -46,7 +46,7 @@ Backend 保持单进程的模块化单体，按账户、配置、会话、记忆
 
 业务 ORM 留在所属模块，跨模块调用公开操作、查询和事件，返回 DTO 或只读快照。双向协调移入流程，反向通知通过明确装配的端口完成。短事务管理状态，供应商等待在事务外；必须原子完成的流程通过模块提供的事务内操作共享事务。内部约束与检查入口归 [Backend](../backend/README.md#模块依赖边界)。
 
-[共享动作目录](../backend/features/action_library/README.md)拥有同着装的动作定义、独立评审与目标调度意图；窗口动作和桌面生活各自拥有素材、制作状态、采纳与播放。跨模式同步由 `workflows` 调用两侧公开操作，使用冻结的原始身份和着装来源匹配目标。
+[共享动作目录](../backend/features/action_library/README.md)拥有同着装的动作定义、独立评审与目标调度意图；窗口动作和桌面生活各自拥有素材、制作状态、采纳与播放。跨模式同步由 `workflows` 调用两侧公开操作，使用冻结的原始身份和着装来源匹配目标。伙伴动作视图也由 `workflows` 组织，只投影当前可用能力并绑定服务端派发目标，模型不选择呈现模式。
 
 Runner 使用 `runner/spirit_agent_runner/` 平铺 Python 包，源码与安装版共用模块入口，入口和实现由一个 wheel 交付。[bootstrap](../runner/spirit_agent_runner/bootstrap.py) 显式装配配置、工具目录、执行器与各能力服务；`transport` 处理本地连接，`runtime` 管理调用、配置快照和恢复，`features` 按执行、文件、浏览器、桌面、媒体与技能组织。`contracts` 提供纯契约，`infrastructure` 提供共享处理能力；两者不依赖运行时或具体工具。
 

@@ -13,7 +13,7 @@
 | [generation/references.py](generation/references.py)、[generation/catalog.py](generation/catalog.py)、[video_queue.py](video_queue.py) | 冻结身份、目录收尾、响应装配与视频提交前有效性检查 |
 | [repository.py](repository.py)、[materials.py](materials.py) | 包、动作和当前尝试/已采纳素材 |
 | [publishing.py](publishing.py)、[asset_retirement.py](asset_retirement.py) | 目录 CAS 发布、引用退役与补偿 |
-| [policy.py](policy.py)、[playback.py](playback.py)、[usage.py](usage.py) | 创建开关、点播、回执和延迟意图 |
+| [policy.py](policy.py)、[playback.py](playback.py)、[usage.py](usage.py)、[expression_catalog.py](expression_catalog.py) | 创建开关、点播、回执、延迟意图及伙伴动作视图的公开快照 |
 | [lifecycle.py](lifecycle.py)、[backup.py](backup.py)、[asset_references.py](asset_references.py) | 任务、目录重建与资产引用贡献 |
 
 ## 提案处理

@@ -74,8 +74,8 @@ class ActionDesignRequest(BaseModel):
     use_when: list[Annotated[str, Field(max_length=120)]] = Field(default_factory=list, max_length=8)
     avoid_when: list[Annotated[str, Field(max_length=120)]] = Field(default_factory=list, max_length=8)
     reason: str = Field(min_length=1, max_length=400, pattern=r"^[^\x00]*$")
-    duration_seconds: float = Field(ge=1, le=ABSOLUTE_MAX_DURATION_SECONDS)
-    clip_kind: str = Field(pattern="^(loop|once)$")
+    duration_seconds: float = Field(default=4, ge=1, le=ABSOLUTE_MAX_DURATION_SECONDS)
+    clip_kind: str = Field(default="once", pattern="^(loop|once)$")
     expected_pack_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)
 
     @field_validator("name", "motion_description")
@@ -103,7 +103,7 @@ class ActionDesignRequest(BaseModel):
 
 
 class ActionDesignResult(BaseModel):
-    """action_design 受理结果：reused / pending_review / rejected。"""
+    """衣柜动作设计接口的受理结果。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -115,7 +115,7 @@ class ActionDesignResult(BaseModel):
 
 
 class ActionPlayRequest(BaseModel):
-    """LLM action_play 工具入参。"""
+    """窗口播放操作入参；模型动作引用由工作流校验并解析。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -125,7 +125,7 @@ class ActionPlayRequest(BaseModel):
 
 
 class ActionPlayResult(BaseModel):
-    """action_play 结果：queued 不等于 completed。"""
+    """窗口播放操作结果：queued 不等于 completed。"""
 
     model_config = ConfigDict(extra="forbid")
 

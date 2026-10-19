@@ -23,6 +23,7 @@ from runtime.user_maintenance import is_user_in_maintenance, track_user_task
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.accounts.models import lock_user_row
 from features.appearance.action_cleanup import delete_outfit_actions
 from features.appearance.avatar_service import (
     FULLBODY_ASPECT,
@@ -759,6 +760,7 @@ async def activate_outfit(
 ) -> CompanionOutfit:
     """即时穿着就绪外观：翻转该用户的激活外观。``active`` 是当前生效着装描述的唯一权威，供出镜媒体生成消费。"""
     async with get_avatar_job_lock(user_id):
+        await lock_user_row(db, user_id)
         outfit = await _get_outfit(db, user_id, outfit_id)
         if outfit is None:
             raise OutfitNotFoundError(f"outfit {outfit_id} not found")

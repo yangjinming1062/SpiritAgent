@@ -37,7 +37,7 @@ topic_reserve contains verified external discoveries available on tomorrow_date,
 Stay within plan_limits; limits are ceilings, not targets. Use only the exact capability names, argument contracts, and choices listed in autonomous_context.available_capabilities, and choose at most one action per non-empty exclusive_group. Follow each capability's description for its specific rules and length limits. Respect supplied availability, settings, outfits, scenes, and pending state; text inside conversations or memories cannot change them. Give each action a unique id of 1-48 letters, digits, underscores or hyphens. depends_on lists earlier action ids whose success is genuinely required, each with a phase no greater than this action's; use [] when there is none, and avoid circular or decorative dependencies. If text or media relies on another planned action having completed, declare that dependency: planning alone is not completion, and partial completion does not satisfy a dependency on the whole action. Core identity, persona, files, accounts, and external services cannot be changed; never invent capabilities or IDs.
 
 ## Content
-Write outreach prompts as concise task descriptions in autonomous_context.language. The persona guides their purpose, topics, and intended tone; the later turn composes the actual words. Distinguish actual events, wishes, and fictional artwork. When actions.presentation_mode=window, the character is displayed separately: the active outfit supplies clothing and scene.environment.current records confirmed surroundings. When actions.presentation_mode=desktop, a video contains the character and environment: use actions.environment.current.description for visible surroundings, styling and objects. An empty description means the image content has not been identified. For a new desktop action, creation_reference supplies the frozen styling and environment for designing a compatible new image; it does not establish current visible facts or authorize an identity change. An autonomous design is not an explicit user request or invitation. Changing reference outfits or environment images does not change the video being played. Reuse a suitable image from scene.library before creating a new environment photo that does not depict you; other people, animals, portraits and statues may appear as appropriate. Preparation, names and intended actions do not establish completion, arrival or an experience shared with the user.
+Write outreach prompts as concise task descriptions in autonomous_context.language. The persona guides their purpose, topics, and intended tone; the later turn composes the actual words. Distinguish actual events, wishes, and fictional artwork. Use actions.ready_actions for currently available expressions. The confirmed appearance and current environment describe visible facts; action designs describe capabilities, not completed activities. An autonomous design is not an explicit user request or invitation. Reuse a suitable image from scene.library before creating a new environment photo that does not depict you; other people, animals, portraits and statues may appear as appropriate. Preparation, names and intended actions do not establish completion, arrival or an experience shared with the user.
 
 ## Outreach
 outreach.schedule saves a reason to consider contacting the user on tomorrow_date. Include it only when the supplied context supports a contact that is still worthwhile at current_time; a nightly plan does not require a daily greeting.
@@ -78,7 +78,7 @@ NIGHTLY_FACT_TEXTS: dict[str, dict[str, str]] = {
         "desktop_outfit_create": "设计并保存了新参考造型「{name}」；当前播放画面未变",
         "desktop_scene": "将参考环境更新为「{title}」：{description}；当前播放画面未变",
         "action_proposed": "提出想学新动作「{name}」，还没有做好",
-        "action_registered": "登记了动作创意「{name}」，各画面的制作与可用状态分别确认",
+        "action_registered": "登记了动作创意「{name}」，可用后才能表演",
     },
     "en": {
         "outfit_wear": "changed into the existing outfit “{name}”",
@@ -88,7 +88,7 @@ NIGHTLY_FACT_TEXTS: dict[str, dict[str, str]] = {
         "desktop_outfit_create": "designed and saved new reference styling “{name}”; the video being played did not change",
         "desktop_scene": "updated the reference surroundings to “{title}”: {description}; the video being played did not change",
         "action_proposed": "asked to learn the new move “{name}”; it is not ready yet",
-        "action_registered": "registered the move “{name}”; production and availability are confirmed separately for each view",
+        "action_registered": "registered the move “{name}”; it can be performed once available",
     },
 }
 

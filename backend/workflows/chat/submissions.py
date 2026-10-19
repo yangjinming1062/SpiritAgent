@@ -247,7 +247,6 @@ def create_submission_handler(
                     user_id,
                     emitter,
                     session_client_context=client_context,
-                    desktop_interaction=actor.origin_kind == "desktop",
                     track_task=actor.account.track,
                     session_settings=runtime.settings,
                     persisted_message_id=persisted_message_id,

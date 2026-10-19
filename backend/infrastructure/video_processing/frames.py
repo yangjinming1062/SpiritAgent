@@ -1,5 +1,6 @@
 """动作姿态图：保留原生 alpha，仅对不透明图抠像，并按交付类型准备留白。"""
 
+from dataclasses import dataclass
 from io import BytesIO
 from math import ceil
 
@@ -12,6 +13,46 @@ from infrastructure.video_processing.matting import ForegroundMatte, require_mat
 logger = get_logger(__name__)
 
 ACTION_FRAME_MARGIN = 0.08
+ACTION_ALPHA_THRESHOLD = 8
+
+
+@dataclass(frozen=True)
+class ActionFrameGeometry:
+    canvas: tuple[int, int]
+    bbox: tuple[int, int, int, int]
+    margins: tuple[float, float, float, float]
+    required_margin: float = ACTION_FRAME_MARGIN
+
+
+def measure_action_frame(data: bytes) -> ActionFrameGeometry:
+    """从已保存候选像素取得四边前景留白；不证明角色身体完整或动作语义。"""
+    with Image.open(BytesIO(data)) as source:
+        image = source.convert("RGBA")
+    bounds = image.getchannel("A").point(lambda value: 255 if value > ACTION_ALPHA_THRESHOLD else 0).getbbox()
+    if bounds is None:
+        raise ActionMaterialRejectedError("动作姿态图缺少可见角色")
+    left, top, right, bottom = bounds
+    return ActionFrameGeometry(
+        canvas=image.size,
+        bbox=bounds,
+        margins=(
+            left / image.width,
+            top / image.height,
+            (image.width - right) / image.width,
+            (image.height - bottom) / image.height,
+        ),
+    )
+
+
+def action_frame_review_input(data: bytes) -> bytes:
+    """固定中灰诊断底仅用于观察透明边缘，不修改原资产。"""
+    with Image.open(BytesIO(data)) as source:
+        image = source.convert("RGBA")
+    background = Image.new("RGBA", image.size, (128, 128, 128, 255))
+    background.alpha_composite(image)
+    output = BytesIO()
+    background.convert("RGB").save(output, format="PNG")
+    return output.getvalue()
 
 
 def _margin_canvas_size(size: int) -> int:
@@ -30,14 +71,14 @@ def prepare_action_frame(data: bytes, *, preserve_resolution: bool = False) -> b
     if alpha_max < 128:
         raise ActionMaterialRejectedError("动作姿态图缺少可见角色")
     method = "native_alpha"
-    if alpha_min > 8:
+    if alpha_min > ACTION_ALPHA_THRESHOLD:
         image = ForegroundMatte(require_matting_model()).apply(image)
         method = "isnet"
     alpha = image.getchannel("A")
     alpha_min, alpha_max = alpha.getextrema()
-    if alpha_min > 8:
+    if alpha_min > ACTION_ALPHA_THRESHOLD:
         raise ActionMaterialRejectedError("动作姿态图背景未去干净，请重新生成此动作")
-    bounds = alpha.point(lambda value: 255 if value > 8 else 0).getbbox()
+    bounds = alpha.point(lambda value: 255 if value > ACTION_ALPHA_THRESHOLD else 0).getbbox()
     if bounds is None or alpha_max < 128:
         raise ActionMaterialRejectedError("动作姿态图缺少可见角色")
     width, height = image.size

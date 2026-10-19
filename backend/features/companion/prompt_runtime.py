@@ -1,4 +1,3 @@
-from collections.abc import Awaitable, Callable
 from typing import Any, NamedTuple
 
 from infrastructure.ai.error_classifier import LLMRuntimeError
@@ -10,7 +9,6 @@ from infrastructure.text import format_local_iso, parse_llm_json, resolve_langua
 from pydantic import BaseModel
 from runtime.memory_scope import MemoryScope
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.companion.models import Persona
 from features.companion.persona_service import load_persona_definition, render_extras
@@ -21,14 +19,6 @@ from features.configuration.settings.values import get_user_setting
 from features.memory.memory_format import format_memories_block
 
 logger = get_logger(__name__)
-
-ExpressionCatalogReader = Callable[[AsyncSession, int], Awaitable[list[dict[str, Any]]]]
-_expression_catalog_reader: ExpressionCatalogReader | None = None
-
-
-def set_expression_catalog_reader(reader: ExpressionCatalogReader) -> None:
-    global _expression_catalog_reader
-    _expression_catalog_reader = reader
 
 
 class CompanionPromptContext(BaseModel):
@@ -47,10 +37,6 @@ def presentation_prompt(snapshot: PresentationSnapshot | None, *, language: str)
     if snapshot is None:
         return ""
     return resolve_prompt_text(PRESENTATION_CONTEXTS[snapshot.mode], language)
-
-
-def build_presentation_prompt(user_id: int, *, language: str) -> str:
-    return presentation_prompt(get_presentation_snapshot(user_id), language=language)
 
 
 class PromptOutcome(NamedTuple):
@@ -75,13 +61,6 @@ async def load_companion_prompt_context(user_id: int) -> CompanionPromptContext 
             memories_block=await format_memories_block(db, MemoryScope(user_id, "companion"), language=language),
             presentation=get_presentation_snapshot(user_id),
         )
-
-
-async def load_available_expression_actions(db: AsyncSession, user_id: int) -> list[dict[str, Any]]:
-    """返回当前激活包中 LLM 可点播的表达动作清单；每项含 action_id/name/use_when 等。系统产品槽位不进清单，动态动作即表达能力。"""
-    if _expression_catalog_reader is None:
-        raise RuntimeError("Expression catalog reader has not been registered")
-    return await _expression_catalog_reader(db, user_id)
 
 
 async def run_prompt_json(

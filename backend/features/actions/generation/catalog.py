@@ -39,6 +39,7 @@ from .queries import (
     _active_avatar,
     _can_publish_jobs,
     _can_resume_job,
+    _can_resume_pose_preparation,
     _has_pending_work,
     _job_result_unresolved,
     _jobs_by_pack,
@@ -204,7 +205,10 @@ def _pack_response(
                     and pack.status in ("ready", "processing", "failed")
                     and context is not None
                     and context.reference_alignment == "ready"
-                    and _resumable_action_state(job, rejected_media.get(job.id, ())) is not None
+                    and (
+                        _can_resume_pose_preparation(job, rejected_media.get(job.id, ()))
+                        or _resumable_action_state(job, rejected_media.get(job.id, ())) is not None
+                    )
                 ),
                 can_regenerate=job.status != "not_generated" and not _job_result_unresolved(job),
                 current_media_url=signed_companion_asset_url(material.media_path) if material else None,

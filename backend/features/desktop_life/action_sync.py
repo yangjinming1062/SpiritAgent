@@ -52,9 +52,7 @@ async def ensure_synced_desktop_action(
     suite = await db.get(DesktopVideoSet, set_id)
     if suite is None:
         raise DesktopVideoNotFoundError("找不到对应的桌景")
-    blocked_reason = source.blocked_reason or (
-        "请先制作安静相伴的基础画面" if definition.desktop_continuity == "base" and not suite.base_image_path else None
-    )
+    blocked_reason = source.blocked_reason
     action = await db.scalar(
         select(DesktopVideoAction).where(
             DesktopVideoAction.user_id == user_id,
@@ -73,8 +71,8 @@ async def ensure_synced_desktop_action(
             kind=definition.clip_kind,
             duration_seconds=definition.duration_seconds,
             target_duration_seconds=definition.duration_seconds,
-            continuity=definition.desktop_continuity,
-            allowed_triggers_json=json.dumps(definition.desktop_allowed_triggers),
+            continuity="independent",
+            allowed_triggers_json=json.dumps(["periodic", "user_return", "chat", "manual"]),
             use_when_json=json.dumps(definition.use_when, ensure_ascii=False),
             avoid_when_json=json.dumps(definition.avoid_when, ensure_ascii=False),
             preset=False,

@@ -67,7 +67,7 @@ ORM 留在数据所属模块。跨模块读取使用冻结 DTO 或只读快照�
 
 `system_settings` 和点键 `user_settings` 逐值 JSON 编码。用户设置只经 [settings/values.py](features/configuration/settings/values.py) 读写，消费方直接使用解码值。
 
-启动自动执行 `alembic upgrade head`，从 [0004 基线](alembic/versions/0004_baseline.py) 顺序迁移至 [0005 共享动作目录](alembic/versions/0005_action_library.py)。结构变更新建迁移，比对 ORM 类型、默认值与索引；autogenerate 不能完整核对部分索引的条件、方法及操作符类。
+启动自动执行 `alembic upgrade head`，从 [0005 完整基线](alembic/versions/0005_action_library.py) 顺序迁移至 [0006 动作语义](alembic/versions/0006_action_semantics.py)。已有数据库须至少完成 `0005`。结构变更新建迁移，比对 ORM 类型、默认值与索引；autogenerate 不能完整核对部分索引的条件、方法及操作符类。
 
 ### 装配与启停
 
@@ -186,10 +186,10 @@ Caddy 自动签发续期证书并代理 HTTP 与 WS；Backend 的明文 10620 �
 | [陪伴](features/companion/prompts.py)、[创作内容审阅](features/companion/narrative_prompts.py) | 人设、心情、环境、问候和主动回合；`prompt_runtime`、`first_greeting` 与主动流程；动态计划及日记的 `narrative_quality` 审阅与有界修订 |
 | [外观](features/appearance/prompts.py)、[场景](features/scenes/prompts.py) | 头像、全身、衣柜、角色卡及环境；各模块的 `prompt_assembly`、提取和制作服务 |
 | [媒体](features/media/prompts.py) | 共享视觉质感、身份参考、审核与评分；图像/视频质量链和出镜装配 |
-| [窗口动作](features/actions/prompts.py)、[桌面生活](features/desktop_life/prompts.py) | 提案、评审、姿态/运动、探身、外部视频提示词和成品检查 |
+| [共享动作](features/action_library/prompts.py)、[窗口动作](features/actions/prompts.py)、[桌面生活](features/desktop_life/prompts.py) | 共同设计评审、姿态/运动、探身、外部视频提示词和成品检查 |
 | [记忆](features/memory/prompts.py)、[动态](features/posts/prompts.py) | 维护政策、召回资料、独立创作与线程回复；记忆模块、动态 `context`/`prompt_contract`/`publication`/`replies` |
 | [夜间](workflows/nightly/prompts.py) | 规划、阶段账本、检查点、日记与反思 |
-| [工具](runtime/tools/prompts.py)、[桌面工具](runtime/tools/desktop_prompts.py) | 工具说明、验图、网页摘要与本机操作；参数类型与必填项仍在工具 schema |
+| [工具](runtime/tools/prompts.py)、[伙伴动作](workflows/companion_action_prompts.py) | 通用工具说明、验图、网页摘要、本机操作及统一动作能力；参数类型与必填项仍在工具 schema |
 
 检查文本同时检查动态装配：聊天 `prompt_blocks`/`system_prompt` 的工具开关、时间和模式，`streaming`/`reply_delivery` 的实际语音与媒体能力，`tool_availability` 的可执行集合，夜间能力目录与预算，动态 `prompt_contract` 的 schema 约束，以及场景检查、出镜参考、动作脚本和桌面视频的各自分支。基础预设预览不代表最终请求。
 

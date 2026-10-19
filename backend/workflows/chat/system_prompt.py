@@ -1,11 +1,8 @@
 import json
 import re
 
-from features.actions.context import build_action_context
 from features.appearance.context import build_outfit_extras
-from features.companion.proactive_runtime import get_presentation_snapshot
 from features.desktop_life.queries import activated_desktop_environment
-from features.desktop_life.service import build_desktop_action_context
 from features.scenes.queries import get_scene_state, scene_environment
 from infrastructure.text import resolve_prompt_text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +15,7 @@ from workflows.chat.prompts import (
     SCENE_CONTEXT_GUIDANCES,
     VOLATILE_LABELS,
 )
+from workflows.companion_actions import ActionViewSnapshot
 
 # volatile header 行：发送前按同一格式整行刷新日期与时区，保留构建时按会话语言写入的标签。
 _VOLATILE_HEADER_RE = re.compile(
@@ -29,15 +27,22 @@ def build_system_prompt(config: AgentPromptConfig, *, preset_id: str, delegated:
     return render_preset_body(preset_body(preset_id, config.language, delegated=delegated), config)
 
 
-async def build_companion_environment_prompt(db: AsyncSession, user_id: int, *, language: str) -> str:
+async def build_companion_environment_prompt(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    language: str,
+    action_view: ActionViewSnapshot,
+) -> str:
     parts: list[str] = []
-    presentation = get_presentation_snapshot(user_id)
+    presentation = action_view.presentation
     if presentation is not None and presentation.mode == "desktop":
+        environment = await activated_desktop_environment(db, user_id)
         parts.extend(
             [
                 resolve_prompt_text(DESKTOP_ENVIRONMENT_GUIDANCES, language),
-                json.dumps(await activated_desktop_environment(db, user_id), ensure_ascii=False),
-                await build_desktop_action_context(db, user_id, language=language),
+                json.dumps({"current": environment.get("current")}, ensure_ascii=False),
+                action_view.to_prompt_block(language=language),
             ],
         )
         return "\n\n".join(parts)
@@ -52,8 +57,7 @@ async def build_companion_environment_prompt(db: AsyncSession, user_id: int, *, 
         ],
     )
     # 动作快照：每次模型调用前刷新（含工具续轮），频繁变化的动作数据不写入稳定身份前缀。
-    action_context = await build_action_context(db, user_id)
-    parts.append(action_context.to_prompt_block(language=language))
+    parts.append(action_view.to_prompt_block(language=language))
     return "\n\n".join(parts)
 
 

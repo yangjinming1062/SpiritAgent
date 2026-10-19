@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 from features.media.identity_contracts import CharacterCardSnapshot
 
@@ -27,21 +27,17 @@ class ActionDefinitionDesign(BaseModel):
     motion_description: str = Field(min_length=10, max_length=600)
     use_when: list[str] = Field(default_factory=list, max_length=8)
     avoid_when: list[str] = Field(default_factory=list, max_length=8)
-    clip_kind: Literal["once", "loop"]
-    duration_seconds: int = Field(ge=1, le=15, strict=True)
+    clip_kind: Literal["once", "loop"] = "once"
+    duration_seconds: int = Field(default=4, ge=1, le=15, strict=True)
     reason: str = Field(default="", max_length=400)
-    desktop_continuity: Literal["independent", "base"] = "independent"
-    desktop_allowed_triggers: list[Literal["periodic", "user_return", "chat", "manual"]] = Field(
-        default_factory=lambda: ["chat", "manual"],
-        min_length=1,
-        max_length=4,
-    )
 
     @field_validator("name", "motion_description")
     @classmethod
-    def nonblank(cls, value: str) -> str:
+    def nonblank(cls, value: str, info: ValidationInfo) -> str:
         if not value.strip() or "\x00" in value:
             raise ValueError("动作名称与描述不能为空或包含空字符")
+        if info.field_name == "motion_description" and len(value.strip()) < 10:
+            raise ValueError("动作描述至少需要10个字符")
         return value.strip()
 
     @field_validator("use_when", "avoid_when")

@@ -36,12 +36,10 @@ def _prepare_definition(raw: dict[str, Any], payload: dict[str, Any], context: B
                     "clip_kind",
                     "duration_seconds",
                     "reason",
-                    "desktop_continuity",
                 )
             },
             "use_when": json.loads(raw["use_when_json"]),
             "avoid_when": json.loads(raw["avoid_when_json"]),
-            "desktop_allowed_triggers": json.loads(raw["desktop_allowed_triggers_json"]),
         },
     )
     if raw["status"] not in {"pending", "reviewing", "deferred", "approved", "reused", "rejected"}:
@@ -101,8 +99,6 @@ async def _existing_definition(
             "avoid_when_json",
             "clip_kind",
             "duration_seconds",
-            "desktop_continuity",
-            "desktop_allowed_triggers_json",
         )
     ):
         raise ValueError("合并的同名共享动作与现有冻结设计不一致。")

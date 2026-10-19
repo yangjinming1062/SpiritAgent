@@ -1,12 +1,3 @@
-"""呈现模式对应的动作工具族；调用方提供已验证的当前模式。"""
+"""伙伴动作统一工具名；本轮资格由工作流绑定的动作视图决定。"""
 
-from runtime.presentation import PresentationMode
-
-WINDOW_ACTION_TOOL_NAMES = frozenset({"action_search", "action_design", "action_inspect", "action_play"})
-DESKTOP_ACTION_TOOL_NAMES = frozenset(
-    {"desktop_action_search", "desktop_action_design", "desktop_action_inspect", "desktop_action_play"},
-)
-
-
-def unavailable_presentation_tool_names(mode: PresentationMode | None) -> frozenset[str]:
-    return WINDOW_ACTION_TOOL_NAMES if mode == "desktop" else DESKTOP_ACTION_TOOL_NAMES
+ACTION_TOOL_NAMES = frozenset({"action_search", "action_design", "action_inspect", "action_play"})

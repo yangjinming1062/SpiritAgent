@@ -496,13 +496,7 @@ class DesktopVideoDesignRequest(BaseModel):
     name: str = Field(min_length=1, max_length=64, pattern=r"^[^\x00]*$")
     motion_description: str = Field(min_length=10, max_length=600, pattern=r"^[^\x00]*$")
     kind: Literal["loop", "once"] = "once"
-    continuity: Literal["independent", "base"] = "independent"
-    allowed_triggers: list[Literal["periodic", "user_return", "chat", "manual"]] = Field(
-        default_factory=lambda: ["chat", "manual"],
-        min_length=1,
-        max_length=4,
-    )
-    duration_seconds: int = Field(default=6, ge=1, le=15, strict=True)
+    duration_seconds: int = Field(default=4, ge=1, le=15, strict=True)
     use_when: list[str] = Field(default_factory=list, max_length=8)
     avoid_when: list[str] = Field(default_factory=list, max_length=8)
     reason: str = Field(default="", max_length=400)
@@ -522,13 +516,6 @@ class DesktopVideoDesignRequest(BaseModel):
     def bounded_conditions(cls, value: list[str]) -> list[str]:
         if any(not item.strip() or len(item) > 120 for item in value):
             raise ValueError("动作条件须为不超过120字的非空文字")
-        return value
-
-    @field_validator("allowed_triggers")
-    @classmethod
-    def unique_triggers(cls, value: list[str]) -> list[str]:
-        if len(set(value)) != len(value):
-            raise ValueError("允许触发情境不能重复")
         return value
 
 

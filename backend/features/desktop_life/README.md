@@ -6,7 +6,7 @@
 |---|---|
 | [service.py](service.py)、[repository.py](repository.py)、[action_sync.py](action_sync.py) | 套装、共享动作目标事务、草稿确认、采用、基准失效与播放事务 |
 | [creation.py](creation.py)、[generation.py](generation.py)、[prompts.py](prompts.py)、[video_queue.py](video_queue.py) | 活动计划、画面检查与修复、冻结参考、图片调整、运动设计、视频制作、上传及提交前有效性检查 |
-| [queries.py](queries.py)、[use_cases.py](use_cases.py)、[tool_use_cases.py](tool_use_cases.py) | 冻结桌景上下文、HTTP 与工具公开操作 |
+| [queries.py](queries.py)、[use_cases.py](use_cases.py)、[companion_actions.py](companion_actions.py) | 冻结桌景上下文、HTTP 与伙伴当前动作的公开快照 |
 | [lifecycle.py](lifecycle.py)、[backup.py](backup.py)、[backup_assets.py](backup_assets.py)、[asset_references.py](asset_references.py) | 任务恢复、备份和资产引用贡献 |
 
 所有状态写入共用账户行锁，进程内单飞只协调任务，模型等待在事务外。来源库通过公开快照读取；套装冻结参考的资产引用独立于来源条目生命周期。内容哈希用于校验，不代表套装身份，当前衣柜和场景指针不约束制作。

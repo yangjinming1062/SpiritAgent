@@ -5,8 +5,7 @@ from functools import partial
 from typing import Any
 
 from features.companion.intents import list_companion_intents
-from features.companion.proactive_runtime import get_presentation_snapshot, user_turn_activity
-from features.companion.prompt_runtime import build_presentation_prompt
+from features.companion.proactive_runtime import user_turn_activity
 from features.companion.prompts import PENDING_INTENTIONS_LABELS
 from features.configuration.settings.timezone import resolve_user_timezone
 from features.configuration.settings.values import get_user_setting, load_user_settings
@@ -43,7 +42,7 @@ from infrastructure.text import resolve_prompt_text, safe_json_loads, utc_now
 from runtime.client_context import ChatRequestClientContext
 from runtime.presets import COMPANION_PRESET_ID
 from runtime.tools.domains import apply_search_tools_catalog
-from runtime.tools.presentation import unavailable_presentation_tool_names
+from runtime.tools.presentation import ACTION_TOOL_NAMES
 from runtime.tools.registry import REGISTRY, schema_name
 from runtime.tools.tool_guardrails import ToolCallGuardrailController
 from runtime.turn_ownership import conversation_lock
@@ -82,6 +81,7 @@ from workflows.chat.turn_inputs import (
     user_text_item,
 )
 from workflows.chat.types import TrackTask
+from workflows.companion_actions import build_action_view
 from workflows.tool_availability import unavailable_action_tool_names
 
 logger = get_logger(__name__)
@@ -198,7 +198,6 @@ async def run_chat_turn(
     ephemeral: bool = False,
     headless: bool = False,
     has_viewer: bool = True,
-    desktop_interaction: bool = False,
     excluded_tool_names: frozenset[str] = frozenset(),
     max_loop_turns: int | None = None,
 ) -> None:
@@ -220,7 +219,6 @@ async def run_chat_turn(
                 ephemeral=ephemeral,
                 headless=headless,
                 has_viewer=has_viewer,
-                desktop_interaction=desktop_interaction,
                 excluded_tool_names=excluded_tool_names,
                 max_loop_turns=max_loop_turns,
             )
@@ -242,7 +240,6 @@ async def _run_chat_turn(
     ephemeral: bool = False,
     headless: bool = False,
     has_viewer: bool = True,
-    desktop_interaction: bool = False,
     excluded_tool_names: frozenset[str] = frozenset(),
     max_loop_turns: int | None = None,
 ) -> None:
@@ -509,6 +506,7 @@ async def _run_chat_turn(
         for step in range(max_loop_turns):
             instruction_parts = [base_instructions]
             action_tools_not_ready: frozenset[str] = frozenset()
+            action_view = None
             async with session_scope() as db:
                 await refresh_video_media(db, media_turn)
                 if replacement is not None:
@@ -516,9 +514,15 @@ async def _run_chat_turn(
                         if artifact.bound_message_id == replacement.previous.id:
                             artifact.bound_message_id = None
                 if conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None:
-                    environment = await build_companion_environment_prompt(db, user_id, language=inputs.language)
+                    action_view = await build_action_view(db, user_id, lock=True)
+                    environment = await build_companion_environment_prompt(
+                        db,
+                        user_id,
+                        language=inputs.language,
+                        action_view=action_view,
+                    )
                     instruction_parts.append(environment)
-                    action_tools_not_ready = await unavailable_action_tool_names(db, user_id)
+                    action_tools_not_ready = await unavailable_action_tool_names(db, user_id, action_view=action_view)
                     if memory_scope is not None:
                         topic_context_at = utc_now()
                         topic_material, topic_cards = await load_topic_context(
@@ -531,36 +535,29 @@ async def _run_chat_turn(
                         current_context["topic_material"] = topic_material
                         current_context["topic_cards"] = topic_cards
                         current_context["topic_context_at"] = topic_context_at
-            if (
-                desktop_interaction
-                and conv.parent_id is None
-                and not conv.is_automation
-                and (presentation := build_presentation_prompt(user_id, language=inputs.language))
-            ):
-                instruction_parts.append(presentation)
             current_context["instructions"] = "\n\n".join(instruction_parts)
 
             if not buffer_text:
                 await emitter.send_json({"type": "message.start"})
-            # 呈现模式可在模型或工具等待期间改变；每次调用重新披露当前工具族，不沿用旧模式的解锁资格。
+            # 动作资料与工具资格共用本次快照，执行时再校验目标仍有效。
             schemas_by_name = {
                 schema_name(schema): schema
                 for schema in REGISTRY.get_all_schemas(user_id, user_settings=effective_settings)
                 if schema_name(schema) not in inputs.excluded_tool_names
             }
-            presentation = get_presentation_snapshot(user_id)
-            mode_excluded = unavailable_presentation_tool_names(presentation.mode if presentation else None)
-            mode_excluded |= action_tools_not_ready
             available_schemas = apply_search_tools_catalog(
                 available_media_tool_schemas(
-                    [schema for name, schema in schemas_by_name.items() if name not in mode_excluded],
+                    [schema for name, schema in schemas_by_name.items() if name not in action_tools_not_ready],
                     media_turn,
                 ),
             )
             available_by_name = {schema_name(schema): schema for schema in available_schemas}
+            if companion_reply:
+                active_tool_names.update(ACTION_TOOL_NAMES & available_by_name.keys())
             dispatch_ctx = replace(
                 dispatch_ctx,
                 unavailable_tool_names=frozenset(schemas_by_name.keys() - available_by_name.keys()),
+                action_view=action_view,
             )
             active_schemas = [available_by_name[name] for name in active_tool_names if name in available_by_name]
             # 正文交付前按链切换；每个槽位使用自己的模型、窗口和干净的请求副本。

@@ -1,8 +1,6 @@
 """播放事实：回执终态与延迟表达意图兑现。"""
 
-import json
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import select
@@ -12,55 +10,6 @@ from features.actions.materials import accepted_action_asset
 from features.actions.models import ActionPlayback, CompanionAction, CompanionActionPack
 from features.actions.policy import PLAY_INTENT_TTL_SECONDS
 from features.actions.schemas import ActionPlayCommand
-
-
-def action_to_dict(action: CompanionAction) -> dict[str, Any]:
-    """动作元信息字典（视频含播放参数），供检索与提示词资料块共用。"""
-    material = accepted_action_asset(action)
-    media_type = material.media_type if material else action.media_type
-    item = {
-        "action_id": action.id,
-        "key": action.key,
-        "name": action.name,
-        "system_slot": action.system_slot or "",
-        "media_type": media_type,
-        "motion_description": action.motion_description,
-        "use_when": json.loads(action.use_when or "[]"),
-        "avoid_when": json.loads(action.avoid_when or "[]"),
-        "enabled": action.enabled,
-    }
-    if media_type == "video":
-        duration_ms = (
-            material.actual_duration_ms
-            if material and material.media_type == "video"
-            else action.actual_duration_ms or int((action.target_duration_seconds or 0) * 1000)
-        )
-        item.update(
-            kind=material.kind if material and material.media_type == "video" else action.kind,
-            duration_ms=duration_ms,
-            duration_seconds=round(duration_ms / 1000, 3) if duration_ms else 0.0,
-            loopable=material.loopable if material and material.media_type == "video" else action.loopable,
-        )
-    return item
-
-
-# 面向模型的动作条目字段：陪伴快照与闲置表达共用，不含内部标识与状态。
-ACTION_PROMPT_KEYS: tuple[str, ...] = (
-    "action_id",
-    "media_type",
-    "name",
-    "motion_description",
-    "use_when",
-    "avoid_when",
-    "kind",
-    "duration_seconds",
-)
-
-
-def action_prompt_entry(action: CompanionAction) -> dict[str, Any]:
-    """面向模型的动作条目：取 `action_to_dict` 中的 `ACTION_PROMPT_KEYS` 字段。"""
-    item = action_to_dict(action)
-    return {key: item[key] for key in ACTION_PROMPT_KEYS if key in item}
 
 
 def emit_play_command(db: AsyncSession, entry: ActionPlayback, action: CompanionAction) -> None:

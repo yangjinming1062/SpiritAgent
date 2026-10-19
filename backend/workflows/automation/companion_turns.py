@@ -40,8 +40,6 @@ _READ_ONLY_TOOLS: frozenset[str] = frozenset(
         "scene_get",
         "action_search",
         "action_inspect",
-        "desktop_action_search",
-        "desktop_action_inspect",
         "video_generate_status",
         "read_file",
         "list_directory",
@@ -151,7 +149,6 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
                     emitter,
                     ephemeral=True,
                     headless=True,
-                    desktop_interaction=True,
                     # 常规档主动回合只提供文字能力：语音由回合装配按档位关闭，视觉表达在此排除。
                     excluded_tool_names=frozenset({"send_message_tool", "agent_delegate_tool"})
                     | (
@@ -160,7 +157,6 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
                         else frozenset(
                             {
                                 "action_play",
-                                "desktop_action_play",
                                 "image_generate",
                                 "image_regenerate",
                                 "video_generate",

@@ -41,9 +41,7 @@ _EFFECT_TOOLS = frozenset(
     {
         "companion_wait",
         "action_play",
-        "desktop_action_play",
         "action_design",
-        "desktop_action_design",
         "scene_create",
         "scene_activate",
         "cronjob",
@@ -52,7 +50,7 @@ _EFFECT_TOOLS = frozenset(
 )
 _EFFECT_FOLLOW_UP_STEPS = 2
 # 状态型工具在一个回合内的调用上限：合理需求至多几次，超出只会是空转。
-_TURN_CALL_LIMITS = {"companion_wait": 4, "action_play": 2, "desktop_action_play": 2}
+_TURN_CALL_LIMITS = {"companion_wait": 4, "action_play": 2}
 # 守卫追加在工具结果之后的提示不属于结果信封，判定前须先剥离。
 _LOOP_WARNING_PREFIX = "\n\n[Tool loop warning"
 

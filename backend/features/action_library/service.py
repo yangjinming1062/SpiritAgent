@@ -77,8 +77,6 @@ async def accept_definition(
             origin_kind=origin_kind,
             origin_target_id=target.target_id,
             fanout_pending=False,
-            desktop_continuity=design.desktop_continuity,
-            desktop_allowed_triggers_json=json.dumps(design.desktop_allowed_triggers),
         )
         db.add(row)
         await db.flush()

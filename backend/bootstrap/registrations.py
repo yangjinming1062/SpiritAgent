@@ -6,7 +6,6 @@ from entrypoints.tools import agent_delegate, cronjob_tool, search_tools_tool
 from entrypoints.tools import memory as memory_tools
 from entrypoints.tools.builtin.action_tool import register as register_actions
 from entrypoints.tools.builtin.companion_wait_tool import register as register_companion_wait
-from entrypoints.tools.builtin.desktop_action_tool import register as register_desktop_actions
 from entrypoints.tools.builtin.image_generation_tool import register as register_image_generation
 from entrypoints.tools.builtin.scene_tool import register as register_scene
 from entrypoints.tools.builtin.send_message_tool import register as register_send_message
@@ -14,7 +13,6 @@ from entrypoints.tools.builtin.video_generation_tool import register as register
 from entrypoints.tools.builtin.web_tools import register as register_web
 from features.action_library.ports import configure_action_library_ports
 from features.actions.asset_retirement import delete_outfit_action_packs
-from features.actions.expression_catalog import available_expression_prompt_entries
 from features.actions.video_queue import inspect_video_queue_owner as inspect_action_video_owner
 from features.appearance.action_cleanup import set_outfit_action_cleanup
 from features.appearance.character_card import character_snapshot_is_current, render_character_identity
@@ -23,7 +21,6 @@ from features.appearance.queries import active_identity_reference, appearance_re
 from features.automation.cron_jobs import set_job_intent_invalidator
 from features.companion.appearance_ports import set_appearance_readiness_reader
 from features.companion.intents import invalidate_cron_companion_intents
-from features.companion.prompt_runtime import set_expression_catalog_reader
 from features.configuration.queries import user_ai_config
 from features.conversation.reply_media import deliver_video_result
 from features.desktop_life.generation import set_desktop_update_handler
@@ -133,7 +130,6 @@ def register_tools() -> None:
     memory_tools.register_memory_tools(REGISTRY)
     search_tools_tool.register(REGISTRY)
     register_actions(REGISTRY)
-    register_desktop_actions(REGISTRY)
     register_companion_wait(REGISTRY)
     register_image_generation(REGISTRY)
     register_scene(REGISTRY)
@@ -191,7 +187,6 @@ def wire_domain_hooks() -> None:
     set_desktop_set_created_handler(synchronize_desktop_set)
     set_desktop_update_handler(update_desktop_actions)
     set_appearance_readiness_reader(appearance_readiness)
-    set_expression_catalog_reader(available_expression_prompt_entries)
     set_outfit_action_cleanup(delete_outfit_action_packs)
 
 
