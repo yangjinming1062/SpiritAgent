@@ -71,6 +71,7 @@ from features.desktop_life.creation import (
     ensure_opening_repair,
     opening_image_hash,
     opening_passed,
+    opening_repair_reference,
     opening_requirements,
     opening_requirements_hash,
     review_existing_opening,
@@ -138,7 +139,6 @@ from features.media.chain import (
     video_provider_failure_reason,
 )
 from features.media.character_images import (
-    CharacterImageInput,
     ImageChainState,
     ImageExpansionInput,
     generate_character_images,
@@ -807,15 +807,6 @@ async def _prepare_expansion(
     await _save_progress(user_id, action_id, progress, stage="image")
 
 
-def _opening_repair_reference(state: ImageChainState | None, identity_safe_path: str | None) -> str | None:
-    if identity_safe_path:
-        return identity_safe_path
-    inputs = state.inputs if state is not None else None
-    if isinstance(inputs, CharacterImageInput) and inputs.image_edit:
-        return inputs.identity_reference
-    return None
-
-
 async def _prepare_pose(
     user_id: int,
     action: DesktopVideoAction,
@@ -961,7 +952,7 @@ async def _prepare_pose(
         begin_opening_repair(
             progress,
             reason=goal.reason if goal else "候选画面未通过身份或活动要求检查",
-            reference_path=_opening_repair_reference(state, identity_safe.path if identity_safe else None),
+            reference_path=opening_repair_reference(progress, state, identity_safe.path if identity_safe else None),
             replace_base=action.key == "idle",
         )
         await _save_progress(user_id, action.id, progress, stage="repairing")
@@ -1021,7 +1012,7 @@ async def _prepare_opening(
         await _save_progress(user_id, action.id, progress, stage="repairing")
     await _prepare_pose(user_id, action, snapshot, progress, directory)
     await _save_progress(user_id, action.id, progress, stage="checking")
-    review = await review_existing_opening(user_id, progress, before_submit=before_submit)
+    review = await review_existing_opening(user_id, progress, snapshot=snapshot, before_submit=before_submit)
     await _save_progress(user_id, action.id, progress, stage="checking")
     if opening_passed(review):
         return
@@ -1033,7 +1024,8 @@ async def _prepare_opening(
     begin_opening_repair(
         progress,
         reason=review.reason,
-        reference_path=_opening_repair_reference(
+        reference_path=opening_repair_reference(
+            progress,
             ImageChainState.model_validate_json(progress.image_chain_json) if progress.image_chain_json else None,
             progress.pose_path if review.score is not None and review.score >= MEDIA_IDENTITY_ACCEPT_SCORE else None,
         ),

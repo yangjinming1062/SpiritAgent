@@ -429,6 +429,13 @@ async def _complete_images(
     retained = set(selected) | {
         path for candidate in state.candidates if candidate.path in selected for path in candidate.artifacts
     }
+    if writer is not None:
+        # 持久任务的后续画面检查与修复仍使用冻结参考，由业务所有者最终回收。
+        retained |= {
+            path
+            for attr, _label in _REFERENCE_FIELDS[type(state.inputs)]
+            if (path := getattr(state.inputs, attr)) and parse_companion_asset_path(path) is not None
+        }
     obsolete = state.stored_paths() - retained
     if isinstance(state.inputs, CharacterImageInput) and state.inputs.expansion:
         state.candidates = [candidate for candidate in state.candidates if candidate.path in selected]
@@ -436,8 +443,9 @@ async def _complete_images(
         state.expansion_canvases = {
             index: canvas for index, canvas in state.expansion_canvases.items() if index in attempts
         }
-        state.inputs.reference_image = state.inputs.identity_reference = ""
-        state.inputs.secondary_reference_image = None
+        if writer is None:
+            state.inputs.reference_image = state.inputs.identity_reference = ""
+            state.inputs.secondary_reference_image = None
         state.pending_path = None
         state.pending_urls = []
         state.pending_slots = state.remaining_slots = []

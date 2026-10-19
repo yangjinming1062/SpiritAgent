@@ -13,7 +13,9 @@ from infrastructure.assets.asset_store import (
     compute_file_sha256,
     read_valid_image_data_uri,
     resolve_asset_reference,
+    validate_image_bytes,
 )
+from infrastructure.assets.paths import parse_companion_asset_path
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from features.desktop_life.prompts import DESKTOP_CREATION_PLAN, DESKTOP_OPENING_REPAIR, desktop_source_reference_prompt
@@ -177,10 +179,75 @@ def opening_requirements_hash(progress: DesktopVideoProgress) -> str:
     return hashlib.sha256(opening_requirements(progress).encode()).hexdigest()
 
 
+def _read_opening_review_source(path: str | None, expected_hash: str | None) -> str:
+    resolved = resolve_asset_reference(path)
+    if resolved is None:
+        raise DesktopVideoStateError("画面检查的参考图片无法读取，请重新准备素材")
+    try:
+        data = resolved[0].read_bytes()
+        if expected_hash is not None and hashlib.sha256(data).hexdigest() != expected_hash:
+            raise DesktopVideoStateError("画面检查的参考图片与冻结内容不一致")
+        data, mime = validate_image_bytes(data)
+    except (OSError, ValueError) as exc:
+        raise DesktopVideoStateError("画面检查的参考图片无法读取，请重新准备素材") from exc
+    return build_data_uri(data, mime)
+
+
+async def _opening_review_reference(
+    value: str | None,
+    *,
+    inputs: CharacterImageInput,
+    progress: DesktopVideoProgress,
+    snapshot: DesktopVisualSnapshot,
+    secondary: bool = False,
+) -> str:
+    if value and (
+        parse_companion_asset_path(value) is None or await asyncio.to_thread(resolve_asset_reference, value) is not None
+    ):
+        data, mime = await image_asset_bytes(value)
+        return await asyncio.to_thread(build_data_uri, data, mime)
+    # 链参考缺失时沿本次输入恢复；编辑和扩图必须保留原画面，不能改用头像。
+    expected_hash: str | None = None
+    if secondary:
+        if progress.aligned_outfit_path:
+            alignment = ImageChainState.model_validate_json(progress.reference_alignment_chain_json or "{}")
+            selected = alignment.best()
+            if (
+                alignment.phase != "complete"
+                or selected is None
+                or selected.path != progress.aligned_outfit_path
+                or not progress.aligned_outfit_hash
+            ):
+                raise DesktopVideoStateError("桌景派生造型参考缺少已通过的对齐结果")
+            path, expected_hash = progress.aligned_outfit_path, progress.aligned_outfit_hash
+        else:
+            path, expected_hash = snapshot.outfit_path, snapshot.outfit_hash
+    elif inputs.expansion is not None:
+        path = progress.previous_pose_path or progress.source_image_path
+    elif inputs.image_edit:
+        path = progress.previous_pose_path
+    else:
+        path = snapshot.primary_reference_path
+        expected_hash = (
+            snapshot.identity_hash if snapshot.identity_reference_role == "fullbody" else snapshot.portrait_hash
+        )
+    if not path:
+        raise DesktopVideoStateError("画面检查的参考图片无法读取，请重新准备素材")
+    reference = await asyncio.to_thread(_read_opening_review_source, path, expected_hash)
+    if secondary:
+        inputs.secondary_reference_image = path
+    else:
+        if inputs.reference_image == inputs.identity_reference:
+            inputs.reference_image = path
+        inputs.identity_reference = path
+    return reference
+
+
 async def review_existing_opening(
     user_id: int,
     progress: DesktopVideoProgress,
     *,
+    snapshot: DesktopVisualSnapshot,
     before_submit: Callable[[], Awaitable[None]],
 ) -> DesktopOpeningReview:
     image_hash = await asyncio.to_thread(opening_image_hash, progress.pose_path)
@@ -213,12 +280,22 @@ async def review_existing_opening(
                     reason="这张生成图片未通过原身份检查，需要按冻结身份重新制作",
                 )
                 return progress.opening_review
-            data, mime = await image_asset_bytes(inputs.identity_reference)
-            reference = build_data_uri(data, mime)
+            reference = await _opening_review_reference(
+                inputs.identity_reference,
+                inputs=inputs,
+                progress=progress,
+                snapshot=snapshot,
+            )
             reference_mode = inputs.identity_reference_mode
             if inputs.secondary_reference_image:
-                data, mime = await image_asset_bytes(inputs.secondary_reference_image)
-                secondary = build_data_uri(data, mime)
+                secondary = await _opening_review_reference(
+                    inputs.secondary_reference_image,
+                    inputs=inputs,
+                    progress=progress,
+                    snapshot=snapshot,
+                    secondary=True,
+                )
+            progress.image_chain_json = chain.model_dump_json()
     result = await review_character_image_goal(
         user_id,
         reference,
@@ -247,6 +324,25 @@ def opening_passed(review: DesktopOpeningReview) -> bool:
         and review.score is not None
         and review.score >= MEDIA_IDENTITY_ACCEPT_SCORE
     )
+
+
+def opening_repair_reference(
+    progress: DesktopVideoProgress,
+    state: ImageChainState | None,
+    identity_safe_path: str | None,
+) -> str | None:
+    if identity_safe_path:
+        return identity_safe_path
+    inputs = state.inputs if state is not None else None
+    if not isinstance(inputs, CharacterImageInput) or not inputs.image_edit:
+        return None
+    for path in (
+        inputs.identity_reference,
+        progress.previous_pose_path or (progress.source_image_path if inputs.expansion is not None else None),
+    ):
+        if path and resolve_asset_reference(path) is not None:
+            return path
+    raise DesktopVideoStateError("画面修复的原始参考无法读取，请重新准备素材")
 
 
 def begin_opening_repair(

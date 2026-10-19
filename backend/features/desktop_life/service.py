@@ -42,7 +42,7 @@ from features.assets.lifecycle import (
 from features.companion.disturbance import get_disturbance_tier
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
 from features.configuration.settings.values import get_user_setting
-from features.desktop_life.creation import begin_opening_repair
+from features.desktop_life.creation import begin_opening_repair, opening_repair_reference
 from features.desktop_life.generation import (
     cancel_and_wait_desktop_video_jobs,
     cancel_desktop_video_job,
@@ -137,7 +137,7 @@ from features.media.chain import (
     MediaChainState,
     spawn_removed_action_task_cancellation,
 )
-from features.media.character_images import CharacterImageInput, ImageChainState
+from features.media.character_images import ImageChainState
 from features.media.contracts import RemovedActionVideoTask
 
 logger = get_logger(__name__)
@@ -1249,7 +1249,11 @@ async def retry_desktop_action(
             or bool(
                 progress.image_only
                 and image is not None
-                and (image.stop_reason in {"exhausted", "goal_review_invalid"} or image.phase == "complete"),
+                and (
+                    image.stop_reason in {"exhausted", "goal_review_invalid"}
+                    or image.phase == "complete"
+                    and image.best() is None
+                ),
             )
         )
         if new_image and not progress.video_refinement and progress.source != "external_upload":
@@ -1264,15 +1268,7 @@ async def retry_desktop_action(
                     key=lambda candidate: candidate.score,
                     default=None,
                 )
-                reference = (
-                    safe.path
-                    if safe
-                    else (
-                        image.inputs.identity_reference
-                        if isinstance(image.inputs, CharacterImageInput) and image.inputs.image_edit
-                        else None
-                    )
-                )
+                reference = opening_repair_reference(progress, image, safe.path if safe else None)
             begin_opening_repair(
                 progress,
                 reason=progress.repair_reason or action.error or "重新准备满足活动要求的起始画面",
