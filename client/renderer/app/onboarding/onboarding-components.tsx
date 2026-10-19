@@ -5,7 +5,8 @@ import { $regenFeedback, MAX_IMAGE_DESCRIPTION } from '@/modules/character'
 import { HistoryGallery, type HistoryGalleryItem, PortraitLightbox } from '@/shared'
 import { usePointerDrag } from '@/shared/hooks/use-pointer-drag'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
-import { INPUT_CLASS } from '@/shared/panel'
+import { BTN_SUBTLE, CreationFeedback, INPUT_CLASS } from '@/shared/panel'
+import { useStrings } from '@/shared/strings'
 
 export const ONBOARDING_PRIMARY_BUTTON =
   'inline-flex h-8 items-center justify-center rounded-lg bg-accent px-4 text-xs font-medium text-on-accent transition hover:bg-accent/85 disabled:pointer-events-none disabled:opacity-40'
@@ -16,6 +17,7 @@ export function PortraitPanel({
   history,
   introHint,
   name,
+  onPreviewReady,
   onSelectEntry,
   selectedIdx
 }: {
@@ -24,6 +26,7 @@ export function PortraitPanel({
   history?: HistoryGalleryItem[]
   introHint?: string | null
   name: string
+  onPreviewReady?: (url: string | null) => void
   onSelectEntry?: (idx: number) => void
   selectedIdx?: number
 }): React.JSX.Element {
@@ -40,6 +43,7 @@ export function PortraitPanel({
       <PortraitThumb
         label="头像"
         name={name}
+        onReady={onPreviewReady}
         onZoom={avatarUrl ? () => setZoomedUrl(avatarUrl) : undefined}
         url={avatarUrl}
       />
@@ -54,13 +58,19 @@ function PortraitThumb({
   label,
   name,
   onZoom,
+  onReady,
   url
 }: {
   label: string
   name: string
   onZoom: (() => void) | undefined
+  onReady?: (url: string | null) => void
   url: string | null
 }): React.JSX.Element {
+  const dict = useStrings()
+  const [failedUrl, setFailedUrl] = useState<string | null>(null)
+  const [revision, setRevision] = useState(0)
+
   return (
     <div className="flex flex-col items-center gap-1">
       {url ? (
@@ -71,7 +81,17 @@ function PortraitThumb({
             onClick={onZoom}
             type="button"
           >
-            <img alt={name} className="h-28 w-28 object-cover shadow-lg" src={url} />
+            <img
+              alt={name}
+              className="h-28 w-28 object-cover shadow-lg"
+              key={`${url}:${revision}`}
+              onError={() => {
+                setFailedUrl(url)
+                onReady?.(null)
+              }}
+              onLoad={() => onReady?.(url)}
+              src={url}
+            />
           </button>
         </div>
       ) : (
@@ -80,6 +100,24 @@ function PortraitThumb({
         </div>
       )}
       <span className="text-[10px] text-muted">{label}</span>
+      {url && failedUrl === url && (
+        <CreationFeedback
+          actions={
+            <button
+              className={BTN_SUBTLE}
+              onClick={() => {
+                setFailedUrl(null)
+                setRevision(value => value + 1)
+              }}
+              type="button"
+            >
+              {dict.creation.retryLoad}
+            </button>
+          }
+          state="error"
+          title={dict.creation.imageLoadFailed}
+        />
+      )}
     </div>
   )
 }
@@ -149,12 +187,21 @@ export function DraggableDialog({ children }: { children: React.ReactNode }): Re
 }
 
 // 放到 OnboardingFlow 外面：否则它订阅的 $regenFeedback 会在每次按键时让整个对话框重渲染。
-export function RegenFeedbackInput({ id, initial = false }: { id?: string; initial?: boolean }): React.JSX.Element {
+export function RegenFeedbackInput({
+  disabled,
+  id,
+  initial = false
+}: {
+  disabled?: boolean
+  id?: string
+  initial?: boolean
+}): React.JSX.Element {
   const value = useStore($regenFeedback)
 
   return (
     <textarea
       className={`${INPUT_CLASS} text-xs`}
+      disabled={disabled}
       id={id}
       maxLength={MAX_IMAGE_DESCRIPTION}
       onChange={e => $regenFeedback.set(e.target.value)}
@@ -194,14 +241,5 @@ export function EditAvatarButton({
     >
       微调
     </button>
-  )
-}
-
-export function SpinnerWithText({ text, size = 'h-5 w-5' }: { text: string; size?: string }): React.JSX.Element {
-  return (
-    <div className="flex flex-col items-center gap-2 py-4">
-      <div className={`${size} animate-spin rounded-full border-2 border-line-strong border-t-accent`} />
-      <p className="text-sm text-body">{text}</p>
-    </div>
   )
 }

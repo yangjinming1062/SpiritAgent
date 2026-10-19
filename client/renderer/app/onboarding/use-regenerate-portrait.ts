@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { $regenFeedback, applyPortrait, type PickedImage, pushPortraitEntry } from '@/modules/character'
 import { captureAuthScope } from '@/shared/lib/authed-api'
-import { backendDetailMessage } from '@/shared/lib/ipc-error'
+import { backendDetailMessage, ipcErrorStatus, isClientErrorIpc } from '@/shared/lib/ipc-error'
 import { requestResource } from '@/shared/lib/resource-request'
 
 import type { ApiSchemas } from '../../../../shared/api.generated'
@@ -24,11 +24,14 @@ interface UseRegeneratePortraitResult {
   edit: () => Promise<void>
   reload: () => Promise<void>
   busy: boolean
+  resultUnknown: boolean
+  previewUnavailable: boolean
 }
 
 // 首次生成、重生与微调共用单次提交、预览落地和描述清理；不重发结果未知的付费请求。
 export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}): UseRegeneratePortraitResult {
   const [busy, setBusy] = useState(false)
+  const [failure, setFailure] = useState<'unknown' | 'preview' | null>(null)
   const mountedRef = useRef(false)
   const runningRef = useRef(false)
   const operationRef = useRef(0)
@@ -98,6 +101,7 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
         }
 
         if (!result?.asset_url) {
+          setFailure(mode === 'reload' ? null : 'unknown')
           onError?.('未收到生成结果，已保留描述。请重新加载查看头像后再决定是否重试。')
 
           return false
@@ -110,6 +114,7 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
         }
 
         if (!applied.avatar) {
+          setFailure('preview')
           onError?.('头像已保存，但预览加载失败，已保留描述。请重新加载查看。')
 
           return false
@@ -121,6 +126,7 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
           $regenFeedback.set('')
         }
 
+        setFailure(null)
         onRegenerated?.({ avatar: applied.avatar, id: result.id ?? null })
 
         return true
@@ -129,7 +135,16 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
           return null
         }
 
-        onError?.(backendDetailMessage(error, '生成未完成，已保留描述。请重新加载查看头像后再决定是否重试。'))
+        if (mode === 'reload' && ipcErrorStatus(error) === 404) {
+          setFailure(null)
+          onError?.('尚未找到已生成的头像，可以重新生成或使用自己的图片。')
+        } else {
+          if (mode !== 'reload') {
+            setFailure(isClientErrorIpc(error) ? null : 'unknown')
+          }
+
+          onError?.(backendDetailMessage(error, '生成未完成，已保留描述。请重新加载查看头像后再决定是否重试。'))
+        }
 
         return false
       } finally {
@@ -156,5 +171,13 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
     await run('reload')
   }, [run])
 
-  return { busy, generate, regenerate, edit, reload }
+  return {
+    busy,
+    resultUnknown: failure === 'unknown',
+    previewUnavailable: failure === 'preview',
+    generate,
+    regenerate,
+    edit,
+    reload
+  }
 }

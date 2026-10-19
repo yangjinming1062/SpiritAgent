@@ -15,7 +15,7 @@ import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
-import { INPUT_CLASS, WizardModal } from '@/shared/panel'
+import { CreationActionBar, CreationFeedback, INPUT_CLASS, WizardModal } from '@/shared/panel'
 import { notifyError } from '@/shared/store/notifications'
 import { errorMessage } from '@runtime'
 
@@ -45,6 +45,7 @@ export function VideoRefinementModal({
   const [fitAspect, setFitAspect] = useState(false)
   const [previewAttempt, setPreviewAttempt] = useState(0)
   const [submitting, setSubmitting] = useState(false)
+  const [submissionError, setSubmissionError] = useState<string | null>(null)
   const submittingRequest = useRef(false)
 
   const [checked, setChecked] = useState<{
@@ -125,6 +126,7 @@ export function VideoRefinementModal({
     const isLive = beginAsync()
     submittingRequest.current = true
     setSubmitting(true)
+    setSubmissionError(null)
 
     try {
       await refineDesktopVideo(action, set, source, feedback, fitAspect ? 'expand' : 'keep')
@@ -134,6 +136,7 @@ export function VideoRefinementModal({
       }
     } catch (failure) {
       if (scope?.() && isLive()) {
+        setSubmissionError(backendDetailMessage(failure, errorMessage(failure)))
         notifyError(failure, t.refineVideo)
         void refreshDesktopVideos()
       }
@@ -146,11 +149,52 @@ export function VideoRefinementModal({
     }
   }
 
+  const operationFeedback =
+    submitting || stale || submissionError || previewError || !preview ? (
+      <CreationFeedback
+        actions={
+          previewError && !stale && !submitting ? (
+            <button className={BTN_SUBTLE} onClick={() => setPreviewAttempt(attempt => attempt + 1)} type="button">
+              {t.retryPrompt}
+            </button>
+          ) : undefined
+        }
+        description={submitting ? t.savedCurrent : stale ? t.refinementStale : submissionError || previewError}
+        key={inputKey}
+        state={submitting ? 'working' : stale || submissionError || previewError ? 'error' : 'working'}
+        title={
+          submitting
+            ? t.submittingRefinement
+            : stale || submissionError || previewError
+              ? t.operationFailed
+              : t.refinementPreviewLoading
+        }
+      />
+    ) : null
+
   return (
     <WizardModal
       backdropClose={!submitting}
       closeDisabled={submitting}
       escClose={!submitting}
+      footer={
+        <CreationActionBar
+          className="w-full"
+          description={operationFeedback ?? (preview ? t.refinementDuration(preview.duration_seconds) : undefined)}
+        >
+          <button
+            className={BTN_PRIMARY}
+            disabled={submitting || !active || stale || !preview || (!feedback.trim() && !fitAspect)}
+            onClick={() => void submit()}
+            type="button"
+          >
+            {submitting ? t.submittingRefinement : t.startRefinement}
+          </button>
+          <button className={BTN_GHOST} disabled={submitting} onClick={onClose} type="button">
+            {t.cancelUpload}
+          </button>
+        </CreationActionBar>
+      }
       onClose={submitting ? () => undefined : onClose}
       regionId="desktop-life-refine-video"
       title={t.refineVideo}
@@ -181,41 +225,6 @@ export function VideoRefinementModal({
           />
           {t.fitVideoAspect}
         </label>
-        {stale ? (
-          <p className="text-sm text-warning" role="alert">
-            {t.refinementStale}
-          </p>
-        ) : previewError ? (
-          <div className="flex flex-col items-start gap-2">
-            <p className="text-sm text-warning" role="alert">
-              {previewError}
-            </p>
-            <button className={BTN_SUBTLE} onClick={() => setPreviewAttempt(attempt => attempt + 1)} type="button">
-              {t.retryPrompt}
-            </button>
-          </div>
-        ) : preview ? (
-          <p className="text-sm text-body" role="status">
-            {t.refinementDuration(preview.duration_seconds)}
-          </p>
-        ) : (
-          <p className="text-sm text-muted" role="status">
-            {t.refinementPreviewLoading}
-          </p>
-        )}
-        <div className="flex flex-wrap gap-2">
-          <button
-            className={BTN_PRIMARY}
-            disabled={submitting || !active || stale || !preview || (!feedback.trim() && !fitAspect)}
-            onClick={() => void submit()}
-            type="button"
-          >
-            {submitting ? t.generatingVideo : t.startRefinement}
-          </button>
-          <button className={BTN_GHOST} disabled={submitting} onClick={onClose} type="button">
-            {t.cancelUpload}
-          </button>
-        </div>
       </div>
     </WizardModal>
   )

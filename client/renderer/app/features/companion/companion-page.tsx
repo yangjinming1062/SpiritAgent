@@ -45,7 +45,11 @@ function CompanionSession(): React.JSX.Element {
   const route = useStore($appNavigation)
 
   const boundedFeature =
-    section === 'desktop-life' || section === 'appearance' || section === 'scene' || section === 'memory'
+    section === 'desktop-life' ||
+    section === 'appearance' ||
+    section === 'scene' ||
+    section === 'memory' ||
+    section === 'voice'
 
   useEffect(() => {
     if (route.page === 'companion' && route.companionTask === 'create') {

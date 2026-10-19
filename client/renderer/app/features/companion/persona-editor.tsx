@@ -14,7 +14,18 @@ import { captureAuthScope } from '@/shared/lib/authed-api'
 import { backendDetailMessage, ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { authedResource } from '@/shared/lib/resource-request'
 import { cn } from '@/shared/lib/utils'
-import { BTN_GHOST, BTN_SUBTLE, Chip, FIELD_LABEL, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
+import {
+  BTN_GHOST,
+  BTN_SUBTLE,
+  Chip,
+  CreationActionBar,
+  CreationFeedback,
+  FIELD_LABEL,
+  HINT_TEXT,
+  INPUT_CLASS,
+  SECTION_TITLE,
+  WizardModal
+} from '@/shared/panel'
 import { $locale } from '@/shared/store/locale'
 import { useStrings } from '@/shared/strings'
 import type { PersonaEditableField, PersonaUpdateRequest } from '@protocol'
@@ -47,7 +58,15 @@ function baseOf(persona: ReturnType<typeof $persona.get>): Record<PersonaEditabl
   }
 }
 
-export function PersonaSection(): React.JSX.Element {
+export function PersonaSection({
+  editorOpen,
+  onEditRequested,
+  onEditorClosed
+}: {
+  editorOpen: boolean
+  onEditRequested: () => void
+  onEditorClosed: () => void
+}): React.JSX.Element {
   const dict = useStrings()
   const t = dict.settings.persona
   const english = useStore($locale) === 'en'
@@ -55,7 +74,6 @@ export function PersonaSection(): React.JSX.Element {
   const draft = useStore($companionEditors).persona
   const [busy, setBusy] = useState(false)
   const [hint, setHint] = useState<string | null>(null)
-  const [saved, setSaved] = useState(false)
   const begin = useAsyncGuard()
 
   const fields: readonly PersonaField[] = [
@@ -111,7 +129,6 @@ export function PersonaSection(): React.JSX.Element {
 
     setBusy(true)
     setHint(null)
-    setSaved(false)
 
     try {
       const expectedFields = Object.fromEntries(fields.map(({ key }) => [key, draft.base[key]]))
@@ -149,10 +166,6 @@ export function PersonaSection(): React.JSX.Element {
       if (JSON.stringify($companionEditors.get().persona) === JSON.stringify(draft)) {
         updateCompanionEditors({ persona: null })
       }
-
-      if (isLive()) {
-        setSaved(true)
-      }
     } catch (error) {
       if (!isCurrent()) {
         return
@@ -169,10 +182,6 @@ export function PersonaSection(): React.JSX.Element {
       if (refreshed.ok && fields.every(({ key }) => current[key] === draft.values[key].trim())) {
         if (JSON.stringify($companionEditors.get().persona) === JSON.stringify(draft)) {
           updateCompanionEditors({ persona: null })
-        }
-
-        if (isLive()) {
-          setSaved(true)
         }
       } else if (isLive()) {
         setHint(
@@ -193,7 +202,7 @@ export function PersonaSection(): React.JSX.Element {
     }
   }
 
-  if (!draft) {
+  if (!draft || !editorOpen) {
     return (
       <section>
         <p className={cn(SECTION_TITLE, 'mb-2')}>{t.sectionTitle}</p>
@@ -213,18 +222,16 @@ export function PersonaSection(): React.JSX.Element {
                     </div>
                   ))}
               </dl>
-              {saved && (
-                <p aria-live="polite" className={cn(HINT_TEXT, 'mt-2')}>
-                  {t.hintSaved}
-                </p>
-              )}
             </div>
             <button
               className={cn(BTN_GHOST, 'shrink-0')}
               onClick={() => {
-                updateCompanionEditors({ persona: { values: latest, base: latestBase } })
+                if (!draft) {
+                  updateCompanionEditors({ persona: { values: latest, base: latestBase } })
+                }
+
+                onEditRequested()
                 setHint(null)
-                setSaved(false)
               }}
               type="button"
             >
@@ -237,95 +244,112 @@ export function PersonaSection(): React.JSX.Element {
   }
 
   return (
-    <section className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <p className={SECTION_TITLE}>{t.editHeading}</p>
-        {dirty && <span className={HINT_TEXT}>{english ? 'Unsaved changes' : '未保存修改'}</span>}
-      </div>
-      {fields.map(({ key, label, placeholder, presets }) => (
-        <label className="block" key={key}>
-          <span className={FIELD_LABEL}>{label}</span>
-          <input
-            className={INPUT_CLASS}
-            disabled={busy}
-            maxLength={500}
-            onChange={event =>
-              updateCompanionEditors({ persona: { ...draft, values: { ...draft.values, [key]: event.target.value } } })
-            }
-            placeholder={placeholder}
-            value={draft.values[key]}
-          />
-          {presets && (
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
-              {presets.map(value => (
-                <Chip
-                  active={draft.values[key] === value}
-                  key={value}
-                  label={value}
-                  onClick={() => {
-                    if (!busy) {
-                      updateCompanionEditors({ persona: { ...draft, values: { ...draft.values, [key]: value } } })
-                    }
-                  }}
-                />
-              ))}
-            </div>
-          )}
-        </label>
-      ))}
-      {conflict && (
-        <div className="rounded-xl border border-line-hairline p-3 text-xs text-amber-300/90">
-          <p>
-            {english
-              ? 'These details changed on another device. Review the latest values before saving.'
-              : '资料已在其他设备修改，请核对最新内容后再保存。'}
-          </p>
-          <dl className="mt-2 space-y-1">
-            {fields
-              .filter(({ key }) => latest[key] !== (draft.base[key] ?? ''))
-              .map(({ key, label }) => (
-                <div key={key}>
-                  <dt>{label}</dt>
-                  <dd className="whitespace-pre-wrap break-words text-body">{latest[key] || '—'}</dd>
-                </div>
-              ))}
-          </dl>
+    <WizardModal
+      closeDisabled={busy}
+      escClose={!busy}
+      footer={
+        <CreationActionBar
+          description={
+            (busy || hint) && (
+              <CreationFeedback
+                state={busy ? 'working' : 'error'}
+                title={busy ? dict.common.saving : hint || t.hintSaveFailed}
+              />
+            )
+          }
+        >
           <button
-            className={cn(BTN_SUBTLE, 'mt-2')}
-            disabled={busy}
-            onClick={() => updateCompanionEditors({ persona: { ...draft, base: latestBase } })}
+            className={BTN_SUBTLE}
+            disabled={busy || !dirty || !!conflict}
+            onClick={() => void save()}
             type="button"
           >
-            {english ? 'Keep my edits after review' : '已核对，保留我的修改'}
+            {busy ? dict.common.saving : english ? 'Save changes' : '保存修改'}
           </button>
+          <button
+            className={BTN_GHOST}
+            disabled={busy}
+            onClick={() => {
+              updateCompanionEditors({ persona: null })
+              setHint(null)
+              onEditorClosed()
+            }}
+            type="button"
+          >
+            {dict.common.cancel}
+          </button>
+        </CreationActionBar>
+      }
+      onClose={onEditorClosed}
+      regionId="persona-editor"
+      title={t.editHeading}
+    >
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className={SECTION_TITLE}>{t.editHeading}</p>
+          {dirty && <span className={HINT_TEXT}>{english ? 'Unsaved changes' : '未保存修改'}</span>}
         </div>
-      )}
-      {hint && (
-        <p aria-live="polite" className="text-xs text-amber-300/90">
-          {hint}
-        </p>
-      )}
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          className={BTN_SUBTLE}
-          disabled={busy || !dirty || !!conflict}
-          onClick={() => void save()}
-          type="button"
-        >
-          {busy ? dict.common.saving : english ? 'Save changes' : '保存修改'}
-        </button>
-        <button
-          className={BTN_GHOST}
-          disabled={busy}
-          onClick={() => {
-            updateCompanionEditors({ persona: null })
-            setHint(null)
-          }}
-          type="button"
-        >
-          {dict.common.cancel}
-        </button>
+        {fields.map(({ key, label, placeholder, presets }) => (
+          <label className="block" key={key}>
+            <span className={FIELD_LABEL}>{label}</span>
+            <input
+              className={INPUT_CLASS}
+              disabled={busy}
+              maxLength={500}
+              onChange={event =>
+                updateCompanionEditors({
+                  persona: { ...draft, values: { ...draft.values, [key]: event.target.value } }
+                })
+              }
+              placeholder={placeholder}
+              value={draft.values[key]}
+            />
+            {presets && (
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {presets.map(value => (
+                  <Chip
+                    active={draft.values[key] === value}
+                    key={value}
+                    label={value}
+                    onClick={() => {
+                      if (!busy) {
+                        updateCompanionEditors({ persona: { ...draft, values: { ...draft.values, [key]: value } } })
+                      }
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+          </label>
+        ))}
+        {conflict && (
+          <div className="rounded-xl border border-line-hairline p-3 text-xs text-amber-300/90">
+            <p>
+              {english
+                ? 'These details changed on another device. Review the latest values before saving.'
+                : '资料已在其他设备修改，请核对最新内容后再保存。'}
+            </p>
+            <dl className="mt-2 space-y-1">
+              {fields
+                .filter(({ key }) => latest[key] !== (draft.base[key] ?? ''))
+                .map(({ key, label }) => (
+                  <div key={key}>
+                    <dt>{label}</dt>
+                    <dd className="whitespace-pre-wrap break-words text-body">{latest[key] || '—'}</dd>
+                  </div>
+                ))}
+            </dl>
+            <button
+              className={cn(BTN_SUBTLE, 'mt-2')}
+              disabled={busy}
+              onClick={() => updateCompanionEditors({ persona: { ...draft, base: latestBase } })}
+              type="button"
+            >
+              {english ? 'Keep my edits after review' : '已核对，保留我的修改'}
+            </button>
+          </div>
+        )}
       </div>
-    </section>
+    </WizardModal>
   )
 }

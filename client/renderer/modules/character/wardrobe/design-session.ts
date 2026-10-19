@@ -35,7 +35,7 @@ interface DesignDraft {
   previewUrl: string
 }
 
-// 衣柜设计会话：描述/参考图 → 草稿 → 微调或重绘 → 确认入柜并准备基础动作。服装/发型可换、五官锁定；失败请求保留在 lastRequest 供一键重试。
+// 衣柜设计会话持有输入、草稿与提交状态；结果不明时先在衣柜核对，不能直接重复制作。
 export function useOutfitDesignSession(
   onConfirmed: (outfitId: number) => void,
   onDrafted?: (outfitId: number) => void
@@ -44,6 +44,9 @@ export function useOutfitDesignSession(
   draft: DesignDraft | null
   refImage: PickedImage | null
   busy: boolean
+  stage: 'loading' | 'generating' | 'confirming' | null
+  resultUnknown: boolean
+  previewError: boolean
   lastRequest: { image: PickedImage | null; text: string; mode: ImageReviseMode } | null
   send: (text: string, mode: ImageReviseMode) => void
   retry: () => void
@@ -59,6 +62,9 @@ export function useOutfitDesignSession(
   const [draft, setDraft] = useState<DesignDraft | null>(null)
   const [refImage, setRefImage] = useState<PickedImage | null>(null)
   const [busy, setBusy] = useState(false)
+  const [stage, setStage] = useState<'generating' | 'confirming' | null>(null)
+  const [resultUnknown, setResultUnknown] = useState(false)
+  const [previewError, setPreviewError] = useState(false)
   const [restoringReference, setRestoringReference] = useState(true)
 
   const [lastRequest, setLastRequest] = useState<{
@@ -79,6 +85,9 @@ export function useOutfitDesignSession(
     referenceRevisionRef.current += 1
     generatingRef.current = false
     setBusy(false)
+    setStage(null)
+    setResultUnknown(false)
+    setPreviewError(false)
     setMessages([])
     setDraft(null)
     setRefImage(null)
@@ -143,6 +152,9 @@ export function useOutfitDesignSession(
       const revision = ++revisionRef.current
       generatingRef.current = true
       setBusy(true)
+      setStage('generating')
+      setResultUnknown(false)
+      setPreviewError(false)
       setLastRequest(null)
 
       push({ imageUrl: image?.previewUrl, role: 'user', text: text || getStrings().living.outfit.design.byReference })
@@ -176,7 +188,8 @@ export function useOutfitDesignSession(
           onDraftedRef.current?.(res.id)
 
           if (!resolved) {
-            setDraft({ id: res.id, previewUrl: '' })
+            setDraft({ id: res.id, previewUrl: withDraft?.previewUrl ?? '' })
+            setPreviewError(true)
             push({ role: 'system', text: getStrings().living.outfit.design.previewFailed, tone: 'info' })
 
             return
@@ -200,25 +213,24 @@ export function useOutfitDesignSession(
           }
 
           const timedOut = err instanceof ApiError && err.code === 'timeout'
+          const unknown = timedOut || ipcErrorStatus(err) === null || ipcErrorStatus(err) === 409
+          setResultUnknown(unknown)
 
-          if (withDraft && (timedOut || ipcErrorStatus(err) === 409)) {
-            setDraft({ id: withDraft.id, previewUrl: '' })
-          }
-
-          // 失败后保留本次输入与参考图，失败气泡旁给一键重试，不必重打描述或重传图。
+          // 保留本次输入与参考图；只有明确失败才提供直接重试。
           setLastRequest({ image, text, mode })
           push({
             role: 'system',
-            text: timedOut
+            text: unknown
               ? getStrings().living.outfit.design.timedOut
               : backendDetailMessage(err, getStrings().living.outfit.design.generateFailed),
-            tone: timedOut ? 'info' : 'error'
+            tone: unknown ? 'info' : 'error'
           })
           log.warn('wardrobe-design', timedOut ? 'generation result timed out' : 'generation failed', err)
         } finally {
           if (isCurrent(revision, isLive)) {
             generatingRef.current = false
             setBusy(false)
+            setStage(null)
           }
         }
       })()
@@ -230,7 +242,7 @@ export function useOutfitDesignSession(
     (text: string, mode: ImageReviseMode = 'edit'): void => {
       const trimmed = text.trim()
 
-      if (generatingRef.current || (!draft && !trimmed && !refImage)) {
+      if (generatingRef.current || resultUnknown || previewError || (!draft && !trimmed && !refImage)) {
         return
       }
 
@@ -239,27 +251,28 @@ export function useOutfitDesignSession(
 
       runDesign(trimmed, image, draft, draft ? mode : 'edit')
     },
-    [draft, refImage, runDesign]
+    [draft, previewError, refImage, resultUnknown, runDesign]
   )
 
   const retry = useCallback((): void => {
-    if (generatingRef.current || !lastRequest) {
+    if (generatingRef.current || resultUnknown || !lastRequest) {
       return
     }
 
     runDesign(lastRequest.text, lastRequest.image, draft, lastRequest.mode)
-  }, [draft, lastRequest, runDesign])
+  }, [draft, lastRequest, resultUnknown, runDesign])
 
   const confirm = useCallback(async (): Promise<void> => {
     const isLive = begin()
 
-    if (!isLive() || !draft?.previewUrl || generatingRef.current) {
+    if (!isLive() || !draft?.previewUrl || generatingRef.current || resultUnknown || previewError) {
       return
     }
 
     const revision = ++revisionRef.current
     generatingRef.current = true
     setBusy(true)
+    setStage('confirming')
 
     try {
       // 确认转正参考图，并由服务端安排基础动作；就绪后由用户选择穿上。
@@ -284,14 +297,16 @@ export function useOutfitDesignSession(
       }
 
       push({ role: 'system', text: backendDetailMessage(err, getStrings().living.outfit.confirmFailed), tone: 'error' })
+      setResultUnknown(ipcErrorStatus(err) === null || ipcErrorStatus(err) === 409)
       log.warn('wardrobe-design', 'confirm failed', err)
     } finally {
       if (isCurrent(revision, isLive)) {
         generatingRef.current = false
         setBusy(false)
+        setStage(null)
       }
     }
-  }, [begin, draft, isCurrent, onConfirmed, push])
+  }, [begin, draft, isCurrent, onConfirmed, previewError, push, resultUnknown])
 
   const attachRefImage = useCallback(async (): Promise<void> => {
     const isLive = begin()
@@ -346,6 +361,9 @@ export function useOutfitDesignSession(
     draft,
     refImage,
     busy: busy || restoringReference,
+    stage: restoringReference ? 'loading' : stage,
+    resultUnknown,
+    previewError,
     lastRequest,
     send,
     retry,

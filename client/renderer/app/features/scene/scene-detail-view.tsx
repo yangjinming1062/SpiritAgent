@@ -1,12 +1,30 @@
+import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useState } from 'react'
 
 import { pickAvatarImage } from '@/modules/character'
-import { adoptSceneImage, type SceneAsset } from '@/modules/scene'
+import {
+  $sceneMutationIssues,
+  adoptSceneImage,
+  type SceneAsset,
+  type SceneMutationIssue,
+  updateSceneMutationIssue
+} from '@/modules/scene'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { captureAuthScope } from '@/shared/lib/authed-api'
 import { ArrowLeft, Loader2, Pencil, RefreshCw, Sparkles, ZoomIn } from '@/shared/lib/icons'
+import { isClientErrorIpc } from '@/shared/lib/ipc-error'
 import { cn } from '@/shared/lib/utils'
-import { BTN_PRIMARY, BTN_SUBTLE, HINT_TEXT, INPUT_CLASS, SettingCard } from '@/shared/panel'
+import {
+  BTN_PRIMARY,
+  BTN_SUBTLE,
+  CreationActionBar,
+  CreationFeedback,
+  type CreationFeedbackState,
+  CreationWorkspace,
+  INPUT_CLASS,
+  SettingCard
+} from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 import { errorMessage } from '@runtime'
 
@@ -65,8 +83,21 @@ export function SceneDetailView({
   const strings = useStrings()
   const t = strings.living.scene
   const tToasts = strings.living.toasts
-  const [actionKind, setActionKind] = useState<'refresh' | 'other' | null>(null)
+
+  const [actionKind, setActionKind] = useState<
+    'refresh' | 'save' | 'cancel' | 'generate' | 'analyze' | 'upload' | null
+  >(null)
+
   const [actionError, setActionError] = useState<string | null>(null)
+  const issues = useStore($sceneMutationIssues)
+  const uncertain = detail ? (issues[detail.id] ?? null) : null
+
+  const setUncertain = (update: React.SetStateAction<SceneMutationIssue | null>): void => {
+    if (detail) {
+      updateSceneMutationIssue(detail.id, current => (typeof update === 'function' ? update(current) : update))
+    }
+  }
+
   const [loadedImage, setLoadedImage] = useState<string | null>(null)
   const [failedImage, setFailedImage] = useState<string | null>(null)
   const [previewAttempt, setPreviewAttempt] = useState(0)
@@ -77,7 +108,8 @@ export function SceneDetailView({
   const regenerating = detail?.regeneration?.status === 'pending'
   const generating = detail?.status === 'pending' || regenerating
   const hasImage = Boolean(detail?.assetUrl)
-  const canChangeInfo = hasImage && detail?.status !== 'pending' && !busy && !regenerating
+  const stage = regenerating ? detail?.regeneration?.stage : detail?.stage
+  const canChangeInfo = hasImage && detail?.status !== 'pending' && !busy && !regenerating && !uncertain
 
   const hasDraft = Boolean(
     detail && draft && (draft.title.trim() !== detail.title || draft.description.trim() !== detail.description)
@@ -93,6 +125,7 @@ export function SceneDetailView({
 
   const canActivate =
     detail?.status === 'ready' &&
+    !uncertain &&
     Boolean(detail.url) &&
     !detail.imageLoadFailed &&
     loadedImage === detail.url &&
@@ -110,23 +143,54 @@ export function SceneDetailView({
 
   const runAction = async (
     action: (isLive: () => boolean) => Promise<void>,
-    kind: 'refresh' | 'other' = 'other'
+    kind: NonNullable<typeof actionKind> = 'save'
   ): Promise<void> => {
-    if (actionBusy) {
+    const currentIssue = detail ? $sceneMutationIssues.get()[detail.id] : null
+    const scope = captureAuthScope()
+
+    if (!scope || actionBusy || currentIssue?.pending || (currentIssue && kind !== 'refresh')) {
       return
+    }
+
+    const isLive = begin()
+
+    const mutation: SceneMutationIssue | null =
+      kind !== 'refresh' && detail ? { baseline: detail, message: '', inspected: false, pending: true } : null
+
+    const settle = (next: SceneMutationIssue | null): void => {
+      if (scope() && mutation) {
+        updateSceneMutationIssue(mutation.baseline.id, current => (current === mutation ? next : current))
+      }
+    }
+
+    if (mutation) {
+      setUncertain(mutation)
     }
 
     setActionKind(kind)
     setActionError(null)
-    const isLive = begin()
 
     try {
       await action(isLive)
+      settle(null)
     } catch (error) {
-      if (isLive()) {
-        setActionError(
-          errorMessage(error, kind === 'refresh' ? tToasts.sceneStatusRefreshFailed : tToasts.sceneRegenerateFailed)
-        )
+      const message = errorMessage(
+        error,
+        kind === 'refresh' ? tToasts.sceneStatusRefreshFailed : tToasts.sceneRegenerateFailed
+      )
+
+      if (mutation && !isClientErrorIpc(error)) {
+        settle({ ...mutation, message, pending: false })
+      } else {
+        settle(null)
+
+        if (isLive()) {
+          setActionError(message)
+
+          if (kind === 'refresh') {
+            setUncertain(current => (current ? { ...current, inspected: false } : null))
+          }
+        }
       }
     } finally {
       if (isLive()) {
@@ -136,99 +200,320 @@ export function SceneDetailView({
   }
 
   const refreshDetail = (): Promise<void> =>
-    runAction(async () => {
-      await onLoad()
+    runAction(async isLive => {
+      const loaded = await onLoad()
+      const baseline = uncertain?.baseline
+
+      if (isLive() && loaded && baseline) {
+        const changed =
+          loaded.status !== baseline.status ||
+          loaded.stage !== baseline.stage ||
+          loaded.regeneration?.task_id !== baseline.regeneration?.task_id ||
+          loaded.regeneration?.status !== baseline.regeneration?.status ||
+          loaded.assetUrl.split(/[?#]/)[0] !== baseline.assetUrl.split(/[?#]/)[0] ||
+          loaded.title !== baseline.title ||
+          loaded.description !== baseline.description
+
+        setUncertain(current => (current === uncertain ? (changed ? null : { ...current, inspected: true }) : current))
+      } else if (isLive() && uncertain) {
+        setUncertain(current => (current === uncertain ? { ...current, inspected: false } : current))
+      }
     }, 'refresh')
 
   if (!detail) {
     return (
-      <section className="space-y-4">
-        <button className={BTN_SUBTLE} onClick={onBack} type="button">
-          <ArrowLeft className="size-3.5" />
-          <span>{t.backToLibrary}</span>
-        </button>
-        <SettingCard>
-          <div className="space-y-3 p-5 text-center">
-            {loading || refreshing ? <Loader2 className="mx-auto size-5 animate-spin text-accent" /> : null}
-            <p className="text-xs text-faint">{loading ? t.loading : loadError || t.detailLoadFailed}</p>
-            {actionError ? (
-              <p className="text-xs text-danger-fg" role="alert">
-                {actionError}
-              </p>
-            ) : null}
-            {!loading ? (
+      <CreationWorkspace
+        className="mx-auto w-full max-w-6xl"
+        header={
+          <button className={BTN_SUBTLE} onClick={onBack} type="button">
+            <ArrowLeft className="size-3.5" />
+            <span>{t.backToLibrary}</span>
+          </button>
+        }
+      >
+        <CreationFeedback
+          actions={
+            !loading ? (
               <button
                 aria-busy={refreshing}
                 className={BTN_SUBTLE}
-                disabled={actionBusy}
+                disabled={actionBusy || uncertain?.pending}
                 onClick={() => void refreshDetail()}
                 type="button"
               >
                 <RefreshCw className="size-3.5" />
                 {refreshing ? strings.common.loading : strings.common.retry}
               </button>
-            ) : null}
-          </div>
-        </SettingCard>
-      </section>
+            ) : undefined
+          }
+          description={actionError || loadError || undefined}
+          state={loading || refreshing ? 'working' : 'error'}
+          title={loading || refreshing ? strings.common.loading : t.detailLoadFailed}
+        />
+      </CreationWorkspace>
     )
   }
 
-  return (
-    <section className="space-y-4">
-      <div className="flex min-w-0 items-center gap-3">
-        <button className={cn(BTN_SUBTLE, 'shrink-0')} onClick={onBack} type="button">
-          <ArrowLeft className="size-3.5" />
-          <span>{t.backToLibrary}</span>
-        </button>
-        <div className="min-w-0 flex-1">
-          <h2 className="truncate text-sm font-semibold text-strong">{detail.title || t.untitled}</h2>
-          <p className={HINT_TEXT}>{t.statuses[detail.status]}</p>
-        </div>
-        {isCurrent ? (
-          <span className="shrink-0 rounded-full bg-accent/15 px-2.5 py-1 text-[10px] text-accent">
-            {t.historyCurrentLabel}
-          </span>
-        ) : null}
-      </div>
+  const showFeedback = Boolean(
+    actionError ||
+    loadError ||
+    uncertain ||
+    actionBusy ||
+    generating ||
+    detail.error ||
+    detail.status !== 'ready' ||
+    detail.regeneration?.status === 'failed' ||
+    detail.regeneration?.status === 'cancelled'
+  )
 
-      {loadError ? (
-        <SettingCard className="border border-danger-line/50">
-          <div className="flex flex-wrap items-center gap-3 p-3" role="alert">
-            <p className="min-w-0 flex-1 text-xs text-danger-fg">{loadError}</p>
-            <button className={BTN_SUBTLE} disabled={actionBusy} onClick={() => void refreshDetail()} type="button">
-              {refreshing ? strings.common.loading : strings.common.retry}
+  const uncertaintyDescription = uncertain?.pending
+    ? strings.creation.canLeave
+    : uncertain
+      ? `${uncertain.message} ${uncertain.inspected ? t.inspectionHint : ''}`
+      : null
+
+  const generationTitle =
+    !regenerating && detail.stage === 'waiting_upload'
+      ? t.waitingUploadOverlay
+      : stage === 'analyze'
+        ? t.analyzing
+        : stage === 'evaluating' || stage === 'submitting'
+          ? t.checking
+          : regenerating
+            ? t.imageRegenerating
+            : t.pendingOverlay
+
+  const feedbackStatus: { state: CreationFeedbackState; title: string } = actionError
+    ? { state: 'error', title: tToasts.sceneRegenerateFailed }
+    : loadError
+      ? { state: 'unknown', title: tToasts.sceneStatusRefreshFailed }
+      : actionKind
+        ? {
+            state: 'working',
+            title: {
+              refresh: strings.common.loading,
+              save: strings.common.saving,
+              cancel: t.cancelTask,
+              generate: t.imageRegenerate,
+              analyze: t.analyzing,
+              upload: strings.common.processing
+            }[actionKind]
+          }
+        : uncertain
+          ? {
+              state: uncertain.pending ? 'working' : 'unknown',
+              title: uncertain.pending ? strings.common.processing : strings.creation.unknown
+            }
+          : detail.regeneration?.status === 'failed'
+            ? { state: 'error', title: t.imageRegenerationFailed }
+            : generating
+              ? { state: detail.stage === 'waiting_upload' ? 'waiting' : 'working', title: generationTitle }
+              : {
+                  state:
+                    detail.regeneration?.status === 'cancelled' || detail.status === 'cancelled'
+                      ? 'cancelled'
+                      : 'error',
+                  title:
+                    detail.regeneration?.status === 'cancelled' ? strings.creation.cancelled : t.statuses[detail.status]
+                }
+
+  const feedback = showFeedback && (
+    <CreationFeedback
+      {...feedbackStatus}
+      actions={
+        loadError || uncertain ? (
+          <>
+            <button
+              className={BTN_SUBTLE}
+              disabled={actionBusy || uncertain?.pending}
+              onClick={() => void refreshDetail()}
+              type="button"
+            >
+              {refreshing ? strings.common.loading : t.checkStatus}
             </button>
-          </div>
-        </SettingCard>
-      ) : null}
-      {detail.regeneration?.status === 'failed' ? (
-        <SettingCard className="border border-danger-line/50">
-          <p className="p-3 text-xs text-danger-fg">{detail.regeneration.error || t.imageRegenerationFailed}</p>
-        </SettingCard>
-      ) : null}
-      {(detail.error || canRetryGeneration) && detail.status !== 'ready' ? (
-        <SettingCard className="border border-danger-line/50">
-          <div className="flex flex-wrap items-center gap-3 p-3">
-            <p className="min-w-0 flex-1 text-xs text-danger-fg">{detail.error || t.statuses.failed}</p>
-            {canRetryGeneration ? (
+            {uncertain?.inspected && !uncertain.pending ? (
               <button
-                className={cn(BTN_PRIMARY, 'shrink-0')}
-                disabled={actionBusy || busy}
-                onClick={() => void runAction(() => onRegenerate(detail.id))}
+                className={BTN_PRIMARY}
+                disabled={actionBusy}
+                onClick={() => setUncertain(current => (current === uncertain && current.inspected ? null : current))}
                 type="button"
               >
-                {actionKind === 'other' ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <RefreshCw className="size-3.5" />
-                )}
-                {t.retryGeneration}
+                {t.finishWaiting}
               </button>
             ) : null}
-          </div>
-        </SettingCard>
+          </>
+        ) : undefined
+      }
+      description={
+        actionError ||
+        loadError ||
+        uncertaintyDescription ||
+        (actionBusy
+          ? strings.creation.inputLocked
+          : detail.regeneration?.status === 'failed'
+            ? detail.regeneration.error || t.imageRegenerationFailed
+            : detail.error) ||
+        (generating
+          ? `${detail.stage === 'waiting_upload' ? t.waitingUploadHint : regenerating ? t.imageRegenerating : t.pendingOverlayHint} ${strings.creation.canLeave}`
+          : hasImage && detail.status !== 'ready'
+            ? t.needsDescription
+            : undefined)
+      }
+    />
+  )
+
+  const header = (
+    <div className="flex min-w-0 items-center gap-3">
+      <button className={cn(BTN_SUBTLE, 'shrink-0')} onClick={onBack} type="button">
+        <ArrowLeft className="size-3.5" />
+        <span>{t.backToLibrary}</span>
+      </button>
+      <div className="min-w-0 flex-1">
+        <h2 className="truncate text-sm font-semibold text-strong">{detail.title || t.untitled}</h2>
+      </div>
+      {isCurrent ? (
+        <span className="shrink-0 rounded-full bg-accent/15 px-2.5 py-1 text-[10px] text-accent">
+          {t.historyCurrentLabel}
+        </span>
       ) : null}
+    </div>
+  )
+
+  const footer = (
+    <div className="space-y-2">
+      {feedback}
+      <CreationActionBar>
+        {(!isCurrent || selectingMaterial) && hasImage && !draft ? (
+          <button
+            className={BTN_PRIMARY}
+            disabled={actionBusy || !canActivate}
+            onClick={() => onActivate(detail.id)}
+            type="button"
+          >
+            {t.historyRollbackLabel}
+          </button>
+        ) : null}
+        {canRetryGeneration ? (
+          <button
+            className={BTN_PRIMARY}
+            disabled={actionBusy || busy || Boolean(uncertain)}
+            onClick={() => void runAction(() => onRegenerate(detail.id), 'generate')}
+            type="button"
+          >
+            <RefreshCw className="size-3.5" />
+            {t.retryGeneration}
+          </button>
+        ) : null}
+        {canRetryAnalysis ? (
+          <button
+            className={BTN_SUBTLE}
+            disabled={actionBusy || busy || Boolean(uncertain)}
+            onClick={() => void runAction(() => onRetryAnalysis(detail.id), 'analyze')}
+            type="button"
+          >
+            {t.retryAnalysis}
+          </button>
+        ) : null}
+        {generating ? (
+          <>
+            <button
+              className={BTN_SUBTLE}
+              disabled={actionBusy || Boolean(uncertain)}
+              onClick={() => void runAction(() => onCancelTask(detail.id), 'cancel')}
+              type="button"
+            >
+              {t.cancelTask}
+            </button>
+            {detail.status === 'pending' && detail.stage === 'waiting_upload' ? (
+              <button
+                className={BTN_PRIMARY}
+                disabled={actionBusy || Boolean(uncertain)}
+                onClick={() =>
+                  void runAction(async isLive => {
+                    const result = await pickAvatarImage(t.chooseReference)
+
+                    if (!isLive()) {
+                      return
+                    }
+
+                    if (result && 'image' in result) {
+                      await adoptSceneImage(result.image, detail.id)
+                    } else if (result && 'error' in result) {
+                      setActionError(result.error)
+                    }
+                  }, 'upload')
+                }
+                type="button"
+              >
+                {t.waitingUploadAction}
+              </button>
+            ) : null}
+          </>
+        ) : null}
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          {draft ? (
+            <>
+              <button className={BTN_SUBTLE} disabled={actionBusy} onClick={onCancelEdit} type="button">
+                {t.cancel}
+              </button>
+              <button
+                className={BTN_PRIMARY}
+                disabled={actionBusy || !canChangeInfo || !draft.title.trim() || !draft.description.trim()}
+                onClick={() => void runAction(() => onSave(detail.id))}
+                type="button"
+              >
+                {t.save}
+              </button>
+            </>
+          ) : hasImage ? (
+            <button
+              className={cn(BTN_SUBTLE, 'whitespace-nowrap')}
+              disabled={!canChangeInfo || actionBusy}
+              onClick={onEdit}
+              type="button"
+            >
+              <Pencil className="size-3.5" />
+              {t.edit}
+            </button>
+          ) : null}
+          {hasImage && (detail.status === 'ready' || detail.status === 'description_failed') ? (
+            <button
+              className={cn(BTN_SUBTLE, 'whitespace-nowrap')}
+              disabled={!canRegenerate || actionBusy}
+              onClick={() => {
+                if (hasDraft) {
+                  void runAction(() => onSaveAndRegenerate(detail.id), 'generate')
+                } else {
+                  void runAction(() => onRegenerate(detail.id), 'generate')
+                }
+              }}
+              type="button"
+            >
+              {actionKind === 'generate' ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="size-3.5" />
+              )}
+              {hasDraft ? t.saveAndRegenerate : t.imageRegenerate}
+            </button>
+          ) : null}
+          {!isCurrent ? (
+            <button
+              className={cn(BTN_SUBTLE, 'text-danger-fg')}
+              disabled={actionBusy || generating || Boolean(uncertain)}
+              onClick={() => onDelete(detail)}
+              type="button"
+            >
+              {t.historyDeleteLabel}
+            </button>
+          ) : null}
+        </div>
+      </CreationActionBar>
+    </div>
+  )
+
+  return (
+    <CreationWorkspace className="mx-auto w-full max-w-6xl" footer={footer} header={header}>
       <SettingCard className="min-w-0" divided={false}>
         <div className="border-b border-line-hairline">
           {detail.url ? (
@@ -255,12 +540,6 @@ export function SceneDetailView({
               <span className="absolute bottom-2 right-2 rounded-full bg-black/50 p-1.5 text-white opacity-80 transition group-hover:opacity-100">
                 <ZoomIn className="size-4" />
               </span>
-              {regenerating ? (
-                <span className="absolute inset-0 flex items-center justify-center gap-2 bg-black/35 text-xs text-white">
-                  <Loader2 className="size-4 animate-spin" />
-                  {t.imageRegenerating}
-                </span>
-              ) : null}
             </button>
           ) : (
             <div
@@ -284,27 +563,30 @@ export function SceneDetailView({
             </div>
           )}
           {detail.imageLoadFailed || (detail.url && failedImage === detail.url) ? (
-            <div className="flex flex-wrap items-center gap-3 p-3" role="alert">
-              <p className="min-w-0 flex-1 text-xs text-danger-fg">{t.imageLoadFailed}</p>
-              <button
-                className={BTN_SUBTLE}
-                disabled={actionBusy}
-                onClick={() =>
-                  void runAction(async isLive => {
-                    setLoadedImage(null)
-                    await onRetryImage()
+            <CreationFeedback
+              actions={
+                <button
+                  className={BTN_SUBTLE}
+                  disabled={actionBusy || uncertain?.pending}
+                  onClick={() =>
+                    void runAction(async isLive => {
+                      setLoadedImage(null)
+                      await onRetryImage()
 
-                    if (isLive()) {
-                      setFailedImage(null)
-                      setPreviewAttempt(attempt => attempt + 1)
-                    }
-                  }, 'refresh')
-                }
-                type="button"
-              >
-                {refreshing ? strings.common.loading : t.retryImage}
-              </button>
-            </div>
+                      if (isLive()) {
+                        setFailedImage(null)
+                        setPreviewAttempt(attempt => attempt + 1)
+                      }
+                    }, 'refresh')
+                  }
+                  type="button"
+                >
+                  {refreshing ? strings.common.loading : t.retryImage}
+                </button>
+              }
+              state="error"
+              title={t.imageLoadFailed}
+            />
           ) : null}
         </div>
 
@@ -331,6 +613,7 @@ export function SceneDetailView({
                 <span>{t.titleLabel}</span>
                 <input
                   className={INPUT_CLASS}
+                  disabled={actionBusy || !canChangeInfo}
                   maxLength={80}
                   onChange={event => onChangeDraft({ title: event.target.value })}
                   value={draft.title}
@@ -340,6 +623,7 @@ export function SceneDetailView({
                 <span>{t.descriptionLabel}</span>
                 <textarea
                   className={INPUT_CLASS}
+                  disabled={actionBusy || !canChangeInfo}
                   maxLength={2000}
                   onChange={event => onChangeDraft({ description: event.target.value })}
                   rows={7}
@@ -352,141 +636,10 @@ export function SceneDetailView({
               <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-muted">
                 {detail.description || t.needsDescription}
               </p>
-              {detail.regeneration?.status === 'pending' ? (
-                <p className="flex items-center gap-2 border-t border-line-hairline pt-2 text-[11px] text-accent">
-                  <Loader2 className="size-3.5 animate-spin" />
-                  {t.imageRegenerating}
-                </p>
-              ) : null}
             </div>
           )}
         </div>
-
-        <div className="flex flex-wrap items-center gap-2 border-t border-line-hairline p-4 sm:px-5">
-          {(!isCurrent || selectingMaterial) && hasImage && !draft ? (
-            <button
-              className={BTN_PRIMARY}
-              disabled={actionBusy || !canActivate}
-              onClick={() => onActivate(detail.id)}
-              type="button"
-            >
-              {t.historyRollbackLabel}
-            </button>
-          ) : null}
-          {canRetryAnalysis ? (
-            <button
-              className={BTN_SUBTLE}
-              disabled={actionBusy || busy}
-              onClick={() => void runAction(() => onRetryAnalysis(detail.id))}
-              type="button"
-            >
-              {t.retryAnalysis}
-            </button>
-          ) : null}
-          {generating ? (
-            <>
-              <button
-                className={BTN_SUBTLE}
-                disabled={actionBusy}
-                onClick={() => void runAction(() => onCancelTask(detail.id))}
-                type="button"
-              >
-                {t.cancelTask}
-              </button>
-              {detail.status === 'pending' && detail.stage === 'waiting_upload' ? (
-                <button
-                  className={BTN_PRIMARY}
-                  disabled={actionBusy}
-                  onClick={() =>
-                    void runAction(async isLive => {
-                      const result = await pickAvatarImage(t.chooseReference)
-
-                      if (!isLive()) {
-                        return
-                      }
-
-                      if (result && 'image' in result) {
-                        await adoptSceneImage(result.image, detail.id)
-                      } else if (result && 'error' in result) {
-                        throw new Error(result.error)
-                      }
-                    })
-                  }
-                  type="button"
-                >
-                  {t.waitingUploadAction}
-                </button>
-              ) : null}
-            </>
-          ) : null}
-          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-            {draft ? (
-              <>
-                <button className={BTN_SUBTLE} disabled={actionBusy} onClick={onCancelEdit} type="button">
-                  {t.cancel}
-                </button>
-                <button
-                  className={BTN_PRIMARY}
-                  disabled={actionBusy || !canChangeInfo || !draft.title.trim() || !draft.description.trim()}
-                  onClick={() => void runAction(() => onSave(detail.id))}
-                  type="button"
-                >
-                  {t.save}
-                </button>
-              </>
-            ) : hasImage ? (
-              <button
-                className={cn(BTN_SUBTLE, 'whitespace-nowrap')}
-                disabled={!canChangeInfo || actionBusy}
-                onClick={onEdit}
-                type="button"
-              >
-                <Pencil className="size-3.5" />
-                {t.edit}
-              </button>
-            ) : null}
-            {hasImage && (detail.status === 'ready' || detail.status === 'description_failed') ? (
-              <button
-                className={cn(BTN_SUBTLE, 'whitespace-nowrap')}
-                disabled={!canRegenerate || actionBusy}
-                onClick={() => {
-                  if (hasDraft) {
-                    void runAction(() => onSaveAndRegenerate(detail.id))
-                  } else {
-                    void runAction(() => onRegenerate(detail.id))
-                  }
-                }}
-                type="button"
-              >
-                {actionKind === 'other' ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <RefreshCw className="size-3.5" />
-                )}
-                {hasDraft ? t.saveAndRegenerate : t.imageRegenerate}
-              </button>
-            ) : null}
-            {!isCurrent ? (
-              <button
-                className={cn(BTN_SUBTLE, 'text-danger-fg')}
-                disabled={actionBusy || generating}
-                onClick={() => onDelete(detail)}
-                type="button"
-              >
-                {t.historyDeleteLabel}
-              </button>
-            ) : null}
-          </div>
-        </div>
-        {actionError ? (
-          <p className="px-4 pb-4 text-xs text-danger-fg sm:px-5" role="alert">
-            {actionError}
-          </p>
-        ) : null}
-        {detail.status === 'description_failed' ? (
-          <p className={cn(HINT_TEXT, 'px-4 pb-4 sm:px-5')}>{t.needsDescription}</p>
-        ) : null}
       </SettingCard>
-    </section>
+    </CreationWorkspace>
   )
 }

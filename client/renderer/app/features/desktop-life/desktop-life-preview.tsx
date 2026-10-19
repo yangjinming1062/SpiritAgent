@@ -6,22 +6,13 @@ import { useResolvedMediaSrc } from '@/modules/media'
 import { PortraitLightbox } from '@/shared'
 import { usePanelActivity } from '@/shared/context/panel-activity'
 import { ZoomIn } from '@/shared/lib/icons'
-import { BTN_SUBTLE } from '@/shared/panel'
+import { BTN_SUBTLE, CreationFeedback } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 import { desktopMediaLayout } from '@client-shared/desktop-media-geometry'
 
 import styles from './desktop-life-preview.module.css'
 import { resolutionLabel } from './desktop-life-resolution'
 import { useDesktopLifeStrings } from './desktop-life-strings'
-
-export interface DesktopLifePreviewStatus {
-  kind: 'working' | 'paused' | 'error' | 'unknown' | 'empty'
-  title: string
-  phase?: string
-  description?: string
-  detail?: string
-  actions?: React.ReactNode
-}
 
 export function DesktopLifeCover({ url, target }: { url: string | null; target?: DesktopVideoSet }): React.JSX.Element {
   const t = useDesktopLifeStrings()
@@ -73,14 +64,12 @@ export function DesktopLifePreview({
   action,
   set,
   draft = false,
-  onImageReady,
-  status
+  onImageReady
 }: {
   action: DesktopVideoAction
   set: DesktopVideoSet
   draft?: boolean
   onImageReady?: () => void
-  status?: DesktopLifePreviewStatus
 }): React.JSX.Element {
   const [attempt, setAttempt] = useState(0)
 
@@ -102,7 +91,6 @@ export function DesktopLifePreview({
       onImageReady={onImageReady}
       onRetry={() => setAttempt(value => value + 1)}
       set={set}
-      status={status}
     />
   )
 }
@@ -112,15 +100,13 @@ function ResolvedDesktopLifePreview({
   set,
   draft,
   onImageReady,
-  onRetry,
-  status
+  onRetry
 }: {
   action: DesktopVideoAction
   set: DesktopVideoSet
   draft: boolean
   onImageReady?: () => void
   onRetry: () => void
-  status?: DesktopLifePreviewStatus
 }): React.JSX.Element {
   const active = usePanelActivity()
   const t = useDesktopLifeStrings()
@@ -163,26 +149,10 @@ function ResolvedDesktopLifePreview({
   }
 
   useEffect(() => {
-    if (!active || status) {
+    if (!active) {
       video.current?.pause()
     }
-  }, [active, status])
-
-  const displayedStatus: DesktopLifePreviewStatus | undefined =
-    status ||
-    (loadFailed
-      ? {
-          kind: 'error',
-          title: t.previewFailed,
-          actions: (
-            <button className={`${BTN_SUBTLE} ${styles.button}`} onClick={onRetry} type="button">
-              {t.retryPreview}
-            </button>
-          )
-        }
-      : !hasMedia
-        ? { kind: url ? 'working' : 'empty', title: url ? t.previewLoading : t.noPreview }
-        : undefined)
+  }, [active])
 
   const canEnlarge = Boolean(
     active &&
@@ -193,7 +163,7 @@ function ResolvedDesktopLifePreview({
     !videoUrl &&
     hasMedia &&
     size.width > 0 &&
-    !displayedStatus
+    !loadFailed
   )
 
   useEffect(() => {
@@ -220,7 +190,7 @@ function ResolvedDesktopLifePreview({
               <video
                 aria-label={action.name}
                 className={styles.media}
-                controls={!status}
+                controls
                 loop={action.kind === 'loop'}
                 muted
                 onError={() => setFailed(true)}
@@ -264,37 +234,20 @@ function ResolvedDesktopLifePreview({
           )}
         </div>
         {currentFallback && hasMedia && <span className={styles.currentProduct}>{t.currentProduct}</span>}
-        {displayedStatus && (
-          <div className={styles.statusLayer}>
-            <div
-              aria-live={displayedStatus.kind === 'error' ? 'assertive' : 'polite'}
-              className={styles.statusCard}
-              data-kind={displayedStatus.kind}
-              data-over-media={hasMedia}
-              role="status"
-            >
-              {displayedStatus.kind === 'working' && <span aria-hidden="true" className={styles.spinner} />}
-              <strong className={styles.statusTitle}>{displayedStatus.title}</strong>
-              {displayedStatus.phase && <p className={styles.statusDescription}>{t.failedAt(displayedStatus.phase)}</p>}
-              {displayedStatus.description && <p className={styles.statusDescription}>{displayedStatus.description}</p>}
-              {displayedStatus.detail && (
-                <details className={styles.details}>
-                  <summary>{displayedStatus.kind === 'error' ? t.details : t.reviewDetails}</summary>
-                  <p>{displayedStatus.detail}</p>
-                </details>
-              )}
-              {displayedStatus.actions && <div className={styles.actions}>{displayedStatus.actions}</div>}
-            </div>
-          </div>
+        {!hasMedia && !loadFailed && (
+          <span className={styles.coverPlaceholder}>{url ? t.previewLoading : t.noPreview}</span>
         )}
       </div>
-      {status && loadFailed && (
-        <div className={styles.loadFailure} role="status">
-          <p>{t.previewFailed}</p>
-          <button className={`${BTN_SUBTLE} ${styles.button}`} onClick={onRetry} type="button">
-            {t.retryPreview}
-          </button>
-        </div>
+      {loadFailed && (
+        <CreationFeedback
+          actions={
+            <button className={BTN_SUBTLE} onClick={onRetry} type="button">
+              {t.retryPreview}
+            </button>
+          }
+          state="error"
+          title={t.previewFailed}
+        />
       )}
       {actualWidth && actualHeight ? (
         <p className={styles.metadata}>

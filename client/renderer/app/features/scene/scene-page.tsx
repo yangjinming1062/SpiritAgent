@@ -24,6 +24,7 @@ import {
   deleteScene,
   editScene,
   hydrateScene,
+  inspectSceneCreationIssue,
   loadSceneDetail,
   loadSceneLibrary,
   prepareScenePrompt,
@@ -308,14 +309,14 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
     triggerHaptic('open')
 
     try {
-      const created = await createScene({
+      const result = await createScene({
         notes: input.notes.trim() || undefined,
         ...(input.reference ? { image: input.reference.base64, content_type: input.reference.contentType } : {})
       })
 
-      if (created && isLive() && revision === creationRevision.current) {
+      if (result.kind === 'created' && isLive() && revision === creationRevision.current) {
         changeCreateDraft(INITIAL_CREATE_DRAFT)
-        openDetail(created.id)
+        openDetail(result.scene.id)
       }
     } finally {
       if (isLive()) {
@@ -450,13 +451,27 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
 
   return (
     <>
-      <SettingsContent contentClassName={view.kind === 'detail' ? 'max-w-6xl' : undefined} scrollRef={scrollRef}>
-        <div className="space-y-4">
-          {view.kind === 'library' ? (
+      {view.kind === 'library' ? (
+        <SettingsContent scrollRef={scrollRef}>
+          <div className="space-y-4">
             <SceneLibraryView
               activeScene={activeScene}
               entries={library}
               onActivate={sceneId => void handleActivate(sceneId)}
+              onCheckStatus={async () => {
+                const isLive = begin()
+                await inspectSceneCreationIssue()
+
+                if (isLive()) {
+                  setQueryDraft('')
+                  returnScrollTop.current = 0
+                  updateSceneUi({ listScrollTop: 0 })
+
+                  if (scrollRef.current) {
+                    scrollRef.current.scrollTop = 0
+                  }
+                }
+              }}
               onCreate={openCreate}
               onOpen={openDetail}
               onPolicyChange={() => void handlePolicy()}
@@ -472,72 +487,82 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
               regenerating={regenerating}
               slow={slow}
               status={libraryStatus}
-              taskBusy={busy}
               total={total}
             />
-          ) : view.kind === 'detail' ? (
-            <SceneDetailView
-              activeScene={activeScene}
-              busy={status !== 'none' || Boolean(regenerating && regenerating.id !== view.sceneId)}
-              detail={detail}
-              draft={editDrafts[view.sceneId]}
-              key={view.sceneId}
-              loadError={detailLoadError}
-              loading={detailLoading}
-              onActivate={sceneId => void handleActivate(sceneId)}
-              onBack={returnToLibrary}
-              onCancelEdit={() => dropEditDraft(view.sceneId)}
-              onCancelTask={async sceneId => {
-                await cancelSceneTask(sceneId)
-                await loadSceneDetail(sceneId)
-              }}
-              onChangeDraft={next => changeEditDraft(view.sceneId, next)}
-              onDelete={scene => setDeleteTarget(scene)}
-              onEdit={() => {
-                if (detail) {
-                  changeEditDraft(detail.id, { title: detail.title, description: detail.description })
-                }
-              }}
-              onLoad={async () => {
-                const isLive = begin()
-                const loaded = await refreshSceneStatus(view.sceneId)
-                const currentView = $sceneUi.get().view
+          </div>
+        </SettingsContent>
+      ) : view.kind === 'detail' ? (
+        <SceneDetailView
+          activeScene={activeScene}
+          busy={status !== 'none' || Boolean(regenerating && regenerating.id !== view.sceneId)}
+          detail={detail}
+          draft={editDrafts[view.sceneId]}
+          key={view.sceneId}
+          loadError={detailLoadError}
+          loading={detailLoading}
+          onActivate={sceneId => void handleActivate(sceneId)}
+          onBack={returnToLibrary}
+          onCancelEdit={() => dropEditDraft(view.sceneId)}
+          onCancelTask={async sceneId => {
+            await cancelSceneTask(sceneId)
+            await loadSceneDetail(sceneId)
+          }}
+          onChangeDraft={next => changeEditDraft(view.sceneId, next)}
+          onDelete={scene => setDeleteTarget(scene)}
+          onEdit={() => {
+            if (detail) {
+              changeEditDraft(detail.id, { title: detail.title, description: detail.description })
+            }
+          }}
+          onLoad={async () => {
+            const isLive = begin()
+            const loaded = await refreshSceneStatus(view.sceneId)
+            const currentView = $sceneUi.get().view
 
-                if (loaded && isLive() && currentView.kind === 'detail' && currentView.sceneId === view.sceneId) {
-                  setDetailLoadError(null)
-                }
+            if (loaded && isLive() && currentView.kind === 'detail' && currentView.sceneId === view.sceneId) {
+              setDetailLoadError(null)
+            }
 
-                return loaded
-              }}
-              onRegenerate={regenerate}
-              onRetryAnalysis={async sceneId => {
-                await analyzeScene(sceneId)
-                await loadSceneDetail(sceneId)
-              }}
-              onRetryImage={() => reloadSceneImage(view.sceneId)}
-              onSave={async sceneId => {
-                await saveInfo(sceneId)
-              }}
-              onSaveAndRegenerate={saveAndRegenerate}
-              onZoom={(url, name) => setZoom({ url, name })}
-              selectingMaterial={Boolean(onMaterialReady)}
-            />
-          ) : (
-            <SceneCreateView
-              busy={busy || referenceLoading || submitting}
-              draft={createDraft}
-              key={`${importRevision}:${referenceImportRevision}`}
-              onAdopt={adoptCreatedImage}
-              onBack={returnToLibrary}
-              onCancelTask={cancelSceneTask}
-              onChange={changeCreateDraft}
-              onCreate={() => void startCreation()}
-              onFetchPrompt={handleCreatePrompt}
-              onUseAi={() => void startAiForNewScene()}
-            />
-          )}
-        </div>
-      </SettingsContent>
+            return loaded
+          }}
+          onRegenerate={regenerate}
+          onRetryAnalysis={async sceneId => {
+            await analyzeScene(sceneId)
+            await loadSceneDetail(sceneId)
+          }}
+          onRetryImage={() => reloadSceneImage(view.sceneId)}
+          onSave={async sceneId => {
+            await saveInfo(sceneId)
+          }}
+          onSaveAndRegenerate={saveAndRegenerate}
+          onZoom={(url, name) => setZoom({ url, name })}
+          selectingMaterial={Boolean(onMaterialReady)}
+        />
+      ) : (
+        <SceneCreateView
+          busy={busy || referenceLoading || submitting}
+          draft={createDraft}
+          key={`${importRevision}:${referenceImportRevision}`}
+          onAdopt={adoptCreatedImage}
+          onBack={returnToLibrary}
+          onCancelTask={cancelSceneTask}
+          onChange={changeCreateDraft}
+          onCheckStatus={async () => {
+            const isLive = begin()
+            await inspectSceneCreationIssue()
+
+            if (isLive()) {
+              setQueryDraft('')
+              returnScrollTop.current = 0
+              updateSceneUi({ listScrollTop: 0 })
+              returnToLibrary()
+            }
+          }}
+          onCreate={() => void startCreation()}
+          onFetchPrompt={handleCreatePrompt}
+          onUseAi={() => void startAiForNewScene()}
+        />
+      )}
       {zoom ? <PortraitLightbox name={zoom.name} onClose={() => setZoom(null)} url={zoom.url} /> : null}
       <ConfirmDialog
         confirmLabel={dict.living.scene.historyDeleteLabel}

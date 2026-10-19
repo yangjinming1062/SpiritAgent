@@ -9,7 +9,7 @@ import { useImageActions } from '@/shared/hooks/use-image-actions'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { Check, Copy, Download } from '@/shared/lib/icons'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
-import { BTN_PRIMARY, BTN_SUBTLE, HINT_TEXT, WizardModal } from '@/shared/panel'
+import { BTN_PRIMARY, BTN_SUBTLE, CreationActionBar, CreationFeedback, HINT_TEXT, WizardModal } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
 import { pickAvatarImage, type PickedImage } from './avatar-image'
@@ -52,7 +52,8 @@ export function SelfSourceImageFlow({
   onUseAi,
   onClose
 }: SelfSourceImageFlowProps): React.JSX.Element | null {
-  const t = useStrings().selfSource
+  const dict = useStrings()
+  const t = dict.selfSource
   const [showGuidance, setShowGuidance] = useState(false)
   const [prompt, setPrompt] = useState<string | null>(null)
   const [promptError, setPromptError] = useState<string | null>(null)
@@ -197,9 +198,59 @@ export function SelfSourceImageFlow({
     }
   }
 
+  const creationFeedback = (adopting || picking || adoptError || image || (showGuidance && !promptBlockedReason)) && (
+    <CreationFeedback
+      description={adoptError || (adopting ? dict.creation.inputLocked : image ? t.hint : promptError)}
+      state={
+        adoptError
+          ? 'error'
+          : adopting || picking
+            ? 'working'
+            : image
+              ? 'review'
+              : promptError
+                ? 'error'
+                : prompt === null
+                  ? 'working'
+                  : 'review'
+      }
+      title={
+        adoptError
+          ? t.adoptFailed
+          : adopting
+            ? t.adopting
+            : picking
+              ? t.pickTitle
+              : image
+                ? t.adopt
+                : promptError
+                  ? t.promptFailed
+                  : prompt === null
+                    ? t.promptLoading
+                    : t.guidanceAction
+      }
+    />
+  )
+
   return (
     <WizardModal
+      closeDisabled={adopting}
       escClose={!zoomUrl && !adopting}
+      footer={
+        <CreationActionBar className="w-full border-0 p-0" description={creationFeedback}>
+          <button className={BTN_SUBTLE} disabled={adopting || picking} onClick={onUseAi} type="button">
+            {t.useAi}
+          </button>
+          <button
+            className={BTN_PRIMARY}
+            disabled={!image || adopting || picking}
+            onClick={() => void confirmAdopt()}
+            type="button"
+          >
+            {adopting ? t.adopting : t.adopt}
+          </button>
+        </CreationActionBar>
+      }
       onClose={adopting ? () => undefined : onClose}
       regionId="self-source-image"
       title={title}
@@ -333,26 +384,6 @@ export function SelfSourceImageFlow({
             )}
           </div>
         )}
-
-        {adoptError && (
-          <p className="text-xs text-danger-fg" role="alert">
-            {adoptError}
-          </p>
-        )}
-
-        <div className="flex items-center justify-end gap-2 pt-1">
-          <button className={BTN_SUBTLE} disabled={adopting} onClick={onUseAi} type="button">
-            {t.useAi}
-          </button>
-          <button
-            className={BTN_PRIMARY}
-            disabled={!image || adopting}
-            onClick={() => void confirmAdopt()}
-            type="button"
-          >
-            {adopting ? t.adopting : t.adopt}
-          </button>
-        </div>
       </div>
 
       {zoomUrl && <PortraitLightbox name={t.referenceZoom} onClose={() => setZoomUrl(null)} url={zoomUrl} />}

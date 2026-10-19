@@ -12,6 +12,8 @@ import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
 import { errorMessage } from '@runtime'
 
+import { $voiceCreation, setVoiceCreationSample } from './voice-creation-store'
+
 export interface VoiceSample {
   sample_id: string
   url: string
@@ -40,10 +42,11 @@ function asDataUrl(blob: Blob): Promise<string> {
 
 export function useVoiceSample(active: boolean) {
   const auth = useStore($auth)
+  const authIdentity = auth.kind === 'authenticated' ? auth.snapshot.sessionId : auth.kind
   const t = useStrings().voice
   const begin = useAsyncGuard()
   const activeRef = useLatestRef(active)
-  const [sample, setSample] = useState<VoiceSample | null>(null)
+  const sample = useStore($voiceCreation).sample
   const [recording, setRecording] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -90,7 +93,7 @@ export function useVoiceSample(active: boolean) {
     }
 
     return cancel
-  }, [active, auth, cancel])
+  }, [active, authIdentity, cancel])
 
   const upload = async (blob: Blob, filename: string): Promise<void> => {
     if (!activeRef.current) {
@@ -98,7 +101,6 @@ export function useVoiceSample(active: boolean) {
     }
 
     cancel()
-    setSample(null)
     setError(null)
 
     if (blob.size === 0 || blob.size > MAX_SAMPLE_BYTES) {
@@ -135,7 +137,7 @@ export function useVoiceSample(active: boolean) {
       })
 
       if (isLive()) {
-        setSample(result)
+        setVoiceCreationSample(result)
       }
     } catch (failure) {
       log.warn('voice-sample', 'Voice sample upload failed', failure)
@@ -173,7 +175,6 @@ export function useVoiceSample(active: boolean) {
     }
 
     cancel()
-    setSample(null)
     setError(null)
     const mounted = begin()
     const authCurrent = captureAuthScope()
@@ -246,5 +247,5 @@ export function useVoiceSample(active: boolean) {
     }
   }
 
-  return { sample, recording, busy, error, start, stop, upload, cancel }
+  return { sample, recording, busy, error, start, stop, upload, cancel, clearError: () => setError(null) }
 }

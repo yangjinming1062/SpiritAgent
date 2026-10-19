@@ -1,7 +1,7 @@
 import type { RefObject } from 'react'
 
 import { cn } from '@/shared/lib/utils'
-import { Chip, DatePicker, INPUT_CLASS } from '@/shared/panel'
+import { Chip, CreationActionBar, CreationWorkspace, DatePicker, INPUT_CLASS } from '@/shared/panel'
 
 import { ONBOARDING_PRIMARY_BUTTON } from './onboarding-components'
 import type { AnswerKind, Question } from './onboarding-questions'
@@ -44,7 +44,30 @@ export function QuestionPage({
   const presetValues = question.presets ?? []
 
   return (
-    <>
+    <CreationWorkspace
+      footer={
+        <CreationActionBar>
+          <button
+            className="text-body transition hover:text-strong disabled:opacity-30"
+            disabled={!canGoBack}
+            onClick={onBack}
+            type="button"
+          >
+            上一题
+          </button>
+          <div className="flex gap-3">
+            {!question.requiredHint && (
+              <button className="text-body transition hover:text-strong" onClick={onSkip} type="button">
+                跳过
+              </button>
+            )}
+            <button className={ONBOARDING_PRIMARY_BUTTON} onClick={onSend} type="button">
+              {qIndex === questionCount - 1 ? '完成' : '发送'}
+            </button>
+          </div>
+        </CreationActionBar>
+      }
+    >
       {lockedLabel && (
         <p className="mb-2 rounded-md border border-amber-300/30 bg-amber-300/10 px-2 py-1 text-[10px] leading-relaxed text-strong">
           「{lockedLabel}」是形象确认后无法再次更改的重点内容，请仔细选择。
@@ -119,32 +142,13 @@ export function QuestionPage({
               value={input}
             />
           )}
-          <div className="mt-4 flex items-center justify-between text-xs">
-            <button
-              className="text-body transition hover:text-strong disabled:opacity-30"
-              disabled={!canGoBack}
-              onClick={onBack}
-              type="button"
-            >
-              上一题
-            </button>
-            <div className="flex gap-3">
-              {!question.requiredHint && (
-                <button className="text-body transition hover:text-strong" onClick={onSkip} type="button">
-                  跳过
-                </button>
-              )}
-              <button className={ONBOARDING_PRIMARY_BUTTON} onClick={onSend} type="button">
-                {qIndex === questionCount - 1 ? '完成' : '发送'}
-              </button>
-            </div>
-          </div>
+
           {hint && <p className="mt-2 text-xs text-strong">{hint}</p>}
           <p className="mt-2 text-right text-[10px] text-faint">
             {qIndex + 1} / {questionCount}
           </p>
         </>
       )}
-    </>
+    </CreationWorkspace>
   )
 }

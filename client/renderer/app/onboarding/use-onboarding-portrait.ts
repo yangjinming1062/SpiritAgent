@@ -110,7 +110,9 @@ export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, e
     regenerate: regenerateAvatarPortrait,
     edit: editAvatarPortrait,
     reload: reloadAvatarPortrait,
-    busy: avatarBusy
+    busy: avatarBusy,
+    resultUnknown: portraitResultUnknown,
+    previewUnavailable: portraitPreviewUnavailable
   } = useRegeneratePortrait({
     refImage,
     presentationRef,
@@ -383,6 +385,8 @@ export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, e
     setPresentationRef,
     updateRefImage,
     avatarBusy,
+    portraitResultUnknown,
+    portraitPreviewUnavailable,
     startAiHatching,
     currentHistoryItems,
     onSelectHistoryEntry,

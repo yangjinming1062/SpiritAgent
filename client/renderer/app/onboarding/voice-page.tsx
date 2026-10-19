@@ -6,7 +6,12 @@ interface VoicePageProps {
   name: string
   preference?: string
   onDescribe: () => void
-  onVoiceSelected: (voiceId: string, label: string, serverConfirmed: boolean) => Promise<void>
+  onVoiceSelected: (
+    voiceId: string,
+    label: string,
+    serverConfirmed: boolean,
+    isSelectionCurrent?: () => boolean
+  ) => Promise<boolean | void>
   onContinueText: () => void
   confirming: boolean
   error: string | null
@@ -24,16 +29,16 @@ export function VoicePage({
   const t = useStrings().voice
 
   return (
-    <div className="space-y-4">
-      <p className={HINT_TEXT}>{t.onboardingHint}</p>
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
       <VoiceManager
         compact
         disabled={confirming}
+        intro={<p className={HINT_TEXT}>{t.onboardingHint}</p>}
         name={name}
         onVoiceSelected={onVoiceSelected}
         preference={preference}
       />
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
         <button className={BTN_SUBTLE} disabled={confirming} onClick={onDescribe} type="button">
           {t.describePreference}
         </button>

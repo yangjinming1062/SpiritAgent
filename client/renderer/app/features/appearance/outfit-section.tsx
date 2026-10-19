@@ -36,9 +36,10 @@ import {
   BTN_PRIMARY,
   BTN_SUBTLE,
   confirmAction,
-  HINT_TEXT,
+  CreationActionBar,
+  CreationFeedback,
+  CreationWorkspace,
   INPUT_CLASS,
-  Spinner,
   Toggle
 } from '@/shared/panel'
 import { $locale } from '@/shared/store/locale'
@@ -71,6 +72,8 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
   const [busyId, setBusyId] = useState<number | null>(null)
   const [policyBusy, setPolicyBusy] = useState(false)
   const [zoomUrl, setZoomUrl] = useState<string | null>(null)
+  const [failedPreview, setFailedPreview] = useState<string | null>(null)
+  const [loadedPreview, setLoadedPreview] = useState<string | null>(null)
   const ui = useStore($appearanceUi)
   const { designing, text, draftId } = ui
   const listScrollTop = useLatestRef(ui.listScrollTop ?? 0)
@@ -236,12 +239,20 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
   }
 
   const previewUrl = session.draft?.previewUrl ?? null
+  const previewFailed = session.previewError || Boolean(previewUrl && failedPreview === previewUrl)
+  const creationLocked = session.busy || session.resultUnknown || previewFailed
+  const latestMessage = session.messages.at(-1)
   const hasInput = !!text.trim() || !!session.refImage
+
+  const viewWardrobe = (): void => {
+    void hydrateWardrobe()
+    setDesigning(false)
+  }
 
   // 首次生成（无草稿）：描述/参考图创建新设计。
   const sendCreation = (): void => {
     // 生成进行中会话内部会拒绝——此时不清空输入，避免丢字。
-    if (session.busy || !hasInput) {
+    if (creationLocked || !hasInput) {
       return
     }
 
@@ -251,7 +262,7 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
 
   // 草稿反馈的两个显式操作（DESIGN「形象获取与确认」）：微调编辑上一版须带反馈，重新生成允许空反馈整体重绘。
   const sendRevise = (mode: ImageReviseMode): void => {
-    if (session.busy || (mode === 'edit' && !text.trim())) {
+    if (creationLocked || (mode === 'edit' && !text.trim())) {
       return
     }
 
@@ -322,33 +333,122 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
     ? [{ label: selfSourceDict.refs.fullbodySeed, url: avatarSeeds.fullbodySeedUrl }]
     : undefined
 
+  const creationFeedback = (session.busy ||
+    session.draft ||
+    session.resultUnknown ||
+    latestMessage?.tone === 'error') && (
+    <CreationFeedback
+      actions={
+        session.resultUnknown || previewFailed ? (
+          <button className={BTN_SUBTLE} onClick={viewWardrobe} type="button">
+            {session.resultUnknown ? dict.creation.checkResult : dict.creation.retryLoad}
+          </button>
+        ) : undefined
+      }
+      description={
+        session.resultUnknown
+          ? t.design.timedOut
+          : previewFailed
+            ? t.design.previewFailed
+            : latestMessage?.tone === 'error'
+              ? latestMessage.text
+              : session.busy
+                ? `${dict.creation.inputLocked} ${dict.creation.preserveCurrent}`
+                : t.confirmHint
+      }
+      state={
+        session.busy
+          ? 'working'
+          : session.resultUnknown
+            ? 'unknown'
+            : previewFailed || latestMessage?.tone === 'error'
+              ? 'error'
+              : 'review'
+      }
+      title={
+        session.busy
+          ? session.stage === 'confirming'
+            ? common.saving
+            : session.stage === 'loading'
+              ? t.processing
+              : t.generating
+          : session.resultUnknown
+            ? dict.creation.unknown
+            : previewFailed
+              ? dict.creation.imageLoadFailed
+              : latestMessage?.tone === 'error'
+                ? t.design.generateFailed
+                : dict.creation.review
+      }
+    />
+  )
+
   return (
     <div className="flex min-h-0 flex-1 flex-col border-b border-line-hairline bg-surface-panel">
       {designing ? (
-        <section
-          aria-labelledby="appearance-outfit-design-heading"
-          className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+        <CreationWorkspace
+          footer={
+            <CreationActionBar className="shrink-0 px-4" description={creationFeedback}>
+              {session.draft ? (
+                <>
+                  <GenerationActionsGroup
+                    dense
+                    editDisabled={creationLocked || !text.trim()}
+                    editReason={!text.trim() ? dict.generationActions.editRequiresFeedback : undefined}
+                    onEdit={() => sendRevise('edit')}
+                    onRegenerate={() => sendRevise('regenerate')}
+                    regenerateDisabled={creationLocked}
+                  />
+                  <button
+                    className={BTN_PRIMARY}
+                    disabled={creationLocked || !previewUrl || loadedPreview !== previewUrl}
+                    onClick={() => void session.confirm()}
+                    type="button"
+                  >
+                    {session.stage === 'confirming' ? common.saving : t.confirmAction}
+                  </button>
+                </>
+              ) : (
+                <button
+                  className={BTN_PRIMARY}
+                  disabled={creationLocked || !hasInput}
+                  onClick={sendCreation}
+                  type="button"
+                >
+                  <Send className="size-4" />
+                  {t.send}
+                </button>
+              )}
+              <button className={BTN_GHOST} onClick={viewWardrobe} type="button">
+                {t.discard}
+              </button>
+            </CreationActionBar>
+          }
+          header={
+            <>
+              <header className="flex shrink-0 items-center gap-3 border-b border-line-hairline px-4 py-2.5">
+                <button
+                  aria-label={dict.living.appearance.videoBackToOutfits}
+                  className={cn(BTN_GHOST, 'h-8 shrink-0 px-2')}
+                  onClick={viewWardrobe}
+                  type="button"
+                >
+                  <ArrowLeft className="size-4" />
+                  {dict.living.appearance.videoBackToOutfits}
+                </button>
+                <div className="min-w-0">
+                  <h2 className="truncate text-sm font-semibold text-strong" id="appearance-outfit-design-heading">
+                    {t.startAction}
+                  </h2>
+                  <p className="truncate text-[11px] text-muted">
+                    {session.draft ? t.design.resumeReady : t.designIntro}
+                  </p>
+                </div>
+              </header>
+            </>
+          }
         >
-          <header className="flex shrink-0 items-center gap-3 border-b border-line-hairline px-4 py-2.5">
-            <button
-              aria-label={dict.living.appearance.videoBackToOutfits}
-              className={cn(BTN_GHOST, 'h-8 shrink-0 px-2')}
-              disabled={session.busy}
-              onClick={() => setDesigning(false)}
-              type="button"
-            >
-              <ArrowLeft className="size-4" />
-              {dict.living.appearance.videoBackToOutfits}
-            </button>
-            <div className="min-w-0">
-              <h2 className="truncate text-sm font-semibold text-strong" id="appearance-outfit-design-heading">
-                {t.startAction}
-              </h2>
-              <p className="truncate text-[11px] text-muted">{session.draft ? t.design.resumeReady : t.designIntro}</p>
-            </div>
-          </header>
-
-          <div className="grid min-h-0 grid-cols-1 gap-3 p-4 md:flex-1 md:grid-cols-[minmax(0,1fr)_minmax(280px,0.72fr)] md:overflow-hidden">
+          <div className="grid min-h-[360px] grid-cols-1 gap-3 p-4 md:h-full md:grid-cols-[minmax(0,1fr)_minmax(280px,0.72fr)]">
             <div className="relative min-h-64 min-w-0 overflow-hidden rounded-xl border border-line-hairline bg-fill-trough md:min-h-0">
               {previewUrl ? (
                 <button
@@ -356,7 +456,16 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
                   onClick={() => setZoomUrl(previewUrl)}
                   type="button"
                 >
-                  <img alt={t.imageAlt} className="block h-full w-full object-contain" src={previewUrl} />
+                  <img
+                    alt={t.imageAlt}
+                    className="block h-full w-full object-contain"
+                    onError={() => setFailedPreview(previewUrl)}
+                    onLoad={() => {
+                      setLoadedPreview(previewUrl)
+                      setFailedPreview(current => (current === previewUrl ? null : current))
+                    }}
+                    src={previewUrl}
+                  />
                 </button>
               ) : (
                 <div className="absolute inset-0 grid place-items-center px-4 text-center">
@@ -366,12 +475,6 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
                   </div>
                 </div>
               )}
-              {session.busy ? (
-                <div className="absolute inset-0 flex items-center justify-center gap-2 bg-black/40">
-                  <Spinner className="size-5" />
-                  <span className="text-xs text-white">{t.generating}</span>
-                </div>
-              ) : null}
             </div>
 
             <div className="flex min-h-80 min-w-0 flex-col overflow-hidden rounded-xl border border-line-hairline bg-surface-card md:min-h-0">
@@ -410,7 +513,7 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
                       >
                         {m.text}
                       </div>
-                      {m.tone === 'error' && session.lastRequest && (
+                      {m.tone === 'error' && session.lastRequest && !session.resultUnknown && (
                         <button
                           aria-label={t.retryLast}
                           className={cn(BTN_ICON, 'shrink-0 text-danger-fg')}
@@ -425,28 +528,6 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
                   )
                 )}
               </div>
-
-              {session.draft && (
-                <div className="flex min-w-0 flex-wrap items-center gap-2 border-t border-line-hairline px-4 py-2">
-                  <button
-                    className={cn(BTN_PRIMARY, 'h-7 shrink-0 whitespace-nowrap')}
-                    disabled={session.busy || !session.draft.previewUrl}
-                    onClick={() => void session.confirm()}
-                    type="button"
-                  >
-                    {session.busy ? t.processing : t.confirmAction}
-                  </button>
-                  <button
-                    className={cn(BTN_GHOST, 'shrink-0 whitespace-nowrap')}
-                    disabled={session.busy}
-                    onClick={() => setDesigning(false)}
-                    type="button"
-                  >
-                    {t.discard}
-                  </button>
-                  <span className={cn(HINT_TEXT, 'min-w-0 flex-1 truncate')}>{t.confirmHint}</span>
-                </div>
-              )}
 
               {session.refImage && !session.draft && (
                 <div className="flex items-center gap-2 border-t border-line-hairline px-4 py-1.5 text-[11px] text-body">
@@ -465,24 +546,12 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
                   {t.refImageAttached}
                   <button
                     className="text-muted transition hover:text-strong"
+                    disabled={session.busy}
                     onClick={session.clearRefImage}
                     type="button"
                   >
                     {common.remove}
                   </button>
-                </div>
-              )}
-
-              {session.draft && (
-                <div className="border-t border-line-hairline px-4 py-2">
-                  <GenerationActionsGroup
-                    dense
-                    editDisabled={session.busy || !text.trim()}
-                    editReason={!text.trim() ? dict.generationActions.editRequiresFeedback : undefined}
-                    onEdit={() => sendRevise('edit')}
-                    onRegenerate={() => sendRevise('regenerate')}
-                    regenerateDisabled={session.busy}
-                  />
                 </div>
               )}
 
@@ -523,7 +592,7 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
                 <button
                   aria-label={selfSourceDict.open}
                   className="inline-flex items-center gap-1.5 text-xs text-muted transition hover:text-strong disabled:opacity-40"
-                  disabled={session.busy}
+                  disabled={creationLocked}
                   onClick={() => {
                     void hydrateAvatarSeeds().finally(() => setOutfitSelfSourceOpen(true))
                   }}
@@ -532,22 +601,10 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
                 >
                   {selfSourceDict.open}
                 </button>
-                {!session.draft && (
-                  <button
-                    aria-label={t.send}
-                    className={cn(BTN_PRIMARY, 'ml-auto h-9 shrink-0')}
-                    disabled={session.busy || !hasInput}
-                    onClick={sendCreation}
-                    type="button"
-                  >
-                    <Send className="size-4" />
-                    {t.send}
-                  </button>
-                )}
               </div>
             </div>
           </div>
-        </section>
+        </CreationWorkspace>
       ) : (
         <section
           aria-labelledby="appearance-outfits-heading"
@@ -555,6 +612,19 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
           onScroll={event => updateAppearanceUi({ listScrollTop: event.currentTarget.scrollTop })}
           ref={libraryRef}
         >
+          {(session.busy || session.resultUnknown) && (
+            <CreationFeedback
+              actions={
+                <button className={BTN_SUBTLE} onClick={() => setDesigning(true)} type="button">
+                  {t.actions.continueDesign}
+                </button>
+              }
+              className="mx-4 mt-3"
+              description={session.resultUnknown ? t.design.timedOut : dict.creation.preserveCurrent}
+              state={session.resultUnknown ? 'unknown' : 'working'}
+              title={session.resultUnknown ? dict.creation.unknown : t.generating}
+            />
+          )}
           <div className="mx-4 mt-3 flex items-center justify-between gap-4 rounded-xl border border-line-hairline p-4">
             <div className="min-w-0">
               <p className="text-sm font-medium text-strong">{t.policyLabel}</p>
@@ -593,6 +663,10 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
 
               const openOutfit = (): void => {
                 if (canEdit) {
+                  if (session.busy) {
+                    return
+                  }
+
                   updateAppearanceUi({ draftId: outfit.id })
                   session.adoptDraft(outfit.id, outfit.fullbodyUrl ?? '')
                   setDesigning(true)
@@ -694,6 +768,7 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
                         <button
                           aria-label={t.actions.continueDesign}
                           className={CARD_ACTION_CLASS}
+                          disabled={session.busy}
                           onClick={() => {
                             updateAppearanceUi({ draftId: outfit.id })
                             session.adoptDraft(outfit.id, outfit.fullbodyUrl ?? '')

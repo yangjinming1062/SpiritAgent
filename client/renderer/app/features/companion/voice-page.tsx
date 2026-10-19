@@ -10,10 +10,5 @@ export function VoicePage(): React.JSX.Element {
   const persona = useStore($persona)
   const t = useStrings().voice
 
-  return (
-    <div className="space-y-4">
-      <SettingsSectionIntro hint={t.intro} title={t.title} />
-      <VoiceManager name={persona?.name ?? ''} />
-    </div>
-  )
+  return <VoiceManager intro={<SettingsSectionIntro hint={t.intro} title={t.title} />} name={persona?.name ?? ''} />
 }

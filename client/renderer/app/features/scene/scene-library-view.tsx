@@ -1,9 +1,19 @@
+import { useStore } from '@nanostores/react'
 import type React from 'react'
+import { useState } from 'react'
 
-import { type ActiveScene, PAGE_SIZE, type SceneAsset, type ScenePolicy } from '@/modules/scene'
-import { AlertCircle, Loader2, Plus, RefreshCw, Search, Sparkles } from '@/shared/lib/icons'
+import {
+  $sceneCreationIssue,
+  type ActiveScene,
+  finishSceneCreationWait,
+  PAGE_SIZE,
+  type SceneAsset,
+  type ScenePolicy
+} from '@/modules/scene'
+import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { Loader2, Plus, RefreshCw, Search, Sparkles } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
-import { BTN_PRIMARY, BTN_SUBTLE, HINT_TEXT, INPUT_CLASS, SettingCard, Toggle } from '@/shared/panel'
+import { BTN_PRIMARY, BTN_SUBTLE, CreationFeedback, HINT_TEXT, INPUT_CLASS, SettingCard, Toggle } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
 interface SceneLibraryViewProps {
@@ -11,6 +21,7 @@ interface SceneLibraryViewProps {
   entries: SceneAsset[]
   onActivate: (sceneId: string) => void
   onCreate: () => void
+  onCheckStatus: () => Promise<void>
   onOpen: (sceneId: string) => void
   onPolicyChange: () => void
   policyBusy: boolean
@@ -25,7 +36,6 @@ interface SceneLibraryViewProps {
   regenerating: ActiveScene | null
   slow: boolean
   status: 'idle' | 'loading' | 'loaded' | 'error'
-  taskBusy: boolean
   total: number
 }
 
@@ -34,6 +44,7 @@ export function SceneLibraryView({
   entries,
   onActivate,
   onCreate,
+  onCheckStatus,
   onOpen,
   onPolicyChange,
   onRetryLoad,
@@ -48,11 +59,28 @@ export function SceneLibraryView({
   regenerating,
   slow,
   status,
-  taskBusy,
   total
 }: SceneLibraryViewProps): React.JSX.Element {
   const strings = useStrings()
   const t = strings.living.scene
+  const creationIssue = useStore($sceneCreationIssue)
+  const [checking, setChecking] = useState(false)
+  const begin = useAsyncGuard()
+  const task = pending || regenerating
+  const stage = regenerating?.regeneration?.stage || pending?.stage
+
+  const checkStatus = async (): Promise<void> => {
+    const isLive = begin()
+    setChecking(true)
+
+    try {
+      await onCheckStatus()
+    } finally {
+      if (isLive()) {
+        setChecking(false)
+      }
+    }
+  }
 
   return (
     <>
@@ -75,36 +103,6 @@ export function SceneLibraryView({
       </SettingCard>
       <p className="text-[11px] leading-relaxed text-faint">{t.intro}</p>
 
-      {pending ? (
-        <SettingCard className="border border-accent-line/40">
-          <button
-            className="flex w-full min-w-0 items-center gap-2 p-3 text-left"
-            onClick={() => onOpen(pending.id)}
-            type="button"
-          >
-            <Loader2 className="size-4 shrink-0 animate-spin text-accent" />
-            <span className="min-w-0 flex-1 truncate text-xs text-body">
-              {pending.stage === 'waiting_upload' ? t.waitingUploadOverlay : slow ? t.slow : t.pendingOverlay}
-            </span>
-            <span className="shrink-0 text-[10px] text-accent">{t.openDetails}</span>
-          </button>
-        </SettingCard>
-      ) : null}
-
-      {regenerating ? (
-        <SettingCard className="border border-accent-line/40">
-          <button
-            className="flex w-full min-w-0 items-center gap-2 p-3 text-left"
-            onClick={() => onOpen(regenerating.id)}
-            type="button"
-          >
-            <Loader2 className="size-4 shrink-0 animate-spin text-accent" />
-            <span className="min-w-0 flex-1 truncate text-xs text-body">{t.imageRegenerating}</span>
-            <span className="shrink-0 text-[10px] text-accent">{t.openDetails}</span>
-          </button>
-        </SettingCard>
-      ) : null}
-
       <form
         className="flex min-w-0 gap-2"
         onSubmit={event => {
@@ -123,28 +121,78 @@ export function SceneLibraryView({
           <Search className="size-3.5" />
           <span>{t.searchButton}</span>
         </button>
-        <button
-          className={cn(BTN_PRIMARY, 'shrink-0 whitespace-nowrap')}
-          disabled={taskBusy}
-          onClick={onCreate}
-          type="button"
-        >
+        <button className={cn(BTN_PRIMARY, 'shrink-0 whitespace-nowrap')} onClick={onCreate} type="button">
           <Plus className="size-3.5" />
           <span>{t.generateButton}</span>
         </button>
       </form>
 
+      {creationIssue?.outcome === 'unknown' ? (
+        <CreationFeedback
+          actions={
+            <>
+              <button className={BTN_SUBTLE} disabled={checking} onClick={() => void checkStatus()} type="button">
+                {checking ? strings.common.loading : t.inspectLibrary}
+              </button>
+              {creationIssue.inspected ? (
+                <button
+                  className={BTN_PRIMARY}
+                  disabled={checking}
+                  onClick={() => finishSceneCreationWait(creationIssue)}
+                  type="button"
+                >
+                  {t.finishWaiting}
+                </button>
+              ) : null}
+            </>
+          }
+          description={creationIssue.inspected ? t.inspectionHint : t.submissionUnknown}
+          state="unknown"
+          title={strings.creation.unknown}
+        />
+      ) : null}
+      {task ? (
+        <CreationFeedback
+          actions={
+            <button className={BTN_SUBTLE} onClick={() => onOpen(task.id)} type="button">
+              {t.openDetails}
+            </button>
+          }
+          description={
+            pending?.stage === 'waiting_upload'
+              ? t.waitingUploadHint
+              : regenerating
+                ? strings.creation.canLeave
+                : t.pendingOverlayHint
+          }
+          state={pending?.stage === 'waiting_upload' ? 'waiting' : 'working'}
+          title={
+            pending?.stage === 'waiting_upload'
+              ? t.waitingUploadOverlay
+              : stage === 'analyze'
+                ? t.analyzing
+                : stage === 'evaluating' || stage === 'submitting'
+                  ? t.checking
+                  : regenerating
+                    ? t.imageRegenerating
+                    : slow
+                      ? t.slow
+                      : t.pendingOverlay
+          }
+        />
+      ) : null}
+
       {status === 'error' ? (
-        <SettingCard>
-          <div className="flex items-center gap-2 p-3 text-xs text-danger-fg">
-            <AlertCircle className="size-4 shrink-0" />
-            <span className="min-w-0 flex-1">{t.loadFailed}</span>
+        <CreationFeedback
+          actions={
             <button className={BTN_SUBTLE} onClick={onRetryLoad} type="button">
               <RefreshCw className="size-3.5" />
               <span>{strings.common.retry}</span>
             </button>
-          </div>
-        </SettingCard>
+          }
+          state="error"
+          title={t.loadFailed}
+        />
       ) : null}
 
       {entries.length > 0 ? (
@@ -221,7 +269,7 @@ export function SceneLibraryView({
             <Sparkles className="mx-auto size-6 text-accent" />
             <p className="text-xs text-muted">{query.trim() ? t.emptySearch : t.emptyLibrary}</p>
             {total === 0 && !query.trim() ? (
-              <button className={BTN_SUBTLE} disabled={taskBusy} onClick={onCreate} type="button">
+              <button className={BTN_SUBTLE} onClick={onCreate} type="button">
                 {t.generateButton}
               </button>
             ) : null}

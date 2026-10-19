@@ -83,109 +83,6 @@
   text-align: center;
 }
 
-.statusLayer {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  padding: 20px;
-  overflow-y: auto;
-  align-items: safe center;
-  justify-items: center;
-}
-
-.statusCard {
-  display: flex;
-  width: min(100%, 400px);
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  padding: 22px;
-  border: 1px solid transparent;
-  border-radius: 16px;
-  color: var(--ui-text-body);
-  text-align: center;
-}
-
-.statusCard[data-over-media='true'] {
-  border-color: var(--ui-line-standard);
-  background: color-mix(in srgb, var(--ui-app-bg) 94%, transparent);
-  box-shadow: 0 8px 32px rgb(0 0 0 / 15%);
-}
-
-.statusTitle {
-  color: var(--ui-text-strong);
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-.statusDescription {
-  margin: 0;
-  color: var(--ui-text-muted);
-  font-size: 13px;
-  line-height: 1.7;
-}
-
-.spinner {
-  width: 28px;
-  height: 28px;
-  border: 3px solid var(--ui-accent-soft);
-  border-top-color: var(--ui-accent);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-.actions,
-.loadFailure {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.actions {
-  justify-content: center;
-  margin-top: 4px;
-}
-
-.actions button,
-.button {
-  height: 36px;
-  flex-shrink: 0;
-  white-space: nowrap;
-  font-size: 13px;
-}
-
-.actions button:focus-visible,
-.button:focus-visible,
-.details summary:focus-visible {
-  outline: 2px solid var(--ui-accent);
-  outline-offset: 3px;
-}
-
-.details {
-  width: 100%;
-  max-height: 140px;
-  overflow: auto;
-  color: var(--ui-text-muted);
-  font-size: 12px;
-  line-height: 1.6;
-  text-align: left;
-  overflow-wrap: anywhere;
-}
-
-.details summary {
-  width: fit-content;
-  margin: 0 auto;
-  cursor: pointer;
-}
-
-.details p {
-  margin: 10px 0 0;
-  white-space: pre-wrap;
-}
-
 .currentProduct {
   position: absolute;
   top: 12px;
@@ -199,22 +96,6 @@
   font-size: 11px;
 }
 
-.loadFailure {
-  justify-content: space-between;
-  border: 1px solid var(--ui-line-standard);
-  border-radius: 10px;
-  padding: 10px 12px;
-  color: var(--ui-text-muted);
-  font-size: 12px;
-}
-
-.loadFailure p {
-  min-width: 0;
-  flex: 1 1 220px;
-  margin: 0;
-  line-height: 1.6;
-}
-
 .metadata {
   margin: 0;
   color: var(--ui-text-muted);
@@ -222,20 +103,8 @@
   line-height: 1.6;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 @container desktop-life (height < 680px) {
   .stage {
     --desktop-life-preview-height: 260px;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .spinner {
-    animation: none;
   }
 }

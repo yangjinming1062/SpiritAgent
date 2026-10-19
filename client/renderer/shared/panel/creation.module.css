@@ -1,0 +1,106 @@
+.workspace {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  width: 100%;
+}
+.workspaceHeader,
+.workspaceFooter {
+  flex-shrink: 0;
+  min-width: 0;
+}
+.workspaceBody {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.feedback {
+  align-items: flex-start;
+  color: var(--ui-text-body);
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  min-width: 0;
+}
+.message {
+  align-items: flex-start;
+  display: flex;
+  flex: 1 1 auto;
+  gap: 6px;
+  min-width: 0;
+}
+.icon {
+  color: var(--ui-accent);
+  flex-shrink: 0;
+  height: 14px;
+  margin-top: 2px;
+  width: 14px;
+}
+.copy {
+  min-width: 0;
+}
+.title {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.description,
+.actionDescription {
+  color: var(--ui-text-body);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.description {
+  margin-top: 3px;
+}
+.actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.feedback[data-creation-feedback='error'] .icon,
+.feedback[data-creation-feedback='error'] .title {
+  color: var(--ui-danger-fg);
+}
+.actionBar {
+  align-items: center;
+  background: var(--ui-overlay);
+  border-top: 1px solid var(--ui-line-standard);
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  justify-content: space-between;
+  padding: 12px 0;
+}
+.actionDescription {
+  flex: 1 1 180px;
+}
+.feedback button:focus-visible,
+.actionBar button:focus-visible {
+  outline: 2px solid var(--ui-focus-line);
+  outline-offset: 3px;
+}
+.spinning {
+  animation: creation-spin 1s linear infinite;
+}
+@keyframes creation-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinning {
+    animation: none;
+  }
+}

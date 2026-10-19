@@ -25,7 +25,15 @@ import { ChatMediaCard } from '@/modules/conversation'
 import { useResolvedMediaSrc } from '@/modules/media'
 import { ArrowLeft } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
-import { BTN_PRIMARY, BTN_SUBTLE, ConfirmDialog, HINT_TEXT, INPUT_CLASS } from '@/shared/panel'
+import {
+  BTN_PRIMARY,
+  BTN_SUBTLE,
+  ConfirmDialog,
+  CreationActionBar,
+  CreationFeedback,
+  HINT_TEXT,
+  INPUT_CLASS
+} from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
 
@@ -35,6 +43,7 @@ interface ActionEntry {
   key: string
   label: string
   status: string
+  stage: string
   error: string | null
   mediaUrl: string | null
   pendingReview: ActionWire['pending_review']
@@ -59,15 +68,63 @@ function isSystemActionKey(key: string): key is SystemActionKey {
 }
 
 function ActionPreview({ type, url }: { type: 'image' | 'video'; url: string }): React.JSX.Element {
+  const [attempt, setAttempt] = useState(0)
+
+  return (
+    <ResolvedActionPreview
+      key={`${url}:${attempt}`}
+      onRetry={() => setAttempt(value => value + 1)}
+      type={type}
+      url={url}
+    />
+  )
+}
+
+function ResolvedActionPreview({
+  type,
+  url,
+  onRetry
+}: {
+  type: 'image' | 'video'
+  url: string
+  onRetry: () => void
+}): React.JSX.Element {
+  const dict = useStrings()
   const media = useResolvedMediaSrc({ type, url })
+  const [failed, setFailed] = useState(false)
   const className = 'aspect-[2/3] h-full max-h-full w-auto max-w-full object-contain'
   const src = media.status === 'ready' ? media.src : undefined
 
-  if (type === 'image') {
-    return <img alt="" className={className} draggable={false} src={src} />
+  if (failed || media.status === 'failed') {
+    return (
+      <CreationFeedback
+        actions={
+          <button className={BTN_SUBTLE} onClick={onRetry} type="button">
+            {dict.creation.retryLoad}
+          </button>
+        }
+        state="error"
+        title={dict.creation.previewFailed}
+      />
+    )
   }
 
-  return <video className={className} controls loop muted playsInline preload="metadata" src={src} />
+  if (type === 'image') {
+    return <img alt="" className={className} draggable={false} onError={() => setFailed(true)} src={src} />
+  }
+
+  return (
+    <video
+      className={className}
+      controls
+      loop
+      muted
+      onError={() => setFailed(true)}
+      playsInline
+      preload="metadata"
+      src={src}
+    />
+  )
 }
 
 interface VideoSectionProps {
@@ -91,6 +148,7 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
   const [selectedActionKey, setSelectedActionKey] = useState<string | null>(null)
   const [actionFilter, setActionFilter] = useState('')
   const [editing, setEditing] = useState<{ key: string; feedback: string } | null>(null)
+  const [reviewActionsTarget, setReviewActionsTarget] = useState<HTMLDivElement | null>(null)
 
   const selectedOutfit = outfits.find(outfit => outfit.id === outfitId) ?? null
   const selectedPack = selectedOutfit ? (packs.find(pack => pack.outfit_id === selectedOutfit.id) ?? null) : null
@@ -124,6 +182,7 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
         entry.name ||
         entry.action.replace(/_/g, ' '),
       status: entry.status,
+      stage: entry.stage,
       error: entry.error,
       mediaUrl: entry.current_media_url,
       pendingReview: entry.pending_review,
@@ -146,6 +205,7 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
         key: slot,
         label: actionNames[slot],
         status: 'missing',
+        stage: '',
         videoQueue: null,
         feedback: '',
         error: null,
@@ -385,6 +445,40 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
 
   const selectedStatus = selectedAction ? actionStatus(selectedAction) : null
 
+  const selectedVariant = selectedAction?.syncTargets.find(
+    target => target.target_kind === 'window' && target.target_id === selectedPack?.id
+  )
+
+  const selectedStageKey = Object.entries(VIDEO_GEN_STAGE_TEXT_KEYS).find(
+    ([stage]) => stage === selectedAction?.stage
+  )?.[1]
+
+  const selectedIsGenerating =
+    !!selectedAction &&
+    (isActionInProgress(selectedAction.status) ||
+      Object.values(genRequests).some(
+        scope =>
+          (scope.outfitId != null ? scope.outfitId === outfitId : scope.packId === selectedPack?.id) &&
+          (scope.action == null || scope.action === selectedAction.key)
+      ))
+
+  const selectedState =
+    selectedStatus?.label === t.videoActionResultUnknown || selectedAction?.videoQueue?.state === 'blocked'
+      ? 'unknown'
+      : selectedAction?.videoQueue
+        ? 'waiting'
+        : selectedIsGenerating
+          ? 'working'
+          : selectedVariant && ['not_generated', 'blocked', 'disabled', 'excluded'].includes(selectedVariant.status)
+            ? 'waiting'
+            : selectedAction?.status === 'failed' || scopedError
+              ? 'error'
+              : selectedAction?.pendingReview
+                ? 'review'
+                : selectedAction?.hasReadyAsset
+                  ? 'success'
+                  : 'waiting'
+
   const canGenerateAction =
     !!selectedAction &&
     (selectedAction.canGenerate || (!!selectedPack?.can_regenerate && selectedAction.canRegenerate)) &&
@@ -541,118 +635,165 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-strong">{selectedAction.label}</p>
-                    <p className="mt-0.5 text-[11px] text-muted">{selectedStatus.hint ?? selectedStatus.label}</p>
                   </div>
                 </div>
 
-                <div
-                  className={cn(
-                    'mt-3 grid min-h-0 flex-1 gap-3 overflow-y-auto',
-                    selectedAction.pendingReview && selectedAction.mediaUrl ? 'xl:grid-cols-2' : 'grid-cols-1'
-                  )}
-                >
-                  {selectedAction.mediaUrl && selectedAction.mediaType ? (
-                    <div className="flex min-h-48 min-w-0 flex-col rounded-lg bg-fill-trough p-2">
-                      <p className="mb-2 text-[11px] text-muted">{t.videoActionCurrent}</p>
-                      <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden">
-                        <ActionPreview type={selectedAction.mediaType} url={selectedAction.mediaUrl} />
+                <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
+                  <div
+                    className={cn(
+                      'grid min-h-48 gap-3',
+                      selectedAction.pendingReview && selectedAction.mediaUrl ? 'xl:grid-cols-2' : 'grid-cols-1'
+                    )}
+                  >
+                    {selectedAction.mediaUrl && selectedAction.mediaType ? (
+                      <div className="flex min-h-48 min-w-0 flex-col rounded-lg bg-fill-trough p-2">
+                        <p className="mb-2 text-[11px] text-muted">{t.videoActionCurrent}</p>
+                        <div className="flex h-64 items-center justify-center overflow-hidden">
+                          <ActionPreview
+                            key={selectedAction.mediaUrl}
+                            type={selectedAction.mediaType}
+                            url={selectedAction.mediaUrl}
+                          />
+                        </div>
                       </div>
-                    </div>
-                  ) : !selectedAction.pendingReview ? (
-                    <div className="flex items-center justify-center rounded-lg bg-fill-trough px-5 text-center">
-                      <div className="max-w-md">
-                        <p className="text-xs text-body">{selectedStatus.hint ?? selectedStatus.label}</p>
-                        {selectedAction.error ? (
-                          <p className="mt-1 text-[11px] text-danger-fg">{selectedAction.error}</p>
-                        ) : null}
+                    ) : !selectedAction.pendingReview ? (
+                      <div className="flex items-center justify-center rounded-lg bg-fill-trough px-5 text-center">
+                        <div className="max-w-md">
+                          <p className="text-xs text-body">{selectedStatus.hint ?? selectedStatus.label}</p>
+                          {selectedAction.error ? (
+                            <p className="mt-1 text-[11px] text-danger-fg">{selectedAction.error}</p>
+                          ) : null}
+                        </div>
                       </div>
+                    ) : null}
+                    {selectedAction.pendingReview ? (
+                      <div className="min-w-0 space-y-2 overflow-y-auto [&_img]:max-h-64 [&_video]:max-h-64">
+                        <p className="text-[11px] text-muted">{t.videoActionPending}</p>
+                        <ChatMediaCard
+                          item={{
+                            type: selectedAction.pendingReview.media_type,
+                            url: selectedAction.pendingReview.media_url,
+                            review_id: String(selectedAction.pendingReview.id)
+                          }}
+                          key={selectedAction.pendingReview.id}
+                          onReviewed={() => void hydrateVideoPack(true)}
+                          reviewActionsTarget={reviewActionsTarget}
+                          reviewDisabled={actionIsBusy || editing?.key === selectedAction.key}
+                        />
+                        <p className="text-[11px] text-muted">{t.videoActionPendingHint}</p>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {selectedAction.syncTargets.length > 0 ? (
+                    <div className="mt-3 shrink-0">
+                      <ActionSyncStatus targets={selectedAction.syncTargets} />
                     </div>
                   ) : null}
-                  {selectedAction.pendingReview ? (
-                    <div className="min-w-0 space-y-2 overflow-y-auto [&_img]:max-h-64 [&_video]:max-h-64">
-                      <p className="text-[11px] text-muted">{t.videoActionPending}</p>
-                      <ChatMediaCard
-                        item={{
-                          type: selectedAction.pendingReview.media_type,
-                          url: selectedAction.pendingReview.media_url,
-                          review_id: String(selectedAction.pendingReview.id)
-                        }}
-                        key={selectedAction.pendingReview.id}
-                        onReviewed={() => void hydrateVideoPack(true)}
+
+                  {selectedAction.motionPrompt ? (
+                    <details className="mt-2 text-xs text-muted">
+                      <summary className="cursor-pointer">{dict.common.creationDetails}</summary>
+                      <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-muted">
+                        {selectedAction.motionPrompt}
+                      </p>
+                    </details>
+                  ) : null}
+
+                  {editing?.key === selectedAction.key ? (
+                    <div className="mt-3 space-y-2">
+                      <p className={HINT_TEXT}>{t.videoRedoActionHint}</p>
+                      <label className={HINT_TEXT} htmlFor="video-action-feedback">
+                        {t.videoFeedback}
+                      </label>
+                      <textarea
+                        className={cn(INPUT_CLASS, 'min-h-16 resize-y text-xs')}
+                        disabled={actionIsBusy}
+                        id="video-action-feedback"
+                        maxLength={1000}
+                        onChange={event => setEditing({ ...editing, feedback: event.target.value })}
+                        value={editing.feedback}
                       />
-                      <p className="text-[11px] text-muted">{t.videoActionPendingHint}</p>
                     </div>
                   ) : null}
                 </div>
 
-                {selectedAction.syncTargets.length > 0 ? (
-                  <div className="mt-3 shrink-0">
-                    <ActionSyncStatus targets={selectedAction.syncTargets} />
-                  </div>
-                ) : null}
-
-                {selectedAction.motionPrompt ? (
-                  <details className="mt-2 text-xs text-muted">
-                    <summary className="cursor-pointer">{dict.common.creationDetails}</summary>
-                    <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-muted">
-                      {selectedAction.motionPrompt}
-                    </p>
-                  </details>
-                ) : null}
+                {selectedState !== 'success' && (
+                  <CreationFeedback
+                    actions={
+                      selectedState === 'unknown' ? (
+                        <button
+                          className={BTN_SUBTLE}
+                          disabled={packsStatus === 'loading'}
+                          onClick={() => setPacksReloadKey(key => key + 1)}
+                          type="button"
+                        >
+                          {dict.settings.persona.mediaReviewRefresh}
+                        </button>
+                      ) : undefined
+                    }
+                    className="mt-3 shrink-0"
+                    description={selectedStatus.hint ?? (selectedIsGenerating ? dict.creation.canLeave : undefined)}
+                    key={`${selectedPack.id}:${selectedAction.key}:${selectedState}`}
+                    state={selectedState}
+                    title={
+                      selectedIsGenerating && !selectedAction.videoQueue && selectedStageKey
+                        ? t[selectedStageKey]
+                        : selectedStatus.label
+                    }
+                  />
+                )}
 
                 {editing?.key === selectedAction.key ? (
-                  <div className="mt-3 space-y-2">
-                    <p className={HINT_TEXT}>{t.videoRedoActionHint}</p>
-                    <label className={HINT_TEXT} htmlFor="video-action-feedback">
-                      {t.videoFeedback}
-                    </label>
-                    <textarea
-                      className={cn(INPUT_CLASS, 'min-h-16 resize-y text-xs')}
-                      id="video-action-feedback"
-                      maxLength={1000}
-                      onChange={event => setEditing({ ...editing, feedback: event.target.value })}
-                      value={editing.feedback}
-                    />
-                    <div className="flex justify-end gap-2">
-                      <button className={BTN_SUBTLE} onClick={() => setEditing(null)} type="button">
-                        {t.videoActionCancel}
-                      </button>
+                  <CreationActionBar>
+                    <button className={BTN_SUBTLE} onClick={() => setEditing(null)} type="button">
+                      {t.videoActionCancel}
+                    </button>
+                    <button
+                      className={BTN_PRIMARY}
+                      disabled={!canGenerateAction}
+                      onClick={() => requestActionGeneration(editing.feedback)}
+                      type="button"
+                    >
+                      {actionGenerationLabel}
+                    </button>
+                  </CreationActionBar>
+                ) : selectedAction.pendingReview ? (
+                  <CreationActionBar description={actionIsBusy ? dict.creation.inputLocked : t.videoActionPendingHint}>
+                    <div ref={setReviewActionsTarget} />
+                    {canGenerateAction && (
                       <button
-                        className={BTN_PRIMARY}
-                        disabled={!canGenerateAction}
-                        onClick={() => requestActionGeneration(editing.feedback)}
+                        className={BTN_SUBTLE}
+                        onClick={() => setEditing({ key: selectedAction.key, feedback: selectedAction.feedback })}
                         type="button"
                       >
                         {actionGenerationLabel}
                       </button>
-                    </div>
-                  </div>
+                    )}
+                  </CreationActionBar>
                 ) : canGenerateAction || canResumeAction ? (
-                  <div className="mt-3 space-y-2">
-                    {canResumeAction ? <p className={HINT_TEXT}>{t.videoResumeActionHint}</p> : null}
-                    <div className="flex justify-end gap-2">
-                      {canResumeAction ? (
-                        <button className={BTN_PRIMARY} onClick={requestActionResume} type="button">
-                          {t.videoResumeAction}
-                        </button>
-                      ) : null}
-                      {canGenerateAction ? (
-                        <button
-                          className={BTN_SUBTLE}
-                          onClick={() => {
-                            if (firstGeneration) {
-                              requestActionGeneration('')
-                            } else {
-                              setEditing({ key: selectedAction.key, feedback: selectedAction.feedback })
-                            }
-                          }}
-                          type="button"
-                        >
-                          {actionGenerationLabel}
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
+                  <CreationActionBar description={canResumeAction ? t.videoResumeActionHint : undefined}>
+                    {canResumeAction ? (
+                      <button className={BTN_PRIMARY} onClick={requestActionResume} type="button">
+                        {t.videoResumeAction}
+                      </button>
+                    ) : null}
+                    {canGenerateAction ? (
+                      <button
+                        className={BTN_SUBTLE}
+                        onClick={() => {
+                          if (firstGeneration) {
+                            requestActionGeneration('')
+                          } else {
+                            setEditing({ key: selectedAction.key, feedback: selectedAction.feedback })
+                          }
+                        }}
+                        type="button"
+                      >
+                        {actionGenerationLabel}
+                      </button>
+                    ) : null}
+                  </CreationActionBar>
                 ) : null}
               </>
             ) : (

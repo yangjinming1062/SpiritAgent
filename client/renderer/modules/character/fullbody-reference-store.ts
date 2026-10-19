@@ -457,16 +457,32 @@ export async function acceptFullbodyCandidate(avatarId: number): Promise<boolean
 
     return Boolean(rawUrl && previewUrl)
   } catch (error) {
-    if (isCurrent()) {
-      $fullbodyReference.set({
-        ...current,
-        busy: false,
-        candidateError: backendDetailMessage(
-          error,
-          getStrings().settings.persona.fullbodyReference.acceptCandidateFailed
-        )
-      })
+    if (!isCurrent()) {
+      return false
     }
+
+    const httpStatus = ipcErrorStatus(error)
+
+    if (httpStatus === null || httpStatus >= 500 || httpStatus === 404 || httpStatus === 409) {
+      const epoch = currentClearEpoch()
+      const hydrated = await hydrateFullbodyReference(avatarId)
+      const latest = $fullbodyReference.get()
+
+      return (
+        hydrated &&
+        epoch === currentClearEpoch() &&
+        $activeAvatarId.get() === avatarId &&
+        latest.avatarId === avatarId &&
+        latest.candidateId === null &&
+        Boolean(current.rawUrl && latest.rawUrl?.split('?')[0] === current.rawUrl.split('?')[0])
+      )
+    }
+
+    $fullbodyReference.set({
+      ...current,
+      busy: false,
+      candidateError: backendDetailMessage(error, getStrings().settings.persona.fullbodyReference.acceptCandidateFailed)
+    })
 
     return false
   }

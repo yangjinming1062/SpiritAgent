@@ -1,7 +1,7 @@
 import { atom } from 'nanostores'
 
 import { apiSucceeded, captureAuthScope } from '@/shared/lib/authed-api'
-import { backendDetailMessage } from '@/shared/lib/ipc-error'
+import { backendDetailMessage, isClientErrorIpc } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { authedResource, type ResourceArguments } from '@/shared/lib/resource-request'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
@@ -42,6 +42,17 @@ export interface ActiveScene {
   regeneration: SceneRegeneration | null
 }
 export type SceneAsset = ActiveScene
+export type SceneCreationResult =
+  | { kind: 'created'; scene: ActiveScene }
+  | { kind: 'unavailable' }
+  | { kind: 'failed'; message: string; outcome: 'rejected' | 'unknown' }
+export type SceneCreationIssue = Extract<SceneCreationResult, { kind: 'failed' }> & { inspected: boolean }
+export interface SceneMutationIssue {
+  baseline: SceneAsset
+  message: string
+  inspected: boolean
+  pending: boolean
+}
 type SceneWire = ApiSchemas['SceneResponse']
 interface SceneGenerationInput {
   notes?: string
@@ -58,6 +69,8 @@ export const $sceneLibraryStatus = atom<'idle' | 'loading' | 'loaded' | 'error'>
 export const $scenePolicy = atom<ScenePolicy>('llm_may_replace')
 export const $sceneTaskStatus = atom<'none' | 'pending' | 'waiting_upload'>('none')
 export const $sceneTaskSlow = atom(false)
+export const $sceneCreationIssue = atom<SceneCreationIssue | null>(null)
+export const $sceneMutationIssues = atom<Record<string, SceneMutationIssue>>({})
 export const $sceneTotal = atom(0)
 export const $scenePage = atom(0)
 export const $sceneQuery = atom('')
@@ -225,17 +238,25 @@ registerStorageClearHandler(() => {
   $sceneLibraryStatus.set('idle')
   $sceneTaskStatus.set('none')
   $sceneTaskSlow.set(false)
+  $sceneCreationIssue.set(null)
+  $sceneMutationIssues.set({})
   $scenePolicy.set('llm_may_replace')
   $sceneTotal.set(0)
   $scenePage.set(0)
   $sceneQuery.set('')
 })
 
-export async function loadSceneLibrary(query = $sceneQuery.get(), page = $scenePage.get()): Promise<void> {
+export async function loadSceneLibrary(query = $sceneQuery.get(), page = $scenePage.get()): Promise<boolean> {
+  const scope = captureAuthScope()
+
+  if (!scope) {
+    return false
+  }
+
   const read = ++nextRead
   const request = ++listRequest
   const epoch = currentClearEpoch()
-  const isCurrent = (): boolean => request === listRequest && epoch === currentClearEpoch()
+  const isCurrent = (): boolean => scope() && request === listRequest && epoch === currentClearEpoch()
   $sceneQuery.set(query)
   $scenePage.set(page)
   $sceneLibraryStatus.set('loading')
@@ -249,14 +270,14 @@ export async function loadSceneLibrary(query = $sceneQuery.get(), page = $sceneP
       $sceneLibraryStatus.set('error')
     }
 
-    return
+    return false
   }
 
   const value = result.value
   const entries = await Promise.all(value.scenes.map(row => resolveScene(row)))
 
   if (!isCurrent() || value.version < eventVersion) {
-    return
+    return false
   }
 
   cacheSceneDetails(entries, read)
@@ -267,6 +288,8 @@ export async function loadSceneLibrary(query = $sceneQuery.get(), page = $sceneP
   if (page > 0 && entries.length === 0) {
     void loadSceneLibrary(query, page - 1)
   }
+
+  return true
 }
 
 async function fetchSceneDetail(
@@ -380,23 +403,29 @@ export async function refreshSceneStatus(sceneId: string): Promise<SceneAsset | 
   return detail
 }
 
-/** 刷新场景状态并在尾部重刷列表；skipLibraryRefresh 只供首屏已并行 loadSceneLibrary 的调用方消去冗余刷新，其余刷新时机不得跳过。 */
-export async function hydrateScene(options: { skipLibraryRefresh?: boolean } = {}): Promise<void> {
+/** 刷新场景状态；已自行读取列表的调用方使用 skipLibraryRefresh 消去重复读取。返回值只确认本次状态快照有效。 */
+export async function hydrateScene(options: { skipLibraryRefresh?: boolean } = {}): Promise<boolean> {
+  const scope = captureAuthScope()
+
+  if (!scope) {
+    return false
+  }
+
   const read = ++nextRead
   const request = ++stateRequest
   const epoch = currentClearEpoch()
-  const isCurrent = (): boolean => request === stateRequest && epoch === currentClearEpoch()
+  const isCurrent = (): boolean => scope() && request === stateRequest && epoch === currentClearEpoch()
   const result = await authedResource('companion_scenes.read_scene_state')
 
   if (!apiSucceeded(result, 'scene', 'Scene state could not be loaded:') || !result.value) {
-    return
+    return false
   }
 
   const state = result.value
   const stale = (): boolean => !isCurrent() || state.version < Math.max(version, eventVersion)
 
   if (stale()) {
-    return
+    return false
   }
 
   try {
@@ -424,7 +453,7 @@ export async function hydrateScene(options: { skipLibraryRefresh?: boolean } = {
     const regenerating = state.regenerating ? await resolveScene(state.regenerating) : null
 
     if (stale()) {
-      return
+      return false
     }
 
     const oldPending = $pendingScene.get()
@@ -474,9 +503,74 @@ export async function hydrateScene(options: { skipLibraryRefresh?: boolean } = {
     if (isCurrent() && !options.skipLibraryRefresh) {
       await loadSceneLibrary()
     }
+
+    return isCurrent()
   } catch (error) {
     log.warn('scene', 'Scene hydration failed:', error)
+
+    return false
   }
+}
+
+export async function inspectSceneCreationIssue(): Promise<boolean> {
+  const previous = $sceneCreationIssue.get()
+  const scope = captureAuthScope()
+
+  if (!scope || previous?.outcome !== 'unknown') {
+    return false
+  }
+
+  const issue = previous.inspected ? { ...previous, inspected: false } : previous
+  $sceneCreationIssue.set(issue)
+
+  try {
+    const [stateRead, libraryRead] = await Promise.all([
+      hydrateScene({ skipLibraryRefresh: true }),
+      loadSceneLibrary('', 0)
+    ])
+
+    if (!scope() || issue !== $sceneCreationIssue.get() || !stateRead || !libraryRead) {
+      return false
+    }
+
+    $sceneCreationIssue.set({ ...issue, inspected: true })
+
+    return true
+  } catch (error) {
+    log.warn('scene', 'Scene creation inspection failed:', error)
+
+    return false
+  }
+}
+
+/** 只结束用户已核对的本地等待提醒；不推断提交结局，也不取消或重发制作。 */
+export function finishSceneCreationWait(issue: SceneCreationIssue): void {
+  if (issue === $sceneCreationIssue.get() && issue.outcome === 'unknown' && issue.inspected) {
+    $sceneCreationIssue.set(null)
+  }
+}
+
+export function updateSceneMutationIssue(
+  sceneId: string,
+  update: (current: SceneMutationIssue | null) => SceneMutationIssue | null
+): void {
+  const issues = $sceneMutationIssues.get()
+  const previous = issues[sceneId] ?? null
+  const issue = update(previous)
+
+  if (issue === previous) {
+    return
+  }
+
+  const next = { ...issues }
+
+  if (issue) {
+    next[sceneId] = issue
+  } else {
+    delete next[sceneId]
+  }
+
+  $sceneMutationIssues.set(next)
 }
 
 const sceneError = (error: unknown): string =>
@@ -497,9 +591,7 @@ async function sceneRequest<K extends DesktopApiOperationKey>(
   }
 
   if (!result.ok) {
-    throw new Error(
-      result.reason === 'err' ? sceneError(result.error) : getStrings().living.toasts.sceneRegenerateFailed
-    )
+    throw result.reason === 'err' ? result.error : new Error(getStrings().living.toasts.sceneRegenerateFailed)
   }
 
   if (result.value === undefined || result.value === null) {
@@ -525,14 +617,21 @@ async function mutate<K extends DesktopApiOperationKey>(
   return value
 }
 
-export async function createScene(input: SceneGenerationInput = {}): Promise<ActiveScene | null> {
-  if (submitting || $sceneTaskStatus.get() !== 'none' || $sceneRegenerating.get() !== null) {
-    return null
+export async function createScene(input: SceneGenerationInput = {}): Promise<SceneCreationResult> {
+  if (
+    submitting ||
+    $sceneTaskStatus.get() !== 'none' ||
+    $sceneRegenerating.get() !== null ||
+    $sceneCreationIssue.get()?.outcome === 'unknown'
+  ) {
+    return { kind: 'unavailable' }
   }
 
   const epoch = currentClearEpoch()
   const startVersion = version
+  let requestStarted = false
   submitting = true
+  $sceneCreationIssue.set(null)
 
   try {
     const { content_type, ...details } = input
@@ -541,6 +640,8 @@ export async function createScene(input: SceneGenerationInput = {}): Promise<Act
     if (content_type && !mime) {
       throw new Error('仅支持 PNG / JPEG / WebP / GIF 图片')
     }
+
+    requestStarted = true
 
     const row = await sceneRequest('companion_scenes.create_scene', {
       body: { ...details, content_type: mime, source: 'generate' }
@@ -556,18 +657,27 @@ export async function createScene(input: SceneGenerationInput = {}): Promise<Act
     await hydrateScene()
 
     if (epoch !== currentClearEpoch()) {
-      return null
+      return { kind: 'unavailable' }
     }
 
     const created = await resolveScene(row)
 
-    return epoch === currentClearEpoch() ? created : null
+    return epoch === currentClearEpoch() ? { kind: 'created', scene: created } : { kind: 'unavailable' }
   } catch (error) {
     if (epoch === currentClearEpoch()) {
-      notify({ kind: 'warning', message: sceneError(error) })
+      const issue: SceneCreationIssue = {
+        kind: 'failed',
+        message: sceneError(error),
+        outcome: !requestStarted || isClientErrorIpc(error) ? 'rejected' : 'unknown',
+        inspected: false
+      }
+
+      $sceneCreationIssue.set(issue)
+
+      return issue
     }
 
-    return null
+    return { kind: 'unavailable' }
   } finally {
     if (epoch === currentClearEpoch()) {
       submitting = false

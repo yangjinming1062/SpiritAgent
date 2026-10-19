@@ -3,6 +3,19 @@ import type { useStrings } from '@/shared/strings'
 
 import type { useDesktopLifeStrings } from './desktop-life-strings'
 
+export function desktopLifeActionsToCreate(actions: readonly DesktopVideoAction[]): DesktopVideoAction[] {
+  return actions.filter(action => {
+    const alreadyCreated = action.playable || Boolean(action.current?.video_url && !action.needs_update)
+
+    const awaitingAdoption =
+      action.status === 'review_pending' &&
+      action.stage !== 'image_review' &&
+      Boolean(action.draft?.candidate_video_url)
+
+    return action.key !== 'idle' && !alreadyCreated && !awaitingAdoption
+  })
+}
+
 export function isActionPaused(action: DesktopVideoAction): boolean {
   return action.status === 'processing' && action.stage === 'paused'
 }
@@ -86,6 +99,10 @@ export function desktopLifeActionStatus(
 
   if (action.status === 'not_generated' || action.status === 'blocked') {
     return variantStrings.statuses[action.status]
+  }
+
+  if (action.status === 'ready' && action.needs_update && !action.playable) {
+    return t.needsUpdateLabel
   }
 
   return action.playable ? t.ready : action.status === 'queued' ? t.notCreated : t.statuses[action.status]

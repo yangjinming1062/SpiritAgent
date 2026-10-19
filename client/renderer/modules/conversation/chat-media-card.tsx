@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 import { InlineMedia, useResolvedMediaSrc } from '@/modules/media'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
@@ -10,15 +11,28 @@ import type { ChatMediaItem } from '@protocol'
 
 import { useConversationView } from './conversation-view'
 
-export function ChatMediaCard({
-  item,
-  onReviewed
-}: {
+interface ChatMediaCardProps {
   item: ChatMediaItem
   onReviewed?: () => void
-}): React.JSX.Element {
+  reviewActionsTarget?: HTMLElement | null
+  reviewDisabled?: boolean
+}
+
+export function ChatMediaCard({
+  item,
+  onReviewed,
+  reviewActionsTarget,
+  reviewDisabled
+}: ChatMediaCardProps): React.JSX.Element {
   if (item.review_id) {
-    return <ReviewMediaCard item={item} onReviewed={onReviewed} />
+    return (
+      <ReviewMediaCard
+        item={item}
+        onReviewed={onReviewed}
+        reviewActionsTarget={reviewActionsTarget}
+        reviewDisabled={reviewDisabled}
+      />
+    )
   }
 
   return <DeliveredMediaCard item={item} />
@@ -41,19 +55,27 @@ function DeliveredMediaCard({ item }: { item: ChatMediaItem }): React.JSX.Elemen
   )
 }
 
-function ReviewMediaCard({ item, onReviewed }: { item: ChatMediaItem; onReviewed?: () => void }): React.JSX.Element {
+function ReviewMediaCard({
+  item,
+  onReviewed,
+  reviewActionsTarget,
+  reviewDisabled
+}: ChatMediaCardProps): React.JSX.Element {
   const { viewId } = useConversationView()
-  const dict = useStrings().chat.media
+  const strings = useStrings()
+  const dict = strings.chat.media
   const [status, setStatus] = useState<'pending' | 'accepted' | 'rejected' | null>(null)
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [loadAttempt, setLoadAttempt] = useState(0)
   const beginAsync = useAsyncGuard()
   const onReviewedRef = useLatestRef(onReviewed)
 
   useEffect(() => {
     let mounted = true
     const isLive = beginAsync()
+    setError('')
     void requestResource('companion.get_visual_media_review', {
       path: { review_id: Number(item.review_id) }
     })
@@ -76,13 +98,17 @@ function ReviewMediaCard({ item, onReviewed }: { item: ChatMediaItem; onReviewed
     return () => {
       mounted = false
     }
-  }, [item.review_id, dict.reviewLoadError, beginAsync, onReviewedRef])
+  }, [item.review_id, dict.reviewLoadError, beginAsync, onReviewedRef, loadAttempt])
 
   if (status === 'accepted') {
     return <DeliveredMediaCard item={item} />
   }
 
   const decide = async (decision: 'accept' | 'reject'): Promise<void> => {
+    if (busy || reviewDisabled) {
+      return
+    }
+
     const isLive = beginAsync()
     setBusy(true)
     setError('')
@@ -133,6 +159,46 @@ function ReviewMediaCard({ item, onReviewed }: { item: ChatMediaItem; onReviewed
     }
   }
 
+  const controls = (
+    <div className="flex flex-col gap-2">
+      {error && (
+        <p className="text-xs text-danger-fg" role="alert">
+          {error}
+        </p>
+      )}
+      {error && status === null && (
+        <button
+          className="rounded-md border border-line-standard px-3 py-1 text-xs"
+          disabled={reviewDisabled}
+          onClick={() => setLoadAttempt(attempt => attempt + 1)}
+          type="button"
+        >
+          {strings.common.retry}
+        </button>
+      )}
+      {status === 'pending' && (
+        <div className="flex gap-2">
+          <button
+            className="rounded-md border border-line-standard px-3 py-1 text-xs"
+            disabled={busy || reviewDisabled}
+            onClick={() => void decide('accept')}
+            type="button"
+          >
+            {dict.reviewAccept}
+          </button>
+          <button
+            className="rounded-md border border-line-standard px-3 py-1 text-xs"
+            disabled={busy || reviewDisabled}
+            onClick={() => void decide('reject')}
+            type="button"
+          >
+            {dict.reviewReject}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+
   return (
     <div className="space-y-2 rounded-lg border border-amber-400/50 bg-fill-trough p-2">
       <p className="text-xs text-amber-300">
@@ -145,31 +211,7 @@ function ReviewMediaCard({ item, onReviewed }: { item: ChatMediaItem; onReviewed
         onImageClick={item.type === 'image' ? () => presentationPorts().openMediaViewer(item, viewId) : undefined}
         url={item.url}
       />
-      {error && (
-        <p className="text-xs text-danger-fg" role="alert">
-          {error}
-        </p>
-      )}
-      {status === 'pending' && (
-        <div className="flex gap-2">
-          <button
-            className="rounded-md border border-line-standard px-3 py-1 text-xs"
-            disabled={busy}
-            onClick={() => void decide('accept')}
-            type="button"
-          >
-            {dict.reviewAccept}
-          </button>
-          <button
-            className="rounded-md border border-line-standard px-3 py-1 text-xs"
-            disabled={busy}
-            onClick={() => void decide('reject')}
-            type="button"
-          >
-            {dict.reviewReject}
-          </button>
-        </div>
-      )}
+      {reviewActionsTarget ? createPortal(controls, reviewActionsTarget) : controls}
     </div>
   )
 }

@@ -1,11 +1,9 @@
 import { useStore } from '@nanostores/react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import { $companionVoiceId, applyServerCompanionVoiceId, setCompanionVoiceId } from '@/modules/character'
 import {
   $voiceCatalogRevision,
-  cloneVoice,
-  designVoice,
   fetchVoiceCatalogRaw,
   matchVoicePreference,
   playDataUrl,
@@ -17,8 +15,8 @@ import {
 } from '@/modules/speech'
 import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import { useLatestRef } from '@/shared/hooks/use-latest-ref'
-import { Check } from '@/shared/lib/icons'
+import { Check, Loader2 } from '@/shared/lib/icons'
+import { isClientErrorIpc } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { requestResource } from '@/shared/lib/resource-request'
 import { cn } from '@/shared/lib/utils'
@@ -26,6 +24,9 @@ import {
   BTN_PRIMARY,
   BTN_SUBTLE,
   CapsuleTabs,
+  CreationActionBar,
+  CreationFeedback,
+  type CreationFeedbackState,
   HINT_TEXT,
   INPUT_CLASS,
   SettingCard,
@@ -42,15 +43,28 @@ import { GENDER_FILTER_VALUES } from '@/shared/voice-catalog'
 import { errorMessage } from '@runtime'
 
 import { useVoiceSample } from './use-voice-sample'
+import {
+  $voiceCreation,
+  beginVoiceConfirmation,
+  cancelVoiceCreation,
+  createClonedVoice,
+  createDesignedVoice,
+  updateVoiceCreation,
+  type VoiceTab
+} from './voice-creation-store'
 
-type VoiceTab = 'fixed' | 'design' | 'clone'
-type VoiceOperation = 'idle' | 'generating' | 'confirming'
 interface VoiceManagerProps {
   name: string
+  intro?: ReactNode
   compact?: boolean
   preference?: string
   disabled?: boolean
-  onVoiceSelected?: (voiceId: string, label: string, serverConfirmed: boolean) => Promise<void>
+  onVoiceSelected?: (
+    voiceId: string,
+    label: string,
+    serverConfirmed: boolean,
+    isSelectionCurrent?: () => boolean
+  ) => Promise<boolean | void>
 }
 
 export function VoiceManager(props: VoiceManagerProps): React.JSX.Element {
@@ -62,6 +76,7 @@ export function VoiceManager(props: VoiceManagerProps): React.JSX.Element {
 
 function VoiceManagerSession({
   name,
+  intro,
   compact = false,
   preference,
   disabled = false,
@@ -70,7 +85,6 @@ function VoiceManagerSession({
   const dict = useStrings()
   const t = dict.voice
   const locale = useStore($locale)
-  const auth = useStore($auth)
   const gateway = useStore($gatewayState)
   const catalogRevision = useStore($voiceCatalogRevision)
   const currentVoice = useStore($companionVoiceId)
@@ -80,30 +94,55 @@ function VoiceManagerSession({
   const spriteVisible = useStore($surfaceSpriteVisible)
   const [documentVisible, setDocumentVisible] = useState(document.visibilityState === 'visible')
   const active = panelActive && documentVisible && !screenLocked && (surfaceRole !== 'sprite' || spriteVisible)
-  const activeRef = useLatestRef(active)
+  const activeRef = useRef(active)
+
+  const viewEligible = (): boolean =>
+    activeRef.current &&
+    document.visibilityState === 'visible' &&
+    !$surfaceScreenLocked.get() &&
+    ($surfaceRole.get() !== 'sprite' || $surfaceSpriteVisible.get())
+
+  useLayoutEffect(() => {
+    activeRef.current = active
+
+    return () => {
+      activeRef.current = false
+    }
+  }, [active])
   const begin = useAsyncGuard()
   const [catalog, setCatalog] = useState<VoiceCatalog | null>(null)
   const [catalogStatus, setCatalogStatus] = useState<'loading' | 'error' | 'ready'>('loading')
   const [reload, setReload] = useState(0)
-  const [tab, setTab] = useState<VoiceTab>('fixed')
+  const creation = useStore($voiceCreation)
+
+  const {
+    tab,
+    prompt,
+    feedback,
+    adjusting,
+    designPreview,
+    clonePreview,
+    phase: operationState,
+    error,
+    outcome,
+    startedAt,
+    confirmationChecked
+  } = creation
+
   const [genderFilter, setGenderFilter] = useState('')
   const [showAll, setShowAll] = useState(false)
-  const [prompt, setPrompt] = useState('')
-  const [provider, setProvider] = useState<string | undefined>()
-  const [feedback, setFeedback] = useState('')
-  const [designPreview, setDesignPreview] = useState<VoiceDesignPreview | null>(null)
-  const [clonePreview, setClonePreview] = useState<VoiceDesignPreview | null>(null)
-  const [operationState, setOperationState] = useState<VoiceOperation>('idle')
-  const [error, setError] = useState<string | null>(null)
+  const [playbackError, setPlaybackError] = useState<string | null>(null)
+  const [playing, setPlaying] = useState<string | null>(null)
   const previewAbort = useRef<AbortController | null>(null)
-  const operation = useRef<string | null>(null)
+  const playbackGeneration = useRef(0)
+  const operation = useRef<ReturnType<typeof beginVoiceConfirmation>>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const sample = useVoiceSample(active && tab === 'clone')
   const selectedSample = sample.sample
   const busy = operationState !== 'idle'
   const confirming = operationState === 'confirming'
-  const blocked = disabled || busy || sample.busy || !active
-  const initialize = useRef({ prompt: true, tab: true })
+  const blocked = disabled || busy || outcome === 'unknown' || sample.busy || !active
+  const playbackBlocked = disabled || sample.recording || !active || operationState === 'cancelling'
 
   useEffect(() => {
     const onVisibility = (): void => setDocumentVisible(document.visibilityState === 'visible')
@@ -112,29 +151,26 @@ function VoiceManagerSession({
     return () => document.removeEventListener('visibilitychange', onVisibility)
   }, [])
 
-  const cancelOperation = useCallback(() => {
-    const id = operation.current
-    operation.current = null
+  const stopPlayback = useCallback(() => {
+    playbackGeneration.current += 1
     previewAbort.current?.abort()
     previewAbort.current = null
-
-    if (id) {
-      void requestResource('voices.delete_voice_operation', {
-        path: { operation_id: encodeURIComponent(id) }
-      }).catch(failure => {
-        log.warn('voice-manager', 'Could not cancel voice operation', failure)
-      })
-    }
+    setPlaying(null)
   }, [])
 
   useEffect(() => {
     if (!active) {
-      cancelOperation()
-      setOperationState('idle')
+      stopPlayback()
+      operation.current?.invalidate()
+      operation.current = null
     }
 
-    return cancelOperation
-  }, [active, auth, cancelOperation])
+    return () => {
+      stopPlayback()
+      operation.current?.invalidate()
+      operation.current = null
+    }
+  }, [active, stopPlayback])
 
   useEffect(() => {
     if (!active || gateway !== 'open') {
@@ -157,7 +193,7 @@ function VoiceManagerSession({
 
       if (!result.ok) {
         setCatalogStatus(status => (status === 'ready' ? status : 'error'))
-        setError(t.loadFailed)
+        updateVoiceCreation({ error: t.loadFailed })
 
         return
       }
@@ -173,25 +209,23 @@ function VoiceManagerSession({
       setCatalog(next)
       setCatalogStatus('ready')
 
-      if (initialize.current.tab) {
-        const selected = next.customVoices.find(voice => voice.voice_id === $companionVoiceId.get())
-
-        if (selected) {
-          setTab(selected.kind)
-        }
-
-        initialize.current.tab = false
+      if ($voiceCreation.get().error === t.loadFailed) {
+        updateVoiceCreation({ error: null })
       }
 
-      if (initialize.current.prompt) {
+      if (!$voiceCreation.get().initializedTab) {
+        const selected = next.customVoices.find(voice => voice.voice_id === $companionVoiceId.get())
+
+        updateVoiceCreation({ initializedTab: true, ...(selected ? { tab: selected.kind } : {}) })
+      }
+
+      if (!$voiceCreation.get().initializedPrompt) {
         const saved = next.customVoices.find(voice => voice.kind === 'design')
 
-        if (saved) {
-          setPrompt(saved.prompt)
-          setProvider(saved.provider)
-        }
-
-        initialize.current.prompt = false
+        updateVoiceCreation({
+          initializedPrompt: true,
+          ...(saved ? { prompt: saved.prompt, provider: saved.provider } : {})
+        })
       }
     })()
 
@@ -201,18 +235,27 @@ function VoiceManagerSession({
   }, [active, gateway, locale, reload, preference, catalogRevision, t.loadFailed, begin])
 
   const beginPlayback = (): AbortSignal | null => {
-    if (!activeRef.current) {
+    if (!viewEligible()) {
       return null
     }
 
-    previewAbort.current?.abort()
+    stopPlayback()
     const controller = new AbortController()
     previewAbort.current = controller
 
     return controller.signal
   }
 
-  const previewAudio = async (url: string): Promise<void> => {
+  const playPreview = async (
+    key: string,
+    play: (signal: AbortSignal, live: () => boolean) => Promise<void>
+  ): Promise<void> => {
+    if (playing === key) {
+      stopPlayback()
+
+      return
+    }
+
     const signal = beginPlayback()
 
     if (!signal) {
@@ -220,99 +263,127 @@ function VoiceManagerSession({
     }
 
     const mounted = begin()
-    setError(null)
+    const live = (): boolean => !signal.aborted && mounted() && viewEligible()
+    setPlaybackError(null)
+    sample.clearError()
+    setPlaying(key)
 
     try {
+      await play(signal, live)
+    } catch (failure) {
+      if (live()) {
+        setPlaybackError(errorMessage(failure, t.previewFailed))
+      }
+    } finally {
+      if (live()) {
+        setPlaying(null)
+      }
+    }
+  }
+
+  const previewAudio = (url: string): Promise<void> =>
+    playPreview(url, async (signal, live) => {
       const dataUrl = url.startsWith('data:') ? url : await backendApi().apiAsset({ url, preferCache: true })
 
       if (!dataUrl) {
         throw new Error(t.previewFailed)
       }
 
-      if (!signal.aborted && mounted() && activeRef.current) {
-        const result = await playDataUrl(dataUrl, { signal })
+      if (live() && (await playDataUrl(dataUrl, { signal })) === 'failed') {
+        throw new Error(t.previewFailed)
+      }
+    })
 
-        if (result === 'failed' && !signal.aborted && mounted()) {
-          setError(t.previewFailed)
-        }
-      }
-    } catch (failure) {
-      if (!signal.aborted && mounted()) {
-        setError(errorMessage(failure, t.previewFailed))
-      }
-    }
+  const previewFixed = (id: string): Promise<void> =>
+    playPreview(id, async signal => {
+      await speakScripted(sampleLine(name), id, 'voice.preview', signal)
+    })
+
+  const stopOperation = async (): Promise<void> => {
+    stopPlayback()
+    await cancelVoiceCreation()
   }
 
-  const runOperation = async (
-    action: (id: string, live: () => boolean) => Promise<void>,
-    state: Exclude<VoiceOperation, 'idle'> = 'generating'
-  ): Promise<void> => {
-    if (blocked || operation.current || !activeRef.current) {
+  const runOperation = async (action: (live: () => boolean) => Promise<void>, recovering = false): Promise<void> => {
+    if (disabled || sample.busy || !viewEligible() || operation.current) {
       return
     }
 
-    cancelOperation()
-    const id = crypto.randomUUID()
-    operation.current = id
+    const claim = beginVoiceConfirmation(recovering)
+
+    if (!claim) {
+      return
+    }
+
+    operation.current = claim
     const mounted = begin()
-    const live = (): boolean => mounted() && activeRef.current && operation.current === id
-    setOperationState(state)
-    setError(null)
+    const live = (): boolean => mounted() && viewEligible() && operation.current === claim && claim.live()
+    stopPlayback()
+    setPlaybackError(null)
+    sample.clearError()
 
     try {
-      await action(id, live)
+      await action(live)
     } catch (failure) {
-      log.warn('voice-manager', 'Voice operation failed', failure)
+      log.warn('voice-manager', 'Voice confirmation failed', failure)
 
       if (live()) {
-        setError(errorMessage(failure, t.designFailed))
+        const definiteRejection = isClientErrorIpc(failure)
+        const unknown = !definiteRejection && $voiceCreation.get().confirmation !== null
+        const rejected = definiteRejection ? $voiceCreation.get().confirmation?.preview : null
+
+        updateVoiceCreation({
+          outcome: unknown ? 'unknown' : null,
+          error: errorMessage(failure, t.saveFailed),
+          ...(rejected
+            ? {
+                confirmation: null,
+                confirmationChecked: false,
+                ...(rejected.kind === 'design' ? { designPreview: null } : { clonePreview: null, cloneSampleId: null })
+              }
+            : {})
+        })
       }
     } finally {
-      if (live()) {
+      claim.finish()
+
+      if (operation.current === claim) {
         operation.current = null
-        setOperationState('idle')
       }
     }
   }
 
-  const runDesign = (mode: 'auto' | 'feedback' | 'preview'): void => {
-    void runOperation(async (id, live) => {
-      let description = prompt.trim()
-      let designProvider = provider
+  const previewCreation = (create: () => Promise<VoiceDesignPreview | null>): void => {
+    if (blocked) {
+      return
+    }
 
-      if (mode !== 'preview') {
-        const generated = await requestResource('voices.post_voice_prompt', {
-          body: {
-            operation_id: id,
-            preference: preference?.trim() || undefined,
-            current_prompt: mode === 'feedback' ? description : undefined,
-            feedback: mode === 'feedback' ? feedback.trim() : undefined
-          }
-        })
-
-        if (!live()) {
-          return
-        }
-
-        description = generated.prompt
-        designProvider = generated.provider
-        setPrompt(description)
-        setProvider(designProvider)
-        setDesignPreview(null)
-      }
-
-      const result = await designVoice(description, sampleLine(name), id, designProvider)
-
-      if (live()) {
-        setDesignPreview(result)
-        void previewAudio(result.trialAudioDataUrl)
+    stopPlayback()
+    setPlaybackError(null)
+    sample.clearError()
+    const mounted = begin()
+    const playbackVersion = playbackGeneration.current
+    void create().then(preview => {
+      if (preview && mounted() && viewEligible() && playbackVersion === playbackGeneration.current) {
+        void previewAudio(preview.trialAudioDataUrl)
       }
     })
   }
 
-  const applyVoice = async (id: string, label: string, serverConfirmed: boolean): Promise<void> => {
+  const runDesign = (mode: 'auto' | 'feedback' | 'preview'): void => {
+    previewCreation(() => createDesignedVoice(mode, name, preference))
+  }
+
+  const applyVoice = async (
+    id: string,
+    label: string,
+    serverConfirmed: boolean,
+    live: () => boolean
+  ): Promise<void> => {
     if (onVoiceSelected) {
-      await onVoiceSelected(id, label, serverConfirmed)
+      if ((await onVoiceSelected(id, label, serverConfirmed, live)) === false) {
+        throw new Error(t.saveFailed)
+      }
     } else if (serverConfirmed) {
       await applyServerCompanionVoiceId(id)
     } else {
@@ -320,11 +391,38 @@ function VoiceManagerSession({
     }
   }
 
-  const adoptVoice = (id: string, label: string, preview?: VoiceDesignPreview): void => {
-    void runOperation(async (_operationId, live) => {
+  const adoptVoice = (id: string, label: string, preview?: VoiceDesignPreview, recovering = false): void => {
+    if (preview) {
+      const latest = $voiceCreation.get()
+
+      const candidate = recovering
+        ? latest.confirmation?.preview
+        : preview.kind === 'design'
+          ? latest.designPreview
+          : latest.clonePreview
+
+      const matchingInput =
+        recovering ||
+        (preview.kind === 'design'
+          ? latest.prompt.trim() === preview.prompt
+          : Boolean(latest.cloneSampleId && latest.cloneSampleId === latest.sample?.sample_id))
+
+      if (
+        !matchingInput ||
+        candidate?.candidateId !== preview.candidateId ||
+        candidate.expectedVersion !== preview.expectedVersion ||
+        candidate.voiceId !== id
+      ) {
+        return
+      }
+    }
+
+    void runOperation(async live => {
       let voiceId = id
 
       if (preview) {
+        updateVoiceCreation({ confirmation: { id, label, preview } })
+
         const result = await requestResource('voices.post_voice_confirmation', {
           path: { candidate_id: preview.candidateId },
           body: {
@@ -339,18 +437,64 @@ function VoiceManagerSession({
         voiceId = result.voice_id
       }
 
-      await applyVoice(voiceId, label, Boolean(preview))
+      await applyVoice(voiceId, label, Boolean(preview), live)
 
       if (live()) {
-        if (preview?.kind === 'design') {
-          setDesignPreview(null)
-        } else if (preview?.kind === 'clone') {
-          setClonePreview(null)
-        }
+        updateVoiceCreation({
+          confirmation: null,
+          outcome: 'saved',
+          ...(preview?.kind === 'design'
+            ? { designPreview: null }
+            : preview?.kind === 'clone'
+              ? { clonePreview: null }
+              : {})
+        })
 
         setReload(value => value + 1)
       }
-    }, 'confirming')
+    }, recovering)
+  }
+
+  const checkConfirmation = async (): Promise<void> => {
+    const pending = $voiceCreation.get().confirmation
+
+    if (!pending) {
+      return
+    }
+
+    await runOperation(async live => {
+      updateVoiceCreation({ confirmationChecked: false })
+      const result = await fetchVoiceCatalogRaw(locale)
+
+      if (!live()) {
+        return
+      }
+
+      if (!result.ok) {
+        throw new Error(t.loadFailed)
+      }
+
+      setCatalog(result.catalog)
+
+      if (result.catalog.customVoices.some(voice => voice.voice_id === pending.id)) {
+        await requestResource('voices.post_voice_confirmation', {
+          path: { candidate_id: pending.preview.candidateId },
+          body: { expected_version: pending.preview.expectedVersion }
+        })
+
+        if (!live()) {
+          return
+        }
+
+        await applyVoice(pending.id, pending.label, true, live)
+
+        if (live()) {
+          updateVoiceCreation({ confirmation: null, designPreview: null, clonePreview: null, outcome: 'saved' })
+        }
+      } else {
+        updateVoiceCreation({ confirmationChecked: true, outcome: 'unknown' })
+      }
+    }, true)
   }
 
   const actions = (
@@ -360,7 +504,7 @@ function VoiceManagerSession({
     preview?: VoiceDesignPreview
   ): React.JSX.Element => (
     <div className="flex shrink-0 flex-wrap gap-2">
-      <button className={BTN_SUBTLE} disabled={blocked} onClick={onPreview} type="button">
+      <button className={BTN_SUBTLE} disabled={playbackBlocked} onClick={onPreview} type="button">
         {t.preview}
       </button>
       <button
@@ -411,15 +555,19 @@ function VoiceManagerSession({
   }
 
   const chooseTab = (value: VoiceTab): void => {
-    if (confirming) {
+    if (value === tab || confirming || operationState === 'cancelling') {
       return
     }
 
-    cancelOperation()
-    initialize.current.tab = false
-    setOperationState('idle')
-    setError(null)
-    setTab(value)
+    stopPlayback()
+    setPlaybackError(null)
+
+    const latest = $voiceCreation.get()
+    updateVoiceCreation({
+      tab: value,
+      initializedTab: true,
+      ...(latest.phase === 'idle' && latest.outcome !== 'unknown' ? { outcome: null, error: null } : {})
+    })
   }
 
   const voices = catalog?.voices.filter(voice => !genderFilter || voice.gender === genderFilter) ?? []
@@ -436,35 +584,62 @@ function VoiceManagerSession({
   const currentVoiceLabel =
     currentFixed?.label || (currentCustom ? customLabels[currentCustom.kind] : t.savedUnavailable)
 
-  return (
-    <div className="space-y-4">
-      {!compact && catalogStatus === 'ready' && currentVoice && (
-        <SettingCard className="flex flex-wrap items-center justify-between gap-3 p-4">
-          <div className="min-w-0">
-            <p className={SETTINGS_ROW_DESC}>{locale === 'en' ? 'Current voice' : '当前声音'}</p>
-            <p className={SETTINGS_ROW_TITLE}>{currentVoiceLabel}</p>
-          </div>
-          <button
-            className={BTN_SUBTLE}
-            disabled={blocked || (!currentFixed && !currentCustom?.available)}
-            onClick={() => {
-              if (currentCustom) {
-                void previewAudio(currentCustom.preview_audio_url)
-              } else if (currentFixed) {
-                const signal = beginPlayback()
+  const candidate =
+    tab === 'design'
+      ? designPreview?.prompt === prompt.trim()
+        ? designPreview
+        : null
+      : tab === 'clone' && creation.cloneSampleId === selectedSample?.sample_id
+        ? clonePreview
+        : null
 
-                if (signal) {
-                  void speakScripted(sampleLine(name), currentVoice, 'voice.preview', signal)
-                }
-              }
-            }}
-            type="button"
-          >
-            {t.preview}
-          </button>
-        </SettingCard>
-      )}
-      <div>
+  const designStep = operationState === 'describing' || !prompt.trim() ? 0 : candidate ? 2 : 1
+
+  const operationTitle =
+    operationState === 'confirming'
+      ? t.saving
+      : operationState === 'cancelling'
+        ? t.cancelling
+        : operationState === 'describing'
+          ? t.designingDescription
+          : t.generatingTrial
+
+  const status: { state: CreationFeedbackState; title: string; description?: string } | null = busy
+    ? { state: 'working', title: operationTitle, description: confirming ? undefined : dict.creation.canLeave }
+    : outcome === 'unknown'
+      ? {
+          state: 'unknown',
+          title: dict.creation.unknown,
+          description: creation.confirmation
+            ? t.confirmUnknown
+            : error === t.cancelFailed
+              ? t.cancelFailed
+              : t.generationUnknown
+        }
+      : error || (tab === 'clone' && sample.error)
+        ? { state: 'error', title: error || sample.error || t.designFailed }
+        : sample.busy
+          ? {
+              state: sample.recording ? 'waiting' : 'working',
+              title: sample.recording ? t.recordingHint : t.uploadingAudio
+            }
+          : outcome === 'saved'
+            ? null
+            : candidate
+              ? { state: 'review', title: t.trialReady, description: t.trialReadyHint }
+              : outcome === 'cancelled'
+                ? { state: 'cancelled', title: dict.creation.cancelled }
+                : tab === 'clone' && selectedSample
+                  ? { state: 'waiting', title: t.sampleReady, description: t.sampleReadyHint }
+                  : null
+
+  const customAvailable =
+    catalogStatus === 'ready' &&
+    ((tab === 'design' && catalog?.supportsVoiceDesign) || (tab === 'clone' && catalog?.supportsVoiceClone))
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <div className="shrink-0">
         <CapsuleTabs
           ariaLabel={t.methodAria}
           onChange={chooseTab}
@@ -477,269 +652,383 @@ function VoiceManagerSession({
           value={tab}
         />
       </div>
-      {catalogStatus !== 'ready' ? (
-        <div className="space-y-2">
-          <p className={HINT_TEXT}>{catalogStatus === 'error' ? t.loadFailed : dict.common.loading}</p>
-          {catalogStatus === 'error' && (
-            <button className={BTN_SUBTLE} onClick={() => setReload(value => value + 1)} type="button">
-              {dict.common.retry}
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
+        {intro}
+        {!compact && catalogStatus === 'ready' && currentVoice && (
+          <SettingCard className="flex shrink-0 flex-wrap items-center justify-between gap-3 p-3">
+            <div className="min-w-0">
+              <p className={SETTINGS_ROW_DESC}>{locale === 'en' ? 'Current voice' : '当前声音'}</p>
+              <p className={SETTINGS_ROW_TITLE}>{currentVoiceLabel}</p>
+            </div>
+            <button
+              className={BTN_SUBTLE}
+              disabled={playbackBlocked || (!currentFixed && !currentCustom?.available)}
+              onClick={() => {
+                if (currentCustom) {
+                  void previewAudio(currentCustom.preview_audio_url)
+                } else if (currentFixed) {
+                  void previewFixed(currentVoice)
+                }
+              }}
+              type="button"
+            >
+              {t.preview}
             </button>
-          )}
-        </div>
-      ) : tab === 'fixed' ? (
-        <>
-          <div>
-            <CapsuleTabs
-              ariaLabel={t.genderFilterAria}
-              onChange={setGenderFilter}
-              options={GENDER_FILTER_VALUES.map(value => ({ value, label: t.genderFilters[value] }))}
-              size="sm"
-              value={genderFilter}
-            />
-          </div>
-          <SettingCard>
-            {displayedVoices.map(voice => {
-              const id = voiceSelectionId(voice)
-
-              return (
-                <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3" key={id}>
-                  <div className="min-w-0">
-                    <p className={cn(SETTINGS_ROW_TITLE, 'flex items-center gap-1.5')}>
-                      {voice.label}
-                      {currentVoice === id && <Check className="size-3.5 text-accent" />}
-                    </p>
-                    <p className={SETTINGS_ROW_DESC}>{voice.tags.join(' · ')}</p>
-                  </div>
-                  {actions(id, voice.label, () => {
-                    const signal = beginPlayback()
-
-                    if (signal) {
-                      void speakScripted(sampleLine(name), id, 'voice.preview', signal)
-                    }
-                  })}
-                </div>
-              )
-            })}
-            {voices.length === 0 && (
-              <p className="px-4 py-6 text-center text-[13px] text-muted">
-                {catalog?.voices.length
-                  ? t.noMatch
-                  : catalog?.providers.length
-                    ? t.noVoicesForLanguage
-                    : t.noTtsConfigured}
-              </p>
-            )}
           </SettingCard>
-          {compact && voices.length > 3 && !genderFilter && (
-            <button className={BTN_SUBTLE} onClick={() => setShowAll(value => !value)} type="button">
-              {showAll ? t.showRecommended : t.showAll}
+        )}
+        {playbackError && (
+          <CreationFeedback
+            description={candidate ? t.trialReadyHint : undefined}
+            state="error"
+            title={playbackError}
+          />
+        )}
+        {playing && (
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-body" role="status">
+            <span>{t.playingPreview}</span>
+            <button className={BTN_SUBTLE} onClick={stopPlayback} type="button">
+              {t.stopPreview}
             </button>
-          )}
-        </>
-      ) : tab === 'design' ? (
-        <>
-          {savedVoice('design')}
-          {catalog?.supportsVoiceDesign ? (
-            <SettingCard className="space-y-3 p-4" divided={false}>
-              <p className={HINT_TEXT}>{t.designIntro}</p>
-              {catalog.supportsVoicePromptGeneration ? (
-                <button className={BTN_PRIMARY} disabled={blocked} onClick={() => runDesign('auto')} type="button">
-                  {t.autoDesign}
-                </button>
-              ) : (
-                <p className={HINT_TEXT}>{t.autoDesignUnavailable}</p>
-              )}
-              {catalog.voiceDesignGuide && (
-                <details>
-                  <summary className="cursor-pointer text-xs text-muted">{t.designGuide}</summary>
-                  <p className={cn(HINT_TEXT, 'mt-2 whitespace-pre-line')}>{catalog.voiceDesignGuide}</p>
-                </details>
-              )}
-              <textarea
-                aria-label={t.designHeading}
-                className={cn(INPUT_CLASS, 'resize-none')}
-                disabled={busy}
-                maxLength={200}
-                onChange={event => {
-                  setPrompt(event.target.value)
-                  setDesignPreview(null)
-                }}
-                placeholder={t.designPlaceholder}
-                rows={4}
-                value={prompt}
-              />
-              <p className="text-right text-[10px] text-muted">{prompt.length}/200</p>
-              <button
-                className={BTN_SUBTLE}
-                disabled={blocked || !prompt.trim()}
-                onClick={() => runDesign('preview')}
-                type="button"
-              >
-                {t.designGenerate}
+          </div>
+        )}
+        {catalogStatus !== 'ready' ? (
+          <div className="space-y-2">
+            <p className={HINT_TEXT}>{catalogStatus === 'error' ? t.loadFailed : dict.common.loading}</p>
+            {catalogStatus === 'error' && (
+              <button className={BTN_SUBTLE} onClick={() => setReload(value => value + 1)} type="button">
+                {dict.common.retry}
               </button>
-              {catalog.supportsVoicePromptGeneration && (
-                <div className="space-y-2 border-t border-line-hairline pt-3">
+            )}
+          </div>
+        ) : tab === 'fixed' ? (
+          <>
+            <div>
+              <CapsuleTabs
+                ariaLabel={t.genderFilterAria}
+                onChange={setGenderFilter}
+                options={GENDER_FILTER_VALUES.map(value => ({ value, label: t.genderFilters[value] }))}
+                size="sm"
+                value={genderFilter}
+              />
+            </div>
+            <SettingCard>
+              {displayedVoices.map(voice => {
+                const id = voiceSelectionId(voice)
+
+                return (
+                  <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3" key={id}>
+                    <div className="min-w-0">
+                      <p className={cn(SETTINGS_ROW_TITLE, 'flex items-center gap-1.5')}>
+                        {voice.label}
+                        {currentVoice === id && <Check className="size-3.5 text-accent" />}
+                      </p>
+                      <p className={SETTINGS_ROW_DESC}>{voice.tags.join(' · ')}</p>
+                    </div>
+                    {actions(id, voice.label, () => void previewFixed(id))}
+                  </div>
+                )
+              })}
+              {voices.length === 0 && (
+                <p className="px-4 py-6 text-center text-[13px] text-muted">
+                  {catalog?.voices.length
+                    ? t.noMatch
+                    : catalog?.providers.length
+                      ? t.noVoicesForLanguage
+                      : t.noTtsConfigured}
+                </p>
+              )}
+            </SettingCard>
+            {compact && voices.length > 3 && !genderFilter && (
+              <button className={BTN_SUBTLE} onClick={() => setShowAll(value => !value)} type="button">
+                {showAll ? t.showRecommended : t.showAll}
+              </button>
+            )}
+          </>
+        ) : tab === 'design' ? (
+          <>
+            {savedVoice('design')}
+            {catalog?.supportsVoiceDesign ? (
+              <div className="space-y-4 rounded-2xl border border-line-hairline p-4">
+                <p className="text-xs leading-relaxed text-body">{t.designIntro}</p>
+                <ol aria-label={t.designHeading} className="flex flex-wrap gap-x-5 gap-y-2 text-xs">
+                  {t.designSteps.map((label, index) => (
+                    <li
+                      aria-current={designStep === index ? 'step' : undefined}
+                      className={cn(
+                        'flex items-center gap-2',
+                        designStep === index ? 'font-medium text-strong' : 'text-muted'
+                      )}
+                      key={label}
+                    >
+                      <span className="flex size-5 items-center justify-center rounded-full bg-fill-faint">
+                        {index < designStep ? <Check className="size-3.5" /> : index + 1}
+                      </span>
+                      {label}
+                    </li>
+                  ))}
+                </ol>
+                {!catalog.supportsVoicePromptGeneration && (
+                  <p className="text-xs text-body">{t.autoDesignUnavailable}</p>
+                )}
+                {catalog.voiceDesignGuide && (
+                  <details>
+                    <summary className="cursor-pointer text-xs text-body">{t.designGuide}</summary>
+                    <p className="mt-2 whitespace-pre-line text-xs leading-relaxed text-body">
+                      {catalog.voiceDesignGuide}
+                    </p>
+                  </details>
+                )}
+                <label className="block space-y-2 text-xs text-body">
+                  <span>{t.promptLabel}</span>
                   <textarea
-                    aria-label={t.feedbackLabel}
+                    aria-label={t.designHeading}
                     className={cn(INPUT_CLASS, 'resize-none')}
-                    disabled={busy}
-                    maxLength={2000}
-                    onChange={event => setFeedback(event.target.value)}
-                    placeholder={t.feedbackPlaceholder}
-                    rows={2}
-                    value={feedback}
+                    maxLength={200}
+                    onChange={event => {
+                      updateVoiceCreation({
+                        prompt: event.target.value,
+                        initializedPrompt: true,
+                        designPreview: null,
+                        outcome: null,
+                        error: null
+                      })
+                    }}
+                    placeholder={t.designPlaceholder}
+                    readOnly={busy || outcome === 'unknown'}
+                    rows={4}
+                    value={prompt}
                   />
+                </label>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-body">
+                  <span>{busy || outcome === 'unknown' ? dict.creation.inputLocked : t.designHint}</span>
+                  <span>{prompt.length}/200</span>
+                </div>
+                {candidate && (
+                  <p className="rounded-xl bg-fill-faint p-3 text-xs leading-relaxed text-body">{sampleLine(name)}</p>
+                )}
+                {catalog.supportsVoicePromptGeneration && prompt.trim() && (
+                  <div className="space-y-2 border-t border-line-hairline pt-3">
+                    <button
+                      aria-expanded={adjusting}
+                      className={BTN_SUBTLE}
+                      disabled={blocked}
+                      onClick={() => updateVoiceCreation({ adjusting: !adjusting })}
+                      type="button"
+                    >
+                      {t.adjustToggle}
+                    </button>
+                    {adjusting && (
+                      <textarea
+                        aria-label={t.feedbackLabel}
+                        className={cn(INPUT_CLASS, 'resize-none')}
+                        maxLength={2000}
+                        onChange={event => updateVoiceCreation({ feedback: event.target.value })}
+                        placeholder={t.feedbackPlaceholder}
+                        readOnly={busy || outcome === 'unknown'}
+                        rows={2}
+                        value={feedback}
+                      />
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className={HINT_TEXT}>{t.designUnavailable}</p>
+            )}
+          </>
+        ) : (
+          <>
+            {savedVoice('clone')}
+            {catalog?.supportsVoiceClone ? (
+              <div className="space-y-4 rounded-2xl border border-line-hairline p-4">
+                <p className="text-xs leading-relaxed text-body">{t.cloneIntro}</p>
+                <div className="flex flex-wrap gap-2">
                   <button
                     className={BTN_SUBTLE}
-                    disabled={blocked || !prompt.trim() || !feedback.trim()}
-                    onClick={() => runDesign('feedback')}
+                    disabled={
+                      disabled || busy || outcome === 'unknown' || !active || (sample.busy && !sample.recording)
+                    }
+                    onClick={() => {
+                      updateVoiceCreation({ clonePreview: null, outcome: null, error: null })
+
+                      if (sample.recording) {
+                        sample.stop()
+                      } else {
+                        stopPlayback()
+                        void sample.start()
+                      }
+                    }}
                     type="button"
                   >
-                    {t.adjustDesign}
+                    {sample.recording ? t.stopRecording : sample.sample ? t.rerecord : t.startRecording}
                   </button>
-                </div>
-              )}
-              {designPreview &&
-                designPreview.prompt === prompt.trim() &&
-                actions(
-                  designPreview.voiceId,
-                  t.designHeading,
-                  () => void previewAudio(designPreview.trialAudioDataUrl),
-                  designPreview
-                )}
-            </SettingCard>
-          ) : (
-            <p className={HINT_TEXT}>{t.designUnavailable}</p>
-          )}
-        </>
-      ) : (
-        <>
-          {savedVoice('clone')}
-          {catalog?.supportsVoiceClone ? (
-            <SettingCard className="space-y-3 p-4" divided={false}>
-              <p className={HINT_TEXT}>{t.cloneIntro}</p>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  className={BTN_PRIMARY}
-                  disabled={disabled || busy || !active || (sample.busy && !sample.recording)}
-                  onClick={() => {
-                    setClonePreview(null)
-
-                    if (sample.recording) {
-                      sample.stop()
-                    } else {
-                      cancelOperation()
-                      void sample.start()
-                    }
-                  }}
-                  type="button"
-                >
-                  {sample.recording ? t.stopRecording : sample.sample ? t.rerecord : t.startRecording}
-                </button>
-                <button
-                  className={BTN_SUBTLE}
-                  disabled={blocked}
-                  onClick={() => inputRef.current?.click()}
-                  type="button"
-                >
-                  {t.uploadAudio}
-                </button>
-                <input
-                  accept="audio/*,.wav,.mp3,.m4a,.ogg,.flac,.webm,.aac"
-                  className="hidden"
-                  onChange={event => {
-                    const file = event.target.files?.[0]
-                    event.target.value = ''
-
-                    if (file) {
-                      cancelOperation()
-                      setClonePreview(null)
-                      void sample.upload(file, file.name)
-                    }
-                  }}
-                  ref={inputRef}
-                  type="file"
-                />
-              </div>
-              {sample.recording && (
-                <p aria-live="polite" className={HINT_TEXT}>
-                  {t.recordingHint}
-                </p>
-              )}
-              {sample.busy && !sample.recording && (
-                <p aria-live="polite" className={HINT_TEXT}>
-                  {t.uploadingAudio}
-                </p>
-              )}
-              {selectedSample && (
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className={HINT_TEXT}>{t.sampleDuration(Math.round(selectedSample.duration))}</span>
                   <button
                     className={BTN_SUBTLE}
                     disabled={blocked}
-                    onClick={() => void previewAudio(selectedSample.url)}
+                    onClick={() => inputRef.current?.click()}
                     type="button"
                   >
-                    {t.previewOriginal}
+                    {t.uploadAudio}
                   </button>
+                  <input
+                    accept="audio/*,.wav,.mp3,.m4a,.ogg,.flac,.webm,.aac"
+                    className="hidden"
+                    onChange={event => {
+                      const file = event.target.files?.[0]
+                      event.target.value = ''
+
+                      if (file) {
+                        stopPlayback()
+                        updateVoiceCreation({ clonePreview: null, outcome: null, error: null })
+                        void sample.upload(file, file.name)
+                      }
+                    }}
+                    ref={inputRef}
+                    type="file"
+                  />
+                </div>
+                {selectedSample && (
+                  <div className="flex flex-wrap items-center gap-3 rounded-xl bg-fill-faint p-3">
+                    <span className="text-xs text-body">{t.sampleDuration(Math.round(selectedSample.duration))}</span>
+                    <button
+                      className={BTN_SUBTLE}
+                      disabled={playbackBlocked}
+                      onClick={() => void previewAudio(selectedSample.url)}
+                      type="button"
+                    >
+                      {t.previewOriginal}
+                    </button>
+                  </div>
+                )}
+                {candidate && <p className="text-xs leading-relaxed text-body">{sampleLine(name)}</p>}
+              </div>
+            ) : (
+              <p className={HINT_TEXT}>{t.cloneUnavailable}</p>
+            )}
+          </>
+        )}
+      </div>
+      {(customAvailable || busy || outcome === 'unknown' || status) && (
+        <CreationActionBar
+          description={
+            status ? (
+              <CreationFeedback
+                description={status.description}
+                startedAt={busy ? startedAt : undefined}
+                state={status.state}
+                title={status.title}
+              />
+            ) : undefined
+          }
+        >
+          {(customAvailable || busy || outcome === 'unknown') &&
+            (busy ? (
+              <>
+                <button className={BTN_PRIMARY} disabled type="button">
+                  <Loader2 className="size-4 motion-safe:animate-spin" />
+                  {operationTitle}
+                </button>
+                {!confirming && (
+                  <button
+                    className={BTN_SUBTLE}
+                    disabled={operationState === 'cancelling'}
+                    onClick={() => void stopOperation()}
+                    type="button"
+                  >
+                    {dict.common.cancel}
+                  </button>
+                )}
+              </>
+            ) : outcome === 'unknown' ? (
+              creation.confirmation ? (
+                <>
+                  <button className={BTN_PRIMARY} onClick={() => void checkConfirmation()} type="button">
+                    {t.checkCurrent}
+                  </button>
+                  {confirmationChecked && (
+                    <button
+                      className={BTN_SUBTLE}
+                      onClick={() => {
+                        const pending = creation.confirmation
+
+                        if (pending) {
+                          adoptVoice(pending.id, pending.label, pending.preview, true)
+                        }
+                      }}
+                      type="button"
+                    >
+                      {t.retryConfirm}
+                    </button>
+                  )}
+                </>
+              ) : (
+                <button className={BTN_PRIMARY} onClick={() => void stopOperation()} type="button">
+                  {error === t.cancelFailed ? t.retryCancel : t.cancelUnknown}
+                </button>
+              )
+            ) : (
+              <>
+                {candidate && !(adjusting && feedback.trim()) ? (
+                  <>
+                    <button
+                      className={BTN_SUBTLE}
+                      disabled={playbackBlocked}
+                      onClick={() => void previewAudio(candidate.trialAudioDataUrl)}
+                      type="button"
+                    >
+                      {t.preview}
+                    </button>
+                    <button
+                      className={BTN_PRIMARY}
+                      disabled={blocked}
+                      onClick={() => adoptVoice(candidate.voiceId, customLabels[candidate.kind], candidate)}
+                      type="button"
+                    >
+                      {t.useThisVoice}
+                    </button>
+                  </>
+                ) : outcome === 'saved' && !(adjusting && feedback.trim()) ? (
+                  <button className={BTN_PRIMARY} disabled type="button">
+                    <Check className="size-4" />
+                    {t.inUse}
+                  </button>
+                ) : tab === 'design' ? (
                   <button
                     className={BTN_PRIMARY}
-                    disabled={blocked}
+                    disabled={blocked || (!prompt.trim() && !catalog?.supportsVoicePromptGeneration)}
                     onClick={() =>
-                      void runOperation(async (id, live) => {
-                        const result = await cloneVoice(selectedSample.sample_id, sampleLine(name), id)
-
-                        if (live()) {
-                          setClonePreview(result)
-                          void previewAudio(result.trialAudioDataUrl)
-                        }
-                      })
+                      runDesign(adjusting && feedback.trim() ? 'feedback' : prompt.trim() ? 'preview' : 'auto')
                     }
+                    type="button"
+                  >
+                    {adjusting && feedback.trim()
+                      ? t.adjustAndPreview
+                      : prompt.trim()
+                        ? t.designGenerate
+                        : t.autoDesign}
+                  </button>
+                ) : (
+                  <button
+                    className={BTN_PRIMARY}
+                    disabled={blocked || !selectedSample}
+                    onClick={() => {
+                      if (selectedSample) {
+                        previewCreation(() => createClonedVoice(name))
+                      }
+                    }}
                     type="button"
                   >
                     {t.clonePreview}
                   </button>
-                </div>
-              )}
-              {sample.error && (
-                <p className="text-xs text-danger-fg" role="alert">
-                  {sample.error}
-                </p>
-              )}
-              {clonePreview &&
-                actions(
-                  clonePreview.voiceId,
-                  t.cloneHeading,
-                  () => void previewAudio(clonePreview.trialAudioDataUrl),
-                  clonePreview
                 )}
-            </SettingCard>
-          ) : (
-            <p className={HINT_TEXT}>{t.cloneUnavailable}</p>
-          )}
-        </>
-      )}
-      {busy && (
-        <div aria-live="polite" className="flex items-center gap-3">
-          <p className={HINT_TEXT}>{confirming ? t.saving : t.designGenerating}</p>
-          {!confirming && (
-            <button
-              className={BTN_SUBTLE}
-              onClick={() => {
-                cancelOperation()
-                setOperationState('idle')
-              }}
-              type="button"
-            >
-              {dict.common.cancel}
-            </button>
-          )}
-        </div>
-      )}
-      {error && (
-        <p className="text-xs text-danger-fg" role="alert">
-          {error}
-        </p>
+                {tab === 'design' && prompt.trim() && catalog?.supportsVoicePromptGeneration && (
+                  <button className={BTN_SUBTLE} disabled={blocked} onClick={() => runDesign('auto')} type="button">
+                    {t.autoDesign}
+                  </button>
+                )}
+              </>
+            ))}
+        </CreationActionBar>
       )}
     </div>
   )

@@ -12,7 +12,7 @@ export interface DirectoryEntry<T extends string> {
   unread?: boolean
 }
 
-// 分类侧栏 + 右侧内容区：伙伴、动态与日记共用同一版式，宽屏为侧栏，窄屏折叠为顶部换行按钮。
+// 伙伴分类：宽屏侧栏、窄屏顶部按钮，矮窄面板横向浏览分类。
 // 每个分类各自记住滚动位置；内容自管滚动（bounded）或由壳滚动（默认）由页面决定。
 export function DirectoryShell<T extends string>({
   activeId,
@@ -32,6 +32,7 @@ export function DirectoryShell<T extends string>({
   toolbar?: React.ReactNode
 }): React.JSX.Element {
   const scroller = useRef<HTMLDivElement>(null)
+  const directory = useRef<HTMLElement>(null)
   const positions = useRef<Partial<Record<T, number>>>({})
 
   useLayoutEffect(() => {
@@ -42,7 +43,25 @@ export function DirectoryShell<T extends string>({
       element.scrollTop = savedPositions[activeId] ?? 0
     }
 
+    const navigation = directory.current
+
+    const revealSelection = (): void => {
+      if (navigation && navigation.scrollWidth > navigation.clientWidth) {
+        navigation.querySelector('[aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      }
+    }
+
+    const observer = new ResizeObserver(revealSelection)
+
+    if (navigation) {
+      observer.observe(navigation)
+    }
+
+    revealSelection()
+
     return () => {
+      observer.disconnect()
+
       if (element) {
         savedPositions[activeId] = element.scrollTop
       }
@@ -52,7 +71,7 @@ export function DirectoryShell<T extends string>({
   return (
     <div className={styles.layout}>
       <div className={styles.shell}>
-        <nav aria-label={ariaLabel} className={styles.directory} data-directory-navigation>
+        <nav aria-label={ariaLabel} className={styles.directory} data-directory-navigation ref={directory}>
           {entries.map(({ id, icon: Icon, label, unread }) => (
             <button
               aria-current={activeId === id ? 'page' : undefined}

@@ -2,9 +2,11 @@ export type { ActiveScene } from './scene-store'
 export {
   $activeScene,
   $pendingScene,
+  $sceneCreationIssue,
   $sceneDetails,
   $sceneLibrary,
   $sceneLibraryStatus,
+  $sceneMutationIssues,
   $scenePage,
   $scenePolicy,
   $sceneQuery,
@@ -19,7 +21,9 @@ export {
   createScene,
   deleteScene,
   editScene,
+  finishSceneCreationWait,
   hydrateScene,
+  inspectSceneCreationIssue,
   loadSceneDetail,
   loadSceneLibrary,
   onSceneEvent,
@@ -30,6 +34,10 @@ export {
   reloadSceneImage,
   SCENE_IMAGE_SIZE,
   type SceneAsset,
+  type SceneCreationIssue,
+  type SceneCreationResult,
+  type SceneMutationIssue,
   type ScenePolicy,
-  setScenePolicy
+  setScenePolicy,
+  updateSceneMutationIssue
 } from './scene-store'

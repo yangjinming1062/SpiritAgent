@@ -11,7 +11,14 @@ import {
 import { stopSpeaking, warmAudioContext } from '@/modules/speech'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { log } from '@/shared/lib/log'
-import { BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, SURFACE_OVERLAY } from '@/shared/panel'
+import {
+  BTN_PRIMARY,
+  BTN_SUBTLE,
+  CreationActionBar,
+  CreationWorkspace,
+  INPUT_CLASS,
+  SURFACE_OVERLAY
+} from '@/shared/panel'
 import { $gatewayState } from '@/shared/store/gateway'
 
 import { computeBackTransition, type Phase, type VoiceStage } from './back-transition'
@@ -320,27 +327,36 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     }
   }
 
-  const confirmVoice = async (skip = false, voiceId = '', label = '', serverConfirmed = false): Promise<void> => {
-    if (voiceSaving || (!skip && !voiceId)) {
-      return
+  const confirmVoice = async (
+    skip = false,
+    voiceId = '',
+    label = '',
+    serverConfirmed = false,
+    isSelectionCurrent: () => boolean = () => true
+  ): Promise<boolean> => {
+    if (voiceSaving || (!skip && !voiceId) || !isSelectionCurrent()) {
+      return false
     }
 
-    const isLive = begin()
+    const mounted = begin()
+    const isLive = (): boolean => mounted() && isSelectionCurrent()
     setVoiceSaving(true)
     setHint(null)
     const selected = skip ? null : label || voiceId
     const saved = await draft.submit(skip ? 'voice_setup_skipped' : 'voice', skip ? 'true' : selected)
 
-    if (!isLive()) {
-      return
+    if (mounted()) {
+      setVoiceSaving(false)
     }
 
-    setVoiceSaving(false)
+    if (!isLive()) {
+      return false
+    }
 
     if (!saved) {
       setHint('选择未能保存，请检查网络后重试。')
 
-      return
+      return false
     }
 
     setAnswers(previous => ({
@@ -359,11 +375,13 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     }
 
     if (!isLive()) {
-      return
+      return false
     }
 
     setPhase('q-user')
     setQIndex(0)
+
+    return true
   }
 
   const isQuestionPhase = phase === 'q-character' || (phase === 'voice' && voiceStage === 'describe')
@@ -375,10 +393,13 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     <div className="fixed inset-0 z-50 pointer-events-none" style={{ pointerEvents: 'none' }}>
       <DraggableDialog>
         <div
-          className={`max-h-[85vh] w-full overflow-y-auto rounded-2xl p-5 text-strong ${SURFACE_OVERLAY}`}
+          className={`flex h-[min(680px,85vh)] w-full flex-col overflow-hidden rounded-2xl p-5 text-strong ${SURFACE_OVERLAY}`}
           style={{ pointerEvents: 'auto' }}
         >
-          <ol aria-label="认识伙伴的进度" className="mb-5 flex items-center gap-2 border-b border-line-hairline pb-4">
+          <ol
+            aria-label="认识伙伴的进度"
+            className="mb-5 flex shrink-0 items-center gap-2 border-b border-line-hairline pb-4"
+          >
             {['认识伙伴', '确认形象', '选择声音'].map((label, index) => (
               <li
                 aria-current={progressStep === index ? 'step' : undefined}
@@ -445,73 +466,82 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
               name={answers.name ?? ''}
               onContinueText={() => void confirmVoice(true)}
               onDescribe={() => setVoiceStage('describe')}
-              onVoiceSelected={(voiceId, label, serverConfirmed) =>
-                confirmVoice(false, voiceId, label, serverConfirmed)
+              onVoiceSelected={(voiceId, label, serverConfirmed, isSelectionCurrent) =>
+                confirmVoice(false, voiceId, label, serverConfirmed, isSelectionCurrent)
               }
               preference={answers.voice}
             />
           )}
           {phase === 'q-user' && (
-            <div className="space-y-4">
-              <div>
-                <h2 className="text-base font-semibold text-strong">伙伴准备好了</h2>
-                <p className="mt-1 text-xs leading-relaxed text-body">
-                  可以开始聊天了。也可以先告诉伙伴一些关于您的事，之后随时都能补充。
-                </p>
-              </div>
-              <details className="rounded-xl border border-line-hairline bg-surface-card p-3">
-                <summary className="cursor-pointer text-sm text-body">让伙伴更了解我（可选）</summary>
-                <div className="mt-4 space-y-3">
-                  {USER_QUESTIONS.map(item => (
-                    <label className="block space-y-1.5 text-xs text-body" key={item.key}>
-                      <span>{item.text}</span>
-                      {item.multiline ? (
-                        <textarea
-                          className={INPUT_CLASS}
-                          maxLength={item.max}
-                          onBlur={() => void draft.submit(item.key, answers[item.key]?.trim() || null)}
-                          onChange={event => setAnswers(previous => ({ ...previous, [item.key]: event.target.value }))}
-                          placeholder={item.placeholder}
-                          rows={2}
-                          value={answers[item.key] ?? ''}
-                        />
-                      ) : (
-                        <input
-                          className={INPUT_CLASS}
-                          maxLength={item.max}
-                          onBlur={() => void draft.submit(item.key, answers[item.key]?.trim() || null)}
-                          onChange={event => setAnswers(previous => ({ ...previous, [item.key]: event.target.value }))}
-                          placeholder={item.placeholder}
-                          type={item.date ? 'date' : 'text'}
-                          value={answers[item.key] ?? ''}
-                        />
-                      )}
-                    </label>
-                  ))}
+            <CreationWorkspace
+              footer={
+                <CreationActionBar>
+                  <button className={BTN_SUBTLE} onClick={onBack} type="button">
+                    选择声音
+                  </button>
+                  <button
+                    className={BTN_PRIMARY}
+                    onClick={() => {
+                      setHint(null)
+                      setPhase('finishing')
+                      void finish(answers)
+                    }}
+                    type="button"
+                  >
+                    开始相伴
+                  </button>
+                </CreationActionBar>
+              }
+            >
+              <div className="space-y-4">
+                <div>
+                  <h2 className="text-base font-semibold text-strong">伙伴准备好了</h2>
+                  <p className="mt-1 text-xs leading-relaxed text-body">
+                    可以开始聊天了。也可以先告诉伙伴一些关于您的事，之后随时都能补充。
+                  </p>
                 </div>
-              </details>
-              {hint && (
-                <p className="text-xs text-danger-fg" role="alert">
-                  {hint}
-                </p>
-              )}
-              <div className="flex items-center justify-between gap-3">
-                <button className={BTN_SUBTLE} onClick={onBack} type="button">
-                  选择声音
-                </button>
-                <button
-                  className={BTN_PRIMARY}
-                  onClick={() => {
-                    setHint(null)
-                    setPhase('finishing')
-                    void finish(answers)
-                  }}
-                  type="button"
-                >
-                  开始相伴
-                </button>
+                <details className="rounded-xl border border-line-hairline bg-surface-card p-3">
+                  <summary className="cursor-pointer text-sm text-body">让伙伴更了解我（可选）</summary>
+                  <div className="mt-4 space-y-3">
+                    {USER_QUESTIONS.map(item => (
+                      <label className="block space-y-1.5 text-xs text-body" key={item.key}>
+                        <span>{item.text}</span>
+                        {item.multiline ? (
+                          <textarea
+                            className={INPUT_CLASS}
+                            maxLength={item.max}
+                            onBlur={() => void draft.submit(item.key, answers[item.key]?.trim() || null)}
+                            onChange={event =>
+                              setAnswers(previous => ({ ...previous, [item.key]: event.target.value }))
+                            }
+                            placeholder={item.placeholder}
+                            rows={2}
+                            value={answers[item.key] ?? ''}
+                          />
+                        ) : (
+                          <input
+                            className={INPUT_CLASS}
+                            maxLength={item.max}
+                            onBlur={() => void draft.submit(item.key, answers[item.key]?.trim() || null)}
+                            onChange={event =>
+                              setAnswers(previous => ({ ...previous, [item.key]: event.target.value }))
+                            }
+                            placeholder={item.placeholder}
+                            type={item.date ? 'date' : 'text'}
+                            value={answers[item.key] ?? ''}
+                          />
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                </details>
+                {hint && (
+                  <p className="text-xs text-danger-fg" role="alert">
+                    {hint}
+                  </p>
+                )}
               </div>
-            </div>
+            </CreationWorkspace>
           )}
           {phase === 'finishing' && <p className="py-6 text-center text-sm text-strong">正在保存资料…</p>}
         </div>

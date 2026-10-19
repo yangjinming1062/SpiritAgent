@@ -66,6 +66,23 @@ export const dict: Dictionary = {
     processing: 'Processing…'
   },
 
+  creation: {
+    working: 'Creating',
+    review: 'Created, awaiting confirmation',
+    success: 'In use',
+    paused: 'Creation paused',
+    cancelled: 'Creation cancelled',
+    unknown: 'Verifying the creation result',
+    slow: 'This is taking longer. We are still waiting for the result.',
+    preserveCurrent: 'Your current content remains available until you confirm the replacement.',
+    canLeave: 'You can leave this page and return later to check progress.',
+    inputLocked: 'These inputs cannot be changed during creation. You can still read them.',
+    retryLoad: 'Reload preview',
+    previewFailed: 'The preview could not load. Your result is still saved.',
+    imageLoadFailed: 'Image failed to load',
+    checkResult: 'Check existing result'
+  },
+
   selfSource: {
     guidanceAction: 'Need to create an image? Get the prompt and references',
     open: 'Use your own image',
@@ -190,7 +207,6 @@ export const dict: Dictionary = {
     designTab: 'Design a voice',
     designPlaceholder: 'Describe the voice you want…',
     designGenerate: 'Generate preview',
-    designGenerating: 'Generating…',
     designFailed: 'Voice generation failed. Please try again.',
     methodAria: 'Voice source',
     fixedHeading: 'Choose a voice',
@@ -199,15 +215,35 @@ export const dict: Dictionary = {
     saving: 'Saving…',
     showRecommended: 'Show recommended voices',
     showAll: 'Browse all voices',
-    designIntro:
-      'Let your companion design a voice from their character profile, or write and edit the description yourself.',
-    autoDesign: 'Design automatically',
-    autoDesignUnavailable: 'Automatic design is not configured. You can still write a description and preview it.',
+    designIntro: 'Let AI design a voice from your companion’s profile, or write and edit the description yourself.',
+    autoDesign: 'AI design',
+    designingDescription: 'Designing the voice description',
+    generatingTrial: 'Generating the voice preview',
+    trialReady: 'Preview ready, awaiting your choice',
+    trialReadyHint: 'Listen again and use it when you are happy, or keep adjusting the voice.',
+    promptLabel: 'Voice description',
+    designSteps: ['Design description', 'Generate preview', 'Listen and use'],
+    adjustToggle: 'Adjust voice',
+    adjustAndPreview: 'Adjust and preview',
+    sampleReady: 'Reference audio ready',
+    sampleReadyHint: 'Play the original to check it, then clone and preview.',
+    cancelling: 'Cancelling this creation',
+    cancelFailed: 'Cancellation has not been confirmed. Try cancelling again. This operation will not be resubmitted.',
+    retryCancel: 'Retry cancellation',
+    cancelUnknown: 'Stop and check this creation',
+    generationUnknown: 'The creation result has not arrived. Stop this operation before starting another.',
+    confirmUnknown: 'Saving has not been confirmed. Check the current voice first.',
+    checkCurrent: 'Check current voice',
+    retryConfirm: 'Retry confirming this voice',
+    saveFailed: 'Could not save the voice. Your preview is still available.',
+    playingPreview: 'Preview playing',
+    stopPreview: 'Stop preview',
+    designHint: 'Generate a preview after editing. Your current voice changes only when you confirm.',
+    autoDesignUnavailable: 'AI design is not configured. You can still write a description and preview it.',
     designUnavailable: 'Voice design is not configured. Choose a preset or clone a voice.',
     designGuide: 'Voice description tips',
     feedbackLabel: 'Feedback',
     feedbackPlaceholder: 'What would you change? For example: softer, while keeping the mature tone…',
-    adjustDesign: 'Adjust from feedback',
     savedVoice: 'Saved voice',
     savedUnavailable: 'This voice is currently unavailable. Check your voice configuration or choose another voice.',
     cloneIntro:
@@ -1290,6 +1326,15 @@ export const dict: Dictionary = {
         'Confirming an outfit in the wardrobe automatically prepares its idle video and drag image; other actions are made on demand. Your current outfit stays on. Choose Wear once the basic actions are ready.'
     },
     scene: {
+      analyzing: 'Checking the image and scene description…',
+      checking: 'Checking the generation result…',
+      checkStatus: 'Refresh creation status',
+      inspectLibrary: 'Inspect the scene library',
+      finishWaiting: 'I have checked — finish waiting',
+      inspectionHint:
+        'After checking the latest content, you can close this waiting reminder. This does not cancel accepted work; a delayed task or result may still appear.',
+      submissionUnknown:
+        'The creation request has not been confirmed. Refresh its status and check the background library first. No duplicate request will be submitted while it is unresolved.',
       intro:
         'Describe a place you would enjoy. AI creates a background for your chat window, and you choose when to use it.',
       referenceHint:
