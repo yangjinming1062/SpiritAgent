@@ -13,11 +13,13 @@ from infrastructure.ai.error_classifier import (
     LlmCallBlockedError,
     LLMRuntimeError,
     classify_api_error,
+    classify_response_text,
+    is_content_policy_response,
 )
 from infrastructure.ai.llm_client import resolve_provider_chain, resolve_vision_chain
 from infrastructure.ai.llm_fallback import execute_with_fallback
 from infrastructure.ai.llm_retry import call_with_retry
-from infrastructure.ai.providers.base import ChatProvider, ServiceType
+from infrastructure.ai.providers.base import ChatProvider, ProviderError, ServiceType
 from infrastructure.ai.responses import build_responses_kwargs
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.token_budget import request_output_budget
@@ -135,10 +137,21 @@ async def _call_text_response(
     return _response_text(response)
 
 
-def _response_text(response: Response) -> str:
+def _response_text(response: Response, *, validate_text: bool = True) -> str:
+    if response.error is not None:
+        classified = classify_api_error(
+            ProviderError("LLM response failed", body={"error": response.error.model_dump()}),
+        )
+        raise LLMRuntimeError(
+            ClassifiedError(classified.reason, classified.status_code, _response_failure_detail(response)),
+        )
     details = response.incomplete_details
-    if (details is not None and details.reason == "content_filter") or any(
-        part.type == "refusal" for item in response.output if item.type == "message" for part in item.content
+    if (
+        is_content_policy_response(response.model_extra or {})
+        or (details is not None and details.reason == "content_filter")
+        or any(
+            part.type == "refusal" for item in response.output or [] if item.type == "message" for part in item.content
+        )
     ):
         raise LLMRuntimeError(ClassifiedError(FailoverReason.content_policy_blocked, None, "LLM response refused"))
     if response.status != "completed":
@@ -146,6 +159,8 @@ def _response_text(response: Response) -> str:
     text = response.output_text
     if not text.strip():
         raise LLMRuntimeError(ClassifiedError(FailoverReason.empty_result, None, "LLM response has no output text"))
+    if validate_text and (classified := classify_response_text(text)):
+        raise LLMRuntimeError(classified)
     return text
 
 
@@ -159,8 +174,9 @@ async def call_llm_once(
     json_output: bool = False,
     temperature: float | None = None,
     before_call: Callable[[], Awaitable[None]] | None = None,
+    validate_output: Callable[[str], None] | None = None,
 ) -> str:
-    """沿已解析的任务链执行单次非流式调用；温度与推理档位按当前供应商换算。"""
+    """沿任务链非流式调用，响应与应用校验成功后才接受当前供应商结果。"""
     user_content = (
         json.dumps(user_payload, ensure_ascii=False) if isinstance(user_payload, dict | list) else str(user_payload)
     )
@@ -189,6 +205,8 @@ async def call_llm_once(
             raise LLMRuntimeError(
                 ClassifiedError(FailoverReason.format_error, None, "LLM response is not a JSON object"),
             )
+        if validate_output is not None:
+            validate_output(text)
         return text
 
     return await execute_with_fallback(llm_cfg.chain, ChatProvider, call, user_id=llm_cfg.user_id)
@@ -375,15 +393,20 @@ async def call_llm_json[T](
                 diagnostic.output_tokens = response.usage.output_tokens
                 diagnostic.reasoning_tokens = getattr(response.usage.output_tokens_details, "reasoning_tokens", None)
             try:
-                raw = _response_text(response)
+                raw = _response_text(response, validate_text=False)
             except IncompleteLlmResponseError:
                 diagnostic.validation = "incomplete"
                 record(diagnostic)
                 raise
             except LLMRuntimeError as exc:
                 diagnostic.validation = (
-                    "refused" if exc.classified.reason == FailoverReason.content_policy_blocked else "empty_output"
+                    "refused"
+                    if exc.classified.reason == FailoverReason.content_policy_blocked
+                    else "empty_output"
+                    if exc.classified.reason == FailoverReason.empty_result
+                    else "call_error"
                 )
+                diagnostic.failure_reason = exc.classified.reason.value
                 record(diagnostic)
                 raise
             if any(item.type == "function_call" for item in response.output):
@@ -419,6 +442,11 @@ async def call_llm_json[T](
                     raise LlmJsonValidationError("decision_changed", fields=changed)
                 result = parse_output(parsed)
             except ValueError as exc:
+                if classified := classify_response_text(raw):
+                    diagnostic.validation = "refused"
+                    diagnostic.failure_reason = classified.reason.value
+                    record(diagnostic)
+                    raise LLMRuntimeError(classified) from None
                 code, fields = _json_validation_feedback(exc, known_fields)
                 diagnostic.validation = "invalid_json" if code == "invalid_json" else "invalid_contract"
                 diagnostic.validation_error = code
@@ -550,7 +578,7 @@ async def vision_chat(
                 input_items=input_items,
             ),
         )
-        result = strip_outer_code_fence(response.output_text) if response.status == "completed" else ""
+        result = strip_outer_code_fence(_response_text(response))
         if not result:
             # 未完成或空结果可换下一家视觉模型
             raise LLMRuntimeError(

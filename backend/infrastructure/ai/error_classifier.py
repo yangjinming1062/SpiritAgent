@@ -1,6 +1,8 @@
 import enum
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 import openai
@@ -176,6 +178,75 @@ _CONTENT_POLICY_BLOCKED_PATTERNS = (
     "responsibleaipolicyviolation",
     "image_safety",  # Gemini 生图 IMAGE_SAFETY
     "generative ai prohibited use policy",
+    "input data may contain inappropriate content",
+    "output data may contain inappropriate content",
+    "input or output data may contain inappropriate content",
+    "request blocked due to safety violations",
+)
+
+_CONTENT_POLICY_ERROR_CODES = frozenset(
+    {
+        "content_filter",
+        "content_policy_violation",
+        "content_policy_blocked",
+        "responsibleaipolicyviolation",
+        "datainspectionfailed",  # 千问原生错误码。
+        "data_inspection_failed",  # 千问兼容协议错误码。
+        "1026",  # MiniMax 输入审核。
+        "1027",  # MiniMax 输出审核。
+        "safety",
+        "jailbreak",
+        "prohibited_content",
+        "blocklist",
+        "image_safety",
+    },
+)
+_CONTENT_POLICY_FINISH_REASONS = frozenset(
+    {
+        "content_filter",
+        "refusal",
+        "safety",
+        "recitation",
+        "blocklist",
+        "prohibited_content",
+        "spii",
+        "image_safety",
+        "image_prohibited_content",
+        "image_recitation",
+    },
+)
+_POLICY_DIAGNOSTIC_CODES = _CONTENT_POLICY_ERROR_CODES - {"safety", "jailbreak", "blocklist", "1026", "1027"}
+
+_GOOGLE_POLICY_RESPONSE = re.compile(
+    r"The prompt could not be submitted\.\s+"
+    r"The prompt contains sensitive words that violate Google's "
+    r"(?:Generative AI Prohibited Use Policy|\[Generative AI Prohibited Use Policy\]"
+    r"\(https://policies\.google\.com/terms/generative-ai/use-policy/?\))\.\s+"
+    r"Try rephrasing the prompt\."
+    r"(?:\s+If you think this was an error, "
+    r"(?:send feedback|\[send feedback\]\(https://ai\.google\.dev/gemini-api/docs/troubleshooting/?\))\.)?",
+    re.IGNORECASE,
+)
+_POLICY_DIAGNOSTIC_CODE = re.compile(
+    r"(?:(?P<prefix>(?:[\w.-]+\s+)?(?:api\s+)?(?:error|badrequesterror)(?:\s+code)?)\s*:?\s*)?"
+    r"(?P<code>[\w]+)(?:\s*[:：-]\s*(?:(?:input|output)\s+)?(?:blocked|rejected))?[.!]?",
+    re.IGNORECASE,
+)
+_POLICY_DIAGNOSTIC_MESSAGES = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"(?:(?:Error|BadRequestError)(?: code)?\s*:\s*(?:400\s*-\s*)?)?"
+        r"(?:Input|Output|Input or output) data may contain inappropriate content\."
+        r"(?:\s*For details, see:\s*https://help\.aliyun\.com/zh/model-studio/error-code/?#inappropriate-content\.?)?",
+        r"(?:(?:minimax\s+)?error\s+(?:1026|1027):\s*)?(?:input|output)\s+"
+        r"(?:new_sensitive|violated safety policy)\.?",
+        r"(?:Your|The) (?:request|prompt) (?:was flagged by our safety system|violates our usage policies)\."
+        r"(?:\s*Please (?:modify your (?:input|prompt) and (?:retry|try again)|try again with a different prompt)\.)?",
+        r"Responses cannot be generated due to safety filters\.",
+        r"Request blocked due to safety violations(?: \(harmful content\))?\."
+        r"(?:\s*Please modify your input and retry\.)?",
+        r"The prompt contains sensitive words that violate Google's Generative AI Prohibited Use Policy\.",
+    )
 )
 
 # xAI 订阅 entitlement：SSE type=error 不带状态码，须先于通用分类拦截
@@ -225,6 +296,115 @@ def is_content_policy_error_message(msg: str) -> bool:
     return any(p in msg.lower() for p in _CONTENT_POLICY_BLOCKED_PATTERNS)
 
 
+def _refused_message(message: dict[str, Any]) -> bool:
+    if message.get("type") == "refusal":
+        return isinstance(message.get("refusal"), str)
+    if message.get("type") != "message" and message.get("role") != "assistant":
+        return False
+    refusal = message.get("refusal")
+    if isinstance(refusal, str) and refusal.strip():
+        return True
+    content = message.get("content")
+    return isinstance(content, list) and any(
+        isinstance(part, dict) and part.get("type") == "refusal" for part in content
+    )
+
+
+def _policy_diagnostic(text: str) -> bool:
+    text = text.strip()
+    code = _POLICY_DIAGNOSTIC_CODE.fullmatch(text)
+    return bool(
+        (code and code["code"].lower() in (_CONTENT_POLICY_ERROR_CODES if code["prefix"] else _POLICY_DIAGNOSTIC_CODES))
+        or _GOOGLE_POLICY_RESPONSE.fullmatch(text)
+        or any(pattern.fullmatch(text) for pattern in _POLICY_DIAGNOSTIC_MESSAGES),
+    )
+
+
+def _policy_response(payload: dict[str, Any], *, error_context: bool, depth: int) -> bool:
+    codes = (payload.get("code"), payload.get("type"), payload.get("error_code"), payload.get("status_code"))
+    allowed_codes = _CONTENT_POLICY_ERROR_CODES if error_context else _POLICY_DIAGNOSTIC_CODES
+    if (error_context or isinstance(payload.get("message"), str)) and any(
+        _code_text(code).lower() in allowed_codes for code in codes
+    ):
+        return True
+    message = payload.get("message")
+    if error_context and isinstance(message, str) and _policy_diagnostic(message):
+        return True
+    details = payload.get("incomplete_details")
+    if isinstance(details, dict) and details.get("reason") == "content_filter":
+        return True
+    if _refused_message(payload):
+        return True
+    output = payload.get("output")
+    if isinstance(output, list) and any(isinstance(item, dict) and _refused_message(item) for item in output):
+        return True
+    choices = payload.get("choices")
+    if isinstance(choices, list):
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            if str(choice.get("finish_reason", "")).lower() in _CONTENT_POLICY_FINISH_REASONS:
+                return True
+            message = choice.get("message")
+            if isinstance(message, dict) and _refused_message(message):
+                return True
+    feedback = payload.get("promptFeedback", payload.get("prompt_feedback"))
+    if isinstance(feedback, dict) and str(feedback.get("blockReason", feedback.get("block_reason", ""))).lower() in (
+        _CONTENT_POLICY_FINISH_REASONS | {"other"}
+    ):
+        return True
+    candidates = payload.get("candidates")
+    if isinstance(candidates, list) and any(
+        isinstance(candidate, dict)
+        and str(candidate.get("finishReason", candidate.get("finish_reason", ""))).lower()
+        in _CONTENT_POLICY_FINISH_REASONS
+        for candidate in candidates
+    ):
+        return True
+    if depth == 0:
+        return False
+    # 只展开已知错误包装位置，最多三层；不进入业务字段或模型正文。
+    wrappers = [payload.get("error"), payload.get("base_resp")]
+    if error_context:
+        metadata = payload.get("metadata")
+        wrappers.extend(
+            (
+                payload.get("innererror"),
+                payload.get("inner_error"),
+                payload.get("message"),
+                metadata.get("raw") if isinstance(metadata, dict) else None,
+            ),
+        )
+    for wrapper in wrappers:
+        if isinstance(wrapper, str):
+            if _policy_diagnostic(wrapper):
+                return True
+            wrapper = safe_json_loads(wrapper)
+        if isinstance(wrapper, dict) and _policy_response(wrapper, error_context=True, depth=depth - 1):
+            return True
+    return False
+
+
+def is_content_policy_response(payload: dict[str, Any]) -> bool:
+    """识别供应商协议中的拦截信号，错误码与通用 HTTP 状态分别判断。"""
+    return _policy_response(payload, error_context=False, depth=3)
+
+
+def classify_response_text(text: str) -> ClassifiedError | None:
+    """识别正文中的供应商拒绝信封、诊断及完整模板，普通文字拒答不在此判定。"""
+    text = text.strip()
+    # 只解析完整正文或明确错误前缀后的 JSON，不从引文、代码块和业务字段中搜错。
+    payload_text = re.sub(r"^Error code:\s*\d{3}\s*-\s*", "", text, flags=re.IGNORECASE)
+    payload = safe_json_loads(payload_text)
+    if (isinstance(payload, dict) and is_content_policy_response(payload)) or _policy_diagnostic(text):
+        return ClassifiedError(
+            FailoverReason.content_policy_blocked,
+            None,
+            "LLM provider returned a content policy error as output text",
+        )
+    return None
+
+
 @dataclass(frozen=True)
 class _Signals:
     status_code: int | None
@@ -264,14 +444,14 @@ def classify_api_error(
         num_messages=num_messages,
     )
     return ClassifiedError(
-        reason=_classify(error, signals),
+        reason=_classify(error, signals, body),
         status_code=signals.status_code,
         # 消息会进入对外错误与日志，供应商响应体同样可能回显密钥
         message=redact_sensitive_text(_body_message(body) or str(error) or "")[:2000],
     )
 
 
-def _classify(error: BaseException, s: _Signals) -> FailoverReason:
+def _classify(error: BaseException, s: _Signals, body: dict) -> FailoverReason:
     # SDK 会把响应丢失包装成连接异常，仍须保留禁止重发的语义。
     current = error
     for _ in range(_CAUSE_CHAIN_MAX_DEPTH):
@@ -282,7 +462,11 @@ def _classify(error: BaseException, s: _Signals) -> FailoverReason:
             break
         current = cause
     # 内容策略须早于状态码：避免 400 安全拦截降级为 format_error、无状态码拦截落入 unknown
-    if s.has(_CONTENT_POLICY_BLOCKED_PATTERNS):
+    if (
+        s.error_code in _CONTENT_POLICY_ERROR_CODES
+        or _policy_response(body, error_context=True, depth=3)
+        or s.has(_CONTENT_POLICY_BLOCKED_PATTERNS)
+    ):
         return FailoverReason.content_policy_blocked
     if _GROK_ENTITLEMENT_PATTERN in s.text or ("out of available resources" in s.text and "grok" in s.text):
         return FailoverReason.auth
@@ -494,13 +678,12 @@ def _code_text(value: object) -> str:
 
 
 def _payload_code(payload: dict, *, unwrap_message: bool) -> str:
-    """``error.code`` / ``error.type`` → message 内嵌 JSON 的错误码 → 顶层 ``code`` / ``error_code``。"""
+    """读取 error.code/type、message 内嵌错误及顶层错误码。"""
     err = payload.get("error")
     if isinstance(err, dict):
         code = err.get("code") or err.get("type")
-        if isinstance(code, str) and (text := _code_text(code)):
+        if isinstance(code, str | int) and (text := _code_text(code)):
             return text
-        # 部分供应商把真实 JSON 错误体以字符串塞进 error.message
         message = err.get("message")
         if unwrap_message and isinstance(message, str) and message.strip().startswith("{"):
             inner = safe_json_loads(message)

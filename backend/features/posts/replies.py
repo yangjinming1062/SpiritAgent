@@ -2,6 +2,7 @@
 
 import asyncio
 
+from infrastructure.ai.error_classifier import ClassifiedError, FailoverReason, LLMRuntimeError
 from infrastructure.ai.prompt_engineer import call_llm_once
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import resolve_user_llm_config
@@ -65,6 +66,12 @@ async def _run_thread(user_id: int, post_id: str) -> None:
                     row.reply_status, row.reply_error = "failed", "回复暂未完成，可以重试"
                     await emit_comment(db, row)
                     await db.commit()
+
+
+def _validate_reply(text: str) -> None:
+    reply = text.strip()
+    if not reply or len(reply) > POST_COMMENT_MAX_CHARS:
+        raise LLMRuntimeError(ClassifiedError(FailoverReason.format_error, None, "Empty or oversized comment reply"))
 
 
 async def _generate_reply(user_id: int, post_id: str, comment_id: str) -> None:
@@ -131,10 +138,9 @@ async def _generate_reply(user_id: int, post_id: str, comment_id: str) -> None:
             config,
             render_post_instructions(POST_REPLY_INSTRUCTIONS, ctx.language),
             payload,
+            validate_output=_validate_reply,
         )
     ).strip()
-    if not reply or len(reply) > POST_COMMENT_MAX_CHARS:
-        raise ValueError("Empty or oversized comment reply")
     async with SESSION_LOCAL() as db:
         target = await db.scalar(
             select(CompanionPostComment)
