@@ -68,9 +68,9 @@
 
 [desktop-companion-activity.ts](app/workflows/desktop-companion-activity.ts) 合并同一轮变化后转发完整活动载荷；账户或承载代次变化重发，失败允许同值重试。工具派发归主进程，桌面表面停用精灵空间行为。
 
-[desktop-video-wallpaper.ts](app/windows/desktop/desktop-video-wallpaper.ts) 消费显式启用的独立套装，负责播放认领、回执与默认套装准备；启动播放通过现有接口恢复安静相伴，完成标记按账户和主进程鉴权会话保存，窗口重建继续保留伙伴当前选择。衣柜、场景库变化不触发套装切换或制作。套装和当前成品、制作草稿的语义见[桌面生活契约](../../docs/PROTOCOL.md#桌面生活视频与模式隔离)。外部制作窗口绑定草稿及基准，变化后须刷新。静态首帧只使用所属套装的确认图片，不能回退到当前场景库图片。
+[desktop-video-wallpaper.ts](app/windows/desktop/desktop-video-wallpaper.ts) 消费显式启用的独立套装，负责屏幕尺寸上报、播放认领与回执；启动播放通过现有接口恢复安静相伴，完成标记按账户和主进程鉴权会话保存，窗口重建继续保留伙伴当前选择。进入桌面及衣柜、场景库变化不触发套装创建或制作。套装和当前成品、制作草稿的语义见[桌面生活契约](../../docs/PROTOCOL.md#桌面生活视频与模式隔离)。外部制作窗口绑定草稿及基准，变化后须刷新。静态首帧只使用所属套装的确认图片，不能回退到当前场景库图片。
 
-[管理页](app/features/desktop-life/desktop-life-page.tsx) 的参考选择只更新创建草稿，素材加载结果由各自 store 持有，迟到回写守卫账户与请求代次。[视频修改](app/features/desktop-life/desktop-life-refinement.tsx) 独立持有预览检查与提交状态，按素材和套装版本校验制作起点。[预览](app/features/desktop-life/desktop-life-preview.tsx) 的草稿图片实例跟随完整资源 URL，视频保留同一资产的播放身份；图片确认资格来自实际草稿图的加载事件，当前成品封面回退不能解锁确认。页面交互与恢复体验归 [DESIGN](../../docs/DESIGN.md#桌面生活视频)。
+[管理页](app/features/desktop-life/desktop-life-page.tsx) 的新建入口及参考选择只更新账户本地创建草稿，显式提交所选制作方式后才请求建立套装；上传先选择文件，取消不创建套装或回退到 AI 制作。素材加载结果由各自 store 持有，迟到回写守卫账户与请求代次。[视频修改](app/features/desktop-life/desktop-life-refinement.tsx) 独立持有预览检查与提交状态，按素材和套装版本校验制作起点。[预览](app/features/desktop-life/desktop-life-preview.tsx) 的草稿图片实例跟随完整资源 URL，视频保留同一资产的播放身份；图片确认资格来自实际草稿图的加载事件，当前成品封面回退不能解锁确认。页面交互与恢复体验归 [DESIGN](../../docs/DESIGN.md#桌面生活视频)。
 
 [背景播放器](app/windows/desktop/desktop-background-entry.tsx) 双缓冲等待实际呈现的首帧；共同基准且允许自然衔接的短动作在循环接点切入，其余画面及上传视频的循环接点使用淡化。短动作返回仍有效的保留循环，套装或素材替换后不能返回旧画面。管理预览、封面、视频和过渡帧共用 [画幅布局](../shared/desktop-media-geometry.ts)，按实际媒体与视口确定裁切或居中内容区域，完整显示时让出模糊底层；规则归 [PIPELINE](../../docs/PIPELINE.md#桌面生活视频)。媒体加载失败保留当前画面，按主进程暂停状态控制播放并回收媒体 URL。套装启用前先预加载安静相伴，成功后才请求切换；主进程媒体桥同时守卫账户和选中路径。
 

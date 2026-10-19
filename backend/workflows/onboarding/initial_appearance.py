@@ -6,8 +6,6 @@ from infrastructure.database import SESSION_LOCAL
 
 from workflows.outfit_actions import start_outfit_actions
 
-from .desktop_suite import prepare_default_desktop_suite
-
 
 async def start_initial_video(user_id: int) -> None:
     async with SESSION_LOCAL() as db:
@@ -21,4 +19,3 @@ async def resume_initial_appearance() -> None:
         users = await initial_outfit_user_ids(db)
     for user_id in users:
         await schedule_initial_scene(user_id)
-        await prepare_default_desktop_suite(user_id, allow_generation=False)

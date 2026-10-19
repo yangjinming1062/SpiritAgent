@@ -84,13 +84,15 @@ export function DesktopRoot(): React.JSX.Element {
     videoState?.preparation_error ||
     idleVideo?.error ||
     videoError ||
-    (idleVideo?.status === 'processing'
-      ? idleVideo.stage === 'paused'
-        ? desktopLife.paused
-        : desktopLife.statuses.processing
-      : !idleVideo?.video_url
-        ? desktopLife.noPreview
-        : null)
+    (!videoState?.current
+      ? desktopLife.chooseBackground
+      : idleVideo?.status === 'processing'
+        ? idleVideo.stage === 'paused'
+          ? desktopLife.paused
+          : desktopLife.statuses.processing
+        : !idleVideo?.video_url
+          ? desktopLife.noPreview
+          : null)
 
   const [focusedConversation, setFocusedConversation] = useState<'main' | 'whisper' | null>('whisper')
   const [overlay, setOverlay] = useState<'account' | 'controls' | 'dock' | 'product' | null>(null)

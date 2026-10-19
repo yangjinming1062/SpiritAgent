@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.companion.visual_state import persona_snapshot
 from features.media.character_images import ImageChainState
-from features.scenes.models import CompanionScene, SceneOrigin, ScenePolicy, SceneSource, SceneStatus
+from features.scenes.models import CompanionScene, ScenePolicy, SceneSource, SceneStatus
 from features.scenes.query_contracts import SceneSnapshot
 from features.scenes.schemas import SceneImageDimensions, SceneImageSize, SceneResponse
 
@@ -203,14 +203,3 @@ def _snapshot(row: CompanionScene | None) -> SceneSnapshot | None:
 
 async def scene_snapshot(db: AsyncSession, user_id: int, scene_id: int) -> SceneSnapshot | None:
     return _snapshot(await get_scene(db, user_id, scene_id))
-
-
-async def initial_scene_snapshot(db: AsyncSession, user_id: int) -> SceneSnapshot | None:
-    """优先初始化场景；用户先创建场景时等待首条来源就绪，不跟随当前启用项。"""
-    row = await db.scalar(
-        select(CompanionScene)
-        .where(CompanionScene.user_id == user_id)
-        .order_by((CompanionScene.origin == SceneOrigin.ONBOARDING.value).desc(), CompanionScene.id)
-        .limit(1),
-    )
-    return _snapshot(row) if row is not None and row.status == SceneStatus.READY.value else None

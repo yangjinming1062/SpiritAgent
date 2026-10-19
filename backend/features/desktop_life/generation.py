@@ -53,7 +53,6 @@ from features.appearance.character_card import (
     render_character_identity,
     require_character_snapshot,
 )
-from features.appearance.onboarding import initial_outfit
 from features.appearance.queries import avatar_snapshot, outfit_identity_matches, ready_outfit_snapshot
 from features.appearance.visual_identity import align_character_reference
 from features.assets.lifecycle import cleanup_asset_directories_after_task
@@ -97,6 +96,7 @@ from features.desktop_life.prompts import (
     DESKTOP_VIDEO_SCORE,
     desktop_source_reference_prompt,
 )
+from features.desktop_life.queries import desktop_action_generation_blocked_reason
 from features.desktop_life.repository import (
     DesktopVideoStateError,
     desktop_action,
@@ -152,7 +152,7 @@ from features.media.video_queue.service import (
     pause_video_attempt,
     wait_video_attempt,
 )
-from features.scenes.queries import initial_scene_snapshot, scene_snapshot
+from features.scenes.queries import scene_snapshot
 
 logger = get_logger(__name__)
 _JOBS: dict[int, asyncio.Task[None]] = {}
@@ -269,19 +269,23 @@ def desktop_image_chain_exhausted(progress: DesktopVideoProgress) -> bool:
     )
 
 
+def desktop_progress_has_video_work(progress: DesktopVideoProgress) -> bool:
+    return bool(
+        progress.provider_task_id
+        or progress.download_url
+        or progress.source_path
+        or progress.candidate
+        or _queued_video_request(progress),
+    )
+
+
 def desktop_progress_can_resume(progress: DesktopVideoProgress) -> bool:
     if desktop_progress_has_unknown_submission(progress) or progress.failure_reason in {
         "material_rejected",
         "queue_stopped",
     }:
         return False
-    if (
-        progress.provider_task_id
-        or progress.download_url
-        or progress.source_path
-        or progress.candidate
-        or _queued_video_request(progress)
-    ):
+    if desktop_progress_has_video_work(progress):
         return True
     if progress.expand_image and desktop_image_chain_exhausted(progress):
         return False
@@ -337,7 +341,6 @@ async def load_desktop_visual_snapshot(
     *,
     scene_id: int | None = None,
     outfit_id: int | None = None,
-    initial: bool = False,
 ) -> DesktopVisualSnapshot:
     try:
         identity = await require_character_snapshot(db, user_id)
@@ -347,12 +350,8 @@ async def load_desktop_visual_snapshot(
     persona = await persona_snapshot(db, user_id)
     if avatar is None or not avatar.seed_fullbody_url or not avatar.asset_url:
         raise DesktopVideoStateError("伙伴的形象尚未准备好")
-    scene = (
-        await initial_scene_snapshot(db, user_id)
-        if initial
-        else (await scene_snapshot(db, user_id, scene_id) if scene_id is not None else None)
-    )
-    outfit = await initial_outfit(db, user_id) if initial else await ready_outfit_snapshot(db, user_id, outfit_id)
+    scene = await scene_snapshot(db, user_id, scene_id) if scene_id is not None else None
+    outfit = await ready_outfit_snapshot(db, user_id, outfit_id)
     if scene is None or scene.status != "ready" or not scene.description.strip():
         raise DesktopVideoStateError("请选择已就绪的场景")
     if outfit is None or not outfit.fullbody_url:
@@ -479,6 +478,8 @@ async def _require_active_job(user_id: int, action_id: int, generation_id: str) 
         row = await db.get(DesktopVideoSet, action.set_id)
         if row is None or row.user_id != user_id:
             raise DesktopVideoStateError("当前画面已被移除")
+        if await desktop_action_generation_blocked_reason(db, action, row):
+            raise GenerationWorkPaused
         if progress.continuity == "base":
             expected = (
                 row.base_version + 1
@@ -1468,6 +1469,13 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                 return
             generation_id = initial.generation_id
         action, snapshot, progress = await _job_inputs(user_id, action_id, generation_id)
+        if action.key != "idle":
+            async with SESSION_LOCAL() as db:
+                suite = await db.get(DesktopVideoSet, action.set_id)
+                if suite is None:
+                    raise DesktopVideoStateError("当前画面已被移除")
+                if await desktop_action_generation_blocked_reason(db, action, suite):
+                    allow_model_steps = False
         progress.aspect_ratio = _delivery_aspect(progress)
         if desktop_progress_has_unknown_submission(progress):
             progress.submission_unknown = True
@@ -1872,7 +1880,7 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
     except GenerationWorkPaused:
         if generation_id:
             await _pause_desktop_job(user_id, action_id, generation_id)
-        logger.info("Desktop generation paused for maintenance", extra={"action_id": action_id})
+        logger.info("Desktop generation paused before new model calls", extra={"action_id": action_id})
     except asyncio.CancelledError as exc:
         if exc.args == ("paused",) and progress is not None:
             await _pause_desktop_job(

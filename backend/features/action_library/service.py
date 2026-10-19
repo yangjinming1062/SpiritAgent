@@ -154,6 +154,8 @@ async def ensure_target(
         await db.flush()
     elif row.state != "excluded" and mismatch:
         row.state, row.reason = "blocked", "冻结的身份或着装来源不同"
+    elif row.state == "pending" and not target.ready:
+        row.state, row.reason = "blocked", target.blocked_reason
     elif row.state == "blocked" and row.automatic and target.ready and not mismatch:
         row.state, row.reason = "pending", None
     return ActionTargetSnapshot.model_validate(row)

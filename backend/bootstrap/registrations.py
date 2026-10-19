@@ -38,7 +38,6 @@ from features.media.video_jobs import inspect_video_queue_owner as inspect_media
 from features.media.video_queue.ports import configure_video_queue_ports
 from features.media.video_queue.service import cancel_video_attempt
 from features.memory.diary_hooks import set_diary_delete_handler
-from features.scenes.completion import set_scene_ready_handler
 from infrastructure.ai.configuration_reader import set_configuration_reader
 from infrastructure.ai.providers.base import ServiceType
 from infrastructure.ai.providers.custom.chat import CustomChatProvider
@@ -89,7 +88,6 @@ from workflows.action_library import (
 )
 from workflows.automation.companion_turns import execute_companion_turn
 from workflows.onboarding.character_ready import complete_character_initialization
-from workflows.onboarding.desktop_suite import prepare_default_desktop_suite
 from workflows.outfit_actions import start_outfit_actions
 
 from bootstrap.assets import register_asset_contributions
@@ -174,7 +172,6 @@ def wire_domain_hooks() -> None:
     )
     set_character_ready_handler(complete_character_initialization)
     set_outfit_ready_handler(start_outfit_actions)
-    set_scene_ready_handler(prepare_default_desktop_suite)
     configure_action_library_ports(
         source_reader=action_source_reader,
         variant_reader=action_variant_reader,

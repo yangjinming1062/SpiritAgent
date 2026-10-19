@@ -106,7 +106,6 @@ async def prepare_current(user_id: int, body: DesktopVideoEnsureRequest | None =
     try:
         return await ensure_current_desktop_videos(
             user_id,
-            source="user_requested",
             target_width=body.target_width if body else None,
             target_height=body.target_height if body else None,
         )

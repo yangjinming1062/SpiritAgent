@@ -56,7 +56,7 @@ function applyState(state: DesktopVideoState): void {
   }
 }
 
-/** 水合仅查询；制作只由实际进入桌面或显式操作触发。 */
+/** 水合仅查询；素材制作由用户显式操作触发。 */
 export async function refreshDesktopVideos(): Promise<void> {
   if (!captureAuthScope()) {
     return

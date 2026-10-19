@@ -88,6 +88,31 @@ def desktop_accepted_asset(action: DesktopVideoAction) -> DesktopVideoAsset | No
     )
 
 
+async def desktop_base_blocked_reason(db: AsyncSession, suite: DesktopVideoSet) -> str | None:
+    """其他动作只在安静相伴成品及其基准生效后制作；重做草稿不撤销当前成品。"""
+    idle = await db.scalar(
+        select(DesktopVideoAction).where(
+            DesktopVideoAction.user_id == suite.user_id,
+            DesktopVideoAction.set_id == suite.id,
+            DesktopVideoAction.key == "idle",
+        ),
+    )
+    asset = desktop_accepted_asset(idle) if idle is not None else None
+    if idle is None or asset is None or not idle.enabled or idle.needs_update:
+        return "请先完成这套桌景的安静相伴"
+    if (
+        not suite.base_image_path
+        or suite.base_version < 1
+        or asset.image_path != suite.base_image_path
+        or asset.base_image_path != suite.base_image_path
+        or asset.base_version != suite.base_version
+        or asset.resolution_revision != suite.resolution_revision
+        or resolve_asset_reference(suite.base_image_path) is None
+    ):
+        return "安静相伴的基础画面不可用，请先重新制作"
+    return None
+
+
 def desktop_progress(action: DesktopVideoAction) -> DesktopVideoProgress | None:
     return (
         DesktopVideoProgress.model_validate_json(action.generation_state_json) if action.generation_state_json else None
@@ -919,7 +944,7 @@ async def publish_desktop_asset(
     if state.current_set_id == action.set_id and state.selected_action_id is None and action.key == "idle":
         state.selected_action_id = state.loop_action_id = action.id
         state.loop_changed_at = utc_now()
-    if base_changed:
+    if action.key == "idle":
         await db.flush()
         action_source = await read_source(db, action.user_id, "desktop", row.id)
         if action_source is None:

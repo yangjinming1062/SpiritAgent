@@ -120,12 +120,9 @@ async def desktop_target_states(
         can_generate = response.can_generate
         if can_generate or (status == "blocked" and action.generation_state_json is None and response.current is None):
             source = await desktop_action_source(db, user_id, action.set_id)
-            suite = await db.get(DesktopVideoSet, action.set_id)
-            if source is None or suite is None or not source.ready:
+            if source is None or not source.ready:
                 status, can_generate = "blocked", False
-                reason = source.blocked_reason if source and suite is not None else "桌景已删除"
-            elif action.continuity == "base" and not suite.base_image_path:
-                status, can_generate, reason = "blocked", False, "请先制作安静相伴的基础画面"
+                reason = source.blocked_reason if source else "桌景已删除"
             else:
                 status, can_generate, reason = "not_generated", action.enabled, None
         result.setdefault(action.definition_id, []).append(
@@ -153,18 +150,13 @@ async def request_synced_desktop_generation(
         action = await desktop_action(db, user_id, action_id, lock=True)
         if action.definition_id is None:
             raise DesktopVideoStateError("这个桌景动作没有关联共同动作")
+        snapshot = await desktop_action_source(db, user_id, action.set_id)
+        if snapshot is None or not snapshot.ready:
+            raise DesktopVideoStateError(snapshot.blocked_reason if snapshot else "桌景已删除")
         if action.status == "blocked" and not action.generation_state_json and not action.accepted_asset_json:
-            snapshot = await desktop_action_source(db, user_id, action.set_id)
-            suite = await db.get(DesktopVideoSet, action.set_id)
-            if (
-                snapshot is not None
-                and suite is not None
-                and snapshot.ready
-                and (action.continuity != "base" or suite.base_image_path)
-            ):
-                action.status, action.stage, action.error = "not_generated", "prepare", None
-                await touch_desktop_state(db, user_id)
-                await db.commit()
+            action.status, action.stage, action.error = "not_generated", "prepare", None
+            await touch_desktop_state(db, user_id)
+            await db.commit()
         if not desktop_action_response(action).can_generate:
             return desktop_action_response(action)
     return await generate_desktop_action(

@@ -72,6 +72,8 @@ import {
   desktopLifeActionStatus,
   desktopLifeActionsToCreate,
   desktopLifeCreationStage,
+  desktopLifePendingAction,
+  desktopLifeReadyForActions,
   isActionPaused
 } from './desktop-life-status'
 import { useDesktopLifeStrings } from './desktop-life-strings'
@@ -208,12 +210,17 @@ export function DesktopLifePage({
   const externalAuthSession = useRef(authSessionId)
   const beginAsync = useAsyncGuard()
   const selected = sets.find(item => item.id === selectedSetId)
-  const actionsToCreate = desktopLifeActionsToCreate(selected?.actions ?? [])
+  const readyForActions = desktopLifeReadyForActions(selected)
+  const actionsToCreate = readyForActions ? desktopLifeActionsToCreate(selected?.actions ?? []) : []
   const idle = selected?.actions.find(action => action.key === 'idle')
   const action = selected?.actions.find(item => item.id === selectedActionId)
   const currentMatches = selected?.is_current === true
   const externalSet = sets.find(set => set.id === externalAction?.set_id)
   const liveExternalAction = externalSet?.actions.find(item => item.id === externalAction?.id)
+
+  const externalNeedsBase = Boolean(
+    externalAction && externalAction.key !== 'idle' && !desktopLifeReadyForActions(externalSet)
+  )
 
   const externalStale = Boolean(
     externalAction &&
@@ -503,7 +510,7 @@ export function DesktopLifePage({
   }
 
   const loadExternalPrompt = async (action: DesktopVideoAction, requirements = ''): Promise<void> => {
-    if (externalUploadRequest.current) {
+    if (externalUploadRequest.current || externalNeedsBase) {
       return
     }
 
@@ -657,7 +664,13 @@ export function DesktopLifePage({
   }
 
   const uploadExternalVideo = async (): Promise<void> => {
-    if (!externalAction || !externalFilePath || externalUploadRequest.current || externalPromptLoading) {
+    if (
+      !externalAction ||
+      !externalFilePath ||
+      externalUploadRequest.current ||
+      externalPromptLoading ||
+      externalNeedsBase
+    ) {
       return
     }
 
@@ -807,7 +820,8 @@ export function DesktopLifePage({
     }
   }
 
-  const openCreate = (): void => {
+  const openCreate = (event: React.MouseEvent<HTMLButtonElement>): void => {
+    event.preventDefault()
     setCreateOpen(true)
     void loadSceneLibrary('', 0)
     void hydrateWardrobe()
@@ -1018,7 +1032,7 @@ export function DesktopLifePage({
             : 0
 
     const dependent = item.key !== 'idle' && (item.draft?.continuity ?? item.continuity) === 'base'
-    const requiresBase = dependent && !selected.base_image_url && !chooseActivity && !replaceUpload && !unknown
+    const requiresBase = item.key !== 'idle' && !readyForActions && !processing && !candidate && !unknown
 
     const awaitingFirstGeneration =
       item.definition_id !== null && ['not_generated', 'blocked'].includes(item.status) && !item.current && !item.draft
@@ -1243,7 +1257,12 @@ export function DesktopLifePage({
                     {(showingCurrentVideo || candidate) && (
                       <button
                         className={`${BTN_SUBTLE} self-start`}
-                        disabled={busy || item.status === 'processing' || item.draft?.submission_unknown}
+                        disabled={
+                          busy ||
+                          (item.key !== 'idle' && !readyForActions) ||
+                          item.status === 'processing' ||
+                          item.draft?.submission_unknown
+                        }
                         onClick={() =>
                           setRefinement({ action: item, set: selected, source: candidate ? 'candidate' : 'current' })
                         }
@@ -1385,6 +1404,21 @@ export function DesktopLifePage({
           <button className={BTN_PRIMARY} onClick={() => idle && openAction(idle)} type="button">
             {t.openImage}
           </button>
+          {item.draft && !chooseActivity && !replaceUpload && (isActionPaused(item) || item.status === 'failed') && (
+            <button
+              className={BTN_SUBTLE}
+              disabled={busy}
+              onClick={() => void run(() => retryDesktopVideoDraft(item, selected))}
+              type="button"
+            >
+              {isActionPaused(item) ? t.resume : t.retry}
+            </button>
+          )}
+          {item.draft && (
+            <button className={BTN_GHOST} disabled={busy} onClick={() => setDiscardAction(item)} type="button">
+              {t.discardDraft}
+            </button>
+          )}
         </CreationActionBar>
       ) : controls ? (
         <CreationActionBar description={feedbackStatus}>{controls}</CreationActionBar>
@@ -1428,20 +1462,24 @@ export function DesktopLifePage({
   const detailView = !createOpen && action ? renderAction(action, workspaceStatus) : null
 
   const externalFeedback =
-    externalUploading || externalPromptLoading || externalStale || externalError ? (
+    externalUploading || externalPromptLoading || externalStale || externalError || externalNeedsBase ? (
       <CreationFeedback
-        description={externalError || (externalStale ? t.stalePrompt : undefined)}
+        description={
+          externalError || (externalNeedsBase ? t.imageRequiredHint : externalStale ? t.stalePrompt : undefined)
+        }
         state={externalUploading || externalPromptLoading ? 'working' : 'error'}
         title={externalUploading ? t.uploadProcessing : externalPromptLoading ? t.promptLoading : t.operationFailed}
       />
     ) : null
 
+  // 创建入口与提交区使用不同 DOM，避免切页的同一次点击继续触发表单提交。
   const createFooter = createOpen ? (
     <CreationActionBar
       description={
         workspaceStatus ??
         (!resolutionReady ? t.screenUnavailable : !materialReady ? t.creationMissingMaterials : t.creationReady)
       }
+      key="create"
     >
       <button
         className={BTN_PRIMARY}
@@ -1488,7 +1526,7 @@ export function DesktopLifePage({
 
   const libraryFooter =
     !createOpen && !selected ? (
-      <CreationActionBar description={workspaceStatus}>
+      <CreationActionBar description={workspaceStatus} key="library">
         <button className={BTN_PRIMARY} disabled={busy} onClick={openCreate} type="button">
           <Plus size={16} />
           {t.createSet}
@@ -1498,114 +1536,115 @@ export function DesktopLifePage({
 
   const workspaceFooter = createFooter ?? detailView?.footer ?? overviewFooter ?? libraryFooter
 
-  const customActionForm = selected ? (
-    <>
-      <h3 className="mt-3 text-sm font-medium text-strong">{t.addCustom}</h3>
-      <form
-        className="mt-4 flex flex-col gap-3"
-        onSubmit={event => {
-          event.preventDefault()
-          const isLive = beginAsync()
-          void run(async () => {
-            const proposal = await designDesktopVideoAction({
-              name: design.name.trim() || design.description.trim().slice(0, 24),
-              motion_description: design.description.trim(),
-              kind: design.kind,
-              duration_seconds: design.duration,
-              expected_set_id: selected.id
-            })
+  const customActionForm =
+    selected && readyForActions ? (
+      <>
+        <h3 className="mt-3 text-sm font-medium text-strong">{t.addCustom}</h3>
+        <form
+          className="mt-4 flex flex-col gap-3"
+          onSubmit={event => {
+            event.preventDefault()
+            const isLive = beginAsync()
+            void run(async () => {
+              const proposal = await designDesktopVideoAction({
+                name: design.name.trim() || design.description.trim().slice(0, 24),
+                motion_description: design.description.trim(),
+                kind: design.kind,
+                duration_seconds: design.duration,
+                expected_set_id: selected.id
+              })
 
-            if (!isLive()) {
-              return
-            }
-
-            setDesign(current => ({ ...current, name: '', description: '' }))
-            setDesignMessage(proposal.review_reason || t.designSubmitted)
-
-            if (proposal.action_id) {
-              updateDesktopLifeUi({ selectedActionId: proposal.action_id, addActionOpen: false })
-            }
-          })
-        }}
-      >
-        {designMessage && (
-          <p className="text-sm text-muted" role="status">
-            {designMessage}
-          </p>
-        )}
-        <label className="flex flex-col gap-2 text-sm text-body">
-          {t.actionDescription}
-          <textarea
-            className={`${INPUT_CLASS} min-h-28 resize-y`}
-            maxLength={600}
-            minLength={10}
-            onChange={event => setDesign(current => ({ ...current, description: event.target.value }))}
-            required
-            rows={4}
-            value={design.description}
-          />
-        </label>
-        <details>
-          <summary className="cursor-pointer text-sm text-muted">{t.actionSettings}</summary>
-          <div className="mt-3 flex flex-col gap-3">
-            <input
-              aria-label={t.actionName}
-              className={INPUT_CLASS}
-              maxLength={64}
-              onChange={event => setDesign(current => ({ ...current, name: event.target.value }))}
-              placeholder={t.nameOptional}
-              value={design.name}
-            />
-            <PanelSelect
-              ariaLabel={t.actionSettings}
-              onChange={value =>
-                setDesign(current => ({
-                  ...current,
-                  kind: value === 'once' ? 'once' : 'loop',
-                  duration: value === 'once' ? 6 : 10
-                }))
+              if (!isLive()) {
+                return
               }
-              options={[
-                { value: 'loop', label: t.loop },
-                { value: 'once', label: t.once }
-              ]}
-              value={design.kind}
-            />
-            <label className="flex items-center gap-2 text-sm text-body">
-              {t.duration}
-              <input
-                className={`${INPUT_CLASS} w-20`}
-                max={15}
-                min={1}
-                onChange={event => setDesign(current => ({ ...current, duration: Number(event.target.value) || 0 }))}
-                required
-                step={1}
-                type="number"
-                value={design.duration}
-              />
-            </label>
-          </div>
-        </details>
-        <button
-          className={`${BTN_PRIMARY} self-start`}
-          disabled={busy || design.description.trim().length < 10}
-          type="submit"
+
+              setDesign(current => ({ ...current, name: '', description: '' }))
+              setDesignMessage(proposal.review_reason || t.designSubmitted)
+
+              if (proposal.action_id) {
+                updateDesktopLifeUi({ selectedActionId: proposal.action_id, addActionOpen: false })
+              }
+            })
+          }}
         >
-          {t.startAction}
-        </button>
-        {(design.name.trim() || design.description.trim()) && (
+          {designMessage && (
+            <p className="text-sm text-muted" role="status">
+              {designMessage}
+            </p>
+          )}
+          <label className="flex flex-col gap-2 text-sm text-body">
+            {t.actionDescription}
+            <textarea
+              className={`${INPUT_CLASS} min-h-28 resize-y`}
+              maxLength={600}
+              minLength={10}
+              onChange={event => setDesign(current => ({ ...current, description: event.target.value }))}
+              required
+              rows={4}
+              value={design.description}
+            />
+          </label>
+          <details>
+            <summary className="cursor-pointer text-sm text-muted">{t.actionSettings}</summary>
+            <div className="mt-3 flex flex-col gap-3">
+              <input
+                aria-label={t.actionName}
+                className={INPUT_CLASS}
+                maxLength={64}
+                onChange={event => setDesign(current => ({ ...current, name: event.target.value }))}
+                placeholder={t.nameOptional}
+                value={design.name}
+              />
+              <PanelSelect
+                ariaLabel={t.actionSettings}
+                onChange={value =>
+                  setDesign(current => ({
+                    ...current,
+                    kind: value === 'once' ? 'once' : 'loop',
+                    duration: value === 'once' ? 6 : 10
+                  }))
+                }
+                options={[
+                  { value: 'loop', label: t.loop },
+                  { value: 'once', label: t.once }
+                ]}
+                value={design.kind}
+              />
+              <label className="flex items-center gap-2 text-sm text-body">
+                {t.duration}
+                <input
+                  className={`${INPUT_CLASS} w-20`}
+                  max={15}
+                  min={1}
+                  onChange={event => setDesign(current => ({ ...current, duration: Number(event.target.value) || 0 }))}
+                  required
+                  step={1}
+                  type="number"
+                  value={design.duration}
+                />
+              </label>
+            </div>
+          </details>
           <button
-            className={`${BTN_GHOST} self-start`}
-            disabled={busy}
-            onClick={() => setDesign({ name: '', description: '', kind: 'loop', duration: 10 })}
-            type="button"
+            className={`${BTN_PRIMARY} self-start`}
+            disabled={busy || design.description.trim().length < 10}
+            type="submit"
           >
-            {t.clearCustomization}
+            {t.startAction}
           </button>
-        )}
-      </form>
-    </>
-  ) : null
+          {(design.name.trim() || design.description.trim()) && (
+            <button
+              className={`${BTN_GHOST} self-start`}
+              disabled={busy}
+              onClick={() => setDesign({ name: '', description: '', kind: 'loop', duration: 10 })}
+              type="button"
+            >
+              {t.clearCustomization}
+            </button>
+          )}
+        </form>
+      </>
+    ) : null
 
   return (
     <div className={styles.page}>
@@ -1723,14 +1762,50 @@ export function DesktopLifePage({
                   const scope = captureAuthScope()
                   const isLive = beginAsync()
                   void run(async () => {
+                    let mediaPath: string | undefined
+
+                    if (currentCreate.source !== 'ai') {
+                      const image = currentCreate.source === 'image_upload'
+
+                      const paths = await fileApi().selectPaths({
+                        title: image ? t.uploadImage : t.selectVideo,
+                        multiple: false,
+                        filters: [
+                          image
+                            ? { name: t.imageFilterName, extensions: ['png', 'jpg', 'jpeg', 'webp'] }
+                            : { name: t.videoFilterName, extensions: ['mp4', 'mov'] }
+                        ]
+                      })
+
+                      mediaPath = paths[0]
+
+                      if (!mediaPath) {
+                        return
+                      }
+                    }
+
+                    const liveUi = $desktopLifeUi.get()
+                    const currentTarget = readyDesktopLifeResolution(liveUi.create, $presentation.get())
+
+                    if (
+                      !scope?.() ||
+                      !isLive() ||
+                      !authSessionId ||
+                      !currentTarget ||
+                      !liveUi.creating ||
+                      liveUi.create.requestId !== currentCreate.requestId
+                    ) {
+                      return
+                    }
+
                     const created = await createDesktopVideoSet({
                       request_id: currentCreate.requestId,
                       name: currentCreate.name.trim() || t.newSceneName,
                       scene_id: Number(currentCreate.sceneId),
                       outfit_id: Number(currentCreate.outfitId),
                       source: currentCreate.source,
-                      target_width: target.width,
-                      target_height: target.height,
+                      target_width: currentTarget.width,
+                      target_height: currentTarget.height,
                       feedback: currentCreate.feedback.trim()
                     })
 
@@ -1746,26 +1821,38 @@ export function DesktopLifePage({
                       create: newDesktopLifeCreation()
                     })
 
-                    if (first && currentCreate.source === 'image_upload') {
-                      const [path] = await fileApi().selectPaths({
-                        title: t.uploadImage,
-                        multiple: false,
-                        filters: [{ name: t.imageFilterName, extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
-                      })
-
-                      if (path && authSessionId && scope()) {
-                        await withAspectChoice(policy =>
-                          uploadDesktopVideoAction(first, created, path, authSessionId, 'image', policy)
-                        )
-                      }
+                    if (first && currentCreate.source === 'image_upload' && mediaPath) {
+                      const path = mediaPath
+                      await withAspectChoice(policy =>
+                        uploadDesktopVideoAction(first, created, path, authSessionId, 'image', policy)
+                      )
                     }
 
-                    if (first && currentCreate.source === 'video_upload') {
+                    if (first && currentCreate.source === 'video_upload' && mediaPath) {
                       openExternal(first)
+                      setExternalFilePath(mediaPath)
                     }
                   })
                 }}
               >
+                <section className={styles.section}>
+                  <h3 className="text-sm font-medium text-strong">{t.creationSource}</h3>
+                  <div aria-label={t.creationSource} className={styles.sourceChoice} role="group">
+                    {(['ai', 'image_upload', 'video_upload'] as DesktopVideoSource[]).map(source => (
+                      <button
+                        aria-pressed={create.source === source}
+                        className={BTN_SUBTLE}
+                        disabled={busy}
+                        key={source}
+                        onClick={() => setCreate(current => ({ ...current, source, requestId: crypto.randomUUID() }))}
+                        type="button"
+                      >
+                        {source === 'ai' ? t.useAI : source === 'image_upload' ? t.imageSource : t.videoSource}
+                      </button>
+                    ))}
+                  </div>
+                  {create.source !== 'ai' && <p className="text-sm text-body">{t.ownMediaHint}</p>}
+                </section>
                 <DesktopLifeDisplayPicker
                   disabled={busy}
                   displayId={create.targetDisplayId}
@@ -1802,7 +1889,7 @@ export function DesktopLifePage({
                 </section>
                 <details
                   className="rounded-xl border border-line-hairline p-4"
-                  open={Boolean(create.name.trim() || create.feedback.trim() || create.source !== 'ai') || undefined}
+                  open={Boolean(create.name.trim() || create.feedback.trim()) || undefined}
                 >
                   <summary className="cursor-pointer text-sm font-medium text-strong">{t.advanced}</summary>
                   <div className="mt-4 flex flex-col gap-4">
@@ -1816,21 +1903,7 @@ export function DesktopLifePage({
                         value={create.name}
                       />
                     </label>
-                    <div aria-label={t.creationSource} className={styles.sourceChoice} role="group">
-                      {(['ai', 'image_upload', 'video_upload'] as DesktopVideoSource[]).map(source => (
-                        <button
-                          aria-pressed={create.source === source}
-                          className={BTN_SUBTLE}
-                          disabled={busy}
-                          key={source}
-                          onClick={() => setCreate(current => ({ ...current, source, requestId: crypto.randomUUID() }))}
-                          type="button"
-                        >
-                          {source === 'ai' ? t.useAI : source === 'image_upload' ? t.imageSource : t.videoSource}
-                        </button>
-                      ))}
-                    </div>
-                    {create.source === 'ai' ? (
+                    {create.source === 'ai' && (
                       <label className={styles.field}>
                         {t.idea}
                         <textarea
@@ -1848,10 +1921,8 @@ export function DesktopLifePage({
                           value={create.feedback}
                         />
                       </label>
-                    ) : (
-                      <p className="text-sm text-body">{t.ownMediaHint}</p>
                     )}
-                    {(create.name.trim() || create.feedback.trim() || create.source !== 'ai') && (
+                    {(create.name.trim() || create.feedback.trim()) && (
                       <button
                         className={`${BTN_GHOST} self-start`}
                         disabled={busy}
@@ -1860,7 +1931,6 @@ export function DesktopLifePage({
                             ...current,
                             name: '',
                             feedback: '',
-                            source: 'ai',
                             requestId: crypto.randomUUID()
                           }))
                         }
@@ -2021,14 +2091,7 @@ export function DesktopLifePage({
                     action => action.draft || (action.key === 'idle' && !action.current)
                   )
 
-                  const pendingAction =
-                    item.actions.find(action => action.draft?.submission_unknown) ??
-                    item.actions.find(action => action.status === 'processing' && !isActionPaused(action)) ??
-                    item.actions.find(
-                      action => action.status === 'review_pending' || action.stage === 'image_review'
-                    ) ??
-                    item.actions.find(isActionPaused) ??
-                    item.actions.find(action => action.draft)
+                  const pendingAction = desktopLifePendingAction(item)
 
                   const statusAction = pendingAction ?? idle
 
@@ -2180,7 +2243,9 @@ export function DesktopLifePage({
             >
               <button
                 className={BTN_PRIMARY}
-                disabled={!externalFilePath || externalUploading || externalPromptLoading || externalStale}
+                disabled={
+                  !externalFilePath || externalUploading || externalPromptLoading || externalStale || externalNeedsBase
+                }
                 onClick={() => void uploadExternalVideo()}
                 type="button"
               >
@@ -2216,7 +2281,7 @@ export function DesktopLifePage({
             <details
               className="border-t border-line-hairline pt-4"
               onToggle={event => {
-                if (event.currentTarget.open && !externalPrompt && !externalPromptLoading) {
+                if (event.currentTarget.open && !externalPrompt && !externalPromptLoading && !externalNeedsBase) {
                   void loadExternalPrompt(externalAction, externalRequirements)
                 }
               }}
@@ -2243,7 +2308,7 @@ export function DesktopLifePage({
                   (!externalPrompt || externalStale || externalRequirements.trim() !== externalPromptRequirements) && (
                     <button
                       className={`${BTN_SUBTLE} self-start`}
-                      disabled={externalUploading}
+                      disabled={externalUploading || externalNeedsBase}
                       onClick={() => void loadExternalPrompt(externalAction, externalRequirements)}
                       type="button"
                     >

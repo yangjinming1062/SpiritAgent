@@ -1,7 +1,27 @@
-import type { DesktopVideoAction } from '@/modules/desktop-videos'
+import type { DesktopVideoAction, DesktopVideoSet } from '@/modules/desktop-videos'
 import type { useStrings } from '@/shared/strings'
 
 import type { useDesktopLifeStrings } from './desktop-life-strings'
+
+export function desktopLifeReadyForActions(set: DesktopVideoSet | undefined): boolean {
+  const idle = set?.actions.find(action => action.key === 'idle')
+
+  return Boolean(set?.base_image_url && set.base_version > 0 && idle?.current?.video_url && idle.playable)
+}
+
+export function desktopLifePendingAction(set: DesktopVideoSet): DesktopVideoAction | undefined {
+  if (!desktopLifeReadyForActions(set)) {
+    return set.actions.find(action => action.key === 'idle')
+  }
+
+  return (
+    set.actions.find(action => action.draft?.submission_unknown) ??
+    set.actions.find(action => action.status === 'processing' && !isActionPaused(action)) ??
+    set.actions.find(action => action.status === 'review_pending' || action.stage === 'image_review') ??
+    set.actions.find(isActionPaused) ??
+    set.actions.find(action => action.draft)
+  )
+}
 
 export function desktopLifeActionsToCreate(actions: readonly DesktopVideoAction[]): DesktopVideoAction[] {
   return actions.filter(action => {

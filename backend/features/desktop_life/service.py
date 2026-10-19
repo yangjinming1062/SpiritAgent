@@ -8,7 +8,6 @@ from tempfile import TemporaryDirectory
 from typing import Literal
 from uuid import uuid4
 
-from infrastructure.ai.prompt_engineer import VisualReasoningError
 from infrastructure.ai.selection import ProviderSelection
 from infrastructure.assets.asset_store import (
     read_valid_image_data_uri,
@@ -50,6 +49,7 @@ from features.desktop_life.generation import (
     desktop_image_chain_exhausted,
     desktop_progress_can_resume,
     desktop_progress_has_unknown_submission,
+    desktop_progress_has_video_work,
     load_desktop_visual_snapshot,
     notify_desktop_set_updated,
     pause_desktop_video_job,
@@ -79,7 +79,7 @@ from features.desktop_life.prompts import (
     DESKTOP_VIDEO_QUIET,
     desktop_source_reference_prompt,
 )
-from features.desktop_life.queries import desktop_action_source
+from features.desktop_life.queries import desktop_action_generation_blocked_reason
 from features.desktop_life.repository import (
     DesktopVideoAspectRatioError,
     DesktopVideoError,
@@ -413,6 +413,25 @@ async def _suite(db: AsyncSession, user_id: int, set_id: int) -> DesktopVideoSet
     return row
 
 
+async def _require_action_generation(db: AsyncSession, action: DesktopVideoAction, suite: DesktopVideoSet) -> None:
+    if reason := await desktop_action_generation_blocked_reason(db, action, suite):
+        raise DesktopVideoStateError(reason)
+
+
+async def _resume_model_steps(
+    db: AsyncSession,
+    action: DesktopVideoAction,
+    suite: DesktopVideoSet,
+    progress: DesktopVideoProgress,
+) -> bool:
+    reason = await desktop_action_generation_blocked_reason(db, action, suite)
+    if reason is None:
+        return True
+    if desktop_progress_has_video_work(progress):
+        return False
+    raise DesktopVideoStateError(reason)
+
+
 async def _create_suite(
     db: AsyncSession,
     user_id: int,
@@ -526,8 +545,10 @@ async def create_desktop_video_set(user_id: int, request: DesktopVideoCreateSetR
                 source=request.source,
                 target_width=request.target_width,
                 target_height=request.target_height,
+                is_default=not state.default_created,
                 initial_feedback=request.feedback.strip(),
             )
+            state.default_created = True
             if request.source == "ai":
                 idle_id = await db.scalar(
                     select(DesktopVideoAction.id).where(
@@ -651,69 +672,14 @@ async def _record_preparation_error(user_id: int, action_id: int, error: str) ->
 async def ensure_current_desktop_videos(
     user_id: int,
     *,
-    source: str = "user_requested",
-    allow_generation: bool = True,
     target_width: int | None = None,
     target_height: int | None = None,
 ) -> DesktopVideoStateResponse:
-    idle_id = None
-    created_set_id = None
     async with _lock(user_id), SESSION_LOCAL() as db:
         state = await desktop_state(db, user_id, create=True)
-        if target_width is not None and target_height is not None and not state.default_created:
+        if target_width is not None and target_height is not None:
             state.target_width, state.target_height = target_width, target_height
-            await db.commit()
-            state = await desktop_state(db, user_id, create=True)
-        if not state.default_created:
-            if not state.target_width or not state.target_height:
-                return await get_desktop_video_state(db, user_id)
-            try:
-                snapshot = await load_desktop_visual_snapshot(db, user_id, initial=True)
-            except (DesktopVideoError, VisualReasoningError, OSError):
-                return await get_desktop_video_state(db, user_id)
-            row = await _create_suite(
-                db,
-                user_id,
-                snapshot,
-                name="默认桌景",
-                request_id=None,
-                source="ai",
-                target_width=state.target_width,
-                target_height=state.target_height,
-                is_default=True,
-            )
-            state.default_created = True
-            if state.current_set_id is None:
-                state.current_set_id = row.id
-                state.set_epoch += 1
-            idle_id = await db.scalar(
-                select(DesktopVideoAction.id).where(
-                    DesktopVideoAction.set_id == row.id,
-                    DesktopVideoAction.key == "idle",
-                ),
-            )
-            await db.commit()
-            created_set_id = row.id
-        elif allow_generation:
-            idle_id = await db.scalar(
-                select(DesktopVideoAction.id)
-                .join(DesktopVideoSet)
-                .where(
-                    DesktopVideoSet.user_id == user_id,
-                    DesktopVideoSet.is_default.is_(True),
-                    DesktopVideoAction.key == "idle",
-                    DesktopVideoAction.status == "queued",
-                    DesktopVideoAction.generation_state_json.is_(None),
-                ),
-            )
-    if created_set_id is not None:
-        await desktop_set_created(user_id, created_set_id)
-    if idle_id is not None and allow_generation:
-        try:
-            await generate_desktop_image(user_id, idle_id, source=source)
-        except DesktopVideoError as exc:
-            await _record_preparation_error(user_id, idle_id, str(exc))
-    async with SESSION_LOCAL() as db:
+        await db.commit()
         return await get_desktop_video_state(db, user_id)
 
 
@@ -834,15 +800,10 @@ async def generate_desktop_image(
     async with _lock(user_id), SESSION_LOCAL() as db:
         action = await desktop_action(db, user_id, action_id, lock=True)
         row = await _suite(db, user_id, action.set_id)
+        await _require_action_generation(db, action, row)
         state = await desktop_state(db, user_id, create=True)
         if source == "autonomous" and (not state.autonomous_enabled or not SETTINGS.action_autocreate_enabled):
             raise DesktopVideoStateError("自主制作动作当前已关闭")
-        if action.definition_id is not None:
-            source_snapshot = await desktop_action_source(db, user_id, row.id)
-            if source_snapshot is None or not source_snapshot.ready:
-                raise DesktopVideoStateError(
-                    source_snapshot.blocked_reason if source_snapshot else "桌景冻结参考资料无法读取",
-                )
         old = desktop_progress(action)
         accepted = desktop_accepted_asset(action)
         if feedback is None:
@@ -1012,6 +973,7 @@ async def upload_desktop_image(
         if action.version != expected_action_version:
             raise DesktopVideoStateError("当前成品已变化，请刷新后重试")
         row = await _suite(db, user_id, action.set_id)
+        await _require_action_generation(db, action, row)
         if expected_set_id is not None and expected_set_id != row.id:
             raise DesktopVideoStateError("桌景套装已变化")
         _validate_draft(
@@ -1074,6 +1036,7 @@ async def upload_desktop_image(
         async with _lock(user_id), SESSION_LOCAL() as db:
             action = await desktop_action(db, user_id, action_id, lock=True)
             row = await _suite(db, user_id, action.set_id)
+            await _require_action_generation(db, action, row)
             current = desktop_progress(action)
             _validate_draft(row, current, draft_id=progress.generation_id, base_version=baseline)
             action.generation_state_json = progress.model_dump_json()
@@ -1142,6 +1105,7 @@ async def confirm_desktop_image(
     async with _lock(user_id), SESSION_LOCAL() as db:
         action = await desktop_action(db, user_id, action_id, lock=True)
         row = await _suite(db, user_id, action.set_id)
+        await _require_action_generation(db, action, row)
         progress = desktop_progress(action)
         _validate_draft(
             row,
@@ -1250,18 +1214,25 @@ async def retry_desktop_action(
             )
         ):
             return await desktop_action_response_with_sync(db, action)
-        restart_refinement = progress.video_refinement is not None and not desktop_progress_can_resume(progress)
+        allow_model_steps = await _resume_model_steps(db, action, row, progress)
+        restart_refinement = (
+            allow_model_steps and progress.video_refinement is not None and not desktop_progress_can_resume(progress)
+        )
         image = ImageChainState.model_validate_json(progress.image_chain_json) if progress.image_chain_json else None
-        new_image = action.status == "failed" and (
-            progress.failure_reason in {"image_unsuitable", "review_invalid"}
-            or bool(
-                progress.image_only
-                and image is not None
-                and (
-                    image.stop_reason in {"exhausted", "goal_review_invalid"}
-                    or image.phase == "complete"
-                    and image.best() is None
-                ),
+        new_image = (
+            allow_model_steps
+            and action.status == "failed"
+            and (
+                progress.failure_reason in {"image_unsuitable", "review_invalid"}
+                or bool(
+                    progress.image_only
+                    and image is not None
+                    and (
+                        image.stop_reason in {"exhausted", "goal_review_invalid"}
+                        or image.phase == "complete"
+                        and image.best() is None
+                    ),
+                )
             )
         )
         if new_image and not progress.video_refinement and progress.source != "external_upload":
@@ -1293,7 +1264,7 @@ async def retry_desktop_action(
             response = await desktop_action_response_with_sync(db, action)
         else:
             response = None
-        resumable = action.stage == "paused" or desktop_progress_can_resume(progress)
+        resumable = not allow_model_steps or action.stage == "paused" or desktop_progress_can_resume(progress)
         feedback, image_only, auto_continue = progress.feedback, progress.image_only, progress.auto_continue
     if restart_refinement:
         return await _restart_desktop_refinement(
@@ -1345,6 +1316,7 @@ async def _restart_desktop_refinement(
     async with SESSION_LOCAL() as db:
         action = await desktop_action(db, user_id, action_id)
         row = await _suite(db, user_id, action.set_id)
+        await _require_action_generation(db, action, row)
         progress = desktop_progress(action)
         _validate_draft(
             row,
@@ -1374,6 +1346,7 @@ async def _restart_desktop_refinement(
     async with _lock(user_id), SESSION_LOCAL() as db:
         action = await desktop_action(db, user_id, action_id, lock=True)
         row = await _suite(db, user_id, action.set_id)
+        await _require_action_generation(db, action, row)
         old = desktop_progress(action)
         _validate_draft(
             row,
@@ -1466,10 +1439,11 @@ async def resume_desktop_action(
             raise DesktopVideoStateError("本次视频制作已结束，请重新制作视频")
         if progress.expand_image and desktop_image_chain_exhausted(progress):
             raise DesktopVideoStateError("本次图片制作没有可用结果，请重新制作图片")
+        allow_model_steps = await _resume_model_steps(db, action, row, progress)
         if progress.source == "external_upload":
             if not progress.source_path and progress.candidate is None:
                 raise DesktopVideoStateError("上传的视频尚未保存完成，请稍后重试或重新上传")
-        elif not progress.reprocess_only:
+        elif allow_model_steps and not progress.reprocess_only:
             require_new_generation_call(user_id)
         progress.paused_by_user = False
         progress.failure_reason = ""
@@ -1482,7 +1456,7 @@ async def resume_desktop_action(
         await touch_desktop_state(db, user_id)
         await db.commit()
         response = await desktop_action_response_with_sync(db, action)
-    schedule_desktop_video_job(user_id, action_id)
+    schedule_desktop_video_job(user_id, action_id, allow_model_steps=allow_model_steps)
     return response
 
 
@@ -1596,6 +1570,7 @@ async def generate_desktop_action(
     async with SESSION_LOCAL() as db:
         action = await desktop_action(db, user_id, action_id, lock=True)
         row = await _suite(db, user_id, action.set_id)
+        await _require_action_generation(db, action, row)
         if pending_update and (not action.enabled or not action.update_pending):
             return await desktop_action_response_with_sync(db, action)
         progress = desktop_progress(action)
@@ -1737,6 +1712,7 @@ async def generate_desktop_action(
     async with _lock(user_id), SESSION_LOCAL() as db:
         action = await desktop_action(db, user_id, action_id, lock=True)
         row = await _suite(db, user_id, action.set_id)
+        await _require_action_generation(db, action, row)
         state = await desktop_state(db, user_id, create=True)
         old = desktop_progress(action)
         if pending_update and (not action.enabled or not action.update_pending):
@@ -1891,6 +1867,7 @@ async def _refinement_source(
     )
     if row is None:
         raise DesktopVideoNotFoundError("找不到对应的画面")
+    await _require_action_generation(db, action, row)
     progress = desktop_progress(action)
     _validate_draft(
         row,
@@ -2121,6 +2098,7 @@ async def upload_desktop_action(
         )
         if row is None:
             raise DesktopVideoNotFoundError("找不到对应的画面")
+        await _require_action_generation(db, initial, row)
         _validate_draft(
             row,
             desktop_progress(initial) if initial.stage != "complete" else None,
@@ -2183,6 +2161,7 @@ async def upload_desktop_action(
     async with _lock(user_id), SESSION_LOCAL() as db:
         initial = await desktop_action(db, user_id, action_id, lock=True)
         row = await _suite(db, user_id, initial.set_id)
+        await _require_action_generation(db, initial, row)
         old = desktop_progress(initial)
         _validate_draft(
             row,

@@ -11,7 +11,13 @@ from features.action_library.identity import source_visual_key
 from features.action_library.schemas import ActionSourceSnapshot
 
 from .models import DesktopVideoAction, DesktopVideoSet
-from .repository import desktop_accepted_asset, desktop_asset_description, desktop_progress, desktop_state
+from .repository import (
+    desktop_accepted_asset,
+    desktop_asset_description,
+    desktop_base_blocked_reason,
+    desktop_progress,
+    desktop_state,
+)
 from .schemas import DesktopVisualSnapshot
 
 
@@ -53,6 +59,7 @@ async def desktop_action_source(
         return None
     snapshot = DesktopVisualSnapshot.model_validate_json(suite.context_json)
     reason = await asyncio.to_thread(_source_readiness, snapshot, suite.source_visual_key)
+    reason = reason or await desktop_base_blocked_reason(db, suite)
     return ActionSourceSnapshot(
         user_id=user_id,
         outfit_id=suite.outfit_id,
@@ -68,6 +75,19 @@ async def desktop_action_source(
         outfit_description=snapshot.outfit_description,
         persona=snapshot.persona,
     )
+
+
+async def desktop_action_generation_blocked_reason(
+    db: AsyncSession,
+    action: DesktopVideoAction,
+    suite: DesktopVideoSet,
+) -> str | None:
+    if action.key == "idle":
+        return None
+    if action.definition_id is None:
+        return await desktop_base_blocked_reason(db, suite)
+    source = await desktop_action_source(db, action.user_id, suite.id)
+    return source.blocked_reason if source is not None else "桌景已删除"
 
 
 class DesktopStateSnapshot(BaseModel):
