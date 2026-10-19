@@ -15,7 +15,7 @@ import httpx
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from infrastructure.network import trusted_service_async_client
+from infrastructure.network import read_capped_response, trusted_service_async_client
 from infrastructure.text import utc_now
 
 from .social_content import RequestGuard, SocialSourceError
@@ -176,15 +176,15 @@ class XiaohongshuServiceClient:
                         **({"json": payload} if payload is not None else {}),
                     ) as response:
                         status_code = response.status_code
-                        body = bytearray()
-                        async for chunk in response.aiter_bytes():
-                            if len(body) + len(chunk) > _MAX_RESPONSE_BYTES:
-                                raise SocialSourceError(
-                                    "Xiaohongshu response exceeded its limit",
-                                    code=422,
-                                    reason="response_invalid",
-                                )
-                            body.extend(chunk)
+                        body = await read_capped_response(
+                            response,
+                            max_bytes=_MAX_RESPONSE_BYTES,
+                            too_large=SocialSourceError(
+                                "Xiaohongshu response exceeded its limit",
+                                code=422,
+                                reason="response_invalid",
+                            ),
+                        )
             try:
                 raw = json.loads(body)
             except (ValueError, UnicodeError, RecursionError):

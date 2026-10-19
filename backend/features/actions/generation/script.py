@@ -1,7 +1,7 @@
 """动作脚本与探身定位：模型描述画面，代码绑定规格并校验结果。"""
 
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Annotated, Literal
 
 from infrastructure.ai.error_classifier import LlmCallBlockedError
@@ -156,6 +156,77 @@ class ImageActionDescriptions(BaseModel):
     actions: list[ImageActionScriptEntry]
 
 
+def _action_script_payload(
+    specs: Sequence[_ActionSpec],
+    *,
+    persona_definition: dict[str, str],
+    personality_tags: list[str],
+    outfit_description: str,
+    feedback: str,
+) -> dict[str, object]:
+    actions: list[dict[str, object]] = []
+    for spec in specs:
+        action: dict[str, object] = {
+            "action": spec.action,
+            "name": spec.name,
+            "description": spec.semantics_or(),
+            "use_when": spec.use_when,
+            "avoid_when": spec.avoid_when,
+            "feedback": spec.feedback,
+        }
+        if isinstance(spec, VideoActionSpec):
+            action.update(duration_seconds=spec.duration_seconds, clip_kind=spec.clip_kind)
+        actions.append(action)
+    return {
+        "persona": persona_definition,
+        "personality_tags": personality_tags,
+        "outfit_description": outfit_description,
+        "feedback": feedback,
+        "actions": actions,
+    }
+
+
+def _order_action_entries[T: (ImageActionScriptEntry, VideoActionScriptEntry)](
+    entries: list[T],
+    specs: Sequence[_ActionSpec],
+) -> None:
+    wanted = [spec.action for spec in specs]
+    keys = [entry.action for entry in entries]
+    if len(keys) != len(wanted) or set(keys) != set(wanted):
+        raise VideoScriptError("动作集合与请求不符")
+    order = {key: index for index, key in enumerate(wanted)}
+    entries.sort(key=lambda entry: order[entry.action])
+
+
+async def _compose_action_output[T](
+    user_id: int,
+    *,
+    task: AiTaskKey,
+    reference_image: str,
+    instructions: str,
+    payload: dict[str, object],
+    parse_output: Callable[[object], T],
+    failure_message: str,
+    before_submit: Callable[[], Awaitable[None]] | None,
+) -> T:
+    last_error = ""
+    for _attempt in range(2):
+        raw = await vision_chat(
+            user_id,
+            instructions,
+            json.dumps(payload, ensure_ascii=False),
+            reference_images=(reference_image,),
+            before_submit=before_submit,
+            task=task,
+        )
+        try:
+            return parse_output(parse_llm_json(raw))
+        except (ValidationError, ValueError, VideoScriptError) as exc:
+            last_error = str(exc)
+            payload["validation_error"] = last_error
+    raise VideoScriptError(failure_message) from ValueError(last_error)
+
+
 async def compose_action_image_descriptions(
     user_id: int,
     *,
@@ -169,46 +240,27 @@ async def compose_action_image_descriptions(
     feedback: str = "",
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> ImageActionDescriptions:
-    payload = {
-        "persona": persona_definition,
-        "personality_tags": personality_tags,
-        "outfit_description": outfit_description,
-        "feedback": feedback,
-        "actions": [
-            {
-                "action": spec.action,
-                "name": spec.name,
-                "description": spec.semantics_or(),
-                "use_when": spec.use_when,
-                "avoid_when": spec.avoid_when,
-                "feedback": spec.feedback,
-            }
-            for spec in specs
-        ],
-    }
-    wanted = [spec.action for spec in specs]
-    last_error = "缺少有效动作图片描述"
-    for _attempt in range(2):
-        raw = await vision_chat(
-            user_id,
-            ACTION_IMAGE_DESCRIPTION_INSTRUCTIONS + "\n" + render_character_profile(identity),
-            json.dumps(payload, ensure_ascii=False),
-            reference_images=(reference_image,),
-            before_submit=before_submit,
-            task=task,
-        )
-        try:
-            result = ImageActionDescriptions.model_validate(parse_llm_json(raw))
-            keys = [entry.action for entry in result.actions]
-            if len(keys) != len(wanted) or set(keys) != set(wanted):
-                raise VideoScriptError("动作集合与请求不符")
-            order = {key: index for index, key in enumerate(wanted)}
-            result.actions.sort(key=lambda entry: order[entry.action])
-            return result
-        except (ValidationError, ValueError, VideoScriptError) as exc:
-            last_error = str(exc)
-            payload["validation_error"] = last_error
-    raise VideoScriptError("动作图片描述生成失败，请重试") from ValueError(last_error)
+    def parse_output(payload: object) -> ImageActionDescriptions:
+        result = ImageActionDescriptions.model_validate(payload)
+        _order_action_entries(result.actions, specs)
+        return result
+
+    return await _compose_action_output(
+        user_id,
+        task=task,
+        reference_image=reference_image,
+        instructions=ACTION_IMAGE_DESCRIPTION_INSTRUCTIONS + "\n" + render_character_profile(identity),
+        payload=_action_script_payload(
+            specs,
+            persona_definition=persona_definition,
+            personality_tags=personality_tags,
+            outfit_description=outfit_description,
+            feedback=feedback,
+        ),
+        parse_output=parse_output,
+        failure_message="动作图片描述生成失败，请重试",
+        before_submit=before_submit,
+    )
 
 
 def build_action_image_prompt(entry: ImageActionScriptEntry, identity: CharacterCardSnapshot) -> str:
@@ -233,50 +285,30 @@ async def compose_action_script(
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> ActionScript:
     """为一批动作规格编写演绎脚本。返回条目与请求规格一一对应。"""
-    payload = {
-        "persona": persona_definition,
-        "personality_tags": personality_tags,
-        "outfit_description": outfit_description,
-        "feedback": feedback,
-        "actions": [
-            {
-                "action": spec.action,
-                "name": spec.name,
-                "description": spec.semantics_or(),
-                "use_when": spec.use_when,
-                "avoid_when": spec.avoid_when,
-                "feedback": spec.feedback,
-                "duration_seconds": spec.duration_seconds,
-                "clip_kind": spec.clip_kind,
-            }
-            for spec in specs
-        ],
-    }
-    last_error = "缺少有效动作"
-    for _attempt in range(2):
-        raw = await vision_chat(
-            user_id,
-            VIDEO_ACTION_SCRIPT_INSTRUCTIONS + "\n" + render_character_profile(identity),
-            json.dumps(payload, ensure_ascii=False),
-            reference_images=(reference_image,),
-            before_submit=before_submit,
-            task=task,
-        )
-        try:
-            script = ActionScript.model_validate(parse_llm_json(raw))
-            keys = [entry.action for entry in script.actions]
-            wanted = [spec.action for spec in specs]
-            if len(keys) != len(specs) or set(keys) != set(wanted):
-                raise VideoScriptError("动作集合与请求不符")
-            order = {key: index for index, key in enumerate(wanted)}
-            script.actions.sort(key=lambda entry: order[entry.action])
-            # 脚本沿用请求规格的时长与模式：不把 once 舞蹈写成短循环。
-            script.actions = [entry.with_spec(spec) for entry, spec in zip(script.actions, specs, strict=True)]
-            return script
-        except (ValidationError, ValueError, VideoScriptError) as exc:
-            last_error = str(exc)
-            payload["validation_error"] = last_error
-    raise VideoScriptError("动作脚本生成失败，请重试") from ValueError(last_error)
+
+    def parse_output(payload: object) -> ActionScript:
+        script = ActionScript.model_validate(payload)
+        _order_action_entries(script.actions, specs)
+        # 脚本沿用请求规格的时长与模式：不把 once 舞蹈写成短循环。
+        script.actions = [entry.with_spec(spec) for entry, spec in zip(script.actions, specs, strict=True)]
+        return script
+
+    return await _compose_action_output(
+        user_id,
+        task=task,
+        reference_image=reference_image,
+        instructions=VIDEO_ACTION_SCRIPT_INSTRUCTIONS + "\n" + render_character_profile(identity),
+        payload=_action_script_payload(
+            specs,
+            persona_definition=persona_definition,
+            personality_tags=personality_tags,
+            outfit_description=outfit_description,
+            feedback=feedback,
+        ),
+        parse_output=parse_output,
+        failure_message="动作脚本生成失败，请重试",
+        before_submit=before_submit,
+    )
 
 
 async def inspect_peek_geometry(

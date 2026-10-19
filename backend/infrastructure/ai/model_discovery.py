@@ -13,6 +13,7 @@ from infrastructure.ai.models import ModelDiscoveryResponse, ModelMetadata, Mode
 from infrastructure.ai.providers.base import ServiceType
 from infrastructure.ai.providers.http import get_http
 from infrastructure.ai.providers.registry import configured_base_url
+from infrastructure.network import read_capped_response
 
 _CATALOG_URL = "https://openrouter.ai/api/v1"
 _CATALOG_TTL = 3600.0
@@ -137,14 +138,13 @@ async def _json(
         timeout=10.0,
     ) as response:
         response.raise_for_status()
-        chunks = []
-        size = 0
-        async for chunk in response.aiter_bytes():
-            size += len(chunk)
-            if size > 16 * 1024 * 1024:
-                raise ValueError("模型目录响应过大")
-            chunks.append(chunk)
-        body = json.loads(b"".join(chunks))
+        body = json.loads(
+            await read_capped_response(
+                response,
+                max_bytes=16 * 1024 * 1024,
+                too_large=ValueError("模型目录响应过大"),
+            ),
+        )
     if not isinstance(body, dict):
         raise ValueError("模型目录响应格式无效")
     return body

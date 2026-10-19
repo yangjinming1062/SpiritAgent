@@ -33,7 +33,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from runtime.background import TaskBag
 from runtime.events.emit import emit_ws_event
 from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
-from runtime.user_maintenance import is_user_in_maintenance, track_user_task
+from runtime.user_maintenance import is_user_in_maintenance
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -473,8 +473,7 @@ def _spawn_poll(job_id: int, user_id: int) -> None:
     task = asyncio.create_task(_poll_and_finalize(job_id))
     _POLL_TASKS[job_id] = task
     task.add_done_callback(lambda done: _POLL_TASKS.pop(job_id, None) if _POLL_TASKS.get(job_id) is done else None)
-    _BG.add(task, on_error=_on_video_task_error)
-    track_user_task(user_id, task, cancel_on_maintenance=False)
+    _BG.add(task, user_id=user_id, cancel_on_maintenance=False, on_error=_on_video_task_error)
 
 
 async def _record_failure(job_id: int, *, reason: str) -> None:

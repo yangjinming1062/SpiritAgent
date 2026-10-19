@@ -7,7 +7,6 @@ from infrastructure.ai.llm_client import MissingLlmConfigError
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from runtime.background import TaskBag
-from runtime.user_maintenance import track_user_task
 from sqlalchemy import select, update
 
 from features.companion.models import Persona
@@ -30,8 +29,7 @@ async def drain() -> None:
 
 def schedule_personality_tag_refresh(persona_id: int, user_id: int) -> None:
     task = asyncio.create_task(_refresh_personality_tags(persona_id, user_id), name=f"persona-tags-{persona_id}")
-    _BG.add(task)
-    track_user_task(user_id, task)
+    _BG.add(task, user_id=user_id)
 
 
 async def _refresh_personality_tags(persona_id: int, user_id: int) -> None:

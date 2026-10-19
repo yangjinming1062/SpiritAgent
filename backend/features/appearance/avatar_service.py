@@ -3,7 +3,6 @@ import contextlib
 import io
 import json
 from collections.abc import Awaitable, Callable
-from pathlib import Path
 
 from infrastructure.ai.error_classifier import LLMRuntimeError, is_content_policy_error_message
 from infrastructure.ai.prompt_engineer import chat, vision_chat
@@ -606,14 +605,9 @@ async def _generate_avatar_step(
     )
 
 
-def _portrait_file(path: str | None) -> tuple[Path, str] | None:
-    """定位立绘裸路径：temp-media 草稿或 companion-assets 用户资产；缺失或过期返回 None。"""
-    return resolve_asset_reference(path)
-
-
 def read_portrait_bytes(path: str | None) -> tuple[bytes, str] | None:
     """读取立绘裸路径的字节与类型；文件缺失、过期或不可读时返回 None。"""
-    resolved = _portrait_file(path)
+    resolved = resolve_asset_reference(path)
     if resolved is None:
         return None
     try:
@@ -622,17 +616,12 @@ def read_portrait_bytes(path: str | None) -> tuple[bytes, str] | None:
         return None
 
 
-def load_avatar_bytes_as_data_uri(path: str | None) -> str | None:
-    """立绘裸路径读为供应商可内联的 data URI；不可读时返回 None。"""
-    return read_asset_data_uri(path)
-
-
 def delete_portrait_file(path: str | None) -> None:
     """尽力删除立绘文件：temp-media 草稿或 companion-assets 用户资产。"""
     if path and path.startswith("companion-assets/"):
         unlink_companion_asset(path)
         return
-    resolved = _portrait_file(path)
+    resolved = resolve_asset_reference(path)
     if resolved is not None:
         with contextlib.suppress(OSError):
             resolved[0].unlink(missing_ok=True)
@@ -645,11 +634,6 @@ def re_sign_bare_path(bare_path: str | None) -> str | None:
     if bare_path.startswith("temp-media/"):
         return f"/api/media/files/{bare_path.removeprefix('temp-media/')}"
     return signed_companion_asset_url(bare_path)
-
-
-def normalize_avatar_url_to_bare(url: str | None) -> str:
-    """客户端回传的立绘地址（签名 URL 或草稿地址）还原为裸路径，供与存储值比对。"""
-    return normalize_asset_reference(url)
 
 
 async def _verified_persona(user_id: int) -> PersonaSnapshot:
@@ -743,7 +727,9 @@ async def list_avatar_history(db: AsyncSession, user_id: int, limit: int = 20) -
 def _is_orphan_temp_media_asset(asset: AvatarAsset) -> bool:
     """头像草稿所有图片字段都指向已过期 temp-media → DB 行无可用图片，按孤儿清理。字段全空或任一字段仍有活图则不视作孤儿。"""
     paths = [path for path in (asset.asset_url, asset.seed_fullbody_url) if path]
-    return bool(paths) and all(path.startswith("temp-media/") and _portrait_file(path) is None for path in paths)
+    return bool(paths) and all(
+        path.startswith("temp-media/") and resolve_asset_reference(path) is None for path in paths
+    )
 
 
 async def regenerate_avatar(mode: ImageReviseMode, user_id: int, feedback: str | None = None) -> AvatarAsset:
@@ -766,7 +752,7 @@ async def regenerate_avatar(mode: ImageReviseMode, user_id: int, feedback: str |
         # 编辑底图即当前激活头像，成功后照常写入新 AvatarAsset 行。
         if current is None:
             raise AvatarNotFoundError("找不到当前头像，请重新生成")
-        edit_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, current.asset_url)
+        edit_uri = await asyncio.to_thread(read_asset_data_uri, current.asset_url)
         if not edit_uri:
             raise AvatarSourceUnreadableError("当前头像文件缺失或无法读取，请重新生成")
         return await _generate_avatar_step(
@@ -840,7 +826,7 @@ async def finalize_avatar(db: AsyncSession, user_id: int) -> AvatarAsset | None:
             await db.rollback()
             delete_portrait_file(new_path)
             raise
-    elif await asyncio.to_thread(_portrait_file, asset.asset_url) is None:
+    elif await asyncio.to_thread(resolve_asset_reference, asset.asset_url) is None:
         # 被替换的已确认头像只删文件、保留历史行；重新选中后不能把缺失的文件确认为头像。
         raise AvatarSourceUnreadableError("头像文件缺失或无法读取，请重新生成")
     return asset
@@ -890,7 +876,7 @@ async def _prepare_fullbody_reference(
     require_transparent_background: bool = False,
 ) -> tuple[str, str]:
     """返回头像参考与完整提示词，供内部生成和外部制作共用。"""
-    reference = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.asset_url)
+    reference = await asyncio.to_thread(read_asset_data_uri, asset.asset_url)
     if not reference:
         raise AvatarSourceUnreadableError("头像缺失或无法读取，请重新生成头像")
     definition = load_persona_definition(persona)
@@ -1031,7 +1017,7 @@ async def generate_fullbody_reference(
                 raise AvatarGenerationError("参考图只用于重新生成，微调请先移除参考图")
             if not effective_feedback:
                 raise AvatarGenerationError("请先描述要微调的内容")
-            reference_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, edit_path)
+            reference_uri = await asyncio.to_thread(read_asset_data_uri, edit_path)
             if not reference_uri:
                 raise AvatarSourceUnreadableError("上一版全身参考缺失或无法读取，请先重新生成")
             prompt = build_image_edit_prompt(
@@ -1100,10 +1086,10 @@ async def confirm_fullbody_seed(user_id: int, *, avatar_id: int, expected_url: s
             original_seed_url = asset.seed_fullbody_url
         if (
             original_avatar_url.startswith("temp-media/")
-            or await asyncio.to_thread(_portrait_file, original_avatar_url) is None
+            or await asyncio.to_thread(resolve_asset_reference, original_avatar_url) is None
         ):
             raise AvatarSourceUnreadableError("头像文件缺失或尚未确认，请重新确认头像")
-        if not original_seed_url or normalize_avatar_url_to_bare(expected_url) != original_seed_url:
+        if not original_seed_url or normalize_asset_reference(expected_url) != original_seed_url:
             raise AvatarSourceUnreadableError("全身形象已变更，请重新加载后确认")
         seed = await asyncio.to_thread(read_portrait_bytes, original_seed_url)
         if seed is None:

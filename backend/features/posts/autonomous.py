@@ -7,11 +7,11 @@ from time import monotonic
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from runtime.background import TaskBag
-from runtime.user_maintenance import is_user_in_maintenance, track_user_task
+from runtime.user_maintenance import is_user_in_maintenance
 
 from features.accounts.queries import list_user_ids
 from features.companion.queries import complete_user_ids
-from features.posts.publication import available_types, request_publication, resume_publications
+from features.posts.publication import request_publication, resume_publications
 from features.posts.replies import resume_replies
 from features.posts.store import PostBlockedError
 
@@ -37,16 +37,13 @@ async def scan_autonomous_posts() -> None:
         _INFLIGHT.add(user_id)
         task = asyncio.create_task(_decide(user_id))
         task.add_done_callback(lambda _, uid=user_id: _INFLIGHT.discard(uid))
-        _BG.add(task)
-        track_user_task(user_id, task)
+        _BG.add(task, user_id=user_id)
     for stale in set(_NEXT_CHECK_AT) - set(users):
         _NEXT_CHECK_AT.pop(stale, None)
 
 
 async def _decide(user_id: int) -> None:
     try:
-        if not await available_types(user_id):
-            return
         await request_publication(user_id)
     except PostBlockedError:
         logger.info("Autonomous post skipped by policy or quota", extra={"user_id": user_id})

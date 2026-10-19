@@ -454,12 +454,7 @@ def resolve_companion_asset_path(user_id: int, filename: str) -> tuple[Path, str
     if not resolved.is_file():
         return None
     ext = resolved.suffix.lstrip(".").lower()
-    content_type = {
-        "png": "image/png",
-        "jpg": "image/jpeg",
-        "jpeg": "image/jpeg",
-        "webp": "image/webp",
-        "gif": "image/gif",
+    content_type = image_mime_for_extension(ext) or {
         "json": "application/json",
         "mkv": "video/x-matroska",
         "mp4": "video/mp4",

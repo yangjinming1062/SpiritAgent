@@ -6,6 +6,7 @@ from typing import Any
 from infrastructure.async_io import cancel_and_wait
 
 from .task_supervisor import TASK_SUPERVISOR
+from .user_maintenance import track_user_task
 
 
 class BackgroundTask:
@@ -45,9 +46,25 @@ class TaskBag:
     def __init__(self, name: str) -> None:
         self._name = name
 
-    def add(self, task: asyncio.Task, *, on_error: Callable[[asyncio.Task], None] | None = None) -> None:
-        """注册 task;完成时自动从集合移除;若带异常且提供了 on_error 则触发。"""
-        TASK_SUPERVISOR.register(task, owner=self._name, on_error=on_error)
+    def add(
+        self,
+        task: asyncio.Task,
+        *,
+        user_id: int | None = None,
+        cancel_on_maintenance: bool = True,
+        on_error: Callable[[asyncio.Task], None] | None = None,
+    ) -> None:
+        """登记模块与可选账户归属；账户任务同时遵循维护取消策略。"""
+        if user_id is None:
+            TASK_SUPERVISOR.register(task, owner=self._name, on_error=on_error)
+        else:
+            track_user_task(
+                user_id,
+                task,
+                owner=self._name,
+                cancel_on_maintenance=cancel_on_maintenance,
+                on_error=on_error,
+            )
 
     async def drain(self) -> None:
         """取消所有未完成 task 并等待其 settle。"""

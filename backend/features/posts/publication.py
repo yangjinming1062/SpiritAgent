@@ -21,7 +21,7 @@ from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import format_local_iso, resolve_language, resolve_prompt_text, utc_now
 from runtime.background import TaskBag
-from runtime.user_maintenance import is_user_in_maintenance, track_user_task
+from runtime.user_maintenance import is_user_in_maintenance
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import raiseload
 
@@ -152,10 +152,10 @@ async def _video_supported(user_id: int) -> bool:
 
 
 async def _creation_input(user_id: int) -> dict:
-    ctx = await load_post_prompt_context(user_id)
     types = await available_types(user_id)
     if not types:
-        raise PostBlockedError("动态自主发布已关闭")
+        raise PostBlockedError("发布开关已关闭")
+    ctx = await load_post_prompt_context(user_id)
     async with SESSION_LOCAL() as db:
         recent = (
             (
@@ -277,8 +277,7 @@ def schedule_publication(task_id: str, user_id: int) -> None:
     task = asyncio.create_task(_run_publication(task_id), name=f"post.publish.{task_id}")
     _TASKS[task_id] = task
     task.add_done_callback(lambda done: _TASKS.pop(task_id, None) if _TASKS.get(task_id) is done else None)
-    _BG.add(task)
-    track_user_task(user_id, task)
+    _BG.add(task, user_id=user_id)
 
 
 def _owned_assets(row: PostPublication) -> list[str]:
@@ -486,9 +485,6 @@ async def _run_publication(task_id: str) -> None:
         if is_user_in_maintenance(row.user_id):
             return
         if row.plan_json is None:
-            if not await available_types(row.user_id):
-                await _save(task_id, status="blocked", error="发布开关已关闭")
-                return
             payload = await _creation_input(row.user_id)
             await _save(task_id, status="running", phase="planning", request=payload)
             plan = await compose_plan(row.user_id, payload)

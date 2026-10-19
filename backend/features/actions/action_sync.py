@@ -78,8 +78,6 @@ async def ensure_synced_window_action(
     user_id: int,
     pack_id: int,
     definition: ActionDefinitionSnapshot,
-    *,
-    schedule: bool,
 ) -> int:
     await lock_user_row(db, user_id)
     pack = await db.get(CompanionActionPack, pack_id)

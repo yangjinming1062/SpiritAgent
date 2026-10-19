@@ -7,7 +7,6 @@ from datetime import timedelta
 from infrastructure.logger import get_logger
 from infrastructure.text import resolve_prompt_text, utc_now
 from runtime.background import TaskBag
-from runtime.user_maintenance import track_user_task
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.companion.intents import claim_companion_intent, enqueue_companion_intent
@@ -42,8 +41,7 @@ async def enqueue_first_greeting(db: AsyncSession, user_id: int) -> None:
 def schedule_first_greeting_claim(user_id: int) -> None:
     """提交后在后台尝试认领；桌面尚未上报可用时，由可用性信号与等待扫描稍后认领。"""
     task = asyncio.create_task(claim_companion_intent(user_id), name=f"companion.first_greeting.{user_id}")
-    _BG.add(task, on_error=_log_claim_error)
-    track_user_task(user_id, task)
+    _BG.add(task, user_id=user_id, on_error=_log_claim_error)
 
 
 def _log_claim_error(task: asyncio.Task) -> None:

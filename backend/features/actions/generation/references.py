@@ -8,6 +8,7 @@ from infrastructure.ai.llm_client import build_provider, resolve_provider_chain
 from infrastructure.ai.providers.base import VideoGenProvider
 from infrastructure.ai.selection import ProviderSelection, order_provider_chain
 from infrastructure.ai.tasks import AiTaskKey
+from infrastructure.assets.asset_store import read_asset_data_uri
 from infrastructure.async_io import run_blocking
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.video_processing.ffmpeg import VideoProcessError
@@ -22,7 +23,7 @@ from features.actions.generation.state import GenerationContext
 from features.actions.materials import accepted_action_asset
 from features.actions.models import CompanionAction, CompanionActionPack
 from features.actions.schemas import ABSOLUTE_MAX_DURATION_SECONDS
-from features.appearance.avatar_service import load_avatar_bytes_as_data_uri, read_portrait_bytes
+from features.appearance.avatar_service import read_portrait_bytes
 from features.appearance.outfit_service import wait_outfit_description
 from features.appearance.queries import avatar_snapshot, outfit_snapshot
 from features.appearance.query_contracts import AvatarSnapshot
@@ -183,7 +184,7 @@ async def _prepare_pack_identity(pack: CompanionActionPack, context: GenerationC
             avatar = await avatar_snapshot(db, pack.user_id, context.identity.avatar_id)
         if avatar is None or not avatar.asset_url:
             raise VideoPackStateError("头像形象无法读取")
-        identity_source = await run_blocking(load_avatar_bytes_as_data_uri, avatar.asset_url)
+        identity_source = await run_blocking(read_asset_data_uri, avatar.asset_url)
         if not identity_source:
             raise VideoPackStateError("头像形象无法读取")
 

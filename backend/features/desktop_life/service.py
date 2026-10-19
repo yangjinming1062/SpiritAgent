@@ -109,6 +109,7 @@ from features.desktop_life.repository import (
     touch_desktop_state,
 )
 from features.desktop_life.schemas import (
+    DesktopCreationPlan,
     DesktopVideoActionResponse,
     DesktopVideoAsset,
     DesktopVideoCreateSetRequest,
@@ -164,6 +165,17 @@ def _customization_priority(
     if previous is not None and previous.feedback == feedback:
         return previous.customization_priority
     return "general"
+
+
+def _creation_plan_for_feedback(
+    progress: DesktopVideoProgress | None,
+    accepted: DesktopVideoAsset | None,
+    feedback: str,
+) -> DesktopCreationPlan | None:
+    for previous in (progress, accepted):
+        if previous is not None and previous.feedback == feedback:
+            return previous.creation_plan
+    return None
 
 
 def _require_desktop_mode(user_id: int) -> None:
@@ -941,11 +953,7 @@ async def generate_desktop_image(
                 else "",
                 customization_priority=_customization_priority(old or accepted, feedback, video_feedback),
                 action_description=desktop_action_description(action),
-                creation_plan=old.creation_plan
-                if old and old.feedback == feedback
-                else accepted.creation_plan
-                if accepted and accepted.feedback == feedback
-                else None,
+                creation_plan=_creation_plan_for_feedback(old, accepted, feedback),
                 duration_seconds=action.target_duration_seconds,
                 continuity=continuity,
                 base_version=row.base_version + 1 if continuity == "base" else None,
@@ -1801,11 +1809,7 @@ async def generate_desktop_action(
                 video_feedback=selected_video_feedback,
                 customization_priority=_customization_priority(old or accepted, feedback, video_feedback),
                 action_description=desktop_action_description(action),
-                creation_plan=old.creation_plan
-                if old and old.feedback == feedback
-                else accepted.creation_plan
-                if accepted and accepted.feedback == feedback
-                else None,
+                creation_plan=_creation_plan_for_feedback(old, accepted, feedback),
                 opening_review=old.opening_review
                 if old and old.feedback == feedback and old.pose_path == image
                 else None,

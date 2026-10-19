@@ -53,7 +53,7 @@ from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from runtime.background import TaskBag
 from runtime.paid_work import GenerationWorkPaused
-from runtime.user_maintenance import is_user_in_maintenance, track_user_task
+from runtime.user_maintenance import is_user_in_maintenance
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = get_logger(__name__)
@@ -104,8 +104,7 @@ def schedule_action_definition(user_id: int, definition_id: int) -> None:
         return
     _DEFINITIONS.add(key)
     task = asyncio.create_task(_process_definition(user_id, definition_id), name=f"action.definition.{definition_id}")
-    _TASKS.add(task)
-    track_user_task(user_id, task, cancel_on_maintenance=False)
+    _TASKS.add(task, user_id=user_id, cancel_on_maintenance=False)
     task.add_done_callback(lambda _: _DEFINITIONS.discard(key))
 
 
@@ -159,7 +158,7 @@ async def _fanout_definition(user_id: int, definition_id: int, *, only: ActionSo
                     ensure = (
                         ensure_synced_window_action if source.target_kind == "window" else ensure_synced_desktop_action
                     )
-                    action_id = await ensure(db, user_id, source.target_id, definition, schedule=target.automatic)
+                    action_id = await ensure(db, user_id, source.target_id, definition)
                     await bind_target(db, user_id, target.id, action_id)
                     target = await target_snapshot(db, user_id, target.id)
                     if target is not None and target.state == "blocked" and target.automatic:
@@ -197,8 +196,7 @@ def schedule_action_target(user_id: int, target_id: int) -> None:
         return
     _TARGETS.add(key)
     task = asyncio.create_task(_dispatch_target(user_id, target_id), name=f"action.target.{target_id}")
-    _TASKS.add(task)
-    track_user_task(user_id, task, cancel_on_maintenance=False)
+    _TASKS.add(task, user_id=user_id, cancel_on_maintenance=False)
     task.add_done_callback(lambda _: _TARGETS.discard(key))
 
 

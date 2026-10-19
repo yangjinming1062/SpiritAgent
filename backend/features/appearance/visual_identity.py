@@ -7,10 +7,11 @@ from dataclasses import dataclass
 
 from infrastructure.ai.selection import ProviderSelection
 from infrastructure.ai.tasks import AiTaskKey
+from infrastructure.assets.asset_store import read_asset_data_uri
 from infrastructure.database import SESSION_LOCAL
 from sqlalchemy import select
 
-from features.appearance.avatar_service import FULLBODY_SIZE, AvatarSourceUnreadableError, load_avatar_bytes_as_data_uri
+from features.appearance.avatar_service import FULLBODY_SIZE, AvatarSourceUnreadableError
 from features.appearance.character_card import render_character_identity, require_character_snapshot
 from features.appearance.models import AvatarAsset, CompanionOutfit
 from features.appearance.queries import outfit_identity_matches
@@ -80,10 +81,10 @@ async def load_self_visual_context(user_id: int, *, use_outfit_reference: bool =
                 identity_path, role = seed_path, "fullbody"
             outfit_path = outfit.fullbody_url
             outfit_description = outfit.description or ""
-    reference = await asyncio.to_thread(load_avatar_bytes_as_data_uri, identity_path)
+    reference = await asyncio.to_thread(read_asset_data_uri, identity_path)
     if not reference:
         raise AvatarSourceUnreadableError("身份参考缺失或无法读取，请重新生成")
-    outfit_reference = await asyncio.to_thread(load_avatar_bytes_as_data_uri, outfit_path) if outfit_path else None
+    outfit_reference = await asyncio.to_thread(read_asset_data_uri, outfit_path) if outfit_path else None
     if use_outfit_reference and not outfit_reference:
         raise AvatarSourceUnreadableError("当前着装形象缺失或无法读取，请重新准备着装")
     return SelfVisualContext(

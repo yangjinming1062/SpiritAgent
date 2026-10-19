@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import random
 import threading
 from collections.abc import AsyncIterator, Callable
@@ -54,10 +53,6 @@ class ProviderResultUnknownError(OpenAIError):
 async def download_bytes(url: str) -> bytes:
     """下载供应商资产；走安全 transport（SSRF 守卫）并限制大小。"""
     return await download_capped(url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES)
-
-
-async def download_as_b64(url: str) -> str:
-    return base64.b64encode(await download_bytes(url)).decode("utf-8")
 
 
 class _RetryAsyncTransport(httpx.AsyncBaseTransport):

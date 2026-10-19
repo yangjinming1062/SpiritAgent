@@ -6,7 +6,7 @@ from collections.abc import Coroutine
 from infrastructure.ai.providers.base import ServiceType
 from infrastructure.ai.selection import ProviderSelection
 from infrastructure.database import SESSION_LOCAL
-from runtime.user_maintenance import is_user_in_maintenance, track_user_task
+from runtime.user_maintenance import is_user_in_maintenance
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -55,9 +55,8 @@ def _kick_build(
         _build_pack(pack_id, clips=clips, canvas=canvas, action_ranges=action_ranges),
         name=f"companion.video.build.{pack_id}",
     )
-    _TASKS.add(task)
     # 导入不涉及付费调用：用户维护时直接取消，中断的包按失败落库。
-    track_user_task(user_id, task)
+    _TASKS.add(task, user_id=user_id)
 
 
 def _start_pack_task(
@@ -71,12 +70,11 @@ def _start_pack_task(
 ) -> None:
     """登记制作任务；同包并行任务全部收尾后才释放包级资产保护。"""
     task = asyncio.create_task(coro, name=name)
-    _TASKS.add(task)
+    _TASKS.add(task, user_id=user_id, cancel_on_maintenance=False)
     _GEN_INFLIGHT.add(pack_id)
     _GEN_TASK_COUNTS[pack_id] = _GEN_TASK_COUNTS.get(pack_id, 0) + 1
     if whole_pack:
         _PACK_GEN_INFLIGHT.add(pack_id)
-    track_user_task(user_id, task, cancel_on_maintenance=False)
 
     def _done(done: asyncio.Task[bool | None]) -> None:
         remaining = _GEN_TASK_COUNTS[pack_id] - 1

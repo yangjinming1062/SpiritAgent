@@ -386,6 +386,16 @@ def ai_http_timeout() -> httpx.Timeout:
     return httpx.Timeout(None, connect=10.0, pool=10.0)
 
 
+async def read_capped_response(response: httpx.Response, *, max_bytes: int, too_large: Exception) -> bytes:
+    """有界读取响应体；响应的关闭与错误翻译由调用方负责。"""
+    body = bytearray()
+    async for chunk in response.aiter_bytes():
+        if len(body) + len(chunk) > max_bytes:
+            raise too_large
+        body.extend(chunk)
+    return bytes(body)
+
+
 async def download_capped(url: str, *, max_bytes: int, timeout: float | None = None) -> bytes:
     """下载远程 URL：大小上限、逐跳 SSRF（由建连后端完成）、协议白名单 {http, https} 与 HTTPS→HTTP 降级防护。"""
     current_url = url
@@ -425,12 +435,8 @@ async def download_capped(url: str, *, max_bytes: int, timeout: float | None = N
 
             resp.raise_for_status()
 
-            sink = bytearray()
-            total = 0
-            async for chunk in resp.aiter_bytes():
-                total += len(chunk)
-                if total > max_bytes:
-                    raise ValueError(f"download exceeded size limit of {max_bytes} bytes")
-                sink.extend(chunk)
-
-            return bytes(sink)
+            return await read_capped_response(
+                resp,
+                max_bytes=max_bytes,
+                too_large=ValueError(f"download exceeded size limit of {max_bytes} bytes"),
+            )

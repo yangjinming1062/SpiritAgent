@@ -11,7 +11,7 @@ from infrastructure.text import utc_now
 from runtime.background import TaskBag
 from runtime.events.emit import emit_ws_event
 from runtime.memory_scope import EmbeddingItem, MemoryScope, MemorySource, validate_memory_scope
-from runtime.user_maintenance import is_user_in_maintenance, track_user_task
+from runtime.user_maintenance import is_user_in_maintenance
 from sqlalchemy import ColumnElement, and_, case, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,8 +34,7 @@ def schedule_embedding_rebuild(user_id: int) -> None:
     task = asyncio.create_task(_rebuild_embeddings(user_id), name=f"memory-embedding-{user_id}")
     _EMBEDDING_TASKS[user_id] = task
     task.add_done_callback(lambda _: _EMBEDDING_TASKS.pop(user_id, None))
-    _EMBEDDING_BG.add(task)
-    track_user_task(user_id, task)
+    _EMBEDDING_BG.add(task, user_id=user_id)
 
 
 async def drain_memory_embeddings() -> None:

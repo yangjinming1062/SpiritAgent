@@ -1,13 +1,10 @@
 """为每位 onboarding 完成用户一次性生成 ``SYSTEM_PRESET_CATALOG`` 中各预设的系统对话。幂等：已存在的预设跳过。"""
 
-from datetime import UTC, datetime
-
 from runtime.presets import SYSTEM_PRESET_CATALOG
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.conversation.main_conversation import SPECIAL_KIND
+from features.conversation.main_conversation import SPECIAL_KIND, get_or_create_special_conversation
 from features.conversation.models import Conversation
 
 
@@ -28,23 +25,9 @@ async def ensure_system_conversations_for_user(db: AsyncSession, user_id: int) -
     )
     have = set(existing)
 
-    for preset_id, preset in SYSTEM_PRESET_CATALOG.items():
+    for preset_id in SYSTEM_PRESET_CATALOG:
         if preset_id in have:
             continue
-        try:
-            async with db.begin_nested():
-                conv = Conversation(
-                    user_id=user_id,
-                    kind=SPECIAL_KIND,
-                    system_preset_id=preset_id,
-                    title=preset.name,
-                    is_deletable=False,
-                    is_renamable=False,
-                    updated_at=datetime.now(UTC),
-                )
-                db.add(conv)
-                await db.flush()
-        except IntegrityError:
-            continue
+        await get_or_create_special_conversation(db, user_id, preset_id, commit=False)
 
     await db.commit()

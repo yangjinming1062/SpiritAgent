@@ -30,7 +30,6 @@ from infrastructure.text import resolve_language
 from runtime.background import TaskBag
 from runtime.memory_scope import MemoryScope
 from runtime.tools.registry import REGISTRY
-from runtime.user_maintenance import track_user_task
 
 from workflows.chat.background_review import run_background_memory_review
 from workflows.chat.chat_emitter import Emitter
@@ -118,8 +117,7 @@ def _spawn_post_turn_task(
         track_task(task)
         task.add_done_callback(_on_bg_error)
     else:
-        _BG.add(task, on_error=_on_bg_error)
-        track_user_task(user_id, task)
+        _BG.add(task, user_id=user_id, on_error=_on_bg_error)
 
 
 async def _persist_tool_call_row(conv_id: int, result: _LLMTurnResult) -> None:

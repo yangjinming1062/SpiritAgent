@@ -44,15 +44,22 @@ def measure_action_frame(data: bytes) -> ActionFrameGeometry:
     )
 
 
+def _action_frame_on_background(data: bytes, color: tuple[int, int, int]) -> bytes:
+    with (
+        Image.open(BytesIO(data)) as source,
+        source.convert("RGBA") as image,
+        Image.new("RGBA", image.size, (*color, 255)) as background,
+        BytesIO() as output,
+    ):
+        background.alpha_composite(image)
+        with background.convert("RGB") as flattened:
+            flattened.save(output, format="PNG")
+        return output.getvalue()
+
+
 def action_frame_review_input(data: bytes) -> bytes:
     """固定中灰诊断底仅用于观察透明边缘，不修改原资产。"""
-    with Image.open(BytesIO(data)) as source:
-        image = source.convert("RGBA")
-    background = Image.new("RGBA", image.size, (128, 128, 128, 255))
-    background.alpha_composite(image)
-    output = BytesIO()
-    background.convert("RGB").save(output, format="PNG")
-    return output.getvalue()
+    return _action_frame_on_background(data, (128, 128, 128))
 
 
 def _margin_canvas_size(size: int) -> int:
@@ -105,10 +112,4 @@ def prepare_action_frame(data: bytes, *, preserve_resolution: bool = False) -> b
 
 def action_frame_video_input(data: bytes) -> bytes:
     """当前视频接口不承诺保留输入 alpha；显式合成白底，透明原图仍独立保存。"""
-    with Image.open(BytesIO(data)) as source:
-        image = source.convert("RGBA")
-    background = Image.new("RGBA", image.size, "white")
-    background.alpha_composite(image)
-    output = BytesIO()
-    background.convert("RGB").save(output, format="PNG")
-    return output.getvalue()
+    return _action_frame_on_background(data, (255, 255, 255))

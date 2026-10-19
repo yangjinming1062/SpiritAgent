@@ -7,6 +7,7 @@ from infrastructure.assets.asset_store import (
     build_data_uri,
     image_mime_for_extension,
     pack_asset_directory,
+    read_asset_data_uri,
     save_companion_asset_async,
     sniff_media_ext,
 )
@@ -17,7 +18,7 @@ from infrastructure.video_processing.process import HITMASK_FPS, HITMASK_GRID_H,
 
 from features.actions.media_contracts import ActionResult, ImageClipSpec, VideoClipSpec
 from features.actions.models import CompanionActionPack, make_action_reference_hash
-from features.appearance.avatar_service import load_avatar_bytes_as_data_uri, read_portrait_bytes
+from features.appearance.avatar_service import read_portrait_bytes
 from features.appearance.query_contracts import AvatarSnapshot, OutfitSnapshot
 
 from .errors import VideoPackError
@@ -30,7 +31,7 @@ def _pack_dir(pack: CompanionActionPack) -> str:
 
 async def _reference_hash(outfit: OutfitSnapshot | None, avatar: AvatarSnapshot | None) -> str:
     """参考版本指纹包含外观 ID、身份 ID 与参考图实际字节，阻断迟到结果。"""
-    reference = await run_blocking(load_avatar_bytes_as_data_uri, outfit.fullbody_url) if outfit is not None else ""
+    reference = await run_blocking(read_asset_data_uri, outfit.fullbody_url) if outfit is not None else ""
     return make_action_reference_hash(
         outfit.id if outfit is not None else None,
         outfit.fullbody_url if outfit is not None else "",

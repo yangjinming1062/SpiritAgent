@@ -35,8 +35,6 @@ async def ensure_synced_desktop_action(
     user_id: int,
     set_id: int,
     definition: ActionDefinitionSnapshot,
-    *,
-    schedule: bool,
 ) -> int:
     """只登记本地版本；制作意图由共享目录持久化并在事务提交后调度。"""
     await desktop_state(db, user_id, create=True)

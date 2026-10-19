@@ -9,7 +9,12 @@ from datetime import timedelta
 from infrastructure.ai.prompt_engineer import chat
 from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
 from infrastructure.ai.tasks import AiTaskKey
-from infrastructure.assets.asset_store import build_data_uri, outfit_asset_directory, unlink_companion_asset
+from infrastructure.assets.asset_store import (
+    build_data_uri,
+    outfit_asset_directory,
+    read_asset_data_uri,
+    unlink_companion_asset,
+)
 from infrastructure.assets.references import asset_paths
 from infrastructure.async_io import cancel_and_wait
 from infrastructure.config import SETTINGS
@@ -34,7 +39,6 @@ from features.appearance.avatar_service import (
     generate_with_moderation_retry,
     get_active_avatar,
     get_avatar_job_lock,
-    load_avatar_bytes_as_data_uri,
     persist_portrait_bytes,
     persist_portrait_or_draft,
     read_portrait_bytes,
@@ -117,7 +121,7 @@ async def _require_fullbody_seed_readable(avatar: AvatarAsset) -> str:
     """换装/自备图身份锚点：全身种子路径存在且字节可读时返回 data URI。不可读是源资产状态冲突（与 avatar/scenes 自备图同语义），抛 OutfitStateError 由 API 映射 409，不能降级纯文字。"""
     if not avatar.seed_fullbody_url:
         raise OutfitStateError("全身形象缺失或无法读取，请在设置的“角色与记忆”中重新生成")
-    uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, avatar.seed_fullbody_url)
+    uri = await asyncio.to_thread(read_asset_data_uri, avatar.seed_fullbody_url)
     if uri is None:
         raise OutfitStateError("全身形象缺失或无法读取，请在设置的“角色与记忆”中重新生成")
     return uri
@@ -538,7 +542,7 @@ async def regenerate_outfit_draft(
         if source_identity != avatar.seed_fullbody_url:
             raise OutfitStateError("全身形象已变化，请按当前形象重新生成外观")
         # 编辑保持上一版图像的身份与造型；独立评分仍比较当前全身身份图。
-        reference_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, original_url)
+        reference_uri = await asyncio.to_thread(read_asset_data_uri, original_url)
         if not reference_uri:
             raise OutfitDraftExpiredError("上一版草稿已过期或无法读取，请改用重新生成")
         prompt = build_image_edit_prompt(
@@ -937,7 +941,7 @@ async def _describe_outfit(user_id: int, outfit_id: int) -> None:
             outfit.description_status, outfit.description_error = "processing", None
             payload = {"output_language": resolve_language(await get_user_setting(db, user_id, "language"))}
             await db.commit()
-        image_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, fullbody_url)
+        image_uri = await asyncio.to_thread(read_asset_data_uri, fullbody_url)
         if not image_uri:
             # 立绘被替换或已被清理时没有可命名的图片，外观保留原名。
             logger.info(

@@ -5,7 +5,6 @@ from uuid import uuid4
 from features.appearance.avatar_service import (
     AvatarGenerationError,
     AvatarSourceUnreadableError,
-    load_avatar_bytes_as_data_uri,
 )
 from features.appearance.visual_identity import (
     apply_outfit_override,
@@ -100,7 +99,7 @@ async def _submit_video(
             identity_reference_role = visual.identity_reference_role
             identity_reference = None
             if reference_image and not plan.override_outfit_description:
-                identity_reference = await asyncio.to_thread(load_avatar_bytes_as_data_uri, visual.fullbody_path)
+                identity_reference = await asyncio.to_thread(read_asset_data_uri, visual.fullbody_path)
                 if not identity_reference:
                     raise AvatarSourceUnreadableError("全身身份参考缺失或无法读取")
                 identity_reference_role = "fullbody"

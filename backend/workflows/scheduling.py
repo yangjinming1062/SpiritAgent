@@ -48,7 +48,7 @@ from runtime.desktop.connection import MANAGER
 from runtime.events.outbox_gc import run_outbox_gc
 from runtime.memory_scope import MemoryScope
 from runtime.presets import COMPANION_PRESET_ID
-from runtime.user_maintenance import is_user_in_maintenance, track_user_task, user_request_scope
+from runtime.user_maintenance import is_user_in_maintenance, user_request_scope
 
 from workflows.automation.standard_turns import execute_standard_turn
 from workflows.nightly.nightly_activity import run_nightly_pipeline
@@ -145,8 +145,7 @@ def _spawn_scope_task(name: str, scope: MemoryScope, factory: Callable[[], Corou
             _SCOPE_TASKS.pop(key, None)
 
     task.add_done_callback(_discard)
-    _BG.add(task, on_error=partial(_log_task_error, f"{name}:{scope}"))
-    track_user_task(scope.user_id, task)
+    _BG.add(task, user_id=scope.user_id, on_error=partial(_log_task_error, f"{name}:{scope}"))
 
 
 async def _select_due_jobs() -> list[DueJob]:
@@ -238,8 +237,7 @@ async def _advance_due_jobs(due_jobs: list[DueJob], now: datetime) -> None:
     )
     for user_id, name, coro in kicks:
         task = asyncio.create_task(coro)
-        _BG.add(task, on_error=partial(_log_task_error, name))
-        track_user_task(user_id, task)
+        _BG.add(task, user_id=user_id, on_error=partial(_log_task_error, name))
 
 
 async def _scan_companion_waits() -> None:

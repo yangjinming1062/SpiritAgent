@@ -10,7 +10,6 @@ from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import format_local_iso
 from runtime.background import TaskBag
-from runtime.user_maintenance import track_user_task
 from sqlalchemy import select
 
 from features.posts.context import elapsed_seconds, load_post_prompt_context, post_prompt_entry
@@ -32,8 +31,7 @@ def schedule_companion_reply(user_id: int, post_id: str) -> None:
     task = asyncio.create_task(_run_thread(user_id, post_id), name=f"post.reply.{post_id}")
     _THREADS[key] = task
     task.add_done_callback(lambda done: _THREADS.pop(key, None) if _THREADS.get(key) is done else None)
-    _BG.add(task)
-    track_user_task(user_id, task)
+    _BG.add(task, user_id=user_id)
 
 
 async def _run_thread(user_id: int, post_id: str) -> None:

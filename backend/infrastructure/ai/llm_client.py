@@ -174,29 +174,6 @@ async def resolve_provider_chain(
     ]
 
 
-async def resolve_provider_config(
-    db: AsyncSession | None,
-    user_id: int | None,
-    service_type: str,
-    *,
-    task: AiTaskKey,
-    required_modalities: frozenset[ModelModality] | None = None,
-) -> ProviderConfig:
-    """返回已解析调用链首项；链为空时抛出 ``MissingLlmConfigError``。"""
-    chain = await resolve_provider_chain(
-        db,
-        user_id,
-        service_type,
-        task=task,
-        required_modalities=required_modalities,
-    )
-    if not chain:
-        raise MissingLlmConfigError(
-            f"no provider configured for service {service_type!r}",
-        )
-    return chain[0]
-
-
 async def resolve_vision_chain(
     db: AsyncSession | None,
     user_id: int | None,
@@ -209,22 +186,6 @@ async def resolve_vision_chain(
         ServiceType.llm,
         task=task,
         required_modalities=frozenset({ModelModality.text, ModelModality.image}),
-    )
-
-
-async def resolve_video_chain(
-    db: AsyncSession | None,
-    user_id: int | None,
-    *,
-    task: AiTaskKey,
-) -> list[ProviderConfig]:
-    """筛选接受 input_video 的 chat 供应商。"""
-    return await resolve_provider_chain(
-        db,
-        user_id,
-        ServiceType.llm,
-        task=task,
-        required_modalities=frozenset({ModelModality.text, ModelModality.video}),
     )
 
 
