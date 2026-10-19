@@ -26,7 +26,6 @@ import {
   generateDesktopVideoImage,
   getDesktopVideoPrompt,
   pauseDesktopVideoDraft,
-  playDesktopVideoAction,
   refreshDesktopVideos,
   renameDesktopVideoSet,
   retryDesktopVideoDraft,
@@ -496,14 +495,6 @@ export function DesktopLifePage({
     resolve?.(policy)
   }
 
-  const play = async (item: DesktopVideoAction): Promise<void> => {
-    if ($presentation.get().effectiveMode !== 'desktop') {
-      await shellApi().presentation.setMode('desktop')
-    }
-
-    await playDesktopVideoAction(item.id, item.set_id)
-  }
-
   const loadExternalPrompt = async (action: DesktopVideoAction, requirements = ''): Promise<void> => {
     if (externalUploadRequest.current) {
       return
@@ -833,7 +824,7 @@ export function DesktopLifePage({
     const scope = captureAuthScope()
     await reviewDesktopVideoAction(item, selected, true)
 
-    if (!scope?.()) {
+    if (!scope?.() || item.key !== 'idle') {
       return
     }
 
@@ -854,10 +845,6 @@ export function DesktopLifePage({
 
     if ($presentation.get().effectiveMode !== 'desktop') {
       await shellApi().presentation.setMode('desktop')
-    }
-
-    if (item.key !== 'idle') {
-      await play(updated)
     }
   }
 
@@ -1052,7 +1039,7 @@ export function DesktopLifePage({
           onClick={() => void run(() => adoptCandidate(item), t.acceptingVideo)}
           type="button"
         >
-          {item.key === 'idle' ? t.play : t.useCandidate}
+          {item.key === 'idle' ? t.play : t.acceptCandidate}
         </button>
         <button className={BTN_SUBTLE} disabled={busy} onClick={() => setDiscardAction(item)} type="button">
           {t.reject}
@@ -1105,30 +1092,16 @@ export function DesktopLifePage({
         </button>
       </>
     ) : item.current && !item.draft && !item.needs_update ? (
-      <button
-        className={BTN_PRIMARY}
-        disabled={busy || !item.playable}
-        onClick={() =>
-          void run(async () => {
-            if (!currentMatches) {
-              const activated = await activateDesktopVideoSet(selected)
-
-              if (!activated) {
-                return
-              }
-            }
-
-            if (item.key !== 'idle') {
-              await play(item)
-            } else if ($presentation.get().effectiveMode !== 'desktop') {
-              await shellApi().presentation.setMode('desktop')
-            }
-          })
-        }
-        type="button"
-      >
-        {currentMatches && item.key === 'idle' ? t.current : item.key === 'idle' ? t.play : t.playAction}
-      </button>
+      item.key === 'idle' ? (
+        <button
+          className={BTN_PRIMARY}
+          disabled={busy || !item.playable || currentMatches}
+          onClick={() => void run(activate)}
+          type="button"
+        >
+          {currentMatches ? t.currentInUse : t.play}
+        </button>
+      ) : null
     ) : (
       <button
         className={BTN_PRIMARY}
@@ -1236,7 +1209,7 @@ export function DesktopLifePage({
               ) : imageReview ? (
                 <p className="text-sm text-body">{t.imageReview}</p>
               ) : item.current && !item.draft && !item.needs_update ? (
-                <p className="text-sm text-muted">{t.readyHint}</p>
+                <p className="text-sm text-muted">{item.key === 'idle' ? t.readyHint : t.actionReadyHint}</p>
               ) : null}
               {!processing && (
                 <details
@@ -1480,7 +1453,7 @@ export function DesktopLifePage({
             onClick={() => void run(activate)}
             type="button"
           >
-            {idle.draft ? (currentMatches ? t.currentInUse : t.useCurrent) : currentMatches ? t.current : t.play}
+            {currentMatches ? t.currentInUse : idle.draft ? t.useCurrent : t.play}
           </button>
         )}
         {idle.current && !idle.draft && (

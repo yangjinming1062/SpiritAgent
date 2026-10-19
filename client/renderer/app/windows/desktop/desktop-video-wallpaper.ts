@@ -14,12 +14,15 @@ import {
 } from '@/modules/desktop-videos'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
+import { persistString, registerCompanionStorageKey, storedString } from '@/shared/lib/storage'
 import { shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
 import { $presentation } from '@/shared/store/presentation'
 import { $surfaceScreenLocked } from '@/shared/store/surfaces'
 import { $theme } from '@/shared/store/theme'
+
+const STARTUP_SESSION_KEY = registerCompanionStorageKey('da.desktop-life.playback-session')
 
 function hasTerminalReceipt(statuses: ReadonlySet<DesktopVideoReceiptStatus> | undefined): boolean {
   return statuses !== undefined && [...statuses].some(status => status !== 'started')
@@ -40,6 +43,9 @@ export function useDesktopVideoWallpaper(): void {
   const preparedEntry = useRef<string | null>(null)
   const active = presentation.effectiveMode === 'desktop' && presentation.status === 'active'
   const authSessionId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
+  const [startupSession, setStartupSession] = useState(() => storedString(STARTUP_SESSION_KEY))
+  const [startupRequested, setStartupRequested] = useState(false)
+  const startupPending = authSessionId !== null && startupSession !== authSessionId
   const [clientId] = useState(() => crypto.randomUUID())
   const [claimed, setClaimed] = useState<DesktopVideoPlayCommand | null>(null)
   const [reduceMotion, setReduceMotion] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches)
@@ -53,15 +59,19 @@ export function useDesktopVideoWallpaper(): void {
 
   const current = state?.current ?? null
 
-  const currentLoop =
-    current?.actions.find(
-      item => item.id === state?.selected_action_id && item.kind === 'loop' && item.playable && item.video_url
-    ) ??
-    current?.actions.find(
-      item => item.id === state?.loop_action_id && item.kind === 'loop' && item.playable && item.video_url
-    ) ??
-    current?.actions.find(item => item.key === 'idle' && item.playable && item.video_url) ??
-    null
+  const idleLoop = current?.actions.find(item => item.key === 'idle' && item.playable && item.video_url) ?? null
+
+  const currentLoop = startupPending
+    ? idleLoop
+    : (current?.actions.find(
+        item => item.id === state?.selected_action_id && item.kind === 'loop' && item.playable && item.video_url
+      ) ??
+      current?.actions.find(
+        item => item.id === state?.loop_action_id && item.kind === 'loop' && item.playable && item.video_url
+      ) ??
+      idleLoop)
+
+  const canClaimRequested = !startupPending || startupRequested || requested?.action_id === idleLoop?.id
 
   const claimedAction = current?.actions.find(action => action.id === claimed?.action_id)
 
@@ -96,6 +106,18 @@ export function useDesktopVideoWallpaper(): void {
         .then(async () => {
           if (scope()) {
             await acknowledgeDesktopVideoPlay(playId, clientId, status, error)
+
+            const auth = $auth.get()
+
+            if (status === 'started' && scope() && auth.kind === 'authenticated') {
+              const sessionId = auth.snapshot.sessionId
+
+              if (storedString(STARTUP_SESSION_KEY) !== sessionId) {
+                persistString(STARTUP_SESSION_KEY, sessionId)
+              }
+
+              setStartupSession(sessionId)
+            }
           }
         })
         .catch(failure => log.warn('desktop-video', 'Playback receipt failed', failure))
@@ -128,6 +150,8 @@ export function useDesktopVideoWallpaper(): void {
   useEffect(() => {
     defaultPlay.current = ''
     preparedEntry.current = null
+    setStartupSession(storedString(STARTUP_SESSION_KEY))
+    setStartupRequested(false)
     claimedPlays.current.clear()
     receiptQueues.current.clear()
     setClaimed(null)
@@ -207,7 +231,7 @@ export function useDesktopVideoWallpaper(): void {
   }, [active, preparationInProgress])
 
   useEffect(() => {
-    if (!active || !authSessionId || !state || !current || !currentLoop) {
+    if (!active || !authSessionId || gatewayState !== 'open' || !state || !current || !currentLoop) {
       return
     }
 
@@ -230,7 +254,9 @@ export function useDesktopVideoWallpaper(): void {
       return statuses?.has('started') === true || Date.parse(command.expires_at) > Date.now()
     }
 
-    if (ongoingOnce(requested) || ongoingOnce(claimed)) {
+    const startingUp = startupPending && !startupRequested
+
+    if (!startingUp && (ongoingOnce(requested) || ongoingOnce(claimed))) {
       return
     }
 
@@ -241,6 +267,7 @@ export function useDesktopVideoWallpaper(): void {
     const settled = hasTerminalReceipt(receiptStatuses)
 
     if (
+      !startingUp &&
       requested &&
       requested.set_id === current.id &&
       requested.set_epoch === state.set_epoch &&
@@ -260,13 +287,36 @@ export function useDesktopVideoWallpaper(): void {
 
     defaultPlay.current = key
 
-    void playDesktopVideoAction(currentLoop.id, current.id, 'desktop-entry').catch(error =>
-      log.warn('desktop-video', 'Initial playback failed', error)
-    )
-  }, [active, authSessionId, state, current, currentLoop, requested, claimed])
+    const scope = captureAuthScope()
+
+    void playDesktopVideoAction(currentLoop.id, current.id, startingUp ? 'desktop-startup' : 'desktop-entry')
+      .then(() => {
+        if (startingUp && scope?.()) {
+          setStartupRequested(true)
+        }
+      })
+      .catch(error => {
+        if (scope?.() && defaultPlay.current === key) {
+          defaultPlay.current = ''
+        }
+
+        log.warn('desktop-video', 'Initial playback failed', error)
+      })
+  }, [
+    active,
+    authSessionId,
+    gatewayState,
+    startupPending,
+    startupRequested,
+    state,
+    current,
+    currentLoop,
+    requested,
+    claimed
+  ])
 
   useEffect(() => {
-    if (!active || !authSessionId || !requested) {
+    if (!active || !authSessionId || !canClaimRequested || !requested) {
       return
     }
 
@@ -314,7 +364,7 @@ export function useDesktopVideoWallpaper(): void {
     return () => {
       disposed = true
     }
-  }, [active, authSessionId, requested, clientId, state?.set_epoch, recordReceipt])
+  }, [active, authSessionId, canClaimRequested, requested, clientId, state?.set_epoch, recordReceipt])
 
   useEffect(() => {
     if (claimed && (!active || !authSessionId || claimed !== activeCommand)) {

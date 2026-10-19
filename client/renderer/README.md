@@ -68,7 +68,7 @@
 
 [desktop-companion-activity.ts](app/workflows/desktop-companion-activity.ts) 合并同一轮变化后转发完整活动载荷；账户或承载代次变化重发，失败允许同值重试。工具派发归主进程，桌面表面停用精灵空间行为。
 
-[desktop-video-wallpaper.ts](app/windows/desktop/desktop-video-wallpaper.ts) 消费显式启用的独立套装，负责播放认领、回执与默认套装准备；衣柜、场景库变化不触发套装切换或制作。套装和当前成品、制作草稿的语义见[桌面生活契约](../../docs/PROTOCOL.md#桌面生活视频与模式隔离)。外部制作窗口绑定草稿及基准，变化后须刷新。静态首帧只使用所属套装的确认图片，不能回退到当前场景库图片。
+[desktop-video-wallpaper.ts](app/windows/desktop/desktop-video-wallpaper.ts) 消费显式启用的独立套装，负责播放认领、回执与默认套装准备；启动播放通过现有接口恢复安静相伴，完成标记按账户和主进程鉴权会话保存，窗口重建继续保留伙伴当前选择。衣柜、场景库变化不触发套装切换或制作。套装和当前成品、制作草稿的语义见[桌面生活契约](../../docs/PROTOCOL.md#桌面生活视频与模式隔离)。外部制作窗口绑定草稿及基准，变化后须刷新。静态首帧只使用所属套装的确认图片，不能回退到当前场景库图片。
 
 [管理页](app/features/desktop-life/desktop-life-page.tsx) 的参考选择只更新创建草稿，素材加载结果由各自 store 持有，迟到回写守卫账户与请求代次。[视频修改](app/features/desktop-life/desktop-life-refinement.tsx) 独立持有预览检查与提交状态，按素材和套装版本校验制作起点。[预览](app/features/desktop-life/desktop-life-preview.tsx) 的草稿图片实例跟随完整资源 URL，视频保留同一资产的播放身份；图片确认资格来自实际草稿图的加载事件，当前成品封面回退不能解锁确认。页面交互与恢复体验归 [DESIGN](../../docs/DESIGN.md#桌面生活视频)。
 
