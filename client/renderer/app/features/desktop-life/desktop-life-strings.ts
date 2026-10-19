@@ -5,6 +5,7 @@ import { $locale } from '@/shared/store/locale'
 const zh = {
   currentProduct: '当前成品',
   candidateImage: '制作中的画面',
+  reusedBaseImageHint: '沿用已确认的安静相伴画面，直接制作动作视频。',
   operationFailed: '操作未能完成',
   processingRequest: '正在处理操作…',
   acceptingVideo: '正在采用新视频…',
@@ -268,6 +269,7 @@ const zh = {
 const en: typeof zh = {
   currentProduct: 'Current version',
   candidateImage: 'Image being created',
+  reusedBaseImageHint: 'Using the confirmed quiet companionship image to create the activity video directly.',
   operationFailed: 'The operation could not finish',
   processingRequest: 'Processing your request…',
   acceptingVideo: 'Accepting the new video…',

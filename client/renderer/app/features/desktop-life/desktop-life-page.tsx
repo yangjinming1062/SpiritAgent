@@ -848,23 +848,28 @@ export function DesktopLifePage({
     }
   }
 
-  const renderSteps = (step: number): React.JSX.Element => (
-    <ol aria-label={t.createSet} className={styles.steps}>
-      {[t.stepIdea, t.stepImage, t.stepVideo, t.stepUse].map((label, index) => (
-        <li
-          aria-current={step === index ? 'step' : undefined}
-          className={styles.step}
-          data-complete={index < step}
-          key={label}
-        >
-          <span aria-hidden="true" className={styles.stepNumber}>
-            {index < step ? <Check size={14} /> : index + 1}
-          </span>
-          <span>{label}</span>
-        </li>
-      ))}
-    </ol>
-  )
+  const renderSteps = (step: number, skipImage = false): React.JSX.Element => {
+    const labels = [t.stepIdea, ...(skipImage ? [] : [t.stepImage]), t.stepVideo, t.stepUse]
+    const currentStep = skipImage && step >= 2 ? step - 1 : step
+
+    return (
+      <ol aria-label={t.createSet} className={styles.steps}>
+        {labels.map((label, index) => (
+          <li
+            aria-current={currentStep === index ? 'step' : undefined}
+            className={styles.step}
+            data-complete={index < currentStep}
+            key={label}
+          >
+            <span aria-hidden="true" className={styles.stepNumber}>
+              {index < currentStep ? <Check size={14} /> : index + 1}
+            </span>
+            <span>{label}</span>
+          </li>
+        ))}
+      </ol>
+    )
+  }
 
   const creationStatus = (item: DesktopVideoAction): React.ComponentProps<typeof CreationFeedback> | null => {
     if (item.draft?.submission_unknown || item.draft?.recovery_action === 'wait') {
@@ -962,6 +967,14 @@ export function DesktopLifePage({
     const replaceUpload = item.draft?.recovery_action === 'replace_upload'
     const processing = item.status === 'processing' && !isActionPaused(item) && !unknown
 
+    const reusesBaseImage =
+      item.key !== 'idle' &&
+      (item.draft
+        ? item.draft.continuity === 'base' && item.draft.image_confirmed && !item.draft.video_refinement
+        : item.current?.continuity === 'base')
+
+    const hideDraftImage = Boolean(reusesBaseImage && item.draft && !item.draft.candidate_video_url)
+
     const imageReview = Boolean(
       item.status === 'review_pending' &&
       item.stage === 'image_review' &&
@@ -970,6 +983,7 @@ export function DesktopLifePage({
     )
 
     const preparingImage = Boolean(
+      !reusesBaseImage &&
       item.draft &&
       !item.draft.video_refinement &&
       ['planning', 'checking', 'repairing', 'image', 'image_upload'].includes(item.stage)
@@ -979,7 +993,7 @@ export function DesktopLifePage({
       item.status === 'review_pending' && item.stage !== 'image_review' && item.draft?.candidate_video_url
     )
 
-    const previewDraft = previewUsesDraft(item)
+    const previewDraft = previewUsesDraft(item) && !hideDraftImage
     const showPreview = hasPreviewMedia(item, previewDraft)
     const hasCurrentPreview = hasPreviewMedia(item, false)
 
@@ -1133,7 +1147,7 @@ export function DesktopLifePage({
     return {
       content: (
         <section className={styles.detail} key={item.id}>
-          {renderSteps(step)}
+          {renderSteps(step, reusesBaseImage)}
           <div>
             <h3 className="text-lg font-semibold text-strong">{actionName(item)}</h3>
           </div>
@@ -1146,6 +1160,7 @@ export function DesktopLifePage({
             </div>
           ) : (
             <>
+              {hideDraftImage && <p className="text-sm text-muted">{t.reusedBaseImageHint}</p>}
               {showPreview && (
                 <>
                   <p className="text-sm font-medium text-strong">
