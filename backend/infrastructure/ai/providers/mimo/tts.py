@@ -148,7 +148,6 @@ class MiMoTTSProvider(TTSProvider):
                 {
                     "format": "mp3",
                     "voice": f"data:{reference_audio.mime};base64,{encoded}",
-                    "optimize_text_preview": False,
                 },
                 "",
             )
