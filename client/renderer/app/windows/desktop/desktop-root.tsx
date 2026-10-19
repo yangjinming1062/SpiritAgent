@@ -33,7 +33,7 @@ import { $presentation } from '@/shared/store/presentation'
 import { $surfaceScreenLocked } from '@/shared/store/surfaces'
 import { $uiStateReady } from '@/shared/store/ui-state'
 import { useStrings } from '@/shared/strings'
-import { DESKTOP_LAYOUT } from '@client-shared/desktop-layout'
+import { DESKTOP_LAYOUT, getDesktopRailLayout } from '@client-shared/desktop-layout'
 
 import { DesktopAvatarSignal } from './desktop-avatar-signal'
 import { DesktopBottomBar } from './desktop-bottom-bar'
@@ -72,6 +72,10 @@ export function DesktopRoot(): React.JSX.Element {
   const [windowFocused, setWindowFocused] = useState(() => document.hasFocus())
   const presentation = useStore($presentation)
   const workArea = presentation.workArea
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth)
+  const rail = getDesktopRailLayout(viewportWidth)
+  const popupBottom = DESKTOP_LAYOUT.bottomInset
+
   const videoState = useStore($desktopVideoState)
   const videoError = useStore($desktopVideoError)
   const idleVideo = videoState?.current?.actions.find(action => action.key === 'idle')
@@ -121,6 +125,13 @@ export function DesktopRoot(): React.JSX.Element {
     !screenLocked
 
   const foreground = desktopVisible && presentation.foreground && windowFocused
+  useEffect(() => {
+    const resize = (): void => setViewportWidth(window.innerWidth)
+    window.addEventListener('resize', resize)
+
+    return () => window.removeEventListener('resize', resize)
+  }, [])
+
   useEffect(() => {
     const update = (): void => setWindowFocused(document.hasFocus())
     window.addEventListener('focus', update)
@@ -440,7 +451,10 @@ export function DesktopRoot(): React.JSX.Element {
             : `calc(100vh - ${DESKTOP_LAYOUT.bottomInset}px)`,
           '--desktop-center-width': `${DESKTOP_LAYOUT.centerWidth}px`,
           '--desktop-control-size': `${DESKTOP_LAYOUT.controlSize}px`,
-          '--desktop-control-edge': `${DESKTOP_LAYOUT.controlEdge}px`
+          '--desktop-control-edge': `${DESKTOP_LAYOUT.controlEdge}px`,
+          '--desktop-control-right': `${rail.controlRight}px`,
+          '--desktop-bar-available-width': `${rail.width}px`,
+          '--desktop-popup-bottom': `${popupBottom}px`
         } as React.CSSProperties
       }
     >
@@ -546,6 +560,7 @@ export function DesktopRoot(): React.JSX.Element {
             </button>
             {accountOpen && (
               <AccountMenu
+                bottomInset={popupBottom}
                 onClose={() => {
                   setOverlay(null)
                   avatarRef.current?.focus()
@@ -572,6 +587,8 @@ export function DesktopRoot(): React.JSX.Element {
         }
         onDockOpen={() => setOverlay('dock')}
         onDockOpenChange={dockOpenChange}
+        stageEpoch={presentation.stageEpoch}
+        systemTray={presentation.systemTray}
       />
       <DesktopControls
         onDesktopLife={() => activatePanel('desktopLife')}

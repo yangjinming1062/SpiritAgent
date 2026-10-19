@@ -54,6 +54,14 @@ struct WindowSpec {
 }
 
 #[cfg(windows)]
+#[derive(Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TrayLayout {
+    bounds: Bounds,
+    clip: Bounds,
+}
+
+#[cfg(windows)]
 #[derive(Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum WindowRole {
@@ -69,6 +77,11 @@ impl WindowRole {
 }
 
 #[cfg(windows)]
+#[derive(Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Palette { Day, Night }
+
+#[cfg(windows)]
 #[derive(Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 enum Command {
@@ -76,11 +89,20 @@ enum Command {
         id: u32,
         parent_pid: u32,
         takeover: bool,
+        palette: Palette,
         windows: Vec<WindowSpec>,
         work_area: Bounds,
     },
     Heartbeat {
         id: u32,
+    },
+    SetPalette {
+        id: u32,
+        palette: Palette,
+    },
+    SetTrayLayout {
+        id: u32,
+        layout: Option<TrayLayout>,
     },
     Focus {
         id: u32,
@@ -132,6 +154,8 @@ impl Command {
         match self {
             Self::Start { id, .. }
             | Self::Heartbeat { id }
+            | Self::SetPalette { id, .. }
+            | Self::SetTrayLayout { id, .. }
             | Self::Focus { id, .. }
             | Self::RefreshApplications { id }
             | Self::ActivateExternal { id, .. }
@@ -189,7 +213,7 @@ fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mode = args
         .first()
-        .ok_or("missing check-runtime, display-bounds, allow-foreground, host, guardian, or recover mode")?;
+        .ok_or("missing check-runtime, display-bounds, tray-probe, allow-foreground, host, guardian, or recover mode")?;
     if mode == "check-runtime" && args.len() == 1 {
         #[cfg(windows)]
         {
@@ -220,6 +244,27 @@ fn run() -> Result<()> {
         }
         #[cfg(not(windows))]
         return Err("Native display geometry is available on Windows only".into());
+    }
+    if mode == "tray-probe" && args.len() == 2 {
+        #[cfg(windows)]
+        {
+            let handle = args[1].parse::<u64>().map_err(|_| "invalid taskbar handle")?;
+            if handle == 0 || handle > usize::MAX as u64 {
+                return Err("invalid taskbar handle".into());
+            }
+            return windows::tray_probe(handle);
+        }
+        #[cfg(not(windows))]
+        return Err("Native system tray query is available on Windows only".into());
+    }
+    if mode == "tray-style-attach" && args.len() == 3 {
+        #[cfg(windows)]
+        {
+            let pid = args[1].parse::<u32>().map_err(|_| "invalid Explorer process")?;
+            return windows::tray_style_attach(pid, &args[2]);
+        }
+        #[cfg(not(windows))]
+        return Err("Native tray styling is available on Windows only".into());
     }
     if mode == "allow-foreground" {
         if args.len() != 3 {

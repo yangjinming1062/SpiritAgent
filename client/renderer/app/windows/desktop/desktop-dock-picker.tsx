@@ -58,7 +58,13 @@ export function DesktopDockPicker({
   const [viewportIds, setViewportIds] = useState<string[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [position, setPosition] = useState<React.CSSProperties>({})
+
+  const [position, setPosition] = useState(() => ({
+    bottom: 98,
+    left: window.innerWidth / 2,
+    maxHeight: Math.max(0, Math.min(620, window.innerHeight - 150))
+  }))
+
   const listRef = useRef<HTMLUListElement>(null)
   const pickerRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -416,7 +422,11 @@ export function DesktopDockPicker({
       id="desktop-apps-panel"
       ref={pickerRef}
       role="dialog"
-      style={position}
+      style={{
+        ...position,
+        bottom: `max(${position.bottom}px, var(--desktop-popup-bottom))`,
+        maxHeight: `min(${position.maxHeight}px, calc(100vh - max(${position.bottom}px, var(--desktop-popup-bottom)) - 16px))`
+      }}
     >
       <header className={styles.dockPickerHeader}>
         <strong>{mode.kind === 'browse' ? t.allApps : t.pickRepair}</strong>

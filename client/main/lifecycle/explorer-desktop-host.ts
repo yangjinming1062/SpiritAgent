@@ -2,6 +2,8 @@ import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 
+import type { SpiritAgentUiPalette } from '@ipc/contracts'
+
 import type { RunningApplicationsState, RunningApplicationWindow } from '../shared/desktop-applications'
 import type { DesktopJumpListTask } from '../shared/desktop-jump-list'
 import { createSerialQueue } from '../shared/utils'
@@ -37,6 +39,16 @@ export interface ExplorerDesktopWindow {
   bounds: { x: number; y: number; width: number; height: number }
 }
 
+export interface ExplorerDesktopSystemTray {
+  bounds: ExplorerDesktopWindow['bounds']
+  visible: boolean
+}
+
+export interface ExplorerDesktopTrayLayout {
+  bounds: ExplorerDesktopWindow['bounds']
+  clip: ExplorerDesktopWindow['bounds']
+}
+
 interface HostOptions {
   helperPath: string
   journalPath: string
@@ -46,6 +58,7 @@ interface HostOptions {
   onWarning?: (reason: string) => void
   onApplicationsChanged?: (state: RunningApplicationsState) => void
   onWorkAreaChanged?: (bounds: ExplorerDesktopWindow['bounds']) => void
+  onSystemTrayChanged?: (tray: ExplorerDesktopSystemTray | null) => void
 }
 
 export interface ExplorerDesktopHost {
@@ -53,8 +66,11 @@ export interface ExplorerDesktopHost {
     windows: ExplorerDesktopWindow[]
     parentPid: number
     takeover: boolean
+    palette: SpiritAgentUiPalette
     workArea: ExplorerDesktopWindow['bounds']
   }) => Promise<void>
+  setPalette: (palette: SpiritAgentUiPalette) => Promise<void>
+  setTrayLayout: (layout: ExplorerDesktopTrayLayout | null, eligible?: () => boolean) => Promise<void>
   focus: (handle: Buffer, eligible?: () => boolean) => Promise<boolean>
   refreshApplications: (eligible: () => boolean) => Promise<void>
   activateExternal: (
@@ -818,6 +834,26 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
             }
 
             options.onWorkAreaChanged?.({ ...message.work_area })
+          } else if (message.event === 'system_tray') {
+            const tray = message.tray
+
+            if (tray === null) {
+              options.onSystemTrayChanged?.(null)
+            } else {
+              if (
+                !tray ||
+                typeof tray !== 'object' ||
+                Array.isArray(tray) ||
+                !('bounds' in tray) ||
+                !isPhysicalRect(tray.bounds) ||
+                !('visible' in tray) ||
+                typeof tray.visible !== 'boolean'
+              ) {
+                throw new Error('Desktop helper returned an invalid system tray')
+              }
+
+              options.onSystemTrayChanged?.({ bounds: { ...tray.bounds }, visible: tray.visible })
+            }
           } else if (
             Number.isInteger(message.id) &&
             typeof message.id === 'number' &&
@@ -992,6 +1028,32 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
   }
 
   return {
+    setTrayLayout: (layout, eligible = () => true) => {
+      const currentGeneration = generation
+
+      return serialize(async () => {
+        if (state !== 'running' || generation !== currentGeneration || !eligible()) {
+          return
+        }
+
+        if (layout !== null && (!isPhysicalRect(layout.bounds) || !isPhysicalRect(layout.clip))) {
+          throw new Error('无效系统托盘布局。')
+        }
+
+        await request({ command: 'set_tray_layout', layout }, 4_000)
+      })
+    },
+    setPalette: palette => {
+      const currentGeneration = generation
+
+      return serialize(async () => {
+        if (state !== 'running' || generation !== currentGeneration) {
+          return
+        }
+
+        await request({ command: 'set_palette', palette }, 4_000)
+      })
+    },
     focus: (handle, eligible = () => true) => {
       const currentGeneration = generation
 
@@ -1206,6 +1268,7 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
               command: 'start',
               parent_pid: input.parentPid,
               takeover: input.takeover,
+              palette: input.palette,
               windows,
               work_area: input.workArea
             },

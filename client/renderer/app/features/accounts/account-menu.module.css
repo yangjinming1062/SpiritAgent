@@ -28,7 +28,7 @@
   flex-direction: column;
   gap: 3px;
   width: 256px;
-  max-height: calc(100vh - 24px);
+  max-height: var(--account-available-height, calc(100vh - 24px));
   overflow: auto;
   padding: 9px;
   background: var(--ui-app-bg);

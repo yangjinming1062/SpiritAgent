@@ -508,7 +508,7 @@ export function DesktopDock({
             onPointerDown={event => event.stopPropagation()}
             ref={menuRef}
             role="menu"
-            style={{ left: menu.x, bottom: menu.bottom }}
+            style={{ left: menu.x, bottom: `max(${menu.bottom}px, var(--desktop-popup-bottom))` }}
           >
             {menuTasks?.entryId === menu.id && menuTasks.loading && (
               <div className={styles.dockMenuHeading} role="presentation">

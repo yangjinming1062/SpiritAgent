@@ -9,14 +9,18 @@ import {
   type DesktopCompanionActivityState,
   type DesktopMediaBytes,
   type DesktopMediaReference,
+  type DesktopTrayLayout,
+  getUiPalette,
   IPC,
+  normalizeUiTheme,
   type PresentationMode,
   type PresentationState,
+  type SpiritAgentUiTheme,
   type StageActivity
 } from '@ipc/contracts'
 import { errorMessage } from '@runtime'
 
-import { DESKTOP_LAYOUT } from '../../shared/desktop-layout'
+import { DESKTOP_LAYOUT, getDesktopRailLayout } from '../../shared/desktop-layout'
 import { registerDesktopPresentationIpc } from '../ipc/desktop-presentation'
 import { createUiStateBridge } from '../ipc/ui-state'
 import { isSenderWindow } from '../security/ipc-trust'
@@ -27,7 +31,7 @@ import { createDesktopBackgroundRuntime } from './desktop-background-runtime'
 import { readNativeDisplayBounds } from './desktop-display-resolutions'
 import { createDesktopHealth } from './desktop-health'
 import { createDesktopWindows } from './desktop-windows'
-import { createExplorerDesktopHost } from './explorer-desktop-host'
+import { createExplorerDesktopHost, type ExplorerDesktopSystemTray } from './explorer-desktop-host'
 import { createPresentationPreferences } from './presentation-preferences'
 
 interface DesktopPresentationOptions {
@@ -62,6 +66,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   const mainInterruptedFile = `${journalFile}.main-interrupted`
   let revision = 0
   let stageEpoch = 0
+  let desiredPalette = getUiPalette(normalizeUiTheme(options.seedTheme()))
   let foreground = false
   let stageAvailable = false
   let fullscreen = false
@@ -90,6 +95,9 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   let activeDisplay: Electron.Display | null = null
   let nativeWorkArea: PresentationState['workArea'] = null
   let nativeWorkAreaEpoch: number | null = null
+  let nativeSystemTray: PresentationState['systemTray'] = null
+  let nativeSystemTrayReceived = false
+  let trayLayoutRevision = 0
   let disposal: Promise<void> | null = null
   let disposeIpc: (() => void) | null = null
   let lastActivity: StageActivity = { locked: false, idleSeconds: -1, effectiveTier: 'normal', focus: null }
@@ -207,6 +215,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       }
     },
     onWorkAreaChanged: updateNativeWorkArea,
+    onSystemTrayChanged: updateNativeSystemTray,
     onFailure: reason => {
       if (status === 'inactive' || status === 'failed') {
         return
@@ -222,6 +231,38 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     for (const listener of applicationListeners) {
       listener(state)
     }
+  }
+
+  function setUiTheme(theme: SpiritAgentUiTheme): void {
+    desiredPalette = getUiPalette(theme)
+
+    if (disposed || (status !== 'starting' && status !== 'active')) {
+      return
+    }
+
+    const palette = desiredPalette
+    const epoch = stageEpoch
+    const generation = startupGeneration
+    const identity = options.authIdentity()
+
+    const current = (): boolean =>
+      !disposed &&
+      status === 'active' &&
+      effectiveMode === 'desktop' &&
+      stageEpoch === epoch &&
+      startupGeneration === generation &&
+      options.authenticated() &&
+      options.authIdentity() === identity
+
+    void serial(async () => {
+      if (current()) {
+        await native.setPalette(palette)
+      }
+    }).catch(error => {
+      if (current()) {
+        scheduleRecovery(`系统托盘主题同步失败：${errorMessage(error)}`)
+      }
+    })
   }
 
   function snapshot(): PresentationState {
@@ -277,6 +318,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       voicePreparing: activityBySource.host.voicePreparing || activityBySource.desktop.voicePreparing,
       displayId: targetDisplay?.id ?? null,
       workArea: effectiveMode === 'desktop' && status === 'active' ? nativeWorkArea : null,
+      systemTray: effectiveMode === 'desktop' && status === 'active' ? nativeSystemTray : null,
       displays,
       stageOwner: effectiveMode === 'desktop' ? 'desktop' : 'sprite',
       stageVisible: effectiveMode !== 'desktop',
@@ -324,6 +366,61 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
     nativeWorkArea = area
     publish()
+  }
+
+  function updateNativeSystemTray(physical: ExplorerDesktopSystemTray | null): void {
+    const win = windows.getInteractive()
+
+    if (
+      disposed ||
+      nativeWorkAreaEpoch !== stageEpoch ||
+      (status !== 'starting' && status !== 'active') ||
+      !activeDisplay ||
+      !win ||
+      win.isDestroyed()
+    ) {
+      return
+    }
+
+    let tray: PresentationState['systemTray'] = null
+
+    if (physical) {
+      const display = activeDisplay.bounds
+      const monitor = screen.dipToScreenRect(win, display)
+      const rect = physical.bounds
+
+      if (
+        rect.x < monitor.x - 2 ||
+        rect.y < monitor.y - 2 ||
+        rect.x + rect.width > monitor.x + monitor.width + 2 ||
+        rect.y + rect.height > monitor.y + monitor.height + 2
+      ) {
+        throw new Error('系统托盘位置与交互屏不匹配，已恢复窗口模式。')
+      }
+
+      const dip = screen.screenToDipRect(win, rect)
+      const x = Math.max(0, dip.x - display.x)
+      const y = Math.max(0, dip.y - display.y)
+      const right = Math.min(display.width, dip.x + dip.width - display.x)
+      const bottom = Math.min(display.height, dip.y + dip.height - display.y)
+
+      if (right <= x || bottom <= y) {
+        throw new Error('无法确认系统托盘位置，已恢复窗口模式。')
+      }
+
+      tray = { width: right - x, height: bottom - y, visible: physical.visible }
+
+      if (!getDesktopRailLayout(display.width).fits) {
+        throw new Error('屏幕没有足够空间显示桌面底栏，已恢复窗口模式。')
+      }
+    }
+
+    nativeSystemTrayReceived = true
+
+    if (JSON.stringify(nativeSystemTray) !== JSON.stringify(tray)) {
+      nativeSystemTray = tray
+      publish()
+    }
   }
 
   function displayGeometry(display: Electron.Display): string {
@@ -423,6 +520,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     activeDisplay = null
     nativeWorkArea = null
     nativeWorkAreaEpoch = null
+    nativeSystemTray = null
+    nativeSystemTrayReceived = false
     stageAvailable = false
     fullscreen = false
     background.reset()
@@ -436,6 +535,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     invalidateStartup(reason)
     nativeWorkArea = null
     nativeWorkAreaEpoch = null
+    nativeSystemTray = null
+    nativeSystemTrayReceived = false
     foreground = false
     publish()
 
@@ -487,6 +588,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     status = 'recovering'
     nativeWorkArea = null
     nativeWorkAreaEpoch = null
+    nativeSystemTray = null
+    nativeSystemTrayReceived = false
     setRunningApplications({ status: 'inactive', error: null, windows: [] })
     stageEpoch += 1
     background.invalidate()
@@ -605,6 +708,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     status = 'starting'
     nativeWorkArea = null
     nativeWorkAreaEpoch = null
+    nativeSystemTray = null
+    nativeSystemTrayReceived = false
     setRunningApplications({ status: 'loading', error: null, windows: [] })
     failureReason = null
     compatibilityWarning = null
@@ -619,6 +724,10 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
       if (!selected) {
         throw new Error('当前没有可用显示器，请连接显示屏后重试。')
+      }
+
+      if (!getDesktopRailLayout(selected.bounds.width).fits) {
+        throw new Error('屏幕没有足够空间显示桌面底栏，请使用窗口模式。')
       }
 
       // 临时回退不覆盖首选屏，重新接入后仍可按原选择进入。
@@ -662,6 +771,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       await native.start({
         parentPid: process.pid,
         takeover: process.env.SPIRITAGENT_DESKTOP_PROBE !== '1',
+        palette: desiredPalette,
         workArea: screen.dipToScreenRect(main, {
           ...selected.bounds,
           y: selected.bounds.y,
@@ -681,6 +791,10 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
           }
         })
       })
+
+      if (!nativeSystemTrayReceived) {
+        throw new Error('桌面组件未确认系统托盘状态，请修复组件后重试。')
+      }
 
       assertReady()
 
@@ -824,6 +938,122 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       options.authenticated() &&
       identity === options.authIdentity() &&
       isDesktopSender(sender)
+  }
+
+  async function setTrayLayout(sender: WebContents, raw: unknown): Promise<void> {
+    assertDesktop(sender)
+    const value = raw as Partial<DesktopTrayLayout> | null
+
+    if (!value || !Number.isSafeInteger(value.epoch) || value.layout === undefined) {
+      throw new Error('无效系统托盘布局。')
+    }
+
+    // 旧表面的卸载和在途测量不得撤销新代次的原生托盘。
+    if (value.epoch !== stageEpoch || status !== 'active' || effectiveMode !== 'desktop') {
+      return
+    }
+
+    const display = activeDisplay
+    const win = windows.getInteractive()
+
+    if (!display || !win || win.isDestroyed()) {
+      return
+    }
+
+    const generation = startupGeneration
+    const epoch = stageEpoch
+    const identity = options.authIdentity()
+    const requestRevision = ++trayLayoutRevision
+    const layout = value.layout
+
+    const current = (): boolean =>
+      !disposed &&
+      status === 'active' &&
+      effectiveMode === 'desktop' &&
+      generation === startupGeneration &&
+      epoch === stageEpoch &&
+      identity === options.authIdentity() &&
+      options.authenticated() &&
+      isDesktopSender(sender) &&
+      requestRevision === trayLayoutRevision &&
+      windows.getInteractive() === win &&
+      !win.isDestroyed()
+
+    const validRect = (rect: unknown): rect is Electron.Rectangle => {
+      if (!rect || typeof rect !== 'object') {
+        return false
+      }
+
+      const { x, y, width, height } = rect as Electron.Rectangle
+
+      return (
+        [x, y, width, height].every(item => typeof item === 'number' && Number.isFinite(item)) &&
+        Math.abs(x) <= 1_000_000 &&
+        Math.abs(y) <= 1_000_000 &&
+        width > 0 &&
+        width <= 65_536 &&
+        height > 0 &&
+        height <= DESKTOP_LAYOUT.bottomInset
+      )
+    }
+
+    if (layout !== null) {
+      if (!validRect(layout.bounds) || !validRect(layout.clip)) {
+        throw new Error('无效系统托盘区域。')
+      }
+
+      const { bounds, clip } = layout
+      const minimumY = display.bounds.height - DESKTOP_LAYOUT.bottomInset - 1
+
+      if (
+        clip.x < -1 ||
+        clip.y < minimumY ||
+        clip.x + clip.width > display.bounds.width + 1 ||
+        clip.y + clip.height > display.bounds.height + 1 ||
+        bounds.y < minimumY ||
+        bounds.y + bounds.height > display.bounds.height + 1
+      ) {
+        throw new Error('系统托盘必须位于交互屏底栏内。')
+      }
+    }
+
+    const toPhysical = (rect: Electron.Rectangle): Electron.Rectangle => {
+      const x = Math.round(rect.x)
+      const y = Math.round(rect.y)
+
+      return screen.dipToScreenRect(win, {
+        x: display.bounds.x + x,
+        y: display.bounds.y + y,
+        width: Math.max(1, Math.round(rect.x + rect.width) - x),
+        height: Math.max(1, Math.round(rect.y + rect.height) - y)
+      })
+    }
+
+    const physical =
+      layout === null
+        ? null
+        : {
+            bounds: toPhysical(layout.bounds),
+            clip: toPhysical({
+              x: Math.max(0, layout.clip.x),
+              y: Math.max(0, layout.clip.y),
+              width: Math.min(display.bounds.width, layout.clip.x + layout.clip.width) - Math.max(0, layout.clip.x),
+              height: Math.min(display.bounds.height, layout.clip.y + layout.clip.height) - Math.max(0, layout.clip.y)
+            })
+          }
+
+    try {
+      await native.setTrayLayout(
+        physical,
+        () => current() && (layout === null || (!fullscreen && powerMonitor.getSystemIdleState(1) !== 'locked'))
+      )
+    } catch (error) {
+      if (current()) {
+        scheduleRecovery(`系统托盘布局失败：${errorMessage(error)}`)
+      }
+
+      throw error
+    }
   }
 
   function captureApplicationEligibility(sender: WebContents, interaction = true): ApplicationEligibility {
@@ -1074,6 +1304,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         getState: snapshot,
         setMode,
         setDisplay,
+        setTrayLayout,
         companionActivity: (source, state, voicePreparing) => {
           if (disposed) {
             return
@@ -1228,6 +1459,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       }
     },
     restoreUiState,
+    setUiTheme,
     setMode,
     getWindow: windows.getInteractive,
     isDesktopSender,

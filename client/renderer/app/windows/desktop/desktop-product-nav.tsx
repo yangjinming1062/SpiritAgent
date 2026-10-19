@@ -189,7 +189,7 @@ export function DesktopProductNav({
           }}
           ref={menuRef}
           role="menu"
-          style={{ left: menu.x, bottom: menu.bottom }}
+          style={{ left: menu.x, bottom: `max(${menu.bottom}px, var(--desktop-popup-bottom))` }}
         >
           <button
             onClick={() => {

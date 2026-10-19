@@ -234,6 +234,7 @@ impl Applications {
                 || IsWindowVisible(window) == 0
                 || GetAncestor(window, GA_ROOT) != window
         } || window_pid(window) == self.parent_pid
+            || system_popup(window)
         {
             return Ok(false);
         }

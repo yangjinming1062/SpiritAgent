@@ -104,6 +104,8 @@ const desktopBridge = {
     hostReady: () => invoke(IPC.invoke.presentationHostReady),
     setBackground: (background: InvokePayload<typeof IPC.invoke.presentationSetBackground>) =>
       invoke(IPC.invoke.presentationSetBackground, background),
+    setTrayLayout: (payload: InvokePayload<typeof IPC.invoke.presentationSetTrayLayout>) =>
+      invoke(IPC.invoke.presentationSetTrayLayout, payload),
     stageActivity: (activity: InvokePayload<typeof IPC.invoke.presentationStageActivity>) =>
       invoke(IPC.invoke.presentationStageActivity, activity),
     onChanged: (cb: EventCallback<typeof IPC.event.presentationChanged>) =>

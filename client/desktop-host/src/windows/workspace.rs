@@ -496,6 +496,7 @@ impl Workspace {
     pub(super) fn fullscreen(&self, window: HWND) -> bool {
         if window.is_null()
             || window_pid(window) == self.parent_pid
+            || system_popup(window)
             || unsafe { GetAncestor(window, GA_ROOT) } != window
             // Explorer 桌面同样铺满屏幕，焦点切回桌面不能触发全屏避让。
             || window == unsafe { GetShellWindow() }
@@ -529,6 +530,7 @@ impl Workspace {
                 || IsIconic(window) != 0
                 || GetAncestor(window, GA_ROOT) != window
         } || window_pid(window) == self.parent_pid
+            || system_popup(window)
             || !uncloaked(window)
             || self.fullscreen(window)
         {

@@ -1,4 +1,4 @@
-use crate::{Bounds, Command, Result, WindowRole, WindowSpec, commands, emit};
+use crate::{Bounds, Command, Palette, Result, TrayLayout, WindowRole, WindowSpec, commands, emit};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::fs::{self, File};
@@ -39,6 +39,22 @@ use events::WinEvents;
 mod applications;
 use applications::Applications;
 mod jump_lists;
+mod regions;
+use regions::SavedRegion;
+mod tray;
+use tray::Tray;
+mod tray_placement;
+use tray_placement::RestoreTrayPlacement;
+mod tray_style;
+use tray_style::{RestoreTrayStyle, TrayStyle};
+
+pub fn tray_probe(handle: u64) -> Result<()> {
+    tray::probe(handle)
+}
+
+pub fn tray_style_attach(pid: u32, channel: &str) -> Result<()> {
+    tray_style::attach(pid, channel)
+}
 
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(Some(0)).collect()
@@ -311,7 +327,7 @@ fn window_pid(window: HWND) -> u32 {
     pid
 }
 
-fn is_explorer(pid: u32) -> bool {
+fn process_named(pid: u32, names: &[&str]) -> bool {
     let Ok(owner) = process(pid) else {
         return false;
     };
@@ -321,7 +337,32 @@ fn is_explorer(pid: u32) -> bool {
         && String::from_utf16_lossy(&path[..length as usize])
             .rsplit(['\\', '/'])
             .next()
-            .is_some_and(|name| name.eq_ignore_ascii_case("explorer.exe"))
+            .is_some_and(|name| names.iter().any(|expected| name.eq_ignore_ascii_case(expected)))
+}
+
+fn is_explorer(pid: u32) -> bool {
+    process_named(pid, &["explorer.exe"])
+}
+
+fn system_popup(window: HWND) -> bool {
+    if [
+        "NotifyIconOverflowWindow",
+        "TopLevelWindowForOverflowXamlIsland",
+        "XamlExplorerHostIslandWindow",
+        "ControlCenterWindow",
+    ]
+    .contains(&class_name(window).as_str())
+    {
+        return true;
+    }
+    process_named(window_pid(window), &[
+        "ShellExperienceHost.exe",
+        "ShellHost.exe",
+        "StartMenuExperienceHost.exe",
+        "TextInputHost.exe",
+        "SearchHost.exe",
+        "LockApp.exe",
+    ])
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -396,6 +437,12 @@ struct Journal {
     windows: Vec<RestoreWindow>,
     appbar: Option<RestoreAppBar>,
     desktop_bounds: Bounds,
+    #[serde(default)]
+    regions: Vec<SavedRegion>,
+    #[serde(default)]
+    tray_style: Option<RestoreTrayStyle>,
+    #[serde(default)]
+    tray_placements: Vec<RestoreTrayPlacement>,
 }
 
 fn sidecar(path: &Path, suffix: &str) -> PathBuf {
@@ -462,13 +509,45 @@ fn read_journal(path: &Path) -> Result<Option<Journal>> {
 }
 
 fn validate_journal(journal: &Journal) -> Result<()> {
+    if journal.tray_placements.len() > journal.shell.len() {
+        return Err("invalid system tray recovery placement count".into());
+    }
+    let mut placement_handles = std::collections::HashSet::new();
+    for saved in &journal.tray_placements {
+        saved.validate(journal)?;
+        if !placement_handles.insert(saved.identity.handle) {
+            return Err("duplicate system tray recovery placement".into());
+        }
+    }
+    if let Some(style) = &journal.tray_style {
+        style.validate(journal)?;
+    }
     if journal.windows.is_empty()
         || journal.windows.len() > 32
         || journal.shell.len() > 128
+        || journal.regions.len() > 160
     {
         return Err("invalid desktop journal window count".into());
     }
     let mut handles = std::collections::HashSet::new();
+    let mut region_handles = std::collections::HashSet::new();
+    for saved in &journal.regions {
+        saved.validate()?;
+        if !region_handles.insert(saved.identity.handle)
+            || !journal
+                .shell
+                .iter()
+                .chain(journal.windows.iter().map(|window| &window.identity))
+                .any(|identity| {
+                    identity.handle == saved.identity.handle
+                        && identity.pid == saved.identity.pid
+                        && identity.created == saved.identity.created
+                        && identity.class == saved.identity.class
+                })
+        {
+            return Err("invalid recovery region ownership".into());
+        }
+    }
     if let Some(appbar) = &journal.appbar {
         appbar.validate(journal.host_pid, journal.host_created, journal.desktop_bounds)?;
     }
@@ -502,10 +581,11 @@ fn validate_journal(journal: &Journal) -> Result<()> {
 impl Journal {
     fn save(&self, path: &Path) -> Result<()> {
         validate_journal(self)?;
-        atomic_write(
-            path,
-            &serde_json::to_vec(self).map_err(|error| error.to_string())?,
-        )
+        let bytes = serde_json::to_vec(self).map_err(|error| error.to_string())?;
+        if bytes.len() as u64 > MAX_JOURNAL_BYTES {
+            return Err("desktop recovery journal exceeds byte budget".into());
+        }
+        atomic_write(path, &bytes)
     }
 }
 
@@ -566,7 +646,7 @@ fn shell_windows(display: Bounds) -> Result<Vec<Identity>> {
             continue;
         }
         if ["Shell_TrayWnd", "Shell_SecondaryTrayWnd"].contains(&class_name(window).as_str())
-            && window_on_display(window, display)?
+            && tray::on_display(window, display)?
         {
             captured.push(Identity::capture(window)?);
         }
@@ -968,12 +1048,38 @@ fn restore_locked(path: &Path, expected_session: Option<&str>) -> Result<bool> {
     let mut failures = Vec::new();
     let mut hosted = false;
     if !matches!(journal.phase, JournalPhase::Prepared) {
+        if let Some(style) = &journal.tray_style {
+            if let Err(error) = style.restore() {
+                failures.push(error);
+            }
+        }
         if let Some(appbar) = &journal.appbar {
             if let Err(error) = appbar.restore() {
                 failures.push(error);
             }
         }
         // 先恢复系统界面，避免应用窗口复位阻断桌面可用性。
+        for saved in &journal.tray_placements {
+            if let Err(error) = saved.restore() {
+                failures.push(error);
+            }
+        }
+        for saved in &journal.regions {
+            if journal.shell.iter().any(|identity| identity.handle == saved.identity.handle)
+                && !is_explorer(saved.identity.pid)
+            {
+                continue;
+            }
+            let restoring_region = match journal.tray_placements.iter().find(|placement| {
+                placement.identity.handle == saved.identity.handle
+            }) {
+                Some(placement) => saved.restore_resized(placement.bounds),
+                None => saved.restore(),
+            };
+            if let Err(error) = restoring_region {
+                failures.push(error);
+            }
+        }
         for item in &journal.shell {
             if !item.valid()
                 || !is_explorer(item.pid)
@@ -1179,6 +1285,10 @@ struct Session {
     last_shell_scan: Instant,
     stopped: bool,
     restoring: RestoringSignal,
+    tray: Tray,
+    last_tray: Option<Option<tray::SystemTray>>,
+    tray_style: Option<TrayStyle>,
+    palette: Palette,
 }
 
 struct InputAttachment {
@@ -1201,6 +1311,7 @@ impl Session {
         path: &Path,
         parent_pid: u32,
         takeover: bool,
+        palette: Palette,
         specs: &[WindowSpec],
         work_area: Bounds,
     ) -> Result<Self> {
@@ -1301,7 +1412,17 @@ impl Session {
             windows,
             appbar: workspace.appbar_restore(),
             desktop_bounds: targets[0],
+            regions: Vec::new(),
+            tray_style: None,
+            tray_placements: Vec::new(),
         };
+        for identity in &journal.shell {
+            journal.tray_placements.push(RestoreTrayPlacement::capture(identity, journal.desktop_bounds)?);
+            journal.regions.push(SavedRegion::capture(identity)?);
+        }
+        let mut tray = Tray::new(&journal)?;
+        let mut tray_style = TrayStyle::prepare(&journal, palette)?;
+        journal.tray_style = tray_style.as_ref().map(TrayStyle::record);
         let restoring = RestoringSignal::new(&journal)?;
         workspace.bind_restoration(restoring.handle.0)?;
         if let Some(directory) = path.parent() {
@@ -1405,11 +1526,14 @@ impl Session {
             }
             if takeover {
                 for item in &journal.shell {
-                    if !item.valid() || !window_on_display(item.window(), targets[0])? {
+                    if !item.valid() || !tray::on_display(item.window(), targets[0])? {
                         return Err("Explorer changed before shell takeover".into());
                     }
-                    visibility(item, false)?;
                 }
+                if let Some(style) = &mut tray_style {
+                    style.start()?;
+                }
+                tray.apply(&journal, tray_style.as_ref())?;
                 workspace.activate()?;
             }
             layers.order(&journal.windows)?;
@@ -1433,6 +1557,8 @@ impl Session {
                 return Err(finish_failed_start(error, restored, &mut guardian, false));
             }
         };
+        emit(json!({ "event": "system_tray", "tray": tray.state }));
+        let last_tray = Some(tray.state);
         Ok(Self {
             journal,
             layers,
@@ -1452,7 +1578,40 @@ impl Session {
             last_shell_scan: Instant::now(),
             stopped: false,
             restoring,
+            tray,
+            last_tray,
+            tray_style,
+            palette,
         })
+    }
+
+    fn set_palette(&mut self, palette: Palette) -> Result<()> {
+        let _transaction = MutexGuard::restoration()?;
+        require_session(&self.path, &self.journal.session, &self.restoring)?;
+        self.palette = palette;
+        if let Some(style) = &mut self.tray_style {
+            style.heartbeat(palette)?;
+        }
+        Ok(())
+    }
+
+    fn set_tray_layout(&mut self, layout: Option<TrayLayout>) -> Result<()> {
+        let _transaction = MutexGuard::restoration()?;
+        require_session(&self.path, &self.journal.session, &self.restoring)?;
+        if !self.takeover {
+            return if layout.is_none() { Ok(()) } else { Err("native system tray is not enabled".into()) };
+        }
+        self.tray.set_layout(layout, self.targets[0])?;
+        self.tray.apply(&self.journal, self.tray_style.as_ref())?;
+        self.publish_tray();
+        Ok(())
+    }
+
+    fn publish_tray(&mut self) {
+        if self.last_tray != Some(self.tray.state) {
+            emit(json!({ "event": "system_tray", "tray": self.tray.state }));
+            self.last_tray = Some(self.tray.state);
+        }
     }
 
     fn heartbeat(&mut self) -> Result<()> {
@@ -1469,10 +1628,19 @@ impl Session {
 
     fn refresh_applications(&mut self, force: bool) -> Result<()> {
         let events = self.events.drain();
+        let shell_changed = events.iter().any(|(event, handle)| {
+            *event == 0
+                || self.journal.shell.iter().any(|identity| identity.handle == *handle as u64)
+                || ["TrayNotifyWnd", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"]
+                    .contains(&class_name(*handle as HWND).as_str())
+        });
         {
             let _transaction = MutexGuard::restoration()?;
             require_session(&self.path, &self.journal.session, &self.restoring)?;
             self.require_display()?;
+            if self.takeover && shell_changed {
+                self.refresh_shell()?;
+            }
             let changed = self.layers.order(&self.journal.windows)?;
             let verification = self.layers.verify(&self.journal.windows, self.targets[0]);
             if changed || verification.is_err() {
@@ -1805,6 +1973,12 @@ impl Session {
                     || unsafe { GetAncestor(foreground, GA_ROOTOWNER) } == saved.identity.window())
         });
         let fullscreen = self.workspace.fullscreen(foreground);
+        if self.takeover && self.tray.suspend(fullscreen) {
+            let _transaction = MutexGuard::restoration()?;
+            require_session(&self.path, &self.journal.session, &self.restoring)?;
+            self.tray.apply(&self.journal, self.tray_style.as_ref())?;
+            self.publish_tray();
+        }
         let stage_available = !fullscreen && (desktop_active || active);
         let state = (active && !fullscreen, stage_available, fullscreen);
         // 显示与位置消息会交错；跨轮复验异步校正的结果，沿用显示器的两像素 DPI 容差。
@@ -1868,6 +2042,9 @@ impl Session {
                 json!({ "event": "foreground", "active": state.0, "stage_available": state.1, "fullscreen": state.2 }),
             );
         }
+        if let Some(style) = &mut self.tray_style {
+            style.heartbeat(self.palette)?;
+        }
         Ok(())
     }
 
@@ -1894,16 +2071,39 @@ impl Session {
         self.require_display()?;
         let original_size = self.journal.shell.len();
         self.journal.shell.retain(Identity::valid);
+        self.journal.regions.retain(|saved| saved.identity.valid());
+        self.journal.tray_placements.retain(|saved| saved.identity.valid());
         let mut changed = self.journal.shell.len() != original_size;
         let mut released = Vec::new();
         for item in &self.journal.shell {
-            if !window_on_display(item.window(), self.targets[0])? {
+            let saved_placement = self.journal.tray_placements.iter().find(|saved| saved.identity.handle == item.handle);
+            if !saved_placement.is_some_and(|saved| saved.monitor == self.targets[0])
+                && !tray::on_display(item.window(), self.targets[0])?
+            {
+                if let Some(saved) = saved_placement {
+                    saved.restore()?;
+                }
+                if let Some(saved) = self
+                    .journal
+                    .regions
+                    .iter()
+                    .find(|saved| saved.identity.handle == item.handle)
+                {
+                    match saved_placement {
+                        Some(placement) => saved.restore_resized(placement.bounds)?,
+                        None => saved.restore()?,
+                    }
+                }
                 visibility(item, item.visible)?;
                 released.push(item.handle);
             }
         }
         if !released.is_empty() {
             self.journal.shell.retain(|item| !released.contains(&item.handle));
+            self.journal
+                .regions
+                .retain(|saved| !released.contains(&saved.identity.handle));
+            self.journal.tray_placements.retain(|saved| !released.contains(&saved.identity.handle));
             changed = true;
         }
         for item in shell_windows(self.targets[0])? {
@@ -1912,18 +2112,34 @@ impl Session {
                     && saved.pid == item.pid
                     && saved.created == item.created
             }) {
+                self.journal.regions.push(SavedRegion::capture(&item)?);
+                self.journal.tray_placements.push(RestoreTrayPlacement::capture(&item, self.targets[0])?);
                 self.journal.shell.push(item);
                 changed = true;
             }
         }
+        let style_matches = self.tray_style.as_ref().map_or(self.journal.shell.is_empty(),
+            |style| style.matches_target(&self.journal.shell));
+        if !style_matches {
+            if let Some(record) = &self.journal.tray_style {
+                record.restore()?;
+            }
+            self.tray_style = None;
+            self.tray_style = TrayStyle::prepare(&self.journal, self.palette)?;
+            self.journal.tray_style = self.tray_style.as_ref().map(TrayStyle::record);
+            changed = true;
+        }
         if changed {
             self.journal.save(&self.path)?;
         }
-        for item in &self.journal.shell {
-            if window_on_display(item.window(), self.targets[0])? {
-                visibility(item, false)?;
+        if !style_matches {
+            if let Some(style) = &mut self.tray_style {
+                style.begin()?;
             }
         }
+        self.tray.refresh(&self.journal)?;
+        self.tray.apply(&self.journal, self.tray_style.as_ref())?;
+        self.publish_tray();
         self.last_shell_scan = Instant::now();
         Ok(())
     }
@@ -1960,6 +2176,7 @@ pub fn host(path: &Path) -> Result<()> {
                     Command::Start {
                         parent_pid,
                         takeover,
+                        palette,
                         windows,
                         work_area,
                         ..
@@ -1967,7 +2184,7 @@ pub fn host(path: &Path) -> Result<()> {
                         if session.is_some() {
                             Err("desktop host is already running".into())
                         } else {
-                            Session::start(path, parent_pid, takeover, &windows, work_area).map(
+                            Session::start(path, parent_pid, takeover, palette, &windows, work_area).map(
                                 |started| {
                                     session = Some(started);
                                     json!(null)
@@ -1979,6 +2196,16 @@ pub fn host(path: &Path) -> Result<()> {
                         .as_mut()
                         .ok_or_else(|| "desktop is not running".to_owned())
                         .and_then(Session::heartbeat)
+                        .map(|_| json!(null)),
+                    Command::SetPalette { palette, .. } => session
+                        .as_mut()
+                        .ok_or_else(|| "desktop is not running".to_owned())
+                        .and_then(|active| active.set_palette(palette))
+                        .map(|_| json!(null)),
+                    Command::SetTrayLayout { layout, .. } => session
+                        .as_mut()
+                        .ok_or_else(|| "desktop is not running".to_owned())
+                        .and_then(|active| active.set_tray_layout(layout))
                         .map(|_| json!(null)),
                     Command::Focus { handle, .. } => session
                         .as_ref()

@@ -26,6 +26,7 @@ export interface DesktopBridge {
     heartbeat: AsyncIpc<IpcInvokeContract['spiritagent:presentation:heartbeat']>
     hostReady: AsyncIpc<IpcInvokeContract['spiritagent:presentation:host-ready']>
     setBackground: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-background']>
+    setTrayLayout: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-tray-layout']>
     stageActivity: AsyncIpc<IpcInvokeContract['spiritagent:presentation:stage-activity']>
     onChanged: EventSubscription<'spiritagent:presentation:changed'>
     onBackgroundPlayback: EventSubscription<'spiritagent:presentation:background-playback'>

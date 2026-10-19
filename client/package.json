@@ -167,6 +167,14 @@
         {
           "from": "build/${arch}/desktop-host.exe",
           "to": "desktop-host.exe"
+        },
+        {
+          "from": "build/${arch}/tray-style-resources",
+          "to": ".",
+          "filter": [
+            "desktop-tray-style.json",
+            "desktop-tray-style-*.dll"
+          ]
         }
       ]
     },

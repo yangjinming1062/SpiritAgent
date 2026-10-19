@@ -17,7 +17,7 @@ import {
   Tray
 } from 'electron'
 
-import { IPC } from '@ipc/contracts'
+import { IPC, type SpiritAgentUiTheme } from '@ipc/contracts'
 
 import { createBackendClient, isRetryableBackendError } from './backend/client'
 import { createEnsureBackend } from './backend/ensure-backend'
@@ -98,6 +98,12 @@ let mainWindow: BrowserWindow | null = null
 const getMainWindow = (): BrowserWindow | null => mainWindow
 let surfaces: null | SurfacesManager = null
 let presentation: DesktopPresentation | null = null
+
+function publishUiTheme(theme: SpiritAgentUiTheme): void {
+  presentation?.setUiTheme(theme)
+  broadcastToAllWindows(IPC.event.uiThemeChanged, { theme })
+}
+
 // sessionRuntime 在下方创建；各端口晚绑定读取。
 const ensureBackendSession = (): BackendSessionPort => sessionRuntime.ensureBackendSession()
 
@@ -155,7 +161,7 @@ const configSync = createConfigSync({
     broadcastToAllWindows(IPC.event.prefsHydrated, payload)
 
     if (theme) {
-      broadcastToAllWindows(IPC.event.uiThemeChanged, { theme })
+      publishUiTheme(theme)
     }
 
     rebuildTrayMenu()
@@ -263,7 +269,7 @@ registerSystemIpc({
   electron: { app },
   ipcMain
 })
-registerUiThemeIpc({ ipcMain, log: rememberLog })
+registerUiThemeIpc({ ipcMain, log: rememberLog, publishTheme: publishUiTheme })
 registerPrefsIpc({
   applyServerVoice: payload =>
     configSync.applyServerVoice(payload.accountId, payload.voiceId, () => {

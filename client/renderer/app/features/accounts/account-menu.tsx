@@ -64,10 +64,12 @@ function accountSubmenuSide(left: number, right: number): AccountSubmenuSide {
 
 export function AccountMenu({
   onClose,
-  placement = 'below'
+  placement = 'below',
+  bottomInset = VIEWPORT_MARGIN
 }: {
   onClose: () => void
   placement?: 'above' | 'below' | 'top-center'
+  bottomInset?: number
 }): React.JSX.Element {
   const t = useAccountMenuStrings()
   const [accounts, setAccounts] = useState<Accounts | null>(null)
@@ -101,10 +103,11 @@ export function AccountMenu({
     const updatePosition = (): void => {
       popup.style.setProperty('--account-offset-x', '0px')
       popup.style.setProperty('--account-offset-y', '0px')
+      popup.style.setProperty('--account-available-height', `${window.innerHeight - VIEWPORT_MARGIN - bottomInset}px`)
 
       const rect = menu.getBoundingClientRect()
       const left = Math.max(VIEWPORT_MARGIN, Math.min(rect.left, window.innerWidth - rect.width - VIEWPORT_MARGIN))
-      const top = Math.max(VIEWPORT_MARGIN, Math.min(rect.top, window.innerHeight - rect.height - VIEWPORT_MARGIN))
+      const top = Math.max(VIEWPORT_MARGIN, Math.min(rect.top, window.innerHeight - rect.height - bottomInset))
       popup.style.setProperty('--account-offset-x', `${left - rect.left}px`)
       popup.style.setProperty('--account-offset-y', `${top - rect.top}px`)
       popup.style.setProperty('--account-menu-left', `${menu.offsetLeft}px`)
@@ -123,7 +126,7 @@ export function AccountMenu({
         '--account-submenu-top',
         `${menu.offsetTop + (trigger ? trigger.getBoundingClientRect().top - top : 0)}px`
       )
-      popup.style.setProperty('--account-submenu-height', `${window.innerHeight - VIEWPORT_MARGIN * 2}px`)
+      popup.style.setProperty('--account-submenu-height', `${window.innerHeight - VIEWPORT_MARGIN - bottomInset}px`)
 
       const submenuElement = submenuRef.current
 
@@ -136,7 +139,7 @@ export function AccountMenu({
 
         const submenuTop = Math.max(
           VIEWPORT_MARGIN,
-          Math.min(submenuRect.top, window.innerHeight - submenuRect.height - VIEWPORT_MARGIN)
+          Math.min(submenuRect.top, window.innerHeight - submenuRect.height - bottomInset)
         )
 
         submenuElement.style.setProperty('--account-submenu-offset-y', `${submenuTop - submenuRect.top}px`)
@@ -157,7 +160,7 @@ export function AccountMenu({
       observer.disconnect()
       window.removeEventListener('resize', updatePosition)
     }
-  }, [placement, submenu])
+  }, [bottomInset, placement, submenu])
 
   const closeSubmenu = (): void => {
     focusOptionOnOpen.current = false

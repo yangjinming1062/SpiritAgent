@@ -26,12 +26,23 @@ export interface PresentationState {
   displayId: number | null
   /** 交互屏本地 DIP 坐标；原生工作区尚未就绪或已退出桌面时为空。 */
   workArea: { x: number; y: number; width: number; height: number } | null
+  /** 已定位的原生托盘 DIP 尺寸；自动隐藏或等待底栏定位时仍保留占位。 */
+  systemTray: { width: number; height: number; visible: boolean } | null
   displays: PresentationDisplay[]
   stageOwner: 'sprite' | 'desktop'
   stageVisible: boolean
   stageEpoch: number
   revision: number
   switchBlockedReason: string | null
+}
+
+export interface DesktopTrayLayout {
+  epoch: number
+  /** 交互屏本地 DIP：完整托盘占位与允许显示的底栏视口。 */
+  layout: {
+    bounds: { x: number; y: number; width: number; height: number }
+    clip: { x: number; y: number; width: number; height: number }
+  } | null
 }
 
 export type DesktopCompanionActivityState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'working' | 'disconnected'

@@ -10,6 +10,7 @@ import type {
   DesktopBackgroundPlayback,
   DesktopBackgroundRequest,
   DesktopCompanionActivityState,
+  DesktopTrayLayout,
   DockCatalog,
   DockState,
   DockTask,
@@ -36,6 +37,7 @@ export type {
   DesktopCompanionActivityState,
   DesktopMediaBytes,
   DesktopMediaReference,
+  DesktopTrayLayout,
   DockCatalog,
   DockCatalogItem,
   DockCatalogSource,
@@ -506,6 +508,7 @@ export interface IpcInvokeContract {
   'spiritagent:presentation:heartbeat': () => void
   'spiritagent:presentation:host-ready': () => Promise<void>
   'spiritagent:presentation:set-background': (background: DesktopBackgroundRequest) => Promise<void>
+  'spiritagent:presentation:set-tray-layout': (payload: DesktopTrayLayout) => Promise<void>
   'spiritagent:presentation:stage-activity': (activity: StageActivity) => void
   'spiritagent:dock:get-state': () => Promise<DockState>
   'spiritagent:dock:catalog': (force?: boolean, revision?: number) => Promise<DockCatalog>
@@ -756,6 +759,7 @@ export const IPC = {
     presentationHeartbeat: 'spiritagent:presentation:heartbeat',
     presentationHostReady: 'spiritagent:presentation:host-ready',
     presentationSetBackground: 'spiritagent:presentation:set-background',
+    presentationSetTrayLayout: 'spiritagent:presentation:set-tray-layout',
     dockGetState: 'spiritagent:dock:get-state',
     dockCatalog: 'spiritagent:dock:catalog',
     dockCatalogIcons: 'spiritagent:dock:catalog-icons',

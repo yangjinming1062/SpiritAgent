@@ -3,9 +3,10 @@
   --control-edge: var(--desktop-rail-control-edge, var(--desktop-control-edge, 16px));
   --control-bottom: calc(var(--desktop-bar-bottom, 12px) + (var(--desktop-bar-height, 64px) - var(--control-size)) / 2);
   --panel-gap: 12px;
-  --panel-width: min(340px, calc(100vw - 2 * var(--control-edge)));
+  --panel-width: min(340px, calc(100vw - var(--desktop-control-right) - var(--control-edge)));
+  --panel-bottom: max(calc(100% + var(--panel-gap)), calc(var(--desktop-popup-bottom) - var(--control-bottom)));
   position: absolute;
-  right: var(--control-edge);
+  right: var(--desktop-control-right);
   bottom: var(--control-bottom);
   z-index: 65;
   width: var(--control-size);
@@ -64,7 +65,7 @@
   right: 0;
   bottom: 100%;
   width: var(--panel-width);
-  height: var(--panel-gap);
+  height: calc(var(--panel-bottom) - 100%);
   pointer-events: auto;
 }
 
@@ -72,11 +73,11 @@
 .panel {
   position: absolute;
   right: 0;
-  bottom: calc(100% + var(--panel-gap));
+  bottom: var(--panel-bottom);
   display: flex;
   flex-direction: column;
   width: var(--panel-width);
-  max-height: calc(100vh - var(--control-bottom) - var(--control-size) - var(--panel-gap) - var(--control-edge));
+  max-height: calc(100vh - var(--control-bottom) - var(--panel-bottom) - var(--control-edge));
   gap: 16px;
   padding: 18px;
   overflow: auto;

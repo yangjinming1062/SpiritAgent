@@ -5,7 +5,6 @@
   --desktop-rail-center-width: var(--desktop-center-width);
   --desktop-rail-control-size: var(--desktop-control-size);
   --desktop-rail-control-edge: var(--desktop-control-edge);
-  --desktop-control-gap: 12px;
   --desktop-unread-color: #168ee8;
   --desktop-unread-halo: rgb(24 156 239 / 0.5);
   color: var(--ui-text-strong);
@@ -34,21 +33,20 @@
   opacity: 0.45;
 }
 .bottomBar {
+  --desktop-bar-width: min(
+    calc(2 * var(--desktop-wing-width, 216px) + var(--desktop-rail-center-width) + 2 * var(--desktop-bar-padding)),
+    var(--desktop-bar-available-width)
+  );
   position: absolute;
-  right: 0;
   bottom: var(--desktop-bar-bottom);
-  left: 0;
+  left: calc(50% - var(--desktop-bar-width) / 2);
   z-index: 50;
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--desktop-rail-center-width) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   align-items: center;
-  width: calc(2 * var(--desktop-wing-width, 216px) + var(--desktop-rail-center-width) + 2 * var(--desktop-bar-padding));
-  max-width: calc(
-    100% - 2 * (var(--desktop-rail-control-edge) + var(--desktop-rail-control-size) + var(--desktop-control-gap))
-  );
+  width: var(--desktop-bar-width);
   height: var(--desktop-bar-height);
-  margin-inline: auto;
   padding: 8px var(--desktop-bar-padding);
   pointer-events: none;
 }
@@ -470,7 +468,34 @@
   border-color: var(--ui-accent-soft);
   background: var(--ui-accent-soft);
 }
+.productWing {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 4px;
+  pointer-events: auto;
+}
+.wingScroll {
+  display: grid;
+  flex: 0 0 20px;
+  place-items: center;
+  width: 20px;
+  height: 32px;
+  padding: 0;
+  color: var(--ui-text-strong);
+  border: 1px solid var(--ui-line-standard);
+  border-radius: 7px;
+  background: var(--ui-fill-hover);
+}
+.wingScroll[hidden] {
+  display: none;
+}
+.wingScroll:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}
 .productViewport {
+  flex: 1;
   min-width: 0;
   overflow-x: auto;
   padding: 8px 2px;
@@ -480,10 +505,18 @@
   pointer-events: auto;
 }
 .productItems {
+  display: flex;
+  align-items: center;
+  gap: var(--desktop-item-gap);
   width: max-content;
+}
+.systemTraySlot {
+  flex: 0 0 auto;
+  pointer-events: none;
 }
 .productNav {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: var(--desktop-item-gap);
 }
@@ -562,7 +595,7 @@
   transform: translateX(-50%);
   width: 240px;
   max-width: calc(100vw - 32px);
-  max-height: min(400px, calc(100vh - 150px));
+  max-height: min(400px, calc(100vh - var(--desktop-popup-bottom) - 16px));
   overflow-y: auto;
   padding: 5px;
   border-radius: 9px;
@@ -644,7 +677,6 @@
     --desktop-rail-center-width: calc(var(--desktop-avatar-size) + 8px);
     --desktop-rail-control-size: 40px;
     --desktop-rail-control-edge: 4px;
-    --desktop-control-gap: 6px;
     --desktop-bar-padding: 4px;
   }
 }
@@ -707,7 +739,9 @@
   font-size: 11px;
 }
 .dockWarning {
+  flex: 0 0 8px;
   align-self: center;
+  text-align: center;
   color: var(--ui-text-muted);
 }
 

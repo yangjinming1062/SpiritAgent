@@ -23,6 +23,7 @@ interface PresentationOperations {
   getState: () => PresentationState
   setMode: (mode: PresentationMode, sender: WebContents) => Promise<PresentationState>
   setDisplay: (id: number, sender: WebContents) => Promise<PresentationState>
+  setTrayLayout: (sender: WebContents, raw: unknown) => Promise<void>
   companionActivity: (source: 'host' | 'desktop', state: DesktopCompanionActivityState, voicePreparing: boolean) => void
   reportReady: () => void
   focus: (sender: WebContents, epoch: number) => Promise<boolean>
@@ -122,6 +123,15 @@ export function registerDesktopPresentationIpc(
     }
 
     return operations.focus(event.sender, epoch)
+  })
+  register(IPC.invoke.presentationSetTrayLayout, (event, raw: unknown) => {
+    assertDesktop(event.sender)
+
+    if (!access.authenticated()) {
+      throw new Error('登录后才能调整系统托盘。')
+    }
+
+    return operations.setTrayLayout(event.sender, raw)
   })
   register(IPC.invoke.presentationHeartbeat, event => {
     if (!access.isDesktopSender(event.sender)) {
