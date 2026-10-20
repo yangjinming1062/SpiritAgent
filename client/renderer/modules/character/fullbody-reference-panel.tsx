@@ -1,10 +1,11 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { PortraitLightbox } from '@/shared'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import { backendDetailMessage } from '@/shared/lib/ipc-error'
+import { FolderOpen } from '@/shared/lib/icons'
+import { backendDetailMessage, ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { authedResource, requestResource } from '@/shared/lib/resource-request'
 import {
   BTN_PRIMARY,
@@ -67,6 +68,14 @@ export function FullbodyReferencePanel({
   const [failedPreview, setFailedPreview] = useState<string | null>(null)
   const [previewRevision, setPreviewRevision] = useState(0)
   const [loadedPreviewKey, setLoadedPreviewKey] = useState<string | null>(null)
+
+  const adoptedImageRef = useRef<{
+    avatarId: number
+    image: PickedImage
+    url: string
+    isCurrent: () => boolean
+  } | null>(null)
+
   const onboarding = Boolean(onContinue)
   const current = state.avatarId === avatarId
   const currentRawUrl = current ? state.rawUrl : null
@@ -80,6 +89,9 @@ export function FullbodyReferencePanel({
   const previewReady = Boolean(displayedPreview && loadedPreviewKey === previewKey)
   const previewFailed = Boolean(displayedPreview && failedPreview === displayedPreview)
   const currentImageUnavailable = Boolean(state.error) || previewFailed
+
+  const generationBlocked =
+    busy || Boolean(selectedHistory) || currentImageUnavailable || (history.length > 0 && !currentRawUrl)
 
   const errorMessage =
     confirmError ||
@@ -108,15 +120,15 @@ export function FullbodyReferencePanel({
     void hydrateFullbodyReference(avatarId)
   }, [avatarId])
 
-  const confirm = async (): Promise<void> => {
+  const confirm = async (acceptedUrl?: string): Promise<void> => {
     if (!onContinue || selecting || confirming) {
       return
     }
 
-    // 读 store 而非渲染闭包：自备图采纳后要立即确认刚水合的结果。
+    // 手动确认读取当前版本；自备图直接使用服务端返回的采纳路径。
     const latest = $fullbodyReference.get()
 
-    if (latest.avatarId !== avatarId || (!latest.rawUrl && !selectedHistory) || latest.busy) {
+    if (!acceptedUrl && (latest.avatarId !== avatarId || (!latest.rawUrl && !selectedHistory) || latest.busy)) {
       return
     }
 
@@ -124,30 +136,40 @@ export function FullbodyReferencePanel({
     setConfirmError(null)
 
     try {
-      if (selectedHistory && !(await restoreFullbodyReferenceVersion(avatarId, selectedHistory.id))) {
-        setConfirmError(t.restoreFailed)
+      let confirmedUrl = acceptedUrl
 
-        return
+      if (!confirmedUrl) {
+        if (selectedHistory && !(await restoreFullbodyReferenceVersion(avatarId, selectedHistory.id))) {
+          setConfirmError(t.restoreFailed)
+
+          return
+        }
+
+        const confirmed = $fullbodyReference.get()
+
+        if (
+          confirmed.avatarId !== avatarId ||
+          !confirmed.rawUrl ||
+          !confirmed.previewUrl ||
+          confirmed.error ||
+          confirmed.busy
+        ) {
+          setConfirmError(t.restoreFailed)
+
+          return
+        }
+
+        confirmedUrl = confirmed.rawUrl
       }
 
-      const confirmed = $fullbodyReference.get()
-
-      if (
-        confirmed.avatarId !== avatarId ||
-        !confirmed.rawUrl ||
-        !confirmed.previewUrl ||
-        confirmed.error ||
-        confirmed.busy
-      ) {
-        setConfirmError(t.restoreFailed)
-
-        return
-      }
-
-      await onContinue(confirmed.rawUrl)
+      await onContinue(confirmedUrl)
       clearFullbodyReferenceHistory(avatarId)
       setSelectedHistoryId(null)
     } catch (error) {
+      if (acceptedUrl) {
+        throw error
+      }
+
       setConfirmError(backendDetailMessage(error, t.errors.load))
     } finally {
       setConfirming(false)
@@ -208,22 +230,57 @@ export function FullbodyReferencePanel({
 
   const adoptSelfSourceImage = async (image: PickedImage): Promise<void> => {
     const isLive = begin()
+    const adopted = adoptedImageRef.current
 
-    const result = await authedResource('companion.post_fullbody_adopt', {
-      path: { avatar_id: avatarId },
-      body: { image: image.base64, content_type: image.contentType }
-    })
+    let expectedUrl =
+      adopted?.avatarId === avatarId && adopted.image === image && adopted.isCurrent() ? adopted.url : undefined
 
-    if (!isLive() || (!result.ok && result.reason === 'unauth')) {
+    if (!onContinue || !expectedUrl) {
+      const result = await authedResource('companion.post_fullbody_adopt', {
+        path: { avatar_id: avatarId },
+        body: { image: image.base64, content_type: image.contentType }
+      })
+
+      if (!isLive() || (!result.ok && result.reason === 'unauth')) {
+        return
+      }
+
+      if (!result.ok) {
+        throw result.error
+      }
+
+      expectedUrl = result.value
+        ? 'image_url' in result.value
+          ? result.value.image_url
+          : result.value.seed_fullbody_url
+        : undefined
+
+      if (onContinue && expectedUrl) {
+        adoptedImageRef.current = { avatarId, image, url: expectedUrl, isCurrent: isLive }
+      }
+    }
+
+    if (onContinue) {
+      if (!expectedUrl) {
+        throw new Error(t.adoptPreviewFailed)
+      }
+
+      try {
+        await confirm(expectedUrl)
+        adoptedImageRef.current = null
+      } catch (error) {
+        // 回执未知时保留上传结果，只重试确认；明确拒绝源图后允许重新上传。
+        const status = ipcErrorStatus(error)
+
+        if (status !== null && status >= 400 && status < 500 && status !== 429) {
+          adoptedImageRef.current = null
+        }
+
+        throw error
+      }
+
       return
     }
-
-    if (!result.ok) {
-      throw result.error
-    }
-
-    const expectedUrl =
-      result.value && ('image_url' in result.value ? result.value.image_url : result.value.seed_fullbody_url)
 
     const hydrated = await hydrateFullbodyReference(avatarId)
 
@@ -243,8 +300,6 @@ export function FullbodyReferencePanel({
     }
 
     setFeedback('')
-    // 引导内采纳即确认并继续，失败留在本面板可手动重试；设置页无后续步骤，不自动确认。
-    await confirm()
   }
 
   // 独立全身参考以头像为身份锚点（与 AI 生图同源）；优先读种子缓存，回落到当前头像。
@@ -258,6 +313,82 @@ export function FullbodyReferencePanel({
     // 头像为独立全身参考身份锚点：打开前确保种子缓存已水合。
     void hydrateAvatarSeeds().finally(() => setSelfSourceOpen(true))
   }
+
+  const generationActions = (
+    <GenerationActionsGroup
+      dense={onboarding}
+      editDisabled={
+        busy || Boolean(selectedHistory) || currentImageUnavailable || !preview || !feedback.trim() || !!reference
+      }
+      editReason={
+        reference ? t.editDisabledByReference : !feedback.trim() ? genActions.editRequiresFeedback : undefined
+      }
+      onEdit={current && state.rawUrl ? () => void submit('edit') : undefined}
+      onRegenerate={() => void submit('regenerate')}
+      onSelfSource={onboarding ? undefined : openSelfSource}
+      regenerateDisabled={generationBlocked}
+      regenerateLabel={current && state.rawUrl ? undefined : genActions.generate}
+      selfSourceDisabled={generationBlocked}
+    />
+  )
+
+  const adjustmentFields = (
+    <>
+      <div className="space-y-1">
+        <label className={FIELD_LABEL} htmlFor="fullbody-reference-feedback">
+          {initialGeneration ? t.descriptionLabel : t.feedbackLabel}
+        </label>
+        <p className={HINT_TEXT}>{t.descriptionHint}</p>
+        <textarea
+          className={INPUT_CLASS}
+          disabled={busy}
+          id="fullbody-reference-feedback"
+          maxLength={MAX_IMAGE_DESCRIPTION}
+          onChange={(event): void => setFeedback(event.target.value)}
+          placeholder={initialGeneration ? t.descriptionPlaceholder : t.feedbackPlaceholder}
+          rows={2}
+          value={feedback}
+        />
+      </div>
+      <details
+        className={onboarding ? 'space-y-2' : 'space-y-1 rounded-xl border border-line-hairline p-3'}
+        open={reference ? true : undefined}
+      >
+        <summary className="cursor-pointer text-xs text-body">{t.refLabel}</summary>
+        <p className={HINT_TEXT}>{t.refHint}</p>
+        <div className="flex items-center gap-2">
+          {reference && (
+            <img
+              alt={t.referenceLabel}
+              className="h-16 w-16 rounded-lg border border-line-hairline object-contain"
+              src={reference.previewUrl}
+            />
+          )}
+          <button className={BTN_SUBTLE} disabled={busy} onClick={() => void chooseReference()} type="button">
+            {reference ? t.replaceReference : t.chooseReference}
+          </button>
+          {reference && (
+            <button
+              className={BTN_SUBTLE}
+              disabled={busy}
+              onClick={() => {
+                setReference(null)
+                setReferenceError(false)
+              }}
+              type="button"
+            >
+              {t.removeReference}
+            </button>
+          )}
+        </div>
+        {referenceError && (
+          <p className="text-xs text-danger-fg" role="alert">
+            {t.pickError}
+          </p>
+        )}
+      </details>
+    </>
+  )
 
   const creationFeedback = (busy || errorMessage || (onboarding && displayedPreview) || state.candidateId) && (
     <CreationFeedback
@@ -298,29 +429,7 @@ export function FullbodyReferencePanel({
         className="gap-3"
         footer={
           <CreationActionBar description={creationFeedback}>
-            <GenerationActionsGroup
-              editDisabled={
-                busy ||
-                Boolean(selectedHistory) ||
-                currentImageUnavailable ||
-                !preview ||
-                !feedback.trim() ||
-                !!reference
-              }
-              editReason={
-                reference ? t.editDisabledByReference : !feedback.trim() ? genActions.editRequiresFeedback : undefined
-              }
-              onEdit={current && state.rawUrl ? () => void submit('edit') : undefined}
-              onRegenerate={() => void submit('regenerate')}
-              onSelfSource={openSelfSource}
-              regenerateDisabled={
-                busy || Boolean(selectedHistory) || currentImageUnavailable || (history.length > 0 && !currentRawUrl)
-              }
-              regenerateLabel={current && state.rawUrl ? undefined : genActions.generate}
-              selfSourceDisabled={
-                busy || Boolean(selectedHistory) || currentImageUnavailable || (history.length > 0 && !currentRawUrl)
-              }
-            />
+            {!onboarding && generationActions}
             {!onboarding &&
               current &&
               state.candidateId &&
@@ -344,38 +453,54 @@ export function FullbodyReferencePanel({
                 </button>
               ))}
             {(onBack || onContinue) && (
-              <div className="flex flex-wrap items-center gap-2">
+              <div
+                className={
+                  onboarding
+                    ? 'flex w-full flex-wrap items-center justify-between gap-3'
+                    : 'flex flex-wrap items-center gap-2'
+                }
+              >
                 {onBack && (
                   <button className={BTN_SUBTLE} disabled={busy} onClick={onBack} type="button">
                     {t.back}
                   </button>
                 )}
-                {onContinue && (
-                  <button
-                    className={BTN_PRIMARY}
-                    disabled={
-                      busy ||
-                      previewFailed ||
-                      !previewReady ||
-                      (!selectedHistory && (!state.rawUrl || state.error !== null))
-                    }
-                    onClick={() => void confirm()}
-                    type="button"
-                  >
-                    {t.continue}
-                  </button>
-                )}
+                {onContinue &&
+                  (displayedPreview ? (
+                    <button
+                      className={`${BTN_PRIMARY} ml-auto`}
+                      disabled={
+                        busy ||
+                        previewFailed ||
+                        !previewReady ||
+                        (!selectedHistory && (!state.rawUrl || state.error !== null))
+                      }
+                      onClick={() => void confirm()}
+                      type="button"
+                    >
+                      {t.continue}
+                    </button>
+                  ) : (
+                    <button
+                      className={`${BTN_PRIMARY} ml-auto`}
+                      disabled={generationBlocked}
+                      onClick={() => void submit('regenerate')}
+                      type="button"
+                    >
+                      {busy ? dict.creation.working : currentRawUrl ? t.regenerate : t.generate}
+                    </button>
+                  ))}
               </div>
             )}
           </CreationActionBar>
         }
         header={
-          <>
-            <div>
-              <p className={SECTION_TITLE}>{t.title}</p>
-              <p className={HINT_TEXT}>{t.hint}</p>
-            </div>
-          </>
+          <div>
+            <h2 className={onboarding ? 'text-lg font-medium leading-relaxed text-strong' : SECTION_TITLE}>
+              {t.title}
+            </h2>
+            <p className={HINT_TEXT}>{t.hint}</p>
+          </div>
         }
       >
         <div className="space-y-3">
@@ -396,9 +521,11 @@ export function FullbodyReferencePanel({
               />
             </button>
           ) : (
-            <p className="rounded-xl border border-line-hairline bg-fill-trough px-4 py-6 text-center text-xs text-muted">
-              {busy ? t.loading : history.length > 0 ? t.historyCurrentUnavailable : t.empty}
-            </p>
+            (!onboarding || history.length > 0) && (
+              <p className="rounded-xl border border-line-hairline bg-fill-trough px-4 py-6 text-center text-xs text-muted">
+                {busy ? t.loading : history.length > 0 ? t.historyCurrentUnavailable : t.empty}
+              </p>
+            )
           )}
           {onboarding && current && history.length > 0 && (
             <div className="space-y-2">
@@ -440,67 +567,32 @@ export function FullbodyReferencePanel({
               )}
             </div>
           )}
-          <details
-            className="space-y-3 rounded-xl border border-line-hairline p-3"
-            open={!displayedPreview ? true : undefined}
-          >
-            <summary className="cursor-pointer text-xs text-body">
-              {displayedPreview ? genActions.aiTitle : t.descriptionLabel}
-            </summary>
-            <div className="space-y-1">
-              <label className={FIELD_LABEL} htmlFor="fullbody-reference-feedback">
-                {initialGeneration ? t.descriptionLabel : t.feedbackLabel}
-              </label>
-              <p className={HINT_TEXT}>{t.descriptionHint}</p>
-              <textarea
-                className={INPUT_CLASS}
-                disabled={busy}
-                id="fullbody-reference-feedback"
-                maxLength={MAX_IMAGE_DESCRIPTION}
-                onChange={(event): void => setFeedback(event.target.value)}
-                placeholder={initialGeneration ? t.descriptionPlaceholder : t.feedbackPlaceholder}
-                rows={2}
-                value={feedback}
-              />
-            </div>
+          {onboarding && !displayedPreview ? (
+            <div className="space-y-4">{adjustmentFields}</div>
+          ) : (
             <details
-              className="space-y-1 rounded-xl border border-line-hairline p-3"
-              open={reference ? true : undefined}
+              className="space-y-3 rounded-xl border border-line-hairline p-3"
+              open={!displayedPreview ? true : undefined}
             >
-              <summary className="cursor-pointer text-xs text-body">{t.refLabel}</summary>
-              <p className={HINT_TEXT}>{t.refHint}</p>
-              <div className="flex items-center gap-2">
-                {reference && (
-                  <img
-                    alt={t.referenceLabel}
-                    className="h-16 w-16 rounded-lg border border-line-hairline object-contain"
-                    src={reference.previewUrl}
-                  />
-                )}
-                <button className={BTN_SUBTLE} disabled={busy} onClick={() => void chooseReference()} type="button">
-                  {reference ? t.replaceReference : t.chooseReference}
-                </button>
-                {reference && (
-                  <button
-                    className={BTN_SUBTLE}
-                    disabled={busy}
-                    onClick={() => {
-                      setReference(null)
-                      setReferenceError(false)
-                    }}
-                    type="button"
-                  >
-                    {t.removeReference}
-                  </button>
-                )}
-              </div>
-              {referenceError && (
-                <p className="text-xs text-danger-fg" role="alert">
-                  {t.pickError}
-                </p>
-              )}
+              <summary className="cursor-pointer text-xs text-body">
+                {displayedPreview ? genActions.aiTitle : t.descriptionLabel}
+              </summary>
+              {adjustmentFields}
+              {onboarding && generationActions}
             </details>
-          </details>
+          )}
+          {onboarding && (
+            <button
+              className="inline-flex items-center gap-1.5 text-xs text-muted transition hover:text-strong disabled:opacity-40"
+              disabled={generationBlocked}
+              onClick={openSelfSource}
+              title={selfSource.openTitle}
+              type="button"
+            >
+              <FolderOpen className="size-3.5" />
+              {selfSource.open}
+            </button>
+          )}
         </div>
       </CreationWorkspace>
       <SelfSourceImageFlow
@@ -514,6 +606,7 @@ export function FullbodyReferencePanel({
         open={selfSourceOpen}
         referenceImages={selfSourceReferences}
         title={selfSource.open}
+        waitForPromptBeforeAdopt={false}
       />
       {zoom && displayedPreview && (
         <PortraitLightbox name={t.title} onClose={() => setZoom(false)} url={displayedPreview} />

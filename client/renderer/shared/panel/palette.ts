@@ -3,6 +3,9 @@
 // 独立浮层表面（右键菜单、模态卡、下拉列表）：跟色彩轴走，不继承清透档的低 alpha。模态只铺这张卡，不用全屏暗化遮罩——透明精灵窗上会压黑桌面，日色下还容易配深字看不清。
 export const SURFACE_OVERLAY = 'liquid-glass-overlay'
 
+// 表单与确认弹窗使用实底，避免下层页面文字透出叠影。
+export const SURFACE_MODAL = `${SURFACE_OVERLAY} solid-modal-surface`
+
 // 按钮
 export const BTN_PRIMARY =
   'inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-inverse-surface px-3.5 text-xs font-medium text-inverse-fg transition hover:bg-inverse-surface-hover disabled:pointer-events-none disabled:opacity-40'

@@ -680,6 +680,8 @@ async def post_fullbody_adopt(
         )
     except (AvatarGenerationError, VisualReasoningError) as exc:
         raise _avatar_request_error(exc)
+    if isinstance(asset, AvatarAssetResponse) and asset.is_fullbody_confirmed:
+        schedule_character_extraction(user.id)
     return asset
 
 

@@ -1,21 +1,43 @@
 import { useStore } from '@nanostores/react'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { $regenFeedback, MAX_IMAGE_DESCRIPTION } from '@/modules/character'
 import { HistoryGallery, type HistoryGalleryItem, PortraitLightbox } from '@/shared'
 import { usePointerDrag } from '@/shared/hooks/use-pointer-drag'
-import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
-import { BTN_SUBTLE, CreationFeedback, INPUT_CLASS } from '@/shared/panel'
+import { Check } from '@/shared/lib/icons'
+import { probeInteractiveRegions, useInteractiveRegion } from '@/shared/lib/interactive-regions'
+import { BTN_SUBTLE, CreationFeedback, INPUT_CLASS, SURFACE_OVERLAY } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
+import styles from './onboarding.module.css'
+
 export const ONBOARDING_PRIMARY_BUTTON =
-  'inline-flex h-8 items-center justify-center rounded-lg bg-accent px-4 text-xs font-medium text-on-accent transition hover:bg-accent/85 disabled:pointer-events-none disabled:opacity-40'
+  'inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-accent px-4 py-2 text-sm font-medium text-on-accent transition hover:bg-accent/85 disabled:pointer-events-none disabled:opacity-40'
+
+export function OnboardingProgress({ step }: { step: number }): React.JSX.Element {
+  return (
+    <ol aria-label="认识伙伴的进度" className={styles.progress} data-onboarding-drag-handle="">
+      {['认识伙伴', '确认形象', '选择声音'].map((label, index) => (
+        <li
+          aria-current={step === index ? 'step' : undefined}
+          className={styles.step}
+          data-state={step === index ? 'current' : step > index ? 'complete' : 'upcoming'}
+          key={label}
+        >
+          <span aria-hidden="true" className={styles.stepMarker}>
+            {step > index ? <Check className="size-3.5" /> : index + 1}
+          </span>
+          <span className={styles.stepLabel}>{label}</span>
+        </li>
+      ))}
+    </ol>
+  )
+}
 
 export function PortraitPanel({
   avatarUrl,
   hint,
   history,
-  introHint,
   name,
   onPreviewReady,
   onSelectEntry,
@@ -24,7 +46,6 @@ export function PortraitPanel({
   avatarUrl: string | null
   hint: string | null
   history?: HistoryGalleryItem[]
-  introHint?: string | null
   name: string
   onPreviewReady?: (url: string | null) => void
   onSelectEntry?: (idx: number) => void
@@ -39,7 +60,6 @@ export function PortraitPanel({
 
   return (
     <div className="flex flex-col items-center gap-2">
-      {introHint && <p className="text-center text-[10px] leading-relaxed text-muted">{introHint}</p>}
       <PortraitThumb
         label="头像"
         name={name}
@@ -83,7 +103,7 @@ function PortraitThumb({
           >
             <img
               alt={name}
-              className="h-28 w-28 object-cover shadow-lg"
+              className="h-40 w-40 object-cover shadow-lg"
               key={`${url}:${revision}`}
               onError={() => {
                 setFailedUrl(url)
@@ -95,7 +115,7 @@ function PortraitThumb({
           </button>
         </div>
       ) : (
-        <div className="grid h-28 w-28 place-items-center rounded-xl bg-fill-faint text-center text-[10px] text-faint">
+        <div className="grid h-40 w-40 place-items-center rounded-xl bg-fill-faint text-center text-[10px] text-faint">
           —
         </div>
       )}
@@ -135,32 +155,67 @@ const DRAG_THRESHOLD = 6
 // 注册可见矩形到 interactive-regions，SpriteStage 命中测试只在表单卡片上捕获；卸载时恢复穿透。
 export function DraggableDialog({ children }: { children: React.ReactNode }): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
-
-  const [dialogPos, setDialogPos] = useState<{ x: number; y: number }>(() => {
-    const width = 448
-    const height = 600
-
-    return {
-      x: Math.max(0, Math.round((window.innerWidth - width) / 2)),
-      y: Math.max(0, Math.round((window.innerHeight - height) / 2))
-    }
-  })
+  const [dialogOffset, setDialogOffset] = useState({ dx: 0, dy: 0 })
 
   useInteractiveRegion('onboarding', containerRef, interactiveRegionRect)
 
-  // document 级监听让指针离开对话框后仍可拖拽；基准位与实时位移分离，dialogPos 仅松手时提交，避免位移叠到不断重设的 origin 上加速漂移。
+  const constrainOffset = (offset: { dx: number; dy: number }): { dx: number; dy: number } => {
+    const rect = containerRef.current?.getBoundingClientRect()
+
+    if (!rect) {
+      return offset
+    }
+
+    const maxX = Math.max(0, (window.innerWidth - rect.width) / 2 - 24)
+    const maxY = Math.max(0, (window.innerHeight - rect.height) / 2 - 24)
+
+    return {
+      dx: Math.max(-maxX, Math.min(maxX, offset.dx)),
+      dy: Math.max(-maxY, Math.min(maxY, offset.dy))
+    }
+  }
+
+  useEffect(() => {
+    const constrain = (): void => {
+      setDialogOffset(previous => {
+        const next = constrainOffset(previous)
+
+        return next.dx === previous.dx && next.dy === previous.dy ? previous : next
+      })
+      probeInteractiveRegions()
+    }
+
+    const observer = new ResizeObserver(constrain)
+
+    if (containerRef.current) {
+      observer.observe(containerRef.current)
+    }
+
+    window.addEventListener('resize', constrain)
+
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', constrain)
+    }
+  }, [])
+
+  // 基准偏移只在松手时提交，内容尺寸改变时仍按真实卡片居中。
   const { delta: dialogDragDelta, onPointerDown: onRawDialogPointerDown } = usePointerDrag({
     threshold: DRAG_THRESHOLD,
     onCommit: ({ dx, dy }) => {
-      setDialogPos(prev => ({ x: prev.x + dx, y: prev.y + dy }))
+      setDialogOffset(previous => constrainOffset({ dx: previous.dx + dx, dy: previous.dy + dy }))
     }
   })
 
-  // 表单控件交由浏览器原生——若起点是按钮/输入框/可编辑元素则不进入拖拽。
+  useEffect(() => {
+    probeInteractiveRegions()
+  }, [dialogOffset, dialogDragDelta])
+
+  // 只拖动步骤栏，正文滚动、文本选择和表单控件保留原生操作。
   const onDialogPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
     const target = e.target as HTMLElement
 
-    if (target.closest('button, input, textarea, select, summary, a, [contenteditable="true"]')) {
+    if (!target.closest('[data-onboarding-drag-handle]')) {
       return
     }
 
@@ -169,16 +224,11 @@ export function DraggableDialog({ children }: { children: React.ReactNode }): Re
 
   return (
     <div
-      className="absolute flex max-h-[90vh] w-full max-w-md flex-col items-center gap-4"
+      className={`${styles.dialog} ${SURFACE_OVERLAY}`}
       onPointerDown={onDialogPointerDown}
       ref={containerRef}
       style={{
-        left: dialogPos.x + dialogDragDelta.dx,
-        padding: '0 1.5rem',
-        pointerEvents: 'auto',
-        position: 'absolute',
-        top: dialogPos.y + dialogDragDelta.dy,
-        touchAction: 'none'
+        transform: `translate(-50%, -50%) translate(${dialogOffset.dx + dialogDragDelta.dx}px, ${dialogOffset.dy + dialogDragDelta.dy}px)`
       }}
     >
       {children}

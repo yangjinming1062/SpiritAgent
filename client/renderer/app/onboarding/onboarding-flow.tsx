@@ -11,19 +11,12 @@ import {
 import { stopSpeaking, warmAudioContext } from '@/modules/speech'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { log } from '@/shared/lib/log'
-import {
-  BTN_PRIMARY,
-  BTN_SUBTLE,
-  CreationActionBar,
-  CreationWorkspace,
-  INPUT_CLASS,
-  SURFACE_OVERLAY
-} from '@/shared/panel'
+import { BTN_SUBTLE, CreationActionBar, CreationWorkspace, INPUT_CLASS } from '@/shared/panel'
 import { $gatewayState } from '@/shared/store/gateway'
 
 import { computeBackTransition, type Phase, type VoiceStage } from './back-transition'
 import { playOnboardingAudio } from './onboarding-audio'
-import { DraggableDialog, ONBOARDING_PRIMARY_BUTTON } from './onboarding-components'
+import { DraggableDialog, ONBOARDING_PRIMARY_BUTTON, OnboardingProgress } from './onboarding-components'
 import { OnboardingDraft } from './onboarding-draft'
 import {
   type AnswerKind,
@@ -34,6 +27,7 @@ import {
   resolveResumeTarget,
   USER_QUESTIONS
 } from './onboarding-questions'
+import styles from './onboarding.module.css'
 import { PortraitPages } from './portrait-pages'
 import { QuestionPage } from './question-page'
 import { useOnboardingPortrait } from './use-onboarding-portrait'
@@ -108,10 +102,14 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   }, [phase, voiceStage, qIndex, currentList, answersRef])
 
   useEffect(() => {
-    if ((phase === 'q-character' || (phase === 'voice' && voiceStage === 'describe')) && question) {
+    if (
+      resumeState === 'ok' &&
+      (phase === 'q-character' || (phase === 'voice' && voiceStage === 'describe')) &&
+      question
+    ) {
       ;(question.multiline ? textareaRef.current : inputRef.current)?.focus()
     }
-  }, [phase, question, voiceStage])
+  }, [phase, question, resumeState, voiceStage])
 
   // 草稿读取失败暂停作答；连通后只恢复一次，取消的读取可在重连时继续。
   useEffect(() => {
@@ -293,6 +291,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const onSend = (): void => {
     if (question?.requiredHint && !input.trim()) {
       setHint(question.requiredHint)
+      ;(question.multiline ? textareaRef.current : inputRef.current)?.focus()
 
       return
     }
@@ -392,95 +391,77 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   return (
     <div className="fixed inset-0 z-50 pointer-events-none" style={{ pointerEvents: 'none' }}>
       <DraggableDialog>
-        <div
-          className={`flex h-[min(680px,85vh)] w-full flex-col overflow-hidden rounded-2xl p-5 text-strong ${SURFACE_OVERLAY}`}
-          style={{ pointerEvents: 'auto' }}
-        >
-          <ol
-            aria-label="认识伙伴的进度"
-            className="mb-5 flex shrink-0 items-center gap-2 border-b border-line-hairline pb-4"
-          >
-            {['认识伙伴', '确认形象', '选择声音'].map((label, index) => (
-              <li
-                aria-current={progressStep === index ? 'step' : undefined}
-                className="flex min-w-0 flex-1 items-center gap-1.5 text-[11px]"
-                key={label}
-              >
-                <span
-                  className={`grid size-5 shrink-0 place-items-center rounded-full ${progressStep >= index ? 'bg-accent text-on-accent' : 'bg-fill-trough text-muted'}`}
-                >
-                  {index + 1}
-                </span>
-                <span className={progressStep === index ? 'text-strong' : 'text-muted'}>{label}</span>
-              </li>
-            ))}
-          </ol>
-          {resumeState !== 'ok' && (
-            <div className="py-2 text-center">
-              <p className="text-sm text-body">没能读取之前保存的进度，请检查网络后重试。</p>
-              <button
-                className={`mt-3 ${ONBOARDING_PRIMARY_BUTTON}`}
-                disabled={resumeState === 'retrying'}
-                onClick={() => {
-                  setResumeState('retrying')
-                  setResumeAttempt(attempt => attempt + 1)
-                }}
-                type="button"
-              >
-                {resumeState === 'retrying' ? '正在重试…' : '重试'}
-              </button>
-            </div>
-          )}
-          {resumeState === 'ok' && isQuestionPhase && question && (
-            <QuestionPage
-              answerKind={answerKind}
-              canGoBack={backIntent !== null}
-              hint={hint}
-              input={input}
-              inputRef={inputRef}
-              lockedLabel={phase === 'q-character' ? LOCKED_FIELD_LABELS[question.key] : undefined}
-              onBack={onBack}
-              onSend={onSend}
-              onSkip={onSkip}
-              qIndex={qIndex}
-              question={question}
-              questionCount={currentList.length}
-              setAnswerKind={setAnswerKind}
-              setInput={setInput}
-              textareaRef={textareaRef}
-            />
-          )}
-          <PortraitPages
-            answers={answers}
+        <OnboardingProgress step={progressStep} />
+        {resumeState !== 'ok' && (
+          <div className="py-2 text-center">
+            <p className="text-sm text-body">没能读取之前保存的进度，请检查网络后重试。</p>
+            <button
+              className={`mt-3 ${ONBOARDING_PRIMARY_BUTTON}`}
+              disabled={resumeState === 'retrying'}
+              onClick={() => {
+                setResumeState('retrying')
+                setResumeAttempt(attempt => attempt + 1)
+              }}
+              type="button"
+            >
+              {resumeState === 'retrying' ? '正在重试…' : '重试'}
+            </button>
+          </div>
+        )}
+        {resumeState === 'ok' && isQuestionPhase && question && (
+          <QuestionPage
+            answerKind={answerKind}
+            canGoBack={backIntent !== null}
             hint={hint}
+            input={input}
+            inputRef={inputRef}
+            lockedLabel={phase === 'q-character' ? LOCKED_FIELD_LABELS[question.key] : undefined}
             onBack={onBack}
-            phase={phase}
-            portrait={portrait}
-            setHint={setHint}
-            setPhase={setPhase}
+            onSend={onSend}
+            onSkip={onSkip}
+            qIndex={qIndex}
+            question={question}
+            questionCount={currentList.length}
+            setAnswerKind={setAnswerKind}
+            setInput={value => {
+              setInput(value)
+              setHint(null)
+            }}
+            textareaRef={textareaRef}
           />
-          {phase === 'voice' && voiceStage === 'catalog' && (
-            <VoicePage
-              confirming={voiceSaving}
-              error={hint}
-              name={answers.name ?? ''}
-              onContinueText={() => void confirmVoice(true)}
-              onDescribe={() => setVoiceStage('describe')}
-              onVoiceSelected={(voiceId, label, serverConfirmed, isSelectionCurrent) =>
-                confirmVoice(false, voiceId, label, serverConfirmed, isSelectionCurrent)
-              }
-              preference={answers.voice}
-            />
-          )}
-          {phase === 'q-user' && (
-            <CreationWorkspace
-              footer={
-                <CreationActionBar>
+        )}
+        <PortraitPages
+          answers={answers}
+          hint={hint}
+          onBack={onBack}
+          phase={phase}
+          portrait={portrait}
+          setHint={setHint}
+          setPhase={setPhase}
+        />
+        {phase === 'voice' && voiceStage === 'catalog' && (
+          <VoicePage
+            confirming={voiceSaving}
+            error={hint}
+            name={answers.name ?? ''}
+            onContinueText={() => void confirmVoice(true)}
+            onDescribe={() => setVoiceStage('describe')}
+            onVoiceSelected={(voiceId, label, serverConfirmed, isSelectionCurrent) =>
+              confirmVoice(false, voiceId, label, serverConfirmed, isSelectionCurrent)
+            }
+            preference={answers.voice}
+          />
+        )}
+        {phase === 'q-user' && (
+          <CreationWorkspace
+            footer={
+              <CreationActionBar>
+                <div className={styles.navigation}>
                   <button className={BTN_SUBTLE} onClick={onBack} type="button">
                     选择声音
                   </button>
                   <button
-                    className={BTN_PRIMARY}
+                    className={`ml-auto ${ONBOARDING_PRIMARY_BUTTON}`}
                     onClick={() => {
                       setHint(null)
                       setPhase('finishing')
@@ -490,61 +471,57 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                   >
                     开始相伴
                   </button>
-                </CreationActionBar>
-              }
-            >
-              <div className="space-y-4">
-                <div>
-                  <h2 className="text-base font-semibold text-strong">伙伴准备好了</h2>
-                  <p className="mt-1 text-xs leading-relaxed text-body">
-                    可以开始聊天了。也可以先告诉伙伴一些关于您的事，之后随时都能补充。
-                  </p>
                 </div>
-                <details className="rounded-xl border border-line-hairline bg-surface-card p-3">
-                  <summary className="cursor-pointer text-sm text-body">让伙伴更了解我（可选）</summary>
-                  <div className="mt-4 space-y-3">
-                    {USER_QUESTIONS.map(item => (
-                      <label className="block space-y-1.5 text-xs text-body" key={item.key}>
-                        <span>{item.text}</span>
-                        {item.multiline ? (
-                          <textarea
-                            className={INPUT_CLASS}
-                            maxLength={item.max}
-                            onBlur={() => void draft.submit(item.key, answers[item.key]?.trim() || null)}
-                            onChange={event =>
-                              setAnswers(previous => ({ ...previous, [item.key]: event.target.value }))
-                            }
-                            placeholder={item.placeholder}
-                            rows={2}
-                            value={answers[item.key] ?? ''}
-                          />
-                        ) : (
-                          <input
-                            className={INPUT_CLASS}
-                            maxLength={item.max}
-                            onBlur={() => void draft.submit(item.key, answers[item.key]?.trim() || null)}
-                            onChange={event =>
-                              setAnswers(previous => ({ ...previous, [item.key]: event.target.value }))
-                            }
-                            placeholder={item.placeholder}
-                            type={item.date ? 'date' : 'text'}
-                            value={answers[item.key] ?? ''}
-                          />
-                        )}
-                      </label>
-                    ))}
-                  </div>
-                </details>
-                {hint && (
-                  <p className="text-xs text-danger-fg" role="alert">
-                    {hint}
-                  </p>
-                )}
+              </CreationActionBar>
+            }
+          >
+            <div className="space-y-4">
+              <div>
+                <h2 className={styles.questionTitle}>伙伴准备好了</h2>
+                <p className="mt-1 text-xs leading-relaxed text-body">
+                  可以开始聊天了。也可以先告诉伙伴一些关于您的事，之后随时都能补充。
+                </p>
               </div>
-            </CreationWorkspace>
-          )}
-          {phase === 'finishing' && <p className="py-6 text-center text-sm text-strong">正在保存资料…</p>}
-        </div>
+              <details className="rounded-xl border border-line-hairline bg-surface-card p-3">
+                <summary className="cursor-pointer text-sm text-body">让伙伴更了解我（可选）</summary>
+                <div className="mt-4 space-y-3">
+                  {USER_QUESTIONS.map(item => (
+                    <label className="block space-y-1.5 text-xs text-body" key={item.key}>
+                      <span>{item.text}</span>
+                      {item.multiline ? (
+                        <textarea
+                          className={INPUT_CLASS}
+                          maxLength={item.max}
+                          onBlur={() => void draft.submit(item.key, answers[item.key]?.trim() || null)}
+                          onChange={event => setAnswers(previous => ({ ...previous, [item.key]: event.target.value }))}
+                          placeholder={item.placeholder}
+                          rows={2}
+                          value={answers[item.key] ?? ''}
+                        />
+                      ) : (
+                        <input
+                          className={INPUT_CLASS}
+                          maxLength={item.max}
+                          onBlur={() => void draft.submit(item.key, answers[item.key]?.trim() || null)}
+                          onChange={event => setAnswers(previous => ({ ...previous, [item.key]: event.target.value }))}
+                          placeholder={item.placeholder}
+                          type={item.date ? 'date' : 'text'}
+                          value={answers[item.key] ?? ''}
+                        />
+                      )}
+                    </label>
+                  ))}
+                </div>
+              </details>
+              {hint && (
+                <p className="text-xs text-danger-fg" role="alert">
+                  {hint}
+                </p>
+              )}
+            </div>
+          </CreationWorkspace>
+        )}
+        {phase === 'finishing' && <p className="py-6 text-center text-sm text-strong">正在保存资料…</p>}
       </DraggableDialog>
     </div>
   )

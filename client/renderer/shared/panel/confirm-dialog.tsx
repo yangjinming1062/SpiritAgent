@@ -6,7 +6,7 @@ import { probeInteractiveRegions, useInteractiveRegion } from '../lib/interactiv
 import { log } from '../lib/log'
 import { useStrings } from '../strings'
 
-import { BTN_DANGER, BTN_PRIMARY, BTN_SUBTLE, SURFACE_OVERLAY } from './palette'
+import { BTN_DANGER, BTN_PRIMARY, BTN_SUBTLE, SURFACE_MODAL } from './palette'
 
 interface ConfirmDialogProps {
   open: boolean
@@ -81,7 +81,7 @@ function OpenConfirmDialog({
       ref={overlayRef}
       role="dialog"
     >
-      <div className={`w-full max-w-md rounded-2xl p-5 text-strong ${SURFACE_OVERLAY}`}>
+      <div className={`w-full max-w-md rounded-2xl p-5 text-strong ${SURFACE_MODAL}`}>
         <h3 className="text-sm font-semibold">{title}</h3>
         {description && <p className="mt-2 text-xs leading-relaxed text-muted">{description}</p>}
         <div className="mt-5 flex justify-end gap-2">

@@ -6,7 +6,7 @@ import { usePointerDrag } from '@/shared/hooks/use-pointer-drag'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 
 import { PanelHeader } from './components'
-import { SURFACE_OVERLAY } from './palette'
+import { SURFACE_MODAL } from './palette'
 
 interface WizardModalProps {
   regionId: string
@@ -124,7 +124,7 @@ export function WizardModal({
       role="dialog"
     >
       <div
-        className={`flex max-h-[min(85vh,100%)] w-full ${widthClass} flex-col overflow-hidden rounded-2xl text-strong ${SURFACE_OVERLAY}`}
+        className={`flex max-h-[min(85vh,100%)] w-full ${widthClass} flex-col overflow-hidden rounded-2xl text-strong ${SURFACE_MODAL}`}
         ref={cardRef}
         style={
           draggable

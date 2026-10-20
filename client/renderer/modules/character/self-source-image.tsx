@@ -32,6 +32,8 @@ interface SelfSourceImageFlowProps {
   promptBlockedReason?: string
   /** 按需拉取后端组装的自备图提示词；失败时给重试入口。 */
   fetchPrompt: () => Promise<string>
+  /** 提示词会建立草稿时，采纳先等待该请求完成，避免迟到草稿覆盖结果。 */
+  waitForPromptBeforeAdopt?: boolean
   /** 采纳选中的图片；成功后组件自行关闭。抛错时展示后端公开文案。 */
   adopt: (image: PickedImage) => Promise<void>
   /** 改用 AI 生成：关闭弹窗，由调用方走原生成入口。 */
@@ -48,6 +50,7 @@ export function SelfSourceImageFlow({
   hint,
   promptBlockedReason,
   fetchPrompt,
+  waitForPromptBeforeAdopt = true,
   adopt,
   onUseAi,
   onClose
@@ -175,8 +178,9 @@ export function SelfSourceImageFlow({
     const isCurrent = beginOperation()
 
     try {
-      // 场景提示词会准备待上传记录；已请求时先等它收敛，避免迟到记录取代采纳结果。
-      await promptLoadRef.current
+      if (waitForPromptBeforeAdopt) {
+        await promptLoadRef.current
+      }
 
       if (!isCurrent()) {
         return

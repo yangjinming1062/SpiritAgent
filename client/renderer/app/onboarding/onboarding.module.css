@@ -1,0 +1,181 @@
+.dialog {
+  border-radius: 24px;
+  color: var(--ui-text-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  left: 50%;
+  max-height: min(680px, calc(100dvh - 48px));
+  overflow: hidden;
+  padding: 24px;
+  pointer-events: auto;
+  position: absolute;
+  top: 50%;
+  width: min(480px, calc(100% - 48px));
+  -webkit-app-region: no-drag;
+}
+.progress {
+  border-bottom: 1px solid var(--ui-line-hairline);
+  cursor: grab;
+  display: flex;
+  flex-shrink: 0;
+  gap: 12px;
+  padding-bottom: 20px;
+  touch-action: none;
+}
+.progress:active {
+  cursor: grabbing;
+}
+.step {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  position: relative;
+}
+.step:not(:last-child)::after {
+  background: var(--ui-line-standard);
+  content: '';
+  height: 1px;
+  left: 40px;
+  position: absolute;
+  right: 0;
+  top: 14px;
+}
+.step[data-state='complete']::after {
+  background: var(--ui-accent-line);
+}
+.stepMarker {
+  align-items: center;
+  background: var(--ui-fill-trough);
+  border: 1px solid var(--ui-line-hairline);
+  border-radius: 50%;
+  color: var(--ui-text-muted);
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 500;
+  height: 28px;
+  justify-content: center;
+  width: 28px;
+}
+.step[data-state='current'] .stepMarker {
+  background: var(--ui-accent);
+  border-color: transparent;
+  box-shadow: 0 0 0 4px var(--ui-accent-soft);
+  color: var(--ui-on-accent);
+}
+.step[data-state='complete'] .stepMarker {
+  background: var(--ui-accent-soft);
+  border-color: transparent;
+  color: var(--ui-accent);
+}
+.stepLabel {
+  color: var(--ui-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.step[data-state='current'] .stepLabel {
+  color: var(--ui-text-strong);
+  font-weight: 600;
+}
+.question {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.dialog .questionWorkspace {
+  flex: 0 1 auto;
+  gap: 20px;
+}
+.questionMeta {
+  align-items: center;
+  color: var(--ui-text-muted);
+  display: flex;
+  font-size: 11px;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+.questionTitle {
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.answer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.navigation {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  width: 100%;
+}
+.forward {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+.dialog [data-creation-action-bar] {
+  background: transparent;
+  border-color: var(--ui-line-hairline);
+  gap: 12px;
+  margin-top: 0;
+  padding: 16px 0 0;
+}
+.dialog [data-creation-action-bar] > :last-child {
+  flex: 1 1 100%;
+  justify-content: flex-end;
+  min-width: 0;
+}
+.dialog [data-creation-action-bar] button,
+.dialog button[class~='bg-inverse-surface'],
+.voiceNavigation button {
+  border-radius: 12px;
+  min-height: 40px;
+}
+.dialog button[class~='bg-inverse-surface'] {
+  background: var(--ui-accent);
+  color: var(--ui-on-accent);
+}
+.dialog button[class~='bg-inverse-surface']:hover {
+  background: color-mix(in srgb, var(--ui-accent) 85%, transparent);
+}
+.dialog input:not([type='checkbox'], [type='radio'], [type='range']),
+.dialog textarea {
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.dialog input:not([type='checkbox'], [type='radio'], [type='range']) {
+  min-height: 44px;
+}
+.dialog textarea {
+  padding: 12px;
+}
+.dialog button:focus-visible,
+.dialog summary:focus-visible {
+  outline: 2px solid var(--ui-focus-line);
+  outline-offset: -2px;
+}
+.voiceNavigation {
+  align-items: center;
+  border-top: 1px solid var(--ui-line-hairline);
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+  padding-top: 16px;
+}

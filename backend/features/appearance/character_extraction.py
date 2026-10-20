@@ -1,4 +1,4 @@
-"""双图角色分析的持久任务；只有完整发布后才派生初始资产。"""
+"""全身透明准备与双图分析的持久任务；完整发布后才派生初始资产。"""
 
 import asyncio
 from typing import Literal
@@ -10,7 +10,12 @@ from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
 from runtime.user_maintenance import is_user_in_maintenance, track_user_task
 from sqlalchemy import select
 
-from features.appearance.avatar_service import extract_card_features, get_avatar_job_lock
+from features.appearance.avatar_service import (
+    AvatarGenerationError,
+    extract_card_features,
+    get_avatar_job_lock,
+    prepare_initial_fullbody,
+)
 from features.appearance.character_card import emit_character_card_updated, get_character_card
 from features.appearance.character_card_models import CompanionCharacterCard
 from features.appearance.completion import notify_character_ready
@@ -122,6 +127,8 @@ async def _extract_character(user_id: int) -> None:
             card.error = None
             emit_character_card_updated(db, card)
             await db.commit()
+        if not await prepare_initial_fullbody(user_id, extraction_id=extraction_id):
+            return
         results = await asyncio.gather(
             _extract_part(user_id, extraction_id, "portrait"),
             _extract_part(user_id, extraction_id, "body"),
@@ -159,13 +166,17 @@ async def _extract_character(user_id: int) -> None:
             await notify_character_ready(user_id)
     except GenerationWorkPaused:
         return
-    except Exception:
+    except Exception as exc:
         logger.exception("character card task failed", extra={"user_id": user_id})
         async with SESSION_LOCAL() as db:
             card = await get_character_card(db, user_id, lock=True)
             if card is not None and card.extraction_id == extraction_id and card.status == "running":
                 card.status = "failed"
-                card.error = "角色资料分析中断，请重试"
+                if isinstance(exc, AvatarGenerationError):
+                    card.body_status = "failed"
+                    card.error = str(exc)
+                else:
+                    card.error = "角色资料分析中断，请重试"
                 emit_character_card_updated(db, card)
                 await db.commit()
 

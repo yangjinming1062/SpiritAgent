@@ -2,6 +2,8 @@ import { VoiceManager } from '@/app/features/companion/voice-manager'
 import { BTN_SUBTLE, HINT_TEXT } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
+import styles from './onboarding.module.css'
+
 interface VoicePageProps {
   name: string
   preference?: string
@@ -30,6 +32,7 @@ export function VoicePage({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <h2 className={`shrink-0 ${styles.questionTitle}`}>为伙伴选择声音</h2>
       <VoiceManager
         compact
         disabled={confirming}
@@ -38,7 +41,7 @@ export function VoicePage({
         onVoiceSelected={onVoiceSelected}
         preference={preference}
       />
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
+      <div className={styles.voiceNavigation}>
         <button className={BTN_SUBTLE} disabled={confirming} onClick={onDescribe} type="button">
           {t.describePreference}
         </button>

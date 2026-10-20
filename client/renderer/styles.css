@@ -670,6 +670,12 @@ html[data-role='main'][data-effect='clear'][data-palette='night'] .theme-tile.is
     0 20px 48px -12px rgba(0, 0, 0, 0.45);
 }
 
+.solid-modal-surface {
+  --ui-overlay: var(--ui-app-bg);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
 html[data-role='desktop'] {
   --ui-overlay: var(--ui-app-bg);
 }

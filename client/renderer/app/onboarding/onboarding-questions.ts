@@ -111,7 +111,7 @@ export const QUESTIONS: readonly Question[] = [
   {
     key: 'user_call_name',
     text: '我该怎么称呼您？',
-    placeholder: '或者自由描述…',
+    placeholder: '自由描述…',
     audioTag: 'onboarding.q6',
     max: MAX_USER_TEXT,
     kinds: CALL_NAME_KINDS
@@ -119,7 +119,7 @@ export const QUESTIONS: readonly Question[] = [
   {
     key: 'user_gender',
     text: '您方便告诉我您的性别吗？',
-    placeholder: '或自由描述…',
+    placeholder: '自由描述…',
     audioTag: 'onboarding.q7',
     max: MAX_USER_TEXT,
     presets: USER_GENDER_PRESETS
@@ -135,7 +135,7 @@ export const QUESTIONS: readonly Question[] = [
   {
     key: 'user_hobbies',
     text: '您平时喜欢什么？',
-    placeholder: '可以多写几个…',
+    placeholder: '自由描述…',
     multiline: true,
     audioTag: 'onboarding.q9',
     max: MAX_USER_TEXT
@@ -143,7 +143,7 @@ export const QUESTIONS: readonly Question[] = [
   {
     key: 'user_freeform',
     text: '还有什么想告诉我、或者想叮嘱我的吗？',
-    placeholder: '可跳过…',
+    placeholder: '自由描述…',
     multiline: true,
     audioTag: 'onboarding.q11',
     max: MAX_USER_TEXT

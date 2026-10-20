@@ -11,11 +11,11 @@ import {
   clearPortraitHistory,
   hydratePortraitHistory,
   loadDraftRefImage,
-  patchAvatarSeeds,
   pickAvatarImage,
   type PickedImage,
   type PortraitEntry,
   pushPortraitEntry,
+  refreshAvatarSeeds,
   saveDraftRefImage,
   selectAvatar,
   selectPortraitEntry
@@ -282,7 +282,7 @@ export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, e
 
     const isLive = begin()
 
-    const res = await requestResource('companion.post_fullbody_confirm', {
+    await requestResource('companion.post_fullbody_confirm', {
       path: { avatar_id: activeAvatarId },
       body: { expected_url: expectedUrl }
     })
@@ -291,18 +291,8 @@ export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, e
       return
     }
 
-    await applyLocalPortrait(res, isLive)
-
-    if (!isLive()) {
-      return
-    }
-
-    await patchAvatarSeeds({ avatarId: res.id, fullbodySeedUrl: res.seed_fullbody_url })
-
-    if (!isLive()) {
-      return
-    }
-
+    // 后台可能已发布处理后的图片，重新读取当前版本；缓存下载不阻塞后续引导。
+    void refreshAvatarSeeds().catch(error => log.warn('onboarding', 'fullbody cache refresh failed', error))
     enterVoiceSelection()
   }
 

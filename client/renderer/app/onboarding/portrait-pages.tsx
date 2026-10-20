@@ -8,6 +8,7 @@ import { useStrings } from '@/shared/strings'
 
 import type { Phase } from './back-transition'
 import { EditAvatarButton, ONBOARDING_PRIMARY_BUTTON, PortraitPanel, RegenFeedbackInput } from './onboarding-components'
+import styles from './onboarding.module.css'
 import type { OnboardingPortrait } from './use-onboarding-portrait'
 
 interface PortraitPagesProps {
@@ -130,81 +131,54 @@ export function PortraitPages({
       <CreationWorkspace
         footer={
           phase === 'portrait-generate' ? (
-            <CreationActionBar className="mt-4" description={creationFeedback}>
-              <button
-                className="text-body transition hover:text-strong disabled:opacity-40"
-                disabled={sealingPortrait}
-                onClick={onBack}
-                type="button"
-              >
-                上一步
-              </button>
-              <button
-                className={ONBOARDING_PRIMARY_BUTTON}
-                disabled={sealingPortrait}
-                onClick={() => void startAiHatching()}
-                type="button"
-              >
-                为伙伴画头像
-              </button>
+            <CreationActionBar description={creationFeedback}>
+              <div className={styles.navigation}>
+                <button
+                  className="text-body transition hover:text-strong disabled:opacity-40"
+                  disabled={sealingPortrait}
+                  onClick={onBack}
+                  type="button"
+                >
+                  上一步
+                </button>
+                <button
+                  className={`ml-auto ${ONBOARDING_PRIMARY_BUTTON}`}
+                  disabled={sealingPortrait}
+                  onClick={() => void startAiHatching()}
+                  type="button"
+                >
+                  为伙伴画头像
+                </button>
+              </div>
             </CreationActionBar>
           ) : phase === 'portrait-avatar' ? (
-            <CreationActionBar className="mt-4" description={creationFeedback}>
-              <div className="mt-3 flex items-center justify-between text-xs">
-                <div className="flex flex-wrap gap-3">
-                  <button
-                    className="text-body transition hover:text-strong disabled:opacity-40"
-                    disabled={generationBlocked}
-                    onClick={() => {
-                      setPortraitPanelHint(null)
-                      void regenerateAvatarPortrait()
-                    }}
-                    type="button"
-                  >
-                    重新生成
-                  </button>
-                  <EditAvatarButton
-                    busy={generationBlocked}
-                    disabledByReference={Boolean(refImage || presentationRef)}
-                    onEdit={() => {
-                      setPortraitPanelHint(null)
-                      void editAvatarPortrait()
-                    }}
-                  />
-                  <button
-                    className="text-body transition hover:text-strong disabled:opacity-40"
-                    disabled={avatarBusy || sealingPortrait}
-                    onClick={() => void reloadAvatarPortrait()}
-                    type="button"
-                  >
-                    重新加载
-                  </button>
-                </div>
+            <CreationActionBar description={creationFeedback}>
+              <div className={styles.navigation}>
+                <button
+                  className="text-body transition hover:text-strong disabled:opacity-40"
+                  disabled={avatarBusy || sealingPortrait}
+                  onClick={onBack}
+                  type="button"
+                >
+                  上一步
+                </button>
+                <button
+                  className={`ml-auto ${ONBOARDING_PRIMARY_BUTTON}`}
+                  disabled={
+                    !portraitUrl ||
+                    readyPreviewUrl !== portraitUrl ||
+                    portraitPreviewId == null ||
+                    portraitPreviewId !== activeAvatarId ||
+                    avatarBusy ||
+                    sealingPortrait ||
+                    Boolean(portraitPanelHint)
+                  }
+                  onClick={() => void sealPortrait()}
+                  type="button"
+                >
+                  满意，准备全身形象
+                </button>
               </div>
-              <button
-                className="text-body transition hover:text-strong disabled:opacity-40"
-                disabled={avatarBusy || sealingPortrait}
-                onClick={onBack}
-                type="button"
-              >
-                上一步
-              </button>
-              <button
-                className={ONBOARDING_PRIMARY_BUTTON}
-                disabled={
-                  !portraitUrl ||
-                  readyPreviewUrl !== portraitUrl ||
-                  portraitPreviewId == null ||
-                  portraitPreviewId !== activeAvatarId ||
-                  avatarBusy ||
-                  sealingPortrait ||
-                  Boolean(portraitPanelHint)
-                }
-                onClick={() => void sealPortrait()}
-                type="button"
-              >
-                满意，准备全身形象
-              </button>
             </CreationActionBar>
           ) : (
             <CreationActionBar description={creationFeedback}>{null}</CreationActionBar>
@@ -214,7 +188,7 @@ export function PortraitPages({
         <div className="space-y-4">
           {phase === 'portrait-generate' && (
             <div>
-              <p className="text-[15px] font-medium text-strong">想象伙伴的样子</p>
+              <h2 className={styles.questionTitle}>想象伙伴的样子</h2>
               <p className="mt-1 text-xs text-body">
                 描述喜欢的面容、发型或颜色，AI 会为伙伴画出头像。暂时没有想法也可以直接开始。
               </p>
@@ -279,24 +253,55 @@ export function PortraitPages({
           )}
 
           {(phase === 'portrait-avatar' || (phase === 'hatching' && portraitUrl)) && (
-            <PortraitPanel
-              avatarUrl={portraitUrl}
-              hint={null}
-              history={currentHistoryItems}
-              introHint="预览并确认您的头像"
-              name={answers.name?.trim() || '伙伴'}
-              onPreviewReady={setReadyPreviewUrl}
-              onSelectEntry={avatarBusy || sealingPortrait ? undefined : onSelectHistoryEntry}
-              selectedIdx={portraitSelectedIdx}
-            />
+            <div className="space-y-4">
+              <h2 className={styles.questionTitle}>确认伙伴的头像</h2>
+              <PortraitPanel
+                avatarUrl={portraitUrl}
+                hint={null}
+                history={currentHistoryItems}
+                name={answers.name?.trim() || '伙伴'}
+                onPreviewReady={setReadyPreviewUrl}
+                onSelectEntry={avatarBusy || sealingPortrait ? undefined : onSelectHistoryEntry}
+                selectedIdx={portraitSelectedIdx}
+              />
+            </div>
           )}
 
           {phase === 'portrait-avatar' && (
             <div className="mt-4">
               <>
                 <details className="rounded-xl border border-line-hairline p-3" open={!portraitUrl ? true : undefined}>
-                  <summary className="mb-3 cursor-pointer text-xs text-body">调整头像</summary>
+                  <summary className="mb-3 cursor-pointer text-xs text-body">不满意？调整头像</summary>
                   <RegenFeedbackInput disabled={avatarBusy || sealingPortrait} />
+                  <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
+                    <button
+                      className="text-body transition hover:text-strong disabled:opacity-40"
+                      disabled={generationBlocked}
+                      onClick={() => {
+                        setPortraitPanelHint(null)
+                        void regenerateAvatarPortrait()
+                      }}
+                      type="button"
+                    >
+                      重新生成
+                    </button>
+                    <EditAvatarButton
+                      busy={generationBlocked}
+                      disabledByReference={Boolean(refImage || presentationRef)}
+                      onEdit={() => {
+                        setPortraitPanelHint(null)
+                        void editAvatarPortrait()
+                      }}
+                    />
+                    <button
+                      className="text-body transition hover:text-strong disabled:opacity-40"
+                      disabled={avatarBusy || sealingPortrait}
+                      onClick={() => void reloadAvatarPortrait()}
+                      type="button"
+                    >
+                      重新加载
+                    </button>
+                  </div>
                   <div className="mt-2 space-y-2 text-xs">
                     {refImage && (
                       <div className="flex items-center gap-2">

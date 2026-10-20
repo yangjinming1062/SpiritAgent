@@ -109,7 +109,7 @@ export function CreationActionBar({
   className?: string
 }): React.JSX.Element {
   return (
-    <div className={cn(styles.actionBar, className)}>
+    <div className={cn(styles.actionBar, className)} data-creation-action-bar="">
       {description && <div className={styles.actionDescription}>{description}</div>}
       <div className={styles.actions}>{children}</div>
     </div>
