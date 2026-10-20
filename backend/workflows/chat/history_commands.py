@@ -94,10 +94,9 @@ async def _slash_clear(ctx: SlashCommandContext) -> SlashCommandResult:
             result = await clear_history(ctx.user_id, ctx.session_id)
         except ConversationNotFoundError as exc:
             raise RequestError(404, str(exc)) from exc
-    cleared = result["cleared_count"]
     return SlashCommandResult(
         status="ok",
-        message="当前会话无消息可清空" if cleared == 0 else f"已清空 {cleared} 条消息",
+        message="会话已清空",
         hydrate=True,
         payload=result,
     )

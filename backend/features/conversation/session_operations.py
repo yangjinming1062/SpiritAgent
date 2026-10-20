@@ -11,6 +11,7 @@ from infrastructure.constants import SESSION_HISTORY_PRE_BUFFER, SESSION_HISTORY
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from runtime.conversation import LastSubmissionSnapshot
+from runtime.events.emit import emit_ws_event
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,7 +21,7 @@ from features.conversation.edit import replace_user_message
 from features.conversation.fork import fork_conversation_from_message
 from features.conversation.formatting import message_text
 from features.conversation.history import build_session_messages, count_conversation_bubbles
-from features.conversation.main_conversation import CLEARED_STATUS_SUBTYPE, get_or_create_main_conversation
+from features.conversation.main_conversation import get_or_create_main_conversation
 from features.conversation.models import Conversation, Message
 from features.conversation.replacement import ReplyReplacement, reply_replacement_target
 from features.conversation.reply_audio import cancel_reply_audio
@@ -206,7 +207,7 @@ async def _discard_forked_conversation(db: AsyncSession, conv_id: int) -> None:
 
 
 async def _clear_history_in_session(db: AsyncSession, conv: Conversation) -> dict[str, Any]:
-    """清空会话所有消息（含各 role，保留会话行 + 写一条 status_cleared 标记）；返回 {"session_id", "cleared_count", "messages"}，cleared_count 为真实删除行数。"""
+    """清空所有角色的消息并通知列表刷新，保留会话；cleared_count 为真实删除行数。"""
     total = (
         await db.execute(
             select(func.count(Message.id)).where(Message.conversation_id == conv.id),
@@ -219,13 +220,12 @@ async def _clear_history_in_session(db: AsyncSession, conv: Conversation) -> dic
     async with user_asset_lock(conv.user_id):
         removed = await collect_message_asset_releases(db, conv.user_id, [conv.id])
         await db.execute(delete(Message).where(Message.conversation_id == conv.id))
-        marker = Message(
-            conversation_id=conv.id,
-            role="system",
-            content=f"[🧹 会话已清空 — {total} 条消息]",
-            subtype=CLEARED_STATUS_SUBTYPE,
+        emit_ws_event(
+            db,
+            user_id=conv.user_id,
+            event_type="session.list_changed",
+            payload={"session_id": str(conv.id)},
         )
-        db.add(marker)
         await db.commit()
     await cancel_reply_audio(conv.user_id, removed)
     await cleanup_user_media(conv.user_id)

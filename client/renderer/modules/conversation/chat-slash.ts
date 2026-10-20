@@ -97,7 +97,7 @@ async function executeSlashCommand(
     const r = result.result
 
     if (r.status === 'ok') {
-      // hydrate=true 时，payload.messages 已包含服务端写入的 status_cleared / compress_summary marker 行——前端 hydrateChatMessages 后再 pushStatusPill 会产生重复 pill，所以 hydrate 路径只更新消息列表，不再追加 status_command_result。
+      // 历史修改直接替换消息列表；清空时数组为空，不追加成功提示。
       if (r.hydrate && r.payload && 'messages' in r.payload) {
         const messages = r.payload.messages
 

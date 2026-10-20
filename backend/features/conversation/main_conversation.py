@@ -8,7 +8,7 @@ from features.conversation.models import Conversation
 SPECIAL_KIND = "special"
 STANDARD_KIND = "standard"
 
-# /clear 留下的清空标记：只供界面展示清空记录。
+# 清空状态标记只供界面展示。
 CLEARED_STATUS_SUBTYPE: str = "status_cleared"
 
 # UI-only 子类型：渲染端展示但排除出 LLM 上下文与派生副本；与 SPECIAL_KIND 同处一处保证所有会话读取者一致。status_proactive 故意不在此集合——它是用户可回应的真实轮次。

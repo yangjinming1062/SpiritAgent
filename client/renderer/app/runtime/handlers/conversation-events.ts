@@ -354,7 +354,7 @@ export function handleConversationEvent(
     case 'command.result': {
       const result = event.payload.result
 
-      // 仅同步 status_cleared/compress_summary 等历史变化（hydrate=true）：其他窗口需本地 hydrateChatMessages，否则显示陈旧列表。
+      // 历史修改同步到各窗口，空数组也替换本地历史。
       if (result.status === 'ok' && result.hydrate && result.payload && 'messages' in result.payload) {
         const messages = result.payload.messages
 
