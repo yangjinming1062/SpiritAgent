@@ -1,4 +1,4 @@
-import { BrowserWindow, type dialog, type IpcMain, type WebContents } from 'electron'
+import type { dialog, IpcMain, WebContents } from 'electron'
 
 import {
   type DesktopActivatePayload,
@@ -11,7 +11,7 @@ import { errorMessage } from '@runtime'
 
 import type { BackendClientContext, BackendSessionPort, SessionSnapshotPort } from '../shared/backend-port'
 import { writeStoredBackendUrl } from '../shared/config'
-import { confirmAccountRemoval, showAccountRemovalError } from '../shared/lib/account-removal'
+import { showAccountRemovalError } from '../shared/lib/account-removal'
 import { broadcastToAllWindows, createSerialQueue } from '../shared/utils'
 
 interface AuthBroadcasterDeps {
@@ -186,7 +186,7 @@ export function registerAuthIpc({
 
   function removeAccount(accountId: string, isLive?: () => boolean): Promise<void> {
     return enqueueAction(async () => {
-      // 确认框结束后仍可能等待其他账户操作；在真正执行清理前复核来源与身份。
+      // 排队期间可能发生换号；在真正执行清理前复核来源与身份。
       if (isLive && !isLive()) {
         return
       }
@@ -280,7 +280,7 @@ export function registerAuthIpc({
 }
 
 interface DesktopAccountIpcDeps {
-  dialog: Pick<typeof dialog, 'showErrorBox' | 'showMessageBox'>
+  dialog: Pick<typeof dialog, 'showErrorBox'>
   ensureBackendSession: () => BackendSessionPort
   /** 桌面模式离开与窗口切换；presentation 由入口晚绑定，读取得在调用时发生。 */
   onLeavingDesktop: () => Promise<void>
@@ -328,9 +328,8 @@ export function registerDesktopAccountIpc({ deps, ipcMain }: { deps: DesktopAcco
 
     const session = deps.ensureBackendSession()
     const account = typeof id === 'string' ? session.listAccounts().find(item => item.id === id) : undefined
-    const parent = BrowserWindow.fromWebContents(event.sender)
 
-    if (!account || !parent || parent.isDestroyed()) {
+    if (!account || event.sender.isDestroyed()) {
       throw new Error('无效账户或桌面窗口。')
     }
 
@@ -351,7 +350,7 @@ export function registerDesktopAccountIpc({ deps, ipcMain }: { deps: DesktopAcco
     removalBusy = true
 
     try {
-      if ((await confirmAccountRemoval({ account, dialog: deps.dialog, parent })) && isLive()) {
+      if (isLive()) {
         await deps.removeAccount(account.id, isLive)
       }
     } catch (error) {

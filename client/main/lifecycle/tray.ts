@@ -13,7 +13,7 @@ import { IPC, type IpcEventChannel, type IpcEventContract, type PresentationMode
 import { errorMessage } from '@runtime'
 
 import type { BackendSessionPort } from '../shared/backend-port'
-import { confirmAccountRemoval, showAccountRemovalError } from '../shared/lib/account-removal'
+import { showAccountRemovalError } from '../shared/lib/account-removal'
 import { setClientLanguage } from '../shared/lib/client-language'
 import * as runnerConfigStore from '../shared/lib/runner-config-store'
 import { hideAndSkipTaskbar, isWindowShown, sendToWindow } from '../shared/utils'
@@ -191,7 +191,7 @@ async function removeFromTray(accountId: string): Promise<void> {
   rebuildTrayMenu()
 
   try {
-    if ((await confirmAccountRemoval({ account, dialog: trayDeps.dialog })) && isLive()) {
+    if (isLive()) {
       await trayDeps.removeAccount(accountId, isLive)
     }
   } catch (error) {
