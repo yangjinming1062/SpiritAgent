@@ -457,9 +457,13 @@ impl TrayStyle {
             return Ok(true);
         }
         if status < 0 {
+            let error = state.error.load(Ordering::Acquire) as u32;
+            if error == 0x8000_ffff {
+                return Err("系统托盘透明样式未能启用，请重启 Windows 资源管理器后重试（0x8000ffff）。".into());
+            }
             return Err(format!(
                 "系统托盘透明样式未能启用（0x{:08x}）。",
-                state.error.load(Ordering::Acquire) as u32,
+                error,
             ));
         }
         if placement_status < 0 {

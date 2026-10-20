@@ -44,6 +44,7 @@ constexpr wchar_t attach_message[] = L"SpiritAgent.TrayStyle.Attach.v1";
 HMODULE module_handle = nullptr;
 std::mutex session_mutex;
 std::mutex bootstrap_mutex;
+std::atomic<std::uint64_t> tree_revision{0};
 
 struct Handle {
     HANDLE value = nullptr;
@@ -464,7 +465,16 @@ struct View : std::enable_shared_from_this<View> {
     bool target_seen = false;
     LONG dark = -1;
     std::uint64_t generation = 0;
+    std::uint64_t source_revision = 0;
     ULONGLONG missing_since = 0;
+
+    void refresh_sources() {
+        auto revision = tree_revision.load();
+        if (source_revision == revision) return;
+        sources.clear();
+        source_revision = revision;
+        dirty = true;
+    }
 
     void start() {
         timer = xaml::DispatcherTimer();
@@ -637,6 +647,7 @@ struct View : std::enable_shared_from_this<View> {
 
     void tick() noexcept {
         try {
+            refresh_sources();
             auto next = session();
             if (next != owner) {
                 restore(true);
@@ -675,9 +686,10 @@ struct View : std::enable_shared_from_this<View> {
 };
 
 struct Watcher : winrt::implements<Watcher, IVisualTreeServiceCallback2, winrt::non_agile> {
-    enum class Subscription { idle, pending, ready };
+    enum class Subscription { idle, pending, ready, stopping };
     winrt::com_ptr<IXamlDiagnostics> diagnostics;
     std::atomic<Subscription> subscription{Subscription::idle};
+    std::atomic<std::uint64_t> mutations{0};
     std::mutex views_mutex;
     std::unordered_map<DWORD, std::shared_ptr<View>> views;
 
@@ -685,22 +697,80 @@ struct Watcher : winrt::implements<Watcher, IVisualTreeServiceCallback2, winrt::
 
     bool ready() const noexcept { return subscription.load() == Subscription::ready; }
 
+    void advise(IVisualTreeService3* service, std::shared_ptr<Session> const& owner, std::uint64_t before) {
+        auto deadline = GetTickCount64() + 1000;
+        auto result = service->AdviseVisualTreeChange(this);
+        while (result == E_UNEXPECTED && GetTickCount64() < deadline && owner->active()) {
+            if (mutations.load() != before) {
+                // XAML installs the callback before replaying all UI threads; a later root can fail.
+                if (InterlockedCompareExchange(&owner->state->status, 0, 0) == 1 &&
+                    InterlockedCompareExchange(reinterpret_cast<volatile LONG*>(&owner->state->fill_count), 0, 0) > 0) {
+                    OutputDebugStringW(L"SpiritAgent: XAML replay returned 0x8000ffff; selected taskbar style verified.\n");
+                    return;
+                }
+                if (InterlockedCompareExchange(&owner->state->status, 0, 0) < 0) {
+                    winrt::check_hresult(InterlockedCompareExchange(&owner->state->error, 0, 0));
+                    break;
+                }
+                Sleep(20);
+            } else {
+                Sleep(50);
+                result = service->AdviseVisualTreeChange(this);
+            }
+        }
+        winrt::check_hresult(result);
+    }
+
+    void run(std::shared_ptr<Session> const& owner) {
+        auto apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        winrt::com_ptr<IVisualTreeService3> service;
+        auto before = mutations.load();
+        HRESULT failure = S_OK;
+        try {
+            winrt::check_hresult(apartment);
+            // Diagnostics marshals callbacks onto each XAML UI thread.
+            service = diagnostics.as<IVisualTreeService3>();
+            tree_revision.fetch_add(1);
+            advise(service.get(), owner, before);
+            subscription.store(Subscription::ready);
+        } catch (...) {
+            failure = winrt::to_hresult();
+            subscription.store(Subscription::stopping);
+            if (owner->active()) owner->publish(-1, failure);
+        }
+
+        auto observed = owner;
+        for (;;) {
+            if (SUCCEEDED(failure)) {
+                if (auto next = session()) observed = next;
+            }
+            if (!observed->active() &&
+                InterlockedCompareExchange(reinterpret_cast<volatile LONG*>(&observed->state->fill_count), 0, 0) == 0) break;
+            Sleep(50);
+        }
+        subscription.store(Subscription::stopping);
+        // A failed Advise may already have installed the callback before replay failed.
+        auto released = service ? service->UnadviseVisualTreeChange(this) : S_OK;
+        bool foreign_callback = released == E_UNEXPECTED && FAILED(failure) && mutations.load() == before;
+        bool release_failed = FAILED(released) && !foreign_callback;
+        if (release_failed) observed->publish(-1, released);
+        service = nullptr;
+        if (SUCCEEDED(apartment)) CoUninitialize();
+        subscription.store(release_failed ? Subscription::stopping : Subscription::idle);
+        if (!release_failed) {
+            if (auto next = session(); next && next->active() && (SUCCEEDED(failure) || next != owner)) {
+                try { begin(next); }
+                catch (...) { if (next->active()) next->publish(-1, winrt::to_hresult()); }
+            }
+        }
+    }
+
     void begin(std::shared_ptr<Session> const& owner) {
         auto expected = Subscription::idle;
         if (!subscription.compare_exchange_strong(expected, Subscription::pending)) return;
         try {
             auto strong = get_strong();
-            std::thread([strong, owner] {
-                try {
-                    // Diagnostics marshals callbacks onto each XAML UI thread.
-                    winrt::check_hresult(strong->diagnostics.as<IVisualTreeService3>()->AdviseVisualTreeChange(strong.get()));
-                    strong->subscription.store(Subscription::ready);
-                } catch (...) {
-                    auto error = winrt::to_hresult();
-                    strong->subscription.store(Subscription::idle);
-                    if (owner->active()) owner->publish(-1, error);
-                }
-            }).detach();
+            std::thread([strong, owner] { strong->run(owner); }).detach();
         } catch (...) {
             subscription.store(Subscription::idle);
             throw;
@@ -708,6 +778,7 @@ struct Watcher : winrt::implements<Watcher, IVisualTreeServiceCallback2, winrt::
     }
 
     HRESULT STDMETHODCALLTYPE OnVisualTreeChange(ParentChildRelation, VisualElement element, VisualMutationType mutation) noexcept override {
+        mutations.fetch_add(1);
         // XAML diagnostics transfers these BSTR allocations to the callback.
         auto free_strings = [&] {
             if (mutation != Add) return;
@@ -726,6 +797,7 @@ struct Watcher : winrt::implements<Watcher, IVisualTreeServiceCallback2, winrt::
                 view = existing;
             }
             callback_owner = view->owner;
+            view->refresh_sources();
             view->dirty = true;
             if (mutation == Add && element.Type &&
                 std::wstring_view(element.Type, SysStringLen(element.Type)) == L"Windows.UI.Xaml.Hosting.DesktopWindowXamlSource") {
