@@ -28,6 +28,7 @@ from features.desktop_life.policy import desktop_autonomous_block_reason
 from features.desktop_life.ports import shared_desktop_proposals
 from features.desktop_life.prompts import DESKTOP_PRESETS
 from features.desktop_life.schemas import (
+    DesktopUploadSnapshot,
     DesktopVideoActionResponse,
     DesktopVideoAsset,
     DesktopVideoCurrentResponse,
@@ -38,6 +39,7 @@ from features.desktop_life.schemas import (
     DesktopVideoReceipt,
     DesktopVideoSetResponse,
     DesktopVideoStateResponse,
+    parse_desktop_context,
 )
 from features.media.chain import MediaChainState
 from features.media.contracts import RemovedActionVideoTask
@@ -74,6 +76,14 @@ class DesktopVideoAspectRatioError(DesktopVideoStateError):
             "media_kind": media_kind,
             "choices": ["keep", "expand"],
         }
+
+
+def desktop_upload_source_error(snapshot: DesktopUploadSnapshot) -> str | None:
+    if not snapshot.locked:
+        return "请先完成桌景的素材上传"
+    if not snapshot.reference_image_path or resolve_asset_reference(snapshot.reference_image_path) is None:
+        return "桌景上传参考缺失，请恢复原件或重新创建桌景"
+    return None
 
 
 def desktop_accepted_asset(action: DesktopVideoAction) -> DesktopVideoAsset | None:
@@ -354,6 +364,17 @@ async def _populate_action_sync(
     user_id: int,
     response: DesktopVideoActionResponse,
 ) -> DesktopVideoActionResponse:
+    if response.draft is not None and response.draft.recovery_action != "wait":
+        suite = await db.get(DesktopVideoSet, response.set_id)
+        snapshot = parse_desktop_context(suite.source, suite.context_json) if suite is not None else None
+        if response.draft.recovery_action == "replace_upload":
+            response.draft.recovery_action = (
+                "replace_upload"
+                if isinstance(snapshot, DesktopUploadSnapshot) and not snapshot.locked
+                else "recreate_set"
+            )
+        if isinstance(snapshot, DesktopUploadSnapshot) and snapshot.locked and desktop_upload_source_error(snapshot):
+            response.draft.recovery_action = "recreate_set"
     if response.definition_id is not None:
         response.sync_targets = await variant_summaries(db, user_id, response.definition_id)
         local = next(
@@ -414,6 +435,7 @@ def _desktop_set_response(
     *,
     current_id: int | None,
 ) -> DesktopVideoSetResponse:
+    snapshot = parse_desktop_context(row.source, row.context_json)
     return DesktopVideoSetResponse(
         id=row.id,
         title=row.title,
@@ -422,6 +444,10 @@ def _desktop_set_response(
         resolution_revision=row.resolution_revision,
         is_default=row.is_default,
         source=row.source,
+        can_upload_source=isinstance(snapshot, DesktopUploadSnapshot) and not snapshot.locked,
+        source_error=desktop_upload_source_error(snapshot)
+        if isinstance(snapshot, DesktopUploadSnapshot) and snapshot.locked
+        else None,
         outfit_id=row.outfit_id,
         scene_id=row.scene_id,
         status=row.status,
@@ -887,6 +913,7 @@ async def publish_desktop_asset(
         completed = DesktopVideoProgress(
             generation_id=progress.generation_id,
             source=progress.source,
+            outfit_description=asset.outfit_description,
             auto_continue=progress.auto_continue,
             feedback=progress.feedback,
             video_feedback=progress.video_feedback,

@@ -1,8 +1,10 @@
 import json
 import re
 
+from features.appearance.character_card import load_character_snapshot
 from features.appearance.context import build_outfit_extras
 from features.desktop_life.queries import activated_desktop_environment
+from features.media.identity_rendering import render_character_appearance
 from features.scenes.queries import get_scene_state, scene_environment
 from infrastructure.text import resolve_prompt_text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,15 +40,20 @@ async def build_companion_environment_prompt(
     presentation = action_view.presentation
     if presentation is not None and presentation.mode == "desktop":
         environment = await activated_desktop_environment(db, user_id)
+        current = environment.get("current")
         parts.extend(
             [
                 resolve_prompt_text(DESKTOP_ENVIRONMENT_GUIDANCES, language),
-                json.dumps({"current": environment.get("current")}, ensure_ascii=False),
-                action_view.to_prompt_block(language=language),
+                json.dumps({"current": current}, ensure_ascii=False),
             ],
         )
+        if isinstance(current, dict) and current.get("outfit_description"):
+            parts.append(resolve_prompt_text(OUTFIT_DEMEANOR_GUIDANCES, language))
+        parts.append(action_view.to_prompt_block(language=language))
         return "\n\n".join(parts)
     state = await get_scene_state(db, user_id)
+    if appearance := render_character_appearance(await load_character_snapshot(db, user_id), language=language):
+        parts.append(appearance)
     if outfit := await build_outfit_extras(db, user_id, language=language):
         parts.append(outfit)
         parts.append(resolve_prompt_text(OUTFIT_DEMEANOR_GUIDANCES, language))

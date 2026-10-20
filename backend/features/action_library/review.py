@@ -17,9 +17,10 @@ from runtime.paid_work import require_new_generation_call
 
 from features.appearance.avatar_service import read_portrait_bytes
 
+from .identity import definition_matches_source, same_review_reference
 from .ports import read_source
 from .prompts import ACTION_DEFINITION_REVIEW, ACTION_DEFINITION_REVIEW_REPAIR
-from .queries import definition_review_source, definition_snapshot, definitions_for_source
+from .queries import definition_review_source, definition_snapshot, matching_definitions
 from .schemas import ActionDefinitionSnapshot
 from .service import begin_review, record_review
 
@@ -67,12 +68,7 @@ async def _review_definition_locked(user_id: int, definition_id: int) -> None:
             return
         candidates = [
             item
-            for item in await definitions_for_source(
-                db,
-                user_id,
-                definition.outfit_id,
-                definition.source_visual_key,
-            )
+            for item in await matching_definitions(db, source)
             if item.id != definition_id and item.status == "approved"
         ]
         candidates.sort(key=lambda item: (-_similarity_score(definition, item), item.id))
@@ -87,8 +83,10 @@ async def _review_definition_locked(user_id: int, definition_id: int) -> None:
             current_source = await read_source(db, user_id, source.target_kind, source.target_id)
             if current is None or current.status != "reviewing" or current_source is None or not current_source.ready:
                 raise LlmCallBlockedError("动作评审来源已不可用")
-            if current_source.source_visual_key != source.source_visual_key:
+            if not definition_matches_source(current, current_source):
                 raise LlmCallBlockedError("动作评审的冻结来源已变化")
+            if source.scope == "target" and not same_review_reference(source, current_source):
+                raise LlmCallBlockedError("桌景的确认画面或着装资料已变化，请重新评审")
 
     def parse_output(value: Any) -> DefinitionReviewVerdict:
         verdict = DefinitionReviewVerdict.model_validate(value)
@@ -113,6 +111,7 @@ async def _review_definition_locked(user_id: int, definition_id: int) -> None:
         required_modalities=frozenset({ModelModality.text, ModelModality.image}),
     )
     payload = {
+        "creation_scope": "current_desktop" if source.scope == "target" else "shared_outfit",
         "design": definition.model_dump(
             include={"name", "motion_description", "use_when", "avoid_when", "clip_kind", "duration_seconds"},
         ),

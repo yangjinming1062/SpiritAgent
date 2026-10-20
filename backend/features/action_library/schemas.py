@@ -2,11 +2,12 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from features.media.identity_contracts import CharacterCardSnapshot
 
 ActionTargetKind = Literal["window", "desktop"]
+ActionSourceScope = Literal["outfit", "target"]
 ActionVariantStatus = Literal[
     "not_generated",
     "queued",
@@ -55,6 +56,9 @@ class ActionDefinitionSnapshot(ActionDefinitionDesign):
     user_id: int
     outfit_id: int | None
     source_visual_key: str
+    scope: ActionSourceScope
+    origin_kind: ActionTargetKind
+    origin_target_id: int
     source: Literal["user_requested", "autonomous"]
     status: str
     review_reason: str = ""
@@ -70,6 +74,7 @@ class ActionSourceSnapshot(BaseModel):
     target_id: int
     label: str
     source_visual_key: str
+    scope: ActionSourceScope = "outfit"
     ready: bool
     blocked_reason: str | None = None
     reference_paths: list[str] = Field(default_factory=list)
@@ -77,6 +82,12 @@ class ActionSourceSnapshot(BaseModel):
     identity: CharacterCardSnapshot | None = None
     outfit_description: str = ""
     persona: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_target_scope(self) -> "ActionSourceSnapshot":
+        if self.scope == "target" and (self.target_kind != "desktop" or self.outfit_id is not None):
+            raise ValueError("独立动作来源须为不关联着装的桌景")
+        return self
 
 
 class ActionVariantSummary(BaseModel):

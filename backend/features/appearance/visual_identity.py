@@ -1,4 +1,4 @@
-"""出镜媒体共用的固定身份、本次生成造型及视频参考准备。衣柜已启用外观提供默认造型，本次生成造型可单独覆盖；`outfit_override` 只作用于本次产物，不改衣柜或场景。无角色出镜的图片与视频在此补上统一的真实拍摄要求。"""
+"""出镜媒体共用的固定身份、本次生成造型及视频参考准备。当前呈现提供默认造型，本次生成造型可单独覆盖；`outfit_override` 只作用于本次产物，不改衣柜或桌景。无角色出镜的图片与视频在此补上统一的真实拍摄要求。"""
 
 import asyncio
 import json
@@ -57,7 +57,12 @@ class SelfVisualPlan:
     override_outfit_description: str = ""
 
 
-async def load_self_visual_context(user_id: int, *, use_outfit_reference: bool = True) -> SelfVisualContext:
+async def load_self_visual_context(
+    user_id: int,
+    *,
+    use_outfit_reference: bool = True,
+    current_styling: tuple[str, str] | None = None,
+) -> SelfVisualContext:
     async with SESSION_LOCAL() as db:
         identity = await require_character_snapshot(db, user_id)
         avatar = await db.get(AvatarAsset, identity.avatar_id)
@@ -68,19 +73,25 @@ async def load_self_visual_context(user_id: int, *, use_outfit_reference: bool =
         role: CharacterReferenceRole = "portrait"
         outfit_path, outfit_description = "", ""
         if use_outfit_reference:
-            outfit = await db.scalar(
-                select(CompanionOutfit).where(
-                    CompanionOutfit.user_id == user_id,
-                    CompanionOutfit.active.is_(True),
-                    CompanionOutfit.status == "ready",
-                ),
-            )
-            if outfit is None or not outfit.fullbody_url:
-                raise AvatarSourceUnreadableError("当前着装形象缺失，请先完成衣柜准备")
-            if not outfit_identity_matches(outfit.source_json, seed_path):
+            if current_styling is not None:
+                outfit_path, outfit_description = current_styling
+                if not outfit_path:
+                    raise AvatarSourceUnreadableError("当前桌景尚无可用的已确认画面，请先完成桌景准备")
                 identity_path, role = seed_path, "fullbody"
-            outfit_path = outfit.fullbody_url
-            outfit_description = outfit.description or ""
+            else:
+                outfit = await db.scalar(
+                    select(CompanionOutfit).where(
+                        CompanionOutfit.user_id == user_id,
+                        CompanionOutfit.active.is_(True),
+                        CompanionOutfit.status == "ready",
+                    ),
+                )
+                if outfit is None or not outfit.fullbody_url:
+                    raise AvatarSourceUnreadableError("当前着装形象缺失，请先完成衣柜准备")
+                if not outfit_identity_matches(outfit.source_json, seed_path):
+                    identity_path, role = seed_path, "fullbody"
+                outfit_path = outfit.fullbody_url
+                outfit_description = outfit.description or ""
     reference = await asyncio.to_thread(read_asset_data_uri, identity_path)
     if not reference:
         raise AvatarSourceUnreadableError("身份参考缺失或无法读取，请重新生成")
@@ -131,7 +142,7 @@ def build_plain_video_prompt(prompt: str) -> str:
 
 
 def optional_outfit_image_reference(plan: SelfVisualPlan) -> str | None:
-    """返回当前完整着装参考；不在这里静默丢弃必需的第二张参考图。"""
+    """返回本次造型参考；不在这里静默丢弃必需的第二张参考图。"""
     if plan.override_outfit_description:
         return None
     if not plan.context.outfit_reference:

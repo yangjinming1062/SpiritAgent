@@ -55,6 +55,8 @@ def _prepare_definition(raw: dict[str, Any], payload: dict[str, Any], context: B
         raw.get("outfit_id") is not None and source.outfit_id != raw["outfit_id"]
     ):
         raise ValueError("共享动作评审来源与冻结着装不一致")
+    if source.scope == "target" and (raw.get("outfit_id") is not None or raw["origin_kind"] != "desktop"):
+        raise ValueError("独立桌景动作不能关联衣柜着装")
     updates: dict[str, Any] = {"user_id": context.user_id, "outfit_id": payload.get("outfit_id")}
     if source.identity is not None:
         avatar_id = context.id_map.get("avatar_assets", {}).get(str(source.identity.avatar_id))
@@ -78,8 +80,9 @@ async def _existing_definition(
     payload: dict[str, Any],
     context: BackupContext,
 ) -> int | None:
-    # 来源着装已删除的定义各自独立；NULL 着装不能作为跨定义合并依据。
-    if context.mode != "merge" or payload.get("outfit_id") is None:
+    source = ActionSourceSnapshot.model_validate_json(payload["review_source_json"])
+    # 已删除着装的定义不合并；独立桌景用持久来源键标识所属桌景。
+    if context.mode != "merge" or payload.get("outfit_id") is None and source.scope != "target":
         return None
     existing = await db.scalar(
         select(ActionDefinition).where(
@@ -91,6 +94,9 @@ async def _existing_definition(
     )
     if existing is None:
         return None
+    existing_source = ActionSourceSnapshot.model_validate_json(existing.review_source_json)
+    if source.scope != existing_source.scope:
+        raise ValueError("合并的动作与现有定义不属于同一制作来源范围。")
     if any(
         getattr(existing, field) != payload[field]
         for field in (
@@ -123,6 +129,8 @@ async def _definition_rows(
             if str(reused) not in mapping or reused == raw["id"]:
                 raise ValueError("共享动作复用引用无效")
             canonical = originals[str(reused)]
+            source = ActionSourceSnapshot.model_validate_json(raw["review_source_json"])
+            canonical_source = ActionSourceSnapshot.model_validate_json(canonical["review_source_json"])
             if (
                 raw["status"] != "reused"
                 or canonical["status"] != "approved"
@@ -131,8 +139,12 @@ async def _definition_rows(
                     raw["source_visual_key"],
                 )
                 != (canonical["outfit_id"], canonical["source_visual_key"])
+                or source.scope != canonical_source.scope
+                or source.scope == "target"
+                and (raw["origin_kind"], raw["origin_target_id"])
+                != (canonical["origin_kind"], canonical["origin_target_id"])
             ):
-                raise ValueError("共享动作复用目标不属于同一冻结着装来源")
+                raise ValueError("共享动作复用目标不属于同一制作来源范围")
             definition.reuse_definition_id = int(mapping[str(reused)])
 
 
@@ -162,6 +174,13 @@ async def _restore_links(db: AsyncSession, rows: BackupRows, context: BackupCont
         target = containers.get(str(raw["target_id"]))
         if definition is None or target is None:
             raise ValueError("共享动作目标缺少定义或所属形象")
+        source = ActionSourceSnapshot.model_validate_json(definition["review_source_json"])
+        if source.scope == "target" and (
+            (raw["target_kind"], raw["target_id"]) != (definition["origin_kind"], definition["origin_target_id"])
+            or target.get("source") not in {"image_upload", "video_upload"}
+            or definition["source_visual_key"] != target["source_visual_key"]
+        ):
+            raise ValueError("独立桌景动作不能关联其他画面")
         if definition["outfit_id"] != target.get("outfit_id") or (
             definition["source_visual_key"] != target["source_visual_key"]
             and raw["state"] not in {"blocked", "excluded"}
@@ -184,14 +203,30 @@ async def _restore_links(db: AsyncSession, rows: BackupRows, context: BackupCont
             if target is None or target["state"] != "excluded" and target.get("action_id") != action["id"]:
                 raise ValueError("共享动作版本缺少对应的制作目标或排除记录")
     for old_id, raw in definitions.items():
-        if ("action_definitions", old_id) not in context.rewriter.inserted_rows:
-            continue
         definition = await db.get(ActionDefinition, _mapped(context, "action_definitions", old_id))
         if definition is None:
             raise ValueError("共享动作定义恢复失败")
         container = _TARGET_TABLES[raw["origin_kind"]][0]
         origin_id = context.id_map.get(container, {}).get(str(raw["origin_target_id"]))
         source = ActionSourceSnapshot.model_validate_json(definition.review_source_json)
+        if source.scope == "target" and origin_id is None:
+            raise ValueError("独立桌景动作缺少所属桌景")
+        if source.scope == "target":
+            origin = next((item for item in rows.get(container, []) if item["id"] == raw["origin_target_id"]), None)
+            if (
+                origin is None
+                or origin.get("source") not in {"image_upload", "video_upload"}
+                or origin.get("outfit_id") is not None
+                or origin["source_visual_key"] != definition.source_visual_key
+            ):
+                raise ValueError("独立桌景动作与所属上传来源不一致")
+        if ("action_definitions", old_id) not in context.rewriter.inserted_rows:
+            if source.scope == "target" and (definition.origin_kind, definition.origin_target_id) != (
+                raw["origin_kind"],
+                int(origin_id),
+            ):
+                raise ValueError("合并的独立动作与所属桌景不一致")
+            continue
         updates: dict[str, Any] = {"target_id": int(origin_id) if origin_id is not None else 0}
         if origin_id is None:
             updates.update(ready=False, blocked_reason="原始形象已删除，可使用已有动作版本")

@@ -12,6 +12,7 @@ from urllib.parse import unquote, urlsplit
 from uuid import uuid4
 
 from features.action_library.schemas import ActionSourceSnapshot
+from features.desktop_life.schemas import DesktopUploadSnapshot, parse_desktop_context
 from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.config import SETTINGS
 from infrastructure.temp_files import owned_temp_files
@@ -322,15 +323,21 @@ def validate_row_files(table: str, rows: list[dict[str, Any]], rewriter: UrlRewr
             if row.get("upload_source_path"):
                 required.append(row["upload_source_path"])
         elif table == "desktop_video_sets":
-            context = json.loads(row["context_json"])
-            required.extend(
-                (
-                    context.get("identity_path"),
-                    context.get("outfit_path"),
-                    context.get("portrait_path"),
-                    context.get("scene_path"),
-                ),
-            )
+            snapshot = parse_desktop_context(row["source"], row["context_json"])
+            if isinstance(snapshot, DesktopUploadSnapshot):
+                required.extend(
+                    path
+                    for path in (
+                        snapshot.original_image_path,
+                        snapshot.original_video_path,
+                        snapshot.reference_image_path,
+                    )
+                    if path
+                )
+            else:
+                required.extend(
+                    (snapshot.identity_path, snapshot.outfit_path, snapshot.portrait_path, snapshot.scene_path),
+                )
             if row["base_image_path"]:
                 required.append(row["base_image_path"])
         elif table == "desktop_video_actions":

@@ -25,8 +25,6 @@ from features.desktop_life.schemas import (
     DesktopVideoDecisionRequest,
     DesktopVideoDesignRequest,
     DesktopVideoEnsureRequest,
-    DesktopVideoExternalPromptRequest,
-    DesktopVideoExternalPromptResponse,
     DesktopVideoGenerateCommand,
     DesktopVideoImageCommand,
     DesktopVideoListResponse,
@@ -57,7 +55,6 @@ from features.desktop_life.service import (
     generate_desktop_action,
     generate_desktop_image,
     get_desktop_action_response,
-    get_desktop_external_prompt,
     get_desktop_video_state,
     list_desktop_video_sets,
     pause_desktop_action,
@@ -190,28 +187,6 @@ async def preview_video_refinement(
 ) -> DesktopVideoRefinePreviewResponse:
     try:
         return await preview_desktop_video_refinement(user_id, action_id, body)
-    except DesktopVideoError as exc:
-        raise _http_error(exc) from exc
-
-
-async def external_prompt(
-    action_id: int,
-    user_id: int,
-    db: AsyncSession,
-    body: DesktopVideoExternalPromptRequest | None = None,
-) -> DesktopVideoExternalPromptResponse:
-    try:
-        return await get_desktop_external_prompt(
-            db,
-            user_id,
-            action_id,
-            expected_set_id=body.expected_set_id if body else None,
-            requirements=body.requirements if body else "",
-            expected_draft_id=body.expected_draft_id if body else None,
-            expected_base_version=body.expected_base_version if body else None,
-            expected_resolution_revision=body.expected_resolution_revision if body else None,
-            aspect_policy=body.aspect_policy if body else "ask",
-        )
     except DesktopVideoError as exc:
         raise _http_error(exc) from exc
 

@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.models import lock_user_row
+from features.action_library.schemas import ActionSourceScope
 from features.companion.disturbance import get_disturbance_tier
 from features.companion.proactive_runtime import get_user_proactive_record
 
@@ -35,6 +36,7 @@ class DesktopExpressionCatalog:
     state_version: int
     outfit_id: int | None
     source_visual_key: str
+    scope: ActionSourceScope
     current_action_id: int | None
     items: tuple[DesktopExpressionAction, ...]
 
@@ -124,6 +126,7 @@ async def desktop_expression_catalog(
         state_version=state.version,
         outfit_id=suite.outfit_id,
         source_visual_key=suite.source_visual_key,
+        scope="outfit" if suite.source == "ai" else "target",
         current_action_id=state.selected_action_id,
         items=tuple(items),
     )

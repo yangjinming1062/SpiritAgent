@@ -269,7 +269,19 @@ class _ActionRun:
 def _planning_context_payload(context: PlanningContext) -> dict[str, Any]:
     """模型读取规划资料，执行目标绑定保留在代码上下文。"""
     payload = context.model_dump(exclude_none=True)
-    payload["outfits"] = payload.pop("wardrobe", [])
+    wardrobe = payload.pop("wardrobe", [])
+    payload["creation_scope"] = (
+        "current_desktop"
+        if context.action_target is not None and context.action_target.scope == "target"
+        else "shared_outfit"
+    )
+    if context.action_presentation is not None and context.action_presentation.mode == "desktop":
+        payload["presentation_mode"] = "desktop"
+        payload["outfit_library"] = [
+            {key: value for key, value in outfit.items() if key != "active"} for outfit in wardrobe
+        ]
+    else:
+        payload["outfits"] = wardrobe
     return payload
 
 
@@ -448,6 +460,16 @@ def _capability_availability(
     for capability in _CAPABILITIES:
         ready, reason = rules[capability.name]
         if ready and _policy_block(capability.name, context.policies) is None:
+            if context.action_presentation is not None and context.action_presentation.mode == "desktop":
+                descriptions = {
+                    "outfit.wear": "选择已就绪的素材库参考造型，当前画面不变；outfit_id 取 outfit_library 中真实存在的 ready 项。",
+                    "outfit.create": "已有参考造型不适合且有具体用途时，设计并保存新的参考造型；当前画面不变。",
+                    "scene.activate": "将 scene.library 中已有场景设为素材库参考环境，当前画面不变。",
+                    "scene.create": "已有场景不合适且有具体用途时，按真实环境照片创建并保存新的参考环境；不描绘你本人，当前画面不变。",
+                }
+                capability = capability.model_copy(
+                    update={"description": descriptions.get(capability.name, capability.description)},
+                )
             available.append(capability)
         else:
             blocked.append(BlockedCapability(name=capability.name, reason=reason))
@@ -502,7 +524,7 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
             SETTINGS.action_autocreate_enabled
             and action_target is not None
             and action_target.ready
-            and action_target.outfit_id is not None
+            and (action_target.scope == "target" or action_target.outfit_id is not None)
             and action_target.source_visual_key,
         )
         if action_target is not None and action_target.target_kind == "desktop":
@@ -517,7 +539,7 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
 
     language = resolve_language(settings.get("language"))
     definition = dict(persona.definition) if persona is not None else {}
-    if character is not None:
+    if character is not None and (presentation is None or presentation.mode != "desktop"):
         definition["fixed_features"] = render_character_appearance(character, language=language)
     context = PlanningContext(
         policies=_policies(persona),
@@ -614,6 +636,7 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
                 "id": target.target_id,
                 "outfit_id": target.outfit_id,
                 "source_visual_key": target.source_visual_key,
+                "scope": target.scope,
                 "presentation": context.action_presentation.model_dump() if context.action_presentation else None,
             }
         if spec.paid:
@@ -952,9 +975,10 @@ async def _execute_action_design(run: _ActionRun, args: dict[str, Any]) -> Actio
         return _invalid_arguments(exc)
     async with SESSION_LOCAL() as db:
         source = await action_source_reader(db, run.user_id, target["kind"], target.get("id"))
-        if source is None or (source.outfit_id, source.source_visual_key) != (
+        if source is None or (source.outfit_id, source.source_visual_key, source.scope) != (
             target.get("outfit_id"),
             target.get("source_visual_key"),
+            target.get("scope", "outfit"),
         ):
             return ActionExecutionResult(status="blocked", reason="planned frozen source changed")
         if target["kind"] == "desktop":

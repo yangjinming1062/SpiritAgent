@@ -155,7 +155,7 @@ export function VideoRefinementModal({
         actions={
           previewError && !stale && !submitting ? (
             <button className={BTN_SUBTLE} onClick={() => setPreviewAttempt(attempt => attempt + 1)} type="button">
-              {t.retryPrompt}
+              {t.retryRefinementPreview}
             </button>
           ) : undefined
         }

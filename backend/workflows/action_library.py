@@ -3,10 +3,11 @@
 import asyncio
 
 from features.accounts.models import lock_user_row
+from features.action_library.identity import definition_applies_to_source, definition_matches_source
 from features.action_library.ports import read_source
 from features.action_library.queries import (
     definition_snapshot,
-    definitions_for_source,
+    matching_definitions,
     recoverable_work,
     target_snapshot,
     variant_summaries,
@@ -137,14 +138,16 @@ async def _fanout_definition(user_id: int, definition_id: int, *, only: ActionSo
         definition = await definition_snapshot(db, user_id, definition_id)
         if definition is None or definition.status != "approved":
             return
-        sources = (
-            (only,)
-            if only is not None
-            else (*await window_action_sources(db, user_id), *await desktop_action_sources(db, user_id))
-        )
+        if only is not None:
+            sources = (only,)
+        elif definition.scope == "target":
+            source = await action_source_reader(db, user_id, definition.origin_kind, definition.origin_target_id)
+            sources = (source,) if source is not None else ()
+        else:
+            sources = (*await window_action_sources(db, user_id), *await desktop_action_sources(db, user_id))
     queued: list[int] = []
     for source in sources:
-        if source.outfit_id != definition.outfit_id:
+        if not definition_applies_to_source(definition, source):
             continue
         try:
             async with SESSION_LOCAL() as db:
@@ -153,8 +156,10 @@ async def _fanout_definition(user_id: int, definition_id: int, *, only: ActionSo
                 if current_source is None:
                     continue
                 source = current_source
+                if not definition_applies_to_source(definition, source):
+                    continue
                 target = await ensure_target(db, user_id, definition_id, source, automatic=True)
-                if target.state != "excluded" and source.source_visual_key == definition.source_visual_key:
+                if target.state != "excluded" and definition_matches_source(definition, source):
                     ensure = (
                         ensure_synced_window_action if source.target_kind == "window" else ensure_synced_desktop_action
                     )
@@ -183,6 +188,8 @@ async def _fanout_definition(user_id: int, definition_id: int, *, only: ActionSo
                 if current_source is None:
                     continue
                 source = current_source
+                if not definition_applies_to_source(definition, source):
+                    continue
                 target = await ensure_target(db, user_id, definition_id, source, automatic=True)
                 await block_target(db, user_id, target.id, str(exc))
                 await db.commit()
@@ -209,11 +216,11 @@ async def _dispatch_target(user_id: int, target_id: int) -> None:
             definition = await definition_snapshot(db, user_id, target.definition_id)
         if definition is None:
             return
+        async with SESSION_LOCAL() as db:
+            source = await action_source_reader(db, user_id, target.target_kind, target.target_id)
+        if source is None or not definition_matches_source(definition, source):
+            raise ValueError("动作制作来源已变化或不属于当前画面")
         if target.action_id is None:
-            async with SESSION_LOCAL() as db:
-                source = await action_source_reader(db, user_id, target.target_kind, target.target_id)
-            if source is None:
-                raise ValueError("制作目标已移除")
             await _fanout_definition(user_id, definition.id, only=source)
             async with SESSION_LOCAL() as db:
                 target = await target_snapshot(db, user_id, target_id)
@@ -244,11 +251,7 @@ async def _dispatch_target(user_id: int, target_id: int) -> None:
 async def synchronize_action_target(user_id: int, kind: ActionTargetKind, target_id: int) -> None:
     async with SESSION_LOCAL() as db:
         source = await action_source_reader(db, user_id, kind, target_id)
-        definitions = (
-            await definitions_for_source(db, user_id, source.outfit_id, None)
-            if source and source.outfit_id is not None
-            else []
-        )
+        definitions = await matching_definitions(db, source, match_visual=False) if source is not None else []
     if source is not None:
         for definition in definitions:
             if definition.status == "approved":
@@ -318,23 +321,14 @@ async def shared_desktop_proposal(
     if definition is None:
         raise DesktopVideoStateError("找不到对应动作提案")
     source = await read_source(db, user_id, "desktop", set_id)
-    if (
-        source is None
-        or not source.source_visual_key
-        or definition.outfit_id != source.outfit_id
-        or definition.source_visual_key != source.source_visual_key
-    ):
-        raise DesktopVideoStateError("动作提案不属于这个画面的着装或冻结形象")
+    if source is None or not source.source_visual_key or not definition_matches_source(definition, source):
+        raise DesktopVideoStateError("动作提案不属于这个画面的制作来源")
     canonical = (
         await definition_snapshot(db, user_id, definition.reuse_definition_id)
         if definition.reuse_definition_id is not None
         else definition
     )
-    if (
-        canonical is None
-        or canonical.outfit_id != source.outfit_id
-        or canonical.source_visual_key != source.source_visual_key
-    ):
+    if canonical is None or not definition_matches_source(canonical, source):
         raise DesktopVideoStateError("动作资料已变化，请刷新后重试")
     variants = await variant_summaries(db, user_id, canonical.id)
     desktop = next(
@@ -359,17 +353,13 @@ async def shared_desktop_proposals(db: AsyncSession, user_id: int, set_id: int) 
     if source is None or not source.source_visual_key:
         return []
     result = []
-    for definition in await definitions_for_source(db, user_id, source.outfit_id, source.source_visual_key):
+    for definition in await matching_definitions(db, source):
         canonical = (
             await definition_snapshot(db, user_id, definition.reuse_definition_id)
             if definition.reuse_definition_id is not None
             else definition
         )
-        if (
-            canonical is None
-            or canonical.outfit_id != source.outfit_id
-            or canonical.source_visual_key != source.source_visual_key
-        ):
+        if canonical is None or not definition_matches_source(canonical, source):
             continue
         variants = await variant_summaries(db, user_id, canonical.id)
         local = next(

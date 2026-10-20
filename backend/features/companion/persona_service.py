@@ -18,8 +18,6 @@ from features.companion.query_contracts import PersonaSnapshot
 from features.companion.repository import get_or_create_persona_row
 from features.companion.schemas import OnboardingStateResponse
 from features.conversation.bootstrap import ensure_main_conversation_for_user
-from features.media.identity_contracts import CharacterCardSnapshot
-from features.media.identity_rendering import render_character_appearance
 from features.memory.memory_bootstrap import read_user_profile, record_user_profile
 from features.memory.models import USER_PROFILE_MAX_CONTENT_CHARS
 from features.memory.profile_fields import validate_profile_birthday
@@ -196,7 +194,6 @@ def build_system_prompt_extras(
     persona: Persona | None,
     *,
     language: str = DEFAULT_LANGUAGE,
-    character: CharacterCardSnapshot | None = None,
 ) -> str:
     """从 persona.definition_json 按当前 session 语言实时渲染角色设定块。"""
     if persona is None or not persona.is_complete:
@@ -204,9 +201,7 @@ def build_system_prompt_extras(
     definition = load_persona_definition(persona)
     if not definition:
         return ""
-    return (
-        render_extras(definition, language=language) + "\n" + render_character_appearance(character, language=language)
-    )
+    return render_extras(definition, language=language)
 
 
 def render_extras(definition: dict[str, str], *, language: str = DEFAULT_LANGUAGE) -> str:

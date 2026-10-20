@@ -41,9 +41,11 @@ from features.appearance.visual_identity import (
 from features.assets.lifecycle import cleanup_user_assets, enqueue_asset_cleanup
 from features.companion.narrative_prompts import NARRATIVE_REVISION_TEXTS
 from features.companion.narrative_quality import NarrativeQualityError, review_narrative
+from features.companion.proactive_runtime import get_presentation_snapshot
 from features.companion.queries import complete_user_ids
 from features.configuration.settings.timezone import resolve_user_timezone
 from features.configuration.settings.values import get_user_setting, load_user_settings
+from features.desktop_life.queries import activated_desktop_environment, desktop_current_styling_reference
 from features.media.character_images import generate_character_images
 from features.media.contracts import VideoJobSnapshot
 from features.media.identity_contracts import CharacterCardSnapshot
@@ -173,7 +175,15 @@ async def _creation_input(user_id: int) -> dict:
             .scalars()
             .all()
         )
-        environment = scene_environment(await get_scene_state(db, user_id))
+        presentation = get_presentation_snapshot(user_id)
+        environment = (
+            {
+                "presentation_mode": "desktop",
+                "current": (await activated_desktop_environment(db, user_id)).get("current"),
+            }
+            if presentation is not None and presentation.mode == "desktop"
+            else scene_environment(await get_scene_state(db, user_id))
+        )
     return {
         **ctx.payload,
         "environment": environment,
@@ -363,7 +373,11 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
     if plan.content_type == PostContentType.VIDEO and progress.get("media_url") and row.video_job_id is None:
         raise PostError("原视频任务已不可用，未重新制作")
     identity = None
-    visual = await load_self_visual_context(row.user_id) if plan.depicts_self and row.video_job_id is None else None
+    visual = None
+    if plan.depicts_self and row.video_job_id is None:
+        async with SESSION_LOCAL() as db:
+            styling = await desktop_current_styling_reference(db, row.user_id)
+        visual = await load_self_visual_context(row.user_id, current_styling=styling)
     if visual is not None:
         identity = visual.identity
         progress["identity"] = identity.model_dump(mode="json")

@@ -1,6 +1,7 @@
 """桌面生活的组合准备、动作评审与播放协调。"""
 
 import asyncio
+import hashlib
 import json
 from datetime import timedelta
 from pathlib import Path
@@ -10,11 +11,9 @@ from uuid import uuid4
 
 from infrastructure.ai.selection import ProviderSelection
 from infrastructure.assets.asset_store import (
-    read_valid_image_data_uri,
     resolve_asset_reference,
     save_action_source_asset_async,
     save_companion_asset_async,
-    signed_companion_asset_url,
     sniff_media_ext,
 )
 from infrastructure.assets.references import asset_paths
@@ -22,9 +21,9 @@ from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.media_geometry import can_crop_to_aspect
-from infrastructure.text import resolve_language, utc_now
-from infrastructure.video_processing.desktop import extract_desktop_first_frame
-from infrastructure.video_processing.ffmpeg import VideoProcessError, probe_video
+from infrastructure.text import utc_now
+from infrastructure.video_processing.desktop import extract_desktop_first_frame, validate_desktop_video_playback
+from infrastructure.video_processing.ffmpeg import VideoProcessError, probe_video, run_ffmpeg
 from runtime.paid_work import require_new_generation_call
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,8 +38,9 @@ from features.assets.lifecycle import (
     enqueue_asset_cleanup,
 )
 from features.companion.disturbance import get_disturbance_tier
+from features.companion.persona_service import load_persona_definition
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
-from features.configuration.settings.values import get_user_setting
+from features.companion.visual_state import persona_snapshot
 from features.desktop_life.creation import begin_opening_repair, opening_repair_reference
 from features.desktop_life.generation import (
     cancel_and_wait_desktop_video_jobs,
@@ -61,7 +61,6 @@ from features.desktop_life.geometry import (
     desktop_aspect_matches,
     desktop_aspect_ratio,
     probe_desktop_image,
-    probe_desktop_video,
 )
 from features.desktop_life.models import DesktopVideoAction, DesktopVideoPlayback, DesktopVideoSet
 from features.desktop_life.naming import schedule_desktop_title
@@ -71,15 +70,7 @@ from features.desktop_life.ports import (
     desktop_set_created,
     shared_desktop_proposal,
 )
-from features.desktop_life.prompts import (
-    DESKTOP_EXTERNAL_VIDEO_TEMPLATES,
-    DESKTOP_PRESETS,
-    DESKTOP_VIDEO_BASE,
-    DESKTOP_VIDEO_LOOP,
-    DESKTOP_VIDEO_ONCE,
-    DESKTOP_VIDEO_QUIET,
-    desktop_source_reference_prompt,
-)
+from features.desktop_life.prompts import DESKTOP_PRESETS
 from features.desktop_life.queries import desktop_action_generation_blocked_reason
 from features.desktop_life.repository import (
     DesktopVideoAspectRatioError,
@@ -110,12 +101,13 @@ from features.desktop_life.repository import (
     touch_desktop_state,
 )
 from features.desktop_life.schemas import (
+    DesktopContext,
     DesktopCreationPlan,
+    DesktopUploadSnapshot,
     DesktopVideoActionResponse,
     DesktopVideoAsset,
     DesktopVideoCreateSetRequest,
     DesktopVideoDesignRequest,
-    DesktopVideoExternalPromptResponse,
     DesktopVideoListResponse,
     DesktopVideoPlayCommand,
     DesktopVideoPlayRequest,
@@ -123,7 +115,6 @@ from features.desktop_life.schemas import (
     DesktopVideoProgress,
     DesktopVideoProposalResponse,
     DesktopVideoReceipt,
-    DesktopVideoReference,
     DesktopVideoRefinementInput,
     DesktopVideoRefinePreviewResponse,
     DesktopVideoRefineRequest,
@@ -131,6 +122,7 @@ from features.desktop_life.schemas import (
     DesktopVideoSetResponse,
     DesktopVideoStateResponse,
     DesktopVisualSnapshot,
+    parse_desktop_context,
 )
 from features.desktop_life.video_refinement import plan_desktop_video_refinement
 from features.media.chain import (
@@ -217,185 +209,6 @@ async def get_desktop_action_response(db: AsyncSession, user_id: int, action_id:
     return await desktop_action_response_with_sync(db, await desktop_action(db, user_id, action_id, lock=True))
 
 
-async def get_desktop_external_prompt(
-    db: AsyncSession,
-    user_id: int,
-    action_id: int,
-    *,
-    expected_set_id: int | None = None,
-    requirements: str = "",
-    expected_draft_id: str | None = None,
-    expected_base_version: int | None = None,
-    expected_resolution_revision: int | None = None,
-    aspect_policy: Literal["ask", "keep"] = "ask",
-) -> DesktopVideoExternalPromptResponse:
-    action = await desktop_action(db, user_id, action_id, lock=True)
-    if expected_set_id is not None and expected_set_id != action.set_id:
-        raise DesktopVideoStateError("桌面生活组合已经变化")
-    row = await _suite(db, user_id, action.set_id)
-    snapshot = DesktopVisualSnapshot.model_validate_json(row.context_json)
-    progress = desktop_progress(action) if action.stage != "complete" else None
-    _validate_draft(
-        row,
-        progress if action.stage != "complete" else None,
-        draft_id=expected_draft_id,
-        base_version=expected_base_version,
-        resolution_revision=expected_resolution_revision,
-    )
-    accepted = desktop_accepted_asset(action)
-    confirmed = progress.pose_path if progress and progress.image_confirmed and action.stage != "complete" else ""
-    confirmed = (
-        confirmed
-        or (row.base_image_path if _effective_continuity(action) == "base" else "")
-        or (accepted.image_path if accepted else "")
-    )
-    references: list[DesktopVideoReference] = []
-    chosen = (
-        [("已确认的起始画面", confirmed)]
-        if confirmed
-        else [
-            (
-                "全身身份参考图" if snapshot.identity_reference_role == "fullbody" else "头像参考图",
-                snapshot.primary_reference_path,
-            ),
-            ("着装参考图", snapshot.outfit_path),
-            ("场景参考图", snapshot.scene_path),
-        ]
-    )
-    for label, path in chosen:
-        if not path or not await asyncio.to_thread(read_valid_image_data_uri, path):
-            raise DesktopVideoStateError("套装参考图片无法读取，请重新上传图片")
-        url = signed_companion_asset_url(path)
-        if url is None:
-            raise DesktopVideoStateError("套装参考图片无法读取，请重新上传图片")
-        references.append(DesktopVideoReference(label=label, url=url))
-    has_base = _effective_continuity(action) == "base" and bool(confirmed)
-    output_width, output_height = row.target_width, row.target_height
-    if confirmed:
-        mode, width, height, _data = await _image_geometry(db, row, confirmed, aspect_policy, action=action)
-        if mode == "keep":
-            output_width, output_height = width, height
-    language = resolve_language(await get_user_setting(db, user_id, "language"))
-    extra = requirements.strip()
-    description = desktop_action_description(action)
-    plan = (progress.creation_plan if progress else None) or (accepted.creation_plan if accepted else None)
-    if plan is not None:
-        description = plan.activity + "\n" + plan.motion_requirements
-    if language == "en":
-        kind = "looping" if action.kind == "loop" else "single-action"
-        cycle = (
-            DESKTOP_VIDEO_QUIET[language]
-            if action.key == "idle"
-            else "Image 1 is the required opening and ending frame. Complete the target activity once at its required speed, pausing only where appropriate. After completion, return naturally through the actual action to the opening pose, gaze, support contacts, prop positions and visible prop states, settling across the boundary. Keep the camera and lighting stable; do not add unrelated back-and-forth motion, reverse actions or reset visible prop states to match the endpoints."
-            if has_base and action.kind != "loop"
-            else "Continue the target activity, pausing only where appropriate. The ending pose, gaze, support contacts, prop positions and visible prop states join the opening naturally, with continuous motion direction and speed across the boundary. Preserve repetition required by the target itself; do not add unrelated back-and-forth motion, reverse actions or reset visible prop states to close the loop."
-            if action.kind == "loop"
-            else "Complete the target action once at its required speed, pausing only where appropriate, then hold its natural finishing state."
-        )
-    else:
-        kind = "循环" if action.kind == "loop" else "单次"
-        cycle = (
-            DESKTOP_VIDEO_QUIET[language]
-            if action.key == "idle"
-            else "图 1 是必须使用的起止画面。" + DESKTOP_VIDEO_BASE
-            if has_base and action.kind != "loop"
-            else DESKTOP_VIDEO_LOOP
-            if action.kind == "loop"
-            else DESKTOP_VIDEO_ONCE
-        )
-    prompt = DESKTOP_EXTERNAL_VIDEO_TEMPLATES[language].format(
-        duration_seconds=action.duration_seconds,
-        references=(
-            "图 1 是已确认的起始画面，人物外观、穿着、环境、物品、构图和光线均以此为准。"
-            if confirmed and language != "en"
-            else "Image 1 is the confirmed opening frame. Preserve its visible identity, clothing, environment, props, framing and lighting."
-            if confirmed
-            else desktop_source_reference_prompt(
-                snapshot.identity_reference_role,
-                language=language,
-                include_scene=True,
-            )
-        ),
-        kind=kind,
-        motion=description,
-        cycle=cycle,
-    )
-    output_ratio = desktop_aspect_ratio(output_width, output_height)
-    prompt += (
-        f"\nDesktop target: {row.target_width}×{row.target_height}. Output aspect ratio: {output_ratio}; use the highest available native resolution and preserve the confirmed image framing."
-        if language == "en" and confirmed
-        else f"\nDesktop target: {row.target_width}×{row.target_height}. Output aspect ratio: {output_ratio}; use the highest available native resolution and compose a coherent new opening frame for the activity according to the reference roles above."
-        if language == "en"
-        else f"\n桌景目标分辨率为 {row.target_width}×{row.target_height}，本次输出画幅为 {output_ratio}；使用可用的最高原生清晰度，保留已确认图片的构图。"
-        if confirmed
-        else f"\n桌景目标分辨率为 {row.target_width}×{row.target_height}，本次输出画幅为 {output_ratio}；使用可用的最高原生清晰度，按上述参考职责安排符合活动的连贯新开场。"
-    )
-    conditions = {"use_when": json.loads(action.use_when_json), "avoid_when": json.loads(action.avoid_when_json)}
-    prompt += (
-        "\nUsage conditions: "
-        + json.dumps(conditions, ensure_ascii=False)
-        + ". Use the actual body, available props and space; if required conditions are missing, explain why instead of redesigning the body or room."
-        if language == "en" and confirmed
-        else "\nUsage conditions: "
-        + json.dumps(conditions, ensure_ascii=False)
-        + ". Preserve the reference body structure and current styling. Compose a new opening using image 3's environment, with compatible everyday props needed by the activity; if the conditions cannot support it, explain why. Do not redesign the body or replace the environment without support from the references."
-        if language == "en"
-        else "\n适用与避免条件："
-        + json.dumps(conditions, ensure_ascii=False)
-        + "。使用实际身体、已有物品和空间；必要条件缺失时说明原因，不能改造身体或房间布局来完成活动。"
-        if confirmed
-        else "\n适用与避免条件："
-        + json.dumps(conditions, ensure_ascii=False)
-        + "。保留参考中的身体结构和当前造型，按图 3 的环境安排新开场与活动所需的相容日用品；必要条件无法支持时说明原因，不能改造身体或无依据替换环境。"
-    )
-    customization = progress or accepted
-    if customization is not None and (customization.feedback or customization.video_feedback):
-        saved_requirements = json.dumps(
-            {
-                "feedback": customization.feedback,
-                "video_feedback": customization.video_feedback,
-                "customization_priority": customization.customization_priority,
-            },
-            ensure_ascii=False,
-        )
-        prompt += (
-            "\nSaved user requirements (creative material): "
-            + saved_requirements
-            + ". For explicitly conflicting dimensions, customization_priority selects the newer requirement; retain the rest. The confirmed opening remains the visual authority, and motion requirements apply only to the video."
-            if language == "en"
-            else "\n继续生效的用户定制资料："
-            + saved_requirements
-            + "。仅在明确冲突的维度按 customization_priority 指定的较新要求处理，其余继续生效；已确认起始图仍是视觉依据，运动要求只作用于视频过程。"
-        )
-    if extra:
-        if confirmed:
-            prompt += (
-                "\nAdditional user requirements adjust only the activity and expressions compatible with image 1; "
-                f"preserve its opening composition and the playback requirements above: {extra}"
-                if language == "en"
-                else f"\n用户本次调整仅改变与图 1 相容的活动和过程神态，保留图中的开场构图及上述播放要求：{extra}"
-            )
-        else:
-            prompt += (
-                "\nAdditional user requirements (take precedence for the specified activity, expression and opening framing; "
-                f"preserve the identity, styling, environment and playback mode above): {extra}"
-                if language == "en"
-                else f"\n用户本次调整（对应的活动、神态与开场构图细节以此为准，身份、造型、环境与播放方式沿用上述要求）：{extra}"
-            )
-    return DesktopVideoExternalPromptResponse(
-        draft_id=progress.generation_id if progress and action.stage != "complete" else None,
-        base_version=row.base_version,
-        action_id=action.id,
-        set_id=action.set_id,
-        name=action.name,
-        description=description,
-        kind=action.kind,
-        duration_seconds=action.duration_seconds,
-        prompt=prompt,
-        references=references,
-    )
-
-
 async def get_desktop_proposal_response(
     db: AsyncSession,
     user_id: int,
@@ -419,6 +232,51 @@ async def _require_action_generation(db: AsyncSession, action: DesktopVideoActio
         raise DesktopVideoStateError(reason)
 
 
+def _require_source_upload(
+    suite: DesktopVideoSet,
+    action: DesktopVideoAction,
+    media_kind: Literal["image", "video"],
+) -> DesktopUploadSnapshot:
+    if action.key != "idle" or suite.source != f"{media_kind}_upload":
+        raise DesktopVideoStateError("只能在创建桌景时上传所选类型的素材；其他内容请新建桌景")
+    snapshot = parse_desktop_context(suite.source, suite.context_json)
+    if not isinstance(snapshot, DesktopUploadSnapshot) or snapshot.locked:
+        raise DesktopVideoStateError("这套桌景的来源已固定；上传其他内容请新建桌景")
+    return snapshot
+
+
+def _save_upload_source(suite: DesktopVideoSet, snapshot: DesktopUploadSnapshot) -> None:
+    snapshot.locked = True
+    suite.context_json = snapshot.model_dump_json()
+    suite.context_hash = desktop_context_hash(snapshot)
+
+
+async def _commit_upload_start(db: AsyncSession, user_id: int, action_id: int, generation_id: str) -> None:
+    try:
+        await db.commit()
+    except (Exception, asyncio.CancelledError):
+        await db.rollback()
+        async with SESSION_LOCAL() as recovery_db:
+            action = await desktop_action(recovery_db, user_id, action_id, lock=True)
+            suite = await _suite(recovery_db, user_id, action.set_id)
+            snapshot = parse_desktop_context(suite.source, suite.context_json)
+            progress = desktop_progress(action)
+            if (
+                isinstance(snapshot, DesktopUploadSnapshot)
+                and not snapshot.locked
+                and progress is not None
+                and progress.generation_id == generation_id
+                and action.status == "processing"
+                and action.stage in {"upload", "image_upload"}
+            ):
+                progress.failure_reason = "failed"
+                action.generation_state_json = progress.model_dump_json()
+                action.status, action.error = "failed", "上传尚未保存，请继续上传素材"
+                await touch_desktop_state(recovery_db, user_id)
+                await recovery_db.commit()
+        raise
+
+
 async def _resume_model_steps(
     db: AsyncSession,
     action: DesktopVideoAction,
@@ -436,7 +294,7 @@ async def _resume_model_steps(
 async def _create_suite(
     db: AsyncSession,
     user_id: int,
-    snapshot: DesktopVisualSnapshot,
+    snapshot: DesktopContext,
     *,
     name: str,
     request_id: str | None,
@@ -448,15 +306,17 @@ async def _create_suite(
 ) -> DesktopVideoSet:
     row = DesktopVideoSet(
         user_id=user_id,
-        avatar_id=snapshot.identity.avatar_id,
-        outfit_id=snapshot.outfit_id,
-        scene_id=snapshot.scene_id,
+        avatar_id=snapshot.identity.avatar_id if isinstance(snapshot, DesktopVisualSnapshot) else None,
+        outfit_id=snapshot.outfit_id if isinstance(snapshot, DesktopVisualSnapshot) else None,
+        scene_id=snapshot.scene_id if isinstance(snapshot, DesktopVisualSnapshot) else None,
         source_visual_key=source_visual_key(
             snapshot.identity_hash,
             snapshot.outfit_hash,
             portrait_hash=snapshot.portrait_hash,
             identity_reference_role=snapshot.identity_reference_role,
-        ),
+        )
+        if isinstance(snapshot, DesktopVisualSnapshot)
+        else snapshot.source_key,
         context_hash=desktop_context_hash(snapshot),
         context_json=snapshot.model_dump_json(),
         title=name,
@@ -531,12 +391,19 @@ async def create_desktop_video_set(user_id: int, request: DesktopVideoCreateSetR
             ),
         )
         if row is None:
-            snapshot = await load_desktop_visual_snapshot(
-                db,
-                user_id,
-                scene_id=request.scene_id,
-                outfit_id=request.outfit_id,
-            )
+            if request.source == "ai":
+                snapshot = await load_desktop_visual_snapshot(
+                    db,
+                    user_id,
+                    scene_id=request.scene_id,
+                    outfit_id=request.outfit_id,
+                )
+            else:
+                persona = await persona_snapshot(db, user_id)
+                snapshot = DesktopUploadSnapshot(
+                    source_key=hashlib.sha256(uuid4().bytes).hexdigest(),
+                    persona=load_persona_definition(persona) if persona is not None else {},
+                )
             row = await _create_suite(
                 db,
                 user_id,
@@ -559,8 +426,14 @@ async def create_desktop_video_set(user_id: int, request: DesktopVideoCreateSetR
                 )
             await db.commit()
         else:
-            original = DesktopVisualSnapshot.model_validate_json(row.context_json)
-            if (original.scene_id, original.outfit_id, row.source, row.target_width, row.target_height) != (
+            original = parse_desktop_context(row.source, row.context_json)
+            if (
+                original.scene_id if isinstance(original, DesktopVisualSnapshot) else None,
+                original.outfit_id if isinstance(original, DesktopVisualSnapshot) else None,
+                row.source,
+                row.target_width,
+                row.target_height,
+            ) != (
                 request.scene_id,
                 request.outfit_id,
                 request.source,
@@ -860,6 +733,11 @@ async def generate_desktop_image(
                 previous = row.base_image_path
             if not previous and action.key != "idle" and action.continuity == "base":
                 previous = row.base_image_path
+            snapshot = parse_desktop_context(row.source, row.context_json)
+            if isinstance(snapshot, DesktopUploadSnapshot):
+                previous = previous or row.base_image_path or snapshot.reference_image_path
+                if not previous:
+                    raise DesktopVideoStateError("桌景上传来源无法恢复，请重新创建桌景")
             geometry_mode: Literal["target", "keep"] = "target"
             frame_width, frame_height = row.target_width, row.target_height
             expand_image = False
@@ -974,7 +852,7 @@ async def upload_desktop_image(
         if action.version != expected_action_version:
             raise DesktopVideoStateError("当前成品已变化，请刷新后重试")
         row = await _suite(db, user_id, action.set_id)
-        await _require_action_generation(db, action, row)
+        _require_source_upload(row, action, "image")
         if expected_set_id is not None and expected_set_id != row.id:
             raise DesktopVideoStateError("桌景套装已变化")
         _validate_draft(
@@ -1028,7 +906,7 @@ async def upload_desktop_image(
         directory = f"desktop/{row.id}/{action.id}/{progress.generation_id}"
         baseline = row.base_version
         await touch_desktop_state(db, user_id)
-        await db.commit()
+        await _commit_upload_start(db, user_id, action_id, progress.generation_id)
     saved_path = None
     try:
         saved_path = await prepare_uploaded_desktop_image(user_id, data, progress, directory)
@@ -1037,9 +915,12 @@ async def upload_desktop_image(
         async with _lock(user_id), SESSION_LOCAL() as db:
             action = await desktop_action(db, user_id, action_id, lock=True)
             row = await _suite(db, user_id, action.set_id)
-            await _require_action_generation(db, action, row)
+            snapshot = _require_source_upload(row, action, "image")
             current = desktop_progress(action)
             _validate_draft(row, current, draft_id=progress.generation_id, base_version=baseline)
+            snapshot.original_image_path = progress.source_image_path
+            snapshot.reference_image_path = saved_path
+            _save_upload_source(row, snapshot)
             action.generation_state_json = progress.model_dump_json()
             action.status, action.stage, action.error = (
                 ("processing", "prepare", None) if progress.expand_image else ("review_pending", "image_review", None)
@@ -1083,6 +964,10 @@ async def upload_desktop_image(
         if saved_action is None:
             cleanup_asset_directories_after_task(user_id, [directory])
         if isinstance(exc, asyncio.CancelledError):
+            if recovered:
+                if progress.expand_image and action.status == "processing" and not progress.paused_by_user:
+                    schedule_desktop_video_job(user_id, action_id)
+                schedule_desktop_title(user_id, action.set_id)
             raise
         if not recovered:
             raise
@@ -2061,7 +1946,15 @@ def _uploaded_refinement_frame(data: bytes, extension: str) -> tuple[bytes, int]
     with TemporaryDirectory(prefix="desktop-reference-") as directory:
         source = Path(directory) / f"source.{extension}"
         source.write_bytes(data)
+        run_ffmpeg(["-xerror", "-i", str(source), "-map", "0:v:0", "-f", "null", "-"], label="桌景上传解码检查")
         return extract_desktop_first_frame(source), round(probe_video(source).duration_seconds * 1000)
+
+
+def _validate_playable_upload(data: bytes, extension: str) -> None:
+    with TemporaryDirectory(prefix="desktop-playback-check-") as directory:
+        source = Path(directory) / f"source.{extension}"
+        source.write_bytes(data)
+        validate_desktop_video_playback(source)
 
 
 async def upload_desktop_action(
@@ -2085,7 +1978,8 @@ async def upload_desktop_action(
     if extension not in {"mp4", "mov"} or detected not in {"mp4", "mov"}:
         raise DesktopVideoStateError("仅支持 MP4 或 MOV 视频")
     try:
-        width, height = await asyncio.to_thread(probe_desktop_video, data, extension)
+        source_frame, source_duration_ms = await asyncio.to_thread(_uploaded_refinement_frame, data, extension)
+        width, height = await asyncio.to_thread(probe_desktop_image, source_frame)
     except (ValueError, OSError, VideoProcessError) as exc:
         raise DesktopVideoStateError("视频无法读取，请上传完整的视频") from exc
     async with SESSION_LOCAL() as db:
@@ -2101,7 +1995,7 @@ async def upload_desktop_action(
         )
         if row is None:
             raise DesktopVideoNotFoundError("找不到对应的画面")
-        await _require_action_generation(db, initial, row)
+        _require_source_upload(row, initial, "video")
         _validate_draft(
             row,
             desktop_progress(initial) if initial.stage != "complete" else None,
@@ -2122,8 +2016,7 @@ async def upload_desktop_action(
     except DesktopVideoAspectRatioError as exc:
         try:
             if local_fit:
-                _frame, duration_ms = await asyncio.to_thread(_uploaded_refinement_frame, data, extension)
-                seconds = (duration_ms + 999) // 1000
+                seconds = (source_duration_ms + 999) // 1000
             else:
                 seconds, _providers = await plan_desktop_video_refinement(
                     user_id,
@@ -2147,9 +2040,13 @@ async def upload_desktop_action(
         raise
     seconds = initial.duration_seconds
     providers: list[FrozenMediaProvider] = []
-    source_frame: bytes | None = None
-    source_duration_ms = 0
     ai_adjustment = aspect_policy == "expand" and not local_fit
+    # 只有直接播放原文件的策略才要求源文件本身可播放；expand 按目标画幅重新编码源视频。
+    if aspect_policy != "expand":
+        try:
+            await asyncio.to_thread(_validate_playable_upload, data, extension)
+        except (ValueError, OSError, VideoProcessError) as exc:
+            raise DesktopVideoStateError(str(exc)) from exc
     if ai_adjustment:
         seconds, providers = await plan_desktop_video_refinement(
             user_id,
@@ -2160,11 +2057,10 @@ async def upload_desktop_action(
             target_height=row.target_height,
             geometry_mode="target",
         )
-        source_frame, source_duration_ms = await asyncio.to_thread(_uploaded_refinement_frame, data, extension)
     async with _lock(user_id), SESSION_LOCAL() as db:
         initial = await desktop_action(db, user_id, action_id, lock=True)
         row = await _suite(db, user_id, initial.set_id)
-        await _require_action_generation(db, initial, row)
+        _require_source_upload(row, initial, "video")
         old = desktop_progress(initial)
         _validate_draft(
             row,
@@ -2217,7 +2113,7 @@ async def upload_desktop_action(
         if state is not None:
             state.preparation_error = None
         await touch_desktop_state(db, user_id)
-        await db.commit()
+        await _commit_upload_start(db, user_id, action_id, generation_id)
     cancel_desktop_video_job(action_id)
     spawn_removed_action_task_cancellation(user_id, [removed_task] if removed_task else [])
     source_path: str | None = None
@@ -2241,11 +2137,15 @@ async def upload_desktop_action(
             )
         async with SESSION_LOCAL() as db:
             action = await desktop_action(db, user_id, action_id, lock=True)
+            row = await _suite(db, user_id, action.set_id)
+            snapshot = _require_source_upload(row, action, "video")
             current = desktop_progress(action)
             if current is None or current.generation_id != generation_id or action.status != "processing":
                 raise DesktopVideoStateError("上传任务已经失效")
-            if source_image_path is not None:
-                row = await _suite(db, user_id, action.set_id)
+            snapshot.original_video_path = source_path
+            snapshot.reference_image_path = source_image_path
+            _save_upload_source(row, snapshot)
+            if ai_adjustment:
                 updated = _refinement_progress(
                     action,
                     row,
@@ -2266,6 +2166,7 @@ async def upload_desktop_action(
                 action.duration_seconds = seconds
             else:
                 current.source_path = source_path
+                current.source_image_path = source_image_path
             action.generation_state_json = current.model_dump_json()
             action.stage = "paused" if current.paused_by_user else "video" if current.video_refinement else "process"
             await touch_desktop_state(db, user_id)
@@ -2305,6 +2206,10 @@ async def upload_desktop_action(
         if saved_action is None:
             cleanup_asset_directories_after_task(user_id, [directory])
         if isinstance(exc, asyncio.CancelledError):
+            if recovered:
+                if action.status == "processing" and current is not None and not current.paused_by_user:
+                    schedule_desktop_video_job(user_id, action_id)
+                schedule_desktop_title(user_id, action.set_id)
             raise
         if not recovered:
             if isinstance(exc, DesktopVideoError):
@@ -2312,6 +2217,7 @@ async def upload_desktop_action(
             raise DesktopVideoStateError("上传视频保存失败，请重试") from exc
     if action.status == "processing" and current is not None and not current.paused_by_user:
         schedule_desktop_video_job(user_id, action_id)
+    schedule_desktop_title(user_id, action.set_id)
     async with SESSION_LOCAL() as db:
         return await get_desktop_action_response(db, user_id, action_id)
 

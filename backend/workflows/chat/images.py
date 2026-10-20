@@ -16,6 +16,7 @@ from features.appearance.visual_identity import (
     optional_outfit_image_reference,
 )
 from features.conversation.prompts import CHAT_IMAGE_CORRECTION_PREFIX
+from features.desktop_life.queries import desktop_current_styling_reference
 from features.media.chain import MEDIA_IDENTITY_ACCEPT_SCORE
 from features.media.character_images import ImageChainState, generate_character_images
 from features.media.identity_contracts import CharacterCardSnapshot
@@ -75,7 +76,9 @@ async def _freeze_plan(request: ImageRequest, user_id: int) -> ImagePlan:
             size=request.aspect_ratio,
         )
     use_outfit = not bool((request.outfit_override or "").strip())
-    visual = await load_self_visual_context(user_id, use_outfit_reference=use_outfit)
+    async with SESSION_LOCAL() as db:
+        styling = await desktop_current_styling_reference(db, user_id) if use_outfit else None
+    visual = await load_self_visual_context(user_id, use_outfit_reference=use_outfit, current_styling=styling)
     plan = apply_outfit_override(visual, request.outfit_override)
     outfit = optional_outfit_image_reference(plan)
     return ImagePlan(

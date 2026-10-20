@@ -24,7 +24,6 @@ import {
   type DesktopVideoSource,
   generateDesktopVideoAction,
   generateDesktopVideoImage,
-  getDesktopVideoPrompt,
   pauseDesktopVideoDraft,
   refreshDesktopVideos,
   renameDesktopVideoSet,
@@ -34,7 +33,6 @@ import {
   uploadDesktopVideoAction
 } from '@/modules/desktop-videos'
 import { $activeScene, $sceneLibrary, loadSceneDetail, loadSceneLibrary, type SceneAsset } from '@/modules/scene'
-import { PortraitLightbox } from '@/shared'
 import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
@@ -63,7 +61,7 @@ import {
   reconcileDesktopLifeDisplay,
   resolveDesktopLifeRecommendationDisplay
 } from './desktop-life-display'
-import { DesktopLifeReferences, ExternalReference } from './desktop-life-materials'
+import { DesktopLifeReferences } from './desktop-life-materials'
 import { DesktopLifeCover, DesktopLifePreview } from './desktop-life-preview'
 import { VideoRefinementModal } from './desktop-life-refinement'
 import { DesktopLifeDisplayPicker, DesktopLifeRecommendation, resolutionLabel } from './desktop-life-resolution'
@@ -97,10 +95,6 @@ function hasPreviewMedia(action: DesktopVideoAction, draft: boolean): boolean {
       ? action.draft?.candidate_video_url || action.draft?.candidate_poster_url || action.draft?.image_url
       : action.current?.video_url || action.current?.poster_url
   )
-}
-
-function localFileName(filePath: string): string {
-  return filePath.split(/[\\/]/).pop() || filePath
 }
 
 export function DesktopLifePage({
@@ -185,55 +179,16 @@ export function DesktopLifePage({
   } | null>(null)
 
   const [designMessage, setDesignMessage] = useState<string | null>(null)
-  const [externalAction, setExternalActionLocal] = useState<DesktopVideoAction | null>(null)
-
-  const setExternalAction = (action: DesktopVideoAction | null): void => {
-    setExternalActionLocal(action)
-    updateDesktopLifeUi({ externalActionId: action?.id ?? null })
-  }
-
-  const [externalBaseVersion, setExternalBaseVersion] = useState(0)
-  const [externalResolutionRevision, setExternalResolutionRevision] = useState(0)
-  const [externalPrompt, setExternalPrompt] = useState<Awaited<ReturnType<typeof getDesktopVideoPrompt>> | null>(null)
-  const externalRequirements = ui.externalRequirements
-  const setExternalRequirements = (value: string): void => updateDesktopLifeUi({ externalRequirements: value })
-  const [externalPromptRequirements, setExternalPromptRequirements] = useState('')
-  const externalFilePath = ui.externalFilePath
-  const setExternalFilePath = (value: string | null): void => updateDesktopLifeUi({ externalFilePath: value })
-  const [externalPromptLoading, setExternalPromptLoading] = useState(false)
-  const [externalUploading, setExternalUploading] = useState(false)
-  const [externalError, setExternalError] = useState<string | null>(null)
-  const externalUploadRequest = useRef(false)
-  const [externalCopied, setExternalCopied] = useState(false)
-  const [externalReferenceZoom, setExternalReferenceZoom] = useState<{ label: string; url: string } | null>(null)
-  const externalRequest = useRef(0)
-  const externalAuthSession = useRef(authSessionId)
+  const authSession = useRef(authSessionId)
   const beginAsync = useAsyncGuard()
   const selected = sets.find(item => item.id === selectedSetId)
   const selectedTitle = selected?.title.trim() || t.newSceneName
+  const sourceError = selected?.source_error
   const readyForActions = desktopLifeReadyForActions(selected)
-  const actionsToCreate = readyForActions ? desktopLifeActionsToCreate(selected?.actions ?? []) : []
+  const actionsToCreate = readyForActions && !sourceError ? desktopLifeActionsToCreate(selected?.actions ?? []) : []
   const idle = selected?.actions.find(action => action.key === 'idle')
   const action = selected?.actions.find(item => item.id === selectedActionId)
   const currentMatches = selected?.is_current === true
-  const externalSet = sets.find(set => set.id === externalAction?.set_id)
-  const liveExternalAction = externalSet?.actions.find(item => item.id === externalAction?.id)
-
-  const externalNeedsBase = Boolean(
-    externalAction && externalAction.key !== 'idle' && !desktopLifeReadyForActions(externalSet)
-  )
-
-  const externalStale = Boolean(
-    externalAction &&
-    (!externalSet ||
-      externalSet.base_version !== externalBaseVersion ||
-      externalSet.resolution_revision !== externalResolutionRevision ||
-      liveExternalAction?.version !== externalAction.version ||
-      liveExternalAction?.draft?.id !== externalAction.draft?.id ||
-      liveExternalAction?.draft?.image_url?.split(/[?#]/)[0] !== externalAction.draft?.image_url?.split(/[?#]/)[0] ||
-      liveExternalAction?.draft?.image_confirmed !== externalAction.draft?.image_confirmed ||
-      liveExternalAction?.current?.image_url?.split(/[?#]/)[0] !== externalAction.current?.image_url?.split(/[?#]/)[0])
-  )
 
   const working = sets.some(
     item =>
@@ -268,20 +223,11 @@ export function DesktopLifePage({
   }, [authSessionId])
 
   useEffect(() => {
-    if (externalAuthSession.current === authSessionId) {
+    if (authSession.current === authSessionId) {
       return
     }
 
-    externalAuthSession.current = authSessionId
-    externalRequest.current += 1
-    setExternalActionLocal(null)
-    setExternalPrompt(null)
-    setExternalPromptRequirements('')
-    setExternalCopied(false)
-    setExternalReferenceZoom(null)
-    setExternalPromptLoading(false)
-    setExternalUploading(false)
-    externalUploadRequest.current = false
+    authSession.current = authSessionId
     setImagePreviews({})
     setCreationScene(null)
     setDeleteSetId(null)
@@ -289,7 +235,6 @@ export function DesktopLifePage({
     setRefinement(null)
     setBusy(false)
     setOperationError(null)
-    setExternalError(null)
     setPreferencesSaving(false)
     setRename('')
     setDesignMessage(null)
@@ -306,20 +251,7 @@ export function DesktopLifePage({
   }, [working])
 
   useEffect(() => {
-    if (!externalAction && ui.externalActionId) {
-      const set = sets.find(item => item.actions.some(item => item.id === ui.externalActionId))
-      const savedAction = set?.actions.find(item => item.id === ui.externalActionId)
-
-      if (set && savedAction) {
-        setExternalActionLocal(savedAction)
-        setExternalBaseVersion(set.base_version)
-        setExternalResolutionRevision(set.resolution_revision)
-      }
-    }
-  }, [externalAction, sets, ui.externalActionId])
-
-  useEffect(() => {
-    if (!createOpen) {
+    if (!createOpen || create.source !== 'ai') {
       return
     }
 
@@ -348,7 +280,7 @@ export function DesktopLifePage({
         }
       })
     }
-  }, [createOpen, activeScene, creationScene, outfits, scenes])
+  }, [createOpen, create.source, activeScene, creationScene, outfits, scenes])
 
   useEffect(() => {
     if (!createOpen) {
@@ -364,7 +296,7 @@ export function DesktopLifePage({
   }, [createOpen, presentation, create.targetDisplayId, create.targetResolution])
 
   useEffect(() => {
-    if (!createOpen || !create.sceneId) {
+    if (!createOpen || create.source !== 'ai' || !create.sceneId) {
       return
     }
 
@@ -379,7 +311,7 @@ export function DesktopLifePage({
     return () => {
       current = false
     }
-  }, [createOpen, create.sceneId, authSessionId])
+  }, [createOpen, create.source, create.sceneId, authSessionId])
 
   const perform = async (operation: () => Promise<unknown>, title = t.processingRequest): Promise<void> => {
     if (busy) {
@@ -510,301 +442,43 @@ export function DesktopLifePage({
     resolve?.(policy)
   }
 
-  const loadExternalPrompt = async (action: DesktopVideoAction, requirements = ''): Promise<void> => {
-    if (externalUploadRequest.current || externalNeedsBase) {
+  const uploadSource = async (
+    action: DesktopVideoAction,
+    set: DesktopVideoSet,
+    selectedPath?: string
+  ): Promise<void> => {
+    const scope = captureAuthScope()
+    const isLive = beginAsync()
+
+    if (!authSessionId || !scope || !set.can_upload_source || action.key !== 'idle' || set.source === 'ai') {
       return
     }
 
-    const requestId = ++externalRequest.current
-    const authScope = captureAuthScope()
-    const isLive = beginAsync()
-    const generation = aspectGeneration.current
+    const image = set.source === 'image_upload'
 
-    const ownsRequest = (): boolean => Boolean(authScope?.() && isLive() && requestId === externalRequest.current)
+    const path =
+      selectedPath ??
+      (
+        await fileApi().selectPaths({
+          filters: [
+            image
+              ? { name: t.imageFilterName, extensions: ['png', 'jpg', 'jpeg', 'webp'] }
+              : { name: t.videoFilterName, extensions: ['mp4', 'mov'] }
+          ],
+          multiple: false,
+          title: image ? t.uploadImage : t.selectVideo
+        })
+      )[0]
 
-    const isCurrent = (): boolean =>
-      Boolean(
-        ownsRequest() && generation === aspectGeneration.current && $desktopLifeUi.get().externalActionId === action.id
-      )
+    const currentSet = $desktopVideoSets.get().find(item => item.id === set.id)
+    const currentAction = currentSet?.actions.find(item => item.id === action.id)
 
-    const submittedRequirements = requirements.trim()
-    setExternalPromptLoading(true)
-    setExternalError(null)
-
-    try {
-      const set = $desktopVideoSets.get().find(item => item.id === action.set_id)
-      const latest = set?.actions.find(item => item.id === action.id)
-
-      if (!set || !latest) {
-        throw new Error(t.stalePrompt)
-      }
-
-      await withAspectChoice(async (policy, mismatch) => {
-        if (policy === 'expand') {
-          const liveSet = $desktopVideoSets.get().find(item => item.id === set.id)
-          const targetAction = liveSet?.actions.find(item => item.id === (mismatch?.adjust_action_id ?? latest.id))
-
-          if (
-            !isCurrent() ||
-            !liveSet ||
-            !targetAction ||
-            liveSet.base_version !== set.base_version ||
-            liveSet.resolution_revision !== set.resolution_revision
-          ) {
-            throw new Error(t.stalePrompt)
-          }
-
-          if (targetAction.id !== latest.id && targetAction.draft) {
-            throw new Error(t.sharedImageDraftHint)
-          }
-
-          if (
-            targetAction.id === latest.id &&
-            (targetAction.draft?.id !== latest.draft?.id ||
-              targetAction.draft?.image_url?.split(/[?#]/)[0] !== latest.draft?.image_url?.split(/[?#]/)[0] ||
-              targetAction.current?.image_url?.split(/[?#]/)[0] !== latest.current?.image_url?.split(/[?#]/)[0])
-          ) {
-            throw new Error(t.stalePrompt)
-          }
-
-          await generateDesktopVideoImage(targetAction, liveSet, '', false, 'expand')
-
-          if (isCurrent()) {
-            closeExternal()
-            updateDesktopLifeUi({ selectedSetId: liveSet.id, selectedActionId: targetAction.id, creating: false })
-          }
-
-          return
-        }
-
-        const prompt = await getDesktopVideoPrompt(latest, set, submittedRequirements, policy)
-
-        if (isCurrent()) {
-          if (externalStale) {
-            setExternalFilePath(null)
-          }
-
-          setExternalAction(latest)
-          setExternalBaseVersion(set.base_version)
-          setExternalResolutionRevision(set.resolution_revision)
-          setExternalPrompt(prompt)
-          setExternalPromptRequirements(submittedRequirements)
-          setExternalCopied(false)
-        }
-      }, isCurrent)
-    } catch (failure) {
-      if (isCurrent()) {
-        setExternalError(backendDetailMessage(failure, errorMessage(failure)))
-        notifyError(failure, t.externalTitle)
-      }
-    } finally {
-      if (ownsRequest()) {
-        setExternalPromptLoading(false)
-      }
-    }
-  }
-
-  const openExternal = (action: DesktopVideoAction): void => {
-    const sameAction = $desktopLifeUi.get().externalActionId === action.id
-    setExternalAction(action)
-    setExternalBaseVersion($desktopVideoSets.get().find(set => set.id === action.set_id)?.base_version ?? 0)
-    setExternalResolutionRevision(
-      $desktopVideoSets.get().find(set => set.id === action.set_id)?.resolution_revision ?? 0
-    )
-    setExternalPrompt(null)
-    setExternalError(null)
-
-    if (!sameAction) {
-      setExternalRequirements('')
-      setExternalFilePath(null)
-    }
-
-    setExternalPromptRequirements('')
-    setExternalReferenceZoom(null)
-    setExternalCopied(false)
-  }
-
-  const closeExternal = (): void => {
-    chooseAspect(null)
-    externalRequest.current += 1
-    setExternalAction(null)
-    setExternalPrompt(null)
-    setExternalError(null)
-    setExternalRequirements('')
-    setExternalPromptRequirements('')
-    setExternalFilePath(null)
-    setExternalReferenceZoom(null)
-    setExternalCopied(false)
-    setExternalPromptLoading(false)
-    setExternalUploading(false)
-    externalUploadRequest.current = false
-  }
-
-  const chooseExternalVideo = async (): Promise<void> => {
-    const requestId = externalRequest.current
-    const authScope = captureAuthScope()
-    const isLive = beginAsync()
-    const isCurrent = (): boolean => Boolean(authScope?.() && isLive() && requestId === externalRequest.current)
-
-    try {
-      const [path] = await fileApi().selectPaths({
-        filters: [{ extensions: ['mp4', 'mov'], name: t.videoFilterName }],
-        multiple: false,
-        title: t.selectVideo
-      })
-
-      if (path && isCurrent()) {
-        setExternalFilePath(path)
-        setExternalError(null)
-      }
-    } catch (failure) {
-      if (isCurrent()) {
-        notifyError(failure, t.selectVideo)
-      }
-    }
-  }
-
-  const uploadExternalVideo = async (): Promise<void> => {
-    if (
-      !externalAction ||
-      !externalFilePath ||
-      externalUploadRequest.current ||
-      externalPromptLoading ||
-      externalNeedsBase
-    ) {
-      return
-    }
-
-    const action = externalAction
-    const authScope = captureAuthScope()
-    const isLive = beginAsync()
-    const requestId = externalRequest.current
-    const isCurrent = (): boolean => Boolean(authScope?.() && isLive() && requestId === externalRequest.current)
-
-    if (!authSessionId || !authScope) {
-      return
-    }
-
-    externalUploadRequest.current = true
-    setExternalUploading(true)
-    setExternalError(null)
-
-    try {
-      if (!externalSet || externalStale) {
-        throw new Error(t.stalePrompt)
-      }
-
-      const uploaded = await withAspectChoice(
+    if (path && scope() && isLive() && currentSet?.can_upload_source && currentAction) {
+      await withAspectChoice(
         policy =>
-          uploadDesktopVideoAction(
-            action,
-            { ...externalSet, base_version: externalBaseVersion, resolution_revision: externalResolutionRevision },
-            externalFilePath,
-            authSessionId,
-            'video',
-            policy
-          ),
-        isCurrent
+          uploadDesktopVideoAction(currentAction, currentSet, path, authSessionId, image ? 'image' : 'video', policy),
+        () => scope() && isLive()
       )
-
-      if (isCurrent() && uploaded) {
-        closeExternal()
-      } else if (isCurrent()) {
-        setExternalUploading(false)
-      }
-    } catch (failure) {
-      if (isCurrent()) {
-        setExternalError(backendDetailMessage(failure, errorMessage(failure)))
-        notifyError(failure, t.externalTitle)
-        void refreshDesktopVideos()
-        setExternalUploading(false)
-      }
-    } finally {
-      if (isCurrent()) {
-        externalUploadRequest.current = false
-      }
-    }
-  }
-
-  const copyExternalPrompt = async (): Promise<void> => {
-    if (!externalPrompt?.prompt) {
-      return
-    }
-
-    const requestId = externalRequest.current
-    const authScope = captureAuthScope()
-    const isLive = beginAsync()
-    const isCurrent = (): boolean => Boolean(authScope?.() && isLive() && requestId === externalRequest.current)
-
-    try {
-      if ((await fileApi().writeClipboard(externalPrompt.prompt)) && isCurrent()) {
-        setExternalCopied(true)
-      }
-    } catch (failure) {
-      if (isCurrent()) {
-        notifyError(failure, t.copyPrompt)
-      }
-    }
-  }
-
-  const confirmForExternal = async (action: DesktopVideoAction): Promise<void> => {
-    if (!selected) {
-      return
-    }
-
-    const scope = captureAuthScope()
-    const isLive = beginAsync()
-    await confirmDesktopVideoImage(action, selected, false)
-
-    if (!scope?.() || !isLive()) {
-      return
-    }
-
-    const latest = $desktopVideoSets
-      .get()
-      .find(set => set.id === selected.id)
-      ?.actions.find(item => item.id === action.id)
-
-    if (latest) {
-      openExternal(latest)
-    }
-  }
-
-  const uploadImage = async (action: DesktopVideoAction): Promise<void> => {
-    const scope = captureAuthScope()
-    const isLive = beginAsync()
-
-    if (!selected || !authSessionId || !scope) {
-      return
-    }
-
-    const [path] = await fileApi().selectPaths({
-      filters: [{ name: t.imageFilterName, extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
-      multiple: false,
-      title: t.uploadImage
-    })
-
-    if (path && scope() && isLive()) {
-      await withAspectChoice(policy => uploadDesktopVideoAction(action, selected, path, authSessionId, 'image', policy))
-    }
-  }
-
-  const replaceUploadedVideo = async (action: DesktopVideoAction, set: DesktopVideoSet): Promise<void> => {
-    const scope = captureAuthScope()
-    const isLive = beginAsync()
-
-    if (!authSessionId || !scope) {
-      return
-    }
-
-    const [path] = await fileApi().selectPaths({
-      filters: [{ name: t.videoFilterName, extensions: ['mp4', 'mov'] }],
-      multiple: false,
-      title: t.selectVideo
-    })
-
-    if (path && scope() && isLive()) {
-      await withAspectChoice(policy => uploadDesktopVideoAction(action, set, path, authSessionId, 'video', policy))
     }
   }
 
@@ -950,7 +624,9 @@ export function DesktopLifePage({
             ? t.chooseActivityHint
             : item.draft?.recovery_action === 'replace_upload'
               ? t.replaceUploadHint
-              : t.creationFailed}
+              : item.draft?.recovery_action === 'recreate_set'
+                ? t.recreateSetHint
+                : t.creationFailed}
         </p>
         {(item.draft?.error || item.error) && (
           <details>
@@ -976,6 +652,22 @@ export function DesktopLifePage({
     </div>
   )
 
+  const newBackgroundControl = selected ? (
+    <button
+      className={BTN_PRIMARY}
+      disabled={busy}
+      onClick={() =>
+        updateDesktopLifeUi({
+          create: { ...newDesktopLifeCreation(), source: selected.source },
+          creating: true
+        })
+      }
+      type="button"
+    >
+      {t.createSet}
+    </button>
+  ) : null
+
   const renderAction = (
     item: DesktopVideoAction,
     feedbackStatus: React.ReactNode
@@ -986,7 +678,8 @@ export function DesktopLifePage({
 
     const unknown = Boolean(item.draft?.submission_unknown || item.draft?.recovery_action === 'wait')
     const chooseActivity = item.draft?.recovery_action === 'choose_activity'
-    const replaceUpload = item.draft?.recovery_action === 'replace_upload'
+    const pendingSource = item.key === 'idle' && selected.can_upload_source
+    const recreateSet = Boolean(sourceError || item.draft?.recovery_action === 'recreate_set')
     const processing = item.status === 'processing' && !isActionPaused(item) && !unknown
 
     const reusesBaseImage =
@@ -1033,7 +726,9 @@ export function DesktopLifePage({
             : 0
 
     const dependent = item.key !== 'idle' && (item.draft?.continuity ?? item.continuity) === 'base'
-    const requiresBase = item.key !== 'idle' && !readyForActions && !processing && !candidate && !unknown
+
+    const requiresBase =
+      item.key !== 'idle' && !readyForActions && !sourceError && !processing && !candidate && !unknown
 
     const awaitingFirstGeneration =
       item.definition_id !== null && ['not_generated', 'blocked'].includes(item.status) && !item.current && !item.draft
@@ -1042,7 +737,13 @@ export function DesktopLifePage({
     const persistedNote = item.draft?.feedback ?? item.current?.feedback ?? ''
 
     const customizationReadOnly =
-      unknown || isActionPaused(item) || candidate || chooseActivity || replaceUpload || unavailableFirstGeneration
+      unknown ||
+      isActionPaused(item) ||
+      candidate ||
+      chooseActivity ||
+      pendingSource ||
+      recreateSet ||
+      unavailableFirstGeneration
 
     const note = customizationReadOnly ? persistedNote : (feedback[item.id] ?? persistedNote)
     const noteDirty = note !== persistedNote
@@ -1055,7 +756,21 @@ export function DesktopLifePage({
 
     const canConfirm = item.draft && imagePreviews[`${item.draft.id}:${item.draft.image_url}`]
 
-    const controls = unknown ? null : processing ? (
+    const controls = sourceError ? (
+      <>
+        {newBackgroundControl}
+        {item.key === 'idle' && item.playable && (
+          <button
+            className={BTN_SUBTLE}
+            disabled={busy || currentMatches}
+            onClick={() => void run(activate)}
+            type="button"
+          >
+            {currentMatches ? t.currentInUse : t.play}
+          </button>
+        )}
+      </>
+    ) : unknown ? null : processing ? (
       item.draft && !['upload', 'image_upload'].includes(item.stage) ? (
         <button
           className={BTN_SUBTLE}
@@ -1090,14 +805,21 @@ export function DesktopLifePage({
       >
         {t.chooseActivity}
       </button>
-    ) : replaceUpload ? (
+    ) : recreateSet ? (
+      newBackgroundControl
+    ) : pendingSource ? (
       <button
         className={BTN_PRIMARY}
         disabled={busy}
-        onClick={() => void run(() => replaceUploadedVideo(item, selected), t.uploadProcessing)}
+        onClick={() =>
+          void run(
+            () => uploadSource(item, selected),
+            selected.source === 'image_upload' ? t.uploadingImage : t.uploadProcessing
+          )
+        }
         type="button"
       >
-        {t.selectVideo}
+        {selected.source === 'image_upload' ? t.uploadImage : t.selectVideo}
       </button>
     ) : noteDirty ? (
       <button
@@ -1174,7 +896,13 @@ export function DesktopLifePage({
             <h3 className="text-lg font-semibold text-strong">{actionName(item)}</h3>
           </div>
           <ActionSyncStatus targets={item.sync_targets} />
-          {renderFailure(item)}
+          {sourceError ? (
+            <p className="text-sm text-warning" role="alert">
+              {sourceError}
+            </p>
+          ) : (
+            renderFailure(item)
+          )}
           {requiresBase ? (
             <div className="space-y-2">
               <h4 className="font-medium text-strong">{t.imageRequired}</h4>
@@ -1260,6 +988,7 @@ export function DesktopLifePage({
                         className={`${BTN_SUBTLE} self-start`}
                         disabled={
                           busy ||
+                          recreateSet ||
                           (item.key !== 'idle' && !readyForActions) ||
                           item.status === 'processing' ||
                           item.draft?.submission_unknown
@@ -1326,7 +1055,7 @@ export function DesktopLifePage({
                     {!candidate && canRemakeVideo && !item.draft?.video_refinement && (
                       <button
                         className={`${BTN_SUBTLE} self-start`}
-                        disabled={busy || unknown || chooseActivity || replaceUpload || noteDirty}
+                        disabled={busy || unknown || chooseActivity || pendingSource || recreateSet || noteDirty}
                         onClick={() => void run(() => makeVideo(item, selected, note))}
                         type="button"
                       >
@@ -1336,33 +1065,18 @@ export function DesktopLifePage({
                     {!candidate && !dependent && (
                       <button
                         className={`${BTN_SUBTLE} self-start`}
-                        disabled={busy || unknown || chooseActivity || unavailableFirstGeneration}
+                        disabled={
+                          busy ||
+                          unknown ||
+                          chooseActivity ||
+                          pendingSource ||
+                          recreateSet ||
+                          unavailableFirstGeneration
+                        }
                         onClick={() => void run(() => makeImage(item, selected, note, true))}
                         type="button"
                       >
                         {t.regenerateImage}
-                      </button>
-                    )}
-                    {!candidate && !dependent && (
-                      <button
-                        className={`${BTN_SUBTLE} self-start`}
-                        disabled={busy || unknown}
-                        onClick={() => void run(() => uploadImage(item), t.uploadingImage)}
-                        type="button"
-                      >
-                        {t.uploadImage}
-                      </button>
-                    )}
-                    {!candidate && (
-                      <button
-                        className={`${BTN_SUBTLE} self-start`}
-                        disabled={busy || unknown || noteDirty || (imageReview && !canConfirm)}
-                        onClick={() =>
-                          void run(() => (imageReview ? confirmForExternal(item) : Promise.resolve(openExternal(item))))
-                        }
-                        type="button"
-                      >
-                        {imageReview ? t.confirmOnly : t.externalTitle}
                       </button>
                     )}
                     {item.draft && (
@@ -1405,16 +1119,20 @@ export function DesktopLifePage({
           <button className={BTN_PRIMARY} onClick={() => idle && openAction(idle)} type="button">
             {t.openImage}
           </button>
-          {item.draft && !chooseActivity && !replaceUpload && (isActionPaused(item) || item.status === 'failed') && (
-            <button
-              className={BTN_SUBTLE}
-              disabled={busy}
-              onClick={() => void run(() => retryDesktopVideoDraft(item, selected))}
-              type="button"
-            >
-              {isActionPaused(item) ? t.resume : t.retry}
-            </button>
-          )}
+          {item.draft &&
+            !chooseActivity &&
+            !pendingSource &&
+            !recreateSet &&
+            (isActionPaused(item) || item.status === 'failed') && (
+              <button
+                className={BTN_SUBTLE}
+                disabled={busy}
+                onClick={() => void run(() => retryDesktopVideoDraft(item, selected))}
+                type="button"
+              >
+                {isActionPaused(item) ? t.resume : t.retry}
+              </button>
+            )}
           {item.draft && (
             <button className={BTN_GHOST} disabled={busy} onClick={() => setDiscardAction(item)} type="button">
               {t.discardDraft}
@@ -1435,7 +1153,10 @@ export function DesktopLifePage({
       : (scenes.find(scene => scene.id === create.sceneId) ?? (activeScene?.id === create.sceneId ? activeScene : null))
 
   const selectedOutfit = outfits.find(outfit => String(outfit.id) === create.outfitId)
-  const materialReady = selectedScene?.status === 'ready' && selectedOutfit?.status === 'ready'
+
+  const materialReady =
+    create.source !== 'ai' || (selectedScene?.status === 'ready' && selectedOutfit?.status === 'ready')
+
   const recommendationDisplay = resolveDesktopLifeRecommendationDisplay(presentation)
 
   const resolutionReady = readyDesktopLifeResolution(create, presentation) !== null
@@ -1462,23 +1183,18 @@ export function DesktopLifePage({
 
   const detailView = !createOpen && action ? renderAction(action, workspaceStatus) : null
 
-  const externalFeedback =
-    externalUploading || externalPromptLoading || externalStale || externalError || externalNeedsBase ? (
-      <CreationFeedback
-        description={
-          externalError || (externalNeedsBase ? t.imageRequiredHint : externalStale ? t.stalePrompt : undefined)
-        }
-        state={externalUploading || externalPromptLoading ? 'working' : 'error'}
-        title={externalUploading ? undefined : externalPromptLoading ? t.promptLoading : t.operationFailed}
-      />
-    ) : null
-
   // 创建入口与提交区使用不同 DOM，避免切页的同一次点击继续触发表单提交。
   const createFooter = createOpen ? (
     <CreationActionBar
       description={
         workspaceStatus ??
-        (!resolutionReady ? t.screenUnavailable : !materialReady ? t.creationMissingMaterials : t.creationReady)
+        (!resolutionReady
+          ? t.screenUnavailable
+          : !materialReady
+            ? t.creationMissingMaterials
+            : create.source === 'ai'
+              ? t.creationReady
+              : t.uploadReady)
       }
       key="create"
     >
@@ -1504,6 +1220,7 @@ export function DesktopLifePage({
   const overviewFooter =
     !createOpen && !action && selected && idle ? (
       <CreationActionBar description={workspaceStatus}>
+        {sourceError && newBackgroundControl}
         {(idle.draft || !idle.playable || idle.needs_update) && (
           <button className={BTN_PRIMARY} disabled={busy} onClick={() => openAction(idle)} type="button">
             {t.continue}
@@ -1519,7 +1236,7 @@ export function DesktopLifePage({
             {currentMatches ? t.currentInUse : idle.draft ? t.useCurrent : t.play}
           </button>
         )}
-        {idle.current && !idle.draft && (
+        {idle.current && !idle.draft && !sourceError && (
           <button className={BTN_SUBTLE} onClick={() => openAction(idle)} type="button">
             {t.adjustImage}
           </button>
@@ -1539,8 +1256,22 @@ export function DesktopLifePage({
 
   const workspaceFooter = createFooter ?? detailView?.footer ?? overviewFooter ?? libraryFooter
 
+  const creationNameField = (
+    <label className={styles.field}>
+      {t.nameOptional}
+      <input
+        className={INPUT_CLASS}
+        disabled={busy}
+        maxLength={160}
+        onChange={event => setCreate(current => ({ ...current, name: event.target.value }))}
+        placeholder={t.autoNamePlaceholder}
+        value={create.name}
+      />
+    </label>
+  )
+
   const customActionForm =
-    selected && readyForActions ? (
+    selected && readyForActions && !sourceError ? (
       <>
         <h3 className="mt-3 text-sm font-medium text-strong">{t.addCustom}</h3>
         <form
@@ -1799,12 +1530,16 @@ export function DesktopLifePage({
                     const created = await createDesktopVideoSet({
                       request_id: currentCreate.requestId,
                       name: currentCreate.name.trim() || t.newSceneName,
-                      scene_id: Number(currentCreate.sceneId),
-                      outfit_id: Number(currentCreate.outfitId),
+                      ...(currentCreate.source === 'ai'
+                        ? {
+                            scene_id: Number(currentCreate.sceneId),
+                            outfit_id: Number(currentCreate.outfitId),
+                            feedback: currentCreate.feedback.trim()
+                          }
+                        : {}),
                       source: currentCreate.source,
                       target_width: currentTarget.width,
-                      target_height: currentTarget.height,
-                      feedback: currentCreate.feedback.trim()
+                      target_height: currentTarget.height
                     })
 
                     if (!scope?.() || !isLive()) {
@@ -1819,16 +1554,8 @@ export function DesktopLifePage({
                       create: newDesktopLifeCreation()
                     })
 
-                    if (first && currentCreate.source === 'image_upload' && mediaPath) {
-                      const path = mediaPath
-                      await withAspectChoice(policy =>
-                        uploadDesktopVideoAction(first, created, path, authSessionId, 'image', policy)
-                      )
-                    }
-
-                    if (first && currentCreate.source === 'video_upload' && mediaPath) {
-                      openExternal(first)
-                      setExternalFilePath(mediaPath)
+                    if (first && currentCreate.source !== 'ai' && mediaPath) {
+                      await uploadSource(first, created, mediaPath)
                     }
                   })
                 }}
@@ -1859,49 +1586,43 @@ export function DesktopLifePage({
                     setCreate(current => reconcileDesktopLifeDisplay(current, $presentation.get(), targetDisplayId))
                   }}
                 />
-                <section className={styles.section}>
-                  <div>
-                    <h3 className="text-sm font-medium text-strong">{t.referencesTitle}</h3>
-                  </div>
-                  <DesktopLifeReferences
-                    disabled={busy}
-                    onPickOutfit={outfitId =>
-                      setCreate(current => ({ ...current, outfitId, requestId: crypto.randomUUID() }))
-                    }
-                    onPickScene={scene => {
-                      setCreationScene({ id: scene.id, scene })
-                      setCreate(current => ({
-                        ...current,
-                        sceneId: scene.id,
-                        sceneLabel: scene.title,
-                        requestId: crypto.randomUUID()
-                      }))
-                    }}
-                    onPrepareMaterial={onPrepareMaterial}
-                    outfit={selectedOutfit}
-                    outfitId={create.outfitId}
-                    scene={selectedScene}
-                    sceneId={create.sceneId}
-                    sceneLabel={create.sceneLabel}
-                  />
-                </section>
-                <details
-                  className="rounded-xl border border-line-hairline p-4"
-                  open={Boolean(create.name.trim() || create.feedback.trim()) || undefined}
-                >
-                  <summary className="cursor-pointer text-sm font-medium text-strong">{t.advanced}</summary>
-                  <div className="mt-4 flex flex-col gap-4">
-                    <label className={styles.field}>
-                      {t.nameOptional}
-                      <input
-                        className={INPUT_CLASS}
-                        maxLength={160}
-                        onChange={event => setCreate(current => ({ ...current, name: event.target.value }))}
-                        placeholder={t.autoNamePlaceholder}
-                        value={create.name}
-                      />
-                    </label>
-                    {create.source === 'ai' && (
+                {create.source === 'ai' && (
+                  <section className={styles.section}>
+                    <div>
+                      <h3 className="text-sm font-medium text-strong">{t.referencesTitle}</h3>
+                    </div>
+                    <DesktopLifeReferences
+                      disabled={busy}
+                      onPickOutfit={outfitId =>
+                        setCreate(current => ({ ...current, outfitId, requestId: crypto.randomUUID() }))
+                      }
+                      onPickScene={scene => {
+                        setCreationScene({ id: scene.id, scene })
+                        setCreate(current => ({
+                          ...current,
+                          sceneId: scene.id,
+                          sceneLabel: scene.title,
+                          requestId: crypto.randomUUID()
+                        }))
+                      }}
+                      onPrepareMaterial={onPrepareMaterial}
+                      outfit={selectedOutfit}
+                      outfitId={create.outfitId}
+                      scene={selectedScene}
+                      sceneId={create.sceneId}
+                      sceneLabel={create.sceneLabel}
+                    />
+                  </section>
+                )}
+                {create.source !== 'ai' && creationNameField}
+                {create.source === 'ai' && (
+                  <details
+                    className="rounded-xl border border-line-hairline p-4"
+                    open={Boolean(create.name.trim() || create.feedback.trim()) || undefined}
+                  >
+                    <summary className="cursor-pointer text-sm font-medium text-strong">{t.advanced}</summary>
+                    <div className="mt-4 flex flex-col gap-4">
+                      {creationNameField}
                       <label className={styles.field}>
                         {t.idea}
                         <textarea
@@ -1919,26 +1640,26 @@ export function DesktopLifePage({
                           value={create.feedback}
                         />
                       </label>
-                    )}
-                    {(create.name.trim() || create.feedback.trim()) && (
-                      <button
-                        className={`${BTN_GHOST} self-start`}
-                        disabled={busy}
-                        onClick={() =>
-                          setCreate(current => ({
-                            ...current,
-                            name: '',
-                            feedback: '',
-                            requestId: crypto.randomUUID()
-                          }))
-                        }
-                        type="button"
-                      >
-                        {t.clearCustomization}
-                      </button>
-                    )}
-                  </div>
-                </details>
+                      {(create.name.trim() || create.feedback.trim()) && (
+                        <button
+                          className={`${BTN_GHOST} self-start`}
+                          disabled={busy}
+                          onClick={() =>
+                            setCreate(current => ({
+                              ...current,
+                              name: '',
+                              feedback: '',
+                              requestId: crypto.randomUUID()
+                            }))
+                          }
+                          type="button"
+                        >
+                          {t.clearCustomization}
+                        </button>
+                      )}
+                    </div>
+                  </details>
+                )}
               </form>
             </>
           ) : action ? (
@@ -1947,7 +1668,13 @@ export function DesktopLifePage({
             <>
               {idle && (
                 <section className="flex flex-col gap-4">
-                  {renderFailure(idle)}
+                  {sourceError ? (
+                    <p className="text-sm text-warning" role="alert">
+                      {sourceError}
+                    </p>
+                  ) : (
+                    renderFailure(idle)
+                  )}
 
                   {idle.draft?.candidate_video_url ? (
                     <span className={`${styles.badge} self-start`}>{t.newVideo}</span>
@@ -2226,134 +1953,6 @@ export function DesktopLifePage({
           title={t.deleteSet}
         />
       )}
-      {externalAction && (
-        <WizardModal
-          backdropClose={!externalUploading}
-          closeDisabled={externalUploading}
-          escClose={!externalUploading && !externalReferenceZoom && !aspectChoice}
-          footer={
-            <CreationActionBar
-              className="w-full"
-              description={
-                externalFeedback ??
-                (externalFilePath ? `${t.selectedVideo}: ${localFileName(externalFilePath)}` : t.uploadDirect)
-              }
-            >
-              <button
-                aria-atomic="true"
-                aria-live="polite"
-                className={BTN_PRIMARY}
-                disabled={
-                  !externalFilePath || externalUploading || externalPromptLoading || externalStale || externalNeedsBase
-                }
-                onClick={() => void uploadExternalVideo()}
-                type="button"
-              >
-                {externalUploading ? t.uploadProcessing : t.upload}
-              </button>
-              <button className={BTN_GHOST} disabled={externalUploading} onClick={closeExternal} type="button">
-                {t.close}
-              </button>
-            </CreationActionBar>
-          }
-          onClose={externalUploading ? () => undefined : closeExternal}
-          regionId="desktop-life-external"
-          title={t.externalTitle}
-          widthClass="max-w-2xl"
-        >
-          <div className="flex flex-col gap-5">
-            <p className="text-sm leading-relaxed text-body">{t.uploadDirect}</p>
-            <section className="flex flex-col gap-3">
-              <button
-                className={`${BTN_SUBTLE} self-start`}
-                disabled={externalUploading}
-                onClick={() => void chooseExternalVideo()}
-                type="button"
-              >
-                {t.selectVideo}
-              </button>
-              {externalFilePath && (
-                <span className="max-w-full truncate text-sm text-body" title={externalFilePath}>
-                  {t.selectedVideo}: {localFileName(externalFilePath)}
-                </span>
-              )}
-            </section>
-            <details
-              className="border-t border-line-hairline pt-4"
-              onToggle={event => {
-                if (event.currentTarget.open && !externalPrompt && !externalPromptLoading && !externalNeedsBase) {
-                  void loadExternalPrompt(externalAction, externalRequirements)
-                }
-              }}
-            >
-              <summary className="cursor-pointer text-sm font-medium text-strong">{t.externalReferences}</summary>
-              <div className="mt-4 flex flex-col gap-4">
-                <p className="text-sm leading-relaxed text-muted">{t.externalHint}</p>
-                <label className="flex flex-col gap-2 text-sm text-body">
-                  {t.requirements}
-                  <textarea
-                    className={`${INPUT_CLASS} min-h-20 resize-y`}
-                    disabled={externalUploading || externalPromptLoading}
-                    maxLength={600}
-                    onChange={event => setExternalRequirements(event.target.value)}
-                    rows={2}
-                    value={externalRequirements}
-                  />
-                </label>
-                {!externalPromptLoading &&
-                  (!externalPrompt || externalStale || externalRequirements.trim() !== externalPromptRequirements) && (
-                    <button
-                      className={`${BTN_SUBTLE} self-start`}
-                      disabled={externalUploading || externalNeedsBase}
-                      onClick={() => void loadExternalPrompt(externalAction, externalRequirements)}
-                      type="button"
-                    >
-                      {externalPrompt ? t.updatePrompt : t.retryPrompt}
-                    </button>
-                  )}
-                {externalPrompt ? (
-                  <section className="flex flex-col gap-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <h4 className="text-sm font-medium text-strong">{t.prompt}</h4>
-                      <button
-                        className={BTN_SUBTLE}
-                        disabled={externalStale}
-                        onClick={() => void copyExternalPrompt()}
-                        type="button"
-                      >
-                        {externalCopied ? t.copied : t.copyPrompt}
-                      </button>
-                    </div>
-                    <textarea
-                      aria-label={t.prompt}
-                      className={`${INPUT_CLASS} min-h-40 resize-y text-sm leading-relaxed`}
-                      readOnly
-                      rows={7}
-                      value={externalPrompt.prompt}
-                    />
-                    <h4 className="mt-2 text-sm font-medium text-strong">{t.references}</h4>
-                    {externalPrompt.references?.length ? (
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                        {externalPrompt.references.map(reference => (
-                          <ExternalReference
-                            key={`${reference.label}:${reference.url}`}
-                            onZoom={url => setExternalReferenceZoom({ label: reference.label, url })}
-                            reference={reference}
-                          />
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-muted">{t.noReferences}</p>
-                    )}
-                  </section>
-                ) : (
-                  !externalPromptLoading && <p className="text-sm text-muted">{t.promptEmpty}</p>
-                )}
-              </div>
-            </details>
-          </div>
-        </WizardModal>
-      )}
       {refinement && (
         <VideoRefinementModal
           action={refinement.action}
@@ -2407,13 +2006,6 @@ export function DesktopLifePage({
             </div>
           </div>
         </WizardModal>
-      )}
-      {externalReferenceZoom && (
-        <PortraitLightbox
-          name={externalReferenceZoom.label}
-          onClose={() => setExternalReferenceZoom(null)}
-          url={externalReferenceZoom.url}
-        />
       )}
     </div>
   )

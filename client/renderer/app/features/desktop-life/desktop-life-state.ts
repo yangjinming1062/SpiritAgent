@@ -22,10 +22,7 @@ const fallback: DesktopLifeUiSnapshot = {
   create: newDesktopLifeCreation(),
   feedback: {},
   design: { name: '', description: '', kind: 'loop', duration: 10 },
-  addActionOpen: false,
-  externalActionId: null,
-  externalRequirements: '',
-  externalFilePath: null
+  addActionOpen: false
 }
 
 const ui = definePersistedAtom<DesktopLifeUiSnapshot>({

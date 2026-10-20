@@ -30,10 +30,6 @@ export type DesktopVideoTrigger = ApiSchemas['DesktopVideoActionResponse']['allo
 
 export type DesktopVideoAction = ApiSchemas['DesktopVideoActionResponse']
 
-export type DesktopVideoPromptReference = ApiSchemas['DesktopVideoReference']
-
-export type DesktopVideoPrompt = ApiSchemas['DesktopVideoExternalPromptResponse']
-
 export type DesktopVideoSet = ApiSchemas['DesktopVideoSetResponse']
 
 export type DesktopVideoState = ApiSchemas['DesktopVideoStateResponse']

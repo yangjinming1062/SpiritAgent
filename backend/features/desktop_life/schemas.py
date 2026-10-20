@@ -40,7 +40,33 @@ class DesktopVisualSnapshot(BaseModel):
         return self.identity_path if self.identity_reference_role == "fullbody" else self.portrait_path
 
 
-def desktop_visual_hash(snapshot: DesktopVisualSnapshot) -> str:
+class DesktopUploadSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_key: str = Field(pattern=r"^[0-9a-f]{64}$")
+    original_image_path: str | None = None
+    original_video_path: str | None = None
+    reference_image_path: str | None = None
+    outfit_description: str = Field(default="", max_length=1200)
+    outfit_analyzed: bool = False
+    persona: dict[str, str] = Field(default_factory=dict)
+    locked: bool = False
+
+
+DesktopContext = DesktopVisualSnapshot | DesktopUploadSnapshot
+
+
+def parse_desktop_context(source: str, value: str) -> DesktopContext:
+    if source == "ai":
+        return DesktopVisualSnapshot.model_validate_json(value)
+    if source not in {"image_upload", "video_upload"}:
+        raise ValueError("不支持的桌景来源")
+    return DesktopUploadSnapshot.model_validate_json(value)
+
+
+def desktop_visual_hash(snapshot: DesktopContext) -> str:
+    if isinstance(snapshot, DesktopUploadSnapshot):
+        return hashlib.sha256(snapshot.model_dump_json().encode()).hexdigest()
     visual = {
         "avatar_id": snapshot.identity.avatar_id,
         "identity_hash": snapshot.identity_hash,
@@ -92,6 +118,7 @@ class DesktopVideoAsset(BaseModel):
     source: Literal["generated", "external_upload"] = "generated"
     transition: Literal["base", "fade"] = "fade"
     visual_description: str = Field(default="", max_length=1500)
+    outfit_description: str | None = Field(default=None, max_length=1200)
     creation_plan: DesktopCreationPlan | None = None
     feedback: str = ""
     video_feedback: str = ""
@@ -156,6 +183,7 @@ class DesktopVideoProgress(BaseModel):
     regenerate_image: bool = False
     force_review: bool = False
     visual_description: str = Field(default="", max_length=1500)
+    outfit_description: str | None = Field(default=None, max_length=1200)
     action_description: str = ""
     creation_plan: DesktopCreationPlan | None = None
     opening_review: DesktopOpeningReview | None = None
@@ -251,7 +279,7 @@ class DesktopVideoDraftResponse(BaseModel):
     image_url: str = ""
     image_confirmed: bool = False
     continuity: Literal["independent", "base"] = "independent"
-    recovery_action: Literal["retry", "wait", "choose_activity", "replace_upload"] | None = None
+    recovery_action: Literal["retry", "wait", "choose_activity", "replace_upload", "recreate_set"] | None = None
     candidate_video_url: str = ""
     candidate_poster_url: str = ""
     review_reason: str = ""
@@ -316,6 +344,8 @@ class DesktopVideoSetResponse(BaseModel):
     resolution_revision: int
     is_default: bool = False
     source: Literal["ai", "image_upload", "video_upload"] = "ai"
+    can_upload_source: bool = False
+    source_error: str | None = None
     outfit_id: int | None = None
     scene_id: int | None = None
     status: str
@@ -385,12 +415,21 @@ class DesktopVideoCreateSetRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     request_id: str = Field(min_length=1, max_length=80, pattern=r"^[^\x00]*$")
     name: str = Field(min_length=1, max_length=160, pattern=r"^[^\x00]*$")
-    scene_id: int = Field(gt=0, le=POSTGRES_INT4_MAX)
-    outfit_id: int = Field(gt=0, le=POSTGRES_INT4_MAX)
+    scene_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)
+    outfit_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)
     source: Literal["ai", "image_upload", "video_upload"] = "ai"
     feedback: str = Field(default="", max_length=1000)
     target_width: int = Field(gt=0, le=DESKTOP_MAX_EDGE, strict=True)
     target_height: int = Field(gt=0, le=DESKTOP_MAX_EDGE, strict=True)
+
+    @model_validator(mode="after")
+    def source_materials(self) -> "DesktopVideoCreateSetRequest":
+        if self.source == "ai":
+            if self.scene_id is None or self.outfit_id is None:
+                raise ValueError("AI 创建须选择场景与着装")
+        elif self.scene_id is not None or self.outfit_id is not None or self.feedback.strip():
+            raise ValueError("上传创建不能携带素材库参考或 AI 创作要求")
+        return self
 
     @field_validator("name", "request_id")
     @classmethod
@@ -441,40 +480,6 @@ class DesktopVideoConfirmImageRequest(DesktopVideoDraftRequest):
 class DesktopVideoCancelRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     draft_id: str | None = None
-
-
-class DesktopVideoExternalPromptRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    expected_set_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)
-    requirements: str = Field(default="", max_length=1000)
-    expected_draft_id: str | None = None
-    expected_base_version: int | None = Field(default=None, ge=0)
-    expected_resolution_revision: int | None = Field(default=None, gt=0)
-    aspect_policy: Literal["ask", "keep"] = "ask"
-
-    @field_validator("expected_draft_id", mode="before")
-    @classmethod
-    def explicit_no_draft(cls, value: str | None) -> str:
-        return value or "none"
-
-
-class DesktopVideoReference(BaseModel):
-    label: str
-    url: str
-
-
-class DesktopVideoExternalPromptResponse(BaseModel):
-    draft_id: str | None = None
-    base_version: int = 0
-    action_id: int
-    set_id: int
-    name: str
-    description: str
-    kind: Literal["loop", "once"]
-    duration_seconds: int
-    prompt: str
-    references: list[DesktopVideoReference] = Field(default_factory=list)
 
 
 class DesktopVideoEnsureRequest(BaseModel):

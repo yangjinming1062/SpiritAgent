@@ -60,7 +60,6 @@ def _build_mock_user_profile_extras(profile: dict[str, str], *, language: str = 
 
 
 async def _load_from_db(user_id: int, *, preset_id: str, language: str = "zh") -> dict[str, Any]:
-    from features.appearance.character_card import load_character_snapshot
     from features.companion.persona_service import build_system_prompt_extras
     from features.companion.visual_state import persona_snapshot
     from features.memory.memory_bootstrap import build_user_profile_extras
@@ -69,6 +68,7 @@ async def _load_from_db(user_id: int, *, preset_id: str, language: str = "zh") -
     from runtime.memory_scope import MemoryScope, validate_memory_scope
     from runtime.tools.registry import REGISTRY
     from workflows.chat.system_prompt import build_companion_environment_prompt
+    from workflows.companion_actions import build_action_view
 
     _initialize_debug_runtime()
     scope = MemoryScope(user_id, preset_id)
@@ -78,12 +78,18 @@ async def _load_from_db(user_id: int, *, preset_id: str, language: str = "zh") -
         persona_extras = build_system_prompt_extras(
             persona,
             language=language,
-            character=await load_character_snapshot(db, user_id) if persona is not None else None,
         )
 
         user_profile_extras = await build_user_profile_extras(db, scope, language=language)
         environment_prompt = (
-            await build_companion_environment_prompt(db, user_id, language=language) if preset_id == "companion" else ""
+            await build_companion_environment_prompt(
+                db,
+                user_id,
+                language=language,
+                action_view=await build_action_view(db, user_id),
+            )
+            if preset_id == "companion"
+            else ""
         )
         background_memory_extras = await format_background_memory_block(db, scope, language=language)
         proactive_memory_extras = format_proactive_memory_block([], language=language)

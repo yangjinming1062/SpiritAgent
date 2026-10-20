@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, get_args
 
-from features.appearance.character_card import load_character_snapshot
 from features.companion.disturbance import get_disturbance_tier
 from features.companion.persona_service import build_system_prompt_extras, load_persona_definition, render_extras
 from features.companion.visual_state import persona_snapshot
@@ -378,7 +377,6 @@ async def build_turn_inputs(
         persona_extras=build_system_prompt_extras(
             persona,
             language=session_lang,
-            character=await load_character_snapshot(db, user_id) if persona is not None else None,
         ),
         user_profile_extras=user_profile_extras,
         background_memory_extras=background_memory_extras,

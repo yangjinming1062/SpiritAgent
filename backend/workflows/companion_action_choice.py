@@ -33,7 +33,10 @@ async def choose_idle_action(
         view = await build_action_view(db, user_id, presentation=presentation, trigger=trigger, lock=True)
         recent = await load_recent_context_window(db, user_id)
         environment = (
-            {"current": (await activated_desktop_environment(db, user_id)).get("current")}
+            {
+                "presentation_mode": "desktop",
+                "current": (await activated_desktop_environment(db, user_id)).get("current"),
+            }
             if presentation.mode == "desktop"
             else scene_environment(await get_scene_state(db, user_id))
         )

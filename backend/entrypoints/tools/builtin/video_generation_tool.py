@@ -14,6 +14,7 @@ from features.appearance.visual_identity import (
     self_video_references,
 )
 from features.conversation.reply_media import apply_video_status, require_video_source
+from features.desktop_life.queries import desktop_current_styling_reference
 from features.media.contracts import VideoJobSnapshot
 from features.media.identity_contracts import CharacterReferenceRole
 from features.media.prompts import VIDEO_REFERENCE_TEMPLATE
@@ -91,9 +92,13 @@ async def _submit_video(
     references = (reference_image,) if reference_image else ()
     if subject == "self":
         try:
+            use_outfit = not bool((outfit_override or "").strip() or reference_image)
+            async with SESSION_LOCAL() as db:
+                styling = await desktop_current_styling_reference(db, user_id) if use_outfit else None
             visual = await load_self_visual_context(
                 user_id,
-                use_outfit_reference=not bool((outfit_override or "").strip() or reference_image),
+                use_outfit_reference=use_outfit,
+                current_styling=styling,
             )
             plan = apply_outfit_override(visual, outfit_override)
             identity_reference_role = visual.identity_reference_role

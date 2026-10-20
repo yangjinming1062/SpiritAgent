@@ -7,6 +7,8 @@ from infrastructure.database import SESSION_LOCAL
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.action_library.identity import definition_matches_source
+from features.action_library.queries import definition_snapshot
 from features.action_library.schemas import ActionDefinitionSnapshot, ActionSourceSnapshot, ActionVariantSummary
 from features.action_library.service import exclude_target
 
@@ -41,11 +43,7 @@ async def ensure_synced_desktop_action(
     source = await desktop_action_source(db, user_id, set_id)
     if source is None:
         raise DesktopVideoNotFoundError("找不到对应的桌景")
-    if (
-        definition.user_id != user_id
-        or definition.outfit_id != source.outfit_id
-        or definition.source_visual_key != source.source_visual_key
-    ):
+    if definition.user_id != user_id or not definition_matches_source(definition, source):
         raise DesktopVideoStateError("动作与桌景的冻结身份、着装来源不匹配")
     suite = await db.get(DesktopVideoSet, set_id)
     if suite is None:
@@ -153,6 +151,9 @@ async def request_synced_desktop_generation(
         snapshot = await desktop_action_source(db, user_id, action.set_id)
         if snapshot is None or not snapshot.ready:
             raise DesktopVideoStateError(snapshot.blocked_reason if snapshot else "桌景已删除")
+        definition = await definition_snapshot(db, user_id, action.definition_id)
+        if definition is None or not definition_matches_source(definition, snapshot):
+            raise DesktopVideoStateError("动作与桌景的制作来源不匹配")
         if action.status == "blocked" and not action.generation_state_json and not action.accepted_asset_json:
             action.status, action.stage, action.error = "not_generated", "prepare", None
             await touch_desktop_state(db, user_id)

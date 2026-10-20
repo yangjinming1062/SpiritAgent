@@ -15,8 +15,6 @@ from features.desktop_life.schemas import (
     DesktopVideoDecisionRequest,
     DesktopVideoDesignRequest,
     DesktopVideoEnsureRequest,
-    DesktopVideoExternalPromptRequest,
-    DesktopVideoExternalPromptResponse,
     DesktopVideoGenerateCommand,
     DesktopVideoImageCommand,
     DesktopVideoListResponse,
@@ -90,20 +88,6 @@ async def preview_video_refinement(
     body: DesktopVideoRefineRequest,
 ) -> DesktopVideoRefinePreviewResponse:
     return await _desktop.preview_video_refinement(action_id=action_id, user_id=user.id, body=body)
-
-
-@router.post(
-    "/actions/{action_id}/external-prompt",
-    response_model=DesktopVideoExternalPromptResponse,
-    openapi_extra=operation_policy(wait_for_model=True),
-)
-async def external_prompt(
-    action_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
-    user: CurrentUser,
-    db: DbSession,
-    body: DesktopVideoExternalPromptRequest | None = None,
-) -> DesktopVideoExternalPromptResponse:
-    return await _desktop.external_prompt(action_id=action_id, user_id=user.id, db=db, body=body)
 
 
 @router.post(

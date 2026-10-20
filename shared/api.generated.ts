@@ -60,14 +60,12 @@ export interface ApiSchemas {
   "DesktopVideoCancelCommand": { "draft_id"?: (string | null); "command": "cancel" }
   "DesktopVideoClaimRequest": { "client_id": string }
   "DesktopVideoConfirmImageCommand": { "draft_id": string; "expected_base_version"?: (number | null); "expected_resolution_revision"?: (number | null); "generate_video"?: boolean; "command": "confirm-image" }
-  "DesktopVideoCreateSetRequest": { "request_id": string; "name": string; "scene_id": number; "outfit_id": number; "source"?: "ai" | "image_upload" | "video_upload"; "feedback"?: string; "target_width": number; "target_height": number }
+  "DesktopVideoCreateSetRequest": { "request_id": string; "name": string; "scene_id"?: (number | null); "outfit_id"?: (number | null); "source"?: "ai" | "image_upload" | "video_upload"; "feedback"?: string; "target_width": number; "target_height": number }
   "DesktopVideoCurrentResponse": { "video_url": string; "poster_url": string; "image_url": string; "feedback": string; "video_feedback": string; "duration_ms": number; "width": number; "height": number; "geometry_mode": "target" | "keep"; "continuity": "independent" | "base"; "base_version": (number | null); "transition": "base" | "fade" }
   "DesktopVideoDecisionRequest": { "draft_id": string; "expected_base_version"?: (number | null); "expected_resolution_revision"?: (number | null); "decision": "accept" | "reject" }
   "DesktopVideoDesignRequest": { "name": string; "motion_description": string; "kind"?: "loop" | "once"; "duration_seconds"?: number; "use_when"?: Array<string>; "avoid_when"?: Array<string>; "reason"?: string; "expected_set_id"?: (number | null) }
-  "DesktopVideoDraftResponse": { "id": string; "stage": string; "source": "user_requested" | "autonomous" | "external_upload"; "target_width": number; "target_height": number; "resolution_revision": number; "geometry_mode": "target" | "keep"; "duration_seconds": number; "video_refinement": boolean; "frame_width": (number | null); "frame_height": (number | null); "feedback": string; "video_feedback": string; "submission_unknown": boolean; "image_url": string; "image_confirmed": boolean; "continuity": "independent" | "base"; "recovery_action": ("retry" | "wait" | "choose_activity" | "replace_upload" | null); "candidate_video_url": string; "candidate_poster_url": string; "review_reason": string; "base_version": (number | null); "error": (string | null); "video_queue": (ApiSchemas["VideoQueueInfo"] | null) }
+  "DesktopVideoDraftResponse": { "id": string; "stage": string; "source": "user_requested" | "autonomous" | "external_upload"; "target_width": number; "target_height": number; "resolution_revision": number; "geometry_mode": "target" | "keep"; "duration_seconds": number; "video_refinement": boolean; "frame_width": (number | null); "frame_height": (number | null); "feedback": string; "video_feedback": string; "submission_unknown": boolean; "image_url": string; "image_confirmed": boolean; "continuity": "independent" | "base"; "recovery_action": ("retry" | "wait" | "choose_activity" | "replace_upload" | "recreate_set" | null); "candidate_video_url": string; "candidate_poster_url": string; "review_reason": string; "base_version": (number | null); "error": (string | null); "video_queue": (ApiSchemas["VideoQueueInfo"] | null) }
   "DesktopVideoEnsureRequest": { "trigger"?: "entry"; "target_width": number; "target_height": number }
-  "DesktopVideoExternalPromptRequest": { "expected_set_id"?: (number | null); "requirements"?: string; "expected_draft_id"?: (string | null); "expected_base_version"?: (number | null); "expected_resolution_revision"?: (number | null); "aspect_policy"?: "ask" | "keep" }
-  "DesktopVideoExternalPromptResponse": { "draft_id": (string | null); "base_version": number; "action_id": number; "set_id": number; "name": string; "description": string; "kind": "loop" | "once"; "duration_seconds": number; "prompt": string; "references": Array<ApiSchemas["DesktopVideoReference"]> }
   "DesktopVideoGenerateCommand": { "feedback"?: (string | null); "video_feedback"?: (string | null); "expected_draft_id"?: (string | null); "expected_base_version"?: (number | null); "expected_resolution_revision"?: (number | null); "aspect_policy"?: "ask" | "keep" | "expand"; "command": "generate-video" }
   "DesktopVideoImageCommand": { "feedback"?: (string | null); "regenerate"?: boolean; "expected_draft_id"?: (string | null); "expected_base_version"?: (number | null); "expected_resolution_revision"?: (number | null); "aspect_policy"?: "ask" | "keep" | "expand"; "command": "generate-image" }
   "DesktopVideoListResponse": { "sets": Array<ApiSchemas["DesktopVideoSetResponse"]>; "version": number }
@@ -77,7 +75,6 @@ export interface ApiSchemas {
   "DesktopVideoPreferences": { "pinned"?: (boolean | null); "autonomous_enabled"?: (boolean | null) }
   "DesktopVideoProposalResponse": { "proposal_id": number; "set_id": number; "action_id": (number | null); "definition_id": (number | null); "sync_targets": Array<ApiSchemas["ActionVariantSummary"]>; "status": string; "review_reason": string; "name": string; "description": string; "created_at": (string | null) }
   "DesktopVideoReceipt": { "client_id": string; "status": "started" | "completed" | "interrupted" | "failed" | "rejected"; "error"?: (string | null) }
-  "DesktopVideoReference": { "label": string; "url": string }
   "DesktopVideoRefineCommand": { "source": "current" | "candidate"; "feedback"?: string; "aspect_policy"?: "keep" | "expand"; "expected_action_version": number; "expected_draft_id"?: (string | null); "expected_base_version": number; "expected_resolution_revision": number; "command": "refine-video" }
   "DesktopVideoRefinePreviewResponse": { "duration_seconds": number; "width": number; "height": number }
   "DesktopVideoRefineRequest": { "source": "current" | "candidate"; "feedback"?: string; "aspect_policy"?: "keep" | "expand"; "expected_action_version": number; "expected_draft_id"?: (string | null); "expected_base_version": number; "expected_resolution_revision": number }
@@ -85,7 +82,7 @@ export interface ApiSchemas {
   "DesktopVideoResumeCommand": { "draft_id": string; "expected_base_version"?: (number | null); "expected_resolution_revision"?: (number | null); "command": "resume" }
   "DesktopVideoRetryCommand": { "draft_id": string; "expected_base_version"?: (number | null); "expected_resolution_revision"?: (number | null); "command": "retry" }
   "DesktopVideoSelectionRequest": { "set_id": number }
-  "DesktopVideoSetResponse": { "id": number; "title": string; "target_width": number; "target_height": number; "resolution_revision": number; "is_default": boolean; "source": "ai" | "image_upload" | "video_upload"; "outfit_id": (number | null); "scene_id": (number | null); "status": string; "actions": Array<ApiSchemas["DesktopVideoActionResponse"]>; "proposals": Array<ApiSchemas["DesktopVideoProposalResponse"]>; "created_at": string; "is_current": boolean; "base_image_url": string; "base_version": number }
+  "DesktopVideoSetResponse": { "id": number; "title": string; "target_width": number; "target_height": number; "resolution_revision": number; "is_default": boolean; "source": "ai" | "image_upload" | "video_upload"; "can_upload_source": boolean; "source_error": (string | null); "outfit_id": (number | null); "scene_id": (number | null); "status": string; "actions": Array<ApiSchemas["DesktopVideoActionResponse"]>; "proposals": Array<ApiSchemas["DesktopVideoProposalResponse"]>; "created_at": string; "is_current": boolean; "base_image_url": string; "base_version": number }
   "DesktopVideoStateResponse": { "current": (ApiSchemas["DesktopVideoSetResponse"] | null); "selected_action_id": (number | null); "loop_action_id": (number | null); "set_epoch": number; "pinned": boolean; "autonomous_enabled": boolean; "version": number; "preparation_error": (string | null) }
   "DeviceListResponse": { "items": Array<ApiSchemas["DeviceResponse"]> }
   "DeviceResponse": { "id": number; "name": string; "expires_at": string; "last_seen_at": string; "created_at": string }
@@ -458,7 +455,6 @@ export interface ApiOperations {
   "companion_desktop_videos.read_action": { path: { "action_id": number }; query: Record<string, never>; body: undefined; input: { path: { "action_id": number }; query?: never; body?: never }; response: ApiSchemas["DesktopVideoActionResponse"] }
   "companion_desktop_videos.prepare_current": { path: Record<string, never>; query: Record<string, never>; body: (ApiSchemas["DesktopVideoEnsureRequest"] | null); input: { path?: never; query?: never; body?: (ApiSchemas["DesktopVideoEnsureRequest"] | null) }; response: ApiSchemas["DesktopVideoStateResponse"] }
   "companion_desktop_videos.preview_video_refinement": { path: { "action_id": number }; query: Record<string, never>; body: ApiSchemas["DesktopVideoRefineRequest"]; input: { path: { "action_id": number }; query?: never; body: ApiSchemas["DesktopVideoRefineRequest"] }; response: ApiSchemas["DesktopVideoRefinePreviewResponse"] }
-  "companion_desktop_videos.external_prompt": { path: { "action_id": number }; query: Record<string, never>; body: (ApiSchemas["DesktopVideoExternalPromptRequest"] | null); input: { path: { "action_id": number }; query?: never; body?: (ApiSchemas["DesktopVideoExternalPromptRequest"] | null) }; response: ApiSchemas["DesktopVideoExternalPromptResponse"] }
   "companion_desktop_videos.upload_action": { path: { "action_id": number }; query: Record<string, never>; body: FormData; input: { path: { "action_id": number }; query?: never; body: FormData }; response: ApiSchemas["DesktopVideoActionResponse"] }
   "companion_desktop_videos.design_action": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["DesktopVideoDesignRequest"]; input: { path?: never; query?: never; body: ApiSchemas["DesktopVideoDesignRequest"] }; response: ApiSchemas["DesktopVideoProposalResponse"] }
   "companion_desktop_videos.play_action": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["DesktopVideoPlayRequest"]; input: { path?: never; query?: never; body: ApiSchemas["DesktopVideoPlayRequest"] }; response: ApiSchemas["DesktopVideoPlayCommand"] }
@@ -1485,17 +1481,6 @@ export const API_OPERATIONS = {
       "desktop"
     ],
     "wait_for_model": false,
-    "ipc": true
-  },
-  "companion_desktop_videos.external_prompt": {
-    "path": "/api/companion/desktop-videos/actions/{action_id}/external-prompt",
-    "method": "POST",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "desktop"
-    ],
-    "wait_for_model": true,
     "ipc": true
   },
   "companion_desktop_videos.upload_action": {

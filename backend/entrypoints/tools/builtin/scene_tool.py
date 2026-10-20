@@ -3,6 +3,8 @@
 import json
 from typing import Any
 
+from features.companion.proactive_runtime import get_presentation_snapshot
+from features.desktop_life.queries import activated_desktop_environment
 from features.scenes.models import SceneOrigin
 from features.scenes.queries import get_scene_state, scene_environment, scene_snapshot
 from features.scenes.query_contracts import SceneSnapshot
@@ -29,7 +31,22 @@ def _asset(row: SceneSnapshot) -> dict[str, Any]:
 
 async def _result(user_id: int, **payload: Any) -> str:
     async with SESSION_LOCAL() as db:
-        payload["environment"] = scene_environment(await get_scene_state(db, user_id))
+        library_environment = scene_environment(await get_scene_state(db, user_id))
+        presentation = get_presentation_snapshot(user_id)
+        if presentation is not None and presentation.mode == "desktop":
+            payload["environment"] = {
+                "presentation_mode": "desktop",
+                "current": (await activated_desktop_environment(db, user_id)).get("current"),
+            }
+            payload["library_environment"] = library_environment
+            if payload.get("auto_activate_requested"):
+                payload["message"] = "场景正在准备，完成后保存到素材库并更新场景参考；当前画面保持不变"
+            if payload.get("activated"):
+                payload["activated"] = False
+                payload["reference_updated"] = True
+                payload["message"] = "场景参考已更新，当前画面保持不变"
+        else:
+            payload["environment"] = library_environment
     return json.dumps(payload, ensure_ascii=False)
 
 

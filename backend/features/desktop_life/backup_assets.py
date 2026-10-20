@@ -17,10 +17,12 @@ from PIL import Image
 from features.action_library.identity import source_visual_key
 from features.desktop_life.schemas import (
     DESKTOP_MAX_EDGE,
+    DesktopUploadSnapshot,
     DesktopVideoAsset,
     DesktopVideoProgress,
     DesktopVisualSnapshot,
     desktop_visual_hash,
+    parse_desktop_context,
 )
 from features.media.chain import MediaChainState
 from features.media.character_images import ImageChainState
@@ -36,27 +38,38 @@ def restore_desktop_payload(table: str, payload: dict[str, Any], id_map: dict[st
                 and payload[field] > DESKTOP_MAX_EDGE
             ):
                 raise ValueError("桌景目标分辨率或版本无效。")
-        snapshot = DesktopVisualSnapshot.model_validate_json(payload["context_json"])
-        avatar_id = id_map.get("avatar_assets", {}).get(str(snapshot.identity.avatar_id))
-        scene_id = id_map.get("companion_scenes", {}).get(str(snapshot.scene_id))
-        outfit_id = id_map.get("companion_outfits", {}).get(str(snapshot.outfit_id))
-        # 来源库可独立删除；套装冻结图片与文本承担制作依据，外键只记录可用的追溯关系。
-        payload.update(avatar_id=avatar_id, scene_id=scene_id, outfit_id=outfit_id)
-        snapshot = snapshot.model_copy(
-            update={
-                "identity": snapshot.identity.model_copy(update={"avatar_id": int(avatar_id or 0)}),
-                "outfit_id": int(outfit_id) if outfit_id is not None else None,
-                "scene_id": int(scene_id or 0),
-            },
-        )
+        snapshot = parse_desktop_context(payload["source"], payload["context_json"])
+        if isinstance(snapshot, DesktopVisualSnapshot):
+            avatar_id = id_map.get("avatar_assets", {}).get(str(snapshot.identity.avatar_id))
+            scene_id = id_map.get("companion_scenes", {}).get(str(snapshot.scene_id))
+            outfit_id = id_map.get("companion_outfits", {}).get(str(snapshot.outfit_id))
+            # 来源库可独立删除；套装冻结图片与文本承担制作依据，外键只记录可用的追溯关系。
+            payload.update(avatar_id=avatar_id, scene_id=scene_id, outfit_id=outfit_id)
+            snapshot = snapshot.model_copy(
+                update={
+                    "identity": snapshot.identity.model_copy(update={"avatar_id": int(avatar_id or 0)}),
+                    "outfit_id": int(outfit_id) if outfit_id is not None else None,
+                    "scene_id": int(scene_id or 0),
+                },
+            )
+            payload["source_visual_key"] = source_visual_key(
+                snapshot.identity_hash,
+                snapshot.outfit_hash,
+                portrait_hash=snapshot.portrait_hash,
+                identity_reference_role=snapshot.identity_reference_role,
+            )
+        else:
+            if payload["source_visual_key"] != snapshot.source_key or any(
+                payload.get(field) is not None for field in ("avatar_id", "outfit_id", "scene_id")
+            ):
+                raise ValueError("上传桌景不能关联素材库来源。")
+            if not snapshot.locked and (
+                snapshot.original_image_path or snapshot.original_video_path or snapshot.reference_image_path
+            ):
+                raise ValueError("已保存上传素材的桌景必须锁定来源。")
+            payload.update(avatar_id=None, outfit_id=None, scene_id=None)
         payload["context_json"] = snapshot.model_dump_json()
         payload["context_hash"] = desktop_visual_hash(snapshot)
-        payload["source_visual_key"] = source_visual_key(
-            snapshot.identity_hash,
-            snapshot.outfit_hash,
-            portrait_hash=snapshot.portrait_hash,
-            identity_reference_role=snapshot.identity_reference_role,
-        )
         base_version = payload["base_version"]
         base_path = payload["base_image_path"]
         if (
@@ -191,17 +204,28 @@ def validate_desktop_owned_paths(payload: dict[str, Any], user_id: int) -> None:
     if payload.get("base_image_path"):
         references.append(payload["base_image_path"])
     if payload.get("context_json"):
-        snapshot = DesktopVisualSnapshot.model_validate_json(payload["context_json"])
-        references.extend(
-            path
-            for path in (
-                snapshot.identity_path,
-                snapshot.outfit_path,
-                snapshot.portrait_path,
-                snapshot.scene_path,
+        snapshot = parse_desktop_context(payload["source"], payload["context_json"])
+        if isinstance(snapshot, DesktopUploadSnapshot):
+            references.extend(
+                path
+                for path in (
+                    snapshot.original_image_path,
+                    snapshot.original_video_path,
+                    snapshot.reference_image_path,
+                )
+                if path
             )
-            if path
-        )
+        else:
+            references.extend(
+                path
+                for path in (
+                    snapshot.identity_path,
+                    snapshot.outfit_path,
+                    snapshot.portrait_path,
+                    snapshot.scene_path,
+                )
+                if path
+            )
     for field in ("accepted_asset_json", "generation_state_json"):
         if payload.get(field):
             value = json.loads(payload[field])
@@ -313,9 +337,14 @@ def validate_desktop_files(
 
     for row in rows.get("desktop_video_sets", []):
         validate_base_image(row["base_image_path"])
-        snapshot = DesktopVisualSnapshot.model_validate_json(row["context_json"])
+        snapshot = parse_desktop_context(row["source"], row["context_json"])
         if row.get("context_hash") != desktop_visual_hash(snapshot):
             raise ValueError("桌面生活组合内容版本不匹配。")
+        if isinstance(snapshot, DesktopUploadSnapshot):
+            validate_base_image(snapshot.original_image_path)
+            validate_base_image(snapshot.reference_image_path)
+            validate_source_video(snapshot.original_video_path)
+            continue
         for reference, expected_hash in (
             (snapshot.identity_path, snapshot.identity_hash),
             (snapshot.outfit_path, snapshot.outfit_hash),

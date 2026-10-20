@@ -6,6 +6,7 @@ from collections.abc import Collection
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .identity import definition_applies_to_source, definition_matches_source
 from .models import ActionDefinition, ActionSyncTarget
 from .ports import read_variant
 from .schemas import (
@@ -18,11 +19,15 @@ from .schemas import (
 
 
 def definition_view(row: ActionDefinition) -> ActionDefinitionSnapshot:
+    source = ActionSourceSnapshot.model_validate_json(row.review_source_json)
     return ActionDefinitionSnapshot(
         id=row.id,
         user_id=row.user_id,
         outfit_id=row.outfit_id,
         source_visual_key=row.source_visual_key,
+        scope=source.scope,
+        origin_kind=row.origin_kind,
+        origin_target_id=row.origin_target_id,
         name=row.name,
         motion_description=row.motion_description,
         use_when=json.loads(row.use_when_json),
@@ -65,6 +70,22 @@ async def definitions_for_source(
         statement = statement.where(ActionDefinition.source_visual_key == source_visual_key)
     rows = (await db.scalars(statement.order_by(ActionDefinition.updated_at.desc(), ActionDefinition.id.desc()))).all()
     return [definition_view(row) for row in rows]
+
+
+async def matching_definitions(
+    db: AsyncSession,
+    source: ActionSourceSnapshot,
+    *,
+    match_visual: bool = True,
+) -> list[ActionDefinitionSnapshot]:
+    definitions = await definitions_for_source(
+        db,
+        source.user_id,
+        source.outfit_id,
+        source.source_visual_key if match_visual else None,
+    )
+    matches = definition_matches_source if match_visual else definition_applies_to_source
+    return [definition for definition in definitions if matches(definition, source)]
 
 
 async def targets_for_definition(db: AsyncSession, user_id: int, definition_id: int) -> list[ActionTargetSnapshot]:

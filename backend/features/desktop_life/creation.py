@@ -21,8 +21,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from features.desktop_life.prompts import DESKTOP_CREATION_PLAN, DESKTOP_OPENING_REPAIR, desktop_source_reference_prompt
 from features.desktop_life.repository import DesktopVideoStateError
 from features.desktop_life.schemas import (
+    DesktopContext,
     DesktopCreationPlan,
     DesktopOpeningReview,
+    DesktopUploadSnapshot,
     DesktopVideoProgress,
     DesktopVisualSnapshot,
 )
@@ -60,7 +62,7 @@ class _OpeningRepair(BaseModel):
 
 async def ensure_creation_plan(
     user_id: int,
-    snapshot: DesktopVisualSnapshot,
+    snapshot: DesktopContext,
     progress: DesktopVideoProgress,
     *,
     kind: str,
@@ -73,7 +75,20 @@ async def ensure_creation_plan(
         or progress.previous_pose_path
         or (progress.base_image_path if not progress.replace_base else None)
     )
-    paths = (opening,) if opening else (snapshot.primary_reference_path, snapshot.outfit_path, snapshot.scene_path)
+    if not opening and isinstance(snapshot, DesktopUploadSnapshot):
+        opening = snapshot.reference_image_path
+        if not opening:
+            raise DesktopVideoStateError("桌景上传来源无法恢复，请重新创建桌景")
+    if opening:
+        paths = (opening,)
+        reference_roles = "图 1 提供实际人物、造型和环境"
+        environment = ""
+    else:
+        if not isinstance(snapshot, DesktopVisualSnapshot):
+            raise DesktopVideoStateError("桌景上传参考无法读取，请重新创建桌景")
+        paths = (snapshot.primary_reference_path, snapshot.outfit_path, snapshot.scene_path)
+        reference_roles = desktop_source_reference_prompt(snapshot.identity_reference_role, include_scene=True)
+        environment = snapshot.scene_description
     images = tuple(await asyncio.gather(*(asyncio.to_thread(read_valid_image_data_uri, path) for path in paths)))
     if not all(images):
         raise DesktopVideoStateError("活动参考画面无法读取，请重新准备素材")
@@ -82,12 +97,9 @@ async def ensure_creation_plan(
         DESKTOP_CREATION_PLAN,
         {
             "reference_mode": "opening" if opening else "sources",
-            "reference_roles": desktop_source_reference_prompt(
-                snapshot.identity_reference_role,
-                include_scene=True,
-            ),
+            "reference_roles": reference_roles,
             "persona": snapshot.persona,
-            "environment": snapshot.scene_description,
+            "environment": environment,
             "action": progress.action_description,
             "feedback": progress.feedback,
             "video_feedback": progress.video_feedback,
@@ -116,12 +128,18 @@ async def ensure_opening_repair(
     user_id: int,
     progress: DesktopVideoProgress,
     *,
-    snapshot: DesktopVisualSnapshot,
+    snapshot: DesktopContext,
     before_submit: Callable[[], Awaitable[None]],
 ) -> None:
     if not progress.repair_reason or progress.repair_description:
         return
-    reference_path = progress.previous_pose_path or snapshot.primary_reference_path
+    reference_path = progress.previous_pose_path or (
+        snapshot.reference_image_path
+        if isinstance(snapshot, DesktopUploadSnapshot)
+        else snapshot.primary_reference_path
+    )
+    if not reference_path:
+        raise DesktopVideoStateError("桌景上传参考无法读取，请重新创建桌景")
     image = await asyncio.to_thread(read_valid_image_data_uri, reference_path)
     if not image:
         raise DesktopVideoStateError("修复参考画面无法读取")
@@ -134,7 +152,9 @@ async def ensure_opening_repair(
             "video_feedback": progress.video_feedback,
             "customization_priority": progress.customization_priority,
             "review_reason": progress.repair_reason,
-            "reference_role": "opening" if progress.previous_pose_path else "identity",
+            "reference_role": "opening"
+            if progress.previous_pose_path or isinstance(snapshot, DesktopUploadSnapshot)
+            else "identity",
         },
         response_model=_OpeningRepair,
         schema_name="desktop_opening_repair",
@@ -198,9 +218,11 @@ async def _opening_review_reference(
     *,
     inputs: CharacterImageInput,
     progress: DesktopVideoProgress,
-    snapshot: DesktopVisualSnapshot,
+    snapshot: DesktopContext,
     secondary: bool = False,
 ) -> str:
+    if isinstance(snapshot, DesktopUploadSnapshot) and (secondary or not inputs.image_edit):
+        raise DesktopVideoStateError("上传桌景的画面检查不能使用素材库参考，请重新制作")
     if value and (
         parse_companion_asset_path(value) is None or await asyncio.to_thread(resolve_asset_reference, value) is not None
     ):
@@ -209,6 +231,8 @@ async def _opening_review_reference(
     # 链参考缺失时沿本次输入恢复；编辑和扩图必须保留原画面，不能改用头像。
     expected_hash: str | None = None
     if secondary:
+        if not isinstance(snapshot, DesktopVisualSnapshot):
+            raise DesktopVideoStateError("上传桌景不能使用衣柜参考")
         if progress.aligned_outfit_path:
             alignment = ImageChainState.model_validate_json(progress.reference_alignment_chain_json or "{}")
             selected = alignment.best()
@@ -226,6 +250,8 @@ async def _opening_review_reference(
         path = progress.previous_pose_path or progress.source_image_path
     elif inputs.image_edit:
         path = progress.previous_pose_path
+    elif isinstance(snapshot, DesktopUploadSnapshot):
+        path = snapshot.reference_image_path
     else:
         path = snapshot.primary_reference_path
         expected_hash = (
@@ -247,7 +273,7 @@ async def review_existing_opening(
     user_id: int,
     progress: DesktopVideoProgress,
     *,
-    snapshot: DesktopVisualSnapshot,
+    snapshot: DesktopContext,
     before_submit: Callable[[], Awaitable[None]],
 ) -> DesktopOpeningReview:
     image_hash = await asyncio.to_thread(opening_image_hash, progress.pose_path)
@@ -388,4 +414,5 @@ def begin_opening_repair(
     progress.image_only = True
     progress.motion_prompt = ""
     progress.visual_description = ""
+    progress.outfit_description = None
     progress.failure_reason = ""

@@ -7,7 +7,7 @@ from typing import Literal
 
 from features.accounts.models import lock_user_row
 from features.action_library.queries import definition_snapshot, targets_for_definitions
-from features.action_library.schemas import ActionDefinitionDesign
+from features.action_library.schemas import ActionDefinitionDesign, ActionSourceScope
 from features.action_library.service import accept_definition
 from features.actions.expression_catalog import window_expression_catalog
 from features.actions.playback import request_playback
@@ -18,7 +18,11 @@ from features.companion.proactive_runtime import (
     get_presentation_snapshot,
     get_user_proactive_record,
 )
-from features.desktop_life.companion_actions import desktop_autonomous_design_available, desktop_expression_catalog
+from features.desktop_life.companion_actions import (
+    DesktopExpressionCatalog,
+    desktop_autonomous_design_available,
+    desktop_expression_catalog,
+)
 from features.desktop_life.repository import DesktopVideoError
 from features.desktop_life.schemas import DesktopVideoPlayRequest
 from features.desktop_life.service import play_desktop_action
@@ -69,6 +73,7 @@ class ActionViewSnapshot:
     state_version: int = 0
     outfit_id: int | None = None
     source_visual_key: str = ""
+    source_scope: ActionSourceScope = "outfit"
     items: tuple[ActionViewItem, ...] = ()
     current_action_ref: str | None = None
     trigger: ActionTrigger = "chat"
@@ -85,7 +90,10 @@ class ActionViewSnapshot:
             resolve_prompt_text(ACTION_CONTEXT_GUIDANCE, language)
             + "\n"
             + json.dumps(
-                {"available_actions": [item.to_dict() for item in self.items]},
+                {
+                    "creation_scope": "current_desktop" if self.source_scope == "target" else "shared_outfit",
+                    "available_actions": [item.to_dict() for item in self.items],
+                },
                 ensure_ascii=False,
             )
         )
@@ -162,6 +170,7 @@ async def build_action_view(
         state_version=catalog.state_version,
         outfit_id=catalog.outfit_id,
         source_visual_key=catalog.source_visual_key,
+        source_scope=catalog.scope if isinstance(catalog, DesktopExpressionCatalog) else "outfit",
         items=items,
         current_action_ref=next((item.action_ref for item in items if item.action_id == current_action_id), None),
         trigger=trigger,
@@ -177,6 +186,7 @@ def _same_target(expected: ActionViewSnapshot, current: ActionViewSnapshot) -> b
         expected.target_epoch,
         expected.outfit_id,
         expected.source_visual_key,
+        expected.source_scope,
     ) == (
         current.user_id,
         current.presentation,
@@ -184,6 +194,7 @@ def _same_target(expected: ActionViewSnapshot, current: ActionViewSnapshot) -> b
         current.target_epoch,
         current.outfit_id,
         current.source_visual_key,
+        current.source_scope,
     )
 
 
@@ -307,7 +318,10 @@ async def inspect_action_reference(
             }
         definition = await definition_snapshot(db, user_id, definition_id)
         if definition is None or (
-            definition.outfit_id != current.outfit_id or definition.source_visual_key != current.source_visual_key
+            definition.outfit_id != current.outfit_id
+            or definition.source_visual_key != current.source_visual_key
+            or definition.scope == "target"
+            and (definition.origin_kind, definition.origin_target_id) != (current.presentation.mode, current.target_id)
         ):
             return {"error": "找不到属于当前形象的动作设计"}
         canonical_id = definition.reuse_definition_id or definition.id

@@ -18,13 +18,11 @@ import type {
   DesktopVideoAspectMismatch,
   DesktopVideoAspectPolicy,
   DesktopVideoPlayCommand,
-  DesktopVideoPrompt,
   DesktopVideoProposal,
   DesktopVideoReceiptStatus,
   DesktopVideoRefinementPreview,
   DesktopVideoRefinementSource,
   DesktopVideoSet,
-  DesktopVideoSource,
   DesktopVideoState
 } from './types'
 
@@ -258,16 +256,9 @@ export function desktopActionGuard(
   }
 }
 
-export async function createDesktopVideoSet(input: {
-  request_id: string
-  name: string
-  scene_id: number
-  outfit_id: number
-  source: DesktopVideoSource
-  feedback?: string
-  target_width: number
-  target_height: number
-}): Promise<DesktopVideoSet> {
+export async function createDesktopVideoSet(
+  input: ApiSchemas['DesktopVideoCreateSetRequest']
+): Promise<DesktopVideoSet> {
   const set = await mutation('companion_desktop_videos.create_set', { body: input })
   await refreshDesktopVideos()
 
@@ -517,23 +508,6 @@ export async function retryDesktopVideoDraft(action: DesktopVideoAction, set: De
     draft_id: action.draft.id,
     expected_base_version: set.base_version,
     expected_resolution_revision: set.resolution_revision
-  })
-}
-
-export async function getDesktopVideoPrompt(
-  action: DesktopVideoAction,
-  set: DesktopVideoSet,
-  additionalRequirements = '',
-  aspectPolicy: Exclude<DesktopVideoAspectPolicy, 'expand'> = 'ask'
-): Promise<DesktopVideoPrompt> {
-  return mutation('companion_desktop_videos.external_prompt', {
-    path: { action_id: action.id },
-    body: {
-      ...desktopActionGuard(action, set),
-      expected_set_id: set.id,
-      aspect_policy: aspectPolicy,
-      requirements: additionalRequirements.trim()
-    }
   })
 }
 

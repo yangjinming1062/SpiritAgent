@@ -146,9 +146,6 @@ export interface DesktopLifeUiSnapshot {
   feedback: Record<string, string>
   design: { name: string; description: string; kind: 'loop' | 'once'; duration: number }
   addActionOpen: boolean
-  externalActionId: number | null
-  externalRequirements: string
-  externalFilePath: string | null
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -168,13 +165,11 @@ export function isDesktopLifeUiSnapshot(value: unknown): value is DesktopLifeUiS
       (typeof value.libraryScrollTop === 'number' &&
         Number.isFinite(value.libraryScrollTop) &&
         value.libraryScrollTop >= 0)) &&
-    [value.selectedSetId, value.selectedActionId, value.externalActionId].every(
+    [value.selectedSetId, value.selectedActionId].every(
       id => id === null || (typeof id === 'number' && Number.isSafeInteger(id) && id > 0)
     ) &&
     typeof value.creating === 'boolean' &&
     typeof value.addActionOpen === 'boolean' &&
-    typeof value.externalRequirements === 'string' &&
-    (value.externalFilePath === null || typeof value.externalFilePath === 'string') &&
     ['name', 'sceneId', 'sceneLabel', 'outfitId', 'feedback', 'requestId'].every(
       key => typeof create[key] === 'string'
     ) &&
