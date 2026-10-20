@@ -1176,15 +1176,19 @@ dd {
   border: 1px solid var(--line);
   border-radius: 10px;
 }
-.memory-workspace {
-  container-type: inline-size;
-}
-.memory-layout {
-  min-width: 0;
-}
-.memory-summary-list {
+.memory-list {
   display: grid;
   gap: 10px;
+}
+.memory-item {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+}
+.memory-item.expanded {
+  border-color: #91b6a4;
+  background: #f7faf6;
 }
 .memory-summary {
   display: grid;
@@ -1194,9 +1198,10 @@ dd {
   text-align: left;
   min-width: 0;
 }
-.memory-summary[aria-pressed='true'] {
-  border-color: #91b6a4;
-  background: #f0f5ef;
+.memory-item .memory-summary {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 .memory-summary strong {
   display: -webkit-box;
@@ -1214,15 +1219,50 @@ dd {
   color: #718576;
   overflow-wrap: anywhere;
 }
-.memory-editor-pane {
-  display: none;
-  min-width: 0;
+.memory-summary .draft-label {
+  margin: 0;
+  color: #936126;
 }
-.memory-layout.show-editor .memory-list-pane {
-  display: none;
+.memory-editor {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
 }
-.memory-layout.show-editor .memory-editor-pane {
-  display: block;
+.memory-editor-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.memory-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.memory-editor-actions .draft-label,
+.memory-editor-actions .save-status {
+  margin: 0;
+}
+.memory-collapse {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.memory-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.optional-details blockquote {
+  margin: 10px 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--line);
+  font-size: 12px;
+  color: #66766b;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .memory-pagination {
   display: flex;
@@ -1278,20 +1318,6 @@ dd {
 .policy-toggle small {
   margin-top: 4px;
   line-height: 1.6;
-}
-@container (min-width: 720px) {
-  .memory-layout {
-    display: grid;
-    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
-    gap: 20px;
-  }
-  .memory-editor-pane,
-  .memory-layout.show-editor .memory-list-pane {
-    display: block;
-  }
-  .memory-return {
-    display: none;
-  }
 }
 .feed-tabs {
   padding: 4px;

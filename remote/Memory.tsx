@@ -3,11 +3,21 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { MemoryCounts, MemoryItem, SystemPresetSummary, UserProfileField } from '@protocol'
 
-import type { ApiInput } from '../shared/api'
-
 import type { RemoteApi } from './api'
+import type { MemoryDraft, MemoryDrafts } from './memory-state'
+import {
+  acceptMemoryConflict,
+  clearMemoryDraft,
+  forgetMemory,
+  isMemoryConflict,
+  readActiveMemories,
+  readMemoryDraft,
+  saveMemoryDraft,
+  storeMemoryDraft,
+  writeMemoryDraft
+} from './memory-state'
 import { saveWithReadback } from './save-result'
-import { Empty, focusAfterRender, Notice, useAlive, usePageScroll, usePageState, useTask } from './ui'
+import { Empty, Notice, useAlive, usePageScroll, usePageState, useTask } from './ui'
 
 type Status = 'active' | 'candidate' | 'invalidated' | 'expired'
 const STATUSES: { id: Status; label: string }[] = [
@@ -25,6 +35,23 @@ const PROFILE_FIELDS: { key: UserProfileField; context: string; label: string; r
   { key: 'user_freeform', context: 'user_profile:freeform', label: '补充信息', rows: 3 }
 ]
 
+const BASIS_LABELS: Record<MemoryItem['basis'], string> = {
+  explicit: '来自明确表达',
+  inferred: '根据对话整理',
+  observed: '来自事件观察',
+  system: '伙伴的生活记录'
+}
+
+const USAGE_LABELS: Record<MemoryItem['usage'], string> = {
+  contextual: '按需使用',
+  background: '长期背景'
+}
+
+const STANCE_LABELS: Record<'supports' | 'opposes', string> = {
+  supports: '支持依据',
+  opposes: '相反依据'
+}
+
 function memoryTitle(row: MemoryItem): string {
   return row.context?.replace(/^(recall|user_profile):/, '').replaceAll('_', ' ') || '记忆'
 }
@@ -37,21 +64,18 @@ function updatedLabel(value: string): string {
     : value
 }
 
-async function* readActiveMemories(
-  api: RemoteApi,
-  query: ApiInput<'resource_catalog.get_memories'>['query']
-): AsyncGenerator<MemoryItem[]> {
-  let offset = 0
-  while (true) {
-    const result = await api.invoke('resource_catalog.get_memories', {
-      query: { ...query, status: 'active', limit: 500, offset }
-    })
-    yield result.memories
-    offset += result.memories.length
-    if (!result.memories.length || offset >= result.total) {
-      return
-    }
+function memoryTags(row: MemoryItem): string[] {
+  try {
+    const parsed: unknown = JSON.parse(row.tags || '[]')
+
+    return Array.isArray(parsed) ? parsed.map(String) : []
+  } catch {
+    return []
   }
+}
+
+function isActiveMemory(row: MemoryItem): boolean {
+  return row.status === 'active' && (!row.expires_at || Date.parse(row.expires_at) > Date.now())
 }
 
 async function readProfile(api: RemoteApi): Promise<MemoryItem[]> {
@@ -63,24 +87,27 @@ async function readProfile(api: RemoteApi): Promise<MemoryItem[]> {
   return memories
 }
 
-async function findSavedMemory(
-  api: RemoteApi,
-  preset: string,
-  row: MemoryItem,
-  content: string
-): Promise<MemoryItem | null> {
-  for await (const page of readActiveMemories(api, {
-    system_preset_id: preset,
-    kind: row.context?.startsWith('user_profile:') ? 'user_profile' : 'recall',
-    q: content.trim()
-  })) {
-    const saved = page.find(value => value.id === row.id)
-    if (saved) {
-      return saved
-    }
-  }
+/** 展开后把卡片顶部对齐到可视区，并聚焦编辑框。 */
+function focusMemoryEditor(id: number): void {
+  requestAnimationFrame(() => {
+    const content = document.querySelector<HTMLElement>('.content')
+    const card = content?.querySelector<HTMLElement>(`[data-memory-id="${id}"]`)
 
-  return null
+    if (content && card) {
+      content.scrollTop += card.getBoundingClientRect().top - content.getBoundingClientRect().top
+    }
+
+    content?.querySelector<HTMLTextAreaElement>(`#memory-${id}`)?.focus({ preventScroll: true })
+  })
+}
+
+/** 收起后焦点回到该条记忆的卡片。 */
+function focusMemoryCard(id: number): void {
+  requestAnimationFrame(() => {
+    const content = document.querySelector<HTMLElement>('.content')
+
+    content?.querySelector<HTMLElement>(`[data-memory-id="${id}"] .memory-summary`)?.focus({ preventScroll: true })
+  })
 }
 
 export function MemoryView({ api, refresh }: { api: RemoteApi; refresh: number }): ReactElement {
@@ -156,11 +183,11 @@ function MemoryList({ api, preset, refresh }: { api: RemoteApi; preset: string; 
   const [search, setSearch] = usePageState(`memory.${preset}.search`, '')
   const [query, setQuery] = useState(search)
   const [offset, setOffset] = usePageState(`memory.${preset}.offset`, 0)
-  const [selected, setSelected] = usePageState<number | null>(`memory.${preset}.selected`, null)
-  const [showEditor, setShowEditor] = usePageState(`memory.${preset}.showEditor`, false)
+  const [expanded, setExpanded] = usePageState<number | null>(`memory.${preset}.expanded`, null)
+  const [drafts, setDrafts] = usePageState<MemoryDrafts>(`memory.${preset}.drafts`, {})
   const request = useRef(0)
-  const selectedRef = useRef(selected)
-  selectedRef.current = selected
+  const expandedRef = useRef(expanded)
+  expandedRef.current = expanded
 
   useEffect(() => {
     const timer = setTimeout(() => setQuery(search), 250)
@@ -188,17 +215,24 @@ function MemoryList({ api, preset, refresh }: { api: RemoteApi; preset: string; 
       if (offset > 0 && offset >= result.total) {
         setOffset(Math.max(0, Math.ceil(result.total / 20) - 1) * 20)
       }
-      if (!result.memories.some(row => row.id === selectedRef.current)) {
-        setSelected(result.memories[0]?.id ?? null)
+      if (expandedRef.current !== null && !result.memories.some(row => row.id === expandedRef.current)) {
+        setExpanded(null)
       }
     }
-  }, [alive, api, offset, preset, query, setOffset, setSelected, status])
+  }, [alive, api, offset, preset, query, setExpanded, setOffset, status])
 
   useEffect(() => {
     void runLatest(load)
   }, [load, refresh, runLatest])
-  usePageScroll(`memory.${preset}.${status}.${offset}.${query}.${showEditor ? selected : 'list'}`, loaded)
-  const selectedRow = rows.find(row => row.id === selected)
+  usePageScroll(`memory.${preset}.${status}.${offset}.${query}`, loaded)
+
+  const collapse = (focusCard: boolean) => {
+    const id = expandedRef.current
+    setExpanded(null)
+    if (focusCard && id !== null) {
+      focusMemoryCard(id)
+    }
+  }
 
   return (
     <>
@@ -210,7 +244,7 @@ function MemoryList({ api, preset, refresh }: { api: RemoteApi; preset: string; 
           request.current++
           setSearch(event.target.value)
           setOffset(0)
-          setShowEditor(false)
+          setExpanded(null)
         }}
         placeholder="搜索这个分类里的全部记忆"
         type="search"
@@ -226,7 +260,7 @@ function MemoryList({ api, preset, refresh }: { api: RemoteApi; preset: string; 
               request.current++
               setStatus(item.id)
               setOffset(0)
-              setShowEditor(false)
+              setExpanded(null)
             }}
             type="button"
           >
@@ -242,83 +276,74 @@ function MemoryList({ api, preset, refresh }: { api: RemoteApi; preset: string; 
           </button>
         </Notice>
       ) : null}
-      <div className="memory-workspace">
-        <div className={`memory-layout ${showEditor && selectedRow ? 'show-editor' : ''}`}>
-          <div className="memory-list-pane">
-            <div aria-label="记忆列表" className="memory-summary-list">
-              {rows.map(row => (
+      <div className="memory-list">
+        {rows.map(row => {
+          const draft = readMemoryDraft(drafts, row)
+          const open = expanded === row.id
+
+          return (
+            <article className={`memory-item ${open ? 'expanded' : ''}`} data-memory-id={row.id} key={row.id}>
+              {open ? (
+                <MemoryEditor
+                  api={api}
+                  draft={draft}
+                  drafts={drafts}
+                  onChanged={() => runLatest(load)}
+                  onCollapse={collapse}
+                  onDraftsChange={setDrafts}
+                  preset={preset}
+                  row={row}
+                />
+              ) : (
                 <button
-                  aria-pressed={row.id === selected}
+                  aria-controls={`memory-editor-${row.id}`}
+                  aria-expanded={false}
                   className="memory-summary"
-                  data-memory-id={row.id}
-                  key={row.id}
                   onClick={() => {
-                    setSelected(row.id)
-                    setShowEditor(true)
+                    setExpanded(row.id)
+                    focusMemoryEditor(row.id)
                   }}
                   type="button"
                 >
                   <strong>{row.content}</strong>
                   <span>{memoryTitle(row)}</span>
                   <time dateTime={row.updated_at}>{updatedLabel(row.updated_at)}</time>
+                  {draft ? <span className="draft-label">未保存修改</span> : null}
                 </button>
-              ))}
-            </div>
-            {!rows.length && loaded && !busy ? (
-              <Empty title={query ? '没有找到相关记忆' : '这里还没有记忆'}>
-                {query ? '试试其他关键词。' : '聊过的重要事情会保存在所属对话分类中。'}
-              </Empty>
-            ) : null}
-            <div aria-label="记忆分页" className="memory-pagination">
-              <button
-                disabled={busy || offset === 0}
-                onClick={() => {
-                  setOffset(Math.max(0, offset - 20))
-                  setShowEditor(false)
-                }}
-                type="button"
-              >
-                上一页
-              </button>
-              <span>
-                {total ? `${Math.floor(offset / 20) + 1} / ${Math.ceil(total / 20)}` : '0'} · 共 {total} 条
-              </span>
-              <button
-                disabled={busy || offset + 20 >= total}
-                onClick={() => {
-                  setOffset(offset + 20)
-                  setShowEditor(false)
-                }}
-                type="button"
-              >
-                下一页
-              </button>
-            </div>
-          </div>
-          <div className="memory-editor-pane">
-            {selectedRow ? (
-              <>
-                <button
-                  className="back-link memory-return"
-                  onClick={() => {
-                    setShowEditor(false)
-                    focusAfterRender(`[data-memory-id="${selectedRow.id}"]`)
-                  }}
-                  type="button"
-                >
-                  ← 返回
-                </button>
-                <MemoryEditor
-                  api={api}
-                  key={selectedRow.id}
-                  onChanged={() => runLatest(load)}
-                  preset={preset}
-                  row={selectedRow}
-                />
-              </>
-            ) : null}
-          </div>
-        </div>
+              )}
+            </article>
+          )
+        })}
+      </div>
+      {!rows.length && loaded && !busy ? (
+        <Empty title={query ? '没有找到相关记忆' : '这里还没有记忆'}>
+          {query ? '试试其他关键词。' : '聊过的重要事情会保存在所属对话分类中。'}
+        </Empty>
+      ) : null}
+      <div aria-label="记忆分页" className="memory-pagination">
+        <button
+          disabled={busy || offset === 0}
+          onClick={() => {
+            setOffset(Math.max(0, offset - 20))
+            setExpanded(null)
+          }}
+          type="button"
+        >
+          上一页
+        </button>
+        <span>
+          {total ? `${Math.floor(offset / 20) + 1} / ${Math.ceil(total / 20)}` : '0'} · 共 {total} 条
+        </span>
+        <button
+          disabled={busy || offset + 20 >= total}
+          onClick={() => {
+            setOffset(offset + 20)
+            setExpanded(null)
+          }}
+          type="button"
+        >
+          下一页
+        </button>
       </div>
       <button className="load-more" disabled={busy} onClick={() => run(load)} type="button">
         刷新记忆
@@ -331,65 +356,100 @@ function MemoryEditor({
   api,
   row,
   preset,
-  onChanged
+  draft,
+  drafts,
+  onChanged,
+  onCollapse,
+  onDraftsChange
 }: {
   api: RemoteApi
   row: MemoryItem
   preset: string
+  draft: MemoryDraft | undefined
+  drafts: MemoryDrafts
   onChanged: () => Promise<void>
+  onCollapse: (focusCard: boolean) => void
+  onDraftsChange: (drafts: MemoryDrafts) => void
 }): ReactElement {
   const { run, busy, error } = useTask()
   const alive = useAlive()
-  const [draft, setDraft] = usePageState(`memory.${preset}.${row.id}`, {
-    content: row.content,
-    baseContent: row.content,
-    version: row.content_version
-  })
   const [saved, setSaved] = useState(false)
-  const dirty = draft.content !== draft.baseContent
-  const conflict = row.content_version > draft.version
-  const active = row.status === 'active' && (!row.expires_at || Date.parse(row.expires_at) > Date.now())
+  const active = isActiveMemory(row)
+  const conflict = isMemoryConflict(row, draft)
+  const edit: MemoryDraft = draft ?? {
+    baseContent: row.content,
+    content: row.content,
+    version: row.content_version
+  }
 
-  useEffect(() => {
-    if (row.content_version > draft.version && !dirty) {
-      setDraft({ content: row.content, baseContent: row.content, version: row.content_version })
-    }
-  }, [dirty, draft.version, row, setDraft])
+  const save = () =>
+    run(async () => {
+      await saveMemoryDraft(api, {
+        preset,
+        row,
+        draft: edit,
+        isCurrent: alive,
+        onUnconfirmed: () => onChanged()
+      })
+      if (alive()) {
+        onDraftsChange(clearMemoryDraft(drafts, row))
+        setSaved(true)
+        await onChanged()
+      }
+    })
+
+  const forget = () =>
+    run(async () => {
+      if (!window.confirm('让伙伴忘记这条记忆？此操作无法撤销。')) {
+        return
+      }
+      await forgetMemory(api, preset, row)
+      if (alive()) {
+        onDraftsChange(clearMemoryDraft(drafts, row))
+        onCollapse(false)
+        await onChanged()
+      }
+    })
 
   return (
-    <article className="card memory-card profile-editor">
-      <p className="eyebrow">{memoryTitle(row)}</p>
-      <p className="muted">更新于 {updatedLabel(row.updated_at)}</p>
-      {dirty ? (
-        <p className="draft-label">未保存修改</p>
-      ) : saved ? (
-        <p aria-live="polite" className="save-status">
-          修改已保存
-        </p>
-      ) : null}
+    <div className="memory-editor" id={`memory-editor-${row.id}`}>
+      <div className="memory-editor-header">
+        <p className="eyebrow">{memoryTitle(row)}</p>
+        <div className="memory-editor-actions">
+          {draft ? (
+            <span className="draft-label">未保存修改</span>
+          ) : saved ? (
+            <p aria-live="polite" className="save-status">
+              修改已保存
+            </p>
+          ) : null}
+          <button className="memory-collapse" onClick={() => onCollapse(true)} type="button">
+            收起
+          </button>
+        </div>
+      </div>
       <label className="field-label">
         记忆内容
         <textarea
           disabled={busy}
+          id={`memory-${row.id}`}
           maxLength={row.context?.startsWith('user_profile:') ? 2000 : undefined}
           onChange={event => {
-            setDraft(previous => ({ ...previous, content: event.target.value }))
             setSaved(false)
+            onDraftsChange(writeMemoryDraft(drafts, row, event.target.value))
           }}
           rows={7}
-          value={draft.content}
+          value={edit.content}
         />
       </label>
       {!active ? <p className="muted">保存后，伙伴会重新使用这条记忆。</p> : null}
-      {conflict ? (
+      {conflict && draft ? (
         <div className="creation-status">
           <p>这条记忆已在其他设备修改。请核对最新内容后继续。</p>
           <p className="post-body">{row.content}</p>
           <button
             disabled={busy}
-            onClick={() =>
-              setDraft(previous => ({ ...previous, baseContent: row.content, version: row.content_version }))
-            }
+            onClick={() => onDraftsChange(storeMemoryDraft(drafts, row, acceptMemoryConflict(row, draft)))}
             type="button"
           >
             已核对，保留草稿继续编辑
@@ -407,77 +467,61 @@ function MemoryEditor({
       <div className="button-row">
         <button
           className="primary"
-          disabled={busy || conflict || !draft.content.trim() || (!dirty && active)}
-          onClick={() =>
-            run(async () => {
-              const updated = await saveWithReadback({
-                write: () =>
-                  api.invoke('resource_catalog.patch_memory', {
-                    path: { memory_id: row.id },
-                    body: {
-                      system_preset_id: preset,
-                      expected_version: draft.version,
-                      content: draft.content
-                    }
-                  }),
-                read: () => findSavedMemory(api, preset, row, draft.content),
-                matches: latest => latest.content === draft.content.trim(),
-                isCurrent: alive,
-                onUnconfirmed: onChanged
-              })
-              if (alive()) {
-                setDraft({ content: updated.content, baseContent: updated.content, version: updated.content_version })
-                setSaved(true)
-                await onChanged()
-              }
-            })
-          }
+          disabled={busy || conflict || !edit.content.trim() || (active && !draft)}
+          onClick={save}
           type="button"
         >
           {busy ? '保存中…' : active ? '保存修改' : '保存并重新记住'}
         </button>
         <button
-          disabled={busy}
+          disabled={busy || !draft}
           onClick={() => {
-            setDraft({ content: row.content, baseContent: row.content, version: row.content_version })
             setSaved(false)
+            onDraftsChange(clearMemoryDraft(drafts, row))
           }}
           type="button"
         >
           取消
         </button>
+        <button className="danger" disabled={busy} onClick={forget} type="button">
+          忘记这条记忆
+        </button>
       </div>
-      <details className="optional-details">
-        <summary>记忆详情</summary>
-        {row.reason ? <p className="prompt-copy">{row.reason}</p> : null}
-        <p className="muted">
-          {row.basis === 'explicit' ? '来自明确表达' : row.basis === 'system' ? '伙伴的生活记录' : '根据对话整理'}
-        </p>
-        {row.evidence.map(item => (item.quote ? <blockquote key={item.fingerprint}>{item.quote}</blockquote> : null))}
-      </details>
-      <button
-        className="danger"
-        disabled={busy}
-        onClick={() =>
-          run(async () => {
-            if (!window.confirm('让伙伴忘记这条记忆？此操作无法撤销。')) {
-              return
-            }
-            await api.invoke('resource_catalog.delete_memory', {
-              path: { memory_id: row.id },
-              query: { system_preset_id: preset }
-            })
-            if (alive()) {
-              setDraft({ content: '', baseContent: '', version: row.content_version })
-              await onChanged()
-            }
-          })
-        }
-        type="button"
-      >
-        忘记这条记忆
-      </button>
-    </article>
+      <p className="muted">
+        {memoryTitle(row)} · 更新于 {updatedLabel(row.updated_at)}
+      </p>
+      <MemoryDetails row={row} />
+    </div>
+  )
+}
+
+function MemoryDetails({ row }: { row: MemoryItem }): ReactElement {
+  const tags = memoryTags(row)
+
+  return (
+    <details className="optional-details">
+      <summary>记忆详情</summary>
+      <p className="muted">
+        {BASIS_LABELS[row.basis]} · {USAGE_LABELS[row.usage]}
+      </p>
+      {row.reason ? <p className="prompt-copy">{row.reason}</p> : null}
+      {row.expires_at ? <p className="muted">有效期至 {row.expires_at}</p> : null}
+      {tags.length ? (
+        <div className="memory-tags">
+          {tags.map(tag => (
+            <span className="pill" key={tag}>
+              {tag}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {row.evidence.map((item, index) => (
+        <blockquote key={`${item.fingerprint}-${index}`}>
+          {item.stance ? `${STANCE_LABELS[item.stance]} · ${item.created_at ?? ''}` : null}
+          {item.quote}
+        </blockquote>
+      ))}
+    </details>
   )
 }
 
@@ -493,7 +537,7 @@ function UserProfile({ api, refresh }: { api: RemoteApi; refresh: number }): Rea
   const [rows, setRows] = useState<MemoryItem[]>([])
   const [loaded, setLoaded] = useState(false)
   const [draft, setDraft] = usePageState<ProfileDraft | null>('memory.profile.draft', null)
-  const [selected, setSelected] = usePageState<number | null>('memory.profile.extra', null)
+  const [drafts, setDrafts] = usePageState<MemoryDrafts>('memory.companion.drafts', {})
   const [saved, setSaved] = useState(false)
   const current = (context: string) => rows.find(row => row.context === context)
   const changedFields = PROFILE_FIELDS.filter(
@@ -503,7 +547,6 @@ function UserProfile({ api, refresh }: { api: RemoteApi; refresh: number }): Rea
     ? changedFields.filter(({ key, context }) => (current(context)?.content_version ?? 0) !== draft?.versions[key])
     : []
   const extras = rows.filter(row => !PROFILE_FIELDS.some(field => field.context === row.context))
-  const extra = extras.find(row => row.id === selected)
 
   const load = useCallback(async () => {
     const memories = await readProfile(api)
@@ -516,7 +559,7 @@ function UserProfile({ api, refresh }: { api: RemoteApi; refresh: number }): Rea
   useEffect(() => {
     void runLatest(load)
   }, [load, refresh, runLatest])
-  usePageScroll(`memory.profile.${extra ? selected : 'form'}`, loaded)
+  usePageScroll('memory.profile.form', loaded)
 
   const startDraft = (): ProfileDraft => {
     const values: ProfileDraft['values'] = {}
@@ -585,140 +628,247 @@ function UserProfile({ api, refresh }: { api: RemoteApi; refresh: number }): Rea
           </button>
         </Notice>
       ) : null}
-      {extra ? (
-        <>
+      <section className="card profile-editor">
+        <h3>我的资料</h3>
+        <p className="muted">这些信息帮助伙伴了解你。清空已保存的内容，会让伙伴忘记这一项。</p>
+        {changedFields.length ? (
+          <p className="draft-label">未保存修改</p>
+        ) : saved ? (
+          <p aria-live="polite" className="save-status">
+            资料已保存
+          </p>
+        ) : null}
+        <div className="edit-fields">
+          {PROFILE_FIELDS.map(({ key, context, label, rows: size }) => (
+            <label className="field-label" key={key}>
+              {label}
+              <textarea
+                disabled={busy || !loaded}
+                maxLength={2000}
+                onChange={event => {
+                  const value = event.target.value
+                  setDraft(previous => {
+                    const base = previous ?? startDraft()
+
+                    return { ...base, values: { ...base.values, [key]: value } }
+                  })
+                  setSaved(false)
+                }}
+                rows={size}
+                value={draft ? (draft.values[key] ?? '') : (current(context)?.content ?? '')}
+              />
+            </label>
+          ))}
+        </div>
+        {conflictingFields.length ? (
+          <div className="creation-status">
+            <p>以下资料已在其他设备修改。草稿已保留，请核对最新内容。</p>
+            <dl>
+              {conflictingFields.map(({ key, context, label }) => (
+                <div key={key}>
+                  <dt>{label}</dt>
+                  <dd>{current(context)?.content || '已遗忘'}</dd>
+                </div>
+              ))}
+            </dl>
+            <button
+              disabled={busy}
+              onClick={() =>
+                setDraft(previous =>
+                  previous
+                    ? {
+                        ...previous,
+                        base: {
+                          ...previous.base,
+                          ...Object.fromEntries(
+                            conflictingFields.map(({ key, context }) => [key, current(context)?.content ?? ''])
+                          )
+                        },
+                        versions: {
+                          ...previous.versions,
+                          ...Object.fromEntries(
+                            conflictingFields.map(({ key, context }) => [key, current(context)?.content_version ?? 0])
+                          )
+                        }
+                      }
+                    : previous
+                )
+              }
+              type="button"
+            >
+              已核对，保留草稿继续编辑
+            </button>
+          </div>
+        ) : null}
+        <div className="button-row">
           <button
-            className="back-link"
+            className="primary"
+            disabled={busy || !loaded || !changedFields.length || Boolean(conflictingFields.length)}
+            onClick={saveProfile}
+            type="button"
+          >
+            {busy ? '保存中…' : '保存修改'}
+          </button>
+          <button
+            disabled={busy || !draft}
             onClick={() => {
-              setSelected(null)
-              focusAfterRender(`[data-profile-memory-id="${extra.id}"]`)
+              setDraft(null)
+              setSaved(false)
             }}
             type="button"
           >
-            ← 返回
+            取消
           </button>
-          <MemoryEditor api={api} key={extra.id} onChanged={() => runLatest(load)} preset="companion" row={extra} />
-        </>
-      ) : (
-        <>
-          <section className="card profile-editor">
-            <h3>我的资料</h3>
-            <p className="muted">这些信息帮助伙伴了解你。清空已保存的内容，会让伙伴忘记这一项。</p>
-            {changedFields.length ? (
-              <p className="draft-label">未保存修改</p>
+        </div>
+      </section>
+      {extras.length ? (
+        <section className="profile-extras">
+          <h3>其他资料</h3>
+          {extras.map(row => (
+            <ProfileExtraCard
+              api={api}
+              draft={readMemoryDraft(drafts, row)}
+              drafts={drafts}
+              key={row.id}
+              onChanged={() => runLatest(load)}
+              onDraftsChange={setDrafts}
+              row={row}
+            />
+          ))}
+        </section>
+      ) : null}
+    </>
+  )
+}
+
+function ProfileExtraCard({
+  api,
+  row,
+  draft,
+  drafts,
+  onChanged,
+  onDraftsChange
+}: {
+  api: RemoteApi
+  row: MemoryItem
+  draft: MemoryDraft | undefined
+  drafts: MemoryDrafts
+  onChanged: () => Promise<void>
+  onDraftsChange: (drafts: MemoryDrafts) => void
+}): ReactElement {
+  const { run, busy, error } = useTask()
+  const alive = useAlive()
+  const [saved, setSaved] = useState(false)
+  const conflict = isMemoryConflict(row, draft)
+  const edit: MemoryDraft = draft ?? {
+    baseContent: row.content,
+    content: row.content,
+    version: row.content_version
+  }
+
+  const save = () =>
+    run(async () => {
+      await saveMemoryDraft(api, {
+        preset: 'companion',
+        row,
+        draft: edit,
+        isCurrent: alive,
+        onUnconfirmed: () => onChanged()
+      })
+      if (alive()) {
+        onDraftsChange(clearMemoryDraft(drafts, row))
+        setSaved(true)
+        await onChanged()
+      }
+    })
+
+  const forget = () =>
+    run(async () => {
+      if (!window.confirm('让伙伴忘记这条资料？此操作无法撤销。')) {
+        return
+      }
+      await forgetMemory(api, 'companion', row)
+      if (alive()) {
+        onDraftsChange(clearMemoryDraft(drafts, row))
+        await onChanged()
+      }
+    })
+
+  return (
+    <article className="memory-item expanded">
+      <div className="memory-editor">
+        <div className="memory-editor-header">
+          <p className="eyebrow">{memoryTitle(row)}</p>
+          <div className="memory-editor-actions">
+            {draft ? (
+              <span className="draft-label">未保存修改</span>
             ) : saved ? (
               <p aria-live="polite" className="save-status">
                 资料已保存
               </p>
             ) : null}
-            <div className="edit-fields">
-              {PROFILE_FIELDS.map(({ key, context, label, rows: size }) => (
-                <label className="field-label" key={key}>
-                  {label}
-                  <textarea
-                    disabled={busy || !loaded}
-                    maxLength={2000}
-                    onChange={event => {
-                      const value = event.target.value
-                      setDraft(previous => {
-                        const base = previous ?? startDraft()
-
-                        return { ...base, values: { ...base.values, [key]: value } }
-                      })
-                      setSaved(false)
-                    }}
-                    rows={size}
-                    value={draft ? (draft.values[key] ?? '') : (current(context)?.content ?? '')}
-                  />
-                </label>
-              ))}
-            </div>
-            {conflictingFields.length ? (
-              <div className="creation-status">
-                <p>以下资料已在其他设备修改。草稿已保留，请核对最新内容。</p>
-                <dl>
-                  {conflictingFields.map(({ key, context, label }) => (
-                    <div key={key}>
-                      <dt>{label}</dt>
-                      <dd>{current(context)?.content || '已遗忘'}</dd>
-                    </div>
-                  ))}
-                </dl>
-                <button
-                  disabled={busy}
-                  onClick={() =>
-                    setDraft(previous =>
-                      previous
-                        ? {
-                            ...previous,
-                            base: {
-                              ...previous.base,
-                              ...Object.fromEntries(
-                                conflictingFields.map(({ key, context }) => [key, current(context)?.content ?? ''])
-                              )
-                            },
-                            versions: {
-                              ...previous.versions,
-                              ...Object.fromEntries(
-                                conflictingFields.map(({ key, context }) => [
-                                  key,
-                                  current(context)?.content_version ?? 0
-                                ])
-                              )
-                            }
-                          }
-                        : previous
-                    )
-                  }
-                  type="button"
-                >
-                  已核对，保留草稿继续编辑
-                </button>
-              </div>
-            ) : null}
-            <div className="button-row">
-              <button
-                className="primary"
-                disabled={busy || !loaded || !changedFields.length || Boolean(conflictingFields.length)}
-                onClick={saveProfile}
-                type="button"
-              >
-                {busy ? '保存中…' : '保存修改'}
-              </button>
-              <button
-                disabled={busy || !draft}
-                onClick={() => {
-                  setDraft(null)
-                  setSaved(false)
-                }}
-                type="button"
-              >
-                取消
-              </button>
-            </div>
-          </section>
-          {extras.length ? (
-            <section className="profile-extras">
-              <h3>其他资料</h3>
-              <div className="memory-summary-list">
-                {extras.map(row => (
-                  <button
-                    className="memory-summary"
-                    data-profile-memory-id={row.id}
-                    key={row.id}
-                    onClick={() => setSelected(row.id)}
-                    type="button"
-                  >
-                    <strong>{row.content}</strong>
-                    <span>{memoryTitle(row)}</span>
-                    <time dateTime={row.updated_at}>{updatedLabel(row.updated_at)}</time>
-                  </button>
-                ))}
-              </div>
-            </section>
-          ) : null}
-        </>
-      )}
-    </>
+          </div>
+        </div>
+        <label className="field-label">
+          资料内容
+          <textarea
+            disabled={busy}
+            id={`profile-memory-${row.id}`}
+            maxLength={2000}
+            onChange={event => {
+              setSaved(false)
+              onDraftsChange(writeMemoryDraft(drafts, row, event.target.value))
+            }}
+            rows={2}
+            value={edit.content}
+          />
+        </label>
+        {conflict && draft ? (
+          <div className="creation-status">
+            <p>这条资料已在其他设备修改。请核对最新内容后继续。</p>
+            <p className="post-body">{row.content}</p>
+            <button
+              disabled={busy}
+              onClick={() => onDraftsChange(storeMemoryDraft(drafts, row, acceptMemoryConflict(row, draft)))}
+              type="button"
+            >
+              已核对，保留草稿继续编辑
+            </button>
+          </div>
+        ) : null}
+        {error ? (
+          <Notice error={error}>
+            <p>草稿已保留。请检查最新内容后重试。</p>
+            <button disabled={busy} onClick={() => run(onChanged)} type="button">
+              刷新最新内容
+            </button>
+          </Notice>
+        ) : null}
+        <div className="button-row">
+          <button
+            className="primary"
+            disabled={busy || conflict || !edit.content.trim() || !draft}
+            onClick={save}
+            type="button"
+          >
+            {busy ? '保存中…' : '保存修改'}
+          </button>
+          <button
+            disabled={busy || !draft}
+            onClick={() => {
+              setSaved(false)
+              onDraftsChange(clearMemoryDraft(drafts, row))
+            }}
+            type="button"
+          >
+            取消
+          </button>
+          <button className="danger" disabled={busy} onClick={forget} type="button">
+            忘记这条资料
+          </button>
+        </div>
+        <MemoryDetails row={row} />
+      </div>
+    </article>
   )
 }
