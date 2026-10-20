@@ -2,7 +2,7 @@ import asyncio
 import base64
 from dataclasses import dataclass
 
-from infrastructure.ai.error_classifier import ClassifiedError, FailoverReason, classify_api_error
+from infrastructure.ai.error_classifier import ClassifiedError, FailoverReason, LlmCallBlockedError, classify_api_error
 from infrastructure.ai.llm_client import MissingLlmConfigError, resolve_provider_chain
 from infrastructure.ai.llm_fallback import execute_with_fallback
 from infrastructure.ai.models import ModelModality
@@ -266,7 +266,7 @@ async def generate_images(
             return result, GenerationOrigin.from_config(p.config)
 
         result, origin = await execute_with_fallback(chain, ImageGenProvider, _generate_call, user_id=user_id)
-    except ImageGenerationError:
+    except (ImageGenerationError, LlmCallBlockedError):
         raise
     except MissingLlmConfigError as e:
         logger.warning("image generation missing config", extra={"error": str(e), "user_id": user_id})
@@ -275,8 +275,18 @@ async def generate_images(
         logger.exception("image generation failed", extra={"user_id": user_id})
         classified = classify_api_error(e)
         unknown = classified.reason == FailoverReason.result_unknown
-        message = "图片生成结果未知，请核对供应商任务后再决定是否重做" if unknown else "图片生成失败，请稍后重试"
-        error = ImageGenerationError(message, internal=str(e), result_unknown=unknown)
+        if unknown:
+            message = "图片生成结果未知，请核对供应商任务后再决定是否重做"
+        elif classified.reason == FailoverReason.content_policy_blocked:
+            message = "图片生成未通过服务审核，请调整要求后重试"
+        else:
+            message = "图片生成失败，请稍后重试"
+        error = ImageGenerationError(
+            message,
+            internal=str(e),
+            result_unknown=unknown,
+            can_fallback=classified.should_fallback,
+        )
         error.classified = classified
         raise error from e
 

@@ -177,6 +177,7 @@ _CONTENT_POLICY_BLOCKED_PATTERNS = (
     "content_filter",  # OpenAI 标准 token；不匹配带空格的 "content filter"（良性配置描述）
     "responsibleaipolicyviolation",
     "image_safety",  # Gemini 生图 IMAGE_SAFETY
+    "generated image rejected by content moderation",  # Grok 生图审核拒绝。
     "generative ai prohibited use policy",
     "input data may contain inappropriate content",
     "output data may contain inappropriate content",
