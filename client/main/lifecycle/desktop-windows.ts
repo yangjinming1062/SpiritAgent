@@ -167,6 +167,33 @@ export function createDesktopWindows(options: DesktopWindowsOptions) {
     interactive = null
   }
 
+  // 桌面表面必须覆盖交互屏，否则底栏会错开原生托盘槽位。
+  function enforceDisplayBounds(win: BrowserWindow): boolean {
+    const display = displayBoundsByWindow.get(win)
+
+    if (!display || win.isDestroyed()) {
+      return false
+    }
+
+    const current = win.getBounds()
+    // DIP 往返会向外取整，1~2 DIP 的差异不是系统压缩，不能据此反复重设窗口。
+    const tolerance = 2
+
+    const covered =
+      current.x <= display.x + tolerance &&
+      current.y <= display.y + tolerance &&
+      current.x + current.width >= display.x + display.width - tolerance &&
+      current.y + current.height >= display.y + display.height - tolerance
+
+    if (covered) {
+      return false
+    }
+
+    win.setBounds(display)
+
+    return true
+  }
+
   function captureInteraction(sender: Pick<WebContents, 'id'>, requireFocusHistory = true): () => boolean {
     const win = interactive
 
@@ -188,6 +215,7 @@ export function createDesktopWindows(options: DesktopWindowsOptions) {
     getInteractive: () => interactive,
     getBackgrounds: () => backgrounds.values(),
     getBounds: (win: BrowserWindow) => displayBoundsByWindow.get(win),
+    enforceDisplayBounds,
     isDesktopSender: (sender: Pick<WebContents, 'id'>) => isSenderWindow(sender, interactive),
     captureInteraction,
     getBackgroundWindow: (sender: Pick<WebContents, 'id'>) => [...backgrounds].find(win => isSenderWindow(sender, win)),

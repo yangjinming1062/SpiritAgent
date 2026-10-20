@@ -328,6 +328,26 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     }
   }
 
+  // 原生宿主登记底部预留后系统工作区变窄，Windows 会把铺满屏幕的桌面窗口压回工作区；
+  // 界面与背景都要重新声明交互屏边界。
+  function enforceSurfaceBounds(): void {
+    const surfaces = [windows.getInteractive(), ...windows.getBackgrounds()].filter(
+      (surface): surface is BrowserWindow => surface !== null
+    )
+
+    let restored = false
+
+    for (const surface of surfaces) {
+      if (windows.enforceDisplayBounds(surface)) {
+        restored = true
+      }
+    }
+
+    if (restored) {
+      options.log('[desktop] 已恢复桌面表面的交互屏边界。')
+    }
+  }
+
   function updateNativeWorkArea(physical: Electron.Rectangle): void {
     const win = windows.getInteractive()
 
@@ -341,6 +361,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     ) {
       return
     }
+
+    enforceSurfaceBounds()
 
     const dip = screen.screenToDipRect(win, physical)
     const display = activeDisplay.bounds
@@ -796,6 +818,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         throw new Error('桌面组件未确认系统托盘状态，请修复组件后重试。')
       }
 
+      enforceSurfaceBounds()
+
       assertReady()
 
       for (const win of surfaces) {
@@ -1013,6 +1037,10 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         bounds.y < minimumY ||
         bounds.y + bounds.height > display.bounds.height + 1
       ) {
+        options.log(
+          `[desktop] 系统托盘布局越界，已拒绝：display=${JSON.stringify(display.bounds)} ` +
+            `window=${JSON.stringify(win.getContentBounds())} bounds=${JSON.stringify(bounds)} clip=${JSON.stringify(clip)}`
+        )
         throw new Error('系统托盘必须位于交互屏底栏内。')
       }
     }
