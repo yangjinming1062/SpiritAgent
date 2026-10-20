@@ -7,14 +7,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.conversation.context_window import CHECKPOINT_SUBTYPE
-from features.conversation.main_conversation import SPECIAL_KIND, STANDARD_KIND, UI_ONLY_SUBTYPES
+from features.conversation.main_conversation import STANDARD_KIND, UI_ONLY_SUBTYPES
 from features.conversation.memory_scope import conversation_memory_scope
 from features.conversation.models import Conversation, Message
 from features.conversation.replies import CompanionReply, MediaBubble
 
 
 class ForkNotAllowedError(Exception):
-    """源会话 kind 不可派生（special）。"""
+    """任务会话不可派生。"""
 
 
 class SourceNotFoundError(Exception):
@@ -39,8 +39,8 @@ async def _fork_conversation_from_message(
 
     conversation_memory_scope(src, user_id)
 
-    if src.is_automation or src.kind == SPECIAL_KIND:
-        raise ForkNotAllowedError(f"该类型会话不可派生 (kind={src.kind!r})")
+    if src.is_automation:
+        raise ForkNotAllowedError("任务会话不可派生")
 
     src_msg = (
         await db.execute(

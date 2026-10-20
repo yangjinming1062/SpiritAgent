@@ -91,7 +91,8 @@ export function projectSessionMessages(
       items.push({
         id,
         role: m.role === 'user' ? 'user' : 'assistant',
-        subtype: m.subtype,
+        // 普通消息的空 subtype 与实时消息统一，供编辑资格判断使用。
+        subtype: m.subtype || undefined,
         backendMessageId: typeof m.id === 'number' ? m.id : undefined,
         timestamp: m.timestamp
       })

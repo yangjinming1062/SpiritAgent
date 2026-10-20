@@ -249,7 +249,7 @@ function MessageBubbleWithBody({
     !body.cancelled &&
     !body.toolName
 
-  const canFork = sessionKind === 'standard' && canOperate
+  const canFork = canOperate
 
   // 避免误点助手行变成撤回伙伴上一句。
   const canUndo = isUser && sessionKind === 'standard' && canOperate
