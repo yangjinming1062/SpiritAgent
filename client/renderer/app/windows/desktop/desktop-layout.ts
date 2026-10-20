@@ -33,42 +33,26 @@ interface DesktopLayout {
   whisperSide: 'left' | 'right'
 }
 
-const LAYOUT_KEY = registerCompanionStorageKey('da.desktop.layout.v2')
-
-function validRect(value: unknown): value is DesktopRect {
-  if (!value || typeof value !== 'object') {
-    return false
-  }
-
-  const rect = value as Record<string, unknown>
-
-  return (
-    ['x', 'y', 'width', 'height'].every(key => typeof rect[key] === 'number' && Number.isFinite(rect[key])) &&
-    Number(rect.width) > 0 &&
-    Number(rect.height) > 0
-  )
+/** 落盘只保留轻语状态；内部窗口集合仅在本次会话有效，不跨启动恢复。 */
+interface StoredLayout {
+  whisperOpen: boolean
+  whisperSide: 'left' | 'right'
 }
 
-function isLayout(value: unknown): value is DesktopLayout {
+const LAYOUT_KEY = registerCompanionStorageKey('da.desktop.layout.v2')
+
+const DEFAULT_STORED_LAYOUT: StoredLayout = { whisperOpen: true, whisperSide: 'right' }
+
+// 只认轻语状态这一种结构：带窗口列表的记录按无效处理，不做字段迁移。
+function isStoredLayout(value: unknown): value is StoredLayout {
   if (!value || typeof value !== 'object') {
     return false
   }
 
-  const layout = value as Partial<DesktopLayout>
+  const layout = value as Record<string, unknown>
 
   return (
-    Array.isArray(layout.windows) &&
-    layout.windows.length <= DESKTOP_APPS.length &&
-    layout.windows.every(
-      item =>
-        item &&
-        typeof item === 'object' &&
-        DESKTOP_APPS.includes(item.id) &&
-        validRect(item.bounds) &&
-        typeof item.minimized === 'boolean' &&
-        typeof item.maximized === 'boolean'
-    ) &&
-    new Set(layout.windows.map(item => item.id)).size === layout.windows.length &&
+    Object.keys(layout).length === 2 &&
     typeof layout.whisperOpen === 'boolean' &&
     (layout.whisperSide === 'left' || layout.whisperSide === 'right')
   )
@@ -93,33 +77,33 @@ export function fitRect(
 }
 
 export function useDesktopLayout() {
-  const [layout, setLayout] = useState<DesktopLayout>(() =>
-    storedJson(
-      LAYOUT_KEY,
-      {
-        windows: [],
-        whisperOpen: true,
-        whisperSide: 'right'
-      },
-      isLayout
-    )
-  )
+  // 启动不恢复上次打开的窗口：窗口集合只在本次会话内有效。
+  const [layout, setLayout] = useState<DesktopLayout>(() => ({
+    windows: [],
+    ...storedJson(LAYOUT_KEY, DEFAULT_STORED_LAYOUT, isStoredLayout)
+  }))
 
   const scope = useRef({ epoch: currentClearEpoch(), key: accountStorageKey(LAYOUT_KEY) })
   const latest = useRef(layout)
 
   const persist = useCallback((): void => {
     if (scope.current.epoch === currentClearEpoch() && scope.current.key === accountStorageKey(LAYOUT_KEY)) {
-      persistString(LAYOUT_KEY, JSON.stringify(latest.current))
+      const { whisperOpen, whisperSide } = latest.current
+
+      persistString(LAYOUT_KEY, JSON.stringify({ whisperOpen, whisperSide }))
     }
   }, [])
 
   useEffect(() => {
     latest.current = layout
+  }, [layout])
+
+  // 只有轻语状态跨启动保留，落盘时机随之收敛到轻语状态变化。
+  useEffect(() => {
     const timer = window.setTimeout(persist, 200)
 
     return () => window.clearTimeout(timer)
-  }, [layout, persist])
+  }, [layout.whisperOpen, layout.whisperSide, persist])
 
   useEffect(() => {
     window.addEventListener('pagehide', persist)
