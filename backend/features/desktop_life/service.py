@@ -64,6 +64,7 @@ from features.desktop_life.geometry import (
     probe_desktop_video,
 )
 from features.desktop_life.models import DesktopVideoAction, DesktopVideoPlayback, DesktopVideoSet
+from features.desktop_life.naming import schedule_desktop_title
 from features.desktop_life.policy import DEFERRED_PLAY_INTENT_TTL_SECONDS
 from features.desktop_life.ports import (
     design_shared_desktop_action,
@@ -1089,6 +1090,8 @@ async def upload_desktop_image(
     spawn_removed_action_task_cancellation(user_id, [removed_task] if removed_task else [])
     if progress.expand_image and action.status == "processing" and not progress.paused_by_user:
         schedule_desktop_video_job(user_id, action_id)
+    if action.key == "idle":
+        schedule_desktop_title(user_id, action.set_id)
     async with SESSION_LOCAL() as db:
         return await get_desktop_action_response(db, user_id, action_id)
 
@@ -2372,6 +2375,8 @@ async def review_desktop_action(
     if accepted:
         spawn_removed_action_task_cancellation(user_id, removed_tasks)
         await notify_desktop_set_updated(user_id, set_id)
+        if action.key == "idle":
+            schedule_desktop_title(user_id, set_id)
     return response
 
 

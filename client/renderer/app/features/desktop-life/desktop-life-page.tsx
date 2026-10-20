@@ -210,6 +210,7 @@ export function DesktopLifePage({
   const externalAuthSession = useRef(authSessionId)
   const beginAsync = useAsyncGuard()
   const selected = sets.find(item => item.id === selectedSetId)
+  const selectedTitle = selected?.title.trim() || t.newSceneName
   const readyForActions = desktopLifeReadyForActions(selected)
   const actionsToCreate = readyForActions ? desktopLifeActionsToCreate(selected?.actions ?? []) : []
   const idle = selected?.actions.find(action => action.key === 'idle')
@@ -1675,7 +1676,7 @@ export function DesktopLifePage({
           )}
           <header className={styles.header}>
             <div>
-              <h2 className={styles.heading}>{createOpen ? t.createSet : selected?.title || t.title}</h2>
+              <h2 className={styles.heading}>{createOpen ? t.createSet : selected ? selectedTitle : t.title}</h2>
               {(!action || createOpen) && (
                 <p className={styles.intro}>
                   {createOpen ? t.createHint : !selected ? t.hint : idle?.playable ? t.readyHint : t.leaveHint}
@@ -1896,7 +1897,7 @@ export function DesktopLifePage({
                         className={INPUT_CLASS}
                         maxLength={160}
                         onChange={event => setCreate(current => ({ ...current, name: event.target.value }))}
-                        placeholder={t.newSceneName}
+                        placeholder={t.autoNamePlaceholder}
                         value={create.name}
                       />
                     </label>
@@ -2037,7 +2038,7 @@ export function DesktopLifePage({
                       className={`${INPUT_CLASS} min-w-0 flex-1`}
                       maxLength={160}
                       onChange={event => setRename(event.target.value)}
-                      placeholder={selected.title}
+                      placeholder={selectedTitle}
                       value={rename}
                     />
                     <button className={BTN_SUBTLE} disabled={busy || !rename.trim()} type="submit">
@@ -2105,7 +2106,7 @@ export function DesktopLifePage({
                           }
                         />
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <strong className={styles.cardTitle}>{item.title}</strong>
+                          <strong className={styles.cardTitle}>{item.title.trim() || t.newSceneName}</strong>
                           {item.is_current && <span className={styles.badge}>{t.current}</span>}
                         </div>
                         <span className={styles.cardStatus}>

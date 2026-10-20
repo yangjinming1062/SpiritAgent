@@ -79,6 +79,7 @@ from features.desktop_life.geometry import (
     probe_desktop_image,
 )
 from features.desktop_life.models import DesktopVideoAction, DesktopVideoSet
+from features.desktop_life.naming import schedule_desktop_title
 from features.desktop_life.prompts import (
     DESKTOP_ACTION_DESIGN,
     DESKTOP_POSE_EDIT_TEMPLATE,
@@ -717,6 +718,8 @@ async def _await_image(user_id: int, action_id: int, progress: DesktopVideoProgr
         action.status, action.stage, action.error = "review_pending", "image_review", None
         await touch_desktop_state(db, user_id)
         await db.commit()
+    if action.key == "idle":
+        schedule_desktop_title(user_id, action.set_id)
 
 
 async def _prepare_expansion(
@@ -1406,6 +1409,8 @@ async def _finish_job(user_id: int, action_id: int, progress: DesktopVideoProgre
             action.error = None
             await touch_desktop_state(db, user_id)
         await db.commit()
+    if action.key == "idle":
+        schedule_desktop_title(user_id, action.set_id)
     spawn_removed_action_task_cancellation(user_id, removed)
     if published_set is not None:
         await notify_desktop_set_updated(user_id, published_set)
