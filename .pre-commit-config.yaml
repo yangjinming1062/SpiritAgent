@@ -19,6 +19,8 @@ repos:
         args: ['--fix=lf']
       - id: check-added-large-files
         args: ['--maxkb=1000']
+        # README 的完整实机演示；其余文件仍按 1000 KB 检查。
+        exclude: ^docs/media/demo\.mp4$
       - id: check-json
         types: [ file ]
         files: \.(json|myext)$
