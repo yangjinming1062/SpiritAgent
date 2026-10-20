@@ -112,6 +112,7 @@ export function SpriteWindow(): React.JSX.Element {
   const authed = auth.kind === 'authenticated'
   // 引导没有关闭入口（DESIGN「引导与后台准备」）：已激活且未完成时始终显示，完成后由 lifecycle 收起。
   const showOnboarding = authed && lifecycle === 'onboarding'
+  const showCompanion = authed && lifecycle === 'ready' && !activationOpen
 
   // lifecycle 由 useAccountLifecycle 统一解析；本窗只据此决定向导，就绪后才启动活动监视并水合立绘与动作资产。
   useEffect(() => {
@@ -174,24 +175,6 @@ export function SpriteWindow(): React.JSX.Element {
     })
   }, [lifecycle, gatewayState])
 
-  // 鉴权前：点击打开伙伴窗口内的激活浮层。
-  const onTap = (): void => {
-    if (!authed) {
-      setActivationOpen(true)
-    }
-  }
-
-  // 双击精灵：切换轻语卡片；未登录时打开激活浮层。引导期间舞台已收起，不响应手势。
-  const onDoubleTap = (): void => {
-    if (!authed) {
-      setActivationOpen(true)
-
-      return
-    }
-
-    toggleWhisper()
-  }
-
   const onOnboardingComplete = (): void => {
     setCompanionLifecycle('ready')
   }
@@ -201,18 +184,14 @@ export function SpriteWindow(): React.JSX.Element {
       {activationOpen && <ActivationOverlay onClose={() => setActivationOpen(false)} />}
       {showOnboarding && <OnboardingFlow onCompleted={onOnboardingComplete} />}
       <SpriteStage
-        hidden={showOnboarding || surfaceOpen}
+        hidden={!showCompanion || surfaceOpen}
         onContextMenu={e => {
           openContextMenu({ x: e.clientX, y: e.clientY })
         }}
-        onDoubleTap={onDoubleTap}
-        onTap={onTap}
+        onDoubleTap={toggleWhisper}
       >
-        {showOnboarding ? null : presentation.renderer === 'media' ? (
-          <MediaStage />
-        ) : (
-          <CompanionEgg presentation={presentation} />
-        )}
+        {showCompanion &&
+          (presentation.renderer === 'media' ? <MediaStage /> : <CompanionEgg presentation={presentation} />)}
       </SpriteStage>
       <SpriteContextMenu
         onOpenActivation={() => setActivationOpen(true)}

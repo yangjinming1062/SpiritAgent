@@ -27,10 +27,13 @@ import styles from './surface-companion.module.css'
 export function SurfaceCompanion(): React.JSX.Element | null {
   const state = useStore($surfaceCompanion)
   const mode = useStore($presentation)
-  const visible = state.visible && mode.effectiveMode === 'window'
   const hasSlot = state.slotWidth > 0
   const auth = useStore($auth)
   const lifecycle = useStore($companionLifecycle)
+
+  const visible =
+    state.visible && mode.effectiveMode === 'window' && auth.kind === 'authenticated' && lifecycle === 'ready'
+
   const strings = useStrings()
   const wrapperRef = useRef<HTMLDivElement>(null)
   const mediaHitTest = useMediaPixelHitTest(1)
