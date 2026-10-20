@@ -420,7 +420,7 @@ export function DesktopLifePage({
     setPreferencesSaving(true)
 
     try {
-      await run(() => setDesktopVideoPreferences(change))
+      await run(() => setDesktopVideoPreferences(change), t.preferencesSaving)
     } finally {
       if (isLive()) {
         setPreferencesSaving(false)
@@ -1453,7 +1453,7 @@ export function DesktopLifePage({
       <CreationFeedback
         description={visibleOperationError || undefined}
         state={busy ? 'working' : 'error'}
-        title={busy ? requestTitle : t.operationFailed}
+        title={busy ? (createOpen ? undefined : requestTitle) : t.operationFailed}
       />
     ) : taskStatus ? (
       <CreationFeedback {...taskStatus} key={statusAction?.draft?.id ?? statusAction?.id} />
@@ -1468,7 +1468,7 @@ export function DesktopLifePage({
           externalError || (externalNeedsBase ? t.imageRequiredHint : externalStale ? t.stalePrompt : undefined)
         }
         state={externalUploading || externalPromptLoading ? 'working' : 'error'}
-        title={externalUploading ? t.uploadProcessing : externalPromptLoading ? t.promptLoading : t.operationFailed}
+        title={externalUploading ? undefined : externalPromptLoading ? t.promptLoading : t.operationFailed}
       />
     ) : null
 
@@ -1482,6 +1482,8 @@ export function DesktopLifePage({
       key="create"
     >
       <button
+        aria-atomic="true"
+        aria-live="polite"
         className={BTN_PRIMARY}
         disabled={busy || !materialReady || !resolutionReady}
         form="desktop-life-create"
@@ -1717,11 +1719,6 @@ export function DesktopLifePage({
                 {state.pinned && (
                   <p className="text-xs text-muted" role="status">
                     {t.pinnedHint}
-                  </p>
-                )}
-                {preferencesSaving && (
-                  <p aria-live="polite" className="text-xs text-muted">
-                    {t.preferencesSaving}
                   </p>
                 )}
               </div>
@@ -2242,6 +2239,8 @@ export function DesktopLifePage({
               }
             >
               <button
+                aria-atomic="true"
+                aria-live="polite"
                 className={BTN_PRIMARY}
                 disabled={
                   !externalFilePath || externalUploading || externalPromptLoading || externalStale || externalNeedsBase
@@ -2300,11 +2299,7 @@ export function DesktopLifePage({
                     value={externalRequirements}
                   />
                 </label>
-                {externalPromptLoading ? (
-                  <p className="text-sm text-muted" role="status">
-                    {t.promptLoading}
-                  </p>
-                ) : (
+                {!externalPromptLoading &&
                   (!externalPrompt || externalStale || externalRequirements.trim() !== externalPromptRequirements) && (
                     <button
                       className={`${BTN_SUBTLE} self-start`}
@@ -2314,8 +2309,7 @@ export function DesktopLifePage({
                     >
                       {externalPrompt ? t.updatePrompt : t.retryPrompt}
                     </button>
-                  )
-                )}
+                  )}
                 {externalPrompt ? (
                   <section className="flex flex-col gap-3">
                     <div className="flex items-center justify-between gap-2">

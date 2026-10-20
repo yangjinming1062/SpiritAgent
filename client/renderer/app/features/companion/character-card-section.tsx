@@ -159,7 +159,7 @@ export function CharacterCardSection({
       title={
         busy || analyzing
           ? busy && editing
-            ? common.saving
+            ? undefined
             : t.analyzing
           : imageError
             ? strings.creation.imageLoadFailed
@@ -334,6 +334,8 @@ export function CharacterCardSection({
           footer={
             <CreationActionBar description={creationFeedback}>
               <button
+                aria-atomic="true"
+                aria-live="polite"
                 className={BTN_SUBTLE}
                 disabled={busy || !Object.keys(changes).length || revision !== current?.revision}
                 onClick={() =>

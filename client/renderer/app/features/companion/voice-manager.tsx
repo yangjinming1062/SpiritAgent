@@ -604,8 +604,8 @@ function VoiceManagerSession({
           ? t.designingDescription
           : t.generatingTrial
 
-  const status: { state: CreationFeedbackState; title: string; description?: string } | null = busy
-    ? { state: 'working', title: operationTitle, description: confirming ? undefined : dict.creation.canLeave }
+  const status: { state: CreationFeedbackState; title?: string; description?: string } | null = busy
+    ? { state: 'working', description: confirming ? undefined : dict.creation.canLeave }
     : outcome === 'unknown'
       ? {
           state: 'unknown',
@@ -921,113 +921,115 @@ function VoiceManagerSession({
             ) : undefined
           }
         >
-          {(customAvailable || busy || outcome === 'unknown') &&
-            (busy ? (
-              <>
-                <button className={BTN_PRIMARY} disabled type="button">
-                  <Loader2 className="size-4 motion-safe:animate-spin" />
-                  {operationTitle}
-                </button>
-                {!confirming && (
-                  <button
-                    className={BTN_SUBTLE}
-                    disabled={operationState === 'cancelling'}
-                    onClick={() => void stopOperation()}
-                    type="button"
-                  >
-                    {dict.common.cancel}
-                  </button>
-                )}
-              </>
-            ) : outcome === 'unknown' ? (
-              creation.confirmation ? (
+          <div aria-atomic="true" aria-live="polite" className="flex flex-wrap items-center gap-2">
+            {(customAvailable || busy || outcome === 'unknown') &&
+              (busy ? (
                 <>
-                  <button className={BTN_PRIMARY} onClick={() => void checkConfirmation()} type="button">
-                    {t.checkCurrent}
+                  <button className={BTN_PRIMARY} disabled type="button">
+                    <Loader2 className="size-4 motion-safe:animate-spin" />
+                    {operationTitle}
                   </button>
-                  {confirmationChecked && (
+                  {!confirming && (
                     <button
                       className={BTN_SUBTLE}
-                      onClick={() => {
-                        const pending = creation.confirmation
+                      disabled={operationState === 'cancelling'}
+                      onClick={() => void stopOperation()}
+                      type="button"
+                    >
+                      {dict.common.cancel}
+                    </button>
+                  )}
+                </>
+              ) : outcome === 'unknown' ? (
+                creation.confirmation ? (
+                  <>
+                    <button className={BTN_PRIMARY} onClick={() => void checkConfirmation()} type="button">
+                      {t.checkCurrent}
+                    </button>
+                    {confirmationChecked && (
+                      <button
+                        className={BTN_SUBTLE}
+                        onClick={() => {
+                          const pending = creation.confirmation
 
-                        if (pending) {
-                          adoptVoice(pending.id, pending.label, pending.preview, true)
+                          if (pending) {
+                            adoptVoice(pending.id, pending.label, pending.preview, true)
+                          }
+                        }}
+                        type="button"
+                      >
+                        {t.retryConfirm}
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <button className={BTN_PRIMARY} onClick={() => void stopOperation()} type="button">
+                    {error === t.cancelFailed ? t.retryCancel : t.cancelUnknown}
+                  </button>
+                )
+              ) : (
+                <>
+                  {candidate && !(adjusting && feedback.trim()) ? (
+                    <>
+                      <button
+                        className={BTN_SUBTLE}
+                        disabled={playbackBlocked}
+                        onClick={() => void previewAudio(candidate.trialAudioDataUrl)}
+                        type="button"
+                      >
+                        {t.preview}
+                      </button>
+                      <button
+                        className={BTN_PRIMARY}
+                        disabled={blocked}
+                        onClick={() => adoptVoice(candidate.voiceId, customLabels[candidate.kind], candidate)}
+                        type="button"
+                      >
+                        {t.useThisVoice}
+                      </button>
+                    </>
+                  ) : outcome === 'saved' && !(adjusting && feedback.trim()) ? (
+                    <button className={BTN_PRIMARY} disabled type="button">
+                      <Check className="size-4" />
+                      {t.inUse}
+                    </button>
+                  ) : tab === 'design' ? (
+                    <button
+                      className={BTN_PRIMARY}
+                      disabled={blocked || (!prompt.trim() && !catalog?.supportsVoicePromptGeneration)}
+                      onClick={() =>
+                        runDesign(adjusting && feedback.trim() ? 'feedback' : prompt.trim() ? 'preview' : 'auto')
+                      }
+                      type="button"
+                    >
+                      {adjusting && feedback.trim()
+                        ? t.adjustAndPreview
+                        : prompt.trim()
+                          ? t.designGenerate
+                          : t.autoDesign}
+                    </button>
+                  ) : (
+                    <button
+                      className={BTN_PRIMARY}
+                      disabled={blocked || !selectedSample}
+                      onClick={() => {
+                        if (selectedSample) {
+                          previewCreation(() => createClonedVoice(name))
                         }
                       }}
                       type="button"
                     >
-                      {t.retryConfirm}
+                      {t.clonePreview}
+                    </button>
+                  )}
+                  {tab === 'design' && prompt.trim() && catalog?.supportsVoicePromptGeneration && (
+                    <button className={BTN_SUBTLE} disabled={blocked} onClick={() => runDesign('auto')} type="button">
+                      {t.autoDesign}
                     </button>
                   )}
                 </>
-              ) : (
-                <button className={BTN_PRIMARY} onClick={() => void stopOperation()} type="button">
-                  {error === t.cancelFailed ? t.retryCancel : t.cancelUnknown}
-                </button>
-              )
-            ) : (
-              <>
-                {candidate && !(adjusting && feedback.trim()) ? (
-                  <>
-                    <button
-                      className={BTN_SUBTLE}
-                      disabled={playbackBlocked}
-                      onClick={() => void previewAudio(candidate.trialAudioDataUrl)}
-                      type="button"
-                    >
-                      {t.preview}
-                    </button>
-                    <button
-                      className={BTN_PRIMARY}
-                      disabled={blocked}
-                      onClick={() => adoptVoice(candidate.voiceId, customLabels[candidate.kind], candidate)}
-                      type="button"
-                    >
-                      {t.useThisVoice}
-                    </button>
-                  </>
-                ) : outcome === 'saved' && !(adjusting && feedback.trim()) ? (
-                  <button className={BTN_PRIMARY} disabled type="button">
-                    <Check className="size-4" />
-                    {t.inUse}
-                  </button>
-                ) : tab === 'design' ? (
-                  <button
-                    className={BTN_PRIMARY}
-                    disabled={blocked || (!prompt.trim() && !catalog?.supportsVoicePromptGeneration)}
-                    onClick={() =>
-                      runDesign(adjusting && feedback.trim() ? 'feedback' : prompt.trim() ? 'preview' : 'auto')
-                    }
-                    type="button"
-                  >
-                    {adjusting && feedback.trim()
-                      ? t.adjustAndPreview
-                      : prompt.trim()
-                        ? t.designGenerate
-                        : t.autoDesign}
-                  </button>
-                ) : (
-                  <button
-                    className={BTN_PRIMARY}
-                    disabled={blocked || !selectedSample}
-                    onClick={() => {
-                      if (selectedSample) {
-                        previewCreation(() => createClonedVoice(name))
-                      }
-                    }}
-                    type="button"
-                  >
-                    {t.clonePreview}
-                  </button>
-                )}
-                {tab === 'design' && prompt.trim() && catalog?.supportsVoicePromptGeneration && (
-                  <button className={BTN_SUBTLE} disabled={blocked} onClick={() => runDesign('auto')} type="button">
-                    {t.autoDesign}
-                  </button>
-                )}
-              </>
-            ))}
+              ))}
+          </div>
         </CreationActionBar>
       )}
     </div>

@@ -368,7 +368,9 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
       title={
         session.busy
           ? session.stage === 'confirming'
-            ? common.saving
+            ? session.draft
+              ? undefined
+              : common.saving
             : session.stage === 'loading'
               ? t.processing
               : t.generating
@@ -400,6 +402,8 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
                     regenerateDisabled={creationLocked}
                   />
                   <button
+                    aria-atomic="true"
+                    aria-live="polite"
                     className={BTN_PRIMARY}
                     disabled={creationLocked || !previewUrl || loadedPreview !== previewUrl}
                     onClick={() => void session.confirm()}

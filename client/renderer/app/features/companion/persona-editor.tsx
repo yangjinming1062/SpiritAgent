@@ -253,12 +253,14 @@ export function PersonaSection({
             (busy || hint) && (
               <CreationFeedback
                 state={busy ? 'working' : 'error'}
-                title={busy ? dict.common.saving : hint || t.hintSaveFailed}
+                title={busy ? undefined : hint || t.hintSaveFailed}
               />
             )
           }
         >
           <button
+            aria-atomic="true"
+            aria-live="polite"
             className={BTN_SUBTLE}
             disabled={busy || !dirty || !!conflict}
             onClick={() => void save()}

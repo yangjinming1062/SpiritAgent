@@ -222,7 +222,7 @@ export function SelfSourceImageFlow({
         adoptError
           ? t.adoptFailed
           : adopting
-            ? t.adopting
+            ? undefined
             : picking
               ? t.pickTitle
               : image
@@ -246,6 +246,8 @@ export function SelfSourceImageFlow({
             {t.useAi}
           </button>
           <button
+            aria-atomic="true"
+            aria-live="polite"
             className={BTN_PRIMARY}
             disabled={!image || adopting || picking}
             onClick={() => void confirmAdopt()}

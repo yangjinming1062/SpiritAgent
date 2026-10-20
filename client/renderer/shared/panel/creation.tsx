@@ -36,7 +36,7 @@ export type CreationFeedbackState = 'working' | 'waiting' | 'review' | 'error' |
 
 interface CreationFeedbackProps {
   state: CreationFeedbackState
-  title: string
+  title?: string
   description?: ReactNode
   actions?: ReactNode
   startedAt?: number
@@ -51,7 +51,7 @@ export function CreationFeedback({
   actions,
   startedAt,
   className
-}: CreationFeedbackProps): React.JSX.Element {
+}: CreationFeedbackProps): React.JSX.Element | null {
   const t = useStrings().creation
   const [slow, setSlow] = useState(false)
 
@@ -68,6 +68,13 @@ export function CreationFeedback({
     return () => window.clearTimeout(timer)
   }, [startedAt, state])
 
+  const showSlow = slow && state === 'working'
+  const hasMessage = Boolean(title || description || showSlow)
+
+  if (!hasMessage && !actions) {
+    return null
+  }
+
   const Icon =
     state === 'working'
       ? Loader2
@@ -81,19 +88,21 @@ export function CreationFeedback({
 
   return (
     <div className={cn(styles.feedback, className)} data-creation-feedback={state}>
-      <div
-        aria-atomic="true"
-        aria-live={state === 'error' ? 'assertive' : 'polite'}
-        className={styles.message}
-        role={state === 'error' ? 'alert' : 'status'}
-      >
-        <Icon aria-hidden="true" className={cn(styles.icon, state === 'working' && styles.spinning)} />
-        <div className={styles.copy}>
-          <span className={styles.title}>{title}</span>
-          {description && <div className={styles.description}>{description}</div>}
-          {slow && state === 'working' && <p className={styles.description}>{t.slow}</p>}
+      {hasMessage && (
+        <div
+          aria-atomic="true"
+          aria-live={state === 'error' ? 'assertive' : 'polite'}
+          className={styles.message}
+          role={state === 'error' ? 'alert' : 'status'}
+        >
+          {title && <Icon aria-hidden="true" className={cn(styles.icon, state === 'working' && styles.spinning)} />}
+          <div className={styles.copy}>
+            {title && <span className={styles.title}>{title}</span>}
+            {description && <div className={styles.description}>{description}</div>}
+            {showSlow && <p className={styles.description}>{t.slow}</p>}
+          </div>
         </div>
-      </div>
+      )}
       {actions && <div className={styles.actions}>{actions}</div>}
     </div>
   )

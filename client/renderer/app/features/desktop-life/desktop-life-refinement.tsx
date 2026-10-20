@@ -164,7 +164,7 @@ export function VideoRefinementModal({
         state={submitting ? 'working' : stale || submissionError || previewError ? 'error' : 'working'}
         title={
           submitting
-            ? t.submittingRefinement
+            ? undefined
             : stale || submissionError || previewError
               ? t.operationFailed
               : t.refinementPreviewLoading
@@ -183,6 +183,8 @@ export function VideoRefinementModal({
           description={operationFeedback ?? (preview ? t.refinementDuration(preview.duration_seconds) : undefined)}
         >
           <button
+            aria-atomic="true"
+            aria-live="polite"
             className={BTN_PRIMARY}
             disabled={submitting || !active || stale || !preview || (!feedback.trim() && !fitAspect)}
             onClick={() => void submit()}

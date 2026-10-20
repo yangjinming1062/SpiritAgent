@@ -235,7 +235,8 @@ export function SceneDetailView({
           actions={
             !loading ? (
               <button
-                aria-busy={refreshing}
+                aria-atomic="true"
+                aria-live="polite"
                 className={BTN_SUBTLE}
                 disabled={actionBusy || uncertain?.pending}
                 onClick={() => void refreshDetail()}
@@ -248,7 +249,7 @@ export function SceneDetailView({
           }
           description={actionError || loadError || undefined}
           state={loading || refreshing ? 'working' : 'error'}
-          title={loading || refreshing ? strings.common.loading : t.detailLoadFailed}
+          title={loading ? strings.common.loading : refreshing ? undefined : t.detailLoadFailed}
         />
       </CreationWorkspace>
     )
@@ -283,7 +284,7 @@ export function SceneDetailView({
             ? t.imageRegenerating
             : t.pendingOverlay
 
-  const feedbackStatus: { state: CreationFeedbackState; title: string } = actionError
+  const feedbackStatus: { state: CreationFeedbackState; title?: string } = actionError
     ? { state: 'error', title: tToasts.sceneRegenerateFailed }
     : loadError
       ? { state: 'unknown', title: tToasts.sceneStatusRefreshFailed }
@@ -291,7 +292,10 @@ export function SceneDetailView({
         ? {
             state: 'working',
             title: {
-              refresh: strings.common.loading,
+              refresh:
+                uncertain || detail.imageLoadFailed || (detail.url && failedImage === detail.url)
+                  ? undefined
+                  : strings.common.loading,
               save: strings.common.saving,
               cancel: t.cancelTask,
               generate: t.imageRegenerate,
@@ -324,6 +328,8 @@ export function SceneDetailView({
         loadError || uncertain ? (
           <>
             <button
+              aria-atomic="true"
+              aria-live="polite"
               className={BTN_SUBTLE}
               disabled={actionBusy || uncertain?.pending}
               onClick={() => void refreshDetail()}
@@ -566,6 +572,8 @@ export function SceneDetailView({
             <CreationFeedback
               actions={
                 <button
+                  aria-atomic="true"
+                  aria-live="polite"
                   className={BTN_SUBTLE}
                   disabled={actionBusy || uncertain?.pending}
                   onClick={() =>

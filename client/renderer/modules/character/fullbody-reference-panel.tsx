@@ -407,9 +407,11 @@ export function FullbodyReferencePanel({
       state={busy ? 'working' : errorMessage ? (state.error === 'generate' ? 'unknown' : 'error') : 'review'}
       title={
         busy
-          ? confirming
-            ? dict.common.saving
-            : t.loading
+          ? onboarding && !displayedPreview
+            ? undefined
+            : confirming
+              ? dict.common.saving
+              : t.loading
           : errorMessage
             ? currentImageUnavailable
               ? state.error === 'generate'
@@ -482,6 +484,8 @@ export function FullbodyReferencePanel({
                     </button>
                   ) : (
                     <button
+                      aria-atomic="true"
+                      aria-live="polite"
                       className={`${BTN_PRIMARY} ml-auto`}
                       disabled={generationBlocked}
                       onClick={() => void submit('regenerate')}
