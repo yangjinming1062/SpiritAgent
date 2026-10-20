@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 
 COMPANION_PRESET_ID = "companion"
+# 通用助手：只共用工作预设体、不追加角色头部，用于不需要特定系统角色的普通任务与对话。
+GENERAL_PRESET_ID = "general"
 
 
 @dataclass(frozen=True)
@@ -29,6 +31,12 @@ SYSTEM_PRESET_CATALOG: dict[str, SystemPresetMeta] = {
         name="语言老师",
         description="按水平与目标讲解、纠错和练习，提供忠实自然的翻译。",
         icon_key="preset_language_teacher",
+    ),
+    "general": SystemPresetMeta(
+        id="general",
+        name="通用助手",
+        description="不带角色设定的通用对话：保留工具调用、记忆与环境提示，只去掉具体角色与专业指引。",
+        icon_key="preset_general",
     ),
 }
 

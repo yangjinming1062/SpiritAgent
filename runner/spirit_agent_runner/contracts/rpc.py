@@ -17,7 +17,7 @@ class RpcError(Exception):
 class SkillScopeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     user_id: int = Field(gt=0, strict=True)
-    system_preset_id: Literal["companion", "copywriter", "language_teacher"]
+    system_preset_id: Literal["companion", "copywriter", "language_teacher", "general"]
 
 
 class ToolExecuteRequest(BaseModel):

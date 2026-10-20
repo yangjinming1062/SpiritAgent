@@ -263,7 +263,7 @@ export interface ApiSchemas {
   "RunnerInputConfigReplaceRequest": { "config": { [key: string]: ApiSchemas["RunnerInputJsonValue"] } }
   "RunnerInputJsonValue": unknown
   "RunnerInputRunnerEmptyRequest": Record<string, never>
-  "RunnerInputSkillScopeRequest": { "user_id": number; "system_preset_id": "companion" | "copywriter" | "language_teacher" }
+  "RunnerInputSkillScopeRequest": { "user_id": number; "system_preset_id": "companion" | "copywriter" | "language_teacher" | "general" }
   "RunnerInputToolExecuteRequest": { "name": string; "args"?: { [key: string]: ApiSchemas["RunnerInputJsonValue"] }; "call_id"?: (string | null); "skill_scope"?: (ApiSchemas["RunnerInputSkillScopeRequest"] | null) }
   "RunnerJsonValue": unknown
   "RunnerRunnerCallResult": { "call_id": string; "status": "claimed" | "completed" | "failed" | "unknown" | "not_found"; "result": ApiSchemas["RunnerJsonValue"]; "error": (string | null); "claimed_at": (number | number | null); "finished_at": (number | number | null) }
@@ -2990,3 +2990,4 @@ export const EVENT_POLICIES = {
     "baseline": false
   }
 } as const
+export const SYSTEM_PRESET_IDS = ["companion", "copywriter", "language_teacher", "general"] as const

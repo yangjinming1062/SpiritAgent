@@ -6,7 +6,7 @@ import json
 import sys
 from functools import cache
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
@@ -167,6 +167,31 @@ def input_schema(value: object, shared: set[str]) -> Any:
     return result
 
 
+def preset_ids() -> list[str]:
+    """后端预设目录的 id 顺序。目录是跨端约定的唯一来源，Runner 与客户端都从它派生。"""
+    from runtime.presets import SYSTEM_PRESET_CATALOG
+
+    return list(SYSTEM_PRESET_CATALOG)
+
+
+def assert_presets_match_runner() -> None:
+    """后端目录、Runner 允许预设与 Runner 协议声明必须一致。
+
+    三处任一漏同步，目录外预设的技能调用都会在运行期被拒；生成阶段失败才能让问题停在发布前。
+    """
+    from runtime.presets import SYSTEM_PRESET_CATALOG
+    from spirit_agent_runner.contracts.rpc import SkillScopeRequest
+    from spirit_agent_runner.contracts.scope import PRESETS
+
+    catalog = set(SYSTEM_PRESET_CATALOG)
+    declared = set(get_args(SkillScopeRequest.model_fields["system_preset_id"].annotation))
+    if catalog != set(PRESETS) or catalog != declared:
+        raise SystemExit(
+            "系统预设目录与 Runner 允许预设不一致："
+            f"catalog={sorted(catalog)} scope={sorted(PRESETS)} literal={sorted(declared)}",
+        )
+
+
 def generate() -> str:
     from bootstrap.app import app
     from entrypoints.desktop.contracts import RPC_CONTRACTS
@@ -174,6 +199,7 @@ def generate() -> str:
     from infrastructure.api_errors import ApiErrorResponse
     from spirit_agent_runner.contracts.rpc import RUNNER_CONTRACTS, RUNNER_EVENTS
 
+    assert_presets_match_runner()
     document = app.openapi()
     schemas = copy.deepcopy(document.get("components", {}).get("schemas", {}))
     add_model(schemas, ApiErrorResponse)
@@ -296,6 +322,7 @@ def generate() -> str:
     lines.append("export const RPC_POLICIES = " + json.dumps(rpc_policies, ensure_ascii=False, indent=2) + " as const")
     event_policy_json = json.dumps(event_policies, ensure_ascii=False, indent=2)
     lines.append(f"export const EVENT_POLICIES = {event_policy_json} as const")
+    lines.append("export const SYSTEM_PRESET_IDS = " + json.dumps(preset_ids(), ensure_ascii=False) + " as const")
     return "\n".join(lines) + "\n"
 
 

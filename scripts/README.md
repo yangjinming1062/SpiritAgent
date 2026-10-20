@@ -12,7 +12,7 @@
 | Python | 提交前 hook；Backend 依赖变化另跑分层检查 |
 | Client | `pnpm --dir client lint`（含路径解析后的模块／窗口边界、平台桥访问与静态值依赖环）、`pnpm --dir client typecheck` |
 | 手机远程页面 | `pnpm --dir remote lint`、`pnpm --dir remote typecheck`、`pnpm --dir remote build`；扫码、麦克风和后台恢复须在 iOS Safari、Android Chrome 实机验收 |
-| 共享协议 `shared/` | 先执行 `backend/.venv/Scripts/python.exe scripts/generate_protocol.py --check`（其他环境使用 Backend Python），再同时执行 Client 与 Remote 的 lint、typecheck 和构建；Remote lint 及提交前格式化覆盖全部手写共享 TS，生成的 `api.generated.ts` 只核对生成漂移 |
+| 共享协议 `shared/`、预设目录 | 先执行 `backend/.venv/Scripts/python.exe scripts/generate_protocol.py --check`（其他环境使用 Backend Python），再同时执行 Client 与 Remote 的 lint、typecheck 和构建；Remote lint 及提交前格式化覆盖全部手写共享 TS，生成的 `api.generated.ts` 只核对生成漂移 |
 | Windows 桌面 helper | 在 Windows 执行 `pnpm --dir client build:native`，生成 Rust host 与同架构 C++/WinRT 托盘样式模块；`cargo check --locked` 只覆盖 Rust；透明呈现、交互与恢复另做实机验收 |
 | preload、构建入口或资源 | `pnpm --dir client build` 并核对实际产物 |
 | Installer 前端与编排 | `pnpm --dir installer build`，以及完整载荷下的目标平台 Tauri 构建和安装验收 |
@@ -27,7 +27,7 @@ uv tool run --python 3.13 pre-commit run -a
 
 hook 包含自动修正，仅在修改完成、准备提交时执行，随后检查差异并复验；开发过程使用只读专项检查，不反复运行格式化。hook 不包含 Client typecheck、Backend 架构检查或原生验收。构建可能修改构建信息和版本清单，交付时区分静态、构建与真实运行结果。
 
-修改协议后运行 `scripts/generate_protocol.py` 更新生成契约；`--check` 只检查漂移。
+修改协议后运行 `scripts/generate_protocol.py` 更新生成契约；`--check` 只检查漂移。生成阶段同时校验后端预设目录与 Runner 允许预设是否一致，不一致时命令失败，跨端预设清单与 Runner 契约都从后端目录派生。
 
 ## Windows 桌面验收
 

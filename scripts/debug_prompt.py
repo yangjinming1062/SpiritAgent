@@ -285,8 +285,9 @@ def main() -> int:
     parser.add_argument(
         "--preset",
         default="companion",
-        choices=["companion", "copywriter", "language_teacher"],
-        help="系统提示词预设 id；默认 companion(完整伴侣语气)，其余工作面预设抑制伴侣 persona 与着装联动",
+        choices=["companion", "copywriter", "language_teacher", "general"],
+        help="系统提示词预设 id；默认 companion(完整伴侣语气)，其余工作面预设抑制伴侣 persona 与着装联动，"
+        "general 另不追加角色设定，只保留通用协作与工具能力",
     )
     parser.add_argument("--language", choices=["zh", "en"], default="zh", help="回复语言")
     parser.add_argument(

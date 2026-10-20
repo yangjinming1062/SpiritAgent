@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-PRESETS = frozenset({"companion", "copywriter", "language_teacher"})
+PRESETS = frozenset({"companion", "copywriter", "language_teacher", "general"})
 
 
 @dataclass(frozen=True, slots=True)

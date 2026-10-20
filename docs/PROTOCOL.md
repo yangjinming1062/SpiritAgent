@@ -24,7 +24,7 @@ WS 只处理连接恢复、ACK、心跳、工具同步、结果回执与桌面�
 
 ### 通道分工
 
-路由的稳定 `operationId` 和 `operation_policy` 共同定义操作、身份、编码、载荷与等待策略。[生成器](../scripts/generate_protocol.py) 从 OpenAPI、控制 RPC、事件及 Runner 契约生成[跨端类型与操作映射](../shared/api.generated.ts)，分别反映输入必填规则与响应序列化。调用方按操作标识提交参数，主进程不接受渲染层指定任意业务路径；检查入口见 [Scripts](../scripts/README.md#按改动选择验证)。
+路由的稳定 `operationId` 和 `operation_policy` 共同定义操作、身份、编码、载荷与等待策略。[生成器](../scripts/generate_protocol.py) 从 OpenAPI、控制 RPC、事件、Runner 契约与后端预设目录生成[跨端类型与操作映射](../shared/api.generated.ts)，分别反映输入必填规则与响应序列化。调用方按操作标识提交参数，主进程不接受渲染层指定任意业务路径；检查入口见 [Scripts](../scripts/README.md#按改动选择验证)。
 
 聊天提交、停止、快照、命令与资源操作统一走业务 HTTP，实时事件与设备指令走 WS。HTTP 不要求 WS 在线，仍独立校验身份、权限与资源归属。已受理回合由账户运行态持有；网络失败不证明操作未受理，不能自动重做副作用。
 
@@ -36,7 +36,7 @@ Client 决定唯一主窗口、窗口模式精灵显隐及窗口位置。Backend
 
 ### 会话种类与历史修改
 
-`kind` 区分系统与普通会话，`system_preset_id` 决定不可变的预设和记忆域；自动化任务使用专属预设。系统对话仅为每用户唯一的陪伴主会话，其他预设不自动创建会话；手动创建的会话均为普通会话，包括陪伴预设。创建须显式选择有效预设，挂载以服务端返回为准。定义见 [presets](../backend/runtime/presets.py)、[models](../backend/features/conversation/models.py) 与 [schemas](../backend/features/conversation/schemas.py)。
+`kind` 区分系统与普通会话，`system_preset_id` 决定不可变的预设和记忆域；自动化任务使用专属预设。系统对话仅为每用户唯一的陪伴主会话，其他预设不自动创建会话；手动创建的会话均为普通会话，包括陪伴预设。创建须显式选择有效预设，挂载以服务端返回为准。预设目录是跨端约定的唯一来源，目录项决定提示词体、记忆域与工具边界。定义见 [presets](../backend/runtime/presets.py)、[models](../backend/features/conversation/models.py) 与 [schemas](../backend/features/conversation/schemas.py)。
 
 | 操作 | 普通会话 | 系统对话 | 任务会话 |
 |---|---|---|---|
@@ -63,7 +63,7 @@ Client 决定唯一主窗口、窗口模式精灵显隐及窗口位置。Backend
 
 模型只能使用服务端验证的用户原始证据。自动化和子 Agent 消息不能作证，伙伴自身记录不能证明用户事实；人工记录的自动修改须有更新的用户依据。更新校验 ID、版本及作用域，候选、失效、过期和遗忘内容不作有效事实。决策结构见 [memory_policy](../backend/features/memory/memory_policy.py)。
 
-学习工具的 `skill_scope` 由 Backend 在模型参数之外捕获，经 Client 透传至 Runner；异步和委派继承发起域，不读取界面选择。[SkillScope](../runner/spirit_agent_runner/contracts/scope.py) 定义允许预设，目录变化须同步，否则带域调用被拒绝。
+学习工具的 `skill_scope` 由 Backend 在模型参数之外捕获，经 Client 透传至 Runner；异步和委派继承发起域，不读取界面选择。[SkillScope](../runner/spirit_agent_runner/contracts/scope.py) 定义允许预设；后端预设目录与该契约的一致性由[生成器](../scripts/generate_protocol.py)校验，不一致时生成失败，目录外的预设不会进入带域调用。
 
 ### 后台陪伴对话
 

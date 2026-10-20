@@ -1,7 +1,7 @@
 """内置系统提示词预设体，按会话的 ``system_preset_id`` 选取；预设体里的 ``{{BLOCK}}`` 由 ``prompt_blocks`` 渲染。"""
 
 from infrastructure.text import resolve_prompt_text
-from runtime.presets import COMPANION_PRESET_ID, resolve_preset_meta
+from runtime.presets import COMPANION_PRESET_ID, GENERAL_PRESET_ID, resolve_preset_meta
 from runtime.tools.presentation import ACTION_TOOL_NAMES
 
 from workflows.chat.prompts import (
@@ -48,7 +48,7 @@ AUTOMATION_EXCLUDED_TOOL_NAMES = LIFE_SPACE_TOOL_NAMES | frozenset(
 
 
 def preset_body(preset_id: str, language: str, *, delegated: bool = False) -> str:
-    """陪伴与自动化各用独立预设体；职业预设在共享工作预设体前加各自的双语头部。"""
+    """陪伴与自动化各用独立预设体；职业预设在共享工作预设体前加各自的双语头部；通用助手只用工作预设体，不加角色头部。"""
     # 自动化会话以字面量 "automation" 识别：is_automation 与 system_preset_id == "automation" 由数据库约束保证等价。
     if delegated:
         if preset_id != "automation":
@@ -60,6 +60,8 @@ def preset_body(preset_id: str, language: str, *, delegated: bool = False) -> st
         return PRESET_BODY_COMPANION
     # 仅作校验：不在预设目录中的 id 抛 ValueError，不回落为工作预设体。
     resolve_preset_meta(preset_id)
+    if preset_id == GENERAL_PRESET_ID:
+        return PRESET_BODY_WORK
     return f"{resolve_prompt_text(PRESET_HEADER_TEXTS[preset_id], language)}\n\n{PRESET_BODY_WORK}"
 
 

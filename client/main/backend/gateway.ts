@@ -9,6 +9,7 @@ import type {
 } from '@ipc/contracts'
 import { errorMessage } from '@runtime'
 
+import { SYSTEM_PRESET_IDS } from '../../../shared/api.generated'
 import { ApiError } from '../../../shared/errors'
 import {
   GatewayConnection,
@@ -34,6 +35,11 @@ interface GatewayOptions {
   onState: (snapshot: DesktopGatewaySnapshot, authSessionId: string) => void
   onExpired: (authSessionId: string) => void
   log: (message: string) => void
+}
+
+/** 技能作用域只接受预设目录内的 id；清单由后端目录生成，目录与 Runner 契约的漏同步在生成阶段失败。 */
+function isSystemPresetId(value: string): value is MemoryToolScope['system_preset_id'] {
+  return (SYSTEM_PRESET_IDS as readonly string[]).includes(value)
 }
 
 function callResult(outcome: RunnerCallOutcome): JsonValue {
@@ -316,13 +322,7 @@ export function createDesktopGateway(options: GatewayOptions) {
     if (payload.skill_scope) {
       const scope = payload.skill_scope
 
-      if (
-        scope.user_id <= 0 ||
-        !Number.isSafeInteger(scope.user_id) ||
-        (scope.system_preset_id !== 'companion' &&
-          scope.system_preset_id !== 'copywriter' &&
-          scope.system_preset_id !== 'language_teacher')
-      ) {
+      if (scope.user_id <= 0 || !Number.isSafeInteger(scope.user_id) || !isSystemPresetId(scope.system_preset_id)) {
         receipts.set(callId, { ok: false, error: 'Invalid server-controlled skill scope' })
         void deliver(callId, epoch)
 

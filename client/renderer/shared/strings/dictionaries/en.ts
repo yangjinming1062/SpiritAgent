@@ -1433,13 +1433,16 @@ export const dict: Dictionary = {
     names: {
       companion: 'Companion',
       copywriter: 'Copywriter',
-      language_teacher: 'Language teacher'
+      language_teacher: 'Language teacher',
+      general: 'General assistant'
     },
     descriptions: {
       copywriter:
         'Drafts, polishes and organizes copy, emails and meeting notes, keeping the original meaning and fitting the audience and occasion.',
       language_teacher:
-        'Explains, corrects and practices at your level and toward your goals, with faithful, natural translations.'
+        'Explains, corrects and practices at your level and toward your goals, with faithful, natural translations.',
+      general:
+        'A general conversation without a role: keeps tool use, memory and environment context, and drops the specific persona and professional guidance.'
     }
   },
 

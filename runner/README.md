@@ -105,7 +105,7 @@ SSH 内容搜索按命令退出状态区分未命中、分页截断与执行失�
 
 ## 按预设学习技能
 
-`ToolContext` 固定学习域并通过 `ContextVar` 传递，结束后恢复；允许预设在 [学习域契约](spirit_agent_runner/contracts/scope.py) 登记，Backend 新增或改名须同步。目录与隔离契约归 [学习作用域](../docs/PROTOCOL.md#预设记忆与学习作用域)，读取依次合并本域、静态技能和 `skills.external_dirs`。
+`ToolContext` 固定学习域并通过 `ContextVar` 传递，结束后恢复；允许预设在 [学习域契约](spirit_agent_runner/contracts/scope.py) 登记，后端预设目录新增或改名须与该契约一致，由[跨端生成器](../scripts/generate_protocol.py)校验后才生成契约。目录与隔离契约归 [学习作用域](../docs/PROTOCOL.md#预设记忆与学习作用域)，读取依次合并本域、静态技能和 `skills.external_dirs`。
 
 读取与管理共用候选定位：首个有匹配的根优先，同根裸名歧义拒绝猜选，可用 `category/skill-name` 定位；创建仍用单段名称，frontmatter description 必须是字符串。
 
