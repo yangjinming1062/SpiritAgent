@@ -38,6 +38,8 @@ export interface PresentationState {
 
 export interface DesktopTrayLayout {
   epoch: number
+  /** 测量时的视口尺寸 DIP；窗口尺寸变化后旧测量作废。 */
+  viewport: { width: number; height: number } | null
   /** 交互屏本地 DIP：完整托盘占位与允许显示的底栏视口。 */
   layout: {
     bounds: { x: number; y: number; width: number; height: number }

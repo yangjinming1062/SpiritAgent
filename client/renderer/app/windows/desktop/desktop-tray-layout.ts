@@ -37,6 +37,7 @@ export function useDesktopTrayLayout({
     let frame = 0
     let lastSignature: string | undefined
     let queued: DesktopTrayLayout['layout'] | undefined
+    let measuredViewport: DesktopTrayLayout['viewport'] = null
     let inFlight: Promise<void> | undefined
 
     const flush = (): void => {
@@ -45,9 +46,10 @@ export function useDesktopTrayLayout({
       }
 
       const layout = queued
+      const measured = measuredViewport
       queued = undefined
       inFlight = shellApi()
-        .presentation.setTrayLayout({ epoch, layout })
+        .presentation.setTrayLayout({ epoch, layout, viewport: measured })
         .catch(error => {
           lastSignature = undefined
           console.warn('[desktop] native tray layout failed', error)
@@ -84,7 +86,9 @@ export function useDesktopTrayLayout({
 
       if (signature !== lastSignature) {
         lastSignature = signature
+        // 视口尺寸随窗口变化上报，主进程据此丢弃压缩期间的旧测量。
         queued = layout
+        measuredViewport = { width: window.innerWidth, height: window.innerHeight }
         flush()
       }
     }
@@ -120,7 +124,7 @@ export function useDesktopTrayLayout({
 
         if ($presentation.get().stageEpoch === epoch) {
           await shellApi()
-            .presentation.setTrayLayout({ epoch, layout: null })
+            .presentation.setTrayLayout({ epoch, layout: null, viewport: null })
             .catch(error => console.warn('[desktop] native tray layout release failed', error))
         }
       })

@@ -1028,18 +1028,35 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
       const { bounds, clip } = layout
       const minimumY = display.bounds.height - DESKTOP_LAYOUT.bottomInset - 1
+      const content = win.getContentBounds()
 
-      if (
+      const outOfBand =
         clip.x < -1 ||
         clip.y < minimumY ||
         clip.x + clip.width > display.bounds.width + 1 ||
         clip.y + clip.height > display.bounds.height + 1 ||
         bounds.y < minimumY ||
         bounds.y + bounds.height > display.bounds.height + 1
-      ) {
+
+      if (outOfBand) {
+        // 底部预留生效时系统会把铺屏窗口压回工作区，压缩期间的测量已作废：
+        // 窗口尺寸与测量时不一致、或窗口尚未回到交互屏时，丢弃旧测量并等待重新测量。
+        const viewport = value.viewport
+
+        const compressed = content.y + content.height < display.bounds.y + display.bounds.height - 2
+
+        const stale =
+          compressed || (viewport !== undefined && viewport !== null && Math.abs(viewport.height - content.height) > 2)
+
+        if (stale) {
+          enforceSurfaceBounds()
+
+          return
+        }
+
         options.log(
           `[desktop] 系统托盘布局越界，已拒绝：display=${JSON.stringify(display.bounds)} ` +
-            `window=${JSON.stringify(win.getContentBounds())} bounds=${JSON.stringify(bounds)} clip=${JSON.stringify(clip)}`
+            `window=${JSON.stringify(content)} bounds=${JSON.stringify(bounds)} clip=${JSON.stringify(clip)}`
         )
         throw new Error('系统托盘必须位于交互屏底栏内。')
       }
