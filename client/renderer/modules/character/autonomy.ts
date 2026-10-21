@@ -9,7 +9,6 @@ import { clamp } from '@runtime'
 import { $activePlayInstance, isActionStageVisible, observeActionStageVisibility } from './actions'
 import { $focusContext, $lastIdleSeconds, $screenLocked } from './activity'
 import { $effectiveTier } from './companion-store'
-import { $llmAutonomy } from './prefs'
 import {
   $defaultScale,
   $homePosition,
@@ -51,7 +50,6 @@ function canConsultAutonomy(): boolean {
   return (
     active &&
     $runnerPhase.get() === 'running' &&
-    $llmAutonomy.get() &&
     $effectiveTier.get() === 'autonomous' &&
     isActionStageVisible() &&
     $spatialLocomotion.get() !== 'drag' &&
@@ -270,15 +268,6 @@ export function startAutonomyProvision(): () => void {
     })
   )
   unsubs.push($lastIdleSeconds.subscribe(onStateOrEventChange))
-  unsubs.push(
-    $llmAutonomy.subscribe(enabled => {
-      if (!enabled) {
-        invalidateConsult()
-      } else {
-        onStateOrEventChange()
-      }
-    })
-  )
   unsubs.push(
     $effectiveTier.subscribe(tier => {
       if (tier !== 'autonomous') {

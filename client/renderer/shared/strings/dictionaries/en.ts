@@ -523,8 +523,7 @@ export const dict: Dictionary = {
       }
     },
     interaction: {
-      title: 'Companionship',
-      moreOptions: 'More companionship options',
+      title: 'Companionship intensity',
       intro: 'How the companion responds and when it may interrupt you.',
       voiceHeading: 'Responses & recording',
       responsePreference: 'Response preference',
@@ -546,14 +545,8 @@ export const dict: Dictionary = {
         autonomous: { label: 'Free to explore', hint: 'May speak, move around, and interact naturally' }
       },
       smartHeading: 'Everyday life',
-      smartHint: 'Let your companion share daily life and discover things you both enjoy.',
-      idleAffect: 'Expressions and activities while idle',
-      idleAffectAria: 'Idle situational mood',
-      idleAffectDesc:
-        'When free to explore, the companion beside your window can react naturally after a long idle period.',
-      autonomy: 'Choose where to move',
-      autonomyAria: 'Autonomous space decisions',
-      autonomyDesc: 'When free to explore, the companion beside your window can choose places to stay and move to.',
+      smartHint:
+        'Your companion keeps a life of its own and shares things you both enjoy. Both are independent of the intensity tier.',
       postsEnabled: 'Post creation',
       informationDiscovery: 'Discover new content',
       informationDiscoveryDesc:

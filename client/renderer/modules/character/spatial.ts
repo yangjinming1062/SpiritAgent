@@ -9,9 +9,8 @@ import { type DesktopScreenRect, type DesktopSpriteScalePayload, SPRITE_SCALE_LI
 import { clamp } from '@runtime'
 
 import { $actionCatalog, $activePlayInstance } from './actions'
-import { $focusContext, $lastIdleSeconds, $screenLocked } from './activity'
+import { $lastIdleSeconds, $screenLocked } from './activity'
 import { $effectiveTier, $spriteState, holdInteracting, setSpriteState } from './companion-store'
-import { $llmAutonomy } from './prefs'
 import type { SpatialPeek } from './spatial-peek'
 import {
   baseSpriteSize,
@@ -357,8 +356,6 @@ export function updateSpatialDecision(): void {
     return
   }
 
-  const state = $spriteState.get()
-
   // 静止档恢复栖息地；常规档只停止自主移动。
   if (tier === 'still') {
     stopRoam()
@@ -384,40 +381,6 @@ export function updateSpatialDecision(): void {
     }
 
     return
-  }
-
-  if ($spatialLocale.get() === 'window_peek') {
-    return
-  }
-
-  if ($llmAutonomy.get()) {
-    return
-  }
-
-  const ctx = $focusContext.get()
-  const canPerch = ctx?.windowGeom && ctx.category !== 'unknown' && ctx.category !== 'gaming' && !ctx.fullscreen
-
-  if (canPerch) {
-    stopRoam()
-
-    if ($spatialLocale.get() !== 'perch' && $spatialLocale.get() !== 'window_peek' && state === 'idle') {
-      void enterWindowPeek()
-    }
-
-    return
-  }
-
-  if (state === 'idle' && $lastIdleSeconds.get() >= ROAM_IDLE_THRESHOLD_SECONDS) {
-    // 暂停（收起、隐藏或降档）后 locale 可能仍是 roam 但漫游已停；startRoam 对进行中的漫游幂等。
-    startRoam()
-
-    return
-  }
-
-  stopRoam()
-
-  if ($spatialLocale.get() === 'perch' || $spatialLocale.get() === 'roam') {
-    setSpatialLocale('home')
   }
 }
 
@@ -720,7 +683,6 @@ export function initSpatial(): () => void {
 
   offs.push($spriteState.listen(reevaluate))
   offs.push($effectiveTier.listen(reevaluate))
-  offs.push($focusContext.listen(() => updateSpatialDecision()))
 
   offs.push(
     $screenLocked.listen(locked => {

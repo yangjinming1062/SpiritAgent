@@ -4,16 +4,12 @@ import { useEffect, useMemo, useState } from 'react'
 
 import {
   $informationDiscoveryEnabled,
-  $llmAffect,
-  $llmAutonomy,
   $postsEnabled,
   $responsePreference,
   $userPreferredTier,
   type DisturbanceTier,
   endQuiet,
   informationDiscoveryPref,
-  llmAffectPref,
-  llmAutonomyPref,
   postsEnabledPref,
   type ResponsePreference,
   setDisturbanceTier,
@@ -25,7 +21,6 @@ import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
 import {
   CapsuleTabs,
-  Disclosure,
   HINT_TEXT,
   PanelSelect,
   SECTION_TITLE,
@@ -43,15 +38,13 @@ const DISTURBANCE_TIERS: readonly DisturbanceTier[] = ['still', 'normal', 'auton
 const RECORDING_OPTIONS = [15, 30, 60, 120, 300] as const
 const DEFAULT_RECORDING_SECONDS = 60
 
-// 伙伴回应方式、打扰档位和自主行为。
+// 伙伴回应方式、打扰档位和日常开关。
 export function InteractionPage({ part = 'companionship' }: { part?: 'companionship' | 'voice' }): React.ReactElement {
   const dict = useStrings()
   const t = dict.settings.interaction
 
   const tier = useStore($userPreferredTier)
   const responsePreference = useStore($responsePreference)
-  const llmAffect = useStore($llmAffect)
-  const llmAutonomy = useStore($llmAutonomy)
   const postsEnabled = useStore($postsEnabled)
   const informationDiscoveryEnabled = useStore($informationDiscoveryEnabled)
 
@@ -205,16 +198,6 @@ export function InteractionPage({ part = 'companionship' }: { part?: 'companions
               </SettingRow>
             </SettingCard>
           </section>
-          <Disclosure title={t.moreOptions}>
-            <SettingCard>
-              <SettingRow description={t.idleAffectDesc} label={t.idleAffect}>
-                <Toggle ariaLabel={t.idleAffectAria} checked={llmAffect} onChange={llmAffectPref.set} />
-              </SettingRow>
-              <SettingRow description={t.autonomyDesc} label={t.autonomy}>
-                <Toggle ariaLabel={t.autonomyAria} checked={llmAutonomy} onChange={llmAutonomyPref.set} />
-              </SettingRow>
-            </SettingCard>
-          </Disclosure>
         </>
       )}
     </div>

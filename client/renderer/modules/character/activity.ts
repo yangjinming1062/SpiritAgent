@@ -20,7 +20,6 @@ import {
   type DisturbanceTier,
   pushEffectiveDisturbanceTier
 } from './companion-store'
-import { $llmAffect } from './prefs'
 
 // 本地环境信号取自 Runner 的 system.* 工具，伙伴层直接据此推理（不经 LLM）；Runner 离线或探测失败时空闲时长回到 -1。
 
@@ -115,7 +114,6 @@ function maybeTriggerIdleExpression(idleSeconds: number, locked: boolean): void 
   // 自主表演条件与播放共用可见性判断（见 renderer README），发请求时读取；播放指令由后端统一派发。
   if (
     idleExpressionInFlight ||
-    (!desktop && !$llmAffect.get()) ||
     $effectiveTier.get() !== 'autonomous' ||
     locked ||
     $chatVisible.get() ||

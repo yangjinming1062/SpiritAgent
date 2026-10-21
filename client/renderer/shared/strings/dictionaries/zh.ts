@@ -505,9 +505,8 @@ export const dict = {
       }
     },
     interaction: {
-      title: '陪伴方式',
+      title: '陪伴强度',
       intro: '选择伙伴什么时候主动找你，以及平时可以做些什么。',
-      moreOptions: '更多陪伴选项',
       voiceHeading: '回应与录音',
       responsePreference: '回应偏好',
       responsePreferenceText: '偏好文字',
@@ -527,13 +526,7 @@ export const dict = {
         autonomous: { label: '自由活动', hint: '可以主动说话、走动，与你自然互动' }
       },
       smartHeading: '伙伴的日常',
-      smartHint: '允许伙伴记录生活，发现你们感兴趣的新内容。',
-      idleAffect: '闲暇时的表情和动作',
-      idleAffectAria: '空闲情境情绪',
-      idleAffectDesc: '选择自由活动时，让窗口旁的伙伴在长时间空闲后自然活动。',
-      autonomy: '自己选择走动的位置',
-      autonomyAria: '自主空间决策',
-      autonomyDesc: '选择自由活动时，让窗口旁的伙伴结合当前情况选择停留和走动的位置。',
+      smartHint: '伙伴自己记录生活、分享你们感兴趣的新内容；这两项与陪伴档位各自独立。',
       postsEnabled: '动态创作',
       postsEnabledDesc: '允许伙伴全天自主创作并发布文字、图片、视频或语音动态，离线时也可发布；所有类型共用发布限额',
       informationDiscovery: '关注新资讯',

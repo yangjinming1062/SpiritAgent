@@ -25,8 +25,6 @@ const RESPONSE_PREFERENCE_STORAGE_KEY = 'da.companion.responsePreference'
 const AUTOPLAY_VOICE_STORAGE_KEY = 'da.companion.autoplayVoice'
 const POSTS_ENABLED_STORAGE_KEY = 'da.companion.postsEnabled'
 const INFORMATION_DISCOVERY_STORAGE_KEY = 'da.companion.informationDiscoveryEnabled'
-const LLM_AFFECT_STORAGE_KEY = 'da.companion.llmAffect'
-const LLM_AUTONOMY_STORAGE_KEY = 'da.companion.llmAutonomy'
 
 // localStorage 是各窗口的即时缓存；本地编辑经 prefs:set 合入主进程镜像并上云。服务端确认的音色先同步镜像，再由水合广播回写缓存与 atom。
 function reportCloud(key: string, value: unknown): void {
@@ -99,9 +97,6 @@ function makeBooleanPref(key: string, fallback: boolean, cloudKey: string): Bool
   }
 }
 
-const llmAffectPref = makeBooleanPref(LLM_AFFECT_STORAGE_KEY, true, 'companion.llm_affect')
-const llmAutonomyPref = makeBooleanPref(LLM_AUTONOMY_STORAGE_KEY, true, 'companion.llm_autonomy')
-
 const postsEnabledPref = makeBooleanPref(POSTS_ENABLED_STORAGE_KEY, true, 'companion.posts_enabled')
 export const $postsEnabled = postsEnabledPref.$atom
 export { postsEnabledPref }
@@ -116,17 +111,10 @@ export const $informationDiscoveryEnabled = informationDiscoveryPref.$atom
 export const autoplayVoicePref = makeBooleanPref(AUTOPLAY_VOICE_STORAGE_KEY, true, 'companion.autoplay_voice')
 export const $autoplayVoice = autoplayVoicePref.$atom
 
-export const $llmAffect = llmAffectPref.$atom
-export const $llmAutonomy = llmAutonomyPref.$atom
-
-export { llmAffectPref, llmAutonomyPref }
-
 // 云端水合时按序回写的布尔偏好（companion 节键 → 偏好）。
 const HYDRATED_BOOLEAN_PREFS = [
   ['posts_enabled', postsEnabledPref],
-  ['information_discovery_enabled', informationDiscoveryPref],
-  ['llm_affect', llmAffectPref],
-  ['llm_autonomy', llmAutonomyPref]
+  ['information_discovery_enabled', informationDiscoveryPref]
 ] as const
 
 // 云端水合应用：只接受类型匹配的键；音色仅回写缓存，其他偏好沿用 setter，主进程消解与已上云内容相同的回写。
@@ -150,14 +138,6 @@ export function initCompanionPrefsSync(): () => void {
 
     if (event.key === accountStorageKey(INFORMATION_DISCOVERY_STORAGE_KEY) || event.key === null) {
       informationDiscoveryPref.reload()
-    }
-
-    if (event.key === accountStorageKey(LLM_AFFECT_STORAGE_KEY) || event.key === null) {
-      llmAffectPref.reload()
-    }
-
-    if (event.key === accountStorageKey(LLM_AUTONOMY_STORAGE_KEY) || event.key === null) {
-      llmAutonomyPref.reload()
     }
 
     syncDisturbanceFromStorage(event.key)
