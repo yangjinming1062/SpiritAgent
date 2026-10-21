@@ -1126,8 +1126,11 @@ export const dict = {
     },
     outfit: {
       empty: '还没有着装，先设计第一套吧。',
-      wardrobeHeading: '着装',
-      outfitCount: (count: number) => `${count} 套`,
+      loading: '正在加载着装…',
+      search: '搜索名称或描述',
+      emptySearch: '没有找到匹配的着装。',
+      noDescription: '暂无着装描述',
+      openDetails: '查看着装详情',
       zoomOutfit: (name: string) => `查看${name}大图`,
       policyLabel: '允许伙伴自主换装',
       policyDesc: '开启后，伙伴可在夜间挑选已有着装或为自己设计新装。',

@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useState } from 'react'
 
+import { useAssetLibrarySearch } from '@/app/components/asset-library-header'
 import { $outfits, hydrateAvatarSeeds, hydrateVideoPack, hydrateWardrobe } from '@/modules/character'
 import { $auth } from '@/shared/store/auth'
 
@@ -23,6 +24,7 @@ export function AppearancePage({
   const outfits = useStore($outfits)
   const { selectedOutfitId } = useStore($appearanceUi)
   const [loaded, setLoaded] = useState(false)
+  const librarySearch = useAssetLibrarySearch()
   const setSelectedOutfitId = (id: number | null): void => updateAppearanceUi({ selectedOutfitId: id })
 
   useEffect(() => {
@@ -60,7 +62,7 @@ export function AppearancePage({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {selectedOutfitId === null ? (
-        <OutfitSection onMaterialReady={onMaterialReady} onSelectOutfit={setSelectedOutfitId} />
+        <OutfitSection onMaterialReady={onMaterialReady} onSelectOutfit={setSelectedOutfitId} search={librarySearch} />
       ) : (
         <VideoSection
           onBack={() => setSelectedOutfitId(null)}

@@ -3,6 +3,22 @@ import type { useStrings } from '@/shared/strings'
 
 import type { useDesktopLifeStrings } from './desktop-life-strings'
 
+export function desktopLifeActionName(action: DesktopVideoAction, t: ReturnType<typeof useDesktopLifeStrings>): string {
+  return action.preset ? t.actionNames[action.key as keyof typeof t.actionNames] || action.name : action.name
+}
+
+export function desktopLifeSelectedAction(
+  set: DesktopVideoSet,
+  actionId: number | null
+): DesktopVideoAction | undefined {
+  return (
+    set.actions.find(action => action.id === actionId) ??
+    desktopLifePendingAction(set) ??
+    set.actions.find(action => action.key === 'idle') ??
+    set.actions[0]
+  )
+}
+
 export function desktopLifeReadyForActions(set: DesktopVideoSet | undefined): boolean {
   const idle = set?.actions.find(action => action.key === 'idle')
 

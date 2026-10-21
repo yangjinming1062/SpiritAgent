@@ -14,43 +14,15 @@ import styles from './desktop-life-preview.module.css'
 import { resolutionLabel } from './desktop-life-resolution'
 import { useDesktopLifeStrings } from './desktop-life-strings'
 
-export function DesktopLifeCover({ url, target }: { url: string | null; target?: DesktopVideoSet }): React.JSX.Element {
+export function DesktopLifeCover({ url }: { url: string | null }): React.JSX.Element {
   const t = useDesktopLifeStrings()
   const media = useResolvedMediaSrc({ type: 'image', url: url ?? '' })
-  const [size, setSize] = useState({ url, width: 0, height: 0 })
   const [failedUrl, setFailedUrl] = useState<string | null>(null)
-  const frameWidth = target?.target_width ?? 16
-  const frameHeight = target?.target_height ?? 9
-
-  const layout = desktopMediaLayout(
-    size.url === url ? size.width : 0,
-    size.url === url ? size.height : 0,
-    frameWidth,
-    frameHeight
-  )
 
   return (
-    <div className={styles.cover} style={{ aspectRatio: frameWidth / frameHeight }}>
+    <div className={styles.cover}>
       {media.status === 'ready' && failedUrl !== url ? (
-        <>
-          <div className={styles.backdrop} style={{ backgroundImage: `url("${media.src}")` }} />
-          <img
-            alt=""
-            className={styles.media}
-            onError={() => setFailedUrl(url)}
-            onLoad={event =>
-              setSize({ url, width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })
-            }
-            src={media.src}
-            style={{
-              left: `${(layout.left / frameWidth) * 100}%`,
-              top: `${(layout.top / frameHeight) * 100}%`,
-              width: `${(layout.width / frameWidth) * 100}%`,
-              height: `${(layout.height / frameHeight) * 100}%`,
-              objectFit: layout.objectFit
-            }}
-          />
-        </>
+        <img alt="" className="h-full w-full object-contain" onError={() => setFailedUrl(url)} src={media.src} />
       ) : (
         <span className={styles.coverPlaceholder}>
           {url && media.status === 'loading' ? t.previewLoading : t.noPreview}
@@ -197,6 +169,7 @@ function ResolvedDesktopLifePreview({
                 onLoadedMetadata={updateVideoSize}
                 onResize={updateVideoSize}
                 playsInline
+                poster={posterMedia.status === 'ready' ? posterMedia.src : undefined}
                 preload="metadata"
                 ref={video}
                 src={media.src}

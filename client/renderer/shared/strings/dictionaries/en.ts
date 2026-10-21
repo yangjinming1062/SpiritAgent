@@ -1190,8 +1190,11 @@ export const dict: Dictionary = {
     },
     outfit: {
       empty: 'No outfits yet. Design your first one to get started.',
-      wardrobeHeading: 'Outfits',
-      outfitCount: (count: number) => (count === 1 ? '1 outfit' : `${count} outfits`),
+      loading: 'Loading outfits…',
+      search: 'Search names or descriptions',
+      emptySearch: 'No outfits match this search.',
+      noDescription: 'No outfit description yet',
+      openDetails: 'View outfit details',
       zoomOutfit: (name: string) => `View ${name} full size`,
       policyLabel: 'Allow autonomous outfit changes',
       policyDesc: 'When enabled, your companion may choose a ready outfit or design a new one at night.',

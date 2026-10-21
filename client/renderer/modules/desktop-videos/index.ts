@@ -1,5 +1,6 @@
 export {
   $desktopVideoError,
+  $desktopVideoLibraryError,
   $desktopVideoLoading,
   $desktopVideoPlayback,
   $desktopVideoSets,

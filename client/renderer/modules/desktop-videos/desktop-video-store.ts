@@ -34,7 +34,9 @@ export const $desktopVideoState = atom<DesktopVideoState | null>(null)
 export const $desktopVideoSets = atom<DesktopVideoSet[]>([])
 export const $desktopVideoPlayback = atom<DesktopVideoPlayCommand | null>(null)
 export const $desktopVideoLoading = atom(false)
+// 状态读取错误由桌面壁纸呈现，套装库读取错误只归管理页，两者互不牵连。
 export const $desktopVideoError = atom<string | null>(null)
+export const $desktopVideoLibraryError = atom<string | null>(null)
 
 let refreshRequest: Promise<void> | null = null
 let refreshAgain = false
@@ -84,21 +86,28 @@ export async function refreshDesktopVideos(): Promise<void> {
       }
 
       const [state, sets] = results
+      const stateReady = apiSucceeded(state, 'desktop-video', 'State refresh failed')
+      const libraryReady = apiSucceeded(sets, 'desktop-video', 'Library refresh failed')
 
-      if (apiSucceeded(state, 'desktop-video', 'State refresh failed') && state.value) {
+      if (stateReady && state.value) {
         applyState(state.value)
+      }
+
+      if (libraryReady && sets.value && sets.value.version >= libraryVersion) {
+        libraryVersion = sets.value.version
+        $desktopVideoSets.set(sets.value.sets)
+      }
+
+      if (stateReady) {
         $desktopVideoError.set(null)
       } else if (!state.ok && state.reason === 'err') {
         $desktopVideoError.set(String(state.error))
       }
 
-      if (
-        apiSucceeded(sets, 'desktop-video', 'Library refresh failed') &&
-        sets.value &&
-        sets.value.version >= libraryVersion
-      ) {
-        libraryVersion = sets.value.version
-        $desktopVideoSets.set(sets.value.sets)
+      if (libraryReady) {
+        $desktopVideoLibraryError.set(null)
+      } else if (!sets.ok && sets.reason === 'err') {
+        $desktopVideoLibraryError.set(String(sets.error))
       }
     } while (refreshAgain && scope() && epoch === currentEpoch)
   })().finally(() => {
@@ -688,4 +697,5 @@ registerStorageClearHandler(() => {
   $desktopVideoPlayback.set(null)
   $desktopVideoLoading.set(false)
   $desktopVideoError.set(null)
+  $desktopVideoLibraryError.set(null)
 })

@@ -2,6 +2,8 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useState } from 'react'
 
+import { AssetLibraryCard, AssetLibraryGrid } from '@/app/components/asset-library-card'
+import { AssetLibraryHeader, AssetLibraryToolbar } from '@/app/components/asset-library-header'
 import {
   $sceneCreationIssue,
   type ActiveScene,
@@ -11,9 +13,8 @@ import {
   type ScenePolicy
 } from '@/modules/scene'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import { Loader2, Plus, RefreshCw, Search, Sparkles } from '@/shared/lib/icons'
-import { cn } from '@/shared/lib/utils'
-import { BTN_PRIMARY, BTN_SUBTLE, CreationFeedback, HINT_TEXT, INPUT_CLASS, SettingCard, Toggle } from '@/shared/panel'
+import { Loader2, RefreshCw, Sparkles } from '@/shared/lib/icons'
+import { BTN_PRIMARY, BTN_SUBTLE, CreationFeedback, HINT_TEXT, SettingCard } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
 interface SceneLibraryViewProps {
@@ -84,48 +85,35 @@ export function SceneLibraryView({
 
   return (
     <>
-      <SettingCard>
-        <div className="flex items-center justify-between gap-4 p-4">
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-strong">{t.policyLabel}</p>
-            <p className="mt-1 text-xs leading-relaxed text-muted">{t.policyDesc}</p>
-            <p aria-live="polite" className="mt-1 text-xs text-muted">
-              {policyBusy ? strings.common.saving : policy === 'locked' ? t.policyStatusLocked : t.policyStatusUnlocked}
-            </p>
-          </div>
-          <Toggle
-            ariaLabel={t.policyToggleAria}
-            checked={policy !== 'locked'}
-            disabled={policyBusy}
-            onChange={onPolicyChange}
-          />
-        </div>
-      </SettingCard>
-      <p className="text-[11px] leading-relaxed text-faint">{t.intro}</p>
-
-      <form
-        className="flex min-w-0 gap-2"
-        onSubmit={event => {
-          event.preventDefault()
-          onSearch()
-        }}
+      <AssetLibraryHeader
+        description={t.intro}
+        policies={[
+          {
+            id: 'scene-autonomy',
+            label: t.policyLabel,
+            description: t.policyDesc,
+            status: policyBusy
+              ? strings.common.saving
+              : policy === 'locked'
+                ? t.policyStatusLocked
+                : t.policyStatusUnlocked,
+            checked: policy !== 'locked',
+            disabled: policyBusy,
+            ariaLabel: t.policyToggleAria,
+            onChange: onPolicyChange
+          }
+        ]}
       >
-        <input
-          aria-label={t.search}
-          className={cn(INPUT_CLASS, 'min-w-0 flex-1')}
-          onChange={event => onQueryChange(event.target.value)}
-          placeholder={t.search}
-          value={query}
+        <AssetLibraryToolbar
+          createLabel={t.generateButton}
+          onCreate={onCreate}
+          onQueryChange={onQueryChange}
+          onSearch={onSearch}
+          query={query}
+          searchButtonLabel={t.searchButton}
+          searchLabel={t.search}
         />
-        <button className={cn(BTN_SUBTLE, 'shrink-0 whitespace-nowrap px-3')} type="submit">
-          <Search className="size-3.5" />
-          <span>{t.searchButton}</span>
-        </button>
-        <button className={cn(BTN_PRIMARY, 'shrink-0 whitespace-nowrap')} onClick={onCreate} type="button">
-          <Plus className="size-3.5" />
-          <span>{t.generateButton}</span>
-        </button>
-      </form>
+      </AssetLibraryHeader>
 
       {creationIssue?.outcome === 'unknown' ? (
         <CreationFeedback
@@ -196,20 +184,35 @@ export function SceneLibraryView({
       ) : null}
 
       {entries.length > 0 ? (
-        <div className="grid grid-cols-1 gap-3 min-[620px]:grid-cols-2 min-[900px]:grid-cols-3">
+        <AssetLibraryGrid>
           {entries.map(entry => {
             const isCurrent = entry.id === activeScene?.id
             const isRegenerating = entry.regeneration?.status === 'pending'
 
             return (
-              <SettingCard className="min-w-0" key={entry.id}>
-                <button
-                  aria-label={`${t.openDetails}: ${entry.title || t.untitled}`}
-                  className="block w-full min-w-0 text-left"
-                  onClick={() => onOpen(entry.id)}
-                  type="button"
-                >
-                  <div className="relative aspect-video w-full overflow-hidden bg-fill-trough">
+              <AssetLibraryCard
+                currentLabel={isCurrent ? t.historyCurrentLabel : undefined}
+                description={entry.description || t.needsDescription}
+                footer={
+                  <>
+                    <span className={`${HINT_TEXT} min-w-0 flex-1 truncate`}>
+                      {isRegenerating ? t.imageRegenerating : t.statuses[entry.status]}
+                    </span>
+                    {!isCurrent && entry.status === 'ready' ? (
+                      <button className={BTN_SUBTLE} onClick={() => onActivate(entry.id)} type="button">
+                        {t.historyRollbackLabel}
+                      </button>
+                    ) : (
+                      <span className="shrink-0 text-[10px] text-muted">{t.openDetails}</span>
+                    )}
+                  </>
+                }
+                id={entry.id}
+                key={entry.id}
+                onOpen={() => onOpen(entry.id)}
+                openLabel={`${t.openDetails}: ${entry.title || t.untitled}`}
+                preview={
+                  <>
                     {entry.url ? (
                       <img
                         alt={entry.title || t.historyAltFallback}
@@ -227,37 +230,13 @@ export function SceneLibraryView({
                         {t.imageRegenerating}
                       </span>
                     ) : null}
-                  </div>
-                  <div className="space-y-1.5 p-3">
-                    <h3 className="flex min-w-0 items-center gap-2 text-xs font-medium text-strong">
-                      <span className="min-w-0 flex-1 truncate">{entry.title || t.untitled}</span>
-                      {isCurrent ? (
-                        <span className="shrink-0 rounded-full bg-accent/15 px-2 py-0.5 text-[10px] text-accent">
-                          {t.historyCurrentLabel}
-                        </span>
-                      ) : null}
-                    </h3>
-                    <p className="line-clamp-2 min-h-8 whitespace-pre-wrap break-words text-[10px] leading-relaxed text-faint">
-                      {entry.description || t.needsDescription}
-                    </p>
-                  </div>
-                </button>
-                <div className="flex items-center justify-between gap-2 border-t border-line-hairline px-3 py-2">
-                  <span className={cn(HINT_TEXT, 'min-w-0 truncate')}>
-                    {isRegenerating ? t.imageRegenerating : t.statuses[entry.status]}
-                  </span>
-                  {!isCurrent && entry.status === 'ready' ? (
-                    <button className={BTN_SUBTLE} onClick={() => onActivate(entry.id)} type="button">
-                      {t.historyRollbackLabel}
-                    </button>
-                  ) : (
-                    <span className="shrink-0 text-[10px] text-muted">{t.openDetails}</span>
-                  )}
-                </div>
-              </SettingCard>
+                  </>
+                }
+                title={entry.title || t.untitled}
+              />
             )
           })}
-        </div>
+        </AssetLibraryGrid>
       ) : status === 'loading' || status === 'idle' ? (
         <div className="flex items-center justify-center gap-2 py-12 text-xs text-faint">
           <Loader2 className="size-4 animate-spin" />

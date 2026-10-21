@@ -15,11 +15,12 @@ import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
-import { CreationActionBar, CreationFeedback, INPUT_CLASS, WizardModal } from '@/shared/panel'
+import { CreationActionBar, CreationFeedback, INPUT_CLASS } from '@/shared/panel'
 import { notifyError } from '@/shared/store/notifications'
 import { errorMessage } from '@runtime'
 
 import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE } from './desktop-life-buttons'
+import { DesktopLifeDialog } from './desktop-life-dialog'
 import { DesktopLifePreview } from './desktop-life-preview'
 import { useDesktopLifeStrings } from './desktop-life-strings'
 
@@ -173,7 +174,7 @@ export function VideoRefinementModal({
     ) : null
 
   return (
-    <WizardModal
+    <DesktopLifeDialog
       backdropClose={!submitting}
       closeDisabled={submitting}
       escClose={!submitting}
@@ -228,6 +229,6 @@ export function VideoRefinementModal({
           {t.fitVideoAspect}
         </label>
       </div>
-    </WizardModal>
+    </DesktopLifeDialog>
   )
 }

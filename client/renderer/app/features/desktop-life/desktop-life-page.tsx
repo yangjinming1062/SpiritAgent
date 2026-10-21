@@ -1,11 +1,12 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { ActionSyncStatus } from '@/app/components/action-sync-status'
+import { useAssetLibrarySearch } from '@/app/components/asset-library-header'
 import { $outfits, hydrateWardrobe } from '@/modules/character'
 import {
   $desktopVideoError,
+  $desktopVideoLibraryError,
   $desktopVideoLoading,
   $desktopVideoSets,
   $desktopVideoState,
@@ -21,7 +22,6 @@ import {
   type DesktopVideoAspectPolicy,
   type DesktopVideoRefinementSource,
   type DesktopVideoSet,
-  type DesktopVideoSource,
   generateDesktopVideoAction,
   generateDesktopVideoImage,
   pauseDesktopVideoDraft,
@@ -36,66 +36,38 @@ import { $activeScene, $sceneLibrary, loadSceneDetail, loadSceneLibrary, type Sc
 import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
-import { ArrowLeft, Check, ChevronDown, Plus, RefreshCw, Settings } from '@/shared/lib/icons'
+import { RefreshCw } from '@/shared/lib/icons'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
-import {
-  ConfirmDialog,
-  CreationActionBar,
-  CreationFeedback,
-  CreationWorkspace,
-  INPUT_CLASS,
-  PanelSelect,
-  Toggle,
-  WizardModal
-} from '@/shared/panel'
+import { CreationFeedback, CreationWorkspace, INPUT_CLASS, PanelSelect } from '@/shared/panel'
 import { fileApi, shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { notifyError } from '@/shared/store/notifications'
 import { $presentation } from '@/shared/store/presentation'
 import { useStrings } from '@/shared/strings'
+import type { DesktopLifeUiSnapshot } from '@ipc/contracts'
 import { errorMessage } from '@runtime'
 
+import { DesktopLifeActionView } from './desktop-life-action-view'
 import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE } from './desktop-life-buttons'
-import {
-  readyDesktopLifeResolution,
-  reconcileDesktopLifeDisplay,
-  resolveDesktopLifeRecommendationDisplay
-} from './desktop-life-display'
-import { DesktopLifeReferences } from './desktop-life-materials'
-import { DesktopLifeCover, DesktopLifePreview } from './desktop-life-preview'
+import { DesktopLifeCreateView } from './desktop-life-create-view'
+import { DesktopLifeConfirmDialog, DesktopLifeDialog } from './desktop-life-dialog'
+import { readyDesktopLifeResolution, reconcileDesktopLifeDisplay } from './desktop-life-display'
+import { DesktopLifeHeader } from './desktop-life-header'
+import { DesktopLifeLibraryView } from './desktop-life-library-view'
 import { VideoRefinementModal } from './desktop-life-refinement'
-import { DesktopLifeDisplayPicker, DesktopLifeRecommendation, resolutionLabel } from './desktop-life-resolution'
+import { resolutionLabel } from './desktop-life-resolution'
 import { $desktopLifeUi, newDesktopLifeCreation, updateDesktopLifeUi } from './desktop-life-state'
 import {
+  desktopLifeActionName,
   desktopLifeActionStatus,
   desktopLifeActionsToCreate,
-  desktopLifeCreationStage,
-  desktopLifePendingAction,
   desktopLifeReadyForActions,
+  desktopLifeSelectedAction,
   isActionPaused
 } from './desktop-life-status'
 import { useDesktopLifeStrings } from './desktop-life-strings'
+import { DesktopLifeWorkbench } from './desktop-life-workbench'
 import styles from './desktop-life.module.css'
-
-function previewUsesDraft(action: DesktopVideoAction): boolean {
-  const draft = action.draft
-
-  return Boolean(
-    draft &&
-    (draft.candidate_video_url ||
-      (draft.image_url &&
-        (draft.image_confirmed || (action.status === 'review_pending' && action.stage === 'image_review')) &&
-        (!draft.video_refinement || !action.current)))
-  )
-}
-
-function hasPreviewMedia(action: DesktopVideoAction, draft: boolean): boolean {
-  return Boolean(
-    draft
-      ? action.draft?.candidate_video_url || action.draft?.candidate_poster_url || action.draft?.image_url
-      : action.current?.video_url || action.current?.poster_url
-  )
-}
 
 export function DesktopLifePage({
   onPrepareMaterial
@@ -113,57 +85,31 @@ export function DesktopLifePage({
   const sets = useStore($desktopVideoSets)
   const loading = useStore($desktopVideoLoading)
   const error = useStore($desktopVideoError)
+  const libraryError = useStore($desktopVideoLibraryError)
   const ui = useStore($desktopLifeUi)
   const { selectedSetId, selectedActionId, create, feedback, design, addActionOpen } = ui
   const createOpen = ui.creating
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const libraryScrollTop = useRef(ui.libraryScrollTop ?? 0)
-  libraryScrollTop.current = ui.libraryScrollTop ?? 0
-
-  useLayoutEffect(() => {
-    const element = scrollRef.current
-
-    if (element) {
-      element.scrollTop = selectedSetId === null && !createOpen ? libraryScrollTop.current : 0
-    }
-
-    const savePosition = (): void => {
-      if (element && selectedSetId === null && !createOpen) {
-        updateDesktopLifeUi({ libraryScrollTop: element.scrollTop })
-      }
-    }
-
-    element?.addEventListener('scroll', savePosition)
-
-    return () => element?.removeEventListener('scroll', savePosition)
-  }, [selectedSetId, selectedActionId, createOpen])
+  const navigationRevision = useRef(0)
+  const libraryFocus = useRef<number | 'create' | null>(selectedSetId)
+  const librarySearch = useAssetLibrarySearch()
 
   const setCreate = (next: React.SetStateAction<typeof create>): void => {
     updateDesktopLifeUi({ create: typeof next === 'function' ? next($desktopLifeUi.get().create) : next })
-  }
-
-  const setFeedback = (next: React.SetStateAction<typeof feedback>): void => {
-    updateDesktopLifeUi({ feedback: typeof next === 'function' ? next($desktopLifeUi.get().feedback) : next })
   }
 
   const setDesign = (next: React.SetStateAction<typeof design>): void => {
     updateDesktopLifeUi({ design: typeof next === 'function' ? next($desktopLifeUi.get().design) : next })
   }
 
-  const setSelectedSetId = (id: number | null): void =>
-    updateDesktopLifeUi({ selectedSetId: id, selectedActionId: null })
-
-  const setCreateOpen = (creating: boolean): void => updateDesktopLifeUi({ creating })
-  const [busy, setBusy] = useState(false)
-  const [requestTitle, setRequestTitle] = useState(t.processingRequest)
-  const [operationError, setOperationError] = useState<{ scope: string; message: string } | null>(null)
-  const operationScope = `${selectedSetId}:${selectedActionId}:${createOpen}`
-  const visibleOperationError = operationError?.scope === operationScope ? operationError.message : null
+  // 提交锁按背景、动作或创建入口归属：同一入口不并发，不同入口互不阻塞。
+  const requestRef = useRef<Map<string, { scope: string; title: string }>>(new Map())
+  const [requests, setRequests] = useState<Record<string, { scope: string; title: string }>>({})
+  const [operationErrors, setOperationErrors] = useState<Record<string, string>>({})
   const [preferencesSaving, setPreferencesSaving] = useState(false)
   const [aspectChoice, setAspectChoice] = useState<DesktopVideoAspectMismatch | null>(null)
   const resolveAspectChoice = useRef<((policy: DesktopVideoAspectPolicy | null) => void) | null>(null)
   const aspectGeneration = useRef(0)
-  const [imagePreviews, setImagePreviews] = useState<Record<string, boolean>>({})
+  const aspectQueue = useRef<Promise<unknown>>(Promise.resolve())
   const scenes = useStore($sceneLibrary)
   const activeScene = useStore($activeScene)
   const outfits = useStore($outfits)
@@ -179,6 +125,9 @@ export function DesktopLifePage({
   } | null>(null)
 
   const [designMessage, setDesignMessage] = useState<string | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [customActionOpen, setCustomActionOpen] = useState(false)
+  const customActionRevision = useRef(0)
   const authSession = useRef(authSessionId)
   const beginAsync = useAsyncGuard()
   const selected = sets.find(item => item.id === selectedSetId)
@@ -187,8 +136,55 @@ export function DesktopLifePage({
   const readyForActions = desktopLifeReadyForActions(selected)
   const actionsToCreate = readyForActions && !sourceError ? desktopLifeActionsToCreate(selected?.actions ?? []) : []
   const idle = selected?.actions.find(action => action.key === 'idle')
-  const action = selected?.actions.find(item => item.id === selectedActionId)
-  const currentMatches = selected?.is_current === true
+  const action = selected ? desktopLifeSelectedAction(selected, selectedActionId) : undefined
+  const setScope = `set:${selectedSetId}`
+  const createScope = `create:${selectedSetId}`
+  const actionScope = `${setScope}:action:${action?.id}`
+  const libraryScope = 'library'
+
+  const operationScope = createOpen ? createScope : selected ? actionScope : libraryScope
+
+  const busy = useCallback((scope: string): boolean => scope in requests, [requests])
+  const anyBusy = Object.keys(requests).length > 0
+
+  const navigate = useCallback((change: Partial<DesktopLifeUiSnapshot>): void => {
+    navigationRevision.current += 1
+    aspectGeneration.current += 1
+    resolveAspectChoice.current?.(null)
+    resolveAspectChoice.current = null
+    setAspectChoice(null)
+    setSettingsOpen(false)
+    setRename('')
+    setCustomActionOpen(false)
+    setRefinement(null)
+    setDiscardAction(null)
+    setDeleteSetId(null)
+    customActionRevision.current += 1
+    updateDesktopLifeUi({ ...change, addActionOpen: false })
+  }, [])
+
+  const closeCustomAction = (): void => {
+    customActionRevision.current += 1
+    setCustomActionOpen(false)
+  }
+
+  useEffect(() => {
+    if (loading || !state || error || libraryError) {
+      return
+    }
+
+    if (selectedSetId !== null && !selected) {
+      navigate({ selectedSetId: null, selectedActionId: null })
+
+      return
+    }
+
+    if (selected && (action?.id ?? null) !== selectedActionId) {
+      setRefinement(null)
+      setDiscardAction(null)
+      updateDesktopLifeUi({ selectedActionId: action?.id ?? null })
+    }
+  }, [loading, state, error, libraryError, selected, selectedSetId, action?.id, selectedActionId, navigate])
 
   const working = sets.some(
     item =>
@@ -228,16 +224,20 @@ export function DesktopLifePage({
     }
 
     authSession.current = authSessionId
-    setImagePreviews({})
     setCreationScene(null)
     setDeleteSetId(null)
     setDiscardAction(null)
     setRefinement(null)
-    setBusy(false)
-    setOperationError(null)
+    requestRef.current.clear()
+    setRequests({})
+    setOperationErrors({})
     setPreferencesSaving(false)
     setRename('')
     setDesignMessage(null)
+    libraryFocus.current = null
+    setSettingsOpen(false)
+    setCustomActionOpen(false)
+    customActionRevision.current += 1
   }, [authSessionId])
 
   useEffect(() => {
@@ -313,39 +313,60 @@ export function DesktopLifePage({
     }
   }, [createOpen, create.source, create.sceneId, authSessionId])
 
-  const perform = async (operation: () => Promise<unknown>, title = t.processingRequest): Promise<void> => {
-    if (busy) {
+  const perform = async <T,>(
+    operation: () => Promise<T>,
+    title = t.processingRequest,
+    scope = operationScope
+  ): Promise<T> => {
+    if (requestRef.current.has(scope)) {
       throw new Error(t.processingRequest)
     }
 
     const isLive = beginAsync()
-    setBusy(true)
-    setRequestTitle(title)
-    setOperationError(null)
+    const pending = { scope, title }
+    requestRef.current.set(scope, pending)
+    setRequests(current => ({ ...current, [scope]: pending }))
+    setOperationErrors(current => {
+      const next = { ...current }
+      delete next[scope]
+
+      return next
+    })
 
     try {
-      await operation()
+      return await operation()
     } catch (failure) {
       if (isLive()) {
-        setOperationError({ scope: operationScope, message: backendDetailMessage(failure, errorMessage(failure)) })
+        setOperationErrors(current => ({ ...current, [scope]: backendDetailMessage(failure, errorMessage(failure)) }))
         notifyError(failure, t.title)
         void refreshDesktopVideos()
       }
 
       throw failure
     } finally {
-      if (isLive()) {
-        setBusy(false)
+      if (isLive() && requestRef.current.get(scope) === pending) {
+        requestRef.current.delete(scope)
+        setRequests(current => {
+          if (current[scope] !== pending) {
+            return current
+          }
+
+          const next = { ...current }
+          delete next[scope]
+
+          return next
+        })
       }
     }
   }
 
-  // 普通操作在页面呈现错误；确认弹窗直接等待 perform 的成功或失败。
-  const run = (operation: () => Promise<unknown>, title?: string): Promise<void> =>
-    perform(operation, title).catch(() => undefined)
+  const run = (operation: () => Promise<unknown>, title?: string, scope?: string): Promise<void> =>
+    perform(operation, title, scope)
+      .then(() => undefined)
+      .catch(() => undefined)
 
   const savePreferences = async (change: Parameters<typeof setDesktopVideoPreferences>[0]): Promise<void> => {
-    if (busy || preferencesSaving) {
+    if (busy(libraryScope) || preferencesSaving) {
       return
     }
 
@@ -353,7 +374,7 @@ export function DesktopLifePage({
     setPreferencesSaving(true)
 
     try {
-      await run(() => setDesktopVideoPreferences(change), t.preferencesSaving)
+      await run(() => setDesktopVideoPreferences(change), t.preferencesSaving, 'library')
     } finally {
       if (isLive()) {
         setPreferencesSaving(false)
@@ -368,6 +389,7 @@ export function DesktopLifePage({
     const scope = captureAuthScope()
     const isLive = beginAsync()
     const generation = aspectGeneration.current
+    const navigation = navigationRevision.current
 
     try {
       await operation('ask')
@@ -380,17 +402,46 @@ export function DesktopLifePage({
         throw failure
       }
 
-      if (!scope?.() || !isLive() || !isCurrent() || generation !== aspectGeneration.current) {
+      if (
+        !scope?.() ||
+        !isLive() ||
+        !isCurrent() ||
+        generation !== aspectGeneration.current ||
+        navigation !== navigationRevision.current
+      ) {
         return false
       }
 
-      const policy = await new Promise<DesktopVideoAspectPolicy | null>(resolve => {
-        resolveAspectChoice.current?.(null)
-        resolveAspectChoice.current = resolve
-        setAspectChoice(mismatch)
+      // 画幅确认一次只展示一个：后到的冲突等前一个选择结束后再展示自己的。
+      const aspectResult = aspectQueue.current.then(() => {
+        if (
+          !scope?.() ||
+          !isLive() ||
+          !isCurrent() ||
+          generation !== aspectGeneration.current ||
+          navigation !== navigationRevision.current
+        ) {
+          return null
+        }
+
+        return new Promise<DesktopVideoAspectPolicy | null>(resolve => {
+          resolveAspectChoice.current = resolve
+          setAspectChoice(mismatch)
+        })
       })
 
-      if (policy && scope() && isLive() && isCurrent() && generation === aspectGeneration.current) {
+      aspectQueue.current = aspectResult.catch(() => undefined)
+
+      const policy = await aspectResult
+
+      if (
+        policy &&
+        scope() &&
+        isLive() &&
+        isCurrent() &&
+        generation === aspectGeneration.current &&
+        navigation === navigationRevision.current
+      ) {
         await operation(policy, mismatch)
 
         return true
@@ -418,6 +469,7 @@ export function DesktopLifePage({
     const scope = captureAuthScope()
     const isLive = beginAsync()
     const generation = aspectGeneration.current
+    const navigation = navigationRevision.current
     await withAspectChoice(async policy => {
       const generated = await generateDesktopVideoAction(item, set, note, policy, videoFeedback)
       const currentUi = $desktopLifeUi.get()
@@ -427,6 +479,8 @@ export function DesktopLifePage({
         scope?.() &&
         isLive() &&
         generation === aspectGeneration.current &&
+        navigation === navigationRevision.current &&
+        !currentUi.creating &&
         currentUi.selectedSetId === set.id &&
         currentUi.selectedActionId === item.id
       ) {
@@ -477,7 +531,7 @@ export function DesktopLifePage({
       await withAspectChoice(
         policy =>
           uploadDesktopVideoAction(currentAction, currentSet, path, authSessionId, image ? 'image' : 'video', policy),
-        () => scope() && isLive()
+        () => scope() && isLive() && !$desktopLifeUi.get().creating && $desktopLifeUi.get().selectedSetId === set.id
       )
     }
   }
@@ -495,19 +549,26 @@ export function DesktopLifePage({
     }
   }
 
-  const openCreate = (event: React.MouseEvent<HTMLButtonElement>): void => {
-    event.preventDefault()
-    setCreateOpen(true)
+  const openCreate = (): void => {
+    if (selectedSetId === null) {
+      libraryFocus.current = 'create'
+    }
+
+    navigate({ creating: true })
     void loadSceneLibrary('', 0)
     void hydrateWardrobe()
   }
 
-  const actionName = (item: DesktopVideoAction): string =>
-    item.preset ? t.actionNames[item.key as keyof typeof t.actionNames] || item.name : item.name
-
-  const openAction = (item: DesktopVideoAction): void => {
-    updateDesktopLifeUi({ selectedActionId: item.id, addActionOpen: false })
+  const openSet = (set: DesktopVideoSet): void => {
+    libraryFocus.current = set.id
+    navigate({
+      selectedSetId: set.id,
+      selectedActionId: desktopLifeSelectedAction(set, null)?.id ?? null,
+      creating: false
+    })
   }
+
+  const openAction = (item: DesktopVideoAction): void => navigate({ selectedActionId: item.id })
 
   const actionStatus = (item: DesktopVideoAction): string =>
     desktopLifeActionStatus(item, t, queueStrings, commonStrings.actionVariants)
@@ -544,29 +605,6 @@ export function DesktopLifePage({
     }
   }
 
-  const renderSteps = (step: number, skipImage = false): React.JSX.Element => {
-    const labels = [t.stepIdea, ...(skipImage ? [] : [t.stepImage]), t.stepVideo, t.stepUse]
-    const currentStep = skipImage && step >= 2 ? step - 1 : step
-
-    return (
-      <ol aria-label={t.createSet} className={styles.steps}>
-        {labels.map((label, index) => (
-          <li
-            aria-current={currentStep === index ? 'step' : undefined}
-            className={styles.step}
-            data-complete={index < currentStep}
-            key={label}
-          >
-            <span aria-hidden="true" className={styles.stepNumber}>
-              {index < currentStep ? <Check size={14} /> : index + 1}
-            </span>
-            <span>{label}</span>
-          </li>
-        ))}
-      </ol>
-    )
-  }
-
   const creationStatus = (item: DesktopVideoAction): React.ComponentProps<typeof CreationFeedback> | null => {
     if (item.draft?.submission_unknown || item.draft?.recovery_action === 'wait') {
       return {
@@ -576,7 +614,7 @@ export function DesktopLifePage({
         actions: (
           <button
             className={BTN_SUBTLE}
-            disabled={loading || busy}
+            disabled={loading || anyBusy}
             onClick={() => void refreshDesktopVideos()}
             type="button"
           >
@@ -611,542 +649,6 @@ export function DesktopLifePage({
     return null
   }
 
-  const renderFailure = (item: DesktopVideoAction): React.JSX.Element | null => {
-    if (item.status !== 'failed' || item.draft?.submission_unknown || item.draft?.recovery_action === 'wait') {
-      return null
-    }
-
-    return (
-      <div className="space-y-2 text-sm text-body">
-        <p>{t.failedAt(desktopLifeCreationStage(item, t))}</p>
-        <p>
-          {item.draft?.recovery_action === 'choose_activity'
-            ? t.chooseActivityHint
-            : item.draft?.recovery_action === 'replace_upload'
-              ? t.replaceUploadHint
-              : item.draft?.recovery_action === 'recreate_set'
-                ? t.recreateSetHint
-                : t.creationFailed}
-        </p>
-        {(item.draft?.error || item.error) && (
-          <details>
-            <summary className="cursor-pointer">{t.details}</summary>
-            <p className="mt-2 break-words">{item.draft?.error || item.error}</p>
-          </details>
-        )}
-      </div>
-    )
-  }
-
-  const renderMetadata = (target: DesktopVideoSet): React.JSX.Element => (
-    <div className={styles.metadata}>
-      <span>
-        {t.targetResolution}: {resolutionLabel(target.target_width, target.target_height)}
-      </span>
-      <DesktopLifeRecommendation display={recommendationDisplay} set={target} />
-      <span>
-        {recommendationDisplay
-          ? `${t.recommendationDisplay}: ${recommendationDisplay.label}`
-          : t.recommendationUnavailable}
-      </span>
-    </div>
-  )
-
-  const newBackgroundControl = selected ? (
-    <button
-      className={BTN_PRIMARY}
-      disabled={busy}
-      onClick={() =>
-        updateDesktopLifeUi({
-          create: { ...newDesktopLifeCreation(), source: selected.source },
-          creating: true
-        })
-      }
-      type="button"
-    >
-      {t.createSet}
-    </button>
-  ) : null
-
-  const renderAction = (
-    item: DesktopVideoAction,
-    feedbackStatus: React.ReactNode
-  ): { content: React.JSX.Element; footer: React.ReactNode } => {
-    if (!selected) {
-      return { content: <></>, footer: null }
-    }
-
-    const unknown = Boolean(item.draft?.submission_unknown || item.draft?.recovery_action === 'wait')
-    const chooseActivity = item.draft?.recovery_action === 'choose_activity'
-    const pendingSource = item.key === 'idle' && selected.can_upload_source
-    const recreateSet = Boolean(sourceError || item.draft?.recovery_action === 'recreate_set')
-    const processing = item.status === 'processing' && !isActionPaused(item) && !unknown
-
-    const reusesBaseImage =
-      item.key !== 'idle' &&
-      (item.draft
-        ? item.draft.continuity === 'base' && item.draft.image_confirmed && !item.draft.video_refinement
-        : item.current?.continuity === 'base')
-
-    const hideDraftImage = Boolean(reusesBaseImage && item.draft && !item.draft.candidate_video_url)
-
-    const imageReview = Boolean(
-      item.status === 'review_pending' &&
-      item.stage === 'image_review' &&
-      item.draft?.image_url &&
-      !item.draft.image_confirmed
-    )
-
-    const preparingImage = Boolean(
-      !reusesBaseImage &&
-      item.draft &&
-      !item.draft.video_refinement &&
-      ['planning', 'checking', 'repairing', 'image', 'image_upload'].includes(item.stage)
-    )
-
-    const candidate = Boolean(
-      item.status === 'review_pending' && item.stage !== 'image_review' && item.draft?.candidate_video_url
-    )
-
-    const previewDraft = previewUsesDraft(item) && !hideDraftImage
-    const showPreview = hasPreviewMedia(item, previewDraft)
-    const hasCurrentPreview = hasPreviewMedia(item, false)
-
-    const showingCurrentVideo = Boolean(item.current?.video_url && !previewDraft)
-
-    const step =
-      candidate || (!item.draft && item.current)
-        ? 3
-        : imageReview || preparingImage
-          ? 1
-          : item.draft
-            ? item.draft.image_confirmed || item.draft.video_refinement || item.draft.source === 'external_upload'
-              ? 2
-              : 1
-            : 0
-
-    const dependent = item.key !== 'idle' && (item.draft?.continuity ?? item.continuity) === 'base'
-
-    const requiresBase =
-      item.key !== 'idle' && !readyForActions && !sourceError && !processing && !candidate && !unknown
-
-    const awaitingFirstGeneration =
-      item.definition_id !== null && ['not_generated', 'blocked'].includes(item.status) && !item.current && !item.draft
-
-    const unavailableFirstGeneration = awaitingFirstGeneration && !item.can_generate
-    const persistedNote = item.draft?.feedback ?? item.current?.feedback ?? ''
-
-    const customizationReadOnly =
-      unknown ||
-      isActionPaused(item) ||
-      candidate ||
-      chooseActivity ||
-      pendingSource ||
-      recreateSet ||
-      unavailableFirstGeneration
-
-    const note = customizationReadOnly ? persistedNote : (feedback[item.id] ?? persistedNote)
-    const noteDirty = note !== persistedNote
-    const videoNote = item.draft?.video_feedback ?? item.current?.video_feedback ?? ''
-    const canRemakeVideo = !imageReview && Boolean(item.current || item.draft?.image_confirmed)
-
-    const affected = selected.actions.filter(
-      action => action.id !== item.id && (action.current?.continuity === 'base' || action.draft?.continuity === 'base')
-    ).length
-
-    const canConfirm = item.draft && imagePreviews[`${item.draft.id}:${item.draft.image_url}`]
-
-    const controls = sourceError ? (
-      <>
-        {newBackgroundControl}
-        {item.key === 'idle' && item.playable && (
-          <button
-            className={BTN_SUBTLE}
-            disabled={busy || currentMatches}
-            onClick={() => void run(activate)}
-            type="button"
-          >
-            {currentMatches ? t.currentInUse : t.play}
-          </button>
-        )}
-      </>
-    ) : unknown ? null : processing ? (
-      item.draft && !['upload', 'image_upload'].includes(item.stage) ? (
-        <button
-          className={BTN_SUBTLE}
-          disabled={busy}
-          onClick={() => void run(() => pauseDesktopVideoDraft(item), t.pausingCreation)}
-          title={t.stopHint}
-          type="button"
-        >
-          {t.cancel}
-        </button>
-      ) : null
-    ) : unavailableFirstGeneration ? null : candidate ? (
-      <>
-        <button
-          className={BTN_PRIMARY}
-          disabled={busy}
-          onClick={() => void run(() => adoptCandidate(item), t.acceptingVideo)}
-          type="button"
-        >
-          {item.key === 'idle' ? t.play : t.acceptCandidate}
-        </button>
-        <button className={BTN_SUBTLE} disabled={busy} onClick={() => setDiscardAction(item)} type="button">
-          {t.reject}
-        </button>
-      </>
-    ) : chooseActivity ? (
-      <button
-        className={BTN_PRIMARY}
-        disabled={busy}
-        onClick={() => updateDesktopLifeUi({ selectedActionId: null, addActionOpen: true })}
-        type="button"
-      >
-        {t.chooseActivity}
-      </button>
-    ) : recreateSet ? (
-      newBackgroundControl
-    ) : pendingSource ? (
-      <button
-        className={BTN_PRIMARY}
-        disabled={busy}
-        onClick={() =>
-          void run(
-            () => uploadSource(item, selected),
-            selected.source === 'image_upload' ? t.uploadingImage : t.uploadProcessing
-          )
-        }
-        type="button"
-      >
-        {selected.source === 'image_upload' ? t.uploadImage : t.selectVideo}
-      </button>
-    ) : noteDirty ? (
-      <button
-        className={BTN_PRIMARY}
-        disabled={busy}
-        onClick={() => void run(() => makeImage(item, selected, note))}
-        type="button"
-      >
-        {t.applyCustomization}
-      </button>
-    ) : imageReview ? (
-      <>
-        <button
-          className={BTN_PRIMARY}
-          disabled={busy || !canConfirm}
-          onClick={() => void run(() => confirmDesktopVideoImage(item, selected), t.confirmingImage)}
-          type="button"
-        >
-          {t.confirmImage}
-        </button>
-        <button
-          className={BTN_SUBTLE}
-          disabled={busy}
-          onClick={() => void run(() => makeImage(item, selected, note, true))}
-          type="button"
-        >
-          {t.anotherImage}
-        </button>
-      </>
-    ) : item.current && !item.draft && !item.needs_update ? (
-      item.key === 'idle' ? (
-        <button
-          className={BTN_PRIMARY}
-          disabled={busy || !item.playable || currentMatches}
-          onClick={() => void run(activate)}
-          type="button"
-        >
-          {currentMatches ? t.currentInUse : t.play}
-        </button>
-      ) : null
-    ) : (
-      <button
-        className={BTN_PRIMARY}
-        disabled={busy}
-        onClick={() =>
-          void run(() => {
-            if (
-              item.draft &&
-              (item.draft.recovery_action === 'retry' || isActionPaused(item) || item.status === 'failed')
-            ) {
-              return retryDesktopVideoDraft(item, selected)
-            }
-
-            return makeVideo(item, selected, note)
-          })
-        }
-        type="button"
-      >
-        {isActionPaused(item)
-          ? t.resume
-          : item.draft?.recovery_action === 'retry' || item.status === 'failed'
-            ? t.retry
-            : item.key === 'idle'
-              ? t.generateImage
-              : t.startAction}
-      </button>
-    )
-
-    return {
-      content: (
-        <section className={styles.detail} key={item.id}>
-          {renderSteps(step, reusesBaseImage)}
-          <div>
-            <h3 className="text-lg font-semibold text-strong">{actionName(item)}</h3>
-          </div>
-          <ActionSyncStatus targets={item.sync_targets} />
-          {sourceError ? (
-            <p className="text-sm text-warning" role="alert">
-              {sourceError}
-            </p>
-          ) : (
-            renderFailure(item)
-          )}
-          {requiresBase ? (
-            <div className="space-y-2">
-              <h4 className="font-medium text-strong">{t.imageRequired}</h4>
-              <p className="my-3 text-sm leading-relaxed text-body">{t.imageRequiredHint}</p>
-            </div>
-          ) : (
-            <>
-              {hideDraftImage && <p className="text-sm text-muted">{t.reusedBaseImageHint}</p>}
-              {showPreview && (
-                <>
-                  <p className="text-sm font-medium text-strong">
-                    {previewDraft
-                      ? candidate
-                        ? t.newVideo
-                        : imageReview
-                          ? t.stepImage
-                          : t.candidateImage
-                      : t.currentProduct}
-                  </p>
-                  <DesktopLifePreview
-                    action={item}
-                    draft={previewDraft}
-                    onImageReady={() => {
-                      const draft = item.draft
-
-                      if (draft) {
-                        setImagePreviews(current => ({ ...current, [`${draft.id}:${draft.image_url}`]: true }))
-                      }
-                    }}
-                    set={selected}
-                  />
-                </>
-              )}
-              {renderMetadata(selected)}
-              {hasCurrentPreview && item.draft && <p className="text-sm text-muted">{t.savedCurrent}</p>}
-              {hasCurrentPreview && previewDraft && (
-                <details className="rounded-xl border border-line-hairline p-3">
-                  <summary className="cursor-pointer text-sm font-medium text-strong">{t.currentProduct}</summary>
-                  <div className="mt-3">
-                    <DesktopLifePreview action={item} set={selected} />
-                  </div>
-                </details>
-              )}
-              {!candidate &&
-                item.status !== 'failed' &&
-                !processing &&
-                !unknown &&
-                (item.error || item.draft?.error) && (
-                  <p className="text-sm text-warning" role="status">
-                    {t.unavailable}
-                  </p>
-                )}
-              {item.needs_update && <p className="text-sm text-warning">{t.needsUpdate}</p>}
-              {unknown || processing ? null : candidate ? (
-                <>
-                  <div className="space-y-2 text-sm text-body">
-                    <p>{t.videoReviewHint}</p>
-                    {item.draft?.review_reason && (
-                      <details className="mt-2 text-xs text-muted">
-                        <summary className="cursor-pointer">{t.reviewDetails}</summary>
-                        <p className="mt-2 break-words">{item.draft.review_reason}</p>
-                      </details>
-                    )}
-                  </div>
-                  {item.key === 'idle' && affected > 0 && (
-                    <p className="text-sm text-warning">{t.updateImpact(affected)}</p>
-                  )}
-                </>
-              ) : imageReview ? (
-                <p className="text-sm text-body">{t.imageReview}</p>
-              ) : item.current && !item.draft && !item.needs_update ? (
-                <p className="text-sm text-muted">{item.key === 'idle' ? t.readyHint : t.actionReadyHint}</p>
-              ) : null}
-              {!processing && (
-                <details
-                  className="rounded-xl border border-line-hairline p-4"
-                  open={Boolean(note.trim() || videoNote.trim() || noteDirty) || undefined}
-                >
-                  <summary className="cursor-pointer text-sm font-medium text-strong">{t.advanced}</summary>
-                  <div className="mt-4 flex flex-col gap-3">
-                    {(showingCurrentVideo || candidate) && (
-                      <button
-                        className={`${BTN_SUBTLE} self-start`}
-                        disabled={
-                          busy ||
-                          recreateSet ||
-                          (item.key !== 'idle' && !readyForActions) ||
-                          item.status === 'processing' ||
-                          item.draft?.submission_unknown
-                        }
-                        onClick={() =>
-                          setRefinement({ action: item, set: selected, source: candidate ? 'candidate' : 'current' })
-                        }
-                        type="button"
-                      >
-                        {t.refineVideo}
-                      </button>
-                    )}
-                    {(note.trim() || noteDirty || (!candidate && !item.draft?.video_refinement && !unknown)) && (
-                      <>
-                        <label className="flex flex-col gap-2 text-sm text-body">
-                          {t.feedback}
-                          <textarea
-                            className={`${INPUT_CLASS} min-h-20 resize-y`}
-                            disabled={busy || customizationReadOnly}
-                            maxLength={1000}
-                            onChange={event => setFeedback(current => ({ ...current, [item.id]: event.target.value }))}
-                            rows={2}
-                            value={note}
-                          />
-                        </label>
-                        {(note.trim() || noteDirty) && (
-                          <div className="flex flex-wrap gap-2">
-                            <button
-                              className={BTN_SUBTLE}
-                              disabled={busy || customizationReadOnly}
-                              onClick={() => void run(() => makeImage(item, selected, note))}
-                              type="button"
-                            >
-                              {t.applyCustomization}
-                            </button>
-                            <button
-                              className={BTN_GHOST}
-                              disabled={busy || customizationReadOnly}
-                              onClick={() => setFeedback(current => ({ ...current, [item.id]: '' }))}
-                              type="button"
-                            >
-                              {t.clearCustomization}
-                            </button>
-                          </div>
-                        )}
-                      </>
-                    )}
-                    {videoNote.trim() && (
-                      <div className="flex flex-col gap-2 rounded-lg bg-accent/5 p-3">
-                        <p className="text-sm font-medium text-strong">{t.savedVideoRequirements}</p>
-                        <p className="whitespace-pre-wrap break-words text-sm text-body">{videoNote}</p>
-                        {!customizationReadOnly && canRemakeVideo && (
-                          <button
-                            className={`${BTN_SUBTLE} self-start`}
-                            disabled={busy || noteDirty}
-                            onClick={() => void run(() => makeVideo(item, selected, persistedNote, ''))}
-                            type="button"
-                          >
-                            {t.clearVideoRequirements}
-                          </button>
-                        )}
-                      </div>
-                    )}
-                    {!candidate && canRemakeVideo && !item.draft?.video_refinement && (
-                      <button
-                        className={`${BTN_SUBTLE} self-start`}
-                        disabled={busy || unknown || chooseActivity || pendingSource || recreateSet || noteDirty}
-                        onClick={() => void run(() => makeVideo(item, selected, note))}
-                        type="button"
-                      >
-                        {t.remakeVideo}
-                      </button>
-                    )}
-                    {!candidate && !dependent && (
-                      <button
-                        className={`${BTN_SUBTLE} self-start`}
-                        disabled={
-                          busy ||
-                          unknown ||
-                          chooseActivity ||
-                          pendingSource ||
-                          recreateSet ||
-                          unavailableFirstGeneration
-                        }
-                        onClick={() => void run(() => makeImage(item, selected, note, true))}
-                        type="button"
-                      >
-                        {t.regenerateImage}
-                      </button>
-                    )}
-                    {item.draft && (
-                      <button
-                        className={`${BTN_GHOST} self-start`}
-                        disabled={busy}
-                        onClick={() => setDiscardAction(item)}
-                        type="button"
-                      >
-                        {t.discardDraft}
-                      </button>
-                    )}
-                    <details className="text-xs text-muted">
-                      <summary className="cursor-pointer">{t.details}</summary>
-                      <p className="mt-2">{item.description}</p>
-                      <p className="mt-2">
-                        {item.kind === 'loop' ? t.loop : t.once} · {item.target_duration_seconds}s{' '}
-                        {item.actual_duration_ms !== null && `· ${(item.actual_duration_ms / 1000).toFixed(1)}s`}
-                      </p>
-                      {item.use_when.length > 0 && (
-                        <p className="mt-2">
-                          {t.useWhen}：{item.use_when.join('；')}
-                        </p>
-                      )}
-                      {item.avoid_when.length > 0 && (
-                        <p className="mt-2">
-                          {t.avoidWhen}：{item.avoid_when.join('；')}
-                        </p>
-                      )}
-                    </details>
-                  </div>
-                </details>
-              )}
-            </>
-          )}
-        </section>
-      ),
-      footer: requiresBase ? (
-        <CreationActionBar description={feedbackStatus}>
-          <button className={BTN_PRIMARY} onClick={() => idle && openAction(idle)} type="button">
-            {t.openImage}
-          </button>
-          {item.draft &&
-            !chooseActivity &&
-            !pendingSource &&
-            !recreateSet &&
-            (isActionPaused(item) || item.status === 'failed') && (
-              <button
-                className={BTN_SUBTLE}
-                disabled={busy}
-                onClick={() => void run(() => retryDesktopVideoDraft(item, selected))}
-                type="button"
-              >
-                {isActionPaused(item) ? t.resume : t.retry}
-              </button>
-            )}
-          {item.draft && (
-            <button className={BTN_GHOST} disabled={busy} onClick={() => setDiscardAction(item)} type="button">
-              {t.discardDraft}
-            </button>
-          )}
-        </CreationActionBar>
-      ) : controls ? (
-        <CreationActionBar description={feedbackStatus}>{controls}</CreationActionBar>
-      ) : feedbackStatus ? (
-        <CreationActionBar description={feedbackStatus}>{null}</CreationActionBar>
-      ) : null
-    }
-  }
-
   const selectedScene =
     creationScene?.id === create.sceneId
       ? creationScene.scene
@@ -1157,118 +659,145 @@ export function DesktopLifePage({
   const materialReady =
     create.source !== 'ai' || (selectedScene?.status === 'ready' && selectedOutfit?.status === 'ready')
 
-  const recommendationDisplay = resolveDesktopLifeRecommendationDisplay(presentation)
-
   const resolutionReady = readyDesktopLifeResolution(create, presentation) !== null
 
-  const displayedActions =
-    selected?.actions.filter(
-      item =>
-        item.key !== 'idle' && (item.definition_id !== null || item.current || item.draft || item.status === 'failed')
-    ) ?? []
+  const taskStatus = !createOpen && action ? creationStatus(action) : null
+  const visibleError = operationErrors[operationScope] ?? (!createOpen ? operationErrors[setScope] : undefined)
 
-  const statusAction = !createOpen ? (action ?? idle) : null
-  const taskStatus = statusAction ? creationStatus(statusAction) : null
+  const visibleRequest = requests[operationScope] ?? (!createOpen ? requests[setScope] : undefined) ?? null
 
   const workspaceStatus =
-    busy || visibleOperationError ? (
+    visibleError || visibleRequest ? (
       <CreationFeedback
-        description={visibleOperationError || undefined}
-        state={busy ? 'working' : 'error'}
-        title={busy ? (createOpen ? undefined : requestTitle) : t.operationFailed}
+        description={visibleError}
+        state={visibleRequest ? 'working' : 'error'}
+        title={visibleRequest ? (createOpen ? undefined : visibleRequest.title) : t.operationFailed}
       />
     ) : taskStatus ? (
-      <CreationFeedback {...taskStatus} key={statusAction?.draft?.id ?? statusAction?.id} />
+      <CreationFeedback {...taskStatus} key={action?.draft?.id ?? action?.id} />
     ) : null
 
-  const detailView = !createOpen && action ? renderAction(action, workspaceStatus) : null
+  const loadError = error || libraryError
 
-  // 创建入口与提交区使用不同 DOM，避免切页的同一次点击继续触发表单提交。
-  const createFooter = createOpen ? (
-    <CreationActionBar
-      description={
-        workspaceStatus ??
-        (!resolutionReady
-          ? t.screenUnavailable
-          : !materialReady
-            ? t.creationMissingMaterials
-            : create.source === 'ai'
-              ? t.creationReady
-              : t.uploadReady)
-      }
-      key="create"
-    >
-      <button
-        aria-atomic="true"
-        aria-live="polite"
-        className={BTN_PRIMARY}
-        disabled={busy || !materialReady || !resolutionReady}
-        form="desktop-life-create"
-        type="submit"
-      >
-        {busy
-          ? t.preparing
-          : create.source === 'ai'
-            ? t.generateImage
-            : create.source === 'image_upload'
-              ? t.uploadImage
-              : t.selectVideo}
-      </button>
-    </CreationActionBar>
-  ) : null
-
-  const overviewFooter =
-    !createOpen && !action && selected && idle ? (
-      <CreationActionBar description={workspaceStatus}>
-        {sourceError && newBackgroundControl}
-        {(idle.draft || !idle.playable || idle.needs_update) && (
-          <button className={BTN_PRIMARY} disabled={busy} onClick={() => openAction(idle)} type="button">
-            {t.continue}
+  const loadIssue =
+    loadError || state?.preparation_error ? (
+      <CreationFeedback
+        actions={
+          <button className={BTN_SUBTLE} disabled={loading} onClick={() => void refreshDesktopVideos()} type="button">
+            <RefreshCw className="size-4" />
+            {t.refresh}
           </button>
-        )}
-        {idle.playable && (
-          <button
-            className={idle.draft ? BTN_SUBTLE : BTN_PRIMARY}
-            disabled={busy || currentMatches}
-            onClick={() => void run(activate)}
-            type="button"
-          >
-            {currentMatches ? t.currentInUse : idle.draft ? t.useCurrent : t.play}
-          </button>
-        )}
-        {idle.current && !idle.draft && !sourceError && (
-          <button className={BTN_SUBTLE} onClick={() => openAction(idle)} type="button">
-            {t.adjustImage}
-          </button>
-        )}
-      </CreationActionBar>
-    ) : null
-
-  const libraryFooter =
-    !createOpen && !selected ? (
-      <CreationActionBar description={workspaceStatus} key="library">
-        <button className={BTN_PRIMARY} disabled={busy} onClick={openCreate} type="button">
-          <Plus size={16} />
-          {t.createSet}
-        </button>
-      </CreationActionBar>
-    ) : null
-
-  const workspaceFooter = createFooter ?? detailView?.footer ?? overviewFooter ?? libraryFooter
-
-  const creationNameField = (
-    <label className={styles.field}>
-      {t.nameOptional}
-      <input
-        className={INPUT_CLASS}
-        disabled={busy}
-        maxLength={160}
-        onChange={event => setCreate(current => ({ ...current, name: event.target.value }))}
-        placeholder={t.autoNamePlaceholder}
-        value={create.name}
+        }
+        description={
+          <details>
+            <summary className="cursor-pointer">{t.details}</summary>
+            <p className="mt-2 break-words">{loadError || state?.preparation_error}</p>
+          </details>
+        }
+        state="error"
+        title={t.unavailable}
       />
-    </label>
-  )
+    ) : null
+
+  const submitCreation = async (): Promise<void> => {
+    const currentCreate = $desktopLifeUi.get().create
+
+    if (
+      requestRef.current.has(createScope) ||
+      !readyDesktopLifeResolution(currentCreate, $presentation.get()) ||
+      !materialReady
+    ) {
+      return
+    }
+
+    const scope = captureAuthScope()
+    const isLive = beginAsync()
+    const navigation = navigationRevision.current
+
+    const created = await perform(async () => {
+      let mediaPath: string | undefined
+
+      if (currentCreate.source !== 'ai') {
+        const image = currentCreate.source === 'image_upload'
+
+        const paths = await fileApi().selectPaths({
+          title: image ? t.uploadImage : t.selectVideo,
+          multiple: false,
+          filters: [
+            image
+              ? { name: t.imageFilterName, extensions: ['png', 'jpg', 'jpeg', 'webp'] }
+              : { name: t.videoFilterName, extensions: ['mp4', 'mov'] }
+          ]
+        })
+
+        mediaPath = paths[0]
+
+        if (!mediaPath) {
+          return null
+        }
+      }
+
+      const liveUi = $desktopLifeUi.get()
+      const target = readyDesktopLifeResolution(liveUi.create, $presentation.get())
+
+      if (
+        !scope?.() ||
+        !isLive() ||
+        !authSessionId ||
+        !target ||
+        !liveUi.creating ||
+        liveUi.create.requestId !== currentCreate.requestId ||
+        navigation !== navigationRevision.current
+      ) {
+        return null
+      }
+
+      const set = await createDesktopVideoSet({
+        request_id: currentCreate.requestId,
+        name: currentCreate.name.trim() || t.newSceneName,
+        ...(currentCreate.source === 'ai'
+          ? {
+              scene_id: Number(currentCreate.sceneId),
+              outfit_id: Number(currentCreate.outfitId),
+              feedback: currentCreate.feedback.trim()
+            }
+          : {}),
+        source: currentCreate.source,
+        target_width: target.width,
+        target_height: target.height
+      })
+
+      return { set, mediaPath }
+    }, t.preparing)
+
+    if (!created || !scope?.() || !isLive()) {
+      return
+    }
+
+    const first = created.set.actions.find(item => item.key === 'idle')
+    const liveUi = $desktopLifeUi.get()
+
+    if (liveUi.create.requestId === currentCreate.requestId) {
+      if (navigation === navigationRevision.current && liveUi.creating) {
+        navigate({
+          selectedSetId: created.set.id,
+          selectedActionId: first?.id ?? null,
+          creating: false,
+          create: newDesktopLifeCreation()
+        })
+      } else {
+        updateDesktopLifeUi({ create: newDesktopLifeCreation() })
+      }
+    }
+
+    if (first && created.mediaPath) {
+      await perform(
+        () => uploadSource(first, created.set, created.mediaPath),
+        currentCreate.source === 'image_upload' ? t.uploadingImage : t.uploadProcessing,
+        `set:${created.set.id}:action:${first.id}`
+      )
+    }
+  }
 
   const customActionForm =
     selected && readyForActions && !sourceError ? (
@@ -1279,26 +808,47 @@ export function DesktopLifePage({
           onSubmit={event => {
             event.preventDefault()
             const isLive = beginAsync()
-            void run(async () => {
-              const proposal = await designDesktopVideoAction({
-                name: design.name.trim() || design.description.trim().slice(0, 24),
-                motion_description: design.description.trim(),
-                kind: design.kind,
-                duration_seconds: design.duration,
-                expected_set_id: selected.id
-              })
+            const navigation = navigationRevision.current
+            const dialogRevision = customActionRevision.current
+            const submittedDesign = $desktopLifeUi.get().design
+            void run(
+              async () => {
+                const proposal = await designDesktopVideoAction({
+                  name: design.name.trim() || design.description.trim().slice(0, 24),
+                  motion_description: design.description.trim(),
+                  kind: design.kind,
+                  duration_seconds: design.duration,
+                  expected_set_id: selected.id
+                })
 
-              if (!isLive()) {
-                return
-              }
+                if (!isLive()) {
+                  return
+                }
 
-              setDesign(current => ({ ...current, name: '', description: '' }))
-              setDesignMessage(proposal.review_reason || t.designSubmitted)
+                if ($desktopLifeUi.get().design === submittedDesign) {
+                  setDesign(current => ({ ...current, name: '', description: '' }))
+                }
 
-              if (proposal.action_id) {
-                updateDesktopLifeUi({ selectedActionId: proposal.action_id, addActionOpen: false })
-              }
-            })
+                const currentUi = $desktopLifeUi.get()
+
+                if (
+                  navigation !== navigationRevision.current ||
+                  dialogRevision !== customActionRevision.current ||
+                  currentUi.selectedSetId !== selected.id ||
+                  currentUi.creating
+                ) {
+                  return
+                }
+
+                setDesignMessage(proposal.review_reason || t.designSubmitted)
+
+                if (proposal.action_id) {
+                  navigate({ selectedActionId: proposal.action_id })
+                }
+              },
+              t.processingRequest,
+              setScope
+            )
           }}
         >
           {designMessage && (
@@ -1310,6 +860,7 @@ export function DesktopLifePage({
             {t.actionDescription}
             <textarea
               className={`${INPUT_CLASS} min-h-28 resize-y`}
+              disabled={busy(setScope)}
               maxLength={600}
               minLength={10}
               onChange={event => setDesign(current => ({ ...current, description: event.target.value }))}
@@ -1324,6 +875,7 @@ export function DesktopLifePage({
               <input
                 aria-label={t.actionName}
                 className={INPUT_CLASS}
+                disabled={busy(setScope)}
                 maxLength={64}
                 onChange={event => setDesign(current => ({ ...current, name: event.target.value }))}
                 placeholder={t.nameOptional}
@@ -1331,6 +883,7 @@ export function DesktopLifePage({
               />
               <PanelSelect
                 ariaLabel={t.actionSettings}
+                disabled={busy(setScope)}
                 onChange={value =>
                   setDesign(current => ({
                     ...current,
@@ -1348,6 +901,7 @@ export function DesktopLifePage({
                 {t.duration}
                 <input
                   className={`${INPUT_CLASS} w-20`}
+                  disabled={busy(setScope)}
                   max={15}
                   min={1}
                   onChange={event => setDesign(current => ({ ...current, duration: Number(event.target.value) || 0 }))}
@@ -1361,7 +915,7 @@ export function DesktopLifePage({
           </details>
           <button
             className={`${BTN_PRIMARY} self-start`}
-            disabled={busy || design.description.trim().length < 10}
+            disabled={busy(setScope) || design.description.trim().length < 10}
             type="submit"
           >
             {t.startAction}
@@ -1369,7 +923,7 @@ export function DesktopLifePage({
           {(design.name.trim() || design.description.trim()) && (
             <button
               className={`${BTN_GHOST} self-start`}
-              disabled={busy}
+              disabled={busy(setScope)}
               onClick={() => setDesign({ name: '', description: '', kind: 'loop', duration: 10 })}
               type="button"
             >
@@ -1382,508 +936,194 @@ export function DesktopLifePage({
 
   return (
     <div className={styles.page}>
-      <CreationWorkspace
-        footer={workspaceFooter ? <div className={styles.fixedRegion}>{workspaceFooter}</div> : undefined}
-        scrollRef={scrollRef}
-      >
-        <div className={styles.content}>
-          {(selected || createOpen) && (
-            <button
-              className={`${BTN_GHOST} self-start`}
-              onClick={() => {
-                if (createOpen) {
-                  setCreateOpen(false)
-                } else if (selectedActionId !== null) {
-                  updateDesktopLifeUi({ selectedActionId: null })
-                } else {
-                  setSelectedSetId(null)
+      {createOpen ? (
+        <DesktopLifeCreateView
+          busy={busy(createScope)}
+          create={create}
+          materialReady={materialReady}
+          onBack={() => navigate({ creating: false })}
+          onChange={change => setCreate(current => ({ ...current, ...change, requestId: crypto.randomUUID() }))}
+          onChangeDisplay={displayId =>
+            setCreate(current => reconcileDesktopLifeDisplay(current, $presentation.get(), displayId))
+          }
+          onPickScene={scene => {
+            setCreationScene({ id: scene.id, scene })
+            setCreate(current => ({
+              ...current,
+              sceneId: scene.id,
+              sceneLabel: scene.title,
+              requestId: crypto.randomUUID()
+            }))
+          }}
+          onPrepareMaterial={onPrepareMaterial}
+          onSubmit={() => void submitCreation().catch(() => undefined)}
+          presentation={presentation}
+          resolutionReady={resolutionReady}
+          selectedOutfit={selectedOutfit}
+          selectedScene={selectedScene}
+          status={workspaceStatus ?? loadIssue}
+        />
+      ) : selected ? (
+        <DesktopLifeWorkbench
+          action={action}
+          busy={busy(setScope)}
+          canAdd={actionsToCreate.length > 0}
+          canCustomize={readyForActions && !sourceError}
+          key={selected.id}
+          onActivate={() => void run(() => activate(selected), t.processingRequest, setScope)}
+          onAdd={() => updateDesktopLifeUi({ addActionOpen: true })}
+          onBack={() => navigate({ selectedSetId: null, selectedActionId: null })}
+          onCustomize={() => {
+            customActionRevision.current += 1
+            setCustomActionOpen(true)
+          }}
+          onMore={() => setSettingsOpen(true)}
+          onSelect={openAction}
+          set={selected}
+        >
+          {action ? (
+            <DesktopLifeActionView
+              action={action}
+              busy={busy(actionScope)}
+              feedbackStatus={workspaceStatus}
+              issue={loadIssue}
+              key={action.id}
+              noteDraft={feedback[action.id]}
+              onAddAction={() => updateDesktopLifeUi({ addActionOpen: true })}
+              onAdopt={() => void run(() => adoptCandidate(action), t.acceptingVideo)}
+              onChangeNote={note =>
+                updateDesktopLifeUi({ feedback: { ...$desktopLifeUi.get().feedback, [action.id]: note } })
+              }
+              onConfirmImage={() => void run(() => confirmDesktopVideoImage(action, selected), t.confirmingImage)}
+              onContinueBase={() => {
+                if (idle) {
+                  openAction(idle)
                 }
               }}
-              type="button"
-            >
-              <ArrowLeft size={15} />
-              {selectedActionId !== null && !createOpen ? t.backToBackground : t.backToLibrary}
-            </button>
-          )}
-          <header className={styles.header}>
-            <div>
-              <h2 className={styles.heading}>{createOpen ? t.createSet : selected ? selectedTitle : t.title}</h2>
-              {(!action || createOpen) && (
-                <p className={styles.intro}>
-                  {createOpen ? t.createHint : !selected ? t.hint : idle?.playable ? t.readyHint : t.leaveHint}
-                </p>
-              )}
-            </div>
-          </header>
-
-          {!createOpen && !selected && state && (
-            <details className={styles.settings}>
-              <summary>
-                <Settings size={16} />
-                {t.preferences}
-                <ChevronDown size={16} />
-              </summary>
-              <div className="mt-4 space-y-4">
-                <div className="flex items-center justify-between gap-4">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-strong">{t.autonomy}</p>
-                    <p className="mt-1 text-xs leading-relaxed text-muted">{t.autonomyHint}</p>
-                  </div>
-                  <Toggle
-                    ariaLabel={t.autonomy}
-                    checked={state.autonomous_enabled}
-                    disabled={busy}
-                    onChange={() => void savePreferences({ autonomous_enabled: !state.autonomous_enabled })}
-                  />
-                </div>
-                <div className="flex items-center justify-between gap-4">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-strong">{t.pin}</p>
-                    <p className="mt-1 text-xs leading-relaxed text-muted">{t.pinHint}</p>
-                  </div>
-                  <Toggle
-                    ariaLabel={t.pin}
-                    checked={state.pinned}
-                    disabled={busy}
-                    onChange={() => void savePreferences({ pinned: !state.pinned })}
-                  />
-                </div>
-                {state.pinned && (
-                  <p className="text-xs text-muted" role="status">
-                    {t.pinnedHint}
-                  </p>
-                )}
-              </div>
-            </details>
-          )}
-          {(error || state?.preparation_error) && (
-            <div className="space-y-2 text-sm text-body" role="alert">
-              <p>{t.unavailable}</p>
-              <button
-                className={`${BTN_SUBTLE} mt-3`}
-                disabled={loading || busy}
-                onClick={() => void refreshDesktopVideos()}
-                type="button"
-              >
-                {t.refresh}
-              </button>
-              <details className="mt-3 text-xs text-muted">
-                <summary className="cursor-pointer">{t.details}</summary>
-                <p className="mt-2 break-words">{state?.preparation_error || error}</p>
-              </details>
-            </div>
-          )}
-          {createOpen ? (
-            <>
-              {renderSteps(0)}
-              <form
-                className={styles.form}
-                id="desktop-life-create"
-                onSubmit={event => {
-                  event.preventDefault()
-                  const currentCreate = $desktopLifeUi.get().create
-                  const target = readyDesktopLifeResolution(currentCreate, $presentation.get())
-
-                  if (busy || !target || !materialReady) {
-                    return
-                  }
-
-                  const scope = captureAuthScope()
-                  const isLive = beginAsync()
-                  void run(async () => {
-                    let mediaPath: string | undefined
-
-                    if (currentCreate.source !== 'ai') {
-                      const image = currentCreate.source === 'image_upload'
-
-                      const paths = await fileApi().selectPaths({
-                        title: image ? t.uploadImage : t.selectVideo,
-                        multiple: false,
-                        filters: [
-                          image
-                            ? { name: t.imageFilterName, extensions: ['png', 'jpg', 'jpeg', 'webp'] }
-                            : { name: t.videoFilterName, extensions: ['mp4', 'mov'] }
-                        ]
-                      })
-
-                      mediaPath = paths[0]
-
-                      if (!mediaPath) {
-                        return
-                      }
-                    }
-
-                    const liveUi = $desktopLifeUi.get()
-                    const currentTarget = readyDesktopLifeResolution(liveUi.create, $presentation.get())
-
-                    if (
-                      !scope?.() ||
-                      !isLive() ||
-                      !authSessionId ||
-                      !currentTarget ||
-                      !liveUi.creating ||
-                      liveUi.create.requestId !== currentCreate.requestId
-                    ) {
-                      return
-                    }
-
-                    const created = await createDesktopVideoSet({
-                      request_id: currentCreate.requestId,
-                      name: currentCreate.name.trim() || t.newSceneName,
-                      ...(currentCreate.source === 'ai'
-                        ? {
-                            scene_id: Number(currentCreate.sceneId),
-                            outfit_id: Number(currentCreate.outfitId),
-                            feedback: currentCreate.feedback.trim()
-                          }
-                        : {}),
-                      source: currentCreate.source,
-                      target_width: currentTarget.width,
-                      target_height: currentTarget.height
-                    })
-
-                    if (!scope?.() || !isLive()) {
-                      return
-                    }
-
-                    const first = created.actions.find(item => item.key === 'idle')
-                    updateDesktopLifeUi({
-                      selectedSetId: created.id,
-                      selectedActionId: first?.id ?? null,
-                      creating: false,
-                      create: newDesktopLifeCreation()
-                    })
-
-                    if (first && currentCreate.source !== 'ai' && mediaPath) {
-                      await uploadSource(first, created, mediaPath)
-                    }
-                  })
-                }}
-              >
-                <section className={styles.section}>
-                  <h3 className="text-sm font-medium text-strong">{t.creationSource}</h3>
-                  <div aria-label={t.creationSource} className={styles.sourceChoice} role="group">
-                    {(['ai', 'image_upload', 'video_upload'] as DesktopVideoSource[]).map(source => (
-                      <button
-                        aria-pressed={create.source === source}
-                        className={BTN_SUBTLE}
-                        disabled={busy}
-                        key={source}
-                        onClick={() => setCreate(current => ({ ...current, source, requestId: crypto.randomUUID() }))}
-                        type="button"
-                      >
-                        {source === 'ai' ? t.useAI : source === 'image_upload' ? t.imageSource : t.videoSource}
-                      </button>
-                    ))}
-                  </div>
-                  {create.source !== 'ai' && <p className="text-sm text-body">{t.ownMediaHint}</p>}
-                </section>
-                <DesktopLifeDisplayPicker
-                  disabled={busy}
-                  displayId={create.targetDisplayId}
-                  displays={presentation.displays}
-                  onChange={targetDisplayId => {
-                    setCreate(current => reconcileDesktopLifeDisplay(current, $presentation.get(), targetDisplayId))
-                  }}
-                />
-                {create.source === 'ai' && (
-                  <section className={styles.section}>
-                    <div>
-                      <h3 className="text-sm font-medium text-strong">{t.referencesTitle}</h3>
-                    </div>
-                    <DesktopLifeReferences
-                      disabled={busy}
-                      onPickOutfit={outfitId =>
-                        setCreate(current => ({ ...current, outfitId, requestId: crypto.randomUUID() }))
-                      }
-                      onPickScene={scene => {
-                        setCreationScene({ id: scene.id, scene })
-                        setCreate(current => ({
-                          ...current,
-                          sceneId: scene.id,
-                          sceneLabel: scene.title,
-                          requestId: crypto.randomUUID()
-                        }))
-                      }}
-                      onPrepareMaterial={onPrepareMaterial}
-                      outfit={selectedOutfit}
-                      outfitId={create.outfitId}
-                      scene={selectedScene}
-                      sceneId={create.sceneId}
-                      sceneLabel={create.sceneLabel}
-                    />
-                  </section>
-                )}
-                {create.source !== 'ai' && creationNameField}
-                {create.source === 'ai' && (
-                  <details
-                    className="rounded-xl border border-line-hairline p-4"
-                    open={Boolean(create.name.trim() || create.feedback.trim()) || undefined}
-                  >
-                    <summary className="cursor-pointer text-sm font-medium text-strong">{t.advanced}</summary>
-                    <div className="mt-4 flex flex-col gap-4">
-                      {creationNameField}
-                      <label className={styles.field}>
-                        {t.idea}
-                        <textarea
-                          className={`${INPUT_CLASS} min-h-28 resize-y font-normal`}
-                          maxLength={1000}
-                          onChange={event =>
-                            setCreate(current => ({
-                              ...current,
-                              feedback: event.target.value,
-                              requestId: crypto.randomUUID()
-                            }))
-                          }
-                          placeholder={t.ideaExample}
-                          rows={4}
-                          value={create.feedback}
-                        />
-                      </label>
-                      {(create.name.trim() || create.feedback.trim()) && (
-                        <button
-                          className={`${BTN_GHOST} self-start`}
-                          disabled={busy}
-                          onClick={() =>
-                            setCreate(current => ({
-                              ...current,
-                              name: '',
-                              feedback: '',
-                              requestId: crypto.randomUUID()
-                            }))
-                          }
-                          type="button"
-                        >
-                          {t.clearCustomization}
-                        </button>
-                      )}
-                    </div>
-                  </details>
-                )}
-              </form>
-            </>
-          ) : action ? (
-            detailView?.content
-          ) : selected ? (
-            <>
-              {idle && (
-                <section className="flex flex-col gap-4">
-                  {sourceError ? (
-                    <p className="text-sm text-warning" role="alert">
-                      {sourceError}
-                    </p>
-                  ) : (
-                    renderFailure(idle)
-                  )}
-
-                  {idle.draft?.candidate_video_url ? (
-                    <span className={`${styles.badge} self-start`}>{t.newVideo}</span>
-                  ) : idle.stage === 'image_review' ? (
-                    <span className={`${styles.badge} self-start`}>{t.stepImage}</span>
-                  ) : null}
-                  {hasPreviewMedia(idle, previewUsesDraft(idle)) && (
-                    <DesktopLifePreview action={idle} draft={previewUsesDraft(idle)} set={selected} />
-                  )}
-                  {renderMetadata(selected)}
-                  {hasPreviewMedia(idle, false) && idle.draft && <p className="text-sm text-muted">{t.savedCurrent}</p>}
-
-                  {!idle.playable && <p className="text-sm text-muted">{t.noActionsHint}</p>}
-                </section>
-              )}
-              <section className="flex flex-col gap-4 border-t border-line-hairline pt-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h3 className="text-base font-medium text-strong">{t.actions}</h3>
-                  {actionsToCreate.length > 0 && (
+              onCreateSet={openCreate}
+              onDiscard={() => setDiscardAction(action)}
+              onMakeImage={(note, regenerate) => void run(() => makeImage(action, selected, note, regenerate))}
+              onMakeVideo={(note, videoFeedback) => void run(() => makeVideo(action, selected, note, videoFeedback))}
+              onPause={() => void run(() => pauseDesktopVideoDraft(action), t.pausingCreation)}
+              onRefine={source => setRefinement({ action, set: selected, source })}
+              onRetry={() => void run(() => retryDesktopVideoDraft(action, selected))}
+              onUpload={() =>
+                void run(
+                  () => uploadSource(action, selected),
+                  selected.source === 'image_upload' ? t.uploadingImage : t.uploadProcessing
+                )
+              }
+              set={selected}
+            />
+          ) : (
+            <div className={styles.content}>
+              {loadIssue ?? (
+                <CreationFeedback
+                  actions={
                     <button
                       className={BTN_SUBTLE}
-                      onClick={() => updateDesktopLifeUi({ addActionOpen: true })}
+                      disabled={loading}
+                      onClick={() => void refreshDesktopVideos()}
                       type="button"
                     >
-                      {t.design}
+                      {t.refresh}
                     </button>
-                  )}
-                </div>
-                {displayedActions.length > 0 && (
-                  <div className={styles.actionGrid}>
-                    {displayedActions.map(item => (
-                      <button
-                        className={styles.libraryCard}
-                        key={item.id}
-                        onClick={() => openAction(item)}
-                        type="button"
-                      >
-                        <DesktopLifeCover
-                          target={selected}
-                          url={
-                            item.current?.poster_url ||
-                            item.draft?.candidate_poster_url ||
-                            item.draft?.image_url ||
-                            null
-                          }
-                        />
-                        <span className="font-medium text-strong">{actionName(item)}</span>
-                        <span className="text-xs text-muted">{actionStatus(item)}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {selected.proposals
-                  ?.filter(proposal => !proposal.action_id)
-                  .map(proposal => (
-                    <div className="rounded-xl bg-black/5 p-4" key={proposal.proposal_id}>
-                      <p className="text-sm font-medium text-strong">{proposal.name}</p>
-                      <p className="mt-1 text-sm text-muted" role="status">
-                        {t.proposalStatuses[proposal.status as keyof typeof t.proposalStatuses] || t.preparing}
-                      </p>
-                      {proposal.review_reason && <p className="mt-2 text-sm text-body">{proposal.review_reason}</p>}
-                    </div>
-                  ))}
-              </section>
-              <details
-                className="rounded-xl border border-line-hairline p-4"
-                open={
-                  Boolean(
-                    rename.trim() || (actionsToCreate.length === 0 && (design.name.trim() || design.description.trim()))
-                  ) || undefined
-                }
-              >
-                <summary className="cursor-pointer text-sm text-body">{t.advanced}</summary>
-                <div className="mt-4 flex flex-col gap-4">
-                  {actionsToCreate.length === 0 && customActionForm}
-                  <form
-                    className="flex flex-wrap gap-2"
-                    onSubmit={event => {
-                      event.preventDefault()
-                      void run(async () => {
-                        await renameDesktopVideoSet(selected.id, rename.trim())
-                        setRename('')
-                      })
-                    }}
-                  >
-                    <input
-                      aria-label={t.setName}
-                      className={`${INPUT_CLASS} min-w-0 flex-1`}
-                      maxLength={160}
-                      onChange={event => setRename(event.target.value)}
-                      placeholder={selectedTitle}
-                      value={rename}
-                    />
-                    <button className={BTN_SUBTLE} disabled={busy || !rename.trim()} type="submit">
-                      {t.renameSet}
-                    </button>
-                  </form>
-                  <button
-                    className={`${BTN_GHOST} self-start`}
-                    disabled={busy}
-                    onClick={() => setDeleteSetId(selected.id)}
-                    type="button"
-                  >
-                    {t.deleteSet}
-                  </button>
-                </div>
-              </details>
-            </>
-          ) : (
-            <>
-              {loading && !sets.length && (
-                <p className="py-8 text-center text-sm text-muted" role="status">
-                  {t.loading}
-                </p>
+                  }
+                  state={loading ? 'working' : 'error'}
+                  title={loading ? t.loading : t.noActions}
+                />
               )}
-              {!loading && !sets.length && (
-                <div className="rounded-2xl bg-accent/5 px-5 py-12 text-center">
-                  <h3 className="text-lg font-medium text-strong">{t.noSets}</h3>
-                  <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-muted">{t.emptyHint}</p>
-                </div>
-              )}
-              <div className={styles.toolbar}>
-                <h3 className="mr-auto text-sm font-medium text-strong">{t.libraryTitle}</h3>
-                <button
-                  className={BTN_GHOST}
-                  disabled={loading || busy}
-                  onClick={() => void refreshDesktopVideos()}
-                  type="button"
-                >
-                  <RefreshCw size={16} />
-                  {t.refresh}
-                </button>
-              </div>
-              <div className={styles.libraryGrid}>
-                {sets.map(item => {
-                  const idle = item.actions.find(action => action.key === 'idle')
-
-                  const unfinished = item.actions.some(
-                    action => action.draft || (action.key === 'idle' && !action.current)
-                  )
-
-                  const pendingAction = desktopLifePendingAction(item)
-
-                  const statusAction = pendingAction ?? idle
-
-                  return (
-                    <article className={styles.libraryCard} data-current={item.is_current} key={item.id}>
-                      <button className={styles.cardLink} onClick={() => setSelectedSetId(item.id)} type="button">
-                        <DesktopLifeCover
-                          target={item}
-                          url={
-                            idle?.current?.poster_url ||
-                            idle?.draft?.candidate_poster_url ||
-                            idle?.draft?.image_url ||
-                            item.base_image_url
-                          }
-                        />
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <strong className={styles.cardTitle}>{item.title.trim() || t.newSceneName}</strong>
-                          {item.is_current && <span className={styles.badge}>{t.current}</span>}
-                        </div>
-                        <span className={styles.cardStatus}>
-                          {statusAction ? (
-                            <>
-                              {statusAction.key !== 'idle' && <>{actionName(statusAction)} · </>}
-                              {actionStatus(statusAction)}
-                            </>
-                          ) : (
-                            t.notCreated
-                          )}
-                        </span>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-xs text-muted">
-                            {resolutionLabel(item.target_width, item.target_height)}
-                          </span>
-                          <DesktopLifeRecommendation display={recommendationDisplay} set={item} />
-                        </div>
-                      </button>
-                      <button
-                        className={`${BTN_SUBTLE} self-start`}
-                        disabled={busy || (item.is_current && !unfinished)}
-                        onClick={() => {
-                          if (idle?.playable && !item.is_current && !unfinished) {
-                            void run(() => activate(item))
-                          } else {
-                            updateDesktopLifeUi({
-                              selectedSetId: item.id,
-                              selectedActionId: pendingAction?.id ?? idle?.id ?? null
-                            })
-                          }
-                        }}
-                        type="button"
-                      >
-                        {idle?.playable && !item.is_current && !unfinished
-                          ? t.play
-                          : item.is_current && !unfinished
-                            ? t.current
-                            : t.continue}
-                      </button>
-                    </article>
-                  )
-                })}
-              </div>
-            </>
+            </div>
           )}
-        </div>
-      </CreationWorkspace>
-      {addActionOpen && selected && actionsToCreate.length > 0 && (
-        <WizardModal
+        </DesktopLifeWorkbench>
+      ) : selectedSetId !== null ? (
+        <CreationWorkspace
+          header={
+            <DesktopLifeHeader
+              onBack={() => navigate({ selectedSetId: null, selectedActionId: null })}
+              title={t.title}
+            />
+          }
+        >
+          <div className={styles.content}>{loadIssue ?? <CreationFeedback state="working" title={t.loading} />}</div>
+        </CreationWorkspace>
+      ) : (
+        <DesktopLifeLibraryView
+          busy={busy(libraryScope) || preferencesSaving}
+          feedback={workspaceStatus}
+          focusTarget={libraryFocus.current}
+          issue={loadIssue}
+          loading={loading}
+          onCreate={openCreate}
+          onOpenSet={openSet}
+          onSavePreferences={change => void savePreferences(change)}
+          savingPreferences={preferencesSaving}
+          search={librarySearch}
+          sets={sets}
+          state={state}
+        />
+      )}
+      {settingsOpen && selected && (
+        <DesktopLifeDialog
+          onClose={() => setSettingsOpen(false)}
+          regionId="desktop-life-settings"
+          title={t.backgroundSettings}
+        >
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={event => {
+              event.preventDefault()
+              const name = rename.trim()
+              const navigation = navigationRevision.current
+
+              if (!name) {
+                return
+              }
+
+              void perform(() => renameDesktopVideoSet(selected.id, name), t.processingRequest, setScope)
+                .then(() => {
+                  if (navigation === navigationRevision.current) {
+                    setRename('')
+                  }
+                })
+                .catch(() => undefined)
+            }}
+          >
+            <label className={styles.field}>
+              {t.setName}
+              <input
+                className={INPUT_CLASS}
+                disabled={busy(setScope)}
+                maxLength={160}
+                onChange={event => setRename(event.target.value)}
+                placeholder={selectedTitle}
+                value={rename}
+              />
+            </label>
+            <button className={`${BTN_SUBTLE} self-start`} disabled={busy(setScope) || !rename.trim()} type="submit">
+              {t.renameSet}
+            </button>
+          </form>
+          {operationErrors[setScope] && (
+            <p className="mt-3 text-xs text-danger-fg" role="alert">
+              {operationErrors[setScope]}
+            </p>
+          )}
+          <button
+            className={`${BTN_GHOST} mt-5 text-danger-fg`}
+            disabled={busy(setScope)}
+            onClick={() => {
+              setSettingsOpen(false)
+              setDeleteSetId(selected.id)
+            }}
+            type="button"
+          >
+            {t.deleteSet}
+          </button>
+        </DesktopLifeDialog>
+      )}
+      {addActionOpen && selected && actionsToCreate.length > 0 && !createOpen && (
+        <DesktopLifeDialog
           onClose={() => updateDesktopLifeUi({ addActionOpen: false })}
           regionId="desktop-life-add-action"
           title={t.design}
@@ -1893,31 +1133,44 @@ export function DesktopLifePage({
           <div className={styles.actionGrid}>
             {actionsToCreate.map(item => (
               <button
-                className="flex flex-col gap-2 rounded-xl border border-line-hairline p-4 text-left hover:bg-black/5"
+                className="flex flex-col gap-2 rounded-xl border border-line-hairline p-4 text-left hover:bg-fill-hover"
                 key={item.id}
                 onClick={() => openAction(item)}
                 type="button"
               >
-                <strong className="text-sm text-strong">{actionName(item)}</strong>
+                <strong className="text-sm text-strong">{desktopLifeActionName(item, t)}</strong>
                 <span className="text-xs text-muted">{actionStatus(item)}</span>
               </button>
             ))}
           </div>
-          <details
-            className="mt-5 border-t border-line-hairline pt-4"
-            open={Boolean(design.name.trim() || design.description.trim()) || undefined}
-          >
-            <summary className="cursor-pointer text-sm font-medium text-strong">{t.advanced}</summary>
-            {customActionForm}
-          </details>
-        </WizardModal>
+        </DesktopLifeDialog>
+      )}
+      {customActionOpen && selected && !createOpen && (
+        <DesktopLifeDialog
+          onClose={closeCustomAction}
+          regionId="desktop-life-custom-action"
+          title={t.customAction}
+          widthClass="max-w-2xl"
+        >
+          {customActionForm}
+          {requests[setScope] && <CreationFeedback state="working" title={requests[setScope].title} />}
+          {operationErrors[setScope] && (
+            <CreationFeedback description={operationErrors[setScope]} state="error" title={t.operationFailed} />
+          )}
+        </DesktopLifeDialog>
       )}
       {discardAction && (
-        <ConfirmDialog
+        <DesktopLifeConfirmDialog
           confirmLabel={t.discardConfirm}
           description={t.discardHint}
           key={`discard:${discardAction.id}:${discardAction.draft?.id ?? ''}`}
-          onConfirm={() => perform(() => cancelDesktopVideoDraft(discardAction))}
+          onConfirm={() =>
+            perform(
+              () => cancelDesktopVideoDraft(discardAction),
+              t.processingRequest,
+              `set:${discardAction.set_id}:action:${discardAction.id}`
+            )
+          }
           onOpenChange={open => {
             if (!open) {
               setDiscardAction(null)
@@ -1928,19 +1181,19 @@ export function DesktopLifePage({
         />
       )}
       {selected && deleteSetId === selected.id && (
-        <ConfirmDialog
+        <DesktopLifeConfirmDialog
           confirmLabel={t.deleteSet}
           description={t.deleteHint}
           key={`delete:${selected.id}`}
           onConfirm={async () => {
             const isLive = beginAsync()
-            await perform(() => deleteDesktopVideoSet(selected.id))
+            await perform(() => deleteDesktopVideoSet(selected.id), t.processingRequest, setScope)
 
             if (isLive()) {
               setDeleteSetId(current => (current === selected.id ? null : current))
 
               if ($desktopLifeUi.get().selectedSetId === selected.id) {
-                setSelectedSetId(null)
+                navigate({ selectedSetId: null, selectedActionId: null })
               }
             }
           }}
@@ -1951,6 +1204,7 @@ export function DesktopLifePage({
           }}
           open
           title={t.deleteSet}
+          variant="destructive"
         />
       )}
       {refinement && (
@@ -1963,7 +1217,11 @@ export function DesktopLifePage({
         />
       )}
       {aspectChoice && (
-        <WizardModal onClose={() => chooseAspect(null)} regionId="desktop-life-aspect-choice" title={t.aspectMismatch}>
+        <DesktopLifeDialog
+          onClose={() => chooseAspect(null)}
+          regionId="desktop-life-aspect-choice"
+          title={t.aspectMismatch}
+        >
           <div className="flex flex-col gap-4 text-sm text-body">
             <p>
               {t.actualResolution}: {resolutionLabel(aspectChoice.source_width, aspectChoice.source_height)}
@@ -2005,7 +1263,7 @@ export function DesktopLifePage({
               </button>
             </div>
           </div>
-        </WizardModal>
+        </DesktopLifeDialog>
       )}
     </div>
   )

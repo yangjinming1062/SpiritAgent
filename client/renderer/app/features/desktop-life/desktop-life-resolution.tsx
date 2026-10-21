@@ -1,11 +1,31 @@
+import { useStore } from '@nanostores/react'
+
 import { desktopDisplayResolution, desktopVideoMatchesDisplay, type DesktopVideoSet } from '@/modules/desktop-videos'
 import { PanelSelect } from '@/shared/panel'
+import { $presentation } from '@/shared/store/presentation'
 import type { PresentationDisplay } from '@ipc/contracts'
 
+import { resolveDesktopLifeRecommendationDisplay } from './desktop-life-display'
 import { useDesktopLifeStrings } from './desktop-life-strings'
+import styles from './desktop-life.module.css'
 
 export function resolutionLabel(width: number, height: number): string {
   return `${width} × ${height}`
+}
+
+export function DesktopLifeMetadata({ set }: { set: DesktopVideoSet }): React.JSX.Element {
+  const t = useDesktopLifeStrings()
+  const display = resolveDesktopLifeRecommendationDisplay(useStore($presentation))
+
+  return (
+    <div className={styles.metadata}>
+      <span>
+        {t.targetResolution}: {resolutionLabel(set.target_width, set.target_height)}
+      </span>
+      <DesktopLifeRecommendation display={display} set={set} />
+      <span>{display ? `${t.recommendationDisplay}: ${display.label}` : t.recommendationUnavailable}</span>
+    </div>
+  )
 }
 
 export function DesktopLifeDisplayPicker({
