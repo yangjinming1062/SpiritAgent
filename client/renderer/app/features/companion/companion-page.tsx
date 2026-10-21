@@ -26,8 +26,8 @@ import { VoicePage } from './voice-page'
 const ENTRIES = [
   { id: 'profile', icon: Users, zh: '资料', en: 'Profile' },
   { id: 'voice', icon: Volume2, zh: '声音', en: 'Voice' },
-  { id: 'appearance', icon: Shirt, zh: '衣柜', en: 'Wardrobe' },
   { id: 'memory', icon: Brain, zh: '记忆', en: 'Memories' },
+  { id: 'appearance', icon: Shirt, zh: '衣柜', en: 'Wardrobe' },
   { id: 'scene', icon: Home, zh: '窗口背景', en: 'Window backgrounds' },
   { id: 'desktop-life', icon: Monitor, zh: '桌面背景', en: 'Desktop backgrounds' }
 ] as const

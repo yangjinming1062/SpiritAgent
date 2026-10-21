@@ -12,9 +12,9 @@ export function Companion({ api, refresh }: { api: RemoteApi; refresh: number })
   const [savedSection, setSection] = usePageState<Section>('companion.section', 'profile')
   const items = [
     { id: 'profile', title: '资料' },
+    { id: 'memory', title: '记忆' },
     { id: 'outfit', title: '衣柜' },
-    { id: 'scene', title: '窗口背景' },
-    { id: 'memory', title: '记忆' }
+    { id: 'scene', title: '窗口背景' }
   ] as const
   const section = items.some(item => item.id === savedSection) ? savedSection : 'profile'
 
