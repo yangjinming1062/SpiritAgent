@@ -160,6 +160,7 @@ export function useInteractiveRegion(
 export interface WindowMouseCaptureOptions {
   releaseDelayMs?: number
   setIgnoreMouseEvents?: (payload: { forward?: boolean; ignore: boolean }) => Promise<void>
+  subscribePointerPosition?: (callback: (point: { x: number; y: number }) => void) => () => void
 }
 
 // 状态与定时器挂在 globalThis 并在卸载时取消，避免 HMR 重载期间遗留定时器把窗口置为 ignore。
@@ -168,8 +169,10 @@ export function useWindowMouseCapture(windowId: number = 0, options?: WindowMous
   setIgnoreFnRef.current = options?.setIgnoreMouseEvents
   const releaseDelayRef = useRef(options?.releaseDelayMs ?? 100)
   releaseDelayRef.current = options?.releaseDelayMs ?? 100
+  const subscribePointerPosition = options?.subscribePointerPosition
 
   useEffect(() => {
+    let active = true
     let requestedIgnore: boolean | undefined
     let latestRequest: Promise<void> | undefined
 
@@ -254,11 +257,23 @@ export function useWindowMouseCapture(windowId: number = 0, options?: WindowMous
 
     setCaptureProbe(probe, windowId)
 
-    const onMouseMove = (e: MouseEvent) => {
-      state.lastPointsByWindow.set(windowId, { x: e.clientX, y: e.clientY })
+    const updatePointerPosition = (point: { x: number; y: number }) => {
+      if (!active) {
+        return
+      }
 
+      state.lastPointsByWindow.set(windowId, point)
       probe()
     }
+
+    const onMouseMove = (e: MouseEvent) => updatePointerPosition({ x: e.clientX, y: e.clientY })
+
+    const unsubscribePointerPosition = subscribePointerPosition?.(point => {
+      // 采样仅补偿失焦窗口；恢复焦点后不能用迟到旧点覆盖实时鼠标事件。
+      if (!document.hasFocus()) {
+        updatePointerPosition(point)
+      }
+    })
 
     window.addEventListener('mousemove', onMouseMove, { passive: true })
     window.addEventListener('focus', probe)
@@ -267,6 +282,8 @@ export function useWindowMouseCapture(windowId: number = 0, options?: WindowMous
     probe()
 
     return () => {
+      active = false
+      unsubscribePointerPosition?.()
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('focus', probe)
       cancelPendingRelease()
@@ -274,5 +291,5 @@ export function useWindowMouseCapture(windowId: number = 0, options?: WindowMous
       state.lastPointsByWindow.delete(windowId)
       setIgnoreMouseEvents(false)
     }
-  }, [windowId])
+  }, [subscribePointerPosition, windowId])
 }

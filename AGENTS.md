@@ -13,7 +13,7 @@
 | 动态与日记 | [动态体验](docs/DESIGN.md#生活动态)、[日记体验](docs/DESIGN.md#第一人称日记)、[契约](docs/PROTOCOL.md#动态与日记) | [Backend 任务入口](backend/README.md#任务入口) |
 | 手机扫码、远程页面与本机能力 | [远程访问](docs/PROTOCOL.md#远程访问) | [Remote](remote/README.md)、[Backend 远程](backend/README.md#远程网页)、[Client](client/README.md#远程网页)、[Runner](runner/README.md#任务入口) |
 | 窗口、拖拽、主题、多屏 | [窗口与会话](docs/DESIGN.md#窗口与会话)、[主题](docs/DESIGN.md#主题与图片查看)、[精灵表现](docs/DESIGN.md#窗口精灵表现与移动) | [Client 任务入口](client/README.md#任务入口)、[窗口与主题约束](client/README.md#窗口与主题) |
-| Windows 桌面模式、Dock 与异常恢复 | [桌面体验](docs/DESIGN.md#桌面模式)、[呈现与启动器](docs/PROTOCOL.md#桌面呈现与本机启动器) | [主进程](client/main/README.md#桌面承载与恢复)、[原生宿主](client/desktop-host/README.md)、[实机验收](scripts/README.md#windows-桌面验收) |
+| 桌面模式、Dock 与异常恢复 | [桌面体验](docs/DESIGN.md#桌面模式)、[呈现与启动器](docs/PROTOCOL.md#桌面呈现与本机启动器) | [主进程](client/main/README.md#桌面承载与恢复)、[Windows 宿主](client/desktop-windows/README.md)、[macOS 模块](client/desktop-macos/README.md)、[Windows 验收](scripts/README.md#windows-桌面验收)、[macOS 验收](scripts/README.md#macos-桌面验收) |
 | 工具、能力同步、执行取消 | [本机工具契约](docs/PROTOCOL.md#本机工具) | [Runner 任务入口](runner/README.md#任务入口)、[Client 主进程](client/main/README.md#runner-生命周期) |
 | 激活、账户切换、凭据、配置与更新 | [信任边界](docs/ARCHITECTURE.md#信任边界与安全)、[账户体验](docs/DESIGN.md#激活与账户切换)、[安全契约](docs/PROTOCOL.md#安全更新与备份) | [Client](client/README.md#任务入口)、[Backend 任务入口](backend/README.md#任务入口) |
 | 首次安装、修复与内置技能 | [安装与修复](installer/README.md#安装与修复) | [Installer 任务入口](installer/README.md#任务入口)、[内置技能文档](installer/README.md#内置技能文档) |

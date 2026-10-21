@@ -96,6 +96,7 @@ export const fileApi = (): FilePort => ({
   copyImage: window.spiritagent.copyImage,
   saveImage: window.spiritagent.saveImage
 })
+export const desktopPlatform = (): string => window.spiritagent.platform
 export const shellApi = (): ShellPort => window.spiritagent
 export const preferencesApi = (): PreferencesPort => window.spiritagent
 export const systemApi = (): SystemPort => window.spiritagent

@@ -1,6 +1,6 @@
 import { type RefObject, useLayoutEffect } from 'react'
 
-import { shellApi } from '@/shared/platform/desktop'
+import { desktopPlatform, shellApi } from '@/shared/platform/desktop'
 import { $presentation } from '@/shared/store/presentation'
 import type { DesktopTrayLayout } from '@ipc/contracts'
 
@@ -27,7 +27,7 @@ export function useDesktopTrayLayout({
     const tray = trayRef.current
     const viewport = viewportRef.current
 
-    if (!enabled || !available || !bar || !tray || !viewport) {
+    if (desktopPlatform() !== 'win32' || !enabled || !available || !bar || !tray || !viewport) {
       return
     }
 

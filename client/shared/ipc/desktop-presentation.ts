@@ -17,6 +17,8 @@ export interface PresentationState {
   prepareDesktopMedia: boolean
   failureReason: string | null
   supported: boolean
+  unsupportedReason: string | null
+  accessibility: { granted: boolean; requestable: boolean }
   foreground: boolean
   stageAvailable: boolean
   fullscreen: boolean
@@ -26,7 +28,7 @@ export interface PresentationState {
   displayId: number | null
   /** 交互屏本地 DIP 坐标；原生工作区尚未就绪或已退出桌面时为空。 */
   workArea: { x: number; y: number; width: number; height: number } | null
-  /** 已定位的原生托盘 DIP 尺寸；自动隐藏或等待底栏定位时仍保留占位。 */
+  /** 已定位的原生托盘 DIP 尺寸；平台无嵌入托盘时为空。 */
   systemTray: { width: number; height: number; visible: boolean } | null
   displays: PresentationDisplay[]
   stageOwner: 'sprite' | 'desktop'
@@ -146,6 +148,9 @@ export type DockCatalogSourceKey =
   | 'desktop-public'
   | 'app-paths'
   | 'apps-folder'
+  | 'mac-applications'
+  | 'mac-system'
+  | 'mac-user'
 
 export interface DockCatalogSource {
   key: DockCatalogSourceKey

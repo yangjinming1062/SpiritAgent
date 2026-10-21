@@ -3,9 +3,24 @@
 const path = require('node:path')
 const fs = require('node:fs')
 const { assertStaticRuntime, readWindowsExecutableArch, windowsArchFromBuilder } = require('./build-desktop-host.cjs')
+const { macosArchFromBuilder, readMacosArchitectures } = require('./build-desktop-macos.cjs')
+const { prepareMacosAppIdentity } = require('./macos-app-identity.cjs')
 const { prepareWindowsDpiManifest } = require('./windows-dpi-manifest.cjs')
 
 exports.default = async function afterPack(context) {
+  if (context.electronPlatformName === 'darwin') {
+    const arch = macosArchFromBuilder(context.arch)
+    const app = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, 'Contents')
+    const name =
+      context.packager.platformSpecificBuildOptions.executableName || context.packager.appInfo.productFilename
+    const executable = path.join(app, 'MacOS', name)
+    const component = path.join(app, 'Resources', 'desktop_macos.node')
+    if (!readMacosArchitectures(executable).includes(arch) || readMacosArchitectures(component).join() !== arch) {
+      throw new Error('Packaged macOS desktop component architecture does not match Electron')
+    }
+    prepareMacosAppIdentity(executable, context.packager.appInfo.id)
+    return
+  }
   if (context.electronPlatformName !== 'win32') return
   const name = context.packager.platformSpecificBuildOptions.executableName || context.packager.appInfo.productFilename
   const executable = path.join(context.appOutDir, `${name}.exe`)

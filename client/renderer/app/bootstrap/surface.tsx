@@ -19,7 +19,7 @@ import { CaptureWindowIdContext, useWindowMouseCapture } from '@/shared/lib/inte
 import { log } from '@/shared/lib/log'
 import { installUpdateBridge } from '@/shared/lib/update-bridge'
 import { ConfirmHost } from '@/shared/panel'
-import { shellApi } from '@/shared/platform/desktop'
+import { desktopPlatform, shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { setPrimaryGateway } from '@/shared/store/gateway'
 import { setSurfaceRole } from '@/shared/store/surfaces'
@@ -66,7 +66,8 @@ function DesktopLifecycle(): null {
   const auth = useStore($auth)
   useWindowMouseCapture(1, {
     releaseDelayMs: 0,
-    setIgnoreMouseEvents: payload => shellApi().presentation.setIgnoreMouseEvents(payload)
+    setIgnoreMouseEvents: payload => shellApi().presentation.setIgnoreMouseEvents(payload),
+    subscribePointerPosition: desktopPlatform() === 'darwin' ? shellApi().presentation.onPointerPosition : undefined
   })
 
   useEffect(() => {

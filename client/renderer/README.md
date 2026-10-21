@@ -16,7 +16,7 @@
 | 改动 | 入口 |
 |---|---|
 | 宿主与独立窗口 | [sprite-entry.tsx](sprite-entry.tsx)、[bootstrap/sprite.tsx](app/bootstrap/sprite.tsx)、[bootstrap/surface.tsx](app/bootstrap/surface.tsx) |
-| Windows 桌面与生活视频 | [bootstrap/surface.tsx](app/bootstrap/surface.tsx)、[windows/desktop](app/windows/desktop/)、[desktop-videos](modules/desktop-videos/) |
+| 桌面模式与生活视频 | [bootstrap/surface.tsx](app/bootstrap/surface.tsx)、[windows/desktop](app/windows/desktop/)、[desktop-videos](modules/desktop-videos/) |
 | 网关与账户 | [host-runtime.ts](app/runtime/host-runtime.ts)、[gateway-event-router.ts](app/runtime/gateway-event-router.ts)、[account-lifecycle.ts](app/workflows/account-lifecycle.ts) |
 | 引导、激活与启动失败 | [onboarding](app/onboarding/) |
 | 角色、动作、拖拽与空间 | [modules/character](modules/character/)、[sprite-stage.tsx](app/components/sprite-stage.tsx) |

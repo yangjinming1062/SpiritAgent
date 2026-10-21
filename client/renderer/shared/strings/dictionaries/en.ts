@@ -815,11 +815,11 @@ export const dict: Dictionary = {
       switchFailed: 'Could not save the display settings. Try again.',
       modeDescription:
         'Window mode uses a main window and floating companion. Desktop mode places your companion in the desktop background.',
-      modeDescriptionUnsupported: 'Desktop mode is available on Windows.',
+      modeDescriptionUnsupported: 'Desktop mode is currently unavailable on this computer.',
       switchToWindowMode: 'Switch to window mode',
       switchToDesktopMode: 'Switch to desktop mode',
       displayDescription:
-        'Use this display while it is connected; otherwise use the current display. Other displays keep the Windows desktop.'
+        'Use this display while it is connected; otherwise use the current display. Other displays keep their existing desktop.'
     }
   },
 
@@ -1711,7 +1711,7 @@ export const dict: Dictionary = {
     rightWhisper: 'Move to right',
     windowMode: 'Return to window mode',
     display: 'Interactive display',
-    displayHint: 'Use only this display. Other displays keep the Windows desktop.',
+    displayHint: 'Use only this display. Other displays keep their existing desktop.',
     quit: 'Quit SpiritAgent',
     dock: 'App Dock',
     pinnedApps: 'Pinned apps',
@@ -1727,6 +1727,11 @@ export const dict: Dictionary = {
     closeWindow: 'Close window',
     closeAllWindows: 'Close all windows',
     runningUnavailable: 'Running apps are temporarily unavailable. Try again.',
+    accessibilityTitle: 'Accessibility permission',
+    accessibilityRequest: 'Allow app window management',
+    accessibilityDescription:
+      'Allow SpiritAgent in System Settings → Privacy & Security → Accessibility to view, close, and move running windows between displays. Pinned apps and the app catalog can still launch apps.',
+    accessibilityGranted: 'Viewing and managing running windows is allowed.',
     allApps: 'All apps',
     appLaunchFailed: 'Could not start app. Try again.',
     repairApp: 'Choose app again',
@@ -1750,7 +1755,10 @@ export const dict: Dictionary = {
       'desktop-onedrive': 'OneDrive desktop',
       'desktop-public': 'Public desktop',
       'app-paths': 'Registered apps',
-      'apps-folder': 'Windows apps'
+      'apps-folder': 'Windows apps',
+      'mac-applications': 'Applications',
+      'mac-system': 'System apps',
+      'mac-user': 'User apps'
     },
     pickSourceFailed: 'Could not read',
     minimize: 'Minimize',

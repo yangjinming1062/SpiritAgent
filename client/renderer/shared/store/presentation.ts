@@ -12,6 +12,8 @@ export const $presentation = atom<PresentationState>({
   status: 'inactive',
   failureReason: null,
   supported: false,
+  unsupportedReason: null,
+  accessibility: { granted: false, requestable: false },
   foreground: false,
   stageAvailable: false,
   fullscreen: false,

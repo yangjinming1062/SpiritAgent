@@ -21,6 +21,7 @@ interface PresentationAccess {
 
 interface PresentationOperations {
   getState: () => PresentationState
+  requestAccessibility: () => Promise<PresentationState>
   setMode: (mode: PresentationMode, sender: WebContents) => Promise<PresentationState>
   setDisplay: (id: number, sender: WebContents) => Promise<PresentationState>
   setTrayLayout: (sender: WebContents, raw: unknown) => Promise<void>
@@ -90,6 +91,11 @@ export function registerDesktopPresentationIpc(
     win.setIgnoreMouseEvents(value.ignore, { forward: value.forward === true })
   })
   register(IPC.invoke.presentationGetState, operations.getState)
+  register(IPC.invoke.presentationRequestAccessibility, event => {
+    access.assertSettings(event.sender)
+
+    return operations.requestAccessibility()
+  })
   register(IPC.invoke.presentationSetMode, (event, raw: unknown) => {
     access.assertSettings(event.sender)
 

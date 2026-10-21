@@ -2,6 +2,7 @@
 
 const fs = require('node:fs')
 const path = require('node:path')
+const { buildDesktopMacos, macosArchFromBuilder } = require('./build-desktop-macos.cjs')
 const { checkDistBuilt } = require('./assert-dist-built.cjs')
 const { buildDesktopHost, targets, windowsArchFromBuilder } = require('./build-desktop-host.cjs')
 
@@ -23,6 +24,8 @@ exports.default = async function beforePack(context) {
   if (context.electronPlatformName === 'win32') {
     const arch = windowsArchFromBuilder(context.arch)
     buildDesktopHost(targets[arch])
+  } else if (context.electronPlatformName === 'darwin') {
+    buildDesktopMacos(macosArchFromBuilder(context.arch))
   }
   const appOutDir = context && context.appOutDir
   try {

@@ -17,7 +17,11 @@ export function createDesktopHealth(options: DesktopHealthOptions) {
   let displayTimer: ReturnType<typeof setTimeout> | undefined
 
   const onMetrics = (_event: Electron.Event, _display: Electron.Display, metrics: string[]): void => {
-    if (metrics.some(metric => ['bounds', 'scaleFactor', 'rotation'].includes(metric))) {
+    if (
+      metrics.some(metric =>
+        ['bounds', 'scaleFactor', 'rotation', ...(process.platform === 'darwin' ? ['workArea'] : [])].includes(metric)
+      )
+    ) {
       options.onDisplaysChanged()
     }
   }

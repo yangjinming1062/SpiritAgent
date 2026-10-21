@@ -24,7 +24,7 @@
     "fix": "eslint renderer/ main/ shared/ scripts/ --fix && prettier --write \"renderer/**/*.{ts,tsx}\" \"main/**/*.{ts,tsx}\" \"shared/**/*.{ts,tsx}\" \"scripts/**/*.{cjs,mjs,ts}\" \"vite.config.ts\" \"tsup.config.ts\" && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.main.json",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.main.json",
     "lint": "eslint renderer/ main/ shared/ scripts/",
-    "build:native": "node scripts/build-desktop-host.cjs"
+    "build:native": "node scripts/build-native.cjs"
   },
   "dependencies": {
     "electron-log": "^5.2.0",
@@ -117,6 +117,12 @@
       "dist/**"
     ],
     "mac": {
+      "extraResources": [
+        {
+          "from": "build/${arch}/desktop_macos.node",
+          "to": "desktop_macos.node"
+        }
+      ],
       "notarize": false,
       "category": "public.app-category.lifestyle",
       "entitlements": "main/security/entitlements.mac.plist",
@@ -126,6 +132,7 @@
         "CFBundleExecutable": "SpiritAgent",
         "CFBundleName": "SpiritAgent",
         "NSAudioCaptureUsageDescription": "唤生使用音频采集进行语音对话。",
+        "NSLocalNetworkUsageDescription": "唤生需要连接局域网内的服务，以登录账户并同步伙伴内容。",
         "NSMicrophoneUsageDescription": "唤生使用麦克风进行语音输入和对话。"
       },
       "gatekeeperAssess": false,

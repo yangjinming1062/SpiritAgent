@@ -23,7 +23,7 @@ import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import { ArrowLeft, ArrowRight, MessageCircle, X } from '@/shared/lib/icons'
 import { isPointInteractive, useInteractiveRegion } from '@/shared/lib/interactive-regions'
-import { shellApi } from '@/shared/platform/desktop'
+import { desktopPlatform, shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { $desktopChatActive } from '@/shared/store/chat-visibility'
 import { $gateway, $gatewayState } from '@/shared/store/gateway'
@@ -70,10 +70,23 @@ export function DesktopRoot(): React.JSX.Element {
   const revealRequest = useRef(0)
   const [windowFocused, setWindowFocused] = useState(() => document.hasFocus())
   const presentation = useStore($presentation)
-  const workArea = presentation.workArea
-  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth)
-  const rail = getDesktopRailLayout(viewportWidth)
-  const popupBottom = DESKTOP_LAYOUT.bottomInset
+  const isMac = desktopPlatform() === 'darwin'
+  const systemWorkArea = presentation.workArea
+
+  const workArea =
+    isMac && systemWorkArea
+      ? { ...systemWorkArea, height: Math.max(0, systemWorkArea.height - DESKTOP_LAYOUT.bottomInset) }
+      : systemWorkArea
+
+  const [viewport, setViewport] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }))
+  const safeLeft = isMac ? (systemWorkArea?.x ?? 0) : 0
+  const safeRight = isMac && systemWorkArea ? Math.max(0, viewport.width - systemWorkArea.x - systemWorkArea.width) : 0
+
+  const safeBottom =
+    isMac && systemWorkArea ? Math.max(0, viewport.height - systemWorkArea.y - systemWorkArea.height) : 0
+
+  const rail = getDesktopRailLayout(Math.max(0, viewport.width - 2 * Math.max(safeLeft, safeRight)))
+  const popupBottom = safeBottom + DESKTOP_LAYOUT.bottomInset
 
   const videoState = useStore($desktopVideoState)
   const videoError = useStore($desktopVideoError)
@@ -127,7 +140,7 @@ export function DesktopRoot(): React.JSX.Element {
 
   const foreground = desktopVisible && presentation.foreground && windowFocused
   useEffect(() => {
-    const resize = (): void => setViewportWidth(window.innerWidth)
+    const resize = (): void => setViewport({ width: window.innerWidth, height: window.innerHeight })
     window.addEventListener('resize', resize)
 
     return () => window.removeEventListener('resize', resize)
@@ -436,7 +449,11 @@ export function DesktopRoot(): React.JSX.Element {
       style={
         {
           '--desktop-bar-height': `${DESKTOP_LAYOUT.barHeight}px`,
-          '--desktop-bar-bottom': `${DESKTOP_LAYOUT.barBottom}px`,
+          '--desktop-bar-bottom': `${safeBottom + DESKTOP_LAYOUT.barBottom}px`,
+          '--desktop-safe-top': `${isMac ? (systemWorkArea?.y ?? 0) : 0}px`,
+          '--desktop-safe-left': `${safeLeft}px`,
+          '--desktop-safe-right': `${safeRight}px`,
+          '--desktop-safe-width': isMac && systemWorkArea ? `${systemWorkArea.width}px` : '100vw',
           '--desktop-avatar-size': `${DESKTOP_LAYOUT.avatarSize}px`,
           '--desktop-bottom-inset': `${DESKTOP_LAYOUT.bottomInset}px`,
           '--desktop-content-inset': `${DESKTOP_LAYOUT.contentInset}px`,
@@ -453,7 +470,7 @@ export function DesktopRoot(): React.JSX.Element {
           '--desktop-center-width': `${DESKTOP_LAYOUT.centerWidth}px`,
           '--desktop-control-size': `${DESKTOP_LAYOUT.controlSize}px`,
           '--desktop-control-edge': `${DESKTOP_LAYOUT.controlEdge}px`,
-          '--desktop-control-right': `${rail.controlRight}px`,
+          '--desktop-control-right': `${safeRight + rail.controlRight}px`,
           '--desktop-bar-available-width': `${rail.width}px`,
           '--desktop-popup-bottom': `${popupBottom}px`
         } as React.CSSProperties

@@ -2,9 +2,8 @@ import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 
-import type { SpiritAgentUiPalette } from '@ipc/contracts'
-
 import type { RunningApplicationsState, RunningApplicationWindow } from '../shared/desktop-applications'
+import type { DesktopHostOperations, DesktopHostOptions, DesktopHostWindow } from '../shared/desktop-host'
 import type { DesktopJumpListTask } from '../shared/desktop-jump-list'
 import { createSerialQueue } from '../shared/utils'
 
@@ -30,62 +29,6 @@ function isRunningWindow(raw: unknown): raw is RunningApplicationWindow {
     typeof item.lastActive === 'number' &&
     item.lastActive >= 0
   )
-}
-
-export interface ExplorerDesktopWindow {
-  handle: Buffer
-  role: 'background' | 'overlay'
-  /** 使用 screen.dipToScreenRect 转换完整显示器边界；helper 校正最多两像素的舍入。 */
-  bounds: { x: number; y: number; width: number; height: number }
-}
-
-export interface ExplorerDesktopSystemTray {
-  bounds: ExplorerDesktopWindow['bounds']
-  visible: boolean
-}
-
-export interface ExplorerDesktopTrayLayout {
-  bounds: ExplorerDesktopWindow['bounds']
-  clip: ExplorerDesktopWindow['bounds']
-}
-
-interface HostOptions {
-  helperPath: string
-  journalPath: string
-  log: (message: string) => void
-  onFailure: (reason: string) => void
-  onForegroundChanged?: (state: { active: boolean; stageAvailable: boolean; fullscreen: boolean }) => void
-  onWarning?: (reason: string) => void
-  onApplicationsChanged?: (state: RunningApplicationsState) => void
-  onWorkAreaChanged?: (bounds: ExplorerDesktopWindow['bounds']) => void
-  onSystemTrayChanged?: (tray: ExplorerDesktopSystemTray | null) => void
-}
-
-export interface ExplorerDesktopHost {
-  start: (options: {
-    windows: ExplorerDesktopWindow[]
-    parentPid: number
-    takeover: boolean
-    palette: SpiritAgentUiPalette
-    workArea: ExplorerDesktopWindow['bounds']
-  }) => Promise<void>
-  setPalette: (palette: SpiritAgentUiPalette) => Promise<void>
-  setTrayLayout: (layout: ExplorerDesktopTrayLayout | null, eligible?: () => boolean) => Promise<void>
-  focus: (handle: Buffer, eligible?: () => boolean) => Promise<boolean>
-  refreshApplications: (eligible: () => boolean) => Promise<void>
-  activateExternal: (
-    windowId: string,
-    allowRemote: boolean,
-    eligible: () => boolean,
-    continuation?: () => boolean
-  ) => Promise<void>
-  cancelExternalInteraction: () => Promise<void>
-  launchExternal: (target: string, appId: string, eligible: () => boolean) => Promise<void>
-  closeExternal: (windowIds: string[], eligible: () => boolean) => Promise<void>
-  getJumpListTasks: (target: string, eligible: () => boolean) => Promise<DesktopJumpListTask[]>
-  activateJumpListTask: (target: string, taskId: string, eligible: () => boolean) => Promise<void>
-  stop: () => Promise<void>
-  recover: () => Promise<boolean>
 }
 
 interface PendingRequest {
@@ -215,10 +158,10 @@ function encodeHandle(buffer: Buffer): string {
   return handle.toString(16)
 }
 
-function encodeWindow(window: ExplorerDesktopWindow): {
+function encodeWindow(window: DesktopHostWindow): {
   handle: string
-  role: ExplorerDesktopWindow['role']
-  bounds: ExplorerDesktopWindow['bounds']
+  role: DesktopHostWindow['role']
+  bounds: DesktopHostWindow['bounds']
 } {
   const handle = encodeHandle(window.handle)
   const bounds = window.bounds
@@ -230,7 +173,7 @@ function encodeWindow(window: ExplorerDesktopWindow): {
   return { bounds: { ...bounds }, handle, role: window.role }
 }
 
-function isPhysicalRect(value: unknown): value is ExplorerDesktopWindow['bounds'] {
+function isPhysicalRect(value: unknown): value is DesktopHostWindow['bounds'] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return false
   }
@@ -248,7 +191,7 @@ function isPhysicalRect(value: unknown): value is ExplorerDesktopWindow['bounds'
   )
 }
 
-export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktopHost {
+export function createExplorerDesktopHost(options: DesktopHostOptions): DesktopHostOperations {
   if (!path.isAbsolute(options.helperPath) || !path.isAbsolute(options.journalPath)) {
     throw new Error('Desktop helper and journal paths must be absolute')
   }

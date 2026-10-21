@@ -7,6 +7,7 @@ type EventSubscription<K extends keyof IpcEventContract> = IpcEventContract[K] e
   : (callback: () => void) => () => void
 
 export interface DesktopBridge {
+  platform: string
   uiState: {
     get: AsyncIpc<IpcInvokeContract['spiritagent:ui-state:get']>
     update: AsyncIpc<IpcInvokeContract['spiritagent:ui-state:update']>
@@ -19,6 +20,7 @@ export interface DesktopBridge {
     companionActivity: AsyncIpc<IpcInvokeContract['spiritagent:presentation:companion-activity']>
     setIgnoreMouseEvents: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-ignore-mouse-events']>
     getState: AsyncIpc<IpcInvokeContract['spiritagent:presentation:get-state']>
+    requestAccessibility: AsyncIpc<IpcInvokeContract['spiritagent:presentation:request-accessibility']>
     setMode: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-mode']>
     setDisplay: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-display']>
     reportReady: AsyncIpc<IpcInvokeContract['spiritagent:presentation:report-ready']>
@@ -29,6 +31,7 @@ export interface DesktopBridge {
     setTrayLayout: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-tray-layout']>
     stageActivity: AsyncIpc<IpcInvokeContract['spiritagent:presentation:stage-activity']>
     onChanged: EventSubscription<'spiritagent:presentation:changed'>
+    onPointerPosition: EventSubscription<'spiritagent:presentation:pointer-position'>
     onBackgroundPlayback: EventSubscription<'spiritagent:presentation:background-playback'>
   }
   dock: {

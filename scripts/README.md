@@ -14,6 +14,7 @@
 | 手机远程页面 | `pnpm --dir remote lint`、`pnpm --dir remote typecheck`、`pnpm --dir remote build`；扫码、麦克风和后台恢复须在 iOS Safari、Android Chrome 实机验收 |
 | 共享协议 `shared/`、预设目录 | 先执行 `backend/.venv/Scripts/python.exe scripts/generate_protocol.py --check`（其他环境使用 Backend Python），再同时执行 Client 与 Remote 的 lint、typecheck 和构建；Remote lint 及提交前格式化覆盖全部手写共享 TS，生成的 `api.generated.ts` 只核对生成漂移 |
 | Windows 桌面 helper | 在 Windows 执行 `pnpm --dir client build:native`，生成 Rust host 与同架构 C++/WinRT 托盘样式模块；`cargo check --locked` 只覆盖 Rust；透明呈现、交互与恢复另做实机验收 |
+| macOS 桌面模块 | 在 macOS 执行 `pnpm --dir client build:native`，用 Xcode CLT 与 C Node-API 头构建目标 Electron 架构；`builder --dir --mac --arm64`／`--x64` 检查包内 Mach-O 和资源，层级、权限与交接另做下文实机验收 |
 | preload、构建入口或资源 | `pnpm --dir client build` 并核对实际产物 |
 | Installer 前端与编排 | `pnpm --dir installer build`，以及完整载荷下的目标平台 Tauri 构建和安装验收 |
 | wheel 或安装载荷 | 隔离安装门禁、精确版本与对应平台构建 |
@@ -28,6 +29,21 @@ uv tool run --python 3.13 pre-commit run -a
 hook 包含自动修正，仅在修改完成、准备提交时执行，随后检查差异并复验；开发过程使用只读专项检查，不反复运行格式化。hook 不包含 Client typecheck、Backend 架构检查或原生验收。构建可能修改构建信息和版本清单，交付时区分静态、构建与真实运行结果。
 
 修改协议后运行 `scripts/generate_protocol.py` 更新生成契约；`--check` 只检查漂移。生成阶段同时校验后端预设目录与 Runner 允许预设是否一致，不一致时命令失败，跨端预设清单与 Runner 契约都从后端目录派生。
+
+## macOS 桌面验收
+
+自动检查与构建不能替代以下目标系统验收。支持 macOS 12 及以上的 arm64、x64；不接受 universal 桌面模块打包。原生构建与系统 API 边界见 [模块说明](../client/desktop-macos/README.md)，Windows 的 helper 和恢复验收保持下节原入口。
+
+| 场景 | 验收依据 |
+|---|---|
+| 原生加载与打包 | 开发与打包 Electron 均能加载对应架构的 `desktop_macos.node`；缺文件、错误架构和接口不匹配保留原因，旧窗口未关闭前拒绝进入；正式签名包验证模块签名与公证结果 |
+| 图层与输入 | 动态背景位于 Finder 图标下；点击、框选、拖放与键盘正常；底栏与内部窗口可交互，透明空白穿透；普通应用可覆盖界面，显式打开功能可置前，Dock 和菜单栏保持系统行为 |
+| 工作区与显示器 | 覆盖 Dock 位于左／右／下方、尺寸和自动隐藏变化、菜单栏、Retina／非 Retina 混合屏、负坐标、切交互屏、拔屏、旋转及缩放；底栏和弹层避让系统区域，产品内容区避让底栏，其他应用工作区不被修改 |
+| Spaces 与全屏 | 切换 Space、Mission Control、Stage Manager 和原生／普通全屏，视频与交互层行为一致；全屏暂停媒体且不抢焦点，退出恢复；旧 Space 窗口 ID 不可操作，首次已最小化窗口不猜测归属 |
+| 辅助功能权限 | 无权限仍能进入、交接、浏览目录、固定和启动；运行投影显示授权引导，关闭与迁移禁用；手动授权／撤销后刷新，操作前再次校验；普通启动回执不假称已定位窗口 |
+| 目录与启动条 | 系统、共享与用户 `.app`，多层目录、中文名、损坏包、缺失／卸载、符号链接、搜索、分批图标、拖入、修复、排序、重启固定恢复；本屏优先、异屏迁移和新启动定位均复核实际窗口；最小化恢复、不支持的全屏／模态操作、正常关闭与保存提示保留真实结果 |
+| 生命周期与隔离 | 页面、会话、草稿及阅读位置双向交接；录音／转写／上传阻止切换；换号、鉴权失效、退出、更新取消、renderer 崩溃、休眠唤醒、进入中取消均可回窗口；迟到查询和动作不作用新会话；原生进程硬崩溃后下次启动留窗口模式 |
+| Windows 回归 | 按下节原有清单验证 helper、托盘、AppBar、程序任务、前台授权与 guardian，确认平台适配未改变原协议及行为 |
 
 ## Windows 桌面验收
 
@@ -101,7 +117,9 @@ uv run --project backend python scripts/debug_prompt.py --db --user-id 1 --prese
 
 [`client/scripts/`](../client/scripts/) 的关键门禁：`assert-root-install.cjs` 检查 Client 根依赖，`write-build-stamp.cjs` 记录提交来源，`assert-dist-built.cjs` 检查所有入口页面及其本地 JS、样式和预加载资源。`launch-dev-electron.cjs` 管理开发进程，打包钩子准备 Windows helper 和 DPI manifest。
 
-`build` 收尾与 `beforePack` 均校验渲染产物，直接调用 `builder` 仍须先完成构建；Windows helper 的架构或静态运行库门禁失败会中止打包。开发准备见 [桌面宿主构建](../client/desktop-host/README.md#构建)。
+`build` 收尾与 `beforePack` 均校验渲染产物，直接调用 `builder` 仍须先完成构建；Windows helper 的架构或静态运行库门禁失败会中止打包。开发准备见 [桌面宿主构建](../client/desktop-windows/README.md#构建)。
+
+macOS `afterPack` 校验原生模块架构，再由 [macos-app-identity.cjs](../client/scripts/macos-app-identity.cjs) 按应用 ID 与原始 Electron build UUID 派生主执行文件 UUID，避免与其他 Electron 应用混淆本地网络授权（[Apple TN3178](https://developer.apple.com/documentation/technotes/tn3178-checking-for-and-resolving-build-uuid-problems)）。此步骤只改主执行文件并修复其 ad-hoc 签名，之后仍由 builder 完成所选身份的签名；Framework 与 helper 的 UUID 保持不变，仅小型启动器不再匹配 Electron 官方 dSYM。本地整包验签可用 `CSC_IDENTITY_AUTO_DISCOVERY=false pnpm --dir client exec electron-builder --dir --mac --arm64 -c.mac.identity=-`，正式交付仍需 Apple 证书签名与公证。
 
 macOS `afterSign` 调用 [notarize.cjs](../client/scripts/notarize.cjs)，electron-builder 内建公证关闭。支持 keychain profile、Apple ID 及 API key，参数与优先级见脚本；未配置时跳过，部分配置报错。外部命令有超时，临时 ZIP 和内联 key 文件在结束时清理；真实签名与公证须在 macOS 验证。
 

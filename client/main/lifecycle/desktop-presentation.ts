@@ -25,13 +25,14 @@ import { registerDesktopPresentationIpc } from '../ipc/desktop-presentation'
 import { createUiStateBridge } from '../ipc/ui-state'
 import { isSenderWindow } from '../security/ipc-trust'
 import type { ApplicationEligibility, RunningApplicationsState } from '../shared/desktop-applications'
+import type { DesktopHostSystemTray } from '../shared/desktop-host'
 import { atomicWriteFile, broadcastToAllWindows, createSerialQueue, sendToWindow } from '../shared/utils'
 
 import { createDesktopBackgroundRuntime } from './desktop-background-runtime'
 import { readNativeDisplayBounds } from './desktop-display-resolutions'
 import { createDesktopHealth } from './desktop-health'
+import { createDesktopHost } from './desktop-host'
 import { createDesktopWindows } from './desktop-windows'
-import { createExplorerDesktopHost, type ExplorerDesktopSystemTray } from './explorer-desktop-host'
 import { createPresentationPreferences } from './presentation-preferences'
 
 interface DesktopPresentationOptions {
@@ -64,6 +65,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   const journalFile = path.join(options.userData, 'desktop-shell-recovery.json')
   const interruptedFile = `${journalFile}.interrupted`
   const mainInterruptedFile = `${journalFile}.main-interrupted`
+  const macosActiveFile = path.join(options.userData, 'desktop-macos-active.json')
   let revision = 0
   let stageEpoch = 0
   let desiredPalette = getUiPalette(normalizeUiTheme(options.seedTheme()))
@@ -188,12 +190,17 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     log: options.log
   })
 
-  const native = createExplorerDesktopHost({
+  const native = createDesktopHost({
     helperPath: options.helperPath,
     journalPath: journalFile,
     log: options.log,
     onForegroundChanged: state => {
-      if (foreground === state.active && stageAvailable === state.stageAvailable && fullscreen === state.fullscreen) {
+      if (
+        process.platform !== 'darwin' &&
+        foreground === state.active &&
+        stageAvailable === state.stageAvailable &&
+        fullscreen === state.fullscreen
+      ) {
         return
       }
 
@@ -210,7 +217,9 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     onApplicationsChanged: state => {
       if (status === 'starting' || status === 'active') {
         setRunningApplications(
-          state.status === 'unavailable' ? { ...state, windows: runningApplications.windows } : state
+          state.status === 'unavailable' && (process.platform !== 'darwin' || native.accessibility().granted)
+            ? { ...state, windows: runningApplications.windows }
+            : state
         )
       }
     },
@@ -224,6 +233,12 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       scheduleRecovery(reason)
     }
   })
+
+  function refreshAccessibility(): void {
+    if (!disposed) {
+      publish()
+    }
+  }
 
   function setRunningApplications(state: RunningApplicationsState): void {
     runningApplications = state
@@ -305,7 +320,9 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       status,
       prepareDesktopMedia,
       failureReason,
-      supported: process.platform === 'win32',
+      supported: native.availability().supported,
+      unsupportedReason: native.availability().reason,
+      accessibility: native.accessibility(),
       foreground: foreground && desktopUnlocked,
       stageAvailable: stageAvailable && desktopUnlocked,
       fullscreen,
@@ -364,7 +381,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
     enforceSurfaceBounds()
 
-    const dip = screen.screenToDipRect(win, physical)
+    const dip = process.platform === 'darwin' ? physical : screen.screenToDipRect(win, physical)
     const display = activeDisplay.bounds
     const x = Math.max(0, dip.x - display.x)
     const y = Math.max(0, dip.y - display.y)
@@ -376,6 +393,14 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     }
 
     const area = { x, y, width: right - x, height: bottom - y }
+
+    if (process.platform === 'darwin') {
+      const safeWidth = display.width - 2 * Math.max(x, display.width - right)
+
+      if (area.height <= DESKTOP_LAYOUT.bottomInset || !getDesktopRailLayout(safeWidth).fits) {
+        throw new Error('系统可用区域没有足够空间显示桌面底栏，请使用窗口模式。')
+      }
+    }
 
     if (
       nativeWorkArea?.x === area.x &&
@@ -390,7 +415,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     publish()
   }
 
-  function updateNativeSystemTray(physical: ExplorerDesktopSystemTray | null): void {
+  function updateNativeSystemTray(physical: DesktopHostSystemTray | null): void {
     const win = windows.getInteractive()
 
     if (
@@ -584,6 +609,12 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   function invalidateStartup(reason: string): void {
     startupGeneration += 1
 
+    if (process.platform === 'darwin') {
+      void native
+        .cancelExternalInteraction()
+        .catch(error => options.log(`[desktop] cancelling macOS operation: ${errorMessage(error)}`))
+    }
+
     windows.invalidateReady(reason)
   }
 
@@ -659,6 +690,15 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     } finally {
       try {
         destroyWindows()
+
+        if (process.platform === 'darwin' && existsSync(macosActiveFile)) {
+          try {
+            unlinkSync(macosActiveFile)
+          } catch (error) {
+            options.log(`[desktop] macOS active marker cleanup: ${errorMessage(error)}`)
+          }
+        }
+
         foreground = false
 
         const main = options.getMainWindow()
@@ -693,8 +733,10 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       return
     }
 
-    if (process.platform !== 'win32') {
-      throw new Error('桌面模式目前仅支持 Windows。')
+    const availability = native.availability()
+
+    if (!availability.supported) {
+      throw new Error(availability.reason || '当前系统不支持桌面模式。')
     }
 
     if (!options.authenticated() || !hostReady) {
@@ -702,10 +744,10 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     }
 
     if (options.developmentPreparationError) {
-      throw new Error(`Windows 桌面组件准备失败，请修复工具链并重启开发客户端：${options.developmentPreparationError}`)
+      throw new Error(`桌面组件准备失败，请修复工具链并重启开发客户端：${options.developmentPreparationError}`)
     }
 
-    if (!existsSync(options.helperPath)) {
+    if (process.platform === 'win32' && !existsSync(options.helperPath)) {
       throw new Error(
         app.isPackaged
           ? 'Windows 桌面组件缺失，请重新安装客户端。'
@@ -748,7 +790,20 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         throw new Error('当前没有可用显示器，请连接显示屏后重试。')
       }
 
-      if (!getDesktopRailLayout(selected.bounds.width).fits) {
+      const availableWidth =
+        process.platform === 'darwin'
+          ? selected.bounds.width -
+            2 *
+              Math.max(
+                selected.workArea.x - selected.bounds.x,
+                selected.bounds.x + selected.bounds.width - selected.workArea.x - selected.workArea.width
+              )
+          : selected.bounds.width
+
+      if (
+        !getDesktopRailLayout(availableWidth).fits ||
+        (process.platform === 'darwin' && selected.workArea.height <= DESKTOP_LAYOUT.bottomInset)
+      ) {
         throw new Error('屏幕没有足够空间显示桌面底栏，请使用窗口模式。')
       }
 
@@ -790,15 +845,25 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       assertReady()
 
       nativeWorkAreaEpoch = stageEpoch
+
+      if (process.platform === 'darwin') {
+        // 进入原生模块前落盘，硬崩溃后首次启动不会重入同一路径。
+        await atomicWriteFile(macosActiveFile, JSON.stringify({ pid: process.pid }))
+        assertReady()
+      }
+
       await native.start({
         parentPid: process.pid,
         takeover: process.env.SPIRITAGENT_DESKTOP_PROBE !== '1',
         palette: desiredPalette,
-        workArea: screen.dipToScreenRect(main, {
-          ...selected.bounds,
-          y: selected.bounds.y,
-          height: selected.bounds.height - DESKTOP_LAYOUT.bottomInset
-        }),
+        workArea:
+          process.platform === 'darwin'
+            ? selected.workArea
+            : screen.dipToScreenRect(main, {
+                ...selected.bounds,
+                y: selected.bounds.y,
+                height: selected.bounds.height - DESKTOP_LAYOUT.bottomInset
+              }),
         windows: surfaces.map(win => {
           const bounds = windows.getBounds(win)
 
@@ -808,7 +873,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
           return {
             handle: win.getNativeWindowHandle(),
-            bounds: screen.dipToScreenRect(win, bounds),
+            bounds: process.platform === 'darwin' ? bounds : screen.dipToScreenRect(win, bounds),
             role: win === main ? ('overlay' as const) : ('background' as const)
           }
         })
@@ -830,6 +895,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         }
       }
 
+      // macOS 在首次显示时可能再次避让菜单栏，显示后复核完整背景边界。
+      enforceSurfaceBounds()
       assertReady()
 
       effectiveMode = 'desktop'
@@ -849,7 +916,12 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     }
 
     initialized = true
-    let interrupted = existsSync(interruptedFile) || existsSync(mainInterruptedFile)
+
+    let interrupted =
+      existsSync(interruptedFile) ||
+      existsSync(mainInterruptedFile) ||
+      (process.platform === 'darwin' && existsSync(macosActiveFile))
+
     suppressAutoRestore = interrupted
 
     if (process.platform === 'win32' && existsSync(journalFile)) {
@@ -878,7 +950,11 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     }
 
     if (interrupted && !existsSync(journalFile)) {
-      for (const marker of [interruptedFile, mainInterruptedFile]) {
+      for (const marker of [
+        interruptedFile,
+        mainInterruptedFile,
+        ...(process.platform === 'darwin' ? [macosActiveFile] : [])
+      ]) {
         if (existsSync(marker)) {
           try {
             unlinkSync(marker)
@@ -891,6 +967,12 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
     if (!disposed) {
       health.start()
+
+      if (process.platform === 'darwin') {
+        app.on('activate', refreshAccessibility)
+        app.on('browser-window-focus', refreshAccessibility)
+      }
+
       await refreshDisplayResolutions()
       publish()
     }
@@ -909,6 +991,11 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     }
 
     if (activeDisplay && current && sameDisplayGeometry(activeDisplay, current)) {
+      if (process.platform === 'darwin') {
+        activeDisplay = { ...current, bounds: { ...current.bounds } }
+        updateNativeWorkArea(current.workArea)
+      }
+
       publish()
 
       return
@@ -966,6 +1053,11 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
   async function setTrayLayout(sender: WebContents, raw: unknown): Promise<void> {
     assertDesktop(sender)
+
+    if (process.platform !== 'win32') {
+      return
+    }
+
     const value = raw as Partial<DesktopTrayLayout> | null
 
     if (!value || !Number.isSafeInteger(value.epoch) || value.layout === undefined) {
@@ -1146,8 +1238,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
     assertModeInputAvailable(mode)
 
-    if (mode === 'desktop' && process.platform !== 'win32') {
-      return Promise.reject(new Error('桌面模式目前仅支持 Windows。'))
+    if (mode === 'desktop' && !native.availability().supported) {
+      return Promise.reject(new Error(native.availability().reason || '当前系统不支持桌面模式。'))
     }
 
     if (mode === 'window') {
@@ -1350,6 +1442,12 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         setMode,
         setDisplay,
         setTrayLayout,
+        requestAccessibility: async () => {
+          native.requestAccessibility()
+          publish()
+
+          return snapshot()
+        },
         companionActivity: (source, state, voicePreparing) => {
           if (disposed) {
             return
@@ -1412,6 +1510,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     if (!disposal) {
       disposed = true
       health.dispose()
+      app.removeListener('activate', refreshAccessibility)
+      app.removeListener('browser-window-focus', refreshAccessibility)
       uiState.beginShutdown()
       applicationListeners.clear()
       // 精灵宿主会持续上报到窗口关闭；will-quit 才表示所有发送窗口已经退出。
@@ -1473,7 +1573,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     ): Promise<void> => {
       assertDesktop(sender)
 
-      return serial(() => native.launchExternal(target, appId, eligible.current))
+      return serial(() => native.launchExternal(target, appId, eligible.current, eligible.continuation))
     },
     closeExternal: (sender: WebContents, windowIds: string[], eligible: ApplicationEligibility): Promise<void> => {
       assertDesktop(sender)

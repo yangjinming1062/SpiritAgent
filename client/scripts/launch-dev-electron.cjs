@@ -7,6 +7,7 @@ const { createConcurrently } = require('concurrently')
 const waitOn = require('wait-on')
 let electronPath = require('electron')
 const { buildDesktopHost, readWindowsExecutableArch, targets } = require('./build-desktop-host.cjs')
+const { buildDesktopMacos, readMacosExecutableArch } = require('./build-desktop-macos.cjs')
 const { prepareDevelopmentElectron } = require('./windows-dpi-manifest.cjs')
 
 const DEV_SERVER_URL = 'http://127.0.0.1:5174'
@@ -202,6 +203,16 @@ async function startDevelopment() {
       console.warn(`[launch-dev-electron] 桌面模式尚未准备：${error.message}`)
       console.warn(
         '[launch-dev-electron] 继续启动窗口模式。准备好工具链后，在 client 目录运行 pnpm build:native，再重新启动 pnpm dev。'
+      )
+    }
+  } else if (process.platform === 'darwin') {
+    try {
+      buildDesktopMacos(readMacosExecutableArch(electronPath), { ifNeeded: true })
+    } catch (error) {
+      process.env.SPIRITAGENT_DESKTOP_DEV_PREPARATION_ERROR = error.message
+      console.warn(`[launch-dev-electron] 桌面模式尚未准备：${error.message}`)
+      console.warn(
+        '[launch-dev-electron] 继续启动窗口模式。安装 Xcode 命令行工具后运行 pnpm build:native，再重启 pnpm dev。'
       )
     }
   }

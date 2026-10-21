@@ -24,7 +24,7 @@ flowchart LR
 
 - Backend 运行于 Linux Docker；Client、Runner、Installer 支持 Windows 与 macOS 原生运行。底层库的跨平台能力不等于产品平台支持。
 - 主进程保管桌面身份、持有唯一聊天 WS 并桥接本机执行；所有渲染窗口通过受控 IPC 请求和订阅。Runner 不持后端凭据，模型调用由 Backend 执行。
-- Client 提供窗口模式与 Windows 桌面模式，共用后台宿主和业务页面。窗口模式由主窗口、透明精灵与轻语承载；桌面模式在交互屏组合视频、Explorer 原生图标与透明界面。独立 Rust helper 管理层级和底部系统预留，guardian 在异常时恢复系统界面。界面行为归 [DESIGN](DESIGN.md#桌面模式)，原生边界归 [desktop-host](../client/desktop-host/README.md)。
+- Client 提供窗口模式与 Windows、macOS 桌面模式，共用后台宿主和业务页面。窗口模式由主窗口、透明精灵与轻语承载；桌面模式在交互屏组合视频、系统桌面图标与透明界面。主进程通过统一宿主端口管理平台能力：Windows 独立 Rust helper 管理 Explorer 层级和底部预留，guardian 在异常时恢复系统界面；macOS 进程内 Node-API 模块设置窗口层级并通过辅助功能操作应用窗口，不修改系统工作区。界面行为归 [DESIGN](DESIGN.md#桌面模式)，原生边界分别归 [Windows 宿主](../client/desktop-windows/README.md)与 [macOS 模块](../client/desktop-macos/README.md)。
 - 进程拆分隔离职责与凭据，不构成完整安全沙箱。
 
 ## 模块职责

@@ -770,10 +770,10 @@ export const dict = {
       displayAria: '交互显示器',
       switchFailed: '显示设置未能保存，请重试',
       modeDescription: '窗口模式通过主窗口和悬浮伙伴互动；桌面模式将伙伴呈现在桌面背景中。',
-      modeDescriptionUnsupported: '桌面模式仅在 Windows 上可用。',
+      modeDescriptionUnsupported: '本机桌面模式暂不可用。',
       switchToWindowMode: '切换到窗口模式',
       switchToDesktopMode: '切换到桌面模式',
-      displayDescription: '优先使用所选屏幕，未连接时自动使用当前屏幕。其他屏幕保留 Windows。'
+      displayDescription: '优先使用所选屏幕，未连接时自动使用当前屏幕。其他屏幕保持原有桌面。'
     }
   },
 
@@ -1624,7 +1624,7 @@ export const dict = {
     rightWhisper: '移到右侧',
     windowMode: '返回窗口模式',
     display: '显示屏',
-    displayHint: '仅使用此屏，其他屏幕保留 Windows。',
+    displayHint: '仅使用此屏，其他屏幕保持原有桌面。',
     quit: '退出唤生',
     dock: '程序 Dock',
     pinnedApps: '固定程序',
@@ -1640,6 +1640,11 @@ export const dict = {
     closeWindow: '关闭窗口',
     closeAllWindows: '关闭所有窗口',
     runningUnavailable: '运行程序列表暂时不可用，请重试',
+    accessibilityTitle: '辅助功能权限',
+    accessibilityRequest: '授权管理应用窗口',
+    accessibilityDescription:
+      '在系统设置 → 隐私与安全性 → 辅助功能中允许唤生，即可查看运行窗口、关闭窗口和跨屏移动。固定程序与应用目录仍可正常启动。',
+    accessibilityGranted: '已允许查看和管理运行窗口。',
     allApps: '所有程序',
     appLaunchFailed: '程序启动失败，请重试',
     repairApp: '重新选择程序',
@@ -1663,7 +1668,10 @@ export const dict = {
       'desktop-onedrive': 'OneDrive 桌面',
       'desktop-public': '公共桌面',
       'app-paths': '已登记程序',
-      'apps-folder': 'Windows 应用'
+      'apps-folder': 'Windows 应用',
+      'mac-applications': '应用程序',
+      'mac-system': '系统应用',
+      'mac-user': '个人应用'
     },
     pickSourceFailed: '以下位置未能读取',
     minimize: '最小化',

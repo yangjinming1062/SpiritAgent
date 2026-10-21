@@ -16,7 +16,7 @@
 | 窗口、拖拽、主题与动作 | [主进程窗口](main/README.md#窗口与几何)、[渲染层呈现](renderer/README.md#角色呈现契约) |
 | 主窗口、导航与统一设置 | [main-root.tsx](renderer/app/windows/main/main-root.tsx)、[伙伴入口](renderer/app/features/companion/companion-page.tsx)、[动态](renderer/app/features/posts/posts-page.tsx)、[日记](renderer/app/features/diary/diary-page.tsx)、[app-settings.tsx](renderer/app/features/settings/app-settings.tsx)；导航归 `app/navigation`，跨模式视图快照归 `main/ipc/ui-state.ts` |
 | 伙伴显示、比例与主动偏好 | [companion-page.tsx](renderer/app/features/settings/companion-page.tsx)、[interaction-page.tsx](renderer/app/features/settings/interaction-page.tsx) → [spatial.ts](renderer/modules/character/spatial.ts)、[activity.ts](renderer/modules/character/activity.ts) |
-| Windows 桌面模式、生活视频与 Dock | [desktop-presentation.ts](main/lifecycle/desktop-presentation.ts)、[desktop-dock.ts](main/ipc/desktop-dock.ts)、[桌面生活模块](renderer/modules/desktop-videos/)、[desktop renderer](renderer/app/windows/desktop/)、[原生宿主](desktop-host/README.md) |
+| 桌面模式、生活视频与 Dock | [desktop-presentation.ts](main/lifecycle/desktop-presentation.ts)、[desktop-dock.ts](main/ipc/desktop-dock.ts)、[桌面生活模块](renderer/modules/desktop-videos/)、[desktop renderer](renderer/app/windows/desktop/)、[Windows 宿主](desktop-windows/README.md)、[macOS 模块](desktop-macos/README.md) |
 | 设置同步与 Runner 更新 | [runner-config.ts](main/ipc/runner-config.ts)、[config-sync.ts](main/shared/lib/config-sync.ts)、[updater.ts](main/runner/updater.ts) |
 | 桌面应用更新 | [update.ts](main/ipc/update.ts)、[auto-updater.ts](main/lifecycle/auto-updater.ts) → [update-bridge.ts](renderer/shared/lib/update-bridge.ts)、[about-page.tsx](renderer/app/features/settings/about-page.tsx) |
 
@@ -26,7 +26,8 @@
 |---|---|
 | [main](main/README.md) | 组合根、preload、身份、窗口、Runner、配置与磁盘资源 |
 | [renderer](renderer/README.md) | 精灵宿主、唯一主窗口与交互桌面各自运行；主窗口与桌面共用页面，桌面内部面板共用 renderer 和会话 runtime；桌面背景通过受限桥消费主进程缓存媒体 |
-| [desktop-host](desktop-host/README.md) | Windows Explorer 挂载、运行窗口观察、工作区与异常恢复 |
+| [desktop-windows](desktop-windows/README.md) | Windows Explorer 挂载、运行窗口观察、工作区与异常恢复 |
+| [desktop-macos](desktop-macos/README.md) | macOS 窗口层级、辅助功能与应用信息 |
 | `shared/ipc` | 跨进程通道、载荷与 `DesktopBridge`，main、preload 与 renderer 共用 |
 | `shared/runtime.ts`、`shared/speech-text.ts` | 两个进程共用的运行时原语与朗读文本清理 |
 | `scripts` | 开发、构建与打包钩子；操作归 [Scripts](../scripts/README.md#client-开发与打包脚本) |

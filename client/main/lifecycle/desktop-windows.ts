@@ -1,6 +1,9 @@
-import { app, BrowserWindow, type WebContents } from 'electron'
+import { app, BrowserWindow, screen, type WebContents } from 'electron'
+
+import { IPC } from '@ipc/contracts'
 
 import { isSenderWindow } from '../security/ipc-trust'
+import { sendToWindow } from '../shared/utils'
 
 export type DesktopWindowRole = 'desktop' | 'desktop-background'
 
@@ -24,6 +27,44 @@ export function createDesktopWindows(options: DesktopWindowsOptions) {
   const blurGenerations = new WeakMap<BrowserWindow, number>()
   const readyWindows = new Map<BrowserWindow, { resolve: () => void; reject: (error: Error) => void }>()
 
+  function trackInactivePointer(win: BrowserWindow): void {
+    let previous: { x: number; y: number } | undefined
+    let sentAt = 0
+
+    const sample = (): void => {
+      if (win.isDestroyed() || !win.isVisible() || win.isFocused()) {
+        previous = undefined
+
+        return
+      }
+
+      try {
+        const cursor = screen.getCursorScreenPoint()
+        const bounds = win.getContentBounds()
+        const point = { x: cursor.x - bounds.x, y: cursor.y - bounds.y }
+        const now = Date.now()
+
+        if (previous && point.x === previous.x && point.y === previous.y && now - sentAt < 100) {
+          return
+        }
+
+        previous = point
+        sentAt = now
+        sendToWindow(win, IPC.event.presentationPointerPosition, point)
+      } catch (error) {
+        clearInterval(timer)
+        options.onFailure(`桌面指针读取失败：${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+
+    // Chromium 会过滤普通层窗口失焦后的 mousemove；只补充坐标，仍由原区域探针决定捕获。
+    const timer = setInterval(sample, 16)
+    timer.unref()
+    win.on('blur', sample)
+    win.on('show', sample)
+    win.once('closed', () => clearInterval(timer))
+  }
+
   function makeWindow(display: Electron.Display, role: 'desktop' | 'desktop-background'): BrowserWindow {
     const primary = role !== 'desktop-background'
 
@@ -32,6 +73,10 @@ export function createDesktopWindows(options: DesktopWindowsOptions) {
       frame: false,
       thickFrame: false,
       show: false,
+      // macOS 表面覆盖完整屏幕；交互层首击即响应，背景不取得键盘焦点。
+      ...(process.platform === 'darwin'
+        ? { enableLargerThanScreen: true, acceptFirstMouse: primary, focusable: primary }
+        : {}),
       skipTaskbar: true,
       resizable: false,
       fullscreenable: false,
@@ -72,6 +117,10 @@ export function createDesktopWindows(options: DesktopWindowsOptions) {
     if (primary) {
       inputGenerations.set(win, 0)
       blurGenerations.set(win, 0)
+
+      if (process.platform === 'darwin') {
+        trackInactivePointer(win)
+      }
 
       const inputInteraction = (): void => {
         inputGenerations.set(win, (inputGenerations.get(win) ?? 0) + 1)

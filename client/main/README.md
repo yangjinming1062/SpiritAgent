@@ -34,6 +34,8 @@
 
 凭据存储与换号语义见 [PROTOCOL](../../docs/PROTOCOL.md#凭据落盘)，多账户存储在 [session.ts](backend/session.ts)。凭据读取须在 `app.whenReady()` 后触发，避免 safeStorage 尚未就绪时缓存解密失败。托盘账户操作留在主进程，preload 不暴露持久凭据读取。`api()` 只接受登记的操作标识和参数，类型与 [主进程准入](security/api-allowlist.ts) 均由生成契约的 `ipc` 策略约束。multipart 上传通过专用媒体 IPC 传递字节或已授权路径，由主进程构建 `FormData`，不跨 Electron 传递该对象。`api()`、资产读取与本站登录失效通知集中在 [connection.ts](ipc/connection.ts)，WS 票据仅由主进程账户网关申请与消费。
 
+macOS 实机验证须从已登录的图形会话启动客户端，SSH 安全会话可能无法交互访问钥匙串。连接局域网后端时，macOS 15 及以上还需用户允许应用的“本地网络”权限；用途说明由 [打包配置](../package.json) 的 `NSLocalNetworkUsageDescription` 提供。Terminal／SSH 的命令行网络请求自动放行，不能用其连通结果代替图形客户端验证；应用身份与签名要求见 [打包入口](../../scripts/README.md#client-开发与打包脚本)，平台依据见 [Apple TN3179](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy)。
+
 ### 文件与媒体
 
 - 文件读取仅接受选择器或拖拽登记的路径，渲染层不能自行授予白名单；敏感路径另行阻断。读取统一经 [readUserSelectedFile](security/hardening.ts)，新增读文件通道不绕过它。
@@ -72,40 +74,45 @@
 
 显示器逻辑坐标用于窗口布局。Windows 桌景尺寸经 `desktop-display-resolutions.ts` 调用原生宿主的只读 `display-bounds` 查询，按显示器 ID、几何和查询代次缓存；启动及显示器变更后发布真实像素，查询不可用时返回空值，禁止从已取整的 DIP 反推尺寸。
 
-交互界面使用完整 preload，账户、配置、更新与启动器仅授权交互界面；交互屏背景使用 [preload-background.ts](preload-background.ts)，仅接收缓存媒体与播放状态并回报播放生命周期。其他屏幕不创建背景窗口，保留原生 Windows 界面。隐藏精灵宿主仍可通过受控直调读取本机场景与活动信息；模型工具由主进程派发。背景媒体由交互界面提交已认证资源引用，主进程通过账户资产缓存读取原始字节；播放命令与回执按账户和呈现代次隔离，锁屏、全屏及减少动态效果时暂停。
+交互界面使用完整 preload，账户、配置、更新与启动器仅授权交互界面；交互屏背景使用 [preload-background.ts](preload-background.ts)，仅接收缓存媒体与播放状态并回报播放生命周期。其他屏幕不创建背景窗口，保留原生系统桌面。隐藏精灵宿主仍可通过受控直调读取本机场景与活动信息；模型工具由主进程派发。背景媒体由交互界面提交已认证资源引用，主进程通过账户资产缓存读取原始字节；播放命令与回执按账户和呈现代次隔离，锁屏、全屏及减少动态效果时暂停。
 
 Windows 启动时由 [platform.ts](lifecycle/platform.ts) 禁用 DirectComposition 视频叠加层，让视频与模糊底层参与页面合成。本策略不关闭硬件解码和 GPU 合成，远程显示仍按既有策略关闭 GPU。该启动策略修改后须重启客户端生效。
 
 呈现切换 IPC 允许精灵宿主、主窗口和交互桌面；托盘复用同一串行入口。录音、转写和附件上传状态由 [ui-state.ts](ipc/ui-state.ts) 合并，切换入口共同消费阻止原因。该桥按账户在进程内持有页面、会话、主对话草稿与阅读位置，核对鉴权会话和合法 sender；主动切换等待来源捕获与目标恢复，失败保留来源界面。快照不持久化文件访问许可，主窗口与桌面通过受控导航交接。桌面组件缺失时在关闭旧窗口前拒绝启用，广播实际窗口模式及失败原因。
 
-[explorer-desktop-host.ts](lifecycle/explorer-desktop-host.ts)通过有界 JSON 协议调用 [Rust helper](../desktop-host/README.md)。界面与交互屏背景先在限时内报告界面就绪，再复核账户与窗口存活并交给 helper 接管；任一阶段失败均回到恢复流程。原生事务、窗口身份校验与 journal 归 helper。
+[desktop-host.ts](lifecycle/desktop-host.ts) 按平台装配统一的 [宿主端口](shared/desktop-host.ts)，主进程仍持有唯一模式状态。Windows 的 [explorer-desktop-host.ts](lifecycle/explorer-desktop-host.ts)通过有界 JSON 协议调用 [Rust helper](../desktop-windows/README.md)。界面与交互屏背景先在限时内报告界面就绪，再复核账户与窗口存活并交给 helper 接管；任一阶段失败均回到恢复流程。原生事务、窗口身份校验与 journal 归 helper。
 
-桌面窗口固定页面缩放，使悬浮底栏的 DIP 高度与工作区一致；退出时恢复窗口模式保存的缩放。底部 AppBar 的 96 DIP 请求与 renderer 共用 [desktop-layout.ts](../shared/desktop-layout.ts)，`contentInset` 仅用于内部界面留白，集成系统托盘不重复增加底部预留。helper 上报实际物理工作区与托盘尺寸、可见性，主进程校验并换算为当前会话的 DIP 投影；内部窗口与轻语按工作区布局，界面只接收托盘固有尺寸，不把滚动后的原生窗口位置反馈为新的槽位。
+macOS 的 [desktop-macos-host.ts](lifecycle/desktop-macos-host.ts) 使用 [进程内原生模块](../desktop-macos/README.md)，按稳定显示器几何传入全局左上原点 points，并将系统工作区转换为交互屏本地 DIP；仅工作区变化时更新布局，不重建表面。原生轮询产生前台、可见舞台、全屏和当前 Space 状态，未授予 AX 时仍可呈现桌面，运行窗口快照单独标记不可用。权限在进入、焦点恢复及轮询中刷新。`stop()` 先取消后续原生动作且不等待查询队列，迟到回执核验宿主代次。进入原生代码前写入轻量活动标记，正常退出清除，硬崩溃残留使下次启动停留窗口模式；不复用 Windows 的系统恢复 journal、guardian 或恢复快捷键。
 
-renderer 测量 Dock 中产品图标后的完整托盘槽位与右侧滚动视口，通过 `setTrayLayout` 上报交互屏本地 DIP 的 `bounds`、`clip`、测量时的视口尺寸及呈现代次。主进程在准入、排队执行和原生回执期间隔离失效账户、窗口与代次，核验几何和显示器范围后转换为物理坐标；底部预留生效时系统会把铺屏窗口压回工作区，按旧视口测得的布局作废，主进程丢弃该测量、让窗口回到交互屏并等待重新测量，不按越界拒绝；空布局或界面隐藏时收起原生行。主进程在挂载及应用主题变化时传入解析后的明暗主题，只有原生托盘透明样式确认成功后才发布就绪状态。快照与布局边界见[呈现契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。挂载后用 `showInactive()` 同步 Electron 可见状态；原生层级、任务栏平移与裁剪、透明样式、几何复验和工作区恢复由 [helper](../desktop-host/README.md#原生系统托盘)负责，Dock 玻璃绘制保持完整。
+桌面窗口固定页面缩放，使悬浮底栏的 DIP 高度与工作区一致；退出时恢复窗口模式保存的缩放。Windows 底部 AppBar 的 96 DIP 请求与 renderer 共用 [desktop-layout.ts](../shared/desktop-layout.ts)，`contentInset` 仅用于内部界面留白，集成系统托盘不重复增加底部预留。helper 上报实际物理工作区与托盘尺寸、可见性，主进程校验并换算为当前会话的 DIP 投影；内部窗口与轻语按工作区布局，界面只接收托盘固有尺寸，不把滚动后的原生窗口位置反馈为新的槽位。
 
-真实主指针释放请求输入焦点；显式页面与会话导航还调用 `focus()`、`moveTop()` 置前，全屏时跳过激活。主进程与 helper 在各自串行队列执行时核对窗口、账户、舞台代次和锁屏。前台广播不抢焦点，渲染层手势不能代替权限校验。焦点请求超时终止 host 并恢复，防止迟到请求继续改动焦点；视图资格与状态同步见[呈现契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
+renderer 测量 Dock 中产品图标后的完整托盘槽位与右侧滚动视口，通过 `setTrayLayout` 上报交互屏本地 DIP 的 `bounds`、`clip`、测量时的视口尺寸及呈现代次。主进程在准入、排队执行和原生回执期间隔离失效账户、窗口与代次，核验几何和显示器范围后转换为物理坐标；底部预留生效时系统会把铺屏窗口压回工作区，按旧视口测得的布局作废，主进程丢弃该测量、让窗口回到交互屏并等待重新测量，不按越界拒绝；空布局或界面隐藏时收起原生行。主进程在挂载及应用主题变化时传入解析后的明暗主题，只有原生托盘透明样式确认成功后才发布就绪状态。快照与布局边界见[呈现契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。挂载后用 `showInactive()` 同步 Electron 可见状态；原生层级、任务栏平移与裁剪、透明样式、几何复验和工作区恢复由 [helper](../desktop-windows/README.md#原生系统托盘)负责，Dock 玻璃绘制保持完整。
 
-账户失效、呈现切换、目标显示器变化、渲染器失败与退出都先恢复系统，再销毁桌面窗口。首次选屏与缺屏回退遵循[呈现契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)；活动显示器身份独立于首选屏和窗口当前位置，拔屏立即退出并保存窗口模式，其他屏幕增减仅更新列表。目标屏几何或 DPI 改变才在当前活动屏重新挂载，不因临时回退或首选屏重接而切到其他屏。准备期间的换号、退出、拔屏或 renderer 失败立即使当前接管失效；界面就绪与页面加载共享限时预算。休眠或唤醒时恢复窗口模式并保留桌面偏好，须由用户重新选择桌面模式，避免接管 guardian 已恢复的系统窗口。
+真实主指针释放请求输入焦点；显式页面与会话导航还调用 `focus()`、`moveTop()` 置前，全屏时跳过激活。主进程与 helper 在各自串行队列执行时核对窗口、账户、舞台代次和锁屏。前台广播不抢焦点，渲染层手势不能代替权限校验。Windows 焦点请求超时终止 host 并恢复，防止迟到请求继续改动焦点；macOS 原生操作按实际 AX 超时与取消代次阻断后续步骤，已提交系统调用的结果未知时如实报告；视图资格与状态同步见[呈现契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
 
-启动时先处理待恢复记录；异常标记使已由 guardian 恢复的会话也停留窗口模式。主进程检测到的失败另存独立标记，成功手动重试只清该标记，不覆盖 guardian 原因。恢复失败保留记录和错误，不阻断窗口模式启动。原生恢复信号与限制见 [helper](../desktop-host/README.md#恢复)。
+macOS 普通层窗口失焦时，Chromium 会过滤转发的 `mousemove`。[desktop-windows.ts](lifecycle/desktop-windows.ts) 仅为可见且失焦的交互窗采样系统光标，向本窗发送相对内容区的 DIP 点；renderer 复用区域命中与手势捕获探针，恢复焦点后忽略迟到采样。坐标补偿不合成点击、不请求焦点，也不依赖 AX；轮询随该窗口销毁，Windows 保持原鼠标转发路径。
+
+账户失效、呈现切换、目标显示器变化、渲染器失败与退出都先停止宿主，再销毁桌面窗口；Windows 停止阶段负责恢复系统。首次选屏与缺屏回退遵循[呈现契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)；活动显示器身份独立于首选屏和窗口当前位置，拔屏立即退出并保存窗口模式，其他屏幕增减仅更新列表。目标屏几何或 DPI 改变才在当前活动屏重新挂载，不因临时回退或首选屏重接而切到其他屏。准备期间的换号、退出、拔屏或 renderer 失败立即使当前接管失效；界面就绪与页面加载共享限时预算。休眠或唤醒时恢复窗口模式并保留桌面偏好，须由用户重新选择桌面模式，避免接管 guardian 已恢复的系统窗口。
+
+Windows 启动时先处理待恢复记录；异常标记使已由 guardian 恢复的会话也停留窗口模式。主进程检测到的失败另存独立标记，成功手动重试只清该标记，不覆盖 guardian 原因。恢复失败保留记录和错误，不阻断窗口模式启动。原生恢复信号与限制见 [helper](../desktop-windows/README.md#恢复)。
 
 恢复已保存的桌面偏好仅加载已有媒体；`prepareDesktopMedia` 是本次会话的制作许可，默认关闭，用户显式选择桌面后开启，退出或换号清除，切屏重挂载保留。渲染层据此区分启动水合与用户启用，启动不提交付费素材制作。
 
-真实平台门禁见 [Windows 桌面验收](../../scripts/README.md#windows-桌面验收)，挂载探测入口见 [helper](../desktop-host/README.md#原生验收)。
+真实平台门禁见 [Windows 桌面验收](../../scripts/README.md#windows-桌面验收)与 [macOS 桌面验收](../../scripts/README.md#macos-桌面验收)，挂载探测入口见 [helper](../desktop-windows/README.md#原生验收)。
 
 ## Dock 与应用目录
 
-[desktop-dock.ts](ipc/desktop-dock.ts) 合并固定配置、运行快照与图标投影；[windows-app-catalog.ts](ipc/windows-app-catalog.ts) 只负责目录和图标，[windows-installed-apps.ts](ipc/windows-installed-apps.ts) 负责系统查询。原生窗口采集归 helper，渲染层只接收不透明条目与窗口 ID。
+[desktop-dock.ts](ipc/desktop-dock.ts) 合并固定配置、运行快照与图标投影；[desktop-app-catalog.ts](ipc/desktop-app-catalog.ts) 装配目录服务；Windows 目录和系统查询分别归 [windows-app-catalog.ts](ipc/windows-app-catalog.ts)、[windows-installed-apps.ts](ipc/windows-installed-apps.ts)，macOS 目录归 [macos-app-catalog.ts](ipc/macos-app-catalog.ts)，可信 `.app` 目标归 [macos-application-target.ts](ipc/macos-application-target.ts)。原生窗口采集归各平台宿主，渲染层只接收不透明条目与窗口 ID。
 
-- 普通应用以规范化 exe 路径归并，快捷方式解析目标；同名 exe 的父子安装目录关联启动器与窗口进程，无关目录保持独立。固定去重、目录已添加标记和运行显示复用此规则，打包应用以 AUMID 归并。
-- 原生快照保留所有屏幕窗口及交互屏归属，Dock 只投影本屏窗口；固定项与目录入口激活共用本屏优先、最近异屏窗口回退的规则，显式窗口选择仍限本屏。启动统一交给 helper，定位监听与桌面会话同生命周期；目录启动不改固定配置。
-- 固定时优先保留目录快捷方式及参数，无目录的普通程序使用已验证 exe；打包应用保存 `shell:AppsFolder\AUMID`，激活前在完整系统目录核验。`desktop-dock.json` 只保存固定项，运行状态不落盘。
+- Windows 普通应用以规范化 exe 路径归并，快捷方式解析目标；同名 exe 的父子安装目录关联启动器与窗口进程，无关目录保持独立。固定去重、目录已添加标记和运行显示复用此规则，打包应用以 AUMID 归并。
+- macOS 应用身份使用解析符号链接后的 `.app` 绝对路径，保留文件系统大小写；保存、拖入、修复、目录与运行窗口使用同一身份。所有执行入口复核有效应用包及可执行文件，目录按系统、共享和用户应用来源有界扫描。图标按可见项分批读取，重扫废弃句柄；未授权时仅允许固定与目录目标提交普通启动，其他运行查询错误仍保留最近快照并拒绝依赖该快照的操作。
+- 原生快照保留所有屏幕窗口及交互屏归属，Dock 只投影本屏窗口；固定项与目录入口激活共用本屏优先、最近异屏窗口回退的规则，显式窗口选择仍限本屏。启动统一交给平台宿主，定位监听与桌面会话同生命周期；目录启动不改固定配置。
+- Windows 固定时优先保留目录快捷方式及参数，无目录的普通程序使用已验证 exe；打包应用保存 `shell:AppsFolder\AUMID`，激活前在完整系统目录核验。`desktop-dock.json` 只保存固定项，运行状态不落盘。
 - 添加、修复和启动均复核目标；修复保留 ID 和顺序，取消不写配置。投影或启动失败保留条目，写盘失败保留原配置。运行查询失败保留最近快照，并报告不可用状态。
 - `revision` 覆盖投影变化，`pinnedRevision` 只随固定配置变化；运行和图标刷新不重取选择面板目录。面板内刷新固定标记可携当前扫描版本，版本仍有效时复用句柄重新投影，首次打开沿用目录缓存期限，手动重扫始终废弃旧句柄。桌面结束或目录重扫使在途元数据失效。
-- 目录合并开始菜单、桌面快捷方式、App Paths 与 AppsFolder，按 exe 或 AUMID 去重、快捷方式优先；排除非现存 exe、网页快捷方式、`.msc`、虚拟和隐藏入口。各来源独立限时并报告失败；扫描保留预算，下发全部扫描结果，已保存应用使用完整目录核验。
-- 目录随机句柄仅本次扫描有效，重扫废弃句柄与图标缓存。固定、运行与目录图标共用 [windows-application-icon.ts](ipc/windows-application-icon.ts)：打包应用优先用清单图标，快捷方式保留指定图标及资源索引；exe / DLL 图标经限时、分批的 Windows 原生提取，兼容全 PNG 图标资源，失败再用系统文件图标。目录与产品账户无关，不上云。
-- 打包应用的安装状态使用独立的 AppsFolder 查询缓存，目录扫描共享该查询结果；启动校验及固定项投影不替换目录句柄，避免缓存到期后使打开中的面板失效。查询失败不复用过期结果冒充校验成功。
+- Windows 目录合并开始菜单、桌面快捷方式、App Paths 与 AppsFolder，按 exe 或 AUMID 去重、快捷方式优先；排除非现存 exe、网页快捷方式、`.msc`、虚拟和隐藏入口。各来源独立限时并报告失败；扫描保留预算，下发全部扫描结果，已保存应用使用完整目录核验。
+- 目录随机句柄仅本次扫描有效，重扫废弃句柄与图标缓存。Windows 固定、运行与目录图标共用 [windows-application-icon.ts](ipc/windows-application-icon.ts)：打包应用优先用清单图标，快捷方式保留指定图标及资源索引；exe / DLL 图标经限时、分批的 Windows 原生提取，兼容全 PNG 图标资源，失败再用系统文件图标。目录与产品账户无关，不上云。
+- Windows 打包应用的安装状态使用独立的 AppsFolder 查询缓存，目录扫描共享该查询结果；启动校验及固定项投影不替换目录句柄，避免缓存到期后使打开中的面板失效。查询失败不复用过期结果冒充校验成功。
 - 程序任务按右键菜单懒加载 Windows `CustomDestinations` 的 `Task` 分类；helper 会合并仅因 `--user-data-dir` 不同而留下的同一任务历史副本。渲染层只接收标题、图标和不透明任务 ID，主进程在 helper 重新校验后启动原始参数。解析失败静默回到现有窗口和固定菜单，任务 ID 不落盘。
 
 激活、关闭和启动的授权与结果边界统一归 [本机启动器契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。

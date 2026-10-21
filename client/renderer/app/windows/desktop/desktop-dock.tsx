@@ -1,11 +1,14 @@
+import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
+import { AccessibilityPermissionButton } from '@/app/components/accessibility-permission-button'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { LayoutGrid, Monitor, X } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
-import { shellApi } from '@/shared/platform/desktop'
+import { desktopPlatform, shellApi } from '@/shared/platform/desktop'
 import { notifyError } from '@/shared/store/notifications'
+import { $presentation } from '@/shared/store/presentation'
 import { useStrings } from '@/shared/strings'
 import type { DesktopBridge } from '@client-shared/ipc/bridge'
 
@@ -34,6 +37,8 @@ export function DesktopDock({
   onMenuOpenChange: (open: boolean) => void
 }): React.JSX.Element {
   const t = useStrings().desktopShell
+  const presentation = useStore($presentation)
+  const isMac = desktopPlatform() === 'darwin'
 
   const [state, setState] = useState<DockState>({
     entries: [],
@@ -105,7 +110,7 @@ export function DesktopDock({
 
     const update = (): void => {
       const gap = Number.parseFloat(getComputedStyle(dock).columnGap) || 0
-      const warning = dock.querySelector<HTMLElement>('[role="status"]')
+      const warning = dock.querySelector<HTMLElement>('[role="status"], [data-permission-request]')
       onContentWidthChange(
         trigger.getBoundingClientRect().width +
           gap +
@@ -120,7 +125,12 @@ export function DesktopDock({
     update()
 
     return () => observer.disconnect()
-  }, [onContentWidthChange, state.runningStatus])
+  }, [
+    onContentWidthChange,
+    state.runningStatus,
+    presentation.accessibility.granted,
+    presentation.accessibility.requestable
+  ])
 
   useEffect(() => {
     let disposed = false
@@ -271,13 +281,20 @@ export function DesktopDock({
     onBeforeOpen()
     closePicker(false)
     const rect = button.getBoundingClientRect()
-    const halfWidth = Math.min(120, (window.innerWidth - 32) / 2)
-    const center = Math.max(halfWidth + 16, Math.min(rect.left + rect.width / 2, window.innerWidth - halfWidth - 16))
+    const workArea = isMac ? presentation.workArea : null
+    const left = workArea?.x ?? 0
+    const right = workArea ? workArea.x + workArea.width : window.innerWidth
+    const halfWidth = Math.min(120, (right - left - 32) / 2)
+    const center = Math.max(left + halfWidth + 16, Math.min(rect.left + rect.width / 2, right - halfWidth - 16))
     const requestId = taskRequestRef.current + 1
     taskRequestRef.current = requestId
     triggerRef.current = button
-    setMenuTasks({ entryId: target.id, loading: true, tasks: [] })
+    setMenuTasks(isMac ? null : { entryId: target.id, loading: true, tasks: [] })
     setMenu({ ...target, focusMenu, x: center, bottom: window.innerHeight - dock.top + 12 })
+
+    if (isMac) {
+      return
+    }
 
     void shellApi()
       .dock.tasks(target.id)
@@ -319,6 +336,10 @@ export function DesktopDock({
       setMenuTasks(null)
     }
   }, [menu])
+
+  useEffect(() => {
+    setMenu(null)
+  }, [presentation.workArea?.x, presentation.workArea?.y, presentation.workArea?.width, presentation.workArea?.height])
 
   const visibleMenuTasks = menuTasks?.entryId === menu?.id && !menuTasks?.loading ? (menuTasks?.tasks ?? []) : []
 
@@ -380,7 +401,7 @@ export function DesktopDock({
           className={styles.appIcon}
           data-unavailable={entry.status !== 'ready' && !entry.running}
           disabled={busy}
-          draggable={pinned || entry.canPin}
+          draggable={pinned || (presentation.accessibility.granted && entry.canPin)}
           onClick={() => void run(() => shellApi().dock.activate(entry.id))}
           onContextMenu={event => {
             event.preventDefault()
@@ -492,15 +513,21 @@ export function DesktopDock({
             </div>
           </div>
         </div>
-        {state.runningStatus === 'unavailable' && (
-          <span
-            aria-label={t.runningUnavailable}
-            className={styles.dockWarning}
-            role="status"
-            title={`${t.runningUnavailable}${state.runningError ? ` · ${state.runningError}` : ''}`}
-          >
-            !
-          </span>
+        {state.runningStatus === 'unavailable' &&
+        !presentation.accessibility.granted &&
+        presentation.accessibility.requestable ? (
+          <AccessibilityPermissionButton className={styles.dockPermission} compact />
+        ) : (
+          state.runningStatus === 'unavailable' && (
+            <span
+              aria-label={t.runningUnavailable}
+              className={styles.dockWarning}
+              role="status"
+              title={`${t.runningUnavailable}${state.runningError ? ` · ${state.runningError}` : ''}`}
+            >
+              !
+            </span>
+          )
         )}
         {menuEnabled && menu && menuEntry && (
           <div
@@ -544,13 +571,13 @@ export function DesktopDock({
                   <div className={styles.dockWindowRow} key={runningWindow.id}>
                     <button
                       className={styles.dockWindowActivate}
-                      disabled={busy}
+                      disabled={busy || !presentation.accessibility.granted}
                       onClick={() => {
                         void run(() => shellApi().dock.activate(menuEntry.id, runningWindow.id))
                         setMenu(null)
                       }}
                       role="menuitem"
-                      title={runningWindow.title}
+                      title={presentation.accessibility.granted ? runningWindow.title : t.accessibilityDescription}
                       type="button"
                     >
                       <span className={styles.dockWindowTitle}>{runningWindow.title}</span>
@@ -560,10 +587,10 @@ export function DesktopDock({
                       <button
                         aria-label={`${t.closeWindow} · ${runningWindow.title}`}
                         className={styles.dockWindowClose}
-                        disabled={busy}
+                        disabled={busy || !presentation.accessibility.granted}
                         onClick={() => closeWindows(menuEntry, [runningWindow.id])}
                         role="menuitem"
-                        title={t.closeWindow}
+                        title={presentation.accessibility.granted ? t.closeWindow : t.accessibilityDescription}
                         type="button"
                       >
                         <X size={15} />
@@ -573,7 +600,7 @@ export function DesktopDock({
                 ))}
                 {menuEntry.windows.length > 0 && (
                   <button
-                    disabled={busy}
+                    disabled={busy || !presentation.accessibility.granted}
                     onClick={() =>
                       closeWindows(
                         menuEntry,
@@ -581,6 +608,7 @@ export function DesktopDock({
                       )
                     }
                     role="menuitem"
+                    title={presentation.accessibility.granted ? undefined : t.accessibilityDescription}
                     type="button"
                   >
                     {menuEntry.windows.length > 1 ? t.closeAllWindows : t.closeWindow}
@@ -646,13 +674,19 @@ export function DesktopDock({
                   </>
                 ) : (
                   <button
-                    disabled={busy || !menuEntry.canPin}
+                    disabled={busy || !menuEntry.canPin || !presentation.accessibility.granted}
                     onClick={() => {
                       void run(() => shellApi().dock.pin(menuEntry.id))
                       setMenu(null)
                     }}
                     role="menuitem"
-                    title={menuEntry.canPin ? t.pinApp : t.cannotPin}
+                    title={
+                      !presentation.accessibility.granted
+                        ? t.accessibilityDescription
+                        : menuEntry.canPin
+                          ? t.pinApp
+                          : t.cannotPin
+                    }
                     type="button"
                   >
                     {t.pinApp}

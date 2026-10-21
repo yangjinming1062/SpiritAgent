@@ -1,11 +1,12 @@
 import type React from 'react'
 import { useState } from 'react'
 
+import { AccessibilityPermissionButton } from '@/app/components/accessibility-permission-button'
 import { usePresentationModeSwitch } from '@/app/components/presentation-mode-switch'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { presentationDisplayOptions } from '@/shared/lib/presentation-displays'
 import { BTN_SUBTLE, PanelSelect, SettingCard, SettingRow, SettingsSectionIntro } from '@/shared/panel'
-import { shellApi } from '@/shared/platform/desktop'
+import { desktopPlatform, shellApi } from '@/shared/platform/desktop'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
@@ -44,7 +45,7 @@ export function PresentationPage(): React.JSX.Element {
           description={
             state.supported
               ? strings.settings.presentation.modeDescription
-              : strings.settings.presentation.modeDescriptionUnsupported
+              : state.unsupportedReason || strings.settings.presentation.modeDescriptionUnsupported
           }
           label={strings.settings.presentation.displayModeLabel}
         >
@@ -73,6 +74,18 @@ export function PresentationPage(): React.JSX.Element {
               value={String(state.displayId ?? '')}
               widthClass="w-full sm:w-72"
             />
+          </SettingRow>
+        )}
+        {state.supported && desktopPlatform() === 'darwin' && (
+          <SettingRow
+            description={
+              state.accessibility.granted
+                ? strings.desktopShell.accessibilityGranted
+                : strings.desktopShell.accessibilityDescription
+            }
+            label={strings.desktopShell.accessibilityTitle}
+          >
+            <AccessibilityPermissionButton className={BTN_SUBTLE} />
           </SettingRow>
         )}
       </SettingCard>

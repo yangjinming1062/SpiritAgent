@@ -13,9 +13,15 @@ import type {
   RunningApplicationWindow
 } from '../shared/desktop-applications'
 import type { DesktopJumpListTask } from '../shared/desktop-jump-list'
+import { desktopMacos } from '../shared/desktop-macos'
 import { atomicWriteFile, createSerialQueue, safeReadJson, sendToWindow } from '../shared/utils'
 
-import { type CatalogApplication, createWindowsAppCatalog } from './windows-app-catalog'
+import { type CatalogApplication, createDesktopAppCatalog } from './desktop-app-catalog'
+import {
+  isMacosApplicationTarget,
+  readMacosApplicationIcon,
+  validateMacosApplicationTarget
+} from './macos-application-target'
 import { readWindowsApplicationIcon } from './windows-application-icon'
 import { type InstalledApplication, isPackagedAppTarget } from './windows-installed-apps'
 
@@ -47,6 +53,10 @@ function fileSelection(target: string): DockSelection {
 }
 
 function targetIdentity(target: string): string {
+  if (process.platform === 'darwin') {
+    return path.normalize(target)
+  }
+
   if (path.extname(target).toLowerCase() === '.lnk') {
     try {
       return path.normalize(shell.readShortcutLink(target).target).toLowerCase()
@@ -64,6 +74,7 @@ function sameApplicationTarget(first: string, second: string): boolean {
   }
 
   if (
+    process.platform === 'darwin' ||
     !path.isAbsolute(first) ||
     !path.isAbsolute(second) ||
     path.extname(first) !== '.exe' ||
@@ -90,8 +101,10 @@ function isSavedEntry(raw: unknown): raw is SavedDockEntry {
     typeof item.id === 'string' &&
     typeof item.name === 'string' &&
     typeof item.target === 'string' &&
-    (isPackagedAppTarget(item.target) ||
-      (path.isAbsolute(item.target) && ['.exe', '.lnk'].includes(path.extname(item.target).toLowerCase())))
+    (process.platform === 'darwin'
+      ? isMacosApplicationTarget(item.target)
+      : isPackagedAppTarget(item.target) ||
+        (path.isAbsolute(item.target) && ['.exe', '.lnk'].includes(path.extname(item.target).toLowerCase())))
   )
 }
 
@@ -150,7 +163,7 @@ export function registerDesktopDock(options: {
   let pinnedRevision = 0
   const serial = createSerialQueue()
   const taskReadSerial = createSerialQueue()
-  const catalog = createWindowsAppCatalog()
+  const catalog = createDesktopAppCatalog()
   const projections = new Map<string, { identity: string; value: DockProjection | null }>()
   const running = new Map<string, RunningDockApplication>()
   let runtime = options.getRunningApplications()
@@ -159,7 +172,7 @@ export function registerDesktopDock(options: {
   let metadataTask: Promise<void> | null = null
 
   const assertSender = (sender: WebContents): void => {
-    if (!options.isDesktopSender(sender) || process.platform !== 'win32') {
+    if (!options.isDesktopSender(sender) || !['win32', 'darwin'].includes(process.platform)) {
       throw new Error('Dock 仅允许桌面入口操作。')
     }
   }
@@ -189,7 +202,8 @@ export function registerDesktopDock(options: {
   function withRunningApplications(
     sender: WebContents,
     eligible: ApplicationEligibility,
-    action: () => Promise<void>
+    action: () => Promise<void>,
+    allowTrustedLaunch = false
   ): Promise<void> {
     return serial(async () => {
       assertSender(sender)
@@ -204,7 +218,13 @@ export function registerDesktopDock(options: {
         throw new Error('桌面已改变，请重新选择程序。')
       }
 
-      if (runtime.status !== 'ready') {
+      const launchWithoutWindows =
+        allowTrustedLaunch &&
+        process.platform === 'darwin' &&
+        runtime.status === 'unavailable' &&
+        !desktopMacos().accessibilityStatus()
+
+      if (runtime.status !== 'ready' && !launchWithoutWindows) {
         throw new Error(runtime.error || '运行程序列表暂时不可用，请重试。')
       }
 
@@ -219,6 +239,10 @@ export function registerDesktopDock(options: {
     eligible: ApplicationEligibility,
     windowId?: string
   ): Promise<boolean> {
+    if (runtime.status !== 'ready') {
+      return false
+    }
+
     const window =
       windowId === undefined
         ? (application?.windows.find(item => item.onDesktopDisplay) ??
@@ -277,6 +301,12 @@ export function registerDesktopDock(options: {
   }
 
   async function validateTarget(target: string): Promise<InstalledApplication | null> {
+    if (process.platform === 'darwin') {
+      await validateMacosApplicationTarget(target)
+
+      return null
+    }
+
     if (isPackagedAppTarget(target)) {
       return requirePackagedApplication(target)
     }
@@ -302,7 +332,10 @@ export function registerDesktopDock(options: {
 
     if (status === 'ready') {
       try {
-        icon = await readWindowsApplicationIcon(entry.target, application?.iconPath)
+        icon =
+          process.platform === 'darwin'
+            ? await readMacosApplicationIcon(entry.target)
+            : await readWindowsApplicationIcon(entry.target, application?.iconPath)
       } catch {
         /* 图标失败保留程序启动能力。 */
       }
@@ -346,7 +379,7 @@ export function registerDesktopDock(options: {
 
     const pinned = entries.map(entry => {
       const base = projection(entry)
-      const identity = projections.get(entry.target)?.identity ?? entry.target.toLowerCase()
+      const identity = projections.get(entry.target)?.identity ?? targetIdentity(entry.target)
       const application = findRunningTarget(identity)
       registered.push(identity)
       const windows = windowsFor(application)
@@ -373,8 +406,10 @@ export function registerDesktopDock(options: {
           windows: windowsFor(application),
           canPin:
             application.target !== null &&
-            (isPackagedAppTarget(application.target) ||
-              (path.isAbsolute(application.target) && path.extname(application.target).toLowerCase() === '.exe'))
+            (process.platform === 'darwin'
+              ? isMacosApplicationTarget(application.target)
+              : isPackagedAppTarget(application.target) ||
+                (path.isAbsolute(application.target) && path.extname(application.target).toLowerCase() === '.exe'))
         })),
       runningStatus: runtime.status,
       runningError: runtime.error
@@ -433,7 +468,9 @@ export function registerDesktopDock(options: {
               icon = item
                 ? ((await catalog.icons([item.id]))[item.id] ?? null)
                 : application.target && !isPackagedAppTarget(application.target)
-                  ? await readWindowsApplicationIcon(application.target)
+                  ? process.platform === 'darwin'
+                    ? await readMacosApplicationIcon(application.target)
+                    : await readWindowsApplicationIcon(application.target)
                   : null
             } catch {
               /* 图标失败不影响窗口切换。 */
@@ -574,8 +611,8 @@ export function registerDesktopDock(options: {
     const next = [...entries]
     const registered = next.map(entry => targetIdentity(entry.target))
 
-    for (const selection of selections) {
-      await validateTarget(selection.target)
+    for (const original of selections) {
+      const selection = await validatedSelection(original)
       const identity = targetIdentity(selection.target)
 
       if (!registered.some(target => sameApplicationTarget(target, identity))) {
@@ -595,10 +632,19 @@ export function registerDesktopDock(options: {
       throw new Error('桌面入口已关闭。')
     }
 
-    const result = await dialog.showOpenDialog(win, {
-      properties: multiple ? ['openFile', 'multiSelections'] : ['openFile'],
-      filters: [{ name: '程序与快捷方式', extensions: ['exe', 'lnk'] }]
-    })
+    const result = await dialog.showOpenDialog(
+      win,
+      process.platform === 'darwin'
+        ? {
+            defaultPath: '/Applications',
+            properties: multiple ? ['openFile', 'multiSelections'] : ['openFile'],
+            filters: [{ name: '应用程序', extensions: ['app'] }]
+          }
+        : {
+            properties: multiple ? ['openFile', 'multiSelections'] : ['openFile'],
+            filters: [{ name: '程序与快捷方式', extensions: ['exe', 'lnk'] }]
+          }
+    )
 
     assertSender(sender)
 
@@ -708,8 +754,20 @@ export function registerDesktopDock(options: {
     )
   }
 
-  async function repairTo(entry: SavedDockEntry, selection: DockSelection): Promise<DockState> {
+  async function validatedSelection(selection: DockSelection): Promise<DockSelection> {
+    if (process.platform === 'darwin') {
+      const application = await validateMacosApplicationTarget(selection.target)
+
+      return { target: application.path, name: application.name || selection.name }
+    }
+
     await validateTarget(selection.target)
+
+    return selection
+  }
+
+  async function repairTo(entry: SavedDockEntry, original: DockSelection): Promise<DockState> {
+    const selection = await validatedSelection(original)
     const identity = targetIdentity(selection.target)
 
     if (entries.some(item => item.id !== entry.id && sameApplicationTarget(targetIdentity(item.target), identity))) {
@@ -812,54 +870,64 @@ export function registerDesktopDock(options: {
       throw new Error('无效程序或窗口。')
     }
 
-    return withRunningApplications(event.sender, eligible, async () => {
-      const application = findRunningApplication(id)
-      const entry = entries.find(item => item.id === id)
+    return withRunningApplications(
+      event.sender,
+      eligible,
+      async () => {
+        const application = findRunningApplication(id)
+        const entry = entries.find(item => item.id === id)
 
-      if (await activateRunningApplication(event.sender, application, Boolean(entry), eligible, windowId)) {
-        return
-      }
-
-      if (!entry) {
-        throw new Error('窗口已关闭，请重新选择程序。')
-      }
-
-      try {
-        await launchApplication(event.sender, entry.target, eligible)
-      } catch (error) {
-        // 移动或卸载后刷新状态，保留修复入口。
-        if (isPackagedAppTarget(entry.target)) {
-          await catalog.refresh()
+        if (await activateRunningApplication(event.sender, application, Boolean(entry), eligible, windowId)) {
+          return
         }
 
-        projections.delete(entry.target)
-        publish()
-        throw error
-      }
-    })
+        if (!entry) {
+          throw new Error('窗口已关闭，请重新选择程序。')
+        }
+
+        try {
+          await launchApplication(event.sender, entry.target, eligible)
+        } catch (error) {
+          // 移动或卸载后刷新状态，保留修复入口。
+          if (isPackagedAppTarget(entry.target)) {
+            await catalog.refresh()
+          }
+
+          projections.delete(entry.target)
+          publish()
+          throw error
+        }
+      },
+      windowId === undefined && entries.some(entry => entry.id === id)
+    )
   })
   options.ipcMain.handle(IPC.invoke.dockActivateCatalog, (event, id: unknown) => {
     assertSender(event.sender)
     const eligible = options.captureEligibility(event.sender)
 
-    return withRunningApplications(event.sender, eligible, async () => {
-      const item = requireCatalogApplication(id)
-      const identity = targetIdentity(item.target)
+    return withRunningApplications(
+      event.sender,
+      eligible,
+      async () => {
+        const item = requireCatalogApplication(id)
+        const identity = targetIdentity(item.target)
 
-      const assertCurrentTarget = (): void => {
-        if (catalog.resolve(item.id) !== item || targetIdentity(item.launchTarget) !== identity) {
-          throw new Error('应用列表已更新，请重新扫描后选择。')
+        const assertCurrentTarget = (): void => {
+          if (catalog.resolve(item.id) !== item || targetIdentity(item.launchTarget) !== identity) {
+            throw new Error('应用列表已更新，请重新扫描后选择。')
+          }
         }
-      }
 
-      assertCurrentTarget()
+        assertCurrentTarget()
 
-      if (await activateRunningApplication(event.sender, findRunningTarget(identity), true, eligible)) {
-        return
-      }
+        if (await activateRunningApplication(event.sender, findRunningTarget(identity), true, eligible)) {
+          return
+        }
 
-      await launchApplication(event.sender, item.launchTarget, eligible, assertCurrentTarget)
-    })
+        await launchApplication(event.sender, item.launchTarget, eligible, assertCurrentTarget)
+      },
+      true
+    )
   })
   options.ipcMain.handle(IPC.invoke.dockTasks, (event, id: unknown) => {
     assertSender(event.sender)
@@ -867,6 +935,10 @@ export function registerDesktopDock(options: {
 
     if (typeof id !== 'string') {
       throw new Error('无效程序。')
+    }
+
+    if (process.platform !== 'win32') {
+      return []
     }
 
     return taskReadSerial(async () => {
@@ -889,6 +961,10 @@ export function registerDesktopDock(options: {
 
     if (typeof id !== 'string' || typeof taskId !== 'string' || taskId.length < 1 || taskId.length > 512) {
       throw new Error('无效程序任务。')
+    }
+
+    if (process.platform !== 'win32') {
+      throw new Error('此系统不支持程序任务。')
     }
 
     return serial(async () => {
@@ -960,7 +1036,7 @@ export function registerDesktopDock(options: {
         ? { target: item.launchTarget, name: item.name }
         : { target: application.target, name: application.name }
 
-      await validateTarget(selection.target)
+      const validated = await validatedSelection(selection)
 
       if (
         !eligible.current() ||
@@ -978,7 +1054,7 @@ export function registerDesktopDock(options: {
       }
 
       const next = [...entries]
-      next.splice(index, 0, { id: randomUUID(), ...selection })
+      next.splice(index, 0, { id: randomUUID(), ...validated })
 
       return commit(next)
     })

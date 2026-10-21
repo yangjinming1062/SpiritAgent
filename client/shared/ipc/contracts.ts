@@ -501,6 +501,7 @@ export interface IpcInvokeContract {
   }) => void
   'spiritagent:presentation:set-ignore-mouse-events': (payload: { ignore: boolean; forward?: boolean }) => void
   'spiritagent:presentation:get-state': () => Promise<PresentationState>
+  'spiritagent:presentation:request-accessibility': () => Promise<PresentationState>
   'spiritagent:presentation:set-mode': (mode: PresentationMode) => Promise<PresentationState>
   'spiritagent:presentation:set-display': (id: number) => Promise<PresentationState>
   'spiritagent:presentation:report-ready': () => void
@@ -709,6 +710,7 @@ export interface IpcInvokeContract {
 // 2. 主进程向渲染进程推送事件（通过 webContents.send / ipcRenderer.on）
 export interface IpcEventContract {
   'spiritagent:presentation:changed': [payload: PresentationState]
+  'spiritagent:presentation:pointer-position': [payload: { x: number; y: number }]
   'spiritagent:dock:changed': [payload: DockState]
   'spiritagent:desktop:navigate': [payload: AppNavigationTarget]
   'spiritagent:background:media': [payload: DesktopBackground]
@@ -752,6 +754,7 @@ export const IPC = {
     presentationStageActivity: 'spiritagent:presentation:stage-activity',
     presentationSetIgnoreMouseEvents: 'spiritagent:presentation:set-ignore-mouse-events',
     presentationGetState: 'spiritagent:presentation:get-state',
+    presentationRequestAccessibility: 'spiritagent:presentation:request-accessibility',
     presentationSetMode: 'spiritagent:presentation:set-mode',
     presentationSetDisplay: 'spiritagent:presentation:set-display',
     presentationReportReady: 'spiritagent:presentation:report-ready',
@@ -857,6 +860,7 @@ export const IPC = {
   } as const satisfies Record<string, IpcChannel>,
   event: {
     presentationChanged: 'spiritagent:presentation:changed',
+    presentationPointerPosition: 'spiritagent:presentation:pointer-position',
     dockChanged: 'spiritagent:dock:changed',
     desktopNavigate: 'spiritagent:desktop:navigate',
     backgroundMedia: 'spiritagent:background:media',

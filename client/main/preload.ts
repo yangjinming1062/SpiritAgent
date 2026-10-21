@@ -79,6 +79,7 @@ function subscribe<C extends IpcEventChannel>(channel: C, callback: EventCallbac
 }
 
 const desktopBridge = {
+  platform: process.platform,
   uiState: {
     get: (authSessionId: string) => invoke(IPC.invoke.uiStateGet, authSessionId),
     update: (payload: InvokePayload<typeof IPC.invoke.uiStateUpdate>) => invoke(IPC.invoke.uiStateUpdate, payload),
@@ -95,6 +96,7 @@ const desktopBridge = {
     setIgnoreMouseEvents: (payload: InvokePayload<typeof IPC.invoke.presentationSetIgnoreMouseEvents>) =>
       invoke(IPC.invoke.presentationSetIgnoreMouseEvents, payload),
     getState: () => invoke(IPC.invoke.presentationGetState),
+    requestAccessibility: () => invoke(IPC.invoke.presentationRequestAccessibility),
     setMode: (mode: InvokePayload<typeof IPC.invoke.presentationSetMode>) =>
       invoke(IPC.invoke.presentationSetMode, mode),
     setDisplay: (id: number) => invoke(IPC.invoke.presentationSetDisplay, id),
@@ -110,6 +112,8 @@ const desktopBridge = {
       invoke(IPC.invoke.presentationStageActivity, activity),
     onChanged: (cb: EventCallback<typeof IPC.event.presentationChanged>) =>
       subscribe(IPC.event.presentationChanged, cb),
+    onPointerPosition: (cb: EventCallback<typeof IPC.event.presentationPointerPosition>) =>
+      subscribe(IPC.event.presentationPointerPosition, cb),
     onBackgroundPlayback: (cb: EventCallback<typeof IPC.event.backgroundPlayback>) =>
       subscribe(IPC.event.backgroundPlayback, cb)
   },

@@ -131,7 +131,7 @@ function preparePackaging(buildRoot, file, arch) {
 function buildDesktopTrayStyle(arch = process.arch) {
   if (!['x64', 'arm64'].includes(arch)) throw new Error(`Unsupported Windows desktop tray style architecture: ${arch}`)
   const clientRoot = path.resolve(__dirname, '..')
-  const sourceRoot = path.join(clientRoot, 'desktop-host', 'tray-style')
+  const sourceRoot = path.join(clientRoot, 'desktop-windows', 'tray-style')
   const buildRoot = path.join(clientRoot, 'build', arch)
   const fingerprint = sourceFingerprint(sourceRoot, arch)
   const file = `desktop-tray-style-${fingerprint}.dll`

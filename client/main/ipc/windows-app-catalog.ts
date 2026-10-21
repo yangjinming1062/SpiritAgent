@@ -11,6 +11,7 @@ import type { DockCatalogSource, DockCatalogSourceKey } from '@ipc/contracts'
 
 import { createSerialQueue } from '../shared/utils'
 
+import type { CatalogApplication, CatalogScan } from './desktop-app-catalog'
 import { readWindowsApplicationIcon } from './windows-application-icon'
 import { type InstalledApplication, readRegisteredApplications, readShellApplications } from './windows-installed-apps'
 
@@ -18,21 +19,6 @@ const MAX_DEPTH = 4
 const MAX_SHORTCUTS = 1000
 const CACHE_TTL_MS = 60_000
 const MAX_ICON_BATCH = 64
-
-export interface CatalogApplication {
-  id: string
-  launchTarget: string
-  target: string
-  name: string
-  detail: string
-  iconPath?: string | null
-}
-
-export interface CatalogScan {
-  revision: number
-  sources: DockCatalogSource[]
-  items: CatalogApplication[]
-}
 
 function userAppData(): string {
   return process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming')

@@ -5,9 +5,10 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { Check, FolderOpen, Monitor, Pin, RefreshCw, Search, X } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
-import { shellApi } from '@/shared/platform/desktop'
+import { desktopPlatform, shellApi } from '@/shared/platform/desktop'
 import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
+import { $presentation } from '@/shared/store/presentation'
 import { useStrings } from '@/shared/strings'
 import type { DesktopBridge } from '@client-shared/ipc/bridge'
 
@@ -49,6 +50,8 @@ export function DesktopDockPicker({
   triggerRef: React.RefObject<HTMLElement | null>
 }): React.JSX.Element {
   const t = useStrings().desktopShell
+  const presentation = useStore($presentation)
+  const workArea = desktopPlatform() === 'darwin' ? presentation.workArea : null
   const locale = useStore($locale)
   const beginAsync = useAsyncGuard()
   const [catalog, setCatalog] = useState<Catalog | null>(null)
@@ -82,14 +85,16 @@ export function DesktopDockPicker({
   useLayoutEffect(() => {
     const positionPicker = (): void => {
       const anchor = (triggerRef.current ?? anchorRef.current)?.getBoundingClientRect()
-      const width = Math.min(640, window.innerWidth - 32)
+      const safeLeft = workArea?.x ?? 0
+      const safeRight = workArea ? workArea.x + workArea.width : window.innerWidth
+      const width = Math.min(640, safeRight - safeLeft - 32)
       const dockTop = anchor?.top ?? window.innerHeight - 82
       const center = anchor ? anchor.left + anchor.width / 2 : window.innerWidth / 2
 
       setPosition({
         bottom: window.innerHeight - dockTop + 12,
-        left: Math.max(width / 2 + 16, Math.min(center, window.innerWidth - width / 2 - 16)),
-        maxHeight: Math.max(0, Math.min(620, dockTop - 72))
+        left: Math.max(safeLeft + width / 2 + 16, Math.min(center, safeRight - width / 2 - 16)),
+        maxHeight: Math.max(0, Math.min(620, dockTop - Math.max(72, (workArea?.y ?? 0) + 16)))
       })
     }
 
@@ -111,7 +116,7 @@ export function DesktopDockPicker({
       observer.disconnect()
       window.removeEventListener('resize', positionPicker)
     }
-  }, [anchorRef, triggerRef])
+  }, [anchorRef, triggerRef, workArea])
 
   useEffect(() => {
     const outside = (event: PointerEvent): void => {
@@ -425,7 +430,7 @@ export function DesktopDockPicker({
       style={{
         ...position,
         bottom: `max(${position.bottom}px, var(--desktop-popup-bottom))`,
-        maxHeight: `min(${position.maxHeight}px, calc(100vh - max(${position.bottom}px, var(--desktop-popup-bottom)) - 16px))`
+        maxHeight: `min(${position.maxHeight}px, calc(100vh - max(${position.bottom}px, var(--desktop-popup-bottom)) - var(--desktop-safe-top, 0px) - 16px))`
       }}
     >
       <header className={styles.dockPickerHeader}>
