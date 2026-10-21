@@ -3,13 +3,12 @@ import { useState } from 'react'
 
 import type { DesktopVideoAction, DesktopVideoSet } from '@/modules/desktop-videos'
 import { Plus } from '@/shared/lib/icons'
-import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, PanelSelect } from '@/shared/panel'
+import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, PanelSelect, SearchField } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
 import { DesktopLifeHeader } from './desktop-life-header'
 import { DesktopLifeProposalList } from './desktop-life-proposals'
 import { desktopLifeActionName, desktopLifeActionStatus } from './desktop-life-status'
-import { useDesktopLifeStrings } from './desktop-life-strings'
 import styles from './desktop-life.module.css'
 
 interface DesktopLifeWorkbenchProps {
@@ -41,7 +40,8 @@ export function DesktopLifeWorkbench({
   onSelect,
   children
 }: DesktopLifeWorkbenchProps): React.JSX.Element {
-  const t = useDesktopLifeStrings()
+  const strings = useStrings()
+  const t = strings.desktopLife
   const common = useStrings().common
   const [query, setQuery] = useState('')
   const idle = set.actions.find(item => item.key === 'idle')
@@ -105,12 +105,11 @@ export function DesktopLifeWorkbench({
         <aside aria-label={t.allActions} className={styles.actionSidebar}>
           <div className={styles.actionListHeader}>
             <h3 className="text-xs font-medium text-strong">{t.allActions}</h3>
-            <input
-              aria-label={t.searchActions}
-              className={INPUT_CLASS}
-              onChange={event => setQuery(event.target.value)}
+            <SearchField
+              ariaLabel={t.searchActions}
+              className="max-w-none"
+              onChange={setQuery}
               placeholder={t.searchActions}
-              type="search"
               value={query}
             />
           </div>

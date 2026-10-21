@@ -1,6 +1,6 @@
 import { Check } from '@/shared/lib/icons'
+import { useStrings } from '@/shared/strings'
 
-import { useDesktopLifeStrings } from './desktop-life-strings'
 import styles from './desktop-life.module.css'
 
 export function DesktopLifeSteps({
@@ -10,7 +10,8 @@ export function DesktopLifeSteps({
   step: number
   skipImage?: boolean
 }): React.JSX.Element {
-  const t = useDesktopLifeStrings()
+  const strings = useStrings()
+  const t = strings.desktopLife
   const labels = [t.stepIdea, ...(skipImage ? [] : [t.stepImage]), t.stepVideo, t.stepUse]
   const currentStep = skipImage && step >= 2 ? step - 1 : step
 

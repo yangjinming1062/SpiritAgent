@@ -14,15 +14,14 @@ import {
 import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
-import { backendDetailMessage } from '@/shared/lib/ipc-error'
+import { failureText } from '@/shared/lib/ipc-error'
 import { CreationActionBar, CreationFeedback, INPUT_CLASS } from '@/shared/panel'
 import { notifyError } from '@/shared/store/notifications'
-import { errorMessage } from '@runtime'
+import { useStrings } from '@/shared/strings'
 
 import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE } from './desktop-life-buttons'
 import { DesktopLifeDialog } from './desktop-life-dialog'
 import { DesktopLifePreview } from './desktop-life-preview'
-import { useDesktopLifeStrings } from './desktop-life-strings'
 
 export function VideoRefinementModal({
   action,
@@ -35,7 +34,8 @@ export function VideoRefinementModal({
   source: DesktopVideoRefinementSource
   onClose: () => void
 }): React.JSX.Element {
-  const t = useDesktopLifeStrings()
+  const strings = useStrings()
+  const t = strings.desktopLife
   const active = usePanelActivity()
   const sets = useStore($desktopVideoSets)
 
@@ -107,7 +107,7 @@ export function VideoRefinementModal({
         })
         .catch((error: unknown) => {
           if (current && scope?.() && isLive()) {
-            setChecked({ key: inputKey, error: backendDetailMessage(error, errorMessage(error)) })
+            setChecked({ key: inputKey, error: failureText(error, t.operationFailed) })
           }
         })
     }, 300)
@@ -116,7 +116,7 @@ export function VideoRefinementModal({
       current = false
       window.clearTimeout(timer)
     }
-  }, [action, active, beginAsync, feedback, fitAspect, inputKey, set, source, stale])
+  }, [action, active, beginAsync, feedback, fitAspect, inputKey, set, source, stale, t.operationFailed])
 
   const submit = async (): Promise<void> => {
     if (submittingRequest.current || !active || stale || !preview || (!feedback.trim() && !fitAspect)) {
@@ -137,7 +137,7 @@ export function VideoRefinementModal({
       }
     } catch (failure) {
       if (scope?.() && isLive()) {
-        setSubmissionError(backendDetailMessage(failure, errorMessage(failure)))
+        setSubmissionError(failureText(failure, t.operationFailed))
         notifyError(failure, t.refineVideo)
         void refreshDesktopVideos()
       }
@@ -156,7 +156,7 @@ export function VideoRefinementModal({
         actions={
           previewError && !stale && !submitting ? (
             <button className={BTN_SUBTLE} onClick={() => setPreviewAttempt(attempt => attempt + 1)} type="button">
-              {t.retryRefinementPreview}
+              {strings.common.retry}
             </button>
           ) : undefined
         }
@@ -194,7 +194,7 @@ export function VideoRefinementModal({
             {submitting ? t.submittingRefinement : t.startRefinement}
           </button>
           <button className={BTN_GHOST} disabled={submitting} onClick={onClose} type="button">
-            {t.cancelUpload}
+            {strings.common.cancel}
           </button>
         </CreationActionBar>
       }

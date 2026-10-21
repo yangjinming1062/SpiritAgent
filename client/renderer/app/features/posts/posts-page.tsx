@@ -22,7 +22,7 @@ import {
 import { ChevronDown, Sparkles, Trash2 } from '@/shared/lib/icons'
 import { currentClearEpoch } from '@/shared/lib/storage'
 import { cn } from '@/shared/lib/utils'
-import { BTN_ICON, BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, LoadingBlock } from '@/shared/panel'
+import { BTN_ICON, BTN_PRIMARY, BTN_SUBTLE, ErrorBanner, INPUT_CLASS, LoadingBlock } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
 import { $locale } from '@/shared/store/locale'
@@ -161,12 +161,12 @@ function PostsContent({
           {loading ? (
             <LoadingBlock label={t.loading} />
           ) : loadFailed ? (
-            <>
-              <p>{t.loadFailed}</p>
-              <button className={cn(BTN_SUBTLE, 'mt-3')} onClick={() => setReloadKey(key => key + 1)} type="button">
-                {strings.common.retry}
-              </button>
-            </>
+            <ErrorBanner
+              message={t.loadFailed}
+              onRetry={() => setReloadKey(key => key + 1)}
+              retryLabel={strings.common.retry}
+              tone="danger"
+            />
           ) : (
             <>
               <Sparkles aria-hidden="true" className={styles.emptyIcon} size={28} />
@@ -222,7 +222,7 @@ function PostsContent({
           onClick={() => {
             void loadMorePosts().then(ok => {
               if (!ok) {
-                notify({ kind: 'error', message: t.loadFailed })
+                notify({ kind: 'error', message: t.loadFailed, title: t.loadFailed })
               }
             })
           }}
@@ -312,7 +312,7 @@ function PostComments(props: {
     if (ok) {
       setDraft('')
     } else if (epoch === currentClearEpoch()) {
-      notify({ kind: 'error', message: t.commentFailed })
+      notify({ kind: 'error', message: t.commentFailed, title: t.commentFailed })
     }
   }
 
@@ -320,7 +320,7 @@ function PostComments(props: {
     const epoch = currentClearEpoch()
 
     if (!(await deletePostComment(postId, commentId)) && epoch === currentClearEpoch()) {
-      notify({ kind: 'error', message: t.commentDeleteFailed })
+      notify({ kind: 'error', message: t.commentDeleteFailed, title: t.commentDeleteFailed })
     }
   }
 
@@ -334,7 +334,7 @@ function PostComments(props: {
           onRemove={remove}
           onRetry={async commentId => {
             if (!(await retryPostReply(postId, commentId))) {
-              notify({ kind: 'error', message: t.replyRetryFailed })
+              notify({ kind: 'error', message: t.replyRetryFailed, title: t.replyRetryFailed })
             }
           }}
         />

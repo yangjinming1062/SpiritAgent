@@ -12,8 +12,8 @@ import {
 } from '@/modules/scene'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
-import { ArrowLeft, Loader2, Pencil, RefreshCw, Sparkles, ZoomIn } from '@/shared/lib/icons'
-import { isClientErrorIpc } from '@/shared/lib/ipc-error'
+import { ArrowLeft, Pencil, RefreshCw, Sparkles, ZoomIn } from '@/shared/lib/icons'
+import { failureText, isClientErrorIpc } from '@/shared/lib/ipc-error'
 import { cn } from '@/shared/lib/utils'
 import {
   BTN_PRIMARY,
@@ -22,11 +22,13 @@ import {
   CreationFeedback,
   type CreationFeedbackState,
   CreationWorkspace,
+  Disclosure,
   INPUT_CLASS,
-  SettingCard
+  Pill,
+  SettingCard,
+  Spinner
 } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
-import { errorMessage } from '@runtime'
 
 export interface SceneEditDraft {
   title: string
@@ -174,7 +176,7 @@ export function SceneDetailView({
       await action(isLive)
       settle(null)
     } catch (error) {
-      const message = errorMessage(
+      const message = failureText(
         error,
         kind === 'refresh' ? tToasts.sceneStatusRefreshFailed : tToasts.sceneRegenerateFailed
       )
@@ -377,11 +379,7 @@ export function SceneDetailView({
       <div className="min-w-0 flex-1">
         <h2 className="truncate text-sm font-semibold text-strong">{detail.title || t.untitled}</h2>
       </div>
-      {isCurrent ? (
-        <span className="shrink-0 rounded-full bg-accent/15 px-2.5 py-1 text-[10px] text-accent">
-          {t.historyCurrentLabel}
-        </span>
-      ) : null}
+      {isCurrent ? <Pill tone="accent">{t.historyCurrentLabel}</Pill> : null}
     </div>
   )
 
@@ -495,11 +493,7 @@ export function SceneDetailView({
               }}
               type="button"
             >
-              {actionKind === 'generate' ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <RefreshCw className="size-3.5" />
-              )}
+              {actionKind === 'generate' ? <Spinner size="sm" /> : <RefreshCw className="size-3.5" />}
               {hasDraft ? t.saveAndRegenerate : t.imageRegenerate}
             </button>
           ) : null}
@@ -557,7 +551,7 @@ export function SceneDetailView({
               }}
             >
               <div className="flex items-center gap-2">
-                {generating ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                {generating ? <Spinner /> : <Sparkles className="size-4" />}
                 {detail.stage === 'waiting_upload'
                   ? t.waitingUploadOverlay
                   : generating
@@ -600,8 +594,12 @@ export function SceneDetailView({
 
         <div className="min-w-0">
           {detail.image_size || detail.source_size || detail.target_size ? (
-            <details className="px-4 pt-3 text-xs text-muted sm:px-5">
-              <summary className="cursor-pointer">{strings.common.creationDetails}</summary>
+            <Disclosure
+              bodyClassName="flex flex-wrap gap-x-4 gap-y-1 text-[11px]"
+              className="px-4 pt-3 text-xs text-muted sm:px-5"
+              title={strings.common.creationDetails}
+              variant="inline"
+            >
               <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
                 {detail.image_size ? (
                   <span>{t.imageSize(detail.image_size.width, detail.image_size.height)}</span>
@@ -613,7 +611,7 @@ export function SceneDetailView({
                   <span>{t.generationTargetSize(detail.target_size.width, detail.target_size.height)}</span>
                 ) : null}
               </div>
-            </details>
+            </Disclosure>
           ) : null}
           {draft ? (
             <div className="space-y-4 p-4 sm:p-5">

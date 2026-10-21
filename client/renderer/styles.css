@@ -19,6 +19,7 @@
   --color-accent-line: var(--ui-accent-line);
   --color-focus-line: var(--ui-focus-line);
   --color-success: var(--ui-success);
+  --color-warning: var(--ui-warning);
   --color-on-accent: var(--ui-on-accent);
   --color-fill-hover: var(--ui-fill-hover);
   --color-fill-trough: var(--ui-fill-trough);
@@ -86,6 +87,7 @@
     --ui-accent-line: rgba(92, 112, 148, 0.45);
     --ui-focus-line: rgba(92, 112, 148, 0.65);
     --ui-success: rgb(20, 145, 90);
+    --ui-warning: rgb(173 106 12);
 
     --sprite-state-idle: rgba(226, 232, 240, 0.45);
     --sprite-state-listening: rgba(251, 113, 133, 0.55);
@@ -141,6 +143,7 @@
     --ui-accent-line: rgba(138, 160, 200, 0.45);
     --ui-focus-line: rgba(138, 160, 200, 0.7);
     --ui-success: rgb(52, 211, 153);
+    --ui-warning: rgb(251 191 36);
     --ui-on-accent: rgb(255 255 255);
     --ui-inverse-surface: rgb(255 255 255);
     --ui-inverse-surface-hover: rgb(235 235 235);
@@ -167,6 +170,7 @@
     --ui-accent-line: rgba(92, 112, 148, 0.45);
     --ui-focus-line: rgba(92, 112, 148, 0.65);
     --ui-success: rgb(20, 145, 90);
+    --ui-warning: rgb(173 106 12);
     --ui-on-accent: rgb(255 255 255);
     --ui-inverse-surface: rgb(26, 28, 32);
     --ui-inverse-surface-hover: rgb(45, 48, 55);

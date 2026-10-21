@@ -1,7 +1,8 @@
 import type { ComponentProps, ReactNode } from 'react'
 
 import type { DesktopVideoSource } from '@/modules/desktop-videos'
-import { CreationActionBar, CreationWorkspace, INPUT_CLASS } from '@/shared/panel'
+import { CreationActionBar, CreationWorkspace, Disclosure, INPUT_CLASS } from '@/shared/panel'
+import { useStrings } from '@/shared/strings'
 import type { DesktopLifeUiSnapshot, PresentationState } from '@ipc/contracts'
 
 import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE } from './desktop-life-buttons'
@@ -9,7 +10,6 @@ import { DesktopLifeHeader } from './desktop-life-header'
 import { DesktopLifeReferences } from './desktop-life-materials'
 import { DesktopLifeDisplayPicker } from './desktop-life-resolution'
 import { DesktopLifeSteps } from './desktop-life-steps'
-import { useDesktopLifeStrings } from './desktop-life-strings'
 import styles from './desktop-life.module.css'
 
 type Creation = DesktopLifeUiSnapshot['create']
@@ -48,7 +48,8 @@ export function DesktopLifeCreateView({
   onPickScene,
   onPrepareMaterial
 }: DesktopLifeCreateViewProps): React.JSX.Element {
-  const t = useDesktopLifeStrings()
+  const strings = useStrings()
+  const t = strings.desktopLife
 
   const creationNameField = (
     <label className={styles.field}>
@@ -155,11 +156,14 @@ export function DesktopLifeCreateView({
           )}
           {create.source !== 'ai' && creationNameField}
           {create.source === 'ai' && (
-            <details
+            <Disclosure
+              bodyClassName="mt-4 flex flex-col gap-4"
               className="rounded-xl border border-line-hairline p-4"
               open={Boolean(create.name.trim() || create.feedback.trim()) || undefined}
+              summaryClassName="text-sm font-medium text-strong"
+              title={t.advanced}
+              variant="bordered"
             >
-              <summary className="cursor-pointer text-sm font-medium text-strong">{t.advanced}</summary>
               <div className="mt-4 flex flex-col gap-4">
                 {creationNameField}
                 <label className={styles.field}>
@@ -185,7 +189,7 @@ export function DesktopLifeCreateView({
                   </button>
                 )}
               </div>
-            </details>
+            </Disclosure>
           )}
         </form>
       </div>

@@ -25,7 +25,9 @@
 | 对话与音频联动 | [modules/conversation](modules/conversation/)、[modules/speech](modules/speech/)、[conversation-speech.ts](app/workflows/conversation-speech.ts) |
 | 动态、日记与记忆页 | [modules/posts](modules/posts/)、[modules/diary](modules/diary/)、[memory-section.tsx](app/features/companion/memory-section.tsx) |
 | 场景与背景 | [scene-store.ts](modules/scene/scene-store.ts) |
-| 文案与主题 | [strings/dictionaries](shared/strings/dictionaries/)、[shared/panel](shared/panel/)；`en` 按 `zh` 类型校验，引导问答和人格预设仍有硬编码中文 |
+| 文案与主题 | [strings/dictionaries](shared/strings/dictionaries/)、[shared/panel](shared/panel/)；`en` 按 `zh` 类型校验，界面外壳与显示件文案取自字典，引导问答、人格预设与模块兜底失败文案仍是硬编码中文 |
+| 通用显示件 | [shared/panel](shared/panel/)（`Spinner`/`LoadingBlock`/`EmptyState`/`ErrorBanner`/`SaveStatus`/`ActionRow`/`Badge`/`Pill`/`Disclosure`/`Placeholder`）、[shared/components](shared/components/)（`CopyButton`/`ImageLightboxButton`/`ReferenceImageField`）；空态、加载态、失败态、确认与焦点约束由这些件统一，业务页只提供文案与回调 |
+| 跨端文案与错误归类 | 根 [shared](../shared/)（`ui-copy.ts`、`error-classification.ts`）；两端的中性措辞与失败归类只在此定义，客户端与手机端共用 |
 
 ## 装配与状态归属
 
@@ -47,6 +49,8 @@
 
 制作页通过 `shared/panel` 的 `CreationWorkspace` 将页头和操作区放在正文滚动容器之外，`CreationFeedback` 在相关按钮或预览旁呈现普通文字与图标，不显示横幅或预留顶部状态区域。按钮已表达当前阶段时，调用处省略反馈标题，相应操作区通过 `aria-live` 播报阶段变化；反馈保留补充说明、耗时提醒与恢复操作，无内容时不占位。`CreationActionBar` 只维护操作区样式、不自行吸附。业务模块投影真实阶段与恢复能力，公共组件不发请求、不推测进度。结果未知时先核对服务端状态，结束本地等待提醒不等于取消原任务。
 
+列表与表单页的显示件统一取 `shared/panel` 与 `shared/components`：`LoadingBlock` 表示加载、`EmptyState` 表示空或失败、`ErrorBanner` 表示与状态绑定的失败、`SaveStatus` 表示自动保存状态、`ActionRow` 表示并列动作、`Disclosure` 表示折叠区、`Spinner`／`Badge`／`Pill`／`Placeholder` 表示局部元素。折叠与确认的焦点约束由 `use-dialog-focus` 与 `ConfirmDialog` 统一承担，业务页不再各自实现焦点陷阱或自持确认弹窗状态。共享件只呈现已判定的状态与回调，不发请求、不读 store、不推测进度，也不在组件里写死文案。
+
 声音管理与引导复用同一制作组件。[voice-creation-store.ts](app/features/companion/voice-creation-store.ts) 按账户会话保存设计、克隆请求与输入和候选，页面失活或卸载不取消制作；录音、样本上传、播放与页面确认回调继续遵守活动资格。换号和账户清理使原任务回调失效，显式取消仍等待原任务的服务端回执。声音页介绍与当前声音摘要在正文中滚动，分类与主操作保留于有界制作区，进度放在主操作旁。`DirectoryShell` 在矮窄面板改用可横向滚动的单行分类，并保持所选分类可见，为最小桌面面板保留制作空间。
 
 `app/runtime` 管理账户与窗口的 IPC 订阅，React Hook 绑定启停。各窗口先订阅再读连接状态，通过类型化 HTTP 操作恢复会话；主进程合并同会话的并发快照，视图释放不关闭网络。业务请求经 [resource-request.ts](shared/lib/resource-request.ts) 提交稳定操作标识，账户与请求代次使旧实例和迟到结果失效。网络连接与设备派发归[主进程网关](../main/README.md#账户网关与窗口订阅)。
@@ -54,6 +58,7 @@
 网关路由先核对认证状态，再按 `session_id` 交给该账户保留的 runtime；角色、工具展示和投递由 [handlers](app/runtime/handlers/) 处理，场景、动态、日记进入所属 module。
 
 - store／工作流用 [captureAuthScope](shared/lib/authed-api.ts) 核对鉴权会话与清理代次，组件用 [use-async-guard](shared/hooks/use-async-guard.ts) 核对挂载与代次；失败记录经 `apiSucceeded`，错误文案经 `ipc-error.ts`。
+- 失败文案与失败归类只经 [ipc-error.ts](shared/lib/ipc-error.ts) 的 `failureText` 与根 [error-classification.ts](../shared/error-classification.ts)；带后端正文的失败用 [notifications.ts](shared/store/notifications.ts) 的 `notifyError` 上报，业务页不再直接读错误对象。与状态绑定的失败走行内 `ErrorBanner`，动作型失败走 toast，两者不重复呈现。
 - [storage.ts](shared/lib/storage.ts) 登记账户持久键、清理及恢复回调。换号释放内存并按 `accountId` 重挂载，重置期间不回写索引；所属账户命名空间切换完成后才应用云偏好广播。全局缓存保留和移除语义归 PROTOCOL。
 - [runner-status.ts](shared/store/runner-status.ts) 先订阅后读快照，同清理代次共用在途读取，迟到快照不能覆盖新事件或新账户。网关握手超时落到 `error`，不能停留 `connecting`。
 - 引导 flow 只装配导航与未提交表单，问题和恢复路由为纯定义；`onboarding-draft.ts` 持串行保存与读取守卫，头像和音色流程各自管理异步结果。引导通过 REST 逐字段增量保存，按服务端 `next_field` 续答，本地非空编辑优先。草稿读取失败暂停待重试，不能当作新引导覆盖。

@@ -200,7 +200,7 @@ export function SkillsPage(): React.JSX.Element {
           </div>
           <div>
             <SearchField
-              aria-label={sk.searchSkills}
+              ariaLabel={sk.searchSkills}
               onChange={setSearchTerm}
               placeholder={sk.searchSkills}
               value={searchTerm}

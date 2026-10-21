@@ -100,16 +100,3 @@
   outline: 2px solid var(--ui-focus-line);
   outline-offset: 3px;
 }
-.spinning {
-  animation: creation-spin 1s linear infinite;
-}
-@keyframes creation-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .spinning {
-    animation: none;
-  }
-}

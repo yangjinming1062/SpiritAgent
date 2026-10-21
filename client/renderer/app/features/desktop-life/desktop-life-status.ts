@@ -1,9 +1,10 @@
 import type { DesktopVideoAction, DesktopVideoSet } from '@/modules/desktop-videos'
 import type { useStrings } from '@/shared/strings'
 
-import type { useDesktopLifeStrings } from './desktop-life-strings'
-
-export function desktopLifeActionName(action: DesktopVideoAction, t: ReturnType<typeof useDesktopLifeStrings>): string {
+export function desktopLifeActionName(
+  action: DesktopVideoAction,
+  t: ReturnType<typeof useStrings>['desktopLife']
+): string {
   return action.preset ? t.actionNames[action.key as keyof typeof t.actionNames] || action.name : action.name
 }
 
@@ -58,7 +59,7 @@ export function isActionPaused(action: DesktopVideoAction): boolean {
 
 export function desktopLifeCreationStage(
   action: DesktopVideoAction,
-  t: ReturnType<typeof useDesktopLifeStrings>
+  t: ReturnType<typeof useStrings>['desktopLife']
 ): string {
   const stages: Record<string, string> = t.creationStages
 
@@ -67,7 +68,7 @@ export function desktopLifeCreationStage(
 
 export function desktopLifeActionStatus(
   action: DesktopVideoAction,
-  t: ReturnType<typeof useDesktopLifeStrings>,
+  t: ReturnType<typeof useStrings>['desktopLife'],
   queueStrings: ReturnType<typeof useStrings>['common']['videoQueue'],
   variantStrings: ReturnType<typeof useStrings>['common']['actionVariants']
 ): string {
@@ -126,7 +127,7 @@ export function desktopLifeActionStatus(
   }
 
   if (action.status === 'failed') {
-    return t.statuses.failed
+    return variantStrings.statuses.failed
   }
 
   if (action.status === 'review_pending' && action.draft?.candidate_video_url) {
@@ -141,5 +142,5 @@ export function desktopLifeActionStatus(
     return t.needsUpdateLabel
   }
 
-  return action.playable ? t.ready : action.status === 'queued' ? t.notCreated : t.statuses[action.status]
+  return action.playable ? t.ready : action.status === 'queued' ? t.notCreated : variantStrings.statuses[action.status]
 }

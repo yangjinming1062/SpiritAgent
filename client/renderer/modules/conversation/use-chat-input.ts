@@ -6,7 +6,7 @@ import { blobToDataUrl } from '@/shared/lib/blob-data-url'
 import { resolveDroppedFiles } from '@/shared/lib/file-drop'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { currentClearEpoch } from '@/shared/lib/storage'
-import { notify } from '@/shared/store/notifications'
+import { notify, notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 
 import { attachVideoFile } from './chat-attach-picker'
@@ -62,7 +62,7 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
     onClearExternalPaths: () => {
       $externalPaths.set([])
     },
-    onPreCheckFail: msg => notify({ kind: 'warning', message: msg })
+    onPreCheckFail: msg => notifyError(msg, getStrings().common.operationFailed)
   })
 
   const {

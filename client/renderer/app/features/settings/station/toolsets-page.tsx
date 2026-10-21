@@ -118,7 +118,7 @@ export function ToolsetsPage(): React.JSX.Element {
         )}
         <div>
           <SearchField
-            aria-label={sk.searchToolsets}
+            ariaLabel={sk.searchToolsets}
             onChange={setSearchTerm}
             placeholder={sk.searchToolsets}
             value={searchTerm}

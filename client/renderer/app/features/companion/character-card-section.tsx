@@ -12,10 +12,10 @@ import {
   PORTRAIT_FEATURE_KEYS,
   saveCharacterCard
 } from '@/modules/character'
-import { PortraitLightbox } from '@/shared'
+import { ImageLightboxButton } from '@/shared/components/image-lightbox-button'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
-import { backendDetailMessage, ipcErrorStatus } from '@/shared/lib/ipc-error'
+import { failureText, ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
 import {
@@ -30,7 +30,6 @@ import {
   WizardModal
 } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
-import { $locale } from '@/shared/store/locale'
 import { useStrings } from '@/shared/strings'
 
 import { $companionEditors, updateCompanionEditors } from './companion-editor-state'
@@ -52,14 +51,13 @@ export function CharacterCardSection({
   const authKind = useStore($auth).kind
   const card = useStore($characterCard)
   const images = useStore($avatarSeeds)
-  const english = useStore($locale) === 'en'
   const draft = useStore($companionEditors).characterCards[String(avatarId)]
   const editing = !!draft && editorOpen
   const changes = draft?.changes ?? {}
   const revision = draft?.revision ?? 0
   const [hint, setHint] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [zoom, setZoom] = useState<string | null>(null)
+  const [zoomOpen, setZoomOpen] = useState(false)
   const [imageError, setImageError] = useState(false)
   const [imageRevision, setImageRevision] = useState(0)
   const begin = useAsyncGuard()
@@ -86,7 +84,7 @@ export function CharacterCardSection({
     const isLive = begin()
     void hydrateCharacterCard().catch(error => {
       if (isLive()) {
-        setHint(backendDetailMessage(error, t.loadFailed))
+        setHint(failureText(error, t.loadFailed))
       }
     })
   }, [begin, t.loadFailed])
@@ -121,7 +119,7 @@ export function CharacterCardSection({
       await operation(isLive)
     } catch (error) {
       if (isLive()) {
-        setHint(backendDetailMessage(error, t.operationFailed))
+        setHint(failureText(error, t.operationFailed))
 
         if (ipcErrorStatus(error) === 409) {
           await hydrateCharacterCard().catch(refreshError => log.warn('character-card', 'Refresh failed', refreshError))
@@ -201,9 +199,7 @@ export function CharacterCardSection({
             </button>
           )}
         </div>
-        {editing && Object.keys(changes).length > 0 && (
-          <p className={HINT_TEXT}>{english ? 'Unsaved changes' : '未保存修改'}</p>
-        )}
+        {editing && Object.keys(changes).length > 0 && <p className={HINT_TEXT}>{common.unsavedChanges}</p>}
         {images.avatarId === avatarId && (
           <div className="flex gap-3">
             {[
@@ -212,11 +208,12 @@ export function CharacterCardSection({
             ].map(
               ({ url, label }) =>
                 url && (
-                  <button
+                  <ImageLightboxButton
                     className="flex min-w-0 flex-1 flex-col items-center gap-1 rounded-xl border border-line-hairline p-2"
                     key={label}
-                    onClick={() => setZoom(url)}
-                    type="button"
+                    name={label}
+                    onOpenChange={setZoomOpen}
+                    url={url}
                   >
                     <img
                       alt={label}
@@ -226,7 +223,7 @@ export function CharacterCardSection({
                       src={url}
                     />
                     <span className={HINT_TEXT}>{label}</span>
-                  </button>
+                  </ImageLightboxButton>
                 )
             )}
           </div>
@@ -330,7 +327,7 @@ export function CharacterCardSection({
       {editing ? (
         <WizardModal
           closeDisabled={busy}
-          escClose={!busy && !zoom}
+          escClose={!busy && !zoomOpen}
           footer={
             <CreationActionBar description={creationFeedback}>
               <button
@@ -389,7 +386,7 @@ export function CharacterCardSection({
                 }
                 type="button"
               >
-                {busy ? common.saving : english ? 'Save changes' : '保存修改'}
+                {busy ? common.saving : common.saveChanges}
               </button>
               <button className={BTN_GHOST} disabled={busy} onClick={closeEditor} type="button">
                 {common.cancel}
@@ -416,7 +413,7 @@ export function CharacterCardSection({
                   }}
                   type="button"
                 >
-                  {english ? 'Keep my edits after review' : '已核对，保留我的修改'}
+                  {common.keepMyEdits}
                 </button>
               )}
             </CreationActionBar>
@@ -444,7 +441,6 @@ export function CharacterCardSection({
           </CreationActionBar>
         </>
       )}
-      {zoom && <PortraitLightbox name={t.title} onClose={() => setZoom(null)} url={zoom} />}
     </section>
   )
 }

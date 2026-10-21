@@ -37,6 +37,9 @@ interface UseRunnerConfigResult {
   config: Config | null
   setConfig: React.Dispatch<React.SetStateAction<Config | null>>
   isLoading: boolean
+  /** 读取失败时的原因，供页面呈现可重试的失败态。 */
+  error: unknown
+  reload: () => void
   patch: (path: readonly string[], value: unknown) => Promise<void>
 }
 
@@ -65,5 +68,12 @@ export function useRunnerConfig(errorKey: string): UseRunnerConfigResult {
     }
   }
 
-  return { config: loader.data, setConfig: loader.setData, isLoading: loader.isLoading, patch }
+  return {
+    config: loader.data,
+    setConfig: loader.setData,
+    isLoading: loader.isLoading,
+    error: loader.error,
+    reload: loader.reload,
+    patch
+  }
 }

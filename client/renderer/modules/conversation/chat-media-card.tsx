@@ -5,6 +5,7 @@ import { InlineMedia, useResolvedMediaSrc } from '@/modules/media'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { requestResource } from '@/shared/lib/resource-request'
+import { ActionRow, ErrorBanner } from '@/shared/panel'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { useStrings } from '@/shared/strings'
 import type { ChatMediaItem } from '@protocol'
@@ -167,34 +168,20 @@ function ReviewMediaCard({
         </p>
       )}
       {error && status === null && (
-        <button
-          className="rounded-md border border-line-standard px-3 py-1 text-xs"
-          disabled={reviewDisabled}
-          onClick={() => setLoadAttempt(attempt => attempt + 1)}
-          type="button"
-        >
-          {strings.common.retry}
-        </button>
+        <ErrorBanner
+          message={error}
+          onRetry={() => setLoadAttempt(attempt => attempt + 1)}
+          retryLabel={strings.common.retry}
+          tone="danger"
+        />
       )}
       {status === 'pending' && (
-        <div className="flex gap-2">
-          <button
-            className="rounded-md border border-line-standard px-3 py-1 text-xs"
-            disabled={busy || reviewDisabled}
-            onClick={() => void decide('accept')}
-            type="button"
-          >
-            {dict.reviewAccept}
-          </button>
-          <button
-            className="rounded-md border border-line-standard px-3 py-1 text-xs"
-            disabled={busy || reviewDisabled}
-            onClick={() => void decide('reject')}
-            type="button"
-          >
-            {dict.reviewReject}
-          </button>
-        </div>
+        <ActionRow
+          actions={[
+            { disabled: busy || reviewDisabled, label: dict.reviewAccept, onClick: () => void decide('accept') },
+            { disabled: busy || reviewDisabled, label: dict.reviewReject, onClick: () => void decide('reject') }
+          ]}
+        />
       )}
     </div>
   )

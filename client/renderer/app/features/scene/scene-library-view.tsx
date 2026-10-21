@@ -13,8 +13,16 @@ import {
   type ScenePolicy
 } from '@/modules/scene'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import { Loader2, RefreshCw, Sparkles } from '@/shared/lib/icons'
-import { BTN_PRIMARY, BTN_SUBTLE, CreationFeedback, HINT_TEXT, SettingCard } from '@/shared/panel'
+import { RefreshCw, Sparkles } from '@/shared/lib/icons'
+import {
+  BTN_PRIMARY,
+  BTN_SUBTLE,
+  CreationFeedback,
+  HINT_TEXT,
+  LoadingBlock,
+  SettingCard,
+  Spinner
+} from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
 interface SceneLibraryViewProps {
@@ -226,7 +234,7 @@ export function SceneLibraryView({
                     )}
                     {isRegenerating ? (
                       <span className="absolute bottom-2 left-2 inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2 py-1 text-[10px] text-white">
-                        <Loader2 className="size-3 animate-spin" />
+                        <Spinner size="sm" />
                         {t.imageRegenerating}
                       </span>
                     ) : null}
@@ -238,10 +246,7 @@ export function SceneLibraryView({
           })}
         </AssetLibraryGrid>
       ) : status === 'loading' || status === 'idle' ? (
-        <div className="flex items-center justify-center gap-2 py-12 text-xs text-faint">
-          <Loader2 className="size-4 animate-spin" />
-          {t.loading}
-        </div>
+        <LoadingBlock label={t.loading} />
       ) : status !== 'error' ? (
         <SettingCard>
           <div className="space-y-3 p-6 text-center">

@@ -4,21 +4,24 @@ import { useRef, useState } from 'react'
 
 import { pickAvatarImage, type PickedImage, SelfSourceImageFlow } from '@/modules/character'
 import { $pendingScene, $sceneCreationIssue, $sceneTaskSlow, $sceneTaskStatus } from '@/modules/scene'
+import { ReferenceImageField } from '@/shared/components/reference-image-field'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import { ArrowLeft, FileImage, Loader2, Plus, Sparkles } from '@/shared/lib/icons'
+import { ArrowLeft, FileImage, Plus, Sparkles } from '@/shared/lib/icons'
+import { failureText } from '@/shared/lib/ipc-error'
 import { cn } from '@/shared/lib/utils'
 import {
   BTN_PRIMARY,
   BTN_SUBTLE,
+  BusyButton,
   CreationActionBar,
   CreationFeedback,
   CreationWorkspace,
+  Disclosure,
   HINT_TEXT,
   INPUT_CLASS,
   SettingCard
 } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
-import { errorMessage } from '@runtime'
 
 export interface SceneCreateDraft {
   notes: string
@@ -102,7 +105,7 @@ export function SceneCreateView({
       await action()
     } catch (error) {
       if (isLive()) {
-        setActionError(errorMessage(error, tToasts.sceneRegenerateFailed))
+        setActionError(failureText(error, tToasts.sceneRegenerateFailed))
       }
     } finally {
       if (isLive()) {
@@ -236,15 +239,15 @@ export function SceneCreateView({
         {pending ? (
           <>
             {waitingUpload ? (
-              <button
+              <BusyButton
+                busy={selecting || saving}
                 className={BTN_PRIMARY}
                 disabled={saving || selecting}
+                icon={<Plus className="size-3.5" />}
                 onClick={() => void uploadWaitingImage()}
-                type="button"
               >
-                {selecting || saving ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
                 {t.waitingUploadAction}
-              </button>
+              </BusyButton>
             ) : null}
             <button
               className={BTN_SUBTLE}
@@ -257,19 +260,19 @@ export function SceneCreateView({
           </>
         ) : (
           <>
-            <button
+            <BusyButton
+              busy={saving || generating}
               className={BTN_PRIMARY}
               disabled={formBusy || (!draft.notes.trim() && !draft.reference)}
+              icon={<Sparkles className="size-3.5" />}
               onClick={() => {
                 setCancelled(false)
                 setActionError(null)
                 onCreate()
               }}
-              type="button"
             >
-              {saving || generating ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
               <span>{generating ? t.generatingButton : t.generateButton}</span>
-            </button>
+            </BusyButton>
             <button
               className={BTN_SUBTLE}
               disabled={formBusy}
@@ -312,43 +315,28 @@ export function SceneCreateView({
                   />
                 </label>
               </div>
-              <details
+              <Disclosure
+                bodyClassName="space-y-2"
                 className="space-y-2 border-t border-line-hairline pt-3"
                 open={draft.reference ? true : undefined}
+                summaryClassName="text-xs text-body"
+                title={t.referenceLabel}
+                variant="inline"
               >
-                <summary className="cursor-pointer text-xs text-body">{t.referenceLabel}</summary>
                 <p className={HINT_TEXT}>{t.referenceHint}</p>
-                <div className="flex flex-wrap items-center gap-2">
-                  {draft.reference ? (
-                    <div className="relative h-20 w-28 overflow-hidden rounded-lg border border-line-hairline">
-                      <img
-                        alt={t.referenceLabel}
-                        className="h-full w-full object-contain"
-                        src={draft.reference.previewUrl}
-                      />
-                    </div>
-                  ) : null}
-                  <button
-                    className={BTN_SUBTLE}
-                    disabled={formBusy}
-                    onClick={() => void chooseReference()}
-                    type="button"
-                  >
-                    {draft.reference ? t.replaceReference : t.chooseReference}
-                  </button>
-                  {draft.reference ? (
-                    <button
-                      className={BTN_SUBTLE}
-                      disabled={formBusy}
-                      onClick={() => onChange({ reference: null })}
-                      type="button"
-                    >
-                      {t.removeReference}
-                    </button>
-                  ) : null}
-                </div>
-                {referenceError ? <p className="text-xs text-danger-fg">{t.referenceError}</p> : null}
-              </details>
+                <ReferenceImageField
+                  alt={t.referenceLabel}
+                  busy={formBusy}
+                  error={referenceError ? t.referenceError : null}
+                  imageUrl={draft.reference?.previewUrl ?? null}
+                  onPick={() => void chooseReference()}
+                  onRemove={() => onChange({ reference: null })}
+                  pickLabel={t.chooseReference}
+                  removeLabel={t.removeReference}
+                  replaceLabel={t.replaceReference}
+                  thumbClassName="relative h-20 w-28 overflow-hidden rounded-lg border border-line-hairline"
+                />
+              </Disclosure>
             </div>
           </SettingCard>
         </div>

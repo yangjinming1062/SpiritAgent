@@ -28,7 +28,6 @@ import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { saveCreationDraftImage } from '@/shared/lib/creation-draft-image'
 import { ArrowBackUp, ArrowLeft, FileImage, ImageIcon, Pencil, Send, Trash2 } from '@/shared/lib/icons'
-import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { requestResource } from '@/shared/lib/resource-request'
 import { currentClearEpoch } from '@/shared/lib/storage'
@@ -42,11 +41,11 @@ import {
   CreationActionBar,
   CreationFeedback,
   CreationWorkspace,
+  Disclosure,
   INPUT_CLASS,
   SettingCard,
   SettingsContent
 } from '@/shared/panel'
-import { $locale } from '@/shared/store/locale'
 import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import type { ImageReviseMode } from '@protocol'
@@ -70,7 +69,6 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady, search }: Outfi
   const packs = useStore($videoPacks)
   const avatarSeeds = useStore($avatarSeeds)
   const dict = useStrings()
-  const english = useStore($locale) === 'en'
   const t = dict.living.outfit
   const common = dict.common
   const selfSourceDict = dict.selfSource
@@ -222,7 +220,7 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady, search }: Outfi
       log.warn('outfit', 'delete failed', err)
 
       if (epoch === currentClearEpoch()) {
-        notify({ kind: 'error', message: backendDetailMessage(err, t.deleteFailed) })
+        notifyError(err, t.deleteFailed)
       }
     }
   }
@@ -247,7 +245,7 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady, search }: Outfi
     setPolicyBusy(false)
 
     if (!saved && epoch === currentClearEpoch()) {
-      notify({ kind: 'error', message: t.policyFailed })
+      notify({ kind: 'error', message: t.policyFailed, title: t.policyFailed })
     }
   }
 
@@ -723,9 +721,7 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady, search }: Outfi
                           type="button"
                         >
                           {onMaterialReady && outfit.status === 'ready'
-                            ? english
-                              ? 'Choose this outfit'
-                              : '选这套衣服'
+                            ? dict.living.appearance.chooseOutfit
                             : outfit.active
                               ? t.wearing
                               : canEdit
@@ -733,20 +729,19 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady, search }: Outfi
                                 : canWear
                                   ? dict.living.appearance.videoActivate
                                   : pack?.identity_review === 'review'
-                                    ? english
-                                      ? 'Review appearance'
-                                      : '查看并确认'
+                                    ? dict.living.appearance.reviewAppearance
                                     : pack?.status === 'processing'
-                                      ? english
-                                        ? 'View progress'
-                                        : '查看进度'
-                                      : english
-                                        ? 'Prepare to wear'
-                                        : '准备穿上'}
+                                      ? dict.living.appearance.viewProgress
+                                      : dict.living.appearance.prepareToWear}
                         </button>
 
-                        <details className="w-full">
-                          <summary className="cursor-pointer text-[10px] text-muted">{dict.common.moreActions}</summary>
+                        <Disclosure
+                          bodyClassName="flex flex-wrap gap-1"
+                          className="w-full"
+                          summaryClassName="text-[10px] text-muted"
+                          title={dict.common.moreActions}
+                          variant="inline"
+                        >
                           <div className="mt-2 flex flex-wrap gap-1">
                             {outfit.fullbodyUrl ? (
                               <button
@@ -811,7 +806,7 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady, search }: Outfi
                               </button>
                             )}
                           </div>
-                        </details>
+                        </Disclosure>
                       </>
                     }
                     id={outfit.id}

@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { MemoryCounts, MemoryItem, SystemPresetSummary, UserProfileField } from '@protocol'
 
+import { uiCopy } from '../shared/ui-copy'
+
 import type { RemoteApi } from './api'
 import type { MemoryDraft, MemoryDrafts } from './memory-state'
 import {
@@ -316,8 +318,8 @@ function MemoryList({ api, preset, refresh }: { api: RemoteApi; preset: string; 
         })}
       </div>
       {!rows.length && loaded && !busy ? (
-        <Empty title={query ? '没有找到相关记忆' : '这里还没有记忆'}>
-          {query ? '试试其他关键词。' : '聊过的重要事情会保存在所属对话分类中。'}
+        <Empty title={query ? '没有找到匹配的记忆。' : '暂无记忆。'}>
+          {query ? '试试其他关键词。' : '没有值得长期保留的信息时，伙伴不会写入。'}
         </Empty>
       ) : null}
       <div aria-label="记忆分页" className="memory-pagination">
@@ -471,7 +473,7 @@ function MemoryEditor({
           onClick={save}
           type="button"
         >
-          {busy ? '保存中…' : active ? '保存修改' : '保存并重新记住'}
+          {busy ? uiCopy.saving : active ? '保存修改' : '保存并重新记住'}
         </button>
         <button
           disabled={busy || !draft}
@@ -707,7 +709,7 @@ function UserProfile({ api, refresh }: { api: RemoteApi; refresh: number }): Rea
             onClick={saveProfile}
             type="button"
           >
-            {busy ? '保存中…' : '保存修改'}
+            {busy ? uiCopy.saving : '保存修改'}
           </button>
           <button
             disabled={busy || !draft}
@@ -851,7 +853,7 @@ function ProfileExtraCard({
             onClick={save}
             type="button"
           >
-            {busy ? '保存中…' : '保存修改'}
+            {busy ? uiCopy.saving : '保存修改'}
           </button>
           <button
             disabled={busy || !draft}

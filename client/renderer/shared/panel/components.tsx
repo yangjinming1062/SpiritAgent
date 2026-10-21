@@ -1,6 +1,6 @@
-import type { ReactNode } from 'react'
+import type { ReactNode, Ref } from 'react'
 
-import { Loader2, Search, X } from '@/shared/lib/icons'
+import { type IconComponent, Loader2, Search, X } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
 
@@ -187,22 +187,56 @@ export function PanelHeader({
   )
 }
 
-export function Spinner({ className }: { className?: string }): React.JSX.Element {
-  return <Loader2 className={cn('size-4 animate-spin text-faint', className)} />
+export function Spinner({
+  ariaLabel,
+  className,
+  role,
+  size = 'md',
+  tone = 'faint'
+}: {
+  /** 读屏下的状态名称。 */
+  ariaLabel?: string
+  className?: string
+  role?: string
+  size?: 'sm' | 'md' | 'lg'
+  tone?: 'faint' | 'muted' | 'accent'
+}): React.JSX.Element {
+  return (
+    <Loader2
+      aria-label={ariaLabel}
+      className={cn(
+        'motion-safe:animate-spin',
+        size === 'sm' ? 'size-3.5' : size === 'lg' ? 'size-5' : 'size-4',
+        tone === 'accent' ? 'text-accent' : tone === 'muted' ? 'text-muted' : 'text-faint',
+        className
+      )}
+      role={role}
+    />
+  )
 }
 
 export function EmptyState({
   title,
   description,
-  action
+  action,
+  icon: Icon,
+  iconTone = 'accent'
 }: {
   title: string
   description?: string
   action?: ReactNode
+  icon?: IconComponent
+  iconTone?: 'accent' | 'muted'
 }): React.JSX.Element {
   return (
     <div className="grid min-h-36 place-items-center px-4 py-8 text-center">
       <div className="max-w-sm">
+        {Icon && (
+          <Icon
+            aria-hidden="true"
+            className={cn('mx-auto mb-2 size-6', iconTone === 'accent' ? 'text-accent' : 'text-muted')}
+          />
+        )}
         <div className="text-xs font-medium text-muted">{title}</div>
         {description && <div className="mt-1 text-[11px] leading-relaxed text-faint">{description}</div>}
         {action && <div className="mt-3 flex justify-center">{action}</div>}
@@ -215,24 +249,36 @@ export function SearchField({
   value,
   onChange,
   placeholder,
-  ariaLabel
+  ariaLabel,
+  className,
+  inputRef,
+  onKeyDown,
+  type = 'text'
 }: {
   value: string
   onChange: (next: string) => void
   placeholder?: string
-  ariaLabel?: string
+  /** 搜索框的无障碍名称。必填，避免出现没有名称的搜索输入。 */
+  ariaLabel: string
+  className?: string
+  /** 需要聚焦或读取输入框时传入。 */
+  inputRef?: Ref<HTMLInputElement>
+  onKeyDown?: React.KeyboardEventHandler<HTMLInputElement>
+  type?: 'text' | 'search'
 }): React.JSX.Element {
   const t = useStrings()
 
   return (
-    <div className="relative w-full max-w-sm">
+    <div className={cn('relative w-full max-w-sm', className)}>
       <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-faint" />
       <input
         aria-label={ariaLabel}
         className={cn(INPUT_CLASS, 'py-1.5 pl-8 pr-8')}
         onChange={e => onChange(e.currentTarget.value)}
+        onKeyDown={onKeyDown}
         placeholder={placeholder}
-        type="text"
+        ref={inputRef}
+        type={type}
         value={value}
       />
       {value && (

@@ -74,7 +74,7 @@ function quietMinutesLeft(until: number): number {
 }
 
 export function SpriteContextMenu({ onOpenActivation, onOpenSurface }: ContextMenuProps): React.JSX.Element {
-  const { state: presentation, en, busy, switchMode } = usePresentationModeSwitch()
+  const { state: presentation, busy, switchMode } = usePresentationModeSwitch()
   const auth = useStore($auth)
   const pos = useStore($contextMenuPos)
   // 临时安静只设置或清除截止时间，不改写档位偏好；已选静止档时无需临时安静，不显示该项。
@@ -168,17 +168,12 @@ export function SpriteContextMenu({ onOpenActivation, onOpenSurface }: ContextMe
       >
         {authed ? (
           <>
-            <MenuItem
-              accent
-              icon={Home}
-              label={en ? 'Open main window' : '打开主窗口'}
-              onClick={() => onOpenSurface?.()}
-            />
+            <MenuItem accent icon={Home} label={dict.companion.menu.openMainWindow} onClick={() => onOpenSurface?.()} />
             {presentation.supported && presentation.effectiveMode !== 'desktop' && (
               <MenuItem
                 disabled={busy}
                 icon={Monitor}
-                label={en ? 'Desktop mode' : '桌面模式'}
+                label={dict.desktopShell.desktopMode}
                 onClick={() => void switchMode('desktop')}
               />
             )}

@@ -1,13 +1,11 @@
-import { useStore } from '@nanostores/react'
 import { useEffect, useRef, useState } from 'react'
 
 import { $videoPacks, systemActionNames } from '@/modules/character'
 import { ChatMediaCard } from '@/modules/conversation'
 import { useAsyncLoader } from '@/shared/hooks/use-async-loader'
-import { cycleTabFocus } from '@/shared/lib/focus-cycle'
+import { createFocusCycleHandler } from '@/shared/lib/focus-cycle'
 import { requestResource } from '@/shared/lib/resource-request'
-import { BTN_SUBTLE, SECTION_TITLE, WizardModal } from '@/shared/panel'
-import { $locale } from '@/shared/store/locale'
+import { BTN_COMPACT, BTN_SUBTLE, SECTION_TITLE, WizardModal } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
@@ -20,10 +18,13 @@ export function MediaReviewQueue(): React.JSX.Element {
   const dict = useStrings()
   const t = dict.settings.persona
   const slotNames = systemActionNames(dict.living.appearance)
-  const english = useStore($locale) === 'en'
   const [open, setOpen] = useState(false)
   const trigger = useRef<HTMLButtonElement>(null)
   const modal = useRef<HTMLDivElement>(null)
+
+  const cycleFocus = createFocusCycleHandler(
+    'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), video[controls]'
+  )
 
   const { data, error, reload, setData } = useAsyncLoader(() =>
     requestResource('companion.get_pending_visual_media_reviews')
@@ -63,24 +64,15 @@ export function MediaReviewQueue(): React.JSX.Element {
     <>
       {failed ? (
         <button className={BTN_SUBTLE} onClick={reload} type="button">
-          {english ? 'Review items could not load · Retry' : '待确认内容加载失败 · 重试'}
+          {t.mediaReviewLoadFailed}
         </button>
       ) : rows.length > 0 ? (
         <button className={BTN_SUBTLE} onClick={() => setOpen(true)} ref={trigger} type="button">
-          {english ? 'Awaiting review' : '待确认'} · {rows.length}
+          {t.mediaReviewPending} · {rows.length}
         </button>
       ) : null}
       {open && (
-        <div
-          onKeyDownCapture={event => {
-            cycleTabFocus(
-              event,
-              event.currentTarget,
-              'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), video[controls]'
-            )
-          }}
-          ref={modal}
-        >
+        <div onKeyDownCapture={event => cycleFocus(event)} ref={modal}>
           <WizardModal
             onClose={close}
             regionId="companion-media-review"
@@ -90,11 +82,7 @@ export function MediaReviewQueue(): React.JSX.Element {
             <section className="space-y-3">
               <div className="flex items-center justify-between gap-2">
                 <p className={SECTION_TITLE}>{t.mediaReviewTitle}</p>
-                <button
-                  className="rounded-md border border-line-standard px-2 py-1 text-xs"
-                  onClick={reload}
-                  type="button"
-                >
+                <button className={BTN_COMPACT} onClick={reload} type="button">
                   {t.mediaReviewRefresh}
                 </button>
               </div>

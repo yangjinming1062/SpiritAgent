@@ -6,14 +6,13 @@ import { AssetLibraryHeader, type AssetLibrarySearch, AssetLibraryToolbar } from
 import type { DesktopVideoSet, DesktopVideoState } from '@/modules/desktop-videos'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { Search, Sparkles } from '@/shared/lib/icons'
-import { SettingCard, SettingsContent } from '@/shared/panel'
+import { LoadingBlock, SettingCard, SettingsContent } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
 import { DesktopLifeCover } from './desktop-life-preview'
 import { resolutionLabel } from './desktop-life-resolution'
 import { $desktopLifeUi, updateDesktopLifeUi } from './desktop-life-state'
 import { desktopLifeActionName, desktopLifeActionStatus, desktopLifePendingAction } from './desktop-life-status'
-import { useDesktopLifeStrings } from './desktop-life-strings'
 
 interface DesktopLifeLibraryViewProps {
   sets: DesktopVideoSet[]
@@ -44,7 +43,8 @@ export function DesktopLifeLibraryView({
   onOpenSet,
   onSavePreferences
 }: DesktopLifeLibraryViewProps): React.JSX.Element {
-  const t = useDesktopLifeStrings()
+  const strings = useStrings()
+  const t = strings.desktopLife
   const common = useStrings().common
   const scrollRef = useRef<HTMLDivElement>(null)
   const createButton = useRef<HTMLButtonElement>(null)
@@ -132,11 +132,7 @@ export function DesktopLifeLibraryView({
         </AssetLibraryHeader>
         {feedback}
         {issue}
-        {loading && !sets.length && (
-          <p className="py-8 text-center text-sm text-muted" role="status">
-            {t.loading}
-          </p>
-        )}
+        {loading && !sets.length && <LoadingBlock label={strings.common.loading} />}
         {!loading && !visibleSets.length && !issue && (
           <SettingCard>
             <div className="space-y-3 p-6 text-center">
@@ -168,14 +164,14 @@ export function DesktopLifeLibraryView({
                         : t.notCreated}
                     </span>
                     <button className="shrink-0 text-[10px] text-muted" onClick={() => onOpenSet(set)} type="button">
-                      {pending ? t.continue : t.view}
+                      {pending ? t.continue : strings.common.view}
                     </button>
                   </>
                 }
                 id={set.id}
                 key={set.id}
                 onOpen={() => onOpenSet(set)}
-                openLabel={`${t.view}: ${set.title.trim() || t.newSceneName}`}
+                openLabel={`${strings.common.view}: ${set.title.trim() || t.newSceneName}`}
                 preview={
                   <DesktopLifeCover
                     url={

@@ -2,10 +2,11 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { Brain, type IconComponent, Loader2, RefreshCw, Sparkles, Thermometer, X } from '@/shared/lib/icons'
+import { Brain, type IconComponent, RefreshCw, Sparkles, Thermometer, X } from '@/shared/lib/icons'
 import { type ReasoningEffort, resolveReasoningEffort } from '@/shared/lib/reasoning-effort'
 import { requestResource } from '@/shared/lib/resource-request'
 import { cn } from '@/shared/lib/utils'
+import { CapsuleTabs, Spinner } from '@/shared/panel'
 import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import { clamp } from '@runtime'
@@ -416,56 +417,18 @@ export function ChatParamsPanel({
   return (
     <div className="w-full flex flex-col gap-3 rounded-2xl border border-line-standard bg-[var(--ui-app-bg)] p-3.5 text-left shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-150 select-none">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line-hairline pb-2.5">
-        <div
-          aria-label={params.openPanel}
-          className="flex items-center gap-1 bg-fill-faint p-0.5 rounded-lg border border-line-hairline"
-          onKeyDown={event => {
-            const tabs: ChatParamsTab[] = ['context', 'temperature', 'reasoning']
-            const index = tabs.indexOf(activeTab)
-
-            const next =
-              event.key === 'ArrowRight'
-                ? (index + 1) % tabs.length
-                : event.key === 'ArrowLeft'
-                  ? (index + tabs.length - 1) % tabs.length
-                  : event.key === 'Home'
-                    ? 0
-                    : event.key === 'End'
-                      ? tabs.length - 1
-                      : null
-
-            if (next !== null) {
-              event.preventDefault()
-              onTabChange(tabs[next])
-              event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()
-            }
-          }}
-          role="tablist"
-        >
-          {(['context', 'temperature', 'reasoning'] as const).map(id => {
-            const Icon = PARAM_TAB_ICONS[id]
-            const active = activeTab === id
-            const label = params.tabs[id]
-
-            return (
-              <button
-                aria-selected={active}
-                className={cn(
-                  'flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition cursor-pointer select-none',
-                  active ? 'bg-surface-panel text-strong shadow-xs' : 'text-muted hover:text-strong hover:bg-fill-hover'
-                )}
-                key={id}
-                onClick={() => onTabChange(id)}
-                role="tab"
-                tabIndex={active ? 0 : -1}
-                type="button"
-              >
-                <Icon className="size-3.5 text-accent" />
-                <span>{label}</span>
-              </button>
-            )
-          })}
-        </div>
+        <CapsuleTabs
+          ariaLabel={params.openPanel}
+          onChange={onTabChange}
+          options={(['context', 'temperature', 'reasoning'] as const).map(id => ({
+            icon: PARAM_TAB_ICONS[id],
+            label: params.tabs[id],
+            value: id
+          }))}
+          size="sm"
+          value={activeTab}
+          variant="segmented"
+        />
 
         <div className="flex items-center gap-1.5">
           <span
@@ -590,7 +553,7 @@ export function ChatParamsPanel({
           >
             {compressing ? (
               <>
-                <Loader2 className="size-3.5 animate-spin" />
+                <Spinner size="sm" />
                 <span>{params.compressing}</span>
               </>
             ) : (

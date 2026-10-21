@@ -15,8 +15,8 @@ import {
 } from '@/modules/speech'
 import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import { Check, Loader2 } from '@/shared/lib/icons'
-import { isClientErrorIpc } from '@/shared/lib/ipc-error'
+import { Check } from '@/shared/lib/icons'
+import { failureText, isClientErrorIpc } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { requestResource } from '@/shared/lib/resource-request'
 import { cn } from '@/shared/lib/utils'
@@ -27,11 +27,13 @@ import {
   CreationActionBar,
   CreationFeedback,
   type CreationFeedbackState,
+  Disclosure,
   HINT_TEXT,
   INPUT_CLASS,
   SettingCard,
   SETTINGS_ROW_DESC,
-  SETTINGS_ROW_TITLE
+  SETTINGS_ROW_TITLE,
+  Spinner
 } from '@/shared/panel'
 import { backendApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
@@ -40,7 +42,6 @@ import { $locale } from '@/shared/store/locale'
 import { $surfaceRole, $surfaceScreenLocked, $surfaceSpriteVisible } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
 import { GENDER_FILTER_VALUES } from '@/shared/voice-catalog'
-import { errorMessage } from '@runtime'
 
 import { useVoiceSample } from './use-voice-sample'
 import {
@@ -193,7 +194,7 @@ function VoiceManagerSession({
 
       if (!result.ok) {
         setCatalogStatus(status => (status === 'ready' ? status : 'error'))
-        updateVoiceCreation({ error: t.loadFailed })
+        updateVoiceCreation({ error: t.loadFailed, errorCode: 'catalog' })
 
         return
       }
@@ -209,8 +210,8 @@ function VoiceManagerSession({
       setCatalog(next)
       setCatalogStatus('ready')
 
-      if ($voiceCreation.get().error === t.loadFailed) {
-        updateVoiceCreation({ error: null })
+      if ($voiceCreation.get().errorCode === 'catalog') {
+        updateVoiceCreation({ error: null, errorCode: null })
       }
 
       if (!$voiceCreation.get().initializedTab) {
@@ -272,7 +273,7 @@ function VoiceManagerSession({
       await play(signal, live)
     } catch (failure) {
       if (live()) {
-        setPlaybackError(errorMessage(failure, t.previewFailed))
+        setPlaybackError(failureText(failure, t.previewFailed))
       }
     } finally {
       if (live()) {
@@ -334,7 +335,7 @@ function VoiceManagerSession({
 
         updateVoiceCreation({
           outcome: unknown ? 'unknown' : null,
-          error: errorMessage(failure, t.saveFailed),
+          error: failureText(failure, t.saveFailed),
           ...(rejected
             ? {
                 confirmation: null,
@@ -612,7 +613,7 @@ function VoiceManagerSession({
           title: dict.creation.unknown,
           description: creation.confirmation
             ? t.confirmUnknown
-            : error === t.cancelFailed
+            : creation.errorCode === 'cancel'
               ? t.cancelFailed
               : t.generationUnknown
         }
@@ -657,7 +658,7 @@ function VoiceManagerSession({
         {!compact && catalogStatus === 'ready' && currentVoice && (
           <SettingCard className="flex shrink-0 flex-wrap items-center justify-between gap-3 p-3">
             <div className="min-w-0">
-              <p className={SETTINGS_ROW_DESC}>{locale === 'en' ? 'Current voice' : '当前声音'}</p>
+              <p className={SETTINGS_ROW_DESC}>{dict.voice.current}</p>
               <p className={SETTINGS_ROW_TITLE}>{currentVoiceLabel}</p>
             </div>
             <button
@@ -771,12 +772,16 @@ function VoiceManagerSession({
                   <p className="text-xs text-body">{t.autoDesignUnavailable}</p>
                 )}
                 {catalog.voiceDesignGuide && (
-                  <details>
-                    <summary className="cursor-pointer text-xs text-body">{t.designGuide}</summary>
+                  <Disclosure
+                    bodyClassName="whitespace-pre-line text-xs leading-relaxed text-body"
+                    summaryClassName="text-xs text-body"
+                    title={t.designGuide}
+                    variant="inline"
+                  >
                     <p className="mt-2 whitespace-pre-line text-xs leading-relaxed text-body">
                       {catalog.voiceDesignGuide}
                     </p>
-                  </details>
+                  </Disclosure>
                 )}
                 <label className="block space-y-2 text-xs text-body">
                   <span>{t.promptLabel}</span>
@@ -926,7 +931,7 @@ function VoiceManagerSession({
               (busy ? (
                 <>
                   <button className={BTN_PRIMARY} disabled type="button">
-                    <Loader2 className="size-4 motion-safe:animate-spin" />
+                    <Spinner />
                     {operationTitle}
                   </button>
                   {!confirming && (
@@ -964,7 +969,7 @@ function VoiceManagerSession({
                   </>
                 ) : (
                   <button className={BTN_PRIMARY} onClick={() => void stopOperation()} type="button">
-                    {error === t.cancelFailed ? t.retryCancel : t.cancelUnknown}
+                    {creation.errorCode === 'cancel' ? t.retryCancel : t.cancelUnknown}
                   </button>
                 )
               ) : (

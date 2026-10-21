@@ -1,6 +1,6 @@
 import type { DesktopVideoProposal } from '@/modules/desktop-videos'
+import { useStrings } from '@/shared/strings'
 
-import { useDesktopLifeStrings } from './desktop-life-strings'
 import styles from './desktop-life.module.css'
 
 // 已提交但还没产出动作的设计提案常驻展示：状态与原因一直可见，
@@ -10,7 +10,8 @@ export function DesktopLifeProposalList({
 }: {
   proposals: DesktopVideoProposal[]
 }): React.JSX.Element | null {
-  const t = useDesktopLifeStrings()
+  const strings = useStrings()
+  const t = strings.desktopLife
 
   if (proposals.length === 0) {
     return null

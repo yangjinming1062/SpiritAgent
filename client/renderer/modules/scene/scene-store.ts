@@ -7,7 +7,7 @@ import { authedResource, type ResourceArguments } from '@/shared/lib/resource-re
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { trimOldest } from '@/shared/lib/trim-oldest'
 import { backendApi } from '@/shared/platform/desktop'
-import { notify } from '@/shared/store/notifications'
+import { notify, notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 import type { DesktopApiOperationKey } from '@ipc/contracts'
 
@@ -724,7 +724,7 @@ export async function activateScene(sceneId: string): Promise<void> {
     }
   } catch (error) {
     if (epoch === currentClearEpoch()) {
-      notify({ kind: 'warning', message: sceneError(error) })
+      notifyError(error, getStrings().living.toasts.sceneRegenerateFailed)
     }
   }
 }

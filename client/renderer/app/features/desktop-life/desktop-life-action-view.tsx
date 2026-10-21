@@ -3,7 +3,8 @@ import { useState } from 'react'
 
 import { ActionSyncStatus } from '@/app/components/action-sync-status'
 import type { DesktopVideoAction, DesktopVideoRefinementSource, DesktopVideoSet } from '@/modules/desktop-videos'
-import { CreationActionBar, CreationWorkspace, INPUT_CLASS } from '@/shared/panel'
+import { CreationActionBar, CreationWorkspace, Disclosure, INPUT_CLASS } from '@/shared/panel'
+import { useStrings } from '@/shared/strings'
 
 import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE } from './desktop-life-buttons'
 import { DesktopLifePreview } from './desktop-life-preview'
@@ -15,7 +16,6 @@ import {
   isActionPaused
 } from './desktop-life-status'
 import { DesktopLifeSteps } from './desktop-life-steps'
-import { useDesktopLifeStrings } from './desktop-life-strings'
 import styles from './desktop-life.module.css'
 
 interface DesktopLifeActionViewProps {
@@ -61,7 +61,8 @@ function hasPreviewMedia(action: DesktopVideoAction, draft: boolean): boolean {
 }
 
 function DesktopLifeFailure({ action: item }: { action: DesktopVideoAction }): React.JSX.Element | null {
-  const t = useDesktopLifeStrings()
+  const strings = useStrings()
+  const t = strings.desktopLife
 
   if (item.status !== 'failed' || item.draft?.submission_unknown || item.draft?.recovery_action === 'wait') {
     return null
@@ -80,10 +81,9 @@ function DesktopLifeFailure({ action: item }: { action: DesktopVideoAction }): R
               : t.creationFailed}
       </p>
       {(item.draft?.error || item.error) && (
-        <details>
-          <summary className="cursor-pointer">{t.details}</summary>
+        <Disclosure bodyClassName="break-words" title={t.details} variant="inline">
           <p className="mt-2 break-words">{item.draft?.error || item.error}</p>
-        </details>
+        </Disclosure>
       )}
     </div>
   )
@@ -110,7 +110,8 @@ export function DesktopLifeActionView({
   onMakeVideo,
   onRefine
 }: DesktopLifeActionViewProps): React.JSX.Element {
-  const t = useDesktopLifeStrings()
+  const strings = useStrings()
+  const t = strings.desktopLife
   const [imagePreviews, setImagePreviews] = useState<Record<string, boolean>>({})
   const sourceError = set.source_error
   const readyForActions = desktopLifeReadyForActions(set)
@@ -205,7 +206,7 @@ export function DesktopLifeActionView({
   ) : unknown ? null : processing ? (
     item.draft && !['upload', 'image_upload'].includes(item.stage) ? (
       <button className={BTN_SUBTLE} disabled={busy} onClick={onPause} title={t.stopHint} type="button">
-        {t.cancel}
+        {t.stopCreation}
       </button>
     ) : null
   ) : unavailableFirstGeneration ? null : candidate ? (
@@ -259,7 +260,7 @@ export function DesktopLifeActionView({
       {isActionPaused(item)
         ? t.resume
         : item.draft?.recovery_action === 'retry' || item.status === 'failed'
-          ? t.retry
+          ? strings.common.retry
           : item.key === 'idle'
             ? t.generateImage
             : t.startAction}
@@ -314,12 +315,11 @@ export function DesktopLifeActionView({
           {<DesktopLifeMetadata set={set} />}
           {hasCurrentPreview && item.draft && <p className="text-sm text-muted">{t.savedCurrent}</p>}
           {hasCurrentPreview && previewDraft && (
-            <details className="rounded-xl border border-line-hairline p-3">
-              <summary className="cursor-pointer text-sm font-medium text-strong">{t.currentProduct}</summary>
+            <Disclosure summaryClassName="text-sm font-medium text-strong" title={t.currentProduct} variant="bordered">
               <div className="mt-3">
                 <DesktopLifePreview action={item} set={set} />
               </div>
-            </details>
+            </Disclosure>
           )}
           {!candidate && item.status !== 'failed' && !processing && !unknown && (item.error || item.draft?.error) && (
             <p className="text-sm text-warning" role="status">
@@ -332,10 +332,14 @@ export function DesktopLifeActionView({
               <div className="space-y-2 text-sm text-body">
                 <p>{t.videoReviewHint}</p>
                 {item.draft?.review_reason && (
-                  <details className="mt-2 text-xs text-muted">
-                    <summary className="cursor-pointer">{t.reviewDetails}</summary>
+                  <Disclosure
+                    bodyClassName="break-words"
+                    className="mt-2 text-xs text-muted"
+                    title={t.reviewDetails}
+                    variant="inline"
+                  >
                     <p className="mt-2 break-words">{item.draft.review_reason}</p>
-                  </details>
+                  </Disclosure>
                 )}
               </div>
               {item.key === 'idle' && affected > 0 && (
@@ -348,11 +352,14 @@ export function DesktopLifeActionView({
             <p className="text-sm text-muted">{item.key === 'idle' ? t.readyHint : t.actionReadyHint}</p>
           ) : null}
           {!processing && (
-            <details
+            <Disclosure
+              bodyClassName="mt-4 flex flex-col gap-3"
               className="rounded-xl border border-line-hairline p-4"
               open={Boolean(note.trim() || videoNote.trim() || noteDirty) || undefined}
+              summaryClassName="text-sm font-medium text-strong"
+              title={t.advanced}
+              variant="bordered"
             >
-              <summary className="cursor-pointer text-sm font-medium text-strong">{t.advanced}</summary>
               <div className="mt-4 flex flex-col gap-3">
                 {(showingCurrentVideo || candidate) && (
                   <button
@@ -440,8 +447,12 @@ export function DesktopLifeActionView({
                     {t.discardDraft}
                   </button>
                 )}
-                <details className="text-xs text-muted">
-                  <summary className="cursor-pointer">{t.details}</summary>
+                <Disclosure
+                  bodyClassName="text-xs text-muted"
+                  className="text-xs text-muted"
+                  title={t.details}
+                  variant="inline"
+                >
                   <p className="mt-2">{item.description}</p>
                   <p className="mt-2">
                     {item.kind === 'loop' ? t.loop : t.once} · {item.target_duration_seconds}s{' '}
@@ -457,9 +468,9 @@ export function DesktopLifeActionView({
                       {t.avoidWhen}：{item.avoid_when.join('；')}
                     </p>
                   )}
-                </details>
+                </Disclosure>
               </div>
-            </details>
+            </Disclosure>
           )}
         </>
       )}
@@ -477,7 +488,7 @@ export function DesktopLifeActionView({
         !recreateSet &&
         (isActionPaused(item) || item.status === 'failed') && (
           <button className={BTN_SUBTLE} disabled={busy} onClick={onRetry} type="button">
-            {isActionPaused(item) ? t.resume : t.retry}
+            {isActionPaused(item) ? t.resume : strings.common.retry}
           </button>
         )}
       {item.draft && (

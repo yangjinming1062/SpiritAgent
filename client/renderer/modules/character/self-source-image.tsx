@@ -1,15 +1,22 @@
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { PortraitLightbox } from '@/shared'
+import { CopyButton } from '@/shared/components/copy-button'
+import { ImageLightboxButton } from '@/shared/components/image-lightbox-button'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import { useClipboard } from '@/shared/hooks/use-clipboard'
-import { useEscapeKey } from '@/shared/hooks/use-escape-key'
 import { useImageActions } from '@/shared/hooks/use-image-actions'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
-import { Check, Copy, Download } from '@/shared/lib/icons'
-import { backendDetailMessage } from '@/shared/lib/ipc-error'
-import { BTN_PRIMARY, BTN_SUBTLE, CreationActionBar, CreationFeedback, HINT_TEXT, WizardModal } from '@/shared/panel'
+import { Copy, Download } from '@/shared/lib/icons'
+import { failureText } from '@/shared/lib/ipc-error'
+import {
+  BTN_PRIMARY,
+  BTN_SUBTLE,
+  CreationActionBar,
+  CreationFeedback,
+  HINT_TEXT,
+  Placeholder,
+  WizardModal
+} from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
 import { pickAvatarImage, type PickedImage } from './avatar-image'
@@ -64,7 +71,7 @@ export function SelfSourceImageFlow({
   const [picking, setPicking] = useState(false)
   const [adopting, setAdopting] = useState(false)
   const [adoptError, setAdoptError] = useState<string | null>(null)
-  const [zoomUrl, setZoomUrl] = useState<string | null>(null)
+  const [zoomOpen, setZoomOpen] = useState(false)
 
   const {
     copied: refCopied,
@@ -107,7 +114,7 @@ export function SelfSourceImageFlow({
       })
       .catch((err: unknown): void => {
         if (isCurrent()) {
-          setPromptError(backendDetailMessage(err, t.promptFailed))
+          setPromptError(failureText(err, t.promptFailed))
         }
       })
       .finally(() => {
@@ -119,9 +126,7 @@ export function SelfSourceImageFlow({
     promptLoadRef.current = request
   }, [beginOperation, fetchPromptRef, t.promptFailed])
 
-  // 灯箱打开时先关灯箱；WizardModal 同步停用 Esc，避免一次按键关掉整个自备图流程。
-  useEscapeKey(() => setZoomUrl(null), { enabled: open && zoomUrl !== null })
-
+  // 灯箱打开时 WizardModal 停用 Esc，避免一次按键关掉整个自备图流程。
   useEffect((): (() => void) => {
     flowVersionRef.current += 1
     promptLoadRef.current = null
@@ -134,7 +139,7 @@ export function SelfSourceImageFlow({
     setPicking(false)
     setAdopting(false)
     setAdoptError(null)
-    setZoomUrl(null)
+    setZoomOpen(false)
     resetRefActions()
     setShowGuidance(false)
     setPrompt(null)
@@ -193,7 +198,7 @@ export function SelfSourceImageFlow({
       }
     } catch (err) {
       if (isCurrent()) {
-        setAdoptError(backendDetailMessage(err, t.adoptFailed))
+        setAdoptError(failureText(err, t.adoptFailed))
       }
     } finally {
       if (isCurrent()) {
@@ -239,7 +244,7 @@ export function SelfSourceImageFlow({
   return (
     <WizardModal
       closeDisabled={adopting}
-      escClose={!zoomUrl && !adopting}
+      escClose={!zoomOpen && !adopting}
       footer={
         <CreationActionBar className="w-full border-0 p-0" description={creationFeedback}>
           <button className={BTN_SUBTLE} disabled={adopting || picking} onClick={onUseAi} type="button">
@@ -267,13 +272,18 @@ export function SelfSourceImageFlow({
 
         <div className="flex items-center gap-2">
           {image && (
-            <button className="cursor-zoom-in" onClick={() => setZoomUrl(image.previewUrl)} type="button">
+            <ImageLightboxButton
+              className="cursor-zoom-in"
+              name={t.referenceZoom}
+              onOpenChange={setZoomOpen}
+              url={image.previewUrl}
+            >
               <img
                 alt={t.pickTitle}
                 className="size-24 rounded-lg border border-line-hairline object-contain"
                 src={image.previewUrl}
               />
-            </button>
+            </ImageLightboxButton>
           )}
           <button
             className={BTN_SUBTLE}
@@ -312,14 +322,14 @@ export function SelfSourceImageFlow({
                       className="group relative overflow-hidden rounded-lg border border-line-hairline bg-surface-card"
                       key={ref.url}
                     >
-                      <button
+                      <ImageLightboxButton
                         className="block cursor-zoom-in"
-                        onClick={() => setZoomUrl(ref.url)}
-                        title={ref.label}
-                        type="button"
+                        name={t.referenceZoom}
+                        onOpenChange={setZoomOpen}
+                        url={ref.url}
                       >
                         <img alt={ref.label} className="size-24 object-contain" draggable src={ref.url} />
-                      </button>
+                      </ImageLightboxButton>
                       <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-black/60 px-1 py-0.5 text-[9.5px] text-white">
                         {ref.label}
                       </span>
@@ -377,9 +387,7 @@ export function SelfSourceImageFlow({
                 </button>
               </div>
             ) : prompt === null ? (
-              <p className="rounded-xl border border-line-hairline bg-fill-trough px-4 py-6 text-center text-xs text-muted">
-                {t.promptLoading}
-              </p>
+              <Placeholder>{t.promptLoading}</Placeholder>
             ) : (
               <div className="relative rounded-xl border border-line-hairline bg-fill-trough p-3">
                 <p className="max-h-48 overflow-y-auto whitespace-pre-wrap break-all pr-6 text-xs leading-relaxed text-body">
@@ -392,33 +400,19 @@ export function SelfSourceImageFlow({
         )}
       </div>
 
-      {zoomUrl && <PortraitLightbox name={t.referenceZoom} onClose={() => setZoomUrl(null)} url={zoomUrl} />}
+      {null}
     </WizardModal>
   )
 }
 
 function SelfSourceCopyButton({ text }: { text: string }): React.JSX.Element {
   const t = useStrings().selfSource
-  const { status, copy } = useClipboard()
-  const copied = status === 'copied'
-
-  const onCopy = async (): Promise<void> => {
-    try {
-      await copy(text)
-    } catch {
-      /* 复制失败保持原态，用户可重试 */
-    }
-  }
 
   return (
-    <button
-      aria-label={copied ? t.copied : t.copyPrompt}
+    <CopyButton
       className="absolute top-2 right-2 inline-flex size-6 items-center justify-center rounded-md text-muted transition select-none hover:bg-fill-hover/80 hover:text-strong"
-      onClick={() => void onCopy()}
-      title={copied ? t.copied : t.copyPrompt}
-      type="button"
-    >
-      {copied ? <Check className="size-3.5 text-emerald-400" /> : <Copy className="size-3.5" />}
-    </button>
+      label={t.copyPrompt}
+      text={text}
+    />
   )
 }

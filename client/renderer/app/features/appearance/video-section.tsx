@@ -28,12 +28,14 @@ import { cn } from '@/shared/lib/utils'
 import {
   BTN_PRIMARY,
   BTN_SUBTLE,
-  ConfirmDialog,
+  confirmAction,
   CreationActionBar,
   CreationFeedback,
   type CreationFeedbackState,
+  Disclosure,
   HINT_TEXT,
-  INPUT_CLASS
+  INPUT_CLASS,
+  Pill
 } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
@@ -151,7 +153,6 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
   const genRequests = useStore($videoGenRequests)
   const dict = useStrings()
   const t = dict.living.appearance
-  const [regenConfirmOpen, setRegenConfirmOpen] = useState(false)
   const [packsStatus, setPacksStatus] = useState<'loading' | 'loaded' | 'failed'>('loading')
   const [packsReloadKey, setPacksReloadKey] = useState(0)
   const [selectedActionKey, setSelectedActionKey] = useState<string | null>(null)
@@ -518,11 +519,7 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
                   {t.actionsHeading}
                 </h2>
                 {selectedOutfit ? <span className="truncate text-xs text-body">{selectedOutfit.name}</span> : null}
-                {selectedPack?.active ? (
-                  <span className="shrink-0 rounded-full bg-success/15 px-2 py-0.5 text-[10px] text-success">
-                    {t.videoActive}
-                  </span>
-                ) : null}
+                {selectedPack?.active ? <Pill tone="success">{t.videoActive}</Pill> : null}
               </div>
               <p className={cn('mt-0.5 truncate text-[11px]', statusIsError ? 'text-danger-fg' : 'text-muted')}>
                 {statusLine}
@@ -562,19 +559,30 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
               </button>
             ) : null}
             {canRegeneratePack ? (
-              <details>
-                <summary className="cursor-pointer rounded-lg px-3 py-2 text-xs text-muted">
-                  {dict.common.moreActions}
-                </summary>
+              <Disclosure
+                summaryClassName="rounded-lg px-3 py-2 text-xs text-muted"
+                title={dict.common.moreActions}
+                variant="inline"
+              >
                 <button
                   className={BTN_SUBTLE}
                   disabled={scopedBusy}
-                  onClick={() => setRegenConfirmOpen(true)}
+                  onClick={() => {
+                    void confirmAction({
+                      confirmLabel: t.videoRegenAction,
+                      description: t.videoRegenBody,
+                      title: t.videoRegenTitle
+                    }).then(confirmed => {
+                      if (confirmed && canRegeneratePack) {
+                        void generateVideoPack({ force: true, outfitId: selectedOutfit?.id })
+                      }
+                    })
+                  }}
                   type="button"
                 >
                   {t.videoRegenAction}
                 </button>
-              </details>
+              </Disclosure>
             ) : null}
           </div>
         </div>
@@ -697,12 +705,16 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
                   ) : null}
 
                   {selectedAction.motionPrompt ? (
-                    <details className="mt-2 text-xs text-muted">
-                      <summary className="cursor-pointer">{dict.common.creationDetails}</summary>
+                    <Disclosure
+                      bodyClassName="whitespace-pre-wrap text-xs leading-relaxed text-muted"
+                      className="mt-2 text-xs text-muted"
+                      title={dict.common.creationDetails}
+                      variant="inline"
+                    >
                       <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-muted">
                         {selectedAction.motionPrompt}
                       </p>
-                    </details>
+                    </Disclosure>
                   ) : null}
 
                   {editing?.key === selectedAction.key ? (
@@ -844,21 +856,6 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
           </div>
         </div>
       )}
-
-      <ConfirmDialog
-        confirmLabel={t.videoRegenAction}
-        description={t.videoRegenBody}
-        onConfirm={() => {
-          if (!canRegeneratePack) {
-            return
-          }
-
-          void generateVideoPack({ force: true, outfitId: selectedOutfit?.id })
-        }}
-        onOpenChange={setRegenConfirmOpen}
-        open={regenConfirmOpen}
-        title={t.videoRegenTitle}
-      />
     </section>
   )
 }

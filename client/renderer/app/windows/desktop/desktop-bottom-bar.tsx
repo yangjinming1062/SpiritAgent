@@ -3,10 +3,10 @@ import { useLayoutEffect, useRef, useState } from 'react'
 
 import { ArrowLeft, ArrowRight } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
+import { useStrings } from '@/shared/strings'
 import type { PresentationState } from '@ipc/contracts'
 
 import { DesktopDock } from './desktop-dock'
-import { useDesktopStrings } from './desktop-strings'
 import { useDesktopTrayLayout } from './desktop-tray-layout'
 import styles from './desktop.module.css'
 
@@ -29,7 +29,7 @@ export function DesktopBottomBar({
   stageEpoch: number
   systemTray: PresentationState['systemTray']
 }): React.JSX.Element {
-  const t = useDesktopStrings()
+  const t = useStrings().desktopShell
   const [dockWidth, setDockWidth] = useState(0)
   const [navigationWidth, setNavigationWidth] = useState(0)
   const [scroll, setScroll] = useState({ left: false, right: false })

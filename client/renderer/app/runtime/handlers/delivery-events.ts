@@ -11,7 +11,7 @@ import {
 } from '@/modules/conversation'
 import { type GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { $chatVisible } from '@/shared/store/chat-visibility'
-import { notify } from '@/shared/store/notifications'
+import { notify, notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 
 // 主动消息与通知投递：companion.message / system.notification / 视频任务完成。提醒是否出现由打扰档位、锁屏与聊天可见性共同裁决；精灵旁提示另需精灵实际可见，不可见时由未读承接。
@@ -145,7 +145,7 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
       }
 
       if (payload.error && !$screenLocked.get()) {
-        notify({ kind: 'warning', message: payload.error })
+        notifyError(payload.error, getStrings().common.operationFailed)
       }
 
       break

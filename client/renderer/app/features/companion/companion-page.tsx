@@ -16,7 +16,7 @@ import {
 import { Brain, Home, Monitor, Shirt, Users, Volume2 } from '@/shared/lib/icons'
 import { BTN_SUBTLE, SettingsSectionIntro } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
-import { $locale } from '@/shared/store/locale'
+import { useStrings } from '@/shared/strings'
 
 import { MediaReviewQueue } from './media-review-queue'
 import { MemorySection } from './memory-section'
@@ -24,12 +24,12 @@ import { PersonaPage } from './persona-page'
 import { VoicePage } from './voice-page'
 
 const ENTRIES = [
-  { id: 'profile', icon: Users, zh: '资料', en: 'Profile' },
-  { id: 'voice', icon: Volume2, zh: '声音', en: 'Voice' },
-  { id: 'memory', icon: Brain, zh: '记忆', en: 'Memories' },
-  { id: 'appearance', icon: Shirt, zh: '衣柜', en: 'Wardrobe' },
-  { id: 'scene', icon: Home, zh: '窗口背景', en: 'Window backgrounds' },
-  { id: 'desktop-life', icon: Monitor, zh: '桌面背景', en: 'Desktop backgrounds' }
+  { id: 'profile', icon: Users },
+  { id: 'voice', icon: Volume2 },
+  { id: 'memory', icon: Brain },
+  { id: 'appearance', icon: Shirt },
+  { id: 'scene', icon: Home },
+  { id: 'desktop-life', icon: Monitor }
 ] as const
 
 export function CompanionHub(): React.JSX.Element {
@@ -41,7 +41,8 @@ export function CompanionHub(): React.JSX.Element {
 
 function CompanionSession(): React.JSX.Element {
   const section = useStore($companionSection)
-  const english = useStore($locale) === 'en'
+  const strings = useStrings()
+  const persona = strings.settings.persona
   const route = useStore($appNavigation)
 
   const boundedFeature =
@@ -115,14 +116,7 @@ function CompanionSession(): React.JSX.Element {
       case 'memory':
         return (
           <div className="flex min-h-0 flex-1 flex-col pb-4">
-            <SettingsSectionIntro
-              hint={
-                english
-                  ? 'Each companion and assistant remembers its own conversations.'
-                  : '伙伴和不同助手分别记住各自对话中的事情。你可以查看、修改或让它忘记。'
-              }
-              title={english ? 'Memories' : '记忆'}
-            />
+            <SettingsSectionIntro hint={persona.memoryIntro} title={persona.memoriesTitle} />
             <MemorySection />
           </div>
         )
@@ -132,15 +126,15 @@ function CompanionSession(): React.JSX.Element {
   return (
     <DirectoryShell
       activeId={section}
-      ariaLabel={english ? 'Companion categories' : '伙伴分类'}
+      ariaLabel={persona.categoriesAria}
       bounded={boundedFeature}
-      entries={ENTRIES.map(({ id, icon, zh, en }) => ({ id, icon, label: english ? en : zh }))}
+      entries={ENTRIES.map(({ id, icon }) => ({ id, icon, label: persona.sections[id] }))}
       onSelect={setCompanionSection}
       toolbar={
         <>
           {route.returnToDesktopLife && (
             <button className={BTN_SUBTLE} onClick={() => returnToDesktop()} type="button">
-              {english ? 'Return to desktop background' : '返回桌面背景制作'}
+              {persona.returnToDesktopBackground}
             </button>
           )}
           <MediaReviewQueue />

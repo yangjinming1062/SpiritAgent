@@ -5,12 +5,10 @@ import { useAutoSave } from '@/shared/hooks/use-auto-save'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { cn } from '@/shared/lib/utils'
 import {
-  BTN_SUBTLE,
+  AsyncSection,
   CapsuleTabs,
-  EmptyState,
-  HINT_TEXT,
   INPUT_CLASS,
-  LoadingBlock,
+  SaveStatus,
   SECTION_TITLE,
   SettingCard,
   SettingRow,
@@ -65,7 +63,7 @@ export function RunnerPage(): React.JSX.Element {
   const dict = useStrings()
   const r = dict.settings.runner
 
-  const { config, setConfig, isLoading, patch } = useRunnerConfig(r.failedLoad)
+  const { config, setConfig, isLoading, error, reload, patch } = useRunnerConfig(r.failedLoad)
   // 按路径记录本页改过的字段，只提交对应点键，避免覆盖其他来源的配置更新。
   const [dirtyPaths, setDirtyPaths] = useState<ReadonlyMap<string, readonly string[]>>(new Map())
   const dirtyPathsRef = useRef(dirtyPaths)
@@ -166,46 +164,45 @@ export function RunnerPage(): React.JSX.Element {
     return groups
   }, [envType, r])
 
-  if (isLoading) {
-    return <LoadingBlock label={r.loading} />
-  }
-
-  if (!config) {
-    return <EmptyState title={r.failedLoad} />
-  }
-
   return (
-    <div className="space-y-6">
-      <SettingsSectionIntro hint={r.intro} title={r.title} />
+    <AsyncSection
+      error={error}
+      errorTitle={r.failedLoad}
+      isLoading={isLoading}
+      loadingLabel={r.loading}
+      onRetry={reload}
+      retryLabel={dict.common.retry}
+    >
+      {config ? (
+        <div className="space-y-6">
+          <SettingsSectionIntro hint={r.intro} title={r.title} />
 
-      <div className="space-y-6">
-        {rowGroups.map(group => (
-          <section key={group.heading}>
-            <p className={cn(SECTION_TITLE, 'mb-2')}>{group.heading}</p>
-            <SettingCard>
-              {group.rows.map(row => (
-                <SettingRow key={row.title} label={row.title}>
-                  {renderRowAction(row, config, updateField)}
-                </SettingRow>
-              ))}
-            </SettingCard>
-          </section>
-        ))}
-      </div>
+          <div className="space-y-6">
+            {rowGroups.map(group => (
+              <section key={group.heading}>
+                <p className={cn(SECTION_TITLE, 'mb-2')}>{group.heading}</p>
+                <SettingCard>
+                  {group.rows.map(row => (
+                    <SettingRow key={row.title} label={row.title}>
+                      {renderRowAction(row, config, updateField)}
+                    </SettingRow>
+                  ))}
+                </SettingCard>
+              </section>
+            ))}
+          </div>
 
-      <div className="flex min-h-5 items-center justify-end gap-3 pt-2">
-        {saveStatus === 'saving' && <span className={HINT_TEXT}>{dict.common.saving}</span>}
-        {saveStatus === 'saved' && <span className={HINT_TEXT}>{r.saveSuccess}</span>}
-        {saveStatus === 'error' && (
-          <>
-            <span className="text-xs leading-relaxed text-danger-fg">{r.saveFailed}</span>
-            <button className={BTN_SUBTLE} onClick={retrySave} type="button">
-              {dict.common.retry}
-            </button>
-          </>
-        )}
-      </div>
-    </div>
+          <SaveStatus
+            errorLabel={r.saveFailed}
+            onRetry={retrySave}
+            retryLabel={dict.common.retry}
+            savedLabel={r.saveSuccess}
+            savingLabel={dict.common.saving}
+            status={saveStatus}
+          />
+        </div>
+      ) : null}
+    </AsyncSection>
   )
 }
 

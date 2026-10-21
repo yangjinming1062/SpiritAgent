@@ -5,14 +5,14 @@ import { useRef, useState } from 'react'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { Monitor } from '@/shared/lib/icons'
 import { shellApi } from '@/shared/platform/desktop'
-import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
 import { $presentation } from '@/shared/store/presentation'
+import { useStrings } from '@/shared/strings'
 import type { PresentationMode } from '@ipc/contracts'
 
 export function usePresentationModeSwitch() {
   const state = useStore($presentation)
-  const en = useStore($locale) === 'en'
+  const strings = useStrings()
   const [busy, setBusy] = useState(false)
   const pending = useRef(false)
   const beginAsync = useAsyncGuard()
@@ -37,7 +37,7 @@ export function usePresentationModeSwitch() {
       await shellApi().presentation.setMode(mode)
     } catch (error) {
       if (isLive()) {
-        notifyError(error, en ? 'Desktop mode' : '桌面模式')
+        notifyError(error, strings.desktopShell.switchFailed)
       }
     } finally {
       pending.current = false
@@ -50,14 +50,14 @@ export function usePresentationModeSwitch() {
 
   return {
     state,
-    en,
     busy: busy || state.status === 'starting' || state.status === 'recovering' || Boolean(state.switchBlockedReason),
     switchMode
   }
 }
 
 export function PresentationModeButton({ className }: { className?: string }): React.JSX.Element | null {
-  const { state, en, busy, switchMode } = usePresentationModeSwitch()
+  const strings = useStrings()
+  const { state, busy, switchMode } = usePresentationModeSwitch()
 
   if (!state.supported || state.effectiveMode === 'desktop') {
     return null
@@ -68,11 +68,11 @@ export function PresentationModeButton({ className }: { className?: string }): R
       className={`${className ?? ''} disabled:cursor-wait disabled:opacity-50`}
       disabled={busy}
       onClick={() => void switchMode('desktop')}
-      title={state.switchBlockedReason ?? (en ? 'Switch to desktop mode' : '切换到桌面模式')}
+      title={state.switchBlockedReason ?? strings.desktopShell.switchToDesktopMode}
       type="button"
     >
       <Monitor size={13} />
-      <span>{en ? 'Desktop mode' : '桌面模式'}</span>
+      <span>{strings.desktopShell.desktopMode}</span>
     </button>
   )
 }

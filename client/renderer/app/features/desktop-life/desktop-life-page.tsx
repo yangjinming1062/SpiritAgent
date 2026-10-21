@@ -37,20 +37,27 @@ import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { RefreshCw } from '@/shared/lib/icons'
-import { backendDetailMessage } from '@/shared/lib/ipc-error'
-import { CreationFeedback, CreationWorkspace, INPUT_CLASS, PanelSelect } from '@/shared/panel'
+import { failureText } from '@/shared/lib/ipc-error'
+import {
+  confirmAction,
+  CreationFeedback,
+  CreationWorkspace,
+  Disclosure,
+  INPUT_CLASS,
+  LoadingBlock,
+  PanelSelect
+} from '@/shared/panel'
 import { fileApi, shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { notifyError } from '@/shared/store/notifications'
 import { $presentation } from '@/shared/store/presentation'
 import { useStrings } from '@/shared/strings'
 import type { DesktopLifeUiSnapshot } from '@ipc/contracts'
-import { errorMessage } from '@runtime'
 
 import { DesktopLifeActionView } from './desktop-life-action-view'
 import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE } from './desktop-life-buttons'
 import { DesktopLifeCreateView } from './desktop-life-create-view'
-import { DesktopLifeConfirmDialog, DesktopLifeDialog } from './desktop-life-dialog'
+import { DesktopLifeDialog } from './desktop-life-dialog'
 import { readyDesktopLifeResolution, reconcileDesktopLifeDisplay } from './desktop-life-display'
 import { DesktopLifeHeader } from './desktop-life-header'
 import { DesktopLifeLibraryView } from './desktop-life-library-view'
@@ -65,7 +72,6 @@ import {
   desktopLifeSelectedAction,
   isActionPaused
 } from './desktop-life-status'
-import { useDesktopLifeStrings } from './desktop-life-strings'
 import { DesktopLifeWorkbench } from './desktop-life-workbench'
 import styles from './desktop-life.module.css'
 
@@ -74,7 +80,8 @@ export function DesktopLifePage({
 }: {
   onPrepareMaterial?: (kind: 'scene' | 'outfit') => void
 }): React.JSX.Element {
-  const t = useDesktopLifeStrings()
+  const strings = useStrings()
+  const t = strings.desktopLife
   const commonStrings = useStrings().common
   const queueStrings = commonStrings.videoQueue
   const auth = useStore($auth)
@@ -115,8 +122,6 @@ export function DesktopLifePage({
   const outfits = useStore($outfits)
   const [creationScene, setCreationScene] = useState<{ id: string; scene: SceneAsset | null } | null>(null)
   const [rename, setRename] = useState('')
-  const [deleteSetId, setDeleteSetId] = useState<number | null>(null)
-  const [discardAction, setDiscardAction] = useState<DesktopVideoAction | null>(null)
 
   const [refinement, setRefinement] = useState<{
     action: DesktopVideoAction
@@ -157,8 +162,6 @@ export function DesktopLifePage({
     setRename('')
     setCustomActionOpen(false)
     setRefinement(null)
-    setDiscardAction(null)
-    setDeleteSetId(null)
     customActionRevision.current += 1
     updateDesktopLifeUi({ ...change, addActionOpen: false })
   }, [])
@@ -181,7 +184,6 @@ export function DesktopLifePage({
 
     if (selected && (action?.id ?? null) !== selectedActionId) {
       setRefinement(null)
-      setDiscardAction(null)
       updateDesktopLifeUi({ selectedActionId: action?.id ?? null })
     }
   }, [loading, state, error, libraryError, selected, selectedSetId, action?.id, selectedActionId, navigate])
@@ -225,8 +227,6 @@ export function DesktopLifePage({
 
     authSession.current = authSessionId
     setCreationScene(null)
-    setDeleteSetId(null)
-    setDiscardAction(null)
     setRefinement(null)
     requestRef.current.clear()
     setRequests({})
@@ -337,7 +337,7 @@ export function DesktopLifePage({
       return await operation()
     } catch (failure) {
       if (isLive()) {
-        setOperationErrors(current => ({ ...current, [scope]: backendDetailMessage(failure, errorMessage(failure)) }))
+        setOperationErrors(current => ({ ...current, [scope]: failureText(failure, t.operationFailed) }))
         notifyError(failure, t.title)
         void refreshDesktopVideos()
       }
@@ -619,7 +619,7 @@ export function DesktopLifePage({
             type="button"
           >
             <RefreshCw size={16} />
-            {t.refresh}
+            {strings.common.refresh}
           </button>
         )
       }
@@ -642,7 +642,7 @@ export function DesktopLifePage({
     if (item.status === 'failed') {
       return {
         state: 'error',
-        title: t.statuses.failed
+        title: strings.common.actionVariants.statuses.failed
       }
     }
 
@@ -685,14 +685,13 @@ export function DesktopLifePage({
         actions={
           <button className={BTN_SUBTLE} disabled={loading} onClick={() => void refreshDesktopVideos()} type="button">
             <RefreshCw className="size-4" />
-            {t.refresh}
+            {strings.common.refresh}
           </button>
         }
         description={
-          <details>
-            <summary className="cursor-pointer">{t.details}</summary>
+          <Disclosure bodyClassName="break-words" title={t.details} variant="inline">
             <p className="mt-2 break-words">{loadError || state?.preparation_error}</p>
-          </details>
+          </Disclosure>
         }
         state="error"
         title={t.unavailable}
@@ -869,8 +868,12 @@ export function DesktopLifePage({
               value={design.description}
             />
           </label>
-          <details>
-            <summary className="cursor-pointer text-sm text-muted">{t.actionSettings}</summary>
+          <Disclosure
+            bodyClassName="flex flex-col gap-3"
+            summaryClassName="text-sm text-muted"
+            title={t.actionSettings}
+            variant="inline"
+          >
             <div className="mt-3 flex flex-col gap-3">
               <input
                 aria-label={t.actionName}
@@ -912,7 +915,7 @@ export function DesktopLifePage({
                 />
               </label>
             </div>
-          </details>
+          </Disclosure>
           <button
             className={`${BTN_PRIMARY} self-start`}
             disabled={busy(setScope) || design.description.trim().length < 10}
@@ -1001,7 +1004,21 @@ export function DesktopLifePage({
                 }
               }}
               onCreateSet={openCreate}
-              onDiscard={() => setDiscardAction(action)}
+              onDiscard={() => {
+                void confirmAction({
+                  confirmLabel: t.discardConfirm,
+                  description: t.discardHint,
+                  title: t.discardDraft
+                }).then(confirmed => {
+                  if (confirmed) {
+                    void run(
+                      () => cancelDesktopVideoDraft(action),
+                      t.processingRequest,
+                      `set:${action.set_id}:action:${action.id}`
+                    )
+                  }
+                })
+              }}
               onMakeImage={(note, regenerate) => void run(() => makeImage(action, selected, note, regenerate))}
               onMakeVideo={(note, videoFeedback) => void run(() => makeVideo(action, selected, note, videoFeedback))}
               onPause={() => void run(() => pauseDesktopVideoDraft(action), t.pausingCreation)}
@@ -1026,11 +1043,11 @@ export function DesktopLifePage({
                       onClick={() => void refreshDesktopVideos()}
                       type="button"
                     >
-                      {t.refresh}
+                      {strings.common.refresh}
                     </button>
                   }
                   state={loading ? 'working' : 'error'}
-                  title={loading ? t.loading : t.noActions}
+                  title={loading ? strings.common.loading : t.noActions}
                 />
               )}
             </div>
@@ -1045,7 +1062,7 @@ export function DesktopLifePage({
             />
           }
         >
-          <div className={styles.content}>{loadIssue ?? <CreationFeedback state="working" title={t.loading} />}</div>
+          <div className={styles.content}>{loadIssue ?? <LoadingBlock label={strings.common.loading} />}</div>
         </CreationWorkspace>
       ) : (
         <DesktopLifeLibraryView
@@ -1114,7 +1131,29 @@ export function DesktopLifePage({
             disabled={busy(setScope)}
             onClick={() => {
               setSettingsOpen(false)
-              setDeleteSetId(selected.id)
+              void confirmAction({
+                confirmLabel: t.deleteSet,
+                description: t.deleteHint,
+                title: t.deleteSet,
+                variant: 'destructive'
+              }).then(async confirmed => {
+                if (!confirmed) {
+                  return
+                }
+
+                const isLive = beginAsync()
+
+                try {
+                  await perform(() => deleteDesktopVideoSet(selected.id), t.processingRequest, setScope)
+                } catch {
+                  // 失败已由 perform 呈现，删除没完成就不再导航。
+                  return
+                }
+
+                if (isLive() && $desktopLifeUi.get().selectedSetId === selected.id) {
+                  navigate({ selectedSetId: null, selectedActionId: null })
+                }
+              })
             }}
             type="button"
           >
@@ -1158,54 +1197,6 @@ export function DesktopLifePage({
             <CreationFeedback description={operationErrors[setScope]} state="error" title={t.operationFailed} />
           )}
         </DesktopLifeDialog>
-      )}
-      {discardAction && (
-        <DesktopLifeConfirmDialog
-          confirmLabel={t.discardConfirm}
-          description={t.discardHint}
-          key={`discard:${discardAction.id}:${discardAction.draft?.id ?? ''}`}
-          onConfirm={() =>
-            perform(
-              () => cancelDesktopVideoDraft(discardAction),
-              t.processingRequest,
-              `set:${discardAction.set_id}:action:${discardAction.id}`
-            )
-          }
-          onOpenChange={open => {
-            if (!open) {
-              setDiscardAction(null)
-            }
-          }}
-          open
-          title={t.discardDraft}
-        />
-      )}
-      {selected && deleteSetId === selected.id && (
-        <DesktopLifeConfirmDialog
-          confirmLabel={t.deleteSet}
-          description={t.deleteHint}
-          key={`delete:${selected.id}`}
-          onConfirm={async () => {
-            const isLive = beginAsync()
-            await perform(() => deleteDesktopVideoSet(selected.id), t.processingRequest, setScope)
-
-            if (isLive()) {
-              setDeleteSetId(current => (current === selected.id ? null : current))
-
-              if ($desktopLifeUi.get().selectedSetId === selected.id) {
-                navigate({ selectedSetId: null, selectedActionId: null })
-              }
-            }
-          }}
-          onOpenChange={open => {
-            if (!open) {
-              setDeleteSetId(null)
-            }
-          }}
-          open
-          title={t.deleteSet}
-          variant="destructive"
-        />
       )}
       {refinement && (
         <VideoRefinementModal
@@ -1259,7 +1250,7 @@ export function DesktopLifePage({
                 {t.keepAspect}
               </button>
               <button className={BTN_GHOST} onClick={() => chooseAspect(null)} type="button">
-                {t.cancelUpload}
+                {strings.common.cancel}
               </button>
             </div>
           </div>

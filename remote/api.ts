@@ -2,13 +2,14 @@ import type { ApiArguments, ApiOperationKey, ApiResponse, ApiTransport } from '.
 import { createHttpClient } from '../shared/api'
 import { ApiError } from '../shared/errors'
 import { GatewayConnection, type GatewayEvent, type SessionSnapshot } from '../shared/gateway'
+import { uiCopy } from '../shared/ui-copy'
 export { ApiError } from '../shared/errors'
 export type { GatewayEvent } from '../shared/gateway'
 
 import type { RemoteSession } from './types'
 
 export function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : '操作失败，请稍后重试'
+  return error instanceof Error ? error.message : uiCopy.operationFailed
 }
 
 export class RemoteApi implements ApiTransport {

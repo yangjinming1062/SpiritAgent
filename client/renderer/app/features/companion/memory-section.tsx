@@ -14,6 +14,8 @@ import {
   CapsuleTabs,
   CHIP,
   confirmAction,
+  Disclosure,
+  ErrorBanner,
   HINT_TEXT,
   INPUT_CLASS,
   PanelSelect
@@ -40,7 +42,6 @@ const PAGE_SIZE = 20
 export function MemorySection(): React.ReactElement {
   const presets = useStore($systemPresets)
   const memory = useStore($companionEditors).memory
-  const english = useStore($locale) === 'en'
   const dict = useStrings()
   const { presetId, section } = memory
   useEffect(() => {
@@ -51,7 +52,7 @@ export function MemorySection(): React.ReactElement {
     <section className="flex min-h-0 flex-1 flex-col gap-4">
       <div className="flex shrink-0 flex-wrap items-end gap-3">
         <label className="block min-w-40 flex-1 text-sm text-body">
-          {english ? 'Whose memories' : '查看谁的记忆'}
+          {dict.settings.persona.memoryScope}
           <PanelSelect
             ariaLabel={dict.settings.memory.presetLabel}
             onChange={next =>
@@ -70,10 +71,10 @@ export function MemorySection(): React.ReactElement {
         </label>
         {presetId === 'companion' && (
           <CapsuleTabs
-            ariaLabel={english ? 'Memory type' : '记忆类型'}
+            ariaLabel={dict.settings.persona.memoryScopeAria}
             onChange={next => updateCompanionEditors({ memory: { ...$companionEditors.get().memory, section: next } })}
             options={[
-              { value: 'recall', label: english ? 'Remembered things' : '记住的事' },
+              { value: 'recall', label: dict.settings.persona.memoryKindRecall },
               { value: 'profile', label: dict.settings.memory.profile.title }
             ]}
             value={section}
@@ -94,7 +95,7 @@ export function MemorySection(): React.ReactElement {
 function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
   const dict = useStrings()
   const t = dict.settings.memory
-  const english = useStore($locale) === 'en'
+  const locale = useStore($locale)
   const memory = useStore($companionEditors).memory
   const browser = memory.browsers[presetId] ?? memoryBrowser(presetId)
   const { status, page, query } = browser
@@ -266,9 +267,7 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
         return
       }
 
-      setSavedHint(
-        status === 'active' ? t.saved : english ? 'Saved. This memory is in use again.' : '已保存，这条记忆已重新生效。'
-      )
+      setSavedHint(status === 'active' ? t.saved : dict.settings.persona.memorySavedActive)
       await load(true)
     } catch (error) {
       if (!isCurrent()) {
@@ -309,13 +308,7 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
 
         if (isLive()) {
           if (confirmed) {
-            setSavedHint(
-              status === 'active'
-                ? t.saved
-                : english
-                  ? 'Saved. This memory is in use again.'
-                  : '已保存，这条记忆已重新生效。'
-            )
+            setSavedHint(status === 'active' ? t.saved : dict.settings.persona.memorySavedActive)
           } else {
             notifyError(error, t.saveFailedToast)
             setHint(t.saveFailedHint)
@@ -343,9 +336,9 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
 
     if (
       !(await confirmAction({
-        title: english ? 'Forget this memory?' : '忘记这条记忆？',
+        title: dict.settings.persona.memoryForgetTitle,
         description: selected.content ?? '',
-        confirmLabel: english ? 'Forget' : '忘记',
+        confirmLabel: dict.common.forget,
         variant: 'destructive'
       })) ||
       !isLive()
@@ -390,11 +383,11 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
       <div className="shrink-0 space-y-3">
         <div className="flex flex-wrap items-center gap-3">
           <label className="block min-w-40 flex-1">
-            <span className="sr-only">{english ? 'Search memories' : '搜索记忆'}</span>
+            <span className="sr-only">{dict.settings.persona.memorySearchAria}</span>
             <input
               className={INPUT_CLASS}
               onChange={event => changeFilter({ query: event.target.value })}
-              placeholder={english ? 'Search remembered things' : '搜索记住的事'}
+              placeholder={dict.settings.persona.memorySearchPlaceholder}
               type="search"
               value={query}
             />
@@ -413,16 +406,7 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
           />
         </div>
         <p className={HINT_TEXT}>{t.maintenanceHint}</p>
-        {hint && (
-          <div className="flex flex-wrap items-center gap-2">
-            <p aria-live="polite" className="text-xs text-amber-300/90">
-              {hint}
-            </p>
-            <button className={BTN_GHOST} onClick={() => void load()} type="button">
-              {dict.common.retry}
-            </button>
-          </div>
-        )}
+        {hint && <ErrorBanner message={hint} onRetry={() => void load()} retryLabel={dict.common.retry} />}
         {savedHint && (
           <p aria-live="polite" className={HINT_TEXT}>
             {savedHint}
@@ -432,9 +416,7 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
       {loading ? (
         <p className={HINT_TEXT}>{t.loading}</p>
       ) : rows.length === 0 ? (
-        !hint && (
-          <p className={HINT_TEXT}>{query ? (english ? 'No matching memories.' : '没有找到匹配的记忆。') : t.empty}</p>
-        )
+        !hint && <p className={HINT_TEXT}>{query ? dict.settings.persona.memoryNoMatch : t.empty}</p>
       ) : (
         <>
           <div
@@ -458,12 +440,12 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
                     <div className="space-y-3 p-4">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <label className="text-sm font-medium text-strong" htmlFor={`memory-${row.id}`}>
-                          {english ? 'Edit memory' : '编辑记忆'}
+                          {dict.settings.persona.memoryEdit}
                         </label>
                         <div className="flex items-center gap-2">
-                          {draft && <span className={HINT_TEXT}>{english ? 'Unsaved changes' : '未保存修改'}</span>}
+                          {draft && <span className={HINT_TEXT}>{dict.common.unsavedChanges}</span>}
                           <button className={BTN_GHOST} onClick={closeEditor} type="button">
-                            {english ? 'Collapse' : '收起'}
+                            {dict.settings.persona.memoryCollapse}
                           </button>
                         </div>
                       </div>
@@ -478,18 +460,10 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
                         rows={7}
                         value={draft?.content ?? row.content ?? ''}
                       />
-                      {status !== 'active' && (
-                        <p className={HINT_TEXT}>
-                          {english ? 'Saving makes this memory available again.' : '保存后，这条记忆会重新生效。'}
-                        </p>
-                      )}
+                      {status !== 'active' && <p className={HINT_TEXT}>{dict.settings.persona.memorySaveHint}</p>}
                       {conflict && (
                         <div className="space-y-2 rounded-xl border border-line-hairline p-3">
-                          <p className="text-xs text-amber-300/90">
-                            {english
-                              ? 'This memory changed on another device. Latest content:'
-                              : '这条记忆已在其他设备修改，最新内容：'}
-                          </p>
+                          <p className="text-xs text-amber-300/90">{dict.settings.persona.memoryLatestContent}</p>
                           <p className="whitespace-pre-wrap break-words text-sm text-body">{row.content}</p>
                           <button
                             className={BTN_SUBTLE}
@@ -505,7 +479,7 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
                             }}
                             type="button"
                           >
-                            {english ? 'Keep my edits after review' : '已核对，保留我的修改'}
+                            {dict.common.keepMyEdits}
                           </button>
                         </div>
                       )}
@@ -519,12 +493,8 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
                           {busy
                             ? dict.common.saving
                             : status === 'active'
-                              ? english
-                                ? 'Save changes'
-                                : '保存修改'
-                              : english
-                                ? 'Save and remember again'
-                                : '保存并重新记住'}
+                              ? dict.common.saveChanges
+                              : dict.settings.persona.memorySaveAgain}
                         </button>
                         <button
                           className={BTN_GHOST}
@@ -540,7 +510,7 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
                           onClick={() => void forget()}
                           type="button"
                         >
-                          {english ? 'Forget this memory' : '忘记这条记忆'}
+                          {dict.settings.persona.memoryForgetAction}
                         </button>
                       </div>
                       <p className={cn(HINT_TEXT, 'break-words')}>
@@ -561,10 +531,10 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
                       </p>
                       <p className={cn(HINT_TEXT, 'mt-2 break-words')}>
                         {row.context?.replace(/^recall:/, '') || '—'} ·{' '}
-                        {row.updated_at ? new Date(row.updated_at).toLocaleDateString(english ? 'en' : 'zh-CN') : '—'}
+                        {row.updated_at ? new Date(row.updated_at).toLocaleDateString(locale) : '—'}
                       </p>
                       {memory.drafts[`${presetId}:${row.id}`] && (
-                        <span className="text-xs text-accent">{english ? 'Unsaved changes' : '未保存修改'}</span>
+                        <span className="text-xs text-accent">{dict.common.unsavedChanges}</span>
                       )}
                     </button>
                   )}
@@ -579,11 +549,10 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
               onClick={() => changeFilter({ page: page - 1 })}
               type="button"
             >
-              {english ? 'Previous' : '上一页'}
+              {dict.common.previous}
             </button>
             <span className={HINT_TEXT}>
-              {page + 1} / {Math.max(1, Math.ceil(total / PAGE_SIZE))} ·{' '}
-              {english ? `${total} memories` : `共 ${total} 条`}
+              {page + 1} / {Math.max(1, Math.ceil(total / PAGE_SIZE))} · {dict.settings.persona.memoryTotal(total)}
             </span>
             <button
               className={BTN_SUBTLE}
@@ -591,7 +560,7 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
               onClick={() => changeFilter({ page: page + 1 })}
               type="button"
             >
-              {english ? 'Next' : '下一页'}
+              {dict.common.next}
             </button>
           </div>
         </>
@@ -606,8 +575,12 @@ function MemoryDetails({ row }: { row: MemoryItem }): React.ReactElement {
   const tags = Array.isArray(parsed) ? parsed.map(String) : []
 
   return (
-    <details className="space-y-2 border-t border-line-hairline pt-3 text-xs text-muted">
-      <summary className="cursor-pointer">{t.evidence}</summary>
+    <Disclosure
+      bodyClassName="space-y-2"
+      className="border-t border-line-hairline pt-3 text-xs text-muted"
+      title={t.evidence}
+      variant="inline"
+    >
       <p>
         {t.basis[row.basis]} · {t.usage[row.usage]}
       </p>
@@ -631,6 +604,6 @@ function MemoryDetails({ row }: { row: MemoryItem }): React.ReactElement {
           {entry.quote}
         </blockquote>
       ))}
-    </details>
+    </Disclosure>
   )
 }

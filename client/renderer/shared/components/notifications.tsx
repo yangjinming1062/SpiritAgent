@@ -2,9 +2,7 @@ import { useStore } from '@nanostores/react'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
-import { useClipboard } from '@/shared/hooks/use-clipboard'
-import { triggerHaptic } from '@/shared/lib/haptics'
-import { AlertCircle, AlertTriangle, Check, CheckCircle2, Copy, type IconComponent, Info, X } from '@/shared/lib/icons'
+import { AlertCircle, AlertTriangle, CheckCircle2, type IconComponent, Info, X } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { cn } from '@/shared/lib/utils'
 import {
@@ -15,6 +13,8 @@ import {
   type NotificationKind
 } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
+
+import { CopyButton } from './copy-button'
 
 // toast 是各窗口共用的瞬时浮层，样式只取随主题换肤的 --ui-* token。
 const tone: Record<NotificationKind, { icon: IconComponent; iconClass: string }> = {
@@ -101,7 +101,7 @@ function NotificationItem({ notification }: { notification: AppNotification }): 
     >
       <Icon className={cn('mt-0.5 size-4 shrink-0', styles.iconClass)} />
       <div className="col-start-2 min-w-0">
-        {notification.title && (
+        {notification.title && notification.title !== notification.message && (
           <div className="text-xs font-medium tracking-tight text-strong">{notification.title}</div>
         )}
         <div className="grid justify-items-start gap-1 text-[11px] leading-relaxed text-muted">
@@ -151,28 +151,12 @@ function NotificationDetail({ detail }: { detail: string }): React.JSX.Element {
 }
 
 function CopyDetailButton({ label, text }: { label: string; text: string }): React.JSX.Element {
-  const { status, copy } = useClipboard()
-  const copied = status === 'copied'
-  const failed = status === 'failed'
-  const t = useStrings()
-
-  const onClick = async (): Promise<void> => {
-    try {
-      await copy(text)
-      triggerHaptic('selection')
-    } catch {
-      // 失败状态由复制按钮就地显示。
-    }
-  }
-
   return (
-    <button
+    <CopyButton
       className="mt-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[0.6875rem] text-muted transition hover:bg-fill-hover hover:text-strong"
-      onClick={() => void onClick()}
-      type="button"
-    >
-      {copied ? <Check className="size-3" /> : failed ? <X className="size-3" /> : <Copy className="size-3" />}
-      {copied ? t.common.copied : failed ? t.common.copyFailed : label}
-    </button>
+      label={label}
+      text={text}
+      variant="text"
+    />
   )
 }

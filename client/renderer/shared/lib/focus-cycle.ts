@@ -1,3 +1,9 @@
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
+
+/** 模态与侧栏里可参与 Tab 循环的元素。 */
+export const FOCUSABLE_SELECTOR =
+  'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, video[controls], [tabindex="0"]'
+
 export function cycleTabFocus(
   event: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'preventDefault'>,
   container: HTMLElement | null | undefined,
@@ -23,5 +29,18 @@ export function cycleTabFocus(
   } else if (!event.shiftKey && (active === last || outside)) {
     event.preventDefault()
     first?.focus()
+  }
+}
+
+/**
+ * React 事件版的焦点循环：容器就是事件所在的元素。
+ * 与 `useDialogFocus` 的原生监听版对应，按需选用其一。
+ */
+export function createFocusCycleHandler(
+  selector: string = FOCUSABLE_SELECTOR,
+  wrapOutside = false
+): (event: ReactKeyboardEvent<HTMLElement>) => void {
+  return (event: ReactKeyboardEvent<HTMLElement>): void => {
+    cycleTabFocus(event, event.currentTarget, selector, wrapOutside)
   }
 }

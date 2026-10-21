@@ -18,6 +18,7 @@ import { BTN_SUBTLE, Disclosure, PanelSelect, SettingCard, SettingRow, SettingsS
 import { runnerApi } from '@/shared/platform/desktop'
 import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
+import { useStrings } from '@/shared/strings'
 import type { SettingsSection } from '@ipc/contracts'
 
 import { AboutPage } from './about-page'
@@ -31,25 +32,6 @@ import { RunnerPage } from './station/runner-page'
 import { SkillsToolsTabs } from './station/skills-tools-tabs'
 import { ThemePage } from './theme-page'
 
-const LABELS = {
-  zh: {
-    companionship: '陪伴方式',
-    voice: '回应与录音',
-    display: '显示与外观',
-    devices: '设备与能力',
-    application: '应用与账户',
-    advanced: '高级设置'
-  },
-  en: {
-    companionship: 'Companionship',
-    voice: 'Replies and recording',
-    display: 'Display and appearance',
-    devices: 'Devices and abilities',
-    application: 'App and accounts',
-    advanced: 'Advanced settings'
-  }
-} satisfies Record<'zh' | 'en', Record<SettingsSection, string>>
-
 const ICONS: Record<SettingsSection, IconComponent> = {
   companionship: SlidersHorizontal,
   voice: Volume2,
@@ -61,7 +43,7 @@ const ICONS: Record<SettingsSection, IconComponent> = {
 
 function ApplicationSettings(): React.JSX.Element {
   const locale = useStore($locale)
-  const english = locale === 'en'
+  const strings = useStrings()
   const [accountOpen, setAccountOpen] = useState(false)
   const [savingLanguage, setSavingLanguage] = useState(false)
   const accountRef = useRef<HTMLDivElement>(null)
@@ -87,7 +69,7 @@ function ApplicationSettings(): React.JSX.Element {
       }
     } catch (error) {
       if (live()) {
-        notifyError(error, english ? 'Language could not be saved' : '语言未能保存，请重试')
+        notifyError(error, strings.settings.application.languageSaveFailed)
       }
     } finally {
       if (live()) {
@@ -98,14 +80,11 @@ function ApplicationSettings(): React.JSX.Element {
 
   return (
     <div className="space-y-5">
-      <SettingsSectionIntro
-        hint={english ? 'Manage accounts, language, shortcuts, and updates.' : '管理账户、语言、快捷键和应用更新。'}
-        title={english ? 'App and accounts' : '应用与账户'}
-      />
+      <SettingsSectionIntro hint={strings.settings.application.hint} title={strings.settings.application.title} />
       <SettingCard>
         <SettingRow
-          description={english ? 'Switch companions or add another account.' : '切换账户，或添加另一个账户。'}
-          label={english ? 'Accounts' : '账户'}
+          description={strings.settings.application.accountsDescription}
+          label={strings.settings.application.accountsLabel}
         >
           <div className="relative" ref={accountRef}>
             <button
@@ -116,14 +95,14 @@ function ApplicationSettings(): React.JSX.Element {
               ref={buttonRef}
               type="button"
             >
-              {english ? 'Manage accounts' : '管理账户'}
+              {strings.settings.application.manageAccounts}
             </button>
             {accountOpen && <AccountMenu onClose={closeAccounts} />}
           </div>
         </SettingRow>
-        <SettingRow label={english ? 'Language' : '界面语言'}>
+        <SettingRow label={strings.settings.application.languageLabel}>
           <PanelSelect
-            ariaLabel={english ? 'Language' : '界面语言'}
+            ariaLabel={strings.settings.application.languageLabel}
             disabled={savingLanguage}
             onChange={value => void changeLanguage(value)}
             options={[
@@ -134,7 +113,7 @@ function ApplicationSettings(): React.JSX.Element {
           />
         </SettingRow>
       </SettingCard>
-      <Disclosure title={english ? 'Keyboard shortcuts' : '快捷键'}>
+      <Disclosure title={strings.settings.application.shortcutsTitle}>
         <ShortcutsPage />
       </Disclosure>
       <AboutPage />
@@ -146,8 +125,8 @@ export function AppSettings(): React.JSX.Element {
   const section = useStore($settingsSection)
   const target = useStore($appNavigationTarget)
   const [abilitiesOpen, setAbilitiesOpen] = useState(false)
-  const english = useStore($locale) === 'en'
-  const labels = LABELS[english ? 'en' : 'zh']
+  const strings = useStrings()
+  const labels = strings.settings.application.sections
 
   useEffect(() => {
     if (target.page === 'settings' && target.section === 'devices' && target.settingsTab) {
@@ -172,10 +151,10 @@ export function AppSettings(): React.JSX.Element {
         return (
           <div className="space-y-5">
             <ThemePage />
-            <Disclosure title={english ? 'Companion size and position' : '伙伴大小与位置'}>
+            <Disclosure title={strings.settings.application.companionSizeTitle}>
               <CompanionPage />
             </Disclosure>
-            <Disclosure title={english ? 'Window and desktop mode' : '窗口与桌面模式'}>
+            <Disclosure title={strings.settings.application.windowModeTitle}>
               <PresentationPage />
             </Disclosure>
           </div>
@@ -186,14 +165,10 @@ export function AppSettings(): React.JSX.Element {
           <div className="space-y-5">
             <RemotePage />
             <Disclosure
-              hint={
-                english
-                  ? 'Choose the skills and tools available on this computer.'
-                  : '按用途选择这台电脑上可以使用的技能和工具。'
-              }
+              hint={strings.settings.application.abilitiesHint}
               onOpenChange={setAbilitiesOpen}
               open={abilitiesOpen}
-              title={english ? 'What your companion can do' : '伙伴能帮你做什么'}
+              title={strings.settings.application.abilitiesTitle}
             >
               <SkillsToolsTabs />
             </Disclosure>
@@ -206,27 +181,16 @@ export function AppSettings(): React.JSX.Element {
       case 'advanced':
         return (
           <div className="space-y-5">
-            <SettingsSectionIntro
-              hint={
-                english
-                  ? 'The recommended defaults work for everyday use. Adjust these options only when you need to.'
-                  : '日常使用保持默认值即可，需要时再调整以下选项。'
-              }
-              title={labels.advanced}
-            />
+            <SettingsSectionIntro hint={strings.settings.application.advancedHint} title={labels.advanced} />
             <Disclosure
-              hint={english ? 'Reasoning, randomness, and long conversations.' : '思考深度、表达随机性和长对话处理。'}
-              title={english ? 'Conversation parameters' : '对话参数'}
+              hint={strings.settings.application.conversationHint}
+              title={strings.settings.application.conversationTitle}
             >
               <InferencePage />
             </Disclosure>
             <Disclosure
-              hint={
-                english
-                  ? 'Remote terminals, network access, and sensitive information.'
-                  : '远程终端、网络访问和敏感信息处理。'
-              }
-              title={english ? 'Computer execution settings' : '电脑执行设置'}
+              hint={strings.settings.application.executionHint}
+              title={strings.settings.application.executionTitle}
             >
               <RunnerPage />
             </Disclosure>
@@ -237,7 +201,7 @@ export function AppSettings(): React.JSX.Element {
 
   return (
     <div className={styles.layout}>
-      <nav aria-label={english ? 'Settings categories' : '设置分类'} className={styles.directory}>
+      <nav aria-label={strings.settings.application.categoriesAria} className={styles.directory}>
         {SETTINGS_SECTIONS.map(id => {
           const Icon = ICONS[id]
 
@@ -257,9 +221,9 @@ export function AppSettings(): React.JSX.Element {
       </nav>
       <div className={styles.contentColumn}>
         <div className={styles.mobileDirectory}>
-          <span>{english ? 'Settings' : '设置'}</span>
+          <span>{strings.settings.application.settingsLabel}</span>
           <PanelSelect
-            ariaLabel={english ? 'Settings category' : '设置分类'}
+            ariaLabel={strings.settings.application.categoryAria}
             onChange={select}
             options={SETTINGS_SECTIONS.map(id => ({ value: id, label: labels[id] }))}
             value={section}

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import type { DesktopVideoAction, DesktopVideoSet } from '@/modules/desktop-videos'
 import { useResolvedMediaSrc } from '@/modules/media'
-import { PortraitLightbox } from '@/shared'
+import { ImageLightboxButton } from '@/shared/components/image-lightbox-button'
 import { usePanelActivity } from '@/shared/context/panel-activity'
 import { ZoomIn } from '@/shared/lib/icons'
 import { BTN_SUBTLE, CreationFeedback } from '@/shared/panel'
@@ -12,10 +12,10 @@ import { desktopMediaLayout } from '@client-shared/desktop-media-geometry'
 
 import styles from './desktop-life-preview.module.css'
 import { resolutionLabel } from './desktop-life-resolution'
-import { useDesktopLifeStrings } from './desktop-life-strings'
 
 export function DesktopLifeCover({ url }: { url: string | null }): React.JSX.Element {
-  const t = useDesktopLifeStrings()
+  const strings = useStrings()
+  const t = strings.desktopLife
   const media = useResolvedMediaSrc({ type: 'image', url: url ?? '' })
   const [failedUrl, setFailedUrl] = useState<string | null>(null)
 
@@ -81,7 +81,8 @@ function ResolvedDesktopLifePreview({
   onRetry: () => void
 }): React.JSX.Element {
   const active = usePanelActivity()
-  const t = useDesktopLifeStrings()
+  const strings = useStrings()
+  const t = strings.desktopLife
   const viewOriginal = useStrings().living.scene.viewOriginal
   const videoUrl = draft ? action.draft?.candidate_video_url : action.current?.video_url
   const draftImageUrl = action.draft?.candidate_poster_url || action.draft?.image_url
@@ -91,7 +92,6 @@ function ResolvedDesktopLifePreview({
   const media = useResolvedMediaSrc({ type: videoUrl ? 'video' : 'image', url })
   const posterMedia = useResolvedMediaSrc({ type: 'image', url: imageUrl || '' })
   const [failed, setFailed] = useState(false)
-  const [zoomed, setZoomed] = useState(false)
   const [size, setSize] = useState({ width: 0, height: 0 })
   const video = useRef<HTMLVideoElement>(null)
   const frameWidth = draft ? (action.draft?.target_width ?? set.target_width) : set.target_width
@@ -137,12 +137,6 @@ function ResolvedDesktopLifePreview({
     size.width > 0 &&
     !loadFailed
   )
-
-  useEffect(() => {
-    if (!canEnlarge) {
-      setZoomed(false)
-    }
-  }, [canEnlarge])
 
   return (
     <div className={styles.preview}>
@@ -191,19 +185,13 @@ function ResolvedDesktopLifePreview({
                 style={mediaStyle}
               />
             ))}
-          {canEnlarge && (
-            <button
-              aria-haspopup="dialog"
-              aria-label={viewOriginal}
-              className={styles.enlarge}
-              onClick={() => setZoomed(true)}
-              type="button"
-            >
+          {canEnlarge && media.status === 'ready' && (
+            <ImageLightboxButton ariaLabel={viewOriginal} className={styles.enlarge} name={action.name} url={media.src}>
               <span className={styles.enlargeHint}>
                 <ZoomIn aria-hidden="true" size={16} />
                 {viewOriginal}
               </span>
-            </button>
+            </ImageLightboxButton>
           )}
         </div>
         {currentFallback && hasMedia && <span className={styles.currentProduct}>{t.currentProduct}</span>}
@@ -227,9 +215,6 @@ function ResolvedDesktopLifePreview({
           {t.actualResolution}: {resolutionLabel(actualWidth, actualHeight)}
         </p>
       ) : null}
-      {zoomed && media.status === 'ready' && (
-        <PortraitLightbox name={action.name} onClose={() => setZoomed(false)} url={media.src} />
-      )}
     </div>
   )
 }

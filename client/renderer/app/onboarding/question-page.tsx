@@ -2,6 +2,7 @@ import { type KeyboardEvent, type RefObject, useId } from 'react'
 
 import { cn } from '@/shared/lib/utils'
 import { BTN_GHOST, Chip, CreationActionBar, CreationWorkspace, DatePicker, INPUT_CLASS } from '@/shared/panel'
+import { useStrings } from '@/shared/strings'
 
 import { ONBOARDING_PRIMARY_BUTTON } from './onboarding-components'
 import type { AnswerKind, Question } from './onboarding-questions'
@@ -42,11 +43,11 @@ export function QuestionPage({
   onSend,
   onSkip
 }: QuestionPageProps): React.JSX.Element {
+  const t = useStrings().onboarding
   const id = useId()
   const presetValues = question.presets ?? []
 
-  const nextLabel =
-    question.key === 'voice' ? '继续选择声音' : qIndex === questionCount - 1 ? '下一步：确认形象' : '下一步'
+  const nextLabel = question.key === 'voice' ? t.nextVoice : qIndex === questionCount - 1 ? t.nextConfirm : t.next
 
   const descriptionIds = [hint && `${id}-error`, lockedLabel && `${id}-locked`].filter(Boolean).join(' ') || undefined
 
@@ -87,13 +88,13 @@ export function QuestionPage({
           <div className={styles.navigation}>
             {canGoBack && (
               <button className={BTN_GHOST} onClick={onBack} type="button">
-                上一题
+                {t.previousQuestion}
               </button>
             )}
             <div className={styles.forward}>
               {!question.requiredHint && (
                 <button className={BTN_GHOST} onClick={onSkip} type="button">
-                  跳过
+                  {t.skip}
                 </button>
               )}
               <button
@@ -112,9 +113,7 @@ export function QuestionPage({
       <div className={styles.question}>
         <div>
           <div className={styles.questionMeta}>
-            <span>
-              第 {qIndex + 1} / {questionCount} 题
-            </span>
+            <span>{t.questionProgress(qIndex + 1, questionCount)}</span>
           </div>
           <h2 className={styles.questionTitle} id={`${id}-title`}>
             {question.text}
@@ -158,7 +157,7 @@ export function QuestionPage({
           )}
           {lockedLabel && (
             <p className="text-xs leading-relaxed text-body" id={`${id}-locked`}>
-              「{lockedLabel}」在形象确认后无法再次更改，请仔细选择。
+              {t.lockedHint(lockedLabel)}
             </p>
           )}
           {question.multiline ? (
@@ -176,7 +175,12 @@ export function QuestionPage({
               value={input}
             />
           ) : question.date ? (
-            <DatePicker clearLabel="清除" onChange={setInput} placeholder={question.placeholder} value={input} />
+            <DatePicker
+              clearLabel={t.removeReference}
+              onChange={setInput}
+              placeholder={question.placeholder}
+              value={input}
+            />
           ) : (
             <input
               aria-describedby={descriptionIds}

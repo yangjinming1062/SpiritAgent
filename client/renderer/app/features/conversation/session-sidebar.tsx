@@ -46,7 +46,6 @@ import {
   CalendarPlus,
   Clock,
   type IconComponent,
-  Loader2,
   Messages,
   Pencil,
   Pin,
@@ -55,12 +54,11 @@ import {
   Trash2
 } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
-import { INPUT_CLASS, SearchField } from '@/shared/panel'
+import { Badge, ErrorBanner, IconAction, INPUT_CLASS, SearchField, Spinner } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
 import type { SessionInfo } from '@protocol'
 
-import { useConversationStrings } from './conversation-strings'
 import { presetIcon, PresetPickerModal } from './preset-picker-modal'
 
 function buildSortOptions(
@@ -132,7 +130,8 @@ export function SessionSidebar({
   const tActions = t.actions
   const sortOptions = buildSortOptions(t)
   const [pickerOpen, setPickerOpen] = useState(false)
-  const conversationStrings = useConversationStrings()
+  const strings = useStrings()
+  const conversationStrings = strings.chat.nav
 
   const handleSelect = async (sessionId: string): Promise<void> => {
     onSessionSelected?.()
@@ -248,17 +247,13 @@ export function SessionSidebar({
       {/* 会话列表区域 */}
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-2.5 pb-3 scrollbar-thin">
         {sessionsError && (
-          <div className="rounded-lg border border-line-standard bg-surface-card p-3 text-xs text-muted" role="alert">
-            <p>{conversationStrings.loadFailed}</p>
-            <p className="mt-1 break-words text-[11px]">{sessionsError}</p>
-            <button
-              className="mt-2 rounded-md px-2 py-1 text-accent hover:bg-fill-hover focus-visible:ring-1 focus-visible:ring-accent"
-              onClick={() => void fetchSessions()}
-              type="button"
-            >
-              {conversationStrings.retry}
-            </button>
-          </div>
+          <ErrorBanner
+            detail={sessionsError}
+            message={conversationStrings.loadFailed}
+            onRetry={() => void fetchSessions()}
+            retryLabel={strings.common.retry}
+            tone="danger"
+          />
         )}
         {searchActive ? (
           <div>
@@ -285,9 +280,7 @@ export function SessionSidebar({
             <div>
               <div className="mb-1.5 flex items-center justify-between px-1.5 text-[11px] font-semibold text-muted tracking-wider">
                 <span>{t.systemHeading}</span>
-                <span className="rounded bg-fill-faint px-1 py-0.2 text-[10px] text-muted">
-                  {systemSessions.length}
-                </span>
+                <Badge>{systemSessions.length}</Badge>
               </div>
               {loading && systemSessions.length === 0 ? (
                 <div className="py-3 text-center text-[11px] text-muted">{t.loadingSystem}</div>
@@ -313,11 +306,7 @@ export function SessionSidebar({
             <div className="pt-1">
               <div className="mb-1.5 flex items-center justify-between px-1.5 text-[11px] font-semibold text-muted tracking-wider">
                 <span>{t.ordinaryHeading}</span>
-                {ordinarySessions.length > 0 && (
-                  <span className="rounded bg-fill-faint px-1 py-0.2 text-[10px] text-muted">
-                    {ordinarySessions.length}
-                  </span>
-                )}
+                {ordinarySessions.length > 0 && <Badge>{ordinarySessions.length}</Badge>}
               </div>
 
               {loading && sessions.length === 0 ? (
@@ -335,17 +324,17 @@ export function SessionSidebar({
                     <SessionRow
                       actions={
                         <>
-                          <RowAction
+                          <IconAction
                             icon={PinOff}
                             label={tActions.unpin}
                             onClick={() => void pinSession(s.id, false)}
                           />
-                          <RowAction
+                          <IconAction
                             icon={Archive}
                             label={tActions.archive}
                             onClick={() => void archiveSession(s.id, true)}
                           />
-                          <RowAction
+                          <IconAction
                             danger
                             icon={Trash2}
                             label={tActions.delete}
@@ -369,13 +358,13 @@ export function SessionSidebar({
                     <SessionRow
                       actions={
                         <>
-                          <RowAction icon={Pin} label={tActions.pin} onClick={() => void pinSession(s.id, true)} />
-                          <RowAction
+                          <IconAction icon={Pin} label={tActions.pin} onClick={() => void pinSession(s.id, true)} />
+                          <IconAction
                             icon={Archive}
                             label={tActions.archive}
                             onClick={() => void archiveSession(s.id, true)}
                           />
-                          <RowAction
+                          <IconAction
                             danger
                             icon={Trash2}
                             label={tActions.delete}
@@ -417,12 +406,17 @@ export function SessionSidebar({
                 <SessionRow
                   actions={
                     <>
-                      <RowAction
+                      <IconAction
                         icon={ArchiveOff}
                         label={tActions.restore}
                         onClick={() => void archiveSession(s.id, false)}
                       />
-                      <RowAction danger icon={Trash2} label={tActions.delete} onClick={() => void handleDelete(s.id)} />
+                      <IconAction
+                        danger
+                        icon={Trash2}
+                        label={tActions.delete}
+                        onClick={() => void handleDelete(s.id)}
+                      />
                     </>
                   }
                   isActive={s.id === activeSessionId}
@@ -474,7 +468,8 @@ function SessionRow({
   const unread = companionUnread || pending.some(message => message.sessionId === session.id)
   const dict = useStrings()
   const tSidebar = dict.conversation.sessionSidebar
-  const conversationStrings = useConversationStrings()
+  const strings = useStrings()
+  const conversationStrings = strings.chat.nav
 
   useEffect(() => retainConversationRuntime(runtime), [runtime])
 
@@ -541,21 +536,23 @@ function SessionRow({
 
         <div className="flex items-center gap-0.5 shrink-0" onClick={e => e.stopPropagation()}>
           {running && (
-            <Loader2
-              aria-label={conversationStrings.running}
-              className="size-3.5 animate-spin text-accent"
+            <Spinner
+              ariaLabel={conversationStrings.running}
+              className="shrink-0"
               role="status"
+              size="sm"
+              tone="accent"
             />
           )}
           {canRename && !editing && (
             <div className="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-              <RowAction icon={Pencil} label={dict.chat.sessionRename.action} onClick={() => setEditing(true)} />
+              <IconAction icon={Pencil} label={dict.chat.sessionRename.action} onClick={() => setEditing(true)} />
             </div>
           )}
           <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
             {actions}
           </div>
-          {badge && <span className="rounded bg-fill-faint px-1 py-0.2 text-[9px] text-muted">{badge}</span>}
+          {badge && <Badge tone="count">{badge}</Badge>}
         </div>
       </div>
 
@@ -620,34 +617,5 @@ function SessionTitleInput({
       title={dict.chat.sessionRename.hint}
       value={draft}
     />
-  )
-}
-
-function RowAction({
-  icon: Icon,
-  label,
-  danger,
-  onClick
-}: {
-  icon: IconComponent
-  label: string
-  danger?: boolean
-  onClick: () => void
-}): React.JSX.Element {
-  return (
-    <button
-      aria-label={label}
-      className={cn(
-        'rounded-md p-1 transition-colors',
-        danger
-          ? 'text-faint hover:bg-danger-bg hover:text-danger-fg'
-          : 'text-faint hover:bg-fill-hover hover:text-strong'
-      )}
-      onClick={onClick}
-      title={label}
-      type="button"
-    >
-      <Icon className="size-3" />
-    </button>
   )
 }

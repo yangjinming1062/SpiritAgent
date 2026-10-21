@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useClipboard } from '@/shared/hooks/use-clipboard'
-import { backendDetailMessage } from '@/shared/lib/ipc-error'
+import { failureText } from '@/shared/lib/ipc-error'
 import {
   BTN_GHOST,
   BTN_PRIMARY,
@@ -61,7 +61,7 @@ export function RemotePage(): React.JSX.Element {
       }
     } catch (cause) {
       if (isLive() && revision === devicesRevision.current) {
-        setLoadError(backendDetailMessage(cause, t.loadFailed))
+        setLoadError(failureText(cause, t.loadFailed))
       }
     } finally {
       if (isLive() && revision === devicesRevision.current) {
@@ -163,7 +163,7 @@ export function RemotePage(): React.JSX.Element {
         failures += 1
 
         if (failures >= 5) {
-          setError(backendDetailMessage(cause, t.pollFailed))
+          setError(failureText(cause, t.pollFailed))
 
           return
         }
@@ -202,7 +202,7 @@ export function RemotePage(): React.JSX.Element {
       }
     } catch (cause) {
       if (isLive() && revision === pairingRevision.current) {
-        setError(backendDetailMessage(cause, failureMessage))
+        setError(failureText(cause, failureMessage))
       }
     } finally {
       if (isLive() && revision === pairingRevision.current) {

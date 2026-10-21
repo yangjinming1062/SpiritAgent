@@ -616,6 +616,8 @@ HTTP 错误统一返回 `{error:{code,message,details,request_id}}`，校验细�
 
 错误离开边界前必须脱敏，不包含凭据、数据库连接或服务端本地路径。恢复策略由错误类别和操作语义决定：超时、断连和取消均不能单独证明副作用未发生。
 
+客户端与手机端把失败归入同一组类别，类别只由 [error-classification](../shared/error-classification.ts) 判定：优先取业务错误码与 HTTP 状态，缺少结构化信息时才回落到消息文本。归类结果为 `network`（断连与超时）、`rate_limited`（限流与配额）、`provider`（供应商鉴权或不可用）、`server`（服务端内部错误）、`unauthorized`（登录失效）与 `unknown`。两端据此给出同一套中文说明，说明文本由 [ui-copy](../shared/ui-copy.ts) 统一定义；未归类的失败保留原始正文。归类只影响对外说明，不改变错误码、恢复策略与副作用判定。
+
 ### ID 语义
 
 | 标识 | 范围与用途 |

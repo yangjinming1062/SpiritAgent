@@ -19,14 +19,14 @@ import {
 import { MediaViewerOverlay } from '@/modules/media'
 import { PanelActivityProvider } from '@/shared/context/panel-activity'
 import { useEscapeKey } from '@/shared/hooks/use-escape-key'
-import { cycleTabFocus } from '@/shared/lib/focus-cycle'
+import { createFocusCycleHandler } from '@/shared/lib/focus-cycle'
 import { ArrowLeft, List } from '@/shared/lib/icons'
 import { definePersistedBoolean, registerCompanionStorageKey } from '@/shared/lib/storage'
+import { ErrorBanner } from '@/shared/panel'
 import { $gatewayState } from '@/shared/store/gateway'
 import { useStrings } from '@/shared/strings'
 
 import styles from './conversation-page.module.css'
-import { useConversationStrings } from './conversation-strings'
 import { SessionSidebar } from './session-sidebar'
 import { usePendingConversationFeed } from './use-pending-conversation-feed'
 
@@ -67,11 +67,13 @@ export function ConversationPage({
   const [railOpen, setRailOpen] = useState(false)
   const layoutRef = useRef<HTMLDivElement>(null)
   const sidebarRef = useRef<HTMLDivElement>(null)
+  const cycleFocus = createFocusCycleHandler('button, input, [tabindex="0"]')
   const sidebarToggle = useRef<HTMLButtonElement>(null)
   const railToggle = useRef<HTMLButtonElement>(null)
   const sidebarId = useId()
   const railId = useId()
-  const t = useConversationStrings()
+  const strings = useStrings()
+  const t = strings.chat.nav
   const sidebarOpen = narrow ? drawerOpen : !collapsed
 
   useEffect(() => {
@@ -146,7 +148,7 @@ export function ConversationPage({
               id={sidebarId}
               onKeyDown={event => {
                 if (narrow) {
-                  cycleTabFocus(event, event.currentTarget, 'button, input, [tabindex="0"]')
+                  cycleFocus(event)
                 }
               }}
               ref={sidebarRef}
@@ -253,7 +255,8 @@ function MainChat({
   const sessionPresetId = useStore(runtime.$chatSessionPresetId)
   const preset = presets.find(preset => preset.id === sessionPresetId)
   const dict = useStrings()
-  const t = useConversationStrings()
+  const strings = useStrings()
+  const t = strings.chat.nav
 
   return (
     <ChatPanel
@@ -276,20 +279,15 @@ function MainChat({
       isReadOnlySession={readOnly}
       notice={
         navigationError && (
-          <div className={styles.error} role="alert">
-            <span>
-              {t.loadFailed} {navigationError.error}
-            </span>
-            <button
-              className={styles.detailButton}
-              onClick={() =>
-                void (navigationError.sessionId ? switchSession(navigationError.sessionId) : openMainSession())
-              }
-              type="button"
-            >
-              {t.retry}
-            </button>
-          </div>
+          <ErrorBanner
+            message={`${t.loadFailed} ${navigationError.error}`}
+            onRetry={() =>
+              void (navigationError.sessionId ? switchSession(navigationError.sessionId) : openMainSession())
+            }
+            retryLabel={strings.common.retry}
+            tone="danger"
+            variant="bar"
+          />
         )
       }
       reveal={reveal}

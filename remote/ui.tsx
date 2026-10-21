@@ -3,6 +3,9 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 
 import type { VideoQueueState } from '@protocol'
 
+import { classifyError } from '../shared/error-classification'
+import { uiCopyErrors } from '../shared/ui-copy'
+
 import { errorText } from './api'
 
 export function videoQueueText(queue: VideoQueueState): string {
@@ -224,15 +227,9 @@ export function Empty({ title, children }: { title: string; children?: ReactNode
 
 export function Notice({ children, error }: { children?: ReactNode; error?: string }): ReactElement {
   const raw = error ?? (typeof children === 'string' ? children : '')
-  const message = /failed to fetch|networkerror|load failed|fetch failed/i.test(raw)
-    ? '暂时连接不上。请检查网络后再试，已经提交的制作可以返回列表查看。'
-    : /429|quota|rate.?limit|额度|配额/i.test(raw)
-      ? '请求暂时受限，请稍后再试。已有内容仍然可以使用。'
-      : /provider|supplier|api.?key|not configured|未配置|供应商|模型卡片/i.test(raw)
-        ? 'AI 暂时不可用，请稍后重试。已保存的内容仍然保留。'
-        : /traceback|internal server|exception|请求失败（5\d\d）/i.test(raw)
-          ? '这次操作没有完成。请稍后重试；制作中的内容可以返回列表查看。'
-          : raw
+  const kind = classifyError(raw)
+  // 归类得到的失败用跨端统一措辞，其余保留原文。
+  const message = kind === 'unknown' ? raw : uiCopyErrors[kind]
 
   return (
     <div className="notice" role="alert">

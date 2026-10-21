@@ -14,6 +14,7 @@ import {
   BTN_SUBTLE,
   confirmAction,
   DatePicker,
+  ErrorBanner,
   FIELD_LABEL,
   HINT_TEXT,
   INPUT_CLASS,
@@ -21,7 +22,6 @@ import {
 } from '@/shared/panel'
 import { gatewayApi } from '@/shared/platform/desktop'
 import { $gateway } from '@/shared/store/gateway'
-import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import type { MemoryItem, MemoryProfileChange, MemoryProfileUpdateRequest, UserProfileField } from '@protocol'
@@ -72,7 +72,6 @@ export function UserProfileSection(): React.ReactElement {
   const dict = useStrings()
   const t = dict.settings.memory
   const p = t.profile
-  const english = useStore($locale) === 'en'
   const drafts = useStore($companionEditors).memory.profileDrafts
   const [rows, setRows] = useState<MemoryItem[] | null>(null)
   const [loading, setLoading] = useState(true)
@@ -175,9 +174,9 @@ export function UserProfileSection(): React.ReactElement {
     if (
       cleared.length &&
       !(await confirmAction({
-        title: english ? 'Forget these details?' : '忘记这些资料？',
+        title: dict.settings.persona.profileForgetTitle,
         description: cleared.map(field => p.fields[field.key]).join('、'),
-        confirmLabel: english ? 'Save and forget' : '保存并遗忘',
+        confirmLabel: dict.settings.persona.profileForgetAndSave,
         variant: 'destructive'
       }))
     ) {
@@ -341,9 +340,9 @@ export function UserProfileSection(): React.ReactElement {
 
     if (
       !(await confirmAction({
-        title: english ? 'Forget this detail?' : '忘记这条资料？',
+        title: dict.settings.persona.profileForgetOneTitle,
         description: row.content ?? '',
-        confirmLabel: english ? 'Forget' : '忘记',
+        confirmLabel: dict.common.forget,
         variant: 'destructive'
       })) ||
       !isLive()
@@ -386,19 +385,10 @@ export function UserProfileSection(): React.ReactElement {
     <section className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <p className={SECTION_TITLE}>{p.title}</p>
-        {changed.length > 0 && <span className={HINT_TEXT}>{english ? 'Unsaved changes' : '未保存修改'}</span>}
+        {changed.length > 0 && <span className={HINT_TEXT}>{dict.common.unsavedChanges}</span>}
       </div>
       <p className={HINT_TEXT}>{p.hint}</p>
-      {hint && (
-        <div className="flex items-center gap-2">
-          <p aria-live="polite" className="text-xs text-amber-300/90">
-            {hint}
-          </p>
-          <button className={BTN_GHOST} onClick={() => void load()} type="button">
-            {dict.common.retry}
-          </button>
-        </div>
-      )}
+      {hint && <ErrorBanner message={hint} onRetry={() => void load()} retryLabel={dict.common.retry} />}
       {savedHint && (
         <p aria-live="polite" className={HINT_TEXT}>
           {savedHint}
@@ -457,11 +447,7 @@ export function UserProfileSection(): React.ReactElement {
             })}
             {conflicts.length > 0 && (
               <div className="space-y-2 rounded-xl border border-line-hairline p-3">
-                <p className="text-xs text-amber-300/90">
-                  {english
-                    ? 'These details changed on another device. Review the latest values:'
-                    : '资料已在其他设备修改，请核对最新内容：'}
-                </p>
+                <p className="text-xs text-amber-300/90">{dict.settings.persona.profileConflictHint}</p>
                 <dl className="space-y-1">
                   {conflicts.map(field => (
                     <div key={field.key}>
@@ -486,7 +472,7 @@ export function UserProfileSection(): React.ReactElement {
                   }}
                   type="button"
                 >
-                  {english ? 'Keep my edits after review' : '已核对，保留我的修改'}
+                  {dict.common.keepMyEdits}
                 </button>
               </div>
             )}
@@ -497,7 +483,7 @@ export function UserProfileSection(): React.ReactElement {
                 onClick={() => void saveProfile()}
                 type="button"
               >
-                {busy ? dict.common.saving : english ? 'Save changes' : '保存修改'}
+                {busy ? dict.common.saving : dict.common.saveChanges}
               </button>
               <button
                 className={BTN_GHOST}
@@ -524,7 +510,7 @@ export function UserProfileSection(): React.ReactElement {
                 <div className="liquid-glass-card space-y-3 rounded-2xl p-4" key={row.id}>
                   <label className="block">
                     <span className={FIELD_LABEL}>
-                      {row.context?.replace(/^user_profile:/, '') || (english ? 'Additional detail' : '补充资料')}
+                      {row.context?.replace(/^user_profile:/, '') || dict.settings.persona.profileAdditionalDetail}
                     </span>
                     <textarea
                       className={INPUT_CLASS}
@@ -537,12 +523,10 @@ export function UserProfileSection(): React.ReactElement {
                       value={draft?.content ?? row.content ?? ''}
                     />
                   </label>
-                  {draft && <p className={HINT_TEXT}>{english ? 'Unsaved changes' : '未保存修改'}</p>}
+                  {draft && <p className={HINT_TEXT}>{dict.common.unsavedChanges}</p>}
                   {conflict && (
                     <div className="space-y-2">
-                      <p className="text-xs text-amber-300/90">
-                        {english ? 'Latest content:' : '其他设备保存的最新内容：'}
-                      </p>
+                      <p className="text-xs text-amber-300/90">{dict.settings.persona.profileLatestContent}</p>
                       <p className="whitespace-pre-wrap break-words text-sm text-body">{row.content}</p>
                       <button
                         className={BTN_SUBTLE}
@@ -558,7 +542,7 @@ export function UserProfileSection(): React.ReactElement {
                         }}
                         type="button"
                       >
-                        {english ? 'Keep my edits after review' : '已核对，保留我的修改'}
+                        {dict.common.keepMyEdits}
                       </button>
                     </div>
                   )}
@@ -569,7 +553,7 @@ export function UserProfileSection(): React.ReactElement {
                       onClick={() => void saveExtra(row)}
                       type="button"
                     >
-                      {english ? 'Save changes' : '保存修改'}
+                      {dict.common.saveChanges}
                     </button>
                     <button
                       className={BTN_GHOST}
@@ -585,7 +569,7 @@ export function UserProfileSection(): React.ReactElement {
                       onClick={() => void forgetExtra(row)}
                       type="button"
                     >
-                      {english ? 'Forget this detail' : '忘记这条资料'}
+                      {dict.settings.persona.profileForgetOneAction}
                     </button>
                   </div>
                 </div>

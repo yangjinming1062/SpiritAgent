@@ -4,8 +4,9 @@ import type React from 'react'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 
 import { usePanelActivity } from '@/shared/context/panel-activity'
-import { AlertCircle, FileText, Loader2, RefreshCw, Volume2 } from '@/shared/lib/icons'
+import { AlertCircle, FileText, RefreshCw, Volume2 } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
+import { Spinner } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 import { clamp } from '@runtime'
 
@@ -141,7 +142,7 @@ export function ChatVoiceBar({ duration, messageId, playbackKey, text }: ChatVoi
         >
           <div className="flex items-center gap-1.5">
             {isLoading ? (
-              <Loader2 className="size-3.5 shrink-0 text-accent animate-spin" />
+              <Spinner className="shrink-0" size="sm" tone="accent" />
             ) : isPlaying ? (
               <Volume2 className={cn('size-4 shrink-0 text-accent', styles.playing)} />
             ) : unavailable ? (

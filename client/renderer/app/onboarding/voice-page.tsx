@@ -28,25 +28,27 @@ export function VoicePage({
   confirming,
   error
 }: VoicePageProps): React.JSX.Element {
-  const t = useStrings().voice
+  const strings = useStrings()
+  const t = strings.onboarding
+  const voice = strings.voice
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
-      <h2 className={`shrink-0 ${styles.questionTitle}`}>为伙伴选择声音</h2>
+      <h2 className={`shrink-0 ${styles.questionTitle}`}>{t.voiceTitle}</h2>
       <VoiceManager
         compact
         disabled={confirming}
-        intro={<p className={HINT_TEXT}>{t.onboardingHint}</p>}
+        intro={<p className={HINT_TEXT}>{voice.onboardingHint}</p>}
         name={name}
         onVoiceSelected={onVoiceSelected}
         preference={preference}
       />
       <div className={styles.voiceNavigation}>
         <button className={BTN_SUBTLE} disabled={confirming} onClick={onDescribe} type="button">
-          {t.describePreference}
+          {voice.describePreference}
         </button>
         <button className={BTN_SUBTLE} disabled={confirming} onClick={onContinueText} type="button">
-          {t.continueText}
+          {voice.continueText}
         </button>
       </div>
       {error && (

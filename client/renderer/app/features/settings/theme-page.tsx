@@ -5,7 +5,7 @@ import { $manualReduceTransparency, setManualReduceTransparency } from '@/shared
 import { triggerHaptic } from '@/shared/lib/haptics'
 import { Check } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
-import { SECTION_TITLE, SettingCard, SettingRow, SettingsSectionIntro, Toggle } from '@/shared/panel'
+import { Badge, SECTION_TITLE, SettingCard, SettingRow, SettingsSectionIntro, Toggle } from '@/shared/panel'
 import { $theme, setUiTheme } from '@/shared/store/theme'
 import { useStrings } from '@/shared/strings'
 import { SPIRITAGENT_UI_THEMES } from '@ipc/contracts'
@@ -59,10 +59,10 @@ export function ThemePage(): React.JSX.Element {
                     {themeText.themes[theme].label}
                   </span>
                   {isActive && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent">
+                    <Badge className="gap-1 rounded-full px-1.5 font-medium" tone="accent">
                       <Check className="size-2.5 stroke-[2.5]" />
                       <span>{themeText.activeBadge}</span>
-                    </span>
+                    </Badge>
                   )}
                 </div>
                 <p className="mt-0.5 text-[11px] leading-relaxed text-muted">{themeText.themes[theme].description}</p>

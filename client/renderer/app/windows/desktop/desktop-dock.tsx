@@ -6,10 +6,10 @@ import { LayoutGrid, Monitor, X } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { shellApi } from '@/shared/platform/desktop'
 import { notifyError } from '@/shared/store/notifications'
+import { useStrings } from '@/shared/strings'
 import type { DesktopBridge } from '@client-shared/ipc/bridge'
 
 import { DesktopDockPicker, type DockPickerMode } from './desktop-dock-picker'
-import { useDesktopStrings } from './desktop-strings'
 import styles from './desktop.module.css'
 
 type DockState = Awaited<ReturnType<DesktopBridge['dock']['getState']>>
@@ -33,7 +33,7 @@ export function DesktopDock({
   onContentWidthChange: (width: number) => void
   onMenuOpenChange: (open: boolean) => void
 }): React.JSX.Element {
-  const t = useDesktopStrings()
+  const t = useStrings().desktopShell
 
   const [state, setState] = useState<DockState>({
     entries: [],

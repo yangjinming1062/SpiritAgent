@@ -6,6 +6,9 @@ import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { getStrings } from '@/shared/strings'
 import { errorMessage } from '@runtime'
 
+import { classifyError } from '../../../../shared/error-classification'
+import { uiCopyErrors } from '../../../../shared/ui-copy'
+
 export type NotificationKind = 'error' | 'warning' | 'info' | 'success'
 
 interface NotificationAction {
@@ -48,37 +51,19 @@ function cleanErrorText(value: string): string {
   return value.replace(/^Error:\s*/, '').trim()
 }
 
-const ERROR_SUMMARIES: { test: (msg: string) => boolean; summarize: (msg: string) => string }[] = [
-  {
-    test: msg => /incorrect api key provided/i.test(msg) || /['"]code['"]\s*:\s*['"]invalid_api_key['"]/i.test(msg),
-    summarize: () => getStrings().notifications.errors.serviceUnavailable
-  },
-  {
-    test: msg => /method not allowed/i.test(msg),
-    summarize: () => {
-      const strings = getStrings()
-
-      return strings.notifications.errors.methodNotAllowed(strings.brand.fullName)
-    }
-  },
-  {
-    test: msg => /microphone permission/i.test(msg),
-    summarize: () => getStrings().notifications.errors.microphonePermission
-  },
-  {
-    test: msg => /(?:未配置|供应商|provider|LLM|TTS|invalid_api_key|模型卡片|Traceback|\/api\/|database)/i.test(msg),
-    summarize: () => getStrings().notifications.errors.serviceUnavailable
-  }
-]
-
 function summarizeErrorMessage(message: string, fallback: string): string {
-  const rule = ERROR_SUMMARIES.find(r => r.test(message))
-
-  if (rule) {
-    return rule.summarize(message)
+  // 客户端特有的两类失败优先判定，其余按跨端统一归类取中性措辞。
+  if (/method not allowed/i.test(message)) {
+    return getStrings().notifications.errors.methodNotAllowed(getStrings().brand.fullName)
   }
 
-  return message.length > 180 ? fallback : message || fallback
+  if (/microphone permission/i.test(message)) {
+    return getStrings().notifications.errors.microphonePermission
+  }
+
+  const kind = classifyError(message)
+
+  return kind === 'unknown' ? (message.length > 180 ? fallback : message || fallback) : uiCopyErrors[kind]
 }
 
 function readableError(error: unknown, fallback: string): { message: string; detail?: string } {

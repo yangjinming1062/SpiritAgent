@@ -1,12 +1,12 @@
 import { useStore } from '@nanostores/react'
 
 import { desktopDisplayResolution, desktopVideoMatchesDisplay, type DesktopVideoSet } from '@/modules/desktop-videos'
-import { PanelSelect } from '@/shared/panel'
+import { PanelSelect, Pill } from '@/shared/panel'
 import { $presentation } from '@/shared/store/presentation'
+import { useStrings } from '@/shared/strings'
 import type { PresentationDisplay } from '@ipc/contracts'
 
 import { resolveDesktopLifeRecommendationDisplay } from './desktop-life-display'
-import { useDesktopLifeStrings } from './desktop-life-strings'
 import styles from './desktop-life.module.css'
 
 export function resolutionLabel(width: number, height: number): string {
@@ -14,7 +14,8 @@ export function resolutionLabel(width: number, height: number): string {
 }
 
 export function DesktopLifeMetadata({ set }: { set: DesktopVideoSet }): React.JSX.Element {
-  const t = useDesktopLifeStrings()
+  const strings = useStrings()
+  const t = strings.desktopLife
   const display = resolveDesktopLifeRecommendationDisplay(useStore($presentation))
 
   return (
@@ -39,7 +40,8 @@ export function DesktopLifeDisplayPicker({
   disabled: boolean
   onChange: (displayId: number) => void
 }): React.JSX.Element {
-  const t = useDesktopLifeStrings()
+  const strings = useStrings()
+  const t = strings.desktopLife
   const selected = displays.find(display => display.id === displayId)
   const resolution = desktopDisplayResolution(selected)
 
@@ -95,15 +97,17 @@ export function DesktopLifeRecommendation({
   set: Pick<DesktopVideoSet, 'target_width' | 'target_height'>
   display: PresentationDisplay | undefined
 }): React.JSX.Element {
-  const t = useDesktopLifeStrings()
+  const strings = useStrings()
+  const t = strings.desktopLife
   const matches = desktopVideoMatchesDisplay(set, display)
 
   return (
-    <span
-      className={`rounded-full px-2 py-1 text-xs ${matches === null ? 'bg-black/5 text-muted' : matches ? 'bg-accent/10 text-accent' : 'bg-warning/10 text-warning'}`}
+    <Pill
+      className="px-2 py-1 text-xs"
       title={matches === null ? t.recommendationUnavailable : matches ? t.recommendedHint : t.notRecommendedHint}
+      tone={matches === null ? 'muted' : matches ? 'accent' : 'warning'}
     >
       {matches === null ? t.recommendationUnknown : matches ? t.recommended : t.notRecommended}
-    </span>
+    </Pill>
   )
 }

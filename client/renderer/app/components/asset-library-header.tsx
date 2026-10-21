@@ -3,7 +3,7 @@ import { useState } from 'react'
 
 import { Plus, Search } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
-import { BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, SettingCard, Toggle } from '@/shared/panel'
+import { BTN_PRIMARY, BTN_SUBTLE, SearchField, SettingCard, Toggle } from '@/shared/panel'
 
 interface LibraryPolicy {
   id: string
@@ -83,10 +83,10 @@ export function AssetLibraryToolbar({
         onSearch?.()
       }}
     >
-      <input
-        aria-label={searchLabel}
-        className={cn(INPUT_CLASS, 'min-w-24 flex-1')}
-        onChange={event => onQueryChange(event.target.value)}
+      <SearchField
+        ariaLabel={searchLabel}
+        className="min-w-24 max-w-none flex-1"
+        onChange={onQueryChange}
         placeholder={searchLabel}
         type="search"
         value={query}

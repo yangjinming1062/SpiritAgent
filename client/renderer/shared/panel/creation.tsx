@@ -1,10 +1,11 @@
 import type { ReactNode, Ref } from 'react'
 import { useEffect, useState } from 'react'
 
-import { AlertCircle, Clock, Info, Loader2, X } from '@/shared/lib/icons'
+import { AlertCircle, Clock, Info, X } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
 
+import { Spinner } from './components'
 import styles from './creation.module.css'
 
 // 页头和操作区不进入正文滚动容器，操作栏的位置由布局负责。
@@ -76,15 +77,13 @@ export function CreationFeedback({
   }
 
   const Icon =
-    state === 'working'
-      ? Loader2
-      : state === 'error' || state === 'unknown'
-        ? AlertCircle
-        : state === 'cancelled'
-          ? X
-          : state === 'paused' || state === 'waiting'
-            ? Clock
-            : Info
+    state === 'error' || state === 'unknown'
+      ? AlertCircle
+      : state === 'cancelled'
+        ? X
+        : state === 'paused' || state === 'waiting'
+          ? Clock
+          : Info
 
   return (
     <div className={cn(styles.feedback, className)} data-creation-feedback={state}>
@@ -95,7 +94,12 @@ export function CreationFeedback({
           className={styles.message}
           role={state === 'error' ? 'alert' : 'status'}
         >
-          {title && <Icon aria-hidden="true" className={cn(styles.icon, state === 'working' && styles.spinning)} />}
+          {title &&
+            (state === 'working' ? (
+              <Spinner className={styles.icon} size="sm" tone="accent" />
+            ) : (
+              <Icon aria-hidden="true" className={styles.icon} />
+            ))}
           <div className={styles.copy}>
             {title && <span className={styles.title}>{title}</span>}
             {description && <div className={styles.description}>{description}</div>}

@@ -6,7 +6,6 @@ import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { useStrings } from '@/shared/strings'
 
 import { type DesktopApp, type DesktopWindowState } from './desktop-layout'
-import { useDesktopStrings } from './desktop-strings'
 import styles from './desktop.module.css'
 
 const DESKTOP_NAV_APPS = ['companion', 'posts', 'diary', 'settings'] as const satisfies readonly DesktopApp[]
@@ -34,7 +33,7 @@ export function DesktopProductNav({
   onBeforeOpen: () => void
   onMenuOpenChange: (open: boolean) => void
 }): React.JSX.Element {
-  const t = useDesktopStrings()
+  const t = useStrings().desktopShell
   const dict = useStrings()
   const [menu, setMenu] = useState<{ id: DesktopNavApp; x: number; bottom: number } | null>(null)
   const [hint, setHint] = useState<{ id: DesktopNavApp; x: number; bottom: number } | null>(null)

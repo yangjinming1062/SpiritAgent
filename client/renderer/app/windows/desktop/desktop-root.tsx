@@ -5,7 +5,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { AppContentPage } from '@/app/components/app-content-page'
 import { AccountMenu } from '@/app/features/accounts/account-menu'
 import { ConversationPage } from '@/app/features/conversation/conversation-page'
-import { useDesktopLifeStrings } from '@/app/features/desktop-life/desktop-life-strings'
 import { $appNavigationRevision, $appPage, applyAppNavigation, setAppPage } from '@/app/navigation/app-navigation'
 import { $persona, $portraitUrl, hydratePersona, hydratePortrait } from '@/modules/character'
 import {
@@ -41,7 +40,6 @@ import { DesktopWhisper } from './desktop-chat'
 import { DesktopControls } from './desktop-controls'
 import { type DesktopApp, useDesktopLayout } from './desktop-layout'
 import { DesktopProductNav } from './desktop-product-nav'
-import { useDesktopStrings } from './desktop-strings'
 import { useDesktopVideoWallpaper } from './desktop-video-wallpaper'
 import { DesktopWindow } from './desktop-window'
 import styles from './desktop.module.css'
@@ -50,8 +48,9 @@ type DesktopShortcut = 'desktopLife'
 
 export function DesktopRoot(): React.JSX.Element {
   useDesktopVideoWallpaper()
-  const t = useDesktopStrings()
-  const desktopLife = useDesktopLifeStrings()
+  const strings = useStrings()
+  const t = strings.desktopShell
+  const desktopLife = strings.desktopLife
   const dict = useStrings()
   const auth = useStore($auth)
   const uiStateReady = useStore($uiStateReady)
@@ -89,7 +88,7 @@ export function DesktopRoot(): React.JSX.Element {
       : idleVideo?.status === 'processing'
         ? idleVideo.stage === 'paused'
           ? desktopLife.paused
-          : desktopLife.statuses.processing
+          : strings.common.actionVariants.statuses.processing
         : !idleVideo?.video_url
           ? desktopLife.noPreview
           : null)

@@ -3,7 +3,7 @@ import { useState } from 'react'
 import type { OnboardingAnswers } from '@/modules/character'
 import { FullbodyReferencePanel, SelfSourceImageFlow } from '@/modules/character'
 import { FolderOpen } from '@/shared/lib/icons'
-import { BTN_SUBTLE, CreationActionBar, CreationFeedback, CreationWorkspace } from '@/shared/panel'
+import { BTN_SUBTLE, CreationActionBar, CreationFeedback, CreationWorkspace, Disclosure } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
 import type { Phase } from './back-transition'
@@ -31,6 +31,7 @@ export function PortraitPages({
   portrait
 }: PortraitPagesProps): React.JSX.Element | null {
   const dict = useStrings()
+  const t = dict.onboarding
   const [readyPreviewUrl, setReadyPreviewUrl] = useState<string | null>(null)
 
   const {
@@ -99,7 +100,7 @@ export function PortraitPages({
       description={
         avatarBusy || sealingPortrait
           ? `${dict.creation.inputLocked} ${portraitUrl ? dict.creation.preserveCurrent : ''}`
-          : portraitPanelHint || '预览并确认您的头像'
+          : portraitPanelHint || t.portraitPreviewHint
       }
       state={
         phase === 'hatching' || avatarBusy || sealingPortrait
@@ -114,13 +115,13 @@ export function PortraitPages({
         sealingPortrait
           ? dict.common.saving
           : phase === 'hatching'
-            ? hint || '正在生成头像…'
+            ? hint || t.portraitGenerating
             : avatarBusy
               ? dict.creation.working
               : portraitPanelHint
                 ? portraitResultUnknown
                   ? dict.creation.unknown
-                  : '头像操作未能完成'
+                  : t.portraitFailed
                 : dict.creation.review
       }
     />
@@ -139,7 +140,7 @@ export function PortraitPages({
                   onClick={onBack}
                   type="button"
                 >
-                  上一步
+                  {t.portraitBack}
                 </button>
                 <button
                   className={`ml-auto ${ONBOARDING_PRIMARY_BUTTON}`}
@@ -147,7 +148,7 @@ export function PortraitPages({
                   onClick={() => void startAiHatching()}
                   type="button"
                 >
-                  为伙伴画头像
+                  {t.portraitTitle}
                 </button>
               </div>
             </CreationActionBar>
@@ -160,7 +161,7 @@ export function PortraitPages({
                   onClick={onBack}
                   type="button"
                 >
-                  上一步
+                  {t.portraitBack}
                 </button>
                 <button
                   className={`ml-auto ${ONBOARDING_PRIMARY_BUTTON}`}
@@ -176,7 +177,7 @@ export function PortraitPages({
                   onClick={() => void sealPortrait()}
                   type="button"
                 >
-                  满意，准备全身形象
+                  {t.portraitConfirm}
                 </button>
               </div>
             </CreationActionBar>
@@ -188,50 +189,51 @@ export function PortraitPages({
         <div className="space-y-4">
           {phase === 'portrait-generate' && (
             <div>
-              <h2 className={styles.questionTitle}>想象伙伴的样子</h2>
-              <p className="mt-1 text-xs text-body">
-                描述喜欢的面容、发型或颜色，AI 会为伙伴画出头像。暂时没有想法也可以直接开始。
-              </p>
+              <h2 className={styles.questionTitle}>{t.portraitIdeaTitle}</h2>
+              <p className="mt-1 text-xs text-body">{t.portraitIdeaHint}</p>
 
               <div className="mt-3 space-y-1">
                 <label className="text-xs text-body" htmlFor="onboarding-portrait-description">
-                  头像描述（可选）
+                  {t.portraitDescriptionLabel}
                 </label>
                 <RegenFeedbackInput id="onboarding-portrait-description" initial />
               </div>
 
-              <details
+              <Disclosure
+                bodyClassName="space-y-1"
                 className="mt-3 rounded-xl border border-line-hairline bg-fill-trough p-3"
                 open={refImage ? true : undefined}
+                summaryClassName="text-xs text-body"
+                title={t.referenceSummary}
+                variant="bordered"
               >
-                <summary className="cursor-pointer text-xs text-body">添加参考图（可选）</summary>
-                <p className="mt-1 text-[11px] text-muted">用于生成时借鉴外形，不会直接成为头像。</p>
+                <p className="mt-1 text-[11px] text-muted">{t.referenceHint}</p>
                 <div className="mt-2 flex items-center gap-2">
                   {refImage && (
-                    <img alt="生成参考图" className="size-12 rounded-md object-contain" src={refImage.previewUrl} />
+                    <img alt={t.referenceAlt} className="size-12 rounded-md object-contain" src={refImage.previewUrl} />
                   )}
                   <button className="text-xs text-strong" onClick={() => void pickReferenceImage()} type="button">
-                    {refImage ? '更换参考图' : '添加参考图'}
+                    {refImage ? t.replaceReference : t.addReference}
                   </button>
                   {refImage && (
                     <button className="text-xs text-muted" onClick={() => updateRefImage(null)} type="button">
-                      移除
+                      {t.removeReference}
                     </button>
                   )}
                 </div>
                 {hint && <p className="mt-2 text-xs text-strong">{hint}</p>}
-              </details>
+              </Disclosure>
 
               {activeAvatarId != null && portraitUrl && (
                 <div className="mt-3 flex items-center gap-3 rounded-xl border border-line-hairline p-3">
-                  <img alt="之前制作的头像" className="size-12 rounded-lg object-contain" src={portraitUrl} />
+                  <img alt={t.previousAvatarAlt} className="size-12 rounded-lg object-contain" src={portraitUrl} />
                   <button
                     className="text-xs text-body transition hover:text-strong disabled:opacity-40"
                     disabled={avatarBusy || sealingPortrait}
                     onClick={() => void continueCurrentPortrait()}
                     type="button"
                   >
-                    继续使用这个头像
+                    {t.keepAvatar}
                   </button>
                 </div>
               )}
@@ -247,19 +249,19 @@ export function PortraitPages({
                 onClick={() => setAvatarSelfSourceOpen(true)}
                 type="button"
               >
-                <FolderOpen className="size-3.5" /> 使用自己的图片
+                <FolderOpen className="size-3.5" /> {t.useOwnImage}
               </button>
             </div>
           )}
 
           {(phase === 'portrait-avatar' || (phase === 'hatching' && portraitUrl)) && (
             <div className="space-y-4">
-              <h2 className={styles.questionTitle}>确认伙伴的头像</h2>
+              <h2 className={styles.questionTitle}>{t.confirmTitle}</h2>
               <PortraitPanel
                 avatarUrl={portraitUrl}
                 hint={null}
                 history={currentHistoryItems}
-                name={answers.name?.trim() || '伙伴'}
+                name={answers.name?.trim() || t.defaultName}
                 onPreviewReady={setReadyPreviewUrl}
                 onSelectEntry={avatarBusy || sealingPortrait ? undefined : onSelectHistoryEntry}
                 selectedIdx={portraitSelectedIdx}
@@ -270,8 +272,14 @@ export function PortraitPages({
           {phase === 'portrait-avatar' && (
             <div className="mt-4">
               <>
-                <details className="rounded-xl border border-line-hairline p-3" open={!portraitUrl ? true : undefined}>
-                  <summary className="mb-3 cursor-pointer text-xs text-body">不满意？调整头像</summary>
+                <Disclosure
+                  bodyClassName="space-y-3"
+                  className="rounded-xl border border-line-hairline p-3"
+                  open={!portraitUrl ? true : undefined}
+                  summaryClassName="mb-3text-xs text-body"
+                  title={t.adjustSummary}
+                  variant="bordered"
+                >
                   <RegenFeedbackInput disabled={avatarBusy || sealingPortrait} />
                   <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
                     <button
@@ -283,7 +291,7 @@ export function PortraitPages({
                       }}
                       type="button"
                     >
-                      重新生成
+                      {t.regenerate}
                     </button>
                     <EditAvatarButton
                       busy={generationBlocked}
@@ -299,21 +307,25 @@ export function PortraitPages({
                       onClick={() => void reloadAvatarPortrait()}
                       type="button"
                     >
-                      重新加载
+                      {t.reload}
                     </button>
                   </div>
                   <div className="mt-2 space-y-2 text-xs">
                     {refImage && (
                       <div className="flex items-center gap-2">
-                        <img alt="形象参考图" className="h-9 w-9 rounded-md object-cover" src={refImage.previewUrl} />
-                        <span className="text-[11px] text-muted">借鉴这张图的外形</span>
+                        <img
+                          alt={t.shapeReferenceAlt}
+                          className="h-9 w-9 rounded-md object-cover"
+                          src={refImage.previewUrl}
+                        />
+                        <span className="text-[11px] text-muted">{t.shapeReferenceHint}</span>
                         <button
                           className="ml-auto text-muted transition hover:text-strong"
                           disabled={avatarBusy || sealingPortrait}
                           onClick={() => updateRefImage(null)}
                           type="button"
                         >
-                          移除
+                          {t.removeReference}
                         </button>
                       </div>
                     )}
@@ -324,29 +336,33 @@ export function PortraitPages({
                         onClick={() => void (refImage ? pickPresentationImage() : pickReferenceImage())}
                         type="button"
                       >
-                        {!refImage ? '＋ 形象参考图' : presentationRef ? '更换构图参考' : '＋ 光线与构图参考'}
+                        {!refImage
+                          ? t.shapeReference
+                          : presentationRef
+                            ? t.replaceCompositionReference
+                            : t.compositionReference}
                       </button>
                       {presentationRef && (
                         <>
                           <img
-                            alt="光线与构图参考"
+                            alt={t.compositionReferenceAlt}
                             className="h-9 w-9 rounded-md object-cover"
                             src={presentationRef.previewUrl}
                           />
-                          <span className="text-[10px] text-faint">参考光线与构图，沿用统一视觉风格</span>
+                          <span className="text-[10px] text-faint">{t.compositionReferenceHint}</span>
                           <button
                             className="ml-auto text-muted transition hover:text-strong"
                             disabled={avatarBusy || sealingPortrait}
                             onClick={() => setPresentationRef(null)}
                             type="button"
                           >
-                            移除
+                            {t.removeReference}
                           </button>
                         </>
                       )}
                     </div>
                   </div>
-                </details>
+                </Disclosure>
               </>
             </div>
           )}
@@ -355,7 +371,7 @@ export function PortraitPages({
       <SelfSourceImageFlow
         adopt={adoptAvatarSeed}
         fetchPrompt={fetchAvatarPrompt}
-        hint="请使用单个角色、纯白背景的图片，采纳后将直接作为头像。"
+        hint="{t.ownImageHint}"
         onClose={() => setAvatarSelfSourceOpen(false)}
         onUseAi={() => {
           setAvatarSelfSourceOpen(false)
@@ -363,9 +379,9 @@ export function PortraitPages({
           setPhase('portrait-generate')
         }}
         open={avatarSelfSourceOpen}
-        referenceImages={refImage ? [{ label: '形象参考图', url: refImage.previewUrl }] : undefined}
+        referenceImages={refImage ? [{ label: t.shapeReferenceAlt, url: refImage.previewUrl }] : undefined}
         referenceRequired={Boolean(refImage)}
-        title="使用自己的图片"
+        title={t.ownImageTitle}
       />
     </>
   )

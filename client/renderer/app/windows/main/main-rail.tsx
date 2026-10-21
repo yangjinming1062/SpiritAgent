@@ -13,7 +13,6 @@ import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import { triggerHaptic } from '@/shared/lib/haptics'
 import { BookOpen, type IconComponent, MessageSquareText, Settings, Sparkles, Users } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
-import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import type { AppPage } from '@ipc/contracts'
@@ -43,8 +42,8 @@ export function MainRail({
   const portrait = useStore($portraitUrl)
   const postsUnread = useStore($postsHasUnread)
   const diaryUnread = useStore($diaryHasUnread)
-  const english = useStore($locale) === 'en'
-  const t = useStrings().living.rail
+  const strings = useStrings()
+  const t = strings.living.rail
   const name = persona?.name || t.companionFallback
   const [accountOpen, setAccountOpen] = useState(false)
   const accountRef = useRef<HTMLDivElement>(null)
@@ -80,7 +79,7 @@ export function MainRail({
   return (
     <aside className={styles.rail}>
       <button
-        aria-label={`${name} · ${english ? 'Companion chat' : '陪伴对话'}${companionUnread ? ` (${t.unread})` : ''}`}
+        aria-label={`${name} · ${strings.chat.nav.companion}${companionUnread ? ` (${t.unread})` : ''}`}
         className={styles.avatar}
         data-unread={companionUnread}
         onClick={() => void openCompanion()}
@@ -90,7 +89,7 @@ export function MainRail({
         {portrait ? <img alt="" className={styles.avatarImage} src={portrait} /> : <span>{name.slice(0, 1)}</span>}
         {companionUnread && <span aria-hidden="true" className={styles.avatarUnread} />}
       </button>
-      <nav aria-label={english ? 'Main navigation' : '功能导航'} className={styles.nav}>
+      <nav aria-label={t.mainNavAria} className={styles.nav}>
         {NAV_ENTRIES.map(({ id, icon: Icon }) => {
           const unread = unreadByPage[id] ?? false
 
@@ -136,7 +135,7 @@ export function MainRail({
             type="button"
           >
             <Users aria-hidden="true" size={21} />
-            <span>{english ? 'Account' : '账户'}</span>
+            <span>{strings.accounts.title}</span>
           </button>
           {accountOpen && <AccountMenu onClose={closeAccounts} placement="above" />}
         </div>

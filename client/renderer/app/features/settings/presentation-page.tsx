@@ -1,4 +1,3 @@
-import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useState } from 'react'
 
@@ -7,11 +6,11 @@ import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { presentationDisplayOptions } from '@/shared/lib/presentation-displays'
 import { BTN_SUBTLE, PanelSelect, SettingCard, SettingRow, SettingsSectionIntro } from '@/shared/panel'
 import { shellApi } from '@/shared/platform/desktop'
-import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
+import { useStrings } from '@/shared/strings'
 
 export function PresentationPage(): React.JSX.Element {
-  const english = useStore($locale) === 'en'
+  const strings = useStrings()
   const { state, busy, switchMode } = usePresentationModeSwitch()
   const [displayBusy, setDisplayBusy] = useState(false)
   const beginAsync = useAsyncGuard()
@@ -28,7 +27,7 @@ export function PresentationPage(): React.JSX.Element {
       await shellApi().presentation.setDisplay(Number(value))
     } catch (error) {
       if (isLive()) {
-        notifyError(error, english ? 'Interactive display' : '交互显示器')
+        notifyError(error, strings.settings.presentation.switchFailed)
       }
     } finally {
       if (isLive()) {
@@ -39,22 +38,15 @@ export function PresentationPage(): React.JSX.Element {
 
   return (
     <div className="space-y-8">
-      <SettingsSectionIntro
-        hint={english ? 'Choose where your companion appears.' : '选择让伙伴出现在窗口旁，还是住进电脑桌面。'}
-        title={english ? 'Where your companion appears' : '伙伴出现在哪里'}
-      />
+      <SettingsSectionIntro hint={strings.settings.presentation.hint} title={strings.settings.presentation.title} />
       <SettingCard className="overflow-visible">
         <SettingRow
           description={
             state.supported
-              ? english
-                ? 'Window mode uses a main window and floating companion. Desktop mode places your companion in the desktop background.'
-                : '窗口模式通过主窗口和悬浮伙伴互动；桌面模式将伙伴呈现在桌面背景中。'
-              : english
-                ? 'Desktop mode is available on Windows.'
-                : '桌面模式仅在 Windows 上可用。'
+              ? strings.settings.presentation.modeDescription
+              : strings.settings.presentation.modeDescriptionUnsupported
           }
-          label={english ? 'Display mode' : '显示方式'}
+          label={strings.settings.presentation.displayModeLabel}
         >
           <button
             className={BTN_SUBTLE}
@@ -64,28 +56,20 @@ export function PresentationPage(): React.JSX.Element {
             type="button"
           >
             {state.effectiveMode === 'desktop'
-              ? english
-                ? 'Switch to window mode'
-                : '切换到窗口模式'
-              : english
-                ? 'Switch to desktop mode'
-                : '切换到桌面模式'}
+              ? strings.settings.presentation.switchToWindowMode
+              : strings.settings.presentation.switchToDesktopMode}
           </button>
         </SettingRow>
         {state.supported && (
           <SettingRow
-            description={
-              english
-                ? 'Use this display while it is connected; otherwise use the current display. Other displays keep the Windows desktop.'
-                : '优先使用所选屏幕，未连接时自动使用当前屏幕。其他屏幕保留 Windows。'
-            }
-            label={english ? 'Display' : '显示屏'}
+            description={strings.settings.presentation.displayDescription}
+            label={strings.settings.presentation.displayLabel}
           >
             <PanelSelect
-              ariaLabel={english ? 'Interactive display' : '交互显示器'}
+              ariaLabel={strings.settings.presentation.displayAria}
               disabled={displayBusy || busy || !state.displays.length}
               onChange={value => void selectDisplay(value)}
-              options={presentationDisplayOptions(state, english)}
+              options={presentationDisplayOptions(state, strings.desktopShell)}
               value={String(state.displayId ?? '')}
               widthClass="w-full sm:w-72"
             />

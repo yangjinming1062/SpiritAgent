@@ -14,9 +14,9 @@ import { shellApi } from '@/shared/platform/desktop'
 import { $gatewayState } from '@/shared/store/gateway'
 import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
+import { useStrings } from '@/shared/strings'
 
 import styles from './desktop-controls.module.css'
-import { useDesktopStrings } from './desktop-strings'
 
 type ConnectionTone = 'offline' | 'online' | 'pending'
 
@@ -43,8 +43,9 @@ export function DesktopControls({
   wallpaperStatus,
   wallpaperError
 }: DesktopControlsProps): React.JSX.Element {
-  const t = useDesktopStrings()
-  const { busy, switchMode, state, en } = usePresentationModeSwitch()
+  const strings = useStrings()
+  const t = strings.desktopShell
+  const { busy, switchMode, state } = usePresentationModeSwitch()
   const preferredTier = useStore($userPreferredTier)
   const gatewayState = useStore($gatewayState)
   const locale = useStore($locale)
@@ -137,7 +138,7 @@ export function DesktopControls({
         <SlidersHorizontal aria-hidden="true" size={20} />
         {hasIssue && (
           <span className={styles.issueDot}>
-            <span className={styles.srOnly}>{en ? 'Needs attention' : '有状态需要留意'}</span>
+            <span className={styles.srOnly}>{t.needsAttention}</span>
           </span>
         )}
       </button>
@@ -206,9 +207,9 @@ export function DesktopControls({
                   value &&
                   void shellApi()
                     .presentation.setDisplay(Number(value))
-                    .catch(error => notifyError(error, t.display))
+                    .catch(error => notifyError(error, strings.common.operationFailed))
                 }
-                options={presentationDisplayOptions(state, en)}
+                options={presentationDisplayOptions(state, t)}
                 value={String(state.displayId ?? '')}
                 widthClass="w-full"
               />

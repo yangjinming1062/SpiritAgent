@@ -11,7 +11,7 @@ import {
 } from '@/modules/character'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
-import { backendDetailMessage, ipcErrorStatus } from '@/shared/lib/ipc-error'
+import { failureText, ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { authedResource } from '@/shared/lib/resource-request'
 import { cn } from '@/shared/lib/utils'
 import {
@@ -26,7 +26,6 @@ import {
   SECTION_TITLE,
   WizardModal
 } from '@/shared/panel'
-import { $locale } from '@/shared/store/locale'
 import { useStrings } from '@/shared/strings'
 import type { PersonaEditableField, PersonaUpdateRequest } from '@protocol'
 
@@ -69,7 +68,6 @@ export function PersonaSection({
 }): React.JSX.Element {
   const dict = useStrings()
   const t = dict.settings.persona
-  const english = useStore($locale) === 'en'
   const persona = useStore($persona)
   const draft = useStore($companionEditors).persona
   const [busy, setBusy] = useState(false)
@@ -115,7 +113,7 @@ export function PersonaSection({
     }
 
     if (!draft.values.personality.trim()) {
-      setHint(english ? 'Enter a personality.' : '请填写性格。')
+      setHint(dict.settings.persona.personalityRequired)
 
       return
     }
@@ -184,16 +182,7 @@ export function PersonaSection({
           updateCompanionEditors({ persona: null })
         }
       } else if (isLive()) {
-        setHint(
-          backendDetailMessage(
-            error,
-            ipcErrorStatus(error) === 409
-              ? english
-                ? 'Details changed on another device. Review the latest values.'
-                : '资料已在其他设备修改，请核对最新内容。'
-              : t.hintSaveFailed
-          )
-        )
+        setHint(failureText(error, ipcErrorStatus(error) === 409 ? dict.common.changedElsewhere : t.hintSaveFailed))
       }
     } finally {
       if (isLive()) {
@@ -266,7 +255,7 @@ export function PersonaSection({
             onClick={() => void save()}
             type="button"
           >
-            {busy ? dict.common.saving : english ? 'Save changes' : '保存修改'}
+            {busy ? dict.common.saving : dict.common.saveChanges}
           </button>
           <button
             className={BTN_GHOST}
@@ -289,7 +278,7 @@ export function PersonaSection({
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <p className={SECTION_TITLE}>{t.editHeading}</p>
-          {dirty && <span className={HINT_TEXT}>{english ? 'Unsaved changes' : '未保存修改'}</span>}
+          {dirty && <span className={HINT_TEXT}>{dict.common.unsavedChanges}</span>}
         </div>
         {fields.map(({ key, label, placeholder, presets }) => (
           <label className="block" key={key}>
@@ -326,11 +315,7 @@ export function PersonaSection({
         ))}
         {conflict && (
           <div className="rounded-xl border border-line-hairline p-3 text-xs text-amber-300/90">
-            <p>
-              {english
-                ? 'These details changed on another device. Review the latest values before saving.'
-                : '资料已在其他设备修改，请核对最新内容后再保存。'}
-            </p>
+            <p>{dict.common.changedElsewhere}</p>
             <dl className="mt-2 space-y-1">
               {fields
                 .filter(({ key }) => latest[key] !== (draft.base[key] ?? ''))
@@ -347,7 +332,7 @@ export function PersonaSection({
               onClick={() => updateCompanionEditors({ persona: { ...draft, base: latestBase } })}
               type="button"
             >
-              {english ? 'Keep my edits after review' : '已核对，保留我的修改'}
+              {dict.common.keepMyEdits}
             </button>
           </div>
         )}

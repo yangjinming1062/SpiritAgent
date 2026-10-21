@@ -22,6 +22,9 @@ interface VoiceConfirmation {
   preview: VoiceDesignPreview
 }
 
+/** 失败类别：与语言无关，界面据此选措辞与恢复动作。 */
+export type VoiceErrorCode = 'catalog' | 'design' | 'save' | 'cancel' | 'confirm_unknown'
+
 interface VoiceCreationState {
   sessionId: string | null
   tab: VoiceTab
@@ -35,6 +38,7 @@ interface VoiceCreationState {
   sample: VoiceSample | null
   phase: VoiceOperation
   error: string | null
+  errorCode: VoiceErrorCode | null
   outcome: 'saved' | 'cancelled' | 'unknown' | null
   startedAt: number | undefined
   operationId: string | null
@@ -57,6 +61,7 @@ const emptyState = (sessionId: string | null): VoiceCreationState => ({
   sample: null,
   phase: 'idle',
   error: null,
+  errorCode: null,
   outcome: null,
   startedAt: undefined,
   operationId: null,
@@ -179,7 +184,8 @@ async function createVoice(
     if (operation.live()) {
       updateVoiceCreation({
         outcome: isClientErrorIpc(error) ? null : 'unknown',
-        error: errorMessage(error, getStrings().voice.designFailed)
+        error: errorMessage(error, getStrings().voice.designFailed),
+        errorCode: 'design'
       })
     }
 
@@ -275,7 +281,12 @@ export async function cancelVoiceCreation(): Promise<void> {
     log.warn('voice-creation', 'Could not cancel voice operation', error)
 
     if (live()) {
-      updateVoiceCreation({ phase: 'idle', outcome: 'unknown', error: getStrings().voice.cancelFailed })
+      updateVoiceCreation({
+        phase: 'idle',
+        outcome: 'unknown',
+        error: getStrings().voice.cancelFailed,
+        errorCode: 'cancel'
+      })
     }
   }
 }
@@ -304,7 +315,9 @@ export function beginVoiceConfirmation(recovering = false): {
         updateVoiceCreation({
           phase: 'idle',
           operationId: null,
-          ...($voiceCreation.get().confirmation ? { outcome: 'unknown', error: getStrings().voice.confirmUnknown } : {})
+          ...($voiceCreation.get().confirmation
+            ? { outcome: 'unknown', error: getStrings().voice.confirmUnknown, errorCode: 'confirm_unknown' }
+            : {})
         })
       }
     }

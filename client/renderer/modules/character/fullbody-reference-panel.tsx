@@ -2,10 +2,11 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
-import { PortraitLightbox } from '@/shared'
+import { ImageLightboxButton } from '@/shared/components/image-lightbox-button'
+import { ReferenceImageField } from '@/shared/components/reference-image-field'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { FolderOpen } from '@/shared/lib/icons'
-import { backendDetailMessage, ipcErrorStatus } from '@/shared/lib/ipc-error'
+import { failureText, ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { authedResource, requestResource } from '@/shared/lib/resource-request'
 import {
   BTN_PRIMARY,
@@ -13,9 +14,11 @@ import {
   CreationActionBar,
   CreationFeedback,
   CreationWorkspace,
+  Disclosure,
   FIELD_LABEL,
   HINT_TEXT,
   INPUT_CLASS,
+  Placeholder,
   SECTION_TITLE
 } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
@@ -62,7 +65,6 @@ export function FullbodyReferencePanel({
   const [selecting, setSelecting] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [confirmError, setConfirmError] = useState<string | null>(null)
-  const [zoom, setZoom] = useState(false)
   const [selfSourceOpen, setSelfSourceOpen] = useState(false)
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null)
   const [failedPreview, setFailedPreview] = useState<string | null>(null)
@@ -170,7 +172,7 @@ export function FullbodyReferencePanel({
         throw error
       }
 
-      setConfirmError(backendDetailMessage(error, t.errors.load))
+      setConfirmError(failureText(error, t.errors.load))
     } finally {
       setConfirming(false)
     }
@@ -350,43 +352,30 @@ export function FullbodyReferencePanel({
           value={feedback}
         />
       </div>
-      <details
-        className={onboarding ? 'space-y-2' : 'space-y-1 rounded-xl border border-line-hairline p-3'}
+      <Disclosure
+        bodyClassName="space-y-2"
+        className="onboarding ? 'space-y-2' : 'space-y-1 rounded-xl border border-line-hairline p-3'"
         open={reference ? true : undefined}
+        summaryClassName="text-xs text-body"
+        title={t.refLabel}
+        variant="inline"
       >
-        <summary className="cursor-pointer text-xs text-body">{t.refLabel}</summary>
         <p className={HINT_TEXT}>{t.refHint}</p>
-        <div className="flex items-center gap-2">
-          {reference && (
-            <img
-              alt={t.referenceLabel}
-              className="h-16 w-16 rounded-lg border border-line-hairline object-contain"
-              src={reference.previewUrl}
-            />
-          )}
-          <button className={BTN_SUBTLE} disabled={busy} onClick={() => void chooseReference()} type="button">
-            {reference ? t.replaceReference : t.chooseReference}
-          </button>
-          {reference && (
-            <button
-              className={BTN_SUBTLE}
-              disabled={busy}
-              onClick={() => {
-                setReference(null)
-                setReferenceError(false)
-              }}
-              type="button"
-            >
-              {t.removeReference}
-            </button>
-          )}
-        </div>
-        {referenceError && (
-          <p className="text-xs text-danger-fg" role="alert">
-            {t.pickError}
-          </p>
-        )}
-      </details>
+        <ReferenceImageField
+          alt={t.referenceLabel}
+          busy={busy}
+          error={referenceError ? t.pickError : null}
+          imageUrl={reference?.previewUrl ?? null}
+          onPick={() => void chooseReference()}
+          onRemove={() => {
+            setReference(null)
+            setReferenceError(false)
+          }}
+          pickLabel={t.chooseReference}
+          removeLabel={t.removeReference}
+          replaceLabel={t.replaceReference}
+        />
+      </Disclosure>
     </>
   )
 
@@ -509,11 +498,11 @@ export function FullbodyReferencePanel({
       >
         <div className="space-y-3">
           {displayedPreview ? (
-            <button
-              aria-label={t.enlarge}
+            <ImageLightboxButton
+              ariaLabel={t.enlarge}
               className="mx-auto block w-full cursor-zoom-in overflow-hidden rounded-xl border border-line-hairline bg-fill-trough"
-              onClick={() => setZoom(true)}
-              type="button"
+              name={t.title}
+              url={displayedPreview}
             >
               <img
                 alt={t.title}
@@ -523,12 +512,10 @@ export function FullbodyReferencePanel({
                 onLoad={() => setLoadedPreviewKey(previewKey)}
                 src={displayedPreview}
               />
-            </button>
+            </ImageLightboxButton>
           ) : (
             (!onboarding || history.length > 0) && (
-              <p className="rounded-xl border border-line-hairline bg-fill-trough px-4 py-6 text-center text-xs text-muted">
-                {busy ? t.loading : history.length > 0 ? t.historyCurrentUnavailable : t.empty}
-              </p>
+              <Placeholder>{busy ? t.loading : history.length > 0 ? t.historyCurrentUnavailable : t.empty}</Placeholder>
             )
           )}
           {onboarding && current && history.length > 0 && (
@@ -574,16 +561,17 @@ export function FullbodyReferencePanel({
           {onboarding && !displayedPreview ? (
             <div className="space-y-4">{adjustmentFields}</div>
           ) : (
-            <details
+            <Disclosure
+              bodyClassName="space-y-3"
               className="space-y-3 rounded-xl border border-line-hairline p-3"
               open={!displayedPreview ? true : undefined}
+              summaryClassName="text-xs text-body"
+              title={displayedPreview ? genActions.aiTitle : t.descriptionLabel}
+              variant="bordered"
             >
-              <summary className="cursor-pointer text-xs text-body">
-                {displayedPreview ? genActions.aiTitle : t.descriptionLabel}
-              </summary>
               {adjustmentFields}
               {onboarding && generationActions}
-            </details>
+            </Disclosure>
           )}
           {onboarding && (
             <button
@@ -612,9 +600,6 @@ export function FullbodyReferencePanel({
         title={selfSource.open}
         waitForPromptBeforeAdopt={false}
       />
-      {zoom && displayedPreview && (
-        <PortraitLightbox name={t.title} onClose={() => setZoom(false)} url={displayedPreview} />
-      )}
     </>
   )
 }

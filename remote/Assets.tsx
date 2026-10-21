@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { ApiInput, ApiOperationKey } from '../shared/api'
 import type { ApiSchemas } from '../shared/api.generated'
+import { uiCopy } from '../shared/ui-copy'
 
 import type { RemoteApi } from './api'
 import { ApiError, readImage } from './api'
@@ -122,7 +123,9 @@ function AssetPolicyToggle({
       <span>
         <strong>{title}</strong>
         <small>{description}</small>
-        <small aria-live="polite">{saving ? '保存中…' : !loaded ? '尚未加载' : checked ? '已开启' : '已关闭'}</small>
+        <small aria-live="polite">
+          {saving ? uiCopy.saving : !loaded ? '尚未加载' : checked ? '已开启' : '已关闭'}
+        </small>
       </span>
     </label>
   )

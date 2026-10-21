@@ -1,6 +1,7 @@
 import { useId, useLayoutEffect, useRef, useState } from 'react'
 
 import { useAsyncGuard } from '../hooks/use-async-guard'
+import { useDialogFocus } from '../hooks/use-dialog-focus'
 import { useEscapeKey } from '../hooks/use-escape-key'
 import { probeInteractiveRegions, useInteractiveRegion } from '../lib/interactive-regions'
 import { log } from '../lib/log'
@@ -36,11 +37,13 @@ function OpenConfirmDialog({
   const submitting = useRef(false)
   const begin = useAsyncGuard()
   const overlayRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
   const regionId = useId()
 
   useInteractiveRegion(`confirm-dialog:${regionId}`, overlayRef)
   useLayoutEffect(() => probeInteractiveRegions(), [])
   useEscapeKey(() => onOpenChange(false), { busy })
+  useDialogFocus(contentRef, { restoreFocus: true })
 
   const confirm = async (): Promise<void> => {
     if (submitting.current) {
@@ -81,7 +84,7 @@ function OpenConfirmDialog({
       ref={overlayRef}
       role="dialog"
     >
-      <div className={`w-full max-w-md rounded-2xl p-5 text-strong ${SURFACE_MODAL}`}>
+      <div className={`w-full max-w-md rounded-2xl p-5 text-strong ${SURFACE_MODAL}`} ref={contentRef}>
         <h3 className="text-sm font-semibold">{title}</h3>
         {description && <p className="mt-2 text-xs leading-relaxed text-muted">{description}</p>}
         <div className="mt-5 flex justify-end gap-2">

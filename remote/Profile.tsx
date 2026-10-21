@@ -11,6 +11,7 @@ import type {
 
 import type { ApiResponse } from '../shared/api'
 import { isRecord } from '../shared/gateway'
+import { uiCopy } from '../shared/ui-copy'
 
 import type { RemoteApi } from './api'
 import { ApiError } from './api'
@@ -303,7 +304,7 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
                 onClick={savePersona}
                 type="button"
               >
-                {busy ? '保存中…' : '保存修改'}
+                {busy ? uiCopy.saving : '保存修改'}
               </button>
               <button disabled={busy} onClick={() => setDraft(null)} type="button">
                 取消
@@ -421,7 +422,7 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
             正在整理角色卡，可以先去其他页面。
           </p>
         ) : null}
-        {card?.status === 'failed' ? <Notice error={card.error ?? '角色卡整理失败，请重新整理。'} /> : null}
+        {card?.status === 'failed' ? <Notice error={card.error ?? '角色卡整理失败，请重试'} /> : null}
         {cardConflict ? (
           <div className="creation-status">
             <p>角色卡已更新，草稿仍保留。请核对下面的最新特征后继续。</p>
@@ -459,7 +460,7 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
                 onClick={saveCard}
                 type="button"
               >
-                {busy ? '保存中…' : '保存修改'}
+                {busy ? uiCopy.saving : '保存修改'}
               </button>
               <button disabled={busy} onClick={() => setCardDraft(null)} type="button">
                 取消

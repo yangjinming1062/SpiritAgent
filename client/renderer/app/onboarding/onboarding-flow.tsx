@@ -11,8 +11,9 @@ import {
 import { stopSpeaking, warmAudioContext } from '@/modules/speech'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { log } from '@/shared/lib/log'
-import { BTN_SUBTLE, CreationActionBar, CreationWorkspace, INPUT_CLASS } from '@/shared/panel'
+import { BTN_SUBTLE, CreationActionBar, CreationWorkspace, Disclosure, INPUT_CLASS } from '@/shared/panel'
 import { $gatewayState } from '@/shared/store/gateway'
+import { useStrings } from '@/shared/strings'
 
 import { computeBackTransition, type Phase, type VoiceStage } from './back-transition'
 import { playOnboardingAudio } from './onboarding-audio'
@@ -39,6 +40,8 @@ interface OnboardingFlowProps {
 
 // 导航与未提交表单归引导视图；持久化和资产操作由专属所有者执行。
 export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.Element | null {
+  const strings = useStrings()
+  const t = strings.onboarding
   const gatewayState = useStore($gatewayState)
   const [draft] = useState(() => new OnboardingDraft())
   const begin = useCallback(() => draft.captureOperation(), [draft])
@@ -353,7 +356,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     }
 
     if (!saved) {
-      setHint('选择未能保存，请检查网络后重试。')
+      setHint(t.saveFailed)
 
       return false
     }
@@ -394,7 +397,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
         <OnboardingProgress step={progressStep} />
         {resumeState !== 'ok' && (
           <div className="py-2 text-center">
-            <p className="text-sm text-body">没能读取之前保存的进度，请检查网络后重试。</p>
+            <p className="text-sm text-body">{t.resumeFailed}</p>
             <button
               className={`mt-3 ${ONBOARDING_PRIMARY_BUTTON}`}
               disabled={resumeState === 'retrying'}
@@ -404,7 +407,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
               }}
               type="button"
             >
-              {resumeState === 'retrying' ? '正在重试…' : '重试'}
+              {resumeState === 'retrying' ? t.retrying : strings.common.retry}
             </button>
           </div>
         )}
@@ -458,7 +461,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
               <CreationActionBar>
                 <div className={styles.navigation}>
                   <button className={BTN_SUBTLE} onClick={onBack} type="button">
-                    选择声音
+                    {t.stepVoice}
                   </button>
                   <button
                     className={`ml-auto ${ONBOARDING_PRIMARY_BUTTON}`}
@@ -469,7 +472,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                     }}
                     type="button"
                   >
-                    开始相伴
+                    {t.stepCompanion}
                   </button>
                 </div>
               </CreationActionBar>
@@ -477,13 +480,16 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
           >
             <div className="space-y-4">
               <div>
-                <h2 className={styles.questionTitle}>伙伴准备好了</h2>
-                <p className="mt-1 text-xs leading-relaxed text-body">
-                  可以开始聊天了。也可以先告诉伙伴一些关于您的事，之后随时都能补充。
-                </p>
+                <h2 className={styles.questionTitle}>{t.readyTitle}</h2>
+                <p className="mt-1 text-xs leading-relaxed text-body">{t.readyHint}</p>
               </div>
-              <details className="rounded-xl border border-line-hairline bg-surface-card p-3">
-                <summary className="cursor-pointer text-sm text-body">让伙伴更了解我（可选）</summary>
+              <Disclosure
+                bodyClassName="mt-4 space-y-3"
+                className="rounded-xl border border-line-hairline bg-surface-card p-3"
+                summaryClassName="text-sm text-body"
+                title={t.knowMore}
+                variant="bordered"
+              >
                 <div className="mt-4 space-y-3">
                   {USER_QUESTIONS.map(item => (
                     <label className="block space-y-1.5 text-xs text-body" key={item.key}>
@@ -512,7 +518,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                     </label>
                   ))}
                 </div>
-              </details>
+              </Disclosure>
               {hint && (
                 <p className="text-xs text-danger-fg" role="alert">
                   {hint}
@@ -521,7 +527,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             </div>
           </CreationWorkspace>
         )}
-        {phase === 'finishing' && <p className="py-6 text-center text-sm text-strong">正在保存资料…</p>}
+        {phase === 'finishing' && <p className="py-6 text-center text-sm text-strong">{t.savingProfile}</p>}
       </DraggableDialog>
     </div>
   )

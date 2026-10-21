@@ -8,9 +8,9 @@ import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { shellApi } from '@/shared/platform/desktop'
 import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
+import { useStrings } from '@/shared/strings'
 import type { DesktopBridge } from '@client-shared/ipc/bridge'
 
-import { useDesktopStrings } from './desktop-strings'
 import styles from './desktop.module.css'
 
 type Catalog = Awaited<ReturnType<DesktopBridge['dock']['catalog']>>
@@ -48,7 +48,7 @@ export function DesktopDockPicker({
   onCommitted: (state: DockState, close: boolean) => void
   triggerRef: React.RefObject<HTMLElement | null>
 }): React.JSX.Element {
-  const t = useDesktopStrings()
+  const t = useStrings().desktopShell
   const locale = useStore($locale)
   const beginAsync = useAsyncGuard()
   const [catalog, setCatalog] = useState<Catalog | null>(null)

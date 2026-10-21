@@ -42,12 +42,12 @@ import {
   subscribeCreationDraftImage
 } from '@/shared/lib/creation-draft-image'
 import { triggerHaptic } from '@/shared/lib/haptics'
+import { failureText } from '@/shared/lib/ipc-error'
 import { registerStorageClearHandler, registerStorageRestoreHandler } from '@/shared/lib/storage'
-import { ConfirmDialog, SettingsContent } from '@/shared/panel'
+import { confirmAction, SettingsContent } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
-import { notify } from '@/shared/store/notifications'
+import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
-import { errorMessage } from '@runtime'
 
 import { type SceneCreateDraft, SceneCreateView } from './scene-create-view'
 import { SceneDetailView, type SceneEditDraft } from './scene-detail-view'
@@ -101,7 +101,6 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailLoadError, setDetailLoadError] = useState<string | null>(null)
   const [zoom, setZoom] = useState<ImageZoom | null>(null)
-  const [deleteTarget, setDeleteTarget] = useState<SceneAsset | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const returnScrollTop = useRef(ui.listScrollTop ?? 0)
   const begin = useAsyncGuard()
@@ -152,7 +151,6 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
     observedImportRevision.current = importRevision
     creationRevision.current += 1
     setZoom(null)
-    setDeleteTarget(null)
     restoreReference()
   }, [importRevision, restoreReference])
 
@@ -189,7 +187,6 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
       setSubmitting(false)
       setReference(null)
       setZoom(null)
-      setDeleteTarget(null)
       returnScrollTop.current = 0
     })
   }, [])
@@ -214,7 +211,7 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
     void refreshSceneStatus(view.sceneId)
       .catch(error => {
         if (current && isLive()) {
-          setDetailLoadError(errorMessage(error, tToasts.sceneStatusRefreshFailed))
+          setDetailLoadError(failureText(error, tToasts.sceneStatusRefreshFailed))
         }
       })
       .finally(() => {
@@ -369,7 +366,7 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
       await startCreation(input, revision)
     } catch (error) {
       if (isLive()) {
-        notify({ kind: 'warning', message: errorMessage(error, tToasts.sceneRegenerateFailed) })
+        notifyError(error, tToasts.sceneRegenerateFailed)
       }
     }
   }
@@ -386,12 +383,7 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
     await activateScene(sceneId)
   }
 
-  const handleDelete = async (): Promise<void> => {
-    if (!deleteTarget) {
-      return
-    }
-
-    const target = deleteTarget
+  const handleDelete = async (target: SceneAsset): Promise<void> => {
     const isLive = begin()
     triggerHaptic('tap')
 
@@ -400,14 +392,12 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
 
       if (isLive()) {
         dropEditDraft(target.id)
-        setDeleteTarget(null)
         returnToLibrary()
         notify({ kind: 'success', message: tToasts.sceneDeleteSuccess })
       }
     } catch (error) {
       if (isLive()) {
-        notify({ kind: 'warning', message: errorMessage(error, tToasts.sceneDeleteFailed) })
-        throw error
+        notifyError(error, tToasts.sceneDeleteFailed)
       }
     }
   }
@@ -430,7 +420,7 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
       }
     } catch (error) {
       if (isLive()) {
-        notify({ kind: 'warning', message: errorMessage(error, tToasts.sceneLockFailed) })
+        notifyError(error, tToasts.sceneLockFailed)
       }
     } finally {
       if (isLive()) {
@@ -508,7 +498,18 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
             await loadSceneDetail(sceneId)
           }}
           onChangeDraft={next => changeEditDraft(view.sceneId, next)}
-          onDelete={scene => setDeleteTarget(scene)}
+          onDelete={async scene => {
+            const confirmed = await confirmAction({
+              confirmLabel: dict.living.scene.historyDeleteLabel,
+              description: dict.living.scene.historyDeleteConfirmDescription,
+              title: dict.living.scene.historyDeleteConfirmTitle,
+              variant: 'destructive'
+            })
+
+            if (confirmed) {
+              await handleDelete(scene)
+            }
+          }}
           onEdit={() => {
             if (detail) {
               changeEditDraft(detail.id, { title: detail.title, description: detail.description })
@@ -564,19 +565,6 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
         />
       )}
       {zoom ? <PortraitLightbox name={zoom.name} onClose={() => setZoom(null)} url={zoom.url} /> : null}
-      <ConfirmDialog
-        confirmLabel={dict.living.scene.historyDeleteLabel}
-        description={dict.living.scene.historyDeleteConfirmDescription}
-        onConfirm={handleDelete}
-        onOpenChange={open => {
-          if (!open) {
-            setDeleteTarget(null)
-          }
-        }}
-        open={deleteTarget !== null}
-        title={dict.living.scene.historyDeleteConfirmTitle}
-        variant="destructive"
-      />
     </>
   )
 }

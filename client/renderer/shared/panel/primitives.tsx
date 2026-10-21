@@ -26,14 +26,33 @@ export function SettingsContent({
   )
 }
 
+export type PillTone = 'muted' | 'primary' | 'accent' | 'success' | 'warning'
+
+// 状态胶囊的视觉词汇：中性与激活沿用设置页基色，强调/成功/警告是实底低透明。
+const PILL_TONE: Record<PillTone, string> = {
+  muted: CHIP,
+  primary: CHIP_FILTER_ACTIVE,
+  accent: 'inline-flex shrink-0 items-center rounded-full bg-accent/15 px-2.5 py-1 text-[10px] text-accent',
+  success: 'inline-flex shrink-0 items-center rounded-full bg-success/15 px-2.5 py-1 text-[10px] text-success',
+  warning: 'inline-flex shrink-0 items-center rounded-full bg-warning/15 px-2.5 py-1 text-[10px] text-warning'
+}
+
 export function Pill({
   tone = 'muted',
-  children
+  children,
+  className,
+  title
 }: {
-  tone?: 'muted' | 'primary'
+  tone?: PillTone
   children: ReactNode
+  className?: string
+  title?: string
 }): React.JSX.Element {
-  return <span className={tone === 'primary' ? CHIP_FILTER_ACTIVE : CHIP}>{children}</span>
+  return (
+    <span className={cn(PILL_TONE[tone], className)} title={title}>
+      {children}
+    </span>
+  )
 }
 
 export function SettingsSubsection({

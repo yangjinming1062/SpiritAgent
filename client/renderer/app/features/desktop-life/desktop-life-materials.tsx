@@ -15,15 +15,15 @@ import {
 } from '@/modules/scene'
 import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { useDialogFocus } from '@/shared/hooks/use-dialog-focus'
 import { captureAuthScope } from '@/shared/lib/authed-api'
-import { cycleTabFocus } from '@/shared/lib/focus-cycle'
-import { Check, ImageIcon, Loader2, Search, Shirt, Sparkles } from '@/shared/lib/icons'
+import { Check, ImageIcon, Shirt, Sparkles } from '@/shared/lib/icons'
 import { log } from '@/shared/lib/log'
-import { BTN_GHOST, BTN_SUBTLE, INPUT_CLASS, WizardModal } from '@/shared/panel'
+import { BTN_GHOST, BTN_SUBTLE, LoadingBlock, SearchField, Spinner, WizardModal } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
+import { useStrings } from '@/shared/strings'
 
 import styles from './desktop-life-materials.module.css'
-import { useDesktopLifeStrings } from './desktop-life-strings'
 
 type MaterialKind = 'scene' | 'outfit'
 type OutfitReference = Pick<ReturnType<typeof $outfits.get>[number], 'id' | 'name' | 'fullbodyPath' | 'status'>
@@ -41,7 +41,8 @@ interface DesktopLifeReferencesProps {
 }
 
 function ReferenceImage({ url, kind }: { url: string | null; kind: MaterialKind }): React.JSX.Element {
-  const t = useDesktopLifeStrings()
+  const strings = useStrings()
+  const t = strings.desktopLife
   const media = useResolvedMediaSrc({ type: 'image', url: url ?? '' })
   const [failedUrl, setFailedUrl] = useState<string | null>(null)
   const Icon = kind === 'scene' ? ImageIcon : Shirt
@@ -54,11 +55,11 @@ function ReferenceImage({ url, kind }: { url: string | null; kind: MaterialKind 
       ) : (
         <span className={styles.imagePlaceholder}>
           {url && media.status === 'loading' ? (
-            <Loader2 aria-hidden="true" className={styles.spinner} size={24} />
+            <Spinner ariaLabel={strings.common.loading} className={styles.spinner} size="lg" />
           ) : (
             <Icon aria-hidden="true" size={26} strokeWidth={1.5} />
           )}
-          <span>{failed ? t.materialPreviewFailed : url ? t.loading : t.noPreview}</span>
+          <span>{failed ? t.materialPreviewFailed : url ? strings.common.loading : t.noPreview}</span>
         </span>
       )}
     </div>
@@ -80,7 +81,8 @@ function MaterialPicker({
   onPickOutfit: (id: string) => void
   onPrepare?: () => void
 }): React.JSX.Element {
-  const t = useDesktopLifeStrings()
+  const strings = useStrings()
+  const t = strings.desktopLife
   const scenes = useStore($sceneLibrary)
   const sceneStatus = useStore($sceneLibraryStatus)
   const scenePage = useStore($scenePage)
@@ -118,18 +120,11 @@ function MaterialPicker({
     loadMaterials()
   }, [loadMaterials])
 
-  useEffect(() => {
-    searchRef.current?.focus()
-    const dialog = contentRef.current?.closest<HTMLElement>('[role="dialog"]')
-
-    const trapFocus = (event: KeyboardEvent): void => {
-      cycleTabFocus(event, dialog, 'button:not(:disabled), input:not(:disabled), [tabindex="0"]', true)
-    }
-
-    window.addEventListener('keydown', trapFocus, true)
-
-    return () => window.removeEventListener('keydown', trapFocus, true)
-  }, [])
+  useDialogFocus(contentRef, {
+    focusRef: searchRef,
+    scope: 'window',
+    selector: 'button:not(:disabled), input:not(:disabled), [tabindex="0"]'
+  })
 
   const search = (): void => {
     if (kind === 'scene') {
@@ -164,7 +159,7 @@ function MaterialPicker({
                 onClick={() => loadMaterials(sceneQuery, scenePage - 1)}
                 type="button"
               >
-                {t.previous}
+                {strings.common.previous}
               </button>
               <span className={styles.pageNumber}>
                 {scenePage + 1} / {Math.max(1, Math.ceil(sceneTotal / PAGE_SIZE))}
@@ -175,7 +170,7 @@ function MaterialPicker({
                 onClick={() => loadMaterials(sceneQuery, scenePage + 1)}
                 type="button"
               >
-                {t.next}
+                {strings.common.next}
               </button>
             </div>
           )}
@@ -194,40 +189,33 @@ function MaterialPicker({
     >
       <div className={styles.picker} ref={contentRef}>
         <div className={styles.search} role="search">
-          <div className={styles.searchField}>
-            <Search aria-hidden="true" className={styles.searchIcon} size={17} />
-            <input
-              aria-label={kind === 'scene' ? t.searchScenes : t.searchOutfits}
-              className={`${INPUT_CLASS} ${styles.searchInput}`}
-              onChange={event => setQuery(event.target.value)}
-              onKeyDown={event => {
-                if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
-                  event.preventDefault()
-                  search()
-                }
-              }}
-              placeholder={kind === 'scene' ? t.searchScenes : t.searchOutfits}
-              ref={searchRef}
-              type="search"
-              value={query}
-            />
-          </div>
+          <SearchField
+            ariaLabel={kind === 'scene' ? t.searchScenes : t.searchOutfits}
+            className="max-w-none flex-1 min-w-0"
+            inputRef={searchRef}
+            onChange={setQuery}
+            onKeyDown={event => {
+              if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+                event.preventDefault()
+                search()
+              }
+            }}
+            placeholder={kind === 'scene' ? t.searchScenes : t.searchOutfits}
+            value={query}
+          />
           <button className={`${BTN_SUBTLE} ${styles.button}`} disabled={loading} onClick={search} type="button">
-            {t.search}
+            {strings.common.search}
           </button>
         </div>
         {failed ? (
           <div className={styles.empty} role="alert">
             <p>{t.materialLoadFailed}</p>
             <button className={`${BTN_SUBTLE} ${styles.button}`} onClick={() => loadMaterials()} type="button">
-              {t.refresh}
+              {strings.common.refresh}
             </button>
           </div>
         ) : loading ? (
-          <div className={styles.empty} role="status">
-            <Loader2 aria-hidden="true" className={styles.spinner} size={25} />
-            <p>{t.loading}</p>
-          </div>
+          <LoadingBlock label={strings.common.loading} />
         ) : !count ? (
           <div className={styles.empty} role="status">
             {kind === 'scene' ? (
@@ -300,7 +288,8 @@ export function DesktopLifeReferences({
   onPickOutfit,
   onPrepareMaterial
 }: DesktopLifeReferencesProps): React.JSX.Element {
-  const t = useDesktopLifeStrings()
+  const strings = useStrings()
+  const t = strings.desktopLife
   const active = usePanelActivity()
   const auth = useStore($auth)
   const sessionId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null

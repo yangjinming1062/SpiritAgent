@@ -2,12 +2,12 @@ import { useStore } from '@nanostores/react'
 import { type FormEvent, useRef, useState } from 'react'
 
 import { useEscapeKey } from '@/shared/hooks/use-escape-key'
-import { Loader2, Sparkles, X } from '@/shared/lib/icons'
+import { Sparkles, X } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
-import { backendDetailMessage } from '@/shared/lib/ipc-error'
+import { failureText } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
-import { BTN_ICON, BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, SURFACE_OVERLAY } from '@/shared/panel'
+import { BTN_ICON, BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, Spinner, SURFACE_OVERLAY } from '@/shared/panel'
 import { $auth, activate } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
 
@@ -45,7 +45,7 @@ export function ActivationOverlay({ onClose }: { onClose: () => void }): React.J
     } catch (caught) {
       // 主进程 SessionError 经 IPC 只剩「名称: 文案」，错误码不可用；原始信封只进日志。
       log.warn('activation', 'Activation failed', caught)
-      setError(backendDetailMessage(caught, t.failed))
+      setError(failureText(caught, t.failed))
     } finally {
       setBusy(false)
     }
@@ -96,7 +96,7 @@ export function ActivationOverlay({ onClose }: { onClose: () => void }): React.J
             {t.cancel}
           </button>
           <button className={cn(BTN_PRIMARY, 'gap-2')} disabled={!trimmed || busy} type="submit">
-            {busy ? <Loader2 className="size-4 animate-spin" /> : null}
+            {busy ? <Spinner /> : null}
             {busy ? t.submitBusy : t.submit}
           </button>
         </div>

@@ -7,7 +7,7 @@ import { $persona } from '@/modules/character'
 import { $diaryByDate, $diaryLoading, hydrateDiary, markDiaryRead } from '@/modules/diary'
 import { ArrowLeft, ArrowRight, BookOpen } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
-import { BTN_ICON, BTN_SUBTLE } from '@/shared/panel'
+import { BTN_ICON, ErrorBanner } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
 import { $locale } from '@/shared/store/locale'
@@ -225,12 +225,12 @@ export function DiaryPage({ foreground: suppliedForeground }: { foreground?: boo
               <div className={styles.signature}>{t.signature(displayName)}</div>
             </div>
           ) : loadFailed ? (
-            <div className={styles.emptyContainer}>
-              <p className={styles.emptyTitle}>{t.loadFailed}</p>
-              <button className={cn(BTN_SUBTLE, 'mt-2')} onClick={() => setReloadKey(key => key + 1)} type="button">
-                {dict.common.retry}
-              </button>
-            </div>
+            <ErrorBanner
+              message={t.loadFailed}
+              onRetry={() => setReloadKey(key => key + 1)}
+              retryLabel={dict.common.retry}
+              tone="danger"
+            />
           ) : (
             <div className={styles.emptyContainer}>
               <BookOpen className={styles.emptyIcon} size={36} />

@@ -5,7 +5,7 @@ import { type ReactNode, useEffect, useMemo, useRef } from 'react'
 
 import { createRunRailStores } from '@/app/features/execution/run-rail-store'
 import { ChatMediaCard, useConversationView } from '@/modules/conversation'
-import { cycleTabFocus } from '@/shared/lib/focus-cycle'
+import { createFocusCycleHandler } from '@/shared/lib/focus-cycle'
 import { X } from '@/shared/lib/icons'
 import { useStrings } from '@/shared/strings'
 
@@ -29,6 +29,7 @@ export function RunRail({
   const t = useStrings().conversation.runRail
   const railRef = useRef<HTMLElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
+  const cycleFocus = createFocusCycleHandler('button, a[href], input, audio[controls], video[controls], [tabindex="0"]')
 
   useEffect(() => closeRef.current?.focus(), [])
 
@@ -47,11 +48,7 @@ export function RunRail({
           return
         }
 
-        cycleTabFocus(
-          event,
-          railRef.current,
-          'button, a[href], input, audio[controls], video[controls], [tabindex="0"]'
-        )
+        cycleFocus(event)
       }}
       ref={railRef}
       role="dialog"

@@ -4,10 +4,9 @@ import { $chatSessionId, getConversationRuntime } from '@/modules/conversation'
 import { useAsyncLoader } from '@/shared/hooks/use-async-loader'
 import { useAutoSave } from '@/shared/hooks/use-auto-save'
 import { captureAuthScope } from '@/shared/lib/authed-api'
-import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { resolveReasoningEffort } from '@/shared/lib/reasoning-effort'
 import { requestResource } from '@/shared/lib/resource-request'
-import { BTN_SUBTLE, EmptyState, HINT_TEXT, LoadingBlock, SettingsSectionIntro } from '@/shared/panel'
+import { AsyncSection, SaveStatus, SettingsSectionIntro } from '@/shared/panel'
 import { getSpiritAgentConfig, saveSpiritAgentConfig } from '@/shared/spiritagent'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
@@ -138,42 +137,29 @@ export function InferencePage(): React.JSX.Element {
     value: state
   })
 
-  if (loader.isLoading) {
-    return <LoadingBlock label={a.loading} />
-  }
-
-  if (loader.error) {
-    return (
-      <EmptyState
-        action={
-          <button className={BTN_SUBTLE} onClick={loader.reload} type="button">
-            {t.common.retry}
-          </button>
-        }
-        description={backendDetailMessage(loader.error, a.loadFailed)}
-        title={a.heading}
-      />
-    )
-  }
-
   return (
-    <div className="space-y-6">
-      <SettingsSectionIntro hint={a.intro} title={a.heading} />
+    <AsyncSection
+      error={loader.error}
+      errorTitle={a.loadFailed}
+      isLoading={loader.isLoading}
+      loadingLabel={a.loading}
+      onRetry={loader.reload}
+      retryLabel={t.common.retry}
+    >
+      <div className="space-y-6">
+        <SettingsSectionIntro hint={a.intro} title={a.heading} />
 
-      <InferenceForm state={state} update={patch => setState(current => ({ ...current, ...patch }))} />
+        <InferenceForm state={state} update={patch => setState(current => ({ ...current, ...patch }))} />
 
-      <div className="flex min-h-5 items-center justify-end gap-3 pt-2">
-        {saveStatus === 'saving' && <span className={HINT_TEXT}>{t.common.saving}</span>}
-        {saveStatus === 'saved' && <span className={HINT_TEXT}>{a.saved}</span>}
-        {saveStatus === 'error' && (
-          <>
-            <span className="text-xs leading-relaxed text-danger-fg">{a.saveFailed}</span>
-            <button className={BTN_SUBTLE} onClick={retrySave} type="button">
-              {t.common.retry}
-            </button>
-          </>
-        )}
+        <SaveStatus
+          errorLabel={a.saveFailed}
+          onRetry={retrySave}
+          retryLabel={t.common.retry}
+          savedLabel={a.saved}
+          savingLabel={t.common.saving}
+          status={saveStatus}
+        />
       </div>
-    </div>
+    </AsyncSection>
   )
 }

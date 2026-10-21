@@ -2,8 +2,8 @@ import type { ReactNode } from 'react'
 
 import { ArrowLeft } from '@/shared/lib/icons'
 import { BTN_SUBTLE } from '@/shared/panel'
+import { useStrings } from '@/shared/strings'
 
-import { useDesktopLifeStrings } from './desktop-life-strings'
 import styles from './desktop-life.module.css'
 
 export function DesktopLifeHeader({
@@ -15,7 +15,7 @@ export function DesktopLifeHeader({
   onBack?: () => void
   children?: ReactNode
 }): React.JSX.Element {
-  const t = useDesktopLifeStrings()
+  const strings = useStrings()
 
   return (
     <header className={styles.workspaceHeader}>
@@ -23,7 +23,7 @@ export function DesktopLifeHeader({
         {onBack && (
           <button className={`${BTN_SUBTLE} h-8 shrink-0 px-2`} onClick={onBack} type="button">
             <ArrowLeft className="size-4" />
-            {t.back}
+            {strings.common.back}
           </button>
         )}
         <h2 className={styles.workspaceTitle}>{title}</h2>

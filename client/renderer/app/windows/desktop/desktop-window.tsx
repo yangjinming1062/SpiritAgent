@@ -5,9 +5,9 @@ import { useCallback, useEffect, useRef } from 'react'
 import { PanelActivityProvider } from '@/shared/context/panel-activity'
 import { X } from '@/shared/lib/icons'
 import { holdWindowMouseCapture, useInteractiveRegion } from '@/shared/lib/interactive-regions'
+import { useStrings } from '@/shared/strings'
 
 import { type DesktopRect, type DesktopWindowState, fitRect } from './desktop-layout'
-import { useDesktopStrings } from './desktop-strings'
 import styles from './desktop.module.css'
 
 interface Props {
@@ -33,7 +33,7 @@ export function DesktopWindow({
   onClose,
   onChange
 }: Props): React.JSX.Element {
-  const t = useDesktopStrings()
+  const t = useStrings().desktopShell
   const windowRef = useRef<HTMLElement>(null)
   const releaseCapture = useRef<(() => void) | null>(null)
   useInteractiveRegion(`desktop-window-${item.id}`, windowRef, element =>

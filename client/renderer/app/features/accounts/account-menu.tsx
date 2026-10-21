@@ -1,4 +1,3 @@
-import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
@@ -7,8 +6,8 @@ import { captureAuthScope } from '@/shared/lib/authed-api'
 import { ArrowLeft, ArrowRight, Check } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { shellApi } from '@/shared/platform/desktop'
-import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
+import { useStrings } from '@/shared/strings'
 import type { DesktopBridge } from '@client-shared/ipc/bridge'
 
 import styles from './account-menu.module.css'
@@ -19,36 +18,6 @@ const ACCOUNT_SUBMENU_GAP = 8
 const VIEWPORT_MARGIN = 12
 type AccountSubmenuSide = 'left' | 'overlay' | 'right'
 type AccountSubmenu = 'remove' | 'switch'
-
-const zh = {
-  accounts: '账户',
-  currentAccount: '当前账户',
-  switchAccount: '切换账户',
-  accountList: '可切换账户',
-  accountLoadFailed: '账户读取失败',
-  addAccount: '添加账户',
-  removeAccount: '移除账户',
-  removableAccounts: '选择要移除的账户',
-  accountLoading: '正在读取账户…',
-  retry: '重试'
-}
-
-const en: typeof zh = {
-  accounts: 'Accounts',
-  currentAccount: 'Current account',
-  switchAccount: 'Switch account',
-  accountList: 'Available accounts',
-  accountLoadFailed: 'Could not read accounts',
-  addAccount: 'Add account',
-  removeAccount: 'Remove account',
-  removableAccounts: 'Choose an account to remove',
-  accountLoading: 'Loading accounts…',
-  retry: 'Retry'
-}
-
-function useAccountMenuStrings(): typeof zh {
-  return useStore($locale) === 'en' ? en : zh
-}
 
 function selectableAccountIndexes(accounts: Accounts | null, submenu: AccountSubmenu): number[] {
   return (accounts ?? []).flatMap((account, index) => (submenu === 'switch' && account.active ? [] : [index]))
@@ -71,7 +40,8 @@ export function AccountMenu({
   placement?: 'above' | 'below' | 'top-center'
   bottomInset?: number
 }): React.JSX.Element {
-  const t = useAccountMenuStrings()
+  const strings = useStrings()
+  const t = strings.accounts
   const [accounts, setAccounts] = useState<Accounts | null>(null)
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -256,14 +226,14 @@ export function AccountMenu({
       .catch(error => {
         if (!disposed) {
           setFailed(true)
-          notifyError(error, t.accounts)
+          notifyError(error, strings.common.operationFailed)
         }
       })
 
     return () => {
       disposed = true
     }
-  }, [retry, t.accounts])
+  }, [retry, strings.common.operationFailed])
 
   const run = async (action: () => Promise<unknown>): Promise<void> => {
     const isCurrent = captureAuthScope()
@@ -281,7 +251,7 @@ export function AccountMenu({
       await action()
     } catch (error) {
       if (isCurrent()) {
-        notifyError(error, t.accounts)
+        notifyError(error, strings.common.operationFailed)
       }
     } finally {
       if (isLive()) {
@@ -439,7 +409,7 @@ export function AccountMenu({
             tabIndex={submenu ? -1 : 0}
             type="button"
           >
-            {t.retry}
+            {strings.common.retry}
           </button>
         )}
         <button

@@ -2,7 +2,8 @@ import { useStore } from '@nanostores/react'
 import { useEffect, useRef, useState } from 'react'
 
 import { $regenFeedback, MAX_IMAGE_DESCRIPTION } from '@/modules/character'
-import { HistoryGallery, type HistoryGalleryItem, PortraitLightbox } from '@/shared'
+import { HistoryGallery, type HistoryGalleryItem } from '@/shared'
+import { ImageLightboxButton } from '@/shared/components/image-lightbox-button'
 import { usePointerDrag } from '@/shared/hooks/use-pointer-drag'
 import { Check } from '@/shared/lib/icons'
 import { probeInteractiveRegions, useInteractiveRegion } from '@/shared/lib/interactive-regions'
@@ -15,9 +16,11 @@ export const ONBOARDING_PRIMARY_BUTTON =
   'inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-accent px-4 py-2 text-sm font-medium text-on-accent transition hover:bg-accent/85 disabled:pointer-events-none disabled:opacity-40'
 
 export function OnboardingProgress({ step }: { step: number }): React.JSX.Element {
+  const t = useStrings().onboarding
+
   return (
-    <ol aria-label="认识伙伴的进度" className={styles.progress} data-onboarding-drag-handle="">
-      {['认识伙伴', '确认形象', '选择声音'].map((label, index) => (
+    <ol aria-label={t.progressAria} className={styles.progress} data-onboarding-drag-handle="">
+      {[t.steps.meet, t.steps.confirm, t.steps.voice].map((label, index) => (
         <li
           aria-current={step === index ? 'step' : undefined}
           className={styles.step}
@@ -51,7 +54,7 @@ export function PortraitPanel({
   onSelectEntry?: (idx: number) => void
   selectedIdx?: number
 }): React.JSX.Element {
-  const [zoomedUrl, setZoomedUrl] = useState<string | null>(null)
+  const t = useStrings().onboarding
 
   const gallery =
     history && history.length > 1 && onSelectEntry ? (
@@ -60,16 +63,9 @@ export function PortraitPanel({
 
   return (
     <div className="flex flex-col items-center gap-2">
-      <PortraitThumb
-        label="头像"
-        name={name}
-        onReady={onPreviewReady}
-        onZoom={avatarUrl ? () => setZoomedUrl(avatarUrl) : undefined}
-        url={avatarUrl}
-      />
+      <PortraitThumb label={t.avatarLabel} name={name} onReady={onPreviewReady} url={avatarUrl} />
       {gallery}
       {hint && <p className="text-xs text-danger-fg">{hint}</p>}
-      {zoomedUrl && <PortraitLightbox name={name} onClose={() => setZoomedUrl(null)} url={zoomedUrl} />}
     </div>
   )
 }
@@ -77,17 +73,16 @@ export function PortraitPanel({
 function PortraitThumb({
   label,
   name,
-  onZoom,
   onReady,
   url
 }: {
   label: string
   name: string
-  onZoom: (() => void) | undefined
   onReady?: (url: string | null) => void
   url: string | null
 }): React.JSX.Element {
   const dict = useStrings()
+  const t = dict.onboarding
   const [failedUrl, setFailedUrl] = useState<string | null>(null)
   const [revision, setRevision] = useState(0)
 
@@ -95,11 +90,11 @@ function PortraitThumb({
     <div className="flex flex-col items-center gap-1">
       {url ? (
         <div className="group relative">
-          <button
-            aria-label="放大查看"
+          <ImageLightboxButton
+            ariaLabel={t.zoomAria}
             className="block cursor-zoom-in overflow-hidden rounded-xl border-0 bg-transparent p-0"
-            onClick={onZoom}
-            type="button"
+            name={name}
+            url={url}
           >
             <img
               alt={name}
@@ -112,7 +107,7 @@ function PortraitThumb({
               onLoad={() => onReady?.(url)}
               src={url}
             />
-          </button>
+          </ImageLightboxButton>
         </div>
       ) : (
         <div className="grid h-40 w-40 place-items-center rounded-xl bg-fill-faint text-center text-[10px] text-faint">
@@ -246,6 +241,7 @@ export function RegenFeedbackInput({
   id?: string
   initial?: boolean
 }): React.JSX.Element {
+  const t = useStrings().onboarding
   const value = useStore($regenFeedback)
 
   return (
@@ -255,11 +251,7 @@ export function RegenFeedbackInput({
       id={id}
       maxLength={MAX_IMAGE_DESCRIPTION}
       onChange={e => $regenFeedback.set(e.target.value)}
-      placeholder={
-        initial
-          ? '比如：金发绿眼、额间一道疤、机械义眼…（可留空）'
-          : '哪里不满意？比如：头发再短一点、眼睛再大一点、表情更温和…（可留空直接重新生成）'
-      }
+      placeholder={initial ? t.feedbackExample : t.feedbackExampleRefine}
       rows={2}
       value={value}
     />
@@ -276,6 +268,7 @@ export function EditAvatarButton({
   disabledByReference: boolean
   onEdit: () => void
 }): React.JSX.Element {
+  const t = useStrings().onboarding
   const feedback = useStore($regenFeedback)
   const disabled = busy || disabledByReference || !feedback.trim()
 
@@ -284,12 +277,10 @@ export function EditAvatarButton({
       className="text-body transition hover:text-strong disabled:opacity-40"
       disabled={disabled}
       onClick={onEdit}
-      title={
-        disabledByReference ? '附参考图时不可微调，请先移除参考图' : '在当前头像上修改，其余保持不变（需先填写反馈）'
-      }
+      title={disabledByReference ? t.refineDisabledByReference : t.refineHint}
       type="button"
     >
-      微调
+      {t.refineAction}
     </button>
   )
 }

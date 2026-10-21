@@ -11,7 +11,7 @@ import {
 } from '@/modules/posts'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { cn } from '@/shared/lib/utils'
-import { BTN_SUBTLE, ConfirmDialog } from '@/shared/panel'
+import { ActionRow, BTN_SUBTLE, ConfirmDialog } from '@/shared/panel'
 import { notify } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
@@ -67,7 +67,7 @@ export function PostVideoRecovery(): React.JSX.Element | null {
     if (result) {
       setItems(current => current.map(item => (item.publication_id === id ? result : item)))
     } else {
-      notify({ kind: 'error', message: t.videoQueryFailed })
+      notify({ kind: 'error', message: t.videoQueryFailed, title: t.videoQueryFailed })
     }
   }
 
@@ -91,7 +91,11 @@ export function PostVideoRecovery(): React.JSX.Element | null {
         await hydratePosts()
       }
     } else {
-      notify({ kind: 'error', message: action === 'adopt' ? t.videoAdoptFailed : t.videoDiscardFailed })
+      notify({
+        kind: 'error',
+        message: action === 'adopt' ? t.videoAdoptFailed : t.videoDiscardFailed,
+        title: action === 'adopt' ? t.videoAdoptFailed : t.videoDiscardFailed
+      })
     }
   }
 
@@ -117,7 +121,7 @@ export function PostVideoRecovery(): React.JSX.Element | null {
       ])
       setNextOffset(result.next_offset)
     } else {
-      notify({ kind: 'error', message: t.loadFailed })
+      notify({ kind: 'error', message: t.loadFailed, title: t.loadFailed })
     }
   }
 
@@ -162,32 +166,28 @@ export function PostVideoRecovery(): React.JSX.Element | null {
           </p>
           {item.error && <p className={styles.body}>{item.error}</p>}
           {item.media_url && <InlineMedia alt={item.title} audioUrl={null} mediaType="video" url={item.media_url} />}
-          <div className="flex flex-wrap gap-2">
-            <button
-              className={BTN_SUBTLE}
-              disabled={busy !== null}
-              onClick={() => void query(item.publication_id)}
-              type="button"
-            >
-              {t.videoQuery}
-            </button>
-            <button
-              className={BTN_SUBTLE}
-              disabled={busy !== null || !item.can_adopt}
-              onClick={() => void resolve(item.publication_id, 'adopt')}
-              type="button"
-            >
-              {t.videoAdopt}
-            </button>
-            <button
-              className={BTN_SUBTLE}
-              disabled={busy !== null || !item.can_discard}
-              onClick={() => setDiscardId(item.publication_id)}
-              type="button"
-            >
-              {item.status === 'discarded' ? t.videoRetryCleanup : t.videoDiscard}
-            </button>
-          </div>
+          <ActionRow
+            actions={[
+              {
+                className: BTN_SUBTLE,
+                disabled: busy !== null,
+                label: t.videoQuery,
+                onClick: () => void query(item.publication_id)
+              },
+              {
+                className: BTN_SUBTLE,
+                disabled: busy !== null || !item.can_adopt,
+                label: t.videoAdopt,
+                onClick: () => void resolve(item.publication_id, 'adopt')
+              },
+              {
+                className: BTN_SUBTLE,
+                disabled: busy !== null || !item.can_discard,
+                label: item.status === 'discarded' ? t.videoRetryCleanup : t.videoDiscard,
+                onClick: () => setDiscardId(item.publication_id)
+              }
+            ]}
+          />
         </div>
       ))}
       {nextOffset !== null && (
