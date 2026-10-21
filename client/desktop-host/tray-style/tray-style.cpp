@@ -467,6 +467,10 @@ struct View : std::enable_shared_from_this<View> {
     std::uint64_t generation = 0;
     std::uint64_t source_revision = 0;
     ULONGLONG missing_since = 0;
+    std::atomic<bool> retired{false};
+
+    // 订阅被替换后停止改样式，避免与新订阅争抢同一依赖属性的原值。
+    void retire() noexcept { retired.store(true); }
 
     void refresh_sources() {
         auto revision = tree_revision.load();
@@ -647,6 +651,11 @@ struct View : std::enable_shared_from_this<View> {
 
     void tick() noexcept {
         try {
+            if (retired.load()) {
+                // 订阅被替换后只还原原值，不再改样式。
+                if (claimed || !properties.empty()) restore(false);
+                return;
+            }
             refresh_sources();
             auto next = session();
             if (next != owner) {
@@ -690,12 +699,23 @@ struct Watcher : winrt::implements<Watcher, IVisualTreeServiceCallback2, winrt::
     winrt::com_ptr<IXamlDiagnostics> diagnostics;
     std::atomic<Subscription> subscription{Subscription::idle};
     std::atomic<std::uint64_t> mutations{0};
+    std::atomic<bool> retired{false};
     std::mutex views_mutex;
     std::unordered_map<DWORD, std::shared_ptr<View>> views;
 
     explicit Watcher(winrt::com_ptr<IXamlDiagnostics> const& site) : diagnostics(site) {}
 
     bool ready() const noexcept { return subscription.load() == Subscription::ready; }
+
+    // 解除订阅失败后停在停止态，无法再登记新的会话。
+    bool stuck() const noexcept { return subscription.load() == Subscription::stopping; }
+
+    void retire() noexcept {
+        retired.store(true);
+        std::lock_guard lock(views_mutex);
+        for (auto const& entry : views) entry.second->retire();
+    }
+    bool is_retired() const noexcept { return retired.load(); }
 
     void advise(IVisualTreeService3* service, std::shared_ptr<Session> const& owner, std::uint64_t before) {
         auto deadline = GetTickCount64() + 1000;
@@ -757,7 +777,11 @@ struct Watcher : winrt::implements<Watcher, IVisualTreeServiceCallback2, winrt::
         service = nullptr;
         if (SUCCEEDED(apartment)) CoUninitialize();
         subscription.store(release_failed ? Subscription::stopping : Subscription::idle);
-        if (!release_failed) {
+        // 订阅已解除，诊断连接才可以关闭；宿主据此结束附着进程。
+        if (observed->owns_state() && InterlockedCompareExchange(&observed->state->status, 0, 0) >= 0) {
+            observed->publish(3);
+        }
+        if (!release_failed && !is_retired()) {
             if (auto next = session(); next && next->active() && (SUCCEEDED(failure) || next != owner)) {
                 try { begin(next); }
                 catch (...) { if (next->active()) next->publish(-1, winrt::to_hresult()); }
@@ -841,6 +865,11 @@ struct Site : winrt::implements<Site, IObjectWithSite, winrt::non_agile> {
             winrt::com_ptr<Watcher> active_watcher;
             {
                 std::lock_guard lock(session_mutex);
+                if (watcher && watcher->stuck()) {
+                    // 上一次订阅未能解除，不能再在同一连接上登记；新的诊断连接可以重新登记。
+                    watcher->retire();
+                    watcher = nullptr;
+                }
                 if (!watcher) watcher = winrt::make_self<Watcher>(diagnostics);
                 active_watcher = watcher;
             }
@@ -955,9 +984,18 @@ DWORD WINAPI bootstrap(void* value) noexcept {
             next = std::make_shared<Session>(request->mapping, GetCurrentProcessId());
             if (!next->active()) winrt::throw_hresult(HRESULT_FROM_WIN32(ERROR_CANCELLED));
             bool ready;
-            { std::lock_guard session_lock(session_mutex); ready = watcher && watcher->ready(); }
-            if (ready) set_session(next);
-            else {
+            winrt::com_ptr<Watcher> current;
+            {
+                std::lock_guard session_lock(session_mutex);
+                current = watcher;
+                ready = current && current->ready();
+            }
+            if (current && !current->stuck()) {
+                // 既有诊断连接仍可登记：让新会话成为当前会话，运行中的订阅会跟随切换。
+                set_session(next);
+                if (!ready) current->begin(next);
+            } else {
+                // 没有可用订阅时重新登记诊断连接，由 XAML 创建新的 TAP。
                 auto error = initialize(GetCurrentProcessId(), request->mapping, 1400);
                 if (FAILED(error) && next->active()) next->publish(-1, error);
             }
@@ -1016,7 +1054,8 @@ extern "C" __declspec(dllexport) HRESULT WINAPI SpiritAgentAttach(DWORD explorer
         if (!mapping_name) return E_POINTER;
         auto target = std::make_shared<Session>(mapping_name, explorer_pid);
         auto deadline = GetTickCount64() + 3500;
-        auto result = initialize(explorer_pid, mapping_name, 1000);
+        auto init_result = initialize(explorer_pid, mapping_name, 1000);
+        auto result = init_result;
         auto wait_started = GetTickCount64();
         while (SUCCEEDED(result) && GetTickCount64() - wait_started < 250) {
             auto status = InterlockedCompareExchange(&target->state->status, 0, 0);
@@ -1051,7 +1090,9 @@ extern "C" __declspec(dllexport) HRESULT WINAPI SpiritAgentAttach(DWORD explorer
         } catch (...) { result = winrt::to_hresult(); }
         UnhookWindowsHookEx(hook);
         if (FAILED(result)) return result;
-        return ready ? S_OK : HRESULT_FROM_WIN32(WAIT_TIMEOUT);
+        if (ready) return S_OK;
+        // 保留诊断初始化失败的原因，避免统一表现为超时。
+        return FAILED(init_result) ? init_result : HRESULT_FROM_WIN32(WAIT_TIMEOUT);
     } catch (...) { return winrt::to_hresult(); }
 }
 

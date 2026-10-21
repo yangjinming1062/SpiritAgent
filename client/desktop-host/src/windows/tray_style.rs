@@ -461,6 +461,9 @@ impl TrayStyle {
             if error == 0x8000_ffff {
                 return Err("系统托盘透明样式未能启用，请重启 Windows 资源管理器后重试（0x8000ffff）。".into());
             }
+            if error == 0x8007_0102 {
+                return Err("系统托盘透明样式未能启用，Windows 资源管理器未释放上一次的托盘样式订阅，请重启 Windows 资源管理器后重试（0x80070102）。".into());
+            }
             return Err(format!(
                 "系统托盘透明样式未能启用（0x{:08x}）。",
                 error,
@@ -511,7 +514,8 @@ impl Drop for TrayStyle {
         self.placement.placement().enabled.store(0, Ordering::Release);
         let state = self.mapping.state();
         state.active.store(0, Ordering::Release);
-        if state.status.load(Ordering::Acquire) == 2
+        // 原值还原后仍需保留诊断连接，供 Explorer 解除订阅；解除确认后才结束附着进程。
+        if state.status.load(Ordering::Acquire) >= 3
             || state.fill_count.load(Ordering::Acquire) == 0
             || !self.record.explorer_alive()
         {
@@ -695,7 +699,9 @@ pub(super) fn attach(explorer_pid: u32, channel: &str) -> Result<()> {
     // 保留诊断连接，直到 Explorer 确认还原或宿主退出。
     let mut restoring_since = None;
     loop {
-        if state.status.load(Ordering::Acquire) == 2 {
+        // 3 表示订阅已解除，诊断连接才可以关闭；2 只表示原值已还原。
+        let status = state.status.load(Ordering::Acquire);
+        if status == 3 || status < 0 {
             return Ok(());
         }
         let owner_alive = process(state.host_pid)
