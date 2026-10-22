@@ -8,7 +8,7 @@ from typing import Literal
 from starlette.routing import compile_path
 
 type HttpIdentity = Literal["public", "desktop", "remote", "admin"]
-type UploadKind = Literal["json", "chat", "image", "image_file", "video", "audio", "action_pack", "backup", "release"]
+type UploadKind = Literal["json", "chat", "image", "image_file", "video", "audio", "backup", "release"]
 
 
 @dataclass(frozen=True, slots=True)

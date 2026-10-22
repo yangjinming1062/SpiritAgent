@@ -104,7 +104,6 @@ async def desktop_action_source(
     return ActionSourceSnapshot(
         user_id=user_id,
         outfit_id=suite.outfit_id,
-        target_kind="desktop",
         target_id=suite.id,
         label=suite.title,
         source_visual_key=suite.source_visual_key,

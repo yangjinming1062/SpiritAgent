@@ -9,9 +9,6 @@ from features.accounts.models import lock_user_row
 from features.action_library.queries import definition_snapshot, targets_for_definitions
 from features.action_library.schemas import ActionDefinitionDesign, ActionSourceScope
 from features.action_library.service import accept_definition
-from features.actions.expression_catalog import window_expression_catalog
-from features.actions.playback import request_playback
-from features.actions.schemas import ActionPlayRequest
 from features.companion.disturbance import get_disturbance_tier
 from features.companion.proactive_runtime import (
     PresentationSnapshot,
@@ -116,20 +113,21 @@ async def build_action_view(
     current = observed if isinstance(observed, PresentationSnapshot) else None
     record = get_user_proactive_record(user_id)
     empty = ActionViewSnapshot(user_id, current, trigger=trigger, contact_revision=record.contact_revision)
-    if current is None or current != get_presentation_snapshot(user_id) or not record.available:
+    if (
+        current is None
+        or current != get_presentation_snapshot(user_id)
+        or not record.available
+        or current.mode != "desktop"
+    ):
         return empty
-    if current.mode == "window":
-        catalog = await window_expression_catalog(db, user_id, lock=lock)
-        current_action_id = None
-    else:
-        catalog = await desktop_expression_catalog(
-            db,
-            user_id,
-            presentation_revision=current.revision,
-            trigger=trigger,
-            lock=lock,
-        )
-        current_action_id = catalog.current_action_id if catalog is not None else None
+    catalog = await desktop_expression_catalog(
+        db,
+        user_id,
+        presentation_revision=current.revision,
+        trigger=trigger,
+        lock=lock,
+    )
+    current_action_id = catalog.current_action_id if catalog is not None else None
     if catalog is None or current != get_presentation_snapshot(user_id) or not record.available:
         return empty
     definitions = {row.definition_id for row in catalog.items if row.definition_id is not None}
@@ -139,7 +137,6 @@ async def build_action_view(
             db,
             user_id,
             definitions,
-            target_kind=current.mode,
             target_id=catalog.target_id,
             refresh=True,
         )
@@ -283,7 +280,6 @@ async def inspect_action_reference(
                     db,
                     user_id,
                     (captured.definition_id,),
-                    target_kind=current.presentation.mode,
                     target_id=current.target_id,
                     refresh=True,
                 )
@@ -321,7 +317,7 @@ async def inspect_action_reference(
             definition.outfit_id != current.outfit_id
             or definition.source_visual_key != current.source_visual_key
             or definition.scope == "target"
-            and (definition.origin_kind, definition.origin_target_id) != (current.presentation.mode, current.target_id)
+            and definition.origin_target_id != current.target_id
         ):
             return {"error": "找不到属于当前形象的动作设计"}
         canonical_id = definition.reuse_definition_id or definition.id
@@ -329,7 +325,6 @@ async def inspect_action_reference(
             db,
             user_id,
             (canonical_id,),
-            target_kind=current.presentation.mode,
             target_id=current.target_id,
             refresh=True,
         )
@@ -404,7 +399,6 @@ async def design_action_reference(
             user_id,
             design,
             source="autonomous" if proactive_turn else "user_requested",
-            origin_kind=current.presentation.mode,
             expected_target_id=current.target_id,
         )
         if await _current_view(db, user_id, action_view) is None:
@@ -449,38 +443,20 @@ async def play_action_reference(
             return {"error": _STALE_MESSAGE}
         if source == "autonomous" and not await _autonomous_current(db, user_id, action_view, current):
             return {"error": "当前情境已变化，本次动作已取消"}
-        if current.presentation.mode == "window":
-            result = await request_playback(
+        try:
+            command = await play_desktop_action(
                 db,
                 user_id,
-                ActionPlayRequest(
+                DesktopVideoPlayRequest(
                     action_id=captured.action_id,
-                    expected_pack_id=current.target_id,
+                    expected_set_id=current.target_id,
                     reason=reason,
                 ),
                 source=source,
             )
-            response: dict[str, object] = {
-                "outcome": result.outcome,
-                "play_id": result.play_id,
-                "message": result.message,
-                "played": False,
-            }
-        else:
-            try:
-                command = await play_desktop_action(
-                    db,
-                    user_id,
-                    DesktopVideoPlayRequest(
-                        action_id=captured.action_id,
-                        expected_set_id=current.target_id,
-                        reason=reason,
-                    ),
-                    source=source,
-                )
-            except DesktopVideoError as exc:
-                return {"error": str(exc)}
-            response = {"outcome": "queued", "play_id": command.play_id, "played": False}
+        except DesktopVideoError as exc:
+            return {"error": str(exc)}
+        response = {"outcome": "queued", "play_id": command.play_id, "played": False}
         final_view = await _current_view(db, user_id, action_view)
         if (
             final_view is None

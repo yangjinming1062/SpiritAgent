@@ -20,7 +20,7 @@
 | 网关与账户 | [gateway-runtime.ts](app/runtime/gateway-runtime.ts)、[gateway-host-runtime.ts](app/runtime/gateway-host-runtime.ts)、[gateway-event-router.ts](app/runtime/gateway-event-router.ts)、[account-lifecycle.ts](app/workflows/account-lifecycle.ts) |
 | 引导、激活与启动失败 | [onboarding](app/onboarding/) |
 | 角色、动作、拖拽与空间 | [modules/character](modules/character/)、[sprite-stage.tsx](app/components/sprite-stage.tsx) |
-| 衣柜与逐动作预览、重做 | [appearance-page.tsx](app/features/appearance/appearance-page.tsx)、[video-section.tsx](app/features/appearance/video-section.tsx)、[video-pack-store.ts](modules/character/rendering/video/video-pack-store.ts) |
+| 衣柜静态预览、设计与穿着 | [衣柜页](app/features/appearance/appearance-page.tsx)、[造型详情](app/features/appearance/outfit-detail.tsx)、[衣柜状态](modules/character/wardrobe/wardrobe-store.ts) |
 | 公共对话、设置与状态交接 | [conversation-page.tsx](app/features/conversation/conversation-page.tsx)、[app-settings.tsx](app/features/settings/app-settings.tsx)、[app-ui-state.ts](app/workflows/app-ui-state.ts) |
 | 对话与音频联动 | [modules/conversation](modules/conversation/)、[modules/speech](modules/speech/)、[conversation-speech.ts](app/workflows/conversation-speech.ts) |
 | 动态、日记与记忆页 | [modules/posts](modules/posts/)、[modules/diary](modules/diary/)、[memory-section.tsx](app/features/companion/memory-section.tsx) |
@@ -93,11 +93,7 @@
 
 ### 状态与动作
 
-[companion-store.ts](modules/character/companion-store.ts) 管表现优先级，系统动作键归 [presentation/types.ts](modules/character/presentation/types.ts)，两者不混用。界面动作名称经 `systemActionNames` 本地化，外观页复用。
-
-瞬态保存恢复目标，重复瞬态不嵌套，旧计时器不能覆盖持续状态；语音准备与播放分开，尾随点播不切 speaking，聊天完成不触发 emotional。动态动作不新增表现状态，实际 started 期间暂呈 emotional，收尾恢复。
-
-[actions](modules/character/actions/) 校验 play、目录与素材；[character-events.ts](app/runtime/handlers/character-events.ts) 负责强制目录刷新、主进程认领及认领后的失效回执，播放器负责加载和开播失败。去重、有效期、started 与终态定义归 [播放契约](../../docs/PROTOCOL.md#动作目录与播放)。主窗口使用侧边伙伴，实际显隐从带版本主进程快照读取，精灵宿主禁后台节流，不能用页面可见性判断隐藏。
+[companion-store.ts](modules/character/companion-store.ts) 管表现优先级，瞬态恢复、声音与程序反馈仍由原状态机管理。窗口和侧边伙伴使用衣柜当前穿着的静态立绘，实际显隐从主进程快照读取，不使用页面可见性推测舞台资格。桌景动作由独立桌面生活播放器与回执链管理。
 
 ### 打扰与自主行为
 
@@ -122,11 +118,9 @@
 
 ### 空间行为
 
-[spatial.ts](modules/character/spatial.ts) 装配位置 store、空间策略和舞台生命周期；`spatial/geometry.ts` 计算几何，`motion.ts` 持移动与缩放 RAF，`peek-controller.ts` 持探身准备与表达返回目标，`window-tracker.ts` 持外部窗口跟踪。[spatial-peek.ts](modules/character/spatial-peek.ts) 计算绘制、命中共用的遮挡矩形，[autonomy.ts](modules/character/autonomy.ts) 解释云端意图。默认比例经主进程跨窗同步并平滑生效。
+[spatial.ts](modules/character/spatial.ts) 装配位置、比例、空间策略和舞台生命周期；`spatial/geometry.ts` 计算几何，`motion.ts` 持移动与缩放 RAF，[autonomy.ts](modules/character/autonomy.ts) 解释云端意图。默认比例经主进程跨窗同步并平滑生效。
 
-拖拽、换包和卸载撤销探身准备；素材解码后才一起应用位置、遮挡和命中，失败保留旧画面，表演移出遮挡后才上报 started。隐藏／最小化暂停移动、漫游、探身及跟踪，恢复重新约束。
-
-云端 stay／失败不启动漫游；位置由模型的空间智能决定，客户端不另行择位，漫游续行仍要求真实空闲信号。
+窗口使用普通栖息与容器移动，不依赖动作或探身素材。拖拽接管移动，隐藏、最小化或锁屏暂停路径和漫游，恢复重新约束；云端 stay 或失败不启动移动，漫游续行仍要求真实空闲信号。
 
 ## 会话与媒体
 
@@ -160,14 +154,13 @@ speech 持唯一播放队列与台词合成，点播和自动连播共用队列�
 
 [scene-store.ts](modules/scene/scene-store.ts) 分别持当前环境、创建任务、重生成与分页库，按后端版本、请求及账户代次判活。详情写请求按场景保留在途与未知结果状态，离页不释放提交锁；未知结果须刷新核对或明确结束本地等待，账户清理使旧回执失效。详情按 ID 单读，进入详情时先更新任务状态和恢复入口，再异步加载图片，旧读取不得覆盖最新结果；仍在处理时由轮询同步全局状态，等待较久后降低轮询频率，状态读取本身不重试分析或生图。读取失败保留当前页面状态并提供重试入口。新图预加载成功才替换背景，失败保留旧图但更新任务和政策。不可变图片共享在途与成功解析，图片失败单独重取并校验资产；新场景按固定画幅交付，生成与上传不读取显示器尺寸。任务与激活定义归 [场景契约](../../docs/PROTOCOL.md#场景任务与原位换图)。
 
-## 动作素材呈现
+## 静态造型呈现
 
-- 每套着装对应唯一动作组，衣柜先选着装再进入动作列表。请求、进度与错误按着装／包／动作归属，单动作忙碌不禁用其他动作；结果未知仍视为未结束，不能再次提交。重做候选与当前素材分别展示，采纳后刷新目录，待确认或失败继续使用已采纳素材。
-- 网络和持久 manifest 同样校验类型、默认动作、遮罩及包／目录版本，非法目录保留可用画面；片段经 `apiAsset(preferCache)`，目录和遮罩经 `apiAssetBuffer`。同版本共享在途与成功结果，失败释放缓存，账户清理阻断旧回写。
-- 双缓冲等待图片解码或视频首帧再换图；[MediaStage.tsx](modules/character/rendering/video/MediaStage.tsx) 按内容轮廓适配侧栏，绘制与命中扣除同一等比留白。图片静态 alpha、视频逐帧遮罩，缺遮罩时侧栏命中限已知内容边界。
-- 气泡与轻语用整段素材合并的上部轮廓锚定头部，避免逐帧抖动，轮廓更新后重算屏幕避让。
-- 图片只呈现基础动作，动态表达仅视频；移动由容器位移，不从播放推断嘴部或视线。[render-resolver](modules/character/presentation/render-resolver.ts) 选择媒体或 fallback，蛋区分准备、生成、失败及未就绪。
-- 自定义动作展示同着装各画面的制作状态，当前版本未制作时提供显式生成入口；水合与进度刷新不触发付费制作。关联与分别制作语义见 [动作目录与播放](../../docs/PROTOCOL.md#动作目录与播放)。
+衣柜列表与详情只管理静态全身图，确认与穿着分开。列表水合和事件刷新不开始付费制作；桌景素材选择不切换穿着，页面状态与草稿按账户保存。
+
+[OutfitStage](modules/character/rendering/outfit-stage.tsx) 为精灵窗与侧边伙伴共用的静态造型层，解码并读取 alpha 后才切换可见图；尚无可用图片时由同一组件给出准备中、无造型或加载失败的蛋形兜底与重试入口。当前图片加载失败时保留旧画面并提供重试；账户变化立即隔离旧画面与迟到回写。
+
+绘制、主体边界、气泡上部锚点和点击穿透从同一图片 alpha 推导。侧边伙伴按主体轮廓适配可用空间，精灵舞台按原比例完整显示；形变和留白不扩大像素命中。
 
 ## 主题与玻璃效果
 

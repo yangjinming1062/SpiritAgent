@@ -5,7 +5,6 @@ import { openSessionSurface, openWhisper } from '@/app/workflows/session-deliver
 import {
   $effectiveTier,
   $screenLocked,
-  $spatialPeek,
   $spatialPos,
   $spatialScale,
   $spriteContentRect,
@@ -44,7 +43,6 @@ function ProactiveBubbleView({ text, sessionId }: { text: string; sessionId?: st
   const viewport = useStore($viewport)
   const contentRect = useStore($spriteContentRect)
   const headRect = useStore($spriteHeadRect)
-  const peek = useStore($spatialPeek)
   const bubbleRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ width: BUBBLE_MAX_W, height: 0 })
 
@@ -73,7 +71,6 @@ function ProactiveBubbleView({ text, sessionId }: { text: string; sessionId?: st
     pos,
     scale,
     anchorRect: headRect ?? contentRect,
-    peek,
     gap: BUBBLE_GAP,
     overlayW: size.width,
     overlayH: size.height,

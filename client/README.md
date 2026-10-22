@@ -9,7 +9,7 @@
 | 登录、换号与会话过期 | [session.ts](main/backend/session.ts)、[session-runtime.ts](main/backend/session-runtime.ts)、[auth.ts](main/ipc/auth.ts) → [account-lifecycle.ts](renderer/app/workflows/account-lifecycle.ts)、[auth store](renderer/shared/store/auth.ts) |
 | 网关、Runner 派发与断连 | [账户网关](main/backend/gateway.ts)、[网关 IPC](main/ipc/gateway.ts)、[Runner 派发](main/ipc/runner.ts)；渲染层见 [gateway-runtime.ts](renderer/app/runtime/gateway-runtime.ts) |
 | 历史、语音与资产缓存 | [session-history.ts](main/ipc/session-history.ts)、[asset-disk-cache.ts](main/ipc/asset-disk-cache.ts)、[voice-playback.ts](main/ipc/voice-playback.ts) → [conversation](renderer/modules/conversation/)、[conversation-speech.ts](renderer/app/workflows/conversation-speech.ts) |
-| 衣柜、着装与逐动作制作 | [appearance-page.tsx](renderer/app/features/appearance/appearance-page.tsx)、[outfit-section.tsx](renderer/app/features/appearance/outfit-section.tsx)、[video-section.tsx](renderer/app/features/appearance/video-section.tsx) → [video-pack-store.ts](renderer/modules/character/rendering/video/video-pack-store.ts)；后端沿 [窗口动作](../backend/features/actions/README.md) 核对 |
+| 衣柜静态造型与穿着 | [衣柜页](renderer/app/features/appearance/appearance-page.tsx)、[造型列表](renderer/app/features/appearance/outfit-section.tsx) → [衣柜状态](renderer/modules/character/wardrobe/wardrobe-store.ts)；后端沿 [外观](../backend/features/appearance/README.md) 核对 |
 | 人设、记忆与素材 | [persona-page.tsx](renderer/app/features/companion/persona-page.tsx)、[memory-section.tsx](renderer/app/features/companion/memory-section.tsx) |
 | 伙伴声音、音色设计与克隆 | [voice-manager.tsx](renderer/app/features/companion/voice-manager.tsx) 供伙伴页与首次引导共用；录音和上传见 [use-voice-sample.ts](renderer/app/features/companion/use-voice-sample.ts)，跨层约束见 [音色设计与克隆](../docs/PROTOCOL.md#音色设计与克隆) |
 | 场景与背景 | [scene-store.ts](renderer/modules/scene/scene-store.ts)、[scene-backdrop.tsx](renderer/app/features/scene/scene-backdrop.tsx)；后端沿 [场景改动链](../backend/features/scenes/README.md#场景改动链) 核对 |
@@ -56,7 +56,7 @@
 - `preferCache` 命中无需等待后端；普通缓存请求用 ETag 复验，网络、正文或写盘失败可保留旧副本，鉴权失败仍上报。`cacheOnly` 只读本地，未命中返回 `null`。
 - 同账户、同资源的并发下载合并。有效字节不按数量或容量自动淘汰；损坏文件可重新获取，空间不足报告写入失败。
 - 资产下载独立使用 60 秒总期限；缓存下载的请求或正文传输中断最多重试一次，共享原期限；取消、超时和 HTTP 失败不重试，完整正文读取成功后才落盘。
-- 动作目录保留最近成功 manifest，先恢复再网络校准；外观页缓存列表并预取。renderer 的片段、遮罩和图片解析缓存另守卫账户清理代次，失败结果不保留。
+- 衣柜缓存列表并预取立绘，启动先使用可用图片缓存再校准；图片解析与 alpha 命中守卫账户清理代次，失败可单独重试。
 - 历史语音只在播放时下载，后续及重启后优先本地读取；`speak` 合成只合并内存与在途请求，`speakScripted` 按账户和内容落盘。合成缓存按产品账户隔离，在途合并还绑定鉴权会话；读取、出网与返回均复核当前账户，换号后的结果不返回新账户。
 
 收听状态与断点由 [voice-playback-store.ts](main/ipc/voice-playback-store.ts) 独立保存于 `cache/voice-playback`，不随历史快照失效清除。主进程串行合并、写盘并广播版本快照；每秒保存进度，中断和结束立即保存，退出有界等待。消息删除只清理服务端已确认删除的记录，历史截断不作为删除依据。

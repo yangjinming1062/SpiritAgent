@@ -3,7 +3,6 @@
 from entrypoints.desktop.handlers import drain as drain_user_sessions
 from entrypoints.scheduler.cron import drain as drain_cron
 from entrypoints.scheduler.cron import invalidate_user_scheduler_state, stop_scheduler
-from features.actions.lifecycle import runtime_participants as action_participants
 from features.appearance.lifecycle import runtime_participants as appearance_participants
 from features.companion.lifecycle import runtime_participants as companion_participants
 from features.conversation.submissions import recover_interrupted_submissions
@@ -18,7 +17,6 @@ from runtime.events.loop import drain_event_tasks, stop_event_loop
 from runtime.lifecycle import RUNTIME_LIFECYCLE, RuntimeParticipant
 from workflows.action_library import drain_shared_actions, prepare_shared_actions, resume_shared_actions
 from workflows.onboarding.initial_appearance import resume_initial_appearance
-from workflows.outfit_actions import resume_outfit_actions
 
 
 def configure_runtime_lifecycle() -> None:
@@ -34,15 +32,9 @@ def configure_runtime_lifecycle() -> None:
                 resume_user=resume_shared_actions,
                 drain=drain_shared_actions,
             ),
-            *action_participants(),
             *desktop_life_participants(),
             *appearance_participants(),
             *scene_participants(),
-            RuntimeParticipant(
-                "appearance.base_actions",
-                recover=resume_outfit_actions,
-                resume_user=resume_outfit_actions,
-            ),
             RuntimeParticipant("onboarding.initial_assets", recover=resume_initial_appearance),
             *post_participants(),
             *companion_participants(),

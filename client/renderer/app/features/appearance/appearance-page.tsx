@@ -3,14 +3,14 @@ import type React from 'react'
 import { useEffect, useState } from 'react'
 
 import { useAssetLibrarySearch } from '@/app/components/asset-library-header'
-import { $outfits, hydrateAvatarSeeds, hydrateVideoPack, hydrateWardrobe } from '@/modules/character'
+import { $outfits, hydrateAvatarSeeds, hydrateWardrobe } from '@/modules/character'
 import { $auth } from '@/shared/store/auth'
 
 import { $appearanceUi, updateAppearanceUi } from './appearance-ui-state'
+import { OutfitDetail } from './outfit-detail'
 import { OutfitSection } from './outfit-section'
-import { VideoSection } from './video-section'
 
-// 衣柜页按着装 → 动作组织；窗口模式显示设置归设置页统一管理。
+// 衣柜页按造型素材组织；窗口模式显示设置归设置页统一管理。
 interface AppearancePageProps {
   startCreating?: boolean
   onMaterialReady?: (outfitId: number) => void
@@ -43,7 +43,6 @@ export function AppearancePage({
         }
       })
       void hydrateAvatarSeeds()
-      void hydrateVideoPack(true)
 
       return () => {
         current = false
@@ -64,7 +63,7 @@ export function AppearancePage({
       {selectedOutfitId === null ? (
         <OutfitSection onMaterialReady={onMaterialReady} onSelectOutfit={setSelectedOutfitId} search={librarySearch} />
       ) : (
-        <VideoSection
+        <OutfitDetail
           onBack={() => setSelectedOutfitId(null)}
           onMaterialReady={onMaterialReady}
           outfitId={selectedOutfitId}

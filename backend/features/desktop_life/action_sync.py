@@ -128,7 +128,6 @@ async def desktop_target_states(
                 status, can_generate, reason = "not_generated", action.enabled, None
         result.setdefault(action.definition_id, []).append(
             ActionVariantSummary(
-                target_kind="desktop",
                 target_id=action.set_id,
                 action_id=action.id,
                 label=label,
@@ -187,6 +186,6 @@ async def exclude_synced_desktop_action(db: AsyncSession, user_id: int, action_i
     action = await desktop_action(db, user_id, action_id, lock=True)
     if action.definition_id is None:
         raise DesktopVideoStateError("这个桌景动作没有关联共同动作")
-    await exclude_target(db, user_id, action.definition_id, "desktop", action.set_id)
+    await exclude_target(db, user_id, action.definition_id, action.set_id)
     action.enabled = False
     await touch_desktop_state(db, user_id)

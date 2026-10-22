@@ -6,7 +6,6 @@ import { $runnerPhase } from '@/shared/store/runner-status'
 import type { PresentationMode } from '@ipc/contracts'
 import { clamp } from '@runtime'
 
-import { $activePlayInstance, isActionStageVisible, observeActionStageVisibility } from './actions'
 import { $focusContext, $lastIdleSeconds, $screenLocked } from './activity'
 import { $effectiveTier } from './companion-store'
 import {
@@ -14,16 +13,14 @@ import {
   $homePosition,
   $spatialLocomotion,
   $spatialPos,
-  captureWindowPeekIntent,
   computePerchPlacement,
-  enterWindowPeek,
   getBaseSpriteHeight,
   getBaseSpriteWidth,
   locomotionForDistance,
   setSpatialLocale,
-  startRoam,
-  type WindowPeekIntent
+  startRoam
 } from './spatial'
+import { isCharacterStageVisible, observeCharacterStageVisibility } from './stage-visibility'
 
 const CONSULT_MIN_INTERVAL_MS = 60_000
 const MIN_ACTION_QUIET_MS = 60_000
@@ -51,9 +48,8 @@ function canConsultAutonomy(): boolean {
     active &&
     $runnerPhase.get() === 'running' &&
     $effectiveTier.get() === 'autonomous' &&
-    isActionStageVisible() &&
-    $spatialLocomotion.get() !== 'drag' &&
-    !$activePlayInstance.get()
+    isCharacterStageVisible() &&
+    $spatialLocomotion.get() !== 'drag'
   )
 }
 
@@ -111,16 +107,14 @@ function executeApproach(): void {
 }
 
 // 调用方 isCurrent 已同步重验（含舞台可见），这里不重复判断。
-function executeAutonomousAction(action: string, peekIntent: WindowPeekIntent | null): void {
+function executeAutonomousAction(action: string): void {
   switch (action) {
     case 'roam':
       startRoam()
 
       break
     case 'perch': {
-      if (peekIntent) {
-        void enterWindowPeek(peekIntent)
-      }
+      executeApproach()
 
       break
     }
@@ -198,8 +192,6 @@ async function consultAutonomyLLM(force = false): Promise<void> {
   consulting = true
 
   try {
-    const peekIntent = await captureWindowPeekIntent()
-
     if (!isCurrent()) {
       return
     }
@@ -223,7 +215,7 @@ async function consultAutonomyLLM(force = false): Promise<void> {
 
     if (isCurrent() && res?.should_act && res.action) {
       lastAutonomousActionAt = Date.now()
-      executeAutonomousAction(res.action, peekIntent)
+      executeAutonomousAction(res.action)
     }
   } finally {
     consulting = false
@@ -257,7 +249,7 @@ export function startAutonomyProvision(): () => void {
   unsubs.push($focusContext.subscribe(onStateOrEventChange))
   // 完整入口、轻语、锁屏或精灵窗隐藏使舞台不可见：作废在途咨询，恢复可见后重新判断。
   unsubs.push(
-    observeActionStageVisibility(visible => {
+    observeCharacterStageVisibility(visible => {
       if (!visible) {
         invalidateConsult()
 

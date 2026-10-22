@@ -169,20 +169,6 @@ export function handleGatewayEvent(event: GatewayEvent): void {
     case 'companion.character_card.updated':
 
     case 'companion.outfit.updated':
-
-    case 'companion.action.catalog_changed':
-
-    case 'companion.action.job_updated':
-
-    case 'companion.action.play_requested':
-
-    case 'companion.video.activated':
-
-    case 'companion.video.failed':
-
-    case 'companion.video.progress':
-
-    case 'companion.video.ready':
       handleCharacterEvent(event)
 
       break

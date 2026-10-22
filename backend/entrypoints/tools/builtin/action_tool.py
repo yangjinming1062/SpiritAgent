@@ -3,7 +3,7 @@
 import json
 from typing import Any
 
-from features.actions.schemas import ABSOLUTE_MAX_DURATION_SECONDS
+from features.action_library.schemas import ABSOLUTE_MAX_DURATION_SECONDS
 from runtime.tools.registry import ToolsRegistry
 from workflows.companion_action_prompts import (
     ACTION_DESIGN_MOTION_DESCRIPTION,

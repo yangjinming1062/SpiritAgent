@@ -17,7 +17,6 @@ class AiTaskKey(StrEnum):
     appearance = "appearance"
     outfit = "outfit"
     scene = "scene"
-    window_action = "window_action"
     desktop_life = "desktop_life"
     speech_input = "speech_input"
     companion_voice = "companion_voice"
@@ -151,16 +150,6 @@ AI_TASKS: tuple[AiTaskDefinition, ...] = (
         {
             "llm": ("场景重复伙伴检查", "场景标题与描述"),
             "image_gen": ("场景图片生成与重绘", "初始化与夜间规划创建的场景"),
-        },
-    ),
-    _task(
-        AiTaskKey.window_action,
-        "窗口动作",
-        "窗口动作",
-        {
-            "llm": ("动作提案评审", "静态动作描述与视频脚本", "动作成品与身份检查", "探身遮挡位置分析"),
-            "image_gen": ("外观参考校准图", "动作姿态图", "初始化与夜间制作的动作图片"),
-            "video_gen": ("窗口动作视频", "初始化与夜间制作的动作视频"),
         },
     ),
     _task(

@@ -24,8 +24,6 @@ BACKUP_TABLE_ORDER = (
     "companion_character_cards",
     "companion_outfits",
     "action_definitions",
-    "companion_action_packs",
-    "companion_actions",
     "companion_scenes",
     "desktop_video_sets",
     "desktop_video_actions",

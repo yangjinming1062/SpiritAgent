@@ -3,7 +3,7 @@
 import asyncio
 from collections.abc import Iterable
 from contextlib import suppress
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 from infrastructure.assets.asset_store import unlink_companion_asset
@@ -31,7 +31,6 @@ from features.assets.references import (
 )
 
 logger = get_logger(__name__)
-_ACTION_GRACE = timedelta(hours=24)
 _ASSET_SUFFIXES = {
     ".png",
     ".jpg",
@@ -187,13 +186,7 @@ async def _cleanup_user_assets(user_id: int, *, discover: bool = False) -> int:
             else:
                 released |= await asyncio.to_thread(_disk_assets, user_id) - referenced
         protected_until = await protected_asset_paths(db, user_id)
-        now = utc_now()
-        entries: list[tuple[str, datetime | None]] = []
-        for path in released:
-            not_before = protected_until.get(path)
-            if not_before is None and any(part.startswith("pack") and part[4:].isdigit() for part in Path(path).parts):
-                not_before = now + _ACTION_GRACE
-            entries.append((path, not_before))
+        entries = [(path, protected_until.get(path)) for path in released]
         await enqueue_asset_cleanup_entries(db, user_id, entries)
         await db.commit()
 

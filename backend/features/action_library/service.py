@@ -1,4 +1,4 @@
-"""共享创意受理和目标登记；不直接操作窗口或桌景的 ORM。"""
+"""共享创意受理和目标登记；不直接操作桌景的 ORM。"""
 
 import json
 import unicodedata
@@ -19,7 +19,6 @@ from .schemas import (
     ActionDefinitionDesign,
     ActionDefinitionSnapshot,
     ActionSourceSnapshot,
-    ActionTargetKind,
     ActionTargetSnapshot,
     DefinitionAcceptance,
 )
@@ -35,7 +34,6 @@ async def accept_definition(
     design: ActionDefinitionDesign,
     *,
     source: str,
-    origin_kind: ActionTargetKind,
     expected_target_id: int | None = None,
 ) -> DefinitionAcceptance:
     if source not in {"autonomous", "user_requested"}:
@@ -43,7 +41,7 @@ async def accept_definition(
     if source == "autonomous" and not SETTINGS.action_autocreate_enabled:
         return DefinitionAcceptance(definition_id=0, status="rejected", message="自主创建新动作当前已关闭")
     await lock_user_row(db, user_id)
-    target = await read_source(db, user_id, origin_kind, expected_target_id)
+    target = await read_source(db, user_id, expected_target_id)
     if (
         target is None
         or not target.ready
@@ -82,7 +80,6 @@ async def accept_definition(
             source=source,
             status="pending",
             review_source_json=target.model_dump_json(),
-            origin_kind=origin_kind,
             origin_target_id=target.target_id,
             fanout_pending=False,
         )
@@ -93,7 +90,6 @@ async def accept_definition(
         select(ActionSyncTarget).where(
             ActionSyncTarget.user_id == user_id,
             ActionSyncTarget.definition_id == canonical_id,
-            ActionSyncTarget.target_kind == origin_kind,
             ActionSyncTarget.target_id == target.target_id,
         ),
     )
@@ -109,7 +105,7 @@ async def accept_definition(
         # 同名始终沿用冻结设计；重提只重新评审，不改写已登记的动作含义。
         row.status, row.source, row.review_reason = "pending", source, ""
         row.review_source_json = target.model_dump_json()
-        row.origin_kind, row.origin_target_id = origin_kind, target.target_id
+        row.origin_target_id = target.target_id
     return DefinitionAcceptance(
         definition_id=row.id,
         status=row.status,
@@ -140,7 +136,6 @@ async def ensure_target(
     row = await db.scalar(
         select(ActionSyncTarget).where(
             ActionSyncTarget.definition_id == definition_id,
-            ActionSyncTarget.target_kind == target.target_kind,
             ActionSyncTarget.target_id == target.target_id,
         ),
     )
@@ -148,7 +143,6 @@ async def ensure_target(
         row = ActionSyncTarget(
             user_id=user_id,
             definition_id=definition_id,
-            target_kind=target.target_kind,
             target_id=target.target_id,
             automatic=automatic,
             state="pending"
@@ -218,14 +212,12 @@ async def exclude_target(
     db: AsyncSession,
     user_id: int,
     definition_id: int,
-    kind: ActionTargetKind,
     target_id: int,
 ) -> None:
     row = await db.scalar(
         select(ActionSyncTarget).where(
             ActionSyncTarget.user_id == user_id,
             ActionSyncTarget.definition_id == definition_id,
-            ActionSyncTarget.target_kind == kind,
             ActionSyncTarget.target_id == target_id,
         ),
     )
@@ -236,7 +228,6 @@ async def exclude_target(
 async def remove_container_targets(
     db: AsyncSession,
     user_id: int,
-    kind: ActionTargetKind,
     target_id: int,
 ) -> None:
     """容器整体删除后不再保留无归属目标；单版本删除仍保留排除记录。"""
@@ -244,14 +235,12 @@ async def remove_container_targets(
     await db.execute(
         delete(ActionSyncTarget).where(
             ActionSyncTarget.user_id == user_id,
-            ActionSyncTarget.target_kind == kind,
             ActionSyncTarget.target_id == target_id,
         ),
     )
     local_definitions = await db.scalars(
         select(ActionDefinition).where(
             ActionDefinition.user_id == user_id,
-            ActionDefinition.origin_kind == kind,
             ActionDefinition.origin_target_id == target_id,
         ),
     )
@@ -277,7 +266,7 @@ async def record_review(
     review_source = ActionSourceSnapshot.model_validate_json(row.review_source_json)
     # 拒绝不依赖来源仍可落库；只有采纳结论要求来源新鲜。
     if decision in {"approve", "reuse"}:
-        current_source = await read_source(db, user_id, review_source.target_kind, review_source.target_id)
+        current_source = await read_source(db, user_id, review_source.target_id)
         if (
             current_source is None
             or not current_source.ready

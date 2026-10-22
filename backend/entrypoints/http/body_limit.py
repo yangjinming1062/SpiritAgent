@@ -31,7 +31,6 @@ def _body_policy(scope: Scope) -> tuple[int, bool | None]:
         "chat": SETTINGS.max_attachments_per_turn * ATTACHMENT_DATA_URL_MAX_CHARS + _MIB,
         "image": 16 * _MIB + _DEFAULT_MAX_BYTES,
         "image_file": SCENE_DOWNLOAD_MAX_BYTES + _UPLOAD_OVERHEAD_BYTES,
-        "action_pack": 512 * _MIB + _DEFAULT_MAX_BYTES,
         "video": SETTINGS.video_attachment_max_bytes + _UPLOAD_OVERHEAD_BYTES,
         "audio": STT_MAX_AUDIO_BYTES + _UPLOAD_OVERHEAD_BYTES,
         "backup": 4 * 1024 * _MIB + _UPLOAD_OVERHEAD_BYTES,

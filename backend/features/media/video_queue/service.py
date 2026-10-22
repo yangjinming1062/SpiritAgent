@@ -7,9 +7,15 @@ from datetime import timedelta
 from uuid import uuid4
 
 from infrastructure.ai.error_classifier import ClassifiedError, FailoverReason, LLMRuntimeError, classify_api_error
-from infrastructure.ai.llm_client import build_provider
+from infrastructure.ai.llm_client import build_provider, resolve_model_config
 from infrastructure.ai.llm_fallback import execute_with_fallback
-from infrastructure.ai.providers.base import ProviderConfig, VideoGenProvider, VideoGenRequest, VideoJobStatus
+from infrastructure.ai.providers.base import (
+    ProviderConfig,
+    ServiceType,
+    VideoGenProvider,
+    VideoGenRequest,
+    VideoJobStatus,
+)
 from infrastructure.ai.providers.http import ProviderResultUnknownError
 from infrastructure.database import ENGINE, SESSION_LOCAL
 from infrastructure.hashing import sha256_hex
@@ -343,7 +349,21 @@ async def _config(row: VideoQueueRequest, lane: VideoQueueLane) -> ProviderConfi
     if row.user_id is None:
         return None
     frozen = FrozenMediaProvider.model_validate_json(row.frozen_json)
-    current = await resolve_frozen_media_provider(row.user_id, "video_gen", frozen)
+    if row.cancel_requested and row.entity_id is None:
+        async with SESSION_LOCAL() as db:
+            current = await resolve_model_config(
+                db,
+                row.user_id,
+                ServiceType.video_gen,
+                frozen.model_card_id,
+                frozen.provider_id,
+            )
+        if current is not None and (current.provider_name != frozen.provider or current.base_url != frozen.base_url):
+            return None
+        if current is not None:
+            current = replace(current, model=frozen.model)
+    else:
+        current = await resolve_frozen_media_provider(row.user_id, "video_gen", frozen)
     if current is None:
         return None
     if row.state in _ACTIVE and sha256_hex(current.api_key) != lane.credential_fingerprint:
@@ -850,7 +870,8 @@ async def cleanup_video_queue() -> None:
             await db.scalars(
                 select(VideoQueueRequest).where(
                     VideoQueueRequest.state.in_(_TERMINAL),
-                    VideoQueueRequest.consumed_at < utc_now() - timedelta(days=7),
+                    (VideoQueueRequest.kind == "action")
+                    | (VideoQueueRequest.consumed_at < utc_now() - timedelta(days=7)),
                 ),
             ),
         )

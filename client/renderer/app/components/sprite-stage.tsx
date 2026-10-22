@@ -6,7 +6,6 @@ import {
   $expressionBoost,
   $homePosition,
   $spatialLocomotion,
-  $spatialPeek,
   $spatialPos,
   $spatialScale,
   $spriteContentRect,
@@ -18,7 +17,6 @@ import {
   getBaseSpriteHeight,
   getBaseSpriteWidth,
   handleDragEndInteraction,
-  peekMaskRects,
   playSpriteGesture,
   setSpriteState,
   SpriteVfxOverlay,
@@ -100,7 +98,6 @@ export function SpriteStage({
   const lastTapRef = useRef(0)
   const pos = useStore($spatialPos)
   const scale = useStore($spatialScale)
-  const peek = useStore($spatialPeek)
   const expressionBoost = useStore($expressionBoost)
   const content = useStore($spriteContentRect)
   const stageHitTest = useMediaPixelHitTest(windowId)
@@ -502,31 +499,11 @@ export function SpriteStage({
 
   const spriteW = getBaseSpriteWidth()
   const spriteH = getBaseSpriteHeight()
-  const maskRects = peekMaskRects(peek, pos, scale, spriteW, spriteH)
   // 形变与情绪放大以内容脚底中点为原点，透明留白不参与。
   const bodyOrigin = `${((content?.left ?? 0) + (content?.right ?? 1)) * 50}% ${(content?.bottom ?? 1) * 100}%`
 
   return (
     <div className="fixed inset-0" data-sprite-stage style={{ pointerEvents: 'none' }}>
-      {peek ? (
-        <svg aria-hidden="true" className="pointer-events-none absolute size-0" focusable="false">
-          <defs>
-            <mask height={spriteH} id="spiritagent-peek-mask" maskUnits="userSpaceOnUse" width={spriteW}>
-              <rect fill="white" height={spriteH} width={spriteW} x="0" y="0" />
-              {maskRects.map((rect, index) => (
-                <rect
-                  fill="black"
-                  height={rect.bottom - rect.top}
-                  key={index}
-                  width={rect.right - rect.left}
-                  x={rect.left}
-                  y={rect.top}
-                />
-              ))}
-            </mask>
-          </defs>
-        </svg>
-      ) : null}
       <div
         className="absolute transition-opacity duration-200"
         onContextMenu={e => {
@@ -564,8 +541,6 @@ export function SpriteStage({
           touchAction: 'none',
           visibility: hidden ? 'hidden' : 'visible',
           opacity: hidden ? 0 : 1,
-          mask: peek ? 'url(#spiritagent-peek-mask)' : undefined,
-          WebkitMask: peek ? 'url(#spiritagent-peek-mask)' : undefined,
           transform: `translate3d(${pos.x}px, ${pos.y}px, 0px) scale(${scale})`,
           transformOrigin: 'top left',
           willChange: 'transform, opacity'

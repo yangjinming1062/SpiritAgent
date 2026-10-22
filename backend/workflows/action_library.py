@@ -20,7 +20,6 @@ from features.action_library.schemas import (
     ActionDefinitionDesign,
     ActionDefinitionSnapshot,
     ActionSourceSnapshot,
-    ActionTargetKind,
     ActionTargetSnapshot,
     ActionVariantSummary,
 )
@@ -34,14 +33,6 @@ from features.action_library.service import (
     record_review,
     recover_interrupted_reviews,
     release_ready_target,
-)
-from features.actions.action_sync import (
-    active_window_action_source,
-    ensure_synced_window_action,
-    request_synced_window_generation,
-    window_action_source,
-    window_action_sources,
-    window_target_states,
 )
 from features.companion.proactive_runtime import get_presentation_snapshot
 from features.desktop_life.action_sync import (
@@ -70,15 +61,8 @@ _TARGETS: set[tuple[int, int]] = set()
 async def action_source_reader(
     db: AsyncSession,
     user_id: int,
-    kind: ActionTargetKind,
     target_id: int | None,
 ) -> ActionSourceSnapshot | None:
-    if kind == "window":
-        return (
-            await active_window_action_source(db, user_id)
-            if target_id is None
-            else await window_action_source(db, user_id, target_id)
-        )
     if target_id is None:
         state = await desktop_state_snapshot(db, user_id)
         target_id = state.current_set_id if state else None
@@ -94,34 +78,22 @@ async def action_variants_reader(
     user_id = targets[0].user_id
     if any(item.user_id != user_id for item in targets):
         raise ValueError("共享动作版本读取只支持同一账户的目标")
-    states: dict[ActionTargetKind, dict[int, list[ActionVariantSummary]]] = {}
-    window_ids = list({item.definition_id for item in targets if item.target_kind == "window"})
-    desktop_ids = list({item.definition_id for item in targets if item.target_kind == "desktop"})
-    if window_ids:
-        states["window"] = await window_target_states(db, user_id, window_ids)
-    if desktop_ids:
-        states["desktop"] = await desktop_target_states(db, user_id, desktop_ids)
+    states = await desktop_target_states(db, user_id, {item.definition_id for item in targets})
     result: list[ActionVariantSummary] = []
-    fallbacks: dict[tuple[ActionTargetKind, int], ActionSourceSnapshot | None] = {}
+    fallbacks: dict[int, ActionSourceSnapshot | None] = {}
     for target in targets:
         found = next(
-            (
-                item
-                for item in states.get(target.target_kind, {}).get(target.definition_id, [])
-                if item.target_id == target.target_id
-            ),
+            (item for item in states.get(target.definition_id, []) if item.target_id == target.target_id),
             None,
         )
         if found is not None:
             result.append(found)
             continue
-        key = (target.target_kind, target.target_id)
-        if key not in fallbacks:
-            fallbacks[key] = await action_source_reader(db, target.user_id, target.target_kind, target.target_id)
-        source = fallbacks[key]
+        if target.target_id not in fallbacks:
+            fallbacks[target.target_id] = await action_source_reader(db, target.user_id, target.target_id)
+        source = fallbacks[target.target_id]
         result.append(
             ActionVariantSummary(
-                target_kind=target.target_kind,
                 target_id=target.target_id,
                 action_id=target.action_id,
                 label=source.label if source else "",
@@ -179,10 +151,10 @@ async def _fanout_definition(user_id: int, definition_id: int, *, only: ActionSo
         if only is not None:
             sources = (only,)
         elif definition.scope == "target":
-            source = await action_source_reader(db, user_id, definition.origin_kind, definition.origin_target_id)
+            source = await action_source_reader(db, user_id, definition.origin_target_id)
             sources = (source,) if source is not None else ()
         else:
-            sources = (*await window_action_sources(db, user_id), *await desktop_action_sources(db, user_id))
+            sources = await desktop_action_sources(db, user_id)
     queued: list[int] = []
     for source in sources:
         if not definition_applies_to_source(definition, source):
@@ -190,7 +162,7 @@ async def _fanout_definition(user_id: int, definition_id: int, *, only: ActionSo
         try:
             async with SESSION_LOCAL() as db:
                 await lock_user_row(db, user_id)
-                current_source = await action_source_reader(db, user_id, source.target_kind, source.target_id)
+                current_source = await action_source_reader(db, user_id, source.target_id)
                 if current_source is None:
                     continue
                 source = current_source
@@ -198,10 +170,7 @@ async def _fanout_definition(user_id: int, definition_id: int, *, only: ActionSo
                     continue
                 target = await ensure_target(db, user_id, definition_id, source, automatic=True)
                 if target.state != "excluded" and definition_matches_source(definition, source):
-                    ensure = (
-                        ensure_synced_window_action if source.target_kind == "window" else ensure_synced_desktop_action
-                    )
-                    action_id = await ensure(db, user_id, source.target_id, definition)
+                    action_id = await ensure_synced_desktop_action(db, user_id, source.target_id, definition)
                     await bind_target(db, user_id, target.id, action_id)
                     target = await target_snapshot(db, user_id, target.id)
                     if target is not None and target.state == "blocked" and target.automatic:
@@ -222,7 +191,7 @@ async def _fanout_definition(user_id: int, definition_id: int, *, only: ActionSo
             )
             async with SESSION_LOCAL() as db:
                 await lock_user_row(db, user_id)
-                current_source = await action_source_reader(db, user_id, source.target_kind, source.target_id)
+                current_source = await action_source_reader(db, user_id, source.target_id)
                 if current_source is None:
                     continue
                 source = current_source
@@ -255,7 +224,7 @@ async def _dispatch_target(user_id: int, target_id: int) -> None:
         if definition is None:
             return
         async with SESSION_LOCAL() as db:
-            source = await action_source_reader(db, user_id, target.target_kind, target.target_id)
+            source = await action_source_reader(db, user_id, target.target_id)
         if source is None or not definition_matches_source(definition, source):
             raise ValueError("动作制作来源已变化或不属于当前画面")
         if target.action_id is None:
@@ -268,10 +237,7 @@ async def _dispatch_target(user_id: int, target_id: int) -> None:
             state = await action_variant_reader(db, target)
         if state is not None and state.status == "blocked" and not state.can_generate:
             raise ValueError(state.reason or "制作来源尚未就绪")
-        request = (
-            request_synced_window_generation if target.target_kind == "window" else request_synced_desktop_generation
-        )
-        await request(user_id, target.action_id, source=definition.source)
+        await request_synced_desktop_generation(user_id, target.action_id, source=definition.source)
         async with SESSION_LOCAL() as db:
             await mark_target_dispatched(db, user_id, target_id)
             await db.commit()
@@ -286,18 +252,15 @@ async def _dispatch_target(user_id: int, target_id: int) -> None:
             await db.commit()
 
 
-async def synchronize_action_target(user_id: int, kind: ActionTargetKind, target_id: int) -> None:
-    async with SESSION_LOCAL() as db:
-        source = await action_source_reader(db, user_id, kind, target_id)
-        definitions = await matching_definitions(db, source, match_visual=False) if source is not None else []
-    if source is not None:
-        for definition in definitions:
-            if definition.status == "approved":
-                await _fanout_definition(user_id, definition.id, only=source)
-
-
 async def synchronize_desktop_set(user_id: int, set_id: int) -> None:
-    await synchronize_action_target(user_id, "desktop", set_id)
+    async with SESSION_LOCAL() as db:
+        source = await action_source_reader(db, user_id, set_id)
+        definitions = await matching_definitions(db, source, match_visual=False) if source is not None else []
+    if source is None:
+        return
+    for definition in definitions:
+        if definition.status == "approved":
+            await _fanout_definition(user_id, definition.id, only=source)
 
 
 async def update_desktop_actions(user_id: int, set_id: int) -> None:
@@ -337,7 +300,6 @@ async def design_shared_desktop_action(
                 reason=request.reason,
             ),
             source=source,
-            origin_kind="desktop",
             expected_target_id=request.expected_set_id,
         )
         await db.commit()
@@ -352,10 +314,7 @@ def _desktop_local_variant(
     variants: Sequence[ActionVariantSummary],
     target_id: int,
 ) -> ActionVariantSummary | None:
-    return next(
-        (item for item in variants if item.target_kind == "desktop" and item.target_id == target_id),
-        None,
-    )
+    return next((item for item in variants if item.target_id == target_id), None)
 
 
 def _desktop_proposal(

@@ -31,7 +31,7 @@ class OutfitSource(BaseModel):
     reference_image_path: str | None = None
     reference_description: str | None = None
     feedback_history: list[str] = Field(default_factory=list)
-    # 生成时的角色卡修订与全身身份图路径；确认、穿着和视频包据此判断外观是否仍对应当前身份。
+    # 生成时的角色卡修订与全身身份图路径；确认和穿着据此判断外观是否仍对应当前身份。
     character_card_revision: int | None = None
     identity_reference_path: str = Field(min_length=1)
 
@@ -46,7 +46,7 @@ class OutfitSource(BaseModel):
 
 
 class CompanionOutfit(ModelBase, TimestampMixin):
-    """衣柜外观及其着装参考；ready 表示参考就绪，视频状态由动作包维护。"""
+    """衣柜外观及其着装参考；ready 表示静态造型图就绪。"""
 
     __tablename__ = "companion_outfits"
     __table_args__ = (
@@ -65,9 +65,6 @@ class CompanionOutfit(ModelBase, TimestampMixin):
     # 生成来源与身份修订守卫，结构见 OutfitSource
     source_json: Mapped[str] = mapped_column(Text, default="{}", server_default=text("'{}'"))
     is_initial: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
-    # 每套着装首次动作包同事务置位；删除或备份恢复后不自动补建。
-    initial_video_started: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
-    initial_video_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), index=True)
 
 

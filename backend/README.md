@@ -10,7 +10,7 @@
 | 记忆召回、证据、编辑与遗忘 | [记忆领域](features/memory/README.md) |
 | 头像、角色卡与衣柜 | [外观](features/appearance/README.md) |
 | 场景制作、重生成与激活 | [场景](features/scenes/README.md) |
-| 动作提案、制作、目录与播放 | [窗口动作](features/actions/README.md) |
+| 动作提案、制作、目录与播放 | [共享动作](features/action_library/README.md)、[桌面生活](features/desktop_life/README.md) |
 | 桌面生活组合、制作与播放 | [桌面生活](features/desktop_life/README.md) |
 | 公共媒体制作与复核 | [媒体](features/media/README.md) |
 | Cron、主动陪伴与夜间 | [cron.py](entrypoints/scheduler/cron.py)、[定时任务数据](features/automation/cron_jobs.py)、[业务调度](#业务调度) |
@@ -45,7 +45,7 @@
 
 ORM 留在数据所属模块。跨模块读取使用冻结 DTO 或只读快照，写入使用公开操作；普通用例管理短事务，需原子完成的跨模块流程通过各模块提供的事务内操作共享同一事务。供应商等待始终在事务外。Pydantic 用于校验结构，dataclass 用于进程内值对象。
 
-业务实现依赖保持单向；例如动作读取外观和媒体，动态使用媒体并读取陪伴/记忆，陪伴读取记忆和会话证据。媒体不读取动态表或修改消息，分别通过显式任务关联和事务内结果处理器交付。外观就绪、动作目录读取和衣柜动作清理等协作端口由 [registrations.py](bootstrap/registrations.py) 装配。纯 DTO、枚举与静态词表不承担业务操作。
+业务实现依赖保持单向；例如动作读取外观和媒体，动态使用媒体并读取陪伴/记忆，陪伴读取记忆和会话证据。媒体不读取动态表或修改消息，分别通过显式任务关联和事务内结果处理器交付。角色就绪和桌景动作等协作端口由 [registrations.py](bootstrap/registrations.py) 装配。纯 DTO、枚举与静态词表不承担业务操作。
 
 [依赖检查器](../scripts/check_services_architecture.py) 检查目录方向、模块与业务实现环、跨业务 ORM 和私有入口、公开返回 ORM、入口 SQL、禁用目录及缺失导入。新增公开依赖须说明数据所有者和业务理由；检查器的通过不替代事务、权限和行为验证。
 
@@ -97,7 +97,7 @@ HTTP、调度与资产清理共用 [user_maintenance.py](runtime/user_maintenanc
 
 覆盖恢复和删除用户先经 `user.py` 阻止新操作并通过统一生命周期登记收敛在途任务，完成后重读持久状态恢复可继续任务。用户文件只落正式资产 `companion-assets/{user_id}/`、会话附件 `desktop-attachments/{session_id}/`、带用户元数据的 `temp-media/`；新增路径须同时纳入删除和备份。删除正式资产或会话附件失败保留用户行供重试，临时文件另由逐文件和过期清理兜底。备份类别、密钥范围及覆盖规则统一见 PROTOCOL。
 
-[backup.py](bootstrap/backup.py) 显式登记各模块的表贡献者；所属模块提供导出、校验、恢复和引用重建，备份流程消费描述与快照，不直接操作业务 ORM。动作目录与日记索引分别由动作、日记模块重建。
+[backup.py](bootstrap/backup.py) 显式登记各模块的表贡献者；所属模块提供导出、校验、恢复和引用重建，备份流程消费描述与快照，不直接操作业务 ORM。桌景关联与日记索引由所属模块恢复。
 
 ## 业务调度
 
@@ -188,7 +188,7 @@ Caddy 自动签发续期证书并代理 HTTP 与 WS；Backend 的明文 10620 �
 | [陪伴](features/companion/prompts.py)、[创作内容审阅](features/companion/narrative_prompts.py) | 人设、心情、环境、问候和主动回合；`prompt_runtime`、`first_greeting` 与主动流程；动态计划及日记的 `narrative_quality` 审阅与有界修订 |
 | [外观](features/appearance/prompts.py)、[场景](features/scenes/prompts.py) | 头像、全身、衣柜、角色卡及环境；各模块的 `prompt_assembly`、提取和制作服务 |
 | [媒体](features/media/prompts.py) | 共享视觉质感、身份参考、审核与评分；图像/视频质量链和出镜装配 |
-| [共享动作](features/action_library/prompts.py)、[窗口动作](features/actions/prompts.py)、[桌面生活](features/desktop_life/prompts.py) | 共同设计评审、姿态/运动、探身、实际画面描述和成品检查 |
+| [共享动作](features/action_library/prompts.py)、[桌面生活](features/desktop_life/prompts.py) | 共同设计评审、活动与运动、实际画面描述和成品检查 |
 | [记忆](features/memory/prompts.py)、[动态](features/posts/prompts.py) | 维护政策、召回资料、独立创作与线程回复；记忆模块、动态 `context`/`prompt_contract`/`publication`/`replies` |
 | [夜间](workflows/nightly/prompts.py)、[话题检索](workflows/nightly/topic_prompts.py) | 规划、阶段账本、检查点、日记与反思；夜间话题检索方向与筛选 |
 | [工具](runtime/tools/prompts.py)、[伙伴动作](workflows/companion_action_prompts.py) | 通用工具说明、验图、网页摘要、本机操作及统一动作能力；参数类型与必填项仍在工具 schema |

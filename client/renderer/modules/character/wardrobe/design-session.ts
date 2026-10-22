@@ -275,7 +275,7 @@ export function useOutfitDesignSession(
     setStage('confirming')
 
     try {
-      // 确认转正参考图，并由服务端安排基础动作；就绪后由用户选择穿上。
+      // 确认静态造型入柜，穿着由用户显式选择。
       await requestResource('companion.post_outfit_confirm', {
         path: { outfit_id: draft.id },
         body: {}

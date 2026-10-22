@@ -2,7 +2,6 @@ import { useStore } from '@nanostores/react'
 import { useEffect, useRef } from 'react'
 
 import {
-  $spatialPeek,
   $spatialPos,
   $spatialScale,
   $spriteContentRect,
@@ -100,7 +99,6 @@ function WhisperPositioner({
   const scale = useStore($spatialScale)
   const viewport = useStore($viewport)
   const contentRect = useStore($spriteContentRect)
-  const peek = useStore($spatialPeek)
   const baseOffset = useStore($whisperOffset) ?? { dx: 0, dy: 0 }
 
   const containerRef = useRef<HTMLDivElement>(null)
@@ -112,7 +110,6 @@ function WhisperPositioner({
     overlayH: WHISPER_HEIGHT,
     overlayW: WHISPER_WIDTH,
     anchorRect: contentRect,
-    peek,
     pos,
     scale,
     verticalRatio: 0.05,

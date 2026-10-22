@@ -35,9 +35,6 @@ def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: 
 
     if table == "companion_outfits":
         payload["source_json"] = OutfitSource.model_validate_json(payload["source_json"]).dump()
-        if payload.get("status") == "ready":
-            # 恢复后的首次准备由用户接管，不在恢复结束或重启时自动付费。
-            payload["initial_video_started"] = True
         if payload.get("status") == "ready" and payload.get("description_status") in {"pending", "processing"}:
             payload["description_status"] = "failed"
             payload["description_error"] = "恢复的外观描述任务需要手动重试"

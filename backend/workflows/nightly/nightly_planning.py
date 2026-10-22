@@ -497,11 +497,7 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
             has_reference=False,
         )
         presentation = get_presentation_snapshot(user_id)
-        video_task = (
-            AiTaskKey.desktop_life
-            if presentation is not None and presentation.mode == "desktop"
-            else AiTaskKey.window_action
-        )
+        video_task = AiTaskKey.desktop_life
         video_available = await _provider_available(db, user_id, "video_gen", task=video_task)
         recent_actions = (
             await db.scalars(
@@ -513,11 +509,14 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
         ).all()
         recent_posts = await recent_post_summaries(db, user_id, limit=20)
         action_view = await build_action_view(db, user_id, presentation=presentation, lock=True)
-        action_target = await action_source_reader(
-            db,
-            user_id,
-            presentation.mode if presentation is not None else "window",
-            action_view.target_id,
+        action_target = (
+            await action_source_reader(
+                db,
+                user_id,
+                action_view.target_id,
+            )
+            if presentation is not None and presentation.mode == "desktop"
+            else None
         )
         action_snapshot = {"ready_actions": [item.to_dict() for item in action_view.items]}
         action_design_enabled = bool(
@@ -527,7 +526,7 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
             and (action_target.scope == "target" or action_target.outfit_id is not None)
             and action_target.source_visual_key,
         )
-        if action_target is not None and action_target.target_kind == "desktop":
+        if action_target is not None:
             desktop_state = await desktop_state_snapshot(db, user_id)
             action_design_enabled = action_design_enabled and bool(
                 desktop_state is not None and desktop_state.autonomous_enabled,
@@ -630,7 +629,6 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
             if target is None:
                 continue
             args["target"] = {
-                "kind": target.target_kind,
                 "id": target.target_id,
                 "outfit_id": target.outfit_id,
                 "source_visual_key": target.source_visual_key,
@@ -764,11 +762,7 @@ async def _runtime_block_reason(user_id: int, capability: str, resume: dict[str,
 
 
 def _fact(run: _ActionRun, key: str, **values: str) -> str:
-    if (
-        run.context.action_target is not None
-        and run.context.action_target.target_kind == "desktop"
-        and key in {"outfit_wear", "outfit_create", "scene"}
-    ):
+    if run.context.action_target is not None and key in {"outfit_wear", "outfit_create", "scene"}:
         key = f"desktop_{key}"
     return NIGHTLY_FACT_TEXTS[resolve_language(run.context.language)][key].format(**values)
 
@@ -953,14 +947,15 @@ async def _execute_outreach_schedule(run: _ActionRun, args: dict[str, Any]) -> A
 def _action_presentation_matches(target: dict[str, Any], current: PresentationSnapshot | None) -> bool:
     expected = target.get("presentation")
     return (expected is None or current is not None and current.model_dump() == expected) and (
-        current is None or current.mode == target["kind"]
+        current is None or current.mode == "desktop"
     )
 
 
 async def _execute_action_design(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
     """沿计划冻结目标受理共同设计；可播能力及目标绑定不由模型指定。"""
     target = args.get("target")
-    if not isinstance(target, dict) or target.get("kind") not in {"window", "desktop"}:
+    # 旧计划可能冻结了已退役的窗口目标，只接受显式桌面目标。
+    if not isinstance(target, dict) or target.get("kind") not in (None, "desktop"):
         return ActionExecutionResult(status="blocked", reason="planned action target unavailable")
     if not _action_presentation_matches(target, get_presentation_snapshot(run.user_id)):
         return ActionExecutionResult(status="blocked", reason="presentation changed; planned action was not rerouted")
@@ -972,17 +967,16 @@ async def _execute_action_design(run: _ActionRun, args: dict[str, Any]) -> Actio
     except ValidationError as exc:
         return _invalid_arguments(exc)
     async with SESSION_LOCAL() as db:
-        source = await action_source_reader(db, run.user_id, target["kind"], target.get("id"))
+        source = await action_source_reader(db, run.user_id, target.get("id"))
         if source is None or (source.outfit_id, source.source_visual_key, source.scope) != (
             target.get("outfit_id"),
             target.get("source_visual_key"),
             target.get("scope", "outfit"),
         ):
             return ActionExecutionResult(status="blocked", reason="planned frozen source changed")
-        if target["kind"] == "desktop":
-            state = await desktop_state_snapshot(db, run.user_id)
-            if state is None or not state.autonomous_enabled:
-                return ActionExecutionResult(status="blocked", reason="autonomous action creation disabled")
+        state = await desktop_state_snapshot(db, run.user_id)
+        if state is None or not state.autonomous_enabled:
+            return ActionExecutionResult(status="blocked", reason="autonomous action creation disabled")
         if not _action_presentation_matches(target, get_presentation_snapshot(run.user_id)):
             return ActionExecutionResult(
                 status="blocked",
@@ -993,7 +987,6 @@ async def _execute_action_design(run: _ActionRun, args: dict[str, Any]) -> Actio
             run.user_id,
             request,
             source="autonomous",
-            origin_kind=target["kind"],
             expected_target_id=source.target_id,
         )
         if acceptance.status == "rejected":

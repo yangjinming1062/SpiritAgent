@@ -9,15 +9,15 @@ import {
   isCompanionStageVisible
 } from '@/shared/store/surfaces'
 
-import { $screenLocked } from '../activity'
+import { $screenLocked } from './activity'
 
-/** 完整入口的对话面板不会遮住侧边伙伴；精灵旁轻语可见时暂停表达。 */
-export function isActionStageVisible(): boolean {
+/** 完整入口的对话面板不会遮住侧边伙伴；精灵旁轻语可见时暂停自主走位与主动投递。 */
+export function isCharacterStageVisible(): boolean {
   return !$screenLocked.get() && isCompanionStageVisible() && ($surfaceRole.get() !== 'sprite' || !$chatVisible.get())
 }
 
-export function observeActionStageVisibility(listener: (visible: boolean) => void): () => void {
-  const notify = (): void => listener(isActionStageVisible())
+export function observeCharacterStageVisibility(listener: (visible: boolean) => void): () => void {
+  const notify = (): void => listener(isCharacterStageVisible())
 
   const stops = [
     $screenLocked.listen(notify),

@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 from typing import Literal
 
-from features.actions.schemas import ActionPlayCommand
 from features.conversation.client_contracts import (
     ClientMediaBubble,
     ClientMediaEntry,
@@ -197,33 +196,6 @@ class OutfitChangedEvent(BaseModel):
     worn: bool
 
 
-class PackEvent(BaseModel):
-    packId: int
-    outfitId: int | None
-
-
-class PackFailedEvent(PackEvent):
-    reason: str
-
-
-class PackProgressEvent(PackEvent):
-    stage: str
-    action: str | None = None
-    video_queue: VideoQueueInfo | None = None
-
-
-class ActionJobEvent(PackEvent):
-    actionId: int | None = None
-    action: str
-    stage: str
-
-
-class ActionCatalogEvent(BaseModel):
-    packId: int
-    catalogVersion: int
-    appearanceEpoch: int
-
-
 class CharacterCardEvent(BaseModel):
     avatar_id: int
     revision: int
@@ -311,13 +283,6 @@ EVENT_CONTRACTS: dict[str, EventContract] = {
     "companion.scene.updated": EventContract(SceneChangedEvent, "all", "resource"),
     "companion.scene.activated": EventContract(SceneChangedEvent, "all", "resource"),
     "companion.outfit.updated": EventContract(OutfitChangedEvent, "all", "resource"),
-    "companion.video.ready": EventContract(PackEvent, "all", "resource"),
-    "companion.video.activated": EventContract(PackEvent, "all", "resource"),
-    "companion.video.failed": EventContract(PackFailedEvent, "all", "resource"),
-    "companion.video.progress": EventContract(PackProgressEvent, "all", "resource"),
-    "companion.action.job_updated": EventContract(ActionJobEvent, "desktop", "resource"),
-    "companion.action.catalog_changed": EventContract(ActionCatalogEvent, "desktop", "resource"),
-    "companion.action.play_requested": EventContract(ActionPlayCommand, "desktop", "transient"),
     "companion.character_card.updated": EventContract(CharacterCardEvent, "all", "resource"),
     "companion.desktop_video.updated": EventContract(DesktopVideoUpdatedEvent, "desktop", "resource"),
     "companion.desktop_video.play_requested": EventContract(DesktopVideoPlayCommand, "desktop", "transient"),

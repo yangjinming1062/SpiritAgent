@@ -12,7 +12,6 @@ from alembic.config import Config
 from entrypoints.scheduler.cron import start_scheduler
 from fastapi import FastAPI
 from features.accounts.queries import list_user_ids
-from features.actions.asset_retirement import cleanup_retired_action_assets
 from features.assets.lifecycle import cleanup_user_assets
 from features.configuration.system_settings import load_and_apply_system_settings
 from features.media.video_jobs import cleanup_user_video_jobs
@@ -110,7 +109,6 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
                 for step, operation in (
                     ("video queue", cleanup_video_queue),
                     ("temp files", partial(run_blocking, cleanup_expired)),
-                    ("retired actions", cleanup_retired_action_assets),
                     ("publications", gc_autonomous_publications),
                 ):
                     await _best_effort(step, operation(), level=logging.WARNING)

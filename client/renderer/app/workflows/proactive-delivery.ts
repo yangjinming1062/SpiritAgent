@@ -1,8 +1,8 @@
 import {
   $effectiveTier,
   $spriteState,
-  isActionStageVisible,
-  observeActionStageVisibility,
+  isCharacterStageVisible,
+  observeCharacterStageVisibility,
   setSpriteState
 } from '@/modules/character'
 import { setProactiveBubble } from '@/modules/conversation'
@@ -11,7 +11,7 @@ import { $surfaceRole } from '@/shared/store/surfaces'
 
 /** 精灵旁的主动气泡、媒体提示与主动台词只在桌面精灵舞台实际可见时呈现（与表达播放同一判断：未隐藏/最小化、未被完整入口收起、未开轻语、未锁屏）；不可见时不弹出也不出声，消息仍记入未读与历史，重新可见后由待读气泡承接。 */
 export function isSpriteOverlayVisible(): boolean {
-  return $surfaceRole.get() === 'sprite' && isActionStageVisible()
+  return $surfaceRole.get() === 'sprite' && isCharacterStageVisible()
 }
 
 export async function speakProactive(text: string): Promise<void> {
@@ -42,7 +42,7 @@ export async function speakProactive(text: string): Promise<void> {
   setSpriteState('speaking', { force: true })
 
   // 合成或朗读期间精灵变为不可见时立即停声，尚未开始的播放也随之作废。
-  const stopWatching = observeActionStageVisibility(visible => {
+  const stopWatching = observeCharacterStageVisibility(visible => {
     if (!visible) {
       stopSpeaking()
     }

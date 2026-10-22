@@ -2,7 +2,6 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
-import { CompanionEgg, useCompanionPresentation } from '@/app/components/companion-presentation'
 import { SpriteStage } from '@/app/components/sprite-stage'
 import { ActivationOverlay, BootFailureOverlay, OnboardingFlow } from '@/app/onboarding'
 import { useAccountLifecycle } from '@/app/workflows/account-lifecycle'
@@ -11,9 +10,8 @@ import {
   $companionLifecycle,
   $companionVoiceId,
   ensureCompanionHydrated,
-  hydrateActionCatalog,
   hydratePortraitHistory,
-  hydrateVideoPack,
+  hydrateWardrobe,
   initSpatial,
   openContextMenu,
   reportUserActivity,
@@ -22,7 +20,7 @@ import {
   setCompanionVoiceId,
   startActivityMonitor
 } from '@/modules/character'
-import { MediaStage } from '@/modules/character/rendering'
+import { OutfitStage } from '@/modules/character/rendering'
 import { MediaViewerOverlay } from '@/modules/media'
 import { checkVoiceValidity, warmAudioContext } from '@/modules/speech'
 import { NotificationStack } from '@/shared'
@@ -49,7 +47,6 @@ export function SpriteWindow(): React.JSX.Element {
   const gatewayState = useStore($gatewayState)
   const surfaceOpen = useStore($surfaceOpen)
   const lifecycle = useStore($companionLifecycle)
-  const presentation = useCompanionPresentation()
   const [activationOpen, setActivationOpen] = useState(false)
 
   const validityCheckedRef = useRef(false)
@@ -112,7 +109,7 @@ export function SpriteWindow(): React.JSX.Element {
   const showOnboarding = authed && lifecycle === 'onboarding'
   const showCompanion = authed && lifecycle === 'ready' && !activationOpen
 
-  // lifecycle 由 useAccountLifecycle 统一解析；本窗只据此决定向导，就绪后才启动活动监视并水合立绘与动作资产。
+  // lifecycle 由 useAccountLifecycle 统一解析；本窗只据此决定向导，就绪后才启动活动监视并水合立绘。
   useEffect(() => {
     if (auth.kind !== 'authenticated' || lifecycle !== 'ready') {
       return
@@ -127,8 +124,7 @@ export function SpriteWindow(): React.JSX.Element {
       .presentation.hostReady()
       .catch(error => log.warn('desktop', error))
 
-    void hydrateActionCatalog()
-    void hydrateVideoPack()
+    void hydrateWardrobe()
     void ensureCompanionHydrated()
     void hydratePortraitHistory()
 
@@ -185,8 +181,7 @@ export function SpriteWindow(): React.JSX.Element {
         }}
         onDoubleTap={toggleWhisper}
       >
-        {showCompanion &&
-          (presentation.renderer === 'media' ? <MediaStage /> : <CompanionEgg presentation={presentation} />)}
+        {showCompanion && <OutfitStage />}
       </SpriteStage>
       <SpriteContextMenu
         onOpenActivation={() => setActivationOpen(true)}

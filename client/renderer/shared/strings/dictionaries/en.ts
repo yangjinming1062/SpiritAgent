@@ -11,7 +11,6 @@ export const dict: Dictionary = {
       title: 'Creation progress by view',
       readyWithStatus: (status: string) => `Playable · ${status}`,
       remakeFailed: 'Remake failed',
-      kinds: { window: 'Outfit', desktop: 'Desktop background' },
       statuses: {
         not_generated: 'Not created',
         queued: 'Waiting to start',
@@ -628,15 +627,15 @@ export const dict: Dictionary = {
         title: 'Your companion’s full appearance',
         hint: 'AI uses the portrait you just confirmed to create the full appearance. When it looks right, continue to choose a voice.',
         confirmHint:
-          'Confirmation starts character analysis, followed by the default video and scene. You can continue onboarding.',
+          'Confirming saves this look in the wardrobe, where you can wear it or pick it as a desktop scene reference.',
         candidateHint:
-          'This full-body image is awaiting acceptance. Body proportions may change; accepting it updates the body reference for future generations. The old video stays visible until you create a new one.',
+          'This full-body image is awaiting acceptance. Body proportions may change; accepting it updates the body reference for future generations. Saved looks remain in the wardrobe; future creations use the newly accepted body reference.',
         acceptCandidate: 'Accept new full-body image',
         retryCandidateAnalysis: 'Retry body analysis',
         acceptCandidateFailed: 'Could not accept this image. Try again.',
         retryCandidateAnalysisFailed: 'Analysis failed. Try again.',
         adoptHint:
-          'Adopting confirms this full-body image and starts character analysis, followed by the default video and scene.',
+          'Adopting confirms this full-body image and starts character analysis; the saved look stays in the wardrobe.',
         adoptPreviewFailed: 'The image was saved, but its preview is not ready. Reload before confirming.',
         empty: 'No full-body image yet. Generate one from the current portrait and persona.',
         loading: 'Preparing the full-body image…',
@@ -1234,10 +1233,9 @@ export const dict: Dictionary = {
       openMainWindow: 'Open main window'
     },
     egg: {
-      preparing: 'Preparing your companion’s actions…',
-      generating: 'Generating your companion’s actions…',
-      failed: 'Action generation failed',
-      unavailable: 'Actions are not ready yet',
+      preparing: 'Loading your companion’s look…',
+      failed: 'Could not load this look',
+      unavailable: 'Choose a look in the wardrobe',
       retry: 'Retry',
       openWardrobe: 'Open wardrobe',
       ariaLabel: 'Companion egg'
@@ -1326,6 +1324,10 @@ export const dict: Dictionary = {
       dateFormat: (dateStr: string, weekDay: string) => `${dateStr} · ${weekDay}`
     },
     outfit: {
+      chooseOutfit: 'Choose this look',
+      backToWardrobe: 'Back to wardrobe',
+      saved: 'Saved',
+      wear: 'Wear',
       empty: 'No outfits yet. Design your first one to get started.',
       loading: 'Loading outfits…',
       search: 'Search names or descriptions',
@@ -1367,7 +1369,7 @@ export const dict: Dictionary = {
       processing: 'Processing…',
       discard: 'Continue later',
       confirmHint:
-        'Confirming prepares idle and drag actions automatically. Choose Wear on its actions page when ready.',
+        'Confirming saves this look in the wardrobe. Once the image is ready you can wear it, or pick it as a desktop scene reference.',
       refImageAttached: 'Reference image attached',
       refImageAlt: 'Reference image',
       zoomRefImage: 'View reference image',
@@ -1394,74 +1396,6 @@ export const dict: Dictionary = {
         promptRequiresInput:
           'Describe the outfit or attach a reference image in the design area before fetching a prompt.'
       }
-    },
-    appearance: {
-      videoReady: (clips: number) => `Actions ready (${clips} actions)`,
-      chooseOutfit: 'Choose this outfit',
-      reviewAppearance: 'View creation issue',
-      viewProgress: 'View progress',
-      prepareToWear: 'Prepare to wear',
-      actionsHeading: 'Actions',
-      actionCount: (count: number) => (count === 1 ? '1 action' : `${count} actions`),
-      videoActionReady: 'Ready',
-      videoActionGenerating: 'Generating',
-      videoActionFailed: 'Failed',
-      videoActionResultUnknown: 'Outcome unknown',
-      videoActionResultUnknownHint:
-        'Check the generation task. This action cannot be regenerated until its outcome is known.',
-      videoActionCurrent: 'Accepted action',
-      videoActionCompactHint: 'Select to inspect',
-      videoActionOnDemandShort: 'On demand',
-      videoActionSearch: 'Search actions',
-      videoActionNoMatch: 'No matching actions',
-      videoActionEmpty: 'Select an action to see its preview and controls.',
-      videoActionCancel: 'Cancel',
-      videoOutfitNotReady: 'This outfit’s basic actions are not ready yet.',
-      videoPacksLoadFailed: "Couldn't load action packs",
-      videoSelectOutfit: 'Return to the wardrobe and choose an outfit to see its actions.',
-      videoBackToOutfits: 'Back',
-      videoLoading: 'Loading actions for this outfit…',
-      videoIdle: 'Idle',
-      videoWalkLeft: 'Walk left',
-      videoWalkRight: 'Walk right',
-      videoDrag: 'Suspended',
-      videoPeekLeft: 'Peek left',
-      videoPeekRight: 'Peek right',
-      videoPeekCalibrationFailed: 'Layout unavailable',
-      videoPeekCalibrationFailedHint:
-        'The media is ready, but its peek layout did not pass validation. Regenerate to try again.',
-      videoResume: 'Resume existing work',
-      videoResumeAction: 'Continue production',
-      videoResumeActionHint:
-        'Reuse the existing video and saved progress to finish production without generating a new video.',
-      videoActivate: 'Wear this outfit',
-      videoIdentityReviewHint: 'The action pack did not pass its checks. Review the failure and try again.',
-      videoActive: 'Active',
-      videoActionOnDemand: 'System actions are filled in by the service when needed; you can also generate here.',
-      videoGenMissingAction: 'Generate this action',
-      videoRedoAction: 'Regenerate',
-      videoRedoActionHint: 'Create new action media. This may incur new generation charges.',
-      videoFeedback: 'Describe the desired pose or movement (optional)',
-      videoGenAction: 'Prepare basic actions',
-      videoRegenAction: 'Recreate basic actions',
-      videoRegenTitle: 'Regenerate action pack',
-      videoRegenBody:
-        'An idle video and a drag image will be regenerated from this outfit reference. Your current outfit stays on; choose Wear when the actions are ready.',
-      videoGenStagePose: 'Preparing the action pose…',
-      videoGenStageScript: 'Designing the pose and movement from the character’s personality…',
-      videoGenStageSubmit: 'Submitting the generation task…',
-      videoGenStageGenerate: 'Generating action media, this usually takes a few minutes…',
-      videoGenStageDownload: 'Downloading the generated media…',
-      videoGenStageProcess: 'Processing transparent media and checking quality…',
-      videoGenStagePublish: 'Publishing the action pack…',
-      videoGenStageDefault: 'Generating the action pack…',
-      videoGenBusy:
-        'The requested action is still generating or awaiting confirmation. Wait until its outcome is known.',
-      videoPackHasReadyActions: 'This outfit already has ready actions. Regenerate individual actions as needed.',
-      videoGenRequestFailed: 'Action pack request failed. Please retry shortly.',
-      videoActivateFailed: 'Could not wear this outfit. Please retry shortly.',
-      videoGenHint:
-        'Confirming an outfit in the wardrobe automatically prepares its idle video and drag image; other actions are made on demand. Your current outfit stays on. Choose Wear once the basic actions are ready.'
     },
     scene: {
       analyzing: 'Checking the image and scene description…',
@@ -1679,7 +1613,7 @@ export const dict: Dictionary = {
     posts: 'Posts',
     diary: 'Diary',
     scene: 'Scenes',
-    appearance: 'Appearance',
+    appearance: 'Wardrobe',
     desktopLife: 'Desktop background',
     remote: 'Remote',
     settings: 'Settings',

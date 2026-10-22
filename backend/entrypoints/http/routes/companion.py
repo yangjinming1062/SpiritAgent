@@ -3,25 +3,6 @@ import base64
 from typing import Annotated
 
 from fastapi import Body, HTTPException, Path, Request, Response, status
-from features.actions.generation.catalog import list_pack_responses
-from features.actions.generation.commands import delete_pack as delete_video_pack
-from features.actions.generation.errors import VideoPackError, VideoPackNotFoundError, VideoPackStateError
-from features.actions.media_contracts import (
-    VideoPackCreateRequest,
-    VideoPackEnsureRequest,
-    VideoPackGenerateRequest,
-    VideoPackListResponse,
-    VideoPackResponse,
-    VideoPackRetryRequest,
-    VideoPackSelectionRequest,
-)
-from features.actions.views import (
-    activate_pack_view,
-    create_pack_from_clips_view,
-    create_pack_from_reference_view,
-    ensure_system_action_view,
-    retry_pack_view,
-)
 from features.appearance.avatar_service import (
     ALLOWED_AVATAR_UPLOAD_MIME_TYPES,
     AvatarConflictError,
@@ -79,9 +60,11 @@ from features.appearance.schemas import (
     OutfitPromptRequest,
     OutfitRegenerateRequest,
     OutfitResponse,
+    OutfitSelectionRequest,
 )
 from features.appearance.views import (
     accept_fullbody_candidate_view,
+    activate_outfit_view,
     adopt_avatar_seed_view,
     adopt_fullbody_seed_view,
     adopt_outfit_draft_image_view,
@@ -129,7 +112,6 @@ from infrastructure.assets.asset_store import (
     ImagePixelLimitError,
     UnsupportedImageFormatError,
     resolve_companion_asset_path,
-    sniff_media_ext,
     validate_image_bytes,
     verify_signed_asset_request,
 )
@@ -761,6 +743,18 @@ async def post_outfit_regenerate(
     return outfit
 
 
+@router.put(
+    "/outfits/current",
+    response_model=OutfitResponse,
+    openapi_extra=operation_policy(identities=("desktop", "remote")),
+)
+async def put_outfit_selection(body: OutfitSelectionRequest, user: CurrentUser, db: DbSession) -> OutfitResponse:
+    try:
+        return await activate_outfit_view(db, user.id, body.outfit_id)
+    except OutfitError as exc:
+        raise _outfit_request_error(exc) from exc
+
+
 @router.post(
     "/outfits/{outfit_id}/confirm",
     response_model=OutfitResponse,
@@ -811,158 +805,6 @@ async def delete_outfit_route(
         await delete_outfit(db, user.id, outfit_id)
     except OutfitError as exc:
         raise _outfit_request_error(exc)
-    return CompanionOperationResponse(ok=True)
-
-
-def _video_pack_request_error(exc: VideoPackError) -> RequestError:
-    if isinstance(exc, VideoPackNotFoundError):
-        return RequestError(status_code=404, message=str(exc), code="not_found")
-    if isinstance(exc, VideoPackStateError):
-        return RequestError(status_code=409, message=str(exc), code="invalid_state")
-    return RequestError(status_code=400, message=str(exc), code="invalid_request")
-
-
-_CLIP_MIME_BY_EXT = {
-    "png": "image/png",
-    "webp": "image/webp",
-    "webm": "video/webm",
-    "mp4": "video/mp4",
-    "mov": "video/quicktime",
-    "mkv": "video/x-matroska",
-}
-
-
-def _decode_clip_upload(data_b64: str, content_type: str | None, media_type: str) -> tuple[bytes, str]:
-    """解码动作媒体并核对声明类型与文件格式；像素及透明门禁由处理入口负责。"""
-    normalized = content_type.split(";")[0].strip().lower() if content_type else None
-    if normalized is not None and (
-        normalized not in _CLIP_MIME_BY_EXT.values() or not normalized.startswith(f"{media_type}/")
-    ):
-        raise RequestError(status_code=415, message="动作媒体类型与格式不符")
-    try:
-        raw = base64.b64decode(data_b64, validate=True)
-    except ValueError:
-        raise RequestError(status_code=400, message="片段数据无效")
-    if not raw:
-        raise RequestError(status_code=400, message="片段数据为空")
-    ext = sniff_media_ext(raw)
-    detected = _CLIP_MIME_BY_EXT.get(ext)
-    if detected is None or not detected.startswith(f"{media_type}/"):
-        raise RequestError(status_code=415, message="动作文件格式与媒体类型不符")
-    normalized = normalized or detected
-    # EBML 签名同时用于 WebM 与 Matroska，后处理按实际容器解码。
-    if normalized != detected and not (ext == "webm" and normalized == "video/x-matroska"):
-        raise RequestError(status_code=415, message="动作文件格式与媒体类型不符")
-    return raw, normalized
-
-
-@router.get(
-    "/video-packs",
-    response_model=VideoPackListResponse,
-    openapi_extra=operation_policy(identities=("desktop", "remote")),
-)
-async def get_video_packs(user: CurrentUser, db: DbSession) -> VideoPackListResponse:
-    return VideoPackListResponse(packs=await list_pack_responses(db, user.id))
-
-
-@router.post(
-    "/video-packs",
-    response_model=VideoPackResponse,
-    status_code=status.HTTP_201_CREATED,
-    openapi_extra=operation_policy(identities=("desktop", "remote"), upload="action_pack"),
-)
-async def post_video_pack(
-    body: Annotated[VideoPackCreateRequest | VideoPackGenerateRequest, Body(discriminator="source")],
-    user: CurrentUser,
-    db: DbSession,
-) -> VideoPackResponse:
-    if isinstance(body, VideoPackGenerateRequest):
-        try:
-            return await create_pack_from_reference_view(
-                db,
-                user.id,
-                outfit_id=body.outfit_id,
-                force=body.force,
-                source_pack_id=body.source_pack_id,
-                action=body.action,
-                feedback=body.feedback,
-            )
-        except CharacterCardNotReadyError as exc:
-            raise RequestError(status_code=409, message=str(exc)) from exc
-        except VideoPackError as exc:
-            raise _video_pack_request_error(exc) from exc
-    clips: dict[str, tuple[bytes, str]] = {}
-    ranges: dict[str, tuple[float, float]] = {}
-    for clip in body.clips:
-        if clip.action in clips:
-            raise RequestError(status_code=400, message=f"动作片段重复：{clip.action}")
-        raw, content_type = await asyncio.to_thread(_decode_clip_upload, clip.data, clip.content_type, clip.media_type)
-        clips[clip.action] = (raw, content_type)
-        if clip.media_type == "video" and clip.start_seconds is not None and clip.end_seconds is not None:
-            ranges[clip.action] = (clip.start_seconds, clip.end_seconds)
-    try:
-        pack = await create_pack_from_clips_view(
-            db,
-            user.id,
-            outfit_id=body.outfit_id,
-            clips=clips,
-            canvas=(body.canvas_width, body.canvas_height),
-            action_ranges=ranges,
-        )
-    except VideoPackError as exc:
-        raise _video_pack_request_error(exc)
-    return pack
-
-
-@router.post(
-    "/video-packs/{pack_id}/production",
-    response_model=VideoPackResponse,
-    openapi_extra=operation_policy(identities=("desktop", "remote")),
-)
-async def produce_video_pack(
-    pack_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
-    body: Annotated[VideoPackEnsureRequest | VideoPackRetryRequest, Body(discriminator="command")],
-    user: CurrentUser,
-    db: DbSession,
-) -> VideoPackResponse:
-    try:
-        if isinstance(body, VideoPackEnsureRequest):
-            return await ensure_system_action_view(db, user.id, pack_id, body.action)
-        return await retry_pack_view(db, user.id, pack_id, action=body.action)
-    except VideoPackError as exc:
-        raise _video_pack_request_error(exc) from exc
-
-
-@router.put(
-    "/video-packs/current",
-    response_model=VideoPackResponse,
-    openapi_extra=operation_policy(identities=("desktop", "remote")),
-)
-async def put_video_pack_selection(
-    body: VideoPackSelectionRequest,
-    user: CurrentUser,
-    db: DbSession,
-) -> VideoPackResponse:
-    try:
-        return await activate_pack_view(db, user.id, body.pack_id)
-    except VideoPackError as exc:
-        raise _video_pack_request_error(exc) from exc
-
-
-@router.delete(
-    "/video-packs/{pack_id}",
-    response_model=CompanionOperationResponse,
-    openapi_extra=operation_policy(identities=("desktop", "remote")),
-)
-async def delete_video_pack_route(
-    pack_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
-    user: CurrentUser,
-    db: DbSession,
-) -> CompanionOperationResponse:
-    try:
-        await delete_video_pack(db, user.id, pack_id)
-    except VideoPackError as exc:
-        raise _video_pack_request_error(exc)
     return CompanionOperationResponse(ok=True)
 
 

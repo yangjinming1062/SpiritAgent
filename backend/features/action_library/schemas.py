@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validat
 
 from features.media.identity_contracts import CharacterCardSnapshot
 
-ActionTargetKind = Literal["window", "desktop"]
+ABSOLUTE_MAX_DURATION_SECONDS = 15
 ActionSourceScope = Literal["outfit", "target"]
 ActionVariantStatus = Literal[
     "not_generated",
@@ -56,7 +56,6 @@ class ActionDefinitionSnapshot(ActionDefinitionDesign):
     outfit_id: int | None
     source_visual_key: str
     scope: ActionSourceScope
-    origin_kind: ActionTargetKind
     origin_target_id: int
     source: Literal["user_requested", "autonomous"]
     status: str
@@ -69,7 +68,6 @@ class ActionSourceSnapshot(BaseModel):
 
     user_id: int
     outfit_id: int | None
-    target_kind: ActionTargetKind
     target_id: int
     label: str
     source_visual_key: str
@@ -84,7 +82,7 @@ class ActionSourceSnapshot(BaseModel):
 
     @model_validator(mode="after")
     def validate_target_scope(self) -> "ActionSourceSnapshot":
-        if self.scope == "target" and (self.target_kind != "desktop" or self.outfit_id is not None):
+        if self.scope == "target" and self.outfit_id is not None:
             raise ValueError("独立动作来源须为不关联着装的桌景")
         return self
 
@@ -92,7 +90,6 @@ class ActionSourceSnapshot(BaseModel):
 class ActionVariantSummary(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    target_kind: ActionTargetKind
     target_id: int
     action_id: int | None = None
     label: str
@@ -108,7 +105,6 @@ class ActionTargetSnapshot(BaseModel):
     id: int
     user_id: int
     definition_id: int
-    target_kind: ActionTargetKind
     target_id: int
     action_id: int | None
     automatic: bool

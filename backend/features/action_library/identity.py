@@ -11,10 +11,7 @@ def definition_applies_to_source(definition: ActionDefinitionSnapshot, source: A
         definition.user_id == source.user_id
         and definition.scope == source.scope
         and definition.outfit_id == source.outfit_id
-        and (
-            definition.scope == "outfit"
-            or (definition.origin_kind, definition.origin_target_id) == (source.target_kind, source.target_id)
-        )
+        and (definition.scope == "outfit" or definition.origin_target_id == source.target_id)
     )
 
 
@@ -27,7 +24,7 @@ def same_review_reference(expected: ActionSourceSnapshot, current: ActionSourceS
         expected.user_id == current.user_id
         and expected.scope == current.scope
         and expected.source_visual_key == current.source_visual_key
-        and (expected.target_kind, expected.target_id) == (current.target_kind, current.target_id)
+        and expected.target_id == current.target_id
         and expected.reference_paths == current.reference_paths
         and expected.reference_roles == current.reference_roles
         and expected.outfit_description == current.outfit_description

@@ -16,5 +16,3 @@ export type Diary = ApiSchemas['DiaryEntryResponse']
 export type Scene = ApiSchemas['SceneResponse']
 
 export type Outfit = ApiSchemas['OutfitResponse']
-
-export type VideoPack = ApiSchemas['VideoPackResponse']

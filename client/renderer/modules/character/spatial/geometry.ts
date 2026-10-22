@@ -1,8 +1,6 @@
 import type { DesktopScreenRect } from '@ipc/contracts'
 import { clamp } from '@runtime'
 
-import type { SpatialPeek } from '../spatial-peek'
-
 import type { Position, SpriteRect, ViewportSize } from './types'
 
 export const REST_MARGIN = 24
@@ -109,7 +107,6 @@ export function computeOverlayAnchorBesideSprite(opts: {
   pos: { x: number; y: number }
   scale: number
   anchorRect: SpriteRect | null
-  peek: SpatialPeek | null
   gap: number
   overlayW: number
   overlayH?: number
@@ -117,39 +114,14 @@ export function computeOverlayAnchorBesideSprite(opts: {
   vh: number
   verticalRatio?: number
 }): { left: number; top: number; side: 'left' | 'right' } {
-  const { pos, scale, anchorRect, peek, gap, overlayW, overlayH = 0, vw, vh, verticalRatio = 0 } = opts
+  const { pos, scale, anchorRect, gap, overlayW, overlayH = 0, vw, vh, verticalRatio = 0 } = opts
   const base = baseSpriteSize(vh)
   const width = base.width * scale
   const height = base.height * scale
-  let visibleLeft = pos.x + (anchorRect?.left ?? 0) * width
-  let visibleRight = pos.x + (anchorRect?.right ?? 1) * width
-  let visibleTop = pos.y + (anchorRect?.top ?? 0) * height
-  let visibleBottom = pos.y + (anchorRect?.bottom ?? 1) * height
-
-  if (peek) {
-    const [left, top, right, bottom] = peek.focusRect
-    visibleLeft = Math.max(visibleLeft, pos.x + left * width)
-    visibleRight = Math.min(visibleRight, pos.x + right * width)
-    visibleTop = Math.max(visibleTop, pos.y + top * height)
-    visibleBottom = Math.min(visibleBottom, pos.y + bottom * height)
-
-    if (visibleLeft >= visibleRight || visibleTop >= visibleBottom) {
-      visibleLeft = pos.x + left * width
-      visibleRight = pos.x + right * width
-      visibleTop = pos.y + top * height
-      visibleBottom = pos.y + bottom * height
-    }
-  }
-
-  if (peek?.mode === 'screen') {
-    const cut = pos.x + peek.cutX * width
-
-    if (peek.side === 'left') {
-      visibleRight = Math.min(visibleRight, cut)
-    } else {
-      visibleLeft = Math.max(visibleLeft, cut)
-    }
-  }
+  const visibleLeft = pos.x + (anchorRect?.left ?? 0) * width
+  const visibleRight = pos.x + (anchorRect?.right ?? 1) * width
+  const visibleTop = pos.y + (anchorRect?.top ?? 0) * height
+  const visibleBottom = pos.y + (anchorRect?.bottom ?? 1) * height
 
   const rightSpace = vw - visibleRight - gap
   const leftSpace = visibleLeft - gap
@@ -179,23 +151,4 @@ export function generateRoamWaypoint(
     x: REST_MARGIN + random() * Math.max(0, viewport.width - w - 2 * REST_MARGIN),
     y: Math.max(REST_MARGIN, viewport.height * 0.5 + random() * Math.max(0, viewport.height * 0.4 - h))
   }
-}
-
-export function dragScreenEdge(
-  position: Position,
-  viewport: ViewportSize,
-  content: SpriteRect,
-  scale: number,
-  cancelled: boolean
-): 'left' | 'right' | null {
-  const box = spriteContentBox(viewport, content, scale)
-  const width = Math.max(1, box.right - box.left)
-  const leftClipped = Math.max(0, -(position.x + box.left))
-  const rightClipped = Math.max(0, position.x + box.right - viewport.width)
-
-  return !cancelled && rightClipped / width >= 0.25
-    ? 'right'
-    : !cancelled && leftClipped / width >= 0.25
-      ? 'left'
-      : null
 }

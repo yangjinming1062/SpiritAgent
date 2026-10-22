@@ -24,17 +24,12 @@ CONVERSATION_TABLES = frozenset(
         "companion_topic_usages",
     },
 )
-ACTION_TABLES = frozenset({"companion_action_packs", "companion_actions"})
 DESKTOP_TABLES = frozenset({"desktop_video_sets", "desktop_video_actions", "desktop_video_states"})
-ACTION_LIBRARY_TABLES = (
-    ACTION_TABLES
-    | DESKTOP_TABLES
-    | {
-        "companion_outfits",
-        "action_definitions",
-        "action_sync_targets",
-    }
-)
+ACTION_LIBRARY_TABLES = DESKTOP_TABLES | {
+    "companion_outfits",
+    "action_definitions",
+    "action_sync_targets",
+}
 POST_TABLES = frozenset({"companion_posts", "companion_post_comments"})
 IDENTITY_TABLES = frozenset({"personas", "avatar_assets", "companion_character_cards"})
 # 导入勾选粒度：分组 ID → 表；Admin 与 API 共用，不在页面里再维护表名。
@@ -59,7 +54,7 @@ BACKUP_SECTIONS: dict[str, tuple[str, ...]] = {
     "settings": ("user_model_configs", "custom_voices", "user_settings", "user_preferences"),
 }
 BACKUP_SECTION_IDS = tuple(BACKUP_SECTIONS)
-# 选中即整组恢复，不允许落成半个身份/会话/视频包。
+# 选中即整组恢复，不允许落成半个身份/会话/桌景。
 ATOMIC_SECTION_GROUPS: tuple[frozenset[str], ...] = (
     IDENTITY_TABLES,
     CONVERSATION_TABLES,
@@ -69,7 +64,7 @@ ATOMIC_SECTION_GROUPS: tuple[frozenset[str], ...] = (
 # 预检时身份三表成组写入的顺序：先头像，再角色卡与人设。
 IDENTITY_GROUP: tuple[str, ...] = ("avatar_assets", "companion_character_cards", "personas")
 IDENTITY_INCOMPLETE_REASON = "基础身份必须同时包含人设、头像与角色卡。"
-IDENTITY_BLOCKED_REASON = "目标现有动作包等仍引用身份，无法安全覆盖基础身份；请一并恢复这些类别，或先处理引用。"
+IDENTITY_BLOCKED_REASON = "目标现有桌景等仍引用身份，无法安全覆盖基础身份；请一并恢复这些类别，或先处理引用。"
 IDENTITY_DEPENDENT_REASON = "缺少可映射的基础身份，无法恢复此类别。"
 
 

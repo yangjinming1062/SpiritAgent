@@ -1,13 +1,13 @@
 import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useRef } from 'react'
 
-import { type CompanionFallbackStatus, openContextMenu } from '@/modules/character'
+import { openContextMenu } from '@/modules/character'
 import { useInteractiveRegion } from '@/shared'
 import { $surfaceOpen } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
 import { clamp } from '@runtime'
 
-// 视频形象未就绪时的兜底「蛋」：呼吸 / 裂纹闪光 / 注视指针，并显示真实状态与对应恢复入口（DESIGN「呈现与降级」）。桌面精灵与完整入口的侧边伙伴共用；Installer 端的 Egg 组件是安装流程动画，与此无关。
+// 静态形象未就绪时的兜底「蛋」：呼吸 / 裂纹闪光 / 注视指针，并显示真实状态与对应恢复入口（DESIGN「呈现与降级」）。桌面精灵与完整入口的侧边伙伴共用；Installer 端的 Egg 组件是安装流程动画，与此无关。
 const CRACK_PATHS = [
   'M 160 70 L 148 95 L 155 115 L 140 135',
   'M 230 140 L 205 148 L 195 135 L 180 155',
@@ -16,9 +16,12 @@ const CRACK_PATHS = [
 
 const IDLE_LOOK_BOB_MS = 3200
 
+/** 蛋形兜底状态：准备中、加载失败与尚无可用造型的处置不同。 */
+export type EggStageStatus = 'preparing' | 'failed' | 'unavailable'
+
 interface EggStageProps {
   size?: number | string
-  status?: CompanionFallbackStatus | null
+  status?: EggStageStatus | null
   message?: string
   hasRecoveryAction?: boolean
   onStatusAction?: () => void
@@ -219,7 +222,7 @@ export function EggStage({
               onPointerDown={e => e.stopPropagation()}
               type="button"
             >
-              {status === 'failed' ? dict.companion.egg.openWardrobe : dict.companion.egg.retry}
+              {status === 'unavailable' ? dict.companion.egg.openWardrobe : dict.companion.egg.retry}
             </button>
           )}
         </div>

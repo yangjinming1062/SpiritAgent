@@ -17,20 +17,6 @@ class MessageAssetSnapshot(Protocol):
 
 MESSAGE_ASSET_FIELDS = ("content", "tool_calls", "media_json", "reply_json")
 
-ACTION_ASSET_FIELDS = (
-    "artifact_path",
-    "pose_path",
-    "media_path",
-    "cover_path",
-    "hitmask_path",
-    "result_json",
-    "generation_state_json",
-    "pose_generation_state_json",
-    "accepted_asset_json",
-)
-
-PACK_ASSET_FIELDS = ("reference_path", "manifest_path", "cover_path", "context_json")
-
 
 class AssetReferencesUnavailable(RuntimeError):
     """引用目录不可读时阻止整个账户的回收，不能将未知当作无引用。"""

@@ -30,10 +30,6 @@ function resourceDomain(type: GatewayNetworkEvent['type']): 'companion' | 'diary
     case 'companion.scene.updated':
     case 'companion.scene.activated':
     case 'companion.outfit.updated':
-    case 'companion.video.ready':
-    case 'companion.video.activated':
-    case 'companion.video.failed':
-    case 'companion.video.progress':
     case 'companion.character_card.updated':
     case 'companion.topic_feedback.updated':
       return 'companion'

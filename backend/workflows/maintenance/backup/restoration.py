@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 from features.accounts.backup import create_validation_account
-from features.actions.backup_assets import restore_action_catalogs, validate_action_files
 from features.assets.lifecycle import enqueue_asset_cleanup
 from features.assets.references import collect_live_asset_paths
 from features.companion.backup import advance_scene_versions, cron_source_keys, scene_versions
@@ -36,7 +35,6 @@ from workflows.maintenance.backup.file_packing import (
 )
 from workflows.maintenance.backup.serializers import (
     ACTION_LIBRARY_TABLES,
-    ACTION_TABLES,
     ATOMIC_SECTION_GROUPS,
     CONVERSATION_TABLES,
     DESKTOP_TABLES,
@@ -72,17 +70,12 @@ RESTORE_SEQUENCE: tuple[str, ...] = ("conversations",) + tuple(
 )
 # 父类覆盖会改变仍被保留的子类引用，子类未随本次恢复清理时须保留父类；None 表示引用嵌在 JSON / 数组等非关系列中，只要存在保留行就按可能有关联处理。
 OVERWRITE_DEPENDENT_REFERENCES: dict[str, tuple[tuple[str, str | None], ...]] = {
-    "avatar_assets": (
-        ("companion_character_cards", "avatar_id"),
-        ("companion_action_packs", "avatar_id"),
-    ),
-    "companion_outfits": (("companion_action_packs", "outfit_id"), ("action_definitions", "outfit_id")),
+    "avatar_assets": (("companion_character_cards", "avatar_id"),),
+    "companion_outfits": (("action_definitions", "outfit_id"),),
     "action_definitions": (
-        ("companion_actions", "definition_id"),
         ("desktop_video_actions", "definition_id"),
         ("action_sync_targets", "definition_id"),
     ),
-    "companion_action_packs": (("companion_actions", "pack_id"), ("action_sync_targets", None)),
     "cron_jobs": (("companion_intents", "source_key"),),
     "conversations": (
         ("cron_jobs", "conversation_id"),
@@ -361,21 +354,6 @@ async def _preflight_tables(
                             asset_owner_id=target_user_id,
                         )
                     if table == "companion_outfits":
-                        await run_blocking(
-                            validate_action_files,
-                            available_rows,
-                            extract_root,
-                            source_user_id,
-                            target_user_id,
-                        )
-                        await restore_action_catalogs(
-                            db,
-                            available_rows,
-                            staged_map,
-                            validation_user_id,
-                            UrlRewriter({}),
-                            write_files=False,
-                        )
                         await run_blocking(
                             validate_desktop_files,
                             available_rows,
@@ -759,15 +737,6 @@ async def restore_backup_rows(
 
             await BACKUP_REGISTRY.table(table).rewrite_inserted(db, id_map[table][original_id], rewrite_column)
         await db.flush()
-        if ACTION_TABLES.issubset(imported):
-            await restore_action_catalogs(
-                db,
-                compatible_rows,
-                id_map,
-                target_user_id,
-                rewriter,
-                write_files=True,
-            )
         await enqueue_asset_cleanup(
             db,
             target_user_id,

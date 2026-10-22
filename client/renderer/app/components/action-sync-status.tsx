@@ -20,11 +20,9 @@ export function ActionSyncStatus({ targets }: ActionSyncStatusProps): React.JSX.
       <p className="text-xs font-medium text-strong">{t.title}</p>
       <ul className="mt-2 max-h-32 space-y-2 overflow-y-auto">
         {targets.map(target => (
-          <li className="text-xs" key={`${target.target_kind}:${target.target_id}`}>
+          <li className="text-xs" key={target.target_id}>
             <div className="flex items-start justify-between gap-3">
-              <span className="min-w-0 break-words text-body">
-                {t.kinds[target.target_kind]} · {target.label}
-              </span>
+              <span className="min-w-0 break-words text-body">{target.label}</span>
               <span className="shrink-0 text-muted">
                 {target.has_ready_asset && !['ready', 'disabled', 'excluded'].includes(target.status)
                   ? t.readyWithStatus(target.status === 'failed' ? t.remakeFailed : t.statuses[target.status])

@@ -15,7 +15,6 @@ interface MotionPorts {
   getScale: () => number
   setScale: (scale: number) => void
   canMove: () => boolean
-  hasPeek: () => boolean
   clampPosition: (position: Position) => Position
   minScale: number
   maxScale: number
@@ -90,7 +89,7 @@ export function createSpatialMotion(ports: MotionPorts, frames: FrameScheduler =
       y: moveStart.y + (moveTarget.y - moveStart.y) * eased
     }
 
-    ports.setPosition(t === 1 && !ports.hasPeek() ? ports.clampPosition(position) : position)
+    ports.setPosition(t === 1 ? ports.clampPosition(position) : position)
 
     if (t < 1) {
       rafId = frames.request(tick)

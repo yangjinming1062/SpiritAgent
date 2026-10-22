@@ -200,13 +200,6 @@ def outfit_asset_directory(outfit_id: int) -> str:
     return f"outfit{outfit_id}"
 
 
-def pack_asset_directory(outfit_id: int | None, pack_id: int) -> str:
-    if pack_id <= 0:
-        raise ValueError("invalid pack ID")
-    prefix = f"{outfit_asset_directory(outfit_id)}/" if outfit_id is not None else ""
-    return f"{prefix}pack{pack_id}"
-
-
 def scene_asset_directory(scene_id: int) -> str:
     if scene_id <= 0:
         raise ValueError("invalid scene ID")

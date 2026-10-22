@@ -1,4 +1,4 @@
-import { atom } from 'nanostores'
+import { atom, computed } from 'nanostores'
 
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { isClientErrorIpc } from '@/shared/lib/ipc-error'
@@ -13,8 +13,7 @@ import type { ApiSchemas } from '../../../../../shared/api.generated'
 
 type OutfitStatus = ApiSchemas['OutfitResponse']['status']
 
-interface WardrobeOutfit {
-  initialVideoError: string | null
+export interface WardrobeOutfit {
   id: number
   name: string
   description: string | null
@@ -51,7 +50,6 @@ function isOutfitResponse(value: unknown): value is OutfitResponse {
     typeof value.description_status === 'string' &&
     ['pending', 'processing', 'ready', 'failed'].includes(value.description_status) &&
     (value.description_error === null || typeof value.description_error === 'string') &&
-    (value.initial_video_error === null || typeof value.initial_video_error === 'string') &&
     typeof value.fullbody_url === 'string' &&
     typeof value.status === 'string' &&
     ['draft', 'ready', 'expired'].includes(value.status) &&
@@ -60,6 +58,11 @@ function isOutfitResponse(value: unknown): value is OutfitResponse {
 }
 
 export const $outfits = atom<WardrobeOutfit[]>([])
+/** 当前穿着的已就绪造型；窗口与侧边伙伴只呈现它，不读取其他造型。 */
+export const $activeOutfit = computed(
+  $outfits,
+  outfits => outfits.find(item => item.active && item.status === 'ready') ?? null
+)
 export const $outfitPolicy = atom<OutfitPolicy>(snapshot.get().policy)
 export const $wardrobeStatus = atom<'idle' | 'loading' | 'loaded' | 'error'>('idle')
 let revision = 0
@@ -73,7 +76,12 @@ registerStorageClearHandler(() => {
   $wardrobeStatus.set('idle')
 })
 
-async function showOutfits(state: WardrobeSnapshot, version: number, cacheOnly: boolean): Promise<void> {
+async function showOutfits(
+  state: WardrobeSnapshot,
+  version: number,
+  cacheOnly: boolean,
+  revalidateAssets = false
+): Promise<void> {
   const epoch = currentClearEpoch()
 
   const current = (): boolean =>
@@ -96,7 +104,6 @@ async function showOutfits(state: WardrobeSnapshot, version: number, cacheOnly: 
         description: o.description,
         descriptionStatus: o.description_status,
         descriptionError: o.description_error,
-        initialVideoError: o.initial_video_error,
         fullbodyPath,
         fullbodyUrl: old?.fullbodyPath === fullbodyPath ? old.fullbodyUrl : null,
         status: o.status,
@@ -112,7 +119,7 @@ async function showOutfits(state: WardrobeSnapshot, version: number, cacheOnly: 
       }
 
       try {
-        const url = await backendApi().apiAsset({ url: o.fullbody_url, preferCache: true, cacheOnly })
+        const url = await backendApi().apiAsset({ url: o.fullbody_url, preferCache: !revalidateAssets, cacheOnly })
 
         if (url && current()) {
           $outfits.set($outfits.get().map(item => (item.id === o.id ? { ...item, fullbodyUrl: url } : item)))
@@ -128,9 +135,16 @@ async function showOutfits(state: WardrobeSnapshot, version: number, cacheOnly: 
 
 let wardrobeRequest: Promise<void> | null = null
 
-/** 衣柜列表读取；并发调用共享同一次请求，避免同一页面重复拉取。 */
-export async function hydrateWardrobe(): Promise<void> {
-  if (wardrobeRequest) {
+interface WardrobeHydrateOptions {
+  force?: boolean
+  revalidateAssets?: boolean
+}
+
+/** 普通读取合并请求；写入和事件刷新作废较早快照，避免旧穿着覆盖新状态。 */
+export async function hydrateWardrobe(options: WardrobeHydrateOptions = {}): Promise<void> {
+  const { force = false, revalidateAssets = false } = options
+
+  if (wardrobeRequest && !force && !revalidateAssets) {
     return wardrobeRequest
   }
 
@@ -173,7 +187,7 @@ export async function hydrateWardrobe(): Promise<void> {
     }
 
     snapshot.set(state)
-    await showOutfits(state, version, false)
+    await showOutfits(state, version, false, revalidateAssets)
 
     if (current()) {
       $wardrobeStatus.set('loaded')
@@ -215,10 +229,19 @@ export async function setOutfitPolicy(policy: OutfitPolicy): Promise<boolean> {
 
 export async function deleteOutfit(outfitId: number): Promise<void> {
   await requestResource('companion.delete_outfit_route', { path: { outfit_id: outfitId } })
-  await hydrateWardrobe()
+  await hydrateWardrobe({ force: true })
 }
 
 export async function retryOutfitDescription(outfitId: number): Promise<void> {
   await requestResource('companion.post_retry_outfit_description', { path: { outfit_id: outfitId } })
-  await hydrateWardrobe()
+  await hydrateWardrobe({ force: true })
+}
+
+export async function activateOutfit(outfitId: number): Promise<void> {
+  const scope = captureAuthScope()
+  await requestResource('companion.put_outfit_selection', { body: { outfit_id: outfitId } })
+
+  if (scope?.()) {
+    await hydrateWardrobe({ force: true })
+  }
 }

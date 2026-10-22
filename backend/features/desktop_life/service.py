@@ -369,7 +369,7 @@ async def _create_suite(
         )
     await db.flush()
     await touch_desktop_state(db, user_id)
-    action_source = await read_source(db, user_id, "desktop", row.id)
+    action_source = await read_source(db, user_id, row.id)
     if action_source is None:
         raise RuntimeError("新桌景的共享动作来源无法读取")
     await register_source_targets(db, action_source)
@@ -490,7 +490,7 @@ async def delete_desktop_video_set(db: AsyncSession, user_id: int, set_id: int) 
     directory = f"desktop/{set_id}"
     paths |= await collect_asset_directory_paths(user_id, directory)
     removed_tasks = []
-    await remove_container_targets(db, user_id, "desktop", set_id)
+    await remove_container_targets(db, user_id, set_id)
     for action in actions:
         removed = desktop_removed_video_task(action)
         if removed is not None:

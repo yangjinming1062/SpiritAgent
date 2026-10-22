@@ -8,7 +8,7 @@ import { uiCopy } from '../shared/ui-copy'
 
 import type { RemoteApi } from './api'
 import { ApiError, readImage } from './api'
-import type { Outfit, Scene, VideoPack } from './types'
+import type { Outfit, Scene } from './types'
 import {
   Empty,
   focusAfterRender,
@@ -20,8 +20,7 @@ import {
   usePageScroll,
   usePageState,
   useTask,
-  useVisiblePolling,
-  videoQueueText
+  useVisiblePolling
 } from './ui'
 
 type SceneState = ApiSchemas['SceneStateResponse']
@@ -909,7 +908,6 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
   const { run, runLatest, busy, error } = useTask()
   const alive = useAlive()
   const [outfits, setOutfits] = useState<Outfit[]>([])
-  const [packs, setPacks] = useState<VideoPack[]>([])
   const [policy, setPolicy] = useState<string | null>(null)
   const [policySaving, setPolicySaving] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -919,15 +917,11 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
 
   const load = useCallback(async () => {
     const current = ++revision.current
-    const [wardrobe, videos] = await Promise.all([
-      api.invoke('companion.get_outfits'),
-      api.invoke('companion.get_video_packs')
-    ])
+    const wardrobe = await api.invoke('companion.get_outfits')
 
     if (alive() && current === revision.current) {
       setOutfits(wardrobe.outfits)
       setPolicy(wardrobe.policy)
-      setPacks(videos.packs)
       setLoaded(true)
     }
   }, [api, alive])
@@ -936,9 +930,9 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
     void runLatest(load)
   }, [load, refresh, runLatest])
 
-  const pending =
-    outfits.some(outfit => outfit.description_status === 'pending' || outfit.description_status === 'processing') ||
-    packs.some(pack => pack.status === 'processing')
+  const pending = outfits.some(
+    outfit => outfit.description_status === 'pending' || outfit.description_status === 'processing'
+  )
 
   useVisiblePolling(pending, load, runLatest)
 
@@ -1034,21 +1028,16 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
           }}
           onUpdate={load}
           outfit={selected}
-          packs={packs.filter(pack => pack.outfit_id === selected.id)}
         />
       ) : null}
       {!creating && !selected ? (
         <>
           <div className="asset-grid outfits">
             {outfits.map(outfit => {
-              const pack = packs.find(item => item.outfit_id === outfit.id && item.status === 'ready')
-
               return (
                 <AssetCard
                   actionDisabled={busy || outfit.active || outfit.status === 'expired'}
-                  actionLabel={
-                    outfit.active ? '正在穿着' : outfit.status === 'draft' ? '继续制作' : pack ? '穿这套' : '准备穿上'
-                  }
+                  actionLabel={outfit.active ? '正在穿着' : outfit.status === 'draft' ? '继续制作' : '穿这套'}
                   active={outfit.active}
                   id={outfit.id}
                   imageAlt={outfit.name}
@@ -1056,12 +1045,12 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
                   key={outfit.id}
                   kind="outfit"
                   onAction={() => {
-                    if (outfit.status !== 'ready' || !pack) {
+                    if (outfit.status !== 'ready') {
                       setSelectedId(outfit.id)
                       return
                     }
                     void run(async () => {
-                      await api.invoke('companion.put_video_pack_selection', { body: { pack_id: pack.id } })
+                      await api.invoke('companion.put_outfit_selection', { body: { outfit_id: outfit.id } })
                       await load()
                     })
                   }}
@@ -1095,13 +1084,11 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
 function OutfitDetail({
   api,
   outfit,
-  packs,
   onUpdate,
   onClose
 }: {
   api: RemoteApi
   outfit: Outfit
-  packs: VideoPack[]
   onUpdate: () => Promise<void>
   onClose: () => void
 }): ReactElement {
@@ -1111,7 +1098,6 @@ function OutfitDetail({
   const { check, clearSubmission, reconciled, submit, submitted } = useAssetSubmission(`outfit.${outfit.id}`, onUpdate)
   const [loadedImage, setLoadedImage] = useState('')
   const picker = useRef<HTMLInputElement>(null)
-  const pack = packs.find(item => item.status === 'ready') ?? packs[0]
   const produce = <K extends ApiOperationKey>(operation: K, input: ApiInput<K>) =>
     run(() =>
       submit(async () => {
@@ -1147,9 +1133,7 @@ function OutfitDetail({
         />
       ) : null}
       <p>{outfit.description}</p>
-      {outfit.initial_video_error || outfit.description_error || pack?.error ? (
-        <Notice>{outfit.initial_video_error || outfit.description_error || pack?.error}</Notice>
-      ) : null}
+      {outfit.description_error ? <Notice>{outfit.description_error}</Notice> : null}
       {error ? <Notice>{error}</Notice> : null}
       {submitted && !busy ? (
         <AssetResultRecovery onCheck={() => run(check)} onContinue={clearSubmission} reconciled={reconciled} />
@@ -1176,41 +1160,19 @@ function OutfitDetail({
         {outfit.status === 'ready' ? (
           <button
             className="primary full"
-            disabled={busy || submitted || (Boolean(pack) && pack?.status !== 'ready') || outfit.active}
+            disabled={busy || submitted || outfit.active}
             onClick={() =>
-              pack
-                ? run(async () => {
-                    await api.invoke('companion.put_video_pack_selection', { body: { pack_id: pack.id } })
-                    await onUpdate()
-                  })
-                : produce('companion.post_video_pack', { body: { source: 'generate', outfit_id: outfit.id } })
+              run(async () => {
+                await api.invoke('companion.put_outfit_selection', { body: { outfit_id: outfit.id } })
+                await onUpdate()
+              })
             }
             type="button"
           >
-            {outfit.active
-              ? '正在穿着'
-              : pack?.status === 'ready'
-                ? '穿上'
-                : pack?.status === 'processing'
-                  ? '正在准备穿着动作…'
-                  : pack
-                    ? '穿着动作尚未准备好'
-                    : '准备穿上这套衣服'}
+            {outfit.active ? '正在穿着' : '穿上'}
           </button>
         ) : null}
       </div>
-      {pack?.status === 'processing' ? (
-        <p aria-live="polite" className="creation-status">
-          衣服已经保存，正在准备穿上后的动作。可以离开这里，稍后回来继续。
-        </p>
-      ) : null}
-      {pack?.actions
-        .filter(action => action.video_queue)
-        .map(action => (
-          <p aria-live="polite" className="creation-status" key={action.action}>
-            {action.name || action.action} · {action.video_queue ? videoQueueText(action.video_queue) : ''}
-          </p>
-        ))}
       {outfit.status === 'expired' ? <Notice>这套衣服的草稿已过期，请返回衣柜重新设计。</Notice> : null}
       {outfit.status === 'draft' ? (
         <details className="optional-details">
@@ -1238,20 +1200,6 @@ function OutfitDetail({
         </details>
       ) : null}
       <div className="button-row">
-        {pack?.can_retry ? (
-          <button
-            disabled={busy || submitted}
-            onClick={() =>
-              produce('companion.produce_video_pack', {
-                path: { pack_id: pack.id },
-                body: { command: 'retry' }
-              })
-            }
-            type="button"
-          >
-            重试动作制作
-          </button>
-        ) : null}
         {outfit.description_status === 'failed' ? (
           <button
             disabled={busy}

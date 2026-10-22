@@ -395,11 +395,7 @@ async def _populate_action_sync(
             continue
         response.sync_targets = list(summaries[response.definition_id])
         local = next(
-            (
-                target
-                for target in response.sync_targets
-                if target.target_kind == "desktop" and target.target_id == response.set_id
-            ),
+            (target for target in response.sync_targets if target.target_id == response.set_id),
             None,
         )
         if (
@@ -995,7 +991,7 @@ async def publish_desktop_asset(
         state.loop_changed_at = utc_now()
     if action.key == "idle":
         await db.flush()
-        action_source = await read_source(db, action.user_id, "desktop", row.id)
+        action_source = await read_source(db, action.user_id, row.id)
         if action_source is None:
             raise RuntimeError("桌景基础画面的共享动作来源无法读取")
         await register_source_targets(db, action_source)

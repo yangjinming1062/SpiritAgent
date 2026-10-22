@@ -8,9 +8,8 @@ import {
   $avatarSeeds,
   $outfitPolicy,
   $outfits,
-  $videoPacks,
   $wardrobeStatus,
-  activateVideoPack,
+  activateOutfit,
   deleteOutfit,
   GenerationActionsGroup,
   hydrateAvatarSeeds,
@@ -55,7 +54,7 @@ import { $appearanceUi, $appearanceUiImportRevision, updateAppearanceUi } from '
 const CARD_ACTION_CLASS =
   'inline-flex h-6 items-center justify-center rounded-lg bg-fill-faint px-1.5 text-muted transition hover:bg-fill-hover hover:text-strong disabled:pointer-events-none disabled:opacity-40'
 
-// 着装是衣柜页的首层资产；选择着装只切换预览与动作目录，穿着由明确操作完成。
+// 着装是衣柜页的首层资产；选择着装只切换静态预览，穿着由明确操作完成。
 interface OutfitSectionProps {
   onSelectOutfit: (id: number) => void
   onMaterialReady?: (id: number) => void
@@ -66,7 +65,6 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady, search }: Outfi
   const outfits = useStore($outfits)
   const wardrobeStatus = useStore($wardrobeStatus)
   const outfitPolicy = useStore($outfitPolicy)
-  const packs = useStore($videoPacks)
   const avatarSeeds = useStore($avatarSeeds)
   const dict = useStrings()
   const t = dict.living.outfit
@@ -463,13 +461,13 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady, search }: Outfi
             <>
               <header className="flex shrink-0 items-center gap-3 border-b border-line-hairline px-4 py-2.5">
                 <button
-                  aria-label={dict.living.appearance.videoBackToOutfits}
+                  aria-label={t.backToWardrobe}
                   className={cn(BTN_GHOST, 'h-8 shrink-0 px-2')}
                   onClick={viewWardrobe}
                   type="button"
                 >
                   <ArrowLeft className="size-4" />
-                  {dict.living.appearance.videoBackToOutfits}
+                  {t.backToWardrobe}
                 </button>
                 <div className="min-w-0">
                   <h2 className="truncate text-sm font-semibold text-strong" id="appearance-outfit-design-heading">
@@ -688,8 +686,7 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady, search }: Outfi
                 const statusLabel = outfit.active ? t.wearing : (t.statusLabels[outfit.status] ?? '')
                 const canEdit = outfit.status === 'draft'
                 const canDelete = !outfit.active
-                const pack = packs.find(item => item.outfit_id === outfit.id)
-                const canWear = pack?.status === 'ready' && pack.identity_review !== 'review'
+                const canWear = outfit.status === 'ready'
 
                 const continueDesign = (): void => {
                   if (session.busy) {
@@ -716,14 +713,7 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady, search }: Outfi
                     footer={
                       <>
                         <span className="min-w-0 flex-1 truncate text-[10px] text-faint">
-                          {statusLabel ||
-                            (pack?.identity_review === 'review'
-                              ? dict.common.actionVariants.statuses.failed
-                              : canWear
-                                ? dict.living.appearance.videoActionReady
-                                : pack?.status === 'processing'
-                                  ? dict.living.appearance.videoActionGenerating
-                                  : dict.living.appearance.videoOutfitNotReady)}
+                          {statusLabel || (canWear ? t.saved : '')}
                         </span>
                         <button
                           className={BTN_SUBTLE}
@@ -731,12 +721,9 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady, search }: Outfi
                           onClick={() => {
                             if (onMaterialReady && outfit.status === 'ready') {
                               onMaterialReady(outfit.id)
-                            } else if (canWear && pack && !outfit.active) {
-                              const epoch = currentClearEpoch()
+                            } else if (canWear && !outfit.active) {
                               withBusy(outfit.id, async () => {
-                                if (!(await activateVideoPack(pack.id)) && epoch === currentClearEpoch()) {
-                                  onSelectOutfit(outfit.id)
-                                }
+                                await activateOutfit(outfit.id)
                               })
                             } else {
                               openOutfit()
@@ -745,18 +732,14 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady, search }: Outfi
                           type="button"
                         >
                           {onMaterialReady && outfit.status === 'ready'
-                            ? dict.living.appearance.chooseOutfit
+                            ? t.chooseOutfit
                             : outfit.active
                               ? t.wearing
                               : canEdit
                                 ? t.actions.continueDesign
                                 : canWear
-                                  ? dict.living.appearance.videoActivate
-                                  : pack?.identity_review === 'review'
-                                    ? dict.living.appearance.reviewAppearance
-                                    : pack?.status === 'processing'
-                                      ? dict.living.appearance.viewProgress
-                                      : dict.living.appearance.prepareToWear}
+                                  ? t.wear
+                                  : t.openDetails}
                         </button>
 
                         <Disclosure

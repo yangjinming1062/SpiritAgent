@@ -1,7 +1,7 @@
 """共享定义与持久调度意图；素材、供应商任务和播放仍由目标模块拥有。"""
 
 from infrastructure.models import ModelBase, TimestampMixin
-from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -35,7 +35,6 @@ class ActionDefinition(ModelBase, TimestampMixin):
     status: Mapped[str] = mapped_column(String(24), default="pending", server_default=text("'pending'"), index=True)
     review_reason: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     review_source_json: Mapped[str] = mapped_column(Text)
-    origin_kind: Mapped[str] = mapped_column(String(16))
     origin_target_id: Mapped[int] = mapped_column(Integer)
     reuse_definition_id: Mapped[int | None] = mapped_column(
         ForeignKey("action_definitions.id", ondelete="SET NULL"),
@@ -46,15 +45,11 @@ class ActionDefinition(ModelBase, TimestampMixin):
 
 class ActionSyncTarget(ModelBase, TimestampMixin):
     __tablename__ = "action_sync_targets"
-    __table_args__ = (
-        UniqueConstraint("definition_id", "target_kind", "target_id", name="uq_action_sync_target"),
-        CheckConstraint("target_kind IN ('window', 'desktop')", name="ck_action_sync_target_kind"),
-    )
+    __table_args__ = (UniqueConstraint("definition_id", "target_id", name="uq_action_sync_target"),)
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     definition_id: Mapped[int] = mapped_column(ForeignKey("action_definitions.id", ondelete="CASCADE"), index=True)
-    target_kind: Mapped[str] = mapped_column(String(16))
-    # 目标 ID 属于 target_kind 对应模块，跨模块只经公开操作校验与读取。
+    # 目标 ID 属于桌面生活套装，跨模块只经公开操作校验与读取。
     target_id: Mapped[int] = mapped_column(Integer)
     action_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     automatic: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"))

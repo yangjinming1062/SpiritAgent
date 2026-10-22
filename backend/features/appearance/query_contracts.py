@@ -30,8 +30,6 @@ class OutfitSnapshot(BaseModel):
     status: str
     source_json: str
     is_initial: bool
-    initial_video_started: bool
-    initial_video_error: str | None
     active: bool
     id: int
     created_at: datetime

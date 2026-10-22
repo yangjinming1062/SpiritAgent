@@ -155,8 +155,13 @@ class OutfitConfirmRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class OutfitSelectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    outfit_id: int = Field(gt=0, le=POSTGRES_INT4_MAX)
+
+
 class OutfitResponse(BaseModel):
-    initial_video_error: str | None = None
     description_status: Literal["pending", "processing", "ready", "failed"] = "pending"
     description_error: str | None = None
     id: int

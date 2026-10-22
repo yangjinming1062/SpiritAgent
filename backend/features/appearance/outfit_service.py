@@ -30,7 +30,6 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.models import lock_user_row
-from features.appearance.action_cleanup import delete_outfit_actions
 from features.appearance.avatar_service import (
     FULLBODY_ASPECT,
     FULLBODY_SIZE,
@@ -51,7 +50,6 @@ from features.appearance.character_card import (
     render_character_identity,
     require_character_snapshot,
 )
-from features.appearance.completion import notify_outfit_ready
 from features.appearance.models import AvatarAsset, CompanionOutfit, OutfitSource
 from features.appearance.prompt_assembly import build_image_edit_prompt, build_outfit_prompt, describe_garment_image
 from features.appearance.prompts import EDIT_PRESERVE_OUTFIT, OUTFIT_DESCRIBE_SYSTEM
@@ -66,7 +64,6 @@ from features.companion.persona_service import load_persona_definition
 from features.companion.policy_contracts import OUTFIT_POLICY_DEFAULT
 from features.companion.visual_state import change_outfit_policy, ensure_persona_snapshot, persona_snapshot
 from features.configuration.settings.values import get_user_setting
-from features.media.chain import spawn_removed_action_task_cancellation
 from features.media.character_images import ImageChainState, generate_character_images, image_asset_bytes
 from features.media.identity_contracts import CharacterCardSnapshot
 from features.media.image_generation import ImageGenerationError
@@ -600,7 +597,7 @@ async def confirm_outfit(
     user_id: int,
     outfit_id: int,
 ) -> CompanionOutfit:
-    """验收透明草稿并入柜，受理基础动作制作；穿着由动作包启用完成。"""
+    """验收透明草稿并入柜，穿着由用户或自主换装显式选择。"""
     async with get_avatar_job_lock(user_id):
         outfit = await _get_outfit(db, user_id, outfit_id)
         if outfit is None:
@@ -646,13 +643,18 @@ async def confirm_outfit(
                 raise OutfitStateError("全身形象已变化，请重新生成外观后再确认")
             outfit.fullbody_url = persisted or original_url
             outfit.status = "ready"
+            emit_ws_event(
+                db,
+                user_id=user_id,
+                event_type="companion.outfit.updated",
+                payload={"outfit_id": outfit.id, "worn": outfit.active},
+            )
             await db.commit()
         except BaseException:
             await db.rollback()
             delete_portrait_file(persisted)
             raise
     schedule_outfit_description(user_id, outfit.id)
-    await notify_outfit_ready(user_id, outfit.id)
     await db.refresh(outfit)
     return outfit
 
@@ -825,7 +827,7 @@ async def activate_outfit(
             update(CompanionOutfit)
             .where(CompanionOutfit.user_id == user_id, CompanionOutfit.active.is_(True))
             .values(active=False)
-            .execution_options(synchronize_session=False),
+            .execution_options(synchronize_session="fetch"),
         )
         outfit.active = True
         emit_ws_event(
@@ -840,17 +842,13 @@ async def activate_outfit(
 
 
 async def delete_outfit(db: AsyncSession, user_id: int, outfit_id: int) -> None:
-    """删除非穿着外观及已停稳动作包；提交后立即回收无引用的专属文件。"""
+    """删除非穿着外观；提交后立即回收无引用的专属文件。"""
     async with get_avatar_job_lock(user_id):
         outfit = await _get_outfit(db, user_id, outfit_id)
         if outfit is None:
             raise OutfitNotFoundError(f"outfit {outfit_id} not found")
         if outfit.active:
             raise OutfitStateError("穿着中的外观不能删除，请先切换到其他外观")
-        try:
-            removed_tasks = await delete_outfit_actions(db, user_id, outfit.id)
-        except ValueError as exc:
-            raise OutfitStateError(str(exc)) from exc
         directory = outfit_asset_directory(outfit.id)
         paths = asset_paths([outfit.fullbody_url, outfit.source_json], user_id)
         await enqueue_asset_cleanup(db, user_id, paths, expedite=True)
@@ -867,7 +865,6 @@ async def delete_outfit(db: AsyncSession, user_id: int, outfit_id: int) -> None:
     description = _DESCRIBE_TASKS.get((user_id, outfit_id))
     if description is not None and not description.done():
         await cancel_and_wait([description])
-    spawn_removed_action_task_cancellation(user_id, removed_tasks)
     await cleanup_asset_directories(user_id, [directory])
     if outfit.fullbody_url.startswith("temp-media/"):
         delete_portrait_file(outfit.fullbody_url)

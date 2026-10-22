@@ -84,7 +84,7 @@ async def _review_definition_locked(user_id: int, definition_id: int) -> None:
             raise LlmCallBlockedError("自主创建新动作当前已关闭")
         async with SESSION_LOCAL() as db:
             current = await definition_snapshot(db, user_id, definition_id)
-            current_source = await read_source(db, user_id, source.target_kind, source.target_id)
+            current_source = await read_source(db, user_id, source.target_id)
             if current is None or current.status != "reviewing" or current_source is None or not current_source.ready:
                 raise LlmCallBlockedError("动作评审来源已不可用")
             if not definition_matches_source(current, current_source):
@@ -111,7 +111,7 @@ async def _review_definition_locked(user_id: int, definition_id: int) -> None:
         raise ValueError("共享动作缺少冻结参考图")
     config = await load_user_llm_config(
         user_id,
-        AiTaskKey.desktop_life if source.target_kind == "desktop" else AiTaskKey.window_action,
+        AiTaskKey.desktop_life,
         required_modalities=frozenset({ModelModality.text, ModelModality.image}),
     )
     payload = {

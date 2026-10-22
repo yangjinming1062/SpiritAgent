@@ -322,3 +322,23 @@ async def generate_embeddings(
     if not texts:
         return []
     return await _embed(texts, provider, user_id=user_id, purpose="db")
+
+
+async def resolve_model_config(
+    db: AsyncSession,
+    user_id: int,
+    service: ServiceType,
+    model_card_id: UUID,
+    provider_id: UUID,
+) -> ProviderConfig | None:
+    """按原模型身份读取现存凭据，供已失去业务所有者的远端任务收尾。"""
+    user_ai = await read_user_ai_config(db, user_id)
+    system_ai = SETTINGS.ai_config
+    found = user_ai.find_model(model_card_id, system_ai)
+    if found is None:
+        return None
+    actual_service, card, owner = found
+    provider = owner.find_provider(card.provider_id, system_ai if owner is user_ai else None)
+    if actual_service != service.value or provider is None or provider.id != provider_id:
+        return None
+    return _chain_entry(service, provider, card, task=None, config_source="frozen_model")

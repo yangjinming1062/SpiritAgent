@@ -471,7 +471,7 @@ async function deleteUser(id) {
 const BACKUP_SECTION_LABELS = Object.freeze({
     user_preferences: '用户偏好', conversations: '会话', messages: '消息',
     user_model_configs: '模型配置与凭据', avatar_assets: '角色形象', companion_character_cards: '角色卡',
-    companion_outfits: '衣柜', companion_action_packs: '动作包', companion_actions: '动作',
+    companion_outfits: '衣柜',
     companion_scenes: '场景', desktop_video_sets: '桌面生活组合', desktop_video_actions: '桌面生活动作', desktop_video_states: '桌面生活偏好', personas: '角色定义', user_settings: '用户设置',
     cron_jobs: '定时任务', companion_intents: '主动陪伴意图', memories: '长期记忆',
     companion_posts: '动态', companion_post_comments: '动态评论',
@@ -480,7 +480,7 @@ const BACKUP_SECTION_LABELS = Object.freeze({
 // 与 backup/serializers.py 的 BACKUP_SECTIONS 对齐；页面只负责勾选，表映射以服务端为准。
 const BACKUP_SCOPE_HINTS = Object.freeze({
     all: '恢复备份中的全部数据类别。',
-    identity: '恢复人设、头像与全身参考（含确认状态）、角色卡。音色需勾选设置，动作包与场景需分别恢复；缺少引导资料时继续完成对应步骤，不自动生成素材。',
+    identity: '恢复人设、头像与全身参考（含确认状态）、角色卡。音色需勾选设置，场景需单独恢复；缺少引导资料时继续完成对应步骤，不自动生成素材。',
     custom: '只恢复勾选的类别。衣柜与桌景包含共同动作，勾选其中一项时会一起恢复；其他未勾选的数据保留。',
 });
 const BACKUP_MODE_LABELS = Object.freeze({ overwrite: '覆盖', merge: '合并' });

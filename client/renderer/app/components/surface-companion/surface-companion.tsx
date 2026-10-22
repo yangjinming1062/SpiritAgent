@@ -3,13 +3,13 @@ import type React from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 
 import {
+  $activeOutfit,
   $companionLifecycle,
   ensureCompanionHydrated,
-  hydrateActionCatalog,
-  hydrateVideoPack,
+  hydrateWardrobe,
   SpriteVfxOverlay
 } from '@/modules/character'
-import { MediaStage, useMediaPixelHitTest } from '@/modules/character/rendering'
+import { OutfitStage, useMediaPixelHitTest } from '@/modules/character/rendering'
 import { useInteractiveRegion } from '@/shared'
 import { probeInteractiveRegions } from '@/shared/lib/interactive-regions'
 import { cn } from '@/shared/lib/utils'
@@ -17,8 +17,6 @@ import { $auth } from '@/shared/store/auth'
 import { $presentation } from '@/shared/store/presentation'
 import { $surfaceCompanion } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
-
-import { CompanionEgg, useCompanionPresentation } from '../companion-presentation'
 
 import styles from './surface-companion.module.css'
 
@@ -35,13 +33,10 @@ export function SurfaceCompanion(): React.JSX.Element | null {
   const strings = useStrings()
   const wrapperRef = useRef<HTMLDivElement>(null)
   const mediaHitTest = useMediaPixelHitTest(1)
+  const activeOutfit = useStore($activeOutfit)
+  const hasPortrait = Boolean(activeOutfit?.fullbodyPath)
 
-  const presentation = useCompanionPresentation()
-
-  const hitTest = useCallback(
-    (x: number, y: number): boolean => visible && presentation.renderer === 'media' && mediaHitTest(x, y),
-    [presentation.renderer, visible, mediaHitTest]
-  )
+  const hitTest = useCallback((x: number, y: number): boolean => visible && mediaHitTest(x, y), [visible, mediaHitTest])
 
   useInteractiveRegion('surface-companion', wrapperRef, undefined, hitTest, 1)
 
@@ -67,8 +62,7 @@ export function SurfaceCompanion(): React.JSX.Element | null {
       return
     }
 
-    void hydrateActionCatalog()
-    void hydrateVideoPack()
+    void hydrateWardrobe()
     void ensureCompanionHydrated()
   }, [auth.kind, lifecycle, visible])
 
@@ -81,18 +75,19 @@ export function SurfaceCompanion(): React.JSX.Element | null {
   return (
     <aside className={styles.slot} style={{ order: state.preference.side === 'left' ? -1 : 1, width: slotWidth }}>
       <div
-        className={cn(styles.wrapper, presentation.renderer === 'media' && styles.videoWrapper)}
+        className={cn(styles.wrapper, hasPortrait && styles.videoWrapper)}
         onContextMenu={event => event.preventDefault()}
         ref={wrapperRef}
         title={strings.common.companionControl.dragTitle(strings.brand.name)}
       >
         <div className={styles.inner}>
-          {visible &&
-            (presentation.renderer === 'fallback' ? (
-              <CompanionEgg presentation={presentation} size="min(280px, 92%)" windowId={1} />
-            ) : (
-              <MediaStage contentAlign={state.preference.side === 'right' ? 'left' : 'right'} />
-            ))}
+          {visible && (
+            <OutfitStage
+              contentAlign={state.preference.side === 'right' ? 'left' : 'right'}
+              eggSize="min(280px, 92%)"
+              windowId={1}
+            />
+          )}
           {visible && <SpriteVfxOverlay />}
         </div>
       </div>

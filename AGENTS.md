@@ -7,7 +7,7 @@
 | 对话、气泡、语音、历史恢复 | [会话与消息](docs/PROTOCOL.md#会话与消息) | [对话编排](backend/workflows/chat/README.md#关键入口)、[Client](client/README.md#任务入口) |
 | 初始化、角色卡、换装 | [认识伙伴](docs/DESIGN.md#认识伙伴)、[身份与参考](docs/PIPELINE.md#身份造型与参考输入) | [外观](backend/features/appearance/README.md#关键入口) |
 | 场景创建、重生成与切换 | [场景任务](docs/PROTOCOL.md#场景任务与原位换图)、[启用与授权](docs/PROTOCOL.md#场景启用与授权) | [场景改动链](backend/features/scenes/README.md#场景改动链) |
-| 动作制作、目录与播放 | [动作资产](docs/PIPELINE.md#动作资产制作)、[播放契约](docs/PROTOCOL.md#动作目录与播放) | [动作编排](backend/features/actions/README.md)、[渲染层](client/renderer/README.md#角色呈现契约) |
+| 动作制作、目录与播放 | [动作资产](docs/PIPELINE.md#动作资产制作)、[播放契约](docs/PROTOCOL.md#动作目录与播放) | [动作定义](backend/features/action_library/README.md)、[桌面生活](backend/features/desktop_life/README.md)、[渲染层](client/renderer/README.md#角色呈现契约) |
 | 记忆学习、编辑与遗忘，学习技能 | [记忆作用域](docs/PROTOCOL.md#预设记忆与学习作用域) | [记忆模块](backend/features/memory/README.md)、[Runner 学习技能](runner/README.md#按预设学习技能) |
 | 主动陪伴、Cron 与夜间 | [在线与夜间体验](docs/DESIGN.md#主动陪伴)、[调度契约](docs/PROTOCOL.md#调度) | [Backend 任务入口](backend/README.md#任务入口) |
 | 动态与日记 | [动态体验](docs/DESIGN.md#生活动态)、[日记体验](docs/DESIGN.md#第一人称日记)、[契约](docs/PROTOCOL.md#动态与日记) | [Backend 任务入口](backend/README.md#任务入口) |

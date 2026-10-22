@@ -1,26 +1,3 @@
-export {
-  $actionCatalog,
-  $actionCatalogStatus,
-  $activePlayInstance,
-  acceptPlayCommand,
-  actionCatalogChanged,
-  type ActionClipEntry,
-  type ActionHitmask,
-  type ActionPackWire,
-  type ActionPlayCommand,
-  type ActionPlayInstance,
-  type ActionWire,
-  hydrateActionCatalog,
-  isActionStageVisible,
-  markPlayInstanceStarted,
-  type NormalizedRect,
-  observeActionStageVisibility,
-  reportReceipt,
-  resolveActionClipUrl,
-  resolveHitmask,
-  settlePlayInstance,
-  shouldStartInstance
-} from './actions'
 export { $screenLocked, applyStageActivity, reportInteractionStat, startActivityMonitor } from './activity'
 export { startAutonomyProvision, stopAutonomyProvision } from './autonomy'
 export { pickAvatarImage, type PickedImage, resolvePortraitUrl } from './avatar-image'
@@ -101,44 +78,13 @@ export {
   setCompanionVoiceId,
   setResponsePreference
 } from './prefs'
-export {
-  resolveCompanionPresentation,
-  resolveSystemAction,
-  SYSTEM_ACTION_KEYS,
-  type SystemActionKey,
-  systemActionNames,
-  VIDEO_GEN_STAGE_TEXT_KEYS
-} from './presentation'
-export type { CompanionFallbackStatus } from './presentation'
 export { handleDragEndInteraction } from './reactions/reaction-audio'
-export {
-  $videoGenErrors,
-  $videoGenRequests,
-  $videoGenScope,
-  $videoGenStages,
-  $videoGenState,
-  $videoPacks,
-  $videoPacksStatus,
-  activateVideoPack,
-  generateVideoPack,
-  hydrateVideoPack,
-  scopedGenError,
-  videoActionIsBusy,
-  videoGenFailed,
-  videoGenProgress,
-  videoGenReady,
-  videoGenScopeMatches,
-  videoPackEventReceived,
-  videoPackIsGenerating
-} from './rendering/video/video-pack-store'
 export { SelfSourceImageFlow, type SelfSourceReferenceImage } from './self-source-image'
 export {
   $defaultScale,
   $expressionBoost,
   $homePosition,
-  $peekPreparation,
   $spatialLocomotion,
-  $spatialPeek,
   $spatialPos,
   $spatialScale,
   $spriteCanvasRect,
@@ -147,35 +93,33 @@ export {
   $viewport,
   baseSpriteSize,
   cancelMovement,
-  cancelPeekPreparation,
-  commitPeekPreparation,
   computeOverlayAnchorBesideSprite,
   endDragAt,
   EXPRESSION_BOOST_SCALE,
   getBaseSpriteHeight,
   getBaseSpriteWidth,
   initSpatial,
-  leavePeekForExpression,
   resetToHomePosition,
-  restorePeekAfterExpression,
   setDefaultScale,
   setSpatialLocale,
   startDrag,
   syncDefaultScale,
   updateDragPosition
 } from './spatial'
-export { peekMaskRects } from './spatial-peek'
 export { $contextMenuPos, closeContextMenu, openContextMenu } from './sprite/context-menu-store'
 export { FootGlow, triggerFootGlowPulse } from './sprite/foot-glow'
 export { playSpriteGesture } from './sprite/gesture'
 export { useSpriteBodyGesture } from './sprite/gesture-layer'
+export { isCharacterStageVisible, observeCharacterStageVisibility } from './stage-visibility'
 export { clearVfx, emitVfx, SpriteVfxOverlay } from './vfx'
 export { useOutfitDesignSession } from './wardrobe/design-session'
 
 export {
+  $activeOutfit,
   $outfitPolicy,
   $outfits,
   $wardrobeStatus,
+  activateOutfit,
   deleteOutfit,
   hydrateWardrobe,
   retryOutfitDescription,

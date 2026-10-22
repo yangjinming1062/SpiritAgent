@@ -2,7 +2,6 @@
 
 from .admin import router as admin_router
 from .companion import router as companion_router
-from .companion_actions import router as companion_actions_router
 from .companion_desktop_videos import router as companion_desktop_videos_router
 from .companion_journal import router as companion_journal_router
 from .companion_posts import router as companion_posts_router
@@ -25,7 +24,6 @@ ROUTERS = (
     admin_router,
     gateway_router,
     companion_router,
-    companion_actions_router,
     companion_desktop_videos_router,
     companion_journal_router,
     companion_posts_router,

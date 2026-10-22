@@ -9,7 +9,6 @@ from typing import Any
 from infrastructure.assets.asset_store import (
     dated_asset_directory,
     outfit_asset_directory,
-    pack_asset_directory,
     scene_asset_directory,
 )
 from infrastructure.assets.references import asset_paths
@@ -33,7 +32,6 @@ def plan_asset_layout(
     id_map: dict[str, dict[str, int | str]] | None = None,
 ) -> AssetLayout:
     layout = AssetLayout()
-    packs = {str(row["id"]): row for row in rows.get("companion_action_packs", [])}
 
     def mapped(table: str, value: Any) -> int:
         return int(id_map[table][str(value)] if id_map is not None else value)
@@ -65,13 +63,6 @@ def plan_asset_layout(
             return 1, outfit_asset_directory(mapped(table, row["id"]))
         if table == "companion_scenes":
             return 2, scene_asset_directory(mapped(table, row["id"]))
-        if table in {"companion_action_packs", "companion_actions"}:
-            pack = row if table == "companion_action_packs" else packs[str(row["pack_id"])]
-            outfit_id = pack.get("outfit_id")
-            return 3, pack_asset_directory(
-                mapped("companion_outfits", outfit_id) if outfit_id is not None else None,
-                mapped("companion_action_packs", pack["id"]),
-            )
         if table == "desktop_video_sets":
             return 3, f"desktop/{mapped(table, row['id'])}/references"
         if table == "desktop_video_actions":
@@ -139,7 +130,5 @@ def freeze_asset_directory(table: str, column: str, value: Any, directory: str) 
         return [freeze_asset_directory(table, column, item, directory) for item in value]
     updated = {key: freeze_asset_directory(table, key, item, directory) for key, item in value.items()}
     if "generation_id" in value and ("pending_slots" in value or "inputs" in value):
-        updated["storage_directory"] = directory
-    if table == "companion_action_packs" and column == "context_json" and "identity" in value:
         updated["storage_directory"] = directory
     return updated

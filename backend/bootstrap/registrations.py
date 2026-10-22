@@ -12,11 +12,8 @@ from entrypoints.tools.builtin.send_message_tool import register as register_sen
 from entrypoints.tools.builtin.video_generation_tool import register as register_video_generation
 from entrypoints.tools.builtin.web_tools import register as register_web
 from features.action_library.ports import configure_action_library_ports
-from features.actions.asset_retirement import delete_outfit_action_packs
-from features.actions.video_queue import inspect_video_queue_owner as inspect_action_video_owner
-from features.appearance.action_cleanup import set_outfit_action_cleanup
 from features.appearance.character_card import character_snapshot_is_current, render_character_identity
-from features.appearance.completion import set_character_ready_handler, set_outfit_ready_handler
+from features.appearance.completion import set_character_ready_handler
 from features.appearance.queries import active_identity_reference, appearance_readiness, confirmed_media_reference_paths
 from features.automation.cron_jobs import set_job_intent_invalidator
 from features.companion.appearance_ports import set_appearance_readiness_reader
@@ -82,13 +79,11 @@ from workflows.action_library import (
     schedule_action_definition,
     shared_desktop_proposal,
     shared_desktop_proposals,
-    synchronize_action_target,
     synchronize_desktop_set,
     update_desktop_actions,
 )
 from workflows.automation.companion_turns import execute_companion_turn
 from workflows.onboarding.character_ready import complete_character_initialization
-from workflows.outfit_actions import start_outfit_actions
 
 from bootstrap.assets import register_asset_contributions
 
@@ -153,7 +148,6 @@ def wire_domain_hooks() -> None:
     configure_video_queue_ports(
         {
             "media": inspect_media_video_owner,
-            "action": inspect_action_video_owner,
             "desktop": inspect_desktop_video_owner,
         },
         cancel_video_attempt,
@@ -171,12 +165,11 @@ def wire_domain_hooks() -> None:
         ),
     )
     set_character_ready_handler(complete_character_initialization)
-    set_outfit_ready_handler(start_outfit_actions)
     configure_action_library_ports(
         source_reader=action_source_reader,
         variant_reader=action_variants_reader,
         definition_scheduler=schedule_action_definition,
-        target_sync_handler=synchronize_action_target,
+        target_sync_handler=synchronize_desktop_set,
     )
     set_desktop_action_design_handler(design_shared_desktop_action)
     set_desktop_proposal_query_handler(shared_desktop_proposal)
@@ -184,7 +177,6 @@ def wire_domain_hooks() -> None:
     set_desktop_set_created_handler(synchronize_desktop_set)
     set_desktop_update_handler(update_desktop_actions)
     set_appearance_readiness_reader(appearance_readiness)
-    set_outfit_action_cleanup(delete_outfit_action_packs)
 
 
 def register_all() -> None:

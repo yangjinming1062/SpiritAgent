@@ -2,7 +2,6 @@
 
 from features.accounts.backup import backup_tables as account_tables
 from features.action_library.backup import backup_tables as action_library_tables
-from features.actions.backup import backup_tables as action_tables
 from features.appearance.backup import backup_tables as appearance_tables
 from features.automation.backup import backup_tables as automation_tables
 from features.companion.backup import backup_tables as companion_tables
@@ -25,7 +24,6 @@ def register_backup_tables() -> None:
         *configuration_tables(),
         *appearance_tables(),
         *action_library_tables(),
-        *action_tables(),
         *scene_tables(),
         *desktop_tables(),
         *companion_tables(),

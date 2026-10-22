@@ -70,9 +70,7 @@ export function desktopLifeActionStatus(
   queueStrings: ReturnType<typeof useStrings>['common']['videoQueue'],
   variantStrings: ReturnType<typeof useStrings>['common']['actionVariants']
 ): string {
-  const ownVariant = action.sync_targets.find(
-    target => target.target_kind === 'desktop' && target.target_id === action.set_id
-  )
+  const ownVariant = action.sync_targets.find(target => target.target_id === action.set_id)
 
   if (
     !action.draft &&

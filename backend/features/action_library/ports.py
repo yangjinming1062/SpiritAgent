@@ -4,12 +4,12 @@ from collections.abc import Awaitable, Callable, Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .schemas import ActionSourceSnapshot, ActionTargetKind, ActionTargetSnapshot, ActionVariantSummary
+from .schemas import ActionSourceSnapshot, ActionTargetSnapshot, ActionVariantSummary
 
-type SourceReader = Callable[[AsyncSession, int, ActionTargetKind, int | None], Awaitable[ActionSourceSnapshot | None]]
+type SourceReader = Callable[[AsyncSession, int, int | None], Awaitable[ActionSourceSnapshot | None]]
 type VariantReader = Callable[[AsyncSession, Sequence[ActionTargetSnapshot]], Awaitable[list[ActionVariantSummary]]]
 type DefinitionScheduler = Callable[[int, int], None]
-type TargetSyncHandler = Callable[[int, ActionTargetKind, int], Awaitable[None]]
+type TargetSyncHandler = Callable[[int, int], Awaitable[None]]
 
 _source_reader: SourceReader | None = None
 _variant_reader: VariantReader | None = None
@@ -32,12 +32,11 @@ def configure_action_library_ports(
 async def read_source(
     db: AsyncSession,
     user_id: int,
-    kind: ActionTargetKind,
     target_id: int | None,
 ) -> ActionSourceSnapshot | None:
     if _source_reader is None:
         raise RuntimeError("共享动作来源读取尚未装配")
-    return await _source_reader(db, user_id, kind, target_id)
+    return await _source_reader(db, user_id, target_id)
 
 
 async def read_variants(db: AsyncSession, targets: Sequence[ActionTargetSnapshot]) -> list[ActionVariantSummary]:
@@ -55,7 +54,7 @@ def schedule_definition(user_id: int, definition_id: int) -> None:
     _definition_scheduler(user_id, definition_id)
 
 
-async def synchronize_target(user_id: int, kind: ActionTargetKind, target_id: int) -> None:
+async def synchronize_target(user_id: int, target_id: int) -> None:
     if _target_sync_handler is None:
         raise RuntimeError("共享动作目标同步尚未装配")
-    await _target_sync_handler(user_id, kind, target_id)
+    await _target_sync_handler(user_id, target_id)
