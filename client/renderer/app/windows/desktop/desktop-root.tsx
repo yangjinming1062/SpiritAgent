@@ -35,6 +35,7 @@ import { DESKTOP_LAYOUT, getDesktopRailLayout } from '@client-shared/desktop-lay
 
 import { DesktopAvatarSignal } from './desktop-avatar-signal'
 import { DesktopBottomBar } from './desktop-bottom-bar'
+import { DesktopCompanionBubble } from './desktop-companion-bubble'
 import { DesktopControls } from './desktop-controls'
 import { type DesktopApp, useDesktopLayout } from './desktop-layout'
 import { DesktopProductNav } from './desktop-product-nav'
@@ -495,6 +496,7 @@ export function DesktopRoot(): React.JSX.Element {
               )}
               {chatWindow && <i aria-hidden="true" className={styles.runningDot} />}
             </button>
+            <DesktopCompanionBubble onOpen={openCompanionChat} visible={desktopVisible && overlay === null} />
             {accountOpen && (
               <AccountMenu
                 bottomInset={popupBottom}

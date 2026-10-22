@@ -177,6 +177,47 @@
   pointer-events: none;
   animation: desktopAvatarSignal 1.5s ease-in-out infinite;
 }
+.companionBubble {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  z-index: 59;
+  width: max-content;
+  max-width: min(260px, calc(100vw - 24px));
+  padding: 9px 13px;
+  transform: translateX(-50%);
+  border: 1px solid var(--ui-line-standard);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--ui-app-bg) 78%, transparent);
+  backdrop-filter: blur(22px) saturate(150%);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.2);
+  color: var(--ui-text-strong);
+  text-align: left;
+  animation: desktopBubbleIn 200ms ease-out;
+}
+.companionBubble:hover {
+  background: color-mix(in srgb, var(--ui-app-bg) 88%, transparent);
+}
+.companionBubbleText {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@keyframes desktopBubbleIn {
+  from {
+    opacity: 0;
+    translate: 0 6px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
 @keyframes desktopAvatarBreathe {
   0%,
   100% {
@@ -584,6 +625,11 @@
 }
 
 :global(html.no-blur) .bottomBarBackdrop {
+  backdrop-filter: none;
+  background: var(--ui-app-bg);
+}
+
+:global(html.no-blur) .companionBubble {
   backdrop-filter: none;
   background: var(--ui-app-bg);
 }
