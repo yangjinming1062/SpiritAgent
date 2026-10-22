@@ -6,7 +6,7 @@ import { AppContentPage } from '@/app/components/app-content-page'
 import { AccountMenu } from '@/app/features/accounts/account-menu'
 import { ConversationPage } from '@/app/features/conversation/conversation-page'
 import { $appNavigationRevision, $appPage, applyAppNavigation, setAppPage } from '@/app/navigation/app-navigation'
-import { $persona, $portraitUrl, hydratePersona, hydratePortrait } from '@/modules/character'
+import { $portraitUrl, hydratePersona, hydratePortrait } from '@/modules/character'
 import {
   $chatSessionId,
   $companionSessionId,
@@ -21,7 +21,6 @@ import { $postsHasUnread, hydratePostsUnread } from '@/modules/posts'
 import { hydrateScene } from '@/modules/scene'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
-import { ArrowLeft, ArrowRight, MessageCircle, X } from '@/shared/lib/icons'
 import { isPointInteractive, useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { desktopPlatform, shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
@@ -36,7 +35,6 @@ import { DESKTOP_LAYOUT, getDesktopRailLayout } from '@client-shared/desktop-lay
 
 import { DesktopAvatarSignal } from './desktop-avatar-signal'
 import { DesktopBottomBar } from './desktop-bottom-bar'
-import { DesktopWhisper } from './desktop-chat'
 import { DesktopControls } from './desktop-controls'
 import { type DesktopApp, useDesktopLayout } from './desktop-layout'
 import { DesktopProductNav } from './desktop-product-nav'
@@ -59,10 +57,9 @@ export function DesktopRoot(): React.JSX.Element {
   const gatewayState = useStore($gatewayState)
   const gateway = useStore($gateway)
   const screenLocked = useStore($surfaceScreenLocked)
-  const persona = useStore($persona)
   const portrait = useStore($portraitUrl)
   const companionSessionId = useStore($companionSessionId)
-  const { hasUnread: whisperHasUnread, firstUnheard } = useConversationUnread(companionSessionId)
+  const { hasUnread: companionUnread, firstUnheard } = useConversationUnread(companionSessionId)
   const postsUnread = useStore($postsHasUnread)
   const diaryUnread = useStore($diaryHasUnread)
   const [unreadReveal, setUnreadReveal] = useState<{ key: string; request: number }>()
@@ -106,7 +103,7 @@ export function DesktopRoot(): React.JSX.Element {
           ? desktopLife.noPreview
           : null)
 
-  const [focusedConversation, setFocusedConversation] = useState<'main' | 'whisper' | null>('whisper')
+  const [focusedConversation, setFocusedConversation] = useState<'main' | null>(null)
   const [overlay, setOverlay] = useState<'account' | 'controls' | 'dock' | 'product' | null>(null)
   const accountOpen = overlay === 'account'
 
@@ -123,14 +120,8 @@ export function DesktopRoot(): React.JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const avatarRef = useRef<HTMLButtonElement>(null)
-  const whisperRef = useRef<HTMLElement>(null)
-  const whisperTabRef = useRef<HTMLButtonElement>(null)
   useInteractiveRegion('desktop-avatar', menuRef)
-  useInteractiveRegion('desktop-whisper', whisperRef, element =>
-    element.hidden ? null : element.getBoundingClientRect()
-  )
-  useInteractiveRegion('desktop-whisper-tab', whisperTabRef)
-  const { layout, setLayout, activate, updateWindow, close } = useDesktopLayout()
+  const { layout, activate, updateWindow, close } = useDesktopLayout()
 
   const desktopVisible =
     presentation?.effectiveMode === 'desktop' &&
@@ -160,26 +151,20 @@ export function DesktopRoot(): React.JSX.Element {
   const chatWindow = layout.windows.find(item => item.id === 'chat')
 
   const avatarLabel = [
-    whisperHasUnread ? t.openUnread : t.chat,
+    companionUnread ? t.openUnread : t.chat,
     chatWindow && t.running,
     chatWindow?.minimized && t.minimizedWindow
   ]
     .filter(Boolean)
     .join(' · ')
 
-  // 轻语收起时遗留的 whisper 焦点按当前布局归一，覆盖持久化收起启动与互斥收起路径。
-  const focused =
-    layout.whisperOpen || focusedConversation !== 'whisper'
-      ? focusedConversation
-      : activeWindow === 'chat'
-        ? 'main'
-        : null
+  // 内部窗口的活动承载以用户最后激活的面板为准，最小化上层窗口不误激活下层对话。
+  const focused = focusedConversation
 
   const panelsEnabled = foreground && uiStateReady && auth.kind === 'authenticated' && overlay === null
 
-  const activePanel = panelsEnabled && focused !== 'whisper' ? activeWindow : null
+  const activePanel = panelsEnabled ? activeWindow : null
   const mainChatActive = activePanel === 'chat' && focused === 'main'
-  const whisperChatActive = panelsEnabled && focused === 'whisper' && layout.whisperOpen
 
   const dockOpenChange = useCallback((open: boolean): void => {
     setOverlay(current => (open ? 'dock' : current === 'dock' ? null : current))
@@ -256,22 +241,15 @@ export function DesktopRoot(): React.JSX.Element {
     } else {
       setUnreadReveal(undefined)
     }
-
-    setLayout(current => (current.whisperOpen ? { ...current, whisperOpen: false } : current))
-  }, [activatePanel, companionSessionId, firstUnheard, setLayout])
+  }, [activatePanel, companionSessionId, firstUnheard])
 
   const openAccountMenu = (): void => {
     setOverlay('account')
   }
 
-  const openWhisper = useCallback((): void => {
-    setLayout(current => (current.whisperOpen ? current : { ...current, whisperOpen: true }))
-    setFocusedConversation('whisper')
-  }, [setLayout])
-
   useEffect(() => {
-    $desktopChatActive.set(mainChatActive || whisperChatActive)
-  }, [mainChatActive, whisperChatActive])
+    $desktopChatActive.set(mainChatActive)
+  }, [mainChatActive])
 
   useEffect(() => () => $desktopChatActive.set(false), [])
 
@@ -327,7 +305,7 @@ export function DesktopRoot(): React.JSX.Element {
     update()
 
     return () => observer.disconnect()
-  }, [auth.kind, layout.whisperOpen, layout.whisperSide, workArea?.x, workArea?.y, workArea?.width, workArea?.height])
+  }, [auth.kind, workArea?.x, workArea?.y, workArea?.width, workArea?.height])
 
   useEffect(() => {
     const closeMenus = (): void => {
@@ -390,15 +368,6 @@ export function DesktopRoot(): React.JSX.Element {
 
   useDismissOnOutside(menuRef, accountOpen, () => setOverlay(null))
 
-  const toggleWhisper = (): void => {
-    if (layout.whisperOpen) {
-      setLayout(current => ({ ...current, whisperOpen: false }))
-      setFocusedConversation(activeWindow === 'chat' ? 'main' : null)
-    } else {
-      openWhisper()
-    }
-  }
-
   const page = (id: DesktopApp, visible: boolean): React.ReactNode => {
     const reading = visible && activePanel === id
 
@@ -407,7 +376,7 @@ export function DesktopRoot(): React.JSX.Element {
         <ConversationPage
           active={mainChatActive}
           companionSessionId={companionSessionId}
-          companionUnread={whisperHasUnread}
+          companionUnread={companionUnread}
           containerRef={rootRef}
           foreground={foreground}
           receiveExternalAttachments={visible && desktopVisible}
@@ -443,7 +412,6 @@ export function DesktopRoot(): React.JSX.Element {
   return (
     <div
       className={styles.desktop}
-      data-whisper={layout.whisperOpen ? layout.whisperSide : 'closed'}
       inert={['starting', 'recovering'].includes(presentation.status)}
       ref={rootRef}
       style={
@@ -493,55 +461,6 @@ export function DesktopRoot(): React.JSX.Element {
           </DesktopWindow>
         ))}
       </main>
-      <aside
-        aria-label={t.whisper}
-        className={styles.whisper}
-        data-side={layout.whisperSide}
-        hidden={!layout.whisperOpen}
-        onFocusCapture={() => setFocusedConversation('whisper')}
-        onPointerDownCapture={() => setFocusedConversation('whisper')}
-        ref={whisperRef}
-      >
-        <header className={styles.whisperHeader}>
-          <strong>{t.whisper}</strong>
-          <span>{persona?.name || dict.brand.name}</span>
-          <button
-            aria-label={layout.whisperSide === 'right' ? t.leftWhisper : t.rightWhisper}
-            onClick={() =>
-              setLayout(current => ({ ...current, whisperSide: current.whisperSide === 'right' ? 'left' : 'right' }))
-            }
-            title={layout.whisperSide === 'right' ? t.leftWhisper : t.rightWhisper}
-            type="button"
-          >
-            {layout.whisperSide === 'right' ? <ArrowLeft size={14} /> : <ArrowRight size={14} />}
-          </button>
-          <button aria-label={t.hideWhisper} onClick={toggleWhisper} title={t.hideWhisper} type="button">
-            <X size={15} />
-          </button>
-        </header>
-        <DesktopWhisper
-          active={whisperChatActive}
-          containerRef={rootRef}
-          foreground={foreground}
-          sessionId={companionSessionId}
-          visible={layout.whisperOpen && desktopVisible}
-        />
-      </aside>
-      {!layout.whisperOpen && (
-        <button
-          aria-label={whisperHasUnread ? `${t.showWhisper} (${dict.living.rail.unread})` : t.showWhisper}
-          className={styles.whisperTab}
-          data-side={layout.whisperSide}
-          onClick={toggleWhisper}
-          ref={whisperTabRef}
-          title={t.showWhisper}
-          type="button"
-        >
-          <MessageCircle size={17} />
-          <span>{t.whisper}</span>
-          {whisperHasUnread && <span aria-hidden="true" className={styles.whisperUnread} />}
-        </button>
-      )}
       <DesktopBottomBar
         avatar={
           <div className={styles.avatarMenu} ref={menuRef}>
@@ -552,7 +471,7 @@ export function DesktopRoot(): React.JSX.Element {
               className={styles.avatarButton}
               data-current={activeWindow === 'chat'}
               data-minimized={chatWindow?.minimized ?? false}
-              data-unread={whisperHasUnread}
+              data-unread={companionUnread}
               onClick={openCompanionChat}
               onContextMenu={event => {
                 event.preventDefault()
@@ -565,10 +484,10 @@ export function DesktopRoot(): React.JSX.Element {
                 }
               }}
               ref={avatarRef}
-              title={whisperHasUnread ? t.avatarUnreadHint : t.avatarChatHint}
+              title={companionUnread ? t.avatarUnreadHint : t.avatarChatHint}
               type="button"
             >
-              <DesktopAvatarSignal unread={whisperHasUnread} />
+              <DesktopAvatarSignal unread={companionUnread} />
               {portrait ? (
                 <img alt="" className={styles.avatarPortrait} src={portrait} />
               ) : (

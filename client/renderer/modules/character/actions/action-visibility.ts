@@ -11,7 +11,7 @@ import {
 
 import { $screenLocked } from '../activity'
 
-/** 完整入口的对话面板不会遮住侧边伙伴；桌面轻语仍会暂停表达。 */
+/** 完整入口的对话面板不会遮住侧边伙伴；精灵旁轻语可见时暂停表达。 */
 export function isActionStageVisible(): boolean {
   return !$screenLocked.get() && isCompanionStageVisible() && ($surfaceRole.get() !== 'sprite' || !$chatVisible.get())
 }

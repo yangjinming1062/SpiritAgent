@@ -67,7 +67,7 @@
 
 ## 主窗口与桌面装配
 
-主窗口与桌面共用 [features](app/features/) 和导航，各入口选中位置及桌景草稿随主进程账户快照交接。对话页切页时保留实例并关闭活动资格；动态媒体查看器在离开来源页签后释放。衣柜与背景的文字、选中项保存于账户缓存，参考图片字节由 [creation-draft-image.ts](shared/lib/creation-draft-image.ts) 保存、跨窗口通知并随明确移除账户清理，不作为服务端成品。背景表面仅消费主进程缓存媒体及播放控制。窗口与轻语规则归 [DESIGN](../../docs/DESIGN.md#桌面模式)，交接与资格归 [桌面呈现](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。`ConversationViewProvider` 持视图，[chat-store.ts](modules/conversation/chat-store.ts) 管理会话 runtime。
+主窗口与桌面共用 [features](app/features/) 和导航，各入口选中位置及桌景草稿随主进程账户快照交接。对话页切页时保留实例并关闭活动资格；动态媒体查看器在离开来源页签后释放。衣柜与背景的文字、选中项保存于账户缓存，参考图片字节由 [creation-draft-image.ts](shared/lib/creation-draft-image.ts) 保存、跨窗口通知并随明确移除账户清理，不作为服务端成品。背景表面仅消费主进程缓存媒体及播放控制。窗口规则归 [DESIGN](../../docs/DESIGN.md#桌面模式)，轻语规则归 [窗口与会话](../../docs/DESIGN.md#窗口与会话)，交接与资格归 [桌面呈现](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。`ConversationViewProvider` 持视图，[chat-store.ts](modules/conversation/chat-store.ts) 管理会话 runtime。
 
 [panel-activity](shared/context/panel-activity.tsx) 向子组件和 Portal 传播活动资格，子面板不能解除父级禁用；媒体查看器归打开它的视图，失活时隐藏并暂停。视图切换保留各自草稿与附件，录音资格失效后旧麦克风或转写结果不能因重新激活恢复。布局、位置和防抖保存守卫账户清理代次。
 
@@ -83,7 +83,7 @@
 
 [背景播放器](app/windows/desktop/desktop-background-entry.tsx) 双缓冲等待实际呈现的首帧；共同基准且允许自然衔接的短动作在循环接点切入，其余画面及上传视频的循环接点使用淡化。短动作返回仍有效的保留循环，套装或素材替换后不能返回旧画面。管理预览、视频和过渡帧共用 [画幅布局](../shared/desktop-media-geometry.ts)，按实际媒体与视口确定裁切或居中内容区域，完整显示时让出模糊底层；库页缩略图完整展示原图。播放规则归 [PIPELINE](../../docs/PIPELINE.md#桌面生活视频)。媒体加载失败保留当前画面，按主进程暂停状态控制播放并回收媒体 URL。套装启用前先预加载安静相伴，成功后才请求切换；主进程媒体桥同时守卫账户和选中路径。
 
-桌面根组件持有窗口与会话状态，悬浮底栏组合外部应用 Dock、屏幕居中的伙伴头像和固定产品导航；底栏四个导航入口与包含聊天的内部窗口类型分开定义，聊天由头像打开。桌面布局只持久化轻语状态，内部窗口集合仅在本次会话有效，进入桌面不恢复上次打开的窗口。桌面彩色 SVG 集中于 [assets/desktop](../assets/desktop/)，通过 Vite `BASE_URL` 加载；窗口模式导航使用 Tabler 图标。右下角控制入口独立展开状态与桌面操作。主进程与 renderer 共用 [desktop-layout.ts](../shared/desktop-layout.ts) 的尺寸，左右区域等宽并按内容限宽，溢出区域各自滚动。底板装饰与向上展开的弹层分离，避免 backdrop-filter、变换或滚动容器裁切菜单；头像光环与未读声波使用独立装饰层，仅动画缩放和透明度，不参与命中或改变布局，声波不消费录音或音频分析状态。交互区域只覆盖实际底栏、头像、按钮、弹层及连接间隙，透明空白继续穿透。
+桌面根组件持有窗口与会话状态，悬浮底栏组合外部应用 Dock、屏幕居中的伙伴头像和固定产品导航；底栏四个导航入口与包含聊天的内部窗口类型分开定义，聊天由头像打开。桌面布局不跨启动保留任何状态，内部窗口集合仅在本次会话有效，进入桌面不恢复上次打开的窗口。桌面彩色 SVG 集中于 [assets/desktop](../assets/desktop/)，通过 Vite `BASE_URL` 加载；窗口模式导航使用 Tabler 图标。右下角控制入口独立展开状态与桌面操作。主进程与 renderer 共用 [desktop-layout.ts](../shared/desktop-layout.ts) 的尺寸，左右区域等宽并按内容限宽，溢出区域各自滚动。底板装饰与向上展开的弹层分离，避免 backdrop-filter、变换或滚动容器裁切菜单；头像光环与未读声波使用独立装饰层，仅动画缩放和透明度，不参与命中或改变布局，声波不消费录音或音频分析状态。交互区域只覆盖实际底栏、头像、按钮、弹层及连接间隙，透明空白继续穿透。
 
 桌面主题在自身作用域提供实底表面，包括共享弹层的主题覆盖；内部窗口保留 `contain: layout`，使固定定位的表单弹层受所属窗口约束。具体视觉与未读行为见 [桌面模式](../../docs/DESIGN.md#桌面模式)。
 

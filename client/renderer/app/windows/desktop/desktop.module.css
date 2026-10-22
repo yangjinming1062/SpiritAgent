@@ -212,12 +212,6 @@
   pointer-events: none;
   z-index: 10;
 }
-.desktop[data-whisper='right'] .workspace {
-  right: calc(var(--desktop-work-area-right) + 412px);
-}
-.desktop[data-whisper='left'] .workspace {
-  left: calc(var(--desktop-work-area-left) + 412px);
-}
 .window {
   position: absolute;
   contain: layout;
@@ -313,98 +307,6 @@
     transparent 80%
   );
   touch-action: none;
-}
-.whisper {
-  position: absolute;
-  contain: layout;
-  top: calc(var(--desktop-work-area-top) + var(--desktop-content-inset));
-  bottom: var(--desktop-work-area-bottom);
-  width: min(380px, calc(var(--desktop-work-area-width) - 32px));
-  z-index: 30;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border: 1px solid var(--ui-line-standard);
-  border-radius: 18px;
-  background: var(--ui-app-bg);
-  box-shadow: 0 10px 36px rgb(0 0 0 / 0.13);
-}
-.whisper[hidden] {
-  display: none;
-}
-.whisper[data-side='right'] {
-  right: calc(var(--desktop-work-area-right) + 16px);
-}
-.whisper[data-side='left'] {
-  left: calc(var(--desktop-work-area-left) + 16px);
-}
-.whisperHeader {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  height: 46px;
-  padding: 0 14px;
-  border-bottom: 1px solid var(--ui-line-hairline);
-  flex-shrink: 0;
-}
-.whisperHeader strong {
-  font-size: 12px;
-}
-.whisperHeader span {
-  color: var(--ui-text-muted);
-  font-size: 11px;
-  margin-right: auto;
-}
-.whisperHeader button {
-  background: transparent;
-  border: 0;
-  padding: 5px;
-  border-radius: 5px;
-  color: var(--ui-text-muted);
-}
-.whisperHeader button:hover {
-  background: var(--ui-fill-hover);
-}
-.whisperMessages {
-  flex: 1;
-  overflow-y: auto;
-  min-height: 0;
-  padding: 16px;
-}
-.whisperInput {
-  padding: 10px 12px 14px;
-  flex-shrink: 0;
-}
-.whisperTab {
-  position: absolute;
-  top: calc(var(--desktop-work-area-top) + var(--desktop-work-area-height) / 2);
-  z-index: 31;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 7px;
-  padding: 12px 7px;
-  border: 1px solid var(--ui-line-standard);
-  background: var(--ui-app-bg);
-  backdrop-filter: blur(20px);
-  font-size: 11px !important;
-}
-.whisperTab[data-side='right'] {
-  right: var(--desktop-work-area-right);
-  border-radius: 10px 0 0 10px;
-}
-.whisperTab[data-side='left'] {
-  left: var(--desktop-work-area-left);
-  border-radius: 0 10px 10px 0;
-}
-.whisperUnread {
-  position: absolute;
-  top: 5px;
-  right: 5px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--ui-accent);
 }
 .dock {
   display: flex;
@@ -662,14 +564,6 @@
     --desktop-icon-size: 40px;
     --desktop-item-gap: 4px;
     --desktop-bar-padding: 8px;
-  }
-  .desktop[data-whisper='right'] .workspace,
-  .desktop[data-whisper='left'] .workspace {
-    left: calc(var(--desktop-work-area-left) + 12px);
-    right: calc(var(--desktop-work-area-right) + 12px);
-  }
-  .whisper {
-    width: min(380px, calc(var(--desktop-work-area-width) - 24px));
   }
 }
 @media (max-width: 480px) {
