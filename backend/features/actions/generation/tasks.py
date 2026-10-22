@@ -21,7 +21,6 @@ from features.actions.policy import ActionPolicyError, check_can_accept
 from features.actions.repository import clear_action_attempt
 from features.media.chain import FrozenMediaProvider, MediaChainState
 from features.media.character_images import ImageChainState
-from features.media.review_service import reject_pending_action_reviews
 
 from .errors import VideoPackStateError
 from .execution import _build_pack, _generate_dynamic_actions, _generate_pack
@@ -215,7 +214,6 @@ async def _queue_in_place_redo(
         )
         db.add(job)
     else:
-        await reject_pending_action_reviews(db, user_id=job.user_id, action_id=job.id, media_type=job.media_type)
         await retire_action_assets(db, pack.user_id, action_asset_paths(job))
         clear_action_attempt(job)
         job.status = "queued"

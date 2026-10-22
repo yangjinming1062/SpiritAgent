@@ -23,7 +23,6 @@ import {
   videoActionIsBusy,
   videoPackIsGenerating
 } from '@/modules/character'
-import { ChatMediaCard } from '@/modules/conversation'
 import { MediaPreview } from '@/modules/media'
 import { ArrowLeft } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
@@ -51,7 +50,6 @@ interface ActionEntry {
   stage: string
   error: string | null
   mediaUrl: string | null
-  pendingReview: ActionWire['pending_review']
   hasReadyAsset: boolean
   canRetry: boolean
   canGenerate: boolean
@@ -145,7 +143,6 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
           : 'loading'
 
   const [editing, setEditing] = useState<{ key: string; feedback: string } | null>(null)
-  const [reviewActionsTarget, setReviewActionsTarget] = useState<HTMLDivElement | null>(null)
 
   const selectedOutfit = outfits.find(outfit => outfit.id === outfitId) ?? null
   const selectedPack = selectedOutfit ? (packs.find(pack => pack.outfit_id === selectedOutfit.id) ?? null) : null
@@ -184,7 +181,6 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
       stage: entry.stage,
       error: entry.error,
       mediaUrl: entry.current_media_url,
-      pendingReview: entry.pending_review,
       hasReadyAsset: entry.has_ready_asset,
       canRetry: entry.can_retry,
       canGenerate: entry.can_generate,
@@ -209,7 +205,6 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
         feedback: '',
         error: null,
         mediaUrl: null,
-        pendingReview: null,
         hasReadyAsset: false,
         canRetry: false,
         canGenerate: false,
@@ -385,11 +380,9 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
               ? 'waiting'
               : action.status === 'failed' || (requestError ?? packError)
                 ? 'error'
-                : action.pendingReview
-                  ? 'review'
-                  : action.hasReadyAsset
-                    ? 'success'
-                    : 'waiting'
+                : action.hasReadyAsset
+                  ? 'success'
+                  : 'waiting'
 
     const presentation = ((): Pick<ActionPresentation, 'label' | 'hint' | 'className'> => {
       if (action.status !== 'result_unknown' && variantUnavailable && ownVariant) {
@@ -414,10 +407,6 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
 
       if (requestError) {
         return { label: t.videoActionFailed, hint: requestError, className: 'bg-danger-fg' }
-      }
-
-      if (action.status === 'review') {
-        return { label: t.videoActionReview, hint: t.videoActionReviewHint, className: 'bg-amber-400' }
       }
 
       if ((action.key === 'peek_left' || action.key === 'peek_right') && action.mediaUrl && !action.peekGeometry) {
@@ -521,9 +510,12 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
                 {t.videoGenAction}
               </button>
             ) : null}
-            {!onMaterialReady && selectedPack?.status === 'ready' && !selectedPack.active ? (
+            {!onMaterialReady &&
+            selectedPack?.status === 'ready' &&
+            selectedPack.identity_review !== 'review' &&
+            !selectedPack.active ? (
               <button className={BTN_PRIMARY} onClick={() => void activateVideoPack(selectedPack.id)} type="button">
-                {selectedPack.identity_review === 'review' ? t.videoIdentityReviewActivate : t.videoActivate}
+                {t.videoActivate}
               </button>
             ) : null}
             {canRegeneratePack ? (
@@ -620,12 +612,7 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
                 </div>
 
                 <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
-                  <div
-                    className={cn(
-                      'grid min-h-48 gap-3',
-                      selectedAction.pendingReview && selectedAction.mediaUrl ? 'xl:grid-cols-2' : 'grid-cols-1'
-                    )}
-                  >
+                  <div className="grid min-h-48 grid-cols-1 gap-3">
                     {selectedAction.mediaUrl && selectedAction.mediaType ? (
                       <div className="flex min-h-48 min-w-0 flex-col rounded-lg bg-fill-trough p-2">
                         <p className="mb-2 text-[11px] text-muted">{t.videoActionCurrent}</p>
@@ -637,7 +624,7 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
                           />
                         </div>
                       </div>
-                    ) : !selectedAction.pendingReview ? (
+                    ) : (
                       <div className="flex items-center justify-center rounded-lg bg-fill-trough px-5 text-center">
                         <div className="max-w-md">
                           <p className="text-xs text-body">{selectedStatus.hint ?? selectedStatus.label}</p>
@@ -646,24 +633,7 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
                           ) : null}
                         </div>
                       </div>
-                    ) : null}
-                    {selectedAction.pendingReview ? (
-                      <div className="min-w-0 space-y-2 overflow-y-auto [&_img]:max-h-64 [&_video]:max-h-64">
-                        <p className="text-[11px] text-muted">{t.videoActionPending}</p>
-                        <ChatMediaCard
-                          item={{
-                            type: selectedAction.pendingReview.media_type,
-                            url: selectedAction.pendingReview.media_url,
-                            review_id: String(selectedAction.pendingReview.id)
-                          }}
-                          key={selectedAction.pendingReview.id}
-                          onReviewed={() => void hydrateVideoPack(true)}
-                          reviewActionsTarget={reviewActionsTarget}
-                          reviewDisabled={actionIsBusy || editing?.key === selectedAction.key}
-                        />
-                        <p className="text-[11px] text-muted">{t.videoActionPendingHint}</p>
-                      </div>
-                    ) : null}
+                    )}
                   </div>
 
                   {selectedAction.syncTargets.length > 0 ? (
@@ -713,7 +683,7 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
                           onClick={() => setPacksReloadKey(key => key + 1)}
                           type="button"
                         >
-                          {dict.settings.persona.mediaReviewRefresh}
+                          {dict.common.retry}
                         </button>
                       ) : undefined
                     }
@@ -744,19 +714,6 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
                     >
                       {actionGenerationLabel}
                     </button>
-                  </CreationActionBar>
-                ) : selectedAction.pendingReview ? (
-                  <CreationActionBar description={actionIsBusy ? dict.creation.inputLocked : t.videoActionPendingHint}>
-                    <div ref={setReviewActionsTarget} />
-                    {canGenerateAction && (
-                      <button
-                        className={BTN_SUBTLE}
-                        onClick={() => setEditing({ key: selectedAction.key, feedback: selectedAction.feedback })}
-                        type="button"
-                      >
-                        {actionGenerationLabel}
-                      </button>
-                    )}
                   </CreationActionBar>
                 ) : canGenerateAction || canResumeAction ? (
                   <CreationActionBar description={canResumeAction ? t.videoResumeActionHint : undefined}>

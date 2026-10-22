@@ -122,16 +122,12 @@ from features.companion.schemas import (
 )
 from features.companion.should_act import ShouldActResult
 from features.companion.views import get_persona_view, update_persona_view
-from features.media.decision_contracts import ResourceDecision
-from features.media.review_contracts import MediaReviewResponse
-from features.media.review_service import MediaReviewSnapshot, get_media_review, list_pending_media_reviews
 from infrastructure.ai.error_classifier import LLMRuntimeError
 from infrastructure.ai.llm_client import MissingLlmConfigError
 from infrastructure.ai.prompt_engineer import VisualReasoningError
 from infrastructure.assets.asset_store import (
     ImagePixelLimitError,
     UnsupportedImageFormatError,
-    client_asset_url,
     resolve_companion_asset_path,
     sniff_media_ext,
     validate_image_bytes,
@@ -147,7 +143,6 @@ from infrastructure.request_errors import RequestError
 from infrastructure.text import safe_json_loads
 from pydantic import ValidationError
 from workflows.companion.operations import companion_idle_expression, companion_should_act
-from workflows.media_review import MediaReviewStateError, accept_media_review, reject_media_review
 
 from entrypoints.http.auth import CurrentUser, OptionalSession
 from entrypoints.http.rate_limit import limiter
@@ -189,63 +184,6 @@ async def post_movement_decision(user: CurrentUser, body: ShouldActRequest) -> S
     return ShouldActResult.model_validate(
         await companion_should_act(user.id, body.model_dump(exclude_unset=True)),
     )
-
-
-def _media_review_response(row: MediaReviewSnapshot) -> MediaReviewResponse:
-    publication = row.publication
-    return MediaReviewResponse(
-        id=row.id,
-        status=row.status,
-        reason=row.reason,
-        media_type=row.media_type,
-        media_url=client_asset_url(row.media_url),
-        title=publication.title if publication else "",
-        system_slot=publication.system_slot if publication else "",
-    )
-
-
-@router.get(
-    "/media-reviews",
-    response_model=list[MediaReviewResponse],
-)
-async def get_pending_visual_media_reviews(user: CurrentUser) -> list[MediaReviewResponse]:
-    return [_media_review_response(row) for row in await list_pending_media_reviews(user.id)]
-
-
-@router.get(
-    "/media-reviews/{review_id}",
-    response_model=MediaReviewResponse,
-)
-async def get_visual_media_review(
-    review_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
-    user: CurrentUser,
-) -> MediaReviewResponse:
-    row = await get_media_review(user.id, review_id)
-    if row is None:
-        raise RequestError(status_code=404, message="待确认动作不存在")
-    return _media_review_response(row)
-
-
-@router.post(
-    "/media-reviews/{review_id}/decision",
-    response_model=MediaReviewResponse,
-)
-async def decide_visual_media_review(
-    review_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
-    body: ResourceDecision,
-    user: CurrentUser,
-) -> MediaReviewResponse:
-    try:
-        operation = accept_media_review if body.decision == "accept" else reject_media_review
-        row = await operation(user.id, review_id)
-    except MediaReviewStateError as exc:
-        raise RequestError(status_code=409, message=str(exc)) from exc
-    if row is None:
-        raise RequestError(status_code=404, message="待确认动作不存在")
-    expected = "accepted" if body.decision == "accept" else "rejected"
-    if row.status != expected:
-        raise RequestError(status_code=409, message="该媒体已有相反的采用结论")
-    return _media_review_response(row)
 
 
 @router.get(

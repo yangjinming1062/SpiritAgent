@@ -44,7 +44,6 @@ from features.companion.persona_service import load_persona_definition
 from features.companion.visual_state import ensure_persona_snapshot
 from features.media.chain import FrozenMediaProvider, spawn_removed_action_task_cancellation
 from features.media.image_generation import resolve_image_gen_chain
-from features.media.review_service import list_rejected_action_media
 
 from .catalog import _publish_dynamic_catalog
 from .errors import VideoPackError, VideoPackNotFoundError, VideoPackStateError
@@ -53,6 +52,7 @@ from .helpers import _artifact_abs_path, _copy_portrait_asset, _pack_dir, _refer
 from .queries import (
     _action_order,
     _can_publish_jobs,
+    _can_resume_image_review,
     _can_resume_job,
     _can_resume_pose_preparation,
     _get_pack,
@@ -428,14 +428,16 @@ async def retry_pack(
         targets = eligible
         if any(job.id in _ACTION_INFLIGHT for job in targets):
             raise VideoPackStateError("动作任务仍在收尾，请等待完成后继续")
-        rejected_media = await list_rejected_action_media(db, user_id, [job.id for job in targets])
         if action is not None:
             job = targets[0]
-            state = _resumable_action_state(job, rejected_media.get(job.id, ()))
-            pose_review = _can_resume_pose_preparation(job, rejected_media.get(job.id, ()))
-            if (state is None and not pose_review) or context.reference_alignment != "ready":
+            state = _resumable_action_state(job)
+            pose_review = _can_resume_pose_preparation(job)
+            image_review = _can_resume_image_review(job)
+            if (state is None and not pose_review and not image_review) or context.reference_alignment != "ready":
                 raise VideoPackStateError("该动作没有可恢复的制作进度，请核对原任务或重新生成")
-            require_action_matting_model()
+            # 只续审已保存的图片时不经过抠像，不要求额外的本地模型。
+            if pose_review or state is not None:
+                require_action_matting_model()
             if not pose_review and state is not None:
                 # 已有视频只收尾已有结果，姿态检查通过后才允许首次视频提交。
                 state.next_index = len(state.providers)
@@ -453,7 +455,7 @@ async def retry_pack(
             job.status, job.error = "queued", None
             kick_action_id = job.id
         else:
-            recoverable = [job for job in targets if _can_resume_job(job, rejected_media.get(job.id, ()))]
+            recoverable = [job for job in targets if _can_resume_job(job)]
             if (
                 not recoverable
                 and not context.reference_chain.can_retry_goal_review()
@@ -565,7 +567,7 @@ async def activate_pack(db: AsyncSession, user_id: int, pack_id: int) -> ActionP
         if context is not None:
             await _require_current_identity_image(context, avatar)
         if pack.identity_review == "review":
-            pack.identity_review = "accepted"
+            raise VideoPackStateError("动作组未通过自动检查，请重新制作")
         await _activate_locked(db, pack)
         await db.commit()
         await db.refresh(pack)

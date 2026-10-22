@@ -23,7 +23,6 @@ class PostPublicationResult(BaseModel):
         "failed",
         "blocked",
         "result_unknown",
-        "review_pending",
         "declined",
         "discarded",
     ]
@@ -35,7 +34,6 @@ class PostPublicationRecovery(PostPublicationResult):
     title: str
     video_status: Literal["pending", "ready", "failed", "unknown", "discarded"]
     media_url: str | None
-    can_adopt: bool
     can_discard: bool
 
 

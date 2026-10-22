@@ -102,12 +102,7 @@ async def _naming_input(db: AsyncSession, user_id: int, set_id: int) -> _NamingI
         progress = desktop_progress(action)
         if progress is None or progress.resolution_revision != suite.resolution_revision:
             return None
-        if not progress.image_confirmed and not (
-            action.status == "review_pending"
-            and action.stage in {"image_review", "image_confirmed", "review"}
-            and not action.error
-            and not progress.failure_reason
-        ):
+        if not progress.image_confirmed:
             return None
         image_path = progress.candidate.image_path if progress.candidate else progress.pose_path
     parsed = parse_companion_asset_path(image_path)

@@ -17,7 +17,6 @@ import features.conversation.submission_models
 import features.desktop_life.models
 import features.journal.models
 import features.media.models
-import features.media.review_models
 import features.media.video_queue.models
 import features.media.voice_models
 import features.memory.models

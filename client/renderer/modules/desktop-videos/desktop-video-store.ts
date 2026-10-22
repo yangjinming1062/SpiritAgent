@@ -462,24 +462,6 @@ export async function refineDesktopVideo(
   })
 }
 
-export async function confirmDesktopVideoImage(
-  action: DesktopVideoAction,
-  set: DesktopVideoSet,
-  generateVideo = true
-): Promise<void> {
-  if (!action.draft) {
-    throw new Error('图片草稿已失效')
-  }
-
-  await submitDesktopVideoDraft(action.id, {
-    command: 'confirm-image',
-    draft_id: action.draft.id,
-    expected_base_version: set.base_version,
-    expected_resolution_revision: set.resolution_revision,
-    generate_video: generateVideo
-  })
-}
-
 export async function cancelDesktopVideoDraft(action: DesktopVideoAction): Promise<void> {
   if (!action.draft) {
     return
@@ -562,27 +544,6 @@ export async function designDesktopVideoAction(input: {
   await refreshDesktopVideos()
 
   return proposal
-}
-
-export async function reviewDesktopVideoAction(
-  action: DesktopVideoAction,
-  set: DesktopVideoSet,
-  accept: boolean
-): Promise<void> {
-  if (!action.draft) {
-    throw new Error('制作草稿已失效')
-  }
-
-  await mutation('companion_desktop_videos.decide_draft', {
-    path: { action_id: action.id },
-    body: {
-      decision: accept ? 'accept' : 'reject',
-      draft_id: action.draft.id,
-      expected_base_version: set.base_version,
-      expected_resolution_revision: set.resolution_revision
-    }
-  })
-  await refreshDesktopVideos()
 }
 
 export async function setDesktopVideoPreferences(preferences: {

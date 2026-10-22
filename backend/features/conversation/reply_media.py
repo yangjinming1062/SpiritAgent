@@ -105,7 +105,6 @@ def apply_video_status(artifact: MediaArtifact, job: VideoJobSnapshot) -> None:
     artifact.status = {
         "succeeded": "ready",
         "failed": "failed",
-        "review_pending": "failed",
         "result_unknown": "result_unknown",
     }.get(
         job.status,

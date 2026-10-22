@@ -232,7 +232,12 @@ def desktop_asset_description(action: DesktopVideoAction, asset: DesktopVideoAss
 
 
 def desktop_failed_opening_review(action: DesktopVideoAction, progress: DesktopVideoProgress | None) -> bool:
-    return bool(action.stage == "image_review" and action.error and progress and progress.failure_reason)
+    return bool(
+        action.status == "failed"
+        and action.stage in {"planning", "checking", "repairing", "image"}
+        and progress
+        and progress.failure_reason,
+    )
 
 
 def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionResponse:
@@ -245,16 +250,7 @@ def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionRes
     failed_opening = desktop_failed_opening_review(action, progress)
     status = "failed" if failed_opening else action.status
     stage = ("planning" if draft and draft.creation_plan is None else "checking") if failed_opening else action.stage
-    video_review_pending = (
-        action.status == "review_pending" and action.stage != "image_review" and candidate is not None
-    )
-    error = (
-        "活动画面尚未完成规划与检查，已保留原图，点击“再试一次”继续准备。"
-        if failed_opening
-        else None
-        if video_review_pending
-        else action.error
-    )
+    error = action.error
     video_queue = (
         MediaChainState.model_validate_json(progress.video_chain_json).video_queue
         if progress is not None and progress.video_chain_json
@@ -317,7 +313,6 @@ def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionRes
             else None,
             candidate_video_url=client_asset_url(candidate.video_path) if candidate else "",
             candidate_poster_url=client_asset_url(candidate.poster_path) if candidate else "",
-            review_reason=(draft.review_reason or action.error or "") if video_review_pending else "",
             base_version=draft.base_version,
             error=error,
             video_queue=video_queue,
@@ -820,6 +815,8 @@ async def publish_desktop_asset(
     db: AsyncSession,
     action: DesktopVideoAction,
     asset: DesktopVideoAsset,
+    *,
+    schedule_followups: bool = True,
 ) -> list[RemovedActionVideoTask]:
     if resolve_asset_reference(asset.video_path) is None or resolve_asset_reference(asset.poster_path) is None:
         raise DesktopVideoStateError("视频或封面缺失，请重新制作这个动作")
@@ -831,6 +828,8 @@ async def publish_desktop_asset(
     row = await db.get(DesktopVideoSet, action.set_id)
     if row is None or row.user_id != action.user_id:
         raise DesktopVideoStateError("当前画面已被移除")
+    if asset.resolution_revision != row.resolution_revision:
+        raise DesktopVideoStateError("桌景目标尺寸已变化，请重新制作")
     if (
         asset.continuity == "base"
         and action.key != "idle"
@@ -882,7 +881,7 @@ async def publish_desktop_asset(
                     dependent.generation_state_json = None
                     pending = None
                 dependent.needs_update = stale_asset
-                dependent.update_pending = stale_asset and dependent.enabled and pending is None
+                dependent.update_pending = schedule_followups and stale_asset and dependent.enabled and pending is None
                 if pending is None:
                     dependent.status = (
                         "ready"
@@ -938,7 +937,6 @@ async def publish_desktop_asset(
             generation_id=progress.generation_id,
             source=progress.source,
             outfit_description=asset.outfit_description,
-            auto_continue=progress.auto_continue,
             feedback=progress.feedback,
             video_feedback=progress.video_feedback,
             refinement_feedback=progress.refinement_feedback,

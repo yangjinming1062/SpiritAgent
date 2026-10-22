@@ -276,20 +276,18 @@ function Posts({
       {error ? <Notice>{error}</Notice> : null}
       {recoveries.length > 0 ? (
         <details className="card recovery">
-          <summary>待确认的制作 · {recoveries.length}</summary>
+          <summary>待处理的制作 · {recoveries.length}</summary>
           {recoveries.map(item => (
             <section className="recovery-item" key={item.publication_id}>
               <strong>{item.title || '视频动态'}</strong>
               <span className="pill">
-                {item.status === 'review_pending'
-                  ? '身份待确认，未自动发布'
-                  : item.video_status === 'pending'
-                    ? '制作中'
-                    : item.video_status === 'unknown'
-                      ? '等待确认'
-                      : item.video_status === 'ready'
-                        ? '已就绪'
-                        : '制作失败'}
+                {item.video_status === 'pending'
+                  ? '制作中'
+                  : item.video_status === 'unknown'
+                    ? '结果待核对'
+                    : item.video_status === 'ready'
+                      ? '已就绪'
+                      : '制作失败'}
               </span>
               {item.media_url ? (
                 <Media
@@ -311,9 +309,15 @@ function Posts({
                       })
 
                       if (alive()) {
+                        const closed = ['published', 'partial', 'failed', 'blocked'].includes(next.status)
                         setRecoveries(previous =>
-                          previous.map(old => (old.publication_id === next.publication_id ? next : old))
+                          previous.flatMap(old =>
+                            old.publication_id === next.publication_id ? (closed ? [] : [next]) : [old]
+                          )
                         )
+                        if (['published', 'partial'].includes(next.status)) {
+                          await load()
+                        }
                       }
                     })
                   }
@@ -321,32 +325,14 @@ function Posts({
                 >
                   查看最新进度
                 </button>
-                {item.can_adopt ? (
-                  <button
-                    disabled={busy}
-                    onClick={() =>
-                      run(async () => {
-                        await api.invoke('companion_posts.decide_publication', {
-                          path: { publication_id: item.publication_id },
-                          body: { decision: 'accept' }
-                        })
-                        await Promise.all([load(), loadRecovery()])
-                      })
-                    }
-                    type="button"
-                  >
-                    发布这个视频
-                  </button>
-                ) : null}
                 {item.can_discard ? (
                   <button
                     className="danger"
                     disabled={busy}
                     onClick={() =>
                       run(async () => {
-                        await api.invoke('companion_posts.decide_publication', {
-                          path: { publication_id: item.publication_id },
-                          body: { decision: 'reject' }
+                        await api.invoke('companion_posts.discard_publication', {
+                          path: { publication_id: item.publication_id }
                         })
                         await loadRecovery()
                       })

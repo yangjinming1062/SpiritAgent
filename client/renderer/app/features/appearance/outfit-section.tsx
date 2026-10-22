@@ -714,7 +714,7 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady, search }: Outfi
                         <span className="min-w-0 flex-1 truncate text-[10px] text-faint">
                           {statusLabel ||
                             (pack?.identity_review === 'review'
-                              ? dict.living.appearance.videoActionReview
+                              ? dict.common.actionVariants.statuses.failed
                               : canWear
                                 ? dict.living.appearance.videoActionReady
                                 : pack?.status === 'processing'

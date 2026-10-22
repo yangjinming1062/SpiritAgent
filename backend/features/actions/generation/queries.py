@@ -1,6 +1,6 @@
 """动作制作：queries。"""
 
-from collections.abc import Collection, Sequence
+from collections.abc import Sequence
 
 from sqlalchemy import ColumnElement, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,7 +44,7 @@ def _job_result_unresolved(job: CompanionAction) -> bool:
             return True
     return bool(
         job.provider_task_id
-        and job.status not in ("succeeded", "review")
+        and job.status not in ("succeeded",)
         and not job.artifact_path
         and (
             video_state is None
@@ -57,23 +57,17 @@ def _job_result_unresolved(job: CompanionAction) -> bool:
     )
 
 
-def _can_resume_job(job: CompanionAction, rejected_paths: Collection[str]) -> bool:
-    if job.status in ("succeeded", "review", "result_unknown") or job.stage == "invalid_asset":
-        return False
-    if job.media_path in rejected_paths:
+def _can_resume_job(job: CompanionAction) -> bool:
+    if job.status in ("succeeded", "result_unknown") or job.stage in {"invalid_asset", "quality_failed"}:
         return False
     if job.generation_state_json:
         state = MediaChainState.model_validate_json(job.generation_state_json)
-        if any(candidate.path in rejected_paths for candidate in state.candidates):
-            return False
         if (state.phase == "submitting" and not state.queue_request_id) or state.stop_reason == "result_unknown":
             return False
         if state.phase == "ready" and state.active_index is None and not state.needs_next() and state.best() is None:
             return False
     if job.pose_generation_state_json:
         pose = ImageChainState.model_validate_json(job.pose_generation_state_json)
-        if any(candidate.path in rejected_paths for candidate in pose.candidates):
-            return False
         if pose.phase == "submitting" or pose.stop_reason == "result_unknown":
             return False
         if pose.phase == "complete" and pose.best() is None:
@@ -88,7 +82,7 @@ def _can_resume_job(job: CompanionAction, rejected_paths: Collection[str]) -> bo
     )
 
 
-def _can_resume_pose_preparation(job: CompanionAction, rejected_paths: Collection[str]) -> bool:
+def _can_resume_pose_preparation(job: CompanionAction) -> bool:
     """共享动作续用已知图片结果与检查，通过准备后才允许首次视频提交。"""
     if (
         job.definition_id is None
@@ -98,7 +92,7 @@ def _can_resume_pose_preparation(job: CompanionAction, rejected_paths: Collectio
         or not job.pose_generation_state_json
         or not job.generation_state_json
         or _job_result_unresolved(job)
-        or not _can_resume_job(job, rejected_paths)
+        or not _can_resume_job(job)
     ):
         return False
     video = MediaChainState.model_validate_json(job.generation_state_json)
@@ -134,14 +128,30 @@ def _can_resume_pose_preparation(job: CompanionAction, rejected_paths: Collectio
     )
 
 
-def _resumable_action_state(job: CompanionAction, rejected_paths: Collection[str]) -> MediaChainState | None:
+def _can_resume_image_review(job: CompanionAction) -> bool:
+    if job.media_type != "image" or job.status != "failed" or _job_result_unresolved(job):
+        return False
+    if not job.pose_generation_state_json:
+        return False
+    pose = ImageChainState.model_validate_json(job.pose_generation_state_json)
+    if pose.can_retry_goal_review():
+        return all(_artifact_abs_path(candidate.path).is_file() for candidate in pose.candidates)
+    if job.stage != "review" or not job.result_json or pose.best_qualified() is None:
+        return False
+    result = ActionResult.model_validate_json(job.result_json)
+    return all(
+        _artifact_abs_path(path).is_file() for path in (result.clip.path, result.cover_path, result.hitmask_path)
+    )
+
+
+def _resumable_action_state(job: CompanionAction) -> MediaChainState | None:
     """只开放已有视频的下载、后处理或候选收尾，不启动新的生成尝试。"""
     if (
         job.status != "failed"
         or job.media_type != "video"
         or not job.script_json
         or not job.generation_state_json
-        or not _can_resume_job(job, rejected_paths)
+        or not _can_resume_job(job)
         or _job_result_unresolved(job)
     ):
         return None

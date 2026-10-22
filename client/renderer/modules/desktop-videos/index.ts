@@ -9,7 +9,6 @@ export {
   activateDesktopVideoSet,
   cancelDesktopVideoDraft,
   claimDesktopVideoPlay,
-  confirmDesktopVideoImage,
   createDesktopVideoSet,
   deleteDesktopVideoSet,
   designDesktopVideoAction,
@@ -26,7 +25,6 @@ export {
   renameDesktopVideoSet,
   resumeDesktopVideoDraft,
   retryDesktopVideoDraft,
-  reviewDesktopVideoAction,
   setDesktopVideoPreferences,
   uploadDesktopVideoAction
 } from './desktop-video-store'

@@ -6,7 +6,6 @@ from infrastructure.request_errors import RequestError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.posts.publication import (
-    adopt_publication_video,
     discard_publication_video,
     list_publication_recoveries,
     publication_recovery,
@@ -82,13 +81,6 @@ async def query_publication_recovery(user_id: int, db: AsyncSession, publication
     await db.commit()
     try:
         return await publication_recovery(user_id, str(publication_id), query=True)
-    except PostError as exc:
-        raise _error(exc) from exc
-
-
-async def adopt_publication_recovery(user_id: int, publication_id: UUID) -> PostPublicationResult:
-    try:
-        return await adopt_publication_video(user_id, str(publication_id))
     except PostError as exc:
         raise _error(exc) from exc
 

@@ -4,7 +4,6 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import Query
-from features.media.decision_contracts import ResourceDecision
 from features.posts import use_cases as _posts
 from features.posts.schemas import (
     PostCommentCreateRequest,
@@ -84,17 +83,14 @@ async def query_publication_recovery(user: CurrentUser, db: DbSession, publicati
 
 
 @router.post(
-    "/publications/{publication_id}/decision",
+    "/publications/{publication_id}/discard",
     response_model=PostPublicationResult,
 )
-async def decide_publication(
+async def discard_publication(
     user: CurrentUser,
     db: DbSession,
     publication_id: UUID,
-    body: ResourceDecision,
 ) -> PostPublicationResult:
-    if body.decision == "accept":
-        return await _posts.adopt_publication_recovery(user_id=user.id, publication_id=publication_id)
     return await _posts.discard_publication_recovery(user_id=user.id, db=db, publication_id=publication_id)
 
 

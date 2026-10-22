@@ -16,7 +16,6 @@ from features.actions.generation.script import VideoActionScriptEntry, parse_act
 from features.actions.materials import accepted_action_asset
 from features.actions.media_contracts import (
     ActionResult,
-    PendingActionReview,
     VideoActionImageResponse,
     VideoActionVideoResponse,
     VideoPackResponse,
@@ -29,13 +28,13 @@ from features.appearance.avatar_service import get_avatar_job_lock
 from features.appearance.character_card import character_snapshot_is_current
 from features.appearance.queries import active_avatar_snapshot, outfit_snapshot
 from features.media.chain import MediaChainState
-from features.media.review_service import list_pending_media_reviews, list_rejected_action_media
 
 from .helpers import _reference_hash
 from .pipeline import _review_pack_identity
 from .queries import (
     _action_order,
     _can_publish_jobs,
+    _can_resume_image_review,
     _can_resume_job,
     _can_resume_pose_preparation,
     _has_pending_work,
@@ -70,7 +69,7 @@ async def _publish_ready(pack_id: int, results: dict[str, ActionResult]) -> None
             before_submit=lambda: _require_new_paid_step(pack, context),
         )
     else:
-        review_status, review_reason = "review", "动作封面不可用，请预览后手动启用"
+        review_status, review_reason = "review", "动作封面不可用，请重新生成"
     async with get_avatar_job_lock(user_id), SESSION_LOCAL() as db:
         # 共享调度先锁账户再锁动作组，发布及登记意图须保持同一顺序。
         await lock_user_row(db, user_id)
@@ -100,6 +99,10 @@ async def _publish_ready(pack_id: int, results: dict[str, ActionResult]) -> None
         pack.error = None
         pack.identity_review = review_status
         pack.identity_review_reason = review_reason
+        if review_status not in ("pass", "accepted"):
+            await _mark_pack_failed(db, pack, review_reason or "动作组未通过检查，请重新生成", stage="publish")
+            await db.commit()
+            return
         if cover_path:
             pack.cover_path = cover_path
         # 动作目录 = 当前动作包可用清单：从任务行聚合发布；发布失败时不广播目录也不自动启用，保留当前激活包。
@@ -156,9 +159,6 @@ async def _fulfill_pending_intents(action_ids: list[int]) -> None:
 def _pack_response(
     pack: CompanionActionPack,
     jobs: Sequence[CompanionAction],
-    *,
-    pending_reviews: dict[int, PendingActionReview],
-    rejected_media: dict[int, frozenset[str]],
 ) -> VideoPackResponse:
     """列表与单包共用响应装配；资源 URL 仅在出口签名。"""
     context = _load_generation_context(pack)
@@ -204,13 +204,13 @@ def _pack_response(
                     and context is not None
                     and context.reference_alignment == "ready"
                     and (
-                        _can_resume_pose_preparation(job, rejected_media.get(job.id, ()))
-                        or _resumable_action_state(job, rejected_media.get(job.id, ())) is not None
+                        _can_resume_image_review(job)
+                        or _can_resume_pose_preparation(job)
+                        or _resumable_action_state(job) is not None
                     )
                 ),
                 can_regenerate=job.status != "not_generated" and not _job_result_unresolved(job),
                 current_media_url=signed_companion_asset_url(material.media_path) if material else None,
-                pending_review=pending_reviews.get(job.id),
                 feedback=context.action_feedback.get(job.key, "") if context else "",
                 **video_values,
                 peek_geometry=PeekGeometry.from_stored_json(job.peek_geometry_json),
@@ -248,7 +248,7 @@ def _pack_response(
             and (context.reference_alignment != "running" or reference_review_pending)
             and (
                 reference_review_pending
-                or any(_can_resume_job(job, rejected_media.get(job.id, ())) for job in jobs)
+                or any(_can_resume_job(job) for job in jobs)
                 or _can_publish_jobs(jobs, context.must_actions)
             )
         ),
@@ -258,12 +258,7 @@ def _pack_response(
 
 async def load_pack_response(db: AsyncSession, pack: CompanionActionPack) -> VideoPackResponse:
     jobs = (await db.scalars(select(CompanionAction).where(CompanionAction.pack_id == pack.id))).all()
-    response = _pack_response(
-        pack,
-        jobs,
-        pending_reviews=await _pending_action_reviews(pack.user_id),
-        rejected_media=await list_rejected_action_media(db, pack.user_id, [job.id for job in jobs]),
-    )
+    response = _pack_response(pack, jobs)
     await _populate_action_sync(db, pack.user_id, [response])
     return response
 
@@ -317,36 +312,6 @@ async def list_pack_responses(db: AsyncSession, user_id: int) -> list[VideoPackR
     if not packs:
         return []
     jobs_by_pack = await _jobs_by_pack(db, CompanionAction.user_id == user_id)
-    pending_reviews = await _pending_action_reviews(user_id)
-    rejected_media = await list_rejected_action_media(
-        db,
-        user_id,
-        [job.id for jobs in jobs_by_pack.values() for job in jobs],
-    )
-    responses = [
-        _pack_response(
-            pack,
-            jobs_by_pack.get(pack.id, []),
-            pending_reviews=pending_reviews,
-            rejected_media=rejected_media,
-        )
-        for pack in packs
-    ]
+    responses = [_pack_response(pack, jobs_by_pack.get(pack.id, [])) for pack in packs]
     await _populate_action_sync(db, user_id, responses)
     return responses
-
-
-async def _pending_action_reviews(user_id: int) -> dict[int, PendingActionReview]:
-    result: dict[int, PendingActionReview] = {}
-    for review in await list_pending_media_reviews(user_id):
-        if review.publication is None or review.media_type not in ("image", "video"):
-            continue
-        result.setdefault(
-            review.publication.action_id,
-            PendingActionReview(
-                id=review.id,
-                media_type=review.media_type,
-                media_url=signed_companion_asset_url(review.media_url),
-            ),
-        )
-    return result

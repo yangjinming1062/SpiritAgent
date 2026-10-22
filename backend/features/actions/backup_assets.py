@@ -76,7 +76,11 @@ def restore_action_payload(
             payload["accepted_asset_json"] = accepted.model_dump_json()
         if payload.get("pack_id") is None:
             raise ValueError("Action pack is missing from backup")
-        if payload.get("status") in {"queued", "processing", "review", "result_unknown"}:
+        if payload.get("status") == "review":
+            payload["stage"] = "quality_failed"
+            payload["status"] = "failed"
+            payload["error"] = "恢复的动作任务未通过最终检查，请重新生成"
+        elif payload.get("status") in {"queued", "processing", "result_unknown"}:
             payload["status"] = "failed"
             payload["error"] = "恢复的动作任务需要手动处理；请先核对已有生成结果"
         if payload.get("generation_state_json"):
@@ -116,6 +120,9 @@ def restore_action_payload(
         if context.get("reference_alignment") == "running":
             context["reference_alignment"] = "pending"
         payload["context_json"] = json.dumps(context, ensure_ascii=False)
+    if payload.get("identity_review") == "review":
+        payload["status"] = "failed"
+        payload["error"] = "动作组未通过自动检查，请重新制作"
     if payload.get("status") == "processing":
         payload["status"] = "failed"
         payload["error"] = "恢复的动作任务需要手动处理"

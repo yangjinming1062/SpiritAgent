@@ -25,7 +25,6 @@ from features.actions.schemas import (
 from features.actions.usage import record_play_result
 from features.appearance.avatar_service import get_avatar_job_lock
 from features.companion.schemas import CompanionOperationResponse
-from features.media.review_service import reject_pending_action_reviews
 
 logger = get_logger(__name__)
 
@@ -119,12 +118,6 @@ async def delete_action(action_id: int, user_id: int, db: AsyncSession) -> Compa
             raise RequestError(status_code=400, message=f"必需系统动作（{action.system_slot}）不可删除")
         if _job_result_unresolved(action) or action.id in _ACTION_INFLIGHT:
             raise RequestError(status_code=409, message="动作正在制作或结果待核对，请取得明确结果后再删除")
-        await reject_pending_action_reviews(
-            db,
-            user_id=action.user_id,
-            action_id=action.id,
-            media_type=action.media_type,
-        )
         await retire_action_assets(db, user_id, action_asset_paths(action))
         pack_id = action.pack_id
         if action.definition_id is not None:

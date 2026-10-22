@@ -171,7 +171,6 @@ class DesktopVideoProgress(BaseModel):
     paused_by_user: bool = False
     image_confirmed: bool = False
     image_only: bool = False
-    auto_continue: bool = False
     aspect_ratio: str = Field(default="16:9", pattern=r"^[1-9]\d*:[1-9]\d*$")
     frame_width: int | None = Field(default=None, gt=0)
     frame_height: int | None = Field(default=None, gt=0)
@@ -181,7 +180,6 @@ class DesktopVideoProgress(BaseModel):
     image_selection: ProviderSelection | None = None
     video_selection: ProviderSelection | None = None
     regenerate_image: bool = False
-    force_review: bool = False
     visual_description: str = Field(default="", max_length=1500)
     outfit_description: str | None = Field(default=None, max_length=1200)
     action_description: str = ""
@@ -282,7 +280,6 @@ class DesktopVideoDraftResponse(BaseModel):
     recovery_action: Literal["retry", "wait", "choose_activity", "replace_upload", "recreate_set"] | None = None
     candidate_video_url: str = ""
     candidate_poster_url: str = ""
-    review_reason: str = ""
     base_version: int | None = None
     error: str | None = None
     video_queue: VideoQueueInfo | None = None
@@ -305,7 +302,7 @@ class DesktopVideoActionResponse(BaseModel):
     kind: Literal["loop", "once"]
     duration_seconds: int
     target_duration_seconds: int
-    status: Literal["not_generated", "queued", "processing", "ready", "failed", "review_pending", "blocked"]
+    status: Literal["not_generated", "queued", "processing", "ready", "failed", "blocked"]
     stage: str
     error: str | None = None
     video_queue: VideoQueueInfo | None = None
@@ -569,10 +566,6 @@ class DesktopVideoRefineCommand(DesktopVideoRefineRequest):
     command: Literal["refine-video"]
 
 
-class DesktopVideoConfirmImageCommand(DesktopVideoConfirmImageRequest):
-    command: Literal["confirm-image"]
-
-
 class DesktopVideoCancelCommand(DesktopVideoCancelRequest):
     command: Literal["cancel"]
 
@@ -587,10 +580,6 @@ class DesktopVideoResumeCommand(DesktopVideoDraftRequest):
 
 class DesktopVideoRetryCommand(DesktopVideoDraftRequest):
     command: Literal["retry"]
-
-
-class DesktopVideoDecisionRequest(DesktopVideoDraftRequest):
-    decision: Literal["accept", "reject"]
 
 
 class DesktopVideoSelectionRequest(BaseModel):

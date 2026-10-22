@@ -34,7 +34,6 @@ export function desktopLifePendingAction(set: DesktopVideoSet): DesktopVideoActi
   return (
     set.actions.find(action => action.draft?.submission_unknown) ??
     set.actions.find(action => action.status === 'processing' && !isActionPaused(action)) ??
-    set.actions.find(action => action.status === 'review_pending' || action.stage === 'image_review') ??
     set.actions.find(isActionPaused) ??
     set.actions.find(action => action.draft)
   )
@@ -44,12 +43,7 @@ export function desktopLifeActionsToCreate(actions: readonly DesktopVideoAction[
   return actions.filter(action => {
     const alreadyCreated = action.playable || Boolean(action.current?.video_url && !action.needs_update)
 
-    const awaitingAdoption =
-      action.status === 'review_pending' &&
-      action.stage !== 'image_review' &&
-      Boolean(action.draft?.candidate_video_url)
-
-    return action.key !== 'idle' && !alreadyCreated && !awaitingAdoption
+    return action.key !== 'idle' && !alreadyCreated
   })
 }
 
@@ -98,10 +92,6 @@ export function desktopLifeActionStatus(
     return queueStrings[queue.state]
   }
 
-  if (action.stage === 'image_review') {
-    return t.stepImage
-  }
-
   if (action.status === 'processing') {
     if (action.stage === 'planning') {
       return t.planning
@@ -123,15 +113,15 @@ export function desktopLifeActionStatus(
       return t.processingVideo
     }
 
+    if (action.stage === 'review') {
+      return t.checkingVideo
+    }
+
     return action.stage === 'video' || action.stage === 'motion' ? t.generatingVideo : t.preparing
   }
 
   if (action.status === 'failed') {
     return variantStrings.statuses.failed
-  }
-
-  if (action.status === 'review_pending' && action.draft?.candidate_video_url) {
-    return t.videoReviewPending
   }
 
   if (action.status === 'not_generated' || action.status === 'blocked') {

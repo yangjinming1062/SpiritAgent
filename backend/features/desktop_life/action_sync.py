@@ -169,7 +169,6 @@ async def request_synced_desktop_generation(
         action_id,
         source=source,
         expected_draft_id="none",
-        auto_continue=True,
     )
 
 

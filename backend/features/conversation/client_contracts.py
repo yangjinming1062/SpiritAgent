@@ -29,7 +29,6 @@ class ClientMediaEntry(BaseModel):
     audio_url: str | None = None
     duration: float | None = None
     transcript: str | None = None
-    review_id: str | None = None
 
 
 class SessionMessageFields(BaseModel):

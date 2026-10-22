@@ -10,9 +10,7 @@ from features.desktop_life.schemas import (
     DesktopVideoActionResponse,
     DesktopVideoCancelCommand,
     DesktopVideoClaimRequest,
-    DesktopVideoConfirmImageCommand,
     DesktopVideoCreateSetRequest,
-    DesktopVideoDecisionRequest,
     DesktopVideoDesignRequest,
     DesktopVideoEnsureRequest,
     DesktopVideoGenerateCommand,
@@ -245,7 +243,6 @@ async def command_draft(
         DesktopVideoGenerateCommand
         | DesktopVideoImageCommand
         | DesktopVideoRefineCommand
-        | DesktopVideoConfirmImageCommand
         | DesktopVideoCancelCommand
         | DesktopVideoPauseCommand
         | DesktopVideoResumeCommand
@@ -254,18 +251,6 @@ async def command_draft(
     ],
 ) -> DesktopVideoActionResponse:
     return await _desktop.command_draft(action_id=action_id, user_id=user.id, body=body)
-
-
-@router.post(
-    "/actions/{action_id}/draft/decision",
-    response_model=DesktopVideoActionResponse,
-)
-async def decide_draft(
-    action_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
-    user: CurrentUser,
-    body: DesktopVideoDecisionRequest,
-) -> DesktopVideoActionResponse:
-    return await _desktop.decide_action(action_id=action_id, user_id=user.id, body=body)
 
 
 @router.put(

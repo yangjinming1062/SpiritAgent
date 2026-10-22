@@ -18,7 +18,6 @@ import { BTN_SUBTLE, SettingsSectionIntro } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
 
-import { MediaReviewQueue } from './media-review-queue'
 import { MemorySection } from './memory-section'
 import { PersonaPage } from './persona-page'
 import { VoicePage } from './voice-page'
@@ -137,7 +136,6 @@ function CompanionSession(): React.JSX.Element {
               {persona.returnToDesktopBackground}
             </button>
           )}
-          <MediaReviewQueue />
         </>
       }
     >

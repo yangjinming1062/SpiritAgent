@@ -22,7 +22,6 @@ from features.appearance.queries import mark_initial_video_started
 from features.appearance.query_contracts import AvatarSnapshot, OutfitSnapshot
 from features.media.chain import MediaChainState, media_failure_reason
 from features.media.contracts import RemovedActionVideoTask
-from features.media.review_service import reject_pending_action_reviews
 
 from .errors import VideoPackStateError, _generation_error, _GenerationRowGoneError
 from .execution_state import _ACTION_INFLIGHT, logger
@@ -75,7 +74,6 @@ async def _create_or_reset_pack(
                 )
                 if invalid_source:
                     await exclude_target(db, user_id, job.definition_id, "window", pack.id)
-            await reject_pending_action_reviews(db, user_id=user_id, action_id=job.id, media_type=job.media_type)
             clear_action_attempt(job)
             job.metadata_revision += 1
             job.status, job.stage, job.error = (
@@ -173,7 +171,7 @@ async def _advance_job(job_id: int, *, stage: str, status: str = "processing", *
         job = await db.get(CompanionAction, job_id)
         if job is None:
             raise _GenerationRowGoneError
-        if job.status in ("succeeded", "review", "failed"):
+        if job.status in ("succeeded", "failed"):
             return
         previous = accepted_action_asset(job)
         job.status = status
@@ -224,7 +222,7 @@ async def _mark_pack_failed(
         update(CompanionAction)
         .where(
             CompanionAction.pack_id == pack.id,
-            CompanionAction.status.not_in(("succeeded", "review", "failed", "result_unknown")),
+            CompanionAction.status.not_in(("succeeded", "failed", "result_unknown")),
         )
         .values(**values)
         .execution_options(synchronize_session=False),
@@ -265,6 +263,8 @@ async def _record_action_failure(pack_id: int, job: CompanionAction, exc: Except
     logger.error("video action failed", extra=extra, exc_info=exc)
     reason, _ = media_failure_reason(exc)
     status = "result_unknown" if reason == "result_unknown" else "failed"
+    if reason == "quality_failed":
+        job.stage = "quality_failed"
     if isinstance(exc, ActionMaterialRejectedError):
         job.stage = "invalid_asset"
     try:
@@ -347,8 +347,6 @@ async def _remove_packs(
     target_ids = {pack.id for pack in targets}
     candidates: set[str] = set()
     for pack in targets:
-        for job in jobs_by_pack.get(pack.id, []):
-            await reject_pending_action_reviews(db, user_id=job.user_id, action_id=job.id, media_type=job.media_type)
         candidates |= _pack_assets(pack, jobs_by_pack.get(pack.id, []))
     for other in packs:
         if other.id not in target_ids:

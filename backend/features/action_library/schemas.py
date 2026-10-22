@@ -13,7 +13,6 @@ ActionVariantStatus = Literal[
     "queued",
     "processing",
     "ready",
-    "review_pending",
     "failed",
     "blocked",
     "excluded",

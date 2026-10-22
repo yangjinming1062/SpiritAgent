@@ -148,7 +148,7 @@ class CompanionAction(ModelBase, TimestampMixin):
     pose_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     script_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # 已采纳素材独立于当前制作尝试；原位重做和拒绝候选不撤销旧版本的播放资格。
+    # 已采纳素材独立于当前制作尝试；原位重做和检查失败不撤销旧版本的播放资格。
     accepted_asset_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 动态动作的设计规格冻结；系统动作为空。
     source_design_json: Mapped[str | None] = mapped_column(Text, nullable=True)

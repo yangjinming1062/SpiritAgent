@@ -8,7 +8,7 @@ export interface ApiSchemas {
   "ActionDesignResult": { "outcome": string; "definition_id": (number | null); "proposal_id": (number | null); "action_id": (number | null); "message": string }
   "ActionPlaybackReceipt": { "play_id": string; "status": string; "visible_duration_ms"?: number; "error"?: (string | null) }
   "ActionUpdateRequest": { "enabled": boolean }
-  "ActionVariantSummary": { "target_kind": "window" | "desktop"; "target_id": number; "action_id": (number | null); "label": string; "status": "not_generated" | "queued" | "processing" | "ready" | "review_pending" | "failed" | "blocked" | "excluded" | "disabled"; "has_ready_asset": boolean; "can_generate": boolean; "reason": (string | null) }
+  "ActionVariantSummary": { "target_kind": "window" | "desktop"; "target_id": number; "action_id": (number | null); "label": string; "status": "not_generated" | "queued" | "processing" | "ready" | "failed" | "blocked" | "excluded" | "disabled"; "has_ready_asset": boolean; "can_generate": boolean; "reason": (string | null) }
   "ActivateRequest": { "code": string; "client_version"?: string; "client_context"?: (ApiSchemas["ChatRequestClientContext"] | null) }
   "ActiveTurnView": { "request_id": string; "origin_kind": string; "message_ids": Array<number>; "assistant_message_id": (number | null); "messages": Array<ApiSchemas["SessionMessageView"]>; "text": string; "reasoning": string; "bubbles": Array<ApiSchemas["ReplyBubbleView"]>; "tools": Array<ApiSchemas["ToolSnapshot"]>; "running": boolean; "replace_reply_message_id": (number | null) }
   "AdminLoginRequest": { "username": string; "password": string }
@@ -40,7 +40,7 @@ export interface ApiSchemas {
   "ChatRequestClientContext": { "environment_hints"?: (string | null); "platform_hints"?: (string | null) }
   "ChatVideoUploadResponse": { "url": string }
   "ClientMediaBubble": { "type": "image" | "video"; "media_id": string; "status": "pending" | "ready" | "failed" | "result_unknown"; "url": (string | null); "error": (string | null); "video_queue": (ApiSchemas["VideoQueueInfo"] | null) }
-  "ClientMediaEntry": { "type": "image" | "video" | "audio"; "url": string; "audio_url": (string | null); "duration": (number | null); "transcript": (string | null); "review_id": (string | null) }
+  "ClientMediaEntry": { "type": "image" | "video" | "audio"; "url": string; "audio_url": (string | null); "duration": (number | null); "transcript": (string | null) }
   "CommandDispatchRequest": { "command": string; "args"?: (Array<(string | number | number)> | string | null); "confirmed"?: boolean }
   "CommandDispatchResult": { "command": string; "result": ApiSchemas["CommandResult"] }
   "CommandListResponse": { "commands": Array<ApiSchemas["CommandSummary"]> }
@@ -56,15 +56,13 @@ export interface ApiSchemas {
   "DesktopSessionListResponse": { "limit": number; "offset": number; "total": number; "sessions": Array<ApiSchemas["DesktopSessionInfo"]> }
   "DesktopSessionOperationResponse": { "ok": boolean }
   "DesktopSessionPatchRequest": { "title"?: (string | null); "pinned"?: (boolean | null); "archived"?: (boolean | null); "settings"?: (ApiSchemas["SessionSettingsPatch"] | null) }
-  "DesktopVideoActionResponse": { "id": number; "set_id": number; "definition_id": (number | null); "sync_targets": Array<ApiSchemas["ActionVariantSummary"]>; "can_generate": boolean; "current": (ApiSchemas["DesktopVideoCurrentResponse"] | null); "draft": (ApiSchemas["DesktopVideoDraftResponse"] | null); "playable": boolean; "unavailable_reason": (string | null); "needs_update": boolean; "key": string; "name": string; "description": string; "kind": "loop" | "once"; "duration_seconds": number; "target_duration_seconds": number; "status": "not_generated" | "queued" | "processing" | "ready" | "failed" | "review_pending" | "blocked"; "stage": string; "error": (string | null); "video_queue": (ApiSchemas["VideoQueueInfo"] | null); "enabled": boolean; "preset": boolean; "use_when": Array<string>; "avoid_when": Array<string>; "allowed_triggers": Array<"periodic" | "user_return" | "chat" | "manual">; "continuity": "independent" | "base"; "transition": "base" | "fade"; "base_version": (number | null); "poster_url": string; "video_url": string; "version": number; "actual_duration_ms": (number | null) }
+  "DesktopVideoActionResponse": { "id": number; "set_id": number; "definition_id": (number | null); "sync_targets": Array<ApiSchemas["ActionVariantSummary"]>; "can_generate": boolean; "current": (ApiSchemas["DesktopVideoCurrentResponse"] | null); "draft": (ApiSchemas["DesktopVideoDraftResponse"] | null); "playable": boolean; "unavailable_reason": (string | null); "needs_update": boolean; "key": string; "name": string; "description": string; "kind": "loop" | "once"; "duration_seconds": number; "target_duration_seconds": number; "status": "not_generated" | "queued" | "processing" | "ready" | "failed" | "blocked"; "stage": string; "error": (string | null); "video_queue": (ApiSchemas["VideoQueueInfo"] | null); "enabled": boolean; "preset": boolean; "use_when": Array<string>; "avoid_when": Array<string>; "allowed_triggers": Array<"periodic" | "user_return" | "chat" | "manual">; "continuity": "independent" | "base"; "transition": "base" | "fade"; "base_version": (number | null); "poster_url": string; "video_url": string; "version": number; "actual_duration_ms": (number | null) }
   "DesktopVideoCancelCommand": { "draft_id"?: (string | null); "command": "cancel" }
   "DesktopVideoClaimRequest": { "client_id": string }
-  "DesktopVideoConfirmImageCommand": { "draft_id": string; "expected_base_version"?: (number | null); "expected_resolution_revision"?: (number | null); "generate_video"?: boolean; "command": "confirm-image" }
   "DesktopVideoCreateSetRequest": { "request_id": string; "name": string; "scene_id"?: (number | null); "outfit_id"?: (number | null); "source"?: "ai" | "image_upload" | "video_upload"; "feedback"?: string; "target_width": number; "target_height": number }
   "DesktopVideoCurrentResponse": { "video_url": string; "poster_url": string; "image_url": string; "feedback": string; "video_feedback": string; "duration_ms": number; "width": number; "height": number; "geometry_mode": "target" | "keep"; "continuity": "independent" | "base"; "base_version": (number | null); "transition": "base" | "fade" }
-  "DesktopVideoDecisionRequest": { "draft_id": string; "expected_base_version"?: (number | null); "expected_resolution_revision"?: (number | null); "decision": "accept" | "reject" }
   "DesktopVideoDesignRequest": { "name": string; "motion_description": string; "kind"?: "loop" | "once"; "duration_seconds"?: number; "use_when"?: Array<string>; "avoid_when"?: Array<string>; "reason"?: string; "expected_set_id"?: (number | null) }
-  "DesktopVideoDraftResponse": { "id": string; "stage": string; "source": "user_requested" | "autonomous" | "external_upload"; "target_width": number; "target_height": number; "resolution_revision": number; "geometry_mode": "target" | "keep"; "duration_seconds": number; "video_refinement": boolean; "frame_width": (number | null); "frame_height": (number | null); "feedback": string; "video_feedback": string; "submission_unknown": boolean; "image_url": string; "image_confirmed": boolean; "continuity": "independent" | "base"; "recovery_action": ("retry" | "wait" | "choose_activity" | "replace_upload" | "recreate_set" | null); "candidate_video_url": string; "candidate_poster_url": string; "review_reason": string; "base_version": (number | null); "error": (string | null); "video_queue": (ApiSchemas["VideoQueueInfo"] | null) }
+  "DesktopVideoDraftResponse": { "id": string; "stage": string; "source": "user_requested" | "autonomous" | "external_upload"; "target_width": number; "target_height": number; "resolution_revision": number; "geometry_mode": "target" | "keep"; "duration_seconds": number; "video_refinement": boolean; "frame_width": (number | null); "frame_height": (number | null); "feedback": string; "video_feedback": string; "submission_unknown": boolean; "image_url": string; "image_confirmed": boolean; "continuity": "independent" | "base"; "recovery_action": ("retry" | "wait" | "choose_activity" | "replace_upload" | "recreate_set" | null); "candidate_video_url": string; "candidate_poster_url": string; "base_version": (number | null); "error": (string | null); "video_queue": (ApiSchemas["VideoQueueInfo"] | null) }
   "DesktopVideoEnsureRequest": { "trigger"?: "entry"; "target_width": number; "target_height": number }
   "DesktopVideoGenerateCommand": { "feedback"?: (string | null); "video_feedback"?: (string | null); "expected_draft_id"?: (string | null); "expected_base_version"?: (number | null); "expected_resolution_revision"?: (number | null); "aspect_policy"?: "ask" | "keep" | "expand"; "command": "generate-video" }
   "DesktopVideoImageCommand": { "feedback"?: (string | null); "regenerate"?: boolean; "expected_draft_id"?: (string | null); "expected_base_version"?: (number | null); "expected_resolution_revision"?: (number | null); "aspect_policy"?: "ask" | "keep" | "expand"; "command": "generate-image" }
@@ -108,7 +106,6 @@ export interface ApiSchemas {
   "JsonValueInput": unknown
   "LastSubmissionSnapshot": { "request_id": string; "status": string; "error": (string | null); "message_ids": Array<number>; "retry_message_id": (number | null); "replace_reply_message_id": (number | null); "result_message_id": (number | null) }
   "LinkBubble": { "type": "link"; "topic_id": number; "title": string; "platform": "x" | "xiaohongshu" | "douyin"; "url": string; "published_at": string }
-  "MediaReviewResponse": { "id": number; "status": "pending" | "accepted" | "rejected"; "reason": string; "media_type": "image" | "video"; "media_url": string; "title": string; "system_slot": string }
   "MemoryDeleteResponse": { "deleted": boolean }
   "MemoryEvidence": { "fingerprint": string; "message_id"?: (number | null); "session_id"?: (number | null); "quote"?: (string | null); "stance"?: ("supports" | "opposes" | null); "created_at"?: (string | null); "source_unavailable"?: (boolean | null) }
   "MemoryListItem": { "id": number; "content_version": number; "content": string; "context": (string | null); "tags": (string | null); "basis": "explicit" | "inferred" | "observed" | "system"; "status": "active" | "candidate" | "invalidated" | "forgotten"; "usage": "contextual" | "background"; "reason": string; "source_kind": string; "updated_at": string; "evidence": Array<ApiSchemas["MemoryEvidence"]>; "expires_at": (string | null); "reviewed_at": (string | null); "system_preset_id": string; "importance": number; "created_at": string }
@@ -139,7 +136,6 @@ export interface ApiSchemas {
   "OutfitResponse": { "initial_video_error": (string | null); "description_status": "pending" | "processing" | "ready" | "failed"; "description_error": (string | null); "id": number; "name": string; "description": (string | null); "fullbody_url": string; "status": string; "active": boolean }
   "PairingResponse": { "id": number; "url"?: (string | null); "expires_at": string; "state": "pending" | "paired" | "cancelled" | "expired" }
   "PeekGeometry": { "side": "left" | "right"; "cut_x": number; "focus_rect": [number, number, number, number] }
-  "PendingActionReview": { "id": number; "media_type": "image" | "video"; "media_url": string }
   "PersonaResponse": { "definition_json": string; "is_complete": boolean; "personality_tags": Array<string>; "current_mood": (string | null) }
   "PersonaUpdate": { "definition_json": string; "expected_fields"?: ({ [key: string]: (string | null) } | null) }
   "PlainSessionMessageView": { "id": number; "role": "assistant" | "system" | "tool" | "user"; "content": (string | null); "subtype": string; "reasoning": (string | null); "timestamp": number; "can_replace_reply": boolean; "media": Array<ApiSchemas["ClientMediaEntry"]>; "tool_calls": ApiSchemas["JsonValue"]; "tool_call_id": (string | null); "tool_name": string; "content_type": "multimodal_v1" | "text" }
@@ -149,9 +145,9 @@ export interface ApiSchemas {
   "PostCommentRole": "user" | "companion"
   "PostContentType": "text" | "image" | "video" | "audio"
   "PostListResponse": { "posts": Array<ApiSchemas["PostResponse"]>; "next_cursor": (string | null); "unread_post_ids": Array<string> }
-  "PostPublicationRecovery": { "publication_id": string; "status": "queued" | "running" | "published" | "partial" | "failed" | "blocked" | "result_unknown" | "review_pending" | "declined" | "discarded"; "post_id": (string | null); "error": (string | null); "title": string; "video_status": "pending" | "ready" | "failed" | "unknown" | "discarded"; "media_url": (string | null); "can_adopt": boolean; "can_discard": boolean }
+  "PostPublicationRecovery": { "publication_id": string; "status": "queued" | "running" | "published" | "partial" | "failed" | "blocked" | "result_unknown" | "declined" | "discarded"; "post_id": (string | null); "error": (string | null); "title": string; "video_status": "pending" | "ready" | "failed" | "unknown" | "discarded"; "media_url": (string | null); "can_discard": boolean }
   "PostPublicationRecoveryList": { "items": Array<ApiSchemas["PostPublicationRecovery"]>; "next_offset": (number | null) }
-  "PostPublicationResult": { "publication_id": string; "status": "queued" | "running" | "published" | "partial" | "failed" | "blocked" | "result_unknown" | "review_pending" | "declined" | "discarded"; "post_id": (string | null); "error": (string | null) }
+  "PostPublicationResult": { "publication_id": string; "status": "queued" | "running" | "published" | "partial" | "failed" | "blocked" | "result_unknown" | "declined" | "discarded"; "post_id": (string | null); "error": (string | null) }
   "PostReadRequest": { "post_ids": Array<string> }
   "PostResponse": { "id": string; "published_at": string; "content_type": ApiSchemas["PostContentType"]; "title": string; "body": string; "media_url": (string | null); "audio_url": (string | null); "comments": Array<ApiSchemas["PostCommentResponse"]> }
   "PostUnreadResponse": { "has_unread": boolean }
@@ -172,14 +168,13 @@ export interface ApiSchemas {
   "RemoteUserResponse": { "id": number; "username": string }
   "ReplyAudio": { "url": string; "duration": number }
   "ReplyBubbleView": (ApiSchemas["TextBubble"] | ApiSchemas["VoiceBubbleView"] | ApiSchemas["ClientMediaBubble"] | ApiSchemas["LinkBubble"])
-  "ResourceDecision": { "decision": "accept" | "reject" }
   "RpcActionCatalogEvent": { "packId": number; "catalogVersion": number; "appearanceEpoch": number }
   "RpcActionJobEvent": { "packId": number; "outfitId": (number | null); "actionId": (number | null); "action": string; "stage": string }
   "RpcActionPlayCommand": { "play_id": string; "pack_id": number; "appearance_epoch": number; "action_id": number; "asset_revision_id": (number | null); "repeat_count": number; "expires_at": (string | null); "source": string }
   "RpcCacheUsage": { "request_count": number; "reported_request_count": number; "input_tokens": (number | null); "cached_input_tokens": (number | null); "cache_hit_rate": (number | null) }
   "RpcCharacterCardEvent": { "avatar_id": number; "revision": number; "status": "pending" | "running" | "ready" | "failed" }
   "RpcClientMediaBubble": { "type": "image" | "video"; "media_id": string; "status": "pending" | "ready" | "failed" | "result_unknown"; "url": (string | null); "error": (string | null); "video_queue": (ApiSchemas["RpcVideoQueueInfo"] | null) }
-  "RpcClientMediaEntry": { "type": "image" | "video" | "audio"; "url": string; "audio_url": (string | null); "duration": (number | null); "transcript": (string | null); "review_id": (string | null) }
+  "RpcClientMediaEntry": { "type": "image" | "video" | "audio"; "url": string; "audio_url": (string | null); "duration": (number | null); "transcript": (string | null) }
   "RpcCommandDispatchResult": { "command": string; "result": ApiSchemas["RpcCommandResult"] }
   "RpcCommandResult": { "status": "ok" | "error"; "message": string; "payload": (ApiSchemas["RpcSessionClearResult"] | ApiSchemas["RpcSessionCompressionResult"] | ApiSchemas["RpcRememberCommandResult"] | null); "hydrate": boolean }
   "RpcCompanionMessageEvent": { "session_id": string; "message_id": number; "bubbles": Array<ApiSchemas["RpcReplyBubbleView"]> }
@@ -335,8 +330,8 @@ export interface ApiSchemas {
   "UserModelConfigRequest": { "ai_config": ApiSchemas["AIConfigUpdate"] }
   "UserResponse": { "id": number; "username": string; "nightly_activity_enabled": boolean; "is_active": boolean; "created_at": string; "activation_code": string }
   "UserUpdate": { "nightly_activity_enabled"?: (boolean | null); "is_active"?: (boolean | null); "base_url"?: (string | null) }
-  "VideoActionImageResponse": { "media_type": "image"; "action": string; "definition_id": (number | null); "sync_targets": Array<ApiSchemas["ActionVariantSummary"]>; "can_generate": boolean; "name": string; "status": string; "stage": string; "error": (string | null); "video_queue": (ApiSchemas["VideoQueueInfo"] | null); "media_url": (string | null); "current_media_url": (string | null); "pending_review": (ApiSchemas["PendingActionReview"] | null); "has_ready_asset": boolean; "can_retry": boolean; "can_regenerate": boolean; "feedback": string; "peek_geometry": (ApiSchemas["PeekGeometry"] | null); "content_rect": ([number, number, number, number] | null) }
-  "VideoActionVideoResponse": { "media_type": "video"; "action": string; "definition_id": (number | null); "sync_targets": Array<ApiSchemas["ActionVariantSummary"]>; "can_generate": boolean; "name": string; "status": string; "stage": string; "error": (string | null); "video_queue": (ApiSchemas["VideoQueueInfo"] | null); "media_url": (string | null); "current_media_url": (string | null); "pending_review": (ApiSchemas["PendingActionReview"] | null); "has_ready_asset": boolean; "can_retry": boolean; "can_regenerate": boolean; "feedback": string; "peek_geometry": (ApiSchemas["PeekGeometry"] | null); "content_rect": ([number, number, number, number] | null); "motion_prompt": string }
+  "VideoActionImageResponse": { "media_type": "image"; "action": string; "definition_id": (number | null); "sync_targets": Array<ApiSchemas["ActionVariantSummary"]>; "can_generate": boolean; "name": string; "status": string; "stage": string; "error": (string | null); "video_queue": (ApiSchemas["VideoQueueInfo"] | null); "media_url": (string | null); "current_media_url": (string | null); "has_ready_asset": boolean; "can_retry": boolean; "can_regenerate": boolean; "feedback": string; "peek_geometry": (ApiSchemas["PeekGeometry"] | null); "content_rect": ([number, number, number, number] | null) }
+  "VideoActionVideoResponse": { "media_type": "video"; "action": string; "definition_id": (number | null); "sync_targets": Array<ApiSchemas["ActionVariantSummary"]>; "can_generate": boolean; "name": string; "status": string; "stage": string; "error": (string | null); "video_queue": (ApiSchemas["VideoQueueInfo"] | null); "media_url": (string | null); "current_media_url": (string | null); "has_ready_asset": boolean; "can_retry": boolean; "can_regenerate": boolean; "feedback": string; "peek_geometry": (ApiSchemas["PeekGeometry"] | null); "content_rect": ([number, number, number, number] | null); "motion_prompt": string }
   "VideoClipUpload": { "media_type": "video"; "action": string; "data": string; "content_type"?: (string | null); "start_seconds"?: (number | null); "end_seconds"?: (number | null) }
   "VideoPackCreateRequest": { "source": "import"; "outfit_id": number; "clips": Array<(ApiSchemas["ImageClipUpload"] | ApiSchemas["VideoClipUpload"])>; "canvas_width"?: number; "canvas_height"?: number }
   "VideoPackEnsureRequest": { "action": "peek_left" | "peek_right"; "command": "ensure" }
@@ -408,9 +403,6 @@ export interface ApiOperations {
   "companion.record_interaction": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["InteractionStatsRequest"]; input: { path?: never; query?: never; body: ApiSchemas["InteractionStatsRequest"] }; response: ApiSchemas["InteractionStatsResult"] }
   "companion.idle_expression": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["IdleExpressionRequest"]; input: { path?: never; query?: never; body: ApiSchemas["IdleExpressionRequest"] }; response: ApiSchemas["IdleExpressionResult"] }
   "companion.movement_decision": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["ShouldActRequest"]; input: { path?: never; query?: never; body: ApiSchemas["ShouldActRequest"] }; response: ApiSchemas["ShouldActResult"] }
-  "companion.get_pending_visual_media_reviews": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: Array<ApiSchemas["MediaReviewResponse"]> }
-  "companion.get_visual_media_review": { path: { "review_id": number }; query: Record<string, never>; body: undefined; input: { path: { "review_id": number }; query?: never; body?: never }; response: ApiSchemas["MediaReviewResponse"] }
-  "companion.decide_visual_media_review": { path: { "review_id": number }; query: Record<string, never>; body: ApiSchemas["ResourceDecision"]; input: { path: { "review_id": number }; query?: never; body: ApiSchemas["ResourceDecision"] }; response: ApiSchemas["MediaReviewResponse"] }
   "companion.get_character_card_route": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: (ApiSchemas["CharacterCardResponse"] | null) }
   "companion.patch_character_card_route": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["CharacterCardUpdate"]; input: { path?: never; query?: never; body: ApiSchemas["CharacterCardUpdate"] }; response: ApiSchemas["CharacterCardResponse"] }
   "companion.extract_character_card_route": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["CharacterCardExtract"]; input: { path?: never; query?: never; body: ApiSchemas["CharacterCardExtract"] }; response: ApiSchemas["CharacterCardResponse"] }
@@ -464,8 +456,7 @@ export interface ApiOperations {
   "companion_desktop_videos.rename_set": { path: { "set_id": number }; query: Record<string, never>; body: ApiSchemas["DesktopVideoRenameSetRequest"]; input: { path: { "set_id": number }; query?: never; body: ApiSchemas["DesktopVideoRenameSetRequest"] }; response: ApiSchemas["DesktopVideoSetResponse"] }
   "companion_desktop_videos.delete_set": { path: { "set_id": number }; query: Record<string, never>; body: undefined; input: { path: { "set_id": number }; query?: never; body?: never }; response: ApiSchemas["DesktopVideoStateResponse"] }
   "companion_desktop_videos.upload_image": { path: { "action_id": number }; query: Record<string, never>; body: FormData; input: { path: { "action_id": number }; query?: never; body: FormData }; response: ApiSchemas["DesktopVideoActionResponse"] }
-  "companion_desktop_videos.command_draft": { path: { "action_id": number }; query: Record<string, never>; body: (ApiSchemas["DesktopVideoGenerateCommand"] | ApiSchemas["DesktopVideoImageCommand"] | ApiSchemas["DesktopVideoRefineCommand"] | ApiSchemas["DesktopVideoConfirmImageCommand"] | ApiSchemas["DesktopVideoCancelCommand"] | ApiSchemas["DesktopVideoPauseCommand"] | ApiSchemas["DesktopVideoResumeCommand"] | ApiSchemas["DesktopVideoRetryCommand"]); input: { path: { "action_id": number }; query?: never; body: (ApiSchemas["DesktopVideoGenerateCommand"] | ApiSchemas["DesktopVideoImageCommand"] | ApiSchemas["DesktopVideoRefineCommand"] | ApiSchemas["DesktopVideoConfirmImageCommand"] | ApiSchemas["DesktopVideoCancelCommand"] | ApiSchemas["DesktopVideoPauseCommand"] | ApiSchemas["DesktopVideoResumeCommand"] | ApiSchemas["DesktopVideoRetryCommand"]) }; response: ApiSchemas["DesktopVideoActionResponse"] }
-  "companion_desktop_videos.decide_draft": { path: { "action_id": number }; query: Record<string, never>; body: ApiSchemas["DesktopVideoDecisionRequest"]; input: { path: { "action_id": number }; query?: never; body: ApiSchemas["DesktopVideoDecisionRequest"] }; response: ApiSchemas["DesktopVideoActionResponse"] }
+  "companion_desktop_videos.command_draft": { path: { "action_id": number }; query: Record<string, never>; body: (ApiSchemas["DesktopVideoGenerateCommand"] | ApiSchemas["DesktopVideoImageCommand"] | ApiSchemas["DesktopVideoRefineCommand"] | ApiSchemas["DesktopVideoCancelCommand"] | ApiSchemas["DesktopVideoPauseCommand"] | ApiSchemas["DesktopVideoResumeCommand"] | ApiSchemas["DesktopVideoRetryCommand"]); input: { path: { "action_id": number }; query?: never; body: (ApiSchemas["DesktopVideoGenerateCommand"] | ApiSchemas["DesktopVideoImageCommand"] | ApiSchemas["DesktopVideoRefineCommand"] | ApiSchemas["DesktopVideoCancelCommand"] | ApiSchemas["DesktopVideoPauseCommand"] | ApiSchemas["DesktopVideoResumeCommand"] | ApiSchemas["DesktopVideoRetryCommand"]) }; response: ApiSchemas["DesktopVideoActionResponse"] }
   "companion_desktop_videos.select_current_set": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["DesktopVideoSelectionRequest"]; input: { path?: never; query?: never; body: ApiSchemas["DesktopVideoSelectionRequest"] }; response: ApiSchemas["DesktopVideoStateResponse"] }
   "companion_journal.get_diary": { path: Record<string, never>; query: { "from"?: (string | null); "to"?: (string | null); "limit"?: number }; body: undefined; input: { path?: never; query?: { "from"?: (string | null); "to"?: (string | null); "limit"?: number }; body?: never }; response: ApiSchemas["DiaryListResponse"] }
   "companion_journal.get_diary_unread": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["DiaryUnreadResponse"] }
@@ -476,7 +467,7 @@ export interface ApiOperations {
   "companion_posts.get_publication_recoveries": { path: Record<string, never>; query: { "state": "recoverable"; "limit"?: number; "offset"?: number }; body: undefined; input: { path?: never; query: { "state": "recoverable"; "limit"?: number; "offset"?: number }; body?: never }; response: ApiSchemas["PostPublicationRecoveryList"] }
   "companion_posts.get_publication_recovery": { path: { "publication_id": string }; query: Record<string, never>; body: undefined; input: { path: { "publication_id": string }; query?: never; body?: never }; response: ApiSchemas["PostPublicationRecovery"] }
   "companion_posts.query_publication_recovery": { path: { "publication_id": string }; query: Record<string, never>; body: undefined; input: { path: { "publication_id": string }; query?: never; body?: never }; response: ApiSchemas["PostPublicationRecovery"] }
-  "companion_posts.decide_publication": { path: { "publication_id": string }; query: Record<string, never>; body: ApiSchemas["ResourceDecision"]; input: { path: { "publication_id": string }; query?: never; body: ApiSchemas["ResourceDecision"] }; response: ApiSchemas["PostPublicationResult"] }
+  "companion_posts.discard_publication": { path: { "publication_id": string }; query: Record<string, never>; body: undefined; input: { path: { "publication_id": string }; query?: never; body?: never }; response: ApiSchemas["PostPublicationResult"] }
   "companion_posts.get_post_detail": { path: { "post_id": string }; query: Record<string, never>; body: undefined; input: { path: { "post_id": string }; query?: never; body?: never }; response: ApiSchemas["PostResponse"] }
   "companion_posts.post_comment": { path: { "post_id": string }; query: Record<string, never>; body: ApiSchemas["PostCommentCreateRequest"]; input: { path: { "post_id": string }; query?: never; body: ApiSchemas["PostCommentCreateRequest"] }; response: ApiSchemas["PostCommentResponse"] }
   "companion_posts.remove_comment": { path: { "post_id": string; "comment_id": string }; query: Record<string, never>; body: undefined; input: { path: { "post_id": string; "comment_id": string }; query?: never; body?: never }; response: undefined }
@@ -943,39 +934,6 @@ export const API_OPERATIONS = {
       "desktop"
     ],
     "wait_for_model": true,
-    "ipc": true
-  },
-  "companion.get_pending_visual_media_reviews": {
-    "path": "/api/companion/media-reviews",
-    "method": "GET",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "desktop"
-    ],
-    "wait_for_model": false,
-    "ipc": true
-  },
-  "companion.get_visual_media_review": {
-    "path": "/api/companion/media-reviews/{review_id}",
-    "method": "GET",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "desktop"
-    ],
-    "wait_for_model": false,
-    "ipc": true
-  },
-  "companion.decide_visual_media_review": {
-    "path": "/api/companion/media-reviews/{review_id}/decision",
-    "method": "POST",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "desktop"
-    ],
-    "wait_for_model": false,
     "ipc": true
   },
   "companion.get_character_card_route": {
@@ -1593,17 +1551,6 @@ export const API_OPERATIONS = {
     "wait_for_model": false,
     "ipc": true
   },
-  "companion_desktop_videos.decide_draft": {
-    "path": "/api/companion/desktop-videos/actions/{action_id}/draft/decision",
-    "method": "POST",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "desktop"
-    ],
-    "wait_for_model": false,
-    "ipc": true
-  },
   "companion_desktop_videos.select_current_set": {
     "path": "/api/companion/desktop-videos/current",
     "method": "PUT",
@@ -1723,8 +1670,8 @@ export const API_OPERATIONS = {
     "wait_for_model": true,
     "ipc": true
   },
-  "companion_posts.decide_publication": {
-    "path": "/api/companion/posts/publications/{publication_id}/decision",
+  "companion_posts.discard_publication": {
+    "path": "/api/companion/posts/publications/{publication_id}/discard",
     "method": "POST",
     "encoding": "json",
     "response": "json",

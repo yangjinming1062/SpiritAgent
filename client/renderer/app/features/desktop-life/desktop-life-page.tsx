@@ -12,7 +12,6 @@ import {
   $desktopVideoState,
   activateDesktopVideoSet,
   cancelDesktopVideoDraft,
-  confirmDesktopVideoImage,
   createDesktopVideoSet,
   deleteDesktopVideoSet,
   designDesktopVideoAction,
@@ -28,7 +27,6 @@ import {
   refreshDesktopVideos,
   renameDesktopVideoSet,
   retryDesktopVideoDraft,
-  reviewDesktopVideoAction,
   setDesktopVideoPreferences,
   uploadDesktopVideoAction
 } from '@/modules/desktop-videos'
@@ -566,38 +564,6 @@ export function DesktopLifePage({
   const actionStatus = (item: DesktopVideoAction): string =>
     desktopLifeActionStatus(item, t, queueStrings, commonStrings.actionVariants)
 
-  const adoptCandidate = async (item: DesktopVideoAction): Promise<void> => {
-    if (!selected) {
-      return
-    }
-
-    const scope = captureAuthScope()
-    await reviewDesktopVideoAction(item, selected, true)
-
-    if (!scope?.() || item.key !== 'idle') {
-      return
-    }
-
-    const latest = $desktopVideoSets.get().find(set => set.id === selected.id)
-    const updated = latest?.actions.find(action => action.id === item.id)
-
-    if (!latest || !updated?.playable) {
-      return
-    }
-
-    if (!latest.is_current && !(await activateDesktopVideoSet(latest))) {
-      return
-    }
-
-    if (!scope()) {
-      return
-    }
-
-    if ($presentation.get().effectiveMode !== 'desktop') {
-      await shellApi().presentation.setMode('desktop')
-    }
-  }
-
   const creationStatus = (item: DesktopVideoAction): React.ComponentProps<typeof CreationFeedback> | null => {
     if (item.draft?.submission_unknown || item.draft?.recovery_action === 'wait') {
       return {
@@ -986,11 +952,9 @@ export function DesktopLifePage({
               key={action.id}
               noteDraft={feedback[action.id]}
               onAddAction={() => updateDesktopLifeUi({ addActionOpen: true })}
-              onAdopt={() => void perform(() => adoptCandidate(action), t.acceptingVideo)}
               onChangeNote={note =>
                 updateDesktopLifeUi({ feedback: { ...$desktopLifeUi.get().feedback, [action.id]: note } })
               }
-              onConfirmImage={() => void perform(() => confirmDesktopVideoImage(action, selected), t.confirmingImage)}
               onContinueBase={() => {
                 if (idle) {
                   openAction(idle)

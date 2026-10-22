@@ -54,7 +54,6 @@ from features.media.video_jobs import (
     cleanup_user_media,
     discard_video_job,
     post_video_asset,
-    post_video_ready,
     prepare_video_job,
     query_post_video_job,
     select_video_resolution,
@@ -92,11 +91,10 @@ _TERMINAL = {
     "failed",
     "blocked",
     "result_unknown",
-    "review_pending",
     "declined",
     "discarded",
 }
-_RECOVERABLE_VIDEO_STATUSES = ("result_unknown", "review_pending")
+_RECOVERABLE_VIDEO_STATUSES = ("result_unknown",)
 _RECOVERY_LOCKS: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 _POSTS_SWITCH = "companion.posts_enabled"
 # 视频分辨率按此顺序取供应商链能接单的第一档：768P 为默认档，720P 先于 1080P，因为部分供应商模型最高到 720p；动态视频刻意不含 512P/480P 低清档。
@@ -109,8 +107,8 @@ class _VideoUnsupportedError(PostError):
     """供应商链不支持本次视频的参考模式、时长或分辨率，提交前阻止。"""
 
 
-class _VideoReviewPendingError(PostError):
-    """已取得的原视频未通过自动身份交付准入，保留供用户确认。"""
+class _VideoQualityError(PostError):
+    """已取得的原视频未通过自动身份交付准入，不发布。"""
 
 
 _SERVICE_TYPES = {"image": "image_gen", "video": "video_gen", "audio": "tts"}
@@ -477,12 +475,12 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
         while True:
             async with SESSION_LOCAL() as db:
                 job = await get_job(db, job_id, row.user_id)
-            if job is None or job.user_id != row.user_id or job.status == "failed":
+            if job is None or job.user_id != row.user_id:
                 raise PostError("视频生成失败")
             if job.status == "result_unknown":
                 raise ProviderResultUnknownError("POST", "")
-            if job.status == "review_pending":
-                raise _VideoReviewPendingError(job.error_message or "视频身份尚待确认，未自动发布")
+            if job.status == "failed":
+                raise _VideoQualityError(job.error_message or "视频未通过身份检查，内容未发布")
             if job.status == "succeeded":
                 progress["media_url"] = job.video_url
                 break
@@ -575,8 +573,8 @@ async def _run_publication(task_id: str) -> None:
         raise
     except _VideoUnsupportedError:
         await _save(task_id, status="blocked", error="视频供应商不支持本次视频要求")
-    except _VideoReviewPendingError as exc:
-        await _save(task_id, status="review_pending", error=str(exc))
+    except _VideoQualityError as exc:
+        await _save(task_id, status="failed", error=str(exc))
     except PostBlockedError as exc:
         await _save(task_id, status="blocked", error=str(exc))
     except ProviderResultUnknownError:
@@ -599,6 +597,27 @@ async def resume_publications() -> None:
         )
     for row in rows:
         schedule_publication(row.id, row.user_id)
+    async with SESSION_LOCAL() as db:
+        recoveries = list(
+            await db.scalars(
+                select(PostPublication).where(
+                    PostPublication.status == "result_unknown",
+                    PostPublication.video_job_id.is_not(None),
+                ),
+            ),
+        )
+    for row in recoveries:
+        async with SESSION_LOCAL() as db:
+            job = await get_job(db, row.video_job_id, row.user_id)
+        if job is None or job.status != "succeeded":
+            continue
+        try:
+            await publication_recovery(row.user_id, row.id, query=True)
+        except PostBlockedError as exc:
+            await _save(row.id, status="blocked", error=str(exc))
+        except PostError:
+            # 维护、额度或查询故障可能是暂时的，保留待核对状态供下次启动继续发布。
+            logger.warning("post publication recovery deferred", extra={"publication_id": row.id}, exc_info=True)
 
 
 async def drain_publications() -> None:
@@ -616,7 +635,6 @@ def _video_job_id(row: PostPublication) -> int | None:
 def _recovery_response(row: PostPublication, job: VideoJobSnapshot | None) -> PostPublicationRecovery:
     video_status: Literal["pending", "ready", "failed", "unknown", "discarded"] = "unknown"
     media_url = None
-    can_adopt = False
     if row.status == "discarded" or (job is not None and job.status == "discarded"):
         video_status = "discarded"
     elif job is not None and job.status == "failed":
@@ -627,7 +645,6 @@ def _recovery_response(row: PostPublication, job: VideoJobSnapshot | None) -> Po
         if parsed is not None and parsed[0] == row.user_id and resolve_companion_asset_path(*parsed) is not None:
             video_status = "ready"
             media_url = signed_companion_asset_url(path)
-            can_adopt = row.status in _RECOVERABLE_VIDEO_STATUSES and post_video_ready(job)
         elif job.status != "result_unknown":
             video_status = "pending"
     return PostPublicationRecovery(
@@ -635,7 +652,6 @@ def _recovery_response(row: PostPublication, job: VideoJobSnapshot | None) -> Po
         title=(row.plan_json or {}).get("title", "视频动态"),
         video_status=video_status,
         media_url=media_url,
-        can_adopt=can_adopt,
         can_discard=row.post_id is None
         and (
             row.status in _RECOVERABLE_VIDEO_STATUSES
@@ -662,6 +678,15 @@ async def publication_recovery(user_id: int, task_id: str, *, query: bool = Fals
         else:
             async with SESSION_LOCAL() as db:
                 job = await get_job(db, job_id, user_id) if job_id else None
+        if query and job is not None:
+            if job.status == "succeeded" and row.status in _RECOVERABLE_VIDEO_STATUSES:
+                await _publish_checked_video(user_id, task_id)
+            elif job.status == "failed" and row.status in _RECOVERABLE_VIDEO_STATUSES:
+                await _save(task_id, status="failed", error=job.error_message or "视频未通过检查，内容未发布")
+            async with SESSION_LOCAL() as db:
+                row = await db.scalar(
+                    select(PostPublication).where(PostPublication.id == task_id, PostPublication.user_id == user_id),
+                )
         return _recovery_response(row, job)
 
 
@@ -694,11 +719,11 @@ async def list_publication_recoveries(user_id: int, *, limit: int = 50, offset: 
     )
 
 
-async def adopt_publication_video(user_id: int, task_id: str) -> PostPublicationResult:
-    """明确采纳现有视频：原任务幂等，按采纳时政策、身份和额度发布，不重新制作旁白。"""
+async def _publish_checked_video(user_id: int, task_id: str) -> PostPublicationResult:
+    """调用方持恢复锁；核对当前政策与检查结果后发布原视频。"""
     if is_user_in_maintenance(user_id):
-        raise PostError("账户正在维护，暂不能采纳")
-    async with _recovery_lock(task_id), SESSION_LOCAL() as db:
+        raise PostError("账户正在维护，暂不能发布")
+    async with SESSION_LOCAL() as db:
         await lock_account(db, user_id)
         row = await db.scalar(
             select(PostPublication)
@@ -710,7 +735,7 @@ async def adopt_publication_video(user_id: int, task_id: str) -> PostPublication
         if row.post_id is not None:
             return response_for_publication(row)
         if row.status not in _RECOVERABLE_VIDEO_STATUSES or row.plan_json is None:
-            raise PostError("只有待核对的视频动态可以采纳")
+            raise PostError("只有结果待核对的视频动态可以继续发布")
         if not await user_is_active(db, user_id) or user_id not in await complete_user_ids(db, (user_id,)):
             raise PostBlockedError("账户或伙伴资料不可用")
         if not await _posts_enabled(db, user_id):
@@ -727,13 +752,13 @@ async def adopt_publication_video(user_id: int, task_id: str) -> PostPublication
             user_id,
             CharacterCardSnapshot.model_validate(row.progress_json["identity"]),
         ):
-            raise PostBlockedError("伙伴外形已更新，不能采纳旧参考视频")
+            raise PostBlockedError("伙伴外形已更新，不能发布旧参考视频")
         try:
             path = await post_video_asset(db, user_id, job_id)
         except ValueError as exc:
             raise PostError(str(exc)) from exc
         row.progress_json = {**row.progress_json, "media_url": path}
-        # 发布入口会重读任务；autoflush=False，先保存本事务的采纳进度。
+        # 发布入口会重读任务；autoflush=False，先保存本事务的发布进度。
         await db.flush()
         await commit_publication(
             db,

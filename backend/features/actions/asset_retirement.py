@@ -29,7 +29,6 @@ from features.assets.lifecycle import (
 )
 from features.assets.references import ACTION_ASSET_FIELDS, PACK_ASSET_FIELDS, AssetReferencesUnavailable
 from features.media.contracts import RemovedActionVideoTask
-from features.media.review_service import release_action_reviews_for_packs
 
 ASSET_GRACE = timedelta(hours=24)
 logger = get_logger(__name__)
@@ -131,7 +130,6 @@ async def delete_outfit_action_packs(
             select(CompanionActionPack.id).where(CompanionActionPack.id.in_(directory_pack_ids)),
         ),
     )
-    review_pack_ids = pack_ids | (directory_pack_ids - existing_pack_ids)
     preserved_prefixes = tuple(f"{prefix}pack{pack_id}/" for pack_id in existing_pack_ids - pack_ids)
     preserved_paths = {path for path in paths if path.startswith(preserved_prefixes)}
     paths -= preserved_paths
@@ -155,7 +153,6 @@ async def delete_outfit_action_packs(
                 ActionAssetRetirement.path.in_(retired_paths),
             ),
         )
-    paths |= await release_action_reviews_for_packs(db, user_id, review_pack_ids)
     await enqueue_asset_cleanup(db, user_id, paths, expedite=True)
     removed = removed_video_tasks(actions)
     for pack in packs:

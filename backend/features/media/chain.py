@@ -42,7 +42,8 @@ _VIDEO_FAILURE_COPY: dict[str, str] = {
     "download_failed": "视频下载失败，请稍后重试",
     "worker_failed": "视频生成服务异常，请稍后重试",
     "identity_changed": "角色外形已更新，旧参考生成的视频未交付",
-    "quality_failed": "视频文件无法完成质量核查，请稍后重试",
+    "quality_failed": "视频未通过检查，请重新生成",
+    "quality_unavailable": "视频检查暂未完成，可以稍后继续制作",
     "rate_limit": "视频服务繁忙，正在等待重试",
     "queue_stopped": "本次视频制作已结束，请按需重新发起",
 }
@@ -143,6 +144,21 @@ class MediaChainState(BaseModel):
         candidates = [candidate for candidate in self.candidates if candidate.slot == slot]
         return max(candidates, key=lambda item: item.score if item.score is not None else -1, default=None)
 
+    def best_qualified(self, slot: int = 0) -> MediaCandidate | None:
+        return max(
+            (
+                candidate
+                for candidate in self.candidates
+                if candidate.slot == slot
+                and candidate.evaluated
+                and candidate.score is not None
+                and candidate.score >= MEDIA_IDENTITY_ACCEPT_SCORE
+                and candidate.accepted is not False
+            ),
+            key=lambda candidate: candidate.score if candidate.score is not None else -1,
+            default=None,
+        )
+
     def accept_score(self, candidate: MediaCandidate, score: int | None) -> None:
         candidate.score = score
         candidate.evaluated = True
@@ -160,24 +176,12 @@ class MediaChainState(BaseModel):
         )
 
     def needs_next(self, slot: int = 0) -> bool:
-        best = self.best(slot)
-        return (
-            not self.stop_reason
-            and self.next_index < len(self.providers)
-            and (best is None or best.score is None or best.score < MEDIA_IDENTITY_ACCEPT_SCORE)
-        )
+        return not self.stop_reason and self.next_index < len(self.providers) and self.best_qualified(slot) is None
 
     def finish(self, slots: int = 1) -> None:
         if not self.stop_reason:
             self.stop_reason = (
-                "accepted"
-                if all(
-                    (best := self.best(slot)) is not None
-                    and best.score is not None
-                    and best.score >= MEDIA_IDENTITY_ACCEPT_SCORE
-                    for slot in range(slots)
-                )
-                else "exhausted"
+                "accepted" if all(self.best_qualified(slot) is not None for slot in range(slots)) else "exhausted"
             )
         self.phase = "complete"
 

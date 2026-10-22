@@ -266,7 +266,7 @@ async def video_generate_status_tool(
         payload["url"] = row.video_url
         if row.error_message:
             payload["warning"] = row.error_message
-    elif row.status in ("failed", "review_pending"):
+    elif row.status == "failed":
         payload["error"] = row.error_message
     elif row.status == "result_unknown":
         payload.update({"error": row.error_message, "retry_safe": False})

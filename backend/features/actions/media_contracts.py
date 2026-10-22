@@ -128,14 +128,6 @@ class VideoPackSelectionRequest(BaseModel):
     pack_id: int = Field(gt=0, le=POSTGRES_INT4_MAX)
 
 
-class PendingActionReview(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: int
-    media_type: Literal["image", "video"]
-    media_url: str
-
-
 class ActionMediaResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -152,7 +144,6 @@ class ActionMediaResponse(BaseModel):
     video_queue: VideoQueueInfo | None = None
     media_url: str | None = None
     current_media_url: str | None = None
-    pending_review: PendingActionReview | None = None
     has_ready_asset: bool = False
     can_retry: bool = False
     can_regenerate: bool = False

@@ -20,9 +20,7 @@ from features.desktop_life.schemas import (
     DesktopVideoActionResponse,
     DesktopVideoCancelCommand,
     DesktopVideoClaimRequest,
-    DesktopVideoConfirmImageCommand,
     DesktopVideoCreateSetRequest,
-    DesktopVideoDecisionRequest,
     DesktopVideoDesignRequest,
     DesktopVideoEnsureRequest,
     DesktopVideoGenerateCommand,
@@ -47,7 +45,6 @@ from features.desktop_life.service import (
     activate_desktop_video_set,
     cancel_desktop_action,
     claim_desktop_playback,
-    confirm_desktop_image,
     create_desktop_video_set,
     delete_desktop_video_set,
     design_desktop_action,
@@ -65,7 +62,6 @@ from features.desktop_life.service import (
     rename_desktop_video_set,
     resume_desktop_action,
     retry_desktop_action,
-    review_desktop_action,
     set_desktop_video_preferences,
     upload_desktop_action,
     upload_desktop_image,
@@ -116,7 +112,6 @@ async def command_draft(
     body: DesktopVideoGenerateCommand
     | DesktopVideoImageCommand
     | DesktopVideoRefineCommand
-    | DesktopVideoConfirmImageCommand
     | DesktopVideoCancelCommand
     | DesktopVideoPauseCommand
     | DesktopVideoResumeCommand
@@ -148,15 +143,6 @@ async def command_draft(
             )
         if isinstance(body, DesktopVideoRefineCommand):
             return await refine_desktop_video(user_id, action_id, body)
-        if isinstance(body, DesktopVideoConfirmImageCommand):
-            return await confirm_desktop_image(
-                user_id,
-                action_id,
-                draft_id=body.draft_id,
-                expected_base_version=body.expected_base_version,
-                expected_resolution_revision=body.expected_resolution_revision,
-                generate_video=body.generate_video,
-            )
         if isinstance(body, DesktopVideoCancelCommand):
             return await cancel_desktop_action(user_id, action_id, draft_id=body.draft_id)
         if isinstance(body, DesktopVideoPauseCommand):
@@ -226,24 +212,6 @@ async def upload_action(
             expected_base_version=expected_base_version,
             expected_resolution_revision=expected_resolution_revision,
             aspect_policy=aspect_policy,
-        )
-    except DesktopVideoError as exc:
-        raise _http_error(exc) from exc
-
-
-async def decide_action(
-    action_id: int,
-    user_id: int,
-    body: DesktopVideoDecisionRequest,
-) -> DesktopVideoActionResponse:
-    try:
-        return await review_desktop_action(
-            user_id,
-            action_id,
-            accepted=body.decision == "accept",
-            draft_id=body.draft_id,
-            expected_base_version=body.expected_base_version,
-            expected_resolution_revision=body.expected_resolution_revision,
         )
     except DesktopVideoError as exc:
         raise _http_error(exc) from exc

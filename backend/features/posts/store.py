@@ -189,8 +189,7 @@ async def publication_quota_remaining(
             PostPublication.user_id == user_id,
             or_(
                 PostPublication.status.in_(("queued", "running")),
-                PostPublication.status.in_(("result_unknown", "review_pending"))
-                & (PostPublication.reserved_at >= since),
+                PostPublication.status.in_(("result_unknown",)) & (PostPublication.reserved_at >= since),
             ),
         )
     )

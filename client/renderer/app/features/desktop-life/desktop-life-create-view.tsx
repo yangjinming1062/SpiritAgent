@@ -90,10 +90,10 @@ export function DesktopLifeCreateView({
           {busy
             ? t.preparing
             : create.source === 'ai'
-              ? t.generateImage
+              ? t.createProduction
               : create.source === 'image_upload'
-                ? t.uploadImage
-                : t.selectVideo}
+                ? t.uploadImageProduction
+                : t.uploadVideoProduction}
         </button>
       </CreationActionBar>
     </div>

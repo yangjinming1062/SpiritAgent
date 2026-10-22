@@ -22,10 +22,9 @@ export async function queryVideoPublication(id: string): Promise<VideoPublicatio
   return apiSucceeded(result, 'posts', 'video recovery query failed') ? result.value : null
 }
 
-export async function resolveVideoPublication(id: string, action: 'adopt' | 'discard'): Promise<boolean> {
-  const result = await authedResource('companion_posts.decide_publication', {
-    path: { publication_id: id },
-    body: { decision: action === 'adopt' ? 'accept' : 'reject' }
+export async function resolveVideoPublication(id: string): Promise<boolean> {
+  const result = await authedResource('companion_posts.discard_publication', {
+    path: { publication_id: id }
   })
 
   return apiSucceeded(result, 'posts', 'video recovery decision failed') && result.value !== null

@@ -175,16 +175,10 @@ async def window_target_states(
     sources: dict[int, ActionSourceSnapshot | None] = {}
     for action, pack in rows:
         material = accepted_action_asset(action)
-        status = (
-            "ready"
-            if action.status == "succeeded" and material
-            else "review_pending"
-            if action.status == "review"
-            else action.status
-        )
+        status = "ready" if action.status == "succeeded" and material else action.status
         if not action.enabled:
             status = "disabled"
-        if status not in {"not_generated", "queued", "processing", "ready", "review_pending", "failed", "disabled"}:
+        if status not in {"not_generated", "queued", "processing", "ready", "failed", "disabled"}:
             status = "blocked"
         if pack.id not in sources:
             sources[pack.id] = await _window_source_from_pack(user_id, pack, avatar)

@@ -42,12 +42,12 @@ from features.actions.generation.script import (
     inspect_peek_geometry,
 )
 from features.actions.generation.state import GenerationContext
-from features.actions.materials import accepted_action_asset
 from features.actions.media_contracts import ActionResult, ImageClipSpec, VideoClipSpec
 from features.actions.models import REQUIRED_SYSTEM_SLOTS, CompanionAction, CompanionActionPack
 from features.appearance.avatar_service import FULLBODY_SIZE
 from features.appearance.character_card import render_character_profile
 from features.media.chain import (
+    MEDIA_IDENTITY_ACCEPT_SCORE,
     MediaCandidate,
     MediaChainState,
     MediaProviderFailedError,
@@ -58,8 +58,6 @@ from features.media.chain import (
 )
 from features.media.character_images import ImageChainState, generate_character_images
 from features.media.identity_review import review_character_frames, score_character_frames
-from features.media.review_contracts import MediaReviewPublication
-from features.media.review_service import create_media_review
 from features.media.video_queue.contracts import VideoQueueInfo, VideoQueueOwner
 from features.media.video_queue.service import (
     acknowledge_video_attempt,
@@ -181,7 +179,7 @@ async def _review_pack_identity(
     *,
     before_submit: Callable[[], Awaitable[None]],
 ) -> tuple[str, str]:
-    """必需动作的静态图或视频采样帧与头像、当前着装合成的冻结参考复核；不可用时转人工预览。"""
+    """必需动作的静态图或视频采样帧与头像、当前着装合成的冻结参考复核；不可用时阻止发布。"""
     try:
         reference_uri = await run_blocking(_image_data_uri, _artifact_abs_path(pack.reference_path))
         frame_uris: list[str] = []
@@ -201,7 +199,7 @@ async def _review_pack_identity(
         raise
     except Exception:
         logger.warning("video pack identity review failed", extra={"pack_id": pack_id}, exc_info=True)
-        return "review", "动作包的自动检查未完成，请预览后手动启用"
+        return "review", "动作组的自动检查未完成，请稍后重试"
 
 
 async def _prepare_action_pose(
@@ -245,7 +243,7 @@ async def _prepare_action_pose(
         image_edit=True,
         prefer_transparent_background=True,
         prepare_action_frame=job.definition_id is not None,
-        goal_review="required" if job.definition_id is not None else "none",
+        goal_review="required",
         state=pose_state,
         save_progress=save_pose,
         before_submit=lambda: _require_new_paid_step(pack, context),
@@ -308,7 +306,7 @@ async def _run_image_pipeline(
             setattr(job, key, value)
         job.stage = "process"
     identity_uri: str | None = None
-    if job.system_slot in ("peek_left", "peek_right"):
+    if job.system_slot in ("peek_left", "peek_right") and result.clip.peek_geometry is None:
         identity_uri = await run_blocking(_image_data_uri, _artifact_abs_path(pack.reference_path))
         sample_uri = await run_blocking(_image_data_uri, _artifact_abs_path(result.clip.path))
         geometry = await inspect_peek_geometry(
@@ -320,46 +318,35 @@ async def _run_image_pipeline(
             before_submit=lambda: _require_new_paid_step(pack, context),
         )
         result = result.model_copy(update={"clip": result.clip.model_copy(update={"peek_geometry": geometry})})
-    review_id = None
-    replacing_current = accepted_action_asset(job) is not None
-    if pack.status == "ready" or replacing_current:
-        if identity_uri is None:
-            identity_uri = await run_blocking(_image_data_uri, _artifact_abs_path(pack.reference_path))
-        verdict, reason = await review_character_frames(
-            pack.user_id,
-            identity_uri,
-            await _action_sample_uris(result.clip),
-            task=AiTaskKey.window_action,
-            image=True,
-            identity_text=render_character_profile(context.identity),
-            before_submit=lambda: _require_new_paid_step(pack, context),
-        )
-        if verdict == "review" or replacing_current:
-            review_id = await create_media_review(
-                pack.user_id,
-                "image",
-                result.clip.path,
-                reason if verdict == "review" else "新动作已生成，请预览后确认是否替换当前动作",
-                publication=MediaReviewPublication(
-                    kind="action",
-                    pack_id=pack.id,
-                    action_id=job.id,
-                    title=job.name,
-                    system_slot=job.system_slot,
-                ),
-            )
+    job.stage = "review"
+    await _advance_job(job.id, stage="review", **_clip_row_values(result))
+    if identity_uri is None:
+        identity_uri = await run_blocking(_image_data_uri, _artifact_abs_path(pack.reference_path))
+    verdict, reason = await review_character_frames(
+        pack.user_id,
+        identity_uri,
+        await _action_sample_uris(result.clip),
+        task=AiTaskKey.window_action,
+        image=True,
+        identity_text=render_character_profile(context.identity),
+        before_submit=lambda: _require_new_paid_step(pack, context),
+    )
+    if verdict != "pass":
+        raise MediaProviderFailedError(reason or "动作图片未通过检查，请重新生成", reason="quality_failed")
     pose_state = (
         ImageChainState.model_validate_json(job.pose_generation_state_json)
         if job.pose_generation_state_json
         else ImageChainState()
     )
     best = pose_state.best()
-    provider = pose_state.providers[best.attempt] if best is not None else None
+    if best is None or best.score is None or best.score < MEDIA_IDENTITY_ACCEPT_SCORE:
+        raise MediaProviderFailedError("动作图片未通过身份检查，请重新生成", reason="quality_failed")
+    provider = pose_state.providers[best.attempt]
     result = result.model_copy(update={"image_origin": pose_state.selected_origin()})
     await _advance_job(
         job.id,
         stage="publish",
-        status="review" if review_id else "succeeded",
+        status="succeeded",
         **_clip_row_values(result),
         kind=None,
         loopable=None,
@@ -370,7 +357,7 @@ async def _run_image_pipeline(
         provider=provider.provider if provider else job.provider,
         model=provider.model if provider else job.model,
     )
-    return review_id is None
+    return True
 
 
 async def _run_action_pipeline(
@@ -510,6 +497,8 @@ async def _run_action_pipeline(
         if state.stop_reason:
             raise MediaProviderFailedError(video_failure_message(state.stop_reason), reason=state.stop_reason)
         raise VideoPackError("视频生成服务未返回可用素材")
+    if best.score is None or best.score < MEDIA_IDENTITY_ACCEPT_SCORE:
+        raise MediaProviderFailedError("动作视频未通过身份检查，请重新生成", reason="quality_failed")
     unused_source = job.artifact_path
     result = ActionResult.model_validate_json(best.result_json or "")
     pose_state = (
@@ -524,50 +513,31 @@ async def _run_action_pipeline(
         },
     )
     spec = result.clip
-    review_id = None
-    frames: tuple[str, ...] = ()
-    replacing_current = accepted_action_asset(job) is not None
-    if pack.status == "ready" or replacing_current:
-        try:
-            frames = await _clip_frame_uris(spec)
-        except Exception:
-            logger.warning("video action frame sampling failed", extra={"action_id": job.id}, exc_info=True)
-        try:
-            if not frames:
-                raise VideoPackError("动作视频画面无法读取")
-            verdict, reason = await review_character_frames(
-                pack.user_id,
-                identity_uri,
-                frames,
-                task=AiTaskKey.window_action,
-                identity_text=render_character_profile(context.identity),
-                before_submit=lambda: _require_new_paid_step(pack, context),
-            )
-        except LlmCallBlockedError:
-            raise
-        except Exception:
-            verdict, reason = "review", "动作视频的自动检查未完成，请预览确认"
-        if verdict == "review" or replacing_current:
-            review_id = await create_media_review(
-                pack.user_id,
-                "video",
-                spec.path,
-                reason if verdict == "review" else "新动作已生成，请预览后确认是否替换当前动作",
-                publication=MediaReviewPublication(
-                    kind="action",
-                    pack_id=pack.id,
-                    action_id=job.id,
-                    title=job.name,
-                    system_slot=job.system_slot,
-                ),
-            )
+    try:
+        frames = await _clip_frame_uris(spec)
+        if not frames:
+            raise VideoPackError("动作视频画面无法读取")
+        verdict, reason = await review_character_frames(
+            pack.user_id,
+            identity_uri,
+            frames,
+            task=AiTaskKey.window_action,
+            identity_text=render_character_profile(context.identity),
+            before_submit=lambda: _require_new_paid_step(pack, context),
+        )
+    except LlmCallBlockedError:
+        raise
+    except Exception as exc:
+        raise MediaProviderFailedError("动作视频检查未完成，请稍后继续制作", reason="quality_unavailable") from exc
+    if verdict != "pass":
+        raise MediaProviderFailedError(reason or "动作视频未通过检查，请重新生成", reason="quality_failed")
     unresolved = (
         state.stop_reason == "result_unknown"
         or state.phase == "submitting"
         or (bool(job.provider_task_id) and not (state.result_url or state.source_path))
     )
     if unresolved:
-        # 旧最佳素材可以预览或采纳；当前已付费任务仍需保留，不能借旧候选宣告本次提交已结算。
+        # 已合格的最佳素材可以采用；当前已付费任务仍需保留，不能借旧候选宣告本次提交已结算。
         state.stop_reason = "result_unknown"
     else:
         state.finish()
@@ -575,7 +545,7 @@ async def _run_action_pipeline(
         job,
         state,
         stage="publish",
-        status="review" if review_id else "succeeded",
+        status="succeeded",
         **_clip_row_values(result),
         artifact_path=job.artifact_path if unresolved else best.artifacts[0],
         provider=job.provider if unresolved else state.providers[best.attempt].provider,
@@ -596,7 +566,7 @@ async def _run_action_pipeline(
         for path in candidate.artifacts:
             if path not in keep:
                 await asyncio.to_thread(unlink_companion_asset, path)
-    return review_id is None
+    return True
 
 
 async def _run_action_attempt(

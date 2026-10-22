@@ -7,7 +7,6 @@ from collections.abc import Awaitable, Callable
 from fractions import Fraction
 from io import BytesIO
 from typing import Literal, NamedTuple
-from uuid import uuid4
 
 from infrastructure.ai.error_classifier import LlmCallBlockedError
 from infrastructure.ai.llm_client import build_provider, resolve_provider_chain, resolve_vision_chain
@@ -296,6 +295,7 @@ def desktop_progress_can_resume(progress: DesktopVideoProgress) -> bool:
     if desktop_progress_has_unknown_submission(progress) or progress.failure_reason in {
         "material_rejected",
         "queue_stopped",
+        "quality_failed",
     }:
         return False
     if desktop_progress_has_video_work(progress):
@@ -723,22 +723,6 @@ async def prepare_uploaded_desktop_image(
     progress.image_confirmed = False
     progress.motion_prompt = ""
     return path
-
-
-async def _await_image(user_id: int, action_id: int, progress: DesktopVideoProgress) -> None:
-    async with SESSION_LOCAL() as db:
-        await desktop_state(db, user_id, create=True)
-        action = await desktop_action(db, user_id, action_id)
-        saved = desktop_progress(action)
-        if saved is None or saved.generation_id != progress.generation_id or action.status != "processing":
-            raise LlmCallBlockedError("本次制作任务已经失效")
-        progress.generation_id = uuid4().hex
-        action.generation_state_json = progress.model_dump_json()
-        action.status, action.stage, action.error = "review_pending", "image_review", None
-        await touch_desktop_state(db, user_id)
-        await db.commit()
-    if action.key == "idle":
-        schedule_desktop_title(user_id, action.set_id)
 
 
 async def _prepare_expansion(
@@ -1270,7 +1254,7 @@ async def _evaluate_candidate(
 ) -> None:
     candidate = progress.candidate
     if candidate is None:
-        raise DesktopVideoStateError("待确认的视频缺失")
+        raise DesktopVideoStateError("制作的视频缺失")
     await _require_active_job(user_id, action.id, progress.generation_id)
     resolved = resolve_asset_reference(candidate.video_path)
     reference_path = progress.video_refinement.image_path if progress.video_refinement else progress.pose_path
@@ -1311,8 +1295,7 @@ async def _evaluate_candidate(
         )
         await _save_progress(user_id, action.id, progress, stage="review")
         if progress.identity_score is None:
-            progress.review_verdict, progress.review_reason = "review", "画面检查未完成，请预览确认"
-            return
+            raise DesktopCreationError("视频身份检查暂未完成，可以稍后继续", "review_unavailable")
     if progress.review_verdict is None:
         try:
             review_payload: dict[str, object] = {
@@ -1350,9 +1333,9 @@ async def _evaluate_candidate(
             progress.review_verdict, progress.review_reason = review.verdict, review.reason
         except LlmCallBlockedError:
             raise
-        except Exception:
+        except Exception as exc:
             logger.warning("Desktop video review unavailable", extra={"action_id": action.id}, exc_info=True)
-            progress.review_verdict, progress.review_reason = "review", "自动检查未完成，请预览确认"
+            raise DesktopCreationError("视频检查暂未完成，可以稍后继续", "review_unavailable") from exc
     await _save_progress(user_id, action.id, progress, stage="review")
 
 
@@ -1392,7 +1375,13 @@ async def _describe_video_frame(user_id: int, action_id: int, progress: DesktopV
         logger.warning("Desktop video description unavailable", extra={"action_id": action_id}, exc_info=True)
 
 
-async def _finish_job(user_id: int, action_id: int, progress: DesktopVideoProgress) -> None:
+async def _finish_job(
+    user_id: int,
+    action_id: int,
+    progress: DesktopVideoProgress,
+    *,
+    allow_followup_work: bool = True,
+) -> None:
     published_set: int | None = None
     removed: list[RemovedActionVideoTask] = []
     async with SESSION_LOCAL() as db:
@@ -1404,14 +1393,18 @@ async def _finish_job(user_id: int, action_id: int, progress: DesktopVideoProgre
         if progress.candidate is None:
             raise DesktopVideoStateError("当前画面还没有可用视频")
         action.generation_state_json = progress.model_dump_json()
-        first = not action.accepted_asset_json and not progress.force_review
         passed = progress.source == "external_upload" or (
             progress.review_verdict == "pass"
             and progress.identity_score is not None
             and progress.identity_score >= MEDIA_IDENTITY_ACCEPT_SCORE
         )
-        if first and passed:
-            removed = await publish_desktop_asset(db, action, progress.candidate)
+        if passed:
+            removed = await publish_desktop_asset(
+                db,
+                action,
+                progress.candidate,
+                schedule_followups=allow_followup_work,
+            )
             if action.key == "idle":
                 published_set = action.set_id
             state = await desktop_state(db, user_id)
@@ -1438,14 +1431,15 @@ async def _finish_job(user_id: int, action_id: int, progress: DesktopVideoProgre
                         presentation_revision=presentation.revision,
                     )
         else:
-            action.status, action.stage = "review_pending", "review"
-            action.error = None
-            await touch_desktop_state(db, user_id)
+            raise DesktopCreationError(
+                progress.review_reason or "视频未通过检查，请重新生成",
+                "quality_failed",
+            )
         await db.commit()
-    if action.key == "idle":
+    if action.key == "idle" and allow_followup_work:
         schedule_desktop_title(user_id, action.set_id)
     spawn_removed_action_task_cancellation(user_id, removed)
-    if published_set is not None:
+    if published_set is not None and allow_followup_work:
         await notify_desktop_set_updated(user_id, published_set)
 
 
@@ -1518,15 +1512,23 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
             await _save_progress(user_id, action_id, progress, stage=action.stage)
             raise DesktopVideoStateError(_unknown_submission_message(progress))
         directory = f"desktop/{action.set_id}/{action.id}/{generation_id}"
+        # 已有评估结论时只收尾，不因维护暂停而丢弃本次检查。
+        if not allow_model_steps and progress.candidate is not None and progress.review_verdict is not None:
+            await _finish_job(user_id, action_id, progress, allow_followup_work=allow_model_steps)
+            return
+        if not allow_model_steps and progress.reprocess_only:
+            raise GenerationWorkPaused
         if progress.reprocess_only:
             if not progress.source_path:
                 raise DesktopVideoStateError("已保存的视频无法读取，请重新上传或制作")
             await _save_progress(user_id, action_id, progress, stage="process")
             progress.candidate = await _process_candidate(user_id, action, progress, directory)
-            progress.force_review = True
-            progress.review_verdict, progress.review_reason = "review", "画幅已适配，请预览确认"
+            if progress.source == "external_upload":
+                progress.review_verdict, progress.review_reason = "pass", ""
+            else:
+                await _evaluate_candidate(user_id, action, progress)
             await _save_progress(user_id, action_id, progress, stage="review")
-            await _finish_job(user_id, action_id, progress)
+            await _finish_job(user_id, action_id, progress, allow_followup_work=allow_model_steps)
             return
         if progress.source == "external_upload":
             if progress.candidate is None:
@@ -1539,10 +1541,7 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                 await _save_progress(user_id, action_id, progress, stage="complete")
             if allow_model_steps:
                 await _describe_video_frame(user_id, action_id, progress)
-            await _finish_job(user_id, action_id, progress)
-            return
-        if not allow_model_steps and progress.candidate is not None and progress.review_verdict is not None:
-            await _finish_job(user_id, action_id, progress)
+            await _finish_job(user_id, action_id, progress, allow_followup_work=allow_model_steps)
             return
         if not allow_model_steps and not (  # 刻意不含 candidate：待评估候选不算在途视频工作
             progress.provider_task_id
@@ -1553,13 +1552,9 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
             raise GenerationWorkPaused
         if progress.video_refinement is None and not desktop_progress_has_video_work(progress):
             await _prepare_opening(user_id, action, snapshot, progress, directory)
-            if progress.auto_continue:
-                progress.image_confirmed = True
-                progress.image_only = False
-                await _save_progress(user_id, action_id, progress, stage="video")
-            if progress.image_only or not progress.image_confirmed:
-                await _await_image(user_id, action_id, progress)
-                return
+            progress.image_confirmed = True
+            progress.image_only = False
+            await _save_progress(user_id, action_id, progress, stage="video")
         chain = MediaChainState.model_validate_json(progress.video_chain_json or "{}")
         if not chain.providers:
             if progress.video_refinement is not None:
@@ -1647,13 +1642,10 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                     )
                     await _save_progress(user_id, action_id, progress, stage="repairing")
                     await _prepare_opening(user_id, action, snapshot, progress, directory)
-                    if progress.auto_continue:
-                        progress.image_confirmed = True
-                        progress.image_only = False
-                        await _save_progress(user_id, action_id, progress, stage="video")
-                        continue
-                    await _await_image(user_id, action_id, progress)
-                    return
+                    progress.image_confirmed = True
+                    progress.image_only = False
+                    await _save_progress(user_id, action_id, progress, stage="video")
+                    continue
         if progress.submission_unknown:
             raise DesktopVideoStateError(video_failure_message("result_unknown"))
         while True:
@@ -1695,7 +1687,7 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                     progress.video_chain_json = chain.model_dump_json()
                     await _save_progress(user_id, action_id, progress, stage="video")
                     continue
-                best = chain.best()
+                best = chain.best_qualified() or chain.best()
                 if best is not None and best.result_json:
                     chosen = DesktopCandidateResult.model_validate_json(best.result_json)
                     progress.candidate, progress.identity_score = chosen.asset, best.score
@@ -1753,8 +1745,7 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                     raise GenerationWorkPaused
                 await _require_active_job(user_id, action_id, generation_id)
                 if not progress.image_confirmed:
-                    await _await_image(user_id, action_id, progress)
-                    return
+                    raise DesktopVideoStateError("起始画面尚未通过检查，请继续制作")
                 config = await resolve_frozen_media_provider(user_id, "video_gen", chain.providers[index])
                 if config is None:
                     raise DesktopVideoStateError(video_failure_message("provider_unavailable"))
@@ -1902,7 +1893,7 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
             await acknowledge_video_attempt(chain.queue_request_id)
         chain.finish()
         progress.video_chain_json = chain.model_dump_json()
-        await _finish_job(user_id, action_id, progress)
+        await _finish_job(user_id, action_id, progress, allow_followup_work=allow_model_steps)
     except GenerationWorkPaused:
         if generation_id:
             await _pause_desktop_job(user_id, action_id, generation_id)

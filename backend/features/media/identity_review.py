@@ -19,7 +19,7 @@ from infrastructure.text import parse_llm_json
 from infrastructure.video_processing.frames import action_frame_review_input, measure_action_frame
 from pydantic import BaseModel, ConfigDict, Field
 
-from features.media.chain import MEDIA_IDENTITY_ACCEPT_SCORE
+from features.media.chain import MEDIA_IDENTITY_ACCEPT_SCORE, MediaProviderFailedError
 from features.media.prompts import (
     CHARACTER_ACTION_IMAGE_REVIEW,
     CHARACTER_ACTION_VIDEO_REVIEW,
@@ -331,7 +331,7 @@ async def review_character_frames(
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> tuple[str, str]:
     if not identity_uri or not frame_uris:
-        return "review", "参考形象或动作画面无法读取，请预览确认"
+        return "review", "参考形象或动作画面无法读取，检查未通过"
     if pack_wide:
         prompt = CHARACTER_VIDEO_PACK_REVIEW
     elif image:
@@ -350,7 +350,7 @@ async def review_character_frames(
         payload = parse_llm_json(raw)
         if isinstance(payload, dict) and payload.get("verdict") in ("pass", "review"):
             reason = str(payload.get("reason") or "").strip()[:500]
-            return payload["verdict"], reason or "角色外形可能有变化，请预览确认"
+            return payload["verdict"], reason or "角色外形可能有变化，检查未通过"
         logger.warning(
             "character action review output invalid",
             extra={
@@ -363,4 +363,4 @@ async def review_character_frames(
         raise
     except Exception:
         logger.warning("character action review failed", extra={"user_id": user_id}, exc_info=True)
-    return "review", "自动检查未完成，请预览确认"
+    raise MediaProviderFailedError("自动检查未完成，请稍后继续检查已有素材", reason="quality_unavailable")

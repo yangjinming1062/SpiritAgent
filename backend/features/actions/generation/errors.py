@@ -37,6 +37,8 @@ def _generation_error(exc: Exception, *, media_type: str = "video") -> str:
             return {
                 "result_unknown": "图片提交结果尚未确认，请先核对已有结果",
                 "content_policy_blocked": "图片生成被供应商拒绝，请调整姿态要求后重做",
+                "quality_failed": "图片未通过检查，请重新生成",
+                "quality_unavailable": "图片检查暂未完成，可以稍后继续制作",
             }.get(reason, "图片生成服务暂不可用，可重试已有任务或素材")
         return video_failure_message(reason)
     if isinstance(

@@ -37,13 +37,11 @@ export function DesktopLifeCover({ url }: { url: string | null }): React.JSX.Ele
 export function DesktopLifePreview({
   action,
   set,
-  draft = false,
-  onImageReady
+  draft = false
 }: {
   action: DesktopVideoAction
   set: DesktopVideoSet
   draft?: boolean
-  onImageReady?: () => void
 }): React.JSX.Element {
   const videoUrl = draft ? action.draft?.candidate_video_url : action.current?.video_url
 
@@ -52,7 +50,7 @@ export function DesktopLifePreview({
     : action.current?.poster_url
 
   const mediaUrl = videoUrl || imageUrl || ''
-  // 图片确认跟随完整 URL；视频保留资产身份，避免仅因签名更新重建播放器。
+  // 视频保留资产身份，避免仅因签名更新重建播放器。
   const mediaKey = draft && !videoUrl ? mediaUrl : mediaUrl.split(/[?#]/)[0]
 
   return (
@@ -60,7 +58,6 @@ export function DesktopLifePreview({
       action={action}
       draft={draft}
       key={`${draft ? action.draft?.id : action.id}:${mediaKey}`}
-      onImageReady={onImageReady}
       set={set}
     />
   )
@@ -69,13 +66,11 @@ export function DesktopLifePreview({
 function ResolvedDesktopLifePreview({
   action,
   set,
-  draft,
-  onImageReady
+  draft
 }: {
   action: DesktopVideoAction
   set: DesktopVideoSet
   draft: boolean
-  onImageReady?: () => void
 }): React.JSX.Element {
   const active = usePanelActivity()
   const strings = useStrings()
@@ -129,8 +124,7 @@ function ResolvedDesktopLifePreview({
           const canEnlarge = Boolean(
             active &&
             draft &&
-            action.stage === 'image_review' &&
-            !action.draft?.image_confirmed &&
+            action.draft?.image_confirmed &&
             imageUrl === action.draft?.image_url &&
             !videoUrl &&
             hasMedia &&
@@ -179,10 +173,6 @@ function ResolvedDesktopLifePreview({
                             width: event.currentTarget.naturalWidth,
                             height: event.currentTarget.naturalHeight
                           })
-
-                          if (draft && !currentFallback && imageUrl === action.draft?.image_url) {
-                            onImageReady?.()
-                          }
                         }}
                         src={src}
                         style={mediaStyle}

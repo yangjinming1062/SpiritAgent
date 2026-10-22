@@ -137,6 +137,11 @@ def restore_desktop_payload(table: str, payload: dict[str, Any], id_map: dict[st
             payload["accepted_asset_json"] = DesktopVideoAsset.model_validate_json(
                 payload["accepted_asset_json"],
             ).model_dump_json()
+        if payload.get("generation_state_json"):
+            saved_progress = json.loads(payload["generation_state_json"])
+            saved_progress.pop("force_review", None)
+            saved_progress.pop("auto_continue", None)
+            payload["generation_state_json"] = json.dumps(saved_progress, ensure_ascii=False)
         progress = (
             DesktopVideoProgress.model_validate_json(payload["generation_state_json"])
             if payload.get("generation_state_json")
@@ -167,13 +172,12 @@ def restore_desktop_payload(table: str, payload: dict[str, Any], id_map: dict[st
         payload["update_pending"] = False
         if payload["status"] == "ready" and not payload.get("accepted_asset_json"):
             raise ValueError("已就绪桌面生活动作缺少已采纳素材。")
-        if payload["status"] == "review_pending" and (
-            progress is None or (progress.candidate is None and not progress.pose_path)
-        ):
-            raise ValueError("待确认桌面生活动作缺少候选图片或视频。")
-        if payload["status"] in {"queued", "processing"}:
+        if payload["status"] in {"queued", "processing", "review_pending"}:
             payload["status"] = "failed"
             payload["stage"] = "paused"
+            if progress is not None:
+                progress.paused_by_user = True
+                payload["generation_state_json"] = progress.model_dump_json()
             payload["error"] = "恢复的桌面制作需要手动处理；已采纳素材仍可使用"
     elif table == "desktop_video_states":
         width, height = payload.get("target_width"), payload.get("target_height")

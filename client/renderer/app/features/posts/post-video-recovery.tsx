@@ -65,16 +65,21 @@ export function PostVideoRecovery(): React.JSX.Element | null {
     setBusy(null)
 
     if (result) {
-      setItems(current => current.map(item => (item.publication_id === id ? result : item)))
+      if (['published', 'partial', 'failed', 'blocked'].includes(result.status)) {
+        setItems(current => current.filter(item => item.publication_id !== id))
+        await hydratePosts()
+      } else {
+        setItems(current => current.map(item => (item.publication_id === id ? result : item)))
+      }
     } else {
       notify({ kind: 'error', message: t.videoQueryFailed, title: t.videoQueryFailed })
     }
   }
 
-  const resolve = async (id: string, action: 'adopt' | 'discard'): Promise<void> => {
+  const resolve = async (id: string): Promise<void> => {
     const isLive = beginAsync()
     setBusy(id)
-    const ok = await resolveVideoPublication(id, action)
+    const ok = await resolveVideoPublication(id)
 
     if (!isLive()) {
       return
@@ -86,15 +91,11 @@ export function PostVideoRecovery(): React.JSX.Element | null {
     if (ok) {
       setItems(current => current.filter(item => item.publication_id !== id))
       setNextOffset(current => (current === null ? null : Math.max(0, current - 1)))
-
-      if (action === 'adopt') {
-        await hydratePosts()
-      }
     } else {
       notify({
         kind: 'error',
-        message: action === 'adopt' ? t.videoAdoptFailed : t.videoDiscardFailed,
-        title: action === 'adopt' ? t.videoAdoptFailed : t.videoDiscardFailed
+        message: t.videoDiscardFailed,
+        title: t.videoDiscardFailed
       })
     }
   }
@@ -160,9 +161,7 @@ export function PostVideoRecovery(): React.JSX.Element | null {
           <p className={styles.body}>
             {item.status === 'discarded' && item.can_discard
               ? t.videoCleanupPending
-              : item.status === 'review_pending'
-                ? t.videoIdentityReviewPending
-                : t.videoRecoveryStatuses[item.video_status]}
+              : t.videoRecoveryStatuses[item.video_status]}
           </p>
           {item.error && <p className={styles.body}>{item.error}</p>}
           {item.media_url && <InlineMedia alt={item.title} audioUrl={null} mediaType="video" url={item.media_url} />}
@@ -173,12 +172,6 @@ export function PostVideoRecovery(): React.JSX.Element | null {
                 disabled: busy !== null,
                 label: t.videoQuery,
                 onClick: () => void query(item.publication_id)
-              },
-              {
-                className: BTN_SUBTLE,
-                disabled: busy !== null || !item.can_adopt,
-                label: t.videoAdopt,
-                onClick: () => void resolve(item.publication_id, 'adopt')
               },
               {
                 className: BTN_SUBTLE,
@@ -200,7 +193,7 @@ export function PostVideoRecovery(): React.JSX.Element | null {
         description={t.videoDiscardDescription}
         onConfirm={() => {
           if (discardId) {
-            void resolve(discardId, 'discard')
+            void resolve(discardId)
           }
         }}
         onOpenChange={open => {
