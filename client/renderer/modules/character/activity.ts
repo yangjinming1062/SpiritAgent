@@ -145,7 +145,7 @@ function maybeTriggerIdleExpression(idleSeconds: number, locked: boolean): void 
 
   const gateway = $gateway.get()
 
-  if (!gateway || gateway.connectionState !== 'open') {
+  if (!gateway || $gatewayState.get() !== 'open') {
     return
   }
 
@@ -324,7 +324,7 @@ async function reportCompanionSignal(available: boolean, context: string | null 
 
   const presentation = $presentation.get()
 
-  if (!gateway || gateway.connectionState !== 'open' || presentation.revision < 0) {
+  if (!gateway || $gatewayState.get() !== 'open' || presentation.revision < 0) {
     return
   }
 

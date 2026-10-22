@@ -1,31 +1,18 @@
-import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 
 import type { BrowserWindow, Net } from 'electron'
 import { clipboard, dialog, nativeImage } from 'electron'
 
 import { DEFAULT_FETCH_TIMEOUT_MS } from '../security/hardening'
 import { createImageOperations } from '../shared/lib/image-operations'
-import { extensionForMimeType, mimeTypeForPath, parseDataUrl } from '../shared/mime'
+import { dataOrFileBufferFromUrl, extensionForMimeType } from '../shared/mime'
 
 // 解析 `data:` / `file:` / http(s) URL 为字节流 + mime；右键菜单里复制/保存图片依赖这条公共路径。
 async function resourceBufferFromUrl(rawUrl: string, electronNet: Net): Promise<{ buffer: Buffer; mimeType: string }> {
-  if (!rawUrl) {
-    throw new Error('Missing URL')
-  }
+  const local = await dataOrFileBufferFromUrl(rawUrl)
 
-  if (rawUrl.startsWith('data:')) {
-    const { data: buffer, mime: mimeType } = parseDataUrl(rawUrl)
-
-    return { buffer, mimeType }
-  }
-
-  if (rawUrl.startsWith('file:')) {
-    const filePath = fileURLToPath(rawUrl)
-    const buffer = await fs.promises.readFile(filePath)
-
-    return { buffer, mimeType: mimeTypeForPath(filePath) }
+  if (local) {
+    return { buffer: local.buffer, mimeType: local.mimeType }
   }
 
   const res = await electronNet.fetch(rawUrl, { signal: AbortSignal.timeout(DEFAULT_FETCH_TIMEOUT_MS) })

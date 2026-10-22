@@ -1,7 +1,7 @@
 import { type DesktopPrefsHydrated, normalizeUiTheme, type SpiritAgentUiTheme } from '@ipc/contracts'
 import { errorMessage } from '@runtime'
 
-import { isJsonValue } from '../../../../shared/errors'
+import { isJsonValue } from '../../../../shared/gateway'
 import type { BackendClientPort, BackendConnection } from '../backend-port'
 
 import * as store from './runner-config-store'

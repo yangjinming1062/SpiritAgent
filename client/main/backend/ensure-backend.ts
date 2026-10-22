@@ -36,7 +36,7 @@ export function createEnsureBackend(deps: EnsureBackendDeps): {
     const token = deps.getAuthToken()
     const currentBaseUrl = deps.getCurrentBaseUrl()
     deps.logBootStep(`Resolving ${deps.appName} backend`)
-    const baseUrl = currentBaseUrl ?? (await deps.backendHttp.resolveRemoteBackend())?.baseUrl
+    const baseUrl = currentBaseUrl ?? (await deps.backendHttp.resolveRemoteBackend())
     assertCurrent(startGeneration)
 
     if (!baseUrl) {

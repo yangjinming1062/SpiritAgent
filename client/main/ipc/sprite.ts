@@ -1,67 +1,24 @@
-import path from 'node:path'
-
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent, Rectangle, Screen } from 'electron'
 
 import {
   type DesktopScreenRect,
   type DesktopSpritePosition,
-  type DesktopSpriteRestPosition,
   type DesktopWindowSceneSnapshot,
   IPC,
   SPRITE_SCALE_LIMITS
 } from '@ipc/contracts'
-import { clamp, errorMessage } from '@runtime'
+import { errorMessage } from '@runtime'
 
 import type { RunnerRequester } from '../../../shared/runner'
 import { isSenderWindow } from '../security/ipc-trust'
+import { normalizeScreenEdge, readRestPosition, spritePositionPath } from '../shared/sprite-position'
 import {
   atomicWriteFile,
   broadcastToAllWindows,
   hideAndSkipTaskbar,
   isFiniteNumber,
-  safeReadJson,
   setWindowIgnoreMouseEvents
 } from '../shared/utils'
-
-const POSITION_FILE = 'companion-position.json'
-
-// 落盘与读盘共用：贴边侧合法且纵向比例为有限数时保留，比例限制在 0 到 1。
-function normalizeScreenEdge(value: unknown): DesktopSpritePosition['screenEdge'] {
-  const edge = value as { side?: unknown; yRatio?: unknown } | null | undefined
-
-  return edge && (edge.side === 'left' || edge.side === 'right') && isFiniteNumber(edge.yRatio)
-    ? { side: edge.side, yRatio: clamp(edge.yRatio, 0, 1) }
-    : undefined
-}
-
-export function readRestPosition(userDataDir?: string): null | DesktopSpriteRestPosition {
-  if (!userDataDir) {
-    return null
-  }
-
-  const parsed = safeReadJson<{ origin?: unknown; screenEdge?: unknown; x?: unknown; y?: unknown }>(
-    path.join(userDataDir, POSITION_FILE)
-  )
-
-  if (!parsed || !isFiniteNumber(parsed.x) || !isFiniteNumber(parsed.y)) {
-    return null
-  }
-
-  const next: DesktopSpriteRestPosition = { x: parsed.x, y: parsed.y }
-  const origin = parsed.origin as { x?: unknown; y?: unknown } | null
-
-  if (origin && isFiniteNumber(origin.x) && isFiniteNumber(origin.y)) {
-    next.origin = { x: origin.x, y: origin.y }
-  }
-
-  const screenEdge = normalizeScreenEdge(parsed.screenEdge)
-
-  if (screenEdge) {
-    next.screenEdge = screenEdge
-  }
-
-  return next
-}
 
 // Runner 报告原生屏幕坐标：Windows 为物理像素，须换算到 DIP；其余平台已是 DIP。
 function toDipRect(screen: Screen, { h, w, x, y }: DesktopScreenRect): Rectangle {
@@ -243,10 +200,7 @@ export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcM
     try {
       const dir = getUserDataDir()
 
-      await atomicWriteFile(
-        path.join(dir, POSITION_FILE),
-        JSON.stringify({ x: payload.x, y: payload.y, origin, screenEdge })
-      )
+      await atomicWriteFile(spritePositionPath(dir), JSON.stringify({ x: payload.x, y: payload.y, origin, screenEdge }))
     } catch (error) {
       log(`[sprite] saving rest position failed: ${errorMessage(error)}`)
     }

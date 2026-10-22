@@ -1,10 +1,10 @@
 import { atom } from 'nanostores'
 
 import { apiSucceeded, captureAuthScope } from '@/shared/lib/authed-api'
-import { isRecord } from '@/shared/lib/is-record'
 import { authedResource } from '@/shared/lib/resource-request'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { createUnreadMirror } from '@/shared/lib/unread-mirror'
+import { isRecord } from '@client-shared/is-record'
 
 import type { ApiSchemas } from '../../../../shared/api.generated'
 

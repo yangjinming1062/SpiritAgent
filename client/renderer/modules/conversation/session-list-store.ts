@@ -29,6 +29,7 @@ import {
   forgetSessionHistory,
   loadLocalSessionHistory,
   rememberFullHistory,
+  requestSessionSnapshot,
   SessionHistoryChangedError,
   syncSessionHistory
 } from './session-history-cache'
@@ -407,7 +408,7 @@ export async function createNewSession(systemPresetId: string): Promise<string |
 
     if (token === navigationToken) {
       const runtime = getConversationRuntime(res.session_id)
-      const snapshot = await requestResource('sessions.snapshot', { path: { session_id: res.session_id } })
+      const snapshot = await requestSessionSnapshot(res.session_id)
 
       if (!isCurrentNavigation()) {
         return null
@@ -515,7 +516,7 @@ export async function forkConversation(sourceSessionId: string, sourceMessageId:
       return null
     }
 
-    const res = await requestResource('sessions.snapshot', { path: { session_id: created.session_id } })
+    const res = await requestSessionSnapshot(created.session_id)
 
     if (!isCurrent()) {
       return null
@@ -711,7 +712,7 @@ export async function switchSession(sessionId: string): Promise<void> {
 
     const synced = await syncSessionHistory({
       sessionId,
-      request: () => requestResource('sessions.snapshot', { path: { session_id: sessionId } })
+      request: () => requestSessionSnapshot(sessionId)
     })
 
     // 快速 A→B 切换时丢弃过期响应，避免旧会话写回覆盖新会话。
@@ -769,7 +770,7 @@ export async function restoreConversationSelection(sessionId: string): Promise<v
       try {
         const synced = await syncSessionHistory({
           sessionId,
-          request: () => requestResource('sessions.snapshot', { path: { session_id: sessionId } })
+          request: () => requestSessionSnapshot(sessionId)
         })
 
         assertCurrent()
@@ -852,7 +853,7 @@ export async function openMainSession(onMounted?: (res: SessionSnapshot) => void
 
             const synced = await syncSessionHistory({
               sessionId: knownCompanionId,
-              request: () => requestResource('sessions.snapshot', { path: { session_id: knownCompanionId } })
+              request: () => requestSessionSnapshot(knownCompanionId)
             })
 
             if (!isCurrent()) {
@@ -1013,5 +1014,5 @@ async function resumeMainSession(): Promise<SessionSnapshot> {
     throw new Error('Account changed')
   }
 
-  return requestResource('sessions.snapshot', { path: { session_id: resource.session_id } })
+  return requestSessionSnapshot(resource.session_id)
 }

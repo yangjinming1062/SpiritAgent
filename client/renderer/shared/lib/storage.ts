@@ -256,6 +256,35 @@ export function definePersistedAtom<T extends object>(options: PersistedAtomOpti
   }
 }
 
+interface AccountUiAtomOptions<T extends object> {
+  key: string
+  fallback: T
+  isPersistable?: (val: unknown) => val is T
+}
+
+interface AccountUiAtomResult<T extends object> extends PersistedAtomResult<T> {
+  /** 跨窗口导入修订号：其他窗口写入同一账户缓存后自增。 */
+  $importRevision: WritableAtom<number>
+}
+
+/**
+ * 账户级界面状态：持久化到账户缓存，并在其他窗口写入同一键时重载并推进导入修订号。
+ */
+export function defineAccountUiAtom<T extends object>(options: AccountUiAtomOptions<T>): AccountUiAtomResult<T> {
+  const { fallback, isPersistable, key } = options
+  const base = definePersistedAtom<T>({ fallback, isPersistable, key })
+  const $importRevision = atom(0)
+
+  window.addEventListener('storage', event => {
+    if (event.key === accountStorageKey(key)) {
+      base.reload()
+      $importRevision.set($importRevision.get() + 1)
+    }
+  })
+
+  return { ...base, $importRevision }
+}
+
 /** 统一定义持久化布尔：与 definePersistedEnum 同构的单一来源注册与登出生命周期绑定。 */
 export function definePersistedBoolean(options: PersistedBooleanOptions): PersistedBooleanResult {
   const { fallback, key, preserveOnLogout = false } = options

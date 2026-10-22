@@ -14,6 +14,8 @@ import { getStrings } from '@/shared/strings'
 import type { VideoQueueState } from '@protocol'
 
 export const $videoPacks = atom<ActionPackWire[]>([])
+/** 包列表读取状态：视图据此显示加载中或失败，不必为拿状态重发一次列表读。 */
+export const $videoPacksStatus = atom<'error' | 'idle' | 'loaded' | 'loading'>('idle')
 
 /** 生成/失败归属：按着装、动作包与动作隔离展示。 */
 export interface VideoGenScope {
@@ -55,6 +57,21 @@ function scopeKey(scope: VideoGenScope): string {
   }
 
   return scope.packId != null ? `pack:${scope.packId}` : `outfit:${scope.outfitId ?? 'unknown'}`
+}
+
+/** scope 的全部修订键：归属键加 pack / outfit 别名。修订号的写入与读取共用这一套公式。 */
+function scopeKeys(scope: VideoGenScope): string[] {
+  const keys = new Set<string>([scopeKey(scope)])
+
+  if (scope.action != null && scope.packId != null) {
+    keys.add(`pack:${scope.packId}:action:${scope.action}`)
+  }
+
+  if (scope.outfitId != null && scope.action == null) {
+    keys.add(`outfit:${scope.outfitId}`)
+  }
+
+  return [...keys]
 }
 
 export function videoActionIsPending(status: string): boolean {
@@ -205,31 +222,15 @@ export function videoPackEventReceived(scope?: Partial<VideoGenScope>): void {
 
   if (scope) {
     const resolved = resolveGenScope({ outfitId: scope.outfitId, action: scope.action }, scope.packId)
-    scopeRevisions.set(scopeKey(resolved), generationRevision)
 
-    if (resolved.action != null && resolved.packId != null) {
-      scopeRevisions.set(`pack:${resolved.packId}:action:${resolved.action}`, generationRevision)
-    }
-
-    if (resolved.outfitId != null && resolved.action == null) {
-      scopeRevisions.set(`outfit:${resolved.outfitId}`, generationRevision)
+    for (const key of scopeKeys(resolved)) {
+      scopeRevisions.set(key, generationRevision)
     }
   }
 }
 
 function scopeRevision(scope: VideoGenScope): number {
-  if (scope.action != null) {
-    return Math.max(
-      scopeRevisions.get(scopeKey(scope)) ?? 0,
-      scopeRevisions.get(`pack:${scope.packId}:action:${scope.action}`) ?? 0
-    )
-  }
-
-  return Math.max(
-    scopeRevisions.get(scopeKey(scope)) ?? 0,
-    scopeRevisions.get(`pack:${scope.packId}`) ?? 0,
-    scopeRevisions.get(`outfit:${scope.outfitId}`) ?? 0
-  )
+  return Math.max(...scopeKeys(scope).map(key => scopeRevisions.get(key) ?? 0))
 }
 
 /** 当前视图是否命中该归属；归属缺少着装时必须凭 packId 精确匹配。 */
@@ -370,6 +371,7 @@ registerStorageClearHandler(() => {
   activeStages.clear()
   $videoGenRequests.set({})
   $videoPacks.set([])
+  $videoPacksStatus.set('idle')
   $videoGenState.set('idle')
   $videoGenStages.set({})
   $videoGenErrors.set({})
@@ -396,6 +398,11 @@ export async function hydrateVideoPack(refresh = false): Promise<boolean> {
   const epoch = currentClearEpoch()
   const revision = generationRevision
 
+  // 已有列表时刷新不回到 loading：轮询与手动刷新都继续呈现当前列表，界面不在两态间反复切换。
+  if ($videoPacksStatus.get() !== 'loaded') {
+    $videoPacksStatus.set('loading')
+  }
+
   const read = (async (): Promise<boolean> => {
     try {
       const res = await authedResource('companion.get_video_packs')
@@ -405,10 +412,14 @@ export async function hydrateVideoPack(refresh = false): Promise<boolean> {
       }
 
       if (!apiSucceeded(res, 'video-pack-store', 'hydrateVideoPack failed')) {
+        $videoPacksStatus.set('error')
+
         return false
       }
 
       if (!res.value) {
+        $videoPacksStatus.set('error')
+
         return false
       }
 
@@ -447,9 +458,12 @@ export async function hydrateVideoPack(refresh = false): Promise<boolean> {
       clearStaleStages()
       refreshDerivedState()
 
+      $videoPacksStatus.set('loaded')
+
       return true
     } catch (err) {
       log.warn('video-pack-store', 'hydrateVideoPack failed', err)
+      $videoPacksStatus.set('error')
 
       return false
     }

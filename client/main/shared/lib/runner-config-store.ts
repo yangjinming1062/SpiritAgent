@@ -4,6 +4,7 @@ import log from 'electron-log/main'
 
 import { errorMessage } from '@runtime'
 
+import { isJsonValue } from '../../../../shared/gateway'
 import { atomicWriteFile, createSerialQueue, RunnerNotConnectedError, safeReadJson } from '../utils'
 
 const FILENAME = 'desktop-settings.json'
@@ -219,35 +220,6 @@ export function getDisabledSet(section = 'skills'): Set<string> {
   }
 
   return new Set(raw.map(String))
-}
-
-// 落盘配置只接受 JSON 数据；IPC 结构化克隆可传入 BigInt、循环引用等，写入后每次序列化都会失败。
-function isJsonValue(value: unknown, ancestors = new Set<object>()): boolean {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') {
-    return true
-  }
-
-  if (typeof value === 'number') {
-    return Number.isFinite(value)
-  }
-
-  if (typeof value !== 'object' || ancestors.has(value)) {
-    return false
-  }
-
-  if (
-    !Array.isArray(value) &&
-    Object.getPrototypeOf(value) !== Object.prototype &&
-    Object.getPrototypeOf(value) !== null
-  ) {
-    return false
-  }
-
-  ancestors.add(value)
-  const valid = Object.values(value).every(item => isJsonValue(item, ancestors))
-  ancestors.delete(value)
-
-  return valid
 }
 
 // 路径段来自渲染层：只接受字符串键与数组下标，并拒绝能触及原型链的键，避免污染主进程对象原型。

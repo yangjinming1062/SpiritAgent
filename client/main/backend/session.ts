@@ -6,10 +6,15 @@ import { errorMessage } from '@runtime'
 import type { ApiResponse } from '../../../shared/api'
 import { ApiError } from '../../../shared/errors'
 import type { SafeStorageApi } from '../security/hardening'
-import type { BackendClientContext } from '../shared/backend-port'
+import type {
+  BackendClientContext,
+  BackendClientPort,
+  BackendSessionPort,
+  SessionSnapshotPort
+} from '../shared/backend-port'
 import { atomicWriteFile, createSerialQueue, safeReadJson } from '../shared/utils'
 
-import { type BackendClient, createBackendClient, type FetchFunction, normalizeBaseUrl } from './client'
+import { createBackendClient, type FetchFunction, normalizeBaseUrl } from './client'
 
 const SESSION_FILENAME = 'agent-session.json'
 const SESSION_SCHEMA_VERSION = 3
@@ -93,33 +98,6 @@ export interface BackendSessionOptions {
   now?: () => number
   safeStorage?: null | SafeStorageApi
   userDataDir: string
-}
-
-export interface SessionSnapshot {
-  accountId: string
-  baseUrl: string
-  hasToken: boolean
-  sessionId: string
-  tokenExpiresAt: number
-  user: SessionUser
-}
-
-export interface BackendSession {
-  activate: (payload?: { clientContext?: BackendClientContext; code?: string }) => Promise<null | SessionSnapshot>
-  getSession: () => null | SessionSnapshot
-  getSelectedAccountId: () => null | string
-  getToken: () => null | string
-  listAccounts: () => AccountSummary[]
-  logout: (
-    expectedSessionId?: string
-  ) => Promise<{ backendUnreachable?: boolean; error?: string; ignored?: boolean; ok: boolean }>
-  refresh: (payload?: { clientContext?: BackendClientContext }) => Promise<null | SessionSnapshot>
-  removeAccount: (accountId: string) => Promise<void>
-  restoreSession: () => Promise<null | SessionSnapshot>
-  switchAccount: (
-    accountId: string,
-    payload?: { clientContext?: BackendClientContext }
-  ) => Promise<null | SessionSnapshot>
 }
 
 function encryptToken(raw: string, safeStorage?: null | SafeStorageApi): EncryptedToken {
@@ -216,7 +194,7 @@ function readStoredAccount(item: unknown, safeStorage?: null | SafeStorageApi): 
   return { activationCode: code, baseUrl, id: accountId(baseUrl, user.id), user }
 }
 
-export function createBackendSession(options: BackendSessionOptions): BackendSession {
+export function createBackendSession(options: BackendSessionOptions): BackendSessionPort {
   const { appVersion = 'unknown', fetchImpl, now = () => Date.now(), safeStorage = null, userDataDir } = options
 
   if (!userDataDir || typeof fetchImpl !== 'function') {
@@ -234,7 +212,7 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
   let refreshTimer: NodeJS.Timeout | null = null
   let sessionEpoch = 0
   const enqueue = createSerialQueue()
-  const backendAt = (baseUrl: string): BackendClient => createBackendClient({ baseUrl, fetch: fetchImpl })
+  const backendAt = (baseUrl: string): BackendClientPort => createBackendClient({ baseUrl, fetch: fetchImpl })
 
   const logoutBackend = (account: ActiveSession): Promise<unknown> =>
     backendAt(account.baseUrl).invoke('user.logout', {}, { headers: { Authorization: `Bearer ${account.token}` } })
@@ -301,7 +279,7 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
     cached = null
   }
 
-  function snapshot(): null | SessionSnapshot {
+  function snapshot(): null | SessionSnapshotPort {
     if (!cached) {
       return null
     }
@@ -399,7 +377,7 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
     })
   }
 
-  async function activateCode(code: string, clientContext?: BackendClientContext): Promise<null | SessionSnapshot> {
+  async function activateCode(code: string, clientContext?: BackendClientContext): Promise<null | SessionSnapshotPort> {
     loadAccounts()
 
     if (cached?.activationCode === code && cached.tokenExpiresAt > now()) {
@@ -448,7 +426,7 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
   function activate({
     clientContext,
     code
-  }: { clientContext?: BackendClientContext; code?: string } = {}): Promise<null | SessionSnapshot> {
+  }: { clientContext?: BackendClientContext; code?: string } = {}): Promise<null | SessionSnapshotPort> {
     if (!code) {
       return Promise.reject(new SessionError({ code: 'missing-code', message: 'Activation code is required.' }))
     }
@@ -459,7 +437,7 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
   function switchAccount(
     id: string,
     payload: { clientContext?: BackendClientContext } = {}
-  ): Promise<null | SessionSnapshot> {
+  ): Promise<null | SessionSnapshotPort> {
     return enqueue(async () => {
       loadAccounts()
       const account = accounts.find(item => item.id === id)
@@ -476,7 +454,7 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
     })
   }
 
-  async function refresh(payload: { clientContext?: BackendClientContext } = {}): Promise<null | SessionSnapshot> {
+  async function refresh(payload: { clientContext?: BackendClientContext } = {}): Promise<null | SessionSnapshotPort> {
     if (!cached) {
       throw new SessionError({ code: 'not-logged-in', message: 'Cannot refresh without an active session.' })
     }
@@ -576,7 +554,7 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
     })
   }
 
-  function restoreSession(): Promise<null | SessionSnapshot> {
+  function restoreSession(): Promise<null | SessionSnapshotPort> {
     return enqueue(async () => {
       loadAccounts()
       const selected = accounts.find(item => item.id === activeAccountId)

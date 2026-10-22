@@ -1,8 +1,9 @@
 import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { useAssetLibrarySearch } from '@/app/components/asset-library-header'
 import { $outfits, $wardrobeStatus, hydrateWardrobe } from '@/modules/character'
-import { useResolvedMediaSrc } from '@/modules/media'
+import { MediaPreview } from '@/modules/media'
 import {
   $sceneLibrary,
   $sceneLibraryStatus,
@@ -43,25 +44,26 @@ interface DesktopLifeReferencesProps {
 function ReferenceImage({ url, kind }: { url: string | null; kind: MaterialKind }): React.JSX.Element {
   const strings = useStrings()
   const t = strings.desktopLife
-  const media = useResolvedMediaSrc({ type: 'image', url: url ?? '' })
-  const [failedUrl, setFailedUrl] = useState<string | null>(null)
   const Icon = kind === 'scene' ? ImageIcon : Shirt
-  const failed = media.status === 'failed' || (Boolean(url) && failedUrl === url)
 
   return (
     <div className={`${styles.image} ${kind === 'outfit' ? styles.outfitImage : ''}`}>
-      {url && media.status === 'ready' && !failed ? (
-        <img alt="" onError={() => setFailedUrl(url)} src={media.src} />
-      ) : (
-        <span className={styles.imagePlaceholder}>
-          {url && media.status === 'loading' ? (
-            <Spinner ariaLabel={strings.common.loading} className={styles.spinner} size="lg" />
+      <MediaPreview type="image" url={url ?? ''}>
+        {({ failed, onError, src, status }) =>
+          url && src && !failed ? (
+            <img alt="" onError={onError} src={src} />
           ) : (
-            <Icon aria-hidden="true" size={26} strokeWidth={1.5} />
-          )}
-          <span>{failed ? t.materialPreviewFailed : url ? strings.common.loading : t.noPreview}</span>
-        </span>
-      )}
+            <span className={styles.imagePlaceholder}>
+              {url && status === 'loading' ? (
+                <Spinner ariaLabel={strings.common.loading} className={styles.spinner} size="lg" />
+              ) : (
+                <Icon aria-hidden="true" size={26} strokeWidth={1.5} />
+              )}
+              <span>{failed ? t.materialPreviewFailed : url ? strings.common.loading : t.noPreview}</span>
+            </span>
+          )
+        }
+      </MediaPreview>
     </div>
   )
 }
@@ -92,7 +94,7 @@ function MaterialPicker({
   const wardrobeStatus = useStore($wardrobeStatus)
   const beginAsync = useAsyncGuard()
   const [query, setQuery] = useState(kind === 'scene' ? $sceneQuery.get() : '')
-  const [outfitQuery, setOutfitQuery] = useState('')
+  const outfitSearch = useAssetLibrarySearch()
   const [unexpectedFailure, setUnexpectedFailure] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -130,22 +132,20 @@ function MaterialPicker({
     if (kind === 'scene') {
       loadMaterials(query.trim(), 0)
     } else {
-      setOutfitQuery(query.trim())
+      outfitSearch.onQueryChange(query.trim())
     }
   }
 
   const readyScenes = scenes.filter(scene => scene.status === 'ready')
   const readyOutfits = outfits.filter(outfit => outfit.status === 'ready')
 
-  const matchedOutfits = readyOutfits.filter(outfit =>
-    outfit.name.toLocaleLowerCase().includes(outfitQuery.toLocaleLowerCase())
-  )
+  const matchedOutfits = readyOutfits.filter(outfit => outfitSearch.matches(outfit.name))
 
   const status = kind === 'scene' ? sceneStatus : wardrobeStatus
   const failed = unexpectedFailure || status === 'error'
   const loading = !failed && (status === 'loading' || status === 'idle')
   const count = kind === 'scene' ? readyScenes.length : matchedOutfits.length
-  const hasQuery = Boolean(kind === 'scene' ? sceneQuery : outfitQuery)
+  const hasQuery = Boolean(kind === 'scene' ? sceneQuery : outfitSearch.query)
 
   return (
     <WizardModal

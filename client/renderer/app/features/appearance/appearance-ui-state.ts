@@ -1,7 +1,5 @@
-import { atom } from 'nanostores'
-
-import { isRecord } from '@/shared/lib/is-record'
-import { accountStorageKey, definePersistedAtom } from '@/shared/lib/storage'
+import { defineAccountUiAtom } from '@/shared/lib/storage'
+import { isRecord } from '@client-shared/is-record'
 
 interface AppearanceUiState {
   selectedOutfitId: number | null
@@ -27,14 +25,7 @@ function validState(value: unknown): value is AppearanceUiState {
   )
 }
 
-const state = definePersistedAtom<AppearanceUiState>({ key: KEY, fallback: FALLBACK, isPersistable: validState })
+const state = defineAccountUiAtom<AppearanceUiState>({ key: KEY, fallback: FALLBACK, isPersistable: validState })
 export const $appearanceUi = state.$atom
 export const updateAppearanceUi = state.set
-export const $appearanceUiImportRevision = atom(0)
-
-window.addEventListener('storage', event => {
-  if (event.key === accountStorageKey(KEY)) {
-    state.reload()
-    $appearanceUiImportRevision.set($appearanceUiImportRevision.get() + 1)
-  }
-})
+export const $appearanceUiImportRevision = state.$importRevision

@@ -1,7 +1,6 @@
 import { atom } from 'nanostores'
 
 import { isClientErrorIpc } from '@/shared/lib/ipc-error'
-import { isRecord } from '@/shared/lib/is-record'
 import { log } from '@/shared/lib/log'
 import { requestResource } from '@/shared/lib/resource-request'
 import {
@@ -10,6 +9,7 @@ import {
   registerStorageClearHandler,
   registerStorageRestoreHandler
 } from '@/shared/lib/storage'
+import { isRecord } from '@client-shared/is-record'
 
 import { resolvePortraitUrl } from './avatar-image'
 import { clearAvatarSeeds, hydrateAvatarSeeds, patchAvatarSeeds } from './avatar-seeds-store'

@@ -2,8 +2,10 @@ import type { Net } from 'electron'
 
 import { errorMessage, sleep } from '@runtime'
 
-import { type ApiArguments, type ApiOperationKey, type ApiResponse, createHttpClient } from '../../../shared/api'
+import { type ApiArguments, type ApiOperationKey, type ApiResponse } from '../../../shared/api'
 import { resolveNormalizedBackendUrl } from '../shared/config'
+
+import { createBackendClient } from './client'
 
 interface BackendHttpOptions {
   electronNet: Net
@@ -23,11 +25,7 @@ export function createBackendHttp({ electronNet, spiritagentHome }: BackendHttpO
     operation: K,
     ...args: ApiArguments<K>
   ): Promise<ApiResponse<K>> {
-    return createHttpClient({
-      fetch: fetchImpl,
-      baseUrl,
-      headers: () => (token ? { Authorization: `Bearer ${token}` } : {})
-    }).invoke(operation, ...args)
+    return createBackendClient({ baseUrl, fetch: fetchImpl, token }).invoke(operation, ...args)
   }
 
   async function mintWsTicket(baseUrl: string, token: string, streamId?: string): Promise<string> {
@@ -66,10 +64,8 @@ export function createBackendHttp({ electronNet, spiritagentHome }: BackendHttpO
     throw new Error(`SpiritAgent backend did not become ready: ${errorMessage(lastError) || 'timeout'}`)
   }
 
-  async function resolveRemoteBackend(): Promise<null | { baseUrl: string }> {
-    const url = resolveNormalizedBackendUrl(spiritagentHome)
-
-    return url ? { baseUrl: url } : null
+  async function resolveRemoteBackend(): Promise<null | string> {
+    return resolveNormalizedBackendUrl(spiritagentHome)
   }
 
   return { invoke, mintWsTicket, resolveRemoteBackend, waitForSpiritAgent }

@@ -38,6 +38,7 @@ import {
 } from '@ipc/contracts'
 
 import type { ApiResponse } from '../../shared/api'
+import { resolveDropPaths } from '../shared/drop-paths'
 import type { DesktopBridge, DesktopFileBridge } from '../shared/ipc/bridge'
 
 type InvokeChannel = keyof IpcInvokeContract
@@ -123,8 +124,12 @@ const desktopBridge = {
     catalogIcons: (ids: string[]) => invoke(IPC.invoke.dockCatalogIcons, ids),
     addFromCatalog: (ids: string[]) => invoke(IPC.invoke.dockAddFromCatalog, ids),
     addFromFiles: () => invoke(IPC.invoke.dockAddFromFiles),
+    // 拖放路径逐个解析：单个文件失败不影响其余，并经 getPathForFile 登记主进程可读白名单。
     addDroppedFiles: (files: File[]) =>
-      invoke(IPC.invoke.dockAddDropped, files.map(file => webUtils.getPathForFile(file)).filter(Boolean)),
+      invoke(
+        IPC.invoke.dockAddDropped,
+        resolveDropPaths(files, file => desktopFiles.getPathForFile(file))
+      ),
     activate: (id: string, windowId?: string) => invoke(IPC.invoke.dockActivate, id, windowId),
     activateCatalog: (catalogId: string) => invoke(IPC.invoke.dockActivateCatalog, catalogId),
     closeWindows: (id: string, windowIds: string[]) => invoke(IPC.invoke.dockCloseWindows, id, windowIds),

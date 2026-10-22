@@ -52,7 +52,7 @@ export function createAuthBroadcaster(deps: AuthBroadcasterDeps): AuthBroadcaste
       hasToken: live.hasToken,
       sessionId: live.sessionId,
       tokenExpiresAt: live.tokenExpiresAt,
-      user: live.user?.username ? { username: live.user.username } : null
+      user: { username: live.user.username }
     }
 
     const payload: DesktopAuthBroadcast = {

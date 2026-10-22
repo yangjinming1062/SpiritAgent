@@ -13,9 +13,8 @@ import { $auth } from '@/shared/store/auth'
 import { $gateway } from '@/shared/store/gateway'
 
 import { $devMode, pushDevLog } from './dev-log'
-import type { EventRouteContext } from './gateway-event-util'
 import { handleCharacterEvent } from './handlers/character-events'
-import { handleConversationEvent } from './handlers/conversation-events'
+import { type EventRouteContext, handleConversationEvent } from './handlers/conversation-events'
 import { handleDeliveryEvent } from './handlers/delivery-events'
 import { handleToolComplete, handleToolStart } from './handlers/tool-dispatch'
 

@@ -130,6 +130,30 @@ export function createChatHistoryController(
     replaceChatMessages(messages, info)
   }
 
+  type HistoryProjection = ReturnType<typeof projectSessionMessages>
+
+  /** 历史投影：不落库，由调用方决定合并活行后一次性写入。 */
+  function projectHistory(messages: SessionMessage[]): HistoryProjection {
+    return projectSessionMessages(messages, {
+      splitUserBubbles: splitUserBubblesEnabled(),
+      nextMessageId: nextChatMessageId,
+      projectBubble: companionBubbleBody
+    })
+  }
+
+  /** 投影结果一次性落库：消息列表、气泡体、上下文用量与水合标记。 */
+  function commitHistory(projection: HistoryProjection, info?: SessionRuntimeInfo): void {
+    $chatMessageBodies.set(projection.bodies)
+    $chatMessageList.set(projection.items)
+    $lastAssistantStreaming.set(false)
+
+    // 估算 Token 占用（~3 字符/Token）；分项清零避免切换会话残留，无 info 的本会话重水合沿用当前上下文上限。
+    const approxTokens = Math.round(projection.totalChars / 3)
+    const contextLimit = info ? info.context_window || 0 : $sessionContextUsage.get().contextLimit
+    resetSessionContextUsage(contextLimit, approxTokens)
+    $historyHydrated.set(true)
+  }
+
   function replaceChatMessages(messages: SessionMessage[], info?: SessionRuntimeInfo, cancelVoice = true): void {
     if (cancelVoice) {
       conversationVoiceSink().cancel($chatSessionId.get())
@@ -139,21 +163,7 @@ export function createChatHistoryController(
       hydrateSessionInfo(info)
     }
 
-    const { items, bodies, totalChars } = projectSessionMessages(messages, {
-      splitUserBubbles: splitUserBubblesEnabled(),
-      nextMessageId: nextChatMessageId,
-      projectBubble: companionBubbleBody
-    })
-
-    $chatMessageBodies.set(bodies)
-    $chatMessageList.set(items)
-    $lastAssistantStreaming.set(false)
-
-    // 估算 Token 占用（~3 字符/Token）；分项清零避免切换会话残留，无 info 的本会话重水合沿用当前上下文上限。
-    const approxTokens = Math.round(totalChars / 3)
-    const contextLimit = info ? info.context_window || 0 : $sessionContextUsage.get().contextLimit
-    resetSessionContextUsage(contextLimit, approxTokens)
-    $historyHydrated.set(true)
+    commitHistory(projectHistory(messages), info)
   }
 
   function applyRemoteSnapshot(snapshot: Partial<SessionSnapshot>, historySync?: ConversationHistorySync): boolean {
@@ -341,18 +351,32 @@ export function createChatHistoryController(
     )
 
     const inFlight = $chatTurnInFlight.get()
-    replaceChatMessages(messages, info, liveList.length === 0)
+
+    if (liveList.length === 0) {
+      conversationVoiceSink().cancel($chatSessionId.get())
+    }
+
+    if (info) {
+      hydrateSessionInfo(info)
+    }
+
+    const projection = projectHistory(messages)
 
     if (liveList.length > 0) {
-      const history = $chatMessageList.get()
-      const next = mergeLiveHistoryRows(history, liveList)
+      // 活行与投影结果合并后只落库一次：中间态不再出现"活行短暂消失"。
+      const next = mergeLiveHistoryRows(projection.items, liveList)
 
-      const hydratedBodies = $chatMessageBodies.get()
-      $chatMessageBodies.set(
-        Object.fromEntries(next.map(item => [item.id, liveBodies[item.id] ?? hydratedBodies[item.id]]))
+      commitHistory(
+        {
+          ...projection,
+          bodies: Object.fromEntries(next.map(item => [item.id, liveBodies[item.id] ?? projection.bodies[item.id]])),
+          items: next
+        },
+        info
       )
-      $chatMessageList.set(next)
       $lastAssistantStreaming.set(liveList.some(item => liveBodies[item.id]?.streaming))
+    } else {
+      commitHistory(projection, info)
     }
 
     $chatTurnInFlight.set(changed ? inFlight : (info?.running ?? inFlight))

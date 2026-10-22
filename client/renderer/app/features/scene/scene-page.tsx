@@ -257,9 +257,8 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
 
     const isLive = begin()
     await editScene(sceneId, draft.title.trim(), draft.description.trim())
-    const updated = await loadSceneDetail(sceneId)
 
-    if (updated && isLive() && $sceneUi.get().editDrafts[sceneId] === draft) {
+    if (isLive() && $sceneUi.get().editDrafts[sceneId] === draft) {
       dropEditDraft(sceneId)
 
       return true
@@ -495,7 +494,6 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
           onCancelEdit={() => dropEditDraft(view.sceneId)}
           onCancelTask={async sceneId => {
             await cancelSceneTask(sceneId)
-            await loadSceneDetail(sceneId)
           }}
           onChangeDraft={next => changeEditDraft(view.sceneId, next)}
           onDelete={async scene => {
@@ -529,7 +527,6 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
           onRegenerate={regenerate}
           onRetryAnalysis={async sceneId => {
             await analyzeScene(sceneId)
-            await loadSceneDetail(sceneId)
           }}
           onRetryImage={() => reloadSceneImage(view.sceneId)}
           onSave={async sceneId => {
@@ -546,7 +543,9 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
           key={`${importRevision}:${referenceImportRevision}`}
           onAdopt={adoptCreatedImage}
           onBack={returnToLibrary}
-          onCancelTask={cancelSceneTask}
+          onCancelTask={async sceneId => {
+            await cancelSceneTask(sceneId)
+          }}
           onChange={changeCreateDraft}
           onCheckStatus={async () => {
             const isLive = begin()

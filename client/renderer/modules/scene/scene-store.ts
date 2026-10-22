@@ -53,7 +53,7 @@ export interface SceneMutationIssue {
   inspected: boolean
   pending: boolean
 }
-type SceneWire = ApiSchemas['SceneResponse']
+export type SceneWire = ApiSchemas['SceneResponse']
 interface SceneGenerationInput {
   notes?: string
   image?: string
@@ -123,10 +123,6 @@ async function resolveSceneUrl(row: SceneWire, retryImage = false): Promise<stri
     const request = (async (): Promise<string | null> => {
       const dataUrl = await backendApi()?.apiAsset({ url, preferCache: !retryImage })
 
-      if (dataUrl) {
-        await preload(dataUrl)
-      }
-
       if (dataUrl && epoch === currentClearEpoch()) {
         sceneSrcCache.set(key, dataUrl)
         trimOldest(sceneSrcCache, MAX_SCENE_SRC_ENTRIES)
@@ -147,10 +143,14 @@ async function resolveSceneUrl(row: SceneWire, retryImage = false): Promise<stri
   return url
 }
 
-/** 单张图片加载失败只影响该场景：沿用已缓存的旧图，没有则留空显示占位。 */
+/** 单张图片加载失败只影响该场景：沿用已缓存的旧图，没有则留空显示占位。解码由调用方保证一次。 */
 async function resolveScene(row: SceneWire, retryImage = false): Promise<ActiveScene> {
   try {
-    return toScene(row, await resolveSceneUrl(row, retryImage))
+    const url = await resolveSceneUrl(row, retryImage)
+
+    await preload(url)
+
+    return toScene(row, url)
   } catch (error) {
     log.warn('scene', 'Scene image could not be loaded:', error)
 
@@ -178,6 +178,15 @@ function cacheSceneDetails(entries: SceneAsset[], read: number): void {
   }
 
   $sceneDetails.set(Object.fromEntries(detailCache))
+}
+
+/** 写操作返回的场景行直接进详情缓存：不必再补一次详情 GET。 */
+async function applySceneRow(row: SceneWire): Promise<ActiveScene> {
+  const scene = await resolveScene(row)
+
+  cacheSceneDetails([scene], ++nextRead)
+
+  return scene
 }
 
 async function preload(url: string): Promise<void> {
@@ -246,6 +255,14 @@ registerStorageClearHandler(() => {
   $sceneQuery.set('')
 })
 
+interface SceneLibraryRequest {
+  /** 发起时的列表读序号；被更新的读取代后不再复用。 */
+  requestId: number
+  promise: Promise<boolean>
+}
+
+const sceneLibraryRequests = new Map<string, SceneLibraryRequest>()
+
 export async function loadSceneLibrary(query = $sceneQuery.get(), page = $scenePage.get()): Promise<boolean> {
   const scope = captureAuthScope()
 
@@ -253,43 +270,65 @@ export async function loadSceneLibrary(query = $sceneQuery.get(), page = $sceneP
     return false
   }
 
+  // 同参数并发读共享一次请求：重复进入创建页不再重发同样的列表读。
+  // 已被更新的读取代的请求不复用——复用它只会拿到 false，这次查询就停在旧结果上。
+  const key = `${query} ${page}`
+  const pending = sceneLibraryRequests.get(key)
+
+  if (pending && pending.requestId === listRequest) {
+    return pending.promise
+  }
+
   const read = ++nextRead
-  const request = ++listRequest
+  const requestId = ++listRequest
   const epoch = currentClearEpoch()
-  const isCurrent = (): boolean => scope() && request === listRequest && epoch === currentClearEpoch()
-  $sceneQuery.set(query)
-  $scenePage.set(page)
-  $sceneLibraryStatus.set('loading')
+  const isCurrent = (): boolean => scope() && requestId === listRequest && epoch === currentClearEpoch()
 
-  const result = await authedResource('companion_scenes.scene_list_route', {
-    query: { q: query, offset: page * PAGE_SIZE, limit: PAGE_SIZE }
-  })
+  const request = (async (): Promise<boolean> => {
+    $sceneQuery.set(query)
+    $scenePage.set(page)
+    $sceneLibraryStatus.set('loading')
 
-  if (!apiSucceeded(result, 'scene', 'Scene library could not be loaded:') || !result.value) {
-    if (isCurrent()) {
-      $sceneLibraryStatus.set('error')
+    const result = await authedResource('companion_scenes.scene_list_route', {
+      query: { q: query, offset: page * PAGE_SIZE, limit: PAGE_SIZE }
+    })
+
+    if (!apiSucceeded(result, 'scene', 'Scene library could not be loaded:') || !result.value) {
+      if (isCurrent()) {
+        $sceneLibraryStatus.set('error')
+      }
+
+      return false
     }
 
-    return false
+    const value = result.value
+    const entries = await Promise.all(value.scenes.map(row => resolveScene(row)))
+
+    if (!isCurrent() || value.version < eventVersion) {
+      return false
+    }
+
+    cacheSceneDetails(entries, read)
+    $sceneLibrary.set(entries.map(entry => detailCache.get(entry.id) ?? entry))
+    $sceneTotal.set(value.total)
+    $sceneLibraryStatus.set('loaded')
+
+    if (page > 0 && entries.length === 0) {
+      void loadSceneLibrary(query, page - 1)
+    }
+
+    return true
+  })()
+
+  sceneLibraryRequests.set(key, { promise: request, requestId })
+
+  try {
+    return await request
+  } finally {
+    if (sceneLibraryRequests.get(key)?.promise === request) {
+      sceneLibraryRequests.delete(key)
+    }
   }
-
-  const value = result.value
-  const entries = await Promise.all(value.scenes.map(row => resolveScene(row)))
-
-  if (!isCurrent() || value.version < eventVersion) {
-    return false
-  }
-
-  cacheSceneDetails(entries, read)
-  $sceneLibrary.set(entries.map(entry => detailCache.get(entry.id) ?? entry))
-  $sceneTotal.set(value.total)
-  $sceneLibraryStatus.set('loaded')
-
-  if (page > 0 && entries.length === 0) {
-    void loadSceneLibrary(query, page - 1)
-  }
-
-  return true
 }
 
 async function fetchSceneDetail(
@@ -709,8 +748,12 @@ export async function adoptSceneImage(
   return result ? String(result.id) : null
 }
 
-export async function cancelSceneTask(sceneId: string): Promise<void> {
-  await mutate('companion_scenes.post_scene_discard', { path: { scene_id: Number(sceneId) } })
+export async function cancelSceneTask(sceneId: string): Promise<SceneWire> {
+  const row = await mutate('companion_scenes.post_scene_discard', { path: { scene_id: Number(sceneId) } })
+
+  await applySceneRow(row)
+
+  return row
 }
 
 export async function activateScene(sceneId: string): Promise<void> {
@@ -733,19 +776,27 @@ export async function deleteScene(sceneId: string): Promise<void> {
   await mutate('companion_scenes.delete_scene_route', { path: { scene_id: Number(sceneId) } })
 }
 
-export async function editScene(sceneId: string, title: string, description: string): Promise<void> {
-  await mutate('companion_scenes.scene_edit_route', {
+export async function editScene(sceneId: string, title: string, description: string): Promise<SceneWire> {
+  const row = await mutate('companion_scenes.scene_edit_route', {
     path: { scene_id: Number(sceneId) },
     body: { title, description }
   })
+
+  await applySceneRow(row)
+
+  return row
 }
 
 export async function regenerateScene(sceneId: string): Promise<void> {
   await mutate('companion_scenes.post_scene_regenerate', { path: { scene_id: Number(sceneId) } })
 }
 
-export async function analyzeScene(sceneId: string): Promise<void> {
-  await mutate('companion_scenes.scene_analyze_route', { path: { scene_id: Number(sceneId) } })
+export async function analyzeScene(sceneId: string): Promise<SceneWire> {
+  const row = await mutate('companion_scenes.scene_analyze_route', { path: { scene_id: Number(sceneId) } })
+
+  await applySceneRow(row)
+
+  return row
 }
 
 export async function setScenePolicy(policy: ScenePolicy): Promise<void> {

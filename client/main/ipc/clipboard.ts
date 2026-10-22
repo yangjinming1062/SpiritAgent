@@ -1,13 +1,10 @@
-import fs from 'node:fs'
-import { fileURLToPath } from 'node:url'
-
 import type { BrowserWindow, Clipboard, Dialog, IpcMain, NativeImage } from 'electron'
 
 import { IPC } from '@ipc/contracts'
 
 import { assertUserSelectedPath } from '../security/user-selected-paths'
 import { createImageOperations } from '../shared/lib/image-operations'
-import { extensionForMimeType, mimeTypeForPath, parseDataUrl } from '../shared/mime'
+import { dataOrFileBufferFromUrl, extensionForMimeType } from '../shared/mime'
 
 interface ClipboardIpcDeps {
   electron: {
@@ -21,31 +18,19 @@ interface ClipboardIpcDeps {
 
 // copyImage/saveImage 共用解析路径：仅接受 data: 图片或经对话框/拖拽注册过的 file: 路径（与 readFileDataUrl 同一白名单，防 XSS/IPC 任意读盘外传）；不接受任意 http(s)。
 async function imageBufferFromUrl(rawUrl: string): Promise<{ buffer: Buffer; mimeType: string }> {
-  if (!rawUrl) {
-    throw new Error('Missing URL')
+  const parsed = await dataOrFileBufferFromUrl(rawUrl, {
+    assertPath: filePath => assertUserSelectedPath(filePath, 'Image clipboard')
+  })
+
+  if (!parsed) {
+    throw new Error('Unsupported image URL scheme')
   }
 
-  if (rawUrl.startsWith('data:')) {
-    const { data: buffer, mime: mimeType } = parseDataUrl(rawUrl)
-
-    if (!mimeType.startsWith('image/')) {
-      throw new Error(`Not an image data URL (${mimeType})`)
-    }
-
-    return { buffer, mimeType }
+  if (parsed.kind === 'data' && !parsed.mimeType.startsWith('image/')) {
+    throw new Error(`Not an image data URL (${parsed.mimeType})`)
   }
 
-  if (rawUrl.startsWith('file:')) {
-    const filePath = fileURLToPath(rawUrl)
-
-    assertUserSelectedPath(filePath, 'Image clipboard')
-
-    const buffer = await fs.promises.readFile(filePath)
-
-    return { buffer, mimeType: mimeTypeForPath(filePath) }
-  }
-
-  throw new Error('Unsupported image URL scheme')
+  return { buffer: parsed.buffer, mimeType: parsed.mimeType }
 }
 
 function defaultFileName(rawUrl: string, mimeType: string): string {

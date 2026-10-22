@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
-import { useState } from 'react'
 
+import { useAssetLibrarySearch } from '@/app/components/asset-library-header'
 import type { DesktopVideoAction, DesktopVideoSet } from '@/modules/desktop-videos'
 import { Plus } from '@/shared/lib/icons'
 import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, PanelSelect, SearchField } from '@/shared/panel'
@@ -43,7 +43,7 @@ export function DesktopLifeWorkbench({
   const strings = useStrings()
   const t = strings.desktopLife
   const common = useStrings().common
-  const [query, setQuery] = useState('')
+  const actionSearch = useAssetLibrarySearch()
   const idle = set.actions.find(item => item.key === 'idle')
 
   const actions = set.actions.filter(
@@ -61,9 +61,7 @@ export function DesktopLifeWorkbench({
     ...actions.filter(item => item.key !== 'idle')
   ]
 
-  const visibleActions = orderedActions.filter(item =>
-    desktopLifeActionName(item, t).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
-  )
+  const visibleActions = orderedActions.filter(item => actionSearch.matches(desktopLifeActionName(item, t)))
 
   // 还没产出动作的设计提案按背景展示，不占用动作列表的选择位。
   const pendingProposals = set.proposals.filter(proposal => !proposal.action_id)
@@ -108,9 +106,9 @@ export function DesktopLifeWorkbench({
             <SearchField
               ariaLabel={t.searchActions}
               className="max-w-none"
-              onChange={setQuery}
+              onChange={actionSearch.onQueryChange}
               placeholder={t.searchActions}
-              value={query}
+              value={actionSearch.query}
             />
           </div>
           <div className={styles.actionList}>

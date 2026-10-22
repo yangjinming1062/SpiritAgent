@@ -1,13 +1,13 @@
 import { atom } from 'nanostores'
 
 import { apiSucceeded } from '@/shared/lib/authed-api'
-import { isRecord } from '@/shared/lib/is-record'
 import { log } from '@/shared/lib/log'
 /** 动作目录 store：水合激活包 catalog、解析展示 URL 与 clip 查找；账户快照先恢复再网络校准，失败保留已有目录。 */
 import { authedResource } from '@/shared/lib/resource-request'
 import { currentClearEpoch, definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
 import { backendApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
+import { isRecord } from '@client-shared/is-record'
 import { sleep } from '@runtime'
 
 import { resetActionPlayback } from './action-runtime'

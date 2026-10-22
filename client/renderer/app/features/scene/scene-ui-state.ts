@@ -1,7 +1,5 @@
-import { atom } from 'nanostores'
-
-import { isRecord } from '@/shared/lib/is-record'
-import { accountStorageKey, definePersistedAtom } from '@/shared/lib/storage'
+import { defineAccountUiAtom } from '@/shared/lib/storage'
+import { isRecord } from '@client-shared/is-record'
 
 export type ScenePageView = { kind: 'create' } | { kind: 'detail'; sceneId: string } | { kind: 'library' }
 
@@ -32,14 +30,7 @@ function validState(value: unknown): value is SceneUiState {
   )
 }
 
-const state = definePersistedAtom<SceneUiState>({ key: KEY, fallback: FALLBACK, isPersistable: validState })
+const state = defineAccountUiAtom<SceneUiState>({ key: KEY, fallback: FALLBACK, isPersistable: validState })
 export const $sceneUi = state.$atom
 export const updateSceneUi = state.set
-export const $sceneUiImportRevision = atom(0)
-
-window.addEventListener('storage', event => {
-  if (event.key === accountStorageKey(KEY)) {
-    state.reload()
-    $sceneUiImportRevision.set($sceneUiImportRevision.get() + 1)
-  }
-})
+export const $sceneUiImportRevision = state.$importRevision

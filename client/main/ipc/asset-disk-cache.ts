@@ -142,7 +142,11 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
     }
   }
 
-  async function readCached(rawUrl: string, contentHash?: string): Promise<CachedAsset | null> {
+  // meta 与字节同批读出，调用方复用同一份 etag，不再为取 etag 二次读盘。
+  async function readCachedEntry(
+    rawUrl: string,
+    contentHash?: string
+  ): Promise<{ asset: CachedAsset; meta: AssetMeta } | null> {
     const key = normalizeAssetKey(rawUrl, contentHash)
     const binPath = getBinPath(key)
 
@@ -153,7 +157,7 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
         return null
       }
 
-      return { buffer, mime: meta.mime || mimeTypeForPath(rawUrl) }
+      return { asset: { buffer, mime: meta.mime || mimeTypeForPath(rawUrl) }, meta }
     } catch {
       return null
     }
@@ -162,9 +166,9 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
   async function get(rawUrl: string, contentHash?: string): Promise<CachedAsset | null> {
     const readEpoch = epoch
     await clearing
-    const asset = await readCached(rawUrl, contentHash)
+    const entry = await readCachedEntry(rawUrl, contentHash)
 
-    return readEpoch === epoch ? asset : null
+    return readEpoch === epoch ? (entry?.asset ?? null) : null
   }
 
   function clear(): Promise<void> {
@@ -203,7 +207,8 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
 
     const key = normalizeAssetKey(rawUrl, contentHash)
     const binPath = getBinPath(key)
-    const localCached = await readCached(rawUrl, contentHash)
+    const cachedEntry = await readCachedEntry(rawUrl, contentHash)
+    const localCached = cachedEntry?.asset ?? null
     cancellation.throwIfAborted()
 
     if (localCached && (contentHash || opts.preferCache)) {
@@ -228,7 +233,7 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
         headers.Authorization = `Bearer ${token}`
       }
 
-      const cachedEtag = localCached && (await readMeta(key))?.etag
+      const cachedEtag = cachedEntry?.meta.etag
 
       if (cachedEtag) {
         headers['If-None-Match'] = cachedEtag

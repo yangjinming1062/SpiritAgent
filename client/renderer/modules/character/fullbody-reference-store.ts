@@ -1,7 +1,6 @@
 import { atom } from 'nanostores'
 
 import { backendDetailMessage, ipcErrorStatus } from '@/shared/lib/ipc-error'
-import { isRecord } from '@/shared/lib/is-record'
 import { log } from '@/shared/lib/log'
 import { requestResource } from '@/shared/lib/resource-request'
 import {
@@ -12,6 +11,7 @@ import {
   storedJson
 } from '@/shared/lib/storage'
 import { getStrings } from '@/shared/strings'
+import { isRecord } from '@client-shared/is-record'
 import type { ImageReviseMode } from '@protocol'
 
 import type { ApiSchemas } from '../../../../shared/api.generated'

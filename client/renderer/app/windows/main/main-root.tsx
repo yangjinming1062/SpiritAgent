@@ -154,8 +154,6 @@ export function MainRoot(): React.JSX.Element {
     }
 
     void hydrateScene()
-    void hydratePostsUnread()
-    void hydrateDiaryUnread()
     const accountCurrent = beginAsync()
     let disposed = false
     const isLive = (): boolean => !disposed && accountCurrent() && $uiStateReady.get()
@@ -186,12 +184,15 @@ export function MainRoot(): React.JSX.Element {
     }
   }, [authenticated, uiStateReady, accountId, gatewayState, beginAsync, t.chat])
 
+  // 未读补查：网关连通或界面可见时各查一次；同一轮不重复触发，避免在途结果被自己作废。
   useEffect(() => {
-    if (visible && authenticated) {
-      void hydratePostsUnread()
-      void hydrateDiaryUnread()
+    if (!authenticated || (gatewayState !== 'open' && !visible)) {
+      return
     }
-  }, [visible, foreground, authenticated, accountId])
+
+    void hydratePostsUnread()
+    void hydrateDiaryUnread()
+  }, [visible, foreground, authenticated, accountId, gatewayState])
 
   return (
     <div className={styles.windowFrame}>

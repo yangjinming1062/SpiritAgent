@@ -1,9 +1,13 @@
-import { conversationRuntimes, findConversationRuntime, syncSessionHistory } from '@/modules/conversation'
+import {
+  conversationRuntimes,
+  findConversationRuntime,
+  requestSessionSnapshot,
+  syncSessionHistory
+} from '@/modules/conversation'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { createGatewayView } from '@/shared/lib/gateway-view'
 import { log } from '@/shared/lib/log'
-import { requestResource } from '@/shared/lib/resource-request'
 import { gatewayApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { $gateway, reportPrimaryGatewayState, setPrimaryGateway } from '@/shared/store/gateway'
@@ -58,7 +62,7 @@ export function startGatewayView(
       const snapshot = runtime.captureHistorySync()
       void syncSessionHistory({
         sessionId: targetId,
-        request: () => requestResource('sessions.snapshot', { path: { session_id: targetId } })
+        request: () => requestSessionSnapshot(targetId)
       })
         .then(result => {
           if (!isCurrent() || generation !== syncGeneration || findConversationRuntime(targetId) !== runtime) {

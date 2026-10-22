@@ -40,6 +40,8 @@ export const $desktopVideoLibraryError = atom<string | null>(null)
 
 let refreshRequest: Promise<void> | null = null
 let refreshAgain = false
+// 本轮是否跳过状态读；合并进在途批次的调用只要有一方需要状态，这一轮就不能跳过。
+let refreshSkipState = true
 let epoch = 0
 let libraryVersion = -1
 let activationGeneration = 0
@@ -56,13 +58,15 @@ function applyState(state: DesktopVideoState): void {
   }
 }
 
-/** 水合仅查询；素材制作由用户显式操作触发。 */
-export async function refreshDesktopVideos(): Promise<void> {
+/** 水合仅查询；素材制作由用户显式操作触发。skipState 用于写操作后只刷新套装库。 */
+export async function refreshDesktopVideos(options: { skipState?: boolean } = {}): Promise<void> {
   if (!captureAuthScope()) {
     return
   }
 
   if (refreshRequest) {
+    // 合并进在途批次：任一方需要状态就不能跳过状态读，否则这次刷新拿不到状态。
+    refreshSkipState = refreshSkipState && Boolean(options.skipState)
     refreshAgain = true
 
     return refreshRequest
@@ -70,14 +74,18 @@ export async function refreshDesktopVideos(): Promise<void> {
 
   const scope = captureAuthScope()
   const currentEpoch = epoch
+  refreshSkipState = Boolean(options.skipState)
   $desktopVideoLoading.set(true)
 
   const request = (async (): Promise<void> => {
     do {
       refreshAgain = false
+      const skipState = refreshSkipState
+      // 本轮按合并后的口径执行；之后加入的调用重新决定下一轮。
+      refreshSkipState = true
 
-      const results = await Promise.all([
-        authedResource('companion_desktop_videos.read_state'),
+      const [state, sets] = await Promise.all([
+        skipState ? null : authedResource('companion_desktop_videos.read_state'),
         authedResource('companion_desktop_videos.read_sets')
       ])
 
@@ -85,8 +93,7 @@ export async function refreshDesktopVideos(): Promise<void> {
         return
       }
 
-      const [state, sets] = results
-      const stateReady = apiSucceeded(state, 'desktop-video', 'State refresh failed')
+      const stateReady = state !== null && apiSucceeded(state, 'desktop-video', 'State refresh failed')
       const libraryReady = apiSucceeded(sets, 'desktop-video', 'Library refresh failed')
 
       if (stateReady && state.value) {
@@ -100,7 +107,7 @@ export async function refreshDesktopVideos(): Promise<void> {
 
       if (stateReady) {
         $desktopVideoError.set(null)
-      } else if (!state.ok && state.reason === 'err') {
+      } else if (state && !state.ok && state.reason === 'err') {
         $desktopVideoError.set(String(state.error))
       }
 
@@ -280,8 +287,9 @@ export async function renameDesktopVideoSet(setId: number, name: string): Promis
 }
 
 export async function deleteDesktopVideoSet(setId: number): Promise<void> {
+  // 回包即完整状态，只需刷新套装库。
   applyState(await mutation('companion_desktop_videos.delete_set', { path: { set_id: setId } }))
-  await refreshDesktopVideos()
+  await refreshDesktopVideos({ skipState: true })
 }
 
 export async function activateDesktopVideoSet(set: DesktopVideoSet): Promise<boolean> {
@@ -346,7 +354,7 @@ export async function activateDesktopVideoSet(set: DesktopVideoSet): Promise<boo
 
       if (isCurrent()) {
         applyState(state)
-        await refreshDesktopVideos()
+        await refreshDesktopVideos({ skipState: true })
       }
     })
 

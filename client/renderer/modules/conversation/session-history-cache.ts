@@ -1,4 +1,5 @@
 import { log } from '@/shared/lib/log'
+import { requestResource } from '@/shared/lib/resource-request'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { backendApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
@@ -119,6 +120,11 @@ export function rememberFullHistory(
   memoryBySession.set(sessionId, next)
   historyRevisions.set(sessionId, (historyRevisions.get(sessionId) ?? 0) + 1)
   schedulePersist(sessionId)
+}
+
+/** 会话快照请求：切换会话、历史同步与网关补查共用同一构造。 */
+export function requestSessionSnapshot(sessionId: string): Promise<SessionSnapshot> {
+  return requestResource('sessions.snapshot', { path: { session_id: sessionId } })
 }
 
 export async function syncSessionHistory(params: {

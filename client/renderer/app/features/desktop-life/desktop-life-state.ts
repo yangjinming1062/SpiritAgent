@@ -34,6 +34,18 @@ const ui = definePersistedAtom<DesktopLifeUiSnapshot>({
 export const $desktopLifeUi = ui.$atom
 export const updateDesktopLifeUi = ui.set
 
+type DesktopLifeCreate = DesktopLifeUiSnapshot['create']
+
+/** 合并创建草稿子树：一次写入，页面不必读出整棵子树再构造新对象写回。 */
+export function updateDesktopLifeCreate(
+  partial: Partial<DesktopLifeCreate> | ((current: DesktopLifeCreate) => Partial<DesktopLifeCreate>)
+): void {
+  const current = ui.get().create
+  const next = typeof partial === 'function' ? partial(current) : partial
+
+  ui.set({ create: { ...current, ...next } })
+}
+
 export function exportDesktopLifeUiSnapshot(): DesktopLifeUiSnapshot {
   return structuredClone(ui.get())
 }

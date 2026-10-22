@@ -2,7 +2,7 @@ import { type App, BrowserWindow, type Display, screen } from 'electron'
 
 import { errorMessage } from '@runtime'
 
-import { readRestPosition } from '../ipc/sprite'
+import { readRestPosition } from '../shared/sprite-position'
 
 import type { ZoomPersistence } from './zoom-persistence'
 

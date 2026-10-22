@@ -39,6 +39,25 @@ import { useMemoryChanged, UserProfileSection } from './user-profile-section'
 
 const PAGE_SIZE = 20
 
+/** 回忆记忆的计数桶：与服务端 memory_counts 的分桶一致；判定不了时返回 null，调用方回源确认。 */
+function memoryCountBucket(item: { expires_at: null | string; status: string }): null | string {
+  const expired = item.expires_at !== null && new Date(item.expires_at).getTime() <= Date.now()
+
+  if (item.status === 'active') {
+    return expired ? 'expired' : 'active'
+  }
+
+  if (item.status === 'candidate') {
+    return expired ? 'expired' : 'candidate'
+  }
+
+  if (item.status === 'invalidated') {
+    return 'invalidated'
+  }
+
+  return null
+}
+
 export function MemorySection(): React.ReactElement {
   const presets = useStore($systemPresets)
   const memory = useStore($companionEditors).memory
@@ -268,7 +287,35 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
       }
 
       setSavedHint(status === 'active' ? t.saved : dict.settings.persona.memorySavedActive)
-      await load(true)
+
+      // 行就地更新：patch 响应已含完整行，不必整页重读；计数桶变化时本地同步。
+      const previous = rows.find(row => row.id === updated.id)
+
+      setRows(current =>
+        current.map(entry =>
+          entry.id === updated.id && entry.content_version <= updated.content_version ? updated : entry
+        )
+      )
+
+      const previousBucket = previous ? memoryCountBucket(previous) : null
+      const nextBucket = memoryCountBucket(updated)
+
+      if (previousBucket && nextBucket) {
+        if (previousBucket !== nextBucket) {
+          setCounts(current =>
+            current
+              ? {
+                  ...current,
+                  [nextBucket]: (current[nextBucket] ?? 0) + 1,
+                  [previousBucket]: (current[previousBucket] ?? 0) - 1
+                }
+              : current
+          )
+        }
+      } else {
+        // 桶归属判定不了时回源一次，不猜计数。
+        void load(true)
+      }
     } catch (error) {
       if (!isCurrent()) {
         return

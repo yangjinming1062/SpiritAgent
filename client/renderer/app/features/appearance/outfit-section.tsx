@@ -99,17 +99,37 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady, search }: Outfi
       element.scrollTop = listScrollTop.current
     }
 
-    const savePosition = (): void => {
+    // 滚动位置按帧落盘：连续滚动不再每个事件写一次账户缓存。
+    let frame = 0
+
+    const writePosition = (): void => {
       if (element) {
         updateAppearanceUi({ listScrollTop: element.scrollTop })
       }
+    }
+
+    const savePosition = (): void => {
+      if (frame !== 0) {
+        return
+      }
+
+      frame = window.requestAnimationFrame(() => {
+        frame = 0
+        writePosition()
+      })
     }
 
     element?.addEventListener('scroll', savePosition)
 
     return () => {
       element?.removeEventListener('scroll', savePosition)
-      savePosition()
+
+      if (frame !== 0) {
+        window.cancelAnimationFrame(frame)
+        frame = 0
+      }
+
+      writePosition()
     }
   }, [designing, listScrollTop])
 

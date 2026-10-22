@@ -125,6 +125,7 @@ export {
   $videoGenStages,
   $videoGenState,
   $videoPacks,
+  $videoPacksStatus,
   activateVideoPack,
   generateVideoPack,
   hydrateVideoPack,

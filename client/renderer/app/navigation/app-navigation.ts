@@ -42,10 +42,17 @@ const navigation = definePersistedAtom<AppNavigationTarget>({
   }
 })
 
+/** 瞬时导航字段：会话与消息定位不落盘。 */
+const transientNavigation = atom<{ messageKey?: string; sessionId?: string }>({})
+
 export const $appPage = computed(navigation.$atom, value => value.page ?? 'chat')
 export const $settingsSection = computed(navigation.$atom, value => value.section ?? 'companionship')
 export const $companionSection = computed(navigation.$atom, value => value.companionSection ?? 'profile')
-export const $appNavigationTarget = atom<AppNavigationTarget>({})
+// 导航只有一个真源：持久字段与瞬时字段合成同一视图，两侧读到的是同一个页面与分区。
+export const $appNavigationTarget = computed([navigation.$atom, transientNavigation], (durable, transient) => ({
+  ...durable,
+  ...transient
+}))
 export const $appNavigationRevision = atom(0)
 export const $appNavigation = navigation.$atom
 let writingHash = false
@@ -137,7 +144,7 @@ export async function applyAppNavigation(target: AppNavigationTarget, updateHash
     setChatSession(next.sessionId)
   }
 
-  $appNavigationTarget.set(next)
+  transientNavigation.set({ messageKey: next.messageKey, sessionId: next.sessionId })
   $appNavigationRevision.set($appNavigationRevision.get() + 1)
 
   if (updateHash) {
@@ -162,7 +169,7 @@ export function setCompanionSection(companionSection: CompanionSection): void {
 }
 
 registerStorageClearHandler(() => {
-  $appNavigationTarget.set({})
+  transientNavigation.set({})
   $appNavigationRevision.set(0)
   replaceHash('#/chat')
 })

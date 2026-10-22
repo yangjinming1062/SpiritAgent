@@ -6,6 +6,7 @@ import type {
   PersonaEditableField
 } from '../../../shared/protocol'
 import { type DesktopResolution, isDesktopResolution } from '../desktop-media-geometry'
+import { isRecord } from '../is-record'
 
 export interface CompanionMemoryDraft {
   content: string
@@ -146,10 +147,6 @@ export interface DesktopLifeUiSnapshot {
   feedback: Record<string, string>
   design: { name: string; description: string; kind: 'loop' | 'once'; duration: number }
   addActionOpen: boolean
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 export function isDesktopLifeUiSnapshot(value: unknown): value is DesktopLifeUiSnapshot {

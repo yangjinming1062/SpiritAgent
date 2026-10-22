@@ -3,7 +3,6 @@ import { atom } from 'nanostores'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 
 export interface SpiritAgentGatewayLike {
-  readonly connectionState: ConnectionState
   readonly isPresentationHost: boolean
 }
 
@@ -15,7 +14,8 @@ export const $gatewayActiveToolCount = atom(0)
 
 export function setPrimaryGateway(gateway: SpiritAgentGatewayLike | null): void {
   $gateway.set(gateway)
-  $gatewayState.set(gateway?.connectionState ?? 'closed')
+  // 连接状态的真源是 $gatewayState；网关对象只表达"是否已装配"，断开时才回落到 closed。
+  $gatewayState.set(gateway ? $gatewayState.get() : 'closed')
   $gatewayActiveToolCount.set(0)
 }
 

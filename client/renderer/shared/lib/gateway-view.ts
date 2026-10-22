@@ -1,10 +1,5 @@
-import { $gatewayState, type SpiritAgentGatewayLike } from '@/shared/store/gateway'
+import { type SpiritAgentGatewayLike } from '@/shared/store/gateway'
 
 export function createGatewayView(isPresentationHost = false): SpiritAgentGatewayLike {
-  return {
-    isPresentationHost,
-    get connectionState() {
-      return $gatewayState.get()
-    }
-  }
+  return { isPresentationHost }
 }

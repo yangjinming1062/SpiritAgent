@@ -96,7 +96,13 @@ export function conversationRuntimes(): ConversationRuntime[] {
 }
 
 export function runtimeForMessage(messageId: string): ConversationRuntime | undefined {
-  return conversationRuntimes().find(runtime => runtime.$chatMessageBodies.get()[messageId] !== undefined)
+  for (const runtime of runtimes.values()) {
+    if (runtime.$chatMessageBodies.get()[messageId] !== undefined) {
+      return runtime
+    }
+  }
+
+  return undefined
 }
 
 // 选择与账户恢复只登记会话；展示和异步操作直接持有所属 runtime。

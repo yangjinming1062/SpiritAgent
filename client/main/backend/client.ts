@@ -1,17 +1,16 @@
 import { app } from 'electron'
 
-import { type ApiTransport, createHttpClient, type HttpFetch } from '../../../shared/api'
+import { createHttpClient, type HttpFetch } from '../../../shared/api'
 import { ApiError } from '../../../shared/errors'
+import type { BackendClientPort } from '../shared/backend-port'
 
 export type FetchFunction = HttpFetch
 
 interface BackendClientOptions {
   baseUrl: string
   fetch: FetchFunction
-}
-
-export interface BackendClient extends ApiTransport {
-  baseUrl: string
+  /** 登录后的账户令牌；给出时随请求带上 Authorization。 */
+  token?: string
 }
 
 export function isRetryableBackendError(error: unknown): boolean {
@@ -51,13 +50,18 @@ export function normalizeBaseUrl(raw?: null | string): string {
   return parsed.toString().replace(/\/+$/, '')
 }
 
-export function createBackendClient(options: BackendClientOptions): BackendClient {
+/** 出网请求的唯一入口：地址统一归一，默认头带上客户端标识，登录后再附带账户令牌。 */
+export function createBackendClient(options: BackendClientOptions): BackendClientPort {
   const baseUrl = normalizeBaseUrl(options.baseUrl)
+  const token = options.token
 
   const transport = createHttpClient({
     baseUrl,
     fetch: options.fetch,
-    headers: () => ({ 'User-Agent': `SpiritAgentDesktop/${app.getVersion()} (Electron)` })
+    headers: () => ({
+      'User-Agent': `SpiritAgentDesktop/${app.getVersion()} (Electron)`,
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    })
   })
 
   return { baseUrl, invoke: transport.invoke }

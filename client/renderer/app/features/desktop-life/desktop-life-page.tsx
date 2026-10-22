@@ -63,7 +63,12 @@ import { DesktopLifeHeader } from './desktop-life-header'
 import { DesktopLifeLibraryView } from './desktop-life-library-view'
 import { VideoRefinementModal } from './desktop-life-refinement'
 import { resolutionLabel } from './desktop-life-resolution'
-import { $desktopLifeUi, newDesktopLifeCreation, updateDesktopLifeUi } from './desktop-life-state'
+import {
+  $desktopLifeUi,
+  newDesktopLifeCreation,
+  updateDesktopLifeCreate,
+  updateDesktopLifeUi
+} from './desktop-life-state'
 import {
   desktopLifeActionName,
   desktopLifeActionStatus,
@@ -99,10 +104,6 @@ export function DesktopLifePage({
   const navigationRevision = useRef(0)
   const libraryFocus = useRef<number | 'create' | null>(selectedSetId)
   const librarySearch = useAssetLibrarySearch()
-
-  const setCreate = (next: React.SetStateAction<typeof create>): void => {
-    updateDesktopLifeUi({ create: typeof next === 'function' ? next($desktopLifeUi.get().create) : next })
-  }
 
   const setDesign = (next: React.SetStateAction<typeof design>): void => {
     updateDesktopLifeUi({ design: typeof next === 'function' ? next($desktopLifeUi.get().design) : next })
@@ -270,14 +271,10 @@ export function DesktopLifePage({
       (outfits.length > 0 && !outfits.some(item => String(item.id) === previous.outfitId && item.status === 'ready'))
 
     if ((replaceScene && scene) || (replaceOutfit && outfit)) {
-      updateDesktopLifeUi({
-        create: {
-          ...previous,
-          sceneId: replaceScene && scene ? scene.id : previous.sceneId,
-          sceneLabel: replaceScene && scene ? scene.title : previous.sceneLabel,
-          outfitId: replaceOutfit && outfit ? String(outfit.id) : previous.outfitId,
-          requestId: crypto.randomUUID()
-        }
+      updateDesktopLifeCreate({
+        ...(replaceScene && scene ? { sceneId: scene.id, sceneLabel: scene.title } : {}),
+        ...(replaceOutfit && outfit ? { outfitId: String(outfit.id) } : {}),
+        requestId: crypto.randomUUID()
       })
     }
   }, [createOpen, create.source, activeScene, creationScene, outfits, scenes])
@@ -291,7 +288,7 @@ export function DesktopLifePage({
     const create = reconcileDesktopLifeDisplay(previous, presentation)
 
     if (create !== previous) {
-      updateDesktopLifeUi({ create })
+      updateDesktopLifeCreate(create)
     }
   }, [createOpen, presentation, create.targetDisplayId, create.targetResolution])
 
@@ -313,13 +310,14 @@ export function DesktopLifePage({
     }
   }, [createOpen, create.source, create.sceneId, authSessionId])
 
+  /** 执行一个桌景操作：失败由本函数呈现并返回 null，成功返回结果值。 */
   const perform = async <T,>(
     operation: () => Promise<T>,
     title = t.processingRequest,
     scope = operationScope
-  ): Promise<T> => {
+  ): Promise<null | T> => {
     if (requestRef.current.has(scope)) {
-      throw new Error(t.processingRequest)
+      return null
     }
 
     const isLive = beginAsync()
@@ -342,7 +340,7 @@ export function DesktopLifePage({
         void refreshDesktopVideos()
       }
 
-      throw failure
+      return null
     } finally {
       if (isLive() && requestRef.current.get(scope) === pending) {
         requestRef.current.delete(scope)
@@ -360,11 +358,6 @@ export function DesktopLifePage({
     }
   }
 
-  const run = (operation: () => Promise<unknown>, title?: string, scope?: string): Promise<void> =>
-    perform(operation, title, scope)
-      .then(() => undefined)
-      .catch(() => undefined)
-
   const savePreferences = async (change: Parameters<typeof setDesktopVideoPreferences>[0]): Promise<void> => {
     if (busy(libraryScope) || preferencesSaving) {
       return
@@ -374,7 +367,7 @@ export function DesktopLifePage({
     setPreferencesSaving(true)
 
     try {
-      await run(() => setDesktopVideoPreferences(change), t.preferencesSaving, 'library')
+      await perform(() => setDesktopVideoPreferences(change), t.preferencesSaving, 'library')
     } finally {
       if (isLive()) {
         setPreferencesSaving(false)
@@ -810,7 +803,7 @@ export function DesktopLifePage({
             const navigation = navigationRevision.current
             const dialogRevision = customActionRevision.current
             const submittedDesign = $desktopLifeUi.get().design
-            void run(
+            void perform(
               async () => {
                 const proposal = await designDesktopVideoAction({
                   name: design.name.trim() || design.description.trim().slice(0, 24),
@@ -945,18 +938,18 @@ export function DesktopLifePage({
           create={create}
           materialReady={materialReady}
           onBack={() => navigate({ creating: false })}
-          onChange={change => setCreate(current => ({ ...current, ...change, requestId: crypto.randomUUID() }))}
+          // 草稿一改就换请求标识：创建按 request_id 去重，沿用旧标识会把新参数当成同一次提交。
+          onChange={change => updateDesktopLifeCreate({ ...change, requestId: crypto.randomUUID() })}
           onChangeDisplay={displayId =>
-            setCreate(current => reconcileDesktopLifeDisplay(current, $presentation.get(), displayId))
+            updateDesktopLifeCreate(current => reconcileDesktopLifeDisplay(current, $presentation.get(), displayId))
           }
           onPickScene={scene => {
             setCreationScene({ id: scene.id, scene })
-            setCreate(current => ({
-              ...current,
+            updateDesktopLifeCreate({
               sceneId: scene.id,
               sceneLabel: scene.title,
               requestId: crypto.randomUUID()
-            }))
+            })
           }}
           onPrepareMaterial={onPrepareMaterial}
           onSubmit={() => void submitCreation().catch(() => undefined)}
@@ -973,7 +966,7 @@ export function DesktopLifePage({
           canAdd={actionsToCreate.length > 0}
           canCustomize={readyForActions && !sourceError}
           key={selected.id}
-          onActivate={() => void run(() => activate(selected), t.processingRequest, setScope)}
+          onActivate={() => void perform(() => activate(selected), t.processingRequest, setScope)}
           onAdd={() => updateDesktopLifeUi({ addActionOpen: true })}
           onBack={() => navigate({ selectedSetId: null, selectedActionId: null })}
           onCustomize={() => {
@@ -993,11 +986,11 @@ export function DesktopLifePage({
               key={action.id}
               noteDraft={feedback[action.id]}
               onAddAction={() => updateDesktopLifeUi({ addActionOpen: true })}
-              onAdopt={() => void run(() => adoptCandidate(action), t.acceptingVideo)}
+              onAdopt={() => void perform(() => adoptCandidate(action), t.acceptingVideo)}
               onChangeNote={note =>
                 updateDesktopLifeUi({ feedback: { ...$desktopLifeUi.get().feedback, [action.id]: note } })
               }
-              onConfirmImage={() => void run(() => confirmDesktopVideoImage(action, selected), t.confirmingImage)}
+              onConfirmImage={() => void perform(() => confirmDesktopVideoImage(action, selected), t.confirmingImage)}
               onContinueBase={() => {
                 if (idle) {
                   openAction(idle)
@@ -1011,7 +1004,7 @@ export function DesktopLifePage({
                   title: t.discardDraft
                 }).then(confirmed => {
                   if (confirmed) {
-                    void run(
+                    void perform(
                       () => cancelDesktopVideoDraft(action),
                       t.processingRequest,
                       `set:${action.set_id}:action:${action.id}`
@@ -1019,13 +1012,15 @@ export function DesktopLifePage({
                   }
                 })
               }}
-              onMakeImage={(note, regenerate) => void run(() => makeImage(action, selected, note, regenerate))}
-              onMakeVideo={(note, videoFeedback) => void run(() => makeVideo(action, selected, note, videoFeedback))}
-              onPause={() => void run(() => pauseDesktopVideoDraft(action), t.pausingCreation)}
+              onMakeImage={(note, regenerate) => void perform(() => makeImage(action, selected, note, regenerate))}
+              onMakeVideo={(note, videoFeedback) =>
+                void perform(() => makeVideo(action, selected, note, videoFeedback))
+              }
+              onPause={() => void perform(() => pauseDesktopVideoDraft(action), t.pausingCreation)}
               onRefine={source => setRefinement({ action, set: selected, source })}
-              onRetry={() => void run(() => retryDesktopVideoDraft(action, selected))}
+              onRetry={() => void perform(() => retryDesktopVideoDraft(action, selected))}
               onUpload={() =>
-                void run(
+                void perform(
                   () => uploadSource(action, selected),
                   selected.source === 'image_upload' ? t.uploadingImage : t.uploadProcessing
                 )
@@ -1097,13 +1092,13 @@ export function DesktopLifePage({
                 return
               }
 
-              void perform(() => renameDesktopVideoSet(selected.id, name), t.processingRequest, setScope)
-                .then(() => {
-                  if (navigation === navigationRevision.current) {
+              void perform(() => renameDesktopVideoSet(selected.id, name), t.processingRequest, setScope).then(
+                renamed => {
+                  if (renamed !== null && navigation === navigationRevision.current) {
                     setRename('')
                   }
-                })
-                .catch(() => undefined)
+                }
+              )
             }}
           >
             <label className={styles.field}>
@@ -1143,9 +1138,9 @@ export function DesktopLifePage({
 
                 const isLive = beginAsync()
 
-                try {
-                  await perform(() => deleteDesktopVideoSet(selected.id), t.processingRequest, setScope)
-                } catch {
+                const deleted = await perform(() => deleteDesktopVideoSet(selected.id), t.processingRequest, setScope)
+
+                if (deleted === null) {
                   // 失败已由 perform 呈现，删除没完成就不再导航。
                   return
                 }

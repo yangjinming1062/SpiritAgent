@@ -1,4 +1,6 @@
+import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const MEDIA_MIME_TYPES: Record<string, string> = {
   '.avi': 'video/x-msvideo',
@@ -83,4 +85,46 @@ export function parseDataUrl(dataUrl: string): ParsedDataUrl {
   const data = isBase64 ? Buffer.from(payload, 'base64') : Buffer.from(decodeURIComponent(payload), 'utf8')
 
   return { data, mime }
+}
+
+export interface ResourceBuffer {
+  buffer: Buffer
+  kind: 'data' | 'file'
+  mimeType: string
+}
+
+export interface DataOrFileBufferOptions {
+  /** file: 分支的路径准入回调；不传则不校验，由调用方自行决定是否允许读盘。 */
+  assertPath?: (filePath: string) => void
+}
+
+/**
+ * 解析 data: / file: URL 为字节流 + mime；http(s) 不在此处理，命中不了时返回 null。
+ * 准入与 mime 策略留在调用点，这里只做解析。
+ */
+export async function dataOrFileBufferFromUrl(
+  rawUrl: string,
+  { assertPath }: DataOrFileBufferOptions = {}
+): Promise<ResourceBuffer | null> {
+  if (!rawUrl) {
+    throw new Error('Missing URL')
+  }
+
+  if (rawUrl.startsWith('data:')) {
+    const { data: buffer, mime: mimeType } = parseDataUrl(rawUrl)
+
+    return { buffer, kind: 'data', mimeType }
+  }
+
+  if (rawUrl.startsWith('file:')) {
+    const filePath = fileURLToPath(rawUrl)
+
+    assertPath?.(filePath)
+
+    const buffer = await fs.promises.readFile(filePath)
+
+    return { buffer, kind: 'file', mimeType: mimeTypeForPath(filePath) }
+  }
+
+  return null
 }

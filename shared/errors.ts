@@ -1,20 +1,31 @@
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
 
-export function isJsonValue(value: unknown): value is JsonValue {
+/** 校验值可安全 JSON 序列化；ancestors 记录在途对象，循环引用按非法处理而不是递归溢出。 */
+export function isJsonValue(value: unknown, ancestors = new Set<object>()): value is JsonValue {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') {
     return true
   }
   if (typeof value === 'number') {
     return Number.isFinite(value)
   }
-  if (Array.isArray(value)) {
-    return value.every(isJsonValue)
+  if (typeof value !== 'object' || ancestors.has(value)) {
+    return false
   }
-  return (
-    isRecord(value) &&
-    [Object.prototype, null].includes(Object.getPrototypeOf(value)) &&
-    Object.values(value).every(isJsonValue)
-  )
+
+  ancestors.add(value)
+
+  let valid: boolean
+  if (Array.isArray(value)) {
+    valid = value.every(item => isJsonValue(item, ancestors))
+  } else if (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null) {
+    valid = Object.values(value).every(item => isJsonValue(item, ancestors))
+  } else {
+    valid = false
+  }
+
+  ancestors.delete(value)
+
+  return valid
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

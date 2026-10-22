@@ -1,4 +1,5 @@
-import { isRecord } from './is-record'
+import { isRecord } from '@client-shared/is-record'
+
 import { log } from './log'
 import {
   accountStorageKey,

@@ -16,9 +16,13 @@ import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { getStrings } from '@/shared/strings'
 import type { ChatMediaItem, CompanionBubble } from '@protocol'
 
-import type { EventRouteContext } from '../gateway-event-util'
-
 // 会话回合事件：message.*、Slash、压缩与撤回。
+
+/** 路由守卫计算出的窗口角色上下文，随事件传给各能力处理器。 */
+export interface EventRouteContext {
+  /** 精灵视图负责账户级呈现统计与协调。 */
+  isPresentationHost: boolean
+}
 
 export function handleConversationEvent(
   event: GatewayEvent,

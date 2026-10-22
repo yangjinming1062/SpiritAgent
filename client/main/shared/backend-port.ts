@@ -11,13 +11,14 @@ export interface BackendClientPort extends ApiTransport {
   baseUrl: string
 }
 
+/** 会话快照：字段与实现产出的形状一致，实现侧不会产出 null。 */
 export interface SessionSnapshotPort {
   accountId: string
-  baseUrl: null | string
+  baseUrl: string
   hasToken: boolean
   sessionId: string
-  tokenExpiresAt: null | number
-  user: null | { id: null | number; username: null | string }
+  tokenExpiresAt: number
+  user: { id: number; username: string }
 }
 
 /** 会话运行时需要的完整会话面（activate/restore/logout/refresh）。 */
@@ -28,7 +29,9 @@ export interface BackendSessionPort {
   /** Token 失效后仍返回本机选中的账户。 */
   getSelectedAccountId: () => null | string
   listAccounts: () => Array<{ active: boolean; baseUrl: string; id: string; username: string }>
-  logout: (expectedSessionId?: string) => Promise<{ ignored?: boolean; ok: boolean }>
+  logout: (
+    expectedSessionId?: string
+  ) => Promise<{ backendUnreachable?: boolean; error?: string; ignored?: boolean; ok: boolean }>
   refresh: (payload?: { clientContext?: BackendClientContext }) => Promise<null | SessionSnapshotPort>
   removeAccount: (accountId: string) => Promise<void>
   restoreSession: () => Promise<null | SessionSnapshotPort>

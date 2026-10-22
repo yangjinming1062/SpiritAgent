@@ -46,6 +46,7 @@ export {
   invalidateSessionHistory,
   loadLocalSessionHistory,
   rememberFullHistory,
+  requestSessionSnapshot,
   SessionHistoryChangedError,
   syncSessionHistory
 } from './session-history-cache'

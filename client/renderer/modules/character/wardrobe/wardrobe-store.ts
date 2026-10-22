@@ -2,12 +2,12 @@ import { atom } from 'nanostores'
 
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { isClientErrorIpc } from '@/shared/lib/ipc-error'
-import { isRecord } from '@/shared/lib/is-record'
 import { log } from '@/shared/lib/log'
 import { authedResource, requestResource } from '@/shared/lib/resource-request'
 import { currentClearEpoch, definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
 import { backendApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
+import { isRecord } from '@client-shared/is-record'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
 
@@ -126,49 +126,68 @@ async function showOutfits(state: WardrobeSnapshot, version: number, cacheOnly: 
   )
 }
 
+let wardrobeRequest: Promise<void> | null = null
+
+/** 衣柜列表读取；并发调用共享同一次请求，避免同一页面重复拉取。 */
 export async function hydrateWardrobe(): Promise<void> {
-  const scope = captureAuthScope()
-
-  if (!scope) {
-    return
+  if (wardrobeRequest) {
+    return wardrobeRequest
   }
 
-  const policyVersion = policyRevision
-  const version = ++revision
-  const current = (): boolean => version === revision && scope()
+  const request = (async (): Promise<void> => {
+    const scope = captureAuthScope()
 
-  $wardrobeStatus.set('loading')
-
-  if ($outfits.get().length === 0) {
-    await showOutfits(snapshot.get(), version, true)
-  }
-
-  const result = await authedResource('companion.get_outfits')
-
-  if (!current()) {
-    return
-  }
-
-  if (!result.ok || !result.value) {
-    if (!result.ok && result.reason === 'err' && !isClientErrorIpc(result.error)) {
-      log.warn('wardrobe', 'hydrateWardrobe failed', result.error)
+    if (!scope) {
+      return
     }
 
-    $wardrobeStatus.set('error')
+    const policyVersion = policyRevision
+    const version = ++revision
+    const current = (): boolean => version === revision && scope()
 
-    return
-  }
+    $wardrobeStatus.set('loading')
 
-  const state = {
-    outfits: result.value.outfits,
-    policy: policyVersion !== policyRevision ? $outfitPolicy.get() : result.value.policy
-  }
+    if ($outfits.get().length === 0) {
+      await showOutfits(snapshot.get(), version, true)
+    }
 
-  snapshot.set(state)
-  await showOutfits(state, version, false)
+    const result = await authedResource('companion.get_outfits')
 
-  if (current()) {
-    $wardrobeStatus.set('loaded')
+    if (!current()) {
+      return
+    }
+
+    if (!result.ok || !result.value) {
+      if (!result.ok && result.reason === 'err' && !isClientErrorIpc(result.error)) {
+        log.warn('wardrobe', 'hydrateWardrobe failed', result.error)
+      }
+
+      $wardrobeStatus.set('error')
+
+      return
+    }
+
+    const state = {
+      outfits: result.value.outfits,
+      policy: policyVersion !== policyRevision ? $outfitPolicy.get() : result.value.policy
+    }
+
+    snapshot.set(state)
+    await showOutfits(state, version, false)
+
+    if (current()) {
+      $wardrobeStatus.set('loaded')
+    }
+  })()
+
+  wardrobeRequest = request
+
+  try {
+    await request
+  } finally {
+    if (wardrobeRequest === request) {
+      wardrobeRequest = null
+    }
   }
 }
 

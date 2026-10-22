@@ -1,14 +1,16 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { ActionSyncStatus } from '@/app/components/action-sync-status'
+import { useAssetLibrarySearch } from '@/app/components/asset-library-header'
 import {
   $outfits,
   $videoGenErrors,
   $videoGenRequests,
   $videoGenStages,
   $videoPacks,
+  $videoPacksStatus,
   type ActionWire,
   activateVideoPack,
   generateVideoPack,
@@ -22,7 +24,7 @@ import {
   videoPackIsGenerating
 } from '@/modules/character'
 import { ChatMediaCard } from '@/modules/conversation'
-import { useResolvedMediaSrc } from '@/modules/media'
+import { MediaPreview } from '@/modules/media'
 import { ArrowLeft } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import {
@@ -79,62 +81,35 @@ function isSystemActionKey(key: string): key is SystemActionKey {
 }
 
 function ActionPreview({ type, url }: { type: 'image' | 'video'; url: string }): React.JSX.Element {
-  const [attempt, setAttempt] = useState(0)
-
-  return (
-    <ResolvedActionPreview
-      key={`${url}:${attempt}`}
-      onRetry={() => setAttempt(value => value + 1)}
-      type={type}
-      url={url}
-    />
-  )
-}
-
-function ResolvedActionPreview({
-  type,
-  url,
-  onRetry
-}: {
-  type: 'image' | 'video'
-  url: string
-  onRetry: () => void
-}): React.JSX.Element {
   const dict = useStrings()
-  const media = useResolvedMediaSrc({ type, url })
-  const [failed, setFailed] = useState(false)
   const className = 'aspect-[2/3] h-full max-h-full w-auto max-w-full object-contain'
-  const src = media.status === 'ready' ? media.src : undefined
-
-  if (failed || media.status === 'failed') {
-    return (
-      <CreationFeedback
-        actions={
-          <button className={BTN_SUBTLE} onClick={onRetry} type="button">
-            {dict.creation.retryLoad}
-          </button>
-        }
-        state="error"
-        title={dict.creation.previewFailed}
-      />
-    )
-  }
-
-  if (type === 'image') {
-    return <img alt="" className={className} draggable={false} onError={() => setFailed(true)} src={src} />
-  }
 
   return (
-    <video
-      className={className}
-      controls
-      loop
-      muted
-      onError={() => setFailed(true)}
-      playsInline
-      preload="metadata"
-      src={src}
-    />
+    <MediaPreview type={type} url={url}>
+      {({ failed, onError, onRetry, src, status }) => {
+        if (failed || status === 'failed') {
+          return (
+            <CreationFeedback
+              actions={
+                <button className={BTN_SUBTLE} onClick={onRetry} type="button">
+                  {dict.creation.retryLoad}
+                </button>
+              }
+              state="error"
+              title={dict.creation.previewFailed}
+            />
+          )
+        }
+
+        if (type === 'image') {
+          return <img alt="" className={className} draggable={false} onError={onError} src={src} />
+        }
+
+        return (
+          <video className={className} controls loop muted onError={onError} playsInline preload="metadata" src={src} />
+        )
+      }}
+    </MediaPreview>
   )
 }
 
@@ -153,10 +128,22 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
   const genRequests = useStore($videoGenRequests)
   const dict = useStrings()
   const t = dict.living.appearance
-  const [packsStatus, setPacksStatus] = useState<'loading' | 'loaded' | 'failed'>('loading')
   const [packsReloadKey, setPacksReloadKey] = useState(0)
   const [selectedActionKey, setSelectedActionKey] = useState<string | null>(null)
-  const [actionFilter, setActionFilter] = useState('')
+  const actionSearch = useAssetLibrarySearch()
+  const handledReload = useRef(0)
+  const packsStoreStatus = useStore($videoPacksStatus)
+
+  // 列表状态由 store 维护，组件不再为拿状态重发一次列表读。
+  const packsStatus: 'failed' | 'loaded' | 'loading' =
+    authKind !== 'authenticated'
+      ? 'loaded'
+      : packsStoreStatus === 'error'
+        ? 'failed'
+        : packsStoreStatus === 'loaded'
+          ? 'loaded'
+          : 'loading'
+
   const [editing, setEditing] = useState<{ key: string; feedback: string } | null>(null)
   const [reviewActionsTarget, setReviewActionsTarget] = useState<HTMLDivElement | null>(null)
 
@@ -235,9 +222,7 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
     }
   }
 
-  const visibleActions = actions.filter(action =>
-    action.label.toLocaleLowerCase().includes(actionFilter.trim().toLocaleLowerCase())
-  )
+  const visibleActions = actions.filter(action => actionSearch.matches(action.label))
 
   // 搜索只过滤列表；已选动作仍保留在详情区，避免输入时预览被抢走。
   const selectedAction = actions.find(action => action.key === selectedActionKey) ?? visibleActions[0] ?? null
@@ -305,24 +290,14 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
 
   const statusIsError = !!scopedError || selectedPack?.status === 'failed' || !!initialVideoError || packsLoadFailed
 
+  // 列表由衣柜页统一拉取；这里只在用户手动刷新时补一次。
   useEffect(() => {
-    if (authKind !== 'authenticated') {
-      setPacksStatus('loaded')
-
+    if (authKind !== 'authenticated' || handledReload.current === packsReloadKey) {
       return
     }
 
-    let cancelled = false
-    setPacksStatus('loading')
-    void hydrateVideoPack().then(ok => {
-      if (!cancelled) {
-        setPacksStatus(ok ? 'loaded' : 'failed')
-      }
-    })
-
-    return () => {
-      cancelled = true
-    }
+    handledReload.current = packsReloadKey
+    void hydrateVideoPack(true)
   }, [authKind, packsReloadKey])
 
   // 包、单动作或先于列表到达的进度仍在途时，轮询收敛失败及遗漏的终态事件。
@@ -340,18 +315,11 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
       return
     }
 
-    let cancelled = false
-
     const timer = window.setInterval(() => {
-      void hydrateVideoPack(true).then(ok => {
-        if (!cancelled) {
-          setPacksStatus(ok ? 'loaded' : 'failed')
-        }
-      })
+      void hydrateVideoPack(true)
     }, 5000)
 
     return () => {
-      cancelled = true
       window.clearInterval(timer)
     }
   }, [anyPackGenerating])
@@ -604,10 +572,10 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
               <input
                 aria-label={t.videoActionSearch}
                 className={cn(INPUT_CLASS, 'h-8 py-1 text-xs')}
-                onChange={event => setActionFilter(event.target.value)}
+                onChange={event => actionSearch.onQueryChange(event.target.value)}
                 placeholder={t.videoActionSearch}
                 type="search"
-                value={actionFilter}
+                value={actionSearch.query}
               />
             </div>
             <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-1.5">
