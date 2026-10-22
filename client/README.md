@@ -10,7 +10,7 @@
 | 网关、Runner 派发与断连 | [账户网关](main/backend/gateway.ts)、[网关 IPC](main/ipc/gateway.ts)、[Runner 派发](main/ipc/runner.ts)；渲染层见 [gateway-runtime.ts](renderer/app/runtime/gateway-runtime.ts) |
 | 历史、语音与资产缓存 | [session-history.ts](main/ipc/session-history.ts)、[asset-disk-cache.ts](main/ipc/asset-disk-cache.ts)、[voice-playback.ts](main/ipc/voice-playback.ts) → [conversation](renderer/modules/conversation/)、[conversation-speech.ts](renderer/app/workflows/conversation-speech.ts) |
 | 衣柜、着装与逐动作制作 | [appearance-page.tsx](renderer/app/features/appearance/appearance-page.tsx)、[outfit-section.tsx](renderer/app/features/appearance/outfit-section.tsx)、[video-section.tsx](renderer/app/features/appearance/video-section.tsx) → [video-pack-store.ts](renderer/modules/character/rendering/video/video-pack-store.ts)；后端沿 [窗口动作](../backend/features/actions/README.md) 核对 |
-| 人设、记忆与素材复核 | [persona-page.tsx](renderer/app/features/companion/persona-page.tsx)、[memory-section.tsx](renderer/app/features/companion/memory-section.tsx)、[media-review-queue.tsx](renderer/app/features/companion/media-review-queue.tsx) |
+| 人设、记忆与素材 | [persona-page.tsx](renderer/app/features/companion/persona-page.tsx)、[memory-section.tsx](renderer/app/features/companion/memory-section.tsx) |
 | 伙伴声音、音色设计与克隆 | [voice-manager.tsx](renderer/app/features/companion/voice-manager.tsx) 供伙伴页与首次引导共用；录音和上传见 [use-voice-sample.ts](renderer/app/features/companion/use-voice-sample.ts)，跨层约束见 [音色设计与克隆](../docs/PROTOCOL.md#音色设计与克隆) |
 | 场景与背景 | [scene-store.ts](renderer/modules/scene/scene-store.ts)、[scene-backdrop.tsx](renderer/app/features/scene/scene-backdrop.tsx)；后端沿 [场景改动链](../backend/features/scenes/README.md#场景改动链) 核对 |
 | 窗口、拖拽、主题与动作 | [主进程窗口](main/README.md#窗口与几何)、[渲染层呈现](renderer/README.md#角色呈现契约) |

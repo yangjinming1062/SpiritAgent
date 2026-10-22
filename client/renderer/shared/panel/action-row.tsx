@@ -10,7 +10,7 @@ export interface ActionRowItem {
   className?: string
 }
 
-/** 一行操作按钮。用于媒体卡、复核队列与恢复列表里的并列动作。 */
+/** 一行操作按钮。用于媒体卡与恢复列表里的并列动作。 */
 export function ActionRow({ actions, className }: { actions: ActionRowItem[]; className?: string }): React.JSX.Element {
   return (
     <div className={cn('flex flex-wrap gap-2', className)}>

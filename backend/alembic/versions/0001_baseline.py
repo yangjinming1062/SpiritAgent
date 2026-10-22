@@ -202,21 +202,6 @@ def upgrade() -> None:
         unique=False,
     )
     op.create_table(
-        "companion_media_reviews",
-        sa.Column("user_id", sa.Integer(), nullable=False),
-        sa.Column("media_type", sa.String(length=8), nullable=False),
-        sa.Column("media_url", sa.String(length=2048), nullable=False),
-        sa.Column("status", sa.String(length=16), server_default=sa.text("'pending'"), nullable=False),
-        sa.Column("reason", sa.Text(), server_default=sa.text("''"), nullable=False),
-        sa.Column("publication", sa.JSON(), nullable=True),
-        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index(op.f("ix_companion_media_reviews_user_id"), "companion_media_reviews", ["user_id"], unique=False)
-    op.create_table(
         "companion_character_cards",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
@@ -480,6 +465,10 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "is_automation = (system_preset_id = 'automation')",
             name="ck_conversations_automation_preset",
+        ),
+        sa.CheckConstraint(
+            "kind != 'special' OR system_preset_id = 'companion'",
+            name="ck_conversations_main_preset",
         ),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("parent_id", sa.Integer(), nullable=True),
@@ -1482,7 +1471,6 @@ def downgrade() -> None:
         "action_definitions",
         "companion_outfits",
         "companion_character_cards",
-        "companion_media_reviews",
         "companion_fullbody_candidates",
         "avatar_assets",
         "conversations",

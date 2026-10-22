@@ -20,7 +20,7 @@
 | 网关与账户 | [gateway-runtime.ts](app/runtime/gateway-runtime.ts)、[gateway-host-runtime.ts](app/runtime/gateway-host-runtime.ts)、[gateway-event-router.ts](app/runtime/gateway-event-router.ts)、[account-lifecycle.ts](app/workflows/account-lifecycle.ts) |
 | 引导、激活与启动失败 | [onboarding](app/onboarding/) |
 | 角色、动作、拖拽与空间 | [modules/character](modules/character/)、[sprite-stage.tsx](app/components/sprite-stage.tsx) |
-| 衣柜与逐动作预览、重做、采纳 | [appearance-page.tsx](app/features/appearance/appearance-page.tsx)、[video-section.tsx](app/features/appearance/video-section.tsx)、[video-pack-store.ts](modules/character/rendering/video/video-pack-store.ts)；采纳入口复用 [media-review-queue.tsx](app/features/companion/media-review-queue.tsx) |
+| 衣柜与逐动作预览、重做 | [appearance-page.tsx](app/features/appearance/appearance-page.tsx)、[video-section.tsx](app/features/appearance/video-section.tsx)、[video-pack-store.ts](modules/character/rendering/video/video-pack-store.ts) |
 | 公共对话、设置与状态交接 | [conversation-page.tsx](app/features/conversation/conversation-page.tsx)、[app-settings.tsx](app/features/settings/app-settings.tsx)、[app-ui-state.ts](app/workflows/app-ui-state.ts) |
 | 对话与音频联动 | [modules/conversation](modules/conversation/)、[modules/speech](modules/speech/)、[conversation-speech.ts](app/workflows/conversation-speech.ts) |
 | 动态、日记与记忆页 | [modules/posts](modules/posts/)、[modules/diary](modules/diary/)、[memory-section.tsx](app/features/companion/memory-section.tsx) |
@@ -93,7 +93,7 @@
 
 ### 状态与动作
 
-[companion-store.ts](modules/character/companion-store.ts) 管表现优先级，系统动作键归 [presentation/types.ts](modules/character/presentation/types.ts)，两者不混用。界面动作名称经 `systemActionNames` 本地化，外观页与复核队列复用。
+[companion-store.ts](modules/character/companion-store.ts) 管表现优先级，系统动作键归 [presentation/types.ts](modules/character/presentation/types.ts)，两者不混用。界面动作名称经 `systemActionNames` 本地化，外观页复用。
 
 瞬态保存恢复目标，重复瞬态不嵌套，旧计时器不能覆盖持续状态；语音准备与播放分开，尾随点播不切 speaking，聊天完成不触发 emotional。动态动作不新增表现状态，实际 started 期间暂呈 emotional，收尾恢复。
 

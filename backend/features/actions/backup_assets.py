@@ -76,11 +76,7 @@ def restore_action_payload(
             payload["accepted_asset_json"] = accepted.model_dump_json()
         if payload.get("pack_id") is None:
             raise ValueError("Action pack is missing from backup")
-        if payload.get("status") == "review":
-            payload["stage"] = "quality_failed"
-            payload["status"] = "failed"
-            payload["error"] = "恢复的动作任务未通过最终检查，请重新生成"
-        elif payload.get("status") in {"queued", "processing", "result_unknown"}:
+        if payload.get("status") in {"queued", "processing", "result_unknown"}:
             payload["status"] = "failed"
             payload["error"] = "恢复的动作任务需要手动处理；请先核对已有生成结果"
         if payload.get("generation_state_json"):

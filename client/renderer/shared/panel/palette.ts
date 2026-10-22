@@ -17,7 +17,7 @@ export const BTN_DANGER =
   'inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-danger-line bg-danger-bg px-3.5 text-xs font-medium text-danger-fg transition hover:bg-danger-bg-hover disabled:pointer-events-none disabled:opacity-40'
 export const BTN_ICON =
   'inline-flex size-7 items-center justify-center rounded-lg text-muted transition hover:bg-fill-hover hover:text-strong disabled:pointer-events-none disabled:opacity-40 [&_svg]:size-4'
-// 媒体卡与复核队列里的次级操作：小号描边按钮，不抢主操作。
+// 媒体卡里的次级操作：小号描边按钮，不抢主操作。
 export const BTN_COMPACT =
   'inline-flex items-center justify-center gap-1.5 rounded-md border border-line-standard px-3 py-1 text-xs text-body transition hover:border-line-strong hover:text-strong disabled:pointer-events-none disabled:opacity-40'
 

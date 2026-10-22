@@ -125,7 +125,6 @@ def restore_desktop_payload(table: str, payload: dict[str, Any], id_map: dict[st
             "processing",
             "ready",
             "failed",
-            "review_pending",
             "blocked",
         }:
             raise ValueError("桌面生活动作状态无效。")
@@ -137,11 +136,6 @@ def restore_desktop_payload(table: str, payload: dict[str, Any], id_map: dict[st
             payload["accepted_asset_json"] = DesktopVideoAsset.model_validate_json(
                 payload["accepted_asset_json"],
             ).model_dump_json()
-        if payload.get("generation_state_json"):
-            saved_progress = json.loads(payload["generation_state_json"])
-            saved_progress.pop("force_review", None)
-            saved_progress.pop("auto_continue", None)
-            payload["generation_state_json"] = json.dumps(saved_progress, ensure_ascii=False)
         progress = (
             DesktopVideoProgress.model_validate_json(payload["generation_state_json"])
             if payload.get("generation_state_json")
@@ -172,7 +166,7 @@ def restore_desktop_payload(table: str, payload: dict[str, Any], id_map: dict[st
         payload["update_pending"] = False
         if payload["status"] == "ready" and not payload.get("accepted_asset_json"):
             raise ValueError("已就绪桌面生活动作缺少已采纳素材。")
-        if payload["status"] in {"queued", "processing", "review_pending"}:
+        if payload["status"] in {"queued", "processing"}:
             payload["status"] = "failed"
             payload["stage"] = "paused"
             if progress is not None:
