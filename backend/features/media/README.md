@@ -6,7 +6,7 @@
 |---|---|
 | [image_generation.py](image_generation.py)、[chain.py](chain.py) | 能力筛选、提交、候选进度、评分与下载 |
 | [video_jobs.py](video_jobs.py)、[contracts.py](contracts.py)、[queries.py](queries.py) | 视频请求、冻结句柄、恢复和只读任务快照 |
-| [video_queue/service.py](video_queue/service.py)、[video_queue/contracts.py](video_queue/contracts.py) | 按供应商与实际密钥共享名额的持久队列、限流冷却与远端收尾；用户状态和管理接口契约见 [PROTOCOL](../../../docs/PROTOCOL.md#视频排队与结果核对) |
+| [video_queue/service.py](video_queue/service.py)、[video_queue/contracts.py](video_queue/contracts.py) | 公共持久视频队列、限流冷却与远端收尾；分组机制见 [全局视频队列](../../../docs/PIPELINE.md#全局视频队列)，用户状态和管理接口契约见 [PROTOCOL](../../../docs/PROTOCOL.md#视频排队与结果核对) |
 | [delivery.py](delivery.py)、[reference_reader.py](reference_reader.py) | 事务内结果交付与 bootstrap 装配的冻结身份读取端口 |
 | [lifecycle.py](lifecycle.py)、[asset_references.py](asset_references.py) | 任务登记与候选/可恢复资源引用 |
 | [voices.py](voices.py)、[speech.py](speech.py) | 声音方案制作与确认、公共音色解析和合成 |

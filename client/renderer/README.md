@@ -27,7 +27,7 @@
 | 场景与背景 | [scene-store.ts](modules/scene/scene-store.ts) |
 | 文案与主题 | [strings/dictionaries](shared/strings/dictionaries/)、[shared/panel](shared/panel/)；`en` 按 `zh` 类型校验，界面外壳与显示件文案取自字典，引导问答、人格预设与模块兜底失败文案仍是硬编码中文 |
 | 通用显示件 | [shared/panel](shared/panel/)（`Spinner`/`LoadingBlock`/`EmptyState`/`ErrorBanner`/`SaveStatus`/`ActionRow`/`Badge`/`Pill`/`Disclosure`/`Placeholder`）、[shared/components](shared/components/)（`CopyButton`/`ImageLightboxButton`/`ReferenceImageField`）；空态、加载态、失败态、确认与焦点约束由这些件统一，业务页只提供文案与回调 |
-| 跨端文案与错误归类 | 根 [shared](../shared/)（`ui-copy.ts`、`error-classification.ts`）；两端的中性措辞与失败归类只在此定义，客户端与手机端共用 |
+| 跨端文案与错误归类 | 根 [shared](../../shared/)（`ui-copy.ts`、`error-classification.ts`）；两端的中性措辞与失败归类只在此定义，客户端与手机端共用 |
 
 ## 装配与状态归属
 
@@ -58,7 +58,7 @@
 网关路由先核对认证状态，再按 `session_id` 交给该账户保留的 runtime；角色、工具展示和投递由 [handlers](app/runtime/handlers/) 处理，场景、动态、日记进入所属 module。
 
 - store／工作流用 [captureAuthScope](shared/lib/authed-api.ts) 核对鉴权会话与清理代次，组件用 [use-async-guard](shared/hooks/use-async-guard.ts) 核对挂载与代次；失败记录经 `apiSucceeded`，错误文案经 `ipc-error.ts`。
-- 失败文案与失败归类只经 [ipc-error.ts](shared/lib/ipc-error.ts) 的 `failureText` 与根 [error-classification.ts](../shared/error-classification.ts)；带后端正文的失败用 [notifications.ts](shared/store/notifications.ts) 的 `notifyError` 上报，业务页不再直接读错误对象。与状态绑定的失败走行内 `ErrorBanner`，动作型失败走 toast，两者不重复呈现。
+- 失败文案与失败归类只经 [ipc-error.ts](shared/lib/ipc-error.ts) 的 `failureText` 与根 [error-classification.ts](../../shared/error-classification.ts)；带后端正文的失败用 [notifications.ts](shared/store/notifications.ts) 的 `notifyError` 上报，业务页不再直接读错误对象。与状态绑定的失败走行内 `ErrorBanner`，动作型失败走 toast，两者不重复呈现。
 - [storage.ts](shared/lib/storage.ts) 登记账户持久键、清理及恢复回调。换号释放内存并按 `accountId` 重挂载，重置期间不回写索引；所属账户命名空间切换完成后才应用云偏好广播。全局缓存保留和移除语义归 PROTOCOL。
 - [runner-status.ts](shared/store/runner-status.ts) 先订阅后读快照，同清理代次共用在途读取，迟到快照不能覆盖新事件或新账户。网关握手超时落到 `error`，不能停留 `connecting`。
 - 引导 flow 只装配导航与未提交表单，问题和恢复路由为纯定义；`onboarding-draft.ts` 持串行保存与读取守卫，头像和音色流程各自管理异步结果。引导通过 REST 逐字段增量保存，按服务端 `next_field` 续答，本地非空编辑优先。草稿读取失败暂停待重试，不能当作新引导覆盖。
@@ -77,7 +77,7 @@
 
 [管理页](app/features/desktop-life/desktop-life-page.tsx) 的新建入口及参考选择只更新账户本地创建草稿，显式提交所选制作方式后才请求建立套装；上传先选择文件，取消不创建套装或回退到 AI 制作。只有 AI 创建选择并提交素材库参考；上传创建只提交文件来源与显示器尺寸，后续续传由 `can_upload_source` 决定。素材加载结果由各自 store 持有，迟到回写守卫账户与请求代次。[视频修改](app/features/desktop-life/desktop-life-refinement.tsx) 独立持有预览检查与提交状态，按素材和套装版本校验制作起点。[预览](app/features/desktop-life/desktop-life-preview.tsx) 的草稿图片实例跟随完整资源 URL，视频保留同一资产的播放身份；图片确认资格来自实际草稿图的加载事件，当前成品封面回退不能解锁确认。页面交互与恢复体验归 [DESIGN](../../docs/DESIGN.md#桌面生活视频)。
 
-衣柜、窗口背景与桌面背景的库页共用 [asset-library-header.tsx](app/components/asset-library-header.tsx) 的设置卡片、搜索与创建工具栏，以及 [asset-library-card.tsx](app/components/asset-library-card.tsx) 的紧凑卡片和按可用宽度排列的网格。各页面提供状态与操作，公共组件不发业务请求。衣柜与桌面背景在页面所有者内按名称和描述即时筛选本地列表，进入详情或创建页再返回保留筛选；窗口背景沿用服务端搜索与分页，搜索需提交。卡片预览比例由素材决定，竖版立绘按 4/5 展示，宽幅素材按 16/9 展示，均不裁切原图。
+衣柜、窗口背景与桌面背景的库页共用 [asset-library-header.tsx](app/components/asset-library-header.tsx) 的设置卡片、搜索与创建工具栏，以及 [asset-library-card.tsx](app/components/asset-library-card.tsx) 的紧凑卡片和按可用宽度排列的网格。各页面提供状态与操作，公共组件不发业务请求。衣柜与桌面背景在页面所有者内按名称和描述即时筛选本地列表，进入详情或创建页再返回保留筛选；窗口背景沿用服务端搜索与分页，搜索需提交。卡片预览按素材类型选档位展示：竖版立绘 4/5，宽幅素材 16/9，均不裁切原图。
 
 桌景管理按背景库、独立创建页和统一工作台拆分；动作编辑区只消费工作台选中项，不维护独立返回层级。页面复用现有 UI 快照交接选中项、创建草稿与库页滚动位置；只有列表成功刷新后才修正已删除的选中项，失败保留当前页面。提交锁与错误按背景、动作或创建入口归属，页面选择代次守卫迟到回执，制作完成不抢选或重新打开已离开的页面。尚未产出动作的设计提案在制作区常驻展示状态与原因，产出动作后自动消失。画幅确认一次只展示一个，并发冲突按顺序排队。弹窗的焦点约束与归还由桌景模态外壳管理。桌面壁纸只消费状态读取错误，套装库读取失败只影响管理页，两者互不牵连。
 

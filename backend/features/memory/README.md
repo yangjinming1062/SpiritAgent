@@ -12,10 +12,10 @@
 | [memory_retrieval.py](memory_retrieval.py) | 向量、关键词及 RRF 融合 |
 | [memory_store.py](memory_store.py)、[memory_admin.py](memory_admin.py) | 存储、范围过滤、写锁、编辑和遗忘 |
 | [memory_narratives.py](memory_narratives.py)、[日记索引](../journal/journal_indexes.py) | 记忆存储与相处理解快照；日记模块提供派生索引源和恢复重建 |
-| [memory_bootstrap.py](memory_bootstrap.py) | 登记的 `user_*` 引导资料；时区由 `features/configuration/settings/timezone.py` 管理 |
+| [memory_bootstrap.py](memory_bootstrap.py) | 登记的 `user_*` 引导资料；时区由 [features/configuration/settings/timezone.py](../configuration/settings/timezone.py) 管理 |
 | [memory_format.py](memory_format.py)、[memory_namespaces.py](memory_namespaces.py) | 模型资料块与记录命名空间 |
 
-后台入口是回合后、夜间整理和调度器；候选及装配共用 `list_memory_review_scopes`，停用账户不入选。即时模型提案经 `workflows/chat/native_memory.py` 提交。`/remember` 用 `create_memory` 保存显式无证据记录，进入 `recall:` 后续维护轮转。作用域类型与验证归 `runtime/memory_scope.py`，原始证据经会话模块公开查询，不跨模块操作消息或日记 ORM。
+后台入口是回合后、夜间整理和调度器；候选及装配共用 `list_memory_review_scopes`，停用账户不入选。即时模型提案经 [workflows/chat/native_memory.py](../../workflows/chat/native_memory.py) 提交。`/remember` 用 `create_memory` 保存显式无证据记录，进入 `recall:` 后续维护轮转。作用域类型与验证归 [runtime/memory_scope.py](../../runtime/memory_scope.py)，原始证据经会话模块公开查询，不跨模块操作消息或日记 ORM。
 
 ## 证据与原子提交
 

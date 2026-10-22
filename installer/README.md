@@ -56,7 +56,7 @@ Home 默认位于 Windows `%LOCALAPPDATA%\SpiritAgent` 或 macOS `~/Library/Appl
 
 ## 契约与验证
 
-Tauri Rust crate 与前端 API 保持相同次版本，依赖调整须同步 `Cargo.toml`、`package.json` 和两端锁文件；最低 Rust 版本由 `Cargo.toml` 定义。
+Tauri Rust crate 与前端 API 保持相同次版本，依赖调整须同步 [src-tauri/Cargo.toml](src-tauri/Cargo.toml)、[package.json](package.json) 和两端锁文件；最低 Rust 版本由 `src-tauri/Cargo.toml` 定义。
 
 构建门禁隔离安装实际载荷 wheel，检查入口、版本与静态工具定义；安装后再次运行包内健康检查，失败不进入后续阶段。安装改动在目标平台分别验证首装、修复、macOS 快路径、取消与失败重试，并检查真实内嵌文件、路径和 BOM；签名、启动及进程树终止需要实机验证。
 

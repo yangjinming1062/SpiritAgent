@@ -13,7 +13,7 @@
 | 动作提案、制作、目录与播放 | [窗口动作](features/actions/README.md) |
 | 桌面生活组合、制作与播放 | [桌面生活](features/desktop_life/README.md) |
 | 公共媒体制作与复核 | [媒体](features/media/README.md) |
-| Cron、主动陪伴与夜间 | [cron.py](entrypoints/scheduler/cron.py)、[业务调度](#业务调度) |
+| Cron、主动陪伴与夜间 | [cron.py](entrypoints/scheduler/cron.py)、[定时任务数据](features/automation/cron_jobs.py)、[业务调度](#业务调度) |
 | 主动信息检索、来源分享与反馈 | [话题模块](features/topics/README.md)、[夜间检索](workflows/nightly/topic_discovery.py) |
 | 动态与日记 | [动态](features/posts/README.md)、[journal_service.py](features/journal/journal_service.py)；REST 在 `entrypoints/http/routes/companion_posts.py`、`companion_journal.py` |
 | 手机扫码与远程访问 | [远程网页](#远程网页)、[remote.py](entrypoints/http/routes/remote.py) |
@@ -41,7 +41,7 @@
 
 ### 模块依赖边界
 
-`entrypoints → workflows / features`，`workflows → features / runtime`，`features → runtime / infrastructure`，`runtime → infrastructure`。基础设施不反向导入业务，业务不导入流程或协议入口；双向协调放入流程，反向通知使用 bootstrap 登记的明确回调。各模块直接从能力所属文件导入，不经包级 facade。
+允许的依赖方向：`entrypoints → workflows / features / runtime / infrastructure`，`workflows → features / runtime / infrastructure`，`features → runtime / infrastructure`，`runtime → infrastructure`。反向一律禁止：基础设施不导入业务与运行时，业务不导入流程与协议入口，流程不导入入口与装配，入口不导入装配。双向协调放入流程，反向通知使用 bootstrap 登记的明确回调。各模块直接从能力所属文件导入，不经包级 facade。
 
 ORM 留在数据所属模块。跨模块读取使用冻结 DTO 或只读快照，写入使用公开操作；普通用例管理短事务，需原子完成的跨模块流程通过各模块提供的事务内操作共享同一事务。供应商等待始终在事务外。Pydantic 用于校验结构，dataclass 用于进程内值对象。
 
@@ -190,7 +190,7 @@ Caddy 自动签发续期证书并代理 HTTP 与 WS；Backend 的明文 10620 �
 | [媒体](features/media/prompts.py) | 共享视觉质感、身份参考、审核与评分；图像/视频质量链和出镜装配 |
 | [共享动作](features/action_library/prompts.py)、[窗口动作](features/actions/prompts.py)、[桌面生活](features/desktop_life/prompts.py) | 共同设计评审、姿态/运动、探身、实际画面描述和成品检查 |
 | [记忆](features/memory/prompts.py)、[动态](features/posts/prompts.py) | 维护政策、召回资料、独立创作与线程回复；记忆模块、动态 `context`/`prompt_contract`/`publication`/`replies` |
-| [夜间](workflows/nightly/prompts.py) | 规划、阶段账本、检查点、日记与反思 |
+| [夜间](workflows/nightly/prompts.py)、[话题检索](workflows/nightly/topic_prompts.py) | 规划、阶段账本、检查点、日记与反思；夜间话题检索方向与筛选 |
 | [工具](runtime/tools/prompts.py)、[伙伴动作](workflows/companion_action_prompts.py) | 通用工具说明、验图、网页摘要、本机操作及统一动作能力；参数类型与必填项仍在工具 schema |
 
 检查文本同时检查动态装配：聊天 `prompt_blocks`/`system_prompt` 的工具开关、时间和模式，`streaming`/`reply_delivery` 的实际语音与媒体能力，`tool_availability` 的可执行集合，夜间能力目录与预算，动态 `prompt_contract` 的 schema 约束，以及场景检查、出镜参考、动作脚本和桌面视频的各自分支。基础预设预览不代表最终请求。
