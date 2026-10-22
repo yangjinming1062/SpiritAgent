@@ -10,10 +10,6 @@ _CONVERSATION_UNAVAILABLE_TEXTS: dict[str, str] = {
     "zh": "该会话已不可用，请新建会话后重试",
     "en": "This conversation is no longer available, please start a new one",
 }
-_TURN_LIMIT_TEXTS: dict[str, str] = {
-    "zh": "本轮的工具调用次数已达上限，已停止执行",
-    "en": "The tool call limit for this turn was reached, so the turn was stopped",
-}
 _MISSING_CONFIG_TEXTS: dict[str, str] = {
     "zh": "模型服务暂未配置，请联系管理员",
     "en": "The model service is not configured yet, please contact the administrator",
@@ -88,17 +84,6 @@ async def _emit_localized(
 async def emit_conversation_unavailable(emitter: Emitter, language: str | None, detail: str) -> None:
     """会话缺失或作用域无效：回合尚未装配，没有用户消息可重试。"""
     await _emit_localized(emitter, _CONVERSATION_UNAVAILABLE_TEXTS, language, detail, None)
-
-
-async def emit_turn_limit(
-    emitter: Emitter,
-    language: str | None,
-    max_loop_turns: int,
-    *,
-    retry_message_id: int | None,
-) -> None:
-    detail = f"Max tool execution turns ({max_loop_turns}) reached. Terminating loop to prevent unbounded execution."
-    await _emit_localized(emitter, _TURN_LIMIT_TEXTS, language, detail, retry_message_id)
 
 
 async def emit_llm_error(

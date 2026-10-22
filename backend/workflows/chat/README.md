@@ -7,7 +7,7 @@
 | 入口 | 职责 |
 |---|---|
 | [operations.py](operations.py)、[submissions.py](submissions.py)、[history_commands.py](history_commands.py) | HTTP 业务操作、账户受理、提交幂等与历史用例；连接控制留在 entrypoints |
-| [orchestrator.py](orchestrator.py) | `run_chat_turn`：会话互斥、轮数与取消收尾、委派、回退锁定及终态 |
+| [orchestrator.py](orchestrator.py) | `run_chat_turn`：会话互斥、工具循环与取消收尾、委派、回退锁定及终态 |
 | [turn_inputs.py](turn_inputs.py) | 所有会话共用的参数继承与解析、历史转换、工具集合、资料域和 Token 估算 |
 | [session_resources.py](session_resources.py) | 会话列表角色名投影与搜索、会话生效参数和账户运行态同步 |
 | [prompt_presets.py](prompt_presets.py)、[prompt_blocks.py](prompt_blocks.py)、[system_prompt.py](system_prompt.py) | 预设体、排除集合、共享块与每次调用前的环境/动作快照 |
@@ -65,11 +65,11 @@ Token 估算以最近带用量的助手行和其后增量为基线；无基线�
 
 ## 回合执行与交付
 
-`run_chat_turn` 的会话锁覆盖整个回合和取消收尾。默认轮数运行时读取 Settings，调用方可覆盖；模型等待不按耗时终止，等待、取消和有效期约束统一见 [模型失败与重试预算](../../../docs/PROTOCOL.md#模型失败与重试预算)。无进展守卫追加换策略提示，不自行终止循环。
+`run_chat_turn` 的会话锁覆盖整个回合和取消收尾。工具循环不设轮数上限，以完成目标为导向持续执行；无进展守卫收束为最终回复，模型等待不按耗时终止，等待、取消和有效期约束统一见 [模型失败与重试预算](../../../docs/PROTOCOL.md#模型失败与重试预算)。
 
 - 全批只读白名单调用或互不重叠的文件操作才并发。工具参数先修复并校验为 JSON 对象，失败不派发，仍成对发出工具开始/完成并返回参数错误；后端工具另按各自 schema 核对必填项，以及声明 `additionalProperties: false` 的多余参数，错误列出可用参数而不暴露内部异常。日志只记长度，不记录参数中的用户数据。
 - 工具调用行与结果的写入任务必须在取消时等待落完，再释放会话锁，不能把写库留在后台。资产写入保护覆盖工具返回到父回合提交的间隔。
-- 陪伴回合受理图片或视频请求后只再保留两个工具步（`MEDIA_FOLLOW_UP_STEPS`），其后的模型调用沿用最终回复重试的无工具请求形态：不披露工具，llama.cpp 服务上另带结构约束。回复交付不是工具调用，弱模型常在媒体就绪后继续发起无关调用而不输出回复，此处由执行层确定性收束。同一收束也用于陪伴聊天的工具步上限（`companion_chat_max_loop_turns`，最后一步只回复）和 `ToolCallGuardrailController.must_conclude`（连续三个工具步没有新信息：全部失败，或只重复本回合已有调用且结果不变；或动作型工具成功后再过两个工具步）；工作回合与主动回合仍按各自上限报错。守卫另限制状态型工具的回合内调用次数（`companion_wait` 为 4），避免保存与取消交替空转；没有视频任务时不披露 `video_generate_status`。
+- 陪伴回合受理图片或视频请求后只再保留两个工具步（`MEDIA_FOLLOW_UP_STEPS`），其后的模型调用沿用最终回复重试的无工具请求形态：不披露工具，llama.cpp 服务上另带结构约束。回复交付不是工具调用，弱模型常在媒体就绪后继续发起无关调用而不输出回复，此处由执行层确定性收束。工作回合与陪伴聊天共用 `ToolCallGuardrailController.must_conclude` 的确定性收束（连续三个工具步没有新信息：全部失败，或只重复本回合已有调用且结果不变；或动作型工具成功后再过两个工具步），同样落为无工具的最终回复；主动回合不参与守卫收束，由意图有效期约束。守卫另限制状态型工具的回合内调用次数（`companion_wait` 为 4），避免保存与取消交替空转；没有视频任务时不披露 `video_generate_status`。
 - `ephemeral` 仅用于主动陪伴，请求留作尾部资料，压缩检查点仍保存；`headless` 决定本机执行的桌面工作态，`has_viewer` 决定缓冲与气泡停顿，两者分别处理。
 - 非子 Agent 的陪伴预设会话使用完整结构校验；其他有观看者的回合可流式交付，无头和无观看者回合缓冲正文。文本流只按代码围栏外的 Markdown `---` 分泡，跨 chunk 保留候选前缀和原空行。
 - 委派在父会话下建子会话，继承预设、用户设置与限制；`HeadlessEmitter` 捕获事件，最终结果作为工具结果返回。生活空间和进一步委派工具由执行层排除；子会话消息不作为用户事实证据。

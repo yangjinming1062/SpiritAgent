@@ -70,7 +70,6 @@ from workflows.chat.turn_errors import (
     emit_conversation_unavailable,
     emit_llm_error,
     emit_llm_unavailable,
-    emit_turn_limit,
 )
 from workflows.chat.turn_inputs import (
     build_turn_inputs,
@@ -191,7 +190,6 @@ async def run_chat_turn(
     headless: bool = False,
     has_viewer: bool = True,
     excluded_tool_names: frozenset[str] = frozenset(),
-    max_loop_turns: int | None = None,
 ) -> None:
     """所有入口共享会话互斥和取消收尾；用户请求在受理入口校验授权。"""
     async with conversation_lock(req.session_id):
@@ -212,7 +210,6 @@ async def run_chat_turn(
                 headless=headless,
                 has_viewer=has_viewer,
                 excluded_tool_names=excluded_tool_names,
-                max_loop_turns=max_loop_turns,
             )
 
 
@@ -233,7 +230,6 @@ async def _run_chat_turn(
     headless: bool = False,
     has_viewer: bool = True,
     excluded_tool_names: frozenset[str] = frozenset(),
-    max_loop_turns: int | None = None,
 ) -> None:
     """执行一个对话回合；自动化与回合后整理由会话决定。``ephemeral`` 只用于主动陪伴：内部资料、不落库、可沉默，调用方同时 ``headless``。``has_viewer=False`` 表示帧只被程序捕获（子 Agent 委派）：缓冲交付，不做气泡停顿。"""
     user_message_id: int | None = None
@@ -423,11 +419,6 @@ async def _run_chat_turn(
 
         # 陪伴用户会话的终端回复是结构化气泡数组：非流式取得后整体校验再交付。
         companion_reply = conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None
-        # 默认值运行时解析：工具循环上限可在管理端热调，不能在函数定义期绑定常量；陪伴聊天的上限独立于工作回合。
-        if max_loop_turns is None:
-            max_loop_turns = (
-                SETTINGS.companion_chat_max_loop_turns if companion_reply else SETTINGS.agent_max_loop_turns
-            )
         async with session_scope() as db:
             media_turn = await load_media_turn(
                 db,
@@ -494,7 +485,7 @@ async def _run_chat_turn(
         base_instructions = current_context["instructions"]
         audio_transcripts: dict[str, str | Exception] = {}
         turn_usage = LlmUsageAccumulator()
-        for step in range(max_loop_turns):
+        while True:
             instruction_parts = [base_instructions]
             action_tools_not_ready: frozenset[str] = frozenset()
             action_view = None
@@ -561,14 +552,13 @@ async def _run_chat_turn(
                 nonlocal text_delivered
                 text_delivered = True
 
-            # 工具步用尽（媒体请求受理后的额度、聊天的循环上限、动作型工具成功后的额度、连续没有新信息）：
-            # 本次调用只依据已有结果生成最终回复，沿用最终回复重试的无工具请求形态。主动回合保持各自的上限报错，由意图收尾逻辑处理。
-            reply_only = final_reply_only or (
-                companion_reply
-                and (
-                    media_turn.final_reply_due()
-                    or (not ephemeral and (step == max_loop_turns - 1 or dispatch_ctx.guardrails.must_conclude))
-                )
+            # 工具步收束（媒体请求受理后的额度、无进展守卫：全部失败、只重复本回合已有调用且结果不变、
+            # 或动作型工具成功后核对额度用尽）：本次调用只依据已有结果生成最终回复，沿用最终回复重试的无工具请求形态。
+            # 主动回合不参与守卫收束，由意图有效期约束时长。
+            reply_only = (
+                final_reply_only
+                or (companion_reply and media_turn.final_reply_due())
+                or (not ephemeral and dispatch_ctx.guardrails.must_conclude)
             )
 
             async def _call(provider: ChatProvider, native_audio: bool, has_next_attempt: bool) -> _LLMTurnResult:
@@ -724,5 +714,3 @@ async def _run_chat_turn(
                 schemas_by_name,
                 persist=not ephemeral,
             )
-        else:
-            await emit_turn_limit(emitter, inputs.language, max_loop_turns, retry_message_id=user_message_id)

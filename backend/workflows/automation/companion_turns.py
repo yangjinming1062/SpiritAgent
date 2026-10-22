@@ -13,7 +13,6 @@ from features.conversation.request_contracts import ChatMessageRequest, ChatRequ
 from features.conversation.turn_access import ensure_main_conversation
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import resolve_user_llm_config
-from infrastructure.config import SETTINGS
 from infrastructure.database import session_scope
 from infrastructure.logger import get_logger
 from infrastructure.redact import redact_sensitive_text
@@ -162,7 +161,6 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
                             },
                         )
                     ),
-                    max_loop_turns=SETTINGS.companion_max_loop_turns,
                 )
             reply = emitter.final_reply
             if reply and not emitter.error:

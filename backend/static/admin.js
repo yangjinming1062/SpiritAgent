@@ -1819,12 +1819,10 @@ const SETTINGS_SECTIONS = [
         ],
     },
     {
-        title: '对话编排与上下文压缩', hint: '工具循环预算与长会话摘要压缩',
+        title: '对话编排与上下文压缩', hint: '长会话摘要压缩与异步等待参数',
         blocks: [
             ['field', bool('enable_context_compression', '启用长会话自动上下文压缩摘要')],
             ['grid', [
-                num('agent_max_loop_turns', '工具循环轮数上限', 1),
-                num('companion_chat_max_loop_turns', '陪伴聊天工具循环上限 (轮)', 1),
                 num('context_compression_threshold', '压缩触发阈值 (占上下文比例)', 0.05, { min: 0.3, max: 1 }),
                 num('context_summary_target_tokens', '摘要压缩目标 Token 数', 100, { min: 100 }),
                 num('ipc_future_timeout_seconds', 'IPC 异步调用等待超时 (秒)', 10, { min: 10 }),
@@ -1845,7 +1843,6 @@ const SETTINGS_SECTIONS = [
             ['grid', [
                 num('companion_max_pending_intents', '待处理意图上限 (条)', 1),
                 num('companion_min_turn_interval_seconds', '主动回合最小间隔 (秒)', 5),
-                num('companion_max_loop_turns', '主动回合工具循环上限 (轮)', 1),
             ]],
             ['sub', '动作制作'],
             ['field', bool('action_autocreate_enabled', '允许伙伴自主创建新动作')],
