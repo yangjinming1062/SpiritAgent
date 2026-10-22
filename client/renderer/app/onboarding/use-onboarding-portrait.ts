@@ -10,17 +10,16 @@ import {
   applyPortrait,
   clearPortraitHistory,
   hydratePortraitHistory,
-  loadDraftRefImage,
   pickAvatarImage,
   type PickedImage,
   type PortraitEntry,
   pushPortraitEntry,
   refreshAvatarSeeds,
-  saveDraftRefImage,
   selectAvatar,
   selectPortraitEntry
 } from '@/modules/character'
 import type { HistoryGalleryItem } from '@/shared'
+import { loadCreationDraftImage, saveCreationDraftImage } from '@/shared/lib/creation-draft-image'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { authedResource, requestResource } from '@/shared/lib/resource-request'
@@ -80,7 +79,7 @@ export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, e
       setPresentationRef(null)
     }
 
-    void saveDraftRefImage(img)
+    void saveCreationDraftImage('avatar', img)
   }
 
   const startAiHatching = async (): Promise<void> => {
@@ -297,7 +296,7 @@ export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, e
   }
 
   const restoreReference = async (isLive: () => boolean): Promise<void> => {
-    const cached = await loadDraftRefImage()
+    const cached = await loadCreationDraftImage('avatar')
 
     if (isLive() && cached) {
       setRefImage(cached)

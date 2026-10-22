@@ -55,6 +55,7 @@ let ensureRequest: {
 function applyState(state: DesktopVideoState): void {
   if (state.version >= ($desktopVideoState.get()?.version ?? -1)) {
     $desktopVideoState.set(state)
+    $desktopVideoError.set(null)
   }
 }
 
@@ -240,8 +241,9 @@ export async function ensureDesktopVideoCurrent(): Promise<DesktopVideoState> {
 
   const request = (async (): Promise<DesktopVideoState> => {
     const state = await ensureCurrentWithRetry()
+    // 回包即完整状态，只需刷新套装库。
     applyState(state)
-    await refreshDesktopVideos()
+    await refreshDesktopVideos({ skipState: true })
 
     return state
   })()

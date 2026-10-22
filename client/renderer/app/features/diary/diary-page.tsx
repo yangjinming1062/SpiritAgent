@@ -9,12 +9,12 @@ import { ArrowLeft, ArrowRight, BookOpen } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import { BTN_ICON, ErrorBanner } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
-import { $gatewayState } from '@/shared/store/gateway'
 import { $locale } from '@/shared/store/locale'
 import { type Dictionary, useStrings } from '@/shared/strings'
 
-import { useReadingForeground } from '../use-reading-foreground'
+import { useForegroundRestored, useReadingForeground } from '../use-reading-foreground'
 import { useReadingReceipt } from '../use-reading-receipt'
+import { useReadingReload } from '../use-reading-reload'
 
 import styles from './diary.module.css'
 
@@ -71,36 +71,22 @@ export function DiaryPage({ foreground: suppliedForeground }: { foreground?: boo
   const [selectedDate, setSelectedDate] = useState<string>(todayKey())
   const [cursor, setCursor] = useState<Date>(new Date())
   const [loadFailed, setLoadFailed] = useState(false)
-  const [reloadKey, setReloadKey] = useState(0)
+  const { reloadKey, reload } = useReadingReload()
   const [readSnapshot, setReadSnapshot] = useState<string[] | null>(null)
   const snapshotCaptured = useRef(false)
 
   const foreground = useReadingForeground(suppliedForeground)
-  const wasForeground = useRef(foreground)
 
   useEffect(() => {
     snapshotCaptured.current = false
     setReadSnapshot(null)
   }, [sessionId, reloadKey])
 
-  useEffect(
-    () =>
-      $gatewayState.listen(state => {
-        if (state === 'open') {
-          setReloadKey(key => key + 1)
-        }
-      }),
-    []
-  )
-
-  useEffect(() => {
-    const restored = foreground && !wasForeground.current
-    wasForeground.current = foreground
-
-    if (restored && loadFailed) {
-      setReloadKey(key => key + 1)
+  useForegroundRestored(foreground, () => {
+    if (loadFailed) {
+      reload()
     }
-  }, [foreground, loadFailed])
+  })
 
   const displayName = persona?.name || tRail.companionFallback
   const isToday = selectedDate === todayKey()
@@ -225,12 +211,7 @@ export function DiaryPage({ foreground: suppliedForeground }: { foreground?: boo
               <div className={styles.signature}>{t.signature(displayName)}</div>
             </div>
           ) : loadFailed ? (
-            <ErrorBanner
-              message={t.loadFailed}
-              onRetry={() => setReloadKey(key => key + 1)}
-              retryLabel={dict.common.retry}
-              tone="danger"
-            />
+            <ErrorBanner message={t.loadFailed} onRetry={reload} retryLabel={dict.common.retry} tone="danger" />
           ) : (
             <div className={styles.emptyContainer}>
               <BookOpen className={styles.emptyIcon} size={36} />

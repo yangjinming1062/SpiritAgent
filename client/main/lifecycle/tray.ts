@@ -97,7 +97,7 @@ function sendToMainWindow<C extends IpcEventChannel>(channel: C, ...payload: Ipc
   sendToWindow(trayDeps?.getMainWindow?.(), channel, ...payload)
 }
 
-function showActivation(): void {
+export function showActivation(): void {
   showMainWindow()
   const win = trayDeps?.getMainWindow?.()
 
@@ -579,7 +579,6 @@ export function destroyTray(): void {
 }
 
 export function registerSingleInstanceForwarder(deps: TrayDeps): void {
-  trayDeps = deps
   deps.app.on('second-instance', () => {
     deps.rememberLog('[instance] second-instance forwarded')
     showMainWindow()

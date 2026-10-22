@@ -67,7 +67,7 @@
 
 ## 主窗口与桌面装配
 
-主窗口与桌面共用 [features](app/features/) 和导航，各入口选中位置及桌景草稿随主进程账户快照交接。对话页切页时保留实例并关闭活动资格；动态媒体查看器在离开来源页签后释放。衣柜与背景的文字、选中项保存于账户缓存，参考图片字节由 [creation-draft-image.ts](shared/lib/creation-draft-image.ts) 保存、跨窗口通知并随明确移除账户清理，不作为服务端成品。背景表面仅消费主进程缓存媒体及播放控制。窗口规则归 [DESIGN](../../docs/DESIGN.md#桌面模式)，轻语规则归 [窗口与会话](../../docs/DESIGN.md#窗口与会话)，交接与资格归 [桌面呈现](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。`ConversationViewProvider` 持视图，[chat-store.ts](modules/conversation/chat-store.ts) 管理会话 runtime。
+主窗口与桌面共用 [features](app/features/) 和导航，各入口选中位置及桌景草稿随主进程账户快照交接。对话页切页时保留实例并关闭活动资格；动态媒体查看器在离开来源页签后释放。衣柜与背景的文字、选中项保存于账户缓存；引导头像、衣柜与背景的参考图片字节由 [creation-draft-image.ts](shared/lib/creation-draft-image.ts) 按账户保存，随明确移除账户清理，不作为服务端成品。衣柜与背景订阅参考图的跨窗口通知。背景表面仅消费主进程缓存媒体及播放控制。窗口规则归 [DESIGN](../../docs/DESIGN.md#桌面模式)，轻语规则归 [窗口与会话](../../docs/DESIGN.md#窗口与会话)，交接与资格归 [桌面呈现](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。`ConversationViewProvider` 持视图，[chat-store.ts](modules/conversation/chat-store.ts) 管理会话 runtime。
 
 [panel-activity](shared/context/panel-activity.tsx) 向子组件和 Portal 传播活动资格，子面板不能解除父级禁用；媒体查看器归打开它的视图，失活时隐藏并暂停。视图切换保留各自草稿与附件，录音资格失效后旧麦克风或转写结果不能因重新激活恢复。布局、位置和防抖保存守卫账户清理代次。
 

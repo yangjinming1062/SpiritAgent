@@ -16,6 +16,8 @@ import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { getStrings } from '@/shared/strings'
 import type { ChatMediaItem, CompanionBubble } from '@protocol'
 
+import { pendingReplyText } from './pending-reply'
+
 // 会话回合事件：message.*、Slash、压缩与撤回。
 
 /** 路由守卫计算出的窗口角色上下文，随事件传给各能力处理器。 */
@@ -68,23 +70,10 @@ export function handleConversationEvent(
       return
     }
 
-    const preview = chatDisplayText(
-      bubbles?.findLast(bubble => 'text' in bubble)?.text ??
-        bubbles?.findLast(bubble => bubble.type === 'link')?.title ??
-        text ??
-        ''
-    )
+    const { pending } = pendingReplyText(text, bubbles, media)
 
-    const hasMedia = media?.length || bubbles?.some(bubble => bubble.type === 'image' || bubble.type === 'video')
-
-    if (preview || hasMedia) {
-      rememberPendingMessage(
-        sessionId,
-        preview ||
-          (media?.some(item => item.type === 'video') || bubbles?.some(bubble => bubble.type === 'video')
-            ? getStrings().notifications.system.videoReady
-            : getStrings().notifications.system.imageReady)
-      )
+    if (pending) {
+      rememberPendingMessage(sessionId, pending)
     }
   }
 

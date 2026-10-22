@@ -4,6 +4,7 @@ import { computed } from 'nanostores'
 
 import type { ConversationRuntime } from '@/modules/conversation'
 import { deepEqual } from '@/shared/lib/deep-equal'
+import type { ChatMediaItem } from '@protocol'
 
 export interface ToolStep {
   name: string
@@ -20,9 +21,7 @@ export interface RunRound {
 
 export interface RailArtifact {
   id: string
-  kind: 'image' | 'video' | 'audio'
-  audioUrl?: string
-  url: string
+  media: ChatMediaItem
 }
 
 export function createRunRailStores(runtime: ConversationRuntime) {
@@ -82,12 +81,7 @@ export function createRunRailStores(runtime: ConversationRuntime) {
         }
 
         seen.add(key)
-        artifacts.push({
-          id: `${item.id}:${m.url}`,
-          kind: m.type,
-          audioUrl: m.audio_url ?? undefined,
-          url: m.url
-        })
+        artifacts.push({ id: `${item.id}:${m.url}`, media: m })
       }
     }
 

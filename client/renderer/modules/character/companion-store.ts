@@ -12,6 +12,9 @@ import { preferencesApi } from '@/shared/platform/desktop'
 import type { SetSpriteStateOptions, SpriteStateName } from '@/shared/presentation-ports'
 import { DESKTOP_COMPANION_ACTIVITY_PRIORITY, type DesktopCompanionActivityState } from '@ipc/contracts'
 
+import { hydratePersona } from './persona-store'
+import { hydratePortrait } from './portrait-store'
+
 // 渲染层按 unauthed → onboarding（向导进行中）→ ready（向导完成后）流转。
 export type CompanionLifecycle = 'unauthed' | 'onboarding' | 'ready'
 
@@ -286,15 +289,8 @@ function runOnce(key: string, fn: () => Promise<unknown>): Promise<unknown> {
   return task
 }
 
-export async function ensureCompanionHydrated(deps: {
-  hydratePersona: () => Promise<unknown>
-  hydratePortrait?: () => Promise<unknown>
-}): Promise<void> {
-  const tasks = [runOnce('persona', deps.hydratePersona)]
-
-  if (deps.hydratePortrait) {
-    tasks.push(runOnce('portrait', deps.hydratePortrait))
-  }
+export async function ensureCompanionHydrated(): Promise<void> {
+  const tasks = [runOnce('persona', hydratePersona), runOnce('portrait', hydratePortrait)]
 
   try {
     await Promise.all(tasks)

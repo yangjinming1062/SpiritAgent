@@ -1,5 +1,4 @@
 import { log } from '@/shared/lib/log'
-import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { backendApi, fileApi } from '@/shared/platform/desktop'
 import { getStrings } from '@/shared/strings'
 
@@ -70,70 +69,3 @@ export async function resolvePortraitUrl(
     return null
   }
 }
-
-const DB_NAME = 'spiritagent_onboarding'
-const STORE_NAME = 'draft_cache'
-const REF_IMAGE_KEY = 'ref_image'
-
-function openDraftDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1)
-
-    request.onupgradeneeded = () => {
-      request.result.createObjectStore(STORE_NAME)
-    }
-
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error)
-  })
-}
-
-// 每次操作独立连接：事务提交后才算完成，失败或中止即拒绝，结束后关闭连接。
-async function withDraftStore(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequest): Promise<unknown> {
-  const db = await openDraftDB()
-
-  try {
-    return await new Promise<unknown>((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, mode)
-      const request = run(tx.objectStore(STORE_NAME))
-      const fail = (): void => reject(tx.error ?? request.error ?? new Error('Draft transaction aborted'))
-
-      tx.oncomplete = () => resolve(request.result)
-      tx.onerror = fail
-      tx.onabort = fail
-    })
-  } finally {
-    db.close()
-  }
-}
-
-export async function saveDraftRefImage(image: PickedImage | null): Promise<void> {
-  try {
-    await withDraftStore('readwrite', store => (image ? store.put(image, REF_IMAGE_KEY) : store.delete(REF_IMAGE_KEY)))
-  } catch (error) {
-    log.warn('avatar-image', 'Could not save reference draft', error)
-  }
-}
-
-export async function loadDraftRefImage(): Promise<PickedImage | null> {
-  try {
-    const image = (await withDraftStore('readonly', store => store.get(REF_IMAGE_KEY))) as PickedImage | undefined
-
-    return image ?? null
-  } catch (error) {
-    log.warn('avatar-image', 'Could not load reference draft', error)
-
-    return null
-  }
-}
-
-export async function clearDraftRefImage(): Promise<void> {
-  try {
-    await withDraftStore('readwrite', store => store.delete(REF_IMAGE_KEY))
-  } catch (error) {
-    log.warn('avatar-image', 'Could not clear reference draft', error)
-  }
-}
-
-// 草稿不分账户，换号时清除。
-registerStorageClearHandler(clearDraftRefImage)

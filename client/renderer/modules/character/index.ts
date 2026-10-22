@@ -23,14 +23,7 @@ export {
 } from './actions'
 export { $screenLocked, applyStageActivity, reportInteractionStat, startActivityMonitor } from './activity'
 export { startAutonomyProvision, stopAutonomyProvision } from './autonomy'
-export {
-  clearDraftRefImage,
-  loadDraftRefImage,
-  pickAvatarImage,
-  type PickedImage,
-  resolvePortraitUrl,
-  saveDraftRefImage
-} from './avatar-image'
+export { pickAvatarImage, type PickedImage, resolvePortraitUrl } from './avatar-image'
 export { $avatarSeeds, hydrateAvatarSeeds, patchAvatarSeeds, refreshAvatarSeeds } from './avatar-seeds-store'
 export {
   $characterCard,

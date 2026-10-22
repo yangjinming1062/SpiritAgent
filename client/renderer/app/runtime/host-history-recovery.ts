@@ -3,12 +3,12 @@ import {
   getConversationRuntime,
   loadLocalSessionHistory,
   openMainSession,
+  requestSessionSnapshot,
   SessionHistoryChangedError,
   setChatSession,
   syncSessionHistory
 } from '@/modules/conversation'
 import { log } from '@/shared/lib/log'
-import { requestResource } from '@/shared/lib/resource-request'
 
 /** 恢复当前会话；失败只回退仍被选中的会话。 */
 export async function resumeHostHistory(isCurrent: () => boolean, replayed = false): Promise<void> {
@@ -41,7 +41,7 @@ export async function resumeHostHistory(isCurrent: () => boolean, replayed = fal
 
       const synced = await syncSessionHistory({
         sessionId: sid,
-        request: () => requestResource('sessions.snapshot', { path: { session_id: sid } })
+        request: () => requestSessionSnapshot(sid)
       })
 
       if (!isCurrent() || $chatSessionId.get() !== sid) {

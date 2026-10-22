@@ -24,13 +24,13 @@ import { currentClearEpoch } from '@/shared/lib/storage'
 import { cn } from '@/shared/lib/utils'
 import { BTN_ICON, BTN_PRIMARY, BTN_SUBTLE, ErrorBanner, INPUT_CLASS, LoadingBlock } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
-import { $gatewayState } from '@/shared/store/gateway'
 import { $locale } from '@/shared/store/locale'
 import { notify } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
-import { useReadingForeground } from '../use-reading-foreground'
+import { useForegroundRestored, useReadingForeground } from '../use-reading-foreground'
 import { useReadingReceipt } from '../use-reading-receipt'
+import { useReadingReload } from '../use-reading-reload'
 
 import { PostVideoRecovery } from './post-video-recovery'
 import styles from './posts.module.css'
@@ -82,11 +82,10 @@ function PostsContent({
   const t = strings.living.posts
   const [expandedId, setExpandedId] = useState<null | string>(null)
   const [loadFailed, setLoadFailed] = useState(false)
-  const [reloadKey, setReloadKey] = useState(0)
+  const { reloadKey, reload } = useReadingReload()
   const [readSnapshot, setReadSnapshot] = useState<string[] | null>(null)
 
   const foreground = useReadingForeground(suppliedForeground)
-  const wasForeground = useRef(foreground)
 
   // 冷启动可能先挂载动态页，鉴权完成后再水合。
   useEffect(() => {
@@ -110,22 +109,7 @@ function PostsContent({
     }
   }, [authKind, sessionId, reloadKey])
 
-  useEffect(() => {
-    return $gatewayState.listen(state => {
-      if (state === 'open') {
-        setReloadKey(key => key + 1)
-      }
-    })
-  }, [])
-
-  useEffect(() => {
-    const restored = foreground && !wasForeground.current
-    wasForeground.current = foreground
-
-    if (restored) {
-      setReloadKey(key => key + 1)
-    }
-  }, [foreground])
+  useForegroundRestored(foreground, reload)
 
   useReadingReceipt({
     scope: sessionId ?? authKind,
@@ -161,12 +145,7 @@ function PostsContent({
           {loading ? (
             <LoadingBlock label={t.loading} />
           ) : loadFailed ? (
-            <ErrorBanner
-              message={t.loadFailed}
-              onRetry={() => setReloadKey(key => key + 1)}
-              retryLabel={strings.common.retry}
-              tone="danger"
-            />
+            <ErrorBanner message={t.loadFailed} onRetry={reload} retryLabel={strings.common.retry} tone="danger" />
           ) : (
             <>
               <Sparkles aria-hidden="true" className={styles.emptyIcon} size={28} />

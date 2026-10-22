@@ -12,8 +12,6 @@ import {
   $companionVoiceId,
   ensureCompanionHydrated,
   hydrateActionCatalog,
-  hydratePersona,
-  hydratePortrait,
   hydratePortraitHistory,
   hydrateVideoPack,
   initSpatial,
@@ -131,10 +129,7 @@ export function SpriteWindow(): React.JSX.Element {
 
     void hydrateActionCatalog()
     void hydrateVideoPack()
-    void ensureCompanionHydrated({
-      hydratePersona,
-      hydratePortrait
-    })
+    void ensureCompanionHydrated()
     void hydratePortraitHistory()
 
     return () => {

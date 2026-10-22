@@ -629,15 +629,8 @@ export async function ensureCompanionSession(): Promise<string | null> {
         return null
       }
 
-      setCompanionSessionId(result.session_id)
       const runtime = getConversationRuntime(result.session_id)
-
-      const accepted = runtime.applyRemoteSnapshot(result, knownRuntime === runtime ? snapshot : undefined)
-
-      if (accepted) {
-        void runtime.recoverUnconfirmedSubmission()
-        rememberFullHistory(result.session_id, result.messages, { info: result.info })
-      }
+      mountMainSnapshot(result, knownRuntime === runtime ? snapshot : undefined, false)
 
       return result.session_id
     } catch (error) {
@@ -676,6 +669,27 @@ function mountSyncedSession(result: SessionSnapshot, historySync?: ConversationH
   }
 
   return accepted
+}
+
+// 主会话快照收尾：登记陪伴归属，select 时选中会话；接受后恢复在途提交并写历史缓存。
+function mountMainSnapshot(
+  res: SessionSnapshot,
+  historySync: ConversationHistorySync | undefined,
+  select: boolean
+): void {
+  setCompanionSessionId(res.session_id)
+  const runtime = getConversationRuntime(res.session_id)
+
+  if (select && $chatSessionId.get() !== res.session_id) {
+    setChatSession(res.session_id)
+  }
+
+  const accepted = runtime.applyRemoteSnapshot(res, historySync)
+
+  if (accepted) {
+    void runtime.recoverUnconfirmedSubmission()
+    rememberFullHistory(res.session_id, res.messages, { info: res.info })
+  }
 }
 
 export async function switchSession(sessionId: string): Promise<void> {
@@ -894,18 +908,7 @@ export async function openMainSession(onMounted?: (res: SessionSnapshot) => void
         return null
       }
 
-      setCompanionSessionId(res.session_id)
-
-      const runtime = getConversationRuntime(res.session_id)
-
-      const accepted = isLatest()
-        ? mountSyncedSession(res, snapshots.get(res.session_id))
-        : runtime.applyRemoteSnapshot(res, snapshots.get(res.session_id))
-
-      if (accepted) {
-        void runtime.recoverUnconfirmedSubmission()
-        rememberFullHistory(res.session_id, res.messages, { info: res.info })
-      }
+      mountMainSnapshot(res, snapshots.get(res.session_id), isLatest())
 
       onMounted?.(res)
 

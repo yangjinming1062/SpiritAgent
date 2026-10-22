@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { $surfaceOpen, $surfaceOpenVisible, $surfaceScreenLocked } from '@/shared/store/surfaces'
 
@@ -30,4 +30,20 @@ export function useReadingForeground(suppliedForeground?: boolean): boolean {
   }, [])
 
   return (suppliedForeground ?? (surfaceOpen && surfaceVisible)) && !screenLocked && documentActive
+}
+
+// 仅在后台转前台的边沿触发一次；回调经渲染期同步的 ref 取最新闭包。
+export function useForegroundRestored(foreground: boolean, onRestored: () => void): void {
+  const wasForeground = useRef(foreground)
+  const onRestoredRef = useRef(onRestored)
+  onRestoredRef.current = onRestored
+
+  useEffect(() => {
+    const restored = foreground && !wasForeground.current
+    wasForeground.current = foreground
+
+    if (restored) {
+      onRestoredRef.current()
+    }
+  }, [foreground])
 }

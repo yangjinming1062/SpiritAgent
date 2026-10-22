@@ -1,6 +1,6 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { ActionSyncStatus } from '@/app/components/action-sync-status'
 import { useAssetLibrarySearch } from '@/app/components/asset-library-header'
@@ -126,10 +126,8 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
   const genRequests = useStore($videoGenRequests)
   const dict = useStrings()
   const t = dict.living.appearance
-  const [packsReloadKey, setPacksReloadKey] = useState(0)
   const [selectedActionKey, setSelectedActionKey] = useState<string | null>(null)
   const actionSearch = useAssetLibrarySearch()
-  const handledReload = useRef(0)
   const packsStoreStatus = useStore($videoPacksStatus)
 
   // 列表状态由 store 维护，组件不再为拿状态重发一次列表读。
@@ -284,16 +282,6 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
   })()
 
   const statusIsError = !!scopedError || selectedPack?.status === 'failed' || !!initialVideoError || packsLoadFailed
-
-  // 列表由衣柜页统一拉取；这里只在用户手动刷新时补一次。
-  useEffect(() => {
-    if (authKind !== 'authenticated' || handledReload.current === packsReloadKey) {
-      return
-    }
-
-    handledReload.current = packsReloadKey
-    void hydrateVideoPack(true)
-  }, [authKind, packsReloadKey])
 
   // 包、单动作或先于列表到达的进度仍在途时，轮询收敛失败及遗漏的终态事件。
   const anyPackGenerating =
@@ -680,7 +668,7 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
                         <button
                           className={BTN_SUBTLE}
                           disabled={packsStatus === 'loading'}
-                          onClick={() => setPacksReloadKey(key => key + 1)}
+                          onClick={() => void hydrateVideoPack(true)}
                           type="button"
                         >
                           {dict.common.retry}
@@ -767,11 +755,7 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
                     : t.videoLoading}
             </p>
             {packsLoadFailed ? (
-              <button
-                className={cn(BTN_SUBTLE, 'mt-3')}
-                onClick={() => setPacksReloadKey(key => key + 1)}
-                type="button"
-              >
+              <button className={cn(BTN_SUBTLE, 'mt-3')} onClick={() => void hydrateVideoPack(true)} type="button">
                 {dict.common.retry}
               </button>
             ) : selectedOutfit && packsStatus === 'loaded' ? (

@@ -33,8 +33,8 @@ export function DesktopProductNav({
   onBeforeOpen: () => void
   onMenuOpenChange: (open: boolean) => void
 }): React.JSX.Element {
-  const t = useStrings().desktopShell
   const dict = useStrings()
+  const t = dict.desktopShell
   const [menu, setMenu] = useState<{ id: DesktopNavApp; x: number; bottom: number } | null>(null)
   const [hint, setHint] = useState<{ id: DesktopNavApp; x: number; bottom: number } | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)

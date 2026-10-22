@@ -391,6 +391,19 @@ export function createDesktopGateway(options: GatewayOptions) {
     }
   }
 
+  function clearAllTimers(): void {
+    for (const timer of recoveryTimers.values()) {
+      clearTimeout(timer)
+    }
+
+    for (const timer of receiptTimers.values()) {
+      clearTimeout(timer)
+    }
+
+    recoveryTimers.clear()
+    receiptTimers.clear()
+  }
+
   function replaceAuth(): void {
     const next = options.getCurrentAuth()
 
@@ -407,22 +420,13 @@ export function createDesktopGateway(options: GatewayOptions) {
       void options.cancelCall(callId).catch(error => options.log(errorMessage(error)))
     }
 
-    for (const timer of recoveryTimers.values()) {
-      clearTimeout(timer)
-    }
-
-    for (const timer of receiptTimers.values()) {
-      clearTimeout(timer)
-    }
-
+    clearAllTimers()
     active.clear()
     receipts.clear()
     delivering.clear()
     completed.clear()
     cancelled.clear()
     recovering.clear()
-    recoveryTimers.clear()
-    receiptTimers.clear()
     authSessionId = next?.sessionId ?? null
     snapshot = emptySnapshot()
     toolsSignature = null
@@ -510,15 +514,14 @@ export function createDesktopGateway(options: GatewayOptions) {
     return connection
   }
 
+  function restart(): void {
+    replaceAuth()
+    connection?.reconnect()
+  }
+
   return {
-    authChanged: () => {
-      replaceAuth()
-      connection?.reconnect()
-    },
-    reconnect: () => {
-      replaceAuth()
-      connection?.reconnect()
-    },
+    authChanged: restart,
+    reconnect: restart,
     runnerStatus: (tools: RunnerTools) => {
       void syncTools(tools)
       reconcile()
@@ -539,17 +542,7 @@ export function createDesktopGateway(options: GatewayOptions) {
       authSessionId = null
       connection?.close()
       connection = null
-
-      for (const timer of recoveryTimers.values()) {
-        clearTimeout(timer)
-      }
-
-      for (const timer of receiptTimers.values()) {
-        clearTimeout(timer)
-      }
-
-      recoveryTimers.clear()
-      receiptTimers.clear()
+      clearAllTimers()
     }
   }
 }

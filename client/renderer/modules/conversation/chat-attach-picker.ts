@@ -52,15 +52,15 @@ function getImagePickOptions() {
 async function pickPath(
   options: SpiritAgentSelectPathsOptions,
   apply: (path: string) => Promise<void> | void,
-  runtime?: ConversationRuntime
+  runtime: ConversationRuntime
 ): Promise<void> {
   const authCurrent = captureAuthScope()
 
-  if (!authCurrent || (runtime && !runtime.isCurrent())) {
+  if (!authCurrent || !runtime.isCurrent()) {
     return
   }
 
-  const releaseRuntime = runtime ? retainConversationRuntime(runtime) : undefined
+  const releaseRuntime = retainConversationRuntime(runtime)
 
   try {
     const [path] = await fileApi().selectPaths(options)
@@ -75,11 +75,11 @@ async function pickPath(
       reportPickerError(err)
     }
   } finally {
-    releaseRuntime?.()
+    releaseRuntime()
   }
 }
 
-export function pickFile(setPending: SetPending, runtime?: ConversationRuntime): Promise<void> {
+export function pickFile(setPending: SetPending, runtime: ConversationRuntime): Promise<void> {
   return pickPath(
     { multiple: false, title: getStrings().chat.picker.selectFile },
     async path => {
@@ -95,7 +95,7 @@ export function pickFile(setPending: SetPending, runtime?: ConversationRuntime):
   )
 }
 
-export function pickFolder(setPending: SetPending, runtime?: ConversationRuntime): Promise<void> {
+export function pickFolder(setPending: SetPending, runtime: ConversationRuntime): Promise<void> {
   return pickPath(
     { directories: true, multiple: false, title: getStrings().chat.picker.selectFolder },
     path => setPending({ type: 'folder', folderName: basename(path), path }),
@@ -103,7 +103,7 @@ export function pickFolder(setPending: SetPending, runtime?: ConversationRuntime
   )
 }
 
-export function pickImage(setPending: SetPending, runtime?: ConversationRuntime): Promise<void> {
+export function pickImage(setPending: SetPending, runtime: ConversationRuntime): Promise<void> {
   return pickPath(
     getImagePickOptions(),
     path => setPending({ type: 'image', value: path, fileName: basename(path) }),
@@ -111,7 +111,7 @@ export function pickImage(setPending: SetPending, runtime?: ConversationRuntime)
   )
 }
 
-export function pickVideo(setPending: SetPending, runtime?: ConversationRuntime): Promise<void> {
+export function pickVideo(setPending: SetPending, runtime: ConversationRuntime): Promise<void> {
   return pickPath(getVideoUploadOptions(), path => attachVideoFile(path, setPending, runtime), runtime)
 }
 
@@ -119,12 +119,12 @@ export function pickVideo(setPending: SetPending, runtime?: ConversationRuntime)
 export async function attachVideoFile(
   path: string,
   setPending: SetPending,
-  runtime?: ConversationRuntime
+  runtime: ConversationRuntime
 ): Promise<void> {
   const auth = $auth.get()
   const authCurrent = captureAuthScope()
 
-  if (auth.kind !== 'authenticated' || !authCurrent || (runtime && !runtime.isCurrent())) {
+  if (auth.kind !== 'authenticated' || !authCurrent || !runtime.isCurrent()) {
     return
   }
 
@@ -133,7 +133,7 @@ export async function attachVideoFile(
 
   setPending(uploading)
   const finishUpload = beginConversationInputActivity('uploading')
-  const releaseRuntime = runtime ? retainConversationRuntime(runtime) : undefined
+  const releaseRuntime = retainConversationRuntime(runtime)
 
   try {
     const sessionId = await ensureChatSession(runtime)
@@ -159,6 +159,6 @@ export async function attachVideoFile(
     }
   } finally {
     finishUpload()
-    releaseRuntime?.()
+    releaseRuntime()
   }
 }

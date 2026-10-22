@@ -102,10 +102,7 @@ export function RunRail({
           {artifacts.length > 0 ? (
             <div className={styles.artifacts}>
               {artifacts.map(artifact => (
-                <ChatMediaCard
-                  item={{ type: artifact.kind, url: artifact.url, audio_url: artifact.audioUrl }}
-                  key={artifact.id}
-                />
+                <ChatMediaCard item={artifact.media} key={artifact.id} />
               ))}
             </div>
           ) : (

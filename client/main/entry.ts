@@ -68,6 +68,7 @@ import {
   installTray,
   rebuildTrayMenu,
   registerSingleInstanceForwarder,
+  showActivation,
   showMainWindow,
   toggleMainWindow
 } from './lifecycle/tray'
@@ -588,10 +589,7 @@ registerDesktopAccountIpc({
 
       await surfaces?.closeSurface()
     },
-    openMainWindow: () => {
-      showMainWindow()
-      sendToWindow(mainWindow, IPC.event.trayActivate)
-    },
+    openMainWindow: showActivation,
     quitApp: () => app.quit(),
     removeAccount: authActions.removeAccount,
     switchAccount: authActions.switchAccount
@@ -641,14 +639,15 @@ void app.whenReady().then(async () => {
     rememberLog,
     removeAccount: authActions.removeAccount,
     switchAccount: authActions.switchAccount,
-    Tray
+    Tray,
+    getIsQuitting: () => appQuit.isQuitting(),
+    surfaces: surfaces ?? undefined
   }
 
+  installTray(trayDeps)
   registerSingleInstanceForwarder(trayDeps)
-  // 早期第二实例事件须在转发器写入托盘依赖后兑现：showMainWindow 依赖它。
+  // 早期第二实例事件须在 installTray 写入托盘依赖后兑现：showMainWindow 依赖它。
   singleInstance.replayEarlySecondInstance(showMainWindow)
-
-  installTray({ ...trayDeps, getIsQuitting: () => appQuit.isQuitting(), surfaces: surfaces ?? undefined })
 
   if (!IS_PACKAGED && process.connected) {
     process.send?.({ event: 'spiritagent:dev-ready' }, error => {

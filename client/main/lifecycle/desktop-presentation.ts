@@ -365,7 +365,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     }
   }
 
-  function updateNativeWorkArea(physical: Electron.Rectangle): void {
+  function interactiveSurface(): { win: BrowserWindow; display: Electron.Display } | null {
     const win = windows.getInteractive()
 
     if (
@@ -376,26 +376,44 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       !win ||
       win.isDestroyed()
     ) {
-      return
+      return null
     }
 
-    enforceSurfaceBounds()
+    return { win, display: activeDisplay }
+  }
 
-    const dip = process.platform === 'darwin' ? physical : screen.screenToDipRect(win, physical)
-    const display = activeDisplay.bounds
+  function displayLocalRect(dip: Electron.Rectangle, display: Electron.Rectangle): Electron.Rectangle | null {
     const x = Math.max(0, dip.x - display.x)
     const y = Math.max(0, dip.y - display.y)
     const right = Math.min(display.width, dip.x + dip.width - display.x)
     const bottom = Math.min(display.height, dip.y + dip.height - display.y)
 
     if (right <= x || bottom <= y) {
+      return null
+    }
+
+    return { x, y, width: right - x, height: bottom - y }
+  }
+
+  function updateNativeWorkArea(physical: Electron.Rectangle): void {
+    const surface = interactiveSurface()
+
+    if (!surface) {
+      return
+    }
+
+    enforceSurfaceBounds()
+
+    const dip = process.platform === 'darwin' ? physical : screen.screenToDipRect(surface.win, physical)
+    const display = surface.display.bounds
+    const area = displayLocalRect(dip, display)
+
+    if (!area) {
       throw new Error('Desktop helper work area does not intersect the interactive display')
     }
 
-    const area = { x, y, width: right - x, height: bottom - y }
-
     if (process.platform === 'darwin') {
-      const safeWidth = display.width - 2 * Math.max(x, display.width - right)
+      const safeWidth = display.width - 2 * Math.max(area.x, display.width - (area.x + area.width))
 
       if (area.height <= DESKTOP_LAYOUT.bottomInset || !getDesktopRailLayout(safeWidth).fits) {
         throw new Error('系统可用区域没有足够空间显示桌面底栏，请使用窗口模式。')
@@ -416,24 +434,17 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   }
 
   function updateNativeSystemTray(physical: DesktopHostSystemTray | null): void {
-    const win = windows.getInteractive()
+    const surface = interactiveSurface()
 
-    if (
-      disposed ||
-      nativeWorkAreaEpoch !== stageEpoch ||
-      (status !== 'starting' && status !== 'active') ||
-      !activeDisplay ||
-      !win ||
-      win.isDestroyed()
-    ) {
+    if (!surface) {
       return
     }
 
     let tray: PresentationState['systemTray'] = null
 
     if (physical) {
-      const display = activeDisplay.bounds
-      const monitor = screen.dipToScreenRect(win, display)
+      const display = surface.display.bounds
+      const monitor = screen.dipToScreenRect(surface.win, display)
       const rect = physical.bounds
 
       if (
@@ -445,17 +456,13 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         throw new Error('系统托盘位置与交互屏不匹配，已恢复窗口模式。')
       }
 
-      const dip = screen.screenToDipRect(win, rect)
-      const x = Math.max(0, dip.x - display.x)
-      const y = Math.max(0, dip.y - display.y)
-      const right = Math.min(display.width, dip.x + dip.width - display.x)
-      const bottom = Math.min(display.height, dip.y + dip.height - display.y)
+      const local = displayLocalRect(screen.screenToDipRect(surface.win, rect), display)
 
-      if (right <= x || bottom <= y) {
+      if (!local) {
         throw new Error('无法确认系统托盘位置，已恢复窗口模式。')
       }
 
-      tray = { width: right - x, height: bottom - y, visible: physical.visible }
+      tray = { width: local.width, height: local.height, visible: physical.visible }
 
       if (!getDesktopRailLayout(display.width).fits) {
         throw new Error('屏幕没有足够空间显示桌面底栏，已恢复窗口模式。')

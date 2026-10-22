@@ -12,6 +12,7 @@ import {
   desktopLifeActionName,
   desktopLifeCreationStage,
   desktopLifeReadyForActions,
+  isActionOutcomeUnknown,
   isActionPaused
 } from './desktop-life-status'
 import { DesktopLifeSteps } from './desktop-life-steps'
@@ -53,7 +54,7 @@ function DesktopLifeFailure({ action: item }: { action: DesktopVideoAction }): R
   const strings = useStrings()
   const t = strings.desktopLife
 
-  if (item.status !== 'failed' || item.draft?.submission_unknown || item.draft?.recovery_action === 'wait') {
+  if (item.status !== 'failed' || isActionOutcomeUnknown(item)) {
     return null
   }
 
@@ -108,7 +109,7 @@ export function DesktopLifeActionView({
     </button>
   )
 
-  const unknown = Boolean(item.draft?.submission_unknown || item.draft?.recovery_action === 'wait')
+  const unknown = isActionOutcomeUnknown(item)
   const chooseActivity = item.draft?.recovery_action === 'choose_activity'
   const pendingSource = item.key === 'idle' && set.can_upload_source
   const recreateSet = Boolean(sourceError || item.draft?.recovery_action === 'recreate_set')

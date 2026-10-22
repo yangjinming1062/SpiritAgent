@@ -3,13 +3,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   applyServerCompanionVoiceId,
-  clearDraftRefImage,
   type OnboardingAnswers,
   setCompanionVoiceId,
   setResponsePreference
 } from '@/modules/character'
 import { stopSpeaking, warmAudioContext } from '@/modules/speech'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
+import { saveCreationDraftImage } from '@/shared/lib/creation-draft-image'
 import { log } from '@/shared/lib/log'
 import { BTN_SUBTLE, CreationActionBar, CreationWorkspace, Disclosure, INPUT_CLASS } from '@/shared/panel'
 import { $gatewayState } from '@/shared/store/gateway'
@@ -150,7 +150,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
         setResumeState('ok')
 
         if (state.complete) {
-          void clearDraftRefImage()
+          void saveCreationDraftImage('avatar', null)
           onCompletedRef.current()
 
           return

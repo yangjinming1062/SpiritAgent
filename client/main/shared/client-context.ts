@@ -10,7 +10,6 @@ interface ClientContextResult {
     environment_hints: string
     platform_hints: string
   }
-  client_version: string
 }
 
 export function buildClientContext({
@@ -32,7 +31,6 @@ export function buildClientContext({
     client_context: {
       environment_hints: lines.join('; '),
       platform_hints: `SpiritAgentDesktop/${desktopVersion} (${platform}; ${arch})`
-    },
-    client_version: desktopVersion
+    }
   }
 }

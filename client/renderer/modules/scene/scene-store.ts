@@ -43,7 +43,7 @@ export interface ActiveScene {
 }
 export type SceneAsset = ActiveScene
 export type SceneCreationResult =
-  | { kind: 'created'; scene: ActiveScene }
+  | { kind: 'created'; sceneId: string }
   | { kind: 'unavailable' }
   | { kind: 'failed'; message: string; outcome: 'rejected' | 'unknown' }
 export type SceneCreationIssue = Extract<SceneCreationResult, { kind: 'failed' }> & { inspected: boolean }
@@ -180,13 +180,30 @@ function cacheSceneDetails(entries: SceneAsset[], read: number): void {
   $sceneDetails.set(Object.fromEntries(detailCache))
 }
 
-/** 写操作返回的场景行直接进详情缓存：不必再补一次详情 GET。 */
-async function applySceneRow(row: SceneWire): Promise<ActiveScene> {
+/** 写操作回包后登记详情顺序，再校准全局状态；换号后丢弃迟到结果。 */
+async function mutateSceneRow(request: () => Promise<SceneWire>): Promise<SceneWire> {
+  const isCurrent = captureAuthScope()
+  const row = await request()
+  const read = ++nextRead
+
+  if (!isCurrent?.()) {
+    throw new Error(getStrings().living.toasts.sceneRegenerateFailed)
+  }
+
   const scene = await resolveScene(row)
 
-  cacheSceneDetails([scene], ++nextRead)
+  if (!isCurrent()) {
+    throw new Error(getStrings().living.toasts.sceneRegenerateFailed)
+  }
 
-  return scene
+  cacheSceneDetails([scene], read)
+  await hydrateScene()
+
+  if (!isCurrent()) {
+    throw new Error(getStrings().living.toasts.sceneRegenerateFailed)
+  }
+
+  return row
 }
 
 async function preload(url: string): Promise<void> {
@@ -699,9 +716,7 @@ export async function createScene(input: SceneGenerationInput = {}): Promise<Sce
       return { kind: 'unavailable' }
     }
 
-    const created = await resolveScene(row)
-
-    return epoch === currentClearEpoch() ? { kind: 'created', scene: created } : { kind: 'unavailable' }
+    return { kind: 'created', sceneId: String(row.id) }
   } catch (error) {
     if (epoch === currentClearEpoch()) {
       const issue: SceneCreationIssue = {
@@ -749,11 +764,9 @@ export async function adoptSceneImage(
 }
 
 export async function cancelSceneTask(sceneId: string): Promise<SceneWire> {
-  const row = await mutate('companion_scenes.post_scene_discard', { path: { scene_id: Number(sceneId) } })
-
-  await applySceneRow(row)
-
-  return row
+  return mutateSceneRow(() =>
+    sceneRequest('companion_scenes.post_scene_discard', { path: { scene_id: Number(sceneId) } })
+  )
 }
 
 export async function activateScene(sceneId: string): Promise<void> {
@@ -777,26 +790,24 @@ export async function deleteScene(sceneId: string): Promise<void> {
 }
 
 export async function editScene(sceneId: string, title: string, description: string): Promise<SceneWire> {
-  const row = await mutate('companion_scenes.scene_edit_route', {
-    path: { scene_id: Number(sceneId) },
-    body: { title, description }
-  })
-
-  await applySceneRow(row)
-
-  return row
+  return mutateSceneRow(() =>
+    sceneRequest('companion_scenes.scene_edit_route', {
+      path: { scene_id: Number(sceneId) },
+      body: { title, description }
+    })
+  )
 }
 
 export async function regenerateScene(sceneId: string): Promise<void> {
-  await mutate('companion_scenes.post_scene_regenerate', { path: { scene_id: Number(sceneId) } })
+  await mutateSceneRow(() =>
+    sceneRequest('companion_scenes.post_scene_regenerate', { path: { scene_id: Number(sceneId) } })
+  )
 }
 
 export async function analyzeScene(sceneId: string): Promise<SceneWire> {
-  const row = await mutate('companion_scenes.scene_analyze_route', { path: { scene_id: Number(sceneId) } })
-
-  await applySceneRow(row)
-
-  return row
+  return mutateSceneRow(() =>
+    sceneRequest('companion_scenes.scene_analyze_route', { path: { scene_id: Number(sceneId) } })
+  )
 }
 
 export async function setScenePolicy(policy: ScenePolicy): Promise<void> {

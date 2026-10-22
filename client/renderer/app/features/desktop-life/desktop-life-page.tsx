@@ -73,6 +73,7 @@ import {
   desktopLifeActionsToCreate,
   desktopLifeReadyForActions,
   desktopLifeSelectedAction,
+  isActionOutcomeUnknown,
   isActionPaused
 } from './desktop-life-status'
 import { DesktopLifeWorkbench } from './desktop-life-workbench'
@@ -111,7 +112,6 @@ export function DesktopLifePage({
   const requestRef = useRef<Map<string, { scope: string; title: string }>>(new Map())
   const [requests, setRequests] = useState<Record<string, { scope: string; title: string }>>({})
   const [operationErrors, setOperationErrors] = useState<Record<string, string>>({})
-  const [preferencesSaving, setPreferencesSaving] = useState(false)
   const [aspectChoice, setAspectChoice] = useState<DesktopVideoAspectMismatch | null>(null)
   const resolveAspectChoice = useRef<((policy: DesktopVideoAspectPolicy | null) => void) | null>(null)
   const aspectGeneration = useRef(0)
@@ -144,6 +144,7 @@ export function DesktopLifePage({
   const setScope = `set:${selectedSetId}`
   const createScope = `create:${selectedSetId}`
   const actionScope = `${setScope}:action:${action?.id}`
+  // 库级入口仅偏好保存占用：LibraryView 的 busy/savingPreferences 均由此派生。
   const libraryScope = 'library'
 
   const operationScope = createOpen ? createScope : selected ? actionScope : libraryScope
@@ -230,7 +231,6 @@ export function DesktopLifePage({
     requestRef.current.clear()
     setRequests({})
     setOperationErrors({})
-    setPreferencesSaving(false)
     setRename('')
     setDesignMessage(null)
     libraryFocus.current = null
@@ -352,23 +352,6 @@ export function DesktopLifePage({
 
           return next
         })
-      }
-    }
-  }
-
-  const savePreferences = async (change: Parameters<typeof setDesktopVideoPreferences>[0]): Promise<void> => {
-    if (busy(libraryScope) || preferencesSaving) {
-      return
-    }
-
-    const isLive = beginAsync()
-    setPreferencesSaving(true)
-
-    try {
-      await perform(() => setDesktopVideoPreferences(change), t.preferencesSaving, 'library')
-    } finally {
-      if (isLive()) {
-        setPreferencesSaving(false)
       }
     }
   }
@@ -565,7 +548,7 @@ export function DesktopLifePage({
     desktopLifeActionStatus(item, t, queueStrings, commonStrings.actionVariants)
 
   const creationStatus = (item: DesktopVideoAction): React.ComponentProps<typeof CreationFeedback> | null => {
-    if (item.draft?.submission_unknown || item.draft?.recovery_action === 'wait') {
+    if (isActionOutcomeUnknown(item)) {
       return {
         state: 'unknown',
         title: t.resultPending,
@@ -1025,15 +1008,17 @@ export function DesktopLifePage({
         </CreationWorkspace>
       ) : (
         <DesktopLifeLibraryView
-          busy={busy(libraryScope) || preferencesSaving}
+          busy={busy(libraryScope)}
           feedback={workspaceStatus}
           focusTarget={libraryFocus.current}
           issue={loadIssue}
           loading={loading}
           onCreate={openCreate}
           onOpenSet={openSet}
-          onSavePreferences={change => void savePreferences(change)}
-          savingPreferences={preferencesSaving}
+          onSavePreferences={change =>
+            void perform(() => setDesktopVideoPreferences(change), t.preferencesSaving, libraryScope)
+          }
+          savingPreferences={busy(libraryScope)}
           search={librarySearch}
           sets={sets}
           state={state}

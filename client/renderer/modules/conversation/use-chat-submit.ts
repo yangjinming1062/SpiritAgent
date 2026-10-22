@@ -142,13 +142,15 @@ export function useChatSubmit({
             item => item.role === 'user' && item.backendMessageId === edit.sourceMessageId && item.subtype === undefined
           )
 
-      const editStale = (): boolean =>
+      const editStale = (sourceIndex: number): boolean =>
         edit.sessionId !== $chatSessionId.get() ||
         $chatTurnInFlight.get() ||
         $pendingPromptBatch.get().length > 0 ||
-        editSourceIndex() < 0
+        sourceIndex < 0
 
-      if (editStale()) {
+      const sourceIndex = editSourceIndex()
+
+      if (editStale(sourceIndex)) {
         onPreCheckFail(getStrings().chat.edit.stale)
 
         return
@@ -156,7 +158,7 @@ export function useChatSubmit({
 
       const hasLaterUserMessage = $chatMessageList
         .get()
-        .slice(editSourceIndex() + 1)
+        .slice(sourceIndex + 1)
         .some(item => item.role === 'user' && item.backendMessageId !== undefined && item.subtype === undefined)
 
       if (hasLaterUserMessage) {
@@ -178,7 +180,7 @@ export function useChatSubmit({
         return
       }
 
-      if (editStale()) {
+      if (editStale(editSourceIndex())) {
         onPreCheckFail(getStrings().chat.edit.stale)
 
         return

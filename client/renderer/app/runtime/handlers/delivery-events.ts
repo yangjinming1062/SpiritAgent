@@ -2,7 +2,6 @@ import { isSpriteOverlayVisible } from '@/app/workflows/proactive-delivery'
 import { openSessionSurface } from '@/app/workflows/session-delivery'
 import { $effectiveTier, $screenLocked } from '@/modules/character'
 import {
-  chatDisplayText,
   findConversationRuntime,
   invalidateSessionHistory,
   rememberPendingMessage,
@@ -13,6 +12,8 @@ import { type GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { $chatVisible } from '@/shared/store/chat-visibility'
 import { notify, notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
+
+import { pendingReplyText } from './pending-reply'
 
 // 主动消息与通知投递：companion.message / system.notification / 视频任务完成。提醒是否出现由打扰档位、锁屏与聊天可见性共同裁决；精灵旁提示另需精灵实际可见，不可见时由未读承接。
 
@@ -26,18 +27,7 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
         break
       }
 
-      const text = bubbles.findLast(b => 'text' in b)?.text ?? bubbles.findLast(b => b.type === 'link')?.title ?? ''
-
-      const displayText = chatDisplayText(text)
-      const hasMedia = bubbles.some(bubble => bubble.type === 'image' || bubble.type === 'video')
-
-      const pendingText =
-        displayText ||
-        (hasMedia
-          ? bubbles.some(bubble => bubble.type === 'video')
-            ? getStrings().notifications.system.videoReady
-            : getStrings().notifications.system.imageReady
-          : '')
+      const { preview: displayText, pending: pendingText } = pendingReplyText(undefined, bubbles)
 
       // 此事件由服务端写入唯一陪伴主会话；会话列表尚未加载时也能确定提醒归属。
       setCompanionSessionId(payload.session_id)

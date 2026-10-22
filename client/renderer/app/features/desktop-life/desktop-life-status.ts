@@ -51,6 +51,10 @@ export function isActionPaused(action: DesktopVideoAction): boolean {
   return action.status === 'processing' && action.stage === 'paused'
 }
 
+export function isActionOutcomeUnknown(action: DesktopVideoAction): boolean {
+  return Boolean(action.draft?.submission_unknown || action.draft?.recovery_action === 'wait')
+}
+
 export function desktopLifeCreationStage(
   action: DesktopVideoAction,
   t: ReturnType<typeof useStrings>['desktopLife']
@@ -78,7 +82,7 @@ export function desktopLifeActionStatus(
     return variantStrings.statuses[ownVariant.status]
   }
 
-  if (action.draft?.submission_unknown || action.draft?.recovery_action === 'wait') {
+  if (isActionOutcomeUnknown(action)) {
     return t.resultPending
   }
 

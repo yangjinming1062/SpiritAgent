@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 
+import { useForegroundRestored } from './use-reading-foreground'
+
 interface ReadingReceiptState {
   scope: string
   refreshKey: number
@@ -34,7 +36,6 @@ export function useReadingReceipt({
   }))
 
   const requestRef = useRef<Promise<boolean> | undefined>(undefined)
-  const wasForeground = useRef(foreground)
   const beginAsync = useAsyncGuard()
 
   useEffect(() => {
@@ -47,14 +48,7 @@ export function useReadingReceipt({
     }))
   }, [scope, refreshKey])
 
-  useEffect(() => {
-    const restored = foreground && !wasForeground.current
-    wasForeground.current = foreground
-
-    if (restored) {
-      setState(current => ({ ...current, blocked: false }))
-    }
-  }, [foreground])
+  useForegroundRestored(foreground, () => setState(current => ({ ...current, blocked: false })))
 
   useEffect(() => {
     if (

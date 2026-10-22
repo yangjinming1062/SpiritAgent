@@ -7,6 +7,11 @@ export function isMacosApplicationTarget(target: string): boolean {
   return path.isAbsolute(target) && path.extname(target).toLowerCase() === '.app'
 }
 
+// 判定 canonical 路径是否为完整 .app Bundle 目录结构；fs 异常继续抛出，调用方按错误码分流。
+export async function isCompleteMacosBundle(canonical: string): Promise<boolean> {
+  return (await stat(canonical)).isDirectory() && (await stat(path.join(canonical, 'Contents', 'Info.plist'))).isFile()
+}
+
 export async function validateMacosApplicationTarget(target: string): Promise<MacosApplicationInfo> {
   if (!isMacosApplicationTarget(target)) {
     throw new Error('请选择应用程序。')
@@ -14,11 +19,7 @@ export async function validateMacosApplicationTarget(target: string): Promise<Ma
 
   const canonical = await realpath(target)
 
-  if (
-    !isMacosApplicationTarget(canonical) ||
-    !(await stat(canonical)).isDirectory() ||
-    !(await stat(path.join(canonical, 'Contents', 'Info.plist'))).isFile()
-  ) {
+  if (!isMacosApplicationTarget(canonical) || !(await isCompleteMacosBundle(canonical))) {
     throw new Error('应用程序目录无效。')
   }
 

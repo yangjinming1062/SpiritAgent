@@ -6,8 +6,6 @@ import {
   $companionLifecycle,
   ensureCompanionHydrated,
   hydrateActionCatalog,
-  hydratePersona,
-  hydratePortrait,
   hydrateVideoPack,
   SpriteVfxOverlay
 } from '@/modules/character'
@@ -71,7 +69,7 @@ export function SurfaceCompanion(): React.JSX.Element | null {
 
     void hydrateActionCatalog()
     void hydrateVideoPack()
-    void ensureCompanionHydrated({ hydratePersona, hydratePortrait })
+    void ensureCompanionHydrated()
   }, [auth.kind, lifecycle, visible])
 
   if (!hasSlot) {

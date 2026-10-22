@@ -13,7 +13,7 @@ import type { MacosApplicationInfo } from '../shared/desktop-macos'
 import { createSerialQueue } from '../shared/utils'
 
 import type { CatalogApplication, CatalogScan, DesktopAppCatalog } from './desktop-app-catalog'
-import { isMacosApplicationTarget, readMacosApplicationIcon } from './macos-application-target'
+import { isCompleteMacosBundle, isMacosApplicationTarget, readMacosApplicationIcon } from './macos-application-target'
 
 const CACHE_TTL_MS = 60_000
 const MAX_APPLICATIONS = 1000
@@ -105,8 +105,7 @@ export function createMacosAppCatalog(): DesktopAppCatalog {
               if (
                 isMacosApplicationTarget(canonical) &&
                 !seen.has(canonical) &&
-                (await withinBudget(fs.stat(canonical))).isDirectory() &&
-                (await withinBudget(fs.stat(path.join(canonical, 'Contents', 'Info.plist')))).isFile()
+                (await withinBudget(isCompleteMacosBundle(canonical)))
               ) {
                 seen.add(canonical)
                 candidates.push(canonical)

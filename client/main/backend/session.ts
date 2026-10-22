@@ -446,10 +446,6 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
         throw new SessionError({ code: 'account-not-found', message: '该账户未保存在本机。' })
       }
 
-      if (cached?.id === id && cached.tokenExpiresAt > now()) {
-        return snapshot()
-      }
-
       return activateCode(account.activationCode, payload.clientContext)
     })
   }

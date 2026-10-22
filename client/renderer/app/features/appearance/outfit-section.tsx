@@ -691,15 +691,19 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady, search }: Outfi
                 const pack = packs.find(item => item.outfit_id === outfit.id)
                 const canWear = pack?.status === 'ready' && pack.identity_review !== 'review'
 
+                const continueDesign = (): void => {
+                  if (session.busy) {
+                    return
+                  }
+
+                  updateAppearanceUi({ draftId: outfit.id })
+                  session.adoptDraft(outfit.id, outfit.fullbodyUrl ?? '')
+                  setDesigning(true)
+                }
+
                 const openOutfit = (): void => {
                   if (canEdit) {
-                    if (session.busy) {
-                      return
-                    }
-
-                    updateAppearanceUi({ draftId: outfit.id })
-                    session.adoptDraft(outfit.id, outfit.fullbodyUrl ?? '')
-                    setDesigning(true)
+                    continueDesign()
                   } else {
                     onSelectOutfit(outfit.id)
                   }
@@ -779,11 +783,7 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady, search }: Outfi
                                 aria-label={t.actions.continueDesign}
                                 className={CARD_ACTION_CLASS}
                                 disabled={session.busy}
-                                onClick={() => {
-                                  updateAppearanceUi({ draftId: outfit.id })
-                                  session.adoptDraft(outfit.id, outfit.fullbodyUrl ?? '')
-                                  setDesigning(true)
-                                }}
+                                onClick={continueDesign}
                                 title={t.actions.continueDesignTitle}
                                 type="button"
                               >

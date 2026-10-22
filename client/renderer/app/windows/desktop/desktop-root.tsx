@@ -50,7 +50,6 @@ export function DesktopRoot(): React.JSX.Element {
   const strings = useStrings()
   const t = strings.desktopShell
   const desktopLife = strings.desktopLife
-  const dict = useStrings()
   const auth = useStore($auth)
   const uiStateReady = useStore($uiStateReady)
   const appPage = useStore($appPage)
@@ -286,8 +285,8 @@ export function DesktopRoot(): React.JSX.Element {
   }, [uiStateReady, navigationRevision, appPage, activate])
 
   useEffect(() => {
-    document.title = `${dict.brand.name} · ${t.title}`
-  }, [dict.brand.name, t.title])
+    document.title = `${strings.brand.name} · ${t.title}`
+  }, [strings.brand.name, t.title])
 
   useEffect(() => {
     const element = workspaceRef.current
@@ -492,7 +491,7 @@ export function DesktopRoot(): React.JSX.Element {
               {portrait ? (
                 <img alt="" className={styles.avatarPortrait} src={portrait} />
               ) : (
-                <span className={styles.avatarPortrait}>{dict.brand.name.slice(0, 1)}</span>
+                <span className={styles.avatarPortrait}>{strings.brand.name.slice(0, 1)}</span>
               )}
               {chatWindow && <i aria-hidden="true" className={styles.runningDot} />}
             </button>

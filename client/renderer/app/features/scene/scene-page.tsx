@@ -25,7 +25,6 @@ import {
   editScene,
   hydrateScene,
   inspectSceneCreationIssue,
-  loadSceneDetail,
   loadSceneLibrary,
   prepareScenePrompt,
   refreshSceneStatus,
@@ -269,7 +268,6 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
 
   const regenerate = async (sceneId: string): Promise<void> => {
     await regenerateScene(sceneId)
-    await loadSceneDetail(sceneId)
   }
 
   const saveAndRegenerate = async (sceneId: string): Promise<void> => {
@@ -312,7 +310,7 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
 
       if (result.kind === 'created' && isLive() && revision === creationRevision.current) {
         changeCreateDraft(INITIAL_CREATE_DRAFT)
-        openDetail(result.scene.id)
+        openDetail(result.sceneId)
       }
     } finally {
       if (isLive()) {
