@@ -266,11 +266,11 @@ async def submit_onboarding_field(
     await db.refresh(persona, with_for_update=True)
     if persona.is_complete:
         if field.startswith("user_"):
-            if value and value.strip():
+            if value:
                 await record_user_profile(
                     db,
                     MemoryScope(user_id, "companion"),
-                    {field: value.strip()[:_ONBOARDING_MAX_LEN]},
+                    {field: value.strip()},
                 )
                 await db.commit()
             # 传空值不动 Memory 行：清除 user_* 条目通过记忆管理删除

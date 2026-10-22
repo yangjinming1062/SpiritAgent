@@ -33,6 +33,8 @@ from features.appearance.character_card import (
     require_character_snapshot,
 )
 from features.appearance.queries import (
+    active_avatar_snapshot,
+    active_outfit_id,
     mark_initial_video_started,
     outfit_identity_matches,
     outfit_snapshot,
@@ -50,8 +52,6 @@ from .execution_state import _ACTION_INFLIGHT, _DEFAULT_CANVAS, _SYSTEM_ACTION_S
 from .helpers import _artifact_abs_path, _copy_portrait_asset, _pack_dir, _reference_hash
 from .queries import (
     _action_order,
-    _active_avatar,
-    _active_outfit_id,
     _can_publish_jobs,
     _can_resume_job,
     _can_resume_pose_preparation,
@@ -141,7 +141,7 @@ async def create_pack_from_clips(
             raise VideoPackStateError("外观尚未确认，无法创建动作包")
         await _reject_concurrent_build(db, user_id, outfit.id)
         await _reject_pack_regeneration(db, user_id, outfit.id)
-        avatar = await _active_avatar(db, user_id)
+        avatar = await active_avatar_snapshot(db, user_id)
         reference_hash = await _reference_hash(outfit, avatar)
 
         for action, (data, _content_type) in clips.items():
@@ -208,7 +208,7 @@ async def create_pack_from_reference(
                 raise VideoPackStateError("该动作包的制作资料不完整，请重新生成动作包")
             if source_context.reference_alignment != "ready":
                 raise VideoPackStateError("动作参考尚未准备完成，请等待原任务")
-            await _require_current_identity_image(source_context, await _active_avatar(db, user_id))
+            await _require_current_identity_image(source_context, await active_avatar_snapshot(db, user_id))
             job = await _queue_in_place_redo(db, source, action, feedback)
             if source.status == "failed":
                 source.status, source.error = "processing", None
@@ -233,7 +233,7 @@ async def create_pack_from_reference(
             if outfit.initial_video_started:
                 raise VideoPackStateError("基础动作包任务已移除，请在衣柜重新准备")
         await _reject_concurrent_build(db, user_id, outfit.id)
-        avatar = await _active_avatar(db, user_id)
+        avatar = await active_avatar_snapshot(db, user_id)
         reference_hash = await _reference_hash(outfit, avatar)
         identity = await require_character_snapshot(db, user_id)
         seed_path = avatar.seed_fullbody_url if avatar else ""
@@ -315,7 +315,7 @@ async def create_pack_from_reference(
         if reference_path is None:
             raise VideoPackStateError("外观参考图不可读")
         pending_assets.callback(unlink_companion_asset, reference_path)
-        active_outfit_id = await _active_outfit_id(db, user_id)
+        current_outfit_id = await active_outfit_id(db, user_id)
         identity_reference_path = await _copy_portrait_asset(
             seed_path,
             user_id=user_id,
@@ -335,7 +335,7 @@ async def create_pack_from_reference(
             outfit_description=outfit.description or "",
             outfit_description_frozen=bool(outfit.description),
             feedback=feedback,
-            active_outfit_id=outfit.id if create_only and outfit.is_initial else active_outfit_id,
+            active_outfit_id=outfit.id if create_only and outfit.is_initial else current_outfit_id,
             must_actions=list(REQUIRED_SYSTEM_SLOTS),
         )
         context.storage_directory = directory
@@ -388,7 +388,7 @@ async def retry_pack(
         if action is None:
             await _reject_concurrent_build(db, user_id, pack.outfit_id)
         outfit = await outfit_snapshot(db, pack.user_id, pack.outfit_id)
-        avatar = await _active_avatar(db, user_id)
+        avatar = await active_avatar_snapshot(db, user_id)
         if outfit is None or avatar is None or pack.avatar_id != avatar.id:
             raise VideoPackStateError("该动作包对应的角色形象已切换，请重新生成动作包")
         if not _artifact_abs_path(pack.reference_path).is_file():
@@ -558,7 +558,7 @@ async def activate_pack(db: AsyncSession, user_id: int, pack_id: int) -> ActionP
         if pack.status != "ready":
             raise VideoPackStateError("动作包尚未就绪")
         outfit = await outfit_snapshot(db, pack.user_id, pack.outfit_id)
-        avatar = await _active_avatar(db, user_id)
+        avatar = await active_avatar_snapshot(db, user_id)
         if outfit is None or await _reference_hash(outfit, avatar) != pack.reference_hash:
             raise VideoPackStateError("该动作包对应的参考已变更")
         context = _load_generation_context(pack)

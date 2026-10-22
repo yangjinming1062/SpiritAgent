@@ -66,6 +66,10 @@ BACKUP_RESTORE_ORDER: tuple[str, ...] = (
     "companion_topic_usages",
     *(table for table in TABLES if table not in CONVERSATION_TABLES | {"user_model_configs", "custom_voices"}),
 )
+# conversations 先写入以就绪 rewriter 的会话映射，其余表保持 BACKUP_RESTORE_ORDER 原序。
+RESTORE_SEQUENCE: tuple[str, ...] = ("conversations",) + tuple(
+    table for table in BACKUP_RESTORE_ORDER if table != "conversations"
+)
 # 父类覆盖会改变仍被保留的子类引用，子类未随本次恢复清理时须保留父类；None 表示引用嵌在 JSON / 数组等非关系列中，只要存在保留行就按可能有关联处理。
 OVERWRITE_DEPENDENT_REFERENCES: dict[str, tuple[tuple[str, str | None], ...]] = {
     "avatar_assets": (
@@ -687,21 +691,8 @@ async def restore_backup_rows(
             failures = (*failures, *clear_failures)
         id_map: dict[str, dict[str, int | str]] = {}
         imported: dict[str, int] = {}
-        if "conversations" in compatible_rows:
-            id_map["conversations"], imported["conversations"] = await _restore_table(
-                db,
-                "conversations",
-                compatible_rows["conversations"],
-                compatible_rows,
-                target_user_id,
-                rewriter,
-                id_map,
-                mode=mode,
-                import_batch_id=import_batch_id,
-                asset_owner_id=target_user_id,
-            )
-        for table in BACKUP_RESTORE_ORDER:
-            if table == "conversations" or table not in compatible_rows:
+        for table in RESTORE_SEQUENCE:
+            if table not in compatible_rows:
                 continue
             id_map[table], imported[table] = await _restore_table(
                 db,

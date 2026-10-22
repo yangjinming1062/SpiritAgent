@@ -64,18 +64,22 @@ class QwenVideoGenProvider(VideoGenProvider):
         reference_images: bool = False,
         reference_videos: bool = False,
     ) -> tuple[str, ...]:
-        if reference_videos or duration not in _DURATIONS or (reference_images and (first_frame or last_frame)):
+        if (
+            self._reject_reference_media(
+                first_frame=first_frame,
+                last_frame=last_frame,
+                reference_images=reference_images,
+                reference_videos=reference_videos,
+            )
+            or duration not in _DURATIONS
+        ):
             return ()
         return "480P", "720P", "1080P"
 
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
-        if req.reference_videos:
-            raise ProviderError("Qwen video generation does not support reference videos", status_code=400)
-        if req.reference_images:
-            if req.first_frame_image or req.last_frame_image:
-                raise ProviderError("qwen reference images cannot be mixed with first/last frames", status_code=400)
-            if len(req.reference_images) > 10:
-                raise ProviderError("qwen accepts at most ten reference images", status_code=400)
+        self.validate_request(req)
+        if req.reference_images and len(req.reference_images) > 10:
+            raise ProviderError("qwen accepts at most ten reference images", status_code=400)
         if req.duration not in _DURATIONS:
             raise ProviderError(f"qwen video_gen requires duration in 2..30, got {req.duration!r}", status_code=400)
         api_resolution = self.native_resolution(req.resolution or "")

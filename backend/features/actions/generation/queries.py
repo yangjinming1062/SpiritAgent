@@ -10,21 +10,11 @@ from features.actions.materials import accepted_action_asset
 from features.actions.media_contracts import ActionResult
 from features.actions.models import REQUIRED_SYSTEM_SLOTS, SYSTEM_SLOTS, CompanionAction, CompanionActionPack
 from features.actions.policy import is_unsubmitted_video_plan
-from features.appearance.queries import active_avatar_snapshot, active_outfit_id
-from features.appearance.query_contracts import AvatarSnapshot
 from features.media.chain import MediaChainState
 from features.media.character_images import ImageChainState
 
 from .execution_state import _GEN_INFLIGHT
 from .helpers import _artifact_abs_path
-
-
-async def _active_avatar(db: AsyncSession, user_id: int) -> AvatarSnapshot | None:
-    return await active_avatar_snapshot(db, user_id)
-
-
-async def _active_outfit_id(db: AsyncSession, user_id: int) -> int | None:
-    return await active_outfit_id(db, user_id)
 
 
 def _action_order(action: str) -> tuple[int, str]:

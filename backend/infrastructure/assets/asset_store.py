@@ -218,10 +218,14 @@ def dated_asset_directory(created_at: datetime, timezone: str) -> str:
     return value.astimezone(ZoneInfo(timezone)).strftime("%Y%m%d")
 
 
+def _relative_path(directory: str, filename: str) -> str:
+    return f"{directory}/{filename}" if directory else filename
+
+
 def _asset_path(user_id: int, directory: str, filename: str) -> str:
     if user_id <= 0 or (directory and not valid_asset_relative_path(directory)):
         raise ValueError("invalid asset directory")
-    relative = f"{directory}/{filename}" if directory else filename
+    relative = _relative_path(directory, filename)
     if not valid_asset_relative_path(relative):
         raise ValueError("invalid asset path")
     return f"companion-assets/{user_id}/{relative}"
@@ -248,7 +252,7 @@ def save_companion_asset(data: bytes, *, user_id: int, label: str, ext: str, dir
         raise ValueError("invalid asset extension")
     filename = f"{safe_label}_{secrets.token_urlsafe(8)}.{ext}"
     bare = _asset_path(user_id, directory, filename)
-    target = _asset_target(user_id, bare.split("/", 2)[2])
+    target = _asset_target(user_id, _relative_path(directory, filename))
     target.parent.mkdir(parents=True, exist_ok=True)
     protect_asset_write(bare)
     try:

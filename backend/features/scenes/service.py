@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from runtime.events.emit import emit_ws_event
 from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
 from runtime.user_maintenance import is_user_in_maintenance, track_user_task
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.queries import nightly_account
@@ -94,11 +94,14 @@ def _scene_lock(user_id: int) -> asyncio.Lock:
     return _SCENE_LOCKS.setdefault(user_id, asyncio.Lock())
 
 
-async def _persona(db: AsyncSession, user_id: int) -> PersonaSnapshot:
-    persona = await persona_snapshot(db, user_id)
+def _require_complete(persona: PersonaSnapshot | None) -> PersonaSnapshot:
     if persona is None or not persona.is_complete:
         raise SceneStateError("请先完成角色设定")
     return persona
+
+
+async def _persona(db: AsyncSession, user_id: int) -> PersonaSnapshot:
+    return _require_complete(await persona_snapshot(db, user_id))
 
 
 async def _require_scene(db: AsyncSession, user_id: int, scene_id: int) -> CompanionScene:
@@ -114,11 +117,15 @@ def _regeneration_asset_paths(row: CompanionScene) -> set[str]:
     return SceneRegenerationState.model_validate_json(row.regeneration_state_json).image_chain.stored_paths()
 
 
-async def _event(db: AsyncSession, persona: PersonaSnapshot, event_type: str, scene_id: int | None = None) -> None:
-    persona = await advance_scene_state(db, persona.user_id)
+async def _event(db: AsyncSession, user_id: int, event_type: str, scene_id: int | None = None) -> None:
+    try:
+        persona = await advance_scene_state(db, user_id)
+    except ValueError as exc:
+        raise SceneStateError("请先完成角色设定") from exc
+    _require_complete(persona)
     emit_ws_event(
         db,
-        user_id=persona.user_id,
+        user_id=user_id,
         event_type=event_type,
         payload={
             "scene_id": scene_id,
@@ -146,7 +153,7 @@ async def set_scene_policy(db: AsyncSession, user_id: int, policy: str) -> Scene
         persona = await change_scene_policy(db, user_id, ScenePolicy(policy).value)
         # 即使重新选择相同政策，也撤销尚未兑现的切换意图。
         persona = await advance_scene_switch(db, persona.user_id)
-        await _event(db, persona, "companion.scene.updated")
+        await _event(db, persona.user_id, "companion.scene.updated")
         await db.commit()
     return ScenePolicy(policy)
 
@@ -178,7 +185,7 @@ async def activate_scene(
             # 用户再次选择当前环境仍取消旧的自动切换意图，但不产生一次环境变化。
             if origin == SceneOrigin.USER_REQUEST.value:
                 persona = await advance_scene_switch(db, persona.user_id)
-                await _event(db, persona, "companion.scene.updated", scene_id)
+                await _event(db, persona.user_id, "companion.scene.updated", scene_id)
                 await db.commit()
             return row
         await _check_policy(db, persona, origin)
@@ -186,7 +193,7 @@ async def activate_scene(
         persona = await advance_scene_switch(db, persona.user_id)
         persona = await set_active_scene(db, user_id, scene_id)
         row.activated_at = utc_now()
-        await _event(db, persona, "companion.scene.activated", scene_id)
+        await _event(db, persona.user_id, "companion.scene.activated", scene_id)
         await db.commit()
         return row
 
@@ -222,7 +229,7 @@ async def _new_scene(
         if await get_pending_scene_task(db, user_id) is not None:
             if auto_activate:
                 persona = await advance_scene_switch(db, persona.user_id)
-                await _event(db, persona, "companion.scene.updated")
+                await _event(db, persona.user_id, "companion.scene.updated")
                 await db.commit()
                 raise SceneStateError("已有场景正在准备，之前的自动切换已撤销；请等待完成或取消任务后重试")
             raise SceneStateError("已有场景正在准备，请等待完成或取消该任务")
@@ -252,7 +259,7 @@ async def _new_scene(
         )
         db.add(row)
         await db.flush()
-        await _event(db, persona, "companion.scene.updated", row.id)
+        await _event(db, persona.user_id, "companion.scene.updated", row.id)
         await db.commit()
         return row
 
@@ -340,7 +347,7 @@ async def regenerate_scene(user_id: int, scene_id: int) -> CompanionScene:
             row.regeneration_state_json = regeneration.model_dump_json()
         else:
             raise SceneStateError("只有失败的生成任务或已保存图片的场景才能重新生成")
-        await _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
+        await _event(db, user_id, "companion.scene.updated", scene_id)
         await enqueue_asset_cleanup(db, user_id, cleanup_paths)
         await db.commit()
     await cleanup_user_assets(user_id)
@@ -362,7 +369,7 @@ async def adopt_scene(user_id: int, scene_id: int | None, *, data: bytes) -> Com
             raise SceneStateError("该场景不在等待上传状态")
         target = SceneImageSize.model_validate_json(row.target_size_json) if row.target_size_json else SCENE_IMAGE_SIZE
         row.stage = "store"
-        await _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
+        await _event(db, user_id, "companion.scene.updated", scene_id)
         await db.commit()
     try:
         saved = await _save_image(user_id, scene_id, data, target=target)
@@ -396,7 +403,7 @@ async def discard_scene(user_id: int, scene_id: int) -> CompanionScene:
                 persona = await advance_scene_switch(db, persona.user_id)
         else:
             raise SceneStateError("该场景没有待取消的任务")
-        await _event(db, persona, "companion.scene.updated", scene_id)
+        await _event(db, persona.user_id, "companion.scene.updated", scene_id)
         await enqueue_asset_cleanup(db, user_id, cleanup_paths)
         await db.commit()
         task = _INFLIGHT_TASKS.get((user_id, scene_id))
@@ -422,7 +429,7 @@ async def delete_scene(user_id: int, scene_id: int) -> None:
             paths |= ImageChainState.model_validate_json(row.generation_state_json).stored_paths()
         paths |= _regeneration_asset_paths(row)
         await db.delete(row)
-        await _event(db, persona, "companion.scene.updated", scene_id)
+        await _event(db, persona.user_id, "companion.scene.updated", scene_id)
         await enqueue_asset_cleanup(db, user_id, paths)
         await db.commit()
     await cleanup_user_assets(user_id)
@@ -451,7 +458,7 @@ async def edit_scene_description(user_id: int, scene_id: int, description: Scene
         row.stage = "complete"
         row.ready_at = row.ready_at or utc_now()
         row.error = None
-        await _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
+        await _event(db, user_id, "companion.scene.updated", scene_id)
         await enqueue_asset_cleanup(db, user_id, cleanup_paths)
         await db.commit()
     await cleanup_user_assets(user_id)
@@ -484,7 +491,7 @@ async def retry_scene_description(user_id: int, scene_id: int) -> CompanionScene
             row.error = None
         else:
             raise SceneStateError("该场景无需重试分析")
-        await _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
+        await _event(db, user_id, "companion.scene.updated", scene_id)
         await db.commit()
     _launch_task(scene_id, user_id, regeneration_task_id=regeneration_task_id)
     return row
@@ -526,7 +533,7 @@ async def _save_image(user_id: int, scene_id: int, data: bytes, *, target: Scene
             row.source_size_json = wallpaper.source_size.model_dump_json()
             row.image_size_json = wallpaper.image_size.model_dump_json()
             row.stage = "analyze"
-            await _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
+            await _event(db, user_id, "companion.scene.updated", scene_id)
             await db.commit()
             committed = True
             return row
@@ -537,13 +544,14 @@ async def _save_image(user_id: int, scene_id: int, data: bytes, *, target: Scene
 
 async def _scene_image_uri(user_id: int, path: str) -> str:
     parsed_path = parse_companion_asset_path(path)
-    local = (
-        asset_store.resolve_companion_asset_path(*parsed_path) if parsed_path and parsed_path[0] == user_id else None
+    uri = (
+        await asyncio.to_thread(asset_store.read_valid_image_data_uri, path)
+        if parsed_path and parsed_path[0] == user_id
+        else None
     )
-    if local is None:
+    if uri is None:
         raise SceneStateError("场景图片无法读取")
-    data, mime = await asyncio.to_thread(validate_image_bytes, await asyncio.to_thread(local[0].read_bytes))
-    return await asyncio.to_thread(build_data_uri, data, mime)
+    return uri
 
 
 async def _describe_image(user_id: int, path: str) -> SceneDescriptionRequest:
@@ -584,7 +592,7 @@ async def _analyze(user_id: int, scene_id: int) -> None:
             row.generation_state_json = None
         row.reference_image = ""
         persona = await _persona(db, user_id)
-        await _event(db, persona, "companion.scene.updated", scene_id)
+        await _event(db, persona.user_id, "companion.scene.updated", scene_id)
         can_activate = row.auto_activate and row.switch_version == persona.scene_switch_version
         if can_activate:
             try:
@@ -595,7 +603,7 @@ async def _analyze(user_id: int, scene_id: int) -> None:
         if can_activate:
             persona = await set_active_scene(db, user_id, row.id)
             row.activated_at = utc_now()
-            await _event(db, persona, "companion.scene.activated", scene_id)
+            await _event(db, persona.user_id, "companion.scene.activated", scene_id)
         await enqueue_asset_cleanup(db, user_id, cleanup_paths)
         await db.commit()
     await cleanup_user_assets(user_id)
@@ -687,7 +695,7 @@ async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> 
             frozen.image_chain = progress
             fresh.regeneration_state_json = frozen.model_dump_json()
             fresh.regeneration_stage = "analyze" if frozen.wallpaper_path else progress.phase
-            await _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
+            await _event(db, user_id, "companion.scene.updated", scene_id)
             await db.commit()
 
     old_path = ""
@@ -727,7 +735,7 @@ async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> 
             row.regeneration_error = None
             row.regeneration_state_json = None
             await enqueue_asset_cleanup(db, user_id, state.stored_paths() | ({old_path} if old_path else set()))
-            await _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
+            await _event(db, user_id, "companion.scene.updated", scene_id)
             await db.commit()
     finally:
         async with SESSION_LOCAL() as db:
@@ -770,7 +778,7 @@ async def _mark_regeneration_failed(
         row.regeneration_status = "failed"
         row.regeneration_stage = "review_failed" if review_failed else "analyze" if retry_analysis else "failed"
         row.regeneration_error = error
-        await _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
+        await _event(db, user_id, "companion.scene.updated", scene_id)
         await enqueue_asset_cleanup(db, user_id, cleanup_paths)
         await db.commit()
     await cleanup_user_assets(user_id)
@@ -816,7 +824,7 @@ async def _run_pipeline(scene_id: int, user_id: int) -> None:
                 fresh.attempt_count += 1
             fresh.generation_state_json = progress.model_dump_json()
             fresh.stage = "analyze" if progress.phase == "complete" else progress.phase
-            await _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
+            await _event(db, user_id, "companion.scene.updated", scene_id)
             await db.commit()
 
     if needs_image:
@@ -842,7 +850,7 @@ async def _run_pipeline(scene_id: int, user_id: int) -> None:
             fresh.image_size_json = wallpaper.image_size.model_dump_json()
             fresh.generation_state_json = state.model_dump_json()
             fresh.stage = "analyze"
-            await _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
+            await _event(db, user_id, "companion.scene.updated", scene_id)
             await db.commit()
     await _analyze(user_id, scene_id)
 
@@ -856,7 +864,7 @@ async def _mark_failed(user_id: int, scene_id: int, error: str, *, review_failed
         row.error = error
         if review_failed:
             row.stage = "review_failed"
-        await _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
+        await _event(db, user_id, "companion.scene.updated", scene_id)
         await db.commit()
 
 
@@ -944,27 +952,25 @@ async def resume_scene_generation(user_id: int, scene_id: int) -> bool:
     return resumable
 
 
+async def _resume_scene_row(row: CompanionScene) -> None:
+    # 同行双 pending 不可达；优先恢复重新生成，缺任务或维护中时回退整单重跑。
+    if row.regeneration_status == "pending" and row.regeneration_task_id and not is_user_in_maintenance(row.user_id):
+        _launch_task(row.id, row.user_id, regeneration_task_id=row.regeneration_task_id)
+    elif row.status == "pending":
+        await resume_scene_generation(row.user_id, row.id)
+
+
 async def resume_scene_jobs() -> None:
     async with SESSION_LOCAL() as db:
         rows = (
-            await db.execute(
-                select(CompanionScene.user_id, CompanionScene.id).where(CompanionScene.status == "pending"),
-            )
-        ).all()
-    for user_id, scene_id in rows:
-        await resume_scene_generation(user_id, scene_id)
-
-    async with SESSION_LOCAL() as db:
-        regenerations = (
-            await db.execute(
-                select(CompanionScene.user_id, CompanionScene.id, CompanionScene.regeneration_task_id).where(
-                    CompanionScene.regeneration_status == "pending",
+            await db.scalars(
+                select(CompanionScene).where(
+                    or_(CompanionScene.status == "pending", CompanionScene.regeneration_status == "pending"),
                 ),
             )
         ).all()
-    for user_id, scene_id, task_id in regenerations:
-        if task_id and not is_user_in_maintenance(user_id):
-            _launch_task(scene_id, user_id, regeneration_task_id=task_id)
+    for row in rows:
+        await _resume_scene_row(row)
 
 
 async def _scene_paid_boundary(user_id: int) -> None:
@@ -973,19 +979,16 @@ async def _scene_paid_boundary(user_id: int) -> None:
 
 async def resume_user_scene_jobs(user_id: int) -> None:
     async with SESSION_LOCAL() as db:
-        scenes = (
+        rows = (
             await db.scalars(
                 select(CompanionScene).where(
                     CompanionScene.user_id == user_id,
-                    (CompanionScene.status == "pending") | (CompanionScene.regeneration_status == "pending"),
+                    or_(CompanionScene.status == "pending", CompanionScene.regeneration_status == "pending"),
                 ),
             )
         ).all()
-    for row in scenes:
-        if row.regeneration_status == "pending" and row.regeneration_task_id:
-            _launch_task(row.id, user_id, regeneration_task_id=row.regeneration_task_id)
-        elif row.status == "pending":
-            await resume_scene_generation(user_id, row.id)
+    for row in rows:
+        await _resume_scene_row(row)
 
 
 _INITIAL_SCENE_DEFAULT_NOTES = "整洁宁静的日常起居空间，光线柔和，桌椅、床铺与少量个人物品摆放合理。"

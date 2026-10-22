@@ -1,5 +1,6 @@
 from typing import ClassVar
 
+from infrastructure.ai.providers._audio_mime import audio_extension_for_mime
 from infrastructure.ai.providers._provider_errors import raise_for_provider_response
 from infrastructure.ai.providers.base import ProviderConfig, STTProvider, STTResult
 from infrastructure.ai.providers.http import get_http
@@ -18,21 +19,7 @@ class GrokSTTProvider(STTProvider):
 
     async def transcribe(self, audio: bytes, *, mime_type: str = "audio/wav", language: str = "auto") -> STTResult:
         # xAI 通过文件头自动识别容器格式，multipart 文件名只需看起来合理。
-        if "wav" in mime_type:
-            ext = "wav"
-        elif "mpeg" in mime_type or "mp3" in mime_type:
-            ext = "mp3"
-        elif "ogg" in mime_type:
-            ext = "ogg"
-        elif "flac" in mime_type:
-            ext = "flac"
-        elif "m4a" in mime_type or "mp4" in mime_type:
-            ext = "m4a"
-        elif "webm" in mime_type:
-            ext = "webm"
-        else:
-            ext = "wav"
-
+        ext = audio_extension_for_mime(mime_type)
         files = {"file": (f"audio.{ext}", audio, mime_type)}
 
         resp = await self._client.post("/stt", files=files)

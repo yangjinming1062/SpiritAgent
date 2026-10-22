@@ -53,6 +53,22 @@ def _source_readiness(snapshot: DesktopContext, expected_key: str) -> str | None
     return None
 
 
+async def _suite_source_reason(suite: DesktopVideoSet, snapshot: DesktopContext | None = None) -> str | None:
+    snapshot = snapshot if snapshot is not None else parse_desktop_context(suite.source, suite.context_json)
+    return await asyncio.to_thread(_source_readiness, snapshot, suite.source_visual_key)
+
+
+async def suite_blocked_reason(
+    db: AsyncSession,
+    suite: DesktopVideoSet,
+    snapshot: DesktopContext | None = None,
+) -> str | None:
+    """就绪原因优先，否则基准原因。"""
+    if reason := await _suite_source_reason(suite, snapshot):
+        return reason
+    return await desktop_base_blocked_reason(db, suite)
+
+
 async def desktop_action_source(
     db: AsyncSession,
     user_id: int,
@@ -64,8 +80,7 @@ async def desktop_action_source(
     if suite is None:
         return None
     snapshot = parse_desktop_context(suite.source, suite.context_json)
-    reason = await asyncio.to_thread(_source_readiness, snapshot, suite.source_visual_key)
-    reason = reason or await desktop_base_blocked_reason(db, suite)
+    reason = await suite_blocked_reason(db, suite, snapshot)
     outfit_description = snapshot.outfit_description
     if isinstance(snapshot, DesktopUploadSnapshot):
         idle = await db.scalar(
@@ -115,16 +130,13 @@ async def desktop_action_generation_blocked_reason(
     action: DesktopVideoAction,
     suite: DesktopVideoSet,
 ) -> str | None:
-    if suite.source != "ai":
-        snapshot = parse_desktop_context(suite.source, suite.context_json)
-        if reason := await asyncio.to_thread(_source_readiness, snapshot, suite.source_visual_key):
-            return reason
+    if suite.source != "ai" and (reason := await _suite_source_reason(suite)):
+        return reason
     if action.key == "idle":
         return None
     if action.definition_id is None:
         return await desktop_base_blocked_reason(db, suite)
-    source = await desktop_action_source(db, action.user_id, suite.id)
-    return source.blocked_reason if source is not None else "桌景已删除"
+    return await suite_blocked_reason(db, suite)
 
 
 class DesktopStateSnapshot(BaseModel):

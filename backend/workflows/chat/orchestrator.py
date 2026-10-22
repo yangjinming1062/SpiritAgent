@@ -74,6 +74,7 @@ from workflows.chat.turn_errors import (
 )
 from workflows.chat.turn_inputs import (
     build_turn_inputs,
+    estimate_context_tokens,
     memory_query_text,
     merge_session_settings,
     parse_temperature,
@@ -130,7 +131,7 @@ async def compress_session_history(
             memory_scope,
             task=task,
         )
-    _, info = await compress_history(
+    compressed, info = await compress_history(
         inputs.context,
         user_id=user_id,
         task=task,
@@ -147,20 +148,11 @@ async def compress_session_history(
         )
     async with session_scope() as db:
         await persist_compression_checkpoint(db, conv.id, info)
-        compressed = await build_turn_inputs(
-            db,
-            conv,
-            user_id,
-            req,
-            client_context,
-            effective_settings,
-            memory_scope,
-            task=task,
-        )
+        history = await context_messages(db, conv)
     return ManualCompressionResult(
         info=info,
-        total_tokens=compressed.estimated_tokens,
-        context_window=compressed.ctx_length,
+        total_tokens=estimate_context_tokens(compressed, history),
+        context_window=inputs.ctx_length,
     )
 
 
@@ -541,8 +533,11 @@ async def _run_chat_turn(
             # 动作资料与工具资格共用本次快照，执行时再校验目标仍有效。
             schemas_by_name = {
                 schema_name(schema): schema
-                for schema in REGISTRY.get_all_schemas(user_id, user_settings=effective_settings)
-                if schema_name(schema) not in inputs.excluded_tool_names
+                for schema in REGISTRY.get_all_schemas(
+                    user_id,
+                    user_settings=effective_settings,
+                    exclude=inputs.excluded_tool_names,
+                )
             }
             available_schemas = apply_search_tools_catalog(
                 available_media_tool_schemas(

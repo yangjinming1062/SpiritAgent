@@ -29,7 +29,7 @@ from features.companion.proactive_runtime import (
 from features.companion.prompts import CHECK_IN_INTENT_TEXTS
 from features.companion.queries import complete_user_ids
 from features.configuration.settings.queries import timezone_settings
-from features.configuration.settings.values import decode_setting_value, get_user_setting
+from features.configuration.settings.values import get_user_setting
 from features.conversation.evidence import companion_conversation_users
 from features.memory.memory_learning import list_memory_review_scopes
 from features.memory.memory_review import memory_review_backed_off, review_memories
@@ -387,7 +387,7 @@ async def _maybe_run_autonomous_activity(now: datetime) -> None:
         for user_id, timezone_name in rows:
             if is_user_in_maintenance(user_id):
                 continue
-            zone = parse_timezone(decode_setting_value(timezone_name))
+            zone = parse_timezone(timezone_name)
             if zone is None:
                 continue
             scope = MemoryScope(user_id, COMPANION_PRESET_ID)

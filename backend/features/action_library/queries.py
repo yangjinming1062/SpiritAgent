@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .identity import definition_applies_to_source, definition_matches_source
 from .models import ActionDefinition, ActionSyncTarget
-from .ports import read_variant
+from .ports import read_variants
 from .schemas import (
     ActionDefinitionSnapshot,
     ActionSourceSnapshot,
@@ -18,8 +18,9 @@ from .schemas import (
 )
 
 
-def definition_view(row: ActionDefinition) -> ActionDefinitionSnapshot:
-    source = ActionSourceSnapshot.model_validate_json(row.review_source_json)
+def definition_view(row: ActionDefinition, source: ActionSourceSnapshot | None = None) -> ActionDefinitionSnapshot:
+    if source is None:
+        source = ActionSourceSnapshot.model_validate_json(row.review_source_json)
     return ActionDefinitionSnapshot(
         id=row.id,
         user_id=row.user_id,
@@ -47,13 +48,32 @@ async def definition_snapshot(db: AsyncSession, user_id: int, definition_id: int
     return definition_view(row) if row is not None and row.user_id == user_id else None
 
 
-async def definition_review_source(db: AsyncSession, user_id: int, definition_id: int) -> ActionSourceSnapshot | None:
+async def definition_with_source(
+    db: AsyncSession,
+    user_id: int,
+    definition_id: int,
+) -> tuple[ActionDefinitionSnapshot, ActionSourceSnapshot] | None:
     row = await db.get(ActionDefinition, definition_id)
-    return (
-        ActionSourceSnapshot.model_validate_json(row.review_source_json)
-        if row is not None and row.user_id == user_id
-        else None
+    if row is None or row.user_id != user_id:
+        return None
+    source = ActionSourceSnapshot.model_validate_json(row.review_source_json)
+    return definition_view(row, source), source
+
+
+async def definitions_by_id(
+    db: AsyncSession,
+    user_id: int,
+    definition_ids: Collection[int],
+) -> dict[int, ActionDefinitionSnapshot]:
+    if not definition_ids:
+        return {}
+    rows = await db.scalars(
+        select(ActionDefinition).where(
+            ActionDefinition.user_id == user_id,
+            ActionDefinition.id.in_(definition_ids),
+        ),
     )
+    return {row.id: definition_view(row) for row in rows}
 
 
 async def definitions_for_source(
@@ -128,30 +148,38 @@ async def target_snapshot(db: AsyncSession, user_id: int, target_id: int) -> Act
 
 
 async def variant_summaries(db: AsyncSession, user_id: int, definition_id: int) -> list[ActionVariantSummary]:
-    result: list[ActionVariantSummary] = []
-    for target in await targets_for_definition(db, user_id, definition_id):
-        current = await read_variant(db, target)
+    return (await variant_summaries_by_definition(db, user_id, (definition_id,)))[definition_id]
+
+
+async def variant_summaries_by_definition(
+    db: AsyncSession,
+    user_id: int,
+    definition_ids: Collection[int],
+) -> dict[int, list[ActionVariantSummary]]:
+    result: dict[int, list[ActionVariantSummary]] = {definition_id: [] for definition_id in definition_ids}
+    targets = await targets_for_definitions(db, user_id, definition_ids)
+    summaries = await read_variants(db, targets)
+    for target, current in zip(targets, summaries, strict=True):
         if target.state == "excluded":
             current = ActionVariantSummary(
                 target_kind=target.target_kind,
                 target_id=target.target_id,
                 action_id=None,
-                label=current.label if current else "",
+                label=current.label,
                 status="excluded",
                 reason=target.reason,
             )
-        elif target.state == "blocked" and (current is None or current.status == "not_generated"):
+        elif target.state == "blocked" and current.status == "not_generated":
             current = ActionVariantSummary(
                 target_kind=target.target_kind,
                 target_id=target.target_id,
                 action_id=target.action_id,
-                label=current.label if current else "",
+                label=current.label,
                 status="blocked",
                 reason=target.reason,
-                can_generate=current.can_generate if current else False,
+                can_generate=current.can_generate,
             )
-        if current is not None:
-            result.append(current)
+        result[target.definition_id].append(current)
     return result
 
 

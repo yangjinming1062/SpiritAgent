@@ -8,10 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from features.conversation.asset_releases import collect_message_asset_releases
 from features.conversation.fork import SourceNotFoundError
 from features.conversation.history import build_session_messages
+from features.conversation.http_contracts import SessionUndoResult
 from features.conversation.main_conversation import SPECIAL_KIND
 from features.conversation.models import Conversation, Message
 from features.conversation.reply_audio import cancel_reply_audio
-from features.conversation.schemas import UndoAnchor, UndoAttachment, UndoResult
+from features.conversation.schemas import UndoAnchor, UndoAttachment
 
 
 class UndoNotAllowedError(Exception):
@@ -76,7 +77,7 @@ async def undo_conversation_to_message(
     db: AsyncSession,
     conv: Conversation,
     source_message_id: int,
-) -> UndoResult:
+) -> SessionUndoResult:
     """硬删 ``id >= source_message_id`` 的行并 hydrate；调用方必须已 resolve 且已 prune。"""
     anchor_row = (
         await db.execute(
@@ -111,7 +112,7 @@ async def undo_conversation_to_message(
 
     delivered = await build_session_messages(conv.id, db)
 
-    return UndoResult(
+    return SessionUndoResult(
         session_id=str(conv.id),
         deleted_count=deleted_count,
         anchor=_undo_anchor(anchor_content, anchor_content_type),

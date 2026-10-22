@@ -7,7 +7,7 @@ from infrastructure.config import SETTINGS
 from infrastructure.logger import get_logger
 from infrastructure.text import coerce_int, tool_error
 from infrastructure.web.extract_provider import resolve_extract_provider, resolve_search_provider
-from infrastructure.web.web_providers.base import WebDocument
+from infrastructure.web.web_providers.base import WebDocument, WebSearchProvider
 from runtime.tools.prompts import (
     WEB_EXTRACT_DESC,
     WEB_EXTRACT_PARAM_DESCS,
@@ -80,6 +80,15 @@ async def web_search_tool(query: str, limit: int | None = None, **_: object) -> 
     return result.model_dump_json(exclude_none=True)
 
 
+def _extract_provider_problem(provider: WebSearchProvider) -> str | None:
+    """extract 能力检查的单一来源；None 表示可用，返回值是模型可见的不可用原因。"""
+    if not provider.is_available():
+        return provider.missing_credential_message() or f"{provider.display_name} is not configured or unavailable."
+    if not provider.supports_extract():
+        return f"{provider.display_name} does not support extraction."
+    return None
+
+
 async def web_extract_tool(
     urls: list[str],
     llm_config: UserLlmConfig,
@@ -87,11 +96,8 @@ async def web_extract_tool(
     **_: object,
 ) -> str:
     provider = resolve_extract_provider()
-    if not provider.is_available():
-        msg = provider.missing_credential_message() or (f"{provider.display_name} is not configured or unavailable.")
-        return tool_error(msg)
-    if not provider.supports_extract():
-        return tool_error(f"{provider.display_name} does not support extraction.")
+    if (problem := _extract_provider_problem(provider)) is not None:
+        return tool_error(problem)
 
     logger.info("Web extract", extra={"provider_name": provider.name, "url_count": len(urls)})
     try:
@@ -151,9 +157,8 @@ WEB_EXTRACT_SCHEMA = {
 
 
 def _web_extract_available() -> bool:
-    """与 ``web_extract_tool`` 运行时检查互为镜像，让无法服务 extract 的供应商不暴露对应 schema。"""
-    provider = resolve_extract_provider()
-    return provider.is_available() and provider.supports_extract()
+    """与 ``web_extract_tool`` 共用 ``_extract_provider_problem``，让无法服务 extract 的供应商不暴露对应 schema。"""
+    return _extract_provider_problem(resolve_extract_provider()) is None
 
 
 def register(registry: ToolsRegistry) -> None:

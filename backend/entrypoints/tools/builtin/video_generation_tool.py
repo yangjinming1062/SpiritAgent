@@ -2,19 +2,13 @@ import asyncio
 import json
 from uuid import uuid4
 
-from features.appearance.avatar_service import (
-    AvatarGenerationError,
-    AvatarSourceUnreadableError,
-)
+from features.appearance.avatar_service import AvatarGenerationError
 from features.appearance.visual_identity import (
-    apply_outfit_override,
     build_plain_video_prompt,
-    build_self_video_prompt,
-    load_self_visual_context,
-    self_video_references,
+    build_self_video_inputs,
 )
 from features.conversation.reply_media import apply_video_status, require_video_source
-from features.desktop_life.queries import desktop_current_styling_reference
+from features.desktop_life.self_visual import load_self_visual_plan
 from features.media.contracts import VideoJobSnapshot
 from features.media.identity_contracts import CharacterReferenceRole
 from features.media.prompts import VIDEO_REFERENCE_TEMPLATE
@@ -87,36 +81,21 @@ async def _submit_video(
     outfit_override: str | None,
 ) -> tuple[dict[str, object], VideoJobSnapshot | None]:
     """提交已校验请求并返回真实任务状态；成品由后台沿原句柄查询及交付。"""
-    visual = None
+    visual_plan = None
     identity_reference_role: CharacterReferenceRole = "portrait"
     references = (reference_image,) if reference_image else ()
     if subject == "self":
         try:
-            use_outfit = not bool((outfit_override or "").strip() or reference_image)
-            async with SESSION_LOCAL() as db:
-                styling = await desktop_current_styling_reference(db, user_id) if use_outfit else None
-            visual = await load_self_visual_context(
+            visual_plan = await load_self_visual_plan(
                 user_id,
-                use_outfit_reference=use_outfit,
-                current_styling=styling,
+                outfit_override=outfit_override,
+                use_outfit_reference=not bool(reference_image),
             )
-            plan = apply_outfit_override(visual, outfit_override)
-            identity_reference_role = visual.identity_reference_role
-            identity_reference = None
-            if reference_image and not plan.override_outfit_description:
-                identity_reference = await asyncio.to_thread(read_asset_data_uri, visual.fullbody_path)
-                if not identity_reference:
-                    raise AvatarSourceUnreadableError("全身身份参考缺失或无法读取")
-                identity_reference_role = "fullbody"
-            references = self_video_references(plan, reference_image, identity_reference=identity_reference)
+            inputs = await build_self_video_inputs(visual_plan, prompt, reference_image)
+            prompt, references = inputs.prompt, inputs.references
+            identity_reference_role = inputs.identity_reference_role
         except (AvatarGenerationError, VisualReasoningError) as e:
             return {"success": False, "error": str(e)}, None
-        prompt = build_self_video_prompt(
-            plan,
-            prompt,
-            has_outfit_reference=len(references) > 1,
-            identity_reference_role=identity_reference_role,
-        )
     elif references:
         prompt = VIDEO_REFERENCE_TEMPLATE.format(prompt=prompt)
     else:
@@ -136,8 +115,8 @@ async def _submit_video(
                 resolution=resolution,
                 reference_images=references,
                 aspect_ratio=aspect_ratio,
-                identity_reference_path=visual.fullbody_path if visual is not None else None,
-                identity=visual.identity if visual is not None else None,
+                identity_reference_path=visual_plan.context.fullbody_path if visual_plan is not None else None,
+                identity=visual_plan.context.identity if visual_plan is not None else None,
                 identity_reference_role=identity_reference_role,
                 structured_reply=structured_reply,
                 media_id=media_id,

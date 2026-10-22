@@ -95,10 +95,6 @@ async def _get_scoped_job(db: AsyncSession, scope: MemoryScope, job_id: int) -> 
     )
 
 
-async def _create_job_conversation(db: AsyncSession, user_id: int, name: str) -> int:
-    return await create_task_conversation(db, user_id, name)
-
-
 async def _ensure_active_job_capacity(db: AsyncSession, user_id: int, candidate_job_id: int | None = None) -> None:
     stmt = select(func.count()).select_from(CronJob).where(CronJob.user_id == user_id, CronJob.is_paused.is_(False))
     if candidate_job_id is not None:
@@ -139,7 +135,7 @@ async def create_job(
         if not job.is_paused:
             await _ensure_active_job_capacity(db, user_id)
         if normalized_kind == STANDARD_CRON_KIND:
-            job.conversation_id = await _create_job_conversation(db, user_id, name)
+            job.conversation_id = await create_task_conversation(db, user_id, name)
         db.add(job)
         await db.commit()
         await db.refresh(job)
@@ -198,7 +194,7 @@ async def update_job(
         if not job.is_paused:
             await _ensure_active_job_capacity(db, user_id, job.id)
         if job.kind == STANDARD_CRON_KIND and job.conversation_id is None:
-            job.conversation_id = await _create_job_conversation(db, user_id, job.name)
+            job.conversation_id = await create_task_conversation(db, user_id, job.name)
         elif job.kind == SPECIAL_CRON_KIND:
             job.conversation_id = None
         if previous_intent != tuple(getattr(job, field) for field in _INTENT_INVALIDATING_FIELDS):
@@ -228,7 +224,7 @@ async def resolve_job_conversation(user_id: int, job_id: int, conversation_id: i
             existing = await owned_task_conversation_id(db, user_id, conversation_id)
             if existing is not None:
                 return existing
-        created_id = await _create_job_conversation(db, user_id, name)
+        created_id = await create_task_conversation(db, user_id, name)
         await db.execute(
             update(CronJob).where(CronJob.id == job_id, CronJob.user_id == user_id).values(conversation_id=created_id),
         )

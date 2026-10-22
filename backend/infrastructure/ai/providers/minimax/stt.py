@@ -1,5 +1,6 @@
 from typing import ClassVar
 
+from infrastructure.ai.providers._audio_mime import audio_extension_for_mime
 from infrastructure.ai.providers.base import ProviderConfig, STTProvider, STTResult
 from infrastructure.ai.providers.http import get_http
 from infrastructure.ai.providers.minimax._errors import raise_for_minimax_response
@@ -11,20 +12,12 @@ class MiniMaxSTTProvider(STTProvider):
     provider_name = "minimax"
     DEFAULT_BASE_URL: ClassVar[str] = "https://api.minimaxi.com"
 
-    # 上传侧归一化只产这几种 MIME；扩展名与 MiniMax 支持格式对齐，其余（含默认 audio/wav）按 wav 命名。
-    _EXT_BY_MIME: ClassVar[dict[str, str]] = {
-        "audio/mpeg": "mp3",
-        "audio/ogg": "ogg",
-        "audio/mp4": "m4a",
-        "audio/webm": "webm",
-    }
-
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)
         self._client = get_http(config.base_url, config.api_key)
 
     async def transcribe(self, audio: bytes, *, mime_type: str = "audio/wav", language: str = "auto") -> STTResult:
-        ext = self._EXT_BY_MIME.get(mime_type, "wav")
+        ext = audio_extension_for_mime(mime_type)
         files = {"file": (f"audio.{ext}", audio, mime_type)}
         data = {"model": self.config.model}
         headers = {"language": language} if language and language != "auto" else None

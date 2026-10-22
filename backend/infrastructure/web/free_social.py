@@ -25,6 +25,7 @@ from .social_content import (
     SocialSearchPage,
     SocialSourceError,
     extract_inline_subtitles,
+    failure_reason,
     validate_source_url,
 )
 from .xiaohongshu import XiaohongshuServiceClient
@@ -86,17 +87,10 @@ class _XBootstrapClient:
                         method, payload = "GET", None
                     continue
                 if not 200 <= response.status_code < 300:
-                    reason = (
-                        "login_required"
-                        if response.status_code in {401, 403}
-                        else "rate_limited"
-                        if response.status_code == 429
-                        else "source_failed"
-                    )
                     raise SocialSourceError(
                         "X signing bootstrap request failed",
                         code=response.status_code,
-                        reason=reason,
+                        reason=failure_reason(response.status_code),
                     )
                 return response
         raise SocialSourceError("X bootstrap exceeded redirect limit", code=422, reason="bootstrap_failed")
@@ -269,14 +263,11 @@ class FreeSocialClient:
                     cookies=self._x_cookies,
                 )
                 if not 200 <= response.status_code < 300:
-                    reason = (
-                        "login_required"
-                        if response.status_code in {401, 403}
-                        else "rate_limited"
-                        if response.status_code == 429
-                        else "source_failed"
+                    raise SocialSourceError(
+                        "X source request failed",
+                        code=response.status_code,
+                        reason=failure_reason(response.status_code),
                     )
-                    raise SocialSourceError("X source request failed", code=response.status_code, reason=reason)
                 payload = response.json()
         except httpx.HTTPError:
             raise SocialSourceError("X source network error", reason="network_error") from None

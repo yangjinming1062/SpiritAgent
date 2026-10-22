@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.models import lock_user_row
 from features.action_library.ports import read_source
-from features.action_library.queries import variant_summaries
+from features.action_library.queries import variant_summaries_by_definition
 from features.action_library.service import register_source_targets
 from features.assets.lifecycle import enqueue_asset_cleanup
 from features.desktop_life.models import (
@@ -98,6 +98,13 @@ def desktop_accepted_asset(action: DesktopVideoAction) -> DesktopVideoAsset | No
     )
 
 
+def desktop_action_playable(action: DesktopVideoAction, accepted: DesktopVideoAsset | None = None) -> bool:
+    """成品存在且启用未过期；调用方已解析 accepted 时传入即可避免重复探测。"""
+    if accepted is None:
+        accepted = desktop_accepted_asset(action)
+    return accepted is not None and action.enabled and not action.needs_update
+
+
 async def desktop_base_blocked_reason(db: AsyncSession, suite: DesktopVideoSet) -> str | None:
     """其他动作只在安静相伴成品及其基准生效后制作；重做草稿不撤销当前成品。"""
     idle = await db.scalar(
@@ -108,7 +115,7 @@ async def desktop_base_blocked_reason(db: AsyncSession, suite: DesktopVideoSet) 
         ),
     )
     asset = desktop_accepted_asset(idle) if idle is not None else None
-    if idle is None or asset is None or not idle.enabled or idle.needs_update:
+    if idle is None or not desktop_action_playable(idle, asset):
         return "请先完成这套桌景的安静相伴"
     if (
         not suite.base_image_path
@@ -233,7 +240,7 @@ def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionRes
     progress = desktop_progress(action)
     candidate = progress.candidate if progress is not None else None
     poster = accepted.poster_path if accepted else progress.pose_path if progress else ""
-    playable = accepted is not None and action.enabled and not action.needs_update
+    playable = desktop_action_playable(action, accepted)
     draft = progress if progress is not None and action.stage != "complete" else None
     failed_opening = desktop_failed_opening_review(action, progress)
     status = "failed" if failed_opening else action.status
@@ -356,27 +363,42 @@ async def desktop_action_response_with_sync(
     db: AsyncSession,
     action: DesktopVideoAction,
 ) -> DesktopVideoActionResponse:
-    return await _populate_action_sync(db, action.user_id, desktop_action_response(action))
+    response = desktop_action_response(action)
+    await _populate_action_sync(db, action.user_id, [response])
+    return response
 
 
 async def _populate_action_sync(
     db: AsyncSession,
     user_id: int,
-    response: DesktopVideoActionResponse,
-) -> DesktopVideoActionResponse:
-    if response.draft is not None and response.draft.recovery_action != "wait":
-        suite = await db.get(DesktopVideoSet, response.set_id)
-        snapshot = parse_desktop_context(suite.source, suite.context_json) if suite is not None else None
-        if response.draft.recovery_action == "replace_upload":
-            response.draft.recovery_action = (
-                "replace_upload"
-                if isinstance(snapshot, DesktopUploadSnapshot) and not snapshot.locked
-                else "recreate_set"
-            )
-        if isinstance(snapshot, DesktopUploadSnapshot) and snapshot.locked and desktop_upload_source_error(snapshot):
-            response.draft.recovery_action = "recreate_set"
-    if response.definition_id is not None:
-        response.sync_targets = await variant_summaries(db, user_id, response.definition_id)
+    responses: Sequence[DesktopVideoActionResponse],
+) -> None:
+    """共享版本状态一次批量读取后按 definition_id 分发；draft 恢复归类逐件判定。"""
+    for response in responses:
+        if response.draft is not None and response.draft.recovery_action != "wait":
+            suite = await db.get(DesktopVideoSet, response.set_id)
+            snapshot = parse_desktop_context(suite.source, suite.context_json) if suite is not None else None
+            if response.draft.recovery_action == "replace_upload":
+                response.draft.recovery_action = (
+                    "replace_upload"
+                    if isinstance(snapshot, DesktopUploadSnapshot) and not snapshot.locked
+                    else "recreate_set"
+                )
+            if (
+                isinstance(snapshot, DesktopUploadSnapshot)
+                and snapshot.locked
+                and desktop_upload_source_error(snapshot)
+            ):
+                response.draft.recovery_action = "recreate_set"
+    summaries = await variant_summaries_by_definition(
+        db,
+        user_id,
+        {response.definition_id for response in responses if response.definition_id is not None},
+    )
+    for response in responses:
+        if response.definition_id is None:
+            continue
+        response.sync_targets = list(summaries[response.definition_id])
         local = next(
             (
                 target
@@ -391,7 +413,6 @@ async def _populate_action_sync(
             and local.status in {"blocked", "not_generated"}
         ):
             response.status, response.can_generate, response.error = local.status, local.can_generate, local.reason
-    return response
 
 
 async def desktop_set_response(
@@ -420,12 +441,15 @@ async def desktop_set_responses(
     ):
         actions_by_set.setdefault(action.set_id, []).append(action)
     responses = []
+    pending: dict[int, list[DesktopVideoActionResponse]] = {}
     for row in rows:
         response = _desktop_set_response(row, actions_by_set.get(row.id, []), current_id=current_id)
         response.proposals = await shared_desktop_proposals(db, row.user_id, row.id)
-        for action in response.actions:
-            await _populate_action_sync(db, row.user_id, action)
         responses.append(response)
+        if response.actions:
+            pending.setdefault(row.user_id, []).extend(response.actions)
+    for user_id, actions in pending.items():
+        await _populate_action_sync(db, user_id, actions)
     return responses
 
 
@@ -519,7 +543,7 @@ async def emit_desktop_play(
 ) -> DesktopVideoPlayCommand:
     state = await require_desktop_current(db, user_id, action.set_id)
     asset = desktop_accepted_asset(action)
-    if not action.enabled or action.needs_update or asset is None:
+    if not desktop_action_playable(action, asset):
         raise DesktopVideoStateError("这个桌面动作尚未就绪")
     if source == "autonomous" and (state.pinned or not state.autonomous_enabled):
         raise DesktopVideoStateError("桌面动作已固定或自主切换已关闭")

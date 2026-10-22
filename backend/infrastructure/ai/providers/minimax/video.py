@@ -58,9 +58,7 @@ def _validate_video_url(url: str) -> None:
 
 
 def _build_content(req: VideoGenRequest) -> list[dict]:
-    """组装文本与首尾帧；参考素材与首尾帧是互斥模式。"""
-    if (req.reference_images or req.reference_videos) and (req.first_frame_image or req.last_frame_image):
-        raise ProviderError("MiniMax reference media cannot be mixed with first/last frames", status_code=400)
+    """组装文本与参考素材、首尾帧。"""
     if len(req.reference_images) > 9:
         raise ProviderError("MiniMax accepts at most nine reference images", status_code=400)
     if len(req.reference_videos) > 3:
@@ -128,10 +126,11 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
         reference_videos: bool = False,
     ) -> tuple[str, ...]:
         durations, resolutions = self.durations, self.resolutions
-        if (
-            duration not in durations
-            or ((reference_images or reference_videos) and (first_frame or last_frame))
-            or (reference_videos and not self.supports_reference_videos)
+        if duration not in durations or self._reject_reference_media(
+            first_frame=first_frame,
+            last_frame=last_frame,
+            reference_images=reference_images,
+            reference_videos=reference_videos,
         ):
             return ()
         return resolutions

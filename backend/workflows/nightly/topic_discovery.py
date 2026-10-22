@@ -8,7 +8,7 @@ from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from features.accounts.queries import nightly_account
-from features.configuration.settings.values import get_user_setting
+from features.configuration.settings.values import get_user_setting_bool
 from features.topics.schemas import TopicSelection
 from features.topics.store import (
     begin_batch,
@@ -112,8 +112,13 @@ def _inside_window(candidate: SocialContent, start: datetime, end: datetime) -> 
 async def _configured(scope: MemoryScope) -> None:
     async with session_scope() as db:
         account = await nightly_account(db, scope.user_id)
-        enabled = await get_user_setting(db, scope.user_id, "companion.information_discovery_enabled")
-    if account is None or not account.is_active or not account.nightly_activity_enabled or enabled is not True:
+        enabled = await get_user_setting_bool(
+            db,
+            scope.user_id,
+            "companion.information_discovery_enabled",
+            default=False,
+        )
+    if account is None or not account.is_active or not account.nightly_activity_enabled or not enabled:
         raise DiscoveryDisabledError("主动信息检索已关闭或账户不可用")
     if not source_configured():
         raise DiscoveryDisabledError("未配置可用的社交资讯来源")
@@ -370,7 +375,11 @@ async def discover_topics(
             expires_at=expires_at,
             started_at=utc_now(),
         )
-        recent = await recent_topic_feedback(db, scope, since=batch.started_at - timedelta(days=30), limit=None)
+        recent = (
+            await recent_topic_feedback(db, scope, since=batch.started_at - timedelta(days=30), limit=None)
+            if not batch.checkpoint
+            else []
+        )
         await db.commit()
     checkpoint = (
         _Checkpoint.model_validate(batch.checkpoint)
@@ -379,17 +388,10 @@ async def discover_topics(
             source_backend=SETTINGS.social_search_backend,
             context={
                 **context,
-                "recent_topics": [
-                    {key: value for key, value in topic.items() if key not in {"body", "subtitle"}} for topic in recent
-                ],
+                "recent_topics": recent,
             },
         )
     )
-    eligible = {
-        _candidate_id(candidate): candidate
-        for candidate in checkpoint.candidates
-        if candidate.has_evidence and _inside_window(candidate, batch.window_start, batch.window_end)
-    }
     if batch.status == "failed":
         return TopicDiscoveryResult(status="error", summary={"batch_id": batch.id, "reason": batch.error})
     if batch.status == "ready":

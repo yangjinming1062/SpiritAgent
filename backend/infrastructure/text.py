@@ -1,8 +1,8 @@
 import json
 import logging
 import re
-from datetime import UTC, datetime
-from typing import Any
+from datetime import UTC, date, datetime
+from typing import Any, overload
 
 from pydantic import BaseModel
 
@@ -83,12 +83,25 @@ def ensure_utc(dt: datetime) -> datetime:
     return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
 
 
+@overload
+def _safe_localize(dt: None, tz_str: str | None) -> None: ...
+
+
+@overload
+def _safe_localize(dt: datetime, tz_str: str | None) -> datetime: ...
+
+
 def _safe_localize(dt: datetime | None, tz_str: str | None) -> datetime | None:
     if dt is None:
         return None
     dt = ensure_utc(dt)
     zone = parse_timezone(tz_str) or UTC
     return dt.astimezone(zone)
+
+
+def local_date(dt: datetime, tz_str: str | None) -> date:
+    """本地日历日期；时区缺失或无效时按 UTC。"""
+    return _safe_localize(dt, tz_str).date()
 
 
 def format_local_iso(dt: datetime | None, tz_str: str | None) -> str | None:

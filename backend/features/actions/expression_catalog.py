@@ -60,9 +60,9 @@ async def window_expression_catalog(
         return None
     items: list[ExpressionActionSnapshot] = []
     for row in await list_pack_actions(db, pack.id, enabled_only=True, refresh=True):
-        if not is_expression_action(row):
-            continue
         material = accepted_action_asset(row)
+        if not is_expression_action(row, material=material):
+            continue
         if not isinstance(material, AcceptedVideoActionAsset) or resolve_asset_reference(material.media_path) is None:
             continue
         items.append(

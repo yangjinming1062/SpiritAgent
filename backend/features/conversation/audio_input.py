@@ -8,7 +8,7 @@ from infrastructure.ai.stt_service import transcribe_audio
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import safe_json_loads
-from infrastructure.video_processing.audio import audio_wav_bytes, probe_audio
+from infrastructure.video_processing.audio import audio_wav_bytes
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import select
 
@@ -112,8 +112,7 @@ async def _transcript(
                 path = resolve_audio_file(session_id, file_id) if file_id else None
                 if path is None:
                     raise ValueError("音频附件已失效")
-                duration = await asyncio.to_thread(probe_audio, path)
-                audio = await asyncio.to_thread(audio_wav_bytes, path)
+                audio, duration = await asyncio.to_thread(audio_wav_bytes, path)
                 text = (await transcribe_audio(user_id, audio, "audio/wav")).strip()
                 if not text:
                     raise ValueError("未识别到音频中的文字")
@@ -157,8 +156,7 @@ async def prepare_audio_input(
             path = resolve_audio_file(session_id, file_id) if file_id else None
             if path is None:
                 raise ValueError("音频附件已失效")
-            duration = await asyncio.to_thread(probe_audio, path)
-            audio = await asyncio.to_thread(audio_wav_bytes, path)
+            audio, duration = await asyncio.to_thread(audio_wav_bytes, path)
             await _save_audio_details(user_id, session_id, url, duration=duration)
             parts.append(
                 {

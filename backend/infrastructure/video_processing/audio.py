@@ -16,21 +16,35 @@ from infrastructure.video_processing.ffmpeg import (
 )
 
 
+def _audio_info(data: bytes) -> tuple[float, str] | None:
+    """解析音频时长与主 MIME，不可解析或非有效时长返回 None。"""
+    try:
+        audio = AudioFile(io.BytesIO(data))
+        length = float(audio.info.length)
+        mime = audio.mime[0]
+        if not math.isfinite(length) or length <= 0:
+            return None
+    except Exception:
+        return None
+    return length, mime
+
+
 def audio_bytes_info(data: bytes) -> tuple[float, str]:
     """校验合成音频，返回实际时长与文件扩展名。"""
-    audio = AudioFile(io.BytesIO(data))
-    if audio is None or not math.isfinite(audio.info.length) or audio.info.length <= 0:
+    info = _audio_info(data)
+    if info is None:
         raise ValueError("生成的语音无效")
+    duration, mime = info
     extension = {
         "audio/mp3": "mp3",
         "audio/mpeg": "mp3",
         "audio/wav": "wav",
         "audio/ogg": "ogg",
         "audio/flac": "flac",
-    }.get(audio.mime[0])
+    }.get(mime)
     if extension is None:
         raise ValueError("生成的语音格式不受支持")
-    return float(audio.info.length), extension
+    return duration, extension
 
 
 def probe_audio(path: Path) -> float:
@@ -65,7 +79,8 @@ def probe_audio(path: Path) -> float:
     return duration
 
 
-def audio_wav_bytes(path: Path) -> bytes:
+def audio_wav_bytes(path: Path) -> tuple[bytes, float]:
+    """探测纯音频并转为 16kHz 单声道 WAV，返回字节与探测时长。"""
     duration = probe_audio(path)
     if duration * 16000 * 2 + 128 > STT_MAX_AUDIO_BYTES:
         raise VideoProcessError("音频转换后超过输入体积上限", internal="converted audio exceeds byte limit")
@@ -75,7 +90,7 @@ def audio_wav_bytes(path: Path) -> bytes:
     )
     if len(data) > STT_MAX_AUDIO_BYTES:
         raise VideoProcessError("音频转换后超过输入体积上限", internal="converted audio exceeds byte limit")
-    return data
+    return data, duration
 
 
 def voice_sample_wav_bytes(data: bytes, *, max_duration: float, max_bytes: int) -> tuple[bytes, float]:
@@ -122,7 +137,11 @@ def voice_sample_wav_bytes(data: bytes, *, max_duration: float, max_bytes: int) 
         if result.returncode:
             raise VideoProcessError("音频无法解码，请重新录制或上传")
         normalized = destination.read_bytes()
-        duration = probe_audio(destination)
+        # 该 WAV 由本函数以固定参数写出，时长是字节的确定函数，直接解析。
+        info = _audio_info(normalized)
+        if info is None:
+            raise VideoProcessError("文件不是有效的纯音频", internal="invalid wav length")
+        duration, _ = info
         if duration > max_duration:
             raise VideoProcessError(f"声音样本最长为 {max_duration:g} 秒，请截取后重新上传")
     if not normalized or len(normalized) > max_bytes:

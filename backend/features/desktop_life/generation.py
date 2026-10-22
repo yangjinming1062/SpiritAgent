@@ -6,7 +6,7 @@ import json
 from collections.abc import Awaitable, Callable
 from fractions import Fraction
 from io import BytesIO
-from typing import Literal
+from typing import Literal, NamedTuple
 from uuid import uuid4
 
 from infrastructure.ai.error_classifier import LlmCallBlockedError
@@ -466,40 +466,47 @@ async def resolve_desktop_video_plan(
     )
 
 
+class JobInputs(NamedTuple):
+    action: DesktopVideoAction
+    snapshot: DesktopContext
+    progress: DesktopVideoProgress
+    suite: DesktopVideoSet
+
+
 async def _job_inputs(
     user_id: int,
     action_id: int,
     generation_id: str,
-) -> tuple[DesktopVideoAction, DesktopContext, DesktopVideoProgress]:
+) -> JobInputs:
     async with SESSION_LOCAL() as db:
         action = await desktop_action(db, user_id, action_id)
         progress = desktop_progress(action)
         row = await db.get(DesktopVideoSet, action.set_id)
-        if row is None or progress is None or progress.generation_id != generation_id or action.status != "processing":
+        if row is None or row.user_id != user_id:
+            raise DesktopVideoStateError("当前画面已被移除")
+        if progress is None or progress.generation_id != generation_id or action.status != "processing":
             raise LlmCallBlockedError("桌面制作任务已经失效")
         if progress.resolution_revision != row.resolution_revision:
             raise LlmCallBlockedError("桌景分辨率已变化，请重新制作")
         snapshot = parse_desktop_context(row.source, row.context_json)
         db.expunge(action)
-        return action, snapshot, progress
+        db.expunge(row)
+        return JobInputs(action=action, snapshot=snapshot, progress=progress, suite=row)
 
 
 async def _require_active_job(user_id: int, action_id: int, generation_id: str) -> None:
     require_new_generation_call(user_id)
-    action, _snapshot, progress = await _job_inputs(user_id, action_id, generation_id)
+    job = await _job_inputs(user_id, action_id, generation_id)
     async with SESSION_LOCAL() as db:
-        row = await db.get(DesktopVideoSet, action.set_id)
-        if row is None or row.user_id != user_id:
-            raise DesktopVideoStateError("当前画面已被移除")
-        if await desktop_action_generation_blocked_reason(db, action, row):
+        if await desktop_action_generation_blocked_reason(db, job.action, job.suite):
             raise GenerationWorkPaused
-        if progress.continuity == "base":
+        if job.progress.continuity == "base":
             expected = (
-                row.base_version + 1
-                if action.key == "idle" and (progress.replace_base or not row.base_image_path)
-                else row.base_version
+                job.suite.base_version + 1
+                if job.action.key == "idle" and (job.progress.replace_base or not job.suite.base_image_path)
+                else job.suite.base_version
             )
-            if progress.base_version != expected:
+            if job.progress.base_version != expected:
                 raise DesktopVideoStateError("基础画面已经变化，请使用新基准重新制作")
 
 
@@ -1499,12 +1506,10 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
             if initial is None or initial.paused_by_user or action.status != "processing":
                 return
             generation_id = initial.generation_id
-        action, snapshot, progress = await _job_inputs(user_id, action_id, generation_id)
+        job = await _job_inputs(user_id, action_id, generation_id)
+        action, snapshot, progress, suite = job.action, job.snapshot, job.progress, job.suite
         if action.key != "idle":
             async with SESSION_LOCAL() as db:
-                suite = await db.get(DesktopVideoSet, action.set_id)
-                if suite is None:
-                    raise DesktopVideoStateError("当前画面已被移除")
                 if await desktop_action_generation_blocked_reason(db, action, suite):
                     allow_model_steps = False
         progress.aspect_ratio = _delivery_aspect(progress)
@@ -1539,20 +1544,14 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
         if not allow_model_steps and progress.candidate is not None and progress.review_verdict is not None:
             await _finish_job(user_id, action_id, progress)
             return
-        if not allow_model_steps and not (
+        if not allow_model_steps and not (  # 刻意不含 candidate：待评估候选不算在途视频工作
             progress.provider_task_id
             or progress.download_url
             or progress.source_path
             or _queued_video_request(progress)
         ):
             raise GenerationWorkPaused
-        if progress.video_refinement is None and not (
-            progress.provider_task_id
-            or progress.download_url
-            or progress.source_path
-            or progress.candidate
-            or _queued_video_request(progress)
-        ):
+        if progress.video_refinement is None and not desktop_progress_has_video_work(progress):
             await _prepare_opening(user_id, action, snapshot, progress, directory)
             if progress.auto_continue:
                 progress.image_confirmed = True
@@ -1601,13 +1600,7 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
         while (
             progress.video_refinement is None
             and not progress.motion_prompt
-            and not (
-                progress.candidate
-                or progress.provider_task_id
-                or progress.source_path
-                or progress.download_url
-                or _queued_video_request(progress)
-            )
+            and not desktop_progress_has_video_work(progress)
         ):
             try:
                 await _prepare_motion(user_id, action, snapshot, progress)

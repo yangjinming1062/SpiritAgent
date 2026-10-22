@@ -5,6 +5,7 @@ from urllib.parse import urlsplit
 
 from fastapi import HTTPException, Request
 from infrastructure.config import SETTINGS
+from infrastructure.hashing import sha256_hex
 from infrastructure.text import utc_now
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +18,7 @@ REMOTE_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 
 
 def hash_remote_token(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+    return sha256_hex(token)
 
 
 def new_remote_token() -> str:

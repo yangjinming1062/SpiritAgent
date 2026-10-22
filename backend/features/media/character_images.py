@@ -331,14 +331,6 @@ async def image_asset_bytes(path: str, *, max_bytes: int = REMOTE_ASSET_DOWNLOAD
     return data, mime
 
 
-async def _materialize_reference(value: str | None, *, max_bytes: int) -> str | None:
-    """提交与评分前把冻结路径还原为 data URI；空值与已是 data URI 的输入原样返回。"""
-    if not value or value.startswith("data:"):
-        return value
-    data, mime = await image_asset_bytes(value, max_bytes=max_bytes)
-    return await asyncio.to_thread(build_data_uri, data, mime)
-
-
 def _reference_image_canvas(data: bytes) -> ImageCanvas:
     normalized, _mime = asset_store.validate_image_bytes(data)
     with Image.open(io.BytesIO(normalized)) as image:
@@ -762,17 +754,31 @@ async def _run_image_chain(
     if state.phase == "complete":
         return await _complete_images(state, save_progress)
     # 参考图在链运行内不变：物化一次供提交与评分复用，避免逐候选重复读盘/解码。
-    reference_uri = await _materialize_reference(inputs.reference_image, max_bytes=inputs.max_image_bytes)
+    asset_memo: dict[str, tuple[bytes, str]] = {}
+    uri_memo: dict[str, str] = {}
+
+    async def _load_asset(value: str) -> tuple[bytes, str]:
+        hit = asset_memo.get(value)
+        if hit is None:
+            hit = await image_asset_bytes(value, max_bytes=inputs.max_image_bytes)
+            asset_memo[value] = hit
+        return hit
+
+    async def _materialize(value: str | None) -> str | None:
+        if not value or value.startswith("data:"):
+            return value
+        hit = uri_memo.get(value)
+        if hit is None:
+            data, mime = await _load_asset(value)
+            hit = await asyncio.to_thread(build_data_uri, data, mime)
+            uri_memo[value] = hit
+        return hit
+
+    reference_uri = await _materialize(inputs.reference_image)
     secondary_uri = (
-        await _materialize_reference(inputs.secondary_reference_image, max_bytes=inputs.max_image_bytes)
-        if isinstance(inputs, CharacterImageInput)
-        else None
+        await _materialize(inputs.secondary_reference_image) if isinstance(inputs, CharacterImageInput) else None
     )
-    identity_uri = (
-        await _materialize_reference(inputs.identity_reference, max_bytes=inputs.max_image_bytes)
-        if isinstance(inputs, CharacterImageInput)
-        else None
-    )
+    identity_uri = await _materialize(inputs.identity_reference) if isinstance(inputs, CharacterImageInput) else None
     try:
         while True:
             if state.phase == "storing":
@@ -802,11 +808,8 @@ async def _run_image_chain(
                                 canvas = state.expansion_canvases.get(state.active_index or 0)
                                 if canvas is None:
                                     raise ImageGenerationError("扩图任务缺少冻结画布")
-                                canvas_data, _ = await image_asset_bytes(canvas.path, max_bytes=inputs.max_image_bytes)
-                                original_data, _ = await image_asset_bytes(
-                                    inputs.reference_image,
-                                    max_bytes=inputs.max_image_bytes,
-                                )
+                                canvas_data, _ = await _load_asset(canvas.path)
+                                original_data, _ = await _load_asset(inputs.reference_image)
                                 try:
                                     data = await asyncio.to_thread(
                                         finish_expansion,
@@ -996,7 +999,7 @@ async def _run_image_chain(
                         if ratio is None:
                             raise ImageGenerationError("扩图供应商的原生画幅无效")
                         height, width = 1536, round(1536 * ratio)
-                    original, _ = await image_asset_bytes(inputs.reference_image, max_bytes=inputs.max_image_bytes)
+                    original, _ = await _load_asset(inputs.reference_image)
                     data, box = await asyncio.to_thread(expansion_canvas, original, width, height)
                     with Image.open(io.BytesIO(data)) as image:
                         canvas_width, canvas_height = image.size
@@ -1010,7 +1013,7 @@ async def _run_image_chain(
                     canvas = ImageExpansionCanvas(path=path, box=box, width=canvas_width, height=canvas_height)
                     state.expansion_canvases[index] = canvas
                     await _save_progress(state, save_progress)
-                submit_reference = await _materialize_reference(canvas.path, max_bytes=inputs.max_image_bytes)
+                submit_reference = await _materialize(canvas.path)
                 submit_prompt = (
                     f"参考画布为 {canvas.width}×{canvas.height} 像素，矩形 {canvas.box}（左、上、右、下）内为原图，"
                     "其余灰色区域需要补全。输出与该画布相同构图的完整图像。\n" + inputs.prompt

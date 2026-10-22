@@ -598,21 +598,19 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
 
 def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
     raw_plan = NightlyPlanOutput.model_validate(parsed)
-    raw_actions = [action.model_dump() for action in raw_plan.actions]
     seen_ids: set[str] = set()
-    for raw in raw_actions:
-        action_id = raw.get("id")
-        if not _is_action_id(action_id) or action_id in seen_ids:
+    for action in raw_plan.actions:
+        if action.id in seen_ids:
             raise LlmJsonValidationError("duplicate_action_id", fields=("id",))
-        seen_ids.add(action_id)
+        seen_ids.add(action.id)
     available_names = {item.name for item in context.available_capabilities}
     seen_groups: set[str] = set()
     paid_count = 0
     actions: list[PlannedAction] = []
-    for raw in raw_actions:
+    for action in raw_plan.actions:
         if len(actions) >= _MAX_ACTIONS:
             break
-        capability_name = _text(raw.get("capability"))
+        capability_name = _text(action.capability)
         spec = _CAPABILITY_BY_NAME.get(capability_name)
         if spec is None or capability_name not in available_names:
             continue
@@ -622,10 +620,10 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
             continue
         # 能力或预算过滤不删除前置条件；执行端对未完成的依赖跳过后续动作。
         # 依赖 ID 无效只跳过该动作，依赖它的后续动作在执行端因前置未完成而跳过。
-        dependencies = raw.get("depends_on") or []
-        if not isinstance(dependencies, list) or not all(_is_action_id(dep) for dep in dependencies):
+        dependencies = action.depends_on
+        if not all(_is_action_id(dep) for dep in dependencies):
             continue
-        args = dict(raw.get("arguments") if isinstance(raw.get("arguments"), dict) else {})
+        args = dict(action.arguments)
         if capability_name == "action.design":
             args = {key: value for key, value in args.items() if key in spec.arguments}
             target = context.action_target
@@ -645,7 +643,7 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
             seen_groups.add(spec.exclusive_group)
         actions.append(
             PlannedAction(
-                id=raw["id"],
+                id=action.id,
                 capability=capability_name,
                 phase=spec.phase,
                 depends_on=dependencies,

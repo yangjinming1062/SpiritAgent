@@ -8,7 +8,8 @@ from infrastructure.ai.tasks import AI_TASKS
 from infrastructure.config import SETTINGS
 from infrastructure.logger import get_logger, setup_logging
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.configuration.ai_config import prepare_ai_config, public_ai_config, validate_ai_config
@@ -54,8 +55,7 @@ def _validation_fields(exc: ValidationError) -> str:
     )
 
 
-async def _validate_system_ai_references(db: AsyncSession, system: AIConfig) -> None:
-    validate_ai_config(system)
+async def _validate_user_ai_references(db: AsyncSession, system: AIConfig) -> None:
     failures = []
     for row in (await db.execute(select(UserModelConfig))).scalars():
         try:
@@ -79,7 +79,8 @@ async def load_and_apply_system_settings(db: AsyncSession) -> None:
                 if row.setting_key not in STARTUP_ONLY_KEYS and row.setting_key in type(SETTINGS).model_fields
             }
             candidate = SETTINGS.validate_runtime_update(overrides)
-            await _validate_system_ai_references(db, candidate.ai_config)
+            validate_ai_config(candidate.ai_config)
+            await _validate_user_ai_references(db, candidate.ai_config)
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"Invalid persisted system settings: {exc}") from None
         except ValidationError as exc:
@@ -171,7 +172,7 @@ async def save_system_settings(db: AsyncSession, updates: dict[str, Any]) -> Non
                     AIConfigUpdate.model_validate(pending["ai_config"]),
                     SETTINGS.ai_config,
                 )
-                await _validate_system_ai_references(db, pending["ai_config"])
+                await _validate_user_ai_references(db, pending["ai_config"])
             candidate = SETTINGS.validate_runtime_update(pending)
         except ValidationError as exc:
             raise ValueError(f"系统设置无效，请检查：{_validation_fields(exc)}") from None
@@ -183,20 +184,17 @@ async def save_system_settings(db: AsyncSession, updates: dict[str, Any]) -> Non
         changed_keys = {key for key in pending if getattr(SETTINGS, key) != getattr(candidate, key)}
 
         try:
-            rows = {
-                row.setting_key: row
-                for row in (
-                    await db.execute(select(SystemSetting).where(SystemSetting.setting_key.in_(serialized)))
-                ).scalars()
-            }
-            new_rows: list[SystemSetting] = []
-            for key, value in serialized.items():
-                if key in rows:
-                    rows[key].setting_value = value
-                else:
-                    new_rows.append(SystemSetting(setting_key=key, setting_value=value))
-            if new_rows:
-                db.add_all(new_rows)
+            if serialized:
+                stmt = insert(SystemSetting).values(
+                    [{"setting_key": key, "setting_value": value} for key, value in serialized.items()],
+                )
+                # 逐 key 覆盖写；TimestampMixin.onupdate 对 Core 语句不生效，需显式刷新 updated_at。
+                await db.execute(
+                    stmt.on_conflict_do_update(
+                        index_elements=["setting_key"],
+                        set_={"setting_value": stmt.excluded.setting_value, "updated_at": func.now()},
+                    ),
+                )
             await db.commit()
         except Exception:
             await db.rollback()

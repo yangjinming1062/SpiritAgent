@@ -359,9 +359,30 @@ class VideoGenProvider(BaseProvider):
     def validate_reference_video(self, metadata: VideoReferenceMetadata) -> None:
         raise ProviderError(f"{self.provider_name} does not support reference videos", status_code=400)
 
+    def _reject_reference_media(
+        self,
+        *,
+        first_frame: bool = False,
+        last_frame: bool = False,
+        reference_images: bool = False,
+        reference_videos: bool = False,
+    ) -> str | None:
+        """参考素材不被支持或与首/尾帧互斥时返回原因；能力声明与 validate_request 共用同一判定。"""
+        if reference_videos and not self.supports_reference_videos:
+            return f"{self.provider_name} does not support reference videos"
+        if (reference_images or reference_videos) and (first_frame or last_frame):
+            return f"{self.provider_name} reference media cannot be mixed with first/last frames"
+        return None
+
     def validate_request(self, req: VideoGenRequest) -> None:
-        if req.reference_videos and not self.supports_reference_videos:
-            raise ProviderError(f"{self.provider_name} does not support reference videos", status_code=400)
+        reason = self._reject_reference_media(
+            first_frame=bool(req.first_frame_image),
+            last_frame=bool(req.last_frame_image),
+            reference_images=bool(req.reference_images),
+            reference_videos=bool(req.reference_videos),
+        )
+        if reason:
+            raise ProviderError(reason, status_code=400)
 
     @abstractmethod
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus: ...

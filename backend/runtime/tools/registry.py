@@ -1,6 +1,6 @@
 import inspect
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -53,20 +53,14 @@ ToolLocation = Literal["backend", "memory", "runner"]
 def _argument_problem(name: str, schema: dict[str, Any], args: dict[str, Any]) -> str | None:
     """按工具自己的 schema 核对必填参数，以及 schema 声明 additionalProperties=false 时的多余参数；说明可直接用于修正调用。
 
-    允许 null 的必填项（如 expected_set_id）只要求模型表态，缺省仍按空值交给工具处理。
+    可空只表示值可为 null；必填键缺失一律报 missing required，缺键与显式 null 不混同。
     """
     parameters = schema.get("parameters") or {}
     properties = parameters.get("properties") or {}
     required = parameters.get("required") or []
 
-    def nullable(key: str) -> bool:
-        return any(
-            isinstance(variant, dict) and variant.get("type") == "null"
-            for variant in properties.get(key, {}).get("anyOf") or []
-        )
-
     problems = []
-    if missing := [key for key in required if key not in args and not nullable(key)]:
+    if missing := [key for key in required if key not in args]:
         problems.append("missing required parameter " + ", ".join(missing))
     if parameters.get("additionalProperties") is False and (unknown := [key for key in args if key not in properties]):
         problems.append("unknown parameter " + ", ".join(unknown))
@@ -114,22 +108,28 @@ class ToolsRegistry:
     def has_runner_tools(self, user_id: int) -> bool:
         return MANAGER.is_connected(user_id) and bool(self._runner_tools.get(user_id))
 
-    def get_all_schemas(self, user_id: int, user_settings: dict[str, Any]) -> list[dict[str, Any]]:
+    def get_all_schemas(
+        self,
+        user_id: int,
+        user_settings: dict[str, Any],
+        exclude: Collection[str] = frozenset(),
+    ) -> list[dict[str, Any]]:
         # 谓词抛错则隐藏该工具（fail-closed），避免一个 bug 把整次调用拖到 500。toolsets.disabled 对 backend/memory 桶生效；runner 桶在客户端 tools.list 源头已按同一键过滤
-        excluded = disabled_backend_tool_names(user_settings)
+        disabled = disabled_backend_tool_names(user_settings)
         schemas: list[dict[str, Any]] = []
         for name, tool in self._backend_tools.items():
-            if name in excluded:
+            if name in disabled:
                 continue
             try:
                 if tool.availability_check is None or tool.availability_check():
                     schemas.append(tool.schema)
             except Exception as e:
                 logger.warning("availability_check raised; hiding tool", extra={"tool_name": name, "error_msg": str(e)})
-        schemas.extend(schema for name, schema in self._memory_tools.items() if name not in excluded)
+        schemas.extend(schema for name, schema in self._memory_tools.items() if name not in disabled)
         if MANAGER.is_connected(user_id):
             schemas.extend(self._runner_tools.get(user_id, {}).values())
-        return apply_search_tools_catalog(schemas)
+        # exclude 先收窄再装饰目录；调用方再收窄集合时需自行重装饰。
+        return apply_search_tools_catalog([schema for schema in schemas if schema_name(schema) not in exclude])
 
     def _lookup(self, user_id: int, tool_name: str) -> tuple[ToolLocation, dict[str, Any]] | None:
         if (tool := self._backend_tools.get(tool_name)) is not None:

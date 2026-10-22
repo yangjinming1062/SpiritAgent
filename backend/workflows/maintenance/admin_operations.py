@@ -40,7 +40,6 @@ from workflows.maintenance.backup.file_packing import collect_files_for_export
 from workflows.maintenance.backup.manifest import load_manifest
 from workflows.maintenance.backup.restoration import BackupRestoreResult, load_backup_rows, restore_backup_rows
 from workflows.maintenance.backup.serializers import (
-    BACKUP_SECTION_IDS,
     TABLES,
     serialize_rows,
     tables_for_sections,
@@ -126,14 +125,9 @@ async def import_user_backup(
     if not file.filename or not file.filename.endswith(".zip"):
         raise RequestError(status_code=status.HTTP_400_BAD_REQUEST, message="上传文件必须是 .zip。")
     try:
-        selected_tables = tables_for_sections(sections)
+        selected_tables, resolved_sections = tables_for_sections(sections)
     except ValueError as exc:
         raise RequestError(status_code=status.HTTP_400_BAD_REQUEST, message=str(exc)) from exc
-    resolved_sections = (
-        list(BACKUP_SECTION_IDS)
-        if sections is None or "all" in {item.strip() for item in sections if item and item.strip()}
-        else [item.strip() for item in sections if item and item.strip()]
-    )
     await require_account(db, user_id)
     # 上传落盘、解压与维护等待都可能持续数分钟，期间不持有数据库事务。
     await db.rollback()

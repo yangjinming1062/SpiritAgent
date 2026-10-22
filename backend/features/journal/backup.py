@@ -1,6 +1,5 @@
 """模块拥有的备份表、校验与恢复操作。"""
 
-from functools import partial
 from typing import Any
 
 from infrastructure.backup import BackupContext, BackupRows, BackupTable
@@ -14,14 +13,13 @@ from .models import CompanionDiaryEntry
 from .schemas import DiaryContent
 
 
-def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
+def _prepare(raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
     id_map = context.id_map
-    if table == "companion_diary_entries":
-        payload["post_ids"] = [
-            str(id_map["companion_posts"][str(value)])
-            for value in raw.get("post_ids", [])
-            if str(value) in id_map.get("companion_posts", {})
-        ]
+    payload["post_ids"] = [
+        str(id_map["companion_posts"][str(value)])
+        for value in raw.get("post_ids", [])
+        if str(value) in id_map.get("companion_posts", {})
+    ]
 
 
 async def _check(db: AsyncSession, raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
@@ -46,7 +44,7 @@ def backup_tables() -> tuple[BackupTable, ...]:
             "companion_diary_entries",
             CompanionDiaryEntry,
             unique_keys=("entry_date",),
-            prepare_payload=partial(_prepare, "companion_diary_entries"),
+            prepare_payload=_prepare,
             validate_payload=_check,
             custom_delete=_clear,
             restore_context=_restore_context,

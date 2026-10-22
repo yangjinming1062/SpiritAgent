@@ -14,6 +14,7 @@ from uuid import uuid4
 from features.action_library.schemas import ActionSourceSnapshot
 from features.desktop_life.schemas import DesktopUploadSnapshot, parse_desktop_context
 from infrastructure.assets.paths import parse_companion_asset_path
+from infrastructure.assets.references import ASSET_TOKEN_TRAILING_PUNCTUATION
 from infrastructure.config import SETTINGS
 from infrastructure.temp_files import owned_temp_files
 
@@ -54,7 +55,7 @@ def _strings(value: Any, depth: int = 0) -> Iterator[str]:
         return
     if isinstance(value, str):
         yield value
-        yield from (match.group().rstrip(".!?，。；！") for match in _ASSET_TOKEN.finditer(value))
+        yield from (match.group().rstrip(ASSET_TOKEN_TRAILING_PUNCTUATION) for match in _ASSET_TOKEN.finditer(value))
         if value.lstrip().startswith(("{", "[")):
             try:
                 parsed = json.loads(value)
@@ -284,7 +285,7 @@ class UrlRewriter:
 
                 def rewrite_token(match: re.Match[str]) -> str:
                     token = match.group()
-                    reference = token.rstrip(".!?，。；！")
+                    reference = token.rstrip(ASSET_TOKEN_TRAILING_PUNCTUATION)
                     return (self(reference) or "") + token[len(reference) :]
 
                 # sub 逐命中调用 rewrite_token，副作用顺序与 scan 模式一致，仅丢弃替换结果。

@@ -9,14 +9,11 @@ from uuid import uuid4
 from features.appearance.avatar_service import AvatarGenerationError
 from features.appearance.character_card import character_snapshot_is_current, render_character_identity
 from features.appearance.visual_identity import (
-    apply_outfit_override,
     build_plain_image_prompt,
-    build_self_image_prompt,
-    load_self_visual_context,
-    optional_outfit_image_reference,
+    build_self_image_inputs,
 )
 from features.conversation.prompts import CHAT_IMAGE_CORRECTION_PREFIX
-from features.desktop_life.queries import desktop_current_styling_reference
+from features.desktop_life.self_visual import load_self_visual_plan
 from features.media.chain import MEDIA_IDENTITY_ACCEPT_SCORE
 from features.media.character_images import ImageChainState, generate_character_images
 from features.media.identity_contracts import CharacterCardSnapshot
@@ -75,20 +72,16 @@ async def _freeze_plan(request: ImageRequest, user_id: int) -> ImagePlan:
             prompt=build_plain_image_prompt(request.prompt),
             size=request.aspect_ratio,
         )
-    use_outfit = not bool((request.outfit_override or "").strip())
-    async with SESSION_LOCAL() as db:
-        styling = await desktop_current_styling_reference(db, user_id) if use_outfit else None
-    visual = await load_self_visual_context(user_id, use_outfit_reference=use_outfit, current_styling=styling)
-    plan = apply_outfit_override(visual, request.outfit_override)
-    outfit = optional_outfit_image_reference(plan)
+    visual_plan = await load_self_visual_plan(user_id, outfit_override=request.outfit_override)
+    inputs = build_self_image_inputs(visual_plan, request.prompt)
     return ImagePlan(
         request=request.model_dump_json(),
-        prompt=build_self_image_prompt(plan, request.prompt, has_outfit_reference=bool(outfit)),
+        prompt=inputs.prompt,
         size=request.aspect_ratio,
-        reference_image=visual.identity_image,
-        secondary_reference_image=outfit,
-        identity_json=visual.identity.model_dump_json(),
-        identity_reference_mode="primary" if visual.identity_reference_role == "fullbody" else "portrait_and_outfit",
+        reference_image=inputs.reference_image,
+        secondary_reference_image=inputs.secondary_reference_image,
+        identity_json=inputs.identity.model_dump_json(),
+        identity_reference_mode=inputs.identity_reference_mode,
     )
 
 

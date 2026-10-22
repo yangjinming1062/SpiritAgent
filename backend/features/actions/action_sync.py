@@ -9,11 +9,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.models import lock_user_row
-from features.action_library.queries import definition_snapshot
+from features.action_library.queries import definition_snapshot, definitions_by_id
 from features.action_library.schemas import ActionDefinitionSnapshot, ActionSourceSnapshot, ActionVariantSummary
+from features.appearance.queries import active_avatar_snapshot
+from features.appearance.query_contracts import AvatarSnapshot
 
 from .generation.errors import VideoPackStateError
-from .generation.queries import _active_avatar, _job_result_unresolved, _load_generation_context
+from .generation.queries import _job_result_unresolved, _load_generation_context
 from .generation.references import _require_current_identity_image, require_action_matting_model
 from .generation.tasks import kick_dynamic_action
 from .materials import accepted_action_asset
@@ -22,9 +24,12 @@ from .policy import check_creation_enabled
 from .schemas import ActionDesignRequest
 
 
-async def window_action_source(db: AsyncSession, user_id: int, pack_id: int) -> ActionSourceSnapshot | None:
-    pack = await db.get(CompanionActionPack, pack_id)
-    if pack is None or pack.user_id != user_id:
+async def _window_source_from_pack(
+    user_id: int,
+    pack: CompanionActionPack,
+    avatar: AvatarSnapshot | None,
+) -> ActionSourceSnapshot | None:
+    if pack.user_id != user_id:
         return None
     context = _load_generation_context(pack)
     reason = None
@@ -37,7 +42,7 @@ async def window_action_source(db: AsyncSession, user_id: int, pack_id: int) -> 
         reason = "动作组的冻结参考尚未准备完成"
     else:
         try:
-            await _require_current_identity_image(context, await _active_avatar(db, user_id))
+            await _require_current_identity_image(context, avatar)
         except VideoPackStateError as exc:
             reason = str(exc)
     return ActionSourceSnapshot(
@@ -57,9 +62,17 @@ async def window_action_source(db: AsyncSession, user_id: int, pack_id: int) -> 
     )
 
 
+async def window_action_source(db: AsyncSession, user_id: int, pack_id: int) -> ActionSourceSnapshot | None:
+    pack = await db.get(CompanionActionPack, pack_id)
+    if pack is None or pack.user_id != user_id:
+        return None
+    return await _window_source_from_pack(user_id, pack, await active_avatar_snapshot(db, user_id))
+
+
 async def window_action_sources(db: AsyncSession, user_id: int) -> tuple[ActionSourceSnapshot, ...]:
-    ids = await db.scalars(select(CompanionActionPack.id).where(CompanionActionPack.user_id == user_id))
-    sources = [await window_action_source(db, user_id, pack_id) for pack_id in ids]
+    packs = (await db.scalars(select(CompanionActionPack).where(CompanionActionPack.user_id == user_id))).all()
+    avatar = await active_avatar_snapshot(db, user_id)
+    sources = [await _window_source_from_pack(user_id, pack, avatar) for pack in packs]
     return tuple(source for source in sources if source is not None)
 
 
@@ -146,14 +159,20 @@ async def window_target_states(
     definition_ids: Sequence[int],
 ) -> dict[int, list[ActionVariantSummary]]:
     result: dict[int, list[ActionVariantSummary]] = {}
-    rows = await db.execute(
-        select(CompanionAction, CompanionActionPack)
-        .join(
-            CompanionActionPack,
-            CompanionActionPack.id == CompanionAction.pack_id,
-        )
-        .where(CompanionAction.user_id == user_id, CompanionAction.definition_id.in_(definition_ids)),
+    rows = list(
+        await db.execute(
+            select(CompanionAction, CompanionActionPack)
+            .join(
+                CompanionActionPack,
+                CompanionActionPack.id == CompanionAction.pack_id,
+            )
+            .where(CompanionAction.user_id == user_id, CompanionAction.definition_id.in_(definition_ids)),
+        ),
     )
+    wanted = {action.definition_id for action, _ in rows}
+    definitions = await definitions_by_id(db, user_id, wanted)
+    avatar = await active_avatar_snapshot(db, user_id)
+    sources: dict[int, ActionSourceSnapshot | None] = {}
     for action, pack in rows:
         material = accepted_action_asset(action)
         status = (
@@ -167,9 +186,11 @@ async def window_target_states(
             status = "disabled"
         if status not in {"not_generated", "queued", "processing", "ready", "review_pending", "failed", "disabled"}:
             status = "blocked"
-        source = await window_action_source(db, user_id, pack.id)
+        if pack.id not in sources:
+            sources[pack.id] = await _window_source_from_pack(user_id, pack, avatar)
+        source = sources[pack.id]
         can_generate = action.enabled and action.status == "not_generated" and source is not None and source.ready
-        definition = await definition_snapshot(db, user_id, action.definition_id)
+        definition = definitions.get(action.definition_id)
         source_mismatch = (
             definition is None
             or not pack.source_visual_key
@@ -180,13 +201,12 @@ async def window_target_states(
         if source_mismatch:
             status, can_generate = "blocked" if action.enabled else "disabled", False
             reason = "动作的冻结身份或着装来源已变化，无法在这个形象中制作"
-        context = _load_generation_context(pack)
         result.setdefault(action.definition_id, []).append(
             ActionVariantSummary(
                 target_kind="window",
                 target_id=pack.id,
                 action_id=action.id,
-                label=context.outfit_description if context else "",
+                label=source.label if source else "",
                 status=status,
                 has_ready_asset=material is not None,
                 can_generate=can_generate,

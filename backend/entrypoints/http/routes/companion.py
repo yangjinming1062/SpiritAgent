@@ -24,11 +24,13 @@ from features.actions.views import (
 )
 from features.appearance.avatar_service import (
     ALLOWED_AVATAR_UPLOAD_MIME_TYPES,
+    AvatarConflictError,
     AvatarGenerationError,
     AvatarNotFoundError,
     AvatarSourceUnreadableError,
     FullbodyGenerationError,
     ImageSealedError,
+    PersonaIncompleteError,
     get_avatar_job_lock,
     latest_fullbody_candidate,
     prepare_avatar_prompt,
@@ -120,9 +122,8 @@ from features.companion.schemas import (
 )
 from features.companion.should_act import ShouldActResult
 from features.companion.views import get_persona_view, update_persona_view
-from features.companion.visual_state import ensure_persona_snapshot
 from features.media.decision_contracts import ResourceDecision
-from features.media.review_contracts import MediaReviewPublication, MediaReviewResponse
+from features.media.review_contracts import MediaReviewResponse
 from features.media.review_service import MediaReviewSnapshot, get_media_review, list_pending_media_reviews
 from infrastructure.ai.error_classifier import LLMRuntimeError
 from infrastructure.ai.llm_client import MissingLlmConfigError
@@ -139,7 +140,7 @@ from infrastructure.assets.asset_store import (
 from infrastructure.assets.http_range import serve_ranged_file
 from infrastructure.config import SETTINGS
 from infrastructure.constants import POSTGRES_INT4_MAX
-from infrastructure.database import SESSION_LOCAL, DbSession
+from infrastructure.database import DbSession
 from infrastructure.http_contracts import operation_policy
 from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
@@ -191,17 +192,15 @@ async def post_movement_decision(user: CurrentUser, body: ShouldActRequest) -> S
 
 
 def _media_review_response(row: MediaReviewSnapshot) -> MediaReviewResponse:
-    publication = MediaReviewPublication.model_validate(row.publication) if row.publication else None
-    title = publication.title if publication else ""
-    system_slot = publication.system_slot if publication else ""
+    publication = row.publication
     return MediaReviewResponse(
         id=row.id,
         status=row.status,
         reason=row.reason,
         media_type=row.media_type,
         media_url=client_asset_url(row.media_url),
-        title=title,
-        system_slot=system_slot,
+        title=publication.title if publication else "",
+        system_slot=publication.system_slot if publication else "",
     )
 
 
@@ -336,15 +335,12 @@ async def post_portrait_confirm(
 ) -> CompanionOperationResponse:
     try:
         async with get_avatar_job_lock(user.id):
-            previewed = await get_active_avatar_view(db, user.id)
-            if previewed is None:
-                raise RequestError(status_code=404, message="请先生成或上传头像")
-            if previewed.id != body.expected_avatar_id:
-                raise RequestError(status_code=409, message="当前头像已更新，请重新加载预览后确认")
-            asset = await finalize_avatar_view(db, user.id)
+            asset = await finalize_avatar_view(db, user.id, expected_avatar_id=body.expected_avatar_id)
             if asset is None:
                 raise RequestError(status_code=404, message="请先生成或上传头像")
             await confirm_portrait(db, user.id)
+    except AvatarConflictError as exc:
+        raise RequestError(status_code=409, message=str(exc))
     except AvatarSourceUnreadableError as exc:
         raise RequestError(
             status_code=409,
@@ -378,14 +374,6 @@ async def post_avatar(
     user: CurrentUser,
     body: Annotated[AvatarGenerateRequest | AvatarFromImageRequest, Body(discriminator="source")],
 ) -> AvatarAssetResponse:
-    async with SESSION_LOCAL() as pre_db:
-        persona = await ensure_persona_snapshot(pre_db, user.id)
-        if not persona.is_complete:
-            raise RequestError(
-                status_code=409,
-                message="请先完成引导再生成形象",
-                details={"reason": "persona is incomplete"},
-            )
     try:
         if isinstance(body, AvatarFromImageRequest):
             raw, content_type = await _decode_upload_image(body.image, body.content_type)
@@ -407,6 +395,8 @@ async def post_avatar(
             asset = await generate_avatar_view(user_id=user.id, feedback=body.feedback)
     except ImageSealedError as exc:
         raise RequestError(status_code=409, message="形象已确认锁定，无法重新生成", details={"reason": str(exc)})
+    except PersonaIncompleteError as exc:
+        raise RequestError(status_code=409, message=str(exc), details={"reason": "persona is incomplete"})
     except AvatarGenerationError as exc:
         logger.warning("post_avatar generation failed", extra={"user_id": user.id, "error": exc.internal})
         raise RequestError(status_code=502, message="伙伴形象生成失败，请稍后重试", details={"reason": str(exc)})

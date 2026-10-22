@@ -3,7 +3,7 @@ from infrastructure.database import session_scope
 from infrastructure.text import utc_now
 from runtime.events.emit import emit_ws_event
 from runtime.memory_scope import EmbeddingItem, MemoryScope, MemorySource
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import ColumnElement, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
 
@@ -37,6 +37,18 @@ def _list_item(row: Memory) -> MemoryListItem:
     )
 
 
+def _status_condition(status: str) -> ColumnElement[bool]:
+    if status == "active":
+        return active_memory_filter()
+    if status == "candidate":
+        return and_(Memory.status == "candidate", or_(Memory.expires_at.is_(None), Memory.expires_at > func.now()))
+    if status == "invalidated":
+        return Memory.status == "invalidated"
+    if status == "expired":
+        return and_(Memory.status.in_(("active", "candidate")), Memory.expires_at <= func.now())
+    raise ValueError("Invalid memory status filter")
+
+
 def _memory_list_query(
     scope: MemoryScope,
     *,
@@ -49,17 +61,7 @@ def _memory_list_query(
         raise ValueError(f"kind must be one of {sorted(KIND_TO_PREFIX)}")
     if tag is not None and tag not in RECALL_TAGS:
         raise ValueError(f"tag must be in {sorted(RECALL_TAGS)}")
-    if status not in {"active", "candidate", "invalidated", "expired"}:
-        raise ValueError("Invalid memory status filter")
-    stmt = select(Memory).where(scope_filter(scope))
-    if status == "active":
-        stmt = stmt.where(active_memory_filter())
-    elif status == "expired":
-        stmt = stmt.where(Memory.status.in_(("active", "candidate")), Memory.expires_at <= func.now())
-    else:
-        stmt = stmt.where(Memory.status == status)
-        if status == "candidate":
-            stmt = stmt.where(or_(Memory.expires_at.is_(None), Memory.expires_at > func.now()))
+    stmt = select(Memory).where(scope_filter(scope), _status_condition(status))
     if kind is not None:
         stmt = stmt.where(Memory.context.startswith(KIND_TO_PREFIX[kind], autoescape=True))
     if tag:
@@ -234,12 +236,11 @@ async def update_memory(
 
 async def memory_counts(db: AsyncSession, scope: MemoryScope) -> dict[str, int]:
     recall = Memory.context.like("recall:%")
-    unexpired = or_(Memory.expires_at.is_(None), Memory.expires_at > func.now())
     filters = {
-        "active": and_(recall, active_memory_filter()),
-        "candidate": and_(recall, Memory.status == "candidate", unexpired),
-        "invalidated": and_(recall, Memory.status == "invalidated"),
-        "expired": and_(recall, Memory.status.in_(("active", "candidate")), Memory.expires_at <= func.now()),
+        "active": and_(recall, _status_condition("active")),
+        "candidate": and_(recall, _status_condition("candidate")),
+        "invalidated": and_(recall, _status_condition("invalidated")),
+        "expired": and_(recall, _status_condition("expired")),
         "user_profile": and_(Memory.context.startswith("user_profile:", autoescape=True), active_memory_filter()),
     }
     row = (

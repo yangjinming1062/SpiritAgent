@@ -73,11 +73,3 @@ class UndoAnchor(BaseModel):
 
     text: str
     attachments: list[UndoAttachment]
-
-
-class UndoResult(BaseModel):
-    session_id: str
-    deleted_count: int
-    anchor: UndoAnchor
-    # 截断后的完整历史，形状见 build_session_messages。
-    messages: list[SessionMessageView]

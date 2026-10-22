@@ -1,20 +1,24 @@
 """共同动作评审后，按明确冻结目标分别登记与提交制作。"""
 
 import asyncio
+from collections.abc import Sequence
 
 from features.accounts.models import lock_user_row
 from features.action_library.identity import definition_applies_to_source, definition_matches_source
 from features.action_library.ports import read_source
 from features.action_library.queries import (
     definition_snapshot,
+    definitions_by_id,
     matching_definitions,
     recoverable_work,
     target_snapshot,
     variant_summaries,
+    variant_summaries_by_definition,
 )
 from features.action_library.review import review_definition
 from features.action_library.schemas import (
     ActionDefinitionDesign,
+    ActionDefinitionSnapshot,
     ActionSourceSnapshot,
     ActionTargetKind,
     ActionTargetSnapshot,
@@ -81,22 +85,56 @@ async def action_source_reader(
     return await desktop_action_source(db, user_id, target_id) if target_id is not None else None
 
 
+async def action_variants_reader(
+    db: AsyncSession,
+    targets: Sequence[ActionTargetSnapshot],
+) -> list[ActionVariantSummary]:
+    if not targets:
+        return []
+    user_id = targets[0].user_id
+    if any(item.user_id != user_id for item in targets):
+        raise ValueError("共享动作版本读取只支持同一账户的目标")
+    states: dict[ActionTargetKind, dict[int, list[ActionVariantSummary]]] = {}
+    window_ids = list({item.definition_id for item in targets if item.target_kind == "window"})
+    desktop_ids = list({item.definition_id for item in targets if item.target_kind == "desktop"})
+    if window_ids:
+        states["window"] = await window_target_states(db, user_id, window_ids)
+    if desktop_ids:
+        states["desktop"] = await desktop_target_states(db, user_id, desktop_ids)
+    result: list[ActionVariantSummary] = []
+    fallbacks: dict[tuple[ActionTargetKind, int], ActionSourceSnapshot | None] = {}
+    for target in targets:
+        found = next(
+            (
+                item
+                for item in states.get(target.target_kind, {}).get(target.definition_id, [])
+                if item.target_id == target.target_id
+            ),
+            None,
+        )
+        if found is not None:
+            result.append(found)
+            continue
+        key = (target.target_kind, target.target_id)
+        if key not in fallbacks:
+            fallbacks[key] = await action_source_reader(db, target.user_id, target.target_kind, target.target_id)
+        source = fallbacks[key]
+        result.append(
+            ActionVariantSummary(
+                target_kind=target.target_kind,
+                target_id=target.target_id,
+                action_id=target.action_id,
+                label=source.label if source else "",
+                status="blocked" if source is None or not source.ready else "not_generated",
+                can_generate=False,
+                reason=target.reason or (source.blocked_reason if source else "来源形象已移除"),
+            ),
+        )
+    return result
+
+
 async def action_variant_reader(db: AsyncSession, target: ActionTargetSnapshot) -> ActionVariantSummary | None:
-    reader = window_target_states if target.target_kind == "window" else desktop_target_states
-    states = await reader(db, target.user_id, [target.definition_id])
-    found = next((item for item in states.get(target.definition_id, []) if item.target_id == target.target_id), None)
-    if found is not None:
-        return found
-    source = await action_source_reader(db, target.user_id, target.target_kind, target.target_id)
-    return ActionVariantSummary(
-        target_kind=target.target_kind,
-        target_id=target.target_id,
-        action_id=target.action_id,
-        label=source.label if source else "",
-        status="blocked" if source is None or not source.ready else "not_generated",
-        can_generate=False,
-        reason=target.reason or (source.blocked_reason if source else "来源形象已移除"),
-    )
+    return (await action_variants_reader(db, (target,)))[0]
 
 
 def schedule_action_definition(user_id: int, definition_id: int) -> None:
@@ -310,6 +348,38 @@ async def design_shared_desktop_action(
     return response
 
 
+def _desktop_local_variant(
+    variants: Sequence[ActionVariantSummary],
+    target_id: int,
+) -> ActionVariantSummary | None:
+    return next(
+        (item for item in variants if item.target_kind == "desktop" and item.target_id == target_id),
+        None,
+    )
+
+
+def _desktop_proposal(
+    definition: ActionDefinitionSnapshot,
+    source: ActionSourceSnapshot,
+    canonical: ActionDefinitionSnapshot | None,
+    variants: Sequence[ActionVariantSummary],
+) -> DesktopVideoProposalResponse | None:
+    if canonical is None or not definition_matches_source(canonical, source):
+        return None
+    local = _desktop_local_variant(variants, source.target_id)
+    return DesktopVideoProposalResponse(
+        proposal_id=definition.id,
+        definition_id=definition.id,
+        set_id=source.target_id,
+        action_id=local.action_id if local is not None and local.status != "excluded" else None,
+        status=definition.status,
+        review_reason=definition.review_reason,
+        name=definition.name,
+        description=definition.motion_description,
+        sync_targets=list(variants),
+    )
+
+
 async def shared_desktop_proposal(
     db: AsyncSession,
     user_id: int,
@@ -328,44 +398,35 @@ async def shared_desktop_proposal(
         if definition.reuse_definition_id is not None
         else definition
     )
-    if canonical is None or not definition_matches_source(canonical, source):
+    variants = await variant_summaries(db, user_id, definition.reuse_definition_id or definition.id)
+    response = _desktop_proposal(definition, source, canonical, variants)
+    if response is None:
         raise DesktopVideoStateError("动作资料已变化，请刷新后重试")
-    variants = await variant_summaries(db, user_id, canonical.id)
-    desktop = next(
-        (item for item in variants if item.target_kind == "desktop" and item.target_id == source.target_id),
-        None,
-    )
-    return DesktopVideoProposalResponse(
-        proposal_id=definition.id,
-        definition_id=definition.id,
-        set_id=source.target_id,
-        action_id=desktop.action_id if desktop is not None and desktop.status != "excluded" else None,
-        status="pending" if definition.status == "pending" else definition.status,
-        review_reason=definition.review_reason,
-        name=definition.name,
-        description=definition.motion_description,
-        sync_targets=variants,
-    )
+    return response
 
 
 async def shared_desktop_proposals(db: AsyncSession, user_id: int, set_id: int) -> list[DesktopVideoProposalResponse]:
     source = await desktop_action_source(db, user_id, set_id)
     if source is None or not source.source_visual_key:
         return []
-    result = []
-    for definition in await matching_definitions(db, source):
+    definitions = await matching_definitions(db, source)
+    reuse_ids = {item.reuse_definition_id for item in definitions if item.reuse_definition_id is not None}
+    canonicals = await definitions_by_id(db, user_id, reuse_ids)
+    variants_by_canonical = await variant_summaries_by_definition(
+        db,
+        user_id,
+        {definition.reuse_definition_id or definition.id for definition in definitions},
+    )
+    result: list[DesktopVideoProposalResponse] = []
+    for definition in definitions:
         canonical = (
-            await definition_snapshot(db, user_id, definition.reuse_definition_id)
-            if definition.reuse_definition_id is not None
-            else definition
+            canonicals.get(definition.reuse_definition_id) if definition.reuse_definition_id is not None else definition
         )
-        if canonical is None or not definition_matches_source(canonical, source):
+        variants = variants_by_canonical[definition.reuse_definition_id or definition.id]
+        response = _desktop_proposal(definition, source, canonical, variants)
+        if response is None:
             continue
-        variants = await variant_summaries(db, user_id, canonical.id)
-        local = next(
-            (item for item in variants if item.target_kind == "desktop" and item.target_id == set_id),
-            None,
-        )
+        local = _desktop_local_variant(variants, source.target_id)
         if (
             definition.status in {"approved", "reused"}
             and local is not None
@@ -373,19 +434,7 @@ async def shared_desktop_proposals(db: AsyncSession, user_id: int, set_id: int) 
             and local.status not in {"disabled", "excluded", "blocked"}
         ):
             continue
-        result.append(
-            DesktopVideoProposalResponse(
-                proposal_id=definition.id,
-                definition_id=definition.id,
-                set_id=set_id,
-                action_id=local.action_id if local is not None and local.status != "excluded" else None,
-                status=definition.status,
-                review_reason=definition.review_reason,
-                name=definition.name,
-                description=definition.motion_description,
-                sync_targets=variants,
-            ),
-        )
+        result.append(response)
     return result
 
 

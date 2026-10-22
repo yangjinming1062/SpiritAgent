@@ -25,7 +25,7 @@ from features.actions.models import CompanionAction, CompanionActionPack
 from features.actions.schemas import ABSOLUTE_MAX_DURATION_SECONDS
 from features.appearance.avatar_service import read_portrait_bytes
 from features.appearance.outfit_service import wait_outfit_description
-from features.appearance.queries import avatar_snapshot, outfit_snapshot
+from features.appearance.queries import active_avatar_snapshot, avatar_snapshot, outfit_snapshot
 from features.appearance.query_contracts import AvatarSnapshot
 from features.appearance.visual_identity import align_character_reference
 from features.media.chain import FrozenMediaProvider, MediaChainState
@@ -33,13 +33,13 @@ from features.media.character_images import ImageChainState
 
 from .errors import VideoPackError, VideoPackStateError, _GenerationRowGoneError
 from .helpers import _artifact_abs_path, _image_data_uri, _pack_dir
-from .queries import _active_avatar, _get_pack, _job_result_unresolved, _load_generation_context
+from .queries import _get_pack, _job_result_unresolved, _load_generation_context
 
 
 async def _require_new_paid_step(pack: CompanionActionPack, context: GenerationContext) -> None:
     require_new_generation_call(pack.user_id)
     async with SESSION_LOCAL() as db:
-        avatar = await _active_avatar(db, pack.user_id)
+        avatar = await active_avatar_snapshot(db, pack.user_id)
     try:
         await _require_current_identity_image(context, avatar)
     except VideoPackError as exc:
@@ -52,7 +52,7 @@ async def require_pack_generation_identity(db: AsyncSession, user_id: int, pack_
     context = _load_generation_context(pack) if pack is not None else None
     if pack is None or context is None or not pack.reference_path:
         raise VideoPackStateError("该动作包没有可制作的冻结参考，请重新生成动作包")
-    await _require_current_identity_image(context, await _active_avatar(db, user_id))
+    await _require_current_identity_image(context, await active_avatar_snapshot(db, user_id))
 
 
 def require_action_matting_model() -> None:

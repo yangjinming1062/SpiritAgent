@@ -14,9 +14,7 @@ def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: 
 
     if table == "companion_scenes":
         if payload.get("generation_origin_json"):
-            payload["generation_origin_json"] = GenerationOrigin.model_validate_json(
-                payload["generation_origin_json"],
-            ).model_dump_json()
+            GenerationOrigin.model_validate_json(payload["generation_origin_json"])
         if payload.get("status") == "ready":
             SceneDescriptionRequest.model_validate(
                 {"title": payload.get("title"), "description": payload.get("description")},
@@ -29,7 +27,7 @@ def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: 
             ("image_size_json", SceneImageDimensions),
         ):
             if payload.get(field):
-                payload[field] = schema.model_validate_json(payload[field]).model_dump_json()
+                schema.model_validate_json(payload[field])
         payload["auto_activate"] = False
         payload["regeneration_status"] = None
         payload["regeneration_stage"] = None

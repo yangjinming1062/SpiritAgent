@@ -17,7 +17,7 @@ from features.assets.references import message_asset_paths
 from features.conversation.attachments import prune_media_in_range
 from features.conversation.context_window import CHECKPOINT_SUBTYPE
 from features.conversation.models import Conversation, Message
-from features.conversation.replacement import reply_replacement_target
+from features.conversation.replacement import replacement_source_id
 from features.conversation.replies import CompanionReply, MediaBubble
 from features.conversation.reply_media import apply_video_status, bind_reply_videos
 from features.conversation.request_contracts import ChatAttachment, ChatMessageRequest
@@ -204,8 +204,8 @@ async def replace_assistant_message(
     if not data.content.strip() or data.tool_calls:
         raise ValueError("Replacement requires a complete final answer")
     async with user_asset_lock(user_id), session_scope() as db:
-        target = await reply_replacement_target(db, user_id, str(conv_id), old_message_id)
-        await db.execute(select(Message).where(Message.id == target.source_message_id).with_for_update())
+        source_id = await replacement_source_id(db, user_id, str(conv_id), old_message_id)
+        await db.execute(select(Message).where(Message.id == source_id).with_for_update())
         row = Message(
             conversation_id=conv_id,
             role="assistant",

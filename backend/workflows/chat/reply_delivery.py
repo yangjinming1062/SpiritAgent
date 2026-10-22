@@ -174,14 +174,18 @@ def companion_reply_schema(
     return schema
 
 
-def _draft_bubbles(raw: str) -> list[dict] | None:
+def _draft_bubbles(raw: str) -> tuple[list[dict] | None, list]:
     try:
         values = json.loads(normalize_companion_reply_content(raw))
     except ValueError:
-        return None
+        return None, []
+    original_ids = values.get("used_topic_ids", []) if isinstance(values, dict) else []
+    if not isinstance(original_ids, list):
+        original_ids = []
     if isinstance(values, dict):
         values = values.get("bubbles", [values] if "type" in values else None)
-    return values if isinstance(values, list) and all(isinstance(value, dict) for value in values) else None
+    bubbles = values if isinstance(values, list) and all(isinstance(value, dict) for value in values) else None
+    return bubbles, original_ids
 
 
 def _sentence_parts(text: str) -> list[str]:
@@ -404,7 +408,7 @@ def validate_companion_reply_repair(
     topic_cards: Mapping[int, LinkBubble] | None = None,
     used_topic_ids: list[int] | None = None,
 ) -> None:
-    original = _draft_bubbles(draft)
+    original, original_ids = _draft_bubbles(draft)
     if original is None:
         return
     values = json.loads(content)
@@ -448,10 +452,6 @@ def validate_companion_reply_repair(
     repaired_topics = [b.get("topic_id") for b in values if b.get("type") == "link"]
     if repaired_topics != required_topics:
         raise ValueError("A reply repair must preserve authorized source cards and their order")
-    envelope = json.loads(normalize_companion_reply_content(draft))
-    original_ids = envelope.get("used_topic_ids", []) if isinstance(envelope, dict) else []
-    if not isinstance(original_ids, list):
-        original_ids = []
     required_ids = {topic_id for topic_id in original_ids if type(topic_id) is int and topic_id in valid_topics}
     if required_ids - set(used_topic_ids or ()):
         raise ValueError("A reply repair must preserve authorized topic usage")

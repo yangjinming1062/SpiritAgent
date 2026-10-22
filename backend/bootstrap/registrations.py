@@ -77,7 +77,7 @@ from runtime.events.loop import register_internal_event_handler
 from runtime.tools.registry import REGISTRY
 from workflows.action_library import (
     action_source_reader,
-    action_variant_reader,
+    action_variants_reader,
     design_shared_desktop_action,
     schedule_action_definition,
     shared_desktop_proposal,
@@ -174,7 +174,7 @@ def wire_domain_hooks() -> None:
     set_outfit_ready_handler(start_outfit_actions)
     configure_action_library_ports(
         source_reader=action_source_reader,
-        variant_reader=action_variant_reader,
+        variant_reader=action_variants_reader,
         definition_scheduler=schedule_action_definition,
         target_sync_handler=synchronize_action_target,
     )

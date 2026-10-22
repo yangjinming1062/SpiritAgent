@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from datetime import date, datetime
 from typing import Any
 
@@ -52,13 +53,13 @@ class NativeMemory:
                         query=query,
                         before_memory_id=before_memory_id,
                     )
-                payload = self._inspection.payload()
-                payload["next_before_memory_id"] = min((r.id for r in self._inspection.memories), default=None)
-                payload["maintenance_only_memories"] = [
-                    r.model_dump()
+                maintenance = [
+                    r
                     for r in self._inspection.memories
                     if r.status == "active" and (not r.expires_at or datetime.fromisoformat(r.expires_at) > utc_now())
                 ]
+                payload = replace(self._inspection, memories=maintenance).payload()
+                payload["next_before_memory_id"] = min((r.id for r in self._inspection.memories), default=None)
                 return json.dumps(payload, ensure_ascii=False)
             if tool_name == "memory_retain":
                 if self._inspection is None:

@@ -27,6 +27,7 @@ from features.accounts.remote.security import (
     remote_public_base_url,
     revoke_remote_grants,
 )
+from features.accounts.snapshots import RemoteDeviceIdentity, remote_identity
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +46,14 @@ def _pairing_response(pairing: RemotePairing, url: str | None = None) -> Pairing
     elif ensure_utc(pairing.expires_at) <= utc_now():
         state = "expired"
     return PairingResponse(id=pairing.id, url=url, expires_at=pairing.expires_at, state=state)
+
+
+def session_response(user_id: int, username: str, device: RemoteDeviceIdentity, token: str) -> RemoteSessionResponse:
+    return RemoteSessionResponse(
+        user=RemoteUserResponse(id=user_id, username=username),
+        device=DeviceResponse.model_validate(device),
+        csrf_token=remote_csrf_token(token),
+    )
 
 
 async def create_pairing(user_id: int, db: AsyncSession) -> PairingResponse:
@@ -125,11 +134,7 @@ async def exchange_pairing(payload: ExchangeRequest, db: AsyncSession, old_token
             await revoke_remote_grants(db, old_device.user_id, old_device.id)
     await db.commit()
     previous_device = (old_device.user_id, old_device.id) if old_device is not None else None
-    result = RemoteSessionResponse(
-        user=RemoteUserResponse(id=user_id, username=user.username),
-        device=DeviceResponse.model_validate(device),
-        csrf_token=remote_csrf_token(token),
-    )
+    result = session_response(user_id, user.username, remote_identity(device), token)
     return RemoteExchangeResult(result, token, previous_device)
 
 

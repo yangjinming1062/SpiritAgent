@@ -26,7 +26,6 @@ from infrastructure.video_processing.matting import matte_video
 from infrastructure.video_processing.process import (
     MAX_SOURCE_BYTES,
     TARGET_EXT,
-    build_hitmask,
     extract_cover,
     prepare_action_clip,
 )
@@ -111,8 +110,8 @@ async def _prepare_clip(
         preserve_resolution=preserve_resolution,
     )
     canvas_w, canvas_h = processed.width, processed.height
-    hitmask = await run_blocking(build_hitmask, dst, canvas_w=canvas_w, canvas_h=canvas_h)
-    cover = await run_blocking(extract_cover, dst, canvas_w=canvas_w, canvas_h=canvas_h)
+    hitmask = processed.hitmask
+    cover = await run_blocking(extract_cover, dst, probe=processed.probe, canvas_w=canvas_w, canvas_h=canvas_h)
     stored, cover_stored, hitmask_stored = await _save_action_materials(
         user_id,
         directory,
@@ -215,7 +214,6 @@ async def _prepare_action_pose(
         return
     require_action_matting_model()
     reference_uri = await run_blocking(_image_data_uri, _artifact_abs_path(pack.reference_path))
-    identity_uri = await run_blocking(_image_data_uri, _artifact_abs_path(pack.reference_path))
     pose_state = (
         ImageChainState.model_validate_json(job.pose_generation_state_json)
         if job.pose_generation_state_json
@@ -241,7 +239,7 @@ async def _prepare_action_pose(
         user_id=pack.user_id,
         storage_directory=_pack_dir(pack),
         reference_image=reference_uri,
-        identity_reference=identity_uri,
+        identity_reference=reference_uri,
         identity_text=render_character_profile(context.identity),
         size=FULLBODY_SIZE,
         image_edit=True,
@@ -309,6 +307,7 @@ async def _run_image_pipeline(
         for key, value in values.items():
             setattr(job, key, value)
         job.stage = "process"
+    identity_uri: str | None = None
     if job.system_slot in ("peek_left", "peek_right"):
         identity_uri = await run_blocking(_image_data_uri, _artifact_abs_path(pack.reference_path))
         sample_uri = await run_blocking(_image_data_uri, _artifact_abs_path(result.clip.path))
@@ -324,7 +323,8 @@ async def _run_image_pipeline(
     review_id = None
     replacing_current = accepted_action_asset(job) is not None
     if pack.status == "ready" or replacing_current:
-        identity_uri = await run_blocking(_image_data_uri, _artifact_abs_path(pack.reference_path))
+        if identity_uri is None:
+            identity_uri = await run_blocking(_image_data_uri, _artifact_abs_path(pack.reference_path))
         verdict, reason = await review_character_frames(
             pack.user_id,
             identity_uri,

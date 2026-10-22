@@ -1,13 +1,13 @@
 """目标模块的读取与提交后调度由 bootstrap 显式装配。"""
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .schemas import ActionSourceSnapshot, ActionTargetKind, ActionTargetSnapshot, ActionVariantSummary
 
 type SourceReader = Callable[[AsyncSession, int, ActionTargetKind, int | None], Awaitable[ActionSourceSnapshot | None]]
-type VariantReader = Callable[[AsyncSession, ActionTargetSnapshot], Awaitable[ActionVariantSummary | None]]
+type VariantReader = Callable[[AsyncSession, Sequence[ActionTargetSnapshot]], Awaitable[list[ActionVariantSummary]]]
 type DefinitionScheduler = Callable[[int, int], None]
 type TargetSyncHandler = Callable[[int, ActionTargetKind, int], Awaitable[None]]
 
@@ -40,10 +40,13 @@ async def read_source(
     return await _source_reader(db, user_id, kind, target_id)
 
 
-async def read_variant(db: AsyncSession, target: ActionTargetSnapshot) -> ActionVariantSummary | None:
+async def read_variants(db: AsyncSession, targets: Sequence[ActionTargetSnapshot]) -> list[ActionVariantSummary]:
+    """按目标集合一次读取；返回与 targets 同序等长，targets 须同属一个账户，缺失行由读取实现兜底合成。"""
+    if not targets:
+        return []
     if _variant_reader is None:
         raise RuntimeError("共享动作版本读取尚未装配")
-    return await _variant_reader(db, target)
+    return await _variant_reader(db, targets)
 
 
 def schedule_definition(user_id: int, definition_id: int) -> None:

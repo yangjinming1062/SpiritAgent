@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from infrastructure.network import read_capped_response, trusted_service_async_client
 from infrastructure.text import utc_now
 
-from .social_content import RequestGuard, SocialSourceError
+from .social_content import RequestGuard, SocialSourceError, failure_reason
 
 _MAX_RESPONSE_BYTES = 1500000
 _MAX_QR_BYTES = 512000
@@ -211,11 +211,7 @@ class XiaohongshuServiceClient:
                 if status_code == 410
                 else "session_conflict"
                 if status_code == 409
-                else "login_required"
-                if status_code in {401, 403}
-                else "rate_limited"
-                if status_code == 429
-                else "source_failed"
+                else failure_reason(status_code)
             )
             if (
                 status_code == 502

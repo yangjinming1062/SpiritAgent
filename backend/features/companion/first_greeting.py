@@ -1,7 +1,6 @@
 """初次问候：引导首次完成时保存一条主动回合意图；是否开口与台词由伙伴在回合中决定。"""
 
 import asyncio
-import json
 from datetime import timedelta
 
 from infrastructure.logger import get_logger
@@ -25,14 +24,10 @@ _BG = TaskBag("companion.first_greeting")
 async def enqueue_first_greeting(db: AsyncSession, user_id: int) -> None:
     """在完成引导的事务中保存意图；说明文本与该用户的界面语言一致，由调用方提交。"""
     language = await get_user_setting(db, user_id, "language")
-    intent = json.dumps(
-        {"kind": "first_meeting", "intent": resolve_prompt_text(FIRST_MEETING_INTENT_TEXTS, language)},
-        ensure_ascii=False,
-    )
     await enqueue_companion_intent(
         db,
         user_id,
-        intent,
+        resolve_prompt_text(FIRST_MEETING_INTENT_TEXTS, language),
         source_key=_FIRST_GREETING_SOURCE_KEY,
         expires_at=utc_now() + _FIRST_GREETING_TTL,
     )

@@ -21,6 +21,7 @@ from features.conversation.edit import replace_user_message
 from features.conversation.fork import fork_conversation_from_message
 from features.conversation.formatting import message_text
 from features.conversation.history import build_session_messages, count_conversation_bubbles
+from features.conversation.http_contracts import SessionUndoResult
 from features.conversation.main_conversation import get_or_create_main_conversation
 from features.conversation.models import Conversation, Message
 from features.conversation.replacement import ReplyReplacement, reply_replacement_target
@@ -179,13 +180,13 @@ async def clear_history(user_id: int, session_id: str) -> dict[str, Any]:
         return await _clear_history_in_session(db, await _owned(db, user_id, session_id))
 
 
-async def undo_history(user_id: int, session_id: str, message_id: int) -> dict[str, Any]:
+async def undo_history(user_id: int, session_id: str, message_id: int) -> SessionUndoResult:
     async with SESSION_LOCAL() as db:
         conv = await resolve_undo_target(db, user_id, session_id, message_id)
         await prune_media_in_range(db, conv.id, lo=message_id)
         result = await undo_conversation_to_message(db, conv, message_id)
         await cleanup_user_media(user_id)
-        return result.model_dump(mode="json")
+        return result
 
 
 async def _discard_forked_conversation(db: AsyncSession, conv_id: int) -> None:

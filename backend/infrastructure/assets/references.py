@@ -6,6 +6,9 @@ import re
 from infrastructure.assets.asset_store import normalize_asset_reference
 from infrastructure.assets.paths import parse_companion_asset_path
 
+# 资产 token 尾随标点剥离集合；导出、改写与回收三处共用同一取值。
+ASSET_TOKEN_TRAILING_PUNCTUATION = ".!?，。；！"
+
 _ASSET_TOKEN = re.compile(
     r"(?<![\w/-])(?:https?://[^\s<>\"'()\[\]{}]+)?(?:/api/companion/asset/|companion-assets/)[^\s<>\"'()\[\]{},;]+",
 )
@@ -19,7 +22,10 @@ def asset_paths(value: object, user_id: int) -> set[str]:
     if not isinstance(value, str):
         return set()
     result: set[str] = set()
-    candidates = [value, *(match.group(0).rstrip(".!?，。；！") for match in _ASSET_TOKEN.finditer(value))]
+    candidates = [
+        value,
+        *(match.group(0).rstrip(ASSET_TOKEN_TRAILING_PUNCTUATION) for match in _ASSET_TOKEN.finditer(value)),
+    ]
     for candidate in candidates:
         path = normalize_asset_reference(candidate)
         parsed = parse_companion_asset_path(path)

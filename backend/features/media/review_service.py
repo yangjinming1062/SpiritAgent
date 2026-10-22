@@ -125,12 +125,9 @@ async def set_media_review_status(
     review_id: int,
     status: Literal["accepted", "rejected"],
 ) -> None:
-    row = await db.scalar(
-        select(CompanionMediaReview)
-        .where(CompanionMediaReview.id == review_id, CompanionMediaReview.user_id == user_id)
-        .with_for_update(),
-    )
-    if row is None:
+    """对 lock_media_review 已持锁的行直接置状态，不再重复取行加锁。"""
+    row = await db.get(CompanionMediaReview, review_id)
+    if row is None or row.user_id != user_id:
         raise ValueError("Media review is no longer available")
     row.status = status
 

@@ -31,6 +31,8 @@ from features.accounts.snapshots import (
     remote_identity,
 )
 
+REMOTE_TOUCH_INTERVAL_SECONDS = 60
+
 
 async def get_current_admin_token(
     credentials: HTTPAuthorizationCredentials | None = Depends(BEARER_SCHEME),
@@ -54,12 +56,7 @@ async def get_current_admin_token(
     return username
 
 
-async def get_current_session(
-    credentials: HTTPAuthorizationCredentials | None = Depends(BEARER_SCHEME),
-    db: AsyncSession = Depends(get_db),
-) -> tuple[AccountIdentity, LoginIdentity]:
-    payload = decode_bearer_token(credentials)
-
+async def session_from_payload(payload: dict, db: AsyncSession) -> tuple[AccountIdentity, LoginIdentity]:
     if payload.get("purpose") is not None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="令牌用途无效。")
 
@@ -96,6 +93,13 @@ async def get_current_session(
     # get_db 是请求级依赖，响应发送完毕才关闭会话；鉴权读取不能让事务跨过模型等待、文件与流式下发。提交（而非回滚）后 user 与 login_record 不过期，仍可使用。
     await db.commit()
     return account_identity(user), login_identity(login_record)
+
+
+async def get_current_session(
+    credentials: HTTPAuthorizationCredentials | None = Depends(BEARER_SCHEME),
+    db: AsyncSession = Depends(get_db),
+) -> tuple[AccountIdentity, LoginIdentity]:
+    return await session_from_payload(decode_bearer_token(credentials), db)
 
 
 async def get_optional_current_session(
@@ -153,6 +157,14 @@ async def get_current_user(
         yield user
 
 
+def _touch_remote_seen(device: RemoteSession) -> bool:
+    now = utc_now()
+    if (now - ensure_utc(device.last_seen_at)).total_seconds() >= REMOTE_TOUCH_INTERVAL_SECONDS:
+        device.last_seen_at = now
+        return True
+    return False
+
+
 async def authenticate_remote_session(
     request: Request,
     db: AsyncSession,
@@ -196,8 +208,7 @@ async def authenticate_remote_session(
     request.state.user_id = user.id
     request.state.remote_device_id = device.id
     set_request_user_id(user.id)
-    if (utc_now() - ensure_utc(device.last_seen_at)).total_seconds() >= 60:
-        device.last_seen_at = utc_now()
+    _touch_remote_seen(device)
     await db.commit()
     return account_identity(user), remote_identity(device)
 
@@ -228,7 +239,6 @@ async def is_remote_session_active(user_id: int, device_id: int) -> bool:
         )
         if device is None:
             return False
-        if (utc_now() - ensure_utc(device.last_seen_at)).total_seconds() >= 60:
-            device.last_seen_at = utc_now()
+        if _touch_remote_seen(device):
             await db.commit()
         return True

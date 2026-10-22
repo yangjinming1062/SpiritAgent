@@ -1,5 +1,4 @@
 import base64
-import hashlib
 import json
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -10,6 +9,7 @@ from fastapi import HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
+from infrastructure.hashing import sha256_hex
 
 from features.accounts.models import AdminSession
 
@@ -32,7 +32,7 @@ def generate_activation_token() -> str:
 
 
 def hash_activation_token(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+    return sha256_hex(token)
 
 
 def encode_activation_code(base_url: str, token: str) -> str:
@@ -54,6 +54,13 @@ def decode_activation_code(code: str) -> tuple[str, str]:
     return base_url, token
 
 
+def _sign_token(payload: dict) -> tuple[str, int]:
+    expires_delta = timedelta(minutes=SETTINGS.access_token_expire_minutes)
+    payload["exp"] = datetime.now(UTC) + expires_delta
+    token = jwt.encode(payload, SETTINGS.jwt_secret_key, algorithm=SETTINGS.jwt_algorithm)
+    return token, int(expires_delta.total_seconds())
+
+
 def create_access_token(
     *,
     user_id: int,
@@ -61,26 +68,22 @@ def create_access_token(
     client_context: dict | None = None,
 ) -> tuple[str, int, str]:
     token_jti = uuid4().hex
-    expires_delta = timedelta(minutes=SETTINGS.access_token_expire_minutes)
-    expires_at = datetime.now(UTC) + expires_delta
-    payload = {"sub": str(user_id), "username": username, "jti": token_jti, "exp": expires_at}
+    payload = {"sub": str(user_id), "username": username, "jti": token_jti}
     if client_context:
         payload["ctx"] = client_context
-    token = jwt.encode(payload, SETTINGS.jwt_secret_key, algorithm=SETTINGS.jwt_algorithm)
-    return token, int(expires_delta.total_seconds()), token_jti
+    token, expires_in = _sign_token(payload)
+    return token, expires_in, token_jti
 
 
 async def create_admin_token() -> tuple[str, int]:
     jti = uuid4().hex
-    expires_delta = timedelta(minutes=SETTINGS.access_token_expire_minutes)
-    expires_at = datetime.now(UTC) + expires_delta
-    payload = {"sub": "admin", "username": SETTINGS.admin_username, "is_admin": True, "jti": jti, "exp": expires_at}
-    token = jwt.encode(payload, SETTINGS.jwt_secret_key, algorithm=SETTINGS.jwt_algorithm)
+    payload = {"sub": "admin", "username": SETTINGS.admin_username, "is_admin": True, "jti": jti}
+    token, expires_in = _sign_token(payload)
     # deps.get_current_admin_token 要求 jti 行已存在，insert 失败必须抛出而非 mint 首调就 401 的 token。
     async with SESSION_LOCAL() as db:
         db.add(AdminSession(token_jti=jti, username=SETTINGS.admin_username, is_active=True))
         await db.commit()
-    return token, int(expires_delta.total_seconds())
+    return token, expires_in
 
 
 def decode_access_token(token: str) -> dict:

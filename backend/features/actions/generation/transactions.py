@@ -12,9 +12,8 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from features.action_library.queries import definition_snapshot
 from features.action_library.service import exclude_target, remove_container_targets
-from features.actions.asset_retirement import action_asset_paths, retire_action_assets
+from features.actions.asset_retirement import action_asset_paths, pack_asset_paths, retire_action_assets
 from features.actions.materials import accept_action_asset, accepted_action_asset
-from features.actions.media_contracts import ActionResult
 from features.actions.models import CompanionAction, CompanionActionPack, removed_video_tasks
 from features.actions.publishing import emit_catalog_changed, publish_action_catalog
 from features.actions.repository import clear_action_attempt
@@ -22,7 +21,6 @@ from features.appearance.activation import activate_outfit_for_pack
 from features.appearance.queries import mark_initial_video_started
 from features.appearance.query_contracts import AvatarSnapshot, OutfitSnapshot
 from features.media.chain import MediaChainState, media_failure_reason
-from features.media.character_images import ImageChainState
 from features.media.contracts import RemovedActionVideoTask
 from features.media.review_service import reject_pending_action_reviews
 
@@ -333,35 +331,7 @@ async def _activate_locked(db: AsyncSession, pack: CompanionActionPack) -> None:
 
 
 def _pack_assets(pack: CompanionActionPack, jobs: list[CompanionAction]) -> set[str]:
-    paths = {pack.reference_path, pack.manifest_path, pack.cover_path or ""}
-    context = _load_generation_context(pack)
-    if context is not None:
-        paths.add(context.identity_reference_path)
-        paths.update(candidate.path for candidate in context.reference_chain.candidates)
-        paths.add(context.reference_chain.pending_path or "")
-    for job in jobs:
-        paths |= action_asset_paths(job)
-        if job.generation_state_json:
-            state = MediaChainState.model_validate_json(job.generation_state_json)
-            paths.add(state.source_path or "")
-            paths.update(path for candidate in state.candidates for path in candidate.artifacts)
-        if job.pose_generation_state_json:
-            pose_state = ImageChainState.model_validate_json(job.pose_generation_state_json)
-            paths.update(candidate.path for candidate in pose_state.candidates)
-            paths.add(pose_state.pending_path or "")
-        paths.update(
-            (
-                job.artifact_path or "",
-                job.pose_path or "",
-                job.media_path or "",
-                job.cover_path or "",
-                job.hitmask_path or "",
-            ),
-        )
-        if job.result_json:
-            result = ActionResult.model_validate_json(job.result_json)
-            paths.update((result.clip.path, result.cover_path, result.hitmask_path))
-    return paths - {""}
+    return set().union(pack_asset_paths(pack), *(action_asset_paths(job) for job in jobs))
 
 
 async def _remove_packs(

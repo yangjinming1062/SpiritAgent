@@ -22,6 +22,9 @@ class CharacterCardNotReadyError(VisualReasoningError):
     pass
 
 
+CARD_NOT_ANALYZED = "角色资料尚未分析完成，请在角色卡中查看进度或重试"
+
+
 async def get_character_card(db: AsyncSession, user_id: int, *, lock: bool = False) -> CompanionCharacterCard | None:
     query = (
         select(CompanionCharacterCard)
@@ -59,13 +62,8 @@ def character_card_response(card: CompanionCharacterCard) -> CharacterCardRespon
     )
 
 
-async def load_character_snapshot(
-    db: AsyncSession,
-    user_id: int,
-) -> CharacterCardSnapshot | None:
-    card = await get_character_card(db, user_id)
-    if card is None or card.revision == 0:
-        return None
+def card_snapshot(card: CompanionCharacterCard) -> CharacterCardSnapshot:
+    """由已加载的角色卡行构造冻结快照；仅处理 revision>0 的卡。"""
     _, overrides, features = _card_features(card)
     return CharacterCardSnapshot(
         avatar_id=card.avatar_id,
@@ -75,11 +73,33 @@ async def load_character_snapshot(
     )
 
 
+async def load_character_snapshot(
+    db: AsyncSession,
+    user_id: int,
+) -> CharacterCardSnapshot | None:
+    card = await get_character_card(db, user_id)
+    if card is None or card.revision == 0:
+        return None
+    return card_snapshot(card)
+
+
 async def require_character_snapshot(db: AsyncSession, user_id: int) -> CharacterCardSnapshot:
     snapshot = await load_character_snapshot(db, user_id)
     if snapshot is None:
-        raise CharacterCardNotReadyError("角色资料尚未分析完成，请在角色卡中查看进度或重试")
+        raise CharacterCardNotReadyError(CARD_NOT_ANALYZED)
     return snapshot
+
+
+async def require_ready_character_snapshot(db: AsyncSession, user_id: int) -> CharacterCardSnapshot:
+    """就绪角色卡快照；未分析、分析失败与分析中分别拒绝。"""
+    card = await get_character_card(db, user_id)
+    if card is None or card.revision == 0:
+        raise CharacterCardNotReadyError(CARD_NOT_ANALYZED)
+    if card.status == "failed":
+        raise CharacterCardNotReadyError("角色资料分析失败，请先在角色卡中重试分析，再调整全身图")
+    if card.status != "ready":
+        raise CharacterCardNotReadyError("角色资料正在分析，请待分析完成后再调整全身图")
+    return card_snapshot(card)
 
 
 async def character_snapshot_is_current(db: AsyncSession, user_id: int, snapshot: CharacterCardSnapshot) -> bool:

@@ -3,7 +3,7 @@
 import json
 from collections.abc import Collection
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import WSEvent
@@ -27,8 +27,9 @@ async def settled_event_payloads(db: AsyncSession, user_id: int) -> tuple[tuple[
 
 
 async def remove_events(db: AsyncSession, user_id: int, ids: Collection[int]) -> None:
-    for row in await db.scalars(select(WSEvent).where(WSEvent.user_id == user_id, WSEvent.id.in_(ids))):
-        await db.delete(row)
+    if not ids:
+        return
+    await db.execute(delete(WSEvent).where(WSEvent.user_id == user_id, WSEvent.id.in_(ids)))
 
 
 async def invalidate_history_events(
@@ -39,6 +40,7 @@ async def invalidate_history_events(
     session_ids: Collection[str],
 ) -> tuple[str, ...]:
     released: list[str] = []
+    stale_ids: list[int] = []
     for event in await db.scalars(select(WSEvent).where(WSEvent.user_id == user_id)):
         try:
             payload = json.loads(event.payload)
@@ -57,5 +59,7 @@ async def invalidate_history_events(
         )
         if belongs:
             released.append(event.payload)
-            await db.delete(event)
+            stale_ids.append(event.id)
+    if stale_ids:
+        await db.execute(delete(WSEvent).where(WSEvent.id.in_(stale_ids)))
     return tuple(released)

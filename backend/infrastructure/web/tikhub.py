@@ -159,13 +159,13 @@ def _candidate(
     )
 
 
-def normalize_social_content(
+def _candidates_from_objects(
     platform: social_content.SocialPlatform,
-    data: Any,
+    objects: list[dict[str, Any]],
     collected_at: datetime,
 ) -> list[social_content.SocialContent]:
     unique: dict[str, social_content.SocialContent] = {}
-    for raw in _objects(data):
+    for raw in objects:
         try:
             candidate = _candidate(platform, raw, collected_at)
         except (ValueError, TypeError, OverflowError):
@@ -181,6 +181,14 @@ def normalize_social_content(
         ):
             unique[candidate.source_id] = candidate
     return list(unique.values())
+
+
+def normalize_social_content(
+    platform: social_content.SocialPlatform,
+    data: Any,
+    collected_at: datetime,
+) -> list[social_content.SocialContent]:
+    return _candidates_from_objects(platform, _objects(data), collected_at)
 
 
 class TikHubClient:
@@ -301,14 +309,15 @@ class TikHubClient:
             )
         else:
             raise ValueError("Unsupported social platform")
-        candidates = normalize_social_content(platform, data, utc_now())
+        objects = _objects(data)
+        candidates = _candidates_from_objects(platform, objects, utc_now())
         candidates = [
             candidate
             for candidate in candidates
             if candidate.published_at is None or window_start <= candidate.published_at < window_end
         ]
         next_cursor = None
-        for raw in _objects(data):
+        for raw in objects:
             if platform == "x" and raw.get("cursorType") == "Bottom":
                 value = raw.get("value")
                 if value is not None and not isinstance(value, str):

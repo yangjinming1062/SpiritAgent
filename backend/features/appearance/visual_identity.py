@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Literal
 
 from infrastructure.ai.selection import ProviderSelection
 from infrastructure.ai.tasks import AiTaskKey
@@ -55,6 +56,10 @@ class SelfVisualPlan:
 
     context: SelfVisualContext
     override_outfit_description: str = ""
+
+
+def _identity_reference_mode(role: CharacterReferenceRole) -> Literal["primary", "portrait_and_outfit"]:
+    return "primary" if role == "fullbody" else "portrait_and_outfit"
 
 
 async def load_self_visual_context(
@@ -150,6 +155,30 @@ def optional_outfit_image_reference(plan: SelfVisualPlan) -> str | None:
     return plan.context.outfit_reference
 
 
+@dataclass(frozen=True)
+class SelfImageInputs:
+    """一次出镜图片的冻结提示词与参考参数，调用方原样传给生成入口。"""
+
+    prompt: str
+    identity: CharacterCardSnapshot
+    reference_image: str
+    secondary_reference_image: str | None
+    identity_reference_mode: Literal["primary", "portrait_and_outfit"]
+    identity_text: str
+
+
+def build_self_image_inputs(plan: SelfVisualPlan, prompt: str) -> SelfImageInputs:
+    outfit = optional_outfit_image_reference(plan)
+    return SelfImageInputs(
+        prompt=build_self_image_prompt(plan, prompt, has_outfit_reference=bool(outfit)),
+        identity=plan.context.identity,
+        reference_image=plan.context.identity_image,
+        secondary_reference_image=outfit,
+        identity_reference_mode=_identity_reference_mode(plan.context.identity_reference_role),
+        identity_text=render_character_identity(plan.context.identity),
+    )
+
+
 async def align_character_reference(
     user_id: int,
     outfit_image: str,
@@ -188,7 +217,7 @@ async def align_character_reference(
         size=FULLBODY_SIZE,
         image_edit=False,
         identity_reference=identity_reference,
-        identity_reference_mode="primary" if identity_reference_role == "fullbody" else "portrait_and_outfit",
+        identity_reference_mode=_identity_reference_mode(identity_reference_role),
         goal_review="required",
         identity_text=render_character_identity(identity),
         state=state,
@@ -199,31 +228,37 @@ async def align_character_reference(
     return paths[0]
 
 
-def self_video_references(
-    plan: SelfVisualPlan,
-    reference_image: str | None = None,
-    *,
-    identity_reference: str | None = None,
-) -> tuple[str, ...]:
-    """沿冻结分工消费默认参考；显式造型图须搭配完整身份参考。"""
-    if plan.override_outfit_description:
-        return (plan.context.identity_image,)
-    if reference_image:
-        if not identity_reference:
-            raise AvatarSourceUnreadableError("全身身份参考缺失或无法读取")
-        return identity_reference, reference_image
-    outfit = optional_outfit_image_reference(plan)
-    return (plan.context.identity_image, outfit) if outfit else (plan.context.identity_image,)
+@dataclass(frozen=True)
+class SelfVideoInputs:
+    """一次出镜视频的冻结提示词与参考参数，调用方原样传给生成入口。"""
+
+    prompt: str
+    references: tuple[str, ...]
+    identity_reference_role: CharacterReferenceRole
 
 
-def build_self_video_prompt(
+async def build_self_video_inputs(
     plan: SelfVisualPlan,
     prompt: str,
-    *,
-    has_outfit_reference: bool,
-    identity_reference_role: CharacterReferenceRole | None = None,
-) -> str:
-    identity_reference_role = identity_reference_role or plan.context.identity_reference_role
+    reference_image: str | None = None,
+) -> SelfVideoInputs:
+    """冻结视频提示词、参考图与身份职责；has_outfit_reference 与 role 随参考分支一次确定。"""
+    identity_reference_role: CharacterReferenceRole = plan.context.identity_reference_role
+    references: tuple[str, ...]
+    if plan.override_outfit_description:
+        references = (plan.context.identity_image,)
+    elif reference_image:
+        fullbody = await asyncio.to_thread(read_asset_data_uri, plan.context.fullbody_path)
+        if not fullbody:
+            raise AvatarSourceUnreadableError("全身身份参考缺失或无法读取")
+        identity_reference_role = "fullbody"
+        references = (fullbody, reference_image)
+    else:
+        outfit_reference = optional_outfit_image_reference(plan)
+        references = (
+            (plan.context.identity_image, outfit_reference) if outfit_reference else (plan.context.identity_image,)
+        )
+    has_outfit_reference = len(references) > 1
     outfit = plan.override_outfit_description or plan.context.outfit_description
     if has_outfit_reference:
         outfit_instructions = (
@@ -240,8 +275,8 @@ def build_self_video_prompt(
         body = plan.context.identity.features.model_dump(include=set(BodyFeatures.model_fields), exclude_defaults=True)
         if body:
             reference += "身体特征补充资料（JSON）：" + json.dumps(body, ensure_ascii=False) + "。"
-    return SELF_VIDEO_REFERENCE_TEMPLATE.format(
-        reference=reference,
-        outfit=outfit_instructions,
-        prompt=prompt,
+    return SelfVideoInputs(
+        prompt=SELF_VIDEO_REFERENCE_TEMPLATE.format(reference=reference, outfit=outfit_instructions, prompt=prompt),
+        references=references,
+        identity_reference_role=identity_reference_role,
     )

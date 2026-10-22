@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.models import lock_user_row
 from features.action_library.ports import read_source, synchronize_target
-from features.action_library.queries import variant_summaries
+from features.action_library.queries import variant_summaries_by_definition
 from features.action_library.service import register_source_targets
 from features.actions.generation.script import VideoActionScriptEntry, parse_action_script_entry
 from features.actions.materials import accepted_action_asset
@@ -27,16 +27,14 @@ from features.actions.schemas import PeekGeometry, parse_content_rect
 from features.actions.usage import fulfill_deferred_play_intents
 from features.appearance.avatar_service import get_avatar_job_lock
 from features.appearance.character_card import character_snapshot_is_current
-from features.appearance.queries import outfit_snapshot
+from features.appearance.queries import active_avatar_snapshot, outfit_snapshot
 from features.media.chain import MediaChainState
 from features.media.review_service import list_pending_media_reviews, list_rejected_action_media
 
-from .execution_state import logger
 from .helpers import _reference_hash
 from .pipeline import _review_pack_identity
 from .queries import (
     _action_order,
-    _active_avatar,
     _can_publish_jobs,
     _can_resume_job,
     _can_resume_pose_preparation,
@@ -92,7 +90,7 @@ async def _publish_ready(pack_id: int, results: dict[str, ActionResult]) -> None
         ):
             return
         outfit = await outfit_snapshot(db, pack.user_id, pack.outfit_id) if pack.outfit_id is not None else None
-        avatar = await _active_avatar(db, pack.user_id)
+        avatar = await active_avatar_snapshot(db, pack.user_id)
         reference_is_current = outfit is not None and await _reference_hash(outfit, avatar) == pack.reference_hash
         if not reference_is_current and not pack.reference_path:
             await _mark_pack_failed(db, pack, "外观参考已变更，本次生成结果已过期，请重新生成", stage="publish")
@@ -169,17 +167,19 @@ def _pack_response(
     )
     reference_review_pending = context is not None and context.reference_chain.can_retry_goal_review()
     actions = []
+    has_any_material = False
     for job in sorted(jobs, key=lambda job: _action_order(job.key)):
         script = parse_action_script_entry(job.script_json) if job.script_json else None
         material = accepted_action_asset(job)
+        has_any_material = has_any_material or material is not None
         preview_path = job.media_path or (material.media_path if material else "")
-        if not preview_path and job.generation_state_json:
-            try:
-                candidate = MediaChainState.model_validate_json(job.generation_state_json).best()
-                if candidate is not None and candidate.result_json:
-                    preview_path = candidate.path
-            except ValueError:
-                logger.warning("action preview progress invalid", extra={"action_id": job.id})
+        state: MediaChainState | None = None
+        if job.generation_state_json:
+            state = MediaChainState.model_validate_json(job.generation_state_json)
+        if not preview_path and state is not None:
+            candidate = state.best()
+            if candidate is not None and candidate.result_json:
+                preview_path = candidate.path
         preview_type = job.media_type if job.media_path or material is None else material.media_type
         response_model = VideoActionImageResponse if preview_type == "image" else VideoActionVideoResponse
         video_values = (
@@ -195,9 +195,7 @@ def _pack_response(
                 status=job.status,
                 stage=job.stage,
                 error=job.error,
-                video_queue=MediaChainState.model_validate_json(job.generation_state_json).video_queue
-                if job.generation_state_json
-                else None,
+                video_queue=state.video_queue if state is not None else None,
                 media_url=signed_companion_asset_url(preview_path) if preview_path else None,
                 has_ready_asset=material is not None,
                 can_retry=(
@@ -238,7 +236,7 @@ def _pack_response(
         can_regenerate_pack=(
             pack.status in ("ready", "failed")
             and not reference_pending
-            and not any(accepted_action_asset(job) is not None for job in jobs)
+            and not has_any_material
             and not any(_job_result_unresolved(job) for job in jobs)
             and not _has_pending_work(pack.id, jobs)
         ),
@@ -266,28 +264,41 @@ async def load_pack_response(db: AsyncSession, pack: CompanionActionPack) -> Vid
         pending_reviews=await _pending_action_reviews(pack.user_id),
         rejected_media=await list_rejected_action_media(db, pack.user_id, [job.id for job in jobs]),
     )
-    await _populate_action_sync(db, pack.user_id, response)
+    await _populate_action_sync(db, pack.user_id, [response])
     return response
 
 
-async def _populate_action_sync(db: AsyncSession, user_id: int, response: VideoPackResponse) -> None:
-    for action in response.actions:
-        if action.definition_id is None:
-            continue
-        action.sync_targets = await variant_summaries(db, user_id, action.definition_id)
-        local = next(
-            (
-                target
-                for target in action.sync_targets
-                if target.target_kind == "window" and target.target_id == response.id
-            ),
-            None,
-        )
-        action.can_generate = local.can_generate if local is not None else False
-        if local is not None and local.status in {"blocked", "excluded"}:
-            action.can_generate = action.can_regenerate = action.can_retry = False
-        if local is not None and local.status == "blocked" and action.status == "not_generated":
-            action.status, action.error = "blocked", local.reason
+async def _populate_action_sync(
+    db: AsyncSession,
+    user_id: int,
+    responses: Sequence[VideoPackResponse],
+) -> None:
+    """共享版本状态一次批量读取后按 definition_id 分发，保持各动作原有顺序。"""
+    definition_ids = {
+        action.definition_id
+        for response in responses
+        for action in response.actions
+        if action.definition_id is not None
+    }
+    summaries = await variant_summaries_by_definition(db, user_id, definition_ids)
+    for response in responses:
+        for action in response.actions:
+            if action.definition_id is None:
+                continue
+            action.sync_targets = list(summaries[action.definition_id])
+            local = next(
+                (
+                    target
+                    for target in action.sync_targets
+                    if target.target_kind == "window" and target.target_id == response.id
+                ),
+                None,
+            )
+            action.can_generate = local.can_generate if local is not None else False
+            if local is not None and local.status in {"blocked", "excluded"}:
+                action.can_generate = action.can_regenerate = action.can_retry = False
+            if local is not None and local.status == "blocked" and action.status == "not_generated":
+                action.status, action.error = "blocked", local.reason
 
 
 async def list_pack_responses(db: AsyncSession, user_id: int) -> list[VideoPackResponse]:
@@ -321,8 +332,7 @@ async def list_pack_responses(db: AsyncSession, user_id: int) -> list[VideoPackR
         )
         for pack in packs
     ]
-    for response in responses:
-        await _populate_action_sync(db, user_id, response)
+    await _populate_action_sync(db, user_id, responses)
     return responses
 
 

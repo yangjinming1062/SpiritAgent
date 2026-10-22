@@ -1,6 +1,5 @@
 """角色图片透明化及静态动作图片处理。"""
 
-import math
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -18,6 +17,7 @@ from infrastructure.video_processing.process import (
     HITMASK_GRID_H,
     HITMASK_GRID_W,
     MAX_SOURCE_BYTES,
+    minimal_aspect_size,
 )
 from infrastructure.video_processing.quality import validate_action_image, validate_transparent_image
 
@@ -100,10 +100,7 @@ def prepare_action_image(src: Path, dst: Path, *, canvas_w: int, canvas_h: int) 
     image = _load_image(src)
     # 原图先过贴边门禁，补边不能掩盖源图已有的身体裁切。
     validate_action_image(image)
-    divisor = math.gcd(canvas_w, canvas_h)
-    unit_w, unit_h = canvas_w // divisor, canvas_h // divisor
-    multiple = max((image.width + unit_w - 1) // unit_w, (image.height + unit_h - 1) // unit_h)
-    width, height = unit_w * multiple, unit_h * multiple
+    width, height = minimal_aspect_size(image.width, image.height, canvas_w, canvas_h)
     if width * height > _MAX_IMAGE_PIXELS:
         raise ActionMaterialRejectedError("动作图片画布超出处理上限")
     output = Image.new("RGBA", (width, height))

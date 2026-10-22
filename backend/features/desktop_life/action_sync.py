@@ -109,6 +109,7 @@ async def desktop_target_states(
             DesktopVideoAction.definition_id.in_(definition_ids),
         ),
     )
+    sources: dict[int, ActionSourceSnapshot | None] = {}
     for action, label in rows:
         response = desktop_action_response(action)
         status = "disabled" if not action.enabled else response.status
@@ -117,7 +118,9 @@ async def desktop_target_states(
         reason = response.error or (response.unavailable_reason if not response.playable else None)
         can_generate = response.can_generate
         if can_generate or (status == "blocked" and action.generation_state_json is None and response.current is None):
-            source = await desktop_action_source(db, user_id, action.set_id)
+            if action.set_id not in sources:
+                sources[action.set_id] = await desktop_action_source(db, user_id, action.set_id)
+            source = sources[action.set_id]
             if source is None or not source.ready:
                 status, can_generate = "blocked", False
                 reason = source.blocked_reason if source else "桌景已删除"
@@ -158,8 +161,9 @@ async def request_synced_desktop_generation(
             action.status, action.stage, action.error = "not_generated", "prepare", None
             await touch_desktop_state(db, user_id)
             await db.commit()
-        if not desktop_action_response(action).can_generate:
-            return desktop_action_response(action)
+        response = desktop_action_response(action)
+        if not response.can_generate:
+            return response
     return await generate_desktop_action(
         user_id,
         action_id,

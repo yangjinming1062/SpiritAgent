@@ -52,6 +52,32 @@ async def _claim_generation_jobs(db: AsyncSession, jobs: list[CompanionAction]) 
         _ACTION_INFLIGHT.difference_update(reserved - claimed)
 
 
+async def _run_job_isolated(
+    pack: CompanionActionPack,
+    job: CompanionAction,
+    context: GenerationContext,
+    sem: asyncio.Semaphore,
+    claimed_ids: set[int],
+) -> bool:
+    try:
+        async with sem:
+            # 等待并发位期间也可能进入维护；已在制作的动作继续收敛。
+            if job.status == "queued" and is_user_in_maintenance(pack.user_id):
+                return False
+            return await _generate_one_dynamic(pack, job, context)
+    except GenerationWorkPaused:
+        return False
+    except Exception as exc:  # 单动作失败隔离，其他已请求动作仍可交付并独立重做
+        try:
+            await _record_action_failure(pack.id, job, exc)
+        except Exception:  # 失败记录自身失败不能中断其余在制动作的收敛
+            logger.exception("action failure record failed", extra={"pack_id": pack.id, "action_id": job.id})
+        return False
+    finally:
+        claimed_ids.discard(job.id)
+        _ACTION_INFLIGHT.discard(job.id)
+
+
 async def _build_pack(
     pack_id: int,
     *,
@@ -166,29 +192,10 @@ async def _generate_pack(pack_id: int) -> None:
             )
             await _compose_scripts(pack, context, pending)
         sem = _action_pipeline_semaphore(pack_id)
-
-        async def run_one(job: CompanionAction) -> None:
-            try:
-                async with sem:
-                    if job.status == "queued" and is_user_in_maintenance(pack.user_id):
-                        return
-                    entry = parse_action_script_entry(job.script_json or "")
-                    await _run_action_pipeline(pack, job, entry, context)
-            except GenerationWorkPaused:
-                return
-            except Exception as exc:  # 动作失败隔离，其他已请求动作仍可交付并独立重做
-                try:
-                    await _record_action_failure(pack_id, job, exc)
-                except Exception:  # 失败记录自身失败不能中断其余在制动作的收敛
-                    logger.exception(
-                        "action failure record failed",
-                        extra={"pack_id": pack_id, "action_id": job.id},
-                    )
-            finally:
-                claimed_ids.discard(job.id)
-                _ACTION_INFLIGHT.discard(job.id)
-
-        await asyncio.gather(*(run_one(job) for job in jobs))
+        # 批量撰写已完成，工作体只走 script_json 就绪的解析分支，不会触发缺脚本的单条付费撰写。
+        await asyncio.gather(
+            *(_run_job_isolated(pack, job, context, sem, claimed_ids) for job in jobs),
+        )
         await _finalize_pack_generation(pack_id)
     except GenerationWorkPaused:
         return
@@ -222,8 +229,9 @@ async def _finalize_pack_generation(pack_id: int) -> None:
                 return
             context = _load_generation_context(pack)
             must_actions = _must_succeed_actions(context.must_actions) if context is not None else set()
-            blocking = [job for job in rows if accepted_action_asset(job) is None and job.key in must_actions]
-            available = {job.key for job in rows if accepted_action_asset(job) is not None}
+            materials = [(job, accepted_action_asset(job)) for job in rows]
+            blocking = [job for job, material in materials if material is None and job.key in must_actions]
+            available = {job.key for job, material in materials if material is not None}
             if context is None or blocking or not must_actions.issubset(available):
                 message = (
                     "动作包的制作资料不完整，请重新生成动作包"
@@ -233,11 +241,7 @@ async def _finalize_pack_generation(pack_id: int) -> None:
                 await _mark_pack_failed(db, pack, message[:500])
                 await db.commit()
                 return
-            results = {
-                job.key: ActionResult.model_validate_json(material.result_json)
-                for job in rows
-                if (material := accepted_action_asset(job)) is not None
-            }
+            results = {job.key: material.parse_result() for job, material in materials if material is not None}
         await _emit_pack_event(
             user_id,
             "companion.video.progress",
@@ -284,30 +288,9 @@ async def _generate_dynamic_actions(
         if context.reference_alignment != "ready":
             return False
         sem = _action_pipeline_semaphore(pack_id)
-
-        async def run_one(job: CompanionAction) -> bool:
-            try:
-                async with sem:
-                    # 等待并发位期间也可能进入维护；已在制作的动作继续收敛。
-                    if job.status == "queued" and is_user_in_maintenance(pack.user_id):
-                        return False
-                    return await _generate_one_dynamic(pack, job, context)
-            except GenerationWorkPaused:
-                return False
-            except Exception as exc:  # 单动作失败隔离，不影响已就绪目录
-                try:
-                    await _record_action_failure(pack_id, job, exc)
-                except Exception:  # 失败记录自身失败不能中断其余在制动作的收敛
-                    logger.exception(
-                        "action failure record failed",
-                        extra={"pack_id": pack_id, "action_id": job.id},
-                    )
-                return False
-            finally:
-                claimed_ids.discard(job.id)
-                _ACTION_INFLIGHT.discard(job.id)
-
-        outcomes = await asyncio.gather(*(run_one(job) for job in jobs))
+        outcomes = await asyncio.gather(
+            *(_run_job_isolated(pack, job, context, sem, claimed_ids) for job in jobs),
+        )
         # 只有新成功的动作改变目录：发布新目录快照（失败与待复核动作不并入），并兑现这些动作制作期间的表达意图。
         if pack.status == "processing":
             await _finalize_pack_generation(pack_id)

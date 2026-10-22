@@ -11,7 +11,7 @@ from runtime.memory_scope import MemoryScope
 from sqlalchemy import select
 
 from features.companion.models import Persona
-from features.companion.persona_service import load_persona_definition, render_extras
+from features.companion.persona_service import build_system_prompt_extras
 from features.companion.proactive_runtime import PresentationSnapshot, get_presentation_snapshot
 from features.companion.prompts import PRESENTATION_CONTEXTS
 from features.configuration.settings.timezone import resolve_user_timezone
@@ -56,7 +56,7 @@ async def load_companion_prompt_context(user_id: int) -> CompanionPromptContext 
         return CompanionPromptContext(
             language=language,
             current_time=format_local_iso(utc_now(), await resolve_user_timezone(db, user_id)) or "",
-            persona_extras=render_extras(load_persona_definition(persona), language=language),
+            persona_extras=build_system_prompt_extras(persona, language=language),
             current_mood=persona.current_mood or "",
             memories_block=await format_memories_block(db, MemoryScope(user_id, "companion"), language=language),
             presentation=get_presentation_snapshot(user_id),

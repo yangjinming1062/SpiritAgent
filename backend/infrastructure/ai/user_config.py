@@ -36,7 +36,7 @@ class UserLlmConfig:
 
 async def resolve_user_llm_config(
     db: AsyncSession,
-    user_id: int,
+    user_id: int | None,
     task: AiTaskKey,
     *,
     required_modalities: frozenset[ModelModality] | None = None,
@@ -52,7 +52,7 @@ async def resolve_user_llm_config(
 
 
 async def load_user_llm_config(
-    user_id: int,
+    user_id: int | None,
     task: AiTaskKey,
     *,
     required_modalities: frozenset[ModelModality] | None = None,

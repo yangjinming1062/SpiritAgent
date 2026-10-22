@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from features.accounts.queries import nightly_account
 from features.companion.planning_queries import PersonaPlanningSnapshot, planning_persona
 from features.configuration.settings.timezone import resolve_user_timezone
-from features.configuration.settings.values import get_user_setting
+from features.configuration.settings.values import get_user_setting, get_user_setting_bool
 from features.conversation.evidence import OriginalMessageSnapshot, nightly_messages, nightly_user_message_count
 from features.memory.memory_admin import list_memories
 from features.memory.memory_bootstrap import read_user_profile
@@ -334,7 +334,12 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         persona_snapshot = await planning_persona(db, user_id)
         persona = _persona_brief(persona_snapshot)
         previous_reflection = await load_companion_reflection(db, scope)
-        information_discovery_enabled = await get_user_setting(db, user_id, "companion.information_discovery_enabled")
+        information_discovery_enabled = await get_user_setting_bool(
+            db,
+            user_id,
+            "companion.information_discovery_enabled",
+            default=False,
+        )
 
     clean_messages = _clean_messages(today_messages, tz_str)
     today_msg_count = sum(1 for message in today_messages if message.role == "user")
@@ -362,7 +367,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
     }
 
     topic_reserve: list[dict[str, Any]] = []
-    if user.nightly_activity_enabled and information_discovery_enabled is True and source_configured():
+    if user.nightly_activity_enabled and information_discovery_enabled and source_configured():
         try:
             topic_result = await discover_topics(
                 scope,

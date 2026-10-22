@@ -106,8 +106,7 @@ async def get_session_snapshot(
     response_model=SessionUndoResult,
 )
 async def undo_session_history(actor: CurrentActor, session_id: str, body: SessionUndoRequest) -> SessionUndoResult:
-    result = await chat_operations(actor).undo({**body.model_dump(exclude_unset=True), "session_id": session_id})
-    return SessionUndoResult.model_validate(result)
+    return await chat_operations(actor).undo({**body.model_dump(exclude_unset=True), "session_id": session_id})
 
 
 @router.post(

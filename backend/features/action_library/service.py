@@ -175,17 +175,16 @@ async def register_source_targets(db: AsyncSession, source: ActionSourceSnapshot
         return
     await lock_user_row(db, source.user_id)
     definitions = await db.scalars(
-        select(ActionDefinition.id).where(
+        select(ActionDefinition).where(
             ActionDefinition.user_id == source.user_id,
             ActionDefinition.outfit_id == source.outfit_id,
             ActionDefinition.source_visual_key == source.source_visual_key,
             ActionDefinition.status == "approved",
         ),
     )
-    for definition_id in definitions:
-        definition = await db.get(ActionDefinition, definition_id)
-        if definition is not None and definition_matches_source(definition_view(definition), source):
-            await ensure_target(db, source.user_id, definition_id, source, automatic=True)
+    for definition in definitions:
+        if definition_matches_source(definition_view(definition), source):
+            await ensure_target(db, source.user_id, definition.id, source, automatic=True)
 
 
 async def bind_target(db: AsyncSession, user_id: int, target_id: int, action_id: int) -> None:
@@ -276,14 +275,22 @@ async def record_review(
     if row.source == "autonomous" and not SETTINGS.action_autocreate_enabled:
         decision, reason, reuse_id = "defer", "自主创建新动作当前已关闭", None
     review_source = ActionSourceSnapshot.model_validate_json(row.review_source_json)
-    if decision in {"approve", "reuse"} and review_source.scope == "target":
+    # 拒绝不依赖来源仍可落库；只有采纳结论要求来源新鲜。
+    if decision in {"approve", "reuse"}:
         current_source = await read_source(db, user_id, review_source.target_kind, review_source.target_id)
         if (
             current_source is None
             or not current_source.ready
-            or not same_review_reference(review_source, current_source)
+            or not definition_matches_source(definition_view(row, review_source), current_source)
+            or (review_source.scope == "target" and not same_review_reference(review_source, current_source))
         ):
-            decision, reason, reuse_id = "defer", "桌景的确认画面或着装资料已变化，请重新评审", None
+            decision, reason, reuse_id = (
+                "defer",
+                "桌景的确认画面或着装资料已变化，请重新评审"
+                if review_source.scope == "target"
+                else "制作来源已变化，请重新评审",
+                None,
+            )
     if decision == "reuse":
         canonical = await db.get(ActionDefinition, reuse_id) if reuse_id is not None else None
         if (
@@ -299,7 +306,7 @@ async def record_review(
     row.review_reason, row.reuse_definition_id = reason[:400], reuse_id
     row.fanout_pending = decision in {"approve", "reuse"}
     await db.flush()
-    return definition_view(row)
+    return definition_view(row, review_source)
 
 
 async def begin_review(db: AsyncSession, user_id: int, definition_id: int) -> bool:

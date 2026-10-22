@@ -1,6 +1,7 @@
 from typing import ClassVar
 
 from infrastructure.ai.embedding_space import MEMORY_EMBEDDING_DIM
+from infrastructure.ai.providers._provider_errors import raise_for_provider_response
 from infrastructure.ai.providers.base import EmbeddingProvider, ProviderConfig, ProviderError, ServiceType
 from infrastructure.ai.providers.http import get_http
 
@@ -32,12 +33,8 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
             ],
         }
         resp = await self._http.post(f"/v1beta/models/{model}:batchEmbedContents", json=payload)
-        if resp.status_code != 200:
-            raise ProviderError(
-                f"Gemini embedding HTTP {resp.status_code}: {resp.text[:200]}",
-                status_code=resp.status_code,
-            )
-        embeddings_list = resp.json().get("embeddings", [])
+        body = raise_for_provider_response(resp, family="gemini")
+        embeddings_list = body.get("embeddings", [])
         if not embeddings_list:
-            raise ProviderError("Gemini embedding returned empty result")
+            raise ProviderError("Gemini embedding returned empty result", body=body)
         return [item.get("values", []) for item in embeddings_list]

@@ -1,7 +1,7 @@
 """独立主动创作、媒体制作与可恢复发布任务。"""
 
 import asyncio
-from datetime import date, timedelta
+from datetime import timedelta
 from typing import Any, Literal, get_args
 from weakref import WeakValueDictionary
 
@@ -19,24 +19,21 @@ from infrastructure.assets.asset_store import (
 from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
-from infrastructure.text import format_local_iso, resolve_language, resolve_prompt_text, utc_now
+from infrastructure.text import local_date, resolve_language, resolve_prompt_text, utc_now
 from runtime.background import TaskBag
 from runtime.user_maintenance import is_user_in_maintenance
 from sqlalchemy import or_, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import raiseload
 
 from features.accounts.locking import lock_account
 from features.accounts.queries import user_is_active
-from features.appearance.character_card import character_snapshot_is_current, render_character_identity
+from features.appearance.character_card import character_snapshot_is_current
 from features.appearance.visual_identity import (
-    apply_outfit_override,
     build_plain_image_prompt,
     build_plain_video_prompt,
-    build_self_image_prompt,
-    build_self_video_prompt,
-    load_self_visual_context,
-    optional_outfit_image_reference,
-    self_video_references,
+    build_self_image_inputs,
+    build_self_video_inputs,
 )
 from features.assets.lifecycle import cleanup_user_assets, enqueue_asset_cleanup
 from features.companion.narrative_prompts import NARRATIVE_REVISION_TEXTS
@@ -44,11 +41,12 @@ from features.companion.narrative_quality import NarrativeQualityError, review_n
 from features.companion.proactive_runtime import get_presentation_snapshot
 from features.companion.queries import complete_user_ids
 from features.configuration.settings.timezone import resolve_user_timezone
-from features.configuration.settings.values import get_user_setting, load_user_settings
-from features.desktop_life.queries import activated_desktop_environment, desktop_current_styling_reference
+from features.configuration.settings.values import get_user_setting_bool, load_user_settings
+from features.desktop_life.queries import activated_desktop_environment
+from features.desktop_life.self_visual import load_self_visual_plan
 from features.media.character_images import generate_character_images
 from features.media.contracts import VideoJobSnapshot
-from features.media.identity_contracts import CharacterCardSnapshot
+from features.media.identity_contracts import CharacterCardSnapshot, CharacterReferenceRole
 from features.media.image_generation import ImageGenerationError, generate_images
 from features.media.queries import get_job, get_video_jobs
 from features.media.speech import synthesize_speech
@@ -115,24 +113,40 @@ class _VideoReviewPendingError(PostError):
     """已取得的原视频未通过自动身份交付准入，保留供用户确认。"""
 
 
+_SERVICE_TYPES = {"image": "image_gen", "video": "video_gen", "audio": "tts"}
+
+
+async def _posts_enabled(db: AsyncSession, user_id: int) -> bool:
+    return await get_user_setting_bool(db, user_id, _POSTS_SWITCH, default=True)
+
+
+async def _posts_policy_ok(db: AsyncSession, user_id: int) -> bool:
+    return await user_is_active(db, user_id) and await _posts_enabled(db, user_id)
+
+
+async def _service_chain_ready(db: AsyncSession, user_id: int, content_type: str) -> bool:
+    """单档服务能力：text 无条件，其余按服务链非空；video 另做分辨率试探（试探失败按不可用，链解析异常上抛）。"""
+    if content_type == "text":
+        return True
+    if not await resolve_provider_chain(db, user_id, _SERVICE_TYPES[content_type], task=AiTaskKey.posts):
+        return False
+    return content_type != "video" or await _video_supported(user_id)
+
+
+async def _post_type_ready(user_id: int, content_type: str) -> bool:
+    """定点判定某档此刻能否制作，等价于 content_type ∈ available_types(user_id)。"""
+    async with SESSION_LOCAL() as db:
+        return await _posts_policy_ok(db, user_id) and await _service_chain_ready(db, user_id, content_type)
+
+
 async def available_types(user_id: int) -> list[str]:
     async with SESSION_LOCAL() as db:
-        if not await user_is_active(db, user_id):
-            return []
-        enabled = await get_user_setting(db, user_id, _POSTS_SWITCH)
-        if enabled is not None and enabled is not True:
+        if not await _posts_policy_ok(db, user_id):
             return []
         types = ["text"]
-        for content_type, service_type in (("image", "image_gen"), ("video", "video_gen"), ("audio", "tts")):
-            if await resolve_provider_chain(
-                db,
-                user_id,
-                service_type,
-                task=AiTaskKey.posts,
-            ):
+        for content_type in _SERVICE_TYPES:
+            if await _service_chain_ready(db, user_id, content_type):
                 types.append(content_type)
-    if "video" in types and not await _video_supported(user_id):
-        types.remove("video")
     return types
 
 
@@ -266,16 +280,14 @@ def _drop_inapplicable_fields(user_id: int, plan: PostPlan, types: list[str]) ->
 async def request_publication(user_id: int) -> PostPublicationResult:
     if is_user_in_maintenance(user_id):
         raise PostError("账户正在维护，暂不能发布")
-    if not await available_types(user_id):
-        raise PostBlockedError("动态自主发布已关闭")
     async with SESSION_LOCAL() as db:
+        if not await _posts_policy_ok(db, user_id):
+            raise PostBlockedError("动态自主发布已关闭")
         timezone = await resolve_user_timezone(db, user_id)
         row = await reserve_publication(
             db,
             user_id,
-            activity_date=date.fromisoformat(
-                (format_local_iso(utc_now(), timezone) or "")[:10],
-            ),
+            activity_date=local_date(utc_now(), timezone),
         )
     schedule_publication(row.id, user_id)
     return response_for_publication(row)
@@ -373,32 +385,27 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
     if plan.content_type == PostContentType.VIDEO and progress.get("media_url") and row.video_job_id is None:
         raise PostError("原视频任务已不可用，未重新制作")
     identity = None
-    visual = None
+    visual_plan = None
     if plan.depicts_self and row.video_job_id is None:
-        async with SESSION_LOCAL() as db:
-            styling = await desktop_current_styling_reference(db, row.user_id)
-        visual = await load_self_visual_context(row.user_id, current_styling=styling)
-    if visual is not None:
-        identity = visual.identity
+        visual_plan = await load_self_visual_plan(row.user_id)
+    if visual_plan is not None:
+        identity = visual_plan.context.identity
         progress["identity"] = identity.model_dump(mode="json")
     if plan.content_type == PostContentType.IMAGE:
         await _save(row.id, phase="image_submitting", **progress)
-        if visual is not None:
-            visual_plan = apply_outfit_override(visual, None)
-            outfit = optional_outfit_image_reference(visual_plan)
+        if visual_plan is not None:
+            inputs = build_self_image_inputs(visual_plan, plan.prompt)
             urls = await generate_character_images(
-                build_self_image_prompt(visual_plan, plan.prompt, has_outfit_reference=bool(outfit)),
+                inputs.prompt,
                 size=plan.size,
                 user_id=row.user_id,
                 storage_directory=directory,
-                reference_image=visual.identity_image,
-                identity_reference=visual.identity_image,
-                secondary_reference_image=outfit,
-                identity_reference_mode="primary"
-                if visual.identity_reference_role == "fullbody"
-                else "portrait_and_outfit",
+                reference_image=inputs.reference_image,
+                identity_reference=inputs.reference_image,
+                secondary_reference_image=inputs.secondary_reference_image,
+                identity_reference_mode=inputs.identity_reference_mode,
                 goal_review="required",
-                identity_text=render_character_identity(identity),
+                identity_text=inputs.identity_text,
                 task=AiTaskKey.posts,
             )
         else:
@@ -425,11 +432,12 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
     else:
         job_id = row.video_job_id
         if job_id is None:
-            references = ()
-            if visual is not None:
-                visual_plan = apply_outfit_override(visual, None)
-                references = self_video_references(visual_plan)
-                prompt = build_self_video_prompt(visual_plan, plan.prompt, has_outfit_reference=len(references) > 1)
+            references: tuple[str, ...] = ()
+            identity_reference_role: CharacterReferenceRole = "portrait"
+            if visual_plan is not None:
+                inputs = await build_self_video_inputs(visual_plan, plan.prompt)
+                prompt, references = inputs.prompt, inputs.references
+                identity_reference_role = inputs.identity_reference_role
             else:
                 prompt = build_plain_video_prompt(plan.prompt)
             resolution = await select_video_resolution(
@@ -456,14 +464,13 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
                     resolution=resolution,
                     reference_images=references,
                     aspect_ratio=plan.aspect_ratio,
-                    identity_reference_path=visual.fullbody_path if visual else None,
+                    identity_reference_path=visual_plan.context.fullbody_path if visual_plan else None,
                     identity=identity,
-                    identity_reference_role=visual.identity_reference_role if visual else "portrait",
+                    identity_reference_role=identity_reference_role,
                     task=AiTaskKey.posts,
                 )
                 publication.video_job_id = job.id
                 publication.phase = "video_waiting"
-                publication.progress_json = {**publication.progress_json, **progress}
                 await db.commit()
             job_id = job.id
             await submit_video_job(row.user_id, job_id)
@@ -508,7 +515,7 @@ async def _run_publication(task_id: str) -> None:
             await _save(task_id, plan=plan, phase="planned")
         else:
             plan = PostPlan.model_validate(row.plan_json)
-        if plan.content_type.value not in await available_types(row.user_id):
+        if not await _post_type_ready(row.user_id, plan.content_type.value):
             await _save(task_id, status="blocked", error="发布开关或供应商能力不可用")
             return
         await _save(task_id, status="running")
@@ -520,8 +527,7 @@ async def _run_publication(task_id: str) -> None:
             and not progress.get("narration_failed")
         ):
             try:
-                voice_types = await available_types(row.user_id)
-                if "audio" not in voice_types:
+                if not await _post_type_ready(row.user_id, "audio"):
                     raise PostError("旁白不可用")
                 progress["audio_url"], progress["voice_id"] = await _voice(
                     task_id,
@@ -544,7 +550,7 @@ async def _run_publication(task_id: str) -> None:
             if not current:
                 await _save(task_id, status="blocked", error="伙伴外形已更新，本次旧参考作品未发布")
                 return
-        if plan.content_type.value not in await available_types(row.user_id):
+        if not await _post_type_ready(row.user_id, plan.content_type.value):
             await _save(task_id, status="blocked", error="发布开关已关闭")
             return
         async with SESSION_LOCAL() as db:
@@ -707,8 +713,7 @@ async def adopt_publication_video(user_id: int, task_id: str) -> PostPublication
             raise PostError("只有待核对的视频动态可以采纳")
         if not await user_is_active(db, user_id) or user_id not in await complete_user_ids(db, (user_id,)):
             raise PostBlockedError("账户或伙伴资料不可用")
-        enabled = await get_user_setting(db, user_id, _POSTS_SWITCH)
-        if enabled is not None and enabled is not True:
+        if not await _posts_enabled(db, user_id):
             raise PostBlockedError("动态自主发布已关闭")
         remaining = await publication_quota_remaining(db, user_id, exclude_publication_id=row.id)
         if remaining <= 0:

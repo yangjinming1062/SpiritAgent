@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from features.conversation.fork import SourceNotFoundError
-from features.conversation.http_contracts import PromptSubmitRequest, SessionSnapshotResponse
+from features.conversation.http_contracts import PromptSubmitRequest, SessionSnapshotResponse, SessionUndoResult
 from features.conversation.session_operations import (
     history_snapshot,
     last_submission,
@@ -47,7 +47,7 @@ class ChatOperations:
     submit: Callable[[str, PromptSubmitRequest], Awaitable[dict]]
     receipt: Callable[[dict[str, Any]], Awaitable[dict]]
     cancel: Callable[[dict[str, Any]], Awaitable[dict]]
-    undo: Callable[[dict[str, Any]], Awaitable[dict]]
+    undo: Callable[[dict[str, Any]], Awaitable[SessionUndoResult]]
     compress: Callable[[dict[str, Any]], Awaitable[dict]]
     command: Callable[[dict[str, Any]], Awaitable[dict]]
 
@@ -199,7 +199,7 @@ def chat_operations(actor: BusinessActor) -> ChatOperations:
                 )
             return result
 
-    async def session_undo_to_message(params: dict) -> dict:
+    async def session_undo_to_message(params: dict) -> SessionUndoResult:
         session_id = params["session_id"]
         if not bool(params.get("confirmed")):
             raise RequestError(
@@ -221,12 +221,7 @@ def chat_operations(actor: BusinessActor) -> ChatOperations:
                 raise RequestError(422, str(exc)) from exc
         await publish_history_change(
             "message.deleted",
-            {
-                "session_id": session_id,
-                "deleted_count": result["deleted_count"],
-                "anchor": result["anchor"],
-                "messages": result["messages"],
-            },
+            result.model_dump(mode="json"),
             session_id=session_id,
         )
         logger.info(
@@ -235,7 +230,7 @@ def chat_operations(actor: BusinessActor) -> ChatOperations:
                 "user_id": user_id,
                 "session_id": session_id,
                 "source_message_id": source_message_id,
-                "deleted_count": result["deleted_count"],
+                "deleted_count": result.deleted_count,
             },
         )
         return result

@@ -7,9 +7,8 @@ from datetime import datetime
 from sqlalchemy import ColumnElement, and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .context_window import CHECKPOINT_SUBTYPE
+from .context_window import context_visible_subtype
 from .formatting import message_contains_text, message_text
-from .main_conversation import UI_ONLY_SUBTYPES
 from .memory_scope import user_authored_conversation
 from .models import Conversation, Message
 
@@ -178,7 +177,7 @@ def _nightly_scope(user_id: int, preset_id: str) -> ColumnElement[bool]:
         Message.id > Conversation.context_after_message_id,
         user_authored_conversation(),
         Message.role.in_(("user", "assistant")),
-        Message.subtype.is_(None) | Message.subtype.notin_((*UI_ONLY_SUBTYPES, CHECKPOINT_SUBTYPE)),
+        context_visible_subtype(),
         Message.tool_calls.is_(None),
     )
 

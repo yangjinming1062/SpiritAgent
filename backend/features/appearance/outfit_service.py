@@ -250,13 +250,14 @@ async def _describe_reference_garment(
     requirement: str = "",
 ) -> str | None:
     """把服装参考图与用户文字整合为着装设计稿；视觉链缺失或失败返回 None（降级纯描述）。成功时写入 source 供调用方持久化，重生成不再重复整合；整合走独立短会话，不占请求连接。"""
-    if image is None:
-        loaded = await asyncio.to_thread(read_portrait_bytes, source.reference_image_path)
-        if loaded is None:
-            return None
-        image, content_type = loaded
     try:
-        garment_uri = await asyncio.to_thread(build_data_uri, image, content_type)
+        garment_uri = (
+            await asyncio.to_thread(build_data_uri, image, content_type)
+            if image is not None
+            else await asyncio.to_thread(read_asset_data_uri, source.reference_image_path)
+        )
+        if garment_uri is None:
+            return None
         text = await describe_garment_image(user_id, garment_uri, requirement)
     except Exception:
         logger.warning(
@@ -650,7 +651,6 @@ async def confirm_outfit(
             await db.rollback()
             delete_portrait_file(persisted)
             raise
-        await db.refresh(outfit)
     schedule_outfit_description(user_id, outfit.id)
     await notify_outfit_ready(user_id, outfit.id)
     await db.refresh(outfit)

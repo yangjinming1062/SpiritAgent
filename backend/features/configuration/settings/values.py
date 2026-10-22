@@ -36,6 +36,12 @@ async def get_user_setting(db: AsyncSession, user_id: int, key: str) -> Any:
     return None if raw is None else decode_setting_value(raw)
 
 
+async def get_user_setting_bool(db: AsyncSession, user_id: int, key: str, default: bool) -> bool:
+    """未设置取 default；仅字面 True 为真，其余存储值按假。"""
+    value = await get_user_setting(db, user_id, key)
+    return default if value is None else value is True
+
+
 async def lock_user_setting(db: AsyncSession, user_id: int, key: str, default: Any) -> Any:
     """建立并锁定设置行，供需要比较后提交的跨业务操作使用。"""
     await db.execute(

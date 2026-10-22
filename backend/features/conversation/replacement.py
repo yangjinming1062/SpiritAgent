@@ -1,6 +1,7 @@
 """用户主动更换最新终端回答；原输入与已执行工具保持同一回合。"""
 
 from dataclasses import dataclass
+from typing import Literal, overload
 
 from infrastructure.ai.selection import GenerationOrigin
 from sqlalchemy import or_, select
@@ -32,23 +33,50 @@ class ReplyReplacement:
         )
 
 
-async def _replacement_message_ids(
+@overload
+async def _replacement_candidates(
     db: AsyncSession,
     conv: Conversation | None,
     message_id: int | None = None,
-) -> tuple[int, int]:
+    *,
+    with_message: Literal[False],
+) -> tuple[int, int]: ...
+
+
+@overload
+async def _replacement_candidates(
+    db: AsyncSession,
+    conv: Conversation | None,
+    message_id: int | None = None,
+    *,
+    with_message: Literal[True],
+) -> tuple[Message, Message]: ...
+
+
+async def _replacement_candidates(
+    db: AsyncSession,
+    conv: Conversation | None,
+    message_id: int | None = None,
+    *,
+    with_message: bool,
+) -> tuple[int, int] | tuple[Message, Message]:
+    """校验换回答资格并返回 (用户源行, 最新回答)；with_message 时同查询附带实体，否则仅取轻投影 id。"""
     if conv is None or conv.is_automation or conv.parent_id is not None or conv.kind not in {"standard", "special"}:
         raise ReplyReplacementNotAllowedError("当前会话不支持换一个回答")
+    latest_stmt = select(
+        Message.id,
+        Message.role,
+        Message.subtype,
+        Message.tool_calls.is_(None).label("terminal"),
+        or_(Message.content != "", Message.media_json != "", Message.reply_json != "").label("has_content"),
+    )
+    source_stmt = select(Message.id, Message.subtype)
+    if with_message:
+        latest_stmt = latest_stmt.add_columns(Message)
+        source_stmt = source_stmt.add_columns(Message)
     latest = (
         await db.execute(
-            select(
-                Message.id,
-                Message.role,
-                Message.subtype,
-                Message.tool_calls.is_(None).label("terminal"),
-                or_(Message.content != "", Message.media_json != "", Message.reply_json != "").label("has_content"),
-            )
-            .where(Message.conversation_id == conv.id, Message.role.in_(("user", "assistant")))
+            latest_stmt.where(Message.conversation_id == conv.id, Message.role.in_(("user", "assistant")))
             .order_by(Message.id.desc())
             .limit(1),
         )
@@ -64,8 +92,7 @@ async def _replacement_message_ids(
         raise ReplyReplacementNotAllowedError("只能更换最新一轮的完整回答，请刷新后重试")
     source = (
         await db.execute(
-            select(Message.id, Message.subtype)
-            .where(Message.conversation_id == conv.id, Message.role == "user")
+            source_stmt.where(Message.conversation_id == conv.id, Message.role == "user")
             .order_by(Message.id.desc())
             .limit(1),
         )
@@ -74,7 +101,29 @@ async def _replacement_message_ids(
         raise ReplyReplacementNotAllowedError("没有可复用的用户消息")
     if source.id <= await context_message_watermark(db, conv):
         raise ReplyReplacementNotAllowedError("该回合已不在当前上下文中，无法更换回答")
-    return source.id, latest.id
+    return (source.Message, latest.Message) if with_message else (source.id, latest.id)
+
+
+async def _replacement_messages(
+    db: AsyncSession,
+    conv: Conversation | None,
+    message_id: int | None = None,
+) -> tuple[Message, Message]:
+    return await _replacement_candidates(db, conv, message_id, with_message=True)
+
+
+async def _replacement_ids(
+    db: AsyncSession,
+    conv: Conversation | None,
+    message_id: int | None = None,
+) -> tuple[int, int]:
+    return await _replacement_candidates(db, conv, message_id, with_message=False)
+
+
+async def replacement_source_id(db: AsyncSession, user_id: int, session_id: str, message_id: int) -> int:
+    """校验换回答资格并返回可复用的用户消息 id；缺行或不合格仍抛换回答禁用错误。"""
+    conv = await Conversation.by_session_id(db, session_id, user_id)
+    return (await _replacement_ids(db, conv, message_id))[0]
 
 
 async def reply_replacement_target(
@@ -85,15 +134,12 @@ async def reply_replacement_target(
 ) -> ReplyReplacement:
     """调用方持有会话锁；摘要覆盖或新消息出现后，旧回答不再允许更换。"""
     conv = await Conversation.by_session_id(db, session_id, user_id)
-    source_id, target_id = await _replacement_message_ids(db, conv, message_id)
-    source, target = await db.get(Message, source_id), await db.get(Message, target_id)
-    if source is None or target is None:
-        raise ReplyReplacementNotAllowedError("原回合已不可用，请刷新后重试")
+    source, target = await _replacement_messages(db, conv, message_id)
     return ReplyReplacement(source.id, message_text(source), message_snapshot(target))
 
 
 async def replaceable_reply_id(db: AsyncSession, conv_id: int) -> int | None:
     try:
-        return (await _replacement_message_ids(db, await db.get(Conversation, conv_id)))[1]
+        return (await _replacement_ids(db, await db.get(Conversation, conv_id)))[1]
     except ReplyReplacementNotAllowedError:
         return None

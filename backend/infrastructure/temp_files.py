@@ -56,21 +56,33 @@ def _metadata_path(meta: dict) -> Path | None:
     return Path(value)
 
 
+# meta["path"] 记录写入时的绝对路径；仅文件名存活，按名在当前目录定位，数据目录迁移后仍可用。
+def _media_file_for(meta_path: Path, meta: dict) -> Path | None:
+    recorded = _metadata_path(meta)
+    if recorded is None:
+        return None
+    try:
+        return meta_path.with_name(recorded.name)
+    except ValueError:
+        return None
+
+
 def owned_temp_files(file_id: str, user_id: int) -> list[Path]:
     """返回该用户名下临时文件的元数据与数据文件路径（备份导出用）；ID 非法、元数据缺失或归属其他用户时为空。"""
     if not _valid_file_id(file_id):
         return []
     meta_path = _meta_path(file_id)
     meta = _read_metadata(meta_path)
-    if meta is None or meta.get("user_id") != user_id or (recorded := _metadata_path(meta)) is None:
+    if meta is None or meta.get("user_id") != user_id:
         return []
-    # 元数据记录写入时的绝对路径；按文件名在当前目录定位，数据目录迁移后仍可用。
-    media = meta_path.with_name(recorded.name)
+    media = _media_file_for(meta_path, meta)
+    if media is None:
+        return []
     return [meta_path, media] if media.is_file() and media != meta_path else [meta_path]
 
 
-def save_file(data: bytes, content_type: str, ext: str, *, user_id: int) -> tuple[str, str]:
-    """保存到 temp 存储，返回 (file_id, public_url)；``user_id`` 记录归属供删除用户与备份定位；写失败时清理半成品文件避免无 TTL 孤儿。"""
+def save_file(data: bytes, content_type: str, ext: str, *, user_id: int) -> str:
+    """保存到 temp 存储，返回 file_id；``user_id`` 记录归属供删除用户与备份定位；写失败时清理半成品文件避免无 TTL 孤儿。"""
     file_id = secrets.token_urlsafe(16)
     filepath = _media_path(file_id, ext)
 
@@ -92,32 +104,28 @@ def save_file(data: bytes, content_type: str, ext: str, *, user_id: int) -> tupl
         logger.warning("temp file write failed; partial removed", extra={"file_id": file_id, "error": str(exc)})
         raise
 
-    public_url = _build_public_url(file_id)
     logger.info(
         "Temp file saved",
         extra={"file_id": file_id, "size": len(data), "user_id": user_id},
     )
-    return file_id, public_url
-
-
-def _build_public_url(file_id: str) -> str:
-    return f"/api/media/files/{file_id}"
+    return file_id
 
 
 def get_file_path(file_id: str) -> tuple[Path, str] | None:
     """按 ID 取文件路径与 content_type；未找到/已过期返 None。"""
     if not _valid_file_id(file_id):
         return None
-    meta = _read_metadata(_meta_path(file_id))
+    meta_path = _meta_path(file_id)
+    meta = _read_metadata(meta_path)
     if meta is None:
         return None
     created_at = _metadata_created_at(meta)
     if created_at is None or time.time() - created_at > SETTINGS.temp_file_ttl_hours * 3600:
         return None
-    path = _metadata_path(meta)
-    if path is None:
+    media = _media_file_for(meta_path, meta)
+    if media is None:
         return None
-    resolved_path = path.resolve()
+    resolved_path = media.resolve()
     if not resolved_path.is_relative_to(_storage_dir().resolve()) or not resolved_path.is_file():
         return None
     content_type = meta.get("content_type")
@@ -142,9 +150,9 @@ def cleanup_expired() -> None:
         if created_at is None:
             created_at = 0.0
         if now - created_at > ttl:
-            path = _metadata_path(meta)
-            if path is not None:
-                _safe_unlink(path)
+            media = _media_file_for(mp, meta)
+            if media is not None:
+                _safe_unlink(media)
             _safe_unlink(mp)
             count += 1
     if count:
@@ -156,9 +164,9 @@ def purge_user(user_id: int) -> None:
     count = 0
     for mp, meta in _iter_meta_files():
         if meta.get("user_id") == user_id:
-            path = _metadata_path(meta)
-            if path is not None:
-                _safe_unlink(path)
+            media = _media_file_for(mp, meta)
+            if media is not None:
+                _safe_unlink(media)
             _safe_unlink(mp)
             count += 1
     if count:

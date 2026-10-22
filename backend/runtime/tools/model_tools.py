@@ -37,7 +37,7 @@ def coerce_tool_args(tool_name: str, args: dict[str, Any], schema: dict[str, Any
 
         if not isinstance(value, str):
             continue
-        if not expected and not _schema_allows_null(prop_schema):
+        if not expected and not schema_allows_null(prop_schema):
             continue
         coerced = _coerce_value(value, expected, schema=prop_schema)
         if coerced is not value:
@@ -48,7 +48,7 @@ def coerce_tool_args(tool_name: str, args: dict[str, Any], schema: dict[str, Any
 
 def _coerce_value(value: str, expected_type: str | list[str] | None, *, schema: dict[str, Any]) -> Any:
     # 允许 null 的字段在此统一处理字面量 "null"，下方类型分支不必再判断
-    if _schema_allows_null(schema) and value.strip().lower() == "null":
+    if schema_allows_null(schema) and value.strip().lower() == "null":
         return None
 
     if isinstance(expected_type, list):
@@ -71,7 +71,7 @@ def _coerce_value(value: str, expected_type: str | list[str] | None, *, schema: 
             return value
 
 
-def _schema_allows_null(schema: dict[str, Any]) -> bool:
+def schema_allows_null(schema: dict[str, Any]) -> bool:
     schema_type = schema.get("type")
     if schema_type == "null":
         return True

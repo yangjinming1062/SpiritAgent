@@ -9,7 +9,6 @@ import secrets
 import shutil
 import threading
 from collections.abc import Sequence
-from itertools import batched
 from pathlib import Path
 from typing import BinaryIO
 from urllib.parse import quote, urlsplit
@@ -20,7 +19,7 @@ from infrastructure.config import SETTINGS
 from infrastructure.constants import ATTACHMENT_VIDEO_EXTENSIONS, VIDEO_INLINE_MAX_PER_REQUEST
 from infrastructure.logger import get_logger
 from infrastructure.text import safe_json_loads
-from sqlalchemy import ColumnElement, Row, select
+from sqlalchemy import ColumnElement, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.conversation.models import Message
@@ -201,10 +200,13 @@ def _media_messages(conversation_id: int) -> list[ColumnElement[bool]]:
     ]
 
 
-def _referenced_file_ids(content: str | None, session_id: str) -> set[str]:
+def _load_parts(content: str | None) -> list | None:
+    """解析多模态 parts；非 list 返回 None，该行保持原状。"""
     parts = safe_json_loads(content or "[]", default=[])
-    if not isinstance(parts, list):
-        return set()
+    return parts if isinstance(parts, list) else None
+
+
+def _referenced_file_ids(parts: list, session_id: str) -> set[str]:
     return {
         file_id
         for part in parts
@@ -215,27 +217,26 @@ def _referenced_file_ids(content: str | None, session_id: str) -> set[str]:
     }
 
 
-async def _rewrite_rows(
-    db: AsyncSession,
-    rows: Sequence[Row[tuple[int, str | None]]],
-    file_ids: set[str],
-    session_id: str,
-) -> int:
+def _parse_message_parts(messages: Sequence[Message]) -> list[tuple[Message, list]]:
+    """逐行解析 parts 并跳过非 list 行；收集与改写共用同一份解析结果。"""
+    return [(message, parts) for message in messages if (parts := _load_parts(message.content)) is not None]
+
+
+def _collect_message_parts(messages: Sequence[Message], session_id: str) -> tuple[list[tuple[Message, list]], set[str]]:
+    parsed = _parse_message_parts(messages)
+    file_ids: set[str] = set()
+    for _message, parts in parsed:
+        file_ids |= _referenced_file_ids(parts, session_id)
+    return parsed, file_ids
+
+
+def _rewrite_rows(parsed: Sequence[tuple[Message, list]], file_ids: set[str], session_id: str) -> int:
     """把引用了被删文件的行改写为占位文本；返回改写行数。不内部 commit。"""
-    updates: dict[int, str] = {}
-    for message_id, content in rows:
-        parts = safe_json_loads(content or "[]", default=[])
-        if not isinstance(parts, list):
-            continue
+    rewritten = 0
+    for message, parts in parsed:
         new_parts, changed = _rewrite_parts(parts, file_ids, session_id=session_id)
         if changed:
-            updates[message_id] = json.dumps(new_parts, ensure_ascii=False)
-    if not updates:
-        return 0
-    rewritten = 0
-    for batch in batched(updates, 1000):
-        for message in await db.scalars(select(Message).where(Message.id.in_(batch))):
-            message.content = updates[message.id]
+            message.content = json.dumps(new_parts, ensure_ascii=False)
             rewritten += 1
     return rewritten
 
@@ -281,8 +282,14 @@ async def enforce_session_quota(db: AsyncSession, session_id: str, incoming_byte
     if not victims:
         return
     file_ids = {p.name for p in victims}
-    rows = (await db.execute(select(Message.id, Message.content).where(*_media_messages(int(session_id))))).all()
-    rewritten = await _rewrite_rows(db, rows, file_ids, session_id)
+    # populate_existing 固化列级查询恒取 DB 新值的改写基准。
+    messages = (
+        await db.scalars(
+            select(Message).where(*_media_messages(int(session_id))).execution_options(populate_existing=True),
+        )
+    ).all()
+    parsed = _parse_message_parts(messages)
+    rewritten = _rewrite_rows(parsed, file_ids, session_id)
     if rewritten:
         await db.commit()
     await asyncio.to_thread(_unlink_files, victims)
@@ -309,16 +316,19 @@ async def prune_media_in_range(
     conditions = [*_media_messages(conversation_id), Message.id >= lo]
     if hi is not None:
         conditions.append(Message.id < hi)
-    rows = (await db.execute(select(Message.id, Message.content).where(*conditions))).all()
-    file_ids = {file_id for _message_id, content in rows for file_id in _referenced_file_ids(content, session_id)}
+    # populate_existing 固化列级查询恒取 DB 新值的改写基准。
+    messages = (await db.scalars(select(Message).where(*conditions).execution_options(populate_existing=True))).all()
+    parsed, file_ids = _collect_message_parts(messages, session_id)
     if not file_ids:
         return
     outside = (Message.id < lo) | (Message.id >= hi) if hi is not None else Message.id < lo
     for content in await db.scalars(select(Message.content).where(*_media_messages(conversation_id), outside)):
-        file_ids -= _referenced_file_ids(content, session_id)
+        parts = _load_parts(content)
+        if parts is not None:
+            file_ids -= _referenced_file_ids(parts, session_id)
     if not file_ids:
         return
-    rewritten = await _rewrite_rows(db, rows, file_ids, session_id)
+    rewritten = _rewrite_rows(parsed, file_ids, session_id)
     await db.commit()
     root = session_dir(session_id).resolve()
     targets = [target for file_id in file_ids if (target := (root / file_id).resolve()).is_relative_to(root)]
@@ -391,7 +401,7 @@ def _retarget_parts(parts: list, copied: set[str], *, source_session_id: str, ta
 async def copy_forked_media_attachments(db: AsyncSession, source_session_id: str, target_session_id: str) -> int:
     """派生会话复制的用户行仍引用源会话的音视频附件：把被引用的文件复制进派生会话目录并改写引用，派生历史不再依赖源会话的清理与删除；源文件已不存在的引用改写为清理占位。返回改写的消息行数。失败或被取消时调用方须丢弃派生会话及其附件目录。"""
     messages = (await db.scalars(select(Message).where(*_media_messages(int(target_session_id))))).all()
-    file_ids = {file_id for message in messages for file_id in _referenced_file_ids(message.content, source_session_id)}
+    parsed, file_ids = _collect_message_parts(messages, source_session_id)
     if not file_ids:
         return 0
     stop = threading.Event()
@@ -406,10 +416,7 @@ async def copy_forked_media_attachments(db: AsyncSession, source_session_id: str
         await cancel_and_wait([copy_task])
         raise
     rewritten = 0
-    for message in messages:
-        parts = safe_json_loads(message.content or "[]", default=[])
-        if not isinstance(parts, list):
-            continue
+    for message, parts in parsed:
         new_parts = _retarget_parts(
             parts,
             copied,

@@ -5,6 +5,7 @@ from typing import Any
 
 from infrastructure.ai.embedding_space import MEMORY_EMBEDDING_DIM
 from infrastructure.ai.llm_client import embedding_model_key, generate_embeddings, resolve_embedding_provider
+from infrastructure.ai.providers.base import EmbeddingProvider
 from infrastructure.database import session_scope
 from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
@@ -12,7 +13,7 @@ from runtime.background import TaskBag
 from runtime.events.emit import emit_ws_event
 from runtime.memory_scope import EmbeddingItem, MemoryScope, MemorySource, validate_memory_scope
 from runtime.user_maintenance import is_user_in_maintenance
-from sqlalchemy import ColumnElement, and_, case, func, or_, select, text, update
+from sqlalchemy import ColumnElement, and_, bindparam, case, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -77,7 +78,7 @@ async def _rebuild_embeddings(user_id: int) -> None:
                     EmbeddingItem(id=row.id, content=row.content, version=row.content_version),
                 )
             for preset, items in scopes.items():
-                if not await backfill_memory_embeddings(MemoryScope(user_id, preset), items):
+                if not await backfill_memory_embeddings(MemoryScope(user_id, preset), items, provider=provider):
                     return
     except Exception:
         logger.warning("memory embedding rebuild failed", extra={"user_id": user_id}, exc_info=True)
@@ -271,35 +272,49 @@ async def delete_memory(db: AsyncSession, scope: MemoryScope, memory_id: int) ->
     return True
 
 
-async def backfill_memory_embeddings(scope: MemoryScope, rows: list[EmbeddingItem]) -> bool:
+async def backfill_memory_embeddings(
+    scope: MemoryScope,
+    rows: list[EmbeddingItem],
+    *,
+    provider: EmbeddingProvider | None = None,
+) -> bool:
     validate_memory_scope(scope)
     if not rows:
         return True
     try:
-        async with session_scope() as db:
-            provider = await resolve_embedding_provider(db, scope.user_id)
+        if provider is None:
+            async with session_scope() as db:
+                provider = await resolve_embedding_provider(db, scope.user_id)
         vectors = await generate_embeddings([row.content for row in rows], provider, user_id=scope.user_id)
         if vectors is None or len(vectors) != len(rows):
             return False
         if any(not isinstance(vector, list) or len(vector) != MEMORY_EMBEDDING_DIM for vector in vectors):
             return False
+        model_key = embedding_model_key(provider.config)
+        # 同事务单次批量写；行级 WHERE 保留逐行校验跳过语义，失败整批回滚。
+        stmt = (
+            update(Memory)
+            .where(
+                scope_filter(scope),
+                Memory.id == bindparam("row_id"),
+                active_memory_filter(),
+                Memory.content_version == bindparam("row_version"),
+                Memory.content == bindparam("row_content"),
+            )
+            .values(
+                embedding=bindparam("row_embedding"),
+                embedding_model_key=model_key,
+                updated_at=Memory.updated_at,
+            )
+        )
         async with session_scope() as db:
-            for row, vector in zip(rows, vectors, strict=True):
-                await db.execute(
-                    update(Memory)
-                    .where(
-                        scope_filter(scope),
-                        Memory.id == row.id,
-                        active_memory_filter(),
-                        Memory.content_version == row.version,
-                        Memory.content == row.content,
-                    )
-                    .values(
-                        embedding=vector,
-                        embedding_model_key=embedding_model_key(provider.config),
-                        updated_at=Memory.updated_at,
-                    ),
-                )
+            await db.execute(
+                stmt,
+                [
+                    {"row_id": row.id, "row_version": row.version, "row_content": row.content, "row_embedding": vector}
+                    for row, vector in zip(rows, vectors, strict=True)
+                ],
+            )
             await db.commit()
         return True
     except Exception:

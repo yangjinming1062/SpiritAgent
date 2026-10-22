@@ -19,6 +19,10 @@ class SocialSourceError(RuntimeError):
         self.reason = reason
 
 
+def failure_reason(status_code: int) -> str:
+    return "login_required" if status_code in {401, 403} else "rate_limited" if status_code == 429 else "source_failed"
+
+
 def validate_source_url(platform: SocialPlatform, source_id: str, url: str) -> str:
     """只接受能与平台内容 ID 对应的 HTTPS 原文地址，不接受短链和跳转链接。"""
     parsed = urlsplit(url)

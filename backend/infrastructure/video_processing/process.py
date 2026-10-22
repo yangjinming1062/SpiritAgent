@@ -1,6 +1,7 @@
 """角色视频片段处理：切分重置时间轴 → 统一画布与脚底锚点 → 透明 VP9 编码 → 封面与命中遮罩。交付格式固定 WebM/VP9+Alpha（yuva420p）、无音轨；处理参数由代码构造，外部输入只提供路径与受校验的整数。"""
 
 import math
+import tempfile
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -58,19 +59,38 @@ HITMASK_ALPHA_THRESHOLD = 24
 class ClipProcessResult:
     sha256: str
     frames: int
-    duration_ms: int
-    width: int
-    height: int
+    hitmask: list[list[int]]
+    probe: VideoProbe
+
+    @property
+    def duration_ms(self) -> int:
+        return round(self.probe.duration_seconds * 1000)
+
+    @property
+    def width(self) -> int:
+        return self.probe.width
+
+    @property
+    def height(self) -> int:
+        return self.probe.height
 
 
-def _native_canvas_size(width: int, height: int, canvas_w: int, canvas_h: int) -> tuple[int, int]:
-    """容纳源像素的最小同宽高比偶数画布，供生成素材仅补边而不重采样。"""
+def minimal_aspect_size(width: int, height: int, canvas_w: int, canvas_h: int) -> tuple[int, int]:
+    """容纳源像素的最小同宽高比画布尺寸。"""
     divisor = math.gcd(canvas_w, canvas_h)
     unit_w, unit_h = canvas_w // divisor, canvas_h // divisor
     multiple = max((width + unit_w - 1) // unit_w, (height + unit_h - 1) // unit_h)
-    if (unit_w * multiple) % 2 or (unit_h * multiple) % 2:
-        multiple += 1
     return unit_w * multiple, unit_h * multiple
+
+
+def _native_canvas_size(width: int, height: int, canvas_w: int, canvas_h: int) -> tuple[int, int]:
+    """最小同宽高比画布的偶数版（视频编码要求偶数边长），供生成素材仅补边而不重采样。"""
+    size_w, size_h = minimal_aspect_size(width, height, canvas_w, canvas_h)
+    if size_w % 2 or size_h % 2:
+        divisor = math.gcd(canvas_w, canvas_h)
+        size_w += canvas_w // divisor
+        size_h += canvas_h // divisor
+    return size_w, size_h
 
 
 def _canvas_filter(canvas_w: int, canvas_h: int, *, preserve_resolution: bool = False) -> str:
@@ -126,6 +146,69 @@ def prepare_action_clip(
     return _verify_output(dst)
 
 
+def _decode_alpha_grids(
+    dst: Path,
+    probe: VideoProbe,
+    canvas_w: int,
+    canvas_h: int,
+    *,
+    failure_message: str,
+) -> tuple[bytes, list[list[int]]]:
+    """单次解码同出验收灰度网格与命中遮罩行位掩码；split 仅复制帧，两条滤镜链各自独立。"""
+    graph = (
+        "[0:v]split=2[verify][hitmask];"
+        "[verify]format=rgba,alphaextract,scale=32:32[gray];"
+        f"[hitmask]{_canvas_filter(canvas_w, canvas_h)},scale={HITMASK_GRID_W}:{HITMASK_GRID_H},format=rgba[rgba]"
+    )
+    with tempfile.TemporaryDirectory(prefix="spirit-hitmask-") as temporary:
+        rgba_path = Path(temporary) / "grid.raw"
+        gray = ffmpeg_stdout(
+            [
+                *alpha_input_args(probe),
+                "-i",
+                str(dst),
+                "-filter_complex",
+                graph,
+                "-map",
+                "[gray]",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "gray",
+                "-",
+                "-map",
+                "[rgba]",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgba",
+                str(rgba_path),
+            ],
+            failure_message=failure_message,
+        )
+        return gray, _hitmask_rows(rgba_path)
+
+
+def _hitmask_rows(rgba_path: Path) -> list[list[int]]:
+    """逐帧读 alpha 网格转 [frame][row] 列位行，分帧折叠只留紧凑掩码；客户端按呈现时间查表，经容器变换还原屏幕坐标。"""
+    frame_bytes = HITMASK_GRID_W * HITMASK_GRID_H * 4
+    mask: list[list[int]] = []
+    with rgba_path.open("rb") as stream:
+        while frame := stream.read(frame_bytes):
+            if len(frame) != frame_bytes:
+                raise VideoProcessError("命中遮罩生成失败", internal="truncated frame")
+            grid_rows: list[int] = []
+            for row in range(HITMASK_GRID_H):
+                row_bits = 0
+                for col in range(HITMASK_GRID_W):
+                    alpha = frame[(row * HITMASK_GRID_W + col) * 4 + 3]
+                    if alpha >= HITMASK_ALPHA_THRESHOLD:
+                        row_bits |= 1 << col
+                grid_rows.append(row_bits)
+            mask.append(grid_rows)
+    return mask
+
+
 def _verify_output(dst: Path) -> ClipProcessResult:
     out = probe_video(dst)
     if out.codec_name != "vp9":
@@ -134,30 +217,19 @@ def _verify_output(dst: Path) -> ClipProcessResult:
         # 容器声明单独不能证明真实 alpha。
         raise VideoProcessError("视频缺少透明通道，无法作为角色片段使用", internal=f"pix_fmt={out.pix_fmt}")
     invalid_alpha = "透明片段缺少有效前景或透明背景"
-    alpha = ffmpeg_stdout(
-        [
-            *alpha_input_args(out),
-            "-i",
-            str(dst),
-            "-vf",
-            "format=rgba,alphaextract,scale=32:32",
-            "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "gray",
-            "-",
-        ],
-        failure_message=invalid_alpha,
-    )
+    gray, hitmask = _decode_alpha_grids(dst, out, out.width, out.height, failure_message=invalid_alpha)
     frame_size = 32 * 32
-    if not alpha or len(alpha) % frame_size or min(alpha) > 8 or max(alpha) < 240:
+    if not gray or len(gray) % frame_size or min(gray) > 8 or max(gray) < 240:
         raise VideoProcessError(invalid_alpha)
+    frames = len(gray) // frame_size
+    # 同次解码两分支帧数必须一致，否则客户端按帧查掩码会错位。
+    if frames != len(hitmask):
+        raise VideoProcessError("命中遮罩生成失败", internal=f"frames={frames} hitmask={len(hitmask)}")
     return ClipProcessResult(
         sha256=compute_file_sha256(dst),
-        frames=len(alpha) // frame_size,
-        duration_ms=round(out.duration_seconds * 1000),
-        width=out.width,
-        height=out.height,
+        frames=frames,
+        hitmask=hitmask,
+        probe=out,
     )
 
 
@@ -188,9 +260,9 @@ def _frame_webp(src: Path, probe: VideoProbe, *, canvas_w: int, canvas_h: int, a
     return output.getvalue()
 
 
-def extract_cover(src: Path, *, canvas_w: int, canvas_h: int) -> bytes:
+def extract_cover(src: Path, *, probe: VideoProbe, canvas_w: int, canvas_h: int) -> bytes:
     """交付片段首帧的透明 WebP 字节。"""
-    return _frame_webp(src, probe_video(src), canvas_w=canvas_w, canvas_h=canvas_h, at_seconds=0.0)
+    return _frame_webp(src, probe, canvas_w=canvas_w, canvas_h=canvas_h, at_seconds=0.0)
 
 
 def sample_key_frames(src: Path) -> list[bytes]:
@@ -204,41 +276,3 @@ def sample_key_frames(src: Path) -> list[bytes]:
         _frame_webp(src, probe, canvas_w=canvas_w, canvas_h=canvas_h, at_seconds=second)
         for second in (0.0, duration / 2, max(0.0, duration - 0.15))
     ]
-
-
-def build_hitmask(src: Path, *, canvas_w: int, canvas_h: int) -> list[list[int]]:
-    """逐帧生成低分辨率 alpha 命中遮罩：返回 [frame][row] 的列位行。
-    客户端按呈现时间取当前帧查表，经容器变换还原为屏幕坐标。
-
-    WebM 通过 libvpx 解码，采样时间与最终交付片段一致。"""
-    probe = probe_video(src)
-    args = [
-        *alpha_input_args(probe),
-        "-i",
-        str(src),
-        "-vf",
-        f"{_canvas_filter(canvas_w, canvas_h)},scale={HITMASK_GRID_W}:{HITMASK_GRID_H},format=rgba",
-        "-f",
-        "rawvideo",
-        "-pix_fmt",
-        "rgba",
-        "-",
-    ]
-    raw = ffmpeg_stdout(args, failure_message="命中遮罩生成失败")
-    frame_bytes = HITMASK_GRID_W * HITMASK_GRID_H * 4
-    if len(raw) < frame_bytes:
-        raise VideoProcessError("命中遮罩生成失败", internal=f"short output {len(raw)}")
-
-    mask: list[list[int]] = []
-    for sample in range(len(raw) // frame_bytes):
-        offset = sample * frame_bytes
-        grid_rows: list[int] = []
-        for row in range(HITMASK_GRID_H):
-            row_bits = 0
-            for col in range(HITMASK_GRID_W):
-                alpha = raw[offset + (row * HITMASK_GRID_W + col) * 4 + 3]
-                if alpha >= HITMASK_ALPHA_THRESHOLD:
-                    row_bits |= 1 << col
-            grid_rows.append(row_bits)
-        mask.append(grid_rows)
-    return mask

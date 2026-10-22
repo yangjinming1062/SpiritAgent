@@ -12,6 +12,7 @@ from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.assets.asset_store import build_data_uri
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
+from infrastructure.logger import get_logger
 from pydantic import BaseModel, ConfigDict, Field
 from runtime.paid_work import require_new_generation_call
 
@@ -20,10 +21,11 @@ from features.appearance.avatar_service import read_portrait_bytes
 from .identity import definition_matches_source, same_review_reference
 from .ports import read_source
 from .prompts import ACTION_DEFINITION_REVIEW, ACTION_DEFINITION_REVIEW_REPAIR
-from .queries import definition_review_source, definition_snapshot, matching_definitions
+from .queries import definition_snapshot, definition_with_source, matching_definitions
 from .schemas import ActionDefinitionSnapshot
 from .service import begin_review, record_review
 
+logger = get_logger(__name__)
 _REVIEW_LOCKS: dict[tuple[int, int | None, str], asyncio.Lock] = {}
 
 
@@ -62,9 +64,11 @@ async def review_definition(user_id: int, definition_id: int) -> None:
 
 async def _review_definition_locked(user_id: int, definition_id: int) -> None:
     async with SESSION_LOCAL() as db:
-        definition = await definition_snapshot(db, user_id, definition_id)
-        source = await definition_review_source(db, user_id, definition_id)
-        if definition is None or definition.status != "pending" or source is None:
+        loaded = await definition_with_source(db, user_id, definition_id)
+        if loaded is None:
+            return
+        definition, source = loaded
+        if definition.status != "pending":
             return
         candidates = [
             item
@@ -143,7 +147,20 @@ async def _review_definition_locked(user_id: int, definition_id: int) -> None:
         preserve_choices=("decision",),
         before_call=before_call,
     )
-    await before_call()
+    require_new_generation_call(user_id)
     async with SESSION_LOCAL() as db:
-        await record_review(db, user_id, definition_id, verdict.decision, verdict.reason, verdict.reuse_definition_id)
+        recorded = await record_review(
+            db,
+            user_id,
+            definition_id,
+            verdict.decision,
+            verdict.reason,
+            verdict.reuse_definition_id,
+        )
         await db.commit()
+    if recorded is None:
+        # 竞态下结论已无法覆盖既有状态，保留诊断避免静默丢弃已计费判决。
+        logger.warning(
+            "shared action review verdict dropped",
+            extra={"definition_id": definition_id, "user_id": user_id, "decision": verdict.decision},
+        )

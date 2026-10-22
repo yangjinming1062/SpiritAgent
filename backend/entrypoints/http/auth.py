@@ -6,12 +6,13 @@ from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials
 from features.accounts.deps import (
     account_request_scope,
-    authenticate_request_session,
+    authenticate_remote_session,
     get_current_admin_token,
     get_current_remote_session,
     get_current_session,
     get_current_user,
     get_optional_current_session,
+    session_from_payload,
 )
 from features.accounts.gateway import GatewayIdentity
 from features.accounts.security import BEARER_SCHEME, decode_bearer_token
@@ -41,15 +42,18 @@ async def get_request_identity(
     content_only: bool = True,
     stream_id: str | None = None,
 ) -> GatewayIdentity:
-    user, identity = await authenticate_request_session(request, credentials, db, content_only=content_only)
-    if isinstance(identity, LoginIdentity):
-        raw_context = decode_bearer_token(credentials).get("ctx")
+    if credentials is not None:
+        # ctx 与会话鉴权共用同一份已验签 payload，不二次解码；exp 只在首次验签时校验，吊销由 DB 会话状态承担。
+        payload = decode_bearer_token(credentials)
+        user, identity = await session_from_payload(payload, db)
+        raw_context = payload.get("ctx")
         return GatewayIdentity(
             user_id=user.id,
             login_record_id=identity.id,
             client_context=ChatRequestClientContext.model_validate(raw_context) if raw_context else None,
             stream_id=stream_id,
         )
+    user, identity = await authenticate_remote_session(request, db, content_only=content_only)
     return GatewayIdentity(
         user_id=user.id,
         device_id=identity.id,

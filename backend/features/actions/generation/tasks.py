@@ -147,14 +147,13 @@ async def _queue_in_place_redo(
             raise VideoPackStateError("动作的冻结身份或着装来源已变化，无法制作此版本")
     if job is not None and (_job_result_unresolved(job) or job.id in _ACTION_INFLIGHT):
         raise VideoPackStateError("动作仍在制作中，请等待完成后再重新生成")
-    accepted = accepted_action_asset(job) if job is not None else None
     current = (
         ActionResult.model_validate_json(job.result_json)
         if job is not None and job.result_json and job.media_path
-        else accepted.parse_result()
-        if accepted is not None
         else None
     )
+    if current is None and job is not None and (accepted := accepted_action_asset(job)) is not None:
+        current = accepted.parse_result()
     if current is None and job is not None and job.generation_state_json:
         state = MediaChainState.model_validate_json(job.generation_state_json)
         candidate = state.best()

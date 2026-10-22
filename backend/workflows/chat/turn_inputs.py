@@ -23,11 +23,10 @@ from features.memory.memory_format import (
 from features.memory.memory_retrieval import MemoryEmbedding, MemoryRecallResult, retrieve_proactive_memories
 from infrastructure.ai.llm_client import (
     MissingLlmConfigError,
-    build_provider,
     resolve_media_chain,
     resolve_provider_chain,
 )
-from infrastructure.ai.providers.base import ChatProvider, ProviderConfig, ReasoningEffort
+from infrastructure.ai.providers.base import ProviderConfig, ReasoningEffort
 from infrastructure.ai.providers.registry import resolve_context_tokens
 from infrastructure.ai.responses import approx_responses_tokens, message_to_response_items, request_input_modalities
 from infrastructure.ai.tasks import AiTaskKey
@@ -45,7 +44,6 @@ from infrastructure.text import (
 from runtime.client_context import ChatRequestClientContext
 from runtime.memory_scope import MemoryScope, MemorySource
 from runtime.presets import COMPANION_PRESET_ID
-from runtime.tools.domains import apply_search_tools_catalog
 from runtime.tools.registry import REGISTRY, schema_name
 from runtime.tools.toolsets import disabled_backend_tool_names
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -69,7 +67,6 @@ class TurnInputs:
     # 会话预设、调用方排除与用户已禁用工具集中的工具；装配与执行层共用。
     excluded_tool_names: frozenset[str]
     first_user_msg_content: str | None
-    provider_name: str
     estimated_tokens: int
     user_local_tz: str | None
     language: str
@@ -292,6 +289,19 @@ def _find_authoritative_token_baseline(history: list[MessageSnapshot]) -> tuple[
     return None, history
 
 
+def estimate_context_tokens(context: dict[str, Any], history: list[MessageSnapshot]) -> int:
+    """Token 估算结合 Responses 权威基线与 CJK 全量/增量估算；压缩后与回合装配共用同一口径。"""
+    full_context_tokens = approx_responses_tokens(context["instructions"], context["input"])
+    baseline, subsequent_msgs = _find_authoritative_token_baseline(history)
+    if baseline is None:
+        return full_context_tokens
+    delta_items = [item for m in subsequent_msgs for item in db_message_to_response_items(m)]
+    baseline_tokens = baseline + approx_responses_tokens("", delta_items)
+    # 提示词与 Schema 漂移保护：若基线估算与当前全量装配的上下文差异过大（>20% 且 >200 tokens），采用全量估算
+    drift = abs(baseline_tokens - full_context_tokens)
+    return full_context_tokens if drift > max(200, int(full_context_tokens * 0.2)) else baseline_tokens
+
+
 async def build_turn_inputs(
     db: AsyncSession,
     conv: ConversationSnapshot,
@@ -327,19 +337,15 @@ async def build_turn_inputs(
     )
     if not llm_chain:
         raise MissingLlmConfigError("no provider configured for service 'llm'")
-    provider = build_provider(llm_chain[0], ChatProvider)
 
     excluded_tool_names = (
         excluded_tool_names | preset_excluded_tool_names(preset_id) | disabled_backend_tool_names(user_settings)
     )
-    # 排除后重算 search_tools 的业务域清单，只列出本回合实际可解锁的能力。
     action_excluded = await unavailable_action_tool_names(db, user_id)
-    all_schemas = apply_search_tools_catalog(
-        [
-            schema
-            for schema in REGISTRY.get_all_schemas(user_id, user_settings=user_settings)
-            if schema_name(schema) not in excluded_tool_names | action_excluded
-        ],
+    all_schemas = REGISTRY.get_all_schemas(
+        user_id,
+        user_settings=user_settings,
+        exclude=excluded_tool_names | action_excluded,
     )
     persona = await persona_snapshot(db, user_id) if is_companion else None
     # 入口处一次性 normalize 语言：避免 lang="fr" 等未支持值在 volatile header 与 day marker 处分别走不同分支。
@@ -401,16 +407,7 @@ async def build_turn_inputs(
     )
 
     # Token 估算结合 Responses 权威基线与 CJK 全量/增量估算。
-    full_context_tokens = approx_responses_tokens(context["instructions"], context["input"])
-    baseline, subsequent_msgs = _find_authoritative_token_baseline(history)
-    if baseline is not None:
-        delta_items = [item for m in subsequent_msgs for item in db_message_to_response_items(m)]
-        baseline_tokens = baseline + approx_responses_tokens("", delta_items)
-        # 提示词与 Schema 漂移保护：若基线估算与当前全量装配的上下文差异过大（>20% 且 >200 tokens），采用全量估算
-        drift = abs(baseline_tokens - full_context_tokens)
-        estimated_tokens = full_context_tokens if drift > max(200, int(full_context_tokens * 0.2)) else baseline_tokens
-    else:
-        estimated_tokens = full_context_tokens
+    estimated_tokens = estimate_context_tokens(context, history)
 
     # 陪伴用户会话提供语音；主动回合仅在自主档位提供语音能力。
     speech_config: ProviderConfig | None = None
@@ -427,11 +424,10 @@ async def build_turn_inputs(
     return TurnInputs(
         context=context,
         native_memory=native_memory,
-        ctx_length=resolve_context_tokens(provider.config),
+        ctx_length=resolve_context_tokens(llm_chain[0]),
         all_schemas=all_schemas,
         excluded_tool_names=excluded_tool_names,
         first_user_msg_content=first_user_msg_content,
-        provider_name=provider.provider_name,
         estimated_tokens=estimated_tokens,
         user_local_tz=user_local_tz,
         language=session_lang,

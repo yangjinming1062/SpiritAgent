@@ -71,9 +71,13 @@ class GrokVideoGenProvider(VideoGenProvider):
         reference_videos: bool = False,
     ) -> tuple[str, ...]:
         if (
-            reference_videos
+            self._reject_reference_media(
+                first_frame=first_frame,
+                last_frame=last_frame,
+                reference_images=reference_images,
+                reference_videos=reference_videos,
+            )
             or duration not in _SUPPORTED_DURATIONS
-            or (reference_images and (first_frame or last_frame))
         ):
             return ()
         if last_frame or reference_images:
@@ -84,10 +88,7 @@ class GrokVideoGenProvider(VideoGenProvider):
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
         model = self.config.model
 
-        if req.reference_videos:
-            raise ProviderError("Grok video generation does not support reference videos", status_code=400)
-        if req.reference_images and (req.first_frame_image or req.last_frame_image):
-            raise ProviderError("Reference images cannot be combined with first/last frames", status_code=400)
+        self.validate_request(req)
         if len(req.prompt) > _MAX_PROMPT_CHARS:
             raise ProviderError(f"prompt exceeds xAI limit ({_MAX_PROMPT_CHARS} chars)", status_code=400)
         if req.duration not in _SUPPORTED_DURATIONS:

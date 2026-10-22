@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import CompanionScene, SceneOrigin, SceneStatus
-from .queries import get_scene_state, scene_environment
+from .queries import get_pending_scene_task, get_scene, get_scene_state, scene_environment
 from .service import activate_scene, schedule_scene_generation
 
 
@@ -47,19 +47,13 @@ async def ready_scenes(db: AsyncSession, user_id: int) -> list[SceneSnapshot]:
 
 
 async def scene_snapshot(db: AsyncSession, user_id: int, scene_id: int) -> SceneSnapshot | None:
-    row = await db.get(CompanionScene, scene_id)
-    return _snapshot(row) if row is not None and row.user_id == user_id else None
+    row = await get_scene(db, user_id, scene_id)
+    return _snapshot(row) if row is not None else None
 
 
 async def find_pending_scene_id(db: AsyncSession, user_id: int) -> int | None:
-    return await db.scalar(
-        select(CompanionScene.id)
-        .where(
-            CompanionScene.user_id == user_id,
-            (CompanionScene.status == SceneStatus.PENDING.value) | (CompanionScene.regeneration_status == "pending"),
-        )
-        .limit(1),
-    )
+    row = await get_pending_scene_task(db, user_id)
+    return row.id if row is not None else None
 
 
 async def activate_nightly_scene(db: AsyncSession, user_id: int, scene_id: int) -> SceneSnapshot:

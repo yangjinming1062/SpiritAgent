@@ -170,15 +170,23 @@ class CompanionReply(BaseModel):
         return value
 
     @classmethod
+    def load_saved_snapshot(cls, reply_json: str, content: str) -> tuple["CompanionReply", CompanionReplyInput]:
+        """读取交付快照并核对其与原文一致；返回交付态与原文解析结果。"""
+        reply = cls.model_validate_json(reply_json)
+        source = CompanionReplyInput.model_validate_json(content)
+        reply._compare_source(source)
+        return reply, source
+
+    @classmethod
     def from_saved_snapshot(cls, reply_json: str, content: str) -> "CompanionReply":
         """读取交付快照并核对其与原文的气泡、正文及演绎一致。"""
-        reply = cls.model_validate_json(reply_json)
-        reply.validate_content(content)
-        return reply
+        return cls.load_saved_snapshot(reply_json, content)[0]
 
     def validate_content(self, content: str) -> None:
         """原文与交付态须对应同一组气泡；供应商绑定与音频仅存在于交付态。"""
-        source = CompanionReplyInput.model_validate_json(content)
+        self._compare_source(CompanionReplyInput.model_validate_json(content))
+
+    def _compare_source(self, source: CompanionReplyInput) -> None:
         if len(source.root) != len(self.bubbles):
             raise ValueError("Reply content and delivery bubbles differ")
         for raw, delivered in zip(source.root, self.bubbles, strict=True):

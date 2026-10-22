@@ -4,19 +4,15 @@ from fastapi import Depends, Path, Request, Response
 from features.accounts.remote import use_cases as remote_use_cases
 from features.accounts.remote.schemas import (
     DeviceListResponse,
-    DeviceResponse,
     ExchangeRequest,
     PairingResponse,
     RemoteSessionResponse,
-    RemoteUserResponse,
 )
 from features.accounts.remote.security import (
     REMOTE_COOKIE,
     REMOTE_SESSION_TTL_SECONDS,
-    remote_csrf_token,
     require_remote_origin,
 )
-from features.accounts.snapshots import AccountIdentity, RemoteDeviceIdentity
 from infrastructure.config import SETTINGS
 from infrastructure.constants import POSTGRES_INT4_MAX
 from infrastructure.database import DbSession
@@ -37,14 +33,6 @@ async def _private_response(response: Response) -> None:
 
 router = get_router(dependencies=[Depends(_private_response)])
 ResourceId = Annotated[int, Path(ge=1, le=POSTGRES_INT4_MAX)]
-
-
-def _session_response(user: AccountIdentity, device: RemoteDeviceIdentity, token: str) -> RemoteSessionResponse:
-    return RemoteSessionResponse(
-        user=RemoteUserResponse(id=user.id, username=user.username),
-        device=DeviceResponse.model_validate(device),
-        csrf_token=remote_csrf_token(token),
-    )
 
 
 @router.post("/pairings", response_model=PairingResponse)
@@ -99,7 +87,8 @@ async def exchange_pairing(
 
 @router.get("/session", response_model=RemoteSessionResponse, openapi_extra=operation_policy(identities=("remote",)))
 async def current_remote_session(request: Request, session: CurrentRemoteSession) -> RemoteSessionResponse:
-    return _session_response(*session, request.cookies[REMOTE_COOKIE])
+    user, device = session
+    return remote_use_cases.session_response(user.id, user.username, device, request.cookies[REMOTE_COOKIE])
 
 
 @router.delete("/session", response_model=MessageResponse, openapi_extra=operation_policy(identities=("remote",)))

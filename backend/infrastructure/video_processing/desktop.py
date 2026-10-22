@@ -8,6 +8,7 @@ from PIL import Image
 
 from infrastructure.media_geometry import centered_crop_box
 from infrastructure.video_processing.ffmpeg import (
+    VideoProbe,
     VideoProcessError,
     ffmpeg_stdout,
     probe_video,
@@ -243,8 +244,8 @@ def prepare_fitted_external_desktop_video(src: Path, dst: Path, *, aspect_ratio:
     return _desktop_result(dst, expected_size, fitted=fitted)
 
 
-def validate_desktop_video_playback(src: Path) -> None:
-    """核对直接播放所需的容器与编码；不限制供生成模型使用的参考输入。"""
+def validate_desktop_video_playback(src: Path) -> VideoProbe:
+    """核对直接播放所需的容器与编码；不限制供生成模型使用的参考输入。返回已校验的探测结果。"""
     probe = probe_video(src)
     if probe.codec_name not in {"h264", "vp8", "vp9", "av1"}:
         raise VideoProcessError("桌面播放器不支持该视频编码")
@@ -263,12 +264,12 @@ def validate_desktop_video_playback(src: Path) -> None:
         raise VideoProcessError("桌面播放器不支持该 H.264 像素格式")
     if probe.codec_name in {"vp8", "vp9"} and container not in {"matroska", "webm"}:
         raise VideoProcessError("桌面播放器不支持该 VPx 视频容器")
+    return probe
 
 
 def prepare_external_desktop_video(src: Path) -> DesktopVideoResult:
     """验证外部视频并生成缩略图；视频文件本身保持原字节、画幅、帧率和音轨。"""
-    validate_desktop_video_playback(src)
-    probe = probe_video(src)
+    probe = validate_desktop_video_playback(src)
     # 完整解码只用于确认文件可读，不生成新的交付视频。
     run_ffmpeg(
         ["-xerror", "-i", str(src), "-map", "0:v:0", "-f", "null", "-"],

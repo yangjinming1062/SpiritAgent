@@ -82,7 +82,7 @@ from features.desktop_life.repository import (
     desktop_accepted_asset,
     desktop_action,
     desktop_action_description,
-    desktop_action_response,
+    desktop_action_playable,
     desktop_action_response_with_sync,
     desktop_failed_opening_review,
     desktop_image_origin,
@@ -473,7 +473,7 @@ async def activate_desktop_video_set(db: AsyncSession, user_id: int, set_id: int
     idle = await db.scalar(
         select(DesktopVideoAction).where(DesktopVideoAction.set_id == set_id, DesktopVideoAction.key == "idle"),
     )
-    if idle is None or not desktop_action_response(idle).playable:
+    if idle is None or not desktop_action_playable(idle):
         raise DesktopVideoStateError("请先完成这套桌景的安静相伴")
     if state.current_set_id != set_id:
         state.current_set_id = set_id
@@ -518,7 +518,7 @@ async def delete_desktop_video_set(db: AsyncSession, user_id: int, set_id: int) 
             if fallback
             else None
         )
-        state.current_set_id = fallback.id if idle and desktop_action_response(idle).playable else None
+        state.current_set_id = fallback.id if idle and desktop_action_playable(idle) else None
         state.selected_action_id = state.loop_action_id = idle.id if state.current_set_id else None
         state.selected_play_id = None
         state.loop_changed_at = utc_now() if state.current_set_id else None
@@ -727,7 +727,6 @@ async def generate_desktop_image(
             previous = (old.pose_path or old.previous_pose_path) if old else None
             if old is not None and retry_expansion and not previous:
                 previous = old.previous_pose_path or old.source_image_path
-            accepted = desktop_accepted_asset(action)
             previous = previous or (accepted.image_path if accepted else None)
             if previous is None and auto_continue and action.definition_id is not None:
                 previous = row.base_image_path
@@ -1022,7 +1021,6 @@ async def confirm_desktop_image(
         )
         if generate_video:
             require_new_generation_call(user_id)
-        action.generation_state_json = progress.model_dump_json()
         await touch_desktop_state(db, user_id)
         await db.commit()
         response = await desktop_action_response_with_sync(db, action)
@@ -1397,7 +1395,7 @@ async def schedule_pending_desktop_updates(user_id: int, set_id: int) -> None:
             action.id
             for action in actions
             if action.stage == "complete"
-            or (desktop_progress(action) is None or desktop_progress(action).continuity == "base")
+            or ((parsed := desktop_progress(action)) is None or parsed.continuity == "base")
         ]
         invalidated = list(
             await db.scalars(
@@ -1611,13 +1609,6 @@ async def generate_desktop_action(
             draft_id=observed_draft,
             base_version=observed_base,
             resolution_revision=observed_resolution,
-        )
-        _validate_draft(
-            row,
-            old if action.stage != "complete" else None,
-            draft_id=expected_draft_id,
-            base_version=expected_base_version,
-            resolution_revision=expected_resolution_revision,
         )
         if source == "autonomous" and (not state.autonomous_enabled or not SETTINGS.action_autocreate_enabled):
             raise DesktopVideoStateError("自主制作动作当前已关闭")

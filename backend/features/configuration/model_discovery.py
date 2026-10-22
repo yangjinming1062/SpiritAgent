@@ -1,17 +1,16 @@
 from urllib.parse import urlsplit
 
-from infrastructure.ai.config import AIConfig, ModelDiscoveryRequest
+from infrastructure.ai.config import ModelDiscoveryRequest
 from infrastructure.ai.model_discovery import discover_models
 from infrastructure.ai.models import ModelDiscoveryResponse
 from infrastructure.ai.providers.base import ServiceType
 from infrastructure.ai.providers.registry import configured_base_url, providers_supporting
 from infrastructure.config import SETTINGS
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.queries import account_exists
 from features.configuration.ai_config import prepare_provider_card
-from features.configuration.models import UserModelConfig
+from features.configuration.queries import user_ai_config
 
 
 async def discover_configured_models(db: AsyncSession, request: ModelDiscoveryRequest) -> ModelDiscoveryResponse:
@@ -23,14 +22,13 @@ async def discover_configured_models(db: AsyncSession, request: ModelDiscoveryRe
     else:
         if not await account_exists(db, request.user_id):
             raise ValueError("用户不存在")
-        row = await db.scalar(select(UserModelConfig).where(UserModelConfig.user_id == request.user_id))
-        user = AIConfig.model_validate(row.ai_config) if row is not None else AIConfig()
-        previous = user.find_provider(request.provider.id)
         system_provider = SETTINGS.ai_config.find_provider(request.provider.id)
         if system_provider is not None:
             # 用户模型引用系统实例时，端点与密钥始终归系统信息库。
             provider = system_provider.model_copy(deep=True)
         else:
+            user = await user_ai_config(db, request.user_id)
+            previous = user.find_provider(request.provider.id)
             provider = prepare_provider_card(request.provider, previous)
     base = configured_base_url(provider.provider_type, provider.base_url, ServiceType(request.service))
     url = urlsplit(base)

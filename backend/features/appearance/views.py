@@ -58,8 +58,13 @@ async def regenerate_avatar_from_image_view(
     )
 
 
-async def finalize_avatar_view(db: AsyncSession, user_id: int) -> AvatarAssetResponse | None:
-    asset = await _avatar.finalize_avatar(db=db, user_id=user_id)
+async def finalize_avatar_view(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    expected_avatar_id: int,
+) -> AvatarAssetResponse | None:
+    asset = await _avatar.finalize_avatar(db=db, user_id=user_id, expected_avatar_id=expected_avatar_id)
     return avatar_response(asset) if asset is not None else None
 
 

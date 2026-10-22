@@ -2,7 +2,6 @@
 
 from typing import Literal
 
-from features.companion.disturbance import get_disturbance_tier
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
 from features.companion.prompt_runtime import load_companion_prompt_context, run_prompt_json
 from features.conversation.context_window import load_recent_context_window
@@ -26,7 +25,6 @@ async def choose_idle_action(
 ) -> dict[str, object]:
     presentation = get_presentation_snapshot(user_id)
     record = get_user_proactive_record(user_id)
-    contact_revision = record.contact_revision
     if presentation is None or not record.available or record.busy_count:
         return {"expressed": False, "action_id": None, "reason": "unavailable"}
     async with SESSION_LOCAL() as db:
@@ -72,15 +70,7 @@ async def choose_idle_action(
     selected = next((item for item in view.items if item.action_ref == reference), None)
     if reference is None:
         return {"expressed": False, "action_id": None, "reason": "keep_current"}
-    if (
-        not isinstance(reference, str)
-        or selected is None
-        or presentation != get_presentation_snapshot(user_id)
-        or contact_revision != get_user_proactive_record(user_id).contact_revision
-        or not get_user_proactive_record(user_id).available
-        or get_user_proactive_record(user_id).busy_count
-        or await get_disturbance_tier(user_id) != "autonomous"
-    ):
+    if not isinstance(reference, str) or selected is None:
         return {"expressed": False, "action_id": None, "reason": "state_changed"}
     reason = choice.get("reason")
     result = await play_action_reference(
@@ -93,5 +83,5 @@ async def choose_idle_action(
     return {
         "expressed": result.get("outcome") == "queued",
         "action_id": selected.action_id if result.get("outcome") == "queued" else None,
-        "reason": result.get("message", ""),
+        "reason": result.get("message") or result.get("error", ""),
     }

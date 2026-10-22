@@ -2,7 +2,6 @@ import hashlib
 import json
 import time
 from collections.abc import Sequence
-from dataclasses import replace
 from functools import partial
 from uuid import UUID
 
@@ -47,6 +46,9 @@ def _chain_entry(
     service_type: ServiceType,
     provider: ProviderCard,
     card: CapabilityCard,
+    *,
+    task: AiTaskKey | None,
+    config_source: str,
 ) -> ProviderConfig | None:
     """凭据仅从供应商实例取得；未配置必需凭据或端点的模型不可调用。"""
     provider_type = provider.provider_type
@@ -69,6 +71,8 @@ def _chain_entry(
         max_output_tokens=card.max_output_tokens,
         input_modalities=card.input_modalities,
         output_modalities=card.output_modalities,
+        task=task,
+        config_source=config_source,
     )
 
 
@@ -78,6 +82,8 @@ def _chain_from_ai_config(
     system: AIConfig | None = None,
     *,
     card_ids: Sequence[UUID] | None = None,
+    task: AiTaskKey | None,
+    config_source: str,
 ) -> list[ProviderConfig]:
     models: list[tuple[CapabilityCard, AIConfig]] = []
     if card_ids is None:
@@ -96,7 +102,7 @@ def _chain_from_ai_config(
         provider = owner.find_provider(card.provider_id, system if owner is config else None)
         if provider is None:
             raise MissingLlmConfigError(f"模型引用的供应商不存在：{card.provider_id}")
-        entry = _chain_entry(service_type, provider, card)
+        entry = _chain_entry(service_type, provider, card, task=task, config_source=config_source)
         if entry is not None:
             result.append(entry)
     return result
@@ -132,19 +138,14 @@ async def resolve_provider_chain(
         owner, card_ids, source = user_ai, None, "user_default"
     else:
         owner, card_ids, source = system_ai, None, "system_default"
-    chain = [
-        replace(
-            config,
-            task=task,
-            config_source=source,
-        )
-        for config in _chain_from_ai_config(
-            owner,
-            service,
-            system_ai if owner is user_ai else None,
-            card_ids=card_ids,
-        )
-    ]
+    chain = _chain_from_ai_config(
+        owner,
+        service,
+        system_ai if owner is user_ai else None,
+        card_ids=card_ids,
+        task=task,
+        config_source=source,
+    )
     if task == AiTaskKey.voice_design and service == ServiceType.tts:
         defaults = provider_configuration_defaults().get(service.value, {})
         chain = [

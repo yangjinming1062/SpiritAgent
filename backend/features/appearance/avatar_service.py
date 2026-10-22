@@ -41,7 +41,7 @@ from features.appearance.character_card import (
     get_character_card,
     register_character_card,
     request_character_extraction,
-    require_character_snapshot,
+    require_ready_character_snapshot,
 )
 from features.appearance.fullbody_reference_prompt import build_fullbody_reference_prompt
 from features.appearance.models import AvatarAsset, CompanionOutfit, FullbodyCandidate, OutfitSource
@@ -159,6 +159,14 @@ class FullbodyGenerationError(AvatarGenerationError):
     """全身图生成失败。"""
 
 
+class PersonaIncompleteError(AvatarGenerationError):
+    """引导未完成，形象生成前置条件不满足。"""
+
+
+class AvatarConflictError(ValueError):
+    """激活头像与预期不符，需重新加载预览后再确认。"""
+
+
 def fullbody_candidate_response(candidate: FullbodyCandidate) -> FullbodyCandidateResponse:
     return FullbodyCandidateResponse(
         id=candidate.id,
@@ -184,11 +192,9 @@ async def extract_card_features[F: BaseModel](
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> F:
     """按角色卡字段分析立绘裸路径，返回特征；缺字段视为失败，空字段允许未知特征。"""
-    loaded = await asyncio.to_thread(read_portrait_bytes, source_path)
-    if loaded is None:
+    uri = await asyncio.to_thread(read_asset_data_uri, source_path)
+    if uri is None:
         raise ValueError("source image is unreadable")
-    data, mime = loaded
-    uri = await asyncio.to_thread(build_data_uri, data, mime)
     schema = model.model_json_schema()
     schema["required"] = list(model.model_fields)
     source = "portrait" if model is PortraitFeatures else "body"
@@ -412,13 +418,22 @@ class ImageSealedError(AvatarGenerationError):
     """形象已确认锁定：头像重生关闭，全身种子仍可在保持身份的前提下重绘。"""
 
 
+def _raise_if_sealed(persona: PersonaSnapshot, active_asset: AvatarAsset | None) -> None:
+    """以激活头像的全身确认标志锁定身份；active_asset 为调用方读到的激活头像。"""
+    if (
+        persona.is_complete
+        and persona.is_portrait_confirmed
+        and active_asset is not None
+        and active_asset.is_fullbody_confirmed
+    ):
+        raise ImageSealedError("形象已确认锁定，无法重新生成")
+
+
 async def raise_if_image_sealed(db: AsyncSession, user_id: int, persona: PersonaSnapshot) -> None:
-    """以激活头像的全身确认标志锁定身份，客户端隐藏入口不能代替服务端守卫。"""
+    """形象锁定则抛；规则不可能触发时跳过 active_asset 读取。"""
     if not (persona.is_complete and persona.is_portrait_confirmed):
         return
-    asset = await get_active_avatar(db, user_id)
-    if asset is not None and asset.is_fullbody_confirmed:
-        raise ImageSealedError("形象已确认锁定，无法重新生成")
+    _raise_if_sealed(persona, await get_active_avatar(db, user_id))
 
 
 def get_avatar_job_lock(user_id: int) -> asyncio.Lock:
@@ -448,7 +463,7 @@ async def persist_portrait_or_draft(
 
     def save_draft() -> str:
         nonlocal file_id
-        file_id, _public_url = save_file(data, src_content_type, final_ext, user_id=user_id)
+        file_id = save_file(data, src_content_type, final_ext, user_id=user_id)
         return f"temp-media/{file_id}"
 
     try:
@@ -637,14 +652,29 @@ def re_sign_bare_path(bare_path: str | None) -> str | None:
     return signed_companion_asset_url(bare_path)
 
 
+async def _require_complete_persona(db: AsyncSession, user_id: int) -> PersonaSnapshot:
+    """重读 persona（缺则建）并要求引导已完成。"""
+    persona = await ensure_persona_snapshot(db, user_id)
+    if not persona.is_complete:
+        raise PersonaIncompleteError("请先完成引导再生成形象", internal="persona is incomplete")
+    return persona
+
+
 async def _verified_persona(user_id: int) -> PersonaSnapshot:
-    """头像入口共用的前置校验：重读 persona（缺则建），onboarding 完成且形象未锁定；锁外读到的快照可能已过期，不接收。"""
+    """头像入口共用的前置校验：onboarding 完成且形象未锁定。"""
     async with SESSION_LOCAL() as db:
-        persona = await ensure_persona_snapshot(db, user_id)
-        if not persona.is_complete:
-            raise AvatarGenerationError("请先完成引导再生成形象", internal="persona is incomplete")
+        persona = await _require_complete_persona(db, user_id)
         await raise_if_image_sealed(db, user_id, persona)
     return persona
+
+
+async def _verified_persona_with_asset(user_id: int) -> tuple[PersonaSnapshot, AvatarAsset | None]:
+    """_verified_persona 的带 asset 变体：单次读取激活头像供调用方复用，锁外读到的快照可能已过期，不接收。"""
+    async with SESSION_LOCAL() as db:
+        persona = await _require_complete_persona(db, user_id)
+        current = await get_active_avatar(db, user_id)
+        _raise_if_sealed(persona, current)
+    return persona, current
 
 
 async def _avatar_description(
@@ -663,16 +693,17 @@ async def _avatar_description(
 async def generate_avatar(user_id: int, *, feedback: str | None = None) -> AvatarAsset:
     """按角色资料与本次要求生成头像。"""
     async with get_avatar_job_lock(user_id):
-        return await _generate_avatar(user_id, feedback=feedback)
+        persona = await _verified_persona(user_id)
+        return await _generate_avatar(user_id, feedback=feedback, persona=persona)
 
 
 async def _generate_avatar(
     user_id: int,
     *,
+    persona: PersonaSnapshot,
     feedback: str | None = None,
     selection: ProviderSelection | None = None,
 ) -> AvatarAsset:
-    persona = await _verified_persona(user_id)
     return await _generate_avatar_step(
         user_id,
         selection=selection,
@@ -736,8 +767,7 @@ def _is_orphan_temp_media_asset(asset: AvatarAsset) -> bool:
 async def regenerate_avatar(mode: ImageReviseMode, user_id: int, feedback: str | None = None) -> AvatarAsset:
     """根据反馈微调当前头像，或按角色资料重新生成。"""
     async with get_avatar_job_lock(user_id):
-        async with SESSION_LOCAL() as db:
-            current = await get_active_avatar(db, user_id)
+        persona, current = await _verified_persona_with_asset(user_id)
         origin = (
             GenerationOrigin.model_validate_json(current.generation_origin_json)
             if current is not None and current.generation_origin_json
@@ -745,8 +775,7 @@ async def regenerate_avatar(mode: ImageReviseMode, user_id: int, feedback: str |
         )
         selection = ProviderSelection(origin=origin, mode="current" if mode == "edit" else "next")
         if mode == "regenerate":
-            return await _generate_avatar(user_id, feedback=feedback, selection=selection)
-        persona = await _verified_persona(user_id)
+            return await _generate_avatar(user_id, feedback=feedback, selection=selection, persona=persona)
         effective_feedback = (feedback or "").strip()
         if not effective_feedback:
             raise AvatarGenerationError("请先描述要微调的内容")
@@ -778,9 +807,7 @@ async def regenerate_avatar_from_image(
 ) -> AvatarAsset:
     """以用户图锚定身份重绘头像，第二张图仅参考光线、色调与构图。"""
     async with get_avatar_job_lock(user_id):
-        persona = await _verified_persona(user_id)
-        async with SESSION_LOCAL() as db:
-            current = await get_active_avatar(db, user_id)
+        persona, current = await _verified_persona_with_asset(user_id)
         origin = (
             GenerationOrigin.model_validate_json(current.generation_origin_json)
             if current is not None and current.generation_origin_json
@@ -809,11 +836,13 @@ async def regenerate_avatar_from_image(
         )
 
 
-async def finalize_avatar(db: AsyncSession, user_id: int) -> AvatarAsset | None:
-    """确认头像；全身草稿只由全身确认入口转正。"""
+async def finalize_avatar(db: AsyncSession, user_id: int, *, expected_avatar_id: int) -> AvatarAsset | None:
+    """确认头像；全身草稿只由全身确认入口转正。激活头像须仍是预览的那一条，否则零副作用拒绝。"""
     asset = await get_active_avatar(db, user_id)
     if asset is None:
         return None
+    if asset.id != expected_avatar_id:
+        raise AvatarConflictError("当前头像已更新，请重新加载预览后确认")
 
     if asset.asset_url.startswith("temp-media/"):
         draft = await asyncio.to_thread(read_portrait_bytes, asset.asset_url)
@@ -841,15 +870,11 @@ async def _fetch_fullbody_target(db: AsyncSession, user_id: int, avatar_id: int)
     return asset, await ensure_persona_snapshot(db, user_id)
 
 
-async def _require_ready_character_snapshot(db: AsyncSession, user_id: int) -> CharacterCardSnapshot:
-    """已确认身份的全身候选只基于就绪的角色卡：分析中或失败时的候选必然无法采纳，付费生成前拒绝。"""
-    card = await get_character_card(db, user_id)
-    if card is not None and card.revision > 0:
-        if card.status == "failed":
-            raise CharacterCardNotReadyError("角色资料分析失败，请先在角色卡中重试分析，再调整全身图")
-        if card.status != "ready":
-            raise CharacterCardNotReadyError("角色资料正在分析，请待分析完成后再调整全身图")
-    return await require_character_snapshot(db, user_id)
+async def _resolve_fullbody_identity(db: AsyncSession, asset: AvatarAsset) -> CharacterCardSnapshot | None:
+    """目标须为当前激活头像；已确认身份时冻结当前角色卡快照。"""
+    if not asset.active:
+        raise AvatarNotFoundError("请先选择当前角色的头像")
+    return await require_ready_character_snapshot(db, asset.user_id) if asset.is_fullbody_confirmed else None
 
 
 async def _load_fullbody_target(
@@ -859,9 +884,7 @@ async def _load_fullbody_target(
     """取回当前激活的目标头像与 persona；已确认身份时同时冻结当前角色卡快照。"""
     async with SESSION_LOCAL() as db:
         asset, persona = await _fetch_fullbody_target(db, user_id, avatar_id)
-        if not asset.active:
-            raise AvatarNotFoundError("请先选择当前角色的头像")
-        identity = await _require_ready_character_snapshot(db, user_id) if asset.is_fullbody_confirmed else None
+        identity = await _resolve_fullbody_identity(db, asset)
     return asset, persona, identity
 
 
@@ -1290,10 +1313,7 @@ async def adopt_fullbody_seed(
         async with SESSION_LOCAL() as db:
             asset, _ = await _fetch_fullbody_target(db, user_id, avatar_id)
             retry_initial = asset.is_fullbody_confirmed and await _can_replace_initial_fullbody(db, asset)
-        if retry_initial:
-            identity = None
-        else:
-            asset, _, identity = await _load_fullbody_target(user_id, avatar_id)
+            identity = None if retry_initial else await _resolve_fullbody_identity(db, asset)
         if identity is None:
             url = await persist_portrait_or_draft(data, user_id, content_type, persist=asset.is_fullbody_confirmed)
             return await _install_fullbody_seed(user_id, avatar_id=avatar_id, url=url, prompt=None)

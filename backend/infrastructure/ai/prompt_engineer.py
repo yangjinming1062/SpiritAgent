@@ -16,15 +16,14 @@ from infrastructure.ai.error_classifier import (
     classify_response_text,
     is_content_policy_response,
 )
-from infrastructure.ai.llm_client import resolve_provider_chain, resolve_vision_chain
 from infrastructure.ai.llm_fallback import execute_with_fallback
 from infrastructure.ai.llm_retry import call_with_retry
-from infrastructure.ai.providers.base import ChatProvider, ProviderError, ServiceType
+from infrastructure.ai.models import ModelModality
+from infrastructure.ai.providers.base import ChatProvider, ProviderError
 from infrastructure.ai.responses import build_responses_kwargs
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.token_budget import request_output_budget
-from infrastructure.ai.user_config import UserLlmConfig
-from infrastructure.database import SESSION_LOCAL
+from infrastructure.ai.user_config import UserLlmConfig, load_user_llm_config
 from infrastructure.logger import get_logger
 from infrastructure.text import parse_llm_json, strip_outer_code_fence
 
@@ -102,14 +101,7 @@ async def chat(
     task: AiTaskKey,
 ) -> str:
     """在独立短会话中解析任务链，模型调用期间不占数据库连接；空内容视为错误。"""
-    async with SESSION_LOCAL() as config_db:
-        chain = await resolve_provider_chain(
-            config_db,
-            user_id,
-            ServiceType.llm,
-            task=task,
-        )
-    config = UserLlmConfig(chain[0] if chain else None, tuple(chain[1:]), user_id)
+    config = await load_user_llm_config(user_id, task)
     return (await call_llm_once(config, system_prompt, user_payload)).strip()
 
 
@@ -500,11 +492,14 @@ async def _load_vision_config(
 ) -> UserLlmConfig:
     if not reference_images or any(not uri for uri in reference_images):
         raise ValueError("visual reasoning requires readable reference images")
-    async with SESSION_LOCAL() as chain_db:
-        chain = await resolve_vision_chain(chain_db, user_id, task=task)
-    if not chain:
+    config = await load_user_llm_config(
+        user_id,
+        task,
+        required_modalities=frozenset({ModelModality.text, ModelModality.image}),
+    )
+    if not config.is_configured:
         raise VisualReasoningError("视觉分析服务未配置，请联系管理员")
-    return UserLlmConfig(chain[0], tuple(chain[1:]), user_id)
+    return config
 
 
 async def vision_chat_json[T: BaseModel](

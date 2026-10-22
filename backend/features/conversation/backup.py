@@ -82,7 +82,8 @@ def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: 
                     bubble.status, bubble.url, bubble.error = "failed", None, "恢复的生成任务不可继续，请重新提出请求"
         # 保留原文缺省字段，避免把供应商默认列表和速度补成 null。
         payload["content"] = json.dumps(source, ensure_ascii=False)
-        reply = CompanionReply.from_saved_snapshot(reply.model_dump_json(), payload["content"])
+        # 改写后模型不变式的重验由 messages 恢复钩子对 reply_json 的解析兜底。
+        reply.validate_content(payload["content"])
         payload["reply_json"] = reply.model_dump_json()
 
 
@@ -216,24 +217,28 @@ async def _clear(db: AsyncSession, user_id: int) -> None:
         await db.execute(delete(Conversation).where(Conversation.user_id == user_id))
 
 
+async def _check_cards(
+    db: AsyncSession,
+    raw: dict[str, Any],
+    payload: dict[str, Any],
+    context: BackupContext,
+) -> None:
+    reply_json = payload.get("reply_json")
+    # 冷路径廉价短路：非 JSON 字面量 "link" 的交付快照不可能含卡片气泡。
+    if not reply_json or '"link"' not in reply_json:
+        return
+    reply = CompanionReply.model_validate_json(reply_json)
+    cards = [
+        TopicCardSnapshot.model_validate(bubble.model_dump())
+        for bubble in reply.bubbles
+        if isinstance(bubble, LinkBubble)
+    ]
+    if cards:
+        await validate_restored_topic_cards(db, MemoryScope(context.user_id, "companion"), cards)
+
+
 async def _restore_context(db: AsyncSession, rows: BackupRows, context: BackupContext) -> None:
     await restore_conversation_context(db, rows, context.id_map)
-    scope = MemoryScope(context.user_id, "companion")
-    for raw in rows.get("messages", []):
-        message_id = context.id_map.get("messages", {}).get(str(raw["id"]))
-        if message_id is None:
-            continue
-        message = await db.get(Message, int(message_id))
-        if message is None or not message.reply_json:
-            continue
-        reply = CompanionReply.from_saved_snapshot(message.reply_json, message.content or "")
-        cards = [
-            TopicCardSnapshot.model_validate(bubble.model_dump())
-            for bubble in reply.bubbles
-            if isinstance(bubble, LinkBubble)
-        ]
-        if cards:
-            await validate_restored_topic_cards(db, scope, cards)
 
 
 def backup_tables() -> tuple[BackupTable, ...]:
@@ -253,6 +258,7 @@ def backup_tables() -> tuple[BackupTable, ...]:
             order_by_original_id=True,
             export_query=lambda user_id: select(Message).join(Conversation).where(Conversation.user_id == user_id),
             prepare_payload=partial(_prepare, "messages"),
+            validate_payload=_check_cards,
             restore_context=_restore_context,
         ),
     )

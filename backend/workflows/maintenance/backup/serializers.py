@@ -73,24 +73,24 @@ IDENTITY_BLOCKED_REASON = "目标现有动作包等仍引用身份，无法安�
 IDENTITY_DEPENDENT_REASON = "缺少可映射的基础身份，无法恢复此类别。"
 
 
-def tables_for_sections(sections: Sequence[str] | None) -> frozenset[str]:
-    """解析导入分组为表集合；None 表示全部，空列表或未知 ID 由调用方拒绝。"""
+def tables_for_sections(sections: Sequence[str] | None) -> tuple[frozenset[str], list[str]]:
+    """解析导入分组为表集合与回显分组 ID；None 或 all 表示全部，空列表或未知 ID 抛 ValueError。"""
     if sections is None:
-        return frozenset(TABLES)
+        return frozenset(TABLES), list(BACKUP_SECTION_IDS)
     normalized = [item.strip() for item in sections if item and item.strip()]
     if not normalized:
         raise ValueError("恢复范围不能为空")
     if "all" in normalized:
         if len(normalized) > 1:
             raise ValueError("恢复范围 all 不能与其他分组同时指定")
-        return frozenset(TABLES)
+        return frozenset(TABLES), list(BACKUP_SECTION_IDS)
     unknown = [item for item in normalized if item not in BACKUP_SECTIONS]
     if unknown:
         raise ValueError(f"未知的恢复范围：{', '.join(unknown)}")
     tables: set[str] = set()
     for item in normalized:
         tables.update(BACKUP_SECTIONS[item])
-    return frozenset(tables)
+    return frozenset(tables), normalized
 
 
 @cache

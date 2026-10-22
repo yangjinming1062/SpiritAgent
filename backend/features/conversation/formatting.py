@@ -20,7 +20,6 @@ from sqlalchemy.dialects.postgresql import JSONB, JSONPATH, aggregate_order_by
 from features.conversation.models import Conversation, Message
 from features.conversation.replies import (
     CompanionReply,
-    CompanionReplyInput,
     LinkBubble,
     LinkBubbleInput,
     MediaBubble,
@@ -173,8 +172,7 @@ def visible_bubble_count() -> ColumnElement[int]:
 
 
 def _companion_context_items(message: Message | MessageSnapshot, *, dialogue_only: bool) -> list[dict[str, JsonValue]]:
-    delivery = CompanionReply.from_saved_snapshot(message.reply_json or "", message.content or "")
-    source = CompanionReplyInput.model_validate_json(message.content or "")
+    delivery, source = CompanionReply.load_saved_snapshot(message.reply_json or "", message.content or "")
     media = {b.media_id: b for b in delivery.bubbles if isinstance(b, MediaBubble)}
     links = {b.topic_id: b for b in delivery.bubbles if isinstance(b, LinkBubble)}
     return [

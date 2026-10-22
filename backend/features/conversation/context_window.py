@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 
 from infrastructure.text import ensure_utc, utc_now
 from runtime.presets import COMPANION_PRESET_ID
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.configuration.settings.timezone import resolve_user_timezone
@@ -15,6 +15,10 @@ from features.conversation.models import Conversation, Message
 from features.conversation.snapshots import ConversationSnapshot
 
 CHECKPOINT_SUBTYPE = "compress_summary"
+
+
+def context_visible_subtype() -> ColumnElement[bool]:
+    return Message.subtype.is_(None) | Message.subtype.notin_((*UI_ONLY_SUBTYPES, CHECKPOINT_SUBTYPE))
 
 
 @dataclass(frozen=True)
@@ -65,7 +69,7 @@ async def load_context_messages(db: AsyncSession, conv: Conversation | Conversat
     stmt = select(Message).where(
         Message.conversation_id == conv.id,
         Message.id > watermark,
-        Message.subtype.is_(None) | Message.subtype.notin_((*UI_ONLY_SUBTYPES, CHECKPOINT_SUBTYPE)),
+        context_visible_subtype(),
     )
     rows = list((await db.scalars(stmt.order_by(Message.id))).all())
     return [checkpoint, *rows] if checkpoint is not None else rows
@@ -95,7 +99,7 @@ async def load_companion_dialogue(
                     user_authored_conversation(),
                     Message.id > Conversation.context_after_message_id,
                     Message.role.in_(("user", "assistant")),
-                    Message.subtype.is_(None) | Message.subtype.notin_((*UI_ONLY_SUBTYPES, CHECKPOINT_SUBTYPE)),
+                    context_visible_subtype(),
                     Message.tool_calls.is_(None),
                     Message.created_at >= start.astimezone(UTC),
                     Message.created_at <= now,

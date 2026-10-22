@@ -358,25 +358,34 @@ async def apply_memory_decisions(
                 )
                 db.add(row)
             else:
-                row.history = (
-                    fingerprint_history(row)
-                    + [old for old in row.history if "content" in old][-19:]
-                    + [{**memory_record(row).model_dump(), "replaced_at": now.isoformat()}]
-                )
                 row.content_version += 1
-            row.content = decision.content.strip()
-            if not row.context or not row.context.startswith("user_profile:"):
-                row.context = _recall_context(decision.topic)
-            row.tags = json.dumps([decision.category], ensure_ascii=False)
-            row.basis, row.status, row.usage = decision.basis, decision.status, decision.usage
-            row.reason, row.expires_at = decision.reason.strip(), expiry
-            row.evidence, row.reviewed_at, row.updated_at = evidence_rows, now, now
-            row.importance = 1.0
-            row.source_kind = source.kind
-            row.source_refs = {"message_ids": sorted({e.message_id for e in evidence})}
-            row.embedding = None
+                if decision.status == "forgotten":
+                    # 遗忘先聚合旧指纹入 history，再被 forget_record 压成终态 evidence
+                    row.history = fingerprint_history(row)
+                else:
+                    row.history = (
+                        fingerprint_history(row)
+                        + [old for old in row.history if "content" in old][-19:]
+                        + [{**memory_record(row).model_dump(), "replaced_at": now.isoformat()}]
+                    )
             if decision.status == "forgotten":
+                # 内容类字段由 forget_record 成型；content_version 合计 +2（上面的更新步进 + forget_record）
+                row.evidence = evidence_rows
                 forget_record(row)
+                row.basis, row.importance, row.source_kind = decision.basis, 1.0, source.kind
+                row.reviewed_at = now
+            else:
+                row.content = decision.content.strip()
+                if not row.context or not row.context.startswith("user_profile:"):
+                    row.context = _recall_context(decision.topic)
+                row.tags = json.dumps([decision.category], ensure_ascii=False)
+                row.basis, row.status, row.usage = decision.basis, decision.status, decision.usage
+                row.reason, row.expires_at = decision.reason.strip(), expiry
+                row.evidence, row.reviewed_at, row.updated_at = evidence_rows, now, now
+                row.importance = 1.0
+                row.source_kind = source.kind
+                row.source_refs = {"message_ids": sorted({e.message_id for e in evidence})}
+                row.embedding = None
             await db.flush()
             if row.status == "active":
                 embeddings.append(EmbeddingItem(row.id, row.content, row.content_version))

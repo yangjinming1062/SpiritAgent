@@ -13,7 +13,7 @@ from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.locking import lock_account
-from features.configuration.settings.values import get_user_setting
+from features.configuration.settings.values import get_user_setting_bool
 
 from .models import CompanionTopic, TopicBatch, TopicFeedback, TopicUsage
 from .schemas import (
@@ -207,6 +207,19 @@ def _snapshot(topic: CompanionTopic, used: bool, feedback: str | None) -> TopicS
     return TopicSnapshot(topic_id=topic.id, is_used=used, feedback=feedback, **payload)
 
 
+async def _load_topic_snapshots(db: AsyncSession, scope: MemoryScope, *where: Any) -> list[TopicSnapshot]:
+    rows = (
+        await db.execute(
+            select(CompanionTopic, _used(scope), TopicFeedback.value)
+            .join(TopicBatch, TopicBatch.id == CompanionTopic.batch_id)
+            .outerjoin(TopicFeedback, TopicFeedback.topic_id == CompanionTopic.id)
+            .where(*_scope(CompanionTopic, scope), *where)
+            .order_by(CompanionTopic.id),
+        )
+    ).all()
+    return [_snapshot(topic, was_used, feedback) for topic, was_used, feedback in rows]
+
+
 async def load_prompt_topics(
     db: AsyncSession,
     scope: MemoryScope,
@@ -215,22 +228,16 @@ async def load_prompt_topics(
     historical_topic_ids: Sequence[int] = (),
 ) -> list[TopicSnapshot]:
     used = _used(scope)
-    enabled = await get_user_setting(db, scope.user_id, "companion.information_discovery_enabled") is True
-    query = (
-        select(CompanionTopic, used, TopicFeedback.value)
-        .join(TopicBatch, TopicBatch.id == CompanionTopic.batch_id)
-        .outerjoin(TopicFeedback, TopicFeedback.topic_id == CompanionTopic.id)
-        .where(
-            *_scope(CompanionTopic, scope),
-            or_(_active(now) if enabled else False, CompanionTopic.id.in_(historical_topic_ids) & used),
-        )
-        .order_by(CompanionTopic.id)
+    enabled = await get_user_setting_bool(db, scope.user_id, "companion.information_discovery_enabled", default=False)
+    return await _load_topic_snapshots(
+        db,
+        scope,
+        or_(_active(now) if enabled else False, CompanionTopic.id.in_(historical_topic_ids) & used),
     )
-    return [_snapshot(topic, was_used, feedback) for topic, was_used, feedback in (await db.execute(query)).all()]
 
 
 async def has_unshared_topics(db: AsyncSession, scope: MemoryScope, now: datetime) -> bool:
-    if await get_user_setting(db, scope.user_id, "companion.information_discovery_enabled") is not True:
+    if not await get_user_setting_bool(db, scope.user_id, "companion.information_discovery_enabled", default=False):
         return False
     return (
         await db.scalar(
@@ -244,16 +251,7 @@ async def has_unshared_topics(db: AsyncSession, scope: MemoryScope, now: datetim
 
 
 async def load_batch_topics(db: AsyncSession, scope: MemoryScope, batch_id: int) -> list[TopicSnapshot]:
-    rows = (
-        await db.execute(
-            select(CompanionTopic, _used(scope), TopicFeedback.value)
-            .join(TopicBatch, TopicBatch.id == CompanionTopic.batch_id)
-            .outerjoin(TopicFeedback, TopicFeedback.topic_id == CompanionTopic.id)
-            .where(*_scope(CompanionTopic, scope), TopicBatch.id == batch_id, TopicBatch.status == "ready")
-            .order_by(CompanionTopic.id),
-        )
-    ).all()
-    return [_snapshot(topic, was_used, feedback) for topic, was_used, feedback in rows]
+    return await _load_topic_snapshots(db, scope, TopicBatch.id == batch_id, TopicBatch.status == "ready")
 
 
 async def resolve_topic_cards(
@@ -381,7 +379,7 @@ async def recent_topic_feedback(
     ).all()
     return [
         {
-            **_snapshot(topic, used_at is not None, feedback).model_dump(mode="json"),
+            **_snapshot(topic, used_at is not None, feedback).model_dump(mode="json", exclude={"body", "subtitle"}),
             "used_at": ensure_utc(used_at).isoformat() if used_at else None,
             "feedback_updated_at": ensure_utc(feedback_at).isoformat() if feedback_at else None,
         }

@@ -4,7 +4,7 @@ import asyncio
 
 from infrastructure.config import SETTINGS
 
-from features.actions.materials import accepted_action_asset
+from features.actions.materials import AcceptedActionAsset
 from features.actions.models import CompanionAction
 from features.actions.schemas import ABSOLUTE_MAX_DURATION_SECONDS
 from features.media.chain import MediaChainState
@@ -76,7 +76,6 @@ async def check_can_accept(
     check_creation_enabled(source)
 
 
-def is_expression_action(action: CompanionAction) -> bool:
+def is_expression_action(action: CompanionAction, material: AcceptedActionAsset | None) -> bool:
     """模型可点播的表达动作：已启用、素材就绪且不占系统产品槽位。"""
-    material = accepted_action_asset(action)
     return action.enabled and not action.system_slot and material is not None and material.media_type == "video"
