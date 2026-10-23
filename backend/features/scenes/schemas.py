@@ -50,13 +50,10 @@ class SceneResponse(BaseModel):
     requirements: str = ""
     prompt: str = ""
     url: str = ""
-    auto_activate: bool = False
-    switch_version: int = 0
     error: str | None = None
     attempt_count: int = 0
     requested_at: datetime | None = None
     ready_at: datetime | None = None
-    activated_at: datetime | None = None
     regeneration: SceneRegenerationResponse | None = None
 
 
@@ -65,16 +62,14 @@ class SceneListResponse(BaseModel):
     total: int
     offset: int
     limit: int
-    version: int
 
 
 class SceneStateResponse(BaseModel):
-    active: SceneResponse | None = None
+    """环境素材清单与政策；素材状态含准备中的任务，不表示当前所在环境。"""
+
     policy: ScenePolicy = ScenePolicy.LLM_MAY_REPLACE
-    pending: SceneResponse | None = None
-    regenerating: SceneResponse | None = None
-    version: int = 0
-    switch_version: int = 0
+    materials: list[SceneResponse] = Field(default_factory=list)
+    generation_pending: bool = False
 
 
 class SceneGenerateRequest(BaseModel):
@@ -92,12 +87,6 @@ class ScenePromptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     notes: str | None = Field(default=None, max_length=500, pattern=r"^[^\x00]*$")
-
-
-class SceneActivateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    scene_id: int = Field(gt=0, le=POSTGRES_INT4_MAX)
 
 
 class SceneDescriptionRequest(BaseModel):

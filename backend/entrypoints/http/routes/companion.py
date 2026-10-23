@@ -60,11 +60,9 @@ from features.appearance.schemas import (
     OutfitPromptRequest,
     OutfitRegenerateRequest,
     OutfitResponse,
-    OutfitSelectionRequest,
 )
 from features.appearance.views import (
     accept_fullbody_candidate_view,
-    activate_outfit_view,
     adopt_avatar_seed_view,
     adopt_fullbody_seed_view,
     adopt_outfit_draft_image_view,
@@ -626,7 +624,7 @@ async def patch_outfit_policy(body: OutfitPolicyRequest, user: CurrentUser, db: 
     return OutfitPolicyResponse(policy=await set_outfit_policy(db, user.id, body.policy))
 
 
-# 换装路由不检查形象锁定：服装/发型是可换元素而非身份变更（见 DESIGN「身份、穿着与动态能力」）
+# 造型素材的创建与采纳不检查形象锁定：服装/发型是可换元素而非身份变更（见 DESIGN「身份、穿着与动态能力」）
 @router.post(
     "/outfits",
     response_model=OutfitResponse,
@@ -741,18 +739,6 @@ async def post_outfit_regenerate(
         )
         raise RequestError(status_code=502, message=str(exc), code="generation_failed")
     return outfit
-
-
-@router.put(
-    "/outfits/current",
-    response_model=OutfitResponse,
-    openapi_extra=operation_policy(identities=("desktop", "remote")),
-)
-async def put_outfit_selection(body: OutfitSelectionRequest, user: CurrentUser, db: DbSession) -> OutfitResponse:
-    try:
-        return await activate_outfit_view(db, user.id, body.outfit_id)
-    except OutfitError as exc:
-        raise _outfit_request_error(exc) from exc
 
 
 @router.post(

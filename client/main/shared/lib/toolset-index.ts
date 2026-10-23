@@ -19,15 +19,7 @@ const TOOLSET_DEFS: ToolsetDef[] = [
   { id: 'web_tools', staticTools: ['web_search', 'web_extract'] },
   {
     id: 'image_generation',
-    staticTools: [
-      'image_generate',
-      'media_inspect',
-      'image_regenerate',
-      'scene_list',
-      'scene_get',
-      'scene_create',
-      'scene_activate'
-    ]
+    staticTools: ['image_generate', 'media_inspect', 'image_regenerate', 'scene_list', 'scene_get', 'scene_create']
   },
   { id: 'messaging', staticTools: ['send_message_tool'] },
   { id: 'scheduled_tasks', staticTools: ['cronjob', 'companion_wait'] },

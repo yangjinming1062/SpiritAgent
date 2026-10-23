@@ -16,7 +16,7 @@ from infrastructure.logger import get_logger
 from infrastructure.text import coerce_hour_0_23, coerce_non_negative_float
 from runtime.events.contracts import COMPANION_TURN_EVENT
 from runtime.events.loop import interrupt_user_event_tasks
-from workflows.companion_action_choice import choose_idle_action
+from workflows.visual_decisions import evaluate_visuals
 
 logger = get_logger(__name__)
 
@@ -53,9 +53,7 @@ async def companion_idle_expression(user_id: int, params: dict) -> dict:
         return {"expressed": False, "action_id": None, "reason": "throttled"}
     _last_idle_expression_ts[user_id] = now
 
-    idle_seconds = coerce_non_negative_float(params.get("idle_seconds"))
-    local_hour = coerce_hour_0_23(params.get("local_hour"))
-    return await choose_idle_action(user_id, idle_seconds, local_hour, trigger=trigger)
+    return await evaluate_visuals(user_id, trigger=trigger, allow_create=True)
 
 
 async def companion_signal(user_id: int, params: dict) -> dict[str, bool]:

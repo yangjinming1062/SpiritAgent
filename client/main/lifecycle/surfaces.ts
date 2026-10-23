@@ -21,13 +21,7 @@ import {
 import { clamp, errorMessage } from '@runtime'
 
 import { isSenderWindow } from '../security/ipc-trust'
-import {
-  broadcastToAllWindows,
-  createPlaybackClaims,
-  createSerialQueue,
-  isWindowShown,
-  setWindowIgnoreMouseEvents
-} from '../shared/utils'
+import { broadcastToAllWindows, createSerialQueue, isWindowShown, setWindowIgnoreMouseEvents } from '../shared/utils'
 
 import { companionSlot, outerBounds, PANEL_SIZE, panelBounds, parseCompanionPreference } from './surface-companion'
 import type { CreatedSurfaceWindow } from './surface-window'
@@ -46,7 +40,6 @@ export interface SurfacesManager {
   /** 精灵窗显示、隐藏、最小化或还原后调用，向各窗口发布含 `spriteVisible` 的新快照。 */
   publishSpriteVisibility: () => void
   registerIpcHandlers: (deps: { ipcMain: IpcMain }) => void
-  resetPlaybackClaims: () => void
   toggleMaximizeWindow: (win: BrowserWindow) => void
   toggleSurface: (payload: DesktopSurfaceOpenPayload) => Promise<void>
   /** 跟随锁屏与显示器变化，须在 app ready 后调用一次。 */
@@ -96,8 +89,6 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
   let screenLocked = false
   let stateRevision = 0
   let lastPublishedState = ''
-
-  const playbackClaims = createPlaybackClaims()
 
   function findSurfaceWindow(win: BrowserWindow | null): SurfaceWindowState | undefined {
     return surfaceWindow && surfaceWindow.win === win ? surfaceWindow : undefined
@@ -680,24 +671,6 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
         return snapshot()
       })
     )
-    ipcMain.handle(IPC.invoke.surfaceClaimPlay, (event, raw: unknown) => {
-      if (screenLocked) {
-        return false
-      }
-
-      const sender = BrowserWindow.fromWebContents(event.sender)
-      const surface = findSurfaceWindow(sender)
-
-      const allowed = surface
-        ? companionState().visible
-        : sender === options.getSpriteWindow() && spriteWindowVisible() && !surfaceOpen
-
-      if (!allowed) {
-        return false
-      }
-
-      return playbackClaims.claim(raw)
-    })
   }
 
   options.rememberLog?.('[surfaces] manager ready')
@@ -720,7 +693,6 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     restoreMainWindow: payload => withMutex(() => internalOpen(payload, true, true)),
     publishSpriteVisibility: publish,
     registerIpcHandlers,
-    resetPlaybackClaims: playbackClaims.reset,
     toggleMaximizeWindow,
     toggleSurface,
     watchSystemEvents

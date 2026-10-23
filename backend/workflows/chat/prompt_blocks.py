@@ -104,7 +104,7 @@ def _companion_tool_guidance_block(config: AgentPromptConfig) -> str:
         parts.append(resolve_prompt_text(COMPANION_WAIT_GUIDANCES, config.language))
     if "skills_list" in config.valid_tool_names:
         parts.append(resolve_prompt_text(COMPANION_SKILL_GUIDANCES, config.language))
-    if {"scene_list", "scene_create", "scene_activate"}.issubset(config.valid_tool_names):
+    if {"scene_list", "scene_create"}.issubset(config.valid_tool_names):
         parts.append(resolve_prompt_text(SCENE_TOOL_GUIDANCES, config.language))
     return "\n".join(parts)
 

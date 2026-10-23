@@ -6,12 +6,12 @@ import { SpriteStage } from '@/app/components/sprite-stage'
 import { ActivationOverlay, BootFailureOverlay, OnboardingFlow } from '@/app/onboarding'
 import { useAccountLifecycle } from '@/app/workflows/account-lifecycle'
 import { speakProactive } from '@/app/workflows/proactive-delivery'
+import { useVisualProjection } from '@/app/workflows/visual-presentation'
 import {
   $companionLifecycle,
   $companionVoiceId,
   ensureCompanionHydrated,
   hydratePortraitHistory,
-  hydrateWardrobe,
   initSpatial,
   openContextMenu,
   reportUserActivity,
@@ -52,6 +52,7 @@ export function SpriteWindow(): React.JSX.Element {
   const validityCheckedRef = useRef(false)
 
   useAccountLifecycle()
+  useVisualProjection()
 
   useEffect(() => {
     const stopSpatial = initSpatial()
@@ -124,7 +125,6 @@ export function SpriteWindow(): React.JSX.Element {
       .presentation.hostReady()
       .catch(error => log.warn('desktop', error))
 
-    void hydrateWardrobe()
     void ensureCompanionHydrated()
     void hydratePortraitHistory()
 

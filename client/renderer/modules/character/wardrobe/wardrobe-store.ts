@@ -1,4 +1,4 @@
-import { atom, computed } from 'nanostores'
+import { atom } from 'nanostores'
 
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { isClientErrorIpc } from '@/shared/lib/ipc-error'
@@ -22,7 +22,6 @@ export interface WardrobeOutfit {
   fullbodyPath: string | null
   fullbodyUrl: string | null
   status: OutfitStatus
-  active: boolean
 }
 
 type OutfitResponse = ApiSchemas['OutfitResponse']
@@ -58,11 +57,6 @@ function isOutfitResponse(value: unknown): value is OutfitResponse {
 }
 
 export const $outfits = atom<WardrobeOutfit[]>([])
-/** 当前穿着的已就绪造型；窗口与侧边伙伴只呈现它，不读取其他造型。 */
-export const $activeOutfit = computed(
-  $outfits,
-  outfits => outfits.find(item => item.active && item.status === 'ready') ?? null
-)
 export const $outfitPolicy = atom<OutfitPolicy>(snapshot.get().policy)
 export const $wardrobeStatus = atom<'idle' | 'loading' | 'loaded' | 'error'>('idle')
 let revision = 0
@@ -106,8 +100,7 @@ async function showOutfits(
         descriptionError: o.description_error,
         fullbodyPath,
         fullbodyUrl: old?.fullbodyPath === fullbodyPath ? old.fullbodyUrl : null,
-        status: o.status,
-        active: o.active
+        status: o.status
       }
     })
   )
@@ -235,13 +228,4 @@ export async function deleteOutfit(outfitId: number): Promise<void> {
 export async function retryOutfitDescription(outfitId: number): Promise<void> {
   await requestResource('companion.post_retry_outfit_description', { path: { outfit_id: outfitId } })
   await hydrateWardrobe({ force: true })
-}
-
-export async function activateOutfit(outfitId: number): Promise<void> {
-  const scope = captureAuthScope()
-  await requestResource('companion.put_outfit_selection', { body: { outfit_id: outfitId } })
-
-  if (scope?.()) {
-    await hydrateWardrobe({ force: true })
-  }
 }

@@ -1,121 +1,80 @@
-"""共享动作语义、冻结来源与独立画面版本的公共契约。"""
+"""动作素材公共契约：设计入参、对外视图与冻结评审依据。"""
 
+from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from features.media.identity_contracts import CharacterCardSnapshot
 
 ABSOLUTE_MAX_DURATION_SECONDS = 15
-ActionSourceScope = Literal["outfit", "target"]
-ActionVariantStatus = Literal[
-    "not_generated",
-    "queued",
-    "processing",
-    "ready",
-    "failed",
-    "blocked",
-    "excluded",
-    "disabled",
-]
+
+ActionClipKind = Literal["once", "loop"]
+ActionAssetStatus = Literal["pending", "reviewing", "approved", "deferred", "rejected"]
+ActionAssetSource = Literal["user_requested", "autonomous", "preset"]
 
 
-class ActionDefinitionDesign(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+class ActionAssetDesign(BaseModel):
+    """新建或编辑动作素材的语义定义。"""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     name: str = Field(min_length=1, max_length=64)
     motion_description: str = Field(min_length=10, max_length=600)
     use_when: list[str] = Field(default_factory=list, max_length=8)
     avoid_when: list[str] = Field(default_factory=list, max_length=8)
-    clip_kind: Literal["once", "loop"] = "once"
-    duration_seconds: int = Field(default=4, ge=1, le=15, strict=True)
+    allowed_triggers: list[str] = Field(default_factory=list, max_length=8)
+    clip_kind: ActionClipKind = "once"
+    duration_seconds: int = Field(default=4, ge=1, le=ABSOLUTE_MAX_DURATION_SECONDS, strict=True)
     reason: str = Field(default="", max_length=400)
 
-    @field_validator("name", "motion_description")
-    @classmethod
-    def nonblank(cls, value: str, info: ValidationInfo) -> str:
-        if not value.strip() or "\x00" in value:
-            raise ValueError("动作名称与描述不能为空或包含空字符")
-        if info.field_name == "motion_description" and len(value.strip()) < 10:
-            raise ValueError("动作描述至少需要10个字符")
-        return value.strip()
-
-    @field_validator("use_when", "avoid_when")
-    @classmethod
-    def bounded_conditions(cls, value: list[str]) -> list[str]:
-        if any(not item.strip() or len(item) > 120 for item in value):
-            raise ValueError("动作条件须为不超过120字的非空文字")
-        return value
+    @property
+    def triggers(self) -> list[str]:
+        return self.allowed_triggers or ["chat", "manual"]
 
 
-class ActionDefinitionSnapshot(ActionDefinitionDesign):
-    model_config = ConfigDict(extra="forbid", frozen=True, from_attributes=True)
+class ActionAssetView(BaseModel):
+    """动作素材对外视图；名称不承担跨来源唯一身份。"""
+
+    model_config = ConfigDict(extra="forbid")
 
     id: int
-    user_id: int
-    outfit_id: int | None
-    source_visual_key: str
-    scope: ActionSourceScope
-    origin_target_id: int
-    source: Literal["user_requested", "autonomous"]
-    status: str
+    name: str
+    motion_description: str
+    use_when: list[str] = Field(default_factory=list)
+    avoid_when: list[str] = Field(default_factory=list)
+    allowed_triggers: list[str] = Field(default_factory=list)
+    clip_kind: ActionClipKind
+    duration_seconds: int
+    reason: str = ""
+    source: ActionAssetSource
+    status: ActionAssetStatus
     review_reason: str = ""
-    reuse_definition_id: int | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
-class ActionSourceSnapshot(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+class ActionAssetUpdate(ActionAssetDesign):
+    expected_updated_at: datetime
 
-    user_id: int
-    outfit_id: int | None
-    target_id: int
-    label: str
-    source_visual_key: str
-    scope: ActionSourceScope = "outfit"
-    ready: bool
-    blocked_reason: str | None = None
-    reference_paths: list[str] = Field(default_factory=list)
-    reference_roles: list[str] = Field(default_factory=list)
-    identity: CharacterCardSnapshot | None = None
-    outfit_description: str = ""
+
+class ActionReviewSource(BaseModel):
+    """冻结评审依据：角色身体能力与动作含义；环境与道具在组合制作时判断。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    identity_path: str = Field(min_length=1)
+    identity_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    portrait_path: str = Field(min_length=1)
+    portrait_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    identity: CharacterCardSnapshot
     persona: dict[str, str] = Field(default_factory=dict)
 
-    @model_validator(mode="after")
-    def validate_target_scope(self) -> "ActionSourceSnapshot":
-        if self.scope == "target" and self.outfit_id is not None:
-            raise ValueError("独立动作来源须为不关联着装的桌景")
-        return self
 
+class ActionListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
-class ActionVariantSummary(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    target_id: int
-    action_id: int | None = None
-    label: str
-    status: ActionVariantStatus
-    has_ready_asset: bool = False
-    can_generate: bool = False
-    reason: str | None = None
-
-
-class ActionTargetSnapshot(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, from_attributes=True)
-
-    id: int
-    user_id: int
-    definition_id: int
-    target_id: int
-    action_id: int | None
-    automatic: bool
-    state: Literal["manual", "pending", "dispatched", "blocked", "excluded"]
-    reason: str | None = None
-
-
-class DefinitionAcceptance(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    definition_id: int
-    status: str
-    action_id: int | None = None
-    message: str = ""
+    actions: list[ActionAssetView]
+    total: int
+    offset: int
+    limit: int

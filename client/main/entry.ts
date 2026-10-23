@@ -261,8 +261,7 @@ const authBroadcaster = createAuthBroadcaster({
   configSync,
   ensureBackendSession,
   log: rememberLog,
-  rebuildTrayMenu,
-  resetPlaybackClaims: () => surfaces?.resetPlaybackClaims()
+  rebuildTrayMenu
 })
 
 registerSystemIpc({

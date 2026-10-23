@@ -11,8 +11,7 @@ from typing import Any
 from urllib.parse import unquote, urlsplit
 from uuid import uuid4
 
-from features.action_library.schemas import ActionSourceSnapshot
-from features.desktop_life.schemas import DesktopUploadSnapshot, parse_desktop_context
+from features.action_library.schemas import ActionReviewSource
 from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.assets.references import ASSET_TOKEN_TRAILING_PUNCTUATION
 from infrastructure.config import SETTINGS
@@ -316,49 +315,39 @@ def validate_row_files(table: str, rows: list[dict[str, Any]], rewriter: UrlRewr
         elif table == "companion_outfits" and row.get("status") == "ready":
             required.append(row.get("fullbody_url"))
         elif table == "action_definitions":
-            source = ActionSourceSnapshot.model_validate_json(row["review_source_json"])
-            required.extend(source.reference_paths)
+            source = ActionReviewSource.model_validate_json(row["review_source_json"])
+            required.extend((source.identity_path, source.portrait_path))
         elif table == "companion_scenes":
             if row.get("status") == "ready":
                 required.append(row.get("media_path"))
             if row.get("upload_source_path"):
                 required.append(row["upload_source_path"])
-        elif table == "desktop_video_sets":
-            snapshot = parse_desktop_context(row["source"], row["context_json"])
-            if isinstance(snapshot, DesktopUploadSnapshot):
+        elif table == "visual_items":
+            required.append(row.get("media_path"))
+            for optional_path in (row.get("poster_path"), row.get("input_image_path")):
+                if optional_path:
+                    required.append(optional_path)
+        elif table == "visual_jobs":
+            if row.get("progress_json"):
+                progress = json.loads(row["progress_json"])
                 required.extend(
                     path
                     for path in (
-                        snapshot.original_image_path,
-                        snapshot.original_video_path,
-                        snapshot.reference_image_path,
+                        progress.get("pose_path"),
+                        progress.get("previous_pose_path"),
+                        progress.get("source_image_path"),
                     )
                     if path
-                )
-            else:
-                required.extend(
-                    (snapshot.identity_path, snapshot.outfit_path, snapshot.portrait_path, snapshot.scene_path),
-                )
-            if row["base_image_path"]:
-                required.append(row["base_image_path"])
-        elif table == "desktop_video_actions":
-            if row.get("accepted_asset_json"):
-                asset = json.loads(row["accepted_asset_json"])
-                required.extend((asset.get("video_path"), asset.get("poster_path"), asset.get("image_path")))
-                if asset["base_image_path"]:
-                    required.append(asset["base_image_path"])
-            if row.get("generation_state_json"):
-                progress = json.loads(row["generation_state_json"])
-                required.extend(
-                    path for path in (progress.get("pose_path"), progress.get("previous_pose_path")) if path
                 )
                 candidate = progress.get("candidate")
                 if candidate:
                     required.extend(
-                        (candidate.get("video_path"), candidate.get("poster_path"), candidate.get("image_path")),
+                        path for path in (candidate.get("media_path"), candidate.get("poster_path")) if path
                     )
-                    if candidate["base_image_path"]:
-                        required.append(candidate["base_image_path"])
+            if row.get("candidates_json"):
+                for candidate in json.loads(row["candidates_json"]):
+                    if isinstance(candidate, dict) and candidate.get("media_path"):
+                        required.append(candidate["media_path"])
         elif table == "companion_posts":
             if row.get("content_type") != "text":
                 required.append(row.get("media_url"))

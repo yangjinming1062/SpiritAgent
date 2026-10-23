@@ -196,7 +196,7 @@ async def import_user_backup(
                 if not isinstance(exc, asyncio.CancelledError):
                     logger.exception("backup restore failed unexpectedly", extra={"user_id": user_id})
                 raise
-            spawn_removed_action_task_cancellation(user_id, restore_result.removed_desktop_tasks)
+            spawn_removed_action_task_cancellation(user_id, restore_result.removed_visual_tasks)
 
     failed = [
         UserBackupImportFailure(section=item.section, count=item.count, reason=item.reason)

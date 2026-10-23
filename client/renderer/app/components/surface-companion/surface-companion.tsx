@@ -2,13 +2,8 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 
-import {
-  $activeOutfit,
-  $companionLifecycle,
-  ensureCompanionHydrated,
-  hydrateWardrobe,
-  SpriteVfxOverlay
-} from '@/modules/character'
+import { useVisualProjection } from '@/app/workflows/visual-presentation'
+import { $companionLifecycle, $stageOutfit, ensureCompanionHydrated, SpriteVfxOverlay } from '@/modules/character'
 import { OutfitStage, useMediaPixelHitTest } from '@/modules/character/rendering'
 import { useInteractiveRegion } from '@/shared'
 import { probeInteractiveRegions } from '@/shared/lib/interactive-regions'
@@ -21,6 +16,7 @@ import { useStrings } from '@/shared/strings'
 import styles from './surface-companion.module.css'
 
 export function SurfaceCompanion(): React.JSX.Element | null {
+  useVisualProjection()
   const state = useStore($surfaceCompanion)
   const mode = useStore($presentation)
   const hasSlot = state.slotWidth > 0
@@ -33,8 +29,8 @@ export function SurfaceCompanion(): React.JSX.Element | null {
   const strings = useStrings()
   const wrapperRef = useRef<HTMLDivElement>(null)
   const mediaHitTest = useMediaPixelHitTest(1)
-  const activeOutfit = useStore($activeOutfit)
-  const hasPortrait = Boolean(activeOutfit?.fullbodyPath)
+  const activeOutfit = useStore($stageOutfit)
+  const hasPortrait = Boolean(activeOutfit?.url)
 
   const hitTest = useCallback((x: number, y: number): boolean => visible && mediaHitTest(x, y), [visible, mediaHitTest])
 
@@ -62,7 +58,6 @@ export function SurfaceCompanion(): React.JSX.Element | null {
       return
     }
 
-    void hydrateWardrobe()
     void ensureCompanionHydrated()
   }, [auth.kind, lifecycle, visible])
 

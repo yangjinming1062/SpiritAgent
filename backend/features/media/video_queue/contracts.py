@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-type VideoQueueKind = Literal["media", "action", "desktop"]
+type VideoQueueKind = Literal["media", "action", "desktop", "visuals"]
 type VideoQueueReadiness = Literal["ready", "pending", "paused", "gone"]
 
 

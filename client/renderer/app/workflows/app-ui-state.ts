@@ -3,11 +3,7 @@ import {
   applyCompanionEditorUiSnapshot,
   captureCompanionEditorUiSnapshot
 } from '@/app/features/companion/companion-editor-state'
-import {
-  $desktopLifeUi,
-  exportDesktopLifeUiSnapshot,
-  importDesktopLifeUiSnapshot
-} from '@/app/features/desktop-life/desktop-life-state'
+import { $visualsUi, exportVisualsUiSnapshot, importVisualsUiSnapshot } from '@/app/features/visuals/visuals-state'
 import {
   $appNavigationRevision,
   $appPage,
@@ -65,7 +61,7 @@ export function installAppUiStateSync(): () => void {
     return {
       navigation: getAppNavigation(),
       conversation: exportMainConversationDraftSnapshot(),
-      desktopLife: exportDesktopLifeUiSnapshot(),
+      visuals: exportVisualsUiSnapshot(),
       companionEditors: captureCompanionEditorUiSnapshot()
     }
   }
@@ -109,7 +105,7 @@ export function installAppUiStateSync(): () => void {
     }
 
     importMainConversationDraftSnapshot(snapshot.conversation)
-    importDesktopLifeUiSnapshot(snapshot.desktopLife)
+    importVisualsUiSnapshot(snapshot.visuals)
 
     applyCompanionEditorUiSnapshot(snapshot.companionEditors)
 
@@ -298,7 +294,7 @@ export function installAppUiStateSync(): () => void {
     $appNavigationRevision.listen(schedulePublish),
     $chatSessionId.listen(schedulePublish),
     $mainConversationDraftRevision.listen(schedulePublish),
-    $desktopLifeUi.listen(schedulePublish),
+    $visualsUi.listen(schedulePublish),
     $companionEditors.listen(schedulePublish),
     $presentation.listen(schedulePublish),
     bridge.onRequest(enqueue)

@@ -18,7 +18,7 @@ import type {
   PresentationState,
   StageActivity
 } from './desktop-presentation'
-import type { CompanionEditorUiSnapshot, DesktopLifeUiSnapshot, MainConversationDraftSnapshot } from './ui-state'
+import type { CompanionEditorUiSnapshot, MainConversationDraftSnapshot, VisualsUiSnapshot } from './ui-state'
 export {
   APP_PAGES,
   COMPANION_SECTIONS,
@@ -52,8 +52,8 @@ export type {
   SettingsSection,
   StageActivity
 } from './desktop-presentation'
-export type { CompanionEditorUiSnapshot, DesktopLifeUiSnapshot } from './ui-state'
-export { isCompanionEditorUiSnapshot, isDesktopLifeUiSnapshot } from './ui-state'
+export type { CompanionEditorUiSnapshot, VisualsUiSnapshot } from './ui-state'
+export { isCompanionEditorUiSnapshot, isVisualsUiSnapshot } from './ui-state'
 
 // SpiritAgent Electron IPC 契约 —— 主进程与渲染进程的唯一真理源。通过 `@ipc/contracts` 别名同时被 `client/main/preload.ts` 和 `client/renderer/shared/types/global.d.ts` 导入。在此处新增或重命名通道/载荷字段，会在两侧类型检查时立即报错。
 
@@ -185,7 +185,7 @@ export type DesktopSurfaceOpenPayload = AppNavigationTarget
 export interface MainUiStateData {
   navigation: AppNavigationTarget
   conversation: MainConversationDraftSnapshot
-  desktopLife: DesktopLifeUiSnapshot
+  visuals: VisualsUiSnapshot
   companionEditors: CompanionEditorUiSnapshot
 }
 
@@ -227,11 +227,6 @@ export interface SurfaceCompanionState {
   slotWidth: number
   outerWidth: number
   hiddenReason: 'edge' | 'maximized' | 'minimized' | 'screen-locked' | 'window-hidden' | null
-}
-
-export interface SurfacePlaybackClaim {
-  playId: string
-  expiresAt: string | null
 }
 
 export interface DesktopSurfaceChangedEvent {
@@ -447,25 +442,6 @@ export interface AttachmentVideoUploadResult {
   url: string
 }
 
-/** 用户为桌景动作提供的图片或原始视频上传请求。文件路径必须先经系统选择器登记。 */
-export interface DesktopVideoUploadPayload {
-  actionId: number
-  authSessionId: string
-  expectedSetId: number
-  expectedDraftId: string | null
-  expectedBaseVersion: number
-  expectedActionVersion: number
-  expectedResolutionRevision: number
-  aspectPolicy: 'ask' | 'keep' | 'expand'
-  mediaKind: 'image' | 'video'
-  path: string
-}
-
-/** 后端桌景动作上传响应保持原样透传，渲染层随后刷新动作目录。 */
-export interface DesktopVideoUploadResult {
-  response: unknown
-}
-
 export type DesktopGatewayState = 'closed' | 'connecting' | 'error' | 'idle' | 'open'
 
 export interface DesktopGatewaySnapshot {
@@ -559,7 +535,6 @@ export interface IpcInvokeContract {
   'spiritagent:surface:set-companion': (
     preference: SurfaceCompanionPreference
   ) => DesktopSurfaceChangedEvent | Promise<DesktopSurfaceChangedEvent>
-  'spiritagent:surface:claim-play': (claim: SurfacePlaybackClaim) => boolean | Promise<boolean>
   'spiritagent:surface:set-ignore-mouse-events': (payload: {
     forward?: boolean
     ignore: boolean
@@ -665,9 +640,6 @@ export interface IpcInvokeContract {
   'spiritagent:media:video-upload': (
     payload: AttachmentVideoUploadPayload
   ) => Promise<DesktopApiResult<AttachmentVideoUploadResult>>
-  'spiritagent:media:desktop-video-upload': (
-    payload: DesktopVideoUploadPayload
-  ) => Promise<DesktopApiResult<DesktopVideoUploadResult>>
   'spiritagent:onboardingAudio:read': (
     tag: string
   ) =>
@@ -828,7 +800,6 @@ export const IPC = {
     surfaceIsMaximized: 'spiritagent:surface:is-maximized',
     surfaceGetState: 'spiritagent:surface:get-state',
     surfaceSetCompanion: 'spiritagent:surface:set-companion',
-    surfaceClaimPlay: 'spiritagent:surface:claim-play',
     surfaceSetIgnoreMouseEvents: 'spiritagent:surface:set-ignore-mouse-events',
     uiStateGet: 'spiritagent:ui-state:get',
     uiStateUpdate: 'spiritagent:ui-state:update',
@@ -844,7 +815,6 @@ export const IPC = {
     mediaVoiceSampleUpload: 'spiritagent:media:voice-sample-upload',
     mediaTts: 'spiritagent:media:tts',
     mediaVideoUpload: 'spiritagent:media:video-upload',
-    mediaDesktopVideoUpload: 'spiritagent:media:desktop-video-upload',
     onboardingAudioRead: 'spiritagent:onboardingAudio:read',
     spriteHide: 'spiritagent:sprite:hide',
     spriteSetIgnoreMouseEvents: 'spiritagent:sprite:set-ignore-mouse-events',

@@ -2,7 +2,7 @@
 
 from infrastructure.text import resolve_prompt_text
 from runtime.presets import COMPANION_PRESET_ID, GENERAL_PRESET_ID, resolve_preset_meta
-from runtime.tools.presentation import ACTION_TOOL_NAMES
+from runtime.tools.presentation import VISUAL_TOOL_NAMES
 
 from workflows.chat.prompts import (
     DELEGATED_GUIDANCES,
@@ -24,14 +24,13 @@ COMPANION_MEDIA_TOOL_NAMES = frozenset(
 )
 
 # 生活空间工具只服务陪伴会话：其余预设与自动化任务由回合装配、search_tools 与派发层共用同一排除集合，不注入 schema 也不派发。
-LIFE_SPACE_TOOL_NAMES = ACTION_TOOL_NAMES | frozenset(
+LIFE_SPACE_TOOL_NAMES = VISUAL_TOOL_NAMES | frozenset(
     {
         "send_message_tool",
         "companion_wait",
         "scene_list",
         "scene_get",
         "scene_create",
-        "scene_activate",
     },
 )
 AUTOMATION_EXCLUDED_TOOL_NAMES = LIFE_SPACE_TOOL_NAMES | frozenset(

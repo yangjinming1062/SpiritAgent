@@ -1069,9 +1069,9 @@ dd {
   top: 0;
   z-index: 3;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
   padding-block: 8px;
   background: #f8f7f4;
 }
@@ -1087,6 +1087,74 @@ dd {
   background: var(--soft);
   border-color: #b6ccc1;
   font-weight: 600;
+}
+.visuals-entry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-bottom: 22px;
+  padding: 12px 14px;
+  text-align: left;
+}
+.visuals-entry span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.visuals-entry strong {
+  font-size: 14px;
+}
+.visuals-entry small {
+  font-size: 11px;
+  color: #9aaa8d;
+}
+.visual-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.visual-list .recovery-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  border-top: 1px solid var(--line);
+}
+.visual-list .recovery-item:first-child {
+  border-top: 0;
+  padding-top: 4px;
+}
+.visual-list .recovery-item > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.visual-list .recovery-item strong {
+  font-size: 13px;
+}
+.visual-list .recovery-item .muted,
+.visual-list .recovery-item small {
+  font-size: 11px;
+}
+.asset-detail fieldset {
+  margin-block: 18px;
+  padding: 10px 14px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.asset-detail fieldset legend {
+  font-size: 13px;
+  color: #4f6e5e;
+}
+.asset-detail fieldset label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 14px;
+  color: inherit;
 }
 .profile-editor .card-title {
   display: flex;
@@ -1290,19 +1358,6 @@ dd {
   border: 0;
   border-radius: 0;
   text-align: left;
-}
-.asset-card-action {
-  display: block;
-  width: calc(100% - 20px);
-  margin: 0 10px 10px;
-  border-color: #b8d0c0;
-  color: var(--accent);
-  font-size: 13px;
-}
-.current-asset {
-  font-size: 13px;
-  margin-block: 12px 18px;
-  color: #4f6e5e;
 }
 .policy-toggle span {
   flex: 1;

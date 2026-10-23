@@ -33,8 +33,6 @@ const navigation = definePersistedAtom<AppNavigationTarget>({
       APP_PAGES.some(page => page === candidate.page) &&
       SETTINGS_SECTIONS.some(section => section === candidate.section) &&
       COMPANION_SECTIONS.some(section => section === candidate.companionSection) &&
-      (candidate.companionTask === undefined || candidate.companionTask === 'create') &&
-      (candidate.returnToDesktopLife === undefined || typeof candidate.returnToDesktopLife === 'boolean') &&
       (candidate.settingsTab === undefined ||
         candidate.settingsTab === 'skills' ||
         candidate.settingsTab === 'toolsets')
@@ -82,8 +80,6 @@ export function readAppNavigationHash(): AppNavigationTarget | null {
     page,
     section: page === 'settings' ? detail : undefined,
     companionSection: page === 'companion' ? detail : undefined,
-    companionTask: params.get('create') === '1' ? 'create' : undefined,
-    returnToDesktopLife: params.get('return') === 'desktop-life',
     settingsTab: params.get('subtab'),
     sessionId: params.get('sessionId'),
     messageKey: params.get('messageKey')
@@ -95,14 +91,6 @@ function writeHash(target: AppNavigationTarget): void {
 
   if (target.page === 'settings' && target.section === 'devices' && target.settingsTab) {
     query.set('subtab', target.settingsTab)
-  }
-
-  if (target.page === 'companion' && target.companionTask === 'create') {
-    query.set('create', '1')
-  }
-
-  if (target.page === 'companion' && target.returnToDesktopLife) {
-    query.set('return', 'desktop-life')
   }
 
   if (target.sessionId) {
@@ -135,9 +123,7 @@ export async function applyAppNavigation(target: AppNavigationTarget, updateHash
     page: next.page ?? (next.sessionId ? 'chat' : previous.page),
     section: next.section ?? previous.section,
     companionSection: next.companionSection ?? previous.companionSection,
-    settingsTab: next.section ? next.settingsTab : previous.settingsTab,
-    companionTask: next.companionSection ? next.companionTask : previous.companionTask,
-    returnToDesktopLife: next.companionSection ? next.returnToDesktopLife : previous.returnToDesktopLife
+    settingsTab: next.section ? next.settingsTab : previous.settingsTab
   })
 
   if (next.sessionId) {

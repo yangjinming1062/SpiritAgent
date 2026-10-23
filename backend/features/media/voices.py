@@ -31,6 +31,7 @@ from infrastructure.video_processing.audio import audio_bytes_info, voice_sample
 from infrastructure.video_processing.ffmpeg import VideoProcessError
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.assets.lifecycle import enqueue_asset_cleanup
 from features.configuration.settings.values import get_user_setting, lock_user_setting, put_user_settings
@@ -311,3 +312,14 @@ async def confirm_voice(user_id: int, candidate_id: str, expected_version: int) 
         )
         await db.commit()
         return VoiceConfirmResponse(voice_id=voice_id, version=candidate.version)
+
+
+async def read_current_voice(db: AsyncSession, user_id: int) -> str:
+    value = await get_user_setting(db, user_id, "companion.voice_id")
+    return str(value or "")
+
+
+async def write_current_voice(db: AsyncSession, user_id: int, voice_id: str) -> str:
+    await put_user_settings(db, user_id, {"companion.voice_id": voice_id})
+    await db.commit()
+    return voice_id

@@ -41,7 +41,6 @@ RESERVED_KEYS = frozenset(
         "parent_session_id",
         "excluded_tool_names",
         "skill_scope",
-        "action_view",
     },
 )
 

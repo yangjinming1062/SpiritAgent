@@ -3,20 +3,21 @@
 from entrypoints.desktop.handlers import drain as drain_user_sessions
 from entrypoints.scheduler.cron import drain as drain_cron
 from entrypoints.scheduler.cron import invalidate_user_scheduler_state, stop_scheduler
+from features.action_library.lifecycle import runtime_participants as action_participants
 from features.appearance.lifecycle import runtime_participants as appearance_participants
 from features.companion.lifecycle import runtime_participants as companion_participants
 from features.conversation.submissions import recover_interrupted_submissions
-from features.desktop_life.lifecycle import runtime_participants as desktop_life_participants
 from features.media.lifecycle import runtime_participants as media_participants
 from features.media.video_queue.lifecycle import runtime_participants as video_queue_participants
 from features.memory.lifecycle import runtime_participants as memory_participants
 from features.posts.lifecycle import runtime_participants as post_participants
 from features.scenes.lifecycle import runtime_participants as scene_participants
 from features.updates.lifecycle import runtime_participants as update_participants
+from features.visuals.lifecycle import runtime_participants as visuals_participants
 from runtime.events.loop import drain_event_tasks, stop_event_loop
 from runtime.lifecycle import RUNTIME_LIFECYCLE, RuntimeParticipant
-from workflows.action_library import drain_shared_actions, prepare_shared_actions, resume_shared_actions
 from workflows.onboarding.initial_appearance import resume_initial_appearance
+from workflows.visual_decisions import drain_visual_decisions
 
 
 def configure_runtime_lifecycle() -> None:
@@ -25,14 +26,9 @@ def configure_runtime_lifecycle() -> None:
             *update_participants(),
             *video_queue_participants(),
             *media_participants(),
-            RuntimeParticipant(
-                "action_library",
-                prepare=prepare_shared_actions,
-                recover=resume_shared_actions,
-                resume_user=resume_shared_actions,
-                drain=drain_shared_actions,
-            ),
-            *desktop_life_participants(),
+            *action_participants(),
+            *visuals_participants(),
+            RuntimeParticipant("visuals.decisions", drain=drain_visual_decisions),
             *appearance_participants(),
             *scene_participants(),
             RuntimeParticipant("onboarding.initial_assets", recover=resume_initial_appearance),

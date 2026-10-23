@@ -30,7 +30,6 @@ class OutfitSnapshot(BaseModel):
     status: str
     source_json: str
     is_initial: bool
-    active: bool
     id: int
     created_at: datetime
     updated_at: datetime

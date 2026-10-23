@@ -7,11 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.appearance.schemas import ImageAdoptRequest
 from features.companion.schemas import CompanionOperationResponse
-from features.companion.visual_state import persona_snapshot
 from features.scenes.models import SceneOrigin
 from features.scenes.queries import get_scene, get_scene_state, list_scenes, response_for_scene
 from features.scenes.schemas import (
-    SceneActivateRequest,
     SceneDescriptionRequest,
     SceneGenerateRequest,
     SceneImportRequest,
@@ -26,7 +24,6 @@ from features.scenes.service import (
     SceneError,
     SceneNotFoundError,
     SceneStateError,
-    activate_scene,
     adopt_scene,
     delete_scene,
     discard_scene,
@@ -56,13 +53,11 @@ def _scene_http_error(exc: SceneError) -> RequestError:
 
 async def read_scene_state(user_id: int, db: AsyncSession) -> SceneStateResponse:
     state = await get_scene_state(db, user_id)
+    rows = [*state.ready, *(row for row in (state.pending, state.regenerating) if row is not None)]
     return SceneStateResponse(
-        active=response_for_scene(state.active) if state.active is not None else None,
-        version=state.version,
-        switch_version=state.switch_version,
         policy=state.policy,
-        pending=response_for_scene(state.pending) if state.pending is not None else None,
-        regenerating=response_for_scene(state.regenerating) if state.regenerating is not None else None,
+        materials=[response_for_scene(row) for row in rows],
+        generation_pending=state.pending is not None or state.regenerating is not None,
     )
 
 
@@ -122,14 +117,6 @@ async def delete_scene_route(user_id: int, scene_id: int) -> CompanionOperationR
     return CompanionOperationResponse(ok=True)
 
 
-async def post_scene_activate(user_id: int, db: AsyncSession, body: SceneActivateRequest) -> SceneResponse:
-    try:
-        row = await activate_scene(db, user_id, body.scene_id)
-    except SceneError as exc:
-        raise _scene_http_error(exc) from exc
-    return response_for_scene(row)
-
-
 async def patch_scene_policy(user_id: int, db: AsyncSession, body: ScenePolicyRequest) -> ScenePolicyResponse:
     try:
         policy = await set_scene_policy(db, user_id, body.policy)
@@ -145,14 +132,12 @@ async def scene_list_route(
     offset: int = 0,
     limit: int = 30,
 ) -> SceneListResponse:
-    persona = await persona_snapshot(db, user_id)
     rows, total = await list_scenes(db, user_id, query=q, offset=offset, limit=limit)
     return SceneListResponse(
         scenes=[response_for_scene(row) for row in rows],
         total=total,
         offset=offset,
         limit=limit,
-        version=persona.scene_state_version if persona else 0,
     )
 
 

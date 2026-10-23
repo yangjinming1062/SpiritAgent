@@ -341,7 +341,7 @@ async def build_turn_inputs(
     excluded_tool_names = (
         excluded_tool_names | preset_excluded_tool_names(preset_id) | disabled_backend_tool_names(user_settings)
     )
-    action_excluded = await unavailable_action_tool_names(db, user_id)
+    action_excluded = await unavailable_action_tool_names(user_id)
     all_schemas = REGISTRY.get_all_schemas(
         user_id,
         user_settings=user_settings,

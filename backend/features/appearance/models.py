@@ -31,7 +31,7 @@ class OutfitSource(BaseModel):
     reference_image_path: str | None = None
     reference_description: str | None = None
     feedback_history: list[str] = Field(default_factory=list)
-    # 生成时的角色卡修订与全身身份图路径；确认和穿着据此判断外观是否仍对应当前身份。
+    # 生成时的角色卡修订与全身身份图路径；确认据此判断外观是否仍对应当前身份。
     character_card_revision: int | None = None
     identity_reference_path: str = Field(min_length=1)
 
@@ -46,12 +46,9 @@ class OutfitSource(BaseModel):
 
 
 class CompanionOutfit(ModelBase, TimestampMixin):
-    """衣柜外观及其着装参考；ready 表示静态造型图就绪。"""
+    """衣柜造型素材及其着装参考；ready 表示静态造型图就绪。"""
 
     __tablename__ = "companion_outfits"
-    __table_args__ = (
-        Index("uq_companion_outfits_one_active", "user_id", unique=True, postgresql_where=text("active")),
-    )
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(64), default="新外观")
@@ -65,7 +62,6 @@ class CompanionOutfit(ModelBase, TimestampMixin):
     # 生成来源与身份修订守卫，结构见 OutfitSource
     source_json: Mapped[str] = mapped_column(Text, default="{}", server_default=text("'{}'"))
     is_initial: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
-    active: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), index=True)
 
 
 class AvatarAsset(ModelBase):

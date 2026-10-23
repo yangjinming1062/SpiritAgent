@@ -1,12 +1,15 @@
-// 当前场景与创建任务独立；生成和分析失败保留当前背景。
+// 窗口模式的环境来源是当前影像冻结的环境素材；素材缺失时保持透明，不回退到环境库图片。
 
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
-import { $activeScene, $sceneTaskStatus } from '@/modules/scene'
+import { $windowVisualProjection, useVisualProjection } from '@/app/workflows/visual-presentation'
 import { $noBlur } from '@/shared/lib/apply-no-blur'
+import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
+import { backendApi } from '@/shared/platform/desktop'
+import { $auth } from '@/shared/store/auth'
 import { $theme } from '@/shared/store/theme'
 import { useStrings } from '@/shared/strings'
 
@@ -17,9 +20,44 @@ import styles from './scene-backdrop.module.css'
 const BAKE_SIZE_GRID = 64
 const RESIZE_SETTLE_MS = 200
 
+function useFrozenScene(): { ready: boolean; url: string | null } {
+  const projection = useStore($windowVisualProjection)
+  const auth = useStore($auth)
+  const path = projection?.scene_path ?? null
+  const ready = projection?.ready ?? false
+  const [url, setUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    let current = true
+
+    if (!path || auth.kind !== 'authenticated') {
+      setUrl(null)
+
+      return () => {
+        current = false
+      }
+    }
+
+    void backendApi()
+      .apiAsset({ url: path, preferCache: true })
+      .then(next => {
+        if (current) {
+          setUrl(next)
+        }
+      })
+      .catch(error => log.warn('scene-backdrop', 'Frozen scene asset unavailable', error))
+
+    return () => {
+      current = false
+    }
+  }, [path, auth.kind])
+
+  return { ready, url }
+}
+
 export function SceneBackdrop(): React.JSX.Element {
-  const taskStatus = useStore($sceneTaskStatus)
-  const backdrop = useStore($activeScene)
+  useVisualProjection()
+  const { ready, url: bgUrl } = useFrozenScene()
   const theme = useStore($theme)
   const noBlur = useStore($noBlur)
   const t = useStrings().living.sceneBackdrop
@@ -63,8 +101,7 @@ export function SceneBackdrop(): React.JSX.Element {
     }
   }, [])
 
-  const bgUrl = backdrop?.url ?? null
-  const status = bgUrl ? 'ready' : taskStatus === 'pending' ? 'pending' : 'none'
+  const status = bgUrl ? 'ready' : ready ? 'none' : 'pending'
 
   const baked = useBakedScene(noBlur ? null : bgUrl, viewport.width, viewport.height, theme)
 

@@ -6,7 +6,7 @@ import {
   type AppNavigationTarget,
   IPC,
   isCompanionEditorUiSnapshot,
-  isDesktopLifeUiSnapshot,
+  isVisualsUiSnapshot,
   type MainUiStateData,
   type MainUiStateSnapshot,
   type MainUiStateUpdate,
@@ -55,10 +55,10 @@ function stateData(raw: MainUiStateData): MainUiStateData {
     throw new Error('对话状态无效。')
   }
 
-  const desktopLife = raw.desktopLife
+  const visuals = raw.visuals
 
-  if (!isDesktopLifeUiSnapshot(desktopLife)) {
-    throw new Error('制作草稿状态无效。')
+  if (!isVisualsUiSnapshot(visuals)) {
+    throw new Error('影像页状态无效。')
   }
 
   const companionEditors = raw.companionEditors
@@ -70,7 +70,7 @@ function stateData(raw: MainUiStateData): MainUiStateData {
   return structuredClone({
     navigation: normalizeAppNavigation(raw.navigation),
     conversation,
-    desktopLife,
+    visuals,
     companionEditors
   })
 }
@@ -420,11 +420,7 @@ export function createUiStateBridge(options: UiStateOptions) {
             page,
             section: next.section ?? snapshot.navigation.section,
             settingsTab: next.section ? next.settingsTab : snapshot.navigation.settingsTab,
-            companionSection: next.companionSection ?? snapshot.navigation.companionSection,
-            companionTask: next.companionSection ? next.companionTask : snapshot.navigation.companionTask,
-            returnToDesktopLife: next.companionSection
-              ? next.returnToDesktopLife
-              : snapshot.navigation.returnToDesktopLife
+            companionSection: next.companionSection ?? snapshot.navigation.companionSection
           }
           snapshot.conversation.selectedSessionId = next.sessionId ?? snapshot.conversation.selectedSessionId
         }

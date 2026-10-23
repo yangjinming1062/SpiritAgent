@@ -9,7 +9,7 @@ import { ApiError, errorText, RemoteApi, RemoteGateway } from './api'
 import { Chat, clearChatState } from './Chat'
 import { Companion } from './Companion'
 import { Feed } from './Feed'
-import type { RemoteSession } from './types'
+import type { PlaybackReceipt, RemoteSession } from './types'
 import { Notice, PageHeader, PageStateProvider, pauseMedia, useTask } from './ui'
 
 type Tab = 'messages' | 'feed' | 'companion' | 'me'
@@ -28,10 +28,11 @@ function resourceDomain(type: GatewayNetworkEvent['type']): 'companion' | 'diary
       return 'diary'
     case 'memory.changed':
     case 'companion.scene.updated':
-    case 'companion.scene.activated':
     case 'companion.outfit.updated':
     case 'companion.character_card.updated':
     case 'companion.topic_feedback.updated':
+    case 'companion.visual.updated':
+    case 'companion.voice.updated':
       return 'companion'
     default:
       return null
@@ -62,6 +63,7 @@ export function App(): ReactElement {
   const [connectionError, setConnectionError] = useState('')
   const [refresh, setRefresh] = useState(0)
   const [unreadRefresh, setUnreadRefresh] = useState(0)
+  const [playReceipts, setPlayReceipts] = useState<PlaybackReceipt[]>([])
   const [unread, setUnread] = useState({
     messages: false,
     feed: false,
@@ -187,6 +189,16 @@ export function App(): ReactElement {
           if (event.type === 'session.snapshot') {
             return
           }
+
+          // 桌面回执事件只在手机展示；回执只能由桌面提交，手机不写回执接口。
+          if (event.type === 'companion.visual.playback') {
+            const receipt: PlaybackReceipt = { ...event.payload, at: Date.now() }
+
+            setPlayReceipts(previous => [receipt, ...previous].slice(0, 20))
+
+            return
+          }
+
           const domain = resourceDomain(event.type)
           const resource = EVENT_POLICIES[event.type].recovery === 'resource'
           const mood = event.type === 'companion.mood'
@@ -363,7 +375,7 @@ export function App(): ReactElement {
               unread={{ feed: unread.feed, diary: unread.diary }}
             />
           ) : tab === 'companion' ? (
-            <Companion api={api} refresh={refresh} />
+            <Companion api={api} receipts={playReceipts} refresh={refresh} />
           ) : (
             <Settings
               api={api}

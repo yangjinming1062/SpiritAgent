@@ -21,7 +21,7 @@ import type {
 } from './types'
 import {
   Empty,
-  ImageInput,
+  FileInput,
   Media,
   Notice,
   PageHeader,
@@ -1171,7 +1171,7 @@ export function Chat({
               <IconSend size={20} />
             </button>
           </div>
-          <ImageInput
+          <FileInput
             multiple
             onFiles={files => {
               const target = selected

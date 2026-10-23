@@ -8,8 +8,8 @@ import {
   startAutonomyProvision,
   stopAutonomyProvision
 } from '@/modules/character'
-import { refreshDesktopVideos } from '@/modules/desktop-videos'
 import { cancelVoiceBar, stopSpeaking } from '@/modules/speech'
+import { refreshVisuals } from '@/modules/visuals'
 import { fetchSlashCommandMeta } from '@/shared/lib/slash-commands'
 import { $presentation } from '@/shared/store/presentation'
 import type { DesktopGatewayState } from '@ipc/contracts'
@@ -56,7 +56,7 @@ export function startPresentationGateway(authSessionId: string): () => void {
         pushEffectiveDisturbanceTier(tier)
       }
 
-      void refreshDesktopVideos()
+      void refreshVisuals()
       void fetchSlashCommandMeta()
       clearVfx('sleep_zzz')
 

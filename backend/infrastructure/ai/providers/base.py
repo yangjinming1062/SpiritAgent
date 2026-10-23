@@ -203,6 +203,7 @@ class ImageGenRequest:
     aspect_ratio: str | None = None
     reference_image: str | None = None
     secondary_reference_image: str | None = None  # 仅 supports_multiple_reference_images 的供应商消费
+    environment_reference_image: str | None = None
     image_edit: bool = False  # True 以 reference_image 为底图增量编辑（画布贴近参考图）；False 参考图仅作身份条件，画布服从 size/aspect_ratio
     response_format: Literal["b64", "url"] = "b64"
     background: Literal["transparent"] | None = (

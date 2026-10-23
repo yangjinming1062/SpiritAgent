@@ -9,15 +9,15 @@ from typing import Any
 from features.accounts.backup import create_validation_account
 from features.assets.lifecycle import enqueue_asset_cleanup
 from features.assets.references import collect_live_asset_paths
-from features.companion.backup import advance_scene_versions, cron_source_keys, scene_versions
+from features.companion.backup import cron_source_keys
 from features.configuration.settings.timezone import resolve_user_timezone
 from features.conversation.backup import validate_main_conversation_merge
-from features.desktop_life.backup import advance_playback_versions, desktop_video_tasks_for_removal, playback_versions
-from features.desktop_life.backup_assets import validate_desktop_files
 from features.media.backup import restore_current_voices
 from features.media.contracts import RemovedActionVideoTask
 from features.media.voice_queries import custom_voice_tokens
 from features.topics.backup import validate_batch_merges
+from features.visuals.backup import advance_playback_versions, playback_versions, visual_video_tasks_for_removal
+from features.visuals.backup_assets import validate_visual_files
 from infrastructure.async_io import run_blocking, settle_task
 from infrastructure.backup import BACKUP_REGISTRY, BackupContext, BackupImportMode
 from infrastructure.config import SETTINGS
@@ -37,7 +37,6 @@ from workflows.maintenance.backup.serializers import (
     ACTION_LIBRARY_TABLES,
     ATOMIC_SECTION_GROUPS,
     CONVERSATION_TABLES,
-    DESKTOP_TABLES,
     IDENTITY_BLOCKED_REASON,
     IDENTITY_DEPENDENT_REASON,
     IDENTITY_GROUP,
@@ -45,6 +44,7 @@ from workflows.maintenance.backup.serializers import (
     IDENTITY_TABLES,
     POST_TABLES,
     TABLES,
+    VISUALS_TABLES,
     insert_rows,
     read_table_rows,
 )
@@ -71,25 +71,20 @@ RESTORE_SEQUENCE: tuple[str, ...] = ("conversations",) + tuple(
 # 父类覆盖会改变仍被保留的子类引用，子类未随本次恢复清理时须保留父类；None 表示引用嵌在 JSON / 数组等非关系列中，只要存在保留行就按可能有关联处理。
 OVERWRITE_DEPENDENT_REFERENCES: dict[str, tuple[tuple[str, str | None], ...]] = {
     "avatar_assets": (("companion_character_cards", "avatar_id"),),
-    "companion_outfits": (("action_definitions", "outfit_id"),),
-    "action_definitions": (
-        ("desktop_video_actions", "definition_id"),
-        ("action_sync_targets", "definition_id"),
-    ),
+    "companion_outfits": (("visual_items", "outfit_id"),),
+    "action_definitions": (("visual_items", "action_id"),),
     "cron_jobs": (("companion_intents", "source_key"),),
     "conversations": (
         ("cron_jobs", "conversation_id"),
         ("memories", None),
     ),
-    "companion_scenes": (("personas", "active_scene_id"),),
-    "desktop_video_sets": (
-        ("desktop_video_actions", "set_id"),
-        ("desktop_video_states", "current_set_id"),
-        ("action_sync_targets", None),
-    ),
-    "desktop_video_actions": (
-        ("desktop_video_states", "selected_action_id"),
-        ("desktop_video_states", "loop_action_id"),
+    "companion_scenes": (("visual_items", "scene_id"),),
+    "visual_items": (
+        ("visual_items", "input_image_id"),
+        ("visual_jobs", "target_visual_id"),
+        ("visual_presentations", "current_visual_id"),
+        ("visual_presentations", "loop_visual_id"),
+        ("visual_playbacks", "visual_id"),
     ),
     "companion_posts": (("companion_diary_entries", None),),
 }
@@ -114,7 +109,7 @@ class BackupRestoreResult:
     restored_files: int
     failures: tuple[BackupImportFailure, ...]
     rewriter: UrlRewriter
-    removed_desktop_tasks: tuple[RemovedActionVideoTask, ...]
+    removed_visual_tasks: tuple[RemovedActionVideoTask, ...]
 
 
 def _failure_reason(exc: Exception) -> str:
@@ -207,7 +202,7 @@ def load_backup_rows(
                 if group == CONVERSATION_TABLES
                 else "动态与评论必须同时恢复。"
                 if group == POST_TABLES
-                else "着装、共享动作和两种模式的动作版本必须同时恢复。"
+                else "衣柜、动作素材与影像必须同时恢复。"
             )
             for table in sorted(present):
                 rows.pop(table)
@@ -355,7 +350,7 @@ async def _preflight_tables(
                         )
                     if table == "companion_outfits":
                         await run_blocking(
-                            validate_desktop_files,
+                            validate_visual_files,
                             available_rows,
                             extract_root,
                             source_user_id,
@@ -461,11 +456,11 @@ async def _clear_compatible_rows(
                             await _delete_user_rows(db, table, target_user_id)
             except IntegrityError:
                 logger.warning(
-                    "shared action group could not be cleared without affecting retained data",
+                    "visual material group could not be cleared without affecting retained data",
                     extra={"target_user_id": target_user_id},
                     exc_info=True,
                 )
-                library_failure = "共享动作仍被其他内容引用，无法成组覆盖。"
+                library_failure = "影像或动作素材仍被其他内容引用，无法成组覆盖。"
         if library_failure is not None:
             for table in sorted(ACTION_LIBRARY_TABLES):
                 failures.append(BackupImportFailure(table, len(remaining.pop(table)), library_failure))
@@ -570,11 +565,7 @@ async def _clear_compatible_rows(
     for group in (IDENTITY_TABLES, ACTION_LIBRARY_TABLES):
         present = group & set(remaining)
         if present and present != group:
-            reason = (
-                IDENTITY_INCOMPLETE_REASON
-                if group == IDENTITY_TABLES
-                else "着装、共享动作和两种模式的动作版本必须同时恢复。"
-            )
+            reason = IDENTITY_INCOMPLETE_REASON if group == IDENTITY_TABLES else "衣柜、动作素材与影像必须同时恢复。"
             for table in sorted(present):
                 remaining.pop(table)
                 failures.append(
@@ -655,17 +646,16 @@ async def restore_backup_rows(
         extract_root=extract_root,
         conversation_ids=frozenset(str(row["id"]) for row in compatible_rows.get("conversations", [])),
     )
-    existing_scene_versions = await scene_versions(db, target_user_id)
-    existing_desktop_versions = await playback_versions(db, target_user_id)
-    removed_desktop_tasks: tuple[RemovedActionVideoTask, ...] = ()
+    existing_visual_versions = await playback_versions(db, target_user_id)
+    removed_visual_tasks: tuple[RemovedActionVideoTask, ...] = ()
     try:
         if mode == "overwrite":
-            if DESKTOP_TABLES.issubset(compatible_rows):
-                removed_desktop_tasks = await desktop_video_tasks_for_removal(db, target_user_id)
+            if VISUALS_TABLES.issubset(compatible_rows):
+                removed_visual_tasks = await visual_video_tasks_for_removal(db, target_user_id)
             await enqueue_asset_cleanup(db, target_user_id, await collect_live_asset_paths(db, target_user_id))
             compatible_rows, clear_failures = await _clear_compatible_rows(db, target_user_id, compatible_rows)
-            if not DESKTOP_TABLES.issubset(compatible_rows):
-                removed_desktop_tasks = ()
+            if not VISUALS_TABLES.issubset(compatible_rows):
+                removed_visual_tasks = ()
             failures = (*failures, *clear_failures)
         id_map: dict[str, dict[str, int | str]] = {}
         imported: dict[str, int] = {}
@@ -742,10 +732,8 @@ async def restore_backup_rows(
             target_user_id,
             {path.resolve().relative_to(Path(SETTINGS.data_dir).resolve()).as_posix() for path in rewriter.created},
         )
-        if imported.get("personas") or imported.get("companion_scenes"):
-            await advance_scene_versions(db, target_user_id, existing_scene_versions)
-        if DESKTOP_TABLES.issubset(imported):
-            await advance_playback_versions(db, target_user_id, existing_desktop_versions)
+        if VISUALS_TABLES.issubset(imported):
+            await advance_playback_versions(db, target_user_id, existing_visual_versions)
         if rewriter.missing_paths:
             failures = (
                 *failures,
@@ -760,7 +748,7 @@ async def restore_backup_rows(
             restored_files=len(rewriter.created),
             failures=failures,
             rewriter=rewriter,
-            removed_desktop_tasks=removed_desktop_tasks,
+            removed_visual_tasks=removed_visual_tasks,
         )
     except BaseException:
         rewriter.rollback()

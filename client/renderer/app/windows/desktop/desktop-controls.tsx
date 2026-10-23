@@ -31,7 +31,7 @@ const CONNECTION_TONE: Record<ConnectionState, ConnectionTone> = {
 interface DesktopControlsProps {
   open: boolean
   onOpenChange: (open: boolean, restoreFocus?: boolean) => void
-  onDesktopLife: () => void
+  onOpenVisuals: () => void
   wallpaperStatus: string | null
   wallpaperError: boolean
 }
@@ -39,7 +39,7 @@ interface DesktopControlsProps {
 export function DesktopControls({
   open,
   onOpenChange,
-  onDesktopLife,
+  onOpenVisuals,
   wallpaperStatus,
   wallpaperError
 }: DesktopControlsProps): React.JSX.Element {
@@ -188,13 +188,13 @@ export function DesktopControls({
               data-error={wallpaperError}
               onClick={() => {
                 onOpenChange(false)
-                onDesktopLife()
+                onOpenVisuals()
               }}
               type="button"
             >
               <Video aria-hidden="true" size={17} />
               <span>
-                <strong>{t.desktopLife}</strong>
+                <strong>{t.visuals}</strong>
                 {wallpaperStatus && <span role="status">{wallpaperStatus}</span>}
               </span>
             </button>

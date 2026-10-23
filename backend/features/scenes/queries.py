@@ -16,12 +16,10 @@ from features.scenes.schemas import SceneImageDimensions, SceneImageSize, SceneR
 
 @dataclass(frozen=True, slots=True)
 class SceneState:
-    active: SceneSnapshot | None
     policy: ScenePolicy
+    ready: tuple[SceneSnapshot, ...]
     pending: SceneSnapshot | None
     regenerating: SceneSnapshot | None
-    version: int
-    switch_version: int
 
 
 async def get_scene(db: AsyncSession, user_id: int, scene_id: int) -> CompanionScene | None:
@@ -69,16 +67,27 @@ async def get_pending_scene_task(db: AsyncSession, user_id: int) -> CompanionSce
     )
 
 
-async def get_scene_state(db: AsyncSession, user_id: int) -> SceneState:
+async def scene_policy(db: AsyncSession, user_id: int) -> ScenePolicy:
+    """自主添置政策；未完成资料时按可自主处理。"""
+
     persona = await persona_snapshot(db, user_id)
-    active = await get_scene(db, user_id, persona.active_scene_id) if persona and persona.active_scene_id else None
+    return ScenePolicy(persona.scene_policy) if persona else ScenePolicy.LLM_MAY_REPLACE
+
+
+async def get_scene_state(db: AsyncSession, user_id: int) -> SceneState:
+    policy = await scene_policy(db, user_id)
+    ready = (
+        await db.scalars(
+            select(CompanionScene)
+            .where(CompanionScene.user_id == user_id, CompanionScene.status == SceneStatus.READY.value)
+            .order_by(CompanionScene.id.desc()),
+        )
+    ).all()
     return SceneState(
-        active=SceneSnapshot.model_validate(active) if active and active.status == SceneStatus.READY.value else None,
-        policy=ScenePolicy(persona.scene_policy) if persona else ScenePolicy.LLM_MAY_REPLACE,
+        policy=policy,
+        ready=tuple(SceneSnapshot.model_validate(row) for row in ready),
         pending=_snapshot(await get_pending_scene(db, user_id)),
         regenerating=_snapshot(await get_regenerating_scene(db, user_id)),
-        version=persona.scene_state_version if persona else 0,
-        switch_version=persona.scene_switch_version if persona else 0,
     )
 
 
@@ -160,12 +169,9 @@ def response_for_scene(row: CompanionScene | SceneSnapshot) -> SceneResponse:
             "prompt": row.prompt,
             "url": (asset_store.signed_companion_asset_url(row.media_path) or "") if row.media_path else "",
             "error": row.error,
-            "auto_activate": row.auto_activate,
-            "switch_version": row.switch_version,
             "attempt_count": row.attempt_count,
             "requested_at": row.requested_at,
             "ready_at": row.ready_at,
-            "activated_at": row.activated_at,
             "regeneration": (
                 {
                     "task_id": row.regeneration_task_id,
@@ -181,19 +187,15 @@ def response_for_scene(row: CompanionScene | SceneSnapshot) -> SceneResponse:
 
 
 def scene_environment(state: SceneState) -> dict[str, Any]:
-    active = state.active
-    pending = state.pending
+    """纯素材列表：policy 与素材状态，不表示当前所在环境。"""
+    materials = [*state.ready, *(row for row in (state.pending, state.regenerating) if row is not None)]
     return {
-        "current": {"id": active.id, "title": active.title, "description": active.description} if active else None,
-        "pending_switch": {
-            "id": pending.id,
-            "requirements": pending.requirements,
-            "stage": pending.stage,
-        }
-        if pending and pending.auto_activate and pending.switch_version == state.switch_version
-        else None,
-        "policy": state.policy,
-        "version": state.version,
+        "policy": state.policy.value,
+        "materials": [
+            {"id": row.id, "title": row.title, "description": row.description, "status": row.status}
+            for row in materials
+        ],
+        "generation_pending": state.pending is not None or state.regenerating is not None,
     }
 
 

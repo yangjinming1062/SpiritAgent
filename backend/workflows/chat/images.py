@@ -11,14 +11,15 @@ from features.appearance.character_card import character_snapshot_is_current, re
 from features.appearance.visual_identity import (
     build_plain_image_prompt,
     build_self_image_inputs,
+    load_self_visual_context,
 )
 from features.conversation.prompts import CHAT_IMAGE_CORRECTION_PREFIX
-from features.desktop_life.self_visual import load_self_visual_plan
 from features.media.chain import MEDIA_IDENTITY_ACCEPT_SCORE
 from features.media.character_images import ImageChainState, generate_character_images
 from features.media.identity_contracts import CharacterCardSnapshot
 from features.media.image_generation import ImageGenerationError, generate_images
 from features.media.turn_state import ImagePlan, MediaArtifact, MediaInspection, MediaTurnState
+from features.visuals.queries import actual_presentation_snapshot
 from infrastructure.ai.prompt_engineer import VisualReasoningError, vision_chat
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets import asset_store
@@ -72,7 +73,8 @@ async def _freeze_plan(request: ImageRequest, user_id: int) -> ImagePlan:
             prompt=build_plain_image_prompt(request.prompt),
             size=request.aspect_ratio,
         )
-    visual_plan = await load_self_visual_plan(user_id, outfit_override=request.outfit_override)
+    presentation = await actual_presentation_snapshot(user_id)
+    visual_plan = await load_self_visual_context(user_id, presentation, outfit_override=request.outfit_override)
     inputs = build_self_image_inputs(visual_plan, request.prompt)
     return ImagePlan(
         request=request.model_dump_json(),

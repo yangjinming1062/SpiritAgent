@@ -3,13 +3,14 @@ import type React from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import {
-  $activeOutfit,
   $spriteCanvasRect,
   $spriteContentRect,
   $spriteHeadRect,
-  $wardrobeStatus,
+  $stageOutfit,
+  $stageOutfitPresented,
+  $stageOutfitStatus,
   baseSpriteSize,
-  hydrateWardrobe
+  retryStageOutfit
 } from '@/modules/character'
 import { probeInteractiveRegions, useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { log } from '@/shared/lib/log'
@@ -91,11 +92,11 @@ export function OutfitStage({
   eggSize?: string
   windowId?: number
 } = {}): React.JSX.Element {
-  const outfit = useStore($activeOutfit)
-  const wardrobeStatus = useStore($wardrobeStatus)
+  const outfit = useStore($stageOutfit)
+  const sourceStatus = useStore($stageOutfitStatus)
   const auth = useStore($auth)
   const owner = auth.kind === 'authenticated' ? auth.snapshot.accountId : null
-  const url = outfit?.fullbodyUrl ?? null
+  const url = outfit?.url ?? null
   const [portrait, setPortrait] = useState<Portrait | null>(null)
   const [decodeFailed, setDecodeFailed] = useState(false)
   const [retry, setRetry] = useState(0)
@@ -107,20 +108,28 @@ export function OutfitStage({
   const strings = useStrings()
   // 新图地址解析或解码期间保留旧画面，只在确实没有当前穿着时才回到蛋形。
   const shown = outfit && portrait?.owner === owner ? portrait : null
-  // 当前穿着取不到图片地址（缓存或读取失败）同样需要用户可见的重新加载入口。
-  const loadFailed = decodeFailed || (Boolean(outfit) && !url && wardrobeStatus === 'loaded')
+  // 当前影像取不到冻结造型地址（解析或解码失败）同样需要用户可见的重新加载入口。
+  const loadFailed = decodeFailed || sourceStatus === 'error'
+
+  useLayoutEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      if (shown?.url === outfit?.url && imageRef.current?.complete && imageRef.current.naturalWidth > 0) {
+        $stageOutfitPresented.set(outfit?.path ?? null)
+      }
+    })
+
+    return () => cancelAnimationFrame(frame)
+  }, [shown, outfit])
 
   const egg: EggStageStatus | null = shown
     ? null
     : loadFailed
       ? 'failed'
-      : wardrobeStatus === 'error'
-        ? 'failed'
-        : url
-          ? 'preparing'
-          : wardrobeStatus === 'loaded'
-            ? 'unavailable'
-            : 'preparing'
+      : url
+        ? 'preparing'
+        : sourceStatus === 'missing'
+          ? 'unavailable'
+          : 'preparing'
 
   useEffect(() => {
     let current = true
@@ -274,7 +283,7 @@ export function OutfitStage({
 
   const reload = (): void => {
     setRetry(value => value + 1)
-    void hydrateWardrobe({ revalidateAssets: true })
+    retryStageOutfit()
   }
 
   return (
@@ -295,7 +304,7 @@ export function OutfitStage({
           message={strings.companion.egg[egg]}
           onStatusAction={() => {
             if (egg === 'unavailable') {
-              void requestOpenSurface({ page: 'companion', companionSection: 'appearance' })
+              void requestOpenSurface({ page: 'companion', companionSection: 'wardrobe' })
 
               return
             }

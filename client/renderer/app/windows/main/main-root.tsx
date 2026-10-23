@@ -74,6 +74,7 @@ export function MainRoot(): React.JSX.Element {
     posts: t.posts,
     diary: t.diary,
     companion: t.companionFallback,
+    visuals: t.visuals,
     settings: t.settings
   }
 

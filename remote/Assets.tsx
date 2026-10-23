@@ -10,13 +10,16 @@ import type { RemoteApi } from './api'
 import { ApiError, readImage } from './api'
 import type { Outfit, Scene } from './types'
 import {
+  AssetResultRecovery,
   Empty,
+  FileInput,
   focusAfterRender,
-  ImageInput,
+  LibraryCard,
   Media,
   Notice,
   PageHeader,
   useAlive,
+  useAssetSubmission,
   usePageScroll,
   usePageState,
   useTask,
@@ -25,67 +28,8 @@ import {
 
 type SceneState = ApiSchemas['SceneStateResponse']
 
-function useAssetSubmission(key: string, onCheck: () => Promise<void>) {
-  const alive = useAlive()
-  const [submitted, setSubmitted] = usePageState(`${key}.submitted`, false)
-  const [reconciled, setReconciled] = useState(false)
-
-  const submit = async <Result,>(task: () => Promise<Result>): Promise<Result> => {
-    setSubmitted(true)
-    setReconciled(false)
-    try {
-      return await task()
-    } catch (failure) {
-      if (alive() && failure instanceof ApiError && failure.status !== null && failure.status < 500) {
-        setSubmitted(false)
-      }
-      throw failure
-    }
-  }
-  const check = async () => {
-    await onCheck()
-    if (alive()) {
-      setReconciled(true)
-    }
-  }
-
-  return { check, clearSubmission: () => setSubmitted(false), reconciled, submit, submitted }
-}
-
-function AssetResultRecovery({
-  onCheck,
-  onContinue,
-  reconciled
-}: {
-  onCheck: () => Promise<void>
-  onContinue: () => void
-  reconciled: boolean
-}): ReactElement {
-  return (
-    <div className="creation-status">
-      <p>上次制作的结果尚未确认。请先刷新，核对原来的结果。</p>
-      <div className="button-row">
-        <button onClick={onCheck} type="button">
-          刷新结果
-        </button>
-        <button disabled={!reconciled} onClick={onContinue} type="button">
-          已核对，继续调整
-        </button>
-      </div>
-    </div>
-  )
-}
-
-function AssetSteps({
-  kind,
-  step,
-  upload = false
-}: {
-  kind: 'scene' | 'outfit'
-  step: number
-  upload?: boolean
-}): ReactElement {
-  const labels = [upload ? '选择图片' : '描述想法', '预览确认', kind === 'scene' ? '使用背景' : '穿上新衣']
+function AssetSteps({ step, upload = false }: { step: number; upload?: boolean }): ReactElement {
+  const labels = [upload ? '选择图片' : '描述想法', '预览确认', '完成制作']
 
   return (
     <ol aria-label="制作步骤" className="creation-steps">
@@ -130,51 +74,22 @@ function AssetPolicyToggle({
   )
 }
 
-function AssetCard({
-  actionDisabled,
-  actionLabel,
-  active,
-  id,
-  imageAlt,
-  imageUrl,
-  kind,
-  onAction,
-  onPreview,
-  status,
-  title
-}: {
-  actionDisabled: boolean
-  actionLabel: string
-  active: boolean
-  id: number
-  imageAlt: string
-  imageUrl: string
-  kind: 'scene' | 'outfit'
-  onAction: () => void
-  onPreview: () => void
-  status: string
-  title: string
-}): ReactElement {
-  return (
-    <article className={`asset-card ${active ? 'active' : ''}`}>
-      <button
-        className="asset-card-preview"
-        data-outfit-id={kind === 'outfit' ? id : undefined}
-        data-scene-id={kind === 'scene' ? id : undefined}
-        onClick={onPreview}
-        type="button"
-      >
-        {imageUrl ? <img alt={imageAlt} loading="lazy" src={imageUrl} /> : <div className="asset-placeholder">✦</div>}
-        <div>
-          <strong>{title}</strong>
-          <small>{status}</small>
-        </div>
-      </button>
-      <button className="asset-card-action" disabled={actionDisabled} onClick={onAction} type="button">
-        {actionLabel}
-      </button>
-    </article>
-  )
+function assetStatusText(kind: 'scene' | 'outfit', status: string): string {
+  return kind === 'scene'
+    ? status === 'ready'
+      ? '已就绪'
+      : status === 'pending'
+        ? '正在制作'
+        : status === 'description_failed' || status === 'failed'
+          ? '制作失败'
+          : status === 'cancelled'
+            ? '已取消'
+            : '待完善'
+    : status === 'ready'
+      ? '已入柜'
+      : status === 'draft'
+        ? '待确认'
+        : '已过期'
 }
 
 export function Assets({
@@ -213,7 +128,7 @@ function AssetCreator({
   const { check, clearSubmission, reconciled, submit, submitted } = useAssetSubmission(kind, onCheck)
   const picker = useRef<HTMLInputElement>(null)
   const scene = kind === 'scene'
-  const label = scene ? '背景' : '衣服'
+  const label = scene ? '环境' : '衣服'
   const imageBody = image ? { image: image.base64, content_type: image.type } : {}
 
   return (
@@ -223,9 +138,9 @@ function AssetCreator({
       </button>
       <h1>{source === 'ai' ? `让 AI 帮你设计${label}` : `使用自己的${label}图片`}</h1>
       <p className="muted">
-        {source === 'ai' ? '用日常的话说说想法，完成后可以先预览。' : '上传已经做好的图片，准备完成后再选择是否使用。'}
+        {source === 'ai' ? '用日常的话说说想法，完成后可以先预览。' : '上传已经做好的图片，确认后收入素材。'}
       </p>
-      <AssetSteps kind={kind} step={1} upload={source === 'upload'} />
+      <AssetSteps step={1} upload={source === 'upload'} />
       {source === 'ai' || !scene ? (
         <label className="field-label">
           {source === 'upload' ? '补充说明（可选）' : scene ? '想去怎样的地方？' : '想给伙伴穿什么？'}
@@ -404,7 +319,7 @@ function AssetCreator({
           ) : null}
         </details>
       ) : null}
-      <ImageInput
+      <FileInput
         onFiles={([file]) => {
           if (file) {
             void run(async () => {
@@ -474,7 +389,7 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
   useEffect(() => {
     void runLatest(load)
   }, [load, refresh, runLatest])
-  const pending = Boolean(state?.pending || state?.regenerating)
+  const pending = Boolean(state?.generation_pending)
 
   useVisiblePolling(pending, load, runLatest)
 
@@ -482,22 +397,22 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
     <>
       {!creating && !selected ? (
         <>
-          <PageHeader subtitle="描述一个喜欢的地方，让 AI 画出来" title="窗口背景" />
+          <PageHeader subtitle="描述一个喜欢的地方，制作成环境素材" title="环境" />
           <div className="library-toolbar">
             <input
-              aria-label="搜索背景"
+              aria-label="搜索环境"
               onChange={event => {
                 revision.current++
                 setRows([])
                 setBrowseLimit(30)
                 setQuery(event.target.value)
               }}
-              placeholder="搜索背景"
+              placeholder="搜索环境"
               type="search"
               value={query}
             />
             <button
-              aria-label="创建背景"
+              aria-label="创建环境"
               className="primary"
               data-create-asset="scene"
               onClick={() => {
@@ -507,10 +422,10 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
               type="button"
             >
               <IconPlus aria-hidden size={17} />
-              创建背景
+              创建环境
             </button>
             <button
-              aria-label="刷新背景"
+              aria-label="刷新环境"
               className="icon-button"
               disabled={busy}
               onClick={() => run(load)}
@@ -521,7 +436,7 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
           </div>
           <AssetPolicyToggle
             checked={state?.policy === 'llm_may_replace'}
-            description="伙伴可以自行创建并切换背景。"
+            description="伙伴可以自行制作并收藏新的环境素材。"
             disabled={!state || busy}
             loaded={Boolean(state)}
             onChange={checked => {
@@ -539,20 +454,19 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
               })
             }}
             saving={policySaving}
-            title="允许伙伴自主更换背景"
+            title="允许伙伴自主添置素材"
           />
-          {state?.active ? <p className="current-asset">当前背景：{state.active.title || '未命名背景'}</p> : null}
         </>
       ) : null}
-      {state?.pending || state?.regenerating ? (
+      {state?.generation_pending ? (
         <section className="card">
-          <strong>背景正在制作</strong>
+          <strong>环境素材正在制作</strong>
           <p className="muted">AI 正在准备画面，可以先去聊天，稍后回来查看。</p>
           <button
             disabled={busy}
             onClick={() =>
               run(async () => {
-                const id = state.pending?.id ?? state.regenerating?.id
+                const id = state.materials.find(item => item.status === 'pending')?.id
 
                 if (id) {
                   await api.invoke('companion_scenes.post_scene_discard', { path: { scene_id: id } })
@@ -590,11 +504,10 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
       {selected ? (
         <SceneDetail
           api={api}
-          current={selected.id === state?.active?.id}
           key={selected.id}
           onClose={() => {
             setSelected(null)
-            focusAfterRender(`[data-scene-id="${selected.id}"]`)
+            focusAfterRender(`[data-card-key="scene-${selected.id}"]`)
           }}
           onUpdate={load}
           scene={selected}
@@ -604,56 +517,22 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
         <>
           <div className="asset-grid">
             {rows.map(row => (
-              <AssetCard
-                actionDisabled={busy || state?.active?.id === row.id}
-                actionLabel={
-                  state?.active?.id === row.id ? '正在使用' : row.status === 'ready' ? '使用这个背景' : '继续制作'
-                }
-                active={state?.active?.id === row.id}
-                id={row.id}
-                imageAlt={row.title || '背景'}
+              <LibraryCard
+                cardKey={`scene-${row.id}`}
+                imageAlt={row.title || '环境'}
                 imageUrl={row.url}
                 key={row.id}
-                kind="scene"
-                onAction={() => {
-                  if (row.status !== 'ready' || !row.url) {
-                    setSelected(row)
-                    return
-                  }
-                  void run(async () => {
-                    const image = new Image()
-                    image.src = row.url
-                    await image.decode()
-                    if (!alive()) {
-                      return
-                    }
-                    await api.invoke('companion_scenes.post_scene_activate', { body: { scene_id: row.id } })
-                    await load()
-                  })
-                }}
-                onPreview={() => {
+                meta={assetStatusText('scene', row.status)}
+                onSelect={() => {
                   setSelected(row)
                   setCreating(false)
                 }}
-                status={
-                  state?.active?.id === row.id
-                    ? '正在使用'
-                    : row.status === 'ready'
-                      ? '已就绪'
-                      : row.status === 'pending'
-                        ? '正在制作'
-                        : row.status === 'description_failed' || row.status === 'failed'
-                          ? '制作失败'
-                          : row.status === 'cancelled'
-                            ? '已取消'
-                            : '待完善'
-                }
-                title={row.title || '新的背景'}
+                title={row.title || '新的环境'}
               />
             ))}
           </div>
           {loaded && rows.length === 0 && !busy ? (
-            <Empty title="给伙伴一个新的地方">描述想去的地方，AI 会为你制作背景。</Empty>
+            <Empty title="给伙伴一个新的地方">描述想去的地方，AI 会为你制作环境素材。</Empty>
           ) : null}
           {rows.length < total ? (
             <button
@@ -662,7 +541,7 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
               onClick={() => setBrowseLimit(Math.min(total, rows.length + 30))}
               type="button"
             >
-              更多背景
+              更多环境
             </button>
           ) : null}
         </>
@@ -674,13 +553,11 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
 function SceneDetail({
   api,
   scene,
-  current,
   onUpdate,
   onClose
 }: {
   api: RemoteApi
   scene: Scene
-  current: boolean
   onUpdate: () => Promise<void>
   onClose: () => void
 }): ReactElement {
@@ -690,7 +567,6 @@ function SceneDetail({
   const [description, setDescription] = usePageState(`scene.${scene.id}.description`, scene.description)
   const { check, clearSubmission, reconciled, submit, submitted } = useAssetSubmission(`scene.${scene.id}`, onUpdate)
   const previous = useRef({ title: scene.title, description: scene.description })
-  const [loadedImage, setLoadedImage] = useState('')
   const picker = useRef<HTMLInputElement>(null)
   const canRetryAnalysis =
     ((scene.status === 'description_failed' || scene.status === 'cancelled') && Boolean(scene.url)) ||
@@ -718,13 +594,12 @@ function SceneDetail({
       <button className="back-link" onClick={onClose} type="button">
         ← 返回
       </button>
-      {!current ? <AssetSteps kind="scene" step={scene.status === 'ready' ? 3 : 2} /> : null}
+      <AssetSteps step={scene.status === 'ready' ? 3 : 2} />
       <div className="card-title">
-        <h1>{scene.title || '新的背景'}</h1>
+        <h1>{scene.title || '新的环境'}</h1>
       </div>
       {scene.url ? (
         <Media
-          onReady={() => setLoadedImage(scene.url)}
           refresh={() => {
             void run(onUpdate)
           }}
@@ -735,7 +610,7 @@ function SceneDetail({
       {scene.description ? <p className="muted">{scene.description}</p> : null}
       {scene.status === 'pending' ? (
         <p aria-live="polite" className="creation-status">
-          正在准备背景，可以先去聊天，稍后回来查看。
+          正在准备环境素材，可以先去聊天，稍后回来查看。
         </p>
       ) : null}
       <details className="optional-details">
@@ -783,7 +658,7 @@ function SceneDetail({
       {scene.error || scene.regeneration?.error ? <Notice>{scene.error || scene.regeneration?.error}</Notice> : null}
       {scene.can_retry_generation || (scene.regeneration?.status === 'failed' && !canRetryAnalysis) ? (
         <button disabled={busy || submitted} onClick={regenerate} type="button">
-          重试制作背景
+          重试制作环境
         </button>
       ) : null}
       {canRetryAnalysis ? (
@@ -803,23 +678,6 @@ function SceneDetail({
       {error ? <Notice>{error}</Notice> : null}
       {submitted && !busy ? (
         <AssetResultRecovery onCheck={() => run(check)} onContinue={clearSubmission} reconciled={reconciled} />
-      ) : null}
-      {scene.url || scene.status === 'pending' ? (
-        <div className="creation-footer">
-          <button
-            className="primary full"
-            disabled={current || busy || scene.status !== 'ready' || loadedImage !== scene.url}
-            onClick={() =>
-              run(async () => {
-                await api.invoke('companion_scenes.post_scene_activate', { body: { scene_id: scene.id } })
-                await onUpdate()
-              })
-            }
-            type="button"
-          >
-            {current ? '正在使用' : scene.status === 'pending' ? '正在制作…' : '使用此背景'}
-          </button>
-        </div>
       ) : null}
       {!scene.url && scene.status !== 'pending' ? (
         <button className="primary full" disabled={busy} onClick={() => picker.current?.click()} type="button">
@@ -862,10 +720,10 @@ function SceneDetail({
           </button>
           <button
             className="danger"
-            disabled={busy || current}
+            disabled={busy}
             onClick={() =>
               run(async () => {
-                if (!window.confirm('删除这个背景？删除后无法恢复。')) {
+                if (!window.confirm('删除这个环境素材？删除后无法恢复。')) {
                   return
                 }
                 await api.invoke('companion_scenes.delete_scene_route', { path: { scene_id: scene.id } })
@@ -883,7 +741,7 @@ function SceneDetail({
           </button>
         </div>
       </details>
-      <ImageInput
+      <FileInput
         onFiles={([file]) => {
           if (file) {
             void run(async () => {
@@ -971,7 +829,7 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
           </div>
           <AssetPolicyToggle
             checked={policy === 'llm_may_replace'}
-            description="伙伴可以夜间挑选已有衣服，也可以设计新衣服。"
+            description="伙伴可以自行设计并收藏新的衣服素材。"
             disabled={busy || !loaded}
             loaded={loaded}
             onChange={checked => {
@@ -989,7 +847,7 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
               })
             }}
             saving={policySaving}
-            title="允许伙伴自主换装"
+            title="允许伙伴自主添置素材"
           />
         </>
       ) : null}
@@ -1024,7 +882,7 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
           key={selected.id}
           onClose={() => {
             setSelectedId(null)
-            focusAfterRender(`[data-outfit-id="${selected.id}"]`)
+            focusAfterRender(`[data-card-key="outfit-${selected.id}"]`)
           }}
           onUpdate={load}
           outfit={selected}
@@ -1035,38 +893,16 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
           <div className="asset-grid outfits">
             {outfits.map(outfit => {
               return (
-                <AssetCard
-                  actionDisabled={busy || outfit.active || outfit.status === 'expired'}
-                  actionLabel={outfit.active ? '正在穿着' : outfit.status === 'draft' ? '继续制作' : '穿这套'}
-                  active={outfit.active}
-                  id={outfit.id}
+                <LibraryCard
+                  cardKey={`outfit-${outfit.id}`}
                   imageAlt={outfit.name}
                   imageUrl={outfit.fullbody_url}
                   key={outfit.id}
-                  kind="outfit"
-                  onAction={() => {
-                    if (outfit.status !== 'ready') {
-                      setSelectedId(outfit.id)
-                      return
-                    }
-                    void run(async () => {
-                      await api.invoke('companion.put_outfit_selection', { body: { outfit_id: outfit.id } })
-                      await load()
-                    })
-                  }}
-                  onPreview={() => {
+                  meta={assetStatusText('outfit', outfit.status)}
+                  onSelect={() => {
                     setSelectedId(outfit.id)
                     setCreating(false)
                   }}
-                  status={
-                    outfit.active
-                      ? '正在穿着'
-                      : outfit.status === 'ready'
-                        ? '已入柜'
-                        : outfit.status === 'draft'
-                          ? '待确认'
-                          : '已过期'
-                  }
                   title={outfit.name || '新外观'}
                 />
               )
@@ -1118,7 +954,7 @@ function OutfitDetail({
       <button className="back-link" onClick={onClose} type="button">
         ← 返回
       </button>
-      {!outfit.active ? <AssetSteps kind="outfit" step={outfit.status === 'ready' ? 3 : 2} /> : null}
+      <AssetSteps step={outfit.status === 'ready' ? 3 : 2} />
       <div className="card-title">
         <h1>{outfit.name || '新的衣服'}</h1>
       </div>
@@ -1138,8 +974,8 @@ function OutfitDetail({
       {submitted && !busy ? (
         <AssetResultRecovery onCheck={() => run(check)} onContinue={clearSubmission} reconciled={reconciled} />
       ) : null}
-      <div className="creation-footer">
-        {outfit.status === 'draft' ? (
+      {outfit.status === 'draft' ? (
+        <div className="creation-footer">
           <button
             className="primary full"
             disabled={busy || submitted || !outfit.fullbody_url || loadedImage !== outfit.fullbody_url}
@@ -1156,23 +992,8 @@ function OutfitDetail({
           >
             满意，保存这套衣服
           </button>
-        ) : null}
-        {outfit.status === 'ready' ? (
-          <button
-            className="primary full"
-            disabled={busy || submitted || outfit.active}
-            onClick={() =>
-              run(async () => {
-                await api.invoke('companion.put_outfit_selection', { body: { outfit_id: outfit.id } })
-                await onUpdate()
-              })
-            }
-            type="button"
-          >
-            {outfit.active ? '正在穿着' : '穿上'}
-          </button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
       {outfit.status === 'expired' ? <Notice>这套衣服的草稿已过期，请返回衣柜重新设计。</Notice> : null}
       {outfit.status === 'draft' ? (
         <details className="optional-details">
@@ -1225,7 +1046,7 @@ function OutfitDetail({
           </button>
           <button
             className="danger"
-            disabled={busy || outfit.active}
+            disabled={busy}
             onClick={() =>
               run(async () => {
                 if (
@@ -1250,7 +1071,7 @@ function OutfitDetail({
           </button>
         </div>
       </details>
-      <ImageInput
+      <FileInput
         onFiles={([file]) => {
           if (file) {
             void run(async () => {

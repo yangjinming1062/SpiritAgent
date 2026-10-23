@@ -1,4 +1,4 @@
-"""场景资产生成、分析与启用；供应商等待不持有数据库会话。"""
+"""场景素材生成与分析；供应商等待不持有数据库会话。"""
 
 import asyncio
 import json
@@ -24,16 +24,14 @@ from runtime.user_maintenance import is_user_in_maintenance, track_user_task
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.accounts.models import lock_user_row
 from features.accounts.queries import nightly_account
 from features.assets.lifecycle import cleanup_user_assets, enqueue_asset_cleanup
 from features.companion.persona_service import load_persona_definition
 from features.companion.query_contracts import PersonaSnapshot
 from features.companion.visual_state import (
-    advance_scene_state,
-    advance_scene_switch,
     change_scene_policy,
     persona_snapshot,
-    set_active_scene,
 )
 from features.configuration.settings.values import get_user_setting
 from features.media.character_images import ImageChainState, ImageProgressWriter, generate_scene_images
@@ -118,29 +116,25 @@ def _regeneration_asset_paths(row: CompanionScene) -> set[str]:
 
 
 async def _event(db: AsyncSession, user_id: int, event_type: str, scene_id: int | None = None) -> None:
-    try:
-        persona = await advance_scene_state(db, user_id)
-    except ValueError as exc:
-        raise SceneStateError("请先完成角色设定") from exc
-    _require_complete(persona)
+    _require_complete(await persona_snapshot(db, user_id))
     emit_ws_event(
         db,
         user_id=user_id,
         event_type=event_type,
-        payload={
-            "scene_id": scene_id,
-            "version": persona.scene_state_version,
-            "switch_version": persona.scene_switch_version,
-        },
+        payload={"scene_id": scene_id},
     )
+    if scene_id is not None:
+        scene = await get_scene(db, user_id, scene_id)
+        if scene is not None and scene.status == "ready":
+            emit_ws_event(db, user_id=user_id, event_type="companion.visual.initial_requested", payload={})
 
 
 async def _check_policy(db: AsyncSession, persona: PersonaSnapshot, origin: str) -> None:
     if origin not in _AUTONOMOUS_ORIGINS:
         return
     if persona.scene_policy == ScenePolicy.LOCKED.value:
-        raise SceneLockedError("场景已锁定，自主新增与切换已暂停")
-    # 打扰档位只限制打扰用户的主动行为；场景变化不直接打扰用户，对话中的自主变化只受锁定限制，夜间另按总控。
+        raise SceneLockedError("场景已锁定，自主新增已暂停")
+    # 打扰档位只限制打扰用户的主动行为；场景素材新增不直接打扰用户，对话中的自主新增只受锁定限制，夜间另按总控。
     if origin == SceneOrigin.NIGHTLY.value:
         user = await nightly_account(db, persona.user_id)
         if user is None or not user.nightly_activity_enabled:
@@ -151,51 +145,9 @@ async def set_scene_policy(db: AsyncSession, user_id: int, policy: str) -> Scene
     async with _scene_lock(user_id):
         persona = await _persona(db, user_id)
         persona = await change_scene_policy(db, user_id, ScenePolicy(policy).value)
-        # 即使重新选择相同政策，也撤销尚未兑现的切换意图。
-        persona = await advance_scene_switch(db, persona.user_id)
         await _event(db, persona.user_id, "companion.scene.updated")
         await db.commit()
     return ScenePolicy(policy)
-
-
-def _validate_ready(user_id: int, row: CompanionScene) -> None:
-    if (
-        row.status != SceneStatus.READY.value
-        or not row.media_path
-        or not row.title.strip()
-        or not row.description.strip()
-    ):
-        raise SceneStateError("场景图片、标题与描述齐全后才能启用")
-    parsed_path = parse_companion_asset_path(row.media_path)
-    if not parsed_path or parsed_path[0] != user_id or asset_store.resolve_companion_asset_path(*parsed_path) is None:
-        raise SceneStateError("场景图片缺失，请重新创建或上传")
-
-
-async def activate_scene(
-    db: AsyncSession,
-    user_id: int,
-    scene_id: int,
-    *,
-    origin: str = SceneOrigin.USER_REQUEST.value,
-) -> CompanionScene:
-    async with _scene_lock(user_id):
-        row = await _require_scene(db, user_id, scene_id)
-        persona = await _persona(db, user_id)
-        if persona.active_scene_id == scene_id:
-            # 用户再次选择当前环境仍取消旧的自动切换意图，但不产生一次环境变化。
-            if origin == SceneOrigin.USER_REQUEST.value:
-                persona = await advance_scene_switch(db, persona.user_id)
-                await _event(db, persona.user_id, "companion.scene.updated", scene_id)
-                await db.commit()
-            return row
-        await _check_policy(db, persona, origin)
-        _validate_ready(user_id, row)
-        persona = await advance_scene_switch(db, persona.user_id)
-        persona = await set_active_scene(db, user_id, scene_id)
-        row.activated_at = utc_now()
-        await _event(db, persona.user_id, "companion.scene.activated", scene_id)
-        await db.commit()
-        return row
 
 
 async def _consume_llm_quota(db: AsyncSession, user_id: int) -> None:
@@ -220,18 +172,12 @@ async def _new_scene(
     origin: str,
     notes: str,
     source: str,
-    auto_activate: bool,
     reference_image: str | None = None,
 ) -> CompanionScene:
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
         persona = await _persona(db, user_id)
         await _check_policy(db, persona, origin)
         if await get_pending_scene_task(db, user_id) is not None:
-            if auto_activate:
-                persona = await advance_scene_switch(db, persona.user_id)
-                await _event(db, persona.user_id, "companion.scene.updated")
-                await db.commit()
-                raise SceneStateError("已有场景正在准备，之前的自动切换已撤销；请等待完成或取消任务后重试")
             raise SceneStateError("已有场景正在准备，请等待完成或取消该任务")
         if origin == SceneOrigin.ONBOARDING.value and await db.scalar(
             select(CompanionScene.id).where(CompanionScene.user_id == user_id).limit(1),
@@ -239,8 +185,6 @@ async def _new_scene(
             raise SceneStateError("初始场景已准备，不重复创建")
         if origin == SceneOrigin.LLM.value:
             await _consume_llm_quota(db, user_id)
-        if auto_activate:
-            persona = await advance_scene_switch(db, persona.user_id)
         row = CompanionScene(
             user_id=user_id,
             status=SceneStatus.PENDING.value,
@@ -254,8 +198,6 @@ async def _new_scene(
             ),
             target_size_json=SCENE_IMAGE_SIZE.model_dump_json(),
             reference_image=reference_image or "",
-            auto_activate=auto_activate,
-            switch_version=persona.scene_switch_version,
         )
         db.add(row)
         await db.flush()
@@ -270,14 +212,12 @@ async def schedule_scene_generation(
     origin: str,
     notes: str | None = None,
     reference_image: bytes | None = None,
-    auto_activate: bool = False,
 ) -> CompanionScene:
     row = await _new_scene(
         user_id,
         origin=origin,
         notes=notes or "",
         source=SceneSource.GENERATED.value,
-        auto_activate=auto_activate,
         reference_image=await _prepare_reference_image(reference_image) if reference_image is not None else None,
     )
     _launch_task(row.id, user_id)
@@ -294,7 +234,6 @@ async def schedule_scene_prompt(
         origin=SceneOrigin.USER_REQUEST.value,
         notes=notes or "",
         source=SceneSource.USER_UPLOAD.value,
-        auto_activate=False,
     )
 
 
@@ -323,7 +262,6 @@ async def regenerate_scene(user_id: int, scene_id: int) -> CompanionScene:
             row.status = SceneStatus.PENDING.value
             row.error = None
             row.origin = SceneOrigin.USER_REQUEST.value
-            row.auto_activate = False
         elif row.status == SceneStatus.READY.value and row.media_path:
             if not row.title.strip() or not row.description.strip():
                 raise SceneStateError("请先补全场景标题和描述")
@@ -395,12 +333,9 @@ async def discard_scene(user_id: int, scene_id: int) -> CompanionScene:
             row.regeneration_state_json = None
         elif row.status == "pending":
             row.status = SceneStatus.CANCELLED.value
-            row.auto_activate = False
             if row.generation_state_json:
                 cleanup_paths = ImageChainState.model_validate_json(row.generation_state_json).stored_paths()
                 row.generation_state_json = None
-            if row.switch_version == persona.scene_switch_version:
-                persona = await advance_scene_switch(db, persona.user_id)
         else:
             raise SceneStateError("该场景没有待取消的任务")
         await _event(db, persona.user_id, "companion.scene.updated", scene_id)
@@ -416,10 +351,9 @@ async def discard_scene(user_id: int, scene_id: int) -> CompanionScene:
 
 async def delete_scene(user_id: int, scene_id: int) -> None:
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
+        await lock_user_row(db, user_id)
         row = await _require_scene(db, user_id, scene_id)
         persona = await _persona(db, user_id)
-        if persona.active_scene_id == scene_id:
-            raise SceneStateError("当前场景不能删除，请先启用其他场景")
         if row.status == "pending":
             raise SceneStateError("请先取消场景任务")
         if row.regeneration_status == "pending":
@@ -450,8 +384,6 @@ async def edit_scene_description(user_id: int, scene_id: int, description: Scene
             row.regeneration_stage = None
             row.regeneration_task_id = None
             row.regeneration_error = None
-        # 人工补全不兑现旧的自动切换；用户明确选择启用。
-        row.auto_activate = False
         row.title = description.title
         row.description = description.description
         row.status = SceneStatus.READY.value
@@ -593,17 +525,6 @@ async def _analyze(user_id: int, scene_id: int) -> None:
         row.reference_image = ""
         persona = await _persona(db, user_id)
         await _event(db, persona.user_id, "companion.scene.updated", scene_id)
-        can_activate = row.auto_activate and row.switch_version == persona.scene_switch_version
-        if can_activate:
-            try:
-                await _check_policy(db, persona, row.origin)
-                _validate_ready(user_id, row)
-            except SceneError:
-                can_activate = False
-        if can_activate:
-            persona = await set_active_scene(db, user_id, row.id)
-            row.activated_at = utc_now()
-            await _event(db, persona.user_id, "companion.scene.activated", scene_id)
         await enqueue_asset_cleanup(db, user_id, cleanup_paths)
         await db.commit()
     await cleanup_user_assets(user_id)
@@ -1015,7 +936,6 @@ async def schedule_initial_scene(user_id: int) -> SceneSnapshot | None:
             user_id,
             origin=SceneOrigin.ONBOARDING.value,
             notes=notes,
-            auto_activate=True,
         )
         return SceneSnapshot.model_validate(row)
     except SceneStateError as exc:

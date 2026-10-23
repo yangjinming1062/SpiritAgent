@@ -11,7 +11,7 @@ import { $postsHasUnread } from '@/modules/posts'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import { triggerHaptic } from '@/shared/lib/haptics'
-import { BookOpen, type IconComponent, MessageSquareText, Settings, Sparkles, Users } from '@/shared/lib/icons'
+import { BookOpen, type IconComponent, MessageSquareText, Settings, Sparkles, Users, Video } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
@@ -23,7 +23,8 @@ const NAV_ENTRIES: ReadonlyArray<{ icon: IconComponent; id: Exclude<AppPage, 'se
   { icon: MessageSquareText, id: 'chat' },
   { icon: Users, id: 'companion' },
   { icon: Sparkles, id: 'posts' },
-  { icon: BookOpen, id: 'diary' }
+  { icon: BookOpen, id: 'diary' },
+  { icon: Video, id: 'visuals' }
 ]
 
 export function MainRail({

@@ -27,7 +27,6 @@ from runtime.tools.tool_result_classification import file_mutation_result_landed
 from workflows.chat.chat_emitter import Emitter
 from workflows.chat.message_sanitization import parse_tool_call_arguments
 from workflows.chat.native_memory import NativeMemory
-from workflows.companion_actions import ActionViewSnapshot
 
 logger = get_logger(__name__)
 
@@ -55,7 +54,6 @@ class _ToolDispatchContext:
     proactive_turn: bool
     user_message: str
     unavailable_tool_names: frozenset[str] = frozenset()
-    action_view: ActionViewSnapshot | None = None
 
 
 @dataclass
@@ -255,7 +253,6 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext, progress: _B
                     tool_call_id=tc["call_id"],
                     proactive_turn=ctx.proactive_turn,
                     user_message=ctx.user_message,
-                    action_view=ctx.action_view,
                 )
                 result_str = (
                     await ctx.delegate_executor(result, ctx.user_id, ctx.llm_config)

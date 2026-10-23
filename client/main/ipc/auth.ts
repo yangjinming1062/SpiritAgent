@@ -21,7 +21,6 @@ interface AuthBroadcasterDeps {
   ensureBackendSession: () => BackendSessionPort
   log: (message: string) => void
   rebuildTrayMenu: () => void
-  resetPlaybackClaims: () => void
 }
 
 export interface AuthBroadcaster {
@@ -34,8 +33,6 @@ export interface AuthBroadcaster {
 }
 
 export function createAuthBroadcaster(deps: AuthBroadcasterDeps): AuthBroadcaster {
-  let playbackClaimAccountId: null | string = null
-
   function isCurrentSession(snapshot: SessionSnapshotPort): boolean {
     return deps.ensureBackendSession().getSession()?.sessionId === snapshot.sessionId
   }
@@ -63,11 +60,6 @@ export function createAuthBroadcaster(deps: AuthBroadcasterDeps): AuthBroadcaste
 
     // 身份变化时配置同步丢弃上个身份未上云的待写；登录或换号后水合新身份。
     const nextAccountId = live?.accountId ?? null
-
-    if (playbackClaimAccountId !== nextAccountId) {
-      deps.resetPlaybackClaims()
-      playbackClaimAccountId = nextAccountId
-    }
 
     await deps.configSync.handleAuthUserChanged(nextAccountId)
 

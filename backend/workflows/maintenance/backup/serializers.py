@@ -24,11 +24,10 @@ CONVERSATION_TABLES = frozenset(
         "companion_topic_usages",
     },
 )
-DESKTOP_TABLES = frozenset({"desktop_video_sets", "desktop_video_actions", "desktop_video_states"})
-ACTION_LIBRARY_TABLES = DESKTOP_TABLES | {
+VISUALS_TABLES = frozenset({"visual_items", "visual_jobs", "visual_presentations"})
+ACTION_LIBRARY_TABLES = VISUALS_TABLES | {
     "companion_outfits",
     "action_definitions",
-    "action_sync_targets",
 }
 POST_TABLES = frozenset({"companion_posts", "companion_post_comments"})
 IDENTITY_TABLES = frozenset({"personas", "avatar_assets", "companion_character_cards"})
@@ -47,14 +46,15 @@ BACKUP_SECTIONS: dict[str, tuple[str, ...]] = {
     "memories": ("memories",),
     "posts": ("companion_posts", "companion_post_comments"),
     "diary": ("companion_diary_entries",),
+    # 衣柜、动作素材与影像共用同一组冻结引用，任一分组都会恢复整组。
     "wardrobe": tuple(table for table in TABLES if table in ACTION_LIBRARY_TABLES),
     "scenes": ("companion_scenes",),
-    "desktop_life": tuple(table for table in TABLES if table in ACTION_LIBRARY_TABLES),
+    "visuals": tuple(table for table in TABLES if table in ACTION_LIBRARY_TABLES),
     "automation": ("cron_jobs", "companion_intents"),
     "settings": ("user_model_configs", "custom_voices", "user_settings", "user_preferences"),
 }
 BACKUP_SECTION_IDS = tuple(BACKUP_SECTIONS)
-# 选中即整组恢复，不允许落成半个身份/会话/桌景。
+# 选中即整组恢复，不允许落成半个身份/会话/影像组。
 ATOMIC_SECTION_GROUPS: tuple[frozenset[str], ...] = (
     IDENTITY_TABLES,
     CONVERSATION_TABLES,
@@ -64,7 +64,7 @@ ATOMIC_SECTION_GROUPS: tuple[frozenset[str], ...] = (
 # 预检时身份三表成组写入的顺序：先头像，再角色卡与人设。
 IDENTITY_GROUP: tuple[str, ...] = ("avatar_assets", "companion_character_cards", "personas")
 IDENTITY_INCOMPLETE_REASON = "基础身份必须同时包含人设、头像与角色卡。"
-IDENTITY_BLOCKED_REASON = "目标现有桌景等仍引用身份，无法安全覆盖基础身份；请一并恢复这些类别，或先处理引用。"
+IDENTITY_BLOCKED_REASON = "目标现有影像等仍引用身份，无法安全覆盖基础身份；请一并恢复这些类别，或先处理引用。"
 IDENTITY_DEPENDENT_REASON = "缺少可映射的基础身份，无法恢复此类别。"
 
 
@@ -120,7 +120,6 @@ def _build_payload(table: str, raw: dict[str, Any], context: BackupContext) -> d
         if (
             value is not None
             and mapped is None
-            and table != "desktop_video_sets"
             and (contributor.strict_references or ref_table in context.id_map and key != "avatar_id")
         ):
             raise ValueError(f"Missing {ref_table} reference in {table}.{key}")

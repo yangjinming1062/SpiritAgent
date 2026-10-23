@@ -42,7 +42,7 @@ from infrastructure.text import resolve_prompt_text, safe_json_loads, utc_now
 from runtime.client_context import ChatRequestClientContext
 from runtime.presets import COMPANION_PRESET_ID
 from runtime.tools.domains import apply_search_tools_catalog
-from runtime.tools.presentation import ACTION_TOOL_NAMES
+from runtime.tools.presentation import VISUAL_TOOL_NAMES
 from runtime.tools.registry import REGISTRY, schema_name
 from runtime.tools.tool_guardrails import ToolCallGuardrailController
 from runtime.turn_ownership import conversation_lock
@@ -496,7 +496,7 @@ async def _run_chat_turn(
                         if artifact.bound_message_id == replacement.previous.id:
                             artifact.bound_message_id = None
                 if conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None:
-                    action_view = await build_action_view(db, user_id, lock=True)
+                    action_view = await build_action_view(user_id)
                     environment = await build_companion_environment_prompt(
                         db,
                         user_id,
@@ -504,7 +504,7 @@ async def _run_chat_turn(
                         action_view=action_view,
                     )
                     instruction_parts.append(environment)
-                    action_tools_not_ready = await unavailable_action_tool_names(db, user_id, action_view=action_view)
+                    action_tools_not_ready = await unavailable_action_tool_names(user_id, action_view=action_view)
                     if memory_scope is not None:
                         topic_context_at = utc_now()
                         topic_material, topic_cards = await load_topic_context(
@@ -538,11 +538,10 @@ async def _run_chat_turn(
             )
             available_by_name = {schema_name(schema): schema for schema in available_schemas}
             if companion_reply:
-                active_tool_names.update(ACTION_TOOL_NAMES & available_by_name.keys())
+                active_tool_names.update(VISUAL_TOOL_NAMES & available_by_name.keys())
             dispatch_ctx = replace(
                 dispatch_ctx,
                 unavailable_tool_names=frozenset(schemas_by_name.keys() - available_by_name.keys()),
-                action_view=action_view,
             )
             active_schemas = [available_by_name[name] for name in active_tool_names if name in available_by_name]
             # 正文交付前按链切换；每个槽位使用自己的模型、窗口和干净的请求副本。

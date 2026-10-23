@@ -5,7 +5,6 @@ import type {
   MemoryListRequest,
   PersonaEditableField
 } from '../../../shared/protocol'
-import { type DesktopResolution, isDesktopResolution } from '../desktop-media-geometry'
 import { isRecord } from '../is-record'
 
 export interface CompanionMemoryDraft {
@@ -128,58 +127,27 @@ export function isCompanionEditorUiSnapshot(value: unknown): value is CompanionE
   )
 }
 
-export interface DesktopLifeUiSnapshot {
-  libraryScrollTop?: number
-  selectedSetId: number | null
-  selectedActionId: number | null
-  creating: boolean
-  create: {
-    name: string
-    sceneId: string
-    sceneLabel: string
-    outfitId: string
-    source: 'ai' | 'image_upload' | 'video_upload'
-    feedback: string
-    requestId: string
-    targetDisplayId: number | null
-    targetResolution: DesktopResolution | null
-  }
-  feedback: Record<string, string>
-  design: { name: string; description: string; kind: 'loop' | 'once'; duration: number }
-  addActionOpen: boolean
+export interface VisualsUiSnapshot {
+  query: string
+  mediaKind: 'all' | 'image' | 'video'
+  source: string
+  page: number
+  selectedId: number | null
+  detailOpen: boolean
 }
 
-export function isDesktopLifeUiSnapshot(value: unknown): value is DesktopLifeUiSnapshot {
-  if (!isRecord(value) || !isRecord(value.create) || !isRecord(value.feedback) || !isRecord(value.design)) {
-    return false
-  }
-
-  const create = value.create
-  const design = value.design
-
+export function isVisualsUiSnapshot(value: unknown): value is VisualsUiSnapshot {
   return (
-    (value.libraryScrollTop === undefined ||
-      (typeof value.libraryScrollTop === 'number' &&
-        Number.isFinite(value.libraryScrollTop) &&
-        value.libraryScrollTop >= 0)) &&
-    [value.selectedSetId, value.selectedActionId].every(
-      id => id === null || (typeof id === 'number' && Number.isSafeInteger(id) && id > 0)
-    ) &&
-    typeof value.creating === 'boolean' &&
-    typeof value.addActionOpen === 'boolean' &&
-    ['name', 'sceneId', 'sceneLabel', 'outfitId', 'feedback', 'requestId'].every(
-      key => typeof create[key] === 'string'
-    ) &&
-    (create.targetDisplayId === null ||
-      (typeof create.targetDisplayId === 'number' && Number.isSafeInteger(create.targetDisplayId))) &&
-    (create.targetResolution === null || isDesktopResolution(create.targetResolution)) &&
-    (create.source === 'ai' || create.source === 'image_upload' || create.source === 'video_upload') &&
-    Object.values(value.feedback).every(text => typeof text === 'string') &&
-    typeof design.name === 'string' &&
-    typeof design.description === 'string' &&
-    (design.kind === 'loop' || design.kind === 'once') &&
-    typeof design.duration === 'number' &&
-    Number.isFinite(design.duration)
+    isRecord(value) &&
+    typeof value.query === 'string' &&
+    (value.mediaKind === 'all' || value.mediaKind === 'image' || value.mediaKind === 'video') &&
+    typeof value.source === 'string' &&
+    typeof value.page === 'number' &&
+    Number.isSafeInteger(value.page) &&
+    value.page >= 0 &&
+    (value.selectedId === null ||
+      (typeof value.selectedId === 'number' && Number.isSafeInteger(value.selectedId) && value.selectedId > 0)) &&
+    typeof value.detailOpen === 'boolean'
   )
 }
 

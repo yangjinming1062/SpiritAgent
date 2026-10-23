@@ -4,10 +4,10 @@ import {
   onSessionListChanged,
   onTopicFeedbackUpdated
 } from '@/modules/conversation'
-import { handleDesktopVideoEvent } from '@/modules/desktop-videos'
 import { onJournalEvent } from '@/modules/diary'
 import { onPostEvent } from '@/modules/posts'
 import { onSceneEvent } from '@/modules/scene'
+import { handleVisualEvent } from '@/modules/visuals'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { $auth } from '@/shared/store/auth'
 import { $gateway } from '@/shared/store/gateway'
@@ -71,13 +71,6 @@ export function handleGatewayEvent(event: GatewayEvent): void {
   switch (event.type) {
     case 'companion.topic_feedback.updated':
       onTopicFeedbackUpdated(event.payload)
-
-      break
-
-    case 'companion.desktop_video.updated':
-
-    case 'companion.desktop_video.play_requested':
-      handleDesktopVideoEvent(event.type, event.payload)
 
       break
 
@@ -186,8 +179,6 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
       break
 
-    case 'companion.scene.activated':
-
     case 'companion.scene.updated':
       onSceneEvent(event)
 
@@ -210,6 +201,23 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
     case 'companion.diary.deleted':
       onJournalEvent(event)
+
+      break
+
+    case 'companion.visual.updated':
+
+    case 'companion.visual.initial_requested':
+      handleVisualEvent(event.type, event.payload)
+
+      break
+
+    case 'companion.visual.play':
+      handleVisualEvent(event.type, event.payload)
+
+      break
+
+    case 'companion.visual.playback':
+      handleVisualEvent(event.type, event.payload)
 
       break
 

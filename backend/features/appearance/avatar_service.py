@@ -912,7 +912,7 @@ async def _prepare_fullbody_reference(
                 await db.scalar(
                     select(CompanionOutfit.description).where(
                         CompanionOutfit.user_id == user_id,
-                        CompanionOutfit.active.is_(True),
+                        CompanionOutfit.is_initial.is_(True),
                         CompanionOutfit.status == "ready",
                     ),
                 )
@@ -1236,7 +1236,6 @@ async def prepare_initial_fullbody(user_id: int, *, extraction_id: str) -> bool:
                     name="默认外观",
                     fullbody_url="",
                     status="ready",
-                    active=True,
                     is_initial=True,
                     source_json=OutfitSource(
                         identity_reference_path=avatar.seed_fullbody_url,
@@ -1268,7 +1267,7 @@ async def prepare_initial_fullbody(user_id: int, *, extraction_id: str) -> bool:
                     db,
                     user_id=user_id,
                     event_type="companion.outfit.updated",
-                    payload={"outfit_id": outfit.id, "worn": outfit.active},
+                    payload={"outfit_id": outfit.id},
                 )
             await db.commit()
     except BaseException:

@@ -155,12 +155,6 @@ class OutfitConfirmRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class OutfitSelectionRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    outfit_id: int = Field(gt=0, le=POSTGRES_INT4_MAX)
-
-
 class OutfitResponse(BaseModel):
     description_status: Literal["pending", "processing", "ready", "failed"] = "pending"
     description_error: str | None = None
@@ -170,7 +164,6 @@ class OutfitResponse(BaseModel):
     fullbody_url: str = ""
     # draft → ready | expired
     status: str = "draft"
-    active: bool = False
 
 
 class OutfitListResponse(BaseModel):

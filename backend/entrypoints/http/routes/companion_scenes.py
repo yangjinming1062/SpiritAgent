@@ -1,4 +1,4 @@
-"""伙伴场景资产与当前环境的 REST 端点。"""
+"""伙伴环境素材的 REST 端点；素材本身不表示当前呈现环境。"""
 
 from typing import Annotated
 
@@ -6,7 +6,6 @@ from fastapi import Body, Path, Query
 from features.companion.schemas import CompanionOperationResponse
 from features.scenes import http_use_cases as _scenes
 from features.scenes.schemas import (
-    SceneActivateRequest,
     SceneDescriptionRequest,
     SceneGenerateRequest,
     SceneImportRequest,
@@ -89,14 +88,6 @@ async def delete_scene_route(
     scene_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
 ) -> CompanionOperationResponse:
     return await _scenes.delete_scene_route(user_id=user.id, scene_id=scene_id)
-
-
-@router.put(
-    "/scenes/current",
-    response_model=SceneResponse,
-)
-async def post_scene_activate(user: CurrentUser, db: DbSession, body: SceneActivateRequest) -> SceneResponse:
-    return await _scenes.post_scene_activate(user_id=user.id, db=db, body=body)
 
 
 @router.patch(

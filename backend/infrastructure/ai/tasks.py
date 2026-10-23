@@ -17,7 +17,7 @@ class AiTaskKey(StrEnum):
     appearance = "appearance"
     outfit = "outfit"
     scene = "scene"
-    desktop_life = "desktop_life"
+    visuals = "visuals"
     speech_input = "speech_input"
     companion_voice = "companion_voice"
     speech_preview = "speech_preview"
@@ -153,13 +153,13 @@ AI_TASKS: tuple[AiTaskDefinition, ...] = (
         },
     ),
     _task(
-        AiTaskKey.desktop_life,
-        "桌面生活",
-        "桌面生活",
+        AiTaskKey.visuals,
+        "影像",
+        "影像",
         {
-            "llm": ("桌面动作提案评审", "生活构图与运动设计", "生成与导入视频的成品及身份检查"),
-            "image_gen": ("桌面生活起始画面",),
-            "video_gen": ("桌面生活视频", "夜间规划制作的生活视频"),
+            "llm": ("动作素材评审", "组合构图与运动设计", "影像成品及身份检查", "成品画面命名与着装识别"),
+            "image_gen": ("影像起始画面",),
+            "video_gen": ("影像视频", "夜间规划制作的影像视频"),
         },
     ),
     _task(AiTaskKey.speech_input, "语音", "输入转写", {"stt": ("桌面与手机的语音输入转写",)}),

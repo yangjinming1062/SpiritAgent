@@ -16,15 +16,15 @@
 | 改动 | 入口 |
 |---|---|
 | 宿主与独立窗口 | [sprite-entry.tsx](sprite-entry.tsx)、[bootstrap/sprite.tsx](app/bootstrap/sprite.tsx)、[bootstrap/surface.tsx](app/bootstrap/surface.tsx) |
-| 桌面模式与生活视频 | [bootstrap/surface.tsx](app/bootstrap/surface.tsx)、[windows/desktop](app/windows/desktop/)、[desktop-videos](modules/desktop-videos/) |
+| 桌面模式与影像播放 | [bootstrap/surface.tsx](app/bootstrap/surface.tsx)、[windows/desktop](app/windows/desktop/)、[visuals](modules/visuals/) |
 | 网关与账户 | [gateway-runtime.ts](app/runtime/gateway-runtime.ts)、[gateway-host-runtime.ts](app/runtime/gateway-host-runtime.ts)、[gateway-event-router.ts](app/runtime/gateway-event-router.ts)、[account-lifecycle.ts](app/workflows/account-lifecycle.ts) |
 | 引导、激活与启动失败 | [onboarding](app/onboarding/) |
 | 角色、动作、拖拽与空间 | [modules/character](modules/character/)、[sprite-stage.tsx](app/components/sprite-stage.tsx) |
-| 衣柜静态预览、设计与穿着 | [衣柜页](app/features/appearance/appearance-page.tsx)、[造型详情](app/features/appearance/outfit-detail.tsx)、[衣柜状态](modules/character/wardrobe/wardrobe-store.ts) |
+| 衣柜静态造型素材 | [衣柜页](app/features/appearance/appearance-page.tsx)、[造型详情](app/features/appearance/outfit-detail.tsx)、[衣柜状态](modules/character/wardrobe/wardrobe-store.ts)、[窗口造型来源](modules/character/wardrobe/stage-source.ts) |
 | 公共对话、设置与状态交接 | [conversation-page.tsx](app/features/conversation/conversation-page.tsx)、[app-settings.tsx](app/features/settings/app-settings.tsx)、[app-ui-state.ts](app/workflows/app-ui-state.ts) |
 | 对话与音频联动 | [modules/conversation](modules/conversation/)、[modules/speech](modules/speech/)、[conversation-speech.ts](app/workflows/conversation-speech.ts) |
 | 动态、日记与记忆页 | [modules/posts](modules/posts/)、[modules/diary](modules/diary/)、[memory-section.tsx](app/features/companion/memory-section.tsx) |
-| 场景与背景 | [scene-store.ts](modules/scene/scene-store.ts) |
+| 环境素材、动作与影像页 | [scene-store.ts](modules/scene/scene-store.ts)、[动作页](app/features/actions/actions-page.tsx)、[影像页](app/features/visuals/visuals-page.tsx)、[影像状态](modules/visuals/) |
 | 文案与主题 | [strings/dictionaries](shared/strings/dictionaries/)、[shared/panel](shared/panel/)；`en` 按 `zh` 类型校验，界面外壳与显示件文案取自字典，引导问答、人格预设与模块兜底失败文案仍是硬编码中文 |
 | 通用显示件 | [shared/panel](shared/panel/)（`Spinner`/`LoadingBlock`/`EmptyState`/`ErrorBanner`/`SaveStatus`/`ActionRow`/`Badge`/`Pill`/`Disclosure`/`Placeholder`）、[shared/components](shared/components/)（`CopyButton`/`ImageLightboxButton`/`ReferenceImageField`）；空态、加载态、失败态、确认与焦点约束由这些件统一，业务页只提供文案与回调 |
 | 跨端文案与错误归类 | 根 [shared](../../shared/)（`ui-copy.ts`、`error-classification.ts`）；两端的中性措辞与失败归类只在此定义，客户端与手机端共用 |
@@ -73,15 +73,15 @@
 
 [desktop-companion-activity.ts](app/workflows/desktop-companion-activity.ts) 合并同一轮变化后转发完整活动载荷；账户或承载代次变化重发，失败允许同值重试。工具派发归主进程，桌面表面停用精灵空间行为。
 
-[desktop-video-wallpaper.ts](app/windows/desktop/desktop-video-wallpaper.ts) 消费显式启用的独立套装，负责屏幕尺寸上报、播放认领与回执；启动播放通过现有接口恢复安静相伴，完成标记按账户和主进程鉴权会话保存，窗口重建继续保留伙伴当前选择。进入桌面及衣柜、场景库变化不触发套装创建或制作。套装和当前成品、制作草稿的语义见[桌面生活契约](../../docs/PROTOCOL.md#桌面生活视频与模式隔离)。上传入口仅用于服务端允许的首次素材导入，使用套装能力与现有版本守卫。静态首帧只使用所属套装的确认图片，不能回退到当前场景库图片。
+[desktop-visual-wallpaper.ts](app/windows/desktop/desktop-visual-wallpaper.ts) 消费影像呈现状态与播放指令，负责播放认领与回执；桌面播放完整影像，图片即持续画面，视频按动作 `clip_kind` 循环或短时播放后返回保留的持续画面。`queued` 只表示受理，实际回执才更新呈现事实，回执区分完整图片、完整视频与窗口静态投影。播放缓存与预加载按稳定 ID、成品版本与剥除签名后的不可变路径识别，签名 URL 不作持久键。影像、制作与播放账本语义见[影像呈现契约](../../docs/PROTOCOL.md#影像成品与模式隔离)。
 
-[管理页](app/features/desktop-life/desktop-life-page.tsx) 的新建入口及参考选择只更新账户本地创建草稿，显式提交所选制作方式后才请求建立套装；上传先选择文件，取消不创建套装或回退到 AI 制作。只有 AI 创建选择并提交素材库参考；上传创建只提交文件来源与显示器尺寸，后续续传由 `can_upload_source` 决定。素材加载结果由各自 store 持有，迟到回写守卫账户与请求代次。[视频修改](app/features/desktop-life/desktop-life-refinement.tsx) 独立持有预览检查与提交状态，按素材和套装版本校验制作起点。[预览](app/features/desktop-life/desktop-life-preview.tsx) 的草稿图片实例跟随完整资源 URL，视频保留同一资产的播放身份；图片确认资格来自实际草稿图的加载事件，当前成品封面回退不能解锁确认。页面交互与恢复体验归 [DESIGN](../../docs/DESIGN.md#桌面生活视频)。
+[影像页](app/features/visuals/visuals-page.tsx) 展示合格成品与独立的制作区：成品卡给出封面、名称、媒体类型与来源素材摘要，制作区呈现工作项状态并提供暂停、继续、取消与重试。详情含完整预览、组合来源、实际尺寸与制作状态，支持手动播放与附修改要求的重做；重做期间继续展示当前成品。库内预览不产生播放回执。素材被删除的影像仍展示冻结来源与成品。空状态显示真实素材准备情况与联系伙伴入口，不伪造伙伴台词。筛选按名称、媒体类型与来源素材，支持分页；页面状态经 UI 快照参与视图交接。
 
-衣柜、窗口背景与桌面背景的库页共用 [asset-library-header.tsx](app/components/asset-library-header.tsx) 的设置卡片、搜索与创建工具栏，以及 [asset-library-card.tsx](app/components/asset-library-card.tsx) 的紧凑卡片和按可用宽度排列的网格。各页面提供状态与操作，公共组件不发业务请求。衣柜与桌面背景在页面所有者内按名称和描述即时筛选本地列表，进入详情或创建页再返回保留筛选；窗口背景沿用服务端搜索与分页，搜索需提交。卡片预览按素材类型选档位展示：竖版立绘 4/5，宽幅素材 16/9，均不裁切原图。
+衣柜与环境素材的库页共用 [asset-library-header.tsx](app/components/asset-library-header.tsx) 的设置卡片、搜索与创建工具栏，以及 [asset-library-card.tsx](app/components/asset-library-card.tsx) 的紧凑卡片和按可用宽度排列的网格。各页面提供状态与操作，公共组件不发业务请求。衣柜在页面所有者内按名称和描述即时筛选本地列表，进入详情或创建页再返回保留筛选；环境沿用服务端搜索与分页，搜索需提交。卡片预览按素材类型选档位展示：竖版立绘 4/5，宽幅素材 16/9，均不裁切原图。
 
-桌景管理按背景库、独立创建页和统一工作台拆分；动作编辑区只消费工作台选中项，不维护独立返回层级。页面复用现有 UI 快照交接选中项、创建草稿与库页滚动位置；只有列表成功刷新后才修正已删除的选中项，失败保留当前页面。提交锁与错误按背景、动作或创建入口归属，页面选择代次守卫迟到回执，制作完成不抢选或重新打开已离开的页面。尚未产出动作的设计提案在制作区常驻展示状态与原因，产出动作后自动消失。画幅确认一次只展示一个，并发冲突按顺序排队。弹窗的焦点约束与归还由桌景模态外壳管理。桌面壁纸只消费状态读取错误，套装库读取失败只影响管理页，两者互不牵连。
+影像页按库、制作区与详情拆分；动作页独立维护动作语义定义与评审状态，不展示任何制作进度。页面复用 UI 快照交接筛选、选中项与滚动位置；迟到结果受账户与请求代次守卫，制作完成不抢选或重新打开已离开的页面。
 
-[背景播放器](app/windows/desktop/desktop-background-entry.tsx) 双缓冲等待实际呈现的首帧；共同基准且允许自然衔接的短动作在循环接点切入，其余画面及上传视频的循环接点使用淡化。短动作返回仍有效的保留循环，套装或素材替换后不能返回旧画面。管理预览、视频和过渡帧共用 [画幅布局](../shared/desktop-media-geometry.ts)，按实际媒体与视口确定裁切或居中内容区域，完整显示时让出模糊底层；库页缩略图完整展示原图。播放规则归 [PIPELINE](../../docs/PIPELINE.md#桌面生活视频)。媒体加载失败保留当前画面，按主进程暂停状态控制播放并回收媒体 URL。套装启用前先预加载安静相伴，成功后才请求切换；主进程媒体桥同时守卫账户和选中路径。
+[背景播放器](app/windows/desktop/desktop-background-entry.tsx) 双缓冲等待实际呈现的首帧；共同基准且允许自然衔接的短动作在循环接点切入，其余画面及上传视频的循环接点使用淡化。短动作返回仍有效的保留循环，影像或素材替换后不能返回旧画面。管理预览、视频和过渡帧共用 [画幅布局](../shared/desktop-media-geometry.ts)，按实际媒体与视口确定裁切或居中内容区域，完整显示时让出模糊底层；库页缩略图完整展示原图。播放规则归 [PIPELINE](../../docs/PIPELINE.md#组合影像制作)。媒体加载失败保留当前画面，按主进程暂停状态控制播放并回收媒体 URL。切换前先预加载持续画面，成功后才请求切换；主进程媒体桥同时守卫账户和选中路径。
 
 桌面根组件持有窗口与会话状态，悬浮底栏组合外部应用 Dock、屏幕居中的伙伴头像和固定产品导航；底栏四个导航入口与包含聊天的内部窗口类型分开定义，聊天由头像打开，头像上方的待读气泡读取会话待读消息并经同一入口打开对话。桌面布局不跨启动保留任何状态，内部窗口集合仅在本次会话有效，进入桌面不恢复上次打开的窗口。桌面彩色 SVG 集中于 [assets/desktop](../assets/desktop/)，通过 Vite `BASE_URL` 加载；窗口模式导航使用 Tabler 图标。右下角控制入口独立展开状态与桌面操作。主进程与 renderer 共用 [desktop-layout.ts](../shared/desktop-layout.ts) 的尺寸，左右区域等宽并按内容限宽，溢出区域各自滚动。底板装饰与向上展开的弹层分离，避免 backdrop-filter、变换或滚动容器裁切菜单；头像光环与未读声波使用独立装饰层，仅动画缩放和透明度，不参与命中或改变布局，声波不消费录音或音频分析状态。交互区域只覆盖实际底栏、头像、待读气泡、按钮、弹层及连接间隙，透明空白继续穿透。
 
@@ -93,7 +93,7 @@
 
 ### 状态与动作
 
-[companion-store.ts](modules/character/companion-store.ts) 管表现优先级，瞬态恢复、声音与程序反馈仍由原状态机管理。窗口和侧边伙伴使用衣柜当前穿着的静态立绘，实际显隐从主进程快照读取，不使用页面可见性推测舞台资格。桌景动作由独立桌面生活播放器与回执链管理。
+[companion-store.ts](modules/character/companion-store.ts) 管表现优先级，瞬态恢复、声音与程序反馈仍由原状态机管理。窗口和侧边伙伴使用当前影像冻结的静态立绘，实际显隐从主进程快照读取，不使用页面可见性推测舞台资格。影像播放由独立桌面播放器与回执链管理。
 
 ### 打扰与自主行为
 
@@ -156,7 +156,7 @@ speech 持唯一播放队列与台词合成，点播和自动连播共用队列�
 
 ## 静态造型呈现
 
-衣柜列表与详情只管理静态全身图，确认与穿着分开。列表水合和事件刷新不开始付费制作；桌景素材选择不切换穿着，页面状态与草稿按账户保存。
+衣柜列表与详情只管理静态全身图与描述。列表水合和事件刷新不开始制作，页面状态与草稿按账户保存。窗口模式不读取“当前穿着”，造型与环境均来自当前影像的冻结组合。
 
 [OutfitStage](modules/character/rendering/outfit-stage.tsx) 为精灵窗与侧边伙伴共用的静态造型层，解码并读取 alpha 后才切换可见图；尚无可用图片时由同一组件给出准备中、无造型或加载失败的蛋形兜底与重试入口。当前图片加载失败时保留旧画面并提供重试；账户变化立即隔离旧画面与迟到回写。
 

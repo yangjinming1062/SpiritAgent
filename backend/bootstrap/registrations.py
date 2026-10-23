@@ -10,8 +10,8 @@ from entrypoints.tools.builtin.image_generation_tool import register as register
 from entrypoints.tools.builtin.scene_tool import register as register_scene
 from entrypoints.tools.builtin.send_message_tool import register as register_send_message
 from entrypoints.tools.builtin.video_generation_tool import register as register_video_generation
+from entrypoints.tools.builtin.visual_tool import register as register_visuals
 from entrypoints.tools.builtin.web_tools import register as register_web
-from features.action_library.ports import configure_action_library_ports
 from features.appearance.character_card import character_snapshot_is_current, render_character_identity
 from features.appearance.completion import set_character_ready_handler
 from features.appearance.queries import active_identity_reference, appearance_readiness, confirmed_media_reference_paths
@@ -20,14 +20,6 @@ from features.companion.appearance_ports import set_appearance_readiness_reader
 from features.companion.intents import invalidate_cron_companion_intents
 from features.configuration.queries import user_ai_config
 from features.conversation.reply_media import deliver_video_result
-from features.desktop_life.generation import set_desktop_update_handler
-from features.desktop_life.ports import (
-    set_desktop_action_design_handler,
-    set_desktop_proposal_list_handler,
-    set_desktop_proposal_query_handler,
-    set_desktop_set_created_handler,
-)
-from features.desktop_life.video_queue import inspect_video_queue_owner as inspect_desktop_video_owner
 from features.journal.journal_indexes import delete_diary_record
 from features.media.delivery import set_video_result_handler
 from features.media.reference_reader import MediaReferenceReaders, set_media_reference_readers
@@ -35,6 +27,8 @@ from features.media.video_jobs import inspect_video_queue_owner as inspect_media
 from features.media.video_queue.ports import configure_video_queue_ports
 from features.media.video_queue.service import cancel_video_attempt
 from features.memory.diary_hooks import set_diary_delete_handler
+from features.visuals.ports import configure_visual_hooks
+from features.visuals.video_queue import inspect_visual_video_owner
 from infrastructure.ai.configuration_reader import set_configuration_reader
 from infrastructure.ai.providers.base import ServiceType
 from infrastructure.ai.providers.custom.chat import CustomChatProvider
@@ -72,18 +66,10 @@ from runtime.desktop.jsonrpc import configure_event_serializer
 from runtime.events.contracts import COMPANION_TURN_EVENT
 from runtime.events.loop import register_internal_event_handler
 from runtime.tools.registry import REGISTRY
-from workflows.action_library import (
-    action_source_reader,
-    action_variants_reader,
-    design_shared_desktop_action,
-    schedule_action_definition,
-    shared_desktop_proposal,
-    shared_desktop_proposals,
-    synchronize_desktop_set,
-    update_desktop_actions,
-)
 from workflows.automation.companion_turns import execute_companion_turn
 from workflows.onboarding.character_ready import complete_character_initialization
+from workflows.visual_decisions import initialize_visuals, schedule_visual_selection
+from workflows.visual_planning import visual_material_links, visual_planning_context
 
 from bootstrap.assets import register_asset_contributions
 
@@ -123,6 +109,7 @@ def register_tools() -> None:
     memory_tools.register_memory_tools(REGISTRY)
     search_tools_tool.register(REGISTRY)
     register_actions(REGISTRY)
+    register_visuals(REGISTRY)
     register_companion_wait(REGISTRY)
     register_image_generation(REGISTRY)
     register_scene(REGISTRY)
@@ -135,6 +122,7 @@ def register_tools() -> None:
 
 def register_internal_event_handlers() -> None:
     register_internal_event_handler(COMPANION_TURN_EVENT, execute_companion_turn)
+    register_internal_event_handler("companion.visual.initial_requested", initialize_visuals)
 
 
 def wire_domain_hooks() -> None:
@@ -148,7 +136,7 @@ def wire_domain_hooks() -> None:
     configure_video_queue_ports(
         {
             "media": inspect_media_video_owner,
-            "desktop": inspect_desktop_video_owner,
+            "visuals": inspect_visual_video_owner,
         },
         cancel_video_attempt,
     )
@@ -165,17 +153,11 @@ def wire_domain_hooks() -> None:
         ),
     )
     set_character_ready_handler(complete_character_initialization)
-    configure_action_library_ports(
-        source_reader=action_source_reader,
-        variant_reader=action_variants_reader,
-        definition_scheduler=schedule_action_definition,
-        target_sync_handler=synchronize_desktop_set,
+    configure_visual_hooks(
+        planning_reader=visual_planning_context,
+        ready_handler=schedule_visual_selection,
+        link_reader=visual_material_links,
     )
-    set_desktop_action_design_handler(design_shared_desktop_action)
-    set_desktop_proposal_query_handler(shared_desktop_proposal)
-    set_desktop_proposal_list_handler(shared_desktop_proposals)
-    set_desktop_set_created_handler(synchronize_desktop_set)
-    set_desktop_update_handler(update_desktop_actions)
     set_appearance_readiness_reader(appearance_readiness)
 
 

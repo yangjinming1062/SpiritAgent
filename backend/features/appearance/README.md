@@ -1,6 +1,6 @@
 # 外观
 
-拥有头像、全身身份、角色卡、衣柜及其生成、上传、采纳和穿着状态。参考与产物归 [PIPELINE](../../../docs/PIPELINE.md#身份造型与参考输入)，跨端状态归 PROTOCOL；公共媒体制作、场景和动作分别归所属模块。
+拥有头像、全身身份、角色卡、衣柜造型素材及其生成、上传与采纳。参考与产物归 [PIPELINE](../../../docs/PIPELINE.md#身份造型与参考输入)，跨端状态归 PROTOCOL；公共媒体制作、场景和动作分别归所属模块。
 
 ## 关键入口
 
@@ -8,7 +8,7 @@
 |---|---|
 | [avatar_service.py](avatar_service.py) | 头像、全身草稿/候选、身份确认与默认外观 |
 | [character_card.py](character_card.py)、[character_extraction.py](character_extraction.py) | 角色卡读写、修订守卫、分部特征提取与恢复 |
-| [outfit_service.py](outfit_service.py) | 外观草稿、生成、自备图、确认、穿着、删除与描述补全 |
+| [outfit_service.py](outfit_service.py) | 外观草稿、生成、自备图、确认、删除与描述补全 |
 | [prompt_assembly.py](prompt_assembly.py)、[visual_identity.py](visual_identity.py) | 外观指令和聊天/动态出镜身份与参考装配 |
 | [queries.py](queries.py)、[views.py](views.py) | 跨模块冻结身份与外观快照、对外响应 |
 | [lifecycle.py](lifecycle.py)、[backup.py](backup.py)、[asset_references.py](asset_references.py) | 任务登记、模块备份与资产引用贡献 |
@@ -26,7 +26,7 @@
 
 ## 后台任务与初始资产
 
-确认入柜只发布静态造型，首套默认造型在后台透明准备完成时设为当前穿着。角色卡就绪后仅协调初始场景；描述任务按已有进度恢复，不创建动作或视频。
+确认入柜只发布静态造型素材，首套默认造型在后台透明准备完成时登记为初始造型素材。角色卡就绪后仅协调初始场景；描述任务按已有进度恢复，不创建动作或视频。
 
 维护期间收敛已提交结果并落盘，暂停后续付费步骤；角色准备、描述失败及备份恢复各按所属状态处理，不因读取衣柜或启动而重复付费。
 

@@ -12,11 +12,11 @@ from features.conversation.client_contracts import (
 from features.conversation.http_contracts import CommandDispatchResult
 from features.conversation.replies import VoiceBubbleView
 from features.conversation.schemas import UndoAnchor
-from features.desktop_life.schemas import DesktopVideoPlayCommand
 from features.journal.schemas import DiaryEntryResponse
 from features.media.video_queue.contracts import VideoQueueInfo
 from features.posts.schemas import PostCommentResponse, PostResponse
 from features.topics.schemas import TopicFeedbackSnapshot
+from features.visuals.schemas import PlaybackReceiptKind, PlaybackStatus, VisualPlayCommand
 from pydantic import BaseModel, JsonValue
 
 from entrypoints.desktop.contracts import EmptyResult
@@ -187,13 +187,10 @@ class VoiceUpdatedEvent(BaseModel):
 
 class SceneChangedEvent(BaseModel):
     scene_id: int | None = None
-    version: int
-    switch_version: int
 
 
 class OutfitChangedEvent(BaseModel):
     outfit_id: int
-    worn: bool
 
 
 class CharacterCardEvent(BaseModel):
@@ -202,8 +199,14 @@ class CharacterCardEvent(BaseModel):
     status: Literal["pending", "running", "ready", "failed"]
 
 
-class DesktopVideoUpdatedEvent(BaseModel):
+class VisualUpdatedEvent(BaseModel):
     version: int
+
+
+class VisualPlaybackEvent(BaseModel):
+    play_id: str
+    status: PlaybackStatus
+    receipt_kind: PlaybackReceiptKind | None = None
 
 
 class VideoQueueEvent(BaseModel):
@@ -281,11 +284,13 @@ EVENT_CONTRACTS: dict[str, EventContract] = {
     "companion.mood": EventContract(MoodEvent, "all", "transient"),
     "companion.voice.updated": EventContract(VoiceUpdatedEvent, "desktop", "resource"),
     "companion.scene.updated": EventContract(SceneChangedEvent, "all", "resource"),
-    "companion.scene.activated": EventContract(SceneChangedEvent, "all", "resource"),
     "companion.outfit.updated": EventContract(OutfitChangedEvent, "all", "resource"),
     "companion.character_card.updated": EventContract(CharacterCardEvent, "all", "resource"),
-    "companion.desktop_video.updated": EventContract(DesktopVideoUpdatedEvent, "desktop", "resource"),
-    "companion.desktop_video.play_requested": EventContract(DesktopVideoPlayCommand, "desktop", "transient"),
+    "companion.visual.updated": EventContract(VisualUpdatedEvent, "all", "resource"),
+    "companion.action.updated": EventContract(EmptyResult, "all", "resource"),
+    "companion.visual.initial_requested": EventContract(EmptyResult, "all", "resource"),
+    "companion.visual.play": EventContract(VisualPlayCommand, "desktop", "transient"),
+    "companion.visual.playback": EventContract(VisualPlaybackEvent, "all", "resource"),
     "video_gen.queue": EventContract(VideoQueueEvent, "all", "resource"),
     "video_gen.completed": EventContract(VideoCompletedEvent, "all", "resource"),
     "video_gen.failed": EventContract(VideoFailedEvent, "all", "resource"),

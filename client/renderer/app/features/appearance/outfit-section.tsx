@@ -9,7 +9,6 @@ import {
   $outfitPolicy,
   $outfits,
   $wardrobeStatus,
-  activateOutfit,
   deleteOutfit,
   GenerationActionsGroup,
   hydrateAvatarSeeds,
@@ -54,14 +53,13 @@ import { $appearanceUi, $appearanceUiImportRevision, updateAppearanceUi } from '
 const CARD_ACTION_CLASS =
   'inline-flex h-6 items-center justify-center rounded-lg bg-fill-faint px-1.5 text-muted transition hover:bg-fill-hover hover:text-strong disabled:pointer-events-none disabled:opacity-40'
 
-// 着装是衣柜页的首层资产；选择着装只切换静态预览，穿着由明确操作完成。
+// 衣柜是静态造型素材库：列表与详情只管理全身图与描述，不涉及穿着与呈现选择。
 interface OutfitSectionProps {
   onSelectOutfit: (id: number) => void
-  onMaterialReady?: (id: number) => void
   search: AssetLibrarySearch
 }
 
-export function OutfitSection({ onSelectOutfit, onMaterialReady, search }: OutfitSectionProps): React.JSX.Element {
+export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): React.JSX.Element {
   const outfits = useStore($outfits)
   const wardrobeStatus = useStore($wardrobeStatus)
   const outfitPolicy = useStore($outfitPolicy)
@@ -88,7 +86,6 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady, search }: Outfi
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const messagesRef = useRef<HTMLDivElement>(null)
   const begin = useAsyncGuard()
-  const onMaterialReadyRef = useLatestRef(onMaterialReady)
 
   useLayoutEffect(() => {
     const element = libraryRef.current
@@ -138,20 +135,9 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady, search }: Outfi
         designing: false,
         text: '',
         draftId: null,
-        selectedOutfitId: onMaterialReadyRef.current ? null : id
+        selectedOutfitId: id
       })
-      const confirmedUi = $appearanceUi.get()
-      const importAtConfirmation = $appearanceUiImportRevision.get()
-      const isLive = begin()
-      void hydrateWardrobe().then(() => {
-        if (
-          isLive() &&
-          $appearanceUi.get() === confirmedUi &&
-          $appearanceUiImportRevision.get() === importAtConfirmation
-        ) {
-          onMaterialReadyRef.current?.(id)
-        }
-      })
+      void hydrateWardrobe()
     },
     id => updateAppearanceUi({ draftId: id })
   )
@@ -683,10 +669,8 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady, search }: Outfi
 
             <AssetLibraryGrid>
               {visibleOutfits.map(outfit => {
-                const statusLabel = outfit.active ? t.wearing : (t.statusLabels[outfit.status] ?? '')
+                const statusLabel = t.statusLabels[outfit.status] ?? ''
                 const canEdit = outfit.status === 'draft'
-                const canDelete = !outfit.active
-                const canWear = outfit.status === 'ready'
 
                 const continueDesign = (): void => {
                   if (session.busy) {
@@ -708,38 +692,19 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady, search }: Outfi
 
                 return (
                   <AssetLibraryCard
-                    currentLabel={outfit.active ? t.wearing : undefined}
                     description={outfit.description || t.noDescription}
                     footer={
                       <>
                         <span className="min-w-0 flex-1 truncate text-[10px] text-faint">
-                          {statusLabel || (canWear ? t.saved : '')}
+                          {statusLabel || (outfit.status === 'ready' ? t.saved : '')}
                         </span>
                         <button
                           className={BTN_SUBTLE}
-                          disabled={busyId === outfit.id || (outfit.active && !onMaterialReady)}
-                          onClick={() => {
-                            if (onMaterialReady && outfit.status === 'ready') {
-                              onMaterialReady(outfit.id)
-                            } else if (canWear && !outfit.active) {
-                              withBusy(outfit.id, async () => {
-                                await activateOutfit(outfit.id)
-                              })
-                            } else {
-                              openOutfit()
-                            }
-                          }}
+                          disabled={busyId === outfit.id}
+                          onClick={openOutfit}
                           type="button"
                         >
-                          {onMaterialReady && outfit.status === 'ready'
-                            ? t.chooseOutfit
-                            : outfit.active
-                              ? t.wearing
-                              : canEdit
-                                ? t.actions.continueDesign
-                                : canWear
-                                  ? t.wear
-                                  : t.openDetails}
+                          {canEdit ? t.actions.continueDesign : t.openDetails}
                         </button>
 
                         <Disclosure
@@ -785,29 +750,27 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady, search }: Outfi
                                 {t.retryDescription}
                               </button>
                             )}
-                            {canDelete && (
-                              <button
-                                aria-label={t.actions.delete}
-                                className={cn(CARD_ACTION_CLASS, 'hover:text-danger-fg')}
-                                disabled={busyId === outfit.id}
-                                onClick={() => {
-                                  void confirmAction({
-                                    title: t.actions.deleteTitle,
-                                    description: outfit.name,
-                                    confirmLabel: t.actions.delete,
-                                    variant: 'destructive'
-                                  }).then(confirmed => {
-                                    if (confirmed) {
-                                      withBusy(outfit.id, () => removeOutfit(outfit.id))
-                                    }
-                                  })
-                                }}
-                                title={t.actions.deleteTitle}
-                                type="button"
-                              >
-                                <Trash2 className="size-3.5" />
-                              </button>
-                            )}
+                            <button
+                              aria-label={t.actions.delete}
+                              className={cn(CARD_ACTION_CLASS, 'hover:text-danger-fg')}
+                              disabled={busyId === outfit.id}
+                              onClick={() => {
+                                void confirmAction({
+                                  title: t.actions.deleteTitle,
+                                  description: outfit.name,
+                                  confirmLabel: t.actions.delete,
+                                  variant: 'destructive'
+                                }).then(confirmed => {
+                                  if (confirmed) {
+                                    withBusy(outfit.id, () => removeOutfit(outfit.id))
+                                  }
+                                })
+                              }}
+                              title={t.actions.deleteTitle}
+                              type="button"
+                            >
+                              <Trash2 className="size-3.5" />
+                            </button>
                           </div>
                         </Disclosure>
                       </>

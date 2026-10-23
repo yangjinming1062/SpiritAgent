@@ -11,7 +11,6 @@ _TOOLSET_TOOL_NAMES: dict[str, tuple[str, ...]] = {
         "scene_list",
         "scene_get",
         "scene_create",
-        "scene_activate",
     ),
     "messaging": ("send_message_tool",),
     "scheduled_tasks": ("cronjob", "companion_wait"),

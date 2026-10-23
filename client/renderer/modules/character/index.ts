@@ -115,11 +115,17 @@ export { clearVfx, emitVfx, SpriteVfxOverlay } from './vfx'
 export { useOutfitDesignSession } from './wardrobe/design-session'
 
 export {
-  $activeOutfit,
+  $stageOutfit,
+  $stageOutfitPresented,
+  $stageOutfitStatus,
+  retryStageOutfit,
+  setStageOutfitSource
+} from './wardrobe/stage-source'
+export type { StageOutfitSource } from './wardrobe/stage-source'
+export {
   $outfitPolicy,
   $outfits,
   $wardrobeStatus,
-  activateOutfit,
   deleteOutfit,
   hydrateWardrobe,
   retryOutfitDescription,

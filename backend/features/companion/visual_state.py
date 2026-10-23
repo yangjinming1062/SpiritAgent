@@ -1,4 +1,4 @@
-"""视觉业务读取伙伴资料及更新政策、确认和场景版本的事务入口。"""
+"""视觉业务读取伙伴资料及更新政策、确认的事务入口。"""
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,22 +49,4 @@ async def change_outfit_policy(db: AsyncSession, user_id: int, policy: str) -> N
 async def change_scene_policy(db: AsyncSession, user_id: int, policy: str) -> PersonaSnapshot:
     row = await _persona_row(db, user_id)
     row.scene_policy = policy
-    return PersonaSnapshot.model_validate(row)
-
-
-async def advance_scene_switch(db: AsyncSession, user_id: int) -> PersonaSnapshot:
-    row = await _persona_row(db, user_id)
-    row.scene_switch_version += 1
-    return PersonaSnapshot.model_validate(row)
-
-
-async def advance_scene_state(db: AsyncSession, user_id: int) -> PersonaSnapshot:
-    row = await _persona_row(db, user_id)
-    row.scene_state_version += 1
-    return PersonaSnapshot.model_validate(row)
-
-
-async def set_active_scene(db: AsyncSession, user_id: int, scene_id: int) -> PersonaSnapshot:
-    row = await _persona_row(db, user_id)
-    row.active_scene_id = scene_id
     return PersonaSnapshot.model_validate(row)

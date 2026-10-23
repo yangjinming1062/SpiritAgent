@@ -7,13 +7,13 @@ from features.automation.backup import backup_tables as automation_tables
 from features.companion.backup import backup_tables as companion_tables
 from features.configuration.backup import backup_tables as configuration_tables
 from features.conversation.backup import backup_tables as conversation_tables
-from features.desktop_life.backup import backup_tables as desktop_tables
 from features.journal.backup import backup_tables as journal_tables
 from features.media.backup import backup_tables as media_tables
 from features.memory.backup import backup_tables as memory_tables
 from features.posts.backup import backup_tables as post_tables
 from features.scenes.backup import backup_tables as scene_tables
 from features.topics.backup import backup_tables as topic_tables
+from features.visuals.backup import backup_tables as visual_tables
 from infrastructure.backup import BACKUP_REGISTRY, BACKUP_TABLE_ORDER
 
 
@@ -25,7 +25,7 @@ def register_backup_tables() -> None:
         *appearance_tables(),
         *action_library_tables(),
         *scene_tables(),
-        *desktop_tables(),
+        *visual_tables(),
         *companion_tables(),
         *automation_tables(),
         *memory_tables(),

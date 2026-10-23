@@ -14,7 +14,7 @@ _ASSET_TOKEN = re.compile(
 )
 
 
-def asset_paths(value: object, user_id: int) -> set[str]:
+def asset_paths(value: object, user_id: int | None) -> set[str]:
     if isinstance(value, dict):
         return set().union(*(asset_paths(item, user_id) for item in value.values()))
     if isinstance(value, (list, tuple)):
@@ -29,7 +29,7 @@ def asset_paths(value: object, user_id: int) -> set[str]:
     for candidate in candidates:
         path = normalize_asset_reference(candidate)
         parsed = parse_companion_asset_path(path)
-        if parsed is not None and parsed[0] == user_id:
+        if parsed is not None and (user_id is None or parsed[0] == user_id):
             result.add(path)
     if value.lstrip().startswith(("{", "[", '"')):
         try:

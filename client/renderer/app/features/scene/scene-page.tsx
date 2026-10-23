@@ -4,7 +4,6 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 
 import type { PickedImage } from '@/modules/character'
 import {
-  $activeScene,
   $pendingScene,
   $sceneDetails,
   $sceneLibrary,
@@ -16,7 +15,6 @@ import {
   $sceneTaskSlow,
   $sceneTaskStatus,
   $sceneTotal,
-  activateScene,
   adoptSceneImage,
   analyzeScene,
   cancelSceneTask,
@@ -60,12 +58,7 @@ interface ImageZoom {
 
 const INITIAL_CREATE_DRAFT: SceneCreateDraft = { notes: '', reference: null }
 
-interface ScenePageProps {
-  startCreating?: boolean
-  onMaterialReady?: (sceneId: string) => void
-}
-
-export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageProps = {}): React.JSX.Element {
+export function ScenePage(): React.JSX.Element {
   const ui = useStore($sceneUi)
   const importRevision = useStore($sceneUiImportRevision)
   const observedImportRevision = useRef(importRevision)
@@ -73,7 +66,6 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
   const library = useStore($sceneLibrary)
   const libraryStatus = useStore($sceneLibraryStatus)
   const details = useStore($sceneDetails)
-  const activeScene = useStore($activeScene)
   const pending = useStore($pendingScene)
   const regenerating = useStore($sceneRegenerating)
   const slow = useStore($sceneTaskSlow)
@@ -104,12 +96,6 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
   const returnScrollTop = useRef(ui.listScrollTop ?? 0)
   const begin = useAsyncGuard()
   const detail = view.kind === 'detail' ? (details[view.sceneId] ?? null) : null
-
-  useEffect(() => {
-    if (startCreating) {
-      updateSceneUi({ view: { kind: 'create' } })
-    }
-  }, [startCreating])
 
   const restoreReference = useCallback((): void => {
     const revision = ++referenceRevision.current
@@ -368,18 +354,6 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
     }
   }
 
-  const handleActivate = async (sceneId: string): Promise<void> => {
-    triggerHaptic('tap')
-
-    if (onMaterialReady) {
-      onMaterialReady(sceneId)
-
-      return
-    }
-
-    await activateScene(sceneId)
-  }
-
   const handleDelete = async (target: SceneAsset): Promise<void> => {
     const isLive = begin()
     triggerHaptic('tap')
@@ -442,9 +416,7 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
         <SettingsContent scrollRef={scrollRef}>
           <div className="space-y-4">
             <SceneLibraryView
-              activeScene={activeScene}
               entries={library}
-              onActivate={sceneId => void handleActivate(sceneId)}
               onCheckStatus={async () => {
                 const isLive = begin()
                 await inspectSceneCreationIssue()
@@ -480,14 +452,12 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
         </SettingsContent>
       ) : view.kind === 'detail' ? (
         <SceneDetailView
-          activeScene={activeScene}
           busy={status !== 'none' || Boolean(regenerating && regenerating.id !== view.sceneId)}
           detail={detail}
           draft={editDrafts[view.sceneId]}
           key={view.sceneId}
           loadError={detailLoadError}
           loading={detailLoading}
-          onActivate={sceneId => void handleActivate(sceneId)}
           onBack={returnToLibrary}
           onCancelEdit={() => dropEditDraft(view.sceneId)}
           onCancelTask={async sceneId => {
@@ -532,7 +502,6 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
           }}
           onSaveAndRegenerate={saveAndRegenerate}
           onZoom={(url, name) => setZoom({ url, name })}
-          selectingMaterial={Boolean(onMaterialReady)}
         />
       ) : (
         <SceneCreateView

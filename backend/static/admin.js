@@ -471,8 +471,8 @@ async function deleteUser(id) {
 const BACKUP_SECTION_LABELS = Object.freeze({
     user_preferences: '用户偏好', conversations: '会话', messages: '消息',
     user_model_configs: '模型配置与凭据', avatar_assets: '角色形象', companion_character_cards: '角色卡',
-    companion_outfits: '衣柜',
-    companion_scenes: '场景', desktop_video_sets: '桌面生活组合', desktop_video_actions: '桌面生活动作', desktop_video_states: '桌面生活偏好', personas: '角色定义', user_settings: '用户设置',
+    companion_outfits: '衣柜', action_definitions: '动作素材',
+    companion_scenes: '场景', visual_items: '影像成品', visual_jobs: '影像制作工作项', visual_presentations: '影像呈现状态', personas: '角色定义', user_settings: '用户设置',
     cron_jobs: '定时任务', companion_intents: '主动陪伴意图', memories: '长期记忆',
     companion_posts: '动态', companion_post_comments: '动态评论',
     companion_diary_entries: '日记', asset_files: '资产文件',
@@ -481,13 +481,13 @@ const BACKUP_SECTION_LABELS = Object.freeze({
 const BACKUP_SCOPE_HINTS = Object.freeze({
     all: '恢复备份中的全部数据类别。',
     identity: '恢复人设、头像与全身参考（含确认状态）、角色卡。音色需勾选设置，场景需单独恢复；缺少引导资料时继续完成对应步骤，不自动生成素材。',
-    custom: '只恢复勾选的类别。衣柜与桌景包含共同动作，勾选其中一项时会一起恢复；其他未勾选的数据保留。',
+    custom: '只恢复勾选的类别。衣柜、动作素材与影像成组恢复，勾选其中一项时会一起恢复；其他未勾选的数据保留。',
 });
 const BACKUP_MODE_LABELS = Object.freeze({ overwrite: '覆盖', merge: '合并' });
 const BACKUP_SCOPE_LABELS = Object.freeze({
     all: '全部数据', identity: '基础身份', custom: '自定义',
     conversations: '会话记录', memories: '长期记忆', posts: '动态', diary: '日记',
-    wardrobe: '衣柜与动作', scenes: '场景', desktop_life: '桌面生活', automation: '定时与意图', settings: '设置与凭据',
+    wardrobe: '衣柜与动作素材', scenes: '场景', visuals: '影像', automation: '定时与意图', settings: '设置与凭据',
 });
 let backupImportRunning = false;
 
@@ -640,7 +640,7 @@ const ICON_PATHS = {
     scene: '<path d="m3 12 9-9 9 9M5 10v11h14V10m-9 11v-7h4v7"/>',
     moon: '<path d="M20 15A9 9 0 0 1 9 4a9 9 0 1 0 11 11Z"/>',
 };
-const GROUP_ICONS = { '陪伴聊天': 'llm', '专业预设': 'users', '定时任务': 'clock', '主动陪伴': 'ai', '记忆': 'embedding', '夜间': 'moon', '动态': 'logs', '形象初始化': 'appearance', '换装': 'outfit', '场景': 'scene', '窗口动作': 'video_gen', '桌面生活': 'scene', '语音': 'tts' };
+const GROUP_ICONS = { '陪伴聊天': 'llm', '专业预设': 'users', '定时任务': 'clock', '主动陪伴': 'ai', '记忆': 'embedding', '夜间': 'moon', '动态': 'logs', '形象初始化': 'appearance', '换装': 'outfit', '场景': 'scene', '影像': 'video_gen', '语音': 'tts' };
 function icon(name) { return `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_PATHS[name] ?? ICON_PATHS.ai}</svg>`; }
 function injectIcons(root = document) { root.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); }); }
 const READINESS_KEY_LABELS = Object.freeze({ llm: '大语言模型 LLM', stt: '语音识别', tts: '语音合成', image_gen: '图像生成', video_gen: '视频生成', embedding: '向量嵌入' });
@@ -2343,7 +2343,7 @@ const VIDEO_QUEUE_STATES = {
     processing: '远端生成中', running: '远端生成中', blocked: '等待核对', paused: '已暂停',
     cancelled: '已取消', stopped: '已停止', succeeded: '已完成', failed: '已失败',
 };
-const VIDEO_QUEUE_KINDS = { media: '视频作品', action: '衣柜动作', desktop: '桌面生活' };
+const VIDEO_QUEUE_KINDS = { media: '视频作品', visuals: '影像' };
 
 async function loadVideoQueue() {
     const button = $('#videoQueueRefresh');

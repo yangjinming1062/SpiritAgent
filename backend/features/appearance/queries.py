@@ -48,12 +48,6 @@ async def avatar_snapshot(db: AsyncSession, user_id: int, avatar_id: int) -> Ava
     return AvatarSnapshot.model_validate(row) if row is not None else None
 
 
-async def active_outfit_id(db: AsyncSession, user_id: int) -> int | None:
-    return await db.scalar(
-        select(CompanionOutfit.id).where(CompanionOutfit.user_id == user_id, CompanionOutfit.active.is_(True)),
-    )
-
-
 async def outfit_snapshot(db: AsyncSession, user_id: int, outfit_id: int | None) -> OutfitSnapshot | None:
     if outfit_id is None:
         return None
@@ -69,12 +63,25 @@ def outfit_identity_matches(source_json: str, identity_reference_path: str) -> b
     return bool(identity_reference_path) and source.identity_reference_path == identity_reference_path
 
 
-async def ready_outfit_snapshot(db: AsyncSession, user_id: int, outfit_id: int | None = None) -> OutfitSnapshot | None:
-    query = select(CompanionOutfit).where(CompanionOutfit.user_id == user_id, CompanionOutfit.status == "ready")
-    query = (
-        query.where(CompanionOutfit.id == outfit_id)
-        if outfit_id is not None
-        else query.where(CompanionOutfit.active.is_(True))
+async def ready_outfit_snapshot(db: AsyncSession, user_id: int, outfit_id: int) -> OutfitSnapshot | None:
+    row = await db.scalar(
+        select(CompanionOutfit).where(
+            CompanionOutfit.user_id == user_id,
+            CompanionOutfit.id == outfit_id,
+            CompanionOutfit.status == "ready",
+        ),
     )
-    row = await db.scalar(query)
     return OutfitSnapshot.model_validate(row) if row is not None else None
+
+
+async def ready_outfit_snapshots(db: AsyncSession, user_id: int, *, limit: int = 50) -> list[OutfitSnapshot]:
+    rows = await db.scalars(
+        select(CompanionOutfit)
+        .where(
+            CompanionOutfit.user_id == user_id,
+            CompanionOutfit.status == "ready",
+        )
+        .order_by(CompanionOutfit.id.desc())
+        .limit(max(1, min(limit, 100))),
+    )
+    return [OutfitSnapshot.model_validate(row) for row in rows]

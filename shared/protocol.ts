@@ -167,3 +167,31 @@ export type RemoteDevice = ApiSchemas['DeviceResponse']
 export type PromptSubmissionRequest = ApiSchemas['PromptSubmitRequest']
 
 export type MemoryListRequest = ApiOperations['resource_catalog.get_memories']['query']
+
+/**
+ * 影像与动作的共享类型：字段以 backend 对外 DTO 的生成契约为准，仅覆盖手机消费面。
+ */
+export type VisualMediaKind = ApiSchemas['VisualItemView']['media_kind']
+export type VisualJobState = ApiSchemas['VisualJobView']['state']
+export type VisualJobCommand = ApiSchemas['VisualJobCommandRequest']['command']
+export type PlaybackStatus = ApiSchemas['RpcVisualPlaybackEvent']['status']
+export type PlaybackReceiptKind = NonNullable<ApiSchemas['RpcVisualPlaybackEvent']['receipt_kind']>
+export type ActionClipKind = NonNullable<ApiSchemas['ActionAssetDesign']['clip_kind']>
+export type ActionReviewStatus = ApiSchemas['ActionAssetView']['status']
+export type VisualComboSummary = ApiSchemas['ComboSnapshot']
+export type VisualItem = ApiSchemas['VisualItemView']
+export type VisualJob = ApiSchemas['VisualJobView']
+export type VisualDetail = ApiSchemas['VisualDetailView']
+export type VisualPlayback = ApiSchemas['VisualPlayCommand']
+export type VisualPlaybackReceipt = ApiSchemas['RpcVisualPlaybackEvent']
+export type VisualRegenerateRequest = ApiSchemas['VisualRegenerateRequest']
+export type VisualPresentationUpdate = ApiSchemas['VisualPreferencesRequest']
+export type VisualJobCommandRequest = ApiSchemas['VisualJobCommandRequest']
+export type VisualListResponse = ApiSchemas['VisualListResponse']
+export type VisualJobListResponse = ApiSchemas['VisualJobListResponse']
+export type ActionDefinition = ApiSchemas['ActionAssetView']
+export type ActionDefinitionRequest = ApiSchemas['ActionAssetDesign']
+export type ActionUpdateRequest = ApiSchemas['ActionAssetUpdate']
+export type ActionListResponse = ApiSchemas['ActionListResponse']
+
+export type VoiceSelectionResponse = ApiSchemas['CurrentVoiceResponse']

@@ -7,7 +7,7 @@ import { authedResource, type ResourceArguments } from '@/shared/lib/resource-re
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { trimOldest } from '@/shared/lib/trim-oldest'
 import { backendApi } from '@/shared/platform/desktop'
-import { notify, notifyError } from '@/shared/store/notifications'
+import { notify } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 import type { DesktopApiOperationKey } from '@ipc/contracts'
 
@@ -19,7 +19,7 @@ export type ScenePolicy = ApiSchemas['ScenePolicy']
 type SceneImageSize = ApiSchemas['SceneImageDimensions']
 export const SCENE_IMAGE_SIZE: Readonly<SceneImageSize> = { width: 2560, height: 1440 }
 type SceneRegeneration = ApiSchemas['SceneRegenerationResponse']
-export interface ActiveScene {
+export interface SceneAsset {
   id: string
   title: string
   description: string
@@ -41,7 +41,6 @@ export interface ActiveScene {
   error: string | null
   regeneration: SceneRegeneration | null
 }
-export type SceneAsset = ActiveScene
 export type SceneCreationResult =
   | { kind: 'created'; sceneId: string }
   | { kind: 'unavailable' }
@@ -60,9 +59,8 @@ interface SceneGenerationInput {
   content_type?: string
 }
 
-export const $activeScene = atom<ActiveScene | null>(null)
-export const $pendingScene = atom<ActiveScene | null>(null)
-export const $sceneRegenerating = atom<ActiveScene | null>(null)
+export const $pendingScene = atom<SceneAsset | null>(null)
+export const $sceneRegenerating = atom<SceneAsset | null>(null)
 export const $sceneLibrary = atom<SceneAsset[]>([])
 export const $sceneDetails = atom<Record<string, SceneAsset>>({})
 export const $sceneLibraryStatus = atom<'idle' | 'loading' | 'loaded' | 'error'>('idle')
@@ -84,14 +82,13 @@ const sceneSrcCache = new Map<string, string>()
 const sceneSrcRequests = new Map<string, Promise<string | null>>()
 let stateRequest = 0
 let listRequest = 0
-let version = -1
 let eventVersion = -1
 let mutationRevision = 0
 let submitting = false
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let pollCount = 0
 
-function toScene(row: SceneWire, url: string, imageLoadFailed = false): ActiveScene {
+function toScene(row: SceneWire, url: string, imageLoadFailed = false): SceneAsset {
   return { ...row, assetUrl: row.url || '', id: String(row.id), url, thumbnailUrl: url, imageLoadFailed }
 }
 
@@ -144,7 +141,7 @@ async function resolveSceneUrl(row: SceneWire, retryImage = false): Promise<stri
 }
 
 /** 单张图片加载失败只影响该场景：沿用已缓存的旧图，没有则留空显示占位。解码由调用方保证一次。 */
-async function resolveScene(row: SceneWire, retryImage = false): Promise<ActiveScene> {
+async function resolveScene(row: SceneWire, retryImage = false): Promise<SceneAsset> {
   try {
     const url = await resolveSceneUrl(row, retryImage)
 
@@ -248,11 +245,9 @@ function startPoll(): void {
 registerStorageClearHandler(() => {
   stateRequest++
   listRequest++
-  version = -1
   eventVersion = -1
   submitting = false
   stopPoll()
-  $activeScene.set(null)
   $pendingScene.set(null)
   $sceneRegenerating.set(null)
   $sceneLibrary.set([])
@@ -321,7 +316,7 @@ export async function loadSceneLibrary(query = $sceneQuery.get(), page = $sceneP
     const value = result.value
     const entries = await Promise.all(value.scenes.map(row => resolveScene(row)))
 
-    if (!isCurrent() || value.version < eventVersion) {
+    if (!isCurrent()) {
       return false
     }
 
@@ -478,35 +473,18 @@ export async function hydrateScene(options: { skipLibraryRefresh?: boolean } = {
   }
 
   const state = result.value
-  const stale = (): boolean => !isCurrent() || state.version < Math.max(version, eventVersion)
+  const stale = (): boolean => !isCurrent()
 
   if (stale()) {
     return false
   }
 
   try {
-    let active = $activeScene.get()
-    let activeDetail: SceneAsset | null = null
-
-    // 当前环境的替换图预加载成功后才切换；失败保留旧图，其余状态照常刷新。
-    try {
-      const nextActive = state.active ? toScene(state.active, await resolveSceneUrl(state.active)) : null
-
-      if (nextActive?.url && nextActive.url !== active?.url) {
-        await preload(nextActive.url)
-      }
-
-      active = nextActive
-      activeDetail = nextActive
-    } catch (error) {
-      log.warn('scene', 'Active scene image could not be loaded:', error)
-      activeDetail = state.active
-        ? toScene(state.active, active?.id === String(state.active.id) ? active.url : '', true)
-        : null
-    }
-
-    const pending = state.pending ? await resolveScene(state.pending) : null
-    const regenerating = state.regenerating ? await resolveScene(state.regenerating) : null
+    // 环境素材不再有"当前环境"；呈现环境由当前影像的冻结素材决定。
+    const pendingMaterial = state.materials.find(item => item.status === 'pending') ?? null
+    const regeneratingMaterial = state.materials.find(item => item.regeneration) ?? null
+    const pending = pendingMaterial ? await resolveScene(pendingMaterial) : null
+    const regenerating = regeneratingMaterial ? await resolveScene(regeneratingMaterial) : null
 
     if (stale()) {
       return false
@@ -514,14 +492,9 @@ export async function hydrateScene(options: { skipLibraryRefresh?: boolean } = {
 
     const oldPending = $pendingScene.get()
     const oldRegenerating = $sceneRegenerating.get()
-    version = state.version
-    $activeScene.set(active)
     $pendingScene.set(pending)
     $sceneRegenerating.set(regenerating)
-    cacheSceneDetails(
-      [...(activeDetail ? [activeDetail] : []), ...(pending ? [pending] : []), ...(regenerating ? [regenerating] : [])],
-      read
-    )
+    cacheSceneDetails([...(pending ? [pending] : []), ...(regenerating ? [regenerating] : [])], read)
     $scenePolicy.set(state.policy)
     const taskStatus = !pending ? 'none' : pending.stage === 'waiting_upload' ? 'waiting_upload' : 'pending'
     $sceneTaskStatus.set(taskStatus)
@@ -684,7 +657,6 @@ export async function createScene(input: SceneGenerationInput = {}): Promise<Sce
   }
 
   const epoch = currentClearEpoch()
-  const startVersion = version
   let requestStarted = false
   submitting = true
   $sceneCreationIssue.set(null)
@@ -703,7 +675,7 @@ export async function createScene(input: SceneGenerationInput = {}): Promise<Sce
       body: { ...details, content_type: mime, source: 'generate' }
     })
 
-    if (version === startVersion) {
+    if (epoch === currentClearEpoch()) {
       $pendingScene.set(toScene(row, row.url || ''))
       $sceneTaskStatus.set('pending')
     }
@@ -769,22 +741,6 @@ export async function cancelSceneTask(sceneId: string): Promise<SceneWire> {
   )
 }
 
-export async function activateScene(sceneId: string): Promise<void> {
-  const epoch = currentClearEpoch()
-
-  try {
-    await mutate('companion_scenes.post_scene_activate', { body: { scene_id: Number(sceneId) } })
-
-    if (epoch === currentClearEpoch()) {
-      notify({ kind: 'success', message: getStrings().living.toasts.sceneRollbackSuccess })
-    }
-  } catch (error) {
-    if (epoch === currentClearEpoch()) {
-      notifyError(error, getStrings().living.toasts.sceneRegenerateFailed)
-    }
-  }
-}
-
 export async function deleteScene(sceneId: string): Promise<void> {
   await mutate('companion_scenes.delete_scene_route', { path: { scene_id: Number(sceneId) } })
 }
@@ -814,13 +770,8 @@ export async function setScenePolicy(policy: ScenePolicy): Promise<void> {
   await mutate('companion_scenes.patch_scene_policy', { body: { policy } })
 }
 
-export function onSceneEvent(event: { payload?: unknown; type: string }): void {
-  const payload = event.payload as { version?: unknown } | undefined
-
-  if (typeof payload?.version !== 'number' || payload.version <= Math.max(version, eventVersion)) {
-    return
-  }
-
-  eventVersion = payload.version
+/** 场景素材变更的事件计数；仅用于中止与刷新竞争中的过期详情读取。 */
+export function onSceneEvent(_event: { payload?: unknown; type: string }): void {
+  eventVersion += 1
   void hydrateScene()
 }

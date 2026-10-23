@@ -28,7 +28,6 @@ def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: 
         ):
             if payload.get(field):
                 schema.model_validate_json(payload[field])
-        payload["auto_activate"] = False
         payload["regeneration_status"] = None
         payload["regeneration_stage"] = None
         payload["regeneration_error"] = None

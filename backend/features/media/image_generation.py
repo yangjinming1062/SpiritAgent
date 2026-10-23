@@ -155,6 +155,7 @@ async def generate_images(
     n: int = 1,
     reference_image: str | None = None,
     secondary_reference_image: str | None = None,
+    environment_reference_image: str | None = None,
     persist_user_assets: bool = False,
     storage_directory: str | None = None,
     image_edit: bool = False,
@@ -172,13 +173,13 @@ async def generate_images(
         if not storage_directory:
             raise ValueError("persisted image requires a storage directory")
         persist_directory = storage_directory
-    if image_edit and secondary_reference_image:
+    if image_edit and (secondary_reference_image or environment_reference_image):
         raise ImageGenerationError(
             "图像编辑不支持附加参考图，请改用重新生成",
             internal="image_edit with secondary reference",
         )
     try:
-        if secondary_reference_image and not reference_image:
+        if (secondary_reference_image or environment_reference_image) and not reference_image:
             raise ImageGenerationError("第二参考图需要同时提供身份参考图")
 
         def _provider_prompt(provider_name: str) -> str:
@@ -212,7 +213,8 @@ async def generate_images(
                     task=task,
                     has_reference=bool(reference_image),
                     image_edit=image_edit,
-                    multiple_references=bool(secondary_reference_image),
+                    multiple_references=bool(secondary_reference_image or environment_reference_image),
+                    environment_reference=bool(environment_reference_image),
                     prompt_chars=len(prompt),
                     selection=selection,
                 )
@@ -254,6 +256,7 @@ async def generate_images(
                     n=n,
                     reference_image=reference_image,
                     secondary_reference_image=secondary_reference_image,
+                    environment_reference_image=environment_reference_image,
                     image_edit=image_edit,
                     response_format="b64" if persist_user_assets else "url",
                     background="transparent" if request_background == "transparent" else None,

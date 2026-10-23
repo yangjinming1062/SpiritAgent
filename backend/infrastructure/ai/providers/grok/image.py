@@ -52,6 +52,12 @@ class GrokImageGenProvider(ImageGenProvider):
             )
         elif req.reference_image:
             payload["image"] = {"url": req.reference_image, "type": "image_url"}
+        if req.environment_reference_image:
+            images = payload.get("images") or [{"url": req.reference_image, "type": "image_url"}]
+            images.append({"url": req.environment_reference_image, "type": "image_url"})
+            payload.pop("image", None)
+            payload["images"] = images
+            payload["prompt"] = "参考图按图1、图2、图3的顺序提供，最后一张只提供环境与光线。\n\n" + req.prompt
         if req.aspect_ratio:
             payload["aspect_ratio"] = req.aspect_ratio
 

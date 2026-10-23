@@ -29,9 +29,6 @@ class SceneSnapshot(BaseModel):
     regeneration_task_id: str | None
     regeneration_state_json: str | None
     reference_image: str
-    auto_activate: bool
-    switch_version: int
-    activated_at: datetime | None
     error: str | None
     attempt_count: int
     requested_at: datetime

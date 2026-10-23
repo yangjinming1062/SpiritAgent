@@ -4,10 +4,10 @@ from features.action_library import asset_references as action_library
 from features.appearance import asset_references as appearance
 from features.assets.contributions import AssetContribution, configure_asset_contributions
 from features.conversation import asset_references as conversation
-from features.desktop_life import asset_references as desktop_life
 from features.media import asset_references as media
 from features.posts import asset_references as posts
 from features.scenes import asset_references as scenes
+from features.visuals import asset_references as visuals
 from runtime.events import asset_references as events
 
 
@@ -18,7 +18,7 @@ def register_asset_contributions() -> None:
             AssetContribution("appearance", appearance.live_asset_paths, cleanup=appearance.cleanup_obsolete_assets),
             AssetContribution("action_library", action_library.live_asset_paths),
             AssetContribution("scenes", scenes.live_asset_paths),
-            AssetContribution("desktop_life", desktop_life.live_asset_paths),
+            AssetContribution("visuals", visuals.live_asset_paths),
             AssetContribution("posts", posts.live_asset_paths),
             AssetContribution(
                 "media",

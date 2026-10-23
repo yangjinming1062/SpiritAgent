@@ -1,4 +1,4 @@
-"""衣柜草稿、确认、穿着与删除；共享事务约束见本模块 README。"""
+"""衣柜草稿、确认与删除；共享事务约束见本模块 README。"""
 
 import asyncio
 import json
@@ -415,7 +415,7 @@ async def _commit_outfit_draft_image(
         db,
         user_id=user_id,
         event_type="companion.outfit.updated",
-        payload={"outfit_id": outfit.id, "worn": False},
+        payload={"outfit_id": outfit.id},
     )
     await enqueue_asset_cleanup(db, user_id, [original_url])
     await db.commit()
@@ -597,7 +597,7 @@ async def confirm_outfit(
     user_id: int,
     outfit_id: int,
 ) -> CompanionOutfit:
-    """验收透明草稿并入柜，穿着由用户或自主换装显式选择。"""
+    """验收透明草稿并入柜，成为可被出镜媒体引用的造型素材。"""
     async with get_avatar_job_lock(user_id):
         outfit = await _get_outfit(db, user_id, outfit_id)
         if outfit is None:
@@ -647,7 +647,7 @@ async def confirm_outfit(
                 db,
                 user_id=user_id,
                 event_type="companion.outfit.updated",
-                payload={"outfit_id": outfit.id, "worn": outfit.active},
+                payload={"outfit_id": outfit.id},
             )
             await db.commit()
         except BaseException:
@@ -800,55 +800,13 @@ async def adopt_outfit_regenerate_image(
     return outfit
 
 
-async def activate_outfit(
-    db: AsyncSession,
-    user_id: int,
-    outfit_id: int,
-    *,
-    require_current_identity: bool = False,
-) -> CompanionOutfit:
-    """即时穿着就绪外观：翻转该用户的激活外观。``active`` 是当前生效着装描述的唯一权威，供出镜媒体生成消费。"""
+async def delete_outfit(db: AsyncSession, user_id: int, outfit_id: int) -> None:
+    """删除外观素材；提交后立即回收无引用的专属文件。"""
     async with get_avatar_job_lock(user_id):
         await lock_user_row(db, user_id)
         outfit = await _get_outfit(db, user_id, outfit_id)
         if outfit is None:
             raise OutfitNotFoundError(f"outfit {outfit_id} not found")
-        if outfit.status != "ready":
-            raise OutfitStateError("外观尚未确认，无法穿着")
-        if require_current_identity:
-            card = await get_character_card(db, user_id, lock=True)
-            if (
-                card is None
-                or OutfitSource.model_validate_json(outfit.source_json).character_card_revision != card.revision
-            ):
-                raise OutfitStateError("角色卡已更新，本次外观保留在衣柜，请重新生成后穿着")
-
-        await db.execute(
-            update(CompanionOutfit)
-            .where(CompanionOutfit.user_id == user_id, CompanionOutfit.active.is_(True))
-            .values(active=False)
-            .execution_options(synchronize_session="fetch"),
-        )
-        outfit.active = True
-        emit_ws_event(
-            db,
-            user_id=user_id,
-            event_type="companion.outfit.updated",
-            payload={"outfit_id": outfit.id, "worn": True},
-        )
-        await db.commit()
-        await db.refresh(outfit)
-    return outfit
-
-
-async def delete_outfit(db: AsyncSession, user_id: int, outfit_id: int) -> None:
-    """删除非穿着外观；提交后立即回收无引用的专属文件。"""
-    async with get_avatar_job_lock(user_id):
-        outfit = await _get_outfit(db, user_id, outfit_id)
-        if outfit is None:
-            raise OutfitNotFoundError(f"outfit {outfit_id} not found")
-        if outfit.active:
-            raise OutfitStateError("穿着中的外观不能删除，请先切换到其他外观")
         directory = outfit_asset_directory(outfit.id)
         paths = asset_paths([outfit.fullbody_url, outfit.source_json], user_id)
         await enqueue_asset_cleanup(db, user_id, paths, expedite=True)
@@ -857,7 +815,7 @@ async def delete_outfit(db: AsyncSession, user_id: int, outfit_id: int) -> None:
             db,
             user_id=user_id,
             event_type="companion.outfit.updated",
-            payload={"outfit_id": outfit.id, "worn": False},
+            payload={"outfit_id": outfit.id},
         )
         await db.delete(outfit)
         await db.commit()
@@ -1002,7 +960,7 @@ async def _describe_outfit(user_id: int, outfit_id: int) -> None:
                 db,
                 user_id=user_id,
                 event_type="companion.outfit.updated",
-                payload={"outfit_id": outfit_id, "worn": False},
+                payload={"outfit_id": outfit_id},
             )
             await db.commit()
     except asyncio.CancelledError:
@@ -1027,6 +985,6 @@ async def _set_description_failure(user_id: int, outfit_id: int, path: str, mess
             db,
             user_id=user_id,
             event_type="companion.outfit.updated",
-            payload={"outfit_id": outfit_id, "worn": False},
+            payload={"outfit_id": outfit_id},
         )
         await db.commit()

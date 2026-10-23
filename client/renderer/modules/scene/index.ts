@@ -1,6 +1,4 @@
-export type { ActiveScene } from './scene-store'
 export {
-  $activeScene,
   $pendingScene,
   $sceneCreationIssue,
   $sceneDetails,
@@ -14,7 +12,6 @@ export {
   $sceneTaskSlow,
   $sceneTaskStatus,
   $sceneTotal,
-  activateScene,
   adoptSceneImage,
   analyzeScene,
   cancelSceneTask,

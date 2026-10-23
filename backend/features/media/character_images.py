@@ -90,6 +90,7 @@ class CharacterImageInput(BaseModel):
     n: int = Field(ge=1)
     reference_image: str
     secondary_reference_image: str | None = None
+    environment_reference_image: str | None = None
     image_edit: bool = False
     identity_reference: str
     identity_reference_mode: Literal["primary", "portrait_and_outfit"] = "portrait_and_outfit"
@@ -122,6 +123,7 @@ _REFERENCE_FIELDS: dict[type, tuple[tuple[str, str], ...]] = {
     CharacterImageInput: (
         ("reference_image", "ref"),
         ("secondary_reference_image", "ref2"),
+        ("environment_reference_image", "environment"),
         ("identity_reference", "identity"),
     ),
 }
@@ -466,6 +468,7 @@ async def generate_character_images(
     target_height: int | None = None,
     n: int = 1,
     secondary_reference_image: str | None = None,
+    environment_reference_image: str | None = None,
     image_edit: bool = False,
     identity_text: str = "",
     identity_reference_mode: Literal["primary", "portrait_and_outfit"] = "portrait_and_outfit",
@@ -503,7 +506,7 @@ async def generate_character_images(
             raise ValueError("图片显示目标须同时提供宽高")
         if nearest_resolution and (target_width is None or target_height is None):
             raise ValueError("最接近分辨率的图片规划需要目标宽高")
-        if image_edit and secondary_reference_image:
+        if image_edit and (secondary_reference_image or environment_reference_image):
             raise ImageGenerationError("图像编辑不支持附加参考图，请改用重新生成")
         if goal_review == "required":
             if not reference_image or not identity_reference or reference_image != identity_reference:
@@ -519,6 +522,7 @@ async def generate_character_images(
             n=n,
             reference_image=reference_image,
             secondary_reference_image=secondary_reference_image,
+            environment_reference_image=environment_reference_image,
             image_edit=image_edit,
             identity_reference=identity_reference,
             identity_reference_mode=identity_reference_mode,
@@ -537,7 +541,8 @@ async def generate_character_images(
                 task=task,
                 has_reference=bool(reference_image),
                 image_edit=image_edit,
-                multiple_references=bool(secondary_reference_image),
+                multiple_references=bool(secondary_reference_image or environment_reference_image),
+                environment_reference=bool(environment_reference_image),
                 prompt_chars=len(prompt),
                 selection=selection,
             )
@@ -779,6 +784,9 @@ async def _run_image_chain(
         await _materialize(inputs.secondary_reference_image) if isinstance(inputs, CharacterImageInput) else None
     )
     identity_uri = await _materialize(inputs.identity_reference) if isinstance(inputs, CharacterImageInput) else None
+    environment_uri = (
+        await _materialize(inputs.environment_reference_image) if isinstance(inputs, CharacterImageInput) else None
+    )
     try:
         while True:
             if state.phase == "storing":
@@ -913,6 +921,7 @@ async def _run_image_chain(
                                 reference_uri or "",
                                 uri,
                                 secondary_uri=secondary_uri,
+                                environment_uri=environment_uri,
                                 generation_prompt=inputs.prompt,
                                 identity_reference_mode=inputs.identity_reference_mode,
                                 identity_text=inputs.identity_text,
@@ -1033,6 +1042,7 @@ async def _run_image_chain(
                         task=task,
                         reference_image=submit_reference,
                         secondary_reference_image=secondary_uri if isinstance(inputs, CharacterImageInput) else None,
+                        environment_reference_image=environment_uri,
                         image_edit=inputs.image_edit if isinstance(inputs, CharacterImageInput) else False,
                         provider_config=call_config,
                         background=background,

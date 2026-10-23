@@ -75,16 +75,16 @@ export interface DesktopBackgroundRequest {
   video: DesktopMediaReference | null
   poster: DesktopMediaReference | null
   playId: string | null
-  setId: number | null
-  actionId: number | null
-  actionVersion: number | null
-  setEpoch: number
+  /** 成品身份：稳定 ID + 成品版本 + 呈现代次，签名 URL 不参与识别。 */
+  visualId: number | null
+  visualVersion: number | null
+  presentationEpoch: number
   expiresAt: string | null
   kind: 'loop' | 'once'
   continuity: 'base' | 'independent'
-  transition: 'base' | 'fade'
+  transition: 'natural' | 'fade'
   geometryMode: 'target' | 'keep'
-  baseVersion: number | null
+  inputImageHash: string | null
   theme: string
   reduceMotion: boolean
   paused: boolean
@@ -179,19 +179,17 @@ export interface DesktopAccount {
   active: boolean
 }
 
-export const APP_PAGES = ['chat', 'companion', 'posts', 'diary', 'settings'] as const
+export const APP_PAGES = ['chat', 'companion', 'visuals', 'posts', 'diary', 'settings'] as const
 export type AppPage = (typeof APP_PAGES)[number]
 export const SETTINGS_SECTIONS = ['companionship', 'voice', 'display', 'devices', 'application', 'advanced'] as const
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]
-export const COMPANION_SECTIONS = ['profile', 'voice', 'appearance', 'scene', 'desktop-life', 'memory'] as const
+export const COMPANION_SECTIONS = ['profile', 'voice', 'memory', 'wardrobe', 'environment', 'actions'] as const
 export type CompanionSection = (typeof COMPANION_SECTIONS)[number]
 
 export interface AppNavigationTarget {
   page?: AppPage
   section?: SettingsSection
   companionSection?: CompanionSection
-  companionTask?: 'create'
-  returnToDesktopLife?: boolean
   settingsTab?: 'skills' | 'toolsets'
   sessionId?: string
   messageKey?: string
@@ -214,8 +212,6 @@ export function normalizeAppNavigation(raw: unknown): AppNavigationTarget {
     page: page ?? (section ? 'settings' : companionSection ? 'companion' : undefined),
     section,
     companionSection,
-    companionTask: value.companionTask === 'create' ? 'create' : undefined,
-    returnToDesktopLife: value.returnToDesktopLife === true ? true : undefined,
     settingsTab: section === 'devices' ? settingsTab : undefined,
     sessionId: typeof value.sessionId === 'string' ? value.sessionId : undefined,
     messageKey: typeof value.messageKey === 'string' ? value.messageKey : undefined

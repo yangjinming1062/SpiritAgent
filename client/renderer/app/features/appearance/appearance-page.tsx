@@ -11,27 +11,13 @@ import { OutfitDetail } from './outfit-detail'
 import { OutfitSection } from './outfit-section'
 
 // 衣柜页按造型素材组织；窗口模式显示设置归设置页统一管理。
-interface AppearancePageProps {
-  startCreating?: boolean
-  onMaterialReady?: (outfitId: number) => void
-}
-
-export function AppearancePage({
-  startCreating = false,
-  onMaterialReady
-}: AppearancePageProps = {}): React.JSX.Element {
+export function AppearancePage(): React.JSX.Element {
   const authKind = useStore($auth).kind
   const outfits = useStore($outfits)
   const { selectedOutfitId } = useStore($appearanceUi)
   const [loaded, setLoaded] = useState(false)
   const librarySearch = useAssetLibrarySearch()
   const setSelectedOutfitId = (id: number | null): void => updateAppearanceUi({ selectedOutfitId: id })
-
-  useEffect(() => {
-    if (startCreating) {
-      updateAppearanceUi({ selectedOutfitId: null, designing: true })
-    }
-  }, [startCreating])
 
   // 衣柜列表在 auth 就绪后再水合——冷启动直接进入本页时 hydrateAuth 的 IPC 往返尚未完成，提前调用会因 pending 静默跳过。种子图走本地缓存，缺失时补拉。
   useEffect(() => {
@@ -61,13 +47,9 @@ export function AppearancePage({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {selectedOutfitId === null ? (
-        <OutfitSection onMaterialReady={onMaterialReady} onSelectOutfit={setSelectedOutfitId} search={librarySearch} />
+        <OutfitSection onSelectOutfit={setSelectedOutfitId} search={librarySearch} />
       ) : (
-        <OutfitDetail
-          onBack={() => setSelectedOutfitId(null)}
-          onMaterialReady={onMaterialReady}
-          outfitId={selectedOutfitId}
-        />
+        <OutfitDetail onBack={() => setSelectedOutfitId(null)} outfitId={selectedOutfitId} />
       )}
     </div>
   )

@@ -25,7 +25,7 @@ router = get_router()
 @router.post(
     "/voice-samples",
     response_model=VoiceSampleResponse,
-    openapi_extra=operation_policy(upload="audio"),
+    openapi_extra=operation_policy(identities=("desktop", "remote"), upload="audio"),
 )
 @limiter.limit(lambda: f"{SETTINGS.media_stt_rate_limit_per_minute}/minute")
 async def upload_voice_reference(

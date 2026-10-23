@@ -6,7 +6,6 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
-    Integer,
     String,
     Text,
     text,
@@ -38,20 +37,13 @@ class Persona(ModelBase, TimestampMixin):
         index=True,
     )
     portrait_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    # 当前环境仅由成功启用的场景确定。
-    active_scene_id: Mapped[int | None] = mapped_column(
-        ForeignKey("companion_scenes.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    # locked 仅限制自主新增与切换。
+    # locked 仅限制自主添置环境素材。
     scene_policy: Mapped[str] = mapped_column(
         String(16),
         default=SCENE_POLICY_DEFAULT,
         server_default=text(f"'{SCENE_POLICY_DEFAULT}'"),
     )
-    scene_switch_version: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
-    scene_state_version: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
-    # llm_may_replace=夜间可自主换装/添置；locked=仅用户可操作。
+    # llm_may_replace=可自主添置造型素材；locked=仅用户可操作。
     outfit_policy: Mapped[str] = mapped_column(
         String(16),
         default=OUTFIT_POLICY_DEFAULT,

@@ -13,7 +13,6 @@ import features.configuration.models
 import features.configuration.settings.models
 import features.conversation.models
 import features.conversation.submission_models
-import features.desktop_life.models
 import features.journal.models
 import features.media.models
 import features.media.video_queue.models
@@ -23,5 +22,6 @@ import features.posts.models
 import features.scenes.models
 import features.topics.models
 import features.updates.models  # noqa: F401 -- 显式 ORM 登记。
+import features.visuals.models  # noqa: F401 -- 显式 ORM 登记。
 import runtime.events.models  # noqa: F401 -- 显式 ORM 登记。
 import workflows.nightly.models  # noqa: F401 -- 显式 ORM 登记。

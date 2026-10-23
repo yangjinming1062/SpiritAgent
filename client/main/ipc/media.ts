@@ -7,8 +7,6 @@ import {
   type AttachmentVideoUploadResult,
   type AudioUploadPayload,
   type AudioUploadResult,
-  type DesktopVideoUploadPayload,
-  type DesktopVideoUploadResult,
   IPC,
   type MediaSttPayload,
   type MediaTtsPayload,
@@ -22,7 +20,7 @@ import type { BackendHttp } from '../backend/http'
 import { readUserSelectedFile } from '../security/hardening'
 import type { BackendConnection } from '../shared/backend-port'
 import * as store from '../shared/lib/runner-config-store'
-import { dataUrlFromBuffer, mimeTypeForPath, parseDataUrl } from '../shared/mime'
+import { dataUrlFromBuffer, parseDataUrl } from '../shared/mime'
 
 import { registerApiResult } from './api-result'
 import { createBackendCaller, type GetCurrentAuth } from './connection'
@@ -32,7 +30,6 @@ const TTS_MAX_TEXT_CHARS = 4000
 const STT_MAX_AUDIO_BYTES = 24 * 1024 * 1024
 const ATTACH_VIDEO_MAX_BYTES = 512 * 1024 * 1024
 const ATTACH_VIDEO_TIMEOUT_MS = 120_000
-const DESKTOP_VIDEO_UPLOAD_TIMEOUT_MS = 15 * 60_000
 const DEFAULT_TTS_LANGUAGE = 'zh'
 const DEFAULT_STT_LANGUAGE = 'zh'
 
@@ -675,79 +672,6 @@ export function registerMediaIpc({
       }
 
       return { url: parsed.url }
-    }
-  )
-
-  registerApiResult(
-    ipcMain,
-    IPC.invoke.mediaDesktopVideoUpload,
-    async (event, payload: DesktopVideoUploadPayload): Promise<DesktopVideoUploadResult> => {
-      const authSessionId = getCurrentAuth()?.sessionId
-
-      if (!authSessionId || typeof payload?.authSessionId !== 'string' || authSessionId !== payload.authSessionId) {
-        throw new Error('An authenticated session is required')
-      }
-
-      if (typeof payload?.path !== 'string' || !payload.path) {
-        throw new Error('Desktop video file is required')
-      }
-
-      if (!Number.isInteger(payload?.actionId) || payload.actionId <= 0) {
-        throw new Error('Desktop video action is invalid')
-      }
-
-      if (!Number.isInteger(payload?.expectedSetId) || payload.expectedSetId <= 0) {
-        throw new Error('Desktop video set is invalid')
-      }
-
-      if (
-        !['image', 'video'].includes(payload.mediaKind) ||
-        !Number.isSafeInteger(payload.expectedActionVersion) ||
-        payload.expectedActionVersion < 0 ||
-        !Number.isSafeInteger(payload.expectedBaseVersion) ||
-        payload.expectedBaseVersion < 0 ||
-        !Number.isSafeInteger(payload.expectedResolutionRevision) ||
-        payload.expectedResolutionRevision < 1 ||
-        !['ask', 'keep', 'expand'].includes(payload.aspectPolicy) ||
-        (payload.expectedDraftId !== null && typeof payload.expectedDraftId !== 'string')
-      ) {
-        throw new Error('Invalid desktop media context')
-      }
-
-      const { data, resolvedPath } = await readUserSelectedFile(payload.path, {
-        maxBytes: payload.mediaKind === 'image' ? 20 * 1024 * 1024 : ATTACH_VIDEO_MAX_BYTES,
-        purpose: 'Desktop media upload'
-      })
-
-      const form = new FormData()
-      const mime = mimeTypeForPath(resolvedPath)
-      const blob = new Blob([data], { type: mime })
-
-      form.append('file', blob, path.basename(resolvedPath))
-      form.append('expected_set_id', String(payload.expectedSetId))
-      form.append('expected_action_version', String(payload.expectedActionVersion))
-      form.append('expected_base_version', String(payload.expectedBaseVersion))
-      form.append('expected_resolution_revision', String(payload.expectedResolutionRevision))
-      form.append('aspect_policy', payload.aspectPolicy)
-      form.append('expected_draft_id', payload.expectedDraftId ?? 'none')
-
-      if (getCurrentAuth()?.sessionId !== authSessionId) {
-        throw new Error('Authentication changed during desktop video upload')
-      }
-
-      const response = await callUpload(event.sender, authSessionId, connection => {
-        const operation =
-          payload.mediaKind === 'image'
-            ? 'companion_desktop_videos.upload_image'
-            : 'companion_desktop_videos.upload_action'
-
-        const input = { path: { action_id: payload.actionId }, body: form }
-        const options = { timeoutMs: DESKTOP_VIDEO_UPLOAD_TIMEOUT_MS }
-
-        return invokeApi(connection.baseUrl, connection.token || undefined, operation, input, options)
-      })
-
-      return { response }
     }
   )
 

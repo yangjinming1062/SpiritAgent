@@ -1,4 +1,4 @@
-"""共享定义持有冻结评审参考，来源删除后仍保持资产引用。"""
+"""动作素材持有冻结评审参考，来源删除后仍保持资产引用。"""
 
 from infrastructure.assets.references import asset_paths
 from sqlalchemy import select

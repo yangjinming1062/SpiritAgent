@@ -14,10 +14,7 @@ class PersonaSnapshot(BaseModel):
     is_complete: bool
     is_portrait_confirmed: bool
     portrait_confirmed_at: datetime | None
-    active_scene_id: int | None
     scene_policy: str
-    scene_switch_version: int
-    scene_state_version: int
     outfit_policy: str
     current_mood: str | None
     id: int

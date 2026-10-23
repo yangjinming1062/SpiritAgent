@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .queries import list_scenes
 from .query_contracts import SceneSnapshot
-from .service import activate_scene, schedule_scene_generation
+from .service import schedule_scene_generation
 
 
 async def list_scene_snapshots(
@@ -26,17 +26,11 @@ async def schedule_scene_snapshot(
     origin: str,
     notes: str | None = None,
     reference_image: bytes | None = None,
-    auto_activate: bool = False,
 ) -> SceneSnapshot:
     row = await schedule_scene_generation(
         user_id,
         origin=origin,
         notes=notes,
         reference_image=reference_image,
-        auto_activate=auto_activate,
     )
     return SceneSnapshot.model_validate(row)
-
-
-async def activate_scene_snapshot(db: AsyncSession, user_id: int, scene_id: int, *, origin: str) -> SceneSnapshot:
-    return SceneSnapshot.model_validate(await activate_scene(db, user_id, scene_id, origin=origin))

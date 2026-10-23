@@ -1,7 +1,6 @@
-"""夜间场景读取和制作门禁，由场景模块保留 ORM 与状态归属。"""
+"""夜间场景素材读取和制作门禁，由场景模块保留 ORM 与状态归属。"""
 
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -9,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import CompanionScene, SceneOrigin, SceneStatus
 from .queries import get_pending_scene_task, get_scene, get_scene_state, scene_environment
-from .service import activate_scene, schedule_scene_generation
+from .service import schedule_scene_generation
 
 
 @dataclass(frozen=True)
@@ -19,7 +18,6 @@ class SceneSnapshot:
     status: str
     title: str
     description: str
-    activated_at: datetime | None
 
 
 @dataclass(frozen=True)
@@ -29,7 +27,7 @@ class ScenePlanningSnapshot:
 
 
 def _snapshot(row: CompanionScene) -> SceneSnapshot:
-    return SceneSnapshot(row.id, row.user_id, row.status, row.title, row.description, row.activated_at)
+    return SceneSnapshot(row.id, row.user_id, row.status, row.title, row.description)
 
 
 async def planning_scene(db: AsyncSession, user_id: int) -> ScenePlanningSnapshot:
@@ -56,10 +54,6 @@ async def find_pending_scene_id(db: AsyncSession, user_id: int) -> int | None:
     return row.id if row is not None else None
 
 
-async def activate_nightly_scene(db: AsyncSession, user_id: int, scene_id: int) -> SceneSnapshot:
-    return _snapshot(await activate_scene(db, user_id, scene_id, origin=SceneOrigin.NIGHTLY.value))
-
-
 async def schedule_nightly_scene(user_id: int, notes: str) -> int:
-    row = await schedule_scene_generation(user_id, origin=SceneOrigin.NIGHTLY.value, notes=notes, auto_activate=True)
+    row = await schedule_scene_generation(user_id, origin=SceneOrigin.NIGHTLY.value, notes=notes)
     return row.id

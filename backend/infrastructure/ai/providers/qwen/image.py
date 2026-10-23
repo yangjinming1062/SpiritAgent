@@ -53,6 +53,8 @@ class QwenImageGenProvider(ImageGenProvider):
             content.append({"image": req.reference_image})
         if req.secondary_reference_image:
             content.append({"image": req.secondary_reference_image})
+        if req.environment_reference_image:
+            content.append({"image": req.environment_reference_image})
         content.append({"text": req.prompt})
 
         parameters: dict = {

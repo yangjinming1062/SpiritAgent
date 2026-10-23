@@ -58,17 +58,7 @@ export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
         url.hash += `?subtab=${target.settingsTab}`
       }
     } else if (target.page === 'companion' && target.companionSection) {
-      const query = new URLSearchParams()
-
-      if (target.companionTask === 'create') {
-        query.set('create', '1')
-      }
-
-      if (target.returnToDesktopLife) {
-        query.set('return', 'desktop-life')
-      }
-
-      url.hash = `#/companion/${target.companionSection}${query.size ? `?${query}` : ''}`
+      url.hash = `#/companion/${target.companionSection}`
     } else if (target.page) {
       url.hash = `#/${target.page}`
     }

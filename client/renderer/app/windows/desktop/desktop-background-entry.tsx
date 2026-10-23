@@ -68,9 +68,35 @@ function DesktopWallpaper() {
     let fallbackPoster: string | null = null
     let fillPosterUrl: string | null = null
     let disposed = false
+    let imageGeneration = 0
+    let staticMedia: DesktopBackground | null = null
     let fadeTimer: ReturnType<typeof setTimeout> | null = null
     let fadeFrame: number | null = null
     const settled = new Set<string>()
+
+    const acknowledgeImage = (
+      media: DesktopBackground,
+      status: DesktopBackgroundPlayback['status'],
+      error?: string
+    ): void => {
+      if (!media.playId || disposed || settled.has(media.playId)) {
+        return
+      }
+
+      if (status !== 'started' && status !== 'first-frame') {
+        settled.add(media.playId)
+      }
+
+      void bridge
+        .acknowledge({
+          accountEpoch: media.accountEpoch,
+          revision: media.revision,
+          playId: media.playId,
+          status,
+          ...(error ? { error } : {})
+        })
+        .catch(failure => console.warn('Image acknowledgment failed', failure))
+    }
 
     const setFill = (url: string | null): void => {
       fillPosterUrl = url
@@ -296,6 +322,11 @@ function DesktopWallpaper() {
       const slot = slots[index]
       const previous = active === null ? null : slots[active]
 
+      if (slot.media?.kind === 'loop' && staticMedia) {
+        acknowledgeImage(staticMedia, 'interrupted')
+        staticMedia = null
+      }
+
       if (
         previous &&
         previous !== slot &&
@@ -371,6 +402,19 @@ function DesktopWallpaper() {
     }
 
     const restoreLoop = (notifyFirstFrame = false): void => {
+      if (retainedLoop === null && fallbackPoster && staticMedia) {
+        if (active !== null) {
+          captureTransition(slots[active])
+          reset(slots[active])
+        }
+
+        active = null
+        showPoster(fallbackPoster)
+        fadeTransition()
+
+        return
+      }
+
       if (retainedLoop === null || !slots[retainedLoop].ready || slots[retainedLoop].terminal) {
         return
       }
@@ -394,14 +438,13 @@ function DesktopWallpaper() {
 
     const sharesBase = (loop: DesktopBackground | null, candidate: DesktopBackground): boolean =>
       loop?.kind === 'loop' &&
-      loop.setId === candidate.setId &&
-      loop.setEpoch === candidate.setEpoch &&
-      loop.transition === 'base' &&
-      candidate.transition === 'base' &&
+      loop.presentationEpoch === candidate.presentationEpoch &&
+      loop.transition === 'natural' &&
+      candidate.transition === 'natural' &&
       loop.continuity === 'base' &&
       candidate.continuity === 'base' &&
-      loop.baseVersion !== null &&
-      loop.baseVersion === candidate.baseVersion
+      loop.inputImageHash !== null &&
+      loop.inputImageHash === candidate.inputImageHash
 
     const activate = (index: number): void => {
       const slot = slots[index]
@@ -435,8 +478,7 @@ function DesktopWallpaper() {
         slot.media.kind === 'once' &&
         previous !== null &&
         slots[previous].media?.kind === 'loop' &&
-        slots[previous].media?.setId === slot.media.setId &&
-        slots[previous].media?.setEpoch === slot.media.setEpoch
+        slots[previous].media?.presentationEpoch === slot.media.presentationEpoch
       ) {
         retainedLoop = previous
       } else {
@@ -559,6 +601,13 @@ function DesktopWallpaper() {
     })
 
     const clear = (): void => {
+      imageGeneration += 1
+
+      if (staticMedia) {
+        acknowledgeImage(staticMedia, 'interrupted')
+        staticMedia = null
+      }
+
       returningLoop = null
       returningFrom = null
       notifyReturnFrame = false
@@ -606,6 +655,7 @@ function DesktopWallpaper() {
       }
 
       revision = media.revision
+      const nextImageGeneration = ++imageGeneration
       paused = media.paused || media.reduceMotion
       document.documentElement.dataset.theme = media.theme
       document.documentElement.dataset.palette = media.theme.startsWith('night') ? 'night' : 'day'
@@ -658,14 +708,13 @@ function DesktopWallpaper() {
           media.kind === 'loop' &&
           slot.ready &&
           !slot.terminal &&
-          slot.media.setId === media.setId &&
-          slot.media.setEpoch === media.setEpoch &&
-          slot.media.actionId === media.actionId &&
-          slot.media.actionVersion === media.actionVersion &&
+          slot.media.visualId === media.visualId &&
+          slot.media.presentationEpoch === media.presentationEpoch &&
+          slot.media.visualVersion === media.visualVersion &&
           slot.media.continuity === media.continuity &&
           slot.media.transition === media.transition &&
           slot.media.geometryMode === media.geometryMode &&
-          slot.media.baseVersion === media.baseVersion
+          slot.media.inputImageHash === media.inputImageHash
       )
 
       if (media.video && reusableLoop !== -1) {
@@ -694,24 +743,77 @@ function DesktopWallpaper() {
       }
 
       if (!media.video) {
-        if (active === null) {
-          if (fallbackPoster) {
-            if (fillPosterUrl === fallbackPoster) {
-              setFill(null)
+        if (!media.poster) {
+          return
+        }
+
+        if (
+          staticMedia?.playId === media.playId &&
+          staticMedia?.visualId === media.visualId &&
+          staticMedia?.visualVersion === media.visualVersion
+        ) {
+          return
+        }
+
+        const nextPoster = URL.createObjectURL(
+          new Blob([new Uint8Array(media.poster.bytes)], { type: media.poster.mime })
+        )
+
+        const candidate = new Image()
+        candidate.src = nextPoster
+        void candidate
+          .decode()
+          .then(() => {
+            if (disposed || nextImageGeneration !== imageGeneration) {
+              URL.revokeObjectURL(nextPoster)
+
+              return
             }
 
-            URL.revokeObjectURL(fallbackPoster)
-          }
+            if (media.expiresAt && Date.parse(media.expiresAt) <= Date.now()) {
+              acknowledgeImage(media, 'failed', 'Image request expired before display')
+              URL.revokeObjectURL(nextPoster)
 
-          fallbackPoster = media.poster
-            ? URL.createObjectURL(new Blob([new Uint8Array(media.poster.bytes)], { type: media.poster.mime }))
-            : null
-          showPoster(fallbackPoster)
-        }
+              return
+            }
 
-        if (active !== null) {
-          start(slots[active])
-        }
+            if (active !== null) {
+              captureTransition(slots[active])
+            }
+
+            if (staticMedia) {
+              acknowledgeImage(staticMedia, 'interrupted')
+            }
+
+            for (const slot of slots) {
+              acknowledge(slot, 'interrupted')
+              reset(slot)
+            }
+
+            active = null
+            retainedLoop = null
+            const previousPoster = fallbackPoster
+            fallbackPoster = nextPoster
+            staticMedia = media
+            showPoster(nextPoster)
+            fadeTransition()
+            requestAnimationFrame(() => {
+              if (!disposed && nextImageGeneration === imageGeneration) {
+                acknowledgeImage(media, 'started')
+              }
+
+              if (previousPoster) {
+                URL.revokeObjectURL(previousPoster)
+              }
+            })
+          })
+          .catch(error => {
+            URL.revokeObjectURL(nextPoster)
+
+            if (!disposed && nextImageGeneration === imageGeneration) {
+              acknowledgeImage(media, 'failed', String(error))
+            }
+          })
 
         return
       }
@@ -721,10 +823,9 @@ function DesktopWallpaper() {
         const retained = slots[retainedLoop]
 
         if (
-          retained.media?.setId !== media.setId ||
-          retained.media?.setEpoch !== media.setEpoch ||
-          retained.media?.actionId !== media.actionId ||
-          retained.media?.actionVersion !== media.actionVersion
+          retained.media?.visualId !== media.visualId ||
+          retained.media?.presentationEpoch !== media.presentationEpoch ||
+          retained.media?.visualVersion !== media.visualVersion
         ) {
           acknowledge(retained, 'interrupted')
           reset(retained)
@@ -764,7 +865,7 @@ function DesktopWallpaper() {
       if (slot.posterUrl) {
         slot.element.poster = slot.posterUrl
 
-        if (active === null) {
+        if (active === null && !staticMedia) {
           showPoster(slot.posterUrl)
         }
       }

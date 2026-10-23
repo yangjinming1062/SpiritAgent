@@ -13,7 +13,6 @@ type ApiResultChannel =
   | typeof IPC.invoke.mediaAudioUpload
   | typeof IPC.invoke.mediaVoiceSampleUpload
   | typeof IPC.invoke.mediaVideoUpload
-  | typeof IPC.invoke.mediaDesktopVideoUpload
 
 type ApiValue<C extends ApiResultChannel> = Extract<Awaited<ReturnType<IpcInvokeContract[C]>>, { ok: true }>['value']
 

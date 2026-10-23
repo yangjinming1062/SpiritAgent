@@ -24,7 +24,6 @@ import {
   CreationWorkspace,
   Disclosure,
   INPUT_CLASS,
-  Pill,
   SettingCard,
   Spinner
 } from '@/shared/panel'
@@ -36,14 +35,11 @@ export interface SceneEditDraft {
 }
 
 interface SceneDetailViewProps {
-  activeScene: SceneAsset | null
   busy: boolean
   detail: SceneAsset | null
   draft?: SceneEditDraft
   loadError: string | null
   loading: boolean
-  selectingMaterial?: boolean
-  onActivate: (sceneId: string) => void
   onBack: () => void
   onCancelEdit: () => void
   onCancelTask: (sceneId: string) => Promise<void>
@@ -60,14 +56,11 @@ interface SceneDetailViewProps {
 }
 
 export function SceneDetailView({
-  activeScene,
   busy,
   detail,
   draft,
   loadError,
   loading,
-  selectingMaterial = false,
-  onActivate,
   onBack,
   onCancelEdit,
   onCancelTask,
@@ -100,13 +93,11 @@ export function SceneDetailView({
     }
   }
 
-  const [loadedImage, setLoadedImage] = useState<string | null>(null)
   const [failedImage, setFailedImage] = useState<string | null>(null)
   const [previewAttempt, setPreviewAttempt] = useState(0)
   const begin = useAsyncGuard()
   const actionBusy = actionKind !== null
   const refreshing = actionKind === 'refresh'
-  const isCurrent = detail?.id === activeScene?.id
   const regenerating = detail?.regeneration?.status === 'pending'
   const generating = detail?.status === 'pending' || regenerating
   const hasImage = Boolean(detail?.assetUrl)
@@ -124,14 +115,6 @@ export function SceneDetailView({
         ? draft.title.trim() && draft.description.trim()
         : detail?.status === 'ready' && detail.title.trim() && detail.description.trim()
     )
-
-  const canActivate =
-    detail?.status === 'ready' &&
-    !uncertain &&
-    Boolean(detail.url) &&
-    !detail.imageLoadFailed &&
-    loadedImage === detail.url &&
-    Boolean(detail.title.trim() && detail.description.trim())
 
   const canRetryAnalysis = Boolean(
     detail &&
@@ -379,7 +362,6 @@ export function SceneDetailView({
       <div className="min-w-0 flex-1">
         <h2 className="truncate text-sm font-semibold text-strong">{detail.title || t.untitled}</h2>
       </div>
-      {isCurrent ? <Pill tone="accent">{t.historyCurrentLabel}</Pill> : null}
     </div>
   )
 
@@ -387,16 +369,6 @@ export function SceneDetailView({
     <div className="space-y-2">
       {feedback}
       <CreationActionBar>
-        {(!isCurrent || selectingMaterial) && hasImage && !draft ? (
-          <button
-            className={BTN_PRIMARY}
-            disabled={actionBusy || !canActivate}
-            onClick={() => onActivate(detail.id)}
-            type="button"
-          >
-            {t.historyRollbackLabel}
-          </button>
-        ) : null}
         {canRetryGeneration ? (
           <button
             className={BTN_PRIMARY}
@@ -497,16 +469,14 @@ export function SceneDetailView({
               {hasDraft ? t.saveAndRegenerate : t.imageRegenerate}
             </button>
           ) : null}
-          {!isCurrent ? (
-            <button
-              className={cn(BTN_SUBTLE, 'text-danger-fg')}
-              disabled={actionBusy || generating || Boolean(uncertain)}
-              onClick={() => onDelete(detail)}
-              type="button"
-            >
-              {t.historyDeleteLabel}
-            </button>
-          ) : null}
+          <button
+            className={cn(BTN_SUBTLE, 'text-danger-fg')}
+            disabled={actionBusy || generating || Boolean(uncertain)}
+            onClick={() => onDelete(detail)}
+            type="button"
+          >
+            {t.historyDeleteLabel}
+          </button>
         </div>
       </CreationActionBar>
     </div>
@@ -528,11 +498,9 @@ export function SceneDetailView({
                 className="block h-auto max-h-[65vh] w-full object-contain"
                 key={`${detail.url}:${previewAttempt}`}
                 onError={() => {
-                  setLoadedImage(null)
                   setFailedImage(detail.url)
                 }}
                 onLoad={() => {
-                  setLoadedImage(detail.url)
                   setFailedImage(null)
                 }}
                 src={detail.url}
@@ -572,7 +540,6 @@ export function SceneDetailView({
                   disabled={actionBusy || uncertain?.pending}
                   onClick={() =>
                     void runAction(async isLive => {
-                      setLoadedImage(null)
                       await onRetryImage()
 
                       if (isLive()) {

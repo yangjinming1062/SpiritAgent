@@ -84,13 +84,19 @@ async def review_character_image_goal(
     generation_prompt: str,
     identity_reference_mode: Literal["primary", "portrait_and_outfit"],
     secondary_uri: str | None = None,
+    environment_uri: str | None = None,
     identity_text: str = "",
     prepared_action_frame: bool = False,
     task: AiTaskKey,
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> CharacterImageReviewResult:
     """同次审阅保留独立身份分与目标结论；第一张生成参考同时承担身份基准。"""
-    images = (reference_uri, *((secondary_uri,) if secondary_uri else ()), candidate_uri)
+    images = (
+        reference_uri,
+        *((secondary_uri,) if secondary_uri else ()),
+        *((environment_uri,) if environment_uri else ()),
+        candidate_uri,
+    )
     if any(not image for image in images):
         logger.warning("character image goal review skipped: image missing", extra={"user_id": user_id})
         return CharacterImageReviewResult(None, None, ImageGoalReviewFailure(status="invalid"))
@@ -105,6 +111,8 @@ async def review_character_image_goal(
                 "图 2 提供身体比例、身体结构和固有材质，并提供本次造型及携带物；"
                 "其面部细节不覆盖图 1，衣物轮廓不作为被遮挡身体的依据。"
             )
+    if environment_uri:
+        reference_roles += f"图 {len(images) - 1} 提供环境与光线，只核对环境，不参与角色身份评分。"
     diagnostics: list[LlmAttemptDiagnostic] = []
     original_seen = False
     original_score: int | None = None

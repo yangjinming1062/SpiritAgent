@@ -6,7 +6,7 @@ import type { VideoQueueState } from '@protocol'
 import { classifyError } from '../shared/error-classification'
 import { uiCopyErrors } from '../shared/ui-copy'
 
-import { errorText } from './api'
+import { ApiError, errorText } from './api'
 
 export function videoQueueText(queue: VideoQueueState): string {
   return {
@@ -122,6 +122,66 @@ export function focusAfterRender(selector: string): void {
   })
 }
 
+export function useAssetSubmission(
+  key: string,
+  onCheck: () => Promise<void>
+): {
+  check: () => Promise<void>
+  clearSubmission: () => void
+  reconciled: boolean
+  submit: <Result>(task: () => Promise<Result>) => Promise<Result>
+  submitted: boolean
+} {
+  const alive = useAlive()
+  const [submitted, setSubmitted] = usePageState(`${key}.submitted`, false)
+  const [reconciled, setReconciled] = useState(false)
+
+  const submit = async <Result,>(task: () => Promise<Result>): Promise<Result> => {
+    setSubmitted(true)
+    setReconciled(false)
+    try {
+      return await task()
+    } catch (failure) {
+      if (alive() && failure instanceof ApiError && failure.status !== null && failure.status < 500) {
+        setSubmitted(false)
+      }
+      throw failure
+    }
+  }
+  const check = async () => {
+    await onCheck()
+    if (alive()) {
+      setReconciled(true)
+    }
+  }
+
+  return { check, clearSubmission: () => setSubmitted(false), reconciled, submit, submitted }
+}
+
+export function AssetResultRecovery({
+  onCheck,
+  onContinue,
+  reconciled
+}: {
+  onCheck: () => Promise<void>
+  onContinue: () => void
+  reconciled: boolean
+}): ReactElement {
+  return (
+    <div className="creation-status">
+      <p>上次制作的结果尚未确认。请先刷新，核对原来的结果。</p>
+      <div className="button-row">
+        <button onClick={onCheck} type="button">
+          刷新结果
+        </button>
+        <button disabled={!reconciled} onClick={onContinue} type="button">
+          已核对，继续调整
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export function useTask(): {
   busy: boolean
   error: string
@@ -225,6 +285,40 @@ export function Empty({ title, children }: { title: string; children?: ReactNode
   )
 }
 
+/** 素材与影像列表共用的卡片；整卡可点进详情，不承载独立的卡片级动作。 */
+export function LibraryCard({
+  active = false,
+  cardKey,
+  imageAlt,
+  imageUrl,
+  meta,
+  onSelect,
+  submeta,
+  title
+}: {
+  active?: boolean
+  cardKey: string
+  imageAlt: string
+  imageUrl: string
+  meta: string
+  onSelect: () => void
+  submeta?: string
+  title: string
+}): ReactElement {
+  return (
+    <article className={`asset-card ${active ? 'active' : ''}`}>
+      <button className="asset-card-preview" data-card-key={cardKey} onClick={onSelect} type="button">
+        {imageUrl ? <img alt={imageAlt} loading="lazy" src={imageUrl} /> : <div className="asset-placeholder">✦</div>}
+        <div>
+          <strong>{title}</strong>
+          <small>{meta}</small>
+          {submeta ? <small>{submeta}</small> : null}
+        </div>
+      </button>
+    </article>
+  )
+}
+
 export function Notice({ children, error }: { children?: ReactNode; error?: string }): ReactElement {
   const raw = error ?? (typeof children === 'string' ? children : '')
   const kind = classifyError(raw)
@@ -266,18 +360,21 @@ export function PageHeader({
   )
 }
 
-export function ImageInput({
+export function FileInput({
   ref,
+  accept,
   multiple = false,
   onFiles
 }: {
   ref: Ref<HTMLInputElement>
+  /** 允许的文件类型；缺省为图片格式。 */
+  accept?: string
   multiple?: boolean
   onFiles: (files: File[]) => void
 }): ReactElement {
   return (
     <input
-      accept="image/png,image/jpeg,image/webp,image/gif"
+      accept={accept ?? 'image/png,image/jpeg,image/webp,image/gif'}
       hidden
       multiple={multiple}
       onChange={event => {

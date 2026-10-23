@@ -6,15 +6,16 @@ from features.appearance.avatar_service import AvatarGenerationError
 from features.appearance.visual_identity import (
     build_plain_video_prompt,
     build_self_video_inputs,
+    load_self_visual_context,
 )
 from features.conversation.reply_media import apply_video_status, require_video_source
-from features.desktop_life.self_visual import load_self_visual_plan
 from features.media.contracts import VideoJobSnapshot
 from features.media.identity_contracts import CharacterReferenceRole
 from features.media.prompts import VIDEO_REFERENCE_TEMPLATE
 from features.media.queries import get_job
 from features.media.turn_state import MediaArtifact, MediaTurnState
 from features.media.video_jobs import enqueue_video_job, ensure_video_capability
+from features.visuals.queries import actual_presentation_snapshot
 from infrastructure.ai.llm_client import MissingLlmConfigError
 from infrastructure.ai.prompt_engineer import VisualReasoningError
 from infrastructure.ai.tasks import AiTaskKey
@@ -86,11 +87,8 @@ async def _submit_video(
     references = (reference_image,) if reference_image else ()
     if subject == "self":
         try:
-            visual_plan = await load_self_visual_plan(
-                user_id,
-                outfit_override=outfit_override,
-                use_outfit_reference=not bool(reference_image),
-            )
+            presentation = await actual_presentation_snapshot(user_id)
+            visual_plan = await load_self_visual_context(user_id, presentation, outfit_override=outfit_override)
             inputs = await build_self_video_inputs(visual_plan, prompt, reference_image)
             prompt, references = inputs.prompt, inputs.references
             identity_reference_role = inputs.identity_reference_role

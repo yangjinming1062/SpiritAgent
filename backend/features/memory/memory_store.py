@@ -13,7 +13,7 @@ from runtime.background import TaskBag
 from runtime.events.emit import emit_ws_event
 from runtime.memory_scope import EmbeddingItem, MemoryScope, MemorySource, validate_memory_scope
 from runtime.user_maintenance import is_user_in_maintenance
-from sqlalchemy import ColumnElement, and_, bindparam, case, func, or_, select, text, update
+from sqlalchemy import ColumnElement, and_, bindparam, case, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -291,9 +291,10 @@ async def backfill_memory_embeddings(
         if any(not isinstance(vector, list) or len(vector) != MEMORY_EMBEDDING_DIM for vector in vectors):
             return False
         model_key = embedding_model_key(provider.config)
-        # 同事务单次批量写；行级 WHERE 保留逐行校验跳过语义，失败整批回滚。
+        # 同事务单次批量写；行级 WHERE 保留逐行校验跳过语义，失败整批回滚。按表更新避免 ORM 批量主键同步要求。
+        table = Memory.__table__
         stmt = (
-            update(Memory)
+            table.update()
             .where(
                 scope_filter(scope),
                 Memory.id == bindparam("row_id"),
@@ -304,7 +305,7 @@ async def backfill_memory_embeddings(
             .values(
                 embedding=bindparam("row_embedding"),
                 embedding_model_key=model_key,
-                updated_at=Memory.updated_at,
+                updated_at=table.c.updated_at,
             )
         )
         async with session_scope() as db:

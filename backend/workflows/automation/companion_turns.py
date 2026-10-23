@@ -154,7 +154,8 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
                         if disturbance_tier == "autonomous"
                         else frozenset(
                             {
-                                "action_play",
+                                "visual_play",
+                                "visual_generate",
                                 "image_generate",
                                 "image_regenerate",
                                 "video_generate",

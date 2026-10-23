@@ -36,24 +36,6 @@ def plan_asset_layout(
     def mapped(table: str, value: Any) -> int:
         return int(id_map[table][str(value)] if id_map is not None else value)
 
-    desktop_bases = {
-        str(row["id"]): (
-            row["base_image_path"],
-            str(
-                PurePosixPath(
-                    "companion-assets",
-                    str(target_user_id),
-                    "desktop",
-                    str(mapped("desktop_video_sets", row["id"])),
-                    "references",
-                    PurePosixPath(row["base_image_path"]).name,
-                ),
-            ),
-        )
-        for row in rows.get("desktop_video_sets", ())
-        if row.get("base_image_path")
-    }
-
     def directory(table: str, row: dict[str, Any]) -> tuple[int, str]:
         if table == "custom_voices":
             return 3, "voices"
@@ -63,10 +45,10 @@ def plan_asset_layout(
             return 1, outfit_asset_directory(mapped(table, row["id"]))
         if table == "companion_scenes":
             return 2, scene_asset_directory(mapped(table, row["id"]))
-        if table == "desktop_video_sets":
-            return 3, f"desktop/{mapped(table, row['id'])}/references"
-        if table == "desktop_video_actions":
-            return 3, f"desktop/{mapped('desktop_video_sets', row['set_id'])}/{mapped(table, row['id'])}"
+        if table == "visual_items":
+            return 3, f"visuals/{mapped(table, row['id'])}"
+        if table == "visual_jobs":
+            return 3, f"visuals/jobs/{mapped(table, row['id'])}"
         created_at = row.get("created_at")
         if isinstance(created_at, str):
             created_at = datetime.fromisoformat(created_at)
@@ -94,9 +76,6 @@ def plan_asset_layout(
         for old in sorted(references):
             previous = layout.mapping.get(old)
             target = str(PurePosixPath("companion-assets", str(target_user_id), folder, PurePosixPath(old).name))
-            base = desktop_bases.get(str(row.get("set_id"))) if table == "desktop_video_actions" else None
-            if base is not None and old == base[0]:
-                target = base[1]
             if old not in owned and previous is not None:
                 target = previous
             if priority == 5 and previous is None:

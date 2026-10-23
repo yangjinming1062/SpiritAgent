@@ -1,10 +1,10 @@
-"""独立场景资产；当前环境由 Persona 的激活指针与切换版本维护。"""
+"""独立环境素材；素材状态由本表维护。"""
 
 from datetime import datetime
 from enum import StrEnum
 
 from infrastructure.models import ModelBase, TimestampMixin
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func, text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -58,9 +58,6 @@ class CompanionScene(ModelBase, TimestampMixin):
     regeneration_task_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     regeneration_state_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     reference_image: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
-    auto_activate: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
-    switch_version: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
-    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -6,7 +6,6 @@ import { AssetLibraryCard, AssetLibraryGrid } from '@/app/components/asset-libra
 import { AssetLibraryHeader, AssetLibraryToolbar } from '@/app/components/asset-library-header'
 import {
   $sceneCreationIssue,
-  type ActiveScene,
   finishSceneCreationWait,
   PAGE_SIZE,
   type SceneAsset,
@@ -26,9 +25,7 @@ import {
 import { useStrings } from '@/shared/strings'
 
 interface SceneLibraryViewProps {
-  activeScene: ActiveScene | null
   entries: SceneAsset[]
-  onActivate: (sceneId: string) => void
   onCreate: () => void
   onCheckStatus: () => Promise<void>
   onOpen: (sceneId: string) => void
@@ -39,19 +36,17 @@ interface SceneLibraryViewProps {
   onSetPage: (page: number) => void
   onQueryChange: (query: string) => void
   page: number
-  pending: ActiveScene | null
+  pending: SceneAsset | null
   policy: ScenePolicy
   query: string
-  regenerating: ActiveScene | null
+  regenerating: SceneAsset | null
   slow: boolean
   status: 'idle' | 'loading' | 'loaded' | 'error'
   total: number
 }
 
 export function SceneLibraryView({
-  activeScene,
   entries,
-  onActivate,
   onCreate,
   onCheckStatus,
   onOpen,
@@ -194,25 +189,17 @@ export function SceneLibraryView({
       {entries.length > 0 ? (
         <AssetLibraryGrid>
           {entries.map(entry => {
-            const isCurrent = entry.id === activeScene?.id
             const isRegenerating = entry.regeneration?.status === 'pending'
 
             return (
               <AssetLibraryCard
-                currentLabel={isCurrent ? t.historyCurrentLabel : undefined}
                 description={entry.description || t.needsDescription}
                 footer={
                   <>
                     <span className={`${HINT_TEXT} min-w-0 flex-1 truncate`}>
                       {isRegenerating ? t.imageRegenerating : t.statuses[entry.status]}
                     </span>
-                    {!isCurrent && entry.status === 'ready' ? (
-                      <button className={BTN_SUBTLE} onClick={() => onActivate(entry.id)} type="button">
-                        {t.historyRollbackLabel}
-                      </button>
-                    ) : (
-                      <span className="shrink-0 text-[10px] text-muted">{t.openDetails}</span>
-                    )}
+                    <span className="shrink-0 text-[10px] text-muted">{t.openDetails}</span>
                   </>
                 }
                 id={entry.id}

@@ -1,8 +1,10 @@
-"""共享创意只评审一次，画面适配和素材质量由各制作链负责。"""
+"""动作素材的独立语义评审执行。
+
+评审依据为角色身体能力与动作含义；评审中断转为暂缓，不自动重新付费。
+"""
 
 import asyncio
-import re
-from typing import Any, Literal
+from typing import Any
 
 from infrastructure.ai.error_classifier import LlmCallBlockedError
 from infrastructure.ai.models import ModelModality
@@ -10,157 +12,136 @@ from infrastructure.ai.prompt_engineer import LlmJsonValidationError, call_llm_j
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.assets.asset_store import build_data_uri
-from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
+from infrastructure.text import resolve_language
 from pydantic import BaseModel, ConfigDict, Field
 from runtime.paid_work import require_new_generation_call
+from runtime.task_supervisor import TASK_SUPERVISOR
+from sqlalchemy import select
 
 from features.appearance.avatar_service import read_portrait_bytes
+from features.configuration.settings.values import get_user_setting
 
-from .identity import definition_matches_source, same_review_reference
-from .ports import read_source
+from .models import ActionDefinition
 from .prompts import ACTION_DEFINITION_REVIEW, ACTION_DEFINITION_REVIEW_REPAIR
-from .queries import definition_snapshot, definition_with_source, matching_definitions
-from .schemas import ActionDefinitionSnapshot
+from .queries import action_detail
+from .schemas import ActionReviewSource
 from .service import begin_review, record_review
 
 logger = get_logger(__name__)
-_REVIEW_LOCKS: dict[tuple[int, int | None, str], asyncio.Lock] = {}
+_REVIEW_LOCKS: dict[int, asyncio.Lock] = {}
+_REVIEW_TASKS: dict[tuple[int, int], asyncio.Task[None]] = {}
 
 
-class DefinitionReviewVerdict(BaseModel):
+def schedule_action_review(user_id: int, action_id: int) -> None:
+    key = (user_id, action_id)
+    existing = _REVIEW_TASKS.get(key)
+    if existing is not None and not existing.done():
+        return
+    task = asyncio.create_task(review_action(user_id, action_id), name=f"action.review.{action_id}")
+    _REVIEW_TASKS[key] = task
+    TASK_SUPERVISOR.register(task, owner="action_library.review", user_id=user_id)
+    task.add_done_callback(
+        lambda finished: _REVIEW_TASKS.pop(key, None) if _REVIEW_TASKS.get(key) is finished else None,
+    )
+
+
+class ActionReviewVerdict(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    decision: Literal["approve", "reuse", "defer", "reject"]
-    reason: str = Field(min_length=1, max_length=400)
-    reuse_definition_id: int | None = Field(default=None, strict=True, gt=0)
+    decision: str = Field(pattern=r"^(approve|defer|reject)$")
+    reason: str = Field(min_length=1, max_length=200)
 
 
-def _similarity_score(design: ActionDefinitionSnapshot, candidate: ActionDefinitionSnapshot) -> float:
-    query = " ".join((design.name, design.motion_description, *design.use_when)).casefold()
-    terms: set[str] = set()
-    for chunk in re.split(r"[^\w]+", query):
-        if chunk.isascii():
-            if len(chunk) >= 2:
-                terms.add(chunk)
-        else:
-            terms.update(chunk[index : index + 2] for index in range(len(chunk) - 1))
-    if not terms:
-        return 0.0
-    text = " ".join((candidate.name, candidate.motion_description, *candidate.use_when)).casefold()
-    return sum(term in text for term in terms) / len(terms)
+async def review_action(user_id: int, action_id: int) -> None:
+    """对 pending 状态的动作素材执行一次语义评审。"""
+
+    async with _REVIEW_LOCKS.setdefault(user_id, asyncio.Lock()):
+        try:
+            await _review_action_locked(user_id, action_id)
+        except BaseException:
+            async with SESSION_LOCAL() as db:
+                await record_review(db, user_id, action_id, decision="defer", reason="评审未完成，请显式重试")
+                await db.commit()
+            raise
 
 
-async def review_definition(user_id: int, definition_id: int) -> None:
+async def _review_action_locked(user_id: int, action_id: int) -> None:
     async with SESSION_LOCAL() as db:
-        definition = await definition_snapshot(db, user_id, definition_id)
-    if definition is None or definition.status != "pending":
+        current = await action_detail(db, user_id, action_id)
+    if current is None or current.status != "pending":
         return
-    key = (user_id, definition.outfit_id, definition.source_visual_key)
-    async with _REVIEW_LOCKS.setdefault(key, asyncio.Lock()):
-        await _review_definition_locked(user_id, definition_id)
-
-
-async def _review_definition_locked(user_id: int, definition_id: int) -> None:
-    async with SESSION_LOCAL() as db:
-        loaded = await definition_with_source(db, user_id, definition_id)
-        if loaded is None:
-            return
-        definition, source = loaded
-        if definition.status != "pending":
-            return
-        candidates = [
-            item
-            for item in await matching_definitions(db, source)
-            if item.id != definition_id and item.status == "approved"
-        ]
-        candidates.sort(key=lambda item: (-_similarity_score(definition, item), item.id))
-        candidates = candidates[:10]
 
     async def before_call() -> None:
         require_new_generation_call(user_id)
-        if definition.source == "autonomous" and not SETTINGS.action_autocreate_enabled:
-            raise LlmCallBlockedError("自主创建新动作当前已关闭")
         async with SESSION_LOCAL() as db:
-            current = await definition_snapshot(db, user_id, definition_id)
-            current_source = await read_source(db, user_id, source.target_id)
-            if current is None or current.status != "reviewing" or current_source is None or not current_source.ready:
-                raise LlmCallBlockedError("动作评审来源已不可用")
-            if not definition_matches_source(current, current_source):
-                raise LlmCallBlockedError("动作评审的冻结来源已变化")
-            if source.scope == "target" and not same_review_reference(source, current_source):
-                raise LlmCallBlockedError("桌景的确认画面或着装资料已变化，请重新评审")
+            latest = await action_detail(db, user_id, action_id)
+            if latest is None or latest.status != "reviewing":
+                raise LlmCallBlockedError("动作评审状态已变化")
 
-    def parse_output(value: Any) -> DefinitionReviewVerdict:
-        verdict = DefinitionReviewVerdict.model_validate(value)
-        if verdict.decision == "reuse":
-            if verdict.reuse_definition_id not in {item.id for item in candidates}:
-                raise LlmJsonValidationError("invalid_reuse_definition_id", fields=("reuse_definition_id",))
-        elif verdict.reuse_definition_id is not None:
-            raise LlmJsonValidationError("unexpected_reuse_definition_id", fields=("reuse_definition_id",))
+    def parse_output(value: Any) -> ActionReviewVerdict:
+        verdict = ActionReviewVerdict.model_validate(value)
+        if not verdict.reason.strip():
+            raise LlmJsonValidationError("empty_reason", fields=("reason",))
         return verdict
 
+    async with SESSION_LOCAL() as db:
+        row = await db.scalar(
+            select(ActionDefinition).where(ActionDefinition.user_id == user_id, ActionDefinition.id == action_id),
+        )
+        review_source_json = row.review_source_json if row is not None else "{}"
+    try:
+        source = ActionReviewSource.model_validate_json(review_source_json or "{}")
+    except ValueError:
+        source = None
     references: list[str] = []
-    for path in source.reference_paths:
-        loaded = await asyncio.to_thread(read_portrait_bytes, path)
-        if loaded is None:
-            raise ValueError("共享动作的冻结参考图不可读")
-        references.append(await asyncio.to_thread(build_data_uri, loaded[0], loaded[1]))
+    if source is not None:
+        for path in (source.identity_path, source.portrait_path):
+            loaded = await asyncio.to_thread(read_portrait_bytes, path)
+            if loaded is not None:
+                references.append(await asyncio.to_thread(build_data_uri, loaded[0], loaded[1]))
     if not references:
-        raise ValueError("共享动作缺少冻结参考图")
+        raise ValueError("动作评审缺少可读的冻结身份参考图")
+
     config = await load_user_llm_config(
         user_id,
-        AiTaskKey.desktop_life,
+        AiTaskKey.visuals,
         required_modalities=frozenset({ModelModality.text, ModelModality.image}),
     )
+    async with SESSION_LOCAL() as db:
+        language = resolve_language(await get_user_setting(db, user_id, "language"))
     payload = {
-        "creation_scope": "current_desktop" if source.scope == "target" else "shared_outfit",
-        "design": definition.model_dump(
+        "output_language": language,
+        "design": current.model_dump(
             include={"name", "motion_description", "use_when", "avoid_when", "clip_kind", "duration_seconds"},
         ),
-        "reason": definition.reason,
-        "reference_roles": source.reference_roles,
-        "identity": source.identity.model_dump() if source.identity else None,
-        "outfit_description": source.outfit_description,
-        "persona": source.persona,
-        "existing_actions": [
-            item.model_dump(
-                include={"id", "name", "motion_description", "use_when", "avoid_when", "clip_kind", "duration_seconds"},
-            )
-            for item in candidates
-        ],
+        "reason": current.reason,
+        "identity": source.identity.model_dump() if source else None,
+        "persona": source.persona if source else {},
     }
     async with SESSION_LOCAL() as db:
-        if not await begin_review(db, user_id, definition_id):
+        if not await begin_review(db, user_id, action_id, expected_updated_at=current.updated_at):
             return
         await db.commit()
     verdict = await call_llm_json(
         config,
         ACTION_DEFINITION_REVIEW,
         payload,
-        schema=DefinitionReviewVerdict.model_json_schema(),
-        schema_name="shared_action_review",
+        schema=ActionReviewVerdict.model_json_schema(),
+        schema_name="action_asset_review",
         parse_output=parse_output,
         repair_prompt=ACTION_DEFINITION_REVIEW_REPAIR,
         reference_images=tuple(references),
         preserve_choices=("decision",),
         before_call=before_call,
     )
-    require_new_generation_call(user_id)
     async with SESSION_LOCAL() as db:
-        recorded = await record_review(
+        await record_review(
             db,
             user_id,
-            definition_id,
-            verdict.decision,
-            verdict.reason,
-            verdict.reuse_definition_id,
+            action_id,
+            decision=verdict.decision,
+            reason=verdict.reason,
         )
         await db.commit()
-    if recorded is None:
-        # 竞态下结论已无法覆盖既有状态，保留诊断避免静默丢弃已计费判决。
-        logger.warning(
-            "shared action review verdict dropped",
-            extra={"definition_id": definition_id, "user_id": user_id, "decision": verdict.decision},
-        )

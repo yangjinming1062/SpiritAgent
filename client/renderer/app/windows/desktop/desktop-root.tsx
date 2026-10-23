@@ -15,10 +15,10 @@ import {
   switchSession,
   useConversationUnread
 } from '@/modules/conversation'
-import { $desktopVideoError, $desktopVideoState } from '@/modules/desktop-videos'
 import { $diaryHasUnread, hydrateDiaryUnread } from '@/modules/diary'
 import { $postsHasUnread, hydratePostsUnread } from '@/modules/posts'
 import { hydrateScene } from '@/modules/scene'
+import { $visualsError, $visualsJobs, $visualsPresentation, $visualsPresentationError } from '@/modules/visuals'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import { isPointInteractive, useInteractiveRegion } from '@/shared/lib/interactive-regions'
@@ -39,17 +39,15 @@ import { DesktopCompanionBubble } from './desktop-companion-bubble'
 import { DesktopControls } from './desktop-controls'
 import { type DesktopApp, useDesktopLayout } from './desktop-layout'
 import { DesktopProductNav } from './desktop-product-nav'
-import { useDesktopVideoWallpaper } from './desktop-video-wallpaper'
+import { useDesktopVisualWallpaper } from './desktop-visual-wallpaper'
 import { DesktopWindow } from './desktop-window'
 import styles from './desktop.module.css'
 
-type DesktopShortcut = 'desktopLife'
-
 export function DesktopRoot(): React.JSX.Element {
-  useDesktopVideoWallpaper()
+  useDesktopVisualWallpaper()
   const strings = useStrings()
   const t = strings.desktopShell
-  const desktopLife = strings.desktopLife
+  const visuals = strings.visuals
   const auth = useStore($auth)
   const uiStateReady = useStore($uiStateReady)
   const appPage = useStore($appPage)
@@ -85,23 +83,26 @@ export function DesktopRoot(): React.JSX.Element {
   const rail = getDesktopRailLayout(Math.max(0, viewport.width - 2 * Math.max(safeLeft, safeRight)))
   const popupBottom = safeBottom + DESKTOP_LAYOUT.bottomInset
 
-  const videoState = useStore($desktopVideoState)
-  const videoError = useStore($desktopVideoError)
-  const idleVideo = videoState?.current?.actions.find(action => action.key === 'idle')
+  const videoState = useStore($visualsPresentation)
+  const presentationError = useStore($visualsPresentationError)
+  const libraryError = useStore($visualsError)
+  const videoError = presentationError ?? libraryError
+
+  const busyJobs = useStore($visualsJobs).filter(
+    job => job.state === 'running' || job.state === 'queued' || job.state === 'paused'
+  )
+
+  const idleVideo = videoState?.loop_visual ?? videoState?.current_visual
 
   const wallpaperStatus =
-    videoState?.preparation_error ||
-    idleVideo?.error ||
     videoError ||
-    (!videoState?.current
-      ? desktopLife.chooseBackground
-      : idleVideo?.status === 'processing'
-        ? idleVideo.stage === 'paused'
-          ? desktopLife.paused
-          : strings.common.actionVariants.statuses.processing
-        : !idleVideo?.video_url
-          ? desktopLife.noPreview
-          : null)
+    (busyJobs.length > 0
+      ? busyJobs.some(job => job.state === 'paused')
+        ? visuals.paused
+        : strings.common.actionVariants.statuses.processing
+      : !idleVideo
+        ? visuals.emptyTitle
+        : null)
 
   const [focusedConversation, setFocusedConversation] = useState<'main' | null>(null)
   const [overlay, setOverlay] = useState<'account' | 'controls' | 'dock' | 'product' | null>(null)
@@ -214,18 +215,11 @@ export function DesktopRoot(): React.JSX.Element {
   }, [])
 
   const activatePanel = useCallback(
-    (id: DesktopApp | DesktopShortcut): void => {
-      const page = id === 'desktopLife' ? 'companion' : id
-
-      if (id === 'desktopLife') {
-        void applyAppNavigation({ page: 'companion', companionSection: 'desktop-life' })
-      } else {
-        setAppPage(page)
-      }
-
+    (id: DesktopApp): void => {
+      setAppPage(id)
       setOverlay(null)
-      activate(page)
-      setFocusedConversation(page === 'chat' ? 'main' : null)
+      activate(id)
+      setFocusedConversation(id === 'chat' ? 'main' : null)
     },
     [activate]
   )
@@ -529,10 +523,10 @@ export function DesktopRoot(): React.JSX.Element {
         systemTray={presentation.systemTray}
       />
       <DesktopControls
-        onDesktopLife={() => activatePanel('desktopLife')}
         onOpenChange={controlsOpenChange}
+        onOpenVisuals={() => activatePanel('visuals')}
         open={overlay === 'controls'}
-        wallpaperError={Boolean(videoState?.preparation_error || idleVideo?.error || videoError)}
+        wallpaperError={Boolean(videoError)}
         wallpaperStatus={wallpaperStatus}
       />
     </div>

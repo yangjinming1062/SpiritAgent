@@ -30,13 +30,12 @@ type FileBridgePort = Pick<
   | 'readFileDataUrl'
   | 'readImageForAttach'
   | 'uploadVideoForAttach'
-  | 'uploadDesktopVideo'
   | 'selectPaths'
   | 'writeClipboard'
   | 'copyImage'
   | 'saveImage'
 >
-type MediaUpload = 'uploadVideoForAttach' | 'uploadDesktopVideo'
+type MediaUpload = 'uploadVideoForAttach'
 type FilePort = Omit<FileBridgePort, MediaUpload> & {
   [K in MediaUpload]: ApiValueCall<FileBridgePort[K]>
 }
@@ -90,7 +89,6 @@ export const fileApi = (): FilePort => ({
   readFileDataUrl: window.spiritagent.readFileDataUrl,
   readImageForAttach: window.spiritagent.readImageForAttach,
   uploadVideoForAttach: payload => apiValue(window.spiritagent.uploadVideoForAttach(payload)),
-  uploadDesktopVideo: payload => apiValue(window.spiritagent.uploadDesktopVideo(payload)),
   selectPaths: window.spiritagent.selectPaths,
   writeClipboard: window.spiritagent.writeClipboard,
   copyImage: window.spiritagent.copyImage,

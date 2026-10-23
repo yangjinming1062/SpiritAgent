@@ -34,16 +34,14 @@ from features.appearance.visual_identity import (
     build_plain_video_prompt,
     build_self_image_inputs,
     build_self_video_inputs,
+    load_self_visual_context,
 )
 from features.assets.lifecycle import cleanup_user_assets, enqueue_asset_cleanup
 from features.companion.narrative_prompts import NARRATIVE_REVISION_TEXTS
 from features.companion.narrative_quality import NarrativeQualityError, review_narrative
-from features.companion.proactive_runtime import get_presentation_snapshot
 from features.companion.queries import complete_user_ids
 from features.configuration.settings.timezone import resolve_user_timezone
 from features.configuration.settings.values import get_user_setting_bool, load_user_settings
-from features.desktop_life.queries import activated_desktop_environment
-from features.desktop_life.self_visual import load_self_visual_plan
 from features.media.character_images import generate_character_images
 from features.media.contracts import VideoJobSnapshot
 from features.media.identity_contracts import CharacterCardSnapshot, CharacterReferenceRole
@@ -81,6 +79,7 @@ from features.posts.store import (
     response_for_publication,
 )
 from features.scenes.queries import get_scene_state, scene_environment
+from features.visuals.queries import actual_presentation_snapshot
 
 logger = get_logger(__name__)
 _BG = TaskBag("posts.publication")
@@ -187,18 +186,16 @@ async def _creation_input(user_id: int) -> dict:
             .scalars()
             .all()
         )
-        presentation = get_presentation_snapshot(user_id)
-        environment = (
-            {
-                "presentation_mode": "desktop",
-                "current": (await activated_desktop_environment(db, user_id)).get("current"),
-            }
-            if presentation is not None and presentation.mode == "desktop"
-            else scene_environment(await get_scene_state(db, user_id))
-        )
+        environment = scene_environment(await get_scene_state(db, user_id))
+    presentation = await actual_presentation_snapshot(user_id)
     return {
         **ctx.payload,
         "environment": environment,
+        "presentation": {
+            "visual_description": presentation.visual_description,
+            "outfit_description": presentation.outfit_description,
+            "scene_description": presentation.scene_description,
+        },
         "available_types": types,
         "recent_posts": [post_prompt_entry(post, ctx) for post in recent],
     }
@@ -385,7 +382,8 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
     identity = None
     visual_plan = None
     if plan.depicts_self and row.video_job_id is None:
-        visual_plan = await load_self_visual_plan(row.user_id)
+        presentation = await actual_presentation_snapshot(row.user_id)
+        visual_plan = await load_self_visual_context(row.user_id, presentation)
     if visual_plan is not None:
         identity = visual_plan.context.identity
         progress["identity"] = identity.model_dump(mode="json")

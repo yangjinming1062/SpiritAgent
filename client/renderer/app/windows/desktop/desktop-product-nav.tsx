@@ -8,7 +8,7 @@ import { useStrings } from '@/shared/strings'
 import { type DesktopApp, type DesktopWindowState } from './desktop-layout'
 import styles from './desktop.module.css'
 
-const DESKTOP_NAV_APPS = ['companion', 'posts', 'diary', 'settings'] as const satisfies readonly DesktopApp[]
+const DESKTOP_NAV_APPS = ['companion', 'posts', 'diary', 'visuals', 'settings'] as const satisfies readonly DesktopApp[]
 
 type DesktopNavApp = (typeof DESKTOP_NAV_APPS)[number]
 

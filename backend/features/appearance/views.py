@@ -203,7 +203,3 @@ async def retry_outfit_description_view(db: AsyncSession, user_id: int, outfit_i
 async def character_card_view(db: AsyncSession, user_id: int) -> CharacterCardResponse | None:
     row = await get_character_card(db, user_id)
     return character_card_response(row) if row is not None else None
-
-
-async def activate_outfit_view(db: AsyncSession, user_id: int, outfit_id: int) -> OutfitResponse:
-    return outfit_response(await _outfit.activate_outfit(db, user_id, outfit_id))

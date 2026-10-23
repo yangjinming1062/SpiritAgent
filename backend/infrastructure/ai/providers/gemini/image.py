@@ -34,7 +34,7 @@ class GeminiImageGenProvider(ImageGenProvider):
         aspect = req.aspect_ratio or "1:1"
 
         parts: list[dict] = []
-        for reference in (req.reference_image, req.secondary_reference_image):
+        for reference in (req.reference_image, req.secondary_reference_image, req.environment_reference_image):
             if reference:
                 data, mime = await resolve_reference_bytes(reference)
                 parts.append({"inlineData": {"mimeType": mime, "data": base64.b64encode(data).decode("utf-8")}})

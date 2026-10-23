@@ -90,8 +90,6 @@ export interface DesktopBridge {
   readImageForAttach: AsyncIpc<IpcInvokeContract['spiritagent:readImageForAttach']>
   /** 聊天视频附件上传：主进程读文件经后端 /api/media/videos 换取会话级附件 URL。 */
   uploadVideoForAttach: AsyncIpc<IpcInvokeContract['spiritagent:media:video-upload']>
-  /** 桌景动作外部视频上传：主进程读取用户选择的原始文件并以 multipart 发送。 */
-  uploadDesktopVideo: AsyncIpc<IpcInvokeContract['spiritagent:media:desktop-video-upload']>
   selectPaths: AsyncIpc<IpcInvokeContract['spiritagent:selectPaths']>
   writeClipboard: AsyncIpc<IpcInvokeContract['spiritagent:writeClipboard']>
   copyImage: AsyncIpc<IpcInvokeContract['spiritagent:copyImage']>
@@ -119,7 +117,6 @@ export interface DesktopBridge {
     getState: AsyncIpc<IpcInvokeContract['spiritagent:surface:get-state']>
     setCompanion: AsyncIpc<IpcInvokeContract['spiritagent:surface:set-companion']>
     setIgnoreMouseEvents: AsyncIpc<IpcInvokeContract['spiritagent:surface:set-ignore-mouse-events']>
-    claimPlay: AsyncIpc<IpcInvokeContract['spiritagent:surface:claim-play']>
     onChanged: EventSubscription<'spiritagent:surface:changed'>
     onNavigate: EventSubscription<'spiritagent:surface:navigate'>
   }

@@ -5,7 +5,7 @@ from features.companion.schemas import VoiceMatchResponse, VoicesListResponse
 from features.companion.voice_catalog import list_tts_voices, match_user_voice, normalize_voice_language
 from features.media.voice_contracts import VoiceConfirmResponse, VoicePreviewResponse, VoicePromptResponse
 from features.media.voice_operations import cancel_voice_operation, run_voice_operation
-from features.media.voices import clone_voice, confirm_voice, design_voice
+from features.media.voices import clone_voice, confirm_voice, design_voice, read_current_voice, write_current_voice
 from infrastructure.ai.llm_client import MissingLlmConfigError
 from infrastructure.database import DbSession
 from infrastructure.http_contracts import operation_policy
@@ -15,7 +15,7 @@ from workflows.voice_design import generate_voice_prompt
 from entrypoints.http.auth import CurrentUser
 from entrypoints.http.routing import get_router
 
-router = get_router()
+router = get_router(remote=True)
 
 
 class VoiceMatchRequest(BaseModel):
@@ -64,6 +64,28 @@ class VoiceCancelResponse(BaseModel):
 @router.get("", response_model=VoicesListResponse)
 async def list_voices(user: CurrentUser, db: DbSession, language: str | None = None) -> VoicesListResponse:
     return await list_tts_voices(db, user.id, normalize_voice_language(language))
+
+
+class CurrentVoiceResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    voice_id: str
+
+
+class CurrentVoiceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    voice_id: str = Field(min_length=1, max_length=128)
+
+
+@router.get("/current", response_model=CurrentVoiceResponse)
+async def get_current_voice(user: CurrentUser, db: DbSession) -> CurrentVoiceResponse:
+    return CurrentVoiceResponse(voice_id=await read_current_voice(db, user.id))
+
+
+@router.put("/current", response_model=CurrentVoiceResponse)
+async def put_current_voice(user: CurrentUser, db: DbSession, body: CurrentVoiceRequest) -> CurrentVoiceResponse:
+    return CurrentVoiceResponse(voice_id=await write_current_voice(db, user.id, body.voice_id))
 
 
 @router.post(

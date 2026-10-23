@@ -1,23 +1,24 @@
-"""伙伴统一动作工具；账户与本轮呈现视图由派发层注入。"""
+"""伙伴动作素材工具：查询与登记动作语义定义，不表示可播影像或自动开始制作。"""
 
 import json
 from typing import Any
 
+from features.action_library import queries as action_queries
 from features.action_library.schemas import ABSOLUTE_MAX_DURATION_SECONDS
+from infrastructure.database import SESSION_LOCAL
 from runtime.tools.registry import ToolsRegistry
-from workflows.companion_action_prompts import (
-    ACTION_DESIGN_MOTION_DESCRIPTION,
-    ACTION_DESIGN_TOOL_DESCRIPTION,
-    ACTION_INSPECT_TOOL_DESCRIPTION,
-    ACTION_PLAY_TOOL_DESCRIPTION,
-    ACTION_SEARCH_TOOL_DESCRIPTION,
+from workflows.companion_action_prompts import ACTION_DESIGN_MOTION_DESCRIPTION
+from workflows.visuals_companion import design_action_reference
+
+ACTION_SEARCH_TOOL_DESCRIPTION = (
+    "检索已登记的动作。返回名称、动作内容、适用条件、持续或短动作类型与时长；"
+    "登记不代表图片或视频已经制作，制作另用 visual_* 工具。"
 )
-from workflows.companion_actions import (
-    ActionViewSnapshot,
-    design_action_reference,
-    inspect_action_reference,
-    play_action_reference,
-    search_action_reference,
+ACTION_INSPECT_TOOL_DESCRIPTION = "查看一个动作的完整定义与评审状态。"
+ACTION_DESIGN_TOOL_DESCRIPTION = (
+    "登记一个新动作（名称、动作内容、适用条件、持续或短动作类型与时长）。登记只保存定义并进入评审，"
+    "不开始生成图片或视频；评审依据是角色身体能力与动作含义，具体环境与道具在每次生成时判断。"
+    "已登记过相近动作时优先复用，不重复登记。"
 )
 
 
@@ -25,10 +26,28 @@ async def action_search_tool(
     user_id: int,
     query: str = "",
     limit: int = 10,
-    action_view: ActionViewSnapshot | None = None,
     **_: Any,
 ) -> str:
-    return json.dumps(await search_action_reference(user_id, action_view, query=query, limit=limit), ensure_ascii=False)
+    async with SESSION_LOCAL() as db:
+        result = await action_queries.list_actions(
+            db,
+            user_id,
+            query=query,
+            limit=max(1, min(limit, 20)),
+        )
+    return json.dumps([item.model_dump(mode="json") for item in result.actions], ensure_ascii=False)
+
+
+async def action_inspect_tool(
+    user_id: int,
+    action_id: int,
+    **_: Any,
+) -> str:
+    async with SESSION_LOCAL() as db:
+        item = await action_queries.action_detail(db, user_id, action_id)
+    if item is None:
+        return json.dumps({"error": "未找到该动作"}, ensure_ascii=False)
+    return json.dumps(item.model_dump(mode="json"), ensure_ascii=False)
 
 
 async def action_design_tool(
@@ -37,53 +56,22 @@ async def action_design_tool(
     user_id: int,
     use_when: list[str] | None = None,
     avoid_when: list[str] | None = None,
+    allowed_triggers: list[str] | None = None,
     reason: str = "",
     duration_seconds: int = 4,
     clip_kind: str = "once",
-    proactive_turn: bool = False,
-    action_view: ActionViewSnapshot | None = None,
     **_: Any,
 ) -> str:
     result = await design_action_reference(
+        user_id,
         name=name,
         motion_description=motion_description,
-        user_id=user_id,
         use_when=use_when,
         avoid_when=avoid_when,
+        allowed_triggers=allowed_triggers,
         reason=reason,
         duration_seconds=duration_seconds,
         clip_kind=clip_kind,
-        proactive_turn=proactive_turn,
-        action_view=action_view,
-    )
-    return json.dumps(result, ensure_ascii=False)
-
-
-async def action_inspect_tool(
-    user_id: int,
-    action_ref: str | None = None,
-    definition_id: int | None = None,
-    action_view: ActionViewSnapshot | None = None,
-    **_: Any,
-) -> str:
-    result = await inspect_action_reference(user_id, action_view, action_ref=action_ref, definition_id=definition_id)
-    return json.dumps(result, ensure_ascii=False)
-
-
-async def action_play_tool(
-    action_ref: str,
-    user_id: int,
-    reason: str = "",
-    proactive_turn: bool = False,
-    action_view: ActionViewSnapshot | None = None,
-    **_: Any,
-) -> str:
-    result = await play_action_reference(
-        user_id,
-        action_ref,
-        action_view,
-        reason=reason,
-        source="autonomous" if proactive_turn else "chat_expression",
     )
     return json.dumps(result, ensure_ascii=False)
 
@@ -101,6 +89,18 @@ def register(registry: ToolsRegistry) -> None:
                 "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
             },
             [],
+        ),
+        (
+            "action_inspect",
+            action_inspect_tool,
+            {
+                "action_id": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "动作标识，来自 action_search 或 action_design。",
+                },
+            },
+            ["action_id"],
         ),
         (
             "action_design",
@@ -122,13 +122,19 @@ def register(registry: ToolsRegistry) -> None:
                     "type": "array",
                     "maxItems": 8,
                     "items": {"type": "string", "maxLength": 120},
-                    "description": "适用场景列表，如「用户主动请求拥抱」。",
+                    "description": "适用条件列表，如「用户主动请求拥抱」。",
                 },
                 "avoid_when": {
                     "type": "array",
                     "maxItems": 8,
                     "items": {"type": "string", "maxLength": 120},
-                    "description": "应避免使用的场景。",
+                    "description": "应避免使用的条件。",
+                },
+                "allowed_triggers": {
+                    "type": "array",
+                    "maxItems": 8,
+                    "items": {"type": "string", "enum": ["chat", "manual", "periodic", "user_return"]},
+                    "description": "允许发起本动作的情境类别：chat、manual、periodic、user_return；默认 chat 与 manual。",
                 },
                 "reason": {"type": "string", "maxLength": 400, "description": "为何需要新动作；已有近义动作时先复用。"},
                 "duration_seconds": {
@@ -136,55 +142,23 @@ def register(registry: ToolsRegistry) -> None:
                     "minimum": 1,
                     "maximum": int(ABSOLUTE_MAX_DURATION_SECONDS),
                     "default": 4,
-                    "description": "预计时长（整秒），按一次可见表达与必要停留填写 1–15，默认 4 秒；长期陪伴不意味着延长单个片段，不用额外动作填满。",
+                    "description": "预计时长（整秒），按一次可见表达与必要停留填写 1–15，默认 4 秒。",
                 },
                 "clip_kind": {
                     "type": "string",
                     "enum": ["loop", "once"],
                     "default": "once",
-                    "description": "loop 持续保持状态或自然连续的运动，首尾姿态、接触及道具位置和可见状态均须相接；翻到新页等不能自然闭合的过程使用 once，或只设计可持续的阅读阶段，不靠倒放或重置闭合。once 完成一次表达并自然收束。",
+                    "description": "loop 持续保持状态或自然连续的运动，首尾姿态、接触及道具位置和可见状态均须相接；"
+                    "不能自然闭合的过程使用 once，完成一次表达并自然收束。",
                 },
             },
             ["name", "motion_description"],
-        ),
-        (
-            "action_inspect",
-            action_inspect_tool,
-            {
-                "definition_id": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "description": "action_design 返回的动作设计标识，与 action_ref 二选一。",
-                },
-                "action_ref": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128,
-                    "description": "当前清单中的 action_ref，与 definition_id 二选一。",
-                },
-            },
-            [],
-        ),
-        (
-            "action_play",
-            action_play_tool,
-            {
-                "action_ref": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128,
-                    "description": "来自动作清单、action_search 或 action_inspect 的当前 action_ref。",
-                },
-                "reason": {"type": "string", "maxLength": 200, "description": "本次表演的简短情境依据。"},
-            },
-            ["action_ref"],
         ),
     ]
     descriptions = {
         "action_search": ACTION_SEARCH_TOOL_DESCRIPTION,
         "action_design": ACTION_DESIGN_TOOL_DESCRIPTION,
         "action_inspect": ACTION_INSPECT_TOOL_DESCRIPTION,
-        "action_play": ACTION_PLAY_TOOL_DESCRIPTION,
     }
     for name, handler, properties, required in definitions:
         registry.register(

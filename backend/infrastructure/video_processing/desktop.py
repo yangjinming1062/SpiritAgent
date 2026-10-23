@@ -1,4 +1,4 @@
-"""桌面生活视频校验与适配；原始上传保留，派生视频按目标画幅裁切。"""
+"""桌面影像视频校验与适配；原始上传保留，派生视频按目标画幅裁切。"""
 
 from dataclasses import dataclass
 from io import BytesIO

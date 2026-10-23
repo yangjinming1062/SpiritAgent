@@ -2,22 +2,14 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useState } from 'react'
 
-import { $outfits, activateOutfit, deleteOutfit, hydrateWardrobe, retryOutfitDescription } from '@/modules/character'
+import { $outfits, deleteOutfit, hydrateWardrobe, retryOutfitDescription } from '@/modules/character'
 import { PortraitLightbox } from '@/shared'
 import { ArrowLeft } from '@/shared/lib/icons'
-import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, confirmAction, SettingCard, SettingsContent } from '@/shared/panel'
+import { BTN_GHOST, BTN_SUBTLE, confirmAction, SettingCard, SettingsContent } from '@/shared/panel'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
-export function OutfitDetail({
-  outfitId,
-  onBack,
-  onMaterialReady
-}: {
-  outfitId: number
-  onBack: () => void
-  onMaterialReady?: (id: number) => void
-}): React.JSX.Element {
+export function OutfitDetail({ outfitId, onBack }: { outfitId: number; onBack: () => void }): React.JSX.Element {
   const outfit = useStore($outfits).find(item => item.id === outfitId)
   const dict = useStrings()
   const t = dict.living.outfit
@@ -74,20 +66,6 @@ export function OutfitDetail({
             <p className="whitespace-pre-wrap text-xs text-muted">{outfit.description || t.noDescription}</p>
             {outfit.descriptionError && <p className="text-xs text-danger-fg">{outfit.descriptionError}</p>}
             <div className="flex flex-wrap gap-2">
-              <button
-                className={BTN_PRIMARY}
-                disabled={busy || outfit.status !== 'ready' || (outfit.active && !onMaterialReady)}
-                onClick={() => {
-                  if (onMaterialReady) {
-                    onMaterialReady(outfit.id)
-                  } else {
-                    run(() => activateOutfit(outfit.id))
-                  }
-                }}
-                type="button"
-              >
-                {onMaterialReady ? t.chooseOutfit : outfit.active ? t.wearing : t.wear}
-              </button>
               {outfit.descriptionStatus === 'failed' && (
                 <button
                   className={BTN_SUBTLE}
@@ -100,7 +78,7 @@ export function OutfitDetail({
               )}
               <button
                 className={BTN_SUBTLE}
-                disabled={busy || outfit.active}
+                disabled={busy}
                 onClick={() => {
                   void confirmAction({
                     title: t.actions.deleteTitle,

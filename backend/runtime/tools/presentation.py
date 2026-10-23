@@ -1,3 +1,14 @@
-"""伙伴动作统一工具名；本轮资格由工作流绑定的动作视图决定。"""
+"""伙伴动作与影像的统一工具名；呈现资格由工作流绑定的影像视图决定。"""
 
-ACTION_TOOL_NAMES = frozenset({"action_search", "action_design", "action_inspect", "action_play"})
+VISUAL_TOOL_NAMES = frozenset(
+    {
+        "action_search",
+        "action_design",
+        "action_inspect",
+        "visual_search",
+        "visual_inspect",
+        "visual_generate",
+        "outfit_list",
+        "visual_play",
+    },
+)

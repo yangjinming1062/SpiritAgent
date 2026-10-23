@@ -2,11 +2,12 @@
 
 from .admin import router as admin_router
 from .companion import router as companion_router
-from .companion_desktop_videos import router as companion_desktop_videos_router
+from .companion_actions import router as companion_actions_router
 from .companion_journal import router as companion_journal_router
 from .companion_posts import router as companion_posts_router
 from .companion_scenes import router as companion_scenes_router
 from .companion_topics import router as companion_topics_router
+from .companion_visuals import router as companion_visuals_router
 from .config import router as config_router
 from .gateway import router as gateway_router
 from .media import router as media_router
@@ -24,7 +25,8 @@ ROUTERS = (
     admin_router,
     gateway_router,
     companion_router,
-    companion_desktop_videos_router,
+    companion_actions_router,
+    companion_visuals_router,
     companion_journal_router,
     companion_posts_router,
     companion_scenes_router,

@@ -19,7 +19,6 @@ import {
   type DesktopSurfaceOpenPayload,
   type DesktopUiThemeBroadcast,
   type DesktopUpdateEvent,
-  type DesktopVideoUploadPayload,
   IPC,
   type IpcEventChannel,
   type IpcEventContract,
@@ -33,7 +32,6 @@ import {
   type SpiritAgentSelectPathsOptions,
   type SpiritAgentUiTheme,
   type SurfaceCompanionPreference,
-  type SurfacePlaybackClaim,
   type VoiceSampleUploadPayload
 } from '@ipc/contracts'
 
@@ -205,7 +203,6 @@ const desktopBridge = {
   readFileDataUrl: (filePath: string) => invoke(IPC.invoke.readFileDataUrl, filePath),
   readImageForAttach: (filePath: string) => invoke(IPC.invoke.readImageForAttach, filePath),
   uploadVideoForAttach: (payload: AttachmentVideoUploadPayload) => invoke(IPC.invoke.mediaVideoUpload, payload),
-  uploadDesktopVideo: (payload: DesktopVideoUploadPayload) => invoke(IPC.invoke.mediaDesktopVideoUpload, payload),
   refreshSession: () => invoke(IPC.invoke.authRefresh),
   runnerConfig: {
     patch: (patch: RunnerConfigPatch) => invoke(IPC.invoke.runnerConfigPatch, patch),
@@ -229,7 +226,6 @@ const desktopBridge = {
     close: () => invoke(IPC.invoke.surfaceClose),
     getState: () => invoke(IPC.invoke.surfaceGetState),
     isMaximized: () => invoke(IPC.invoke.surfaceIsMaximized),
-    claimPlay: (claim: SurfacePlaybackClaim) => invoke(IPC.invoke.surfaceClaimPlay, claim),
     maximize: () => invoke(IPC.invoke.surfaceMaximize),
     minimize: () => invoke(IPC.invoke.surfaceMinimize),
     onChanged: (cb: (payload: DesktopSurfaceChangedEvent) => void) => subscribe(IPC.event.surfaceChanged, cb),
