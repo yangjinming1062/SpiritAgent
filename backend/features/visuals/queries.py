@@ -189,8 +189,8 @@ async def presentation_state(user_id: int) -> VisualPresentationView:
         row = await db.scalar(select(VisualPresentation).where(VisualPresentation.user_id == user_id))
         if row is None:
             return VisualPresentationView()
-        current = await presented_item(db, row)
-        loop = await presented_item(db, row, loop=True)
+        current = presented_item(row)
+        loop = presented_item(row, loop=True)
         pending = _pending_command(row)
         return VisualPresentationView(
             current_visual=item_view(current) if current is not None and current.user_id == user_id else None,
@@ -219,7 +219,7 @@ async def actual_presentation_snapshot(user_id: int) -> ActualPresentationSnapsh
 
     async with SESSION_LOCAL() as db:
         row = await db.scalar(select(VisualPresentation).where(VisualPresentation.user_id == user_id))
-        item = await presented_item(db, row) if row else None
+        item = presented_item(row) if row else None
         if item is None or item.user_id != user_id:
             return ActualPresentationSnapshot()
         snapshot = visual_snapshot(item)

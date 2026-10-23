@@ -142,7 +142,7 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
     }
   }
 
-  // meta 与字节同批读出，调用方复用同一份 etag，不再为取 etag 二次读盘。
+  // meta 与字节同批读出，调用方复用同一份 etag。
   async function readCachedEntry(
     rawUrl: string,
     contentHash?: string

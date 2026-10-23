@@ -17,7 +17,7 @@ from infrastructure.logger import get_logger
 from pydantic import BaseModel, ConfigDict, Field
 from runtime.user_maintenance import track_user_task
 
-from features.media.contracts import RemovedActionVideoTask
+from features.media.contracts import RemovedVideoTask
 from features.media.video_queue.contracts import VideoQueueInfo
 from features.media.video_queue.ports import cancel_queue_request
 
@@ -57,7 +57,7 @@ def video_provider_failure_reason(error: str | None) -> str:
 
 
 def video_failure_message(reason: str) -> str:
-    """聊天与动作视频共用的失败文案；未知提交与审核拒绝保留各自恢复要求。"""
+    """聊天与影像视频共用的失败文案；未知提交与审核拒绝保留各自恢复要求。"""
     return _VIDEO_FAILURE_COPY.get(reason, _VIDEO_FAILURE_COPY["provider_failed"])
 
 
@@ -226,7 +226,7 @@ async def cancel_video_chain_attempt(state: MediaChainState) -> str:
     return "not_submitted"
 
 
-async def cancel_removed_action_video_tasks(user_id: int, tasks: Sequence[RemovedActionVideoTask]) -> None:
+async def cancel_removed_video_tasks(user_id: int, tasks: Sequence[RemovedVideoTask]) -> None:
     """本地放弃制作提交后请求队列撤销，不能撤销时记录结果。"""
     for task in tasks:
         try:
@@ -242,24 +242,24 @@ async def cancel_removed_action_video_tasks(user_id: int, tasks: Sequence[Remove
                 outcome = await cancel_video_chain_attempt(state)
         except Exception:
             logger.warning(
-                "Removed action task cancellation failed",
-                extra={"user_id": user_id, "action_id": task.action_id},
+                "Removed video task cancellation failed",
+                extra={"user_id": user_id, "task_id": task.task_id},
                 exc_info=True,
             )
             continue
         logger.info(
-            "Removed action task cancellation",
-            extra={"user_id": user_id, "action_id": task.action_id, "outcome": outcome},
+            "Removed video task cancellation",
+            extra={"user_id": user_id, "task_id": task.task_id, "outcome": outcome},
         )
 
 
-def spawn_removed_action_task_cancellation(user_id: int, tasks: Sequence[RemovedActionVideoTask]) -> None:
+def spawn_removed_video_task_cancellation(user_id: int, tasks: Sequence[RemovedVideoTask]) -> None:
     """事务提交后调度撤销；任务登记到用户名下自然落地，失败只记录。"""
     if not tasks:
         return
     track_user_task(
         user_id,
-        asyncio.create_task(cancel_removed_action_video_tasks(user_id, tasks)),
+        asyncio.create_task(cancel_removed_video_tasks(user_id, tasks)),
         cancel_on_maintenance=False,
     )
 

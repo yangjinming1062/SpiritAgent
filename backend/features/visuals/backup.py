@@ -8,7 +8,7 @@ from runtime.events.emit import emit_ws_event
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.media.contracts import RemovedActionVideoTask
+from features.media.contracts import RemovedVideoTask
 
 from .backup_assets import restore_visual_payload, validate_visual_owned_paths
 from .models import VisualItem, VisualJob, VisualPresentation
@@ -116,14 +116,14 @@ def backup_tables() -> tuple[BackupTable, ...]:
     )
 
 
-def _removed_task(job: VisualJob) -> RemovedActionVideoTask | None:
+def _removed_task(job: VisualJob) -> RemovedVideoTask | None:
     progress = visual_progress(job)
     if progress is None or not progress.video_chain_json:
         return None
-    return RemovedActionVideoTask(action_id=job.id, generation_state_json=progress.video_chain_json)
+    return RemovedVideoTask(task_id=job.id, generation_state_json=progress.video_chain_json)
 
 
-async def visual_video_tasks_for_removal(db: AsyncSession, user_id: int) -> tuple[RemovedActionVideoTask, ...]:
+async def visual_video_tasks_for_removal(db: AsyncSession, user_id: int) -> tuple[RemovedVideoTask, ...]:
     jobs = await db.scalars(select(VisualJob).where(VisualJob.user_id == user_id))
     return tuple(task for job in jobs if (task := _removed_task(job)) is not None)
 

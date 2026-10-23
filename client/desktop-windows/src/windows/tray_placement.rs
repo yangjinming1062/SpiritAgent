@@ -7,8 +7,7 @@ pub(super) struct RestoreTrayPlacement {
     pub bounds: Bounds,
     pub monitor: Bounds,
     topmost: bool,
-    #[serde(default)]
-    dpi: Option<u32>,
+    dpi: u32,
 }
 
 impl RestoreTrayPlacement {
@@ -25,13 +24,13 @@ impl RestoreTrayPlacement {
             bounds: rectangle(identity.window())?,
             monitor,
             topmost: unsafe { GetWindowLongPtrW(identity.window(), GWL_EXSTYLE) } as u32 & WS_EX_TOPMOST != 0,
-            dpi: Some(dpi),
+            dpi,
         })
     }
 
     pub(super) fn validate(&self, journal: &Journal) -> Result<()> {
         if !self.bounds.valid() || self.monitor != journal.desktop_bounds
-            || self.dpi.is_some_and(|dpi| !(48..=960).contains(&dpi))
+            || !(48..=960).contains(&self.dpi)
             || !journal.shell.iter().any(|identity| identity.same_window(&self.identity)) {
             return Err("invalid system tray recovery placement".into());
         }
@@ -47,7 +46,7 @@ impl RestoreTrayPlacement {
         let topmost = unsafe { GetWindowLongPtrW(window, GWL_EXSTYLE) } as u32 & WS_EX_TOPMOST != 0;
         // 屏幕或 DPI 改变时由 Explorer 重新协商，不能强制回写旧像素高度。
         let original_display = monitor_bounds(self.monitor).is_ok()
-            && self.dpi.is_some_and(|dpi| unsafe { GetDpiForWindow(window) } == dpi);
+            && unsafe { GetDpiForWindow(window) } == self.dpi;
         if original_display && current == self.bounds && topmost == self.topmost {
             return Ok(());
         }

@@ -13,7 +13,7 @@ from features.companion.backup import cron_source_keys
 from features.configuration.settings.timezone import resolve_user_timezone
 from features.conversation.backup import validate_main_conversation_merge
 from features.media.backup import restore_current_voices
-from features.media.contracts import RemovedActionVideoTask
+from features.media.contracts import RemovedVideoTask
 from features.media.voice_queries import custom_voice_tokens
 from features.topics.backup import validate_batch_merges
 from features.visuals.backup import advance_playback_versions, playback_versions, visual_video_tasks_for_removal
@@ -109,7 +109,7 @@ class BackupRestoreResult:
     restored_files: int
     failures: tuple[BackupImportFailure, ...]
     rewriter: UrlRewriter
-    removed_visual_tasks: tuple[RemovedActionVideoTask, ...]
+    removed_visual_tasks: tuple[RemovedVideoTask, ...]
 
 
 def _failure_reason(exc: Exception) -> str:
@@ -359,7 +359,7 @@ async def _preflight_tables(
             except (KeyError, StatementError, TypeError, ValueError) as exc:
                 # 对外原因不含数据库细节，诊断保留在日志里。
                 logger.warning(
-                    "backup table failed compatibility preflight",
+                    "backup table failed current-schema preflight",
                     extra={"table": table, "error_type": type(exc).__name__},
                     exc_info=not (table in _SECRET_TABLES and isinstance(exc, StatementError)),
                 )
@@ -380,7 +380,7 @@ async def _preflight_tables(
                     BackupImportFailure(
                         section=table,
                         count=len(rows[table]),
-                        reason="配套的会话或消息数据不兼容，无法单独恢复。",
+                        reason="配套的会话或消息数据未通过校验，无法单独恢复。",
                     ),
                 )
         if IDENTITY_TABLES & set(rows) and not IDENTITY_TABLES.issubset(successful):
@@ -402,10 +402,10 @@ async def _has_retained_dependent(
     db: AsyncSession,
     table: str,
     target_user_id: int,
-    compatible_rows: dict[str, list[dict[str, Any]]],
+    validated_rows: dict[str, list[dict[str, Any]]],
 ) -> bool:
     for dependent_table, reference_column in OVERWRITE_DEPENDENT_REFERENCES.get(table, ()):
-        if dependent_table in compatible_rows:
+        if dependent_table in validated_rows:
             continue
         contributor = BACKUP_REGISTRY.table(dependent_table)
         reference_values = None
@@ -420,12 +420,12 @@ async def _delete_user_rows(db: AsyncSession, table: str, user_id: int) -> None:
     await BACKUP_REGISTRY.table(table).clear(db, user_id)
 
 
-async def _clear_compatible_rows(
+async def _clear_validated_rows(
     db: AsyncSession,
     target_user_id: int,
-    compatible_rows: dict[str, list[dict[str, Any]]],
+    validated_rows: dict[str, list[dict[str, Any]]],
 ) -> tuple[dict[str, list[dict[str, Any]]], tuple[BackupImportFailure, ...]]:
-    remaining = dict(compatible_rows)
+    remaining = dict(validated_rows)
     failures: list[BackupImportFailure] = []
 
     # 动态与评论同组保护：保留的日记仍引用动态时，在任何清理前阻止两表覆盖。
@@ -471,7 +471,7 @@ async def _clear_compatible_rows(
             failures.append(
                 BackupImportFailure(
                     section=member,
-                    count=len(compatible_rows.get(member, ())),
+                    count=len(validated_rows.get(member, ())),
                     reason=reason,
                 ),
             )
@@ -495,7 +495,7 @@ async def _clear_compatible_rows(
                 _drop_identity(IDENTITY_BLOCKED_REASON)
 
     # 身份未能写入时先摘掉依赖头像映射的动作类别，避免在清理阶段误删。
-    if IDENTITY_TABLES & set(compatible_rows) and not set(remaining) >= IDENTITY_TABLES:
+    if IDENTITY_TABLES & set(validated_rows) and not set(remaining) >= IDENTITY_TABLES:
         for table in sorted(ACTION_LIBRARY_TABLES):
             if table not in remaining:
                 continue
@@ -503,7 +503,7 @@ async def _clear_compatible_rows(
             failures.append(
                 BackupImportFailure(
                     section=table,
-                    count=len(compatible_rows.get(table, ())),
+                    count=len(validated_rows.get(table, ())),
                     reason=IDENTITY_DEPENDENT_REASON,
                 ),
             )
@@ -519,7 +519,7 @@ async def _clear_compatible_rows(
             failures.append(
                 BackupImportFailure(
                     section=table,
-                    count=len(compatible_rows[table]),
+                    count=len(validated_rows[table]),
                     reason="目标现有的关联数据未被本次恢复，无法安全覆盖此类别。",
                 ),
             )
@@ -537,7 +537,7 @@ async def _clear_compatible_rows(
             failures.append(
                 BackupImportFailure(
                     section=table,
-                    count=len(compatible_rows[table]),
+                    count=len(validated_rows[table]),
                     reason="目标现有数据仍被其他内容引用，无法安全覆盖此类别。",
                 ),
             )
@@ -571,7 +571,7 @@ async def _clear_compatible_rows(
                 failures.append(
                     BackupImportFailure(
                         section=table,
-                        count=len(compatible_rows.get(table, ())),
+                        count=len(validated_rows.get(table, ())),
                         reason=reason,
                     ),
                 )
@@ -638,35 +638,35 @@ async def restore_backup_rows(
         mode=mode,
         import_batch_id=import_batch_id,
     )
-    compatible_rows = {table: records for table, records in rows.items() if table in successful_tables}
+    validated_rows = {table: records for table, records in rows.items() if table in successful_tables}
     rewriter = UrlRewriter(
         {},
         source_user_id=source_user_id,
         target_user_id=target_user_id,
         extract_root=extract_root,
-        conversation_ids=frozenset(str(row["id"]) for row in compatible_rows.get("conversations", [])),
+        conversation_ids=frozenset(str(row["id"]) for row in validated_rows.get("conversations", [])),
     )
     existing_visual_versions = await playback_versions(db, target_user_id)
-    removed_visual_tasks: tuple[RemovedActionVideoTask, ...] = ()
+    removed_visual_tasks: tuple[RemovedVideoTask, ...] = ()
     try:
         if mode == "overwrite":
-            if VISUALS_TABLES.issubset(compatible_rows):
+            if VISUALS_TABLES.issubset(validated_rows):
                 removed_visual_tasks = await visual_video_tasks_for_removal(db, target_user_id)
             await enqueue_asset_cleanup(db, target_user_id, await collect_live_asset_paths(db, target_user_id))
-            compatible_rows, clear_failures = await _clear_compatible_rows(db, target_user_id, compatible_rows)
-            if not VISUALS_TABLES.issubset(compatible_rows):
+            validated_rows, clear_failures = await _clear_validated_rows(db, target_user_id, validated_rows)
+            if not VISUALS_TABLES.issubset(validated_rows):
                 removed_visual_tasks = ()
             failures = (*failures, *clear_failures)
         id_map: dict[str, dict[str, int | str]] = {}
         imported: dict[str, int] = {}
         for table in RESTORE_SEQUENCE:
-            if table not in compatible_rows:
+            if table not in validated_rows:
                 continue
             id_map[table], imported[table] = await _restore_table(
                 db,
                 table,
-                compatible_rows[table],
-                compatible_rows,
+                validated_rows[table],
+                validated_rows,
                 target_user_id,
                 rewriter,
                 id_map,
@@ -678,12 +678,12 @@ async def restore_backup_rows(
             await restore_current_voices(
                 db,
                 target_user_id,
-                compatible_rows["custom_voices"],
+                validated_rows["custom_voices"],
                 id_map["custom_voices"],
                 mode=mode,
             )
         layout = plan_asset_layout(
-            compatible_rows,
+            validated_rows,
             source_user_id,
             target_user_id,
             await resolve_user_timezone(db, target_user_id) or "UTC",
@@ -696,7 +696,7 @@ async def restore_backup_rows(
             target_user_id,
             rewriter,
             conversations=id_map.get("conversations", {}),
-            referenced_files=await run_blocking(referenced_backup_files, extract_root, compatible_rows),
+            referenced_files=await run_blocking(referenced_backup_files, extract_root, validated_rows),
             include_conversation_files=conversation_files_in_scope,
         )
         if skipped_conversation_files:
@@ -708,7 +708,7 @@ async def restore_backup_rows(
                     reason="对应会话未能恢复，附件缺少可用的目标会话。",
                 ),
             )
-        await run_blocking(rewriter.scan, compatible_rows)
+        await run_blocking(rewriter.scan, validated_rows)
         for table, original_id in rewriter.inserted_rows:
             mapping = layout.rows.get((table, original_id), layout.mapping)
             aliases = {

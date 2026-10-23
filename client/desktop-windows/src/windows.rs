@@ -457,11 +457,8 @@ struct Journal {
     windows: Vec<RestoreWindow>,
     appbar: Option<RestoreAppBar>,
     desktop_bounds: Bounds,
-    #[serde(default)]
     regions: Vec<SavedRegion>,
-    #[serde(default)]
     tray_style: Option<RestoreTrayStyle>,
-    #[serde(default)]
     tray_placements: Vec<RestoreTrayPlacement>,
 }
 

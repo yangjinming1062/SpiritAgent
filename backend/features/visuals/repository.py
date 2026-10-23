@@ -76,21 +76,18 @@ def visual_playable(item: VisualItem | PresentedVisual) -> bool:
     return resolve_asset_reference(item.media_path) is not None
 
 
-async def presented_item(
-    db: AsyncSession,
+def presented_item(
     state: VisualPresentation,
     *,
     loop: bool = False,
-) -> VisualItem | PresentedVisual | None:
+) -> PresentedVisual | None:
     saved = state.loop_snapshot_json if loop else state.current_snapshot_json
-    if saved:
-        frozen = PresentedVisual.model_validate_json(saved)
-        if frozen.user_id != state.user_id:
-            raise VisualStateError("呈现快照不属于当前账户")
-        return frozen
-    visual_id = state.loop_visual_id if loop else state.current_visual_id
-    item = await db.get(VisualItem, visual_id) if visual_id else None
-    return item if item is not None and item.user_id == state.user_id else None
+    if not saved:
+        return None
+    frozen = PresentedVisual.model_validate_json(saved)
+    if frozen.user_id != state.user_id:
+        raise VisualStateError("呈现快照不属于当前账户")
+    return frozen
 
 
 async def visual_item(db: AsyncSession, user_id: int, visual_id: int, *, lock: bool = False) -> VisualItem:
@@ -372,7 +369,7 @@ async def dispatch_play_command(
     db.add(play)
     frozen = PresentedVisual.model_validate(item).model_copy(update={"play_id": play.play_id})
     play.snapshot_json = frozen.model_dump_json()
-    previous = await presented_item(db, state, loop=True)
+    previous = presented_item(state, loop=True)
     natural = (
         previous is not None
         and previous.media_kind == "video"

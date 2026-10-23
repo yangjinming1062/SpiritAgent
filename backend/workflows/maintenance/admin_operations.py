@@ -14,7 +14,7 @@ from features.companion.readiness import persona_is_complete
 from features.configuration.lock import configuration_lock
 from features.conversation.bootstrap import ensure_main_conversation_for_user
 from features.conversation.identifiers import conversation_ids
-from features.media.chain import spawn_removed_action_task_cancellation
+from features.media.chain import spawn_removed_video_task_cancellation
 from features.media.video_queue.service import anonymize_user_video_queue
 from infrastructure.assets.asset_store import delete_user_assets
 from infrastructure.async_io import run_blocking
@@ -121,7 +121,7 @@ async def import_user_backup(
     mode: BackupImportMode,
     sections: list[str] | None,
 ) -> UserBackupImportResponse:
-    """尽力恢复备份；覆盖仅清理兼容且可安全替换的数据类。只写入所选分组，不动未勾选内容。"""
+    """按所选分组恢复备份，覆盖仅清理通过当前结构和关联校验的数据类别。"""
     if not file.filename or not file.filename.endswith(".zip"):
         raise RequestError(status_code=status.HTTP_400_BAD_REQUEST, message="上传文件必须是 .zip。")
     try:
@@ -196,7 +196,7 @@ async def import_user_backup(
                 if not isinstance(exc, asyncio.CancelledError):
                     logger.exception("backup restore failed unexpectedly", extra={"user_id": user_id})
                 raise
-            spawn_removed_action_task_cancellation(user_id, restore_result.removed_visual_tasks)
+            spawn_removed_video_task_cancellation(user_id, restore_result.removed_visual_tasks)
 
     failed = [
         UserBackupImportFailure(section=item.section, count=item.count, reason=item.reason)

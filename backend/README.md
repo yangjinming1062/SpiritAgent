@@ -67,10 +67,7 @@ ORM 留在数据所属模块。跨模块读取使用冻结 DTO 或只读快照�
 
 `system_settings` 和点键 `user_settings` 逐值 JSON 编码。用户设置只经 [settings/values.py](features/configuration/settings/values.py) 读写，消费方直接使用解码值。
 
-启动自动执行 `alembic upgrade head`，[完整基线](alembic/versions/0001_baseline.py) 的修订号为 `0001`。空库直接创建当前结构；处于该修订的数据库启动时不重复执行建表。结构变更新建迁移，比对 ORM 类型、默认值与索引；autogenerate 不能完整核对部分索引的条件、方法及操作符类。
-
-`0003` 把桌景套装转换为影像库，是单向数据迁移：升级前先运行[只读预检](../scripts/preflight_visuals_migration.py)（要求库处于 `0002`，只读不写入），核对引用文件与未决供应商提交；缺失文件或存在未决提交时[迁移](alembic/versions/0003_visuals.py)拒绝执行且不写入。转换不调用模型、不重新生成媒体；降级直接失败，回退须使用升级前的完整备份。
-
+启动自动执行 `alembic upgrade head`，[完整基线](alembic/versions/0003_baseline.py) 的修订号为 `0003`，只定义当前结构、扩展、索引与 outbox 唤醒触发器。空库直接建表；已处于该修订的数据库不执行结构或数据操作。结构变更新建迁移，比对 ORM 类型、默认值与索引；autogenerate 不能完整核对部分索引的条件、方法及操作符类。基线降级会删除业务表，仅用于空库验证；生产恢复使用完整备份。
 
 ### 装配与启停
 

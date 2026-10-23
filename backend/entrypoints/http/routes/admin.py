@@ -249,7 +249,7 @@ async def import_user_backup(
         description=f"恢复范围分组，可选 {', '.join(BACKUP_SECTION_IDS)} 或 all；缺省为全部",
     ),
 ) -> UserBackupImportResponse:
-    """尽力恢复备份；覆盖仅清理兼容且可安全替换的数据类。只写入所选分组，不动未勾选内容。"""
+    """按所选分组恢复备份，覆盖仅清理通过当前结构和关联校验的数据类别。"""
     return await maintenance_admin.import_user_backup(
         user_id=user_id,
         db=db,

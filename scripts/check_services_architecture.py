@@ -9,7 +9,7 @@ from pathlib import Path
 
 BACKEND = Path(__file__).resolve().parent.parent / "backend"
 ROOTS = {"bootstrap", "entrypoints", "workflows", "features", "runtime", "infrastructure", "main"}
-RETIRED = {"api", "services", "modules", "components", "common", "prompts"}
+FORBIDDEN_ROOTS = {"api", "services", "modules", "components", "common", "prompts"}
 SQL_OPERATIONS = {
     "execute",
     "scalar",
@@ -186,8 +186,8 @@ def check(backend: Path) -> list[str]:
                 for alias in node.names:
                     imports[module][alias.asname or alias.name] = (target, alias.name)
                 root = target.split(".")[0]
-                if root in RETIRED:
-                    errors.append(f"[retired] {path}:{node.lineno}: {target}")
+                if root in FORBIDDEN_ROOTS:
+                    errors.append(f"[forbidden-root] {path}:{node.lineno}: {target}")
                 if root not in ROOTS:
                     continue
                 if target not in modules:
@@ -207,8 +207,8 @@ def check(backend: Path) -> list[str]:
                         target if alias.asname else target.split(".")[0],
                         "",
                     )
-                    if target.split(".")[0] in RETIRED:
-                        errors.append(f"[retired] {path}:{node.lineno}: {target}")
+                    if target.split(".")[0] in FORBIDDEN_ROOTS:
+                        errors.append(f"[forbidden-root] {path}:{node.lineno}: {target}")
                     if target.split(".")[0] not in ROOTS:
                         continue
                     if target not in modules:

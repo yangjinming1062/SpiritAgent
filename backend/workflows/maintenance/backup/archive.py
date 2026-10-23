@@ -1,6 +1,6 @@
 """备份 zip 的打包与解压校验。
 
-包内布局（`manifest.json`、`db/{表}.json`、`files/{相对 data_dir 的路径}`）同时是 `manifest.py`、`serializers.py`、`file_packing.py` 与动作模块 `backup_assets.py` 读取的契约，调整须一并修改。
+包内布局（`manifest.json`、`db/{表}.json`、`files/{相对 data_dir 的路径}`）由 `manifest.py`、`serializers.py`、`file_packing.py` 与影像模块 `backup_assets.py` 共同读取，调整须一并核对。
 """
 
 import hashlib

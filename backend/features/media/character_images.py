@@ -30,7 +30,7 @@ from infrastructure.media_geometry import (
 )
 from infrastructure.network import download_capped
 from infrastructure.video_processing.ffmpeg import VideoProcessError
-from infrastructure.video_processing.frames import prepare_action_frame as prepare_window_action_frame
+from infrastructure.video_processing.frames import prepare_action_frame
 from infrastructure.video_processing.image import prepare_transparent_image
 from PIL import Image, ImageOps
 from pydantic import BaseModel, ConfigDict, Field
@@ -836,7 +836,7 @@ async def _run_image_chain(
                                 data = await asyncio.to_thread(prepare_transparent_image, data)
                                 ext = "png"
                             if isinstance(inputs, CharacterImageInput) and inputs.prepare_action_frame:
-                                data = await run_blocking(prepare_window_action_frame, data)
+                                data = await run_blocking(prepare_action_frame, data)
                                 ext = "png"
                             state.pending_path = asset_store.image_chain_asset_path(
                                 user_id,

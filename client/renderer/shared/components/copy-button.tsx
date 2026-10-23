@@ -34,7 +34,7 @@ export function CopyButton({
       await copy(text)
       triggerHaptic('selection')
     } catch (error) {
-      // 失败同时给出就地状态与统一通知，两处不再各走各的通道。
+      // 失败同时给出就地状态与统一通知。
       notifyError(error, t.common.copyFailed)
       onError?.(error)
     }

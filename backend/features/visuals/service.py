@@ -423,12 +423,8 @@ async def _settle_short_play(db: AsyncSession, state: VisualPresentation, play: 
     item = await db.get(VisualItem, play.visual_id)
     if item is None or not visual_is_short_action(item):
         return False
-    current = await presented_item(db, state)
-    if (
-        not isinstance(current, PresentedVisual)
-        or current.play_id != play.play_id
-        or current.receipt_kind == "window_static"
-    ):
+    current = presented_item(state)
+    if current is None or current.play_id != play.play_id or current.receipt_kind == "window_static":
         return False
     state.current_visual_id = state.loop_visual_id
     state.current_snapshot_json = state.loop_snapshot_json

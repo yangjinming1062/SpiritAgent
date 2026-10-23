@@ -39,8 +39,6 @@ def validate_manifest(payload: dict[str, Any] | None) -> None:
     if not isinstance(payload.get("tables"), list):
         raise ValueError("manifest.tables must be a list")
     tables = payload["tables"]
-    if any(table in {"companion_action_packs", "companion_actions"} for table in tables):
-        raise ValueError("该备份包含已退役的窗口动作结构，当前版本不支持恢复")
     if not tables or any(not isinstance(table, str) or not TABLE_NAME_PATTERN.fullmatch(table) for table in tables):
         raise ValueError("Invalid backup table names")
     if len(set(tables)) != len(tables):

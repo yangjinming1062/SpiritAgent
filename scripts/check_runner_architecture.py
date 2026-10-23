@@ -9,7 +9,7 @@ from pathlib import Path
 
 PACKAGE = "spirit_agent_runner"
 RUNNER = Path(__file__).resolve().parent.parent / "runner" / PACKAGE
-LEGACY_ROOTS = {"tools", "envs", "utils", "server", "runner_version"}
+FORBIDDEN_ROOTS = {"tools", "envs", "utils", "server", "runner_version"}
 FORBIDDEN_LAYERS = {
     "contracts": {"infrastructure", "runtime", "features", "transport", "bootstrap", "__main__"},
     "infrastructure": {"runtime", "features", "transport", "bootstrap", "__main__"},
@@ -193,14 +193,14 @@ def check(runner: Path) -> list[str]:
             modules[module] = (path, ast.parse(path.read_text(encoding="utf-8-sig")))
         except (OSError, SyntaxError) as exc:
             errors.append(f"[syntax] {path}:{getattr(exc, 'lineno', 1)}: {exc}")
-    for legacy in sorted(LEGACY_ROOTS):
-        file = runner.parent / f"{legacy}.py"
-        directory = runner.parent / legacy
+    for root_name in sorted(FORBIDDEN_ROOTS):
+        file = runner.parent / f"{root_name}.py"
+        directory = runner.parent / root_name
         sources = [file] if file.is_file() else []
         if directory.is_dir():
             sources.extend(path for path in directory.rglob("*.py") if "__pycache__" not in path.parts)
         if sources:
-            errors.append(f"[legacy-source] obsolete root source remains: {sources[0]}")
+            errors.append(f"[package-layout] source must be inside {PACKAGE}: {sources[0]}")
 
     graph: dict[str, set[str]] = defaultdict(set)
     for module, (path, tree) in modules.items():
@@ -223,8 +223,8 @@ def check(runner: Path) -> list[str]:
             else:
                 continue
             for target, symbol in imports:
-                if target.split(".")[0] in LEGACY_ROOTS:
-                    report("legacy-import", node.lineno, f"obsolete import {target}")
+                if target.split(".")[0] in FORBIDDEN_ROOTS:
+                    report("top-level-import", node.lineno, f"import must use the {PACKAGE} package: {target}")
                 if target != PACKAGE and not target.startswith(f"{PACKAGE}."):
                     continue
                 if layer(module) == "infrastructure" and (

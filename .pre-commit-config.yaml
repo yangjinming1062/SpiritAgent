@@ -2,8 +2,7 @@ repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.4
     hooks:
-      # 必须先 ruff-check --fix 再 ruff format：先 format 会让 import 块跨更多行，
-      # 再 --fix 会把 import 合并回单块。规则统一在根 ruff.toml，pre-commit / CLI / IDE 共用。
+      # 先修复导入与代码检查问题，再由格式器统一样式。
       - id: ruff-check
         args: [ --fix ]
         exclude: ^(installer)/
