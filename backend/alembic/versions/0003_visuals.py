@@ -438,7 +438,7 @@ def upgrade() -> None:
             """,
         ),
     )
-    op.execute(
+    bind.execute(
         sa.text(
             "UPDATE nightly_activity_actions "
             "SET status = 'failed', "
