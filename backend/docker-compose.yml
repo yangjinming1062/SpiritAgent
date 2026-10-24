@@ -17,6 +17,27 @@ services:
       timeout: 3s
       retries: 5
 
+  # 服务更新器（--profile updater）：管理后台「服务更新」页的执行体。
+  # 首次启用需 SSH 到服务器配置仓库路径与部署密钥，步骤见 README「服务更新」。
+  updater:
+    build:
+      context: ..
+      dockerfile: backend/updater/Dockerfile
+    container_name: spiritagent-updater
+    restart: unless-stopped
+    profiles:
+      - updater
+    environment:
+      REPO_DIR: ${UPDATER_REPO_DIR:-/srv/spiritagent}
+    volumes:
+      # Docker socket：执行构建与重启。
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 仓库按宿主机绝对路径挂载，保留属主；git 检出与 compose 相对目录都指向原部署。
+      - ${UPDATER_REPO_DIR:-/srv/spiritagent}:${UPDATER_REPO_DIR:-/srv/spiritagent}
+      # 状态与任务日志持久卷。
+      - updater_state:/var/lib/spiritagent-updater
+      - updater_socket:/run/updater
+
   backend:
     build:
       context: ..
@@ -31,6 +52,8 @@ services:
     environment:
       <<: *postgres_credentials
       XHS_MCP_BASE_URL: ${XHS_MCP_BASE_URL:-http://xiaohongshu-mcp:18060}
+      # 更新器共享 socket 目录；未启用 profile 时为空目录，页面按未接入处理。
+      SERVICE_UPDATER_SOCKET_DIR: /run/updater
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # 仅绑定本机回环：明文 HTTP 不暴露公网，公网 TLS 由 caddy（--profile public）终止。
@@ -40,6 +63,8 @@ services:
       - ./config.toml:/app/config.toml:ro
       - ./updates:/app/updates
       - ./data:/app/data
+      # 与更新器容器共享同一 socket 卷。
+      - updater_socket:/run/updater
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://localhost:10620/health', timeout=2)"]
       interval: 10s
@@ -95,3 +120,5 @@ volumes:
   caddy_data:
   caddy_config:
   xiaohongshu_data:
+  updater_state:
+  updater_socket:

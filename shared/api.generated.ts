@@ -269,6 +269,19 @@ export interface ApiSchemas {
   "SceneSource": "generated" | "user_upload"
   "SceneStateResponse": { "policy": ApiSchemas["ScenePolicy"]; "materials": Array<ApiSchemas["SceneResponse"]>; "generation_pending": boolean }
   "SceneStatus": "pending" | "ready" | "description_failed" | "failed" | "cancelled"
+  "ServiceCheckResultView": { "repo": ApiSchemas["ServiceRepoView"]; "incoming": Array<ApiSchemas["ServiceCommitInfo"]>; "issues": Array<ApiSchemas["ServicePreflightIssue"]> }
+  "ServiceCommitInfo": { "sha": string; "short_sha": string; "subject": string; "author": string; "committed_at": (string | null) }
+  "ServicePreflightIssue": { "check": "git" | "ssh" | "docker" | "compose" | "repository" | "upstream" | "worktree" | "divergence"; "message": string }
+  "ServiceRepoView": { "branch": string; "upstream": string; "current_commit": string; "current_commit_subject": string; "ahead": number; "behind": number; "dirty": boolean; "diverged": boolean; "remote_commit": string }
+  "ServiceRuntimeView": { "name": string; "state": string; "health": string; "image_id": string; "running_commit": string }
+  "ServiceUpdateApplyRequest": { "target_commit": string; "request_id"?: string }
+  "ServiceUpdateCheckRequest": { "request_id"?: string }
+  "ServiceUpdateLogChunk": { "task_id": string; "offset": number; "total_bytes": number; "truncated": boolean; "lines": Array<string> }
+  "ServiceUpdateTaskAccepted": { "task_id": string; "existing": boolean }
+  "ServiceUpdateTaskError": { "stage": ("preflight" | "fetch" | "fast_forward" | "build" | "restart" | "verify" | "done" | "failed" | "interrupted" | null); "reason": string; "message": string }
+  "ServiceUpdateTaskList": { "tasks": Array<ApiSchemas["ServiceUpdateTaskView"]> }
+  "ServiceUpdateTaskView": { "task_id": string; "request_id": string; "kind": "check" | "update"; "state": "running" | "done" | "failed" | "interrupted"; "stage": "preflight" | "fetch" | "fast_forward" | "build" | "restart" | "verify" | "done" | "failed" | "interrupted"; "target_commit": string; "created_at": string; "updated_at": string; "error": (ApiSchemas["ServiceUpdateTaskError"] | null); "log_offset": number; "log_truncated": boolean; "check": (ApiSchemas["ServiceCheckResultView"] | null) }
+  "ServiceUpdaterStatus": { "enabled": boolean; "updater_ready": boolean; "version": string; "repo": ApiSchemas["ServiceRepoView"]; "runtime": (ApiSchemas["ServiceRuntimeView"] | null); "preflight_issues": Array<ApiSchemas["ServicePreflightIssue"]>; "active_task": (ApiSchemas["ServiceUpdateTaskView"] | null); "latest_task": (ApiSchemas["ServiceUpdateTaskView"] | null) }
   "SessionClearResult": { "session_id": string; "cleared_count": number; "messages": Array<ApiSchemas["SessionMessageView"]> }
   "SessionCompressionResult": { "session_id": string; "compressed": boolean; "reason": (string | null); "usage": ApiSchemas["CompressionUsage"]; "replaced_count": (number | null); "summary": (string | null); "messages": (Array<ApiSchemas["SessionMessageView"]> | null) }
   "SessionCreateRequest": { "system_preset_id": string }
@@ -515,6 +528,12 @@ export interface ApiOperations {
   "update.create_version": { path: Record<string, never>; query: Record<string, never>; body: FormData; input: { path?: never; query?: never; body: FormData }; response: ApiSchemas["UpdateVersionItem"] }
   "update.update_version": { path: { "id": number }; query: Record<string, never>; body: ApiSchemas["UpdateVersionUpdate"]; input: { path: { "id": number }; query?: never; body: ApiSchemas["UpdateVersionUpdate"] }; response: ApiSchemas["UpdateVersionItem"] }
   "update.delete_version": { path: { "id": number }; query: Record<string, never>; body: undefined; input: { path: { "id": number }; query?: never; body?: never }; response: ApiSchemas["MessageResponse"] }
+  "update.get_service_updater_status": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["ServiceUpdaterStatus"] }
+  "update.start_service_update_check": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["ServiceUpdateCheckRequest"]; input: { path?: never; query?: never; body: ApiSchemas["ServiceUpdateCheckRequest"] }; response: ApiSchemas["ServiceUpdateTaskAccepted"] }
+  "update.apply_service_update": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["ServiceUpdateApplyRequest"]; input: { path?: never; query?: never; body: ApiSchemas["ServiceUpdateApplyRequest"] }; response: ApiSchemas["ServiceUpdateTaskAccepted"] }
+  "update.list_service_update_tasks": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["ServiceUpdateTaskList"] }
+  "update.get_service_update_task": { path: { "task_id": string }; query: Record<string, never>; body: undefined; input: { path: { "task_id": string }; query?: never; body?: never }; response: ApiSchemas["ServiceUpdateTaskView"] }
+  "update.get_service_update_task_log": { path: { "task_id": string }; query: { "offset"?: number }; body: undefined; input: { path: { "task_id": string }; query?: { "offset"?: number }; body?: never }; response: ApiSchemas["ServiceUpdateLogChunk"] }
   "user.activate": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["ActivateRequest"]; input: { path?: never; query?: never; body: ApiSchemas["ActivateRequest"] }; response: ApiSchemas["TokenResponse"] }
   "user.refresh_session": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["RefreshRequest"]; input: { path?: never; query?: never; body: ApiSchemas["RefreshRequest"] }; response: ApiSchemas["TokenResponse"] }
   "user.logout": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["MessageResponse"] }
@@ -2453,6 +2472,72 @@ export const API_OPERATIONS = {
   "update.delete_version": {
     "path": "/api/admin/updates/versions/{id}",
     "method": "DELETE",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "admin"
+    ],
+    "wait_for_model": false,
+    "ipc": false
+  },
+  "update.get_service_updater_status": {
+    "path": "/api/admin/updates/service/status",
+    "method": "GET",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "admin"
+    ],
+    "wait_for_model": false,
+    "ipc": false
+  },
+  "update.start_service_update_check": {
+    "path": "/api/admin/updates/service/check",
+    "method": "POST",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "admin"
+    ],
+    "wait_for_model": false,
+    "ipc": false
+  },
+  "update.apply_service_update": {
+    "path": "/api/admin/updates/service/apply",
+    "method": "POST",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "admin"
+    ],
+    "wait_for_model": false,
+    "ipc": false
+  },
+  "update.list_service_update_tasks": {
+    "path": "/api/admin/updates/service/tasks",
+    "method": "GET",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "admin"
+    ],
+    "wait_for_model": false,
+    "ipc": false
+  },
+  "update.get_service_update_task": {
+    "path": "/api/admin/updates/service/tasks/{task_id}",
+    "method": "GET",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "admin"
+    ],
+    "wait_for_model": false,
+    "ipc": false
+  },
+  "update.get_service_update_task_log": {
+    "path": "/api/admin/updates/service/tasks/{task_id}/log",
+    "method": "GET",
     "encoding": "json",
     "response": "json",
     "identities": [

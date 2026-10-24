@@ -9,6 +9,7 @@ const TABS = {
     versions: { title: '版本发布', desc: '桌面端更新包与版本分发' },
     logs: { title: '夜间日志', desc: '夜间活动的执行状态与阶段结果' },
     videoQueue: { title: '视频队列', desc: '查看生成状态、取消任务、重试限流队列与核对远端结果' },
+    serviceUpdate: { title: '服务更新', desc: '检查更新、构建并重启 backend' },
 };
 
 const $  = (s, r = document) => r.querySelector(s);
@@ -116,7 +117,7 @@ function toggleMenu(btn) {
     placeMenuPop(btn, pop);
 }
 
-const TAB_LOADERS = { overview: loadOverview, users: loadUsers, ai: loadAiView, settings: loadSystemSettings, versions: loadVersions, logs: loadLogs, videoQueue: loadVideoQueue };
+const TAB_LOADERS = { overview: loadOverview, users: loadUsers, ai: loadAiView, settings: loadSystemSettings, versions: loadVersions, logs: loadLogs, videoQueue: loadVideoQueue, serviceUpdate: loadServiceUpdate };
 
 function showTab(name) {
     $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
@@ -126,6 +127,7 @@ function showTab(name) {
     $('#topDesc').textContent = t.desc;
     closeAllMenus();
     syncXhsLoginVisibility();
+    stopServiceUpdatePolling();
     updateSaveActions();
     void TAB_LOADERS[name]();
 }
@@ -2657,6 +2659,297 @@ document.addEventListener('keydown', (e) => {
         else saveSystemSettingsForm();
     }
 });
+
+// 状态与日志共用一处轮询；pollRevision 作废切页或切换到其他任务后的旧回调。
+const svcUpdate = {
+    status: null,
+    task: null,
+    logOffset: 0,
+    logLines: [],
+    logTruncated: false,
+    pollTimer: null,
+    pollRevision: 0,
+    checking: false,
+    historyOpen: false,
+};
+
+const SVC_STAGES = ['preflight', 'fetch', 'fast_forward', 'build', 'restart', 'verify', 'done'];
+const SVC_STAGE_LABELS = {
+    preflight: '预检',
+    fetch: '获取更新',
+    fast_forward: '推进代码',
+    build: '构建镜像',
+    restart: '重启服务',
+    verify: '核对结果',
+    done: '完成',
+    failed: '失败',
+    interrupted: '中断',
+};
+const SVC_HEALTH_LABELS = { healthy: '健康', unhealthy: '不健康', starting: '启动中', none: '运行中', unknown: '未知' };
+
+function svcTaskTerminal(task) { return Boolean(task) && task.state !== 'running'; }
+
+function svcStateBadge(task) {
+    const label = task.state === 'running'
+        ? `${SVC_STAGE_LABELS[task.stage] || task.stage}…`
+        : SVC_STAGE_LABELS[task.state] || task.state;
+    return pill(label, { running: 'info', done: 'green', failed: 'red', interrupted: 'amber' }[task.state] || 'muted');
+}
+
+function randomRequestId() {
+    const bytes = new Uint8Array(12);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function stopServiceUpdatePolling() {
+    svcUpdate.pollRevision++;
+    clearTimeout(svcUpdate.pollTimer);
+    svcUpdate.pollTimer = null;
+}
+
+async function loadServiceUpdate(explicit = false) {
+    if (!$('#panel-serviceUpdate').classList.contains('active')) return;
+    try {
+        applyServiceUpdateStatus(await invoke('update.get_service_updater_status'));
+        if (explicit) toast('更新器状态已刷新');
+    } catch (error) {
+        // 后端重启期间连接失败只更新状态条，保留上一次可用视图并继续轮询。
+        $('#serviceUpdateStatus').textContent = error.isNetwork
+            ? '连接不上后端，可能正在重启；页面会自动重试。'
+            : '读取更新器状态失败：' + error.message;
+    }
+    armServiceUpdatePolling();
+}
+
+function armServiceUpdatePolling() {
+    if (!$('#panel-serviceUpdate').classList.contains('active')) return;
+    const revision = svcUpdate.pollRevision;
+    clearTimeout(svcUpdate.pollTimer);
+    const delay = svcUpdate.task && !svcTaskTerminal(svcUpdate.task) ? 1500 : 6000;
+    svcUpdate.pollTimer = setTimeout(async () => {
+        if (revision !== svcUpdate.pollRevision) return;
+        try {
+            applyServiceUpdateStatus(await invoke('update.get_service_updater_status'));
+        } catch { /* 下一轮继续 */ }
+        if (revision === svcUpdate.pollRevision) armServiceUpdatePolling();
+    }, delay);
+}
+
+function applyServiceUpdateStatus(data) {
+    svcUpdate.status = data;
+    const statusEl = $('#serviceUpdateStatus');
+    if (!data.enabled) {
+        $('#serviceUpdateDisabled').hidden = false;
+        $('#serviceUpdateBody').hidden = true;
+        $('#serviceUpdateCheckBtn').disabled = true;
+        $('#serviceUpdateApplyBtn').hidden = true;
+        statusEl.textContent = '服务更新器未启用；按上方步骤接入后刷新本页。';
+        return;
+    }
+    const repo = data.repo || {};
+    const incoming = (data.active_task?.check || data.latest_task?.check)?.incoming || [];
+    $('#serviceUpdateDisabled').hidden = true;
+    $('#serviceUpdateBody').hidden = false;
+    $('#serviceUpdateCheckBtn').disabled = Boolean(data.active_task) || svcUpdate.checking;
+    $('#serviceUpdateApplyBtn').hidden = !incoming.length || Boolean(data.active_task);
+    renderServiceUpdateRepo(repo, data.runtime);
+    renderServiceUpdateIssues(data.preflight_issues || []);
+    renderServiceUpdateIncoming(repo, incoming);
+    // 任务结束后由 latest_task 取终态；查看历史任务时不抢占当前视图。
+    const active = data.active_task;
+    const latest = data.latest_task;
+    if (active) syncServiceUpdateTask(active);
+    else if (!svcUpdate.task) { if (latest) syncServiceUpdateTask(latest); }
+    else if (latest && latest.task_id === svcUpdate.task.task_id) syncServiceUpdateTask(latest);
+    statusEl.textContent = data.active_task ? '有任务正在执行…' : data.updater_ready ? '' : '更新器预检未通过，请先处理上方前置问题。';
+}
+
+function renderServiceUpdateRepo(repo, runtime) {
+    $('#svcRepoCommit').textContent = repo.current_commit ? repo.current_commit.slice(0, 12) : '未知';
+    $('#svcRepoBranch').textContent = repo.branch ? `分支 ${repo.branch}${repo.upstream ? ` · ${repo.upstream}` : ''}` : '';
+    $('#svcHealth').textContent = runtime && runtime.state === 'running' && runtime.health !== 'unhealthy' ? '运行中' : '待恢复';
+    $('#svcRuntime').textContent = runtime
+        ? `backend ${SVC_HEALTH_LABELS[runtime.health] || runtime.health}` +
+          `${runtime.running_commit ? ` · ${runtime.running_commit.slice(0, 12)}` : ' · 版本未知'}`
+        : '未读取到服务状态';
+}
+
+function renderServiceUpdateIssues(issues) {
+    $('#svcPreflightCard').hidden = !issues.length;
+    $('#svcPreflightList').innerHTML = issues.map(i => `<li><span class="tl-dot amber"></span><div class="tl-body"><div class="title">${esc(i.check)}</div><div class="meta">${esc(i.message)}</div></div></li>`).join('');
+}
+
+function renderServiceUpdateIncoming(repo, incoming) {
+    $('#svcIncoming').textContent = incoming.length ? `${incoming.length} 个提交` : '已是最新';
+    $('#svcIncomingHint').textContent = repo.behind ? `落后 upstream ${repo.behind} 个提交` : '';
+    $('#svcIncomingCount').textContent = incoming.length ? `${incoming.length} 条` : '';
+    $('#svcIncomingList').innerHTML = incoming.length ? incoming.map(c => `<tr>
+        <td><span class="cell-strong" style="font-family:var(--font-mono);">${esc(c.short_sha)}</span></td>
+        <td><div class="cell-strong">${esc(c.subject)}</div></td>
+        <td><div class="cell-meta">${esc(c.author)}</div></td>
+        <td><div class="cell-meta">${fmtDate(c.committed_at)}</div></td>
+    </tr>`).join('') : stateRow(4, '没有可更新提交', '当前分支已与 upstream 一致');
+}
+
+function syncServiceUpdateTask(task) {
+    const switched = !svcUpdate.task || svcUpdate.task.task_id !== task.task_id;
+    if (switched) {
+        svcUpdate.logOffset = 0;
+        svcUpdate.logLines = [];
+        svcUpdate.logTruncated = false;
+    }
+    svcUpdate.task = task;
+    const running = !svcTaskTerminal(task);
+    $('#serviceUpdateCheckBtn').disabled = running || svcUpdate.checking;
+    if (running) $('#serviceUpdateApplyBtn').hidden = true;
+    renderServiceUpdateTask();
+    if (svcUpdate.logOffset < (task.log_offset || 0)) void pollServiceUpdateLog();
+}
+
+function serviceUpdateLogNote(task) {
+    if (task.error) {
+        const stage = SVC_STAGE_LABELS[task.error.stage] || task.error.stage || '未知阶段';
+        return `失败于「${stage}」：${task.error.message}`;
+    }
+    if (svcUpdate.logTruncated || task.log_truncated) return '日志已达单任务上限，后续输出被截断。';
+    return '';
+}
+
+function renderServiceUpdateTask() {
+    const task = svcUpdate.task;
+    const noteEl = $('#svcLogNote');
+    if (!task) {
+        $('#svcTaskState').textContent = '';
+        $('#svcSteps').innerHTML = '';
+        $('#svcLog').textContent = '';
+        noteEl.hidden = true;
+        return;
+    }
+    $('#svcTaskState').innerHTML = svcStateBadge(task);
+    const current = SVC_STAGES.indexOf(task.stage);
+    const failed = task.state === 'failed' || task.state === 'interrupted';
+    $('#svcSteps').innerHTML = SVC_STAGES.map((stage, index) => {
+        let cls = '';
+        if (task.state === 'done' || (!failed && index < current)) cls = 'done';
+        else if (failed && index === current) cls = 'failed';
+        else if (index === current) cls = 'active';
+        return `<li class="${cls}"><span class="svc-step-dot"></span>${SVC_STAGE_LABELS[stage]}</li>`;
+    }).join('');
+    const note = serviceUpdateLogNote(task);
+    noteEl.hidden = !note;
+    noteEl.textContent = note;
+    const logEl = $('#svcLog');
+    logEl.textContent = svcUpdate.logLines.join('\n') || (svcTaskTerminal(task) ? '（无日志）' : '正在读取日志…');
+    logEl.scrollTop = logEl.scrollHeight;
+}
+
+async function pollServiceUpdateLog() {
+    const task = svcUpdate.task;
+    if (!task) return;
+    const revision = svcUpdate.pollRevision;
+    try {
+        const chunk = await invoke('update.get_service_update_task_log', { path: { task_id: task.task_id }, query: { offset: svcUpdate.logOffset } });
+        if (revision !== svcUpdate.pollRevision || svcUpdate.task?.task_id !== task.task_id) return;
+        if (chunk.lines?.length) svcUpdate.logLines.push(...chunk.lines);
+        svcUpdate.logOffset = chunk.offset;
+        svcUpdate.logTruncated = Boolean(chunk.truncated);
+    } catch { /* 保留现有内容，下一轮重试 */ }
+    renderServiceUpdateTask();
+}
+
+async function startServiceUpdateCheck() {
+    if (svcUpdate.checking) return;
+    svcUpdate.checking = true;
+    $('#serviceUpdateCheckBtn').disabled = true;
+    $('#serviceUpdateStatus').textContent = '正在检查更新…';
+    try {
+        const accepted = await invoke('update.start_service_update_check', { body: { request_id: randomRequestId() } });
+        toast(accepted.existing ? '检查任务已在执行，继续跟踪原任务' : '已开始检查更新');
+        await trackServiceUpdateTask(accepted.task_id);
+    } catch (error) {
+        $('#serviceUpdateStatus').textContent = '检查更新失败：' + error.message;
+        toast('检查更新失败：' + error.message, 'err');
+    } finally {
+        svcUpdate.checking = false;
+        $('#serviceUpdateCheckBtn').disabled = svcUpdate.task ? !svcTaskTerminal(svcUpdate.task) : false;
+    }
+}
+
+async function trackServiceUpdateTask(taskId) {
+    try {
+        syncServiceUpdateTask(await invoke('update.get_service_update_task', { path: { task_id: taskId } }));
+        armServiceUpdatePolling();
+    } catch (error) {
+        $('#serviceUpdateStatus').textContent = '读取任务失败：' + error.message;
+    }
+}
+
+function openServiceUpdateConfirm() {
+    const check = svcUpdate.status?.latest_task?.kind === 'check' ? svcUpdate.status.latest_task : null;
+    const repo = check?.check?.repo || svcUpdate.status?.repo || {};
+    const incoming = check?.check?.incoming || [];
+    const target = repo.remote_commit || incoming[0]?.sha || '';
+    if (!target) { toast('没有可更新的目标提交，请先检查更新', 'warn'); return; }
+    $('#svcConfirmTarget').textContent = target.slice(0, 12);
+    $('#svcConfirmCount').textContent = String(incoming.length || repo.behind || 0);
+    const running = svcUpdate.status?.runtime;
+    const drifted = Boolean(running?.running_commit && running.running_commit !== repo.current_commit);
+    $('#svcConfirmNote').hidden = !drifted;
+    $('#svcConfirmNote').textContent = '注意：仓库代码与运行版本不一致（上次部署未完成），本次更新会把两者重新对齐。';
+    $('#svcConfirmSubmit').onclick = () => applyServiceUpdate(target);
+    openModal('serviceUpdateConfirmModal');
+}
+
+async function applyServiceUpdate(targetCommit) {
+    const submitBtn = $('#svcConfirmSubmit');
+    submitBtn.disabled = true;
+    try {
+        const accepted = await invoke('update.apply_service_update', { body: { target_commit: targetCommit, request_id: randomRequestId() } });
+        closeModal('serviceUpdateConfirmModal');
+        toast(accepted.existing ? '更新任务已在执行，继续跟踪原任务' : '更新已开始，服务会短暂中断');
+        await trackServiceUpdateTask(accepted.task_id);
+    } catch (error) {
+        $('#serviceUpdateStatus').textContent = '提交更新失败：' + error.message;
+        toast('提交更新失败：' + error.message, 'err');
+    } finally {
+        submitBtn.disabled = false;
+    }
+}
+
+function toggleServiceUpdateHistory() {
+    svcUpdate.historyOpen = !svcUpdate.historyOpen;
+    $('#svcHistoryCard').hidden = !svcUpdate.historyOpen;
+    if (svcUpdate.historyOpen) void loadServiceUpdateHistory();
+}
+
+async function loadServiceUpdateHistory() {
+    try {
+        const data = await invoke('update.list_service_update_tasks');
+        $('#svcHistoryList').innerHTML = (data.tasks || []).length ? data.tasks.map(t => `<tr>
+            <td><span style="font-family:var(--font-mono);">${esc(t.task_id.slice(0, 8))}</span></td>
+            <td>${t.kind === 'update' ? '更新' : '检查'}</td>
+            <td>${svcStateBadge(t)}</td>
+            <td><span style="font-family:var(--font-mono);">${esc(t.target_commit ? t.target_commit.slice(0, 12) : '—')}</span></td>
+            <td><div class="cell-meta">${fmtDate(t.created_at)}</div></td>
+            <td class="td-actions"><button class="btn btn--ghost btn--sm" onclick="viewServiceUpdateTask('${esc(t.task_id)}')">查看</button></td>
+        </tr>`).join('') : stateRow(6, '暂无历史任务');
+    } catch (error) {
+        $('#svcHistoryList').innerHTML = stateRow(6, '加载失败：' + error.message, '', true);
+    }
+}
+
+async function viewServiceUpdateTask(taskId) {
+    $('#svcHistoryCard').hidden = true;
+    svcUpdate.historyOpen = false;
+    await trackServiceUpdateTask(taskId);
+}
+
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && $('#panel-serviceUpdate')?.classList.contains('active')) loadServiceUpdate();
+    else if ($('#panel-serviceUpdate')?.classList.contains('active')) stopServiceUpdatePolling();
+});
+window.addEventListener('pagehide', stopServiceUpdatePolling);
 
 $('#aiSections').onclick = event => {
     const button = event.target.closest('[data-ai-section]');

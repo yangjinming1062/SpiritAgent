@@ -38,6 +38,7 @@
                 <button class="nav-item" data-tab="versions" onclick="showTab('versions')"><span data-icon="versions"></span><span>版本发布</span></button>
                 <button class="nav-item" data-tab="logs" onclick="showTab('logs')"><span data-icon="logs"></span><span>夜间日志</span></button>
                 <button class="nav-item" data-tab="videoQueue" onclick="showTab('videoQueue')"><span data-icon="logs"></span><span>视频队列</span></button>
+                <button class="nav-item" data-tab="serviceUpdate" onclick="showTab('serviceUpdate')"><span data-icon="versions"></span><span>服务更新</span></button>
             </nav>
             <div class="side-foot"><span class="console-label">管理后台</span><button class="btn btn--ghost" onclick="logout()"><span data-icon="logout"></span>退出登录</button></div>
         </aside>
@@ -71,8 +72,73 @@
                     <p class="hint" id="videoQueueStatus" role="status"></p>
                     <div id="videoQueueList"></div>
                 </section>
+                <section id="panel-serviceUpdate" class="panel">
+                    <div class="section-heading">
+                        <div><h2>服务更新</h2><span class="hint">检查更新、拉取代码、构建并重启 backend</span></div>
+                        <div class="save-actions">
+                            <button class="btn btn--ghost" id="serviceUpdateRefresh" onclick="loadServiceUpdate(true)">刷新</button>
+                            <button class="btn btn--primary" id="serviceUpdateCheckBtn" onclick="startServiceUpdateCheck()">检查更新</button>
+                            <button class="btn btn--primary" id="serviceUpdateApplyBtn" onclick="openServiceUpdateConfirm()" hidden>更新到最新</button>
+                        </div>
+                    </div>
+                    <p class="hint" id="serviceUpdateStatus" role="status">正在读取更新器状态…</p>
+                    <div id="serviceUpdateDisabled" class="card" hidden>
+                        <div class="card-pad">
+                            <h3 style="margin-bottom:6px;">服务更新器未接入</h3>
+                            <p class="hint">要在管理页完成一键更新，请先 SSH 到服务器完成一次性接入：</p>
+                            <ol class="hint" style="margin:8px 0 0; padding-left:18px; line-height:1.9;">
+                                <li>准备部署密钥与 known_hosts，放入仓库旁的 <code>deploy/</code> 目录（只读挂载）。</li>
+                                <li>在 <code>backend/.env</code> 填写 <code>UPDATER_REPO_DIR</code>（仓库绝对路径）等变量。</li>
+                                <li>执行 <code>docker compose --profile updater up -d --build updater</code>。</li>
+                            </ol>
+                            <p class="hint" style="margin-top:8px;">详细步骤与首次上线说明见 backend/README「服务更新」。</p>
+                        </div>
+                    </div>
+                    <div id="serviceUpdateBody" hidden>
+                        <div class="stats" style="grid-template-columns: repeat(3, minmax(0,1fr));">
+                            <div class="stat"><span data-icon="versions"></span><div><div class="label">仓库版本</div><div class="value" id="svcRepoCommit" style="font-size:16px;">—</div><div class="meta hint" id="svcRepoBranch"></div></div></div>
+                            <div class="stat"><span data-icon="ai"></span><div><div class="label">可更新提交</div><div class="value" id="svcIncoming" style="font-size:16px;">—</div><div class="meta hint" id="svcIncomingHint"></div></div></div>
+                            <div class="stat"><span data-icon="settings"></span><div><div class="label">服务运行状态</div><div class="value" id="svcHealth" style="font-size:16px;">—</div><div class="meta hint" id="svcRuntime"></div></div></div>
+                        </div>
+                        <div class="card" id="svcPreflightCard" hidden>
+                            <div class="card-head"><h2>前置检查未通过</h2></div>
+                            <ul class="timeline" id="svcPreflightList" style="padding:5px 18px 12px;"></ul>
+                        </div>
+                        <div class="card">
+                            <div class="card-head"><h2>更新内容</h2><span class="count" id="svcIncomingCount"></span></div>
+                            <div class="table-scroll"><table><thead><tr><th>提交</th><th>说明</th><th>作者</th><th>时间</th></tr></thead><tbody id="svcIncomingList"></tbody></table></div>
+                        </div>
+                        <div class="card">
+                            <div class="card-head"><h2>当前任务</h2><span class="count" id="svcTaskState"></span><span class="spacer"></span><button class="btn btn--ghost btn--sm" id="svcTaskHistoryBtn" onclick="toggleServiceUpdateHistory()">历史任务</button></div>
+                            <ol class="svc-steps" id="svcSteps"></ol>
+                            <pre class="svc-log" id="svcLog" aria-label="任务日志" aria-live="polite"></pre>
+                            <p class="hint" id="svcLogNote" hidden></p>
+                        </div>
+                        <div class="card" id="svcHistoryCard" hidden>
+                            <div class="card-head"><h2>历史任务</h2></div>
+                            <div class="table-scroll"><table><thead><tr><th>任务</th><th>类型</th><th>状态</th><th>目标提交</th><th>时间</th><th class="td-actions">操作</th></tr></thead><tbody id="svcHistoryList"></tbody></table></div>
+                        </div>
+                    </div>
+                </section>
             </div>
         </main>
+    </div>
+</div>
+<div id="serviceUpdateConfirmModal" class="modal">
+    <div class="modal-card">
+        <div class="modal-head">
+            <h2>确认更新服务</h2>
+            <button type="button" class="modal-close" data-close aria-label="关闭">✕</button>
+        </div>
+        <div class="modal-body">
+            <p style="margin:0 0 0.6rem; color:var(--text-2); font-size:0.82rem;">目标版本 <strong id="svcConfirmTarget" style="font-family:var(--font-mono);"></strong>，共 <strong id="svcConfirmCount"></strong> 个新提交。</p>
+            <p class="callout">更新会拉取代码、重新构建并重启 <strong>backend</strong>；期间服务将短暂中断（通常一分钟内），手机与桌面连接会自动恢复。构建或启动失败时旧服务继续运行或保留诊断，不会自动回退。</p>
+            <p class="hint" id="svcConfirmNote" hidden></p>
+        </div>
+        <div class="modal-foot">
+            <button type="button" class="btn btn--ghost" onclick="closeModal('serviceUpdateConfirmModal')">取消</button>
+            <button type="button" class="btn btn--primary" id="svcConfirmSubmit">确认并开始更新</button>
+        </div>
     </div>
 </div>
 <div id="videoQueueResolveModal" class="modal">

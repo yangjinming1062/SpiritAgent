@@ -24,6 +24,7 @@
 | 附件、上传视频与语音 | [media.py](entrypoints/http/routes/media.py)、[sessions.py](entrypoints/http/routes/sessions.py)、[chat_attachments.py](features/conversation/attachments.py) |
 | 正式资产写入、签名与回收 | [asset_store.py](infrastructure/assets/asset_store.py)、[资产领域](features/assets/README.md) |
 | 桌面与 Runner 更新分发 | [update.py](entrypoints/http/routes/update.py)、[update_releases.py](features/updates/releases.py) |
+| 服务更新（后端一键更新） | [updater/](updater/)、[service_updater.py](infrastructure/web/service_updater.py)、[service_operations.py](features/updates/service_operations.py)；接入步骤见[服务更新](#服务更新) |
 | 备份与覆盖恢复 | [admin.py](entrypoints/http/routes/admin.py)、[backup](workflows/maintenance/backup/)、[maintenance.py](workflows/maintenance/user.py) |
 | 提示词、装配与任务恢复 | [提示词索引](#提示词定位)、[bootstrap/lifecycle.py](bootstrap/lifecycle.py) |
 
@@ -148,6 +149,20 @@ X 使用固定版本的 `twscrape` 请求定义和解析器，经 Backend 的有
 在管理后台「系统参数 → 社交资讯来源」确认服务地址和与采集服务相同的鉴权令牌，保存后获取登录二维码，用小红书 App 扫码并确认。平台要求短信验证时，面板显示验证码输入框，提交到本次扫码的同一浏览器会话；验证码不保存，错误可重新输入。验证界面加载与提交后的跳转会继续检查状态，单次操作异常后也会有限次检查实际登录结果，不自动重发验证码。登录验证到期后重新获取二维码，刷新和清除登录会关闭旧会话。识别到滑块等不支持的验证时，面板显示明确状态并停止自动检查。使用项目构建的采集服务，部署时在 `backend` 目录执行 `docker compose up -d --build backend xiaohongshu-mcp`。采集服务的启动令牌仍由 `.env` 的 `XHS_MCP_AUTH_TOKEN` 配置；管理页保存的令牌只用于 Backend 访问该服务。平台未登录或服务不可用时检索独立失败，不阻塞记忆、反思和日记。
 
 登录 Cookies 和浏览器状态保存在专用 `xiaohongshu_data` 卷，重新创建容器会保留；登录失效时重新扫码。该卷属于运营者的采集账户，不进入产品用户备份。管理页「停止检查」只停止当前页面轮询，存活会话到期或刷新时关闭。登录管理接口仅允许管理员访问，二维码不缓存，服务令牌和 Cookie 不下发。浏览器出站代理可通过 `XHS_PROXY` 配置，Backend 访问服务的短名称须包含在 `NO_PROXY`。夜间采集只调用登录状态、搜索和详情读取接口，搜索的一天内筛选仍由实际发布时间再次校验；健康接口成功不代表已登录或取得有效内容。
+
+### 服务更新
+
+管理后台「服务更新」页完成 `backend` 的更新：检查更新、拉取代码、构建镜像、重启并核对实际运行版本。执行体是独立容器 [updater](updater/README.md)，与后端进程解耦——更新期间后端可被替换，更新器自身不受影响；页面请求经共享 Unix socket（`updater_socket` 卷）转交给它。
+
+首次接入需 SSH 到服务器完成一次性准备，之后常规更新都在管理页完成：
+
+1. 准备部署密钥与 `known_hosts`，放入仓库 `deploy/` 目录（`deploy_key`、`known_hosts`）。该目录已在 `.gitignore` 中，否则未跟踪文件会让预检拒绝更新。
+2. 在 `backend/.env` 填写 `UPDATER_REPO_DIR`，即仓库在宿主机的绝对路径（容器内按同一路径挂载，相对目录挂载与命名卷才指向原部署）。
+3. 执行 `docker compose --profile updater up -d --build updater`。
+
+更新顺序为预检（仓库、SSH、Docker、compose）→ 获取 upstream → 仅 fast-forward 推进当前分支 → 构建 `backend` → 重建并等待健康 → 核对运行镜像。预检要求当前分支有 upstream、工作区干净且没有本地领先或分叉；页面提交的更新绑定检查时确认的提交，远端在检查后变化则要求重新检查。
+
+镜像内写入的提交标识区分「代码已拉取」与「更新成功」，页面分别显示仓库版本与运行版本。拉取或构建失败时旧服务继续运行；代码已推进但部署未成功时可重试同一版本。启动失败保留诊断并停止，不自动回退镜像或数据库。更新范围只有 `backend`；小红书采集服务、更新器自身与部署拓扑变化仍需手工升级。
 
 ### HTTPS 与公网访问
 

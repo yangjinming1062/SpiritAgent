@@ -146,6 +146,8 @@ class Settings(BaseSettings):
     x_search_cookies: str = Field(default="", max_length=30000, validation_alias="X_SEARCH_COOKIES")
     xhs_mcp_base_url: str = Field(default="", validation_alias="XHS_MCP_BASE_URL")
     xhs_mcp_auth_token: str = Field(default="", max_length=4096, validation_alias="XHS_MCP_AUTH_TOKEN")
+    # 服务更新器共享 socket 目录；目录为空或没有 socket 时按未启用处理。
+    service_updater_socket_dir: str = Field(default="", validation_alias="SERVICE_UPDATER_SOCKET_DIR")
     tikhub_api_key: str = Field(default="", validation_alias="TIKHUB_API_KEY")
     tikhub_base_url: str = Field(default="https://api.tikhub.io", validation_alias="TIKHUB_BASE_URL")
     topic_search_requests_per_night: int = Field(

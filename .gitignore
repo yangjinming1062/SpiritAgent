@@ -28,6 +28,8 @@
 config.toml
 config.toml.local
 Caddyfile
+# 服务更新器的部署密钥与 known_hosts：仓库工作区保持干净，否则更新预检会因未跟踪文件拒绝推进。
+deploy/
 
 # ---------------------------------------------------------------------------
 # Python Runtime

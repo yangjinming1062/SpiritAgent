@@ -10,6 +10,10 @@ RUN pnpm build
 
 FROM python:3.13-slim
 
+# 构建提交标识：更新器据此核对运行镜像是否来自目标提交。
+ARG GIT_COMMIT=unknown
+LABEL org.opencontainers.image.revision=${GIT_COMMIT}
+
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
