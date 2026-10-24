@@ -20,6 +20,7 @@ from sqlalchemy.orm.attributes import set_committed_value
 from features.accounts.locking import lock_account
 from features.accounts.queries import user_is_active
 from features.posts.models import CompanionPost, CompanionPostComment, PostContentType, PostPublication
+from features.posts.ports import notify_post_published
 from features.posts.schemas import (
     POST_COMMENT_MAX_CHARS,
     PostCommentResponse,
@@ -227,6 +228,8 @@ async def commit_publication(
         row = await get_post(db, task.user_id, task.post_id)
         if row is None:
             raise PostError("发布记录缺少动态")
+        await notify_post_published(db, row.user_id, row.id)
+        await db.commit()
         return row
     if content_type != PostContentType.TEXT and not media_url:
         raise PostError("主媒体尚未完成，不能发布动态")
@@ -260,6 +263,7 @@ async def commit_publication(
         event_type="companion.post.created",
         payload=response_for_post(row).model_dump(),
     )
+    await notify_post_published(db, row.user_id, row.id)
     await db.commit()
     return row
 

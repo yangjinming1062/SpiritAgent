@@ -14,7 +14,8 @@ from features.companion.models import Persona
 from features.companion.persona_service import build_system_prompt_extras
 from features.configuration.settings.timezone import resolve_user_timezone
 from features.configuration.settings.values import get_user_setting
-from features.life.queries import get_life_mood
+from features.life.context import read_life_context_in_session
+from features.life.schemas import LifeContext
 from features.memory.memory_format import format_memories_block
 
 logger = get_logger(__name__)
@@ -29,6 +30,7 @@ class CompanionPromptContext(BaseModel):
     persona_extras: str
     current_mood: str
     memories_block: str
+    life_context: LifeContext
     # 宿主模式不进入角色提示词，实际画面由对话流程按需装配。
 
 
@@ -46,12 +48,14 @@ async def load_companion_prompt_context(user_id: int) -> CompanionPromptContext 
         if persona is None or not persona.is_complete:
             return None
         language = resolve_language(await get_user_setting(db, user_id, "language"))
+        life_context = await read_life_context_in_session(db, user_id)
         return CompanionPromptContext(
             language=language,
             current_time=format_local_iso(utc_now(), await resolve_user_timezone(db, user_id)) or "",
             persona_extras=build_system_prompt_extras(persona, language=language),
-            current_mood=(await get_life_mood(db, user_id)) or "",
+            current_mood=life_context.state.mood or "",
             memories_block=await format_memories_block(db, MemoryScope(user_id, "companion"), language=language),
+            life_context=life_context,
         )
 
 

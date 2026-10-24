@@ -1210,6 +1210,8 @@ async def _finish_job(
                 progress.generation_id,
                 state="completed",
                 result_ref={"visual_id": published.id, "version": published.version},
+                progress=f"已完成影像：{published.title or published.id}",
+                next_step="结合生活情境决定是否呈现",
             )
         except Exception:
             logger.warning(

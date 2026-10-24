@@ -1,13 +1,16 @@
 """生活状态的原子读写与幂等事实接纳。"""
 
 import json
+from datetime import datetime
 
+from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import LifeEvent, LifePursuit, LifeState, LifeStep
+from .ports import project_life_event
 from .schemas import LifeDecisionRequest, LifeEventInput
 
 
@@ -19,8 +22,44 @@ class LifeInputError(ValueError):
     pass
 
 
+logger = get_logger(__name__)
+
+
 def _dump(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+async def _project_event(
+    db: AsyncSession,
+    user_id: int,
+    event: LifeEventInput,
+    occurred_at: datetime,
+) -> None:
+    if not event.is_meaningful:
+        return
+    try:
+        async with db.begin_nested():
+            await project_life_event(db, user_id, event, occurred_at)
+    except Exception:
+        # 事件事实优先保存；记忆是可重建的派生投影，失败不能回滚生活状态或业务结果。
+        logger.warning(
+            "life event memory projection failed",
+            extra={"user_id": user_id, "event_key": event.event_key},
+            exc_info=True,
+        )
+
+
+def _event_matches(row: LifeEvent, event: LifeEventInput) -> bool:
+    return (
+        row.kind == event.kind
+        and row.source == event.source
+        and row.subject == event.subject
+        and row.fact_json == _dump(event.fact)
+        and row.pursuit_id == event.pursuit_id
+        and row.step_id == event.step_id
+        and row.result_ref_json == _dump(event.result_ref)
+        and row.is_meaningful == event.is_meaningful
+    )
 
 
 async def get_or_create_state(db: AsyncSession, user_id: int, *, lock: bool = False) -> LifeState:
@@ -170,6 +209,8 @@ async def record_event(db: AsyncSession, user_id: int, event: LifeEventInput) ->
         select(LifeEvent).where(LifeEvent.user_id == user_id, LifeEvent.event_key == event.event_key)
     )
     if existing is not None:
+        if _event_matches(existing, event):
+            await _project_event(db, user_id, event, existing.occurred_at)
         return existing
     if (
         event.pursuit_id is not None
@@ -208,8 +249,11 @@ async def record_event(db: AsyncSession, user_id: int, event: LifeEventInput) ->
             select(LifeEvent).where(LifeEvent.user_id == user_id, LifeEvent.event_key == event.event_key),
         )
         if existing is not None:
+            if _event_matches(existing, event):
+                await _project_event(db, user_id, event, existing.occurred_at)
             return existing
         raise
+    await _project_event(db, user_id, event, occurred_at)
     state.revision += 1
     await db.flush()
     return row
@@ -223,6 +267,8 @@ async def finish_step(
     state: str,
     result_ref: dict | None = None,
     error: str | None = None,
+    progress: str | None = None,
+    next_step: str | None = None,
 ) -> LifeStep:
     row = await db.scalar(select(LifeStep).where(LifeStep.user_id == user_id, LifeStep.id == step_id).with_for_update())
     if row is None:
@@ -239,15 +285,15 @@ async def finish_step(
             .where(LifePursuit.user_id == user_id, LifePursuit.id == row.pursuit_id)
             .with_for_update(),
         )
-        if pursuit is not None and state == "completed":
-            pursuit.progress = json.dumps(result_ref or {}, ensure_ascii=False)
-            pursuit.next_step = ""
-            pursuit.status = "completed"
-            pursuit.completed_at = row.finished_at
-            life_state = await get_or_create_state(db, user_id, lock=True)
-            if life_state.active_pursuit_id == pursuit.id:
-                life_state.active_pursuit_id = None
-                life_state.revision += 1
+        if pursuit is not None:
+            if progress is not None:
+                pursuit.progress = progress
+            elif state == "completed":
+                pursuit.progress = row.description
+            if next_step is not None:
+                pursuit.next_step = next_step
+            elif state == "completed":
+                pursuit.next_step = ""
     await db.flush()
     return row
 

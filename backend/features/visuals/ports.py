@@ -1,6 +1,7 @@
 """组合策划的情境读取与成品就绪通知，由 bootstrap 显式装配。"""
 
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -12,7 +13,7 @@ class VisualPlanningContext(BaseModel):
 
     voice_style: str = ""
     current_time: str = ""
-    current_mood: str = ""
+    life_context: dict[str, Any] = Field(default_factory=dict)
     relevant_memories: list[dict[str, str]] = Field(default_factory=list)
 
 

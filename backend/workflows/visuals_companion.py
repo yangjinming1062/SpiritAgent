@@ -295,6 +295,12 @@ async def generate_visual_reference(
                 state="completed" if job.state == "succeeded" else job.state,
                 result_ref={"visual_job_id": job.id, "visual_id": job.result_visual_id},
                 error=job.error,
+                progress=(
+                    f"已完成影像：{combo.action.name}"
+                    if job.state == "succeeded"
+                    else f"影像制作{job.state}：{combo.action.name}"
+                ),
+                next_step="结合生活情境决定是否呈现" if job.state == "succeeded" else "确认是否重试影像制作",
             )
         return {
             "job_id": job.id,

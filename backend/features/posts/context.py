@@ -49,7 +49,7 @@ async def load_post_prompt_context(user_id: int) -> PostPromptContext:
             "user_profile": profile,
             "long_term_memories": companion.memories_block,
             "companion_reflection": reflection,
-            "current_mood": companion.current_mood,
+            "life_context": companion.life_context.prompt_payload(),
             "recent_dialogue": {
                 "window_start": dialogue.window_start.isoformat(),
                 "window_end": dialogue.window_end.isoformat(),

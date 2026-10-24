@@ -18,6 +18,8 @@ from features.appearance.nightly import create_and_confirm_outfit, get_outfit, l
 from features.automation.cron_jobs import create_job, remove_job
 from features.companion.planning_queries import PersonaPlanningSnapshot, planning_persona
 from features.configuration.settings.values import load_user_settings
+from features.life.context import read_life_context_in_session
+from features.life.use_cases import read_state
 from features.media.identity_rendering import render_character_appearance
 from features.media.image_generation import resolve_image_gen_chain
 from features.memory.contracts import MemoryListItem
@@ -183,7 +185,6 @@ class PersonaContext(BaseModel):
 
     complete: bool = False
     definition: dict[str, Any] = Field(default_factory=dict)
-    current_mood: str | None = None
 
 
 class SceneContext(BaseModel):
@@ -245,6 +246,7 @@ class PlanningContext(BaseModel):
     providers: PlanningProviders
     language: str = ""
     persona: PersonaContext
+    life_context: dict[str, Any] = Field(default_factory=dict)
     scene: SceneContext
     wardrobe: list[WardrobeItem] = Field(default_factory=list)
     # 模型只读取当前可播能力，制作目标由代码单独冻结。
@@ -464,6 +466,7 @@ def _capability_availability(
 async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
     async with SESSION_LOCAL() as db:
         persona = await planning_persona(db, user_id)
+        life_context = await read_life_context_in_session(db, user_id)
         outfits = await list_outfits(db, user_id)
         scene = await planning_scene(db, user_id)
         scene_rows = await ready_scenes(db, user_id)
@@ -530,8 +533,8 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
         persona=PersonaContext(
             complete=bool(persona and persona.is_complete),
             definition=definition,
-            current_mood=persona.current_mood if persona is not None else None,
         ),
+        life_context=life_context.prompt_payload(),
         scene=SceneContext(
             environment=scene.environment,
             generation_pending=scene.generation_pending,
@@ -824,6 +827,8 @@ async def _execute_visual_create(run: _ActionRun, args: dict[str, Any]) -> Actio
     state = await presentation_state(run.user_id)
     if not state.autonomous_enabled:
         return ActionExecutionResult(status="blocked", reason="autonomous visual creation disabled")
+    if (await read_state(run.user_id)).revision != run.context.life_context.get("state", {}).get("revision"):
+        return ActionExecutionResult(status="blocked", reason="life state changed; replan the visual")
     # 由规划期选定的一组 ready 素材冻结组合，提交即受理；制作与入库由影像模块完成。
     try:
         async with SESSION_LOCAL() as db:

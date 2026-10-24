@@ -1,7 +1,7 @@
 """生活状态的公开 DTO 与请求。"""
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -66,6 +66,19 @@ class LifeEventView(BaseModel):
     step_id: int | None
     result_ref: dict
     is_meaningful: bool
+
+
+class LifeContext(BaseModel):
+    """所有伙伴推理共同读取的生活快照。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    state: LifeStateView
+    active_pursuits: list[LifePursuitView] = Field(default_factory=list)
+    recent_events: list[LifeEventView] = Field(default_factory=list)
+
+    def prompt_payload(self) -> dict[str, Any]:
+        return self.model_dump(mode="json")
 
 
 class LifePursuitListResponse(BaseModel):

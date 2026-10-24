@@ -213,9 +213,7 @@ def _pending_command(row: VisualPresentation) -> VisualPlayCommand | None:
     return None if ensure_utc(command.expires_at) <= utc_now() else command
 
 
-async def actual_presentation_snapshot(user_id: int) -> ActualPresentationSnapshot:
-    """实际呈现快照：冻结造型与环境资料加成品描述；素材缺失的字段为空。"""
-
+async def _presentation_snapshot(user_id: int, *, for_prompt: bool) -> ActualPresentationSnapshot:
     async with SESSION_LOCAL() as db:
         row = await db.scalar(select(VisualPresentation).where(VisualPresentation.user_id == user_id))
         item = presented_item(row) if row else None
@@ -223,28 +221,48 @@ async def actual_presentation_snapshot(user_id: int) -> ActualPresentationSnapsh
             return ActualPresentationSnapshot()
         snapshot = visual_snapshot(item)
         presence = get_presentation_snapshot(user_id)
-        desktop = presence is not None and presence.mode == "desktop"
+        show_full_visual = for_prompt or (presence is not None and presence.mode == "desktop")
+        visual_path = _existing(
+            item.media_path if item.media_kind == "image" else item.input_image_path or item.poster_path,
+        )
+        outfit_path = _existing(snapshot.outfit.path)
+        scene_path = _existing(snapshot.scene.path)
+        identity_path = _existing(snapshot.identity_path)
+        if for_prompt:
+            outfit_description = item.outfit_description or snapshot.outfit.description
+        elif show_full_visual:
+            outfit_description = item.outfit_description
+        else:
+            outfit_description = snapshot.outfit.description
         return ActualPresentationSnapshot(
             visual_id=item.id,
             media_kind=_media_kind(item.media_kind),
             visual_version=item.version,
-            visual_description=item.description if desktop else "",
-            visual_path=_existing(
-                item.media_path if item.media_kind == "image" else item.input_image_path or item.poster_path,
-            )
-            if desktop
-            else None,
-            outfit_path=_existing(snapshot.outfit.path),
-            outfit_hash=snapshot.outfit.content_hash if _existing(snapshot.outfit.path) else None,
-            outfit_description=item.outfit_description if desktop else snapshot.outfit.description,
-            scene_path=_existing(snapshot.scene.path),
-            scene_hash=snapshot.scene.content_hash if _existing(snapshot.scene.path) else None,
+            visual_description=item.description if show_full_visual else "",
+            visual_path=visual_path if show_full_visual else None,
+            outfit_path=outfit_path,
+            outfit_hash=snapshot.outfit.content_hash if outfit_path else None,
+            outfit_description=outfit_description,
+            scene_path=scene_path,
+            scene_hash=snapshot.scene.content_hash if scene_path else None,
             scene_description=snapshot.scene.description,
-            identity_path=_existing(snapshot.identity_path),
-            identity_hash=snapshot.identity_hash if _existing(snapshot.identity_path) else None,
+            identity_path=identity_path,
+            identity_hash=snapshot.identity_hash if identity_path else None,
             identity_reference_role=snapshot.identity_reference_role,
             ready=presence is not None and get_user_proactive_record(user_id).available and visual_playable(item),
         )
+
+
+async def actual_presentation_snapshot(user_id: int) -> ActualPresentationSnapshot:
+    """实际呈现快照：冻结造型与环境资料加成品描述；素材缺失的字段为空。"""
+
+    return await _presentation_snapshot(user_id, for_prompt=False)
+
+
+async def prompt_presentation_snapshot(user_id: int) -> ActualPresentationSnapshot:
+    """供伙伴判断和媒体策划使用的模式无关快照。"""
+
+    return await _presentation_snapshot(user_id, for_prompt=True)
 
 
 def _existing(reference: str | None) -> str | None:

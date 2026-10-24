@@ -3,6 +3,7 @@
 import json
 from datetime import datetime
 
+from infrastructure.text import utc_now
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,6 +37,22 @@ def state_view(row: LifeState) -> LifeStateView:
         revision=row.revision,
         scene_revision=row.scene_revision,
         updated_at=row.updated_at,
+    )
+
+
+def empty_state_view(user_id: int) -> LifeStateView:
+    """返回尚未落库账户的初始生活状态。"""
+
+    return LifeStateView(
+        user_id=user_id,
+        current_activity="",
+        current_scene={},
+        mood=None,
+        active_pursuit_id=None,
+        next_review_at=None,
+        revision=0,
+        scene_revision=0,
+        updated_at=utc_now(),
     )
 
 

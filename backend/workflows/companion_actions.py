@@ -6,7 +6,7 @@
 
 from dataclasses import dataclass, field
 
-from features.visuals.queries import actual_presentation_snapshot, visual_play_catalog
+from features.visuals.queries import prompt_presentation_snapshot, visual_play_catalog
 from features.visuals.schemas import ActualPresentationSnapshot, VisualPlayOption
 from infrastructure.text import resolve_language
 
@@ -40,7 +40,9 @@ class ActionViewSnapshot:
         lines: list[str] = []
         if not self.presentation.ready:
             lines.append(texts["not_presenting"])
-        elif self.presentation.visual_description or self.presentation.outfit_description:
+        elif self.presentation.visual_description:
+            lines.append(texts["presenting_image"])
+        elif self.presentation.outfit_description:
             lines.append(texts["presenting_static"])
         else:
             lines.append(texts["presenting_unknown"])
@@ -66,7 +68,7 @@ async def build_action_view(
 ) -> ActionViewSnapshot:
     """读取实际呈现快照与可播影像；空库也可用制作工具开始第一次组合。"""
 
-    presentation_snapshot = await actual_presentation_snapshot(user_id)
+    presentation_snapshot = await prompt_presentation_snapshot(user_id)
     items = tuple(await visual_play_catalog(user_id, trigger=trigger))
     names = set(_ALWAYS_AVAILABLE)
     if items:

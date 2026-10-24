@@ -10,6 +10,7 @@ from features.companion.narrative_prompts import NARRATIVE_REVISION_TEXTS
 from features.companion.narrative_quality import NarrativeQualityError, review_narrative
 from features.journal.journal_service import get_diary_by_date, publish_diary
 from features.journal.schemas import DIARY_BODY_MAX_CHARS, DiaryContent
+from features.life.context import read_life_context_in_session
 from features.memory.memory_narratives import backfill_diary_embeddings, load_companion_reflection, narrative_date
 from features.posts.store import PostInteractions
 from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, call_llm_json
@@ -21,6 +22,7 @@ from infrastructure.database import SESSION_LOCAL
 from infrastructure.text import resolve_prompt_text, utc_now
 from runtime.memory_scope import MemoryScope
 
+from workflows.life_events import record_diary_published
 from workflows.nightly.output_contracts import DIARY_DECISION, parse_diary_decision
 from workflows.nightly.prompts import JOURNAL_DIARY_TEXTS, NIGHTLY_JSON_REPAIR_TEXTS
 from workflows.nightly.stage_state import load_narrative_result, save_narrative_result
@@ -44,6 +46,7 @@ async def project_today(
 ) -> bool:
     """True 已发布，False 正常跳过；模型调用或输出失败时抛出。"""
     previous_reflection = None
+    life_context_payload: dict[str, Any] = {}
     async with SESSION_LOCAL() as db:
         previous = await load_narrative_result(db, log_id, "journal")
         existing = await get_diary_by_date(db, user_id, target_date)
@@ -55,6 +58,7 @@ async def project_today(
             return False
         else:
             result = None
+            life_context_payload = (await read_life_context_in_session(db, user_id)).prompt_payload()
             reflection = await load_companion_reflection(db, MemoryScope(user_id, "companion"))
             if reflection is not None:
                 previous_reflection = {
@@ -78,6 +82,7 @@ async def project_today(
         contextual_memories,
         background_memories,
         previous_reflection,
+        life_context_payload,
         before_call=partial(require_nightly_window, ZoneInfo(user_timezone)),
         diagnostics=diagnostics,
     )
@@ -85,7 +90,16 @@ async def project_today(
         if not SETTINGS.diary_nightly_enabled:
             composed = False
         if isinstance(composed, DiaryContent):
-            await publish_diary(db, user_id, entry_date=target_date, content=composed, post_ids=posts.posted_ids)
+            diary = await publish_diary(
+                db, user_id, entry_date=target_date, content=composed, post_ids=posts.posted_ids
+            )
+            await record_diary_published(
+                db,
+                user_id,
+                entry_date=target_date.isoformat(),
+                title=diary.title,
+                diary_id=diary.id,
+            )
         await save_narrative_result(db, log_id, "journal", composed is not False)
         await db.commit()
     if composed is not False:
@@ -104,6 +118,7 @@ async def _compose_diary(
     contextual_memories: dict[str, str],
     background_memories: dict[str, str],
     previous_reflection: dict[str, str | None] | None,
+    life_context: dict[str, Any],
     *,
     before_call: Callable[[], Awaitable[None]] | None = None,
     diagnostics: list[LlmAttemptDiagnostic] | None = None,
@@ -116,6 +131,7 @@ async def _compose_diary(
         "contextual_memories": contextual_memories,
         "background_memories": background_memories,
         "previous_reflection": previous_reflection,
+        "life_context": life_context,
         "max_body_chars": DIARY_BODY_MAX_CHARS,
         "persona": persona,
     }

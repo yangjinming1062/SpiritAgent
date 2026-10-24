@@ -1,13 +1,15 @@
 """生活状态的流程入口，负责会话边界与提交。"""
 
+import json
+
 from infrastructure.database import SESSION_LOCAL
-from infrastructure.text import utc_now
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import LifeStep
 from .queries import (
+    empty_state_view,
     event_view,
     get_life_state_view,
     get_pursuit,
@@ -43,17 +45,7 @@ async def read_state(user_id: int) -> LifeStateView:
         if view is not None:
             return view
     # 读取接口保持只读；缺少持久行表示初始状态，只有流程接纳变更时才落库。
-    return LifeStateView(
-        user_id=user_id,
-        current_activity="",
-        current_scene={},
-        mood=None,
-        active_pursuit_id=None,
-        next_review_at=None,
-        revision=0,
-        scene_revision=0,
-        updated_at=utc_now(),
-    )
+    return empty_state_view(user_id)
 
 
 async def read_pursuit(user_id: int, pursuit_id: int) -> LifePursuitView | None:
@@ -74,7 +66,28 @@ async def read_events(user_id: int, *, pursuit_id: int | None, offset: int, limi
 
 async def commit_decision(user_id: int, decision: LifeDecisionRequest) -> LifeStateView:
     async with SESSION_LOCAL() as db:
+        previous = await get_life_state_view(db, user_id)
         row = await apply_decision(db, user_id, decision)
+        activity_changed = previous is None or previous.current_activity != row.current_activity
+        scene_changed = previous is None or previous.scene_revision != row.scene_revision
+        if activity_changed or scene_changed:
+            await record_event(
+                db,
+                user_id,
+                LifeEventInput(
+                    event_key=f"life-state:{user_id}:revision:{row.revision}",
+                    kind="life.state.changed",
+                    source="life_decision",
+                    fact={
+                        "current_activity": row.current_activity,
+                        "current_scene": json.loads(row.current_scene_json or "{}"),
+                        "scene_revision": row.scene_revision,
+                    },
+                    result_ref={"revision": row.revision},
+                    is_meaningful=activity_changed,
+                ),
+            )
+            await db.refresh(row)
         emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"revision": row.revision})
         await db.commit()
         return state_view(row)
@@ -114,6 +127,22 @@ async def begin_pursuit(
             desired_result=desired_result,
             idempotency_key=idempotency_key,
         )
+        await record_event(
+            db,
+            user_id,
+            LifeEventInput(
+                event_key=f"pursuit:{row.id}:started",
+                kind="life.pursuit.started",
+                source="life_pursuit",
+                pursuit_id=row.id,
+                fact={
+                    "title": row.title,
+                    "reason": row.reason,
+                    "desired_result": row.desired_result,
+                },
+                result_ref={"pursuit_id": row.id},
+            ),
+        )
         emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"pursuit_id": row.id})
         await db.commit()
         return pursuit_view(row)
@@ -146,6 +175,7 @@ async def _record_step_event(
     user_id: int,
     row: LifeStep,
     result_ref: dict | None,
+    error: str | None,
 ) -> None:
     if row.finished_at is None:
         return
@@ -158,10 +188,30 @@ async def _record_step_event(
             source="life_step",
             step_id=row.id,
             pursuit_id=row.pursuit_id,
-            fact={"description": row.description, "state": row.state},
+            fact={"description": row.description, "state": row.state, "error": error or ""},
             result_ref=result_ref or {},
         ),
     )
+    if row.pursuit_id is not None and row.state == "completed":
+        pursuit = await get_pursuit(db, user_id, row.pursuit_id)
+        if pursuit is not None and pursuit.status == "active":
+            await record_event(
+                db,
+                user_id,
+                LifeEventInput(
+                    event_key=f"pursuit:{pursuit.id}:step:{row.id}:progressed",
+                    kind="life.pursuit.progressed",
+                    source="life_step",
+                    pursuit_id=pursuit.id,
+                    step_id=row.id,
+                    fact={
+                        "title": pursuit.title,
+                        "progress": pursuit.progress,
+                        "next_step": pursuit.next_step,
+                    },
+                    result_ref=result_ref or {},
+                ),
+            )
 
 
 async def _settle_step_row(
@@ -172,9 +222,20 @@ async def _settle_step_row(
     state: str,
     result_ref: dict | None,
     error: str | None,
+    progress: str | None = None,
+    next_step: str | None = None,
 ) -> LifeStep:
-    row = await finish_step(db, user_id, step_id, state=state, result_ref=result_ref, error=error)
-    await _record_step_event(db, user_id, row, result_ref)
+    row = await finish_step(
+        db,
+        user_id,
+        step_id,
+        state=state,
+        result_ref=result_ref,
+        error=error,
+        progress=progress,
+        next_step=next_step,
+    )
+    await _record_step_event(db, user_id, row, result_ref, error)
     return row
 
 
@@ -185,6 +246,8 @@ async def settle_step(
     state: str,
     result_ref: dict | None = None,
     error: str | None = None,
+    progress: str | None = None,
+    next_step: str | None = None,
 ) -> LifeStepView:
     async with SESSION_LOCAL() as db:
         row = await _settle_step_row(
@@ -194,6 +257,8 @@ async def settle_step(
             state=state,
             result_ref=result_ref,
             error=error,
+            progress=progress,
+            next_step=next_step,
         )
         emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"step_id": row.id})
         await db.commit()
@@ -236,6 +301,8 @@ async def settle_step_by_key(
     state: str,
     result_ref: dict | None = None,
     error: str | None = None,
+    progress: str | None = None,
+    next_step: str | None = None,
 ) -> LifeStepView | None:
     async with SESSION_LOCAL() as db:
         row = await db.scalar(
@@ -252,6 +319,8 @@ async def settle_step_by_key(
             state=state,
             result_ref=result_ref,
             error=error,
+            progress=progress,
+            next_step=next_step,
         )
         emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"step_id": row.id})
         await db.commit()

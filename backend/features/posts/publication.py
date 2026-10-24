@@ -60,6 +60,7 @@ from features.media.video_jobs import (
 from features.posts.context import load_post_prompt_context, post_prompt_entry
 from features.posts.models import CompanionPost, PostContentType, PostPublication
 from features.posts.output_contracts import POST_DECISION, parse_post_decision
+from features.posts.ports import notify_post_published
 from features.posts.prompt_contract import render_post_instructions
 from features.posts.prompts import POST_DECISION_REPAIR_TEXTS, POST_PUBLISH_INSTRUCTIONS
 from features.posts.schemas import (
@@ -79,7 +80,7 @@ from features.posts.store import (
     response_for_publication,
 )
 from features.scenes.queries import get_scene_state, scene_environment
-from features.visuals.queries import actual_presentation_snapshot
+from features.visuals.queries import prompt_presentation_snapshot
 
 logger = get_logger(__name__)
 _BG = TaskBag("posts.publication")
@@ -187,7 +188,7 @@ async def _creation_input(user_id: int) -> dict:
             .all()
         )
         environment = scene_environment(await get_scene_state(db, user_id))
-    presentation = await actual_presentation_snapshot(user_id)
+    presentation = await prompt_presentation_snapshot(user_id)
     return {
         **ctx.payload,
         "environment": environment,
@@ -382,7 +383,7 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
     identity = None
     visual_plan = None
     if plan.depicts_self and row.video_job_id is None:
-        presentation = await actual_presentation_snapshot(row.user_id)
+        presentation = await prompt_presentation_snapshot(row.user_id)
         visual_plan = await load_self_visual_context(row.user_id, presentation)
     if visual_plan is not None:
         identity = visual_plan.context.identity
@@ -731,6 +732,8 @@ async def _publish_checked_video(user_id: int, task_id: str) -> PostPublicationR
         if row is None:
             raise PostNotFoundError("找不到发布任务")
         if row.post_id is not None:
+            await notify_post_published(db, user_id, row.post_id)
+            await db.commit()
             return response_for_publication(row)
         if row.status not in _RECOVERABLE_VIDEO_STATUSES or row.plan_json is None:
             raise PostError("只有结果待核对的视频动态可以继续发布")

@@ -21,12 +21,14 @@ from features.companion.intents import invalidate_cron_companion_intents
 from features.configuration.queries import user_ai_config
 from features.conversation.reply_media import deliver_video_result
 from features.journal.journal_indexes import delete_diary_record
+from features.life.ports import set_life_event_projector
 from features.media.delivery import set_video_result_handler
 from features.media.reference_reader import MediaReferenceReaders, set_media_reference_readers
 from features.media.video_jobs import inspect_video_queue_owner as inspect_media_video_owner
 from features.media.video_queue.ports import configure_video_queue_ports
 from features.media.video_queue.service import cancel_video_attempt
 from features.memory.diary_hooks import set_diary_delete_handler
+from features.posts.ports import set_post_published_handler
 from features.visuals.ports import configure_visual_hooks
 from features.visuals.video_queue import inspect_visual_video_owner
 from infrastructure.ai.configuration_reader import set_configuration_reader
@@ -67,6 +69,7 @@ from runtime.events.contracts import COMPANION_TURN_EVENT
 from runtime.events.loop import register_internal_event_handler
 from runtime.tools.registry import REGISTRY
 from workflows.automation.companion_turns import execute_companion_turn
+from workflows.life_events import project_life_event_to_memory, record_post_published
 from workflows.onboarding.character_ready import complete_character_initialization
 from workflows.visual_decisions import initialize_visuals, schedule_visual_selection
 from workflows.visual_planning import visual_material_links, visual_planning_context
@@ -144,6 +147,8 @@ def wire_domain_hooks() -> None:
         ChannelLifecycle(close_desktop=terminate_user_gateway, close_remote=terminate_remote_sessions),
     )
     set_diary_delete_handler(delete_diary_record)
+    set_life_event_projector(project_life_event_to_memory)
+    set_post_published_handler(record_post_published)
     set_media_reference_readers(
         MediaReferenceReaders(
             active_identity=active_identity_reference,

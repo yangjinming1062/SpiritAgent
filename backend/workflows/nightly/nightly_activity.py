@@ -11,6 +11,7 @@ from features.companion.planning_queries import PersonaPlanningSnapshot, plannin
 from features.configuration.settings.timezone import resolve_user_timezone
 from features.configuration.settings.values import get_user_setting, get_user_setting_bool
 from features.conversation.evidence import OriginalMessageSnapshot, nightly_messages, nightly_user_message_count
+from features.life.context import read_life_context_in_session
 from features.memory.memory_admin import list_memories
 from features.memory.memory_bootstrap import read_user_profile
 from features.memory.memory_format import format_memory_record
@@ -32,6 +33,7 @@ from runtime.presets import COMPANION_PRESET_ID
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
+from workflows.life_events import record_nightly_actions
 from workflows.nightly.journal_nightly import project_today
 from workflows.nightly.models import NightlyActivityLog
 from workflows.nightly.nightly_planning import (
@@ -89,6 +91,7 @@ async def _stage_4_reflection(
     local_date_str: str,
     autonomous_actions: list[dict[str, Any]],
     post_interactions: list[dict[str, Any]],
+    life_context: dict[str, Any],
     persona: dict[str, str],
     language: str,
     log_id: int,
@@ -116,6 +119,7 @@ async def _stage_4_reflection(
         "previous_reflection": previous_reflection,
         "nightly_autonomous_actions": autonomous_actions,
         "post_interactions": post_interactions,
+        "life_context": life_context,
         "local_date": local_date_str,
         "language": language,
         "max_content_chars": SETTINGS.reflection_max_content_chars,
@@ -332,6 +336,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         recall_rows = await list_memories(db, scope, kind="recall", limit=None)
         user_profile = await read_user_profile(db, scope)
         persona_snapshot = await planning_persona(db, user_id)
+        life_context = (await read_life_context_in_session(db, user_id)).prompt_payload()
         persona = _persona_brief(persona_snapshot)
         previous_reflection = await load_companion_reflection(db, scope)
         information_discovery_enabled = await get_user_setting_bool(
@@ -374,13 +379,11 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
                 target_date,
                 ZoneInfo(tz_str),
                 {
-                    "persona": {
-                        "definition": persona_snapshot.definition if persona_snapshot is not None else {},
-                        "current_mood": persona_snapshot.current_mood if persona_snapshot is not None else None,
-                    },
+                    "persona": persona_snapshot.definition if persona_snapshot is not None else {},
                     "user_profile": user_profile,
                     "ordinary_memories": [row.model_dump() for row in recall_rows],
                     "previous_reflection": previous_reflection.content if previous_reflection is not None else None,
+                    "life_context": life_context,
                     "today_conversations": clean_messages,
                     "source_date": local_date_str,
                     "activity_date": tomorrow.isoformat(),
@@ -461,6 +464,14 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
             extra={"user_id": user_id, "error": str(exc)},
         )
         stages.append({"stage": "action memory", "status": "error", "error": str(exc)})
+    try:
+        await record_nightly_actions(user_id, local_date_str, action_facts)
+    except Exception as exc:
+        logger.exception(
+            "nightly_activity: life event projection failed",
+            extra={"user_id": user_id, "error": str(exc)},
+        )
+        stages.append({"stage": "life events", "status": "error", "error": str(exc)})
 
     # 没有可读的用户发言、成功行动或动态互动时不虚构日记；反思与用户可见日记共用这一门控。
     has_readable_messages = any(message.role == "user" and message.content for message in today_messages)
@@ -475,6 +486,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
                 local_date_str,
                 action_facts,
                 posts.threads,
+                life_context,
                 persona,
                 user_language,
                 log_id,
