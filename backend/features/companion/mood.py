@@ -2,14 +2,15 @@ from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
-from infrastructure.text import resolve_prompt_text
+from infrastructure.text import resolve_prompt_text, utc_now
 from runtime.events.emit import emit_ws_event
-from sqlalchemy import update
 
-from features.companion.models import Persona
 from features.companion.prompt_runtime import load_companion_prompt_context, run_prompt_json
 from features.companion.prompts import MOOD_INSTRUCTIONS
 from features.conversation.context_window import load_recent_context_window
+from features.life.schemas import LifeEventInput
+from features.life.service import set_mood
+from features.life.use_cases import accept_event_in_session
 
 logger = get_logger(__name__)
 
@@ -24,10 +25,29 @@ def normalize_mood(raw: object) -> str | None:
 
 
 async def _save_mood(user_id: int, mood: str) -> None:
-    """持久化角色当前心情，并通过独立状态事件刷新客户端身份轨。"""
+    """在同一事务持久化心情和生活事件，并刷新客户端身份轨。"""
     async with SESSION_LOCAL() as db:
-        await db.execute(update(Persona).where(Persona.user_id == user_id).values(current_mood=mood))
+        await set_mood(db, user_id, mood)
+        occurred_at = utc_now()
+        event = await accept_event_in_session(
+            db,
+            user_id,
+            LifeEventInput(
+                event_key=f"mood:{user_id}:{occurred_at.isoformat()}",
+                kind="mood.changed",
+                source="companion_chat",
+                occurred_at=occurred_at,
+                fact={"mood": mood},
+                is_meaningful=False,
+            ),
+        )
         emit_ws_event(db, user_id=user_id, event_type="companion.mood", payload={"mood": mood})
+        emit_ws_event(
+            db,
+            user_id=user_id,
+            event_type="companion.life.updated",
+            payload={"event_key": event.event_key},
+        )
         await db.commit()
 
 

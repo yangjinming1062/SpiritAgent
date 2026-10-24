@@ -6,7 +6,6 @@
 
 from dataclasses import dataclass, field
 
-from features.companion.proactive_runtime import PresentationSnapshot, get_presentation_snapshot
 from features.visuals.queries import actual_presentation_snapshot, visual_play_catalog
 from features.visuals.schemas import ActualPresentationSnapshot, VisualPlayOption
 from infrastructure.text import resolve_language
@@ -35,18 +34,13 @@ class ActionViewSnapshot:
     presentation: ActualPresentationSnapshot
     items: tuple[VisualPlayOption, ...] = ()
     available_tool_names: frozenset[str] = field(default_factory=frozenset)
-    presentation_mode: str | None = None
 
     def to_prompt_block(self, *, language: str = "zh") -> str:
         texts = ACTION_VIEW_TEXTS[resolve_language(language)]
         lines: list[str] = []
         if not self.presentation.ready:
             lines.append(texts["not_presenting"])
-        elif self.presentation_mode == "desktop":
-            lines.append(
-                texts["presenting_image"] if self.presentation.visual_description else texts["presenting_unknown"],
-            )
-        elif self.presentation.outfit_description:
+        elif self.presentation.visual_description or self.presentation.outfit_description:
             lines.append(texts["presenting_static"])
         else:
             lines.append(texts["presenting_unknown"])
@@ -69,7 +63,6 @@ async def build_action_view(
     user_id: int,
     *,
     trigger: str = "chat",
-    presentation: PresentationSnapshot | None = None,
 ) -> ActionViewSnapshot:
     """读取实际呈现快照与可播影像；空库也可用制作工具开始第一次组合。"""
 
@@ -78,11 +71,8 @@ async def build_action_view(
     names = set(_ALWAYS_AVAILABLE)
     if items:
         names.add(_PLAY_TOOL)
-    mode_snapshot = presentation if presentation is not None else get_presentation_snapshot(user_id)
-    mode = mode_snapshot.mode if mode_snapshot is not None else None
     return ActionViewSnapshot(
         presentation=presentation_snapshot,
         items=items,
         available_tool_names=frozenset(names),
-        presentation_mode=mode,
     )

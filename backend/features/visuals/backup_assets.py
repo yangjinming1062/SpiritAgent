@@ -153,9 +153,8 @@ def restore_visual_payload(table: str, payload: dict[str, Any], id_map: IdMap, *
                 },
             )
             payload[field] = frozen.model_dump_json()
-        for field in ("pinned", "autonomous_enabled"):
-            if type(payload.get(field)) is not bool:
-                raise ValueError("影像呈现偏好无效。")
+        if type(payload.get("autonomous_enabled")) is not bool:
+            raise ValueError("影像呈现偏好无效。")
         for field in ("presentation_epoch", "state_revision"):
             if type(payload.get(field)) is not int or payload[field] < 0:
                 raise ValueError("影像呈现版本无效。")

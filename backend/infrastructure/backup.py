@@ -42,6 +42,10 @@ BACKUP_TABLE_ORDER = (
     "companion_topic_feedback",
     "messages",
     "companion_topic_usages",
+    "life_pursuits",
+    "life_steps",
+    "life_events",
+    "life_states",
 )
 
 

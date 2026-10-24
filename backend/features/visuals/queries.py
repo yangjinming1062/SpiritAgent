@@ -195,7 +195,6 @@ async def presentation_state(user_id: int) -> VisualPresentationView:
         return VisualPresentationView(
             current_visual=item_view(current) if current is not None and current.user_id == user_id else None,
             loop_visual=item_view(loop) if loop is not None and loop.user_id == user_id else None,
-            pinned=row.pinned,
             autonomous_enabled=row.autonomous_enabled,
             target_width=row.target_width,
             target_height=row.target_height,

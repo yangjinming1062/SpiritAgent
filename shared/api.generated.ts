@@ -83,6 +83,11 @@ export interface ApiSchemas {
   "JsonValue": unknown
   "JsonValueInput": unknown
   "LastSubmissionSnapshot": { "request_id": string; "status": string; "error": (string | null); "message_ids": Array<number>; "retry_message_id": (number | null); "replace_reply_message_id": (number | null); "result_message_id": (number | null) }
+  "LifeEventListResponse": { "items": Array<ApiSchemas["LifeEventView"]>; "total": number }
+  "LifeEventView": { "id": number; "event_key": string; "kind": string; "source": string; "subject": string; "fact": { [key: string]: unknown }; "occurred_at": string; "pursuit_id": (number | null); "step_id": (number | null); "result_ref": { [key: string]: unknown }; "is_meaningful": boolean }
+  "LifePursuitListResponse": { "items": Array<ApiSchemas["LifePursuitView"]>; "total": number }
+  "LifePursuitView": { "id": number; "title": string; "reason": string; "desired_result": string; "progress": string; "next_step": string; "status": string; "started_at": string; "completed_at": (string | null); "result_ref": { [key: string]: unknown }; "updated_at": string }
+  "LifeStateView": { "user_id": number; "current_activity": string; "current_scene": { [key: string]: unknown }; "mood": (string | null); "active_pursuit_id": (number | null); "next_review_at": (string | null); "revision": number; "scene_revision": number; "updated_at": string }
   "LinkBubble": { "type": "link"; "topic_id": number; "title": string; "platform": "x" | "xiaohongshu" | "douyin"; "url": string; "published_at": string }
   "MemoryDeleteResponse": { "deleted": boolean }
   "MemoryEvidence": { "fingerprint": string; "message_id"?: (number | null); "session_id"?: (number | null); "quote"?: (string | null); "stance"?: ("supports" | "opposes" | null); "created_at"?: (string | null); "source_unavailable"?: (boolean | null) }
@@ -172,6 +177,7 @@ export interface ApiSchemas {
   "RpcInputToolResultRequest": { "call_id": string; "result": ApiSchemas["RpcInputJsonValue"] }
   "RpcInputToolsSyncRequest": { "skill_scope_version": 1; "tools": Array<ApiSchemas["RpcInputRunnerToolSchema"]> }
   "RpcJsonValue": unknown
+  "RpcLifeUpdatedEvent": { "revision": (number | null); "pursuit_id": (number | null); "step_id": (number | null); "event_key": (string | null) }
   "RpcLinkBubble": { "type": "link"; "topic_id": number; "title": string; "platform": "x" | "xiaohongshu" | "douyin"; "url": string; "published_at": string }
   "RpcMemoryChangedEvent": { "system_preset_id": string; "memory_id": (number | null) }
   "RpcMessageAudioEvent": { "session_id": string; "message_id": number; "audio_url": string; "duration": (number | null); "transcript": (string | null) }
@@ -275,8 +281,6 @@ export interface ApiSchemas {
   "SessionSnapshotResponse": { "session_id": string; "message_count": number; "messages": Array<ApiSchemas["SessionMessageView"]>; "info": ApiSchemas["SessionRuntimeInfo"]; "current_seq": (number | null); "stream_id": (string | null); "active_turn": (ApiSchemas["ActiveTurnView"] | null); "last_submission": (ApiSchemas["LastSubmissionSnapshot"] | null); "truncated": boolean; "next_cursor": (string | null); "history_revision": number }
   "SessionUndoRequest": { "source_message_id": number; "confirmed"?: boolean }
   "SessionUndoResult": { "session_id": string; "deleted_count": number; "anchor": ApiSchemas["UndoAnchor"]; "messages": Array<ApiSchemas["SessionMessageView"]> }
-  "ShouldActRequest": { "kind"?: "periodic_provision"; "idle_seconds"?: (number | null); "local_hour"?: (number | null); "focused_category"?: (string | null); "fullscreen"?: boolean; "screen_locked"?: boolean; "seconds_since_last_action"?: (number | null) }
-  "ShouldActResult": { "should_act": boolean; "action": (string | null); "params": ({ [key: string]: unknown } | null); "reason": string }
   "SpeechToTextResponse": { "text": string }
   "TaskConfig": { "chains": { [key: string]: ApiSchemas["ChainPolicy"] } }
   "TaskConfigInput": { "chains"?: { [key: string]: ApiSchemas["ChainPolicyInput"] } }
@@ -319,9 +323,8 @@ export interface ApiSchemas {
   "VisualJobView": { "id": number; "purpose": string; "target_kind": "image" | "video"; "target_visual_id": (number | null); "expected_version": (number | null); "state": "queued" | "running" | "paused" | "succeeded" | "failed" | "cancelled" | "unknown"; "stage": string; "feedback": string; "video_feedback": string; "repair_count": number; "repair_limit": number; "error": (string | null); "result_visual_id": (number | null); "result_image_id": (number | null); "video_queue": (ApiSchemas["VideoQueueInfo"] | null); "created_at": string; "updated_at": string }
   "VisualListResponse": { "visuals": Array<ApiSchemas["VisualItemView"]>; "total": number; "offset": number; "limit": number }
   "VisualPlayCommand": { "play_id": string; "status": "queued"; "visual_id": number; "visual_version": number; "media_kind": "image" | "video"; "media_path": string; "poster_path": (string | null); "input_image_hash": (string | null); "clip_kind": "once" | "loop"; "loop": boolean; "transition": "natural" | "fade"; "presentation_epoch": number; "state_revision": number; "source": "manual" | "autonomous" | "restore" | "remote"; "expires_at": string; "outfit": ApiSchemas["ComboMaterialRef"]; "scene": ApiSchemas["ComboMaterialRef"] }
-  "VisualPlayRequest": { "expected_version"?: (number | null); "reason"?: string }
-  "VisualPreferencesRequest": { "pinned"?: (boolean | null); "autonomous_enabled"?: (boolean | null); "target_width"?: (number | null); "target_height"?: (number | null) }
-  "VisualPresentationResponse": { "current_visual": (ApiSchemas["VisualItemView"] | null); "loop_visual": (ApiSchemas["VisualItemView"] | null); "pinned": boolean; "autonomous_enabled": boolean; "target_width": (number | null); "target_height": (number | null); "presentation_epoch": number; "state_revision": number; "pending_play": (ApiSchemas["VisualPlayCommand"] | null); "actual": ApiSchemas["ActualPresentationSnapshot"] }
+  "VisualPreferencesRequest": { "autonomous_enabled"?: (boolean | null); "target_width"?: (number | null); "target_height"?: (number | null) }
+  "VisualPresentationResponse": { "current_visual": (ApiSchemas["VisualItemView"] | null); "loop_visual": (ApiSchemas["VisualItemView"] | null); "autonomous_enabled": boolean; "target_width": (number | null); "target_height": (number | null); "presentation_epoch": number; "state_revision": number; "pending_play": (ApiSchemas["VisualPlayCommand"] | null); "actual": ApiSchemas["ActualPresentationSnapshot"] }
   "VisualReceiptRequest": { "status": "started" | "finished" | "failed" | "interrupted"; "client_id": string; "receipt_kind"?: ("image" | "video" | "window_static" | null); "error"?: (string | null) }
   "VisualReceiptResponse": { "ok": boolean }
   "VisualRegenerateRequest": { "expected_version": number; "feedback"?: (string | null); "video_feedback"?: (string | null) }
@@ -378,7 +381,6 @@ export interface ApiOperations {
   "gateway.gateway_ticket": { path: Record<string, never>; query: Record<string, never>; body: (ApiSchemas["GatewayTicketRequest"] | null); input: { path?: never; query?: never; body?: (ApiSchemas["GatewayTicketRequest"] | null) }; response: ApiSchemas["GatewayTicketResponse"] }
   "companion.record_interaction": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["InteractionStatsRequest"]; input: { path?: never; query?: never; body: ApiSchemas["InteractionStatsRequest"] }; response: ApiSchemas["InteractionStatsResult"] }
   "companion.idle_expression": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["IdleExpressionRequest"]; input: { path?: never; query?: never; body: ApiSchemas["IdleExpressionRequest"] }; response: ApiSchemas["IdleExpressionResult"] }
-  "companion.movement_decision": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["ShouldActRequest"]; input: { path?: never; query?: never; body: ApiSchemas["ShouldActRequest"] }; response: ApiSchemas["ShouldActResult"] }
   "companion.get_character_card_route": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: (ApiSchemas["CharacterCardResponse"] | null) }
   "companion.patch_character_card_route": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["CharacterCardUpdate"]; input: { path?: never; query?: never; body: ApiSchemas["CharacterCardUpdate"] }; response: ApiSchemas["CharacterCardResponse"] }
   "companion.extract_character_card_route": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["CharacterCardExtract"]; input: { path?: never; query?: never; body: ApiSchemas["CharacterCardExtract"] }; response: ApiSchemas["CharacterCardResponse"] }
@@ -418,7 +420,6 @@ export interface ApiOperations {
   "companion_visuals.put_presentation": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["VisualPreferencesRequest"]; input: { path?: never; query?: never; body: ApiSchemas["VisualPreferencesRequest"] }; response: ApiSchemas["VisualPresentationResponse"] }
   "companion_visuals.restore_presentation": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: (ApiSchemas["VisualPlayCommand"] | null) }
   "companion_visuals.get_visual": { path: { "visual_id": number }; query: Record<string, never>; body: undefined; input: { path: { "visual_id": number }; query?: never; body?: never }; response: ApiSchemas["VisualDetailView"] }
-  "companion_visuals.play_visual": { path: { "visual_id": number }; query: Record<string, never>; body: (ApiSchemas["VisualPlayRequest"] | null); input: { path: { "visual_id": number }; query?: never; body?: (ApiSchemas["VisualPlayRequest"] | null) }; response: ApiSchemas["VisualPlayCommand"] }
   "companion_visuals.regenerate_visual": { path: { "visual_id": number }; query: Record<string, never>; body: ApiSchemas["VisualRegenerateRequest"]; input: { path: { "visual_id": number }; query?: never; body: ApiSchemas["VisualRegenerateRequest"] }; response: ApiSchemas["VisualJobView"] }
   "companion_visuals.command_visual_job": { path: { "job_id": number }; query: Record<string, never>; body: ApiSchemas["VisualJobCommandRequest"]; input: { path: { "job_id": number }; query?: never; body: ApiSchemas["VisualJobCommandRequest"] }; response: ApiSchemas["VisualJobView"] }
   "companion_visuals.claim_play": { path: { "play_id": string }; query: Record<string, never>; body: ApiSchemas["VisualClaimRequest"]; input: { path: { "play_id": string }; query?: never; body: ApiSchemas["VisualClaimRequest"] }; response: ApiSchemas["VisualClaimResponse"] }
@@ -426,6 +427,10 @@ export interface ApiOperations {
   "companion_journal.get_diary": { path: Record<string, never>; query: { "from"?: (string | null); "to"?: (string | null); "limit"?: number }; body: undefined; input: { path?: never; query?: { "from"?: (string | null); "to"?: (string | null); "limit"?: number }; body?: never }; response: ApiSchemas["DiaryListResponse"] }
   "companion_journal.get_diary_unread": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["DiaryUnreadResponse"] }
   "companion_journal.read_diary": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["DiaryReadRequest"]; input: { path?: never; query?: never; body: ApiSchemas["DiaryReadRequest"] }; response: ApiSchemas["DiaryUnreadResponse"] }
+  "companion_life.get_life": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["LifeStateView"] }
+  "companion_life.get_life_pursuits": { path: Record<string, never>; query: { "status"?: (string | null); "offset"?: number; "limit"?: number }; body: undefined; input: { path?: never; query?: { "status"?: (string | null); "offset"?: number; "limit"?: number }; body?: never }; response: ApiSchemas["LifePursuitListResponse"] }
+  "companion_life.get_life_pursuit": { path: { "pursuit_id": number }; query: Record<string, never>; body: undefined; input: { path: { "pursuit_id": number }; query?: never; body?: never }; response: ApiSchemas["LifePursuitView"] }
+  "companion_life.get_life_events": { path: Record<string, never>; query: { "pursuit_id"?: (number | null); "offset"?: number; "limit"?: number }; body: undefined; input: { path?: never; query?: { "pursuit_id"?: (number | null); "offset"?: number; "limit"?: number }; body?: never }; response: ApiSchemas["LifeEventListResponse"] }
   "companion_posts.get_posts": { path: Record<string, never>; query: { "cursor"?: (string | null); "limit"?: number }; body: undefined; input: { path?: never; query?: { "cursor"?: (string | null); "limit"?: number }; body?: never }; response: ApiSchemas["PostListResponse"] }
   "companion_posts.get_posts_unread": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["PostUnreadResponse"] }
   "companion_posts.read_posts": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["PostReadRequest"]; input: { path?: never; query?: never; body: ApiSchemas["PostReadRequest"] }; response: ApiSchemas["PostUnreadResponse"] }
@@ -531,6 +536,7 @@ export interface GatewayEventPayloads {
   "companion.diary.created": ApiSchemas["RpcDiaryEntryResponse"]
   "companion.diary.deleted": ApiSchemas["RpcDiaryDeletedEvent"]
   "companion.diary.read": ApiSchemas["RpcEmptyResult"]
+  "companion.life.updated": ApiSchemas["RpcLifeUpdatedEvent"]
   "companion.message": ApiSchemas["RpcCompanionMessageEvent"]
   "companion.mood": ApiSchemas["RpcMoodEvent"]
   "companion.outfit.updated": ApiSchemas["RpcOutfitChangedEvent"]
@@ -877,17 +883,6 @@ export const API_OPERATIONS = {
   },
   "companion.idle_expression": {
     "path": "/api/companion/idle-expressions",
-    "method": "POST",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "desktop"
-    ],
-    "wait_for_model": true,
-    "ipc": true
-  },
-  "companion.movement_decision": {
-    "path": "/api/companion/movement-decisions",
     "method": "POST",
     "encoding": "json",
     "response": "json",
@@ -1352,18 +1347,6 @@ export const API_OPERATIONS = {
     "wait_for_model": false,
     "ipc": true
   },
-  "companion_visuals.play_visual": {
-    "path": "/api/companion/visuals/{visual_id}/play",
-    "method": "POST",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "desktop",
-      "remote"
-    ],
-    "wait_for_model": false,
-    "ipc": true
-  },
   "companion_visuals.regenerate_visual": {
     "path": "/api/companion/visuals/{visual_id}/regenerate",
     "method": "POST",
@@ -1437,6 +1420,54 @@ export const API_OPERATIONS = {
   "companion_journal.read_diary": {
     "path": "/api/companion/diary/read-state",
     "method": "PATCH",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "desktop",
+      "remote"
+    ],
+    "wait_for_model": false,
+    "ipc": true
+  },
+  "companion_life.get_life": {
+    "path": "/api/companion/life",
+    "method": "GET",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "desktop",
+      "remote"
+    ],
+    "wait_for_model": false,
+    "ipc": true
+  },
+  "companion_life.get_life_pursuits": {
+    "path": "/api/companion/life/pursuits",
+    "method": "GET",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "desktop",
+      "remote"
+    ],
+    "wait_for_model": false,
+    "ipc": true
+  },
+  "companion_life.get_life_pursuit": {
+    "path": "/api/companion/life/pursuits/{pursuit_id}",
+    "method": "GET",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "desktop",
+      "remote"
+    ],
+    "wait_for_model": false,
+    "ipc": true
+  },
+  "companion_life.get_life_events": {
+    "path": "/api/companion/life/events",
+    "method": "GET",
     "encoding": "json",
     "response": "json",
     "identities": [
@@ -2528,6 +2559,12 @@ export const EVENT_POLICIES = {
     "baseline": false
   },
   "companion.diary.read": {
+    "audience": "all",
+    "snapshot": false,
+    "recovery": "resource",
+    "baseline": false
+  },
+  "companion.life.updated": {
     "audience": "all",
     "snapshot": false,
     "recovery": "resource",

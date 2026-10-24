@@ -30,13 +30,3 @@ class IdleExpressionResult(BaseModel):
     expressed: bool
     action_id: int | None = None
     reason: str = ""
-
-
-class ShouldActRequest(CompanionRequest):
-    kind: Literal["periodic_provision"] = "periodic_provision"
-    idle_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False)
-    local_hour: int | None = Field(default=None, ge=-1, le=23)
-    focused_category: str | None = None
-    fullscreen: bool = False
-    screen_locked: bool = False
-    seconds_since_last_action: float | None = Field(default=None, ge=0, allow_inf_nan=False)

@@ -1,4 +1,4 @@
-"""影像库：成品浏览、重做、播放与制作工作项的 REST 端点。"""
+"""影像库：成品浏览、预览、重做与制作工作项的 REST 端点。"""
 
 from typing import Annotated, Literal
 
@@ -15,7 +15,6 @@ from features.visuals.schemas import (
     VisualJobView,
     VisualListResponse,
     VisualPlayCommand,
-    VisualPlayRequest,
     VisualPreferencesRequest,
     VisualPresentationResponse,
     VisualReceiptRequest,
@@ -96,15 +95,6 @@ async def get_visual(
     user: CurrentUser,
 ) -> VisualDetailView:
     return await _visuals.visual_detail(user_id=user.id, visual_id=visual_id)
-
-
-@router.post("/{visual_id}/play", response_model=VisualPlayCommand)
-async def play_visual(
-    visual_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
-    user: CurrentUser,
-    body: VisualPlayRequest | None = None,
-) -> VisualPlayCommand:
-    return await _visuals.play(user_id=user.id, visual_id=visual_id, body=body or VisualPlayRequest())
 
 
 @router.post(

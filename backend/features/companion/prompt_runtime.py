@@ -5,17 +5,16 @@ from infrastructure.ai.prompt_engineer import IncompleteLlmResponseError, call_l
 from infrastructure.ai.user_config import UserLlmConfig
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
-from infrastructure.text import format_local_iso, parse_llm_json, resolve_language, resolve_prompt_text, utc_now
+from infrastructure.text import format_local_iso, parse_llm_json, resolve_language, utc_now
 from pydantic import BaseModel
 from runtime.memory_scope import MemoryScope
 from sqlalchemy import select
 
 from features.companion.models import Persona
 from features.companion.persona_service import build_system_prompt_extras
-from features.companion.proactive_runtime import PresentationSnapshot, get_presentation_snapshot
-from features.companion.prompts import PRESENTATION_CONTEXTS
 from features.configuration.settings.timezone import resolve_user_timezone
 from features.configuration.settings.values import get_user_setting
+from features.life.queries import get_life_mood
 from features.memory.memory_format import format_memories_block
 
 logger = get_logger(__name__)
@@ -30,13 +29,7 @@ class CompanionPromptContext(BaseModel):
     persona_extras: str
     current_mood: str
     memories_block: str
-    presentation: PresentationSnapshot | None
-
-
-def presentation_prompt(snapshot: PresentationSnapshot | None, *, language: str) -> str:
-    if snapshot is None:
-        return ""
-    return resolve_prompt_text(PRESENTATION_CONTEXTS[snapshot.mode], language)
+    # 宿主模式不进入角色提示词，实际画面由对话流程按需装配。
 
 
 class PromptOutcome(NamedTuple):
@@ -57,9 +50,8 @@ async def load_companion_prompt_context(user_id: int) -> CompanionPromptContext 
             language=language,
             current_time=format_local_iso(utc_now(), await resolve_user_timezone(db, user_id)) or "",
             persona_extras=build_system_prompt_extras(persona, language=language),
-            current_mood=persona.current_mood or "",
+            current_mood=(await get_life_mood(db, user_id)) or "",
             memories_block=await format_memories_block(db, MemoryScope(user_id, "companion"), language=language),
-            presentation=get_presentation_snapshot(user_id),
         )
 
 

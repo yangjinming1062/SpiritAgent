@@ -31,8 +31,6 @@ async def visual_autonomous_block_reason(
     snapshot: ComboSnapshot | None = None,
     excluded_play_id: str | None = None,
 ) -> str | None:
-    if presentation.pinned:
-        return "pinned"
     if not presentation.autonomous_enabled:
         return "disabled"
     presence = get_presentation_snapshot(presentation.user_id)

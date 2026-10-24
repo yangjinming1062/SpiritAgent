@@ -87,7 +87,6 @@ from features.companion.http_contracts import (
     IdleExpressionResult,
     InteractionStatsRequest,
     InteractionStatsResult,
-    ShouldActRequest,
 )
 from features.companion.interaction_stats import record_interaction
 from features.companion.persona_service import (
@@ -101,7 +100,6 @@ from features.companion.schemas import (
     PersonaUpdate,
     PortraitConfirmRequest,
 )
-from features.companion.should_act import ShouldActResult
 from features.companion.views import get_persona_view, update_persona_view
 from infrastructure.ai.error_classifier import LLMRuntimeError
 from infrastructure.ai.llm_client import MissingLlmConfigError
@@ -122,7 +120,7 @@ from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
 from infrastructure.text import safe_json_loads
 from pydantic import ValidationError
-from workflows.companion.operations import companion_idle_expression, companion_should_act
+from workflows.companion.operations import companion_idle_expression
 
 from entrypoints.http.auth import CurrentUser, OptionalSession
 from entrypoints.http.rate_limit import limiter
@@ -151,18 +149,6 @@ async def post_interaction(user: CurrentUser, body: InteractionStatsRequest) -> 
 async def post_idle_expression(user: CurrentUser, body: IdleExpressionRequest) -> IdleExpressionResult:
     return IdleExpressionResult.model_validate(
         await companion_idle_expression(user.id, body.model_dump(exclude_unset=True)),
-    )
-
-
-@router.post(
-    "/movement-decisions",
-    operation_id="companion.movement_decision",
-    response_model=ShouldActResult,
-    openapi_extra=operation_policy(wait_for_model=True),
-)
-async def post_movement_decision(user: CurrentUser, body: ShouldActRequest) -> ShouldActResult:
-    return ShouldActResult.model_validate(
-        await companion_should_act(user.id, body.model_dump(exclude_unset=True)),
     )
 
 
@@ -288,7 +274,7 @@ async def get_avatar(user: CurrentUser, db: DbSession) -> AvatarAssetResponse:
 )
 @limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
 async def post_avatar(
-    request: Request,  # required by @limiter.limit
+    request: Request,  # 供 @limiter.limit 使用
     user: CurrentUser,
     body: Annotated[AvatarGenerateRequest | AvatarFromImageRequest, Body(discriminator="source")],
 ) -> AvatarAssetResponse:

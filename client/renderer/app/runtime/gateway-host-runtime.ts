@@ -4,14 +4,11 @@ import {
   clearVfx,
   emitVfx,
   pushEffectiveDisturbanceTier,
-  setSpriteState,
-  startAutonomyProvision,
-  stopAutonomyProvision
+  setSpriteState
 } from '@/modules/character'
 import { cancelVoiceBar, stopSpeaking } from '@/modules/speech'
 import { refreshVisuals } from '@/modules/visuals'
 import { fetchSlashCommandMeta } from '@/shared/lib/slash-commands'
-import { $presentation } from '@/shared/store/presentation'
 import type { DesktopGatewayState } from '@ipc/contracts'
 
 import { clearDesktopBootFailure, failDesktopBoot } from './boot-store'
@@ -20,16 +17,7 @@ import { startGatewayView } from './gateway-runtime'
 /** 精灵窗口只管理呈现与会话视图，连接和本机派发由主进程持有。 */
 export function startPresentationGateway(authSessionId: string): () => void {
   let graceTimer: ReturnType<typeof setTimeout> | undefined
-  let open = false
   let observedState: DesktopGatewayState | undefined
-
-  const syncAutonomy = (): void => {
-    if (open && $presentation.get().stageOwner === 'sprite') {
-      startAutonomyProvision()
-    } else {
-      stopAutonomyProvision()
-    }
-  }
 
   const stopGateway = startGatewayView(authSessionId, true, snapshot => {
     const { state, error, hasConnected } = snapshot
@@ -45,11 +33,9 @@ export function startPresentationGateway(authSessionId: string): () => void {
     }
 
     observedState = state
-    open = state === 'open'
     clearTimeout(graceTimer)
-    syncAutonomy()
 
-    if (open) {
+    if (state === 'open') {
       const tier = $effectiveTier.get()
 
       if (tier) {
@@ -76,13 +62,9 @@ export function startPresentationGateway(authSessionId: string): () => void {
     }
   })
 
-  const offStage = $presentation.listen(syncAutonomy)
-
   return () => {
     clearTimeout(graceTimer)
-    offStage()
     stopGateway?.()
-    stopAutonomyProvision()
     clearDesktopBootFailure()
   }
 }

@@ -8,6 +8,7 @@ from features.companion.backup import backup_tables as companion_tables
 from features.configuration.backup import backup_tables as configuration_tables
 from features.conversation.backup import backup_tables as conversation_tables
 from features.journal.backup import backup_tables as journal_tables
+from features.life.backup import backup_tables as life_tables
 from features.media.backup import backup_tables as media_tables
 from features.memory.backup import backup_tables as memory_tables
 from features.posts.backup import backup_tables as post_tables
@@ -32,6 +33,7 @@ def register_backup_tables() -> None:
         *media_tables(),
         *post_tables(),
         *journal_tables(),
+        *life_tables(),
         *topic_tables(),
     )
     tables = {table.name: table for table in contributions}

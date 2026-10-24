@@ -3,18 +3,30 @@
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.life.queries import get_life_mood
+
 from .models import Persona
 from .query_contracts import PersonaSnapshot
 from .repository import get_or_create_persona_row
 
 
+async def _snapshot(db: AsyncSession, row: Persona) -> PersonaSnapshot:
+    mood = await get_life_mood(db, row.user_id)
+    return PersonaSnapshot.model_validate(
+        {
+            **{key: getattr(row, key) for key in PersonaSnapshot.model_fields if key != "current_mood"},
+            "current_mood": mood,
+        }
+    )
+
+
 async def persona_snapshot(db: AsyncSession, user_id: int) -> PersonaSnapshot | None:
     row = await db.scalar(select(Persona).where(Persona.user_id == user_id))
-    return PersonaSnapshot.model_validate(row) if row is not None else None
+    return await _snapshot(db, row) if row is not None else None
 
 
 async def ensure_persona_snapshot(db: AsyncSession, user_id: int) -> PersonaSnapshot:
-    return PersonaSnapshot.model_validate(await get_or_create_persona_row(db, user_id))
+    return await _snapshot(db, await get_or_create_persona_row(db, user_id))
 
 
 async def lock_persona_snapshot(db: AsyncSession, user_id: int) -> PersonaSnapshot:
@@ -23,7 +35,7 @@ async def lock_persona_snapshot(db: AsyncSession, user_id: int) -> PersonaSnapsh
     )
     if row is None:
         raise ValueError("Persona is no longer available")
-    return PersonaSnapshot.model_validate(row)
+    return await _snapshot(db, row)
 
 
 async def _persona_row(db: AsyncSession, user_id: int) -> Persona:
@@ -49,4 +61,4 @@ async def change_outfit_policy(db: AsyncSession, user_id: int, policy: str) -> N
 async def change_scene_policy(db: AsyncSession, user_id: int, policy: str) -> PersonaSnapshot:
     row = await _persona_row(db, user_id)
     row.scene_policy = policy
-    return PersonaSnapshot.model_validate(row)
+    return await _snapshot(db, row)

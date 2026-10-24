@@ -1,3 +1,4 @@
+import { handleLifeUpdated } from '@/modules/character'
 import {
   findConversationRuntime,
   invalidateSessionHistory,
@@ -163,6 +164,11 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
     case 'companion.outfit.updated':
       handleCharacterEvent(event)
+
+      break
+
+    case 'companion.life.updated':
+      handleLifeUpdated()
 
       break
 

@@ -2,23 +2,12 @@ import { IconRefresh } from '@tabler/icons-react'
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import type {
-  PlaybackReceiptKind,
-  PlaybackStatus,
-  VisualDetail,
-  VisualItem,
-  VisualJob,
-  VisualJobCommand,
-  VisualJobState,
-  VisualMediaKind,
-  VisualPlayback
-} from '@protocol'
+import type { VisualDetail, VisualItem, VisualJob, VisualJobCommand, VisualJobState, VisualMediaKind } from '@protocol'
 
 import { visualJobCommands } from '../shared/visuals'
 
 import type { RemoteApi } from './api'
 import { ApiError } from './api'
-import type { PlaybackReceipt } from './types'
 import {
   AssetResultRecovery,
   Empty,
@@ -46,21 +35,6 @@ const JOB_STATE_TEXT: Record<VisualJobState, string> = {
   unknown: '状态未知'
 }
 
-const PLAYBACK_STATUS_TEXT: Record<PlaybackStatus, string> = {
-  queued: '已受理，等待电脑执行',
-  claimed: '电脑已接收播放请求',
-  started: '电脑开始播放',
-  finished: '电脑已播放',
-  failed: '电脑未能播放',
-  expired: '播放请求已过期'
-}
-
-const RECEIPT_KIND_TEXT: Record<PlaybackReceiptKind, string> = {
-  image: '图片画面',
-  video: '视频',
-  window_static: '窗口静态画面'
-}
-
 function durationText(durationMs: number | null): string {
   return durationMs ? `${(durationMs / 1000).toFixed(1)} 秒` : ''
 }
@@ -70,11 +44,6 @@ const JOB_COMMAND_TEXT: Record<VisualJobCommand, string> = {
   resume: '继续',
   cancel: '取消',
   retry: '重试'
-}
-
-/** 播放请求被判定为“桌面宿主不可用”时明确告知不可执行，而不是普通的请求失败。 */
-function isExecutionUnavailable(failure: unknown): boolean {
-  return failure instanceof ApiError && /unavailable|executable/.test(failure.code)
 }
 
 function sourceSummary(item: Pick<VisualItem, 'action_name' | 'outfit_name' | 'scene_title'>): string {
@@ -140,22 +109,17 @@ function VisualDetailPanel({
   currentVisualId,
   onChanged,
   onClose,
-  receipts,
   visual
 }: {
   api: RemoteApi
   currentVisualId: number | null
   onChanged: () => Promise<void>
   onClose: () => void
-  receipts: PlaybackReceipt[]
   visual: VisualDetail
 }): ReactElement {
   const { run, busy, error } = useTask()
-  const alive = useAlive()
   const [feedback, setFeedback] = usePageState(`visual.${visual.id}.feedback`, '')
-  const [requested, setRequested] = usePageState<VisualPlayback | null>(`visual.${visual.id}.playback`, null)
   const { check, clearSubmission, reconciled, submit, submitted } = useAssetSubmission(`visual.${visual.id}`, onChanged)
-  const receipt = requested ? receipts.find(item => item.play_id === requested.play_id) : undefined
   const jobs = visual.jobs
 
   return (
@@ -248,47 +212,6 @@ function VisualDetailPanel({
           </button>
         </div>
       </details>
-      <section className="card">
-        <h3>在电脑上播放</h3>
-        <p className="muted">播放由电脑实际执行；请求受理不等于已经播放，以电脑回执为准。</p>
-        <button
-          className="primary full"
-          disabled={busy}
-          onClick={() =>
-            run(async () => {
-              try {
-                const playback = await api.invoke('companion_visuals.play_visual', {
-                  path: { visual_id: visual.id },
-                  body: { expected_version: visual.version }
-                })
-                if (alive()) {
-                  setRequested(playback)
-                }
-              } catch (failure) {
-                if (alive() && isExecutionUnavailable(failure)) {
-                  setRequested(null)
-                  throw new Error('当前不可执行：没有可用的电脑在线，暂时无法播放。')
-                }
-                throw failure
-              }
-            })
-          }
-          type="button"
-        >
-          请求桌面播放
-        </button>
-        {requested ? (
-          <p aria-live="polite" className="creation-status">
-            请求结果：{PLAYBACK_STATUS_TEXT[requested.status]}
-          </p>
-        ) : null}
-        {receipt ? (
-          <p aria-live="polite" className="creation-status">
-            桌面回执：{PLAYBACK_STATUS_TEXT[receipt.status]}
-            {receipt.receipt_kind ? `（回执：${RECEIPT_KIND_TEXT[receipt.receipt_kind]}）` : ''}
-          </p>
-        ) : null}
-      </section>
       {error ? <Notice>{error}</Notice> : null}
       {submitted && !busy ? (
         <AssetResultRecovery onCheck={() => run(check)} onContinue={clearSubmission} reconciled={reconciled} />
@@ -300,12 +223,10 @@ function VisualDetailPanel({
 export function Visuals({
   api,
   onBack,
-  receipts,
   refresh
 }: {
   api: RemoteApi
   onBack: () => void
-  receipts: PlaybackReceipt[]
   refresh: number
 }): ReactElement {
   const alive = useAlive()
@@ -372,7 +293,7 @@ export function Visuals({
           <button className="back-link" onClick={onBack} type="button">
             ← 返回伙伴
           </button>
-          <PageHeader subtitle="预览和重做随时可用；播放需要电脑在线执行" title="影像" />
+          <PageHeader subtitle="预览和重做随时可用；实际呈现由伙伴自主决定" title="影像" />
           <div className="library-toolbar">
             <input
               aria-label="按名称筛选影像"
@@ -445,26 +366,6 @@ export function Visuals({
               </ul>
             </section>
           ) : null}
-          {receipts.length ? (
-            <section className="card">
-              <h3>桌面回执</h3>
-              <ul className="visual-list">
-                {receipts.slice(0, 10).map(receipt => (
-                  <li className="recovery-item" key={`${receipt.play_id}:${receipt.at}`}>
-                    <div>
-                      <strong>
-                        {PLAYBACK_STATUS_TEXT[receipt.status]}
-                        {receipt.receipt_kind ? `（回执：${RECEIPT_KIND_TEXT[receipt.receipt_kind]}）` : ''}
-                      </strong>
-                      <span className="muted">
-                        {receipt.play_id.slice(0, 8)} · {timestamp(receipt.at / 1000)}
-                      </span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
           {error ? <Notice>{error}</Notice> : null}
           <div className="asset-grid">
             {rows.map(row => (
@@ -515,7 +416,6 @@ export function Visuals({
             setSelected(null)
             focusAfterRender(`[data-card-key="visual-${selected.id}"]`)
           }}
-          receipts={receipts}
           visual={selected}
         />
       )}

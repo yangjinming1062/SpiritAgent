@@ -539,7 +539,7 @@ export const dict: Dictionary = {
       tiers: {
         still: { label: 'Only reply to me', hint: 'Quiet company until you start a conversation' },
         normal: { label: 'Occasional greetings', hint: 'A gentle text greeting while staying in place' },
-        autonomous: { label: 'Free to explore', hint: 'May speak, move around, and interact naturally' }
+        autonomous: { label: 'Free to interact', hint: 'May speak and interact naturally' }
       },
       smartHeading: 'Everyday life',
       smartHint:
@@ -597,6 +597,11 @@ export const dict: Dictionary = {
         wardrobe: 'Wardrobe',
         environment: 'Environments',
         actions: 'Actions'
+      },
+      lifeStatus: {
+        title: 'Companion status',
+        fallback: 'Quietly keeping you company',
+        activePursuit: 'One thing is currently in progress'
       },
       memoryScope: 'Whose memories',
       memoryScopeAria: 'Memory type',
@@ -1761,8 +1766,6 @@ export const dict: Dictionary = {
     statusLabel: 'Creation status',
     seconds: (value: number) => `${value} s`,
     coverAlt: (name: string) => `${name} cover`,
-    play: 'Play now',
-    playFailed: "Couldn't start playback",
     previewNote: 'Previewing here is not recorded as playback.',
     redoHint: 'The current result stays on display while a redo is created.',
     feedbackLabel: 'Change requests',
@@ -1772,8 +1775,6 @@ export const dict: Dictionary = {
     prefsTitle: 'Presentation preferences',
     autonomousLabel: 'Let the companion present visuals on its own',
     autonomousDesc: 'When enabled, your companion may play or switch visuals at fitting moments.',
-    pinnedLabel: 'Keep the current image',
-    pinnedDesc: 'Keep showing the current visual without automatic switching.',
     prefsFailed: "Couldn't save the presentation preference",
     paused: 'Playback paused',
     prev: 'Previous',

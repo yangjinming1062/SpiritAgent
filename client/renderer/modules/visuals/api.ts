@@ -12,7 +12,6 @@ import type {
   VisualJobListResponse,
   VisualListResponse,
   VisualMediaKind,
-  VisualPlayCommand,
   VisualPresentationUpdate,
   VisualRegenerateRequest,
   VisualsPresentation
@@ -42,12 +41,6 @@ export const visualsApi = {
     requestResource('companion_visuals.list_visuals', { query }),
   detail: (visualId: number): Promise<VisualDetail> =>
     requestResource('companion_visuals.get_visual', { path: { visual_id: visualId } }),
-  /** 手动播放只受理播放请求，播放指令经 `companion.visual.play` 派发给桌面。 */
-  play: (visualId: number, expectedVersion: number): Promise<VisualPlayCommand> =>
-    requestResource('companion_visuals.play_visual', {
-      path: { visual_id: visualId },
-      body: { expected_version: expectedVersion }
-    }),
   regenerate: (visualId: number, body: VisualRegenerateRequest): Promise<VisualJob> =>
     requestResource('companion_visuals.regenerate_visual', { path: { visual_id: visualId }, body }),
   jobs: (): Promise<VisualJobListResponse> => requestResource('companion_visuals.list_visual_jobs'),

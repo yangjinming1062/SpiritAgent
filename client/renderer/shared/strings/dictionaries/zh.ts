@@ -520,7 +520,7 @@ export const dict = {
       tiers: {
         still: { label: '只回应我', hint: '等你来聊天，平时安静陪着你' },
         normal: { label: '偶尔主动问候', hint: '用文字轻轻打个招呼，保持在原处' },
-        autonomous: { label: '自由活动', hint: '可以主动说话、走动，与你自然互动' }
+        autonomous: { label: '自由互动', hint: '可以主动说话并与你自然互动' }
       },
       smartHeading: '伙伴的日常',
       smartHint: '伙伴自己记录生活、分享你们感兴趣的新内容；这两项与陪伴档位各自独立。',
@@ -573,6 +573,11 @@ export const dict = {
         wardrobe: '衣柜',
         environment: '环境',
         actions: '动作'
+      },
+      lifeStatus: {
+        title: '伙伴近况',
+        fallback: '正在安静地陪伴你',
+        activePursuit: '有一件正在推进的事'
       },
       memoryScope: '查看谁的记忆',
       memoryScopeAria: '记忆类型',
@@ -1678,8 +1683,6 @@ export const dict = {
     statusLabel: '制作状态',
     seconds: (value: number) => `${value} 秒`,
     coverAlt: (name: string) => `${name}封面`,
-    play: '手动播放',
-    playFailed: '发起播放失败',
     previewNote: '预览不会记录播放。',
     redoHint: '重做期间继续展示当前成品。',
     feedbackLabel: '修改要求',
@@ -1689,8 +1692,6 @@ export const dict = {
     prefsTitle: '呈现偏好',
     autonomousLabel: '允许伙伴自主呈现影像',
     autonomousDesc: '开启后，伙伴可在合适时机自主播放或切换影像。',
-    pinnedLabel: '固定当前画面',
-    pinnedDesc: '开启后持续展示当前影像，不自动切换。',
     prefsFailed: '呈现偏好保存失败',
     paused: '已暂停播放',
     prev: '上一页',

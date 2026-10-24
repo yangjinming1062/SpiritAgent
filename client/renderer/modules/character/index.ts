@@ -1,5 +1,4 @@
 export { $screenLocked, applyStageActivity, reportInteractionStat, startActivityMonitor } from './activity'
-export { startAutonomyProvision, stopAutonomyProvision } from './autonomy'
 export { pickAvatarImage, type PickedImage, resolvePortraitUrl } from './avatar-image'
 export { $avatarSeeds, hydrateAvatarSeeds, patchAvatarSeeds, refreshAvatarSeeds } from './avatar-seeds-store'
 export {
@@ -31,6 +30,7 @@ export {
 export { FullbodyReferencePanel } from './fullbody-reference-panel'
 export { hydrateFullbodyReference } from './fullbody-reference-store'
 export { GenerationActionsGroup } from './generation-actions'
+export { $lifeRevision, handleLifeUpdated } from './life-store'
 export {
   assembleCharacterPersona,
   assemblePersona,

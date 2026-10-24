@@ -51,6 +51,7 @@ from runtime.presets import COMPANION_PRESET_ID
 from runtime.user_maintenance import is_user_in_maintenance, user_request_scope
 
 from workflows.automation.standard_turns import execute_standard_turn
+from workflows.life_decisions import run_life_scan
 from workflows.nightly.nightly_activity import run_nightly_pipeline
 from workflows.nightly.scheduling import close_expired_logs, unfinished_logs
 from workflows.nightly.window import in_nightly_window
@@ -79,6 +80,8 @@ _LAST_NIGHTLY_SCAN: float = 0.0
 # outbox gc 扫描的外层节流（每 15 分钟运行一次）。
 _LAST_OUTBOX_GC_SCAN: float = 0.0
 _OUTBOX_GC_INTERVAL_SECONDS: int = 900
+_LAST_LIFE_SCAN: float = 0.0
+_LIFE_SCAN_INTERVAL_SECONDS: int = 60
 
 _IGNORED_OUTREACH_MIN_IGNORED_SECONDS = 3600  # 用户持续不理伙伴 1 小时后才有资格触发
 _IGNORED_OUTREACH_MIN_SPACING_SECONDS = 3600  # 两次触发之间的最小间距——沉默结束意图后的再触发安全网
@@ -306,6 +309,7 @@ async def run_tick() -> None:
     _spawn_scan("ignored_outreach", _maybe_run_ignored_outreach)
     _spawn_scan("companion_waits", _scan_companion_waits)
     _spawn_scan("post_impulse", scan_autonomous_posts)
+    _spawn_scan("life_state", _maybe_run_life_scan)
     due_jobs = await _select_due_jobs()
     if len(due_jobs) > _MAX_DUE_PER_TICK:
         logger.warning(
@@ -322,6 +326,17 @@ async def run_tick() -> None:
             if uid not in leases:
                 leases[uid] = await stack.enter_async_context(user_request_scope(uid))
         await _advance_due_jobs([job for job in due_jobs if leases[int(job.user_id)]], now)
+
+
+async def _maybe_run_life_scan() -> None:
+    global _LAST_LIFE_SCAN
+    now = utc_now()
+    if now.timestamp() - _LAST_LIFE_SCAN < _LIFE_SCAN_INTERVAL_SECONDS:
+        return
+    _LAST_LIFE_SCAN = now.timestamp()
+    async with session_scope() as db:
+        users = await list_user_ids(db, active_only=True)
+    await run_life_scan(users)
 
 
 async def _maybe_run_outbox_gc(now: datetime) -> None:

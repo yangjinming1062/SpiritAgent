@@ -27,8 +27,7 @@ import {
   setVisualPreferences,
   type VisualDetail as VisualDetailData,
   type VisualItem,
-  type VisualJob,
-  visualsApi
+  type VisualJob
 } from '@/modules/visuals'
 import { log } from '@/shared/lib/log'
 import {
@@ -64,7 +63,7 @@ function formatDuration(durationMs: number | null | undefined, seconds: (value: 
   return durationMs && durationMs > 0 ? seconds(Math.round(durationMs / 1000)) : null
 }
 
-/** 影像页：浏览与预览组合成品、查看与操作制作工作项、手动播放与重做；库内预览不产生播放回执。 */
+/** 影像页：浏览与预览组合成品、查看与操作制作工作项、重做；库内预览不产生播放回执。 */
 export function VisualsPage(): React.JSX.Element {
   const dict = useStrings()
   const t = dict.visuals
@@ -271,7 +270,6 @@ export function VisualsPage(): React.JSX.Element {
               busy={busy}
               current={currentVisualId === detail.id}
               detail={detail}
-              onPlay={() => run(() => visualsApi.play(detail.id, detail.version).then(() => undefined), t.playFailed)}
               onRedo={(feedback, videoFeedback) =>
                 run(
                   () =>
@@ -349,13 +347,6 @@ export function VisualsPage(): React.JSX.Element {
               }
             />
           </SettingRow>
-          <SettingRow description={t.pinnedDesc} label={t.pinnedLabel}>
-            <Toggle
-              ariaLabel={t.pinnedLabel}
-              checked={projection?.pinned ?? false}
-              onChange={next => run(() => setVisualPreferences({ pinned: next }).then(() => undefined), t.prefsFailed)}
-            />
-          </SettingRow>
         </SettingCard>
       </section>
     </SettingsContent>
@@ -405,14 +396,12 @@ function VisualDetailPanel({
   detail,
   current,
   busy,
-  onPlay,
   onRedo,
   t
 }: {
   detail: VisualDetailData
   current: boolean
   busy: boolean
-  onPlay: () => void
   onRedo: (feedback: string, videoFeedback: string) => void
   t: ReturnType<typeof useStrings>['visuals']
 }): React.JSX.Element {
@@ -482,11 +471,6 @@ function VisualDetailPanel({
             {t.sourceAction}：{materialLabel(detail.action_id, detail.snapshot.action.name)}
           </p>
           <p className="whitespace-pre-wrap text-[11px] text-faint">{detail.snapshot.action.motion_description}</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button className={BTN_PRIMARY} disabled={busy} onClick={onPlay} type="button">
-            {t.play}
-          </button>
         </div>
         <div className="flex flex-col gap-2">
           <p className="text-[11px] text-faint">{t.redoHint}</p>

@@ -11,7 +11,6 @@ from .schemas import (
     VisualJobCommandRequest,
     VisualJobView,
     VisualPlayCommand,
-    VisualPlayRequest,
     VisualPreferencesRequest,
     VisualPresentationResponse,
     VisualPresentationView,
@@ -66,15 +65,6 @@ async def regenerate(user_id: int, visual_id: int, body: VisualRegenerateRequest
         raise _http_error(exc) from exc
 
 
-async def play(user_id: int, visual_id: int, body: VisualPlayRequest) -> VisualPlayCommand:
-    """body.reason 是客户端触发说明，不进入播放账本。"""
-
-    try:
-        return await service.play_visual(user_id, visual_id, source="manual", expected_version=body.expected_version)
-    except VisualError as exc:
-        raise _http_error(exc) from exc
-
-
 async def claim_play(user_id: int, play_id: str, body: VisualClaimRequest) -> VisualClaimResponse:
     try:
         claimed = await service.claim_playback(user_id, play_id, client_id=body.client_id)
@@ -113,7 +103,6 @@ async def update_preferences(user_id: int, body: VisualPreferencesRequest) -> Vi
     try:
         presentation = await service.update_presentation_preferences(
             user_id,
-            pinned=body.pinned,
             autonomous_enabled=body.autonomous_enabled,
             target_width=body.target_width,
             target_height=body.target_height,

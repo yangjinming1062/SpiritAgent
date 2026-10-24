@@ -5,12 +5,14 @@ from typing import Literal
 from uuid import uuid4
 
 from infrastructure.database import SESSION_LOCAL
+from infrastructure.logger import get_logger
 from infrastructure.text import ensure_utc, utc_now
 from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.companion.proactive_runtime import get_presentation_snapshot
+from features.life.use_cases import restart_step_by_key, settle_step_by_key
 
 from .creation import begin_opening_repair
 from .generation import (
@@ -58,7 +60,22 @@ from .schemas import (
     combo_snapshot_hash,
 )
 
+logger = get_logger(__name__)
+
 _LOCKS: dict[int, asyncio.Lock] = {}
+
+
+async def _restart_life_step(user_id: int, generation_id: str | None, *, job_id: int) -> None:
+    if not generation_id:
+        return
+    try:
+        await restart_step_by_key(user_id, generation_id, business_ref={"visual_job_id": job_id})
+    except Exception:
+        logger.warning(
+            "visuals: failed to restart life step",
+            extra={"user_id": user_id, "job_id": job_id},
+            exc_info=True,
+        )
 
 
 def _lock(user_id: int) -> asyncio.Lock:
@@ -459,6 +476,8 @@ async def resume_job(user_id: int, job_id: int) -> VisualJobView:
     async with _lock(user_id), SESSION_LOCAL() as db:
         job = await visual_job_row(db, user_id, job_id, lock=True)
         progress = visual_progress(job)
+        was_failed = job.state == "failed"
+        generation_id = progress.generation_id if progress is not None else None
         if job.state == "running":
             return job_view(job)
         if job.state in {"succeeded", "cancelled"}:
@@ -490,6 +509,8 @@ async def resume_job(user_id: int, job_id: int) -> VisualJobView:
         await notify_visuals_updated(db, user_id)
         view = job_view(job)
         await db.commit()
+    if was_failed:
+        await _restart_life_step(user_id, generation_id, job_id=job_id)
     schedule_visual_job(user_id, job_id, allow_model_steps=allow_model_steps)
     return view
 
@@ -499,12 +520,23 @@ async def cancel_job(user_id: int, job_id: int) -> VisualJobView:
         job = await visual_job_row(db, user_id, job_id, lock=True)
         if job.state in {"succeeded", "cancelled"}:
             return job_view(job)
+        progress = visual_progress(job)
+        life_step_key = progress.generation_id if progress is not None else None
         await discard_job_draft(db, user_id, job)
         job.state, job.stage, job.error = "cancelled", "cancelled", None
         await notify_visuals_updated(db, user_id)
         view = job_view(job)
         await db.commit()
     cancel_visual_job(job_id)
+    if life_step_key is not None:
+        try:
+            await settle_step_by_key(user_id, life_step_key, state="cancelled", error="visual job cancelled")
+        except Exception:
+            logger.warning(
+                "visuals: cancelled job life step settlement failed",
+                extra={"user_id": user_id, "job_id": job_id},
+                exc_info=True,
+            )
     return view
 
 
@@ -522,6 +554,7 @@ async def retry_job(user_id: int, job_id: int) -> VisualJobView:
             raise VisualStateError("供应商提交结果尚未确认，请先核对结果或放弃本次制作")
         if progress is None:
             raise VisualStateError("制作草稿已失效")
+        generation_id = progress.generation_id
         if progress.failure_reason == "activity_unsupported":
             return job_view(job)
         new_image = job.state == "failed" and (
@@ -547,6 +580,7 @@ async def retry_job(user_id: int, job_id: int) -> VisualJobView:
             view = None
     if view is None:
         return await resume_job(user_id, job_id)
+    await _restart_life_step(user_id, generation_id, job_id=job_id)
     schedule_visual_job(user_id, job_id)
     return view
 
@@ -554,15 +588,12 @@ async def retry_job(user_id: int, job_id: int) -> VisualJobView:
 async def update_presentation_preferences(
     user_id: int,
     *,
-    pinned: bool | None = None,
     autonomous_enabled: bool | None = None,
     target_width: int | None = None,
     target_height: int | None = None,
 ) -> VisualPresentationView:
     async with _lock(user_id), SESSION_LOCAL() as db:
         state = await require_presentation_row(db, user_id, lock=True)
-        if pinned is not None:
-            state.pinned = pinned
         if autonomous_enabled is not None:
             state.autonomous_enabled = autonomous_enabled
         if (target_width is None) != (target_height is None):

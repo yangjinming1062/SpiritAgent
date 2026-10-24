@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from workflows.chat.prompt_blocks import AgentPromptConfig, render_preset_body, volatile_header_value
 from workflows.chat.prompt_presets import preset_body
 from workflows.chat.prompts import (
-    DESKTOP_ENVIRONMENT_GUIDANCES,
     OUTFIT_DEMEANOR_GUIDANCES,
+    PRESENTATION_ENVIRONMENT_GUIDANCES,
     SCENE_CONTEXT_GUIDANCES,
     VOLATILE_LABELS,
 )
@@ -34,25 +34,10 @@ async def build_companion_environment_prompt(
     language: str,
     action_view: ActionViewSnapshot,
 ) -> str:
-    """呈现资料统一读实际呈现快照：窗口读静态造型与环境资料，桌面读成品画面描述。"""
+    """所有宿主共用同一份伙伴情景；客户端只负责把它适配为可用呈现。"""
 
     parts: list[str] = []
     presentation = action_view.presentation
-    if action_view.presentation_mode == "desktop":
-        current = {
-            "visual_description": presentation.visual_description,
-            "outfit_description": presentation.outfit_description,
-        }
-        parts.extend(
-            [
-                resolve_prompt_text(DESKTOP_ENVIRONMENT_GUIDANCES, language),
-                json.dumps({"current": current}, ensure_ascii=False),
-            ],
-        )
-        if presentation.outfit_description:
-            parts.append(resolve_prompt_text(OUTFIT_DEMEANOR_GUIDANCES, language))
-        parts.append(action_view.to_prompt_block(language=language))
-        return "\n\n".join(parts)
     if appearance := render_character_appearance(await load_character_snapshot(db, user_id), language=language):
         parts.append(appearance)
     if presentation.outfit_description:
@@ -63,8 +48,18 @@ async def build_companion_environment_prompt(
         parts.append(resolve_prompt_text(OUTFIT_DEMEANOR_GUIDANCES, language))
     parts.extend(
         [
+            resolve_prompt_text(PRESENTATION_ENVIRONMENT_GUIDANCES, language),
             resolve_prompt_text(SCENE_CONTEXT_GUIDANCES, language),
-            json.dumps({"scene_description": presentation.scene_description}, ensure_ascii=False),
+            json.dumps(
+                {
+                    "current": {
+                        "visual_description": presentation.visual_description,
+                        "outfit_description": presentation.outfit_description,
+                        "scene_description": presentation.scene_description,
+                    },
+                },
+                ensure_ascii=False,
+            ),
         ],
     )
     # 动作快照：每次模型调用前刷新（含工具续轮），频繁变化的动作数据不写入稳定身份前缀。

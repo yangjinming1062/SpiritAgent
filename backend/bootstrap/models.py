@@ -14,6 +14,7 @@ import features.configuration.settings.models
 import features.conversation.models
 import features.conversation.submission_models
 import features.journal.models
+import features.life.models
 import features.media.models
 import features.media.video_queue.models
 import features.media.voice_models

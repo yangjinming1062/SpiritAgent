@@ -273,13 +273,12 @@ class VisualDetailView(VisualItemView):
 
 
 class VisualPresentationView(BaseModel):
-    """呈现状态与偏好：当前影像、持续画面、自主开关与固定画面。"""
+    """呈现状态与偏好：当前影像、持续画面和自主开关。"""
 
     model_config = ConfigDict(extra="forbid")
 
     current_visual: VisualItemView | None = None
     loop_visual: VisualItemView | None = None
-    pinned: bool = False
     autonomous_enabled: bool = True
     target_width: int | None = None
     target_height: int | None = None
@@ -427,13 +426,6 @@ class VisualJobCommandRequest(BaseModel):
     command: Literal["pause", "resume", "cancel", "retry"]
 
 
-class VisualPlayRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    expected_version: int | None = Field(default=None, ge=1, strict=True)
-    reason: str = Field(default="", max_length=200)
-
-
 class VisualClaimRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -456,7 +448,6 @@ class VisualPreferencesRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    pinned: bool | None = None
     autonomous_enabled: bool | None = None
     target_width: int | None = Field(default=None, gt=0, le=VISUAL_MAX_EDGE, strict=True)
     target_height: int | None = Field(default=None, gt=0, le=VISUAL_MAX_EDGE, strict=True)

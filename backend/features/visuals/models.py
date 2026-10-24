@@ -121,7 +121,6 @@ class VisualPresentation(ModelBase, TimestampMixin):
         ForeignKey("visual_items.id", ondelete="SET NULL"),
         nullable=True,
     )
-    pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
     autonomous_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"))
     # 本机呈现上下文的目标画幅（像素），组合制作以此冻结目标。
     target_width: Mapped[int | None] = mapped_column(Integer, nullable=True)

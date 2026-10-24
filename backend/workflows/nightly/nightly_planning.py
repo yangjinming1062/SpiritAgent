@@ -17,7 +17,6 @@ from features.appearance.character_card import load_character_snapshot
 from features.appearance.nightly import create_and_confirm_outfit, get_outfit, list_outfits
 from features.automation.cron_jobs import create_job, remove_job
 from features.companion.planning_queries import PersonaPlanningSnapshot, planning_persona
-from features.companion.proactive_runtime import PresentationSnapshot, get_presentation_snapshot
 from features.configuration.settings.values import load_user_settings
 from features.media.identity_rendering import render_character_appearance
 from features.media.image_generation import resolve_image_gen_chain
@@ -250,7 +249,6 @@ class PlanningContext(BaseModel):
     wardrobe: list[WardrobeItem] = Field(default_factory=list)
     # 模型只读取当前可播能力，制作目标由代码单独冻结。
     actions: dict[str, Any] = Field(default_factory=dict)
-    action_presentation: PresentationSnapshot | None = Field(default=None, exclude=True)
     action_design_enabled: bool = Field(default=False, exclude=True)
     # 影像制作各选一份 ready 素材，由代码冻结，模型只提供制作要求。
     visual_materials: VisualMaterialSelection | None = Field(default=None, exclude=True)
@@ -451,14 +449,6 @@ def _capability_availability(
     for capability in _CAPABILITIES:
         ready, reason = rules[capability.name]
         if ready and _policy_block(capability.name, context.policies) is None:
-            if context.action_presentation is not None and context.action_presentation.mode == "desktop":
-                descriptions = {
-                    "outfit.create": "已有造型不适合且有具体用途时，设计并保存一套新造型；当前画面不变。",
-                    "scene.create": "已有环境图片不合适且有具体用途时，按真实环境照片新建一张；不描绘你本人，当前画面不变。",
-                }
-                capability = capability.model_copy(
-                    update={"description": descriptions.get(capability.name, capability.description)},
-                )
             if capability.name == "visual.create" and not providers.video:
                 capability = capability.model_copy(
                     update={
@@ -491,7 +481,6 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
             task=AiTaskKey.scene,
             has_reference=False,
         )
-        presentation = get_presentation_snapshot(user_id)
         video_task = AiTaskKey.visuals
         video_available = await _provider_available(db, user_id, "video_gen", task=video_task)
         recent_actions = (
@@ -503,7 +492,7 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
             )
         ).all()
         recent_posts = await recent_post_summaries(db, user_id, limit=20)
-        action_view = await build_action_view(user_id, presentation=presentation)
+        action_view = await build_action_view(user_id)
         action_snapshot = {"ready_actions": [item.model_dump() for item in action_view.items]}
         presentation_state_row = await presentation_state(user_id)
         action_design_enabled = bool(
@@ -528,7 +517,7 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
 
     language = resolve_language(settings.get("language"))
     definition = dict(persona.definition) if persona is not None else {}
-    if character is not None and (presentation is None or presentation.mode != "desktop"):
+    if character is not None:
         definition["fixed_features"] = render_character_appearance(character, language=language)
     context = PlanningContext(
         policies=_policies(persona),
@@ -557,7 +546,6 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
             for outfit in outfits
         ],
         actions=action_snapshot,
-        action_presentation=presentation,
         action_design_enabled=action_design_enabled,
         visual_materials=visual_materials,
         recent_autonomous_actions=[

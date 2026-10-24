@@ -203,6 +203,13 @@ class VisualUpdatedEvent(BaseModel):
     version: int
 
 
+class LifeUpdatedEvent(BaseModel):
+    revision: int | None = None
+    pursuit_id: int | None = None
+    step_id: int | None = None
+    event_key: str | None = None
+
+
 class VisualPlaybackEvent(BaseModel):
     play_id: str
     status: PlaybackStatus
@@ -287,6 +294,7 @@ EVENT_CONTRACTS: dict[str, EventContract] = {
     "companion.outfit.updated": EventContract(OutfitChangedEvent, "all", "resource"),
     "companion.character_card.updated": EventContract(CharacterCardEvent, "all", "resource"),
     "companion.visual.updated": EventContract(VisualUpdatedEvent, "all", "resource"),
+    "companion.life.updated": EventContract(LifeUpdatedEvent, "all", "resource"),
     "companion.action.updated": EventContract(EmptyResult, "all", "resource"),
     "companion.visual.initial_requested": EventContract(EmptyResult, "all", "resource"),
     "companion.visual.play": EventContract(VisualPlayCommand, "desktop", "transient"),

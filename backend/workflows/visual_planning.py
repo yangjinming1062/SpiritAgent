@@ -2,8 +2,8 @@
 
 from features.action_library.queries import action_detail
 from features.appearance.queries import outfit_snapshot
-from features.companion.visual_state import persona_snapshot
 from features.configuration.settings.timezone import resolve_user_timezone
+from features.life.queries import get_life_mood
 from features.media.voice_queries import resolve_custom_voice
 from features.media.voices import read_current_voice
 from features.memory.memory_retrieval import retrieve_hybrid_memories
@@ -17,7 +17,7 @@ from runtime.memory_scope import MemoryScope
 
 async def visual_planning_context(user_id: int, snapshot: ComboSnapshot) -> VisualPlanningContext:
     async with SESSION_LOCAL() as db:
-        persona = await persona_snapshot(db, user_id)
+        mood = await get_life_mood(db, user_id)
         voice_id = await read_current_voice(db, user_id)
         voice = await resolve_custom_voice(db, user_id, voice_id) if voice_id else None
         memories = await retrieve_hybrid_memories(
@@ -30,7 +30,7 @@ async def visual_planning_context(user_id: int, snapshot: ComboSnapshot) -> Visu
     return VisualPlanningContext(
         voice_style=voice.prompt if voice is not None else "",
         current_time=now,
-        current_mood=(persona.current_mood or "") if persona else "",
+        current_mood=mood or "",
         relevant_memories=[{"content": item.content, "basis": item.basis} for item in memories],
     )
 

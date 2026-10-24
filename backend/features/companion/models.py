@@ -49,7 +49,4 @@ class Persona(ModelBase, TimestampMixin):
         default=OUTFIT_POLICY_DEFAULT,
         server_default=text(f"'{OUTFIT_POLICY_DEFAULT}'"),
     )
-    # 当前心境：独立状态推理产出的心理活动说明，投射到客户端身份轨。
-    current_mood: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
-
     user: Mapped["User"] = relationship(back_populates="persona")
