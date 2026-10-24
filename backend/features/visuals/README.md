@@ -12,6 +12,7 @@
 | `queries.py` | 影像分页与详情、工作项列表、呈现状态、实际呈现快照、按触发条件的可播目录 |
 | `use_cases.py` | HTTP 薄壳：参数收敛与 RequestError 转换（404/409/400） |
 | `generation.py` | 进程内按工作项单飞的制作流水线：图片链→图片检查→运动设计→视频队列→视频检查→发布 |
+| `life.py` | 同事务绑定创作请求、按工作项结算或重试全部关联生活步骤；兼容原制作键 |
 | `video_queue.py` | 公共视频队列的任务有效性检查（owner kind 为 `visuals`） |
 | `lifecycle.py` / `backup.py` / `backup_assets.py` / `asset_references.py` | 恢复登记、备份表与素材校验、活引用收集 |
 
@@ -25,3 +26,4 @@
 - 提交结果未知（`submission_unknown`）时保留占用不重投，工作项进入 `unknown` 状态等人工处理；恢复备份时视频队列句柄一律清空。
 - 库与工作项变化走 `notify_visuals_updated`（不推进 `state_revision`），呈现状态变化走 `touch_presentation`（递增修订），两者都广播 `companion.visual.updated`；避免制作进度保存打断在途播放认领。
 - 自主播放资格与冷却常量在 `policy.py`；触发条件、播放方式与生成要求都来自组合快照，不在本模块内改写。
+- 受理键由 workflow 用工具调用、夜间动作账本或本次自主决定的身份产生，`_requested_job` 优先经生活步骤的业务引用解析工作项；新请求的在途去重复用完整组合哈希。契约见 [自主制作契约](../../../docs/PROTOCOL.md#影像成品与模式隔离)。

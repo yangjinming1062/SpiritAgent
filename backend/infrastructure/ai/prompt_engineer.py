@@ -335,6 +335,15 @@ async def call_llm_json[T](
                 allow_tools=False,
                 repair=repair,
             )
+            # JSON 模式不带字段语义；供应商未下发原生 schema 时随指令提供。
+            native_schema = (
+                options.get("text", {}).get("format", {}).get("type") == "json_schema"
+                or options.get("extra_body", {}).get("response_format", {}).get("type") == "json_schema"
+            )
+            if not native_schema:
+                instructions += "\n\nReturn JSON using the fields and constraints in this schema:\n" + json.dumps(
+                    schema, ensure_ascii=False
+                )
             request = build_responses_kwargs(
                 model=provider.config.model,
                 instructions=instructions,

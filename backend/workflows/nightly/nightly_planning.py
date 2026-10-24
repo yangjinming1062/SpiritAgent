@@ -35,7 +35,6 @@ from features.scenes.nightly import (
 from features.scenes.service import resume_scene_generation
 from features.visuals.queries import presentation_state
 from features.visuals.repository import VisualStateError
-from features.visuals.service import create_visual_job
 from infrastructure.ai.llm_client import resolve_provider_chain
 from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, LlmJsonValidationError, call_llm_json
 from infrastructure.ai.tasks import AiTaskKey
@@ -61,7 +60,7 @@ from workflows.nightly.prompts import (
     PLANNING_SYSTEM_PROMPT,
 )
 from workflows.nightly.window import in_nightly_window, require_nightly_window
-from workflows.visuals_companion import ComboAssemblyError, design_action_reference, load_combo_snapshot
+from workflows.visuals_companion import ComboAssemblyError, design_action_reference, generate_visual_reference
 
 logger = get_logger(__name__)
 
@@ -831,20 +830,14 @@ async def _execute_visual_create(run: _ActionRun, args: dict[str, Any]) -> Actio
         return ActionExecutionResult(status="blocked", reason="life state changed; replan the visual")
     # 由规划期选定的一组 ready 素材冻结组合，提交即受理；制作与入库由影像模块完成。
     try:
-        async with SESSION_LOCAL() as db:
-            combo = await load_combo_snapshot(
-                db,
-                run.user_id,
-                outfit_id=materials.outfit_id,
-                scene_id=materials.scene_id,
-                action_id=materials.action_id,
-                requirements=parsed_args.requirements,
-            )
-        await create_visual_job(
+        await generate_visual_reference(
             run.user_id,
-            combo=combo,
-            target_kind=parsed_args.media_kind,
-            source="autonomous",
+            outfit_id=materials.outfit_id,
+            scene_id=materials.scene_id,
+            action_id=materials.action_id,
+            requirements=parsed_args.requirements,
+            media_kind=parsed_args.media_kind,
+            request_id=f"nightly:{run.row_id}",
         )
     except (ComboAssemblyError, VisualStateError) as exc:
         return ActionExecutionResult(status="failed", reason=str(exc))

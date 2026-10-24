@@ -11,21 +11,21 @@ from runtime.tools.registry import ToolsRegistry
 from workflows.visuals_companion import generate_visual_reference, play_visual_reference
 
 VISUAL_SEARCH_TOOL_DESCRIPTION = (
-    "检索已生成的图片或视频成品。每份成品由一套造型、一个环境和一段动作组合生成，"
-    "按名称或来源筛选；列表含进行中的制作状态。"
+    "检索已生成的图片或视频，按名称或画面描述筛选。返回 visual_id、媒体类型、画面说明及所用穿着、环境和活动信息；"
+    "尚未完成的制作进度通过 visual_inspect 查询。"
 )
 VISUAL_INSPECT_TOOL_DESCRIPTION = (
-    "查看成品或制作工作项：传 visual_id 返回画面描述、来源（造型、环境与动作）、尺寸与时长等完整详情；"
-    "不传 visual_id 时按 job_id 列出相关制作状态。"
+    "查看已生成图片或视频的详情，或查询制作进度。传 visual_id 返回画面内容、所用穿着、环境与活动、尺寸、时长及相关制作记录；"
+    "不传 visual_id 时返回最近 20 次制作，可用 job_id 从中选择一次。"
 )
 VISUAL_GENERATE_TOOL_DESCRIPTION = (
     "提交一次制作：指定一套造型、一个环境和一段动作，由你决定具体组合并生成图片或视频。"
     "需要可见运动过程时才选 video，单张画面足够时选 image；制作视频时先产出合格的起始图（独立入库）再生成视频。"
-    "不需要已有成品即可开始第一次制作；制作为付费操作，受理后异步执行，用 visual_inspect 查看状态。"
+    "没有已生成的图片或视频也能开始第一次制作；制作为付费操作，受理后异步执行，用 visual_inspect 查看状态。"
 )
 VISUAL_PLAY_TOOL_DESCRIPTION = (
-    "请求呈现一份已生成的成品：图片作为持续画面，视频按动作类型循环或作为短动作播放。"
-    "受理只表示指令已登记，实际播放以桌面客户端回执为准；桌面离线时不会播放。"
+    "请求显示一张已生成的图片，或播放一段已生成的视频。图片保持显示，视频按预设方式循环或播放一次。"
+    "返回 queued 表示已安排播放，尚不能确认已经显示；桌面离线时不会播放。"
 )
 
 
@@ -71,7 +71,7 @@ async def visual_inspect_tool(
     result = await list_jobs(user_id, limit=20)
     matched = [job.model_dump(mode="json") for job in result.jobs if job_id is None or job.id == job_id]
     if job_id is not None and not matched:
-        return json.dumps({"error": "未找到该制作工作项"}, ensure_ascii=False)
+        return json.dumps({"error": "未找到这次制作"}, ensure_ascii=False)
     return json.dumps(matched, ensure_ascii=False)
 
 
@@ -80,6 +80,8 @@ async def visual_generate_tool(
     scene_id: int,
     action_id: int,
     user_id: int,
+    tool_call_id: str,
+    parent_session_id: str,
     media_kind: str = "image",
     requirements: str = "",
     feedback: str = "",
@@ -95,6 +97,7 @@ async def visual_generate_tool(
         requirements=requirements,
         feedback=feedback,
         video_feedback=video_feedback,
+        request_id=f"tool:{parent_session_id}:{tool_call_id}",
     )
     return json.dumps(result, ensure_ascii=False)
 
@@ -126,7 +129,7 @@ def register(registry: ToolsRegistry) -> None:
                 "media_kind": {
                     "type": "string",
                     "enum": ["image", "video"],
-                    "description": "只看图片或视频成品；省略返回全部。",
+                    "description": "只看图片或视频；省略返回全部。",
                 },
                 "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
             },
@@ -136,11 +139,11 @@ def register(registry: ToolsRegistry) -> None:
             "visual_inspect",
             visual_inspect_tool,
             {
-                "visual_id": {"type": "integer", "minimum": 1, "description": "成品的 visual_id。"},
+                "visual_id": {"type": "integer", "minimum": 1, "description": "已生成图片或视频的 visual_id。"},
                 "job_id": {
                     "type": "integer",
                     "minimum": 1,
-                    "description": "制作工作项标识；不传 visual_id 时列出相关制作状态。",
+                    "description": "某次制作的 id；不传 visual_id 时从最近 20 次制作中选择它。",
                 },
             },
             [],
@@ -165,7 +168,7 @@ def register(registry: ToolsRegistry) -> None:
                 "requirements": {
                     "type": "string",
                     "maxLength": 2000,
-                    "description": "本次制作的要求；省略时按造型、环境与动作自由组合。",
+                    "description": "具体活动、必要画面内容和用途；省略时根据所选穿着、环境和活动安排细节。",
                 },
                 "feedback": {"type": "string", "maxLength": 2000, "description": "通用定制要求。"},
                 "video_feedback": {"type": "string", "maxLength": 2000, "description": "视频定制要求。"},
@@ -176,8 +179,8 @@ def register(registry: ToolsRegistry) -> None:
             "visual_play",
             visual_play_tool,
             {
-                "visual_id": {"type": "integer", "minimum": 1, "description": "要呈现的成品 visual_id。"},
-                "reason": {"type": "string", "maxLength": 200, "description": "本次呈现的简短情境依据。"},
+                "visual_id": {"type": "integer", "minimum": 1, "description": "要显示的图片或播放的视频的 visual_id。"},
+                "reason": {"type": "string", "maxLength": 200, "description": "现在使用这张图片或这段视频的简短缘由。"},
             },
             ["visual_id"],
         ),

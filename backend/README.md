@@ -110,6 +110,8 @@ HTTP、调度与资产清理共用 [user_maintenance.py](runtime/user_maintenanc
 
 [companion/intents.py](features/companion/intents.py) 管理条件、认领与原子终态；[companion_turns.py](workflows/automation/companion_turns.py) 管理有界回合和提交；普通任务由 [standard_turns.py](workflows/automation/standard_turns.py) 串行执行。交付和副作用恢复归 [Cron 双轨](../docs/PROTOCOL.md#cron-双轨)。
 
+生活判断由 [life_decisions.py](workflows/life_decisions.py) 编排；[scheduling.py](workflows/scheduling.py) 按生活复查时间发现到期账户，复用逐账户单飞与维护租约派发，慢账户不阻塞其他账户。作用范围与资格见 [生活契约](../docs/PROTOCOL.md#生活状态与生活事件)。
+
 ### 远程网页
 
 [remote.py](entrypoints/http/routes/remote.py) 管理扫码授权与设备会话；独立 [Remote](../remote/README.md) 网页直接复用账户内容接口和对话编排。设备会话独立于桌面登录，本机工具仍由桌面 Runner 执行。身份、撤权与多端恢复契约见 [远程访问](../docs/PROTOCOL.md#远程访问)。
@@ -195,7 +197,7 @@ Caddy 自动签发续期证书并代理 HTTP 与 WS；Backend 的明文 10620 �
 
 ## 提示词定位
 
-文本随业务或流程维护，数据库里的生成提示词仅是审计快照。双语常量经 `resolve_prompt_text` 取值，直接从所属文件导入，不设转发别名。修改规范归 [RULES](../RULES.md#提示词设计与修改规范)，参考与验收归 PIPELINE。
+文本随业务或流程维护，数据库里的生成提示词仅是审计快照。双语常量经 `resolve_prompt_text` 取值，直接从所属文件导入，不设转发别名。`infrastructure/ai/prompt_engineer.py` 的结构化调用在供应商未下发原生 JSON Schema 时，将输出结构和字段说明加入指令；普通 JSON 模式本身不提供这些语义。修改规范归 [RULES](../RULES.md#提示词设计与修改规范)，参考与验收归 PIPELINE。
 
 | 文本 | 装配与消费 |
 |---|---|

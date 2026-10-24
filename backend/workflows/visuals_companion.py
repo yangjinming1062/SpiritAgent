@@ -5,7 +5,6 @@
 
 import asyncio
 import hashlib
-import json
 from typing import Any
 
 from features.action_library import queries as action_queries
@@ -28,7 +27,8 @@ from features.companion.disturbance import get_disturbance_tier
 from features.companion.persona_service import load_persona_definition
 from features.companion.proactive_runtime import get_user_proactive_record
 from features.companion.visual_state import persona_snapshot
-from features.life.use_cases import plan_step, read_state, settle_step, start_planned_step
+from features.life.schemas import LifeStepRequest
+from features.life.use_cases import read_state
 from features.scenes.queries import scene_snapshot
 from features.visuals import service as visuals_service
 from features.visuals.queries import presentation_state
@@ -41,10 +41,7 @@ from features.visuals.schemas import (
 from infrastructure.assets.asset_store import compute_file_sha256, resolve_asset_reference
 from infrastructure.assets.write_protection import user_asset_lock
 from infrastructure.database import SESSION_LOCAL
-from infrastructure.logger import get_logger
 from sqlalchemy.ext.asyncio import AsyncSession
-
-logger = get_logger(__name__)
 
 DEFAULT_TARGET = (1920, 1080)
 
@@ -230,6 +227,7 @@ async def update_action_reference(user_id: int, action_id: int, body: ActionAsse
 async def generate_visual_reference(
     user_id: int,
     *,
+    request_id: str,
     outfit_id: int,
     scene_id: int,
     action_id: int,
@@ -256,55 +254,26 @@ async def generate_visual_reference(
                 target_height=state.target_height,
             )
             await db.commit()
-        request_key = (
-            "life:visual:"
-            + hashlib.sha256(
-                json.dumps(
-                    [outfit_id, scene_id, action_id, media_kind, requirements, feedback, video_feedback],
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                ).encode(),
-            ).hexdigest()
-        )
+        request_key = "life:visual:" + hashlib.sha256(request_id.encode("utf-8")).hexdigest()
         life_state = await read_state(user_id)
-        step = await plan_step(
-            user_id,
+        request = LifeStepRequest(
             idempotency_key=request_key,
             kind="visual.generate",
             description=f"制作伙伴影像：{combo.action.name}",
             pursuit_id=life_state.active_pursuit_id,
         )
-        try:
-            job = await visuals_service.create_visual_job(
-                user_id,
-                combo=combo,
-                target_kind=media_kind,
-                source="autonomous",
-                feedback=feedback,
-                video_feedback=video_feedback,
-                request_id=request_key,
-            )
-        except Exception as exc:
-            await settle_step(user_id, step.id, state="failed", error=str(exc)[:500])
-            raise
-        await start_planned_step(user_id, step.id, business_ref={"request_id": request_key, "visual_job_id": job.id})
-        if job.state in {"succeeded", "failed", "cancelled", "unknown"}:
-            await settle_step(
-                user_id,
-                step.id,
-                state="completed" if job.state == "succeeded" else job.state,
-                result_ref={"visual_job_id": job.id, "visual_id": job.result_visual_id},
-                error=job.error,
-                progress=(
-                    f"已完成影像：{combo.action.name}"
-                    if job.state == "succeeded"
-                    else f"影像制作{job.state}：{combo.action.name}"
-                ),
-                next_step="结合生活情境决定是否呈现" if job.state == "succeeded" else "确认是否重试影像制作",
-            )
+        job = await visuals_service.create_visual_job(
+            user_id,
+            combo=combo,
+            target_kind=media_kind,
+            source="autonomous",
+            feedback=feedback,
+            video_feedback=video_feedback,
+            request_id=request_key,
+            life_step=request,
+        )
         return {
             "job_id": job.id,
-            "life_step_id": step.id,
             "state": job.state,
             "target_kind": job.target_kind,
             "message": "制作已受理",

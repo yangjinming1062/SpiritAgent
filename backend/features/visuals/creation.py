@@ -159,7 +159,7 @@ def opening_requirements(job: VisualJob, progress: VisualJobProgress) -> str:
             "video_feedback": job.video_feedback,
             "customization_priority": progress.customization_priority,
             "customization_scope": "只核对静态可见要求和后续运动的起始条件；两类用户要求冲突时，customization_priority 指定的较新要求只覆盖明确涉及的维度，其余继续生效",
-            "reference_authority": "已确认图片自身提供身份与造型，不相容的旧文字不能覆盖它；未确认生成候选须对照冻结参考，不能用候选自身证明身份正确",
+            "reference_authority": "已确认图片自身提供人物外观与穿着，不相容的旧文字不能覆盖它；新生成但尚未确认的图片须对照原有参考，不能用待检查图片自身证明人物外观正确",
             "opening_adjustment": progress.repair_description,
             "opening_state": "单个可执行的活动开始状态，必要物品可见且可操作，姿态有合理支撑和接触关系",
         },
@@ -185,7 +185,7 @@ def _read_opening_review_source(path: str | None, expected_hash: str | None) -> 
     try:
         data = resolved[0].read_bytes()
         if expected_hash is not None and hashlib.sha256(data).hexdigest() != expected_hash:
-            raise VisualStateError("画面检查的参考图片与冻结内容不一致")
+            raise VisualStateError("画面检查的参考图片已变化，请重新准备制作")
         data, mime = validate_image_bytes(data)
     except (OSError, ValueError) as exc:
         raise VisualStateError("画面检查的参考图片无法读取，请重新准备素材") from exc
@@ -277,7 +277,7 @@ async def review_existing_opening(
                     requirements_hash=requirements_hash,
                     score=candidate.score,
                     verdict="fail",
-                    reason="这张生成图片未通过原身份检查，需要按冻结身份重新制作",
+                    reason="这张图片的人物外观与原有参考不一致，应依照原有参考重新制作",
                 )
                 return progress.opening_review
             reference = await _opening_review_reference(

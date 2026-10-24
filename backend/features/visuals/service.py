@@ -5,14 +5,15 @@ from typing import Literal
 from uuid import uuid4
 
 from infrastructure.database import SESSION_LOCAL
-from infrastructure.logger import get_logger
 from infrastructure.text import ensure_utc, utc_now
 from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
-from sqlalchemy import select
+from sqlalchemy import cast, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.companion.proactive_runtime import get_presentation_snapshot
-from features.life.use_cases import restart_step_by_key, settle_step_by_key
+from features.life.schemas import LifeStepRequest
+from features.life.use_cases import read_step_by_key_in_session
 
 from .creation import begin_opening_repair
 from .generation import (
@@ -24,6 +25,7 @@ from .generation import (
     visual_progress_has_video_work,
 )
 from .geometry import visual_aspect_ratio
+from .life import bind_creation_step, restart_visual_steps, settle_visual_steps
 from .models import VisualItem, VisualJob, VisualPlayback, VisualPresentation
 from .policy import visual_autonomous_block_reason
 from .queries import job_view, presentation_state
@@ -60,22 +62,7 @@ from .schemas import (
     combo_snapshot_hash,
 )
 
-logger = get_logger(__name__)
-
 _LOCKS: dict[int, asyncio.Lock] = {}
-
-
-async def _restart_life_step(user_id: int, generation_id: str | None, *, job_id: int) -> None:
-    if not generation_id:
-        return
-    try:
-        await restart_step_by_key(user_id, generation_id, business_ref={"visual_job_id": job_id})
-    except Exception:
-        logger.warning(
-            "visuals: failed to restart life step",
-            extra={"user_id": user_id, "job_id": job_id},
-            exc_info=True,
-        )
 
 
 def _lock(user_id: int) -> asyncio.Lock:
@@ -107,12 +94,16 @@ async def create_visual_job(
     feedback: str = "",
     video_feedback: str = "",
     request_id: str | None = None,
+    life_step: LifeStepRequest | None = None,
 ) -> VisualJobView:
     """受理一次新建制作；request_id 作为受理幂等键，重复提交返回同一工作项。"""
 
     if target_kind not in ("image", "video"):
         raise VisualStateError("不支持的影像类型")
+    if life_step is not None and life_step.idempotency_key != request_id:
+        raise VisualStateError("生活步骤与制作请求的身份必须一致")
     combo = combo.model_copy(update={"feedback": feedback, "video_feedback": video_feedback})
+    combo_hash = combo_snapshot_hash(combo)
     async with _lock(user_id), SESSION_LOCAL() as db:
         state = await require_presentation_row(db, user_id, lock=True)
         if source == "autonomous" and not state.autonomous_enabled:
@@ -123,9 +114,11 @@ async def create_visual_job(
                 if (
                     existing.purpose != "create"
                     or existing.target_kind != target_kind
-                    or combo_snapshot_hash(visual_snapshot(existing)) != combo_snapshot_hash(combo)
+                    or combo_snapshot_hash(visual_snapshot(existing)) != combo_hash
                 ):
                     raise VisualStateError("这个创建请求已经用于另一次制作")
+                await bind_creation_step(db, user_id, existing, life_step)
+                await db.commit()
                 return job_view(existing)
         pending = await db.scalars(
             select(VisualJob).where(
@@ -136,11 +129,9 @@ async def create_visual_job(
             ),
         )
         for existing in pending:
-            if (
-                combo_snapshot_hash(visual_snapshot(existing)) == combo_snapshot_hash(combo)
-                and existing.feedback == feedback
-                and existing.video_feedback == video_feedback
-            ):
+            if combo_snapshot_hash(visual_snapshot(existing)) == combo_hash:
+                await bind_creation_step(db, user_id, existing, life_step)
+                await db.commit()
                 return job_view(existing)
         progress = VisualJobProgress(
             generation_id=request_id or uuid4().hex,
@@ -167,6 +158,7 @@ async def create_visual_job(
         )
         db.add(job)
         await db.flush()
+        await bind_creation_step(db, user_id, job, life_step)
         await notify_visuals_updated(db, user_id)
         view = job_view(job)
         await db.commit()
@@ -175,19 +167,20 @@ async def create_visual_job(
 
 
 async def _requested_job(db: AsyncSession, user_id: int, request_id: str) -> VisualJob | None:
-    """受理幂等核对：在该账户最近的工作项里查找同一 request_id 的制作进度。"""
-
-    rows = await db.scalars(
+    """受理幂等核对：步骤记录请求与工作项的绑定，取消清除制作草稿后仍能返回原受理结果。"""
+    step = await read_step_by_key_in_session(db, user_id, request_id)
+    job_id = step.business_ref.get("visual_job_id") if step is not None else None
+    if isinstance(job_id, int):
+        return await db.scalar(select(VisualJob).where(VisualJob.user_id == user_id, VisualJob.id == job_id))
+    return await db.scalar(
         select(VisualJob)
-        .where(VisualJob.user_id == user_id, VisualJob.progress_json.is_not(None))
+        .where(
+            VisualJob.user_id == user_id,
+            cast(VisualJob.progress_json, JSONB)["generation_id"].astext == request_id,
+        )
         .order_by(VisualJob.id.desc())
-        .limit(200),
+        .limit(1)
     )
-    for job in rows:
-        progress = visual_progress(job)
-        if progress is not None and progress.generation_id == request_id:
-            return job
-    return None
 
 
 async def regenerate_visual(
@@ -477,7 +470,6 @@ async def resume_job(user_id: int, job_id: int) -> VisualJobView:
         job = await visual_job_row(db, user_id, job_id, lock=True)
         progress = visual_progress(job)
         was_failed = job.state == "failed"
-        generation_id = progress.generation_id if progress is not None else None
         if job.state == "running":
             return job_view(job)
         if job.state in {"succeeded", "cancelled"}:
@@ -508,9 +500,9 @@ async def resume_job(user_id: int, job_id: int) -> VisualJobView:
         job.state, job.stage, job.error = "running", "prepare", None
         await notify_visuals_updated(db, user_id)
         view = job_view(job)
+        if was_failed:
+            await restart_visual_steps(db, user_id, job)
         await db.commit()
-    if was_failed:
-        await _restart_life_step(user_id, generation_id, job_id=job_id)
     schedule_visual_job(user_id, job_id, allow_model_steps=allow_model_steps)
     return view
 
@@ -524,19 +516,13 @@ async def cancel_job(user_id: int, job_id: int) -> VisualJobView:
         life_step_key = progress.generation_id if progress is not None else None
         await discard_job_draft(db, user_id, job)
         job.state, job.stage, job.error = "cancelled", "cancelled", None
+        await settle_visual_steps(db, user_id, job, generation_id=life_step_key)
         await notify_visuals_updated(db, user_id)
+        await db.flush()
+        await db.refresh(job)
         view = job_view(job)
         await db.commit()
     cancel_visual_job(job_id)
-    if life_step_key is not None:
-        try:
-            await settle_step_by_key(user_id, life_step_key, state="cancelled", error="visual job cancelled")
-        except Exception:
-            logger.warning(
-                "visuals: cancelled job life step settlement failed",
-                extra={"user_id": user_id, "job_id": job_id},
-                exc_info=True,
-            )
     return view
 
 
@@ -554,7 +540,6 @@ async def retry_job(user_id: int, job_id: int) -> VisualJobView:
             raise VisualStateError("供应商提交结果尚未确认，请先核对结果或放弃本次制作")
         if progress is None:
             raise VisualStateError("制作草稿已失效")
-        generation_id = progress.generation_id
         if progress.failure_reason == "activity_unsupported":
             return job_view(job)
         new_image = job.state == "failed" and (
@@ -575,12 +560,12 @@ async def retry_job(user_id: int, job_id: int) -> VisualJobView:
             job.state, job.stage, job.error = "running", "repairing", None
             await notify_visuals_updated(db, user_id)
             view = job_view(job)
+            await restart_visual_steps(db, user_id, job)
             await db.commit()
         else:
             view = None
     if view is None:
         return await resume_job(user_id, job_id)
-    await _restart_life_step(user_id, generation_id, job_id=job_id)
     schedule_visual_job(user_id, job_id)
     return view
 

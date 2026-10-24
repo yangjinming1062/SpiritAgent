@@ -6,7 +6,7 @@
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .queries import empty_state_view, get_life_state_view, list_events, list_pursuits
+from .queries import empty_state_view, get_life_state_view, get_pursuit, list_events, list_pursuits, pursuit_view
 from .schemas import LifeContext
 
 
@@ -21,6 +21,10 @@ async def read_life_context_in_session(
 
     state = await get_life_state_view(db, user_id) or empty_state_view(user_id)
     pursuits = await list_pursuits(db, user_id, status="active", limit=pursuit_limit)
+    if state.active_pursuit_id is not None and all(item.id != state.active_pursuit_id for item in pursuits.items):
+        focused = await get_pursuit(db, user_id, state.active_pursuit_id)
+        if focused is not None and focused.status == "active":
+            pursuits.items = [pursuit_view(focused), *pursuits.items[: max(0, pursuit_limit - 1)]]
     events = await list_events(db, user_id, limit=event_limit)
     return LifeContext(
         state=state,

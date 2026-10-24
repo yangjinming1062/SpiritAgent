@@ -1,6 +1,7 @@
 """只读查询；调用方不直接读取 Life ORM。"""
 
 import json
+from collections.abc import Collection
 from datetime import datetime
 
 from infrastructure.text import utc_now
@@ -9,8 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import LifeEvent, LifePursuit, LifeState, LifeStep
 from .schemas import (
+    EVIDENCE_EVENT_KINDS,
+    EVIDENCE_EVENTS_PER_PURSUIT,
+    UNRESOLVED_STEP_STATES,
     LifeEventListResponse,
     LifeEventView,
+    LifePursuitEvidence,
     LifePursuitListResponse,
     LifePursuitView,
     LifeStateView,
@@ -120,6 +125,64 @@ async def get_life_state_view(db: AsyncSession, user_id: int) -> LifeStateView |
 
 async def get_pursuit(db: AsyncSession, user_id: int, pursuit_id: int) -> LifePursuit | None:
     return await db.scalar(select(LifePursuit).where(LifePursuit.user_id == user_id, LifePursuit.id == pursuit_id))
+
+
+async def due_review_user_ids(db: AsyncSession, user_ids: Collection[int], now: datetime) -> set[int]:
+    """缺少生活状态的就绪账户也需要首次判断。"""
+    if not user_ids:
+        return set()
+    waiting = set(
+        await db.scalars(
+            select(LifeState.user_id).where(
+                LifeState.user_id.in_(user_ids),
+                LifeState.next_review_at > now,
+            )
+        )
+    )
+    return set(user_ids) - waiting
+
+
+async def pursuit_evidence(
+    db: AsyncSession,
+    user_id: int,
+    pursuit_ids: Collection[int],
+) -> LifePursuitEvidence:
+    """按事项补充未解决步骤与可引用的结果依据。"""
+    if not pursuit_ids:
+        return LifePursuitEvidence()
+    steps = await db.scalars(
+        select(LifeStep)
+        .where(
+            LifeStep.user_id == user_id,
+            LifeStep.pursuit_id.in_(pursuit_ids),
+            LifeStep.state.in_(UNRESOLVED_STEP_STATES),
+        )
+        .order_by(LifeStep.pursuit_id, LifeStep.id)
+    )
+    ranked = (
+        select(
+            LifeEvent.id,
+            func.row_number()
+            .over(partition_by=LifeEvent.pursuit_id, order_by=(LifeEvent.occurred_at.desc(), LifeEvent.id.desc()))
+            .label("position"),
+        )
+        .where(
+            LifeEvent.user_id == user_id,
+            LifeEvent.pursuit_id.in_(pursuit_ids),
+            LifeEvent.subject == "companion",
+            LifeEvent.is_meaningful.is_(True),
+            LifeEvent.kind.in_(EVIDENCE_EVENT_KINDS),
+            LifeEvent.result_ref_json != "{}",
+        )
+        .subquery()
+    )
+    events = await db.scalars(
+        select(LifeEvent)
+        .join(ranked, LifeEvent.id == ranked.c.id)
+        .where(ranked.c.position <= EVIDENCE_EVENTS_PER_PURSUIT)
+        .order_by(LifeEvent.pursuit_id, LifeEvent.occurred_at.desc(), LifeEvent.id.desc())
+    )
+    return LifePursuitEvidence(steps=[step_view(row) for row in steps], events=[event_view(row) for row in events])
 
 
 async def list_pursuits(

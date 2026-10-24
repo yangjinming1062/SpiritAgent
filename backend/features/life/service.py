@@ -11,7 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import LifeEvent, LifePursuit, LifeState, LifeStep
 from .ports import project_life_event
-from .schemas import LifeDecisionRequest, LifeEventInput
+from .schemas import (
+    EVIDENCE_EVENT_KINDS,
+    TERMINAL_STEP_STATES,
+    UNRESOLVED_STEP_STATES,
+    LifeDecisionRequest,
+    LifeEventInput,
+)
 
 
 class LifeStateConflictError(ValueError):
@@ -85,24 +91,20 @@ async def get_or_create_state(db: AsyncSession, user_id: int, *, lock: bool = Fa
     return row
 
 
-async def apply_decision(db: AsyncSession, user_id: int, decision: LifeDecisionRequest) -> LifeState:
-    row = await get_or_create_state(db, user_id, lock=True)
+def apply_decision(row: LifeState, decision: LifeDecisionRequest) -> None:
     if row.revision != decision.expected_revision:
         raise LifeStateConflictError("生活状态已在其他流程更新，请重新读取后重试")
-    scene_changed = decision.scene_changed or decision.current_scene is not None
-    if decision.current_activity is not None:
-        row.current_activity = decision.current_activity
-    if decision.current_scene is not None:
-        row.current_scene_json = _dump(decision.current_scene)
-    if decision.mood is not None:
-        row.mood = decision.mood
+    if decision.operation != "keep":
+        if decision.current_activity is not None:
+            row.current_activity = decision.current_activity
+        if decision.current_scene is not None and decision.current_scene != json.loads(row.current_scene_json or "{}"):
+            row.current_scene_json = _dump(decision.current_scene)
+            row.scene_revision += 1
+        if decision.mood is not None:
+            row.mood = decision.mood
     if decision.next_review_at is not None:
         row.next_review_at = decision.next_review_at
     row.revision += 1
-    if scene_changed:
-        row.scene_revision += 1
-    await db.flush()
-    return row
 
 
 async def set_mood(db: AsyncSession, user_id: int, mood: str) -> None:
@@ -121,6 +123,7 @@ async def ensure_pursuit(
     desired_result: str = "",
     idempotency_key: str | None = None,
 ) -> LifePursuit:
+    state = await get_or_create_state(db, user_id, lock=True)
     if not title.strip():
         raise LifeInputError("持续事项标题不能为空")
     key = idempotency_key.strip() if idempotency_key else None
@@ -140,9 +143,9 @@ async def ensure_pursuit(
         reason=reason,
         desired_result=desired_result,
     )
-    db.add(row)
     try:
         async with db.begin_nested():
+            db.add(row)
             await db.flush()
     except IntegrityError:
         if not key:
@@ -153,11 +156,132 @@ async def ensure_pursuit(
         if existing is not None:
             return existing
         raise
-    state = await get_or_create_state(db, user_id, lock=True)
     if state.active_pursuit_id is None:
         state.active_pursuit_id = row.id
         state.revision += 1
     return row
+
+
+async def _evidence_events(
+    db: AsyncSession,
+    user_id: int,
+    pursuit: LifePursuit,
+    event_ids: set[int],
+) -> list[LifeEvent]:
+    if not event_ids:
+        return []
+    events = list(await db.scalars(select(LifeEvent).where(LifeEvent.user_id == user_id, LifeEvent.id.in_(event_ids))))
+    if len(events) != len(event_ids):
+        raise LifeInputError("生活结果证据不存在或不属于当前账户")
+    for event in events:
+        if (
+            event.subject != "companion"
+            or not event.is_meaningful
+            or event.pursuit_id not in (None, pursuit.id)
+            or event.kind not in EVIDENCE_EVENT_KINDS
+            or not json.loads(event.result_ref_json or "{}")
+        ):
+            raise LifeInputError("事项证据必须是实际完成的步骤或已发布结果")
+    step_ids = {event.step_id for event in events if event.kind == "life.step.completed"}
+    if step_ids and step_ids != set(
+        await db.scalars(
+            select(LifeStep.id).where(
+                LifeStep.user_id == user_id,
+                LifeStep.id.in_(step_ids),
+                LifeStep.pursuit_id == pursuit.id,
+                LifeStep.state == "completed",
+            )
+        )
+    ):
+        raise LifeInputError("步骤尚未完成或不属于当前事项")
+    return events
+
+
+async def _has_unresolved_steps(db: AsyncSession, user_id: int, pursuit_id: int) -> bool:
+    return (
+        await db.scalar(
+            select(LifeStep.id)
+            .where(
+                LifeStep.user_id == user_id,
+                LifeStep.pursuit_id == pursuit_id,
+                LifeStep.state.in_(UNRESOLVED_STEP_STATES),
+            )
+            .limit(1)
+        )
+        is not None
+    )
+
+
+async def _latest_active_pursuit_id(db: AsyncSession, user_id: int, *, exclude: int) -> int | None:
+    return await db.scalar(
+        select(LifePursuit.id)
+        .where(LifePursuit.user_id == user_id, LifePursuit.status == "active", LifePursuit.id != exclude)
+        .order_by(LifePursuit.updated_at.desc(), LifePursuit.id.desc())
+        .limit(1)
+    )
+
+
+async def advance_pursuit(db: AsyncSession, user_id: int, decision: LifeDecisionRequest) -> LifePursuit:
+    state = await get_or_create_state(db, user_id, lock=True)
+    pursuit = await db.scalar(
+        select(LifePursuit)
+        .where(
+            LifePursuit.user_id == user_id,
+            LifePursuit.id == decision.pursuit_id,
+        )
+        .with_for_update()
+    )
+    if pursuit is None:
+        raise LifeInputError("持续事项不存在或不属于当前账户")
+    completing = decision.operation == "complete_pursuit"
+    if completing and pursuit.status == "completed":
+        return pursuit
+    if pursuit.status != "active":
+        raise LifeInputError("只能推进进行中的持续事项")
+    evidence_ids = set(decision.evidence_event_ids)
+    evidence = await _evidence_events(db, user_id, pursuit, evidence_ids)
+    if decision.progress is not None and decision.progress != pursuit.progress and not evidence:
+        raise LifeInputError("更新完成进度需要真实结果证据")
+    if completing:
+        if not evidence or not (decision.progress or "").strip():
+            raise LifeInputError("完成事项需要真实结果证据和完成总结")
+        if await _has_unresolved_steps(db, user_id, pursuit.id):
+            raise LifeInputError("事项仍有未完成或结果未知的步骤")
+    if decision.progress is not None:
+        pursuit.progress = decision.progress
+    if decision.next_step is not None:
+        pursuit.next_step = decision.next_step
+    if completing:
+        pursuit.status = "completed"
+        pursuit.completed_at = utc_now()
+        pursuit.next_step = ""
+        pursuit.result_ref_json = _dump(
+            {
+                "event_ids": sorted(evidence_ids),
+                "results": [json.loads(event.result_ref_json) for event in evidence],
+            }
+        )
+        if state.active_pursuit_id == pursuit.id:
+            state.active_pursuit_id = await _latest_active_pursuit_id(db, user_id, exclude=pursuit.id)
+    else:
+        state.active_pursuit_id = pursuit.id
+    await db.flush()
+    await record_event(
+        db,
+        user_id,
+        LifeEventInput(
+            event_key=f"pursuit:{pursuit.id}:completed"
+            if completing
+            else f"pursuit:{pursuit.id}:revision:{state.revision}:progressed",
+            kind="life.pursuit.completed" if completing else "life.pursuit.progressed",
+            source="life_decision",
+            pursuit_id=pursuit.id,
+            fact={"title": pursuit.title, "progress": pursuit.progress, "next_step": pursuit.next_step},
+            result_ref=json.loads(pursuit.result_ref_json) if completing else {"event_ids": sorted(evidence_ids)},
+            is_meaningful=bool(evidence),
+        ),
+    )
+    return pursuit
 
 
 async def create_step(
@@ -169,6 +293,7 @@ async def create_step(
     description: str,
     pursuit_id: int | None = None,
 ) -> LifeStep:
+    state = await get_or_create_state(db, user_id, lock=True)
     if not idempotency_key.strip():
         raise LifeInputError("生活步骤必须有幂等键")
     existing = await db.scalar(
@@ -178,10 +303,16 @@ async def create_step(
         return existing
     if (
         pursuit_id is not None
-        and await db.scalar(select(LifePursuit.id).where(LifePursuit.user_id == user_id, LifePursuit.id == pursuit_id))
+        and await db.scalar(
+            select(LifePursuit.id).where(
+                LifePursuit.user_id == user_id,
+                LifePursuit.id == pursuit_id,
+                LifePursuit.status == "active",
+            )
+        )
         is None
     ):
-        raise LifeInputError("持续事项不属于当前账户")
+        raise LifeInputError("持续事项不存在、不属于当前账户或已结束")
     row = LifeStep(
         user_id=user_id,
         pursuit_id=pursuit_id,
@@ -189,9 +320,9 @@ async def create_step(
         kind=kind,
         description=description,
     )
-    db.add(row)
     try:
         async with db.begin_nested():
+            db.add(row)
             await db.flush()
     except IntegrityError:
         existing = await db.scalar(
@@ -200,6 +331,8 @@ async def create_step(
         if existing is not None:
             return existing
         raise
+    state.revision += 1
+    await db.flush()
     return row
 
 
@@ -240,9 +373,9 @@ async def record_event(db: AsyncSession, user_id: int, event: LifeEventInput) ->
         result_ref_json=_dump(event.result_ref),
         is_meaningful=event.is_meaningful,
     )
-    db.add(row)
     try:
         async with db.begin_nested():
+            db.add(row)
             await db.flush()
     except IntegrityError:
         existing = await db.scalar(
@@ -270,22 +403,26 @@ async def finish_step(
     progress: str | None = None,
     next_step: str | None = None,
 ) -> LifeStep:
+    life_state = await get_or_create_state(db, user_id, lock=True)
+    if state not in TERMINAL_STEP_STATES:
+        raise LifeInputError("不支持的步骤终态")
     row = await db.scalar(select(LifeStep).where(LifeStep.user_id == user_id, LifeStep.id == step_id).with_for_update())
     if row is None:
         raise LifeInputError("生活步骤不存在")
-    if row.state in {"completed", "failed", "cancelled", "unknown"}:
+    if row.state in {"completed", "cancelled"} or (row.state in {"failed", "unknown"} and state != "cancelled"):
         return row
     row.state = state
     row.result_ref_json = _dump(result_ref or {})
     row.error = error
     row.finished_at = utc_now()
+    life_state.revision += 1
     if row.pursuit_id is not None and state in {"completed", "failed", "cancelled"}:
         pursuit = await db.scalar(
             select(LifePursuit)
             .where(LifePursuit.user_id == user_id, LifePursuit.id == row.pursuit_id)
             .with_for_update(),
         )
-        if pursuit is not None:
+        if pursuit is not None and pursuit.status == "active":
             if progress is not None:
                 pursuit.progress = progress
             elif state == "completed":
@@ -306,6 +443,7 @@ async def start_step(
     business_ref: dict | None = None,
     restart: bool = False,
 ) -> LifeStep:
+    life_state = await get_or_create_state(db, user_id, lock=True)
     row = await db.scalar(
         select(LifeStep).where(LifeStep.user_id == user_id, LifeStep.id == step_id).with_for_update(),
     )
@@ -313,6 +451,8 @@ async def start_step(
         raise LifeInputError("生活步骤不存在")
     was_failed = row.state == "failed"
     if row.state in {"completed", "cancelled", "unknown"} or (was_failed and not restart):
+        return row
+    if row.state == "running" and (business_ref is None or json.loads(row.business_ref_json or "{}") == business_ref):
         return row
     row.state = "running"
     row.started_at = row.started_at or utc_now()
@@ -322,5 +462,6 @@ async def start_step(
         row.result_ref_json = "{}"
     if business_ref is not None:
         row.business_ref_json = _dump(business_ref)
+    life_state.revision += 1
     await db.flush()
     return row

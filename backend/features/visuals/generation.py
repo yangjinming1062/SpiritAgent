@@ -42,7 +42,7 @@ from features.assets.lifecycle import cleanup_asset_directories_after_task
 from features.companion.proactive_runtime import get_presentation_snapshot
 from features.configuration.settings.values import get_user_setting
 from features.life.schemas import LifeEventInput
-from features.life.use_cases import accept_event, settle_step_by_key
+from features.life.use_cases import accept_event_in_session
 from features.media.chain import (
     MEDIA_IDENTITY_ACCEPT_SCORE,
     FrozenMediaProvider,
@@ -83,6 +83,7 @@ from .creation import (
     review_existing_opening,
 )
 from .geometry import probe_visual_image, visual_aspect_matches, visual_aspect_ratio
+from .life import settle_visual_steps
 from .models import VisualItem, VisualJob
 from .naming import schedule_visual_title
 from .ports import notify_visual_ready
@@ -1182,43 +1183,24 @@ async def _finish_job(
                 and get_presentation_snapshot(user_id) is not None
             ):
                 await dispatch_play_command(db, user_id, published, source="restore")
+        await accept_event_in_session(
+            db,
+            user_id,
+            LifeEventInput(
+                event_key=f"visual:{job.id}:{published.id}:{published.version}",
+                kind="visual.ready",
+                source="visuals",
+                fact={"visual_id": published.id, "media_kind": published.media_kind, "version": published.version},
+                result_ref={"visual_id": published.id, "version": published.version},
+            ),
+        )
+        await settle_visual_steps(
+            db, user_id, job, result_ref={"visual_id": published.id, "version": published.version}
+        )
         await notify_visuals_updated(db, user_id)
         await db.commit()
     if published is not None and allow_followup_work and not published.title.strip():
         schedule_visual_title(user_id, published.id)
-    if published is not None:
-        try:
-            await accept_event(
-                user_id,
-                LifeEventInput(
-                    event_key=f"visual:{job.id}:{published.id}:{published.version}",
-                    kind="visual.ready",
-                    source="visuals",
-                    fact={"visual_id": published.id, "media_kind": published.media_kind, "version": published.version},
-                    result_ref={"visual_id": published.id, "version": published.version},
-                ),
-            )
-        except Exception:
-            logger.warning(
-                "visuals: life event recording failed",
-                extra={"user_id": user_id, "visual_id": published.id},
-                exc_info=True,
-            )
-        try:
-            await settle_step_by_key(
-                user_id,
-                progress.generation_id,
-                state="completed",
-                result_ref={"visual_id": published.id, "version": published.version},
-                progress=f"已完成影像：{published.title or published.id}",
-                next_step="结合生活情境决定是否呈现",
-            )
-        except Exception:
-            logger.warning(
-                "visuals: life step settlement failed",
-                extra={"user_id": user_id, "visual_id": published.id},
-                exc_info=True,
-            )
     if published is not None and allow_followup_work and job.purpose == "create":
         notify_visual_ready(user_id)
 
@@ -1710,17 +1692,9 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
                 row.progress_json = saved.model_dump_json()
                 row.state = "unknown" if saved.submission_unknown else "failed"
                 row.error = _visual_job_error(exc, saved, stage=row.stage)
+                await settle_visual_steps(db, user_id, row)
                 await notify_visuals_updated(db, user_id)
                 await db.commit()
-                try:
-                    await settle_step_by_key(
-                        user_id,
-                        generation_id,
-                        state="unknown" if saved.submission_unknown else "failed",
-                        error=row.error,
-                    )
-                except Exception:
-                    logger.warning("visuals: failed life step settlement", extra={"job_id": job_id}, exc_info=True)
                 if allow_model_steps and row.result_image_id is not None:
                     notify_visual_ready(user_id)
     finally:
@@ -1827,6 +1801,7 @@ async def resume_visual_jobs(user_id: int | None = None) -> None:
                     if not progress or not progress.submission_unknown
                     else _unknown_submission_message(progress)
                 )
+                await settle_visual_steps(db, row.user_id, current)
                 await notify_visuals_updated(db, row.user_id)
                 await db.commit()
 
