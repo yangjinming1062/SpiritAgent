@@ -14,6 +14,7 @@
 | 伙伴声音、音色设计与克隆 | [voice-manager.tsx](renderer/app/features/companion/voice-manager.tsx) 供伙伴页与首次引导共用；录音和上传见 [use-voice-sample.ts](renderer/app/features/companion/use-voice-sample.ts)，跨层约束见 [音色设计与克隆](../docs/PROTOCOL.md#音色设计与克隆) |
 | 场景与背景 | [scene-store.ts](renderer/modules/scene/scene-store.ts)、[scene-backdrop.tsx](renderer/app/features/scene/scene-backdrop.tsx)；后端沿 [场景改动链](../backend/features/scenes/README.md#场景改动链) 核对 |
 | 窗口、拖拽、主题与交互 | [主进程窗口](main/README.md#窗口与几何)、[渲染层呈现](renderer/README.md#角色呈现契约) |
+| 生活近况与持续事项 | [生活模块](renderer/modules/life/)、[独立生活区与页面](renderer/app/features/life/)；窗口外壳装配生活区，聊天组件保持纯对话 |
 | 主窗口、导航与统一设置 | [main-root.tsx](renderer/app/windows/main/main-root.tsx)、[伙伴入口](renderer/app/features/companion/companion-page.tsx)、[动态](renderer/app/features/posts/posts-page.tsx)、[日记](renderer/app/features/diary/diary-page.tsx)、[app-settings.tsx](renderer/app/features/settings/app-settings.tsx)；导航归 `app/navigation`，跨模式视图快照归 `main/ipc/ui-state.ts` |
 | 伙伴显示、比例与主动偏好 | [companion-page.tsx](renderer/app/features/settings/companion-page.tsx)、[interaction-page.tsx](renderer/app/features/settings/interaction-page.tsx) → [spatial.ts](renderer/modules/character/spatial.ts)、[activity.ts](renderer/modules/character/activity.ts) |
 | 桌面模式、影像与 Dock | [desktop-presentation.ts](main/lifecycle/desktop-presentation.ts)、[desktop-dock.ts](main/ipc/desktop-dock.ts)、[影像模块](renderer/modules/visuals/)、[desktop renderer](renderer/app/windows/desktop/)、[Windows 宿主](desktop-windows/README.md)、[macOS 模块](desktop-macos/README.md) |

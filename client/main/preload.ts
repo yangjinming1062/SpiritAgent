@@ -90,8 +90,6 @@ const desktopBridge = {
       subscribe(IPC.event.uiStateRequest, callback)
   },
   presentation: {
-    companionActivity: (activity: InvokePayload<typeof IPC.invoke.presentationCompanionActivity>) =>
-      invoke(IPC.invoke.presentationCompanionActivity, activity),
     setIgnoreMouseEvents: (payload: InvokePayload<typeof IPC.invoke.presentationSetIgnoreMouseEvents>) =>
       invoke(IPC.invoke.presentationSetIgnoreMouseEvents, payload),
     getState: () => invoke(IPC.invoke.presentationGetState),
@@ -232,6 +230,8 @@ const desktopBridge = {
     onNavigate: (cb: EventCallback<typeof IPC.event.surfaceNavigate>) => subscribe(IPC.event.surfaceNavigate, cb),
     open: (payload: DesktopSurfaceOpenPayload) => invoke(IPC.invoke.surfaceOpen, payload),
     setCompanion: (preference: SurfaceCompanionPreference) => invoke(IPC.invoke.surfaceSetCompanion, preference),
+    companionVisibility: (payload: InvokePayload<typeof IPC.invoke.surfaceCompanionVisibility>) =>
+      invoke(IPC.invoke.surfaceCompanionVisibility, payload),
     setIgnoreMouseEvents: (payload: InvokePayload<typeof IPC.invoke.surfaceSetIgnoreMouseEvents>) =>
       invoke(IPC.invoke.surfaceSetIgnoreMouseEvents, payload)
   },
@@ -251,9 +251,6 @@ const desktopBridge = {
       subscribe(IPC.event.spriteDefaultScaleChanged, cb),
     setDefaultScale: (payload: DesktopSpriteScalePayload) => ipcRenderer.send(IPC.send.spriteSetDefaultScale, payload),
     getPosition: () => invoke(IPC.invoke.spriteGetPosition),
-    getWindowScene: () => invoke(IPC.invoke.spriteGetWindowScene),
-    moveToDisplay: (point: InvokePayload<typeof IPC.invoke.spriteMoveToDisplay>) =>
-      invoke(IPC.invoke.spriteMoveToDisplay, point),
     hide: () => invoke(IPC.invoke.spriteHide),
     moveToCursorDisplay: () => invoke(IPC.invoke.spriteMoveToCursorDisplay),
     setIgnoreMouseEvents: (payload: InvokePayload<typeof IPC.invoke.spriteSetIgnoreMouseEvents>) =>

@@ -104,22 +104,6 @@
   background: rgb(0 0 0 / 12%);
 }
 
-.error {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--ui-line-hairline);
-  color: var(--ui-text-muted);
-  background: var(--ui-app-bg);
-  font-size: 12px;
-}
-
-.error span {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
 .surface {
   padding: 20px max(20px, calc((100% - 880px) / 2));
   font-size: 15px;

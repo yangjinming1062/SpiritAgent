@@ -7,7 +7,7 @@ import { $surfaceOpen } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
 import { clamp } from '@runtime'
 
-// 静态形象未就绪时的兜底「蛋」：呼吸 / 裂纹闪光 / 注视指针，并显示真实状态与对应恢复入口（DESIGN「呈现与降级」）。桌面精灵与完整入口的侧边伙伴共用；Installer 端的 Egg 组件是安装流程动画，与此无关。
+// 静态形象未就绪时的兜底「蛋」：显示真实状态与对应恢复入口。精灵窗与内嵌生活区共用；Installer 的 Egg 仅用于安装动画。
 const CRACK_PATHS = [
   'M 160 70 L 148 95 L 155 115 L 140 135',
   'M 230 140 L 205 148 L 195 135 L 180 155',
@@ -222,7 +222,7 @@ export function EggStage({
               onPointerDown={e => e.stopPropagation()}
               type="button"
             >
-              {status === 'unavailable' ? dict.companion.egg.openWardrobe : dict.companion.egg.retry}
+              {status === 'unavailable' ? dict.companion.egg.openVisuals : dict.companion.egg.retry}
             </button>
           )}
         </div>

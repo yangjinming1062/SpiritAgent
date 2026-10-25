@@ -88,14 +88,6 @@ export function resolveApiRequest<K extends ApiOperationKey>(operation: K, input
   return { policy, path, method: policy.method, body: input.body }
 }
 
-export function requestApi<K extends ApiOperationKey>(
-  transport: ApiTransport,
-  operation: K,
-  ...args: ApiArguments<K>
-): Promise<ApiResponse<K>> {
-  return transport.invoke(operation, ...args)
-}
-
 function requestBody(body: unknown, encoding: HttpEncoding, headers: Headers): RequestInit['body'] {
   if (body === undefined) {
     return undefined

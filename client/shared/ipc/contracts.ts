@@ -9,7 +9,6 @@ import type {
   DesktopBackground,
   DesktopBackgroundPlayback,
   DesktopBackgroundRequest,
-  DesktopCompanionActivityState,
   DesktopTrayLayout,
   DockCatalog,
   DockState,
@@ -18,14 +17,13 @@ import type {
   PresentationState,
   StageActivity
 } from './desktop-presentation'
-import type { CompanionEditorUiSnapshot, MainConversationDraftSnapshot, VisualsUiSnapshot } from './ui-state'
-export {
-  APP_PAGES,
-  COMPANION_SECTIONS,
-  DESKTOP_COMPANION_ACTIVITY_PRIORITY,
-  normalizeAppNavigation,
-  SETTINGS_SECTIONS
-} from './desktop-presentation'
+import type {
+  CompanionEditorUiSnapshot,
+  LifeUiSnapshot,
+  MainConversationDraftSnapshot,
+  VisualsUiSnapshot
+} from './ui-state'
+export { APP_PAGES, COMPANION_SECTIONS, normalizeAppNavigation, SETTINGS_SECTIONS } from './desktop-presentation'
 export type {
   AppNavigationTarget,
   AppPage,
@@ -34,7 +32,6 @@ export type {
   DesktopBackground,
   DesktopBackgroundPlayback,
   DesktopBackgroundRequest,
-  DesktopCompanionActivityState,
   DesktopMediaBytes,
   DesktopMediaReference,
   DesktopTrayLayout,
@@ -52,8 +49,8 @@ export type {
   SettingsSection,
   StageActivity
 } from './desktop-presentation'
-export type { CompanionEditorUiSnapshot, VisualsUiSnapshot } from './ui-state'
-export { isCompanionEditorUiSnapshot, isVisualsUiSnapshot } from './ui-state'
+export type { CompanionEditorUiSnapshot, LifeUiSnapshot, VisualsUiSnapshot } from './ui-state'
+export { isCompanionEditorUiSnapshot, isLifeUiSnapshot, isVisualsUiSnapshot } from './ui-state'
 
 // SpiritAgent Electron IPC 契约 —— 主进程与渲染进程的唯一真理源。通过 `@ipc/contracts` 别名同时被 `client/main/preload.ts` 和 `client/renderer/shared/types/global.d.ts` 导入。在此处新增或重命名通道/载荷字段，会在两侧类型检查时立即报错。
 
@@ -184,6 +181,7 @@ export type DesktopSurfaceOpenPayload = AppNavigationTarget
 
 export interface MainUiStateData {
   navigation: AppNavigationTarget
+  life: LifeUiSnapshot
   conversation: MainConversationDraftSnapshot
   visuals: VisualsUiSnapshot
   companionEditors: CompanionEditorUiSnapshot
@@ -224,9 +222,7 @@ export interface SurfaceCompanionPreference {
 export interface SurfaceCompanionState {
   preference: SurfaceCompanionPreference
   visible: boolean
-  slotWidth: number
-  outerWidth: number
-  hiddenReason: 'edge' | 'maximized' | 'minimized' | 'screen-locked' | 'window-hidden' | null
+  hiddenReason: 'layout' | 'minimized' | 'screen-locked' | 'window-hidden' | null
 }
 
 export interface DesktopSurfaceChangedEvent {
@@ -250,36 +246,10 @@ export interface DesktopSpriteScalePayload {
 export interface DesktopSpritePosition {
   x: number
   y: number
-  screenEdge?: { side: 'left' | 'right'; yRatio: number }
 }
 
 export interface DesktopSpriteRestPosition extends DesktopSpritePosition {
   origin?: { x: number; y: number }
-}
-
-export interface DesktopWindowSceneSnapshot {
-  runnerInstanceId: string
-  viewport: { displayId: number; height: number; scaleFactor: number; width: number; x: number; y: number }
-  windows: Array<{
-    focused: boolean
-    h: number
-    id: string
-    displayId: number
-    pid: number
-    visible: boolean
-    w: number
-    x: number
-    y: number
-    zOrder: number
-  }>
-}
-
-// 屏幕矩形：入参为 Runner 原生屏幕坐标，出参为精灵视口内 DIP 坐标。
-export interface DesktopScreenRect {
-  h: number
-  w: number
-  x: number
-  y: number
 }
 
 export const SPRITE_SCALE_LIMITS = { max: 3, min: 0.3 } as const
@@ -470,11 +440,6 @@ export interface DesktopPresenceRequest {
 
 // 1. 请求-响应（渲染进程 -> 主进程，通过 ipcRenderer.invoke / ipcMain.handle）
 export interface IpcInvokeContract {
-  'spiritagent:presentation:companion-activity': (activity: {
-    state: DesktopCompanionActivityState
-    voicePreparing: boolean
-    authSessionId: string
-  }) => void
   'spiritagent:presentation:set-ignore-mouse-events': (payload: { ignore: boolean; forward?: boolean }) => void
   'spiritagent:presentation:get-state': () => Promise<PresentationState>
   'spiritagent:presentation:request-accessibility': () => Promise<PresentationState>
@@ -535,6 +500,10 @@ export interface IpcInvokeContract {
   'spiritagent:surface:set-companion': (
     preference: SurfaceCompanionPreference
   ) => DesktopSurfaceChangedEvent | Promise<DesktopSurfaceChangedEvent>
+  'spiritagent:surface:companion-visibility': (payload: {
+    authSessionId: string
+    visible: boolean
+  }) => DesktopSurfaceChangedEvent
   'spiritagent:surface:set-ignore-mouse-events': (payload: {
     forward?: boolean
     ignore: boolean
@@ -668,11 +637,6 @@ export interface IpcInvokeContract {
   }) => Promise<void> | void
   'spiritagent:sprite:get-position': () => null | DesktopSpriteRestPosition | Promise<null | DesktopSpriteRestPosition>
   'spiritagent:sprite:set-position': (payload: DesktopSpritePosition) => Promise<void> | void
-  'spiritagent:sprite:get-window-scene': () =>
-    | DesktopWindowSceneSnapshot
-    | null
-    | Promise<DesktopWindowSceneSnapshot | null>
-  'spiritagent:sprite:move-to-display': (point: { x: number; y: number }) => Promise<void> | void
   'spiritagent:sprite:move-to-cursor-display': () =>
     | null
     | { cursor: { x: number; y: number }; from: { x: number; y: number }; to: { x: number; y: number } }
@@ -722,7 +686,6 @@ type IpcSendChannel = keyof IpcSendContract
 // 运行时 channel 常量。用扁平键(camelCase)避免 `Record<string, Record<string, ...>>` 守卫无法适配混合扁平/嵌套 channel 名的结构问题。每个叶子字符串都必须是对应契约接口的合法 key,任何拼写错误立即在 `satisfies` 检查处报错。在 main + preload 中以 `IPC.invoke.authActivate` 等方式使用,完全消除字面量字符串。
 export const IPC = {
   invoke: {
-    presentationCompanionActivity: 'spiritagent:presentation:companion-activity',
     presentationStageActivity: 'spiritagent:presentation:stage-activity',
     presentationSetIgnoreMouseEvents: 'spiritagent:presentation:set-ignore-mouse-events',
     presentationGetState: 'spiritagent:presentation:get-state',
@@ -800,6 +763,7 @@ export const IPC = {
     surfaceIsMaximized: 'spiritagent:surface:is-maximized',
     surfaceGetState: 'spiritagent:surface:get-state',
     surfaceSetCompanion: 'spiritagent:surface:set-companion',
+    surfaceCompanionVisibility: 'spiritagent:surface:companion-visibility',
     surfaceSetIgnoreMouseEvents: 'spiritagent:surface:set-ignore-mouse-events',
     uiStateGet: 'spiritagent:ui-state:get',
     uiStateUpdate: 'spiritagent:ui-state:update',
@@ -820,8 +784,6 @@ export const IPC = {
     spriteSetIgnoreMouseEvents: 'spiritagent:sprite:set-ignore-mouse-events',
     spriteGetPosition: 'spiritagent:sprite:get-position',
     spriteSetPosition: 'spiritagent:sprite:set-position',
-    spriteGetWindowScene: 'spiritagent:sprite:get-window-scene',
-    spriteMoveToDisplay: 'spiritagent:sprite:move-to-display',
     spriteMoveToCursorDisplay: 'spiritagent:sprite:move-to-cursor-display',
     updateCheck: 'spiritagent:update:check',
     updateDownload: 'spiritagent:update:download',

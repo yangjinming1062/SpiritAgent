@@ -15,19 +15,4 @@ export interface SpriteRect {
   bottom: number
 }
 
-export interface ScreenEdge {
-  side: 'left' | 'right'
-  yRatio: number
-}
-
-export type SpatialLocale = 'home' | 'perch' | 'roam' | 'target'
-
-export type Locomotion = 'still' | 'walk' | 'fly' | 'drag'
-
-export interface SpatialLocaleOptions {
-  position?: Position
-  locomotion?: 'walk' | 'fly'
-  instant?: boolean
-  /** 普通与窗口栖息的缩放上限；缺省时不限。 */
-  scaleLimit?: number
-}
+export type Locomotion = 'still' | 'fly' | 'drag'

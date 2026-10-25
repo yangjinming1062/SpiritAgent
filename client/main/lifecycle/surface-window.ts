@@ -1,37 +1,19 @@
 import { type App, BrowserWindow, screen } from 'electron'
 
-import {
-  type DesktopSurfaceOpenPayload,
-  IPC,
-  normalizeAppNavigation,
-  type SurfaceCompanionPreference
-} from '@ipc/contracts'
+import { type DesktopSurfaceOpenPayload, IPC, normalizeAppNavigation } from '@ipc/contracts'
 import { clamp, errorMessage } from '@runtime'
 
 import { sendToWindow } from '../shared/utils'
 
-import {
-  companionSlotMinimum,
-  companionSlotWidth,
-  outerBounds,
-  PANEL_SIZE,
-  preferredCompanionWidth
-} from './surface-companion'
+import { PANEL_SIZE } from './surface-companion'
 import type { SurfacesManager } from './surfaces'
 import type { ZoomPersistence } from './zoom-persistence'
-
-export interface CreatedSurfaceWindow {
-  panel: Electron.Rectangle
-  slotWidth: number
-  win: BrowserWindow
-}
 
 interface SurfaceWindowDeps {
   appName: string
   app: Pick<App, 'dock' | 'isPackaged'>
   getAppIconPath: () => null | string
   getSurfaces: () => null | SurfacesManager
-  getCompanionPreference: () => SurfaceCompanionPreference
   isQuitting: () => boolean
   isMac: boolean
   preloadPath: string
@@ -44,7 +26,7 @@ interface SurfaceWindowDeps {
 }
 
 export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
-  createSurfaceWindow: (payload?: DesktopSurfaceOpenPayload) => Promise<CreatedSurfaceWindow>
+  createSurfaceWindow: (payload?: DesktopSurfaceOpenPayload) => Promise<BrowserWindow>
   navigateSurfaceWindow: (win: BrowserWindow, payload: DesktopSurfaceOpenPayload) => void
 } {
   function surfaceLoadUrl(payload?: DesktopSurfaceOpenPayload): string {
@@ -71,30 +53,26 @@ export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
       }
     }
 
+    if (target.pursuitId) {
+      url.searchParams.set('pursuitId', String(target.pursuitId))
+    }
+
     return url.toString()
   }
 
-  async function createSurfaceWindow(payload?: DesktopSurfaceOpenPayload): Promise<CreatedSurfaceWindow> {
+  async function createSurfaceWindow(payload?: DesktopSurfaceOpenPayload): Promise<BrowserWindow> {
     const defaults = PANEL_SIZE
     const icon = deps.getAppIconPath() || undefined
-    const preference = deps.getCompanionPreference()
     const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea
-    const initialHeight = clamp(defaults.height, defaults.minHeight, wa.height - 16)
-    const desiredSlot = preference.enabled ? preferredCompanionWidth(initialHeight) : 0
-    const minSlot = companionSlotMinimum(desiredSlot)
-    const panelWidth = clamp(defaults.width, defaults.minWidth, wa.width - 16 - minSlot)
-    const availableSlot = Math.max(0, wa.width - 16 - panelWidth)
-    const slotWidth = companionSlotWidth(desiredSlot, availableSlot)
-    const outerWidth = panelWidth + slotWidth
+    const width = clamp(defaults.width, Math.min(defaults.minWidth, wa.width), Math.max(1, wa.width - 16))
+    const height = clamp(defaults.height, Math.min(defaults.minHeight, wa.height), Math.max(1, wa.height - 16))
 
-    const panel = {
-      height: initialHeight,
-      width: panelWidth,
-      x: Math.round(wa.x + Math.max(0, (wa.width - outerWidth) / 2) + (preference.side === 'left' ? slotWidth : 0)),
-      y: Math.round(wa.y + Math.max(0, (wa.height - initialHeight) / 2))
+    const initialBounds = {
+      width,
+      height,
+      x: Math.round(wa.x + Math.max(0, (wa.width - width) / 2)),
+      y: Math.round(wa.y + Math.max(0, (wa.height - height) / 2))
     }
-
-    const initialBounds = outerBounds(panel, preference.side, slotWidth)
 
     // 入口窗用 CSS 大圆角液态玻璃；Windows 亚克力与系统阴影按 HWND 矩形铺底会在圆角四角漏灰，故关掉原生材质/圆角/阴影保持真透明。
     const win = new BrowserWindow({
@@ -168,7 +146,7 @@ export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
       throw error
     }
 
-    return { panel, slotWidth, win }
+    return win
   }
 
   function navigateSurfaceWindow(win: BrowserWindow, payload: DesktopSurfaceOpenPayload): void {

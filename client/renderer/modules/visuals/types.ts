@@ -9,7 +9,6 @@ import type {
   ActionUpdateRequest,
   PlaybackReceiptKind,
   PlaybackStatus,
-  VisualComboSummary,
   VisualDetail,
   VisualItem,
   VisualJob,
@@ -19,7 +18,6 @@ import type {
   VisualJobState,
   VisualListResponse,
   VisualMediaKind,
-  VisualPlayback,
   VisualPresentationUpdate,
   VisualRegenerateRequest
 } from '@protocol'
@@ -35,7 +33,6 @@ export type {
   ActionUpdateRequest,
   PlaybackReceiptKind,
   PlaybackStatus,
-  VisualComboSummary,
   VisualDetail,
   VisualItem,
   VisualJob,
@@ -45,7 +42,6 @@ export type {
   VisualJobState,
   VisualListResponse,
   VisualMediaKind,
-  VisualPlayback,
   VisualPresentationUpdate,
   VisualRegenerateRequest
 }

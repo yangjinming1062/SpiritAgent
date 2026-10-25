@@ -82,7 +82,7 @@ function readPortrait(image: HTMLImageElement, url: string, owner: string): Port
   }
 }
 
-/** 精灵窗与侧边伙伴共用静态立绘；新图解码和 alpha 读取完成后才替换可见图，无图时给出真实兜底状态。 */
+/** 精灵窗与内嵌生活区共用静态立绘；新图解码和 alpha 读取完成后才替换可见图，无图时给出真实兜底状态。 */
 export function OutfitStage({
   contentAlign,
   eggSize,
@@ -118,7 +118,13 @@ export function OutfitStage({
       }
     })
 
-    return () => cancelAnimationFrame(frame)
+    return () => {
+      cancelAnimationFrame(frame)
+
+      if ($stageOutfitPresented.get() === outfit?.path) {
+        $stageOutfitPresented.set(null)
+      }
+    }
   }, [shown, outfit])
 
   const egg: EggStageStatus | null = shown
@@ -304,7 +310,7 @@ export function OutfitStage({
           message={strings.companion.egg[egg]}
           onStatusAction={() => {
             if (egg === 'unavailable') {
-              void requestOpenSurface({ page: 'companion', companionSection: 'wardrobe' })
+              void requestOpenSurface({ page: 'companion', companionSection: 'visuals' })
 
               return
             }

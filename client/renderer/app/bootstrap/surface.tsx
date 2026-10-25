@@ -8,7 +8,6 @@ import { HashRouter } from 'react-router-dom'
 
 import { ProxyGatewayPump } from '@/app/runtime/proxy-runtime'
 import { useAccountLifecycle } from '@/app/workflows/account-lifecycle'
-import { useDesktopCompanionActivityPublisher } from '@/app/workflows/desktop-companion-activity'
 import { hydratePersona, hydratePortrait } from '@/modules/character'
 import { ErrorBoundary } from '@/shared/components/error-boundary'
 import { HapticsProvider } from '@/shared/components/haptics-provider'
@@ -62,7 +61,6 @@ function SurfaceLifecycle({ role }: { role: 'main' | 'desktop' }): React.JSX.Ele
 }
 
 function DesktopLifecycle(): null {
-  useDesktopCompanionActivityPublisher()
   const auth = useStore($auth)
   useWindowMouseCapture(1, {
     releaseDelayMs: 0,

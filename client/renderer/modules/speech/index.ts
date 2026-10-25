@@ -25,6 +25,4 @@ export {
   setVoiceSurfaceMounted,
   toggleVoiceBar
 } from './voice-bar'
-export { VoiceProviderBadge } from './voice-provider-badge'
-export { $voicePreparing, setDesktopVoicePreparing } from './voice-state'
 export { checkVoiceValidity } from './voice-validity'

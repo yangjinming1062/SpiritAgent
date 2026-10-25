@@ -1,4 +1,3 @@
-import { handleLifeUpdated } from '@/modules/character'
 import {
   findConversationRuntime,
   invalidateSessionHistory,
@@ -6,6 +5,7 @@ import {
   onTopicFeedbackUpdated
 } from '@/modules/conversation'
 import { onJournalEvent } from '@/modules/diary'
+import { handleLifeUpdated } from '@/modules/life'
 import { onPostEvent } from '@/modules/posts'
 import { onSceneEvent } from '@/modules/scene'
 import { handleVisualEvent } from '@/modules/visuals'

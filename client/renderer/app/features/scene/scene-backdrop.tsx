@@ -1,37 +1,44 @@
-// 窗口模式的环境来源是当前影像冻结的环境素材；素材缺失时保持透明，不回退到环境库图片。
-
+// 环境与立绘分别确认加载，只有当前可见的冻结来源才参与呈现回执。
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
-import { $windowVisualProjection, useVisualProjection } from '@/app/workflows/visual-presentation'
-import { $noBlur } from '@/shared/lib/apply-no-blur'
+import {
+  $windowScenePresented,
+  $windowVisualProjection,
+  useVisualProjection
+} from '@/app/workflows/visual-presentation'
+import { captureAuthScope } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
-import { cn } from '@/shared/lib/utils'
+import { BTN_SUBTLE } from '@/shared/panel'
 import { backendApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
-import { $theme } from '@/shared/store/theme'
 import { useStrings } from '@/shared/strings'
 
-import { useBakedScene } from './baked-backdrop'
 import styles from './scene-backdrop.module.css'
 
-// 拖拽改尺寸按 64px 网格重烘焙，停稳后吸附回精确尺寸，终态烘焙无偏差。
-const BAKE_SIZE_GRID = 64
-const RESIZE_SETTLE_MS = 200
-
-function useFrozenScene(): { ready: boolean; url: string | null } {
+export function SceneBackdrop(): React.JSX.Element {
+  useVisualProjection()
   const projection = useStore($windowVisualProjection)
   const auth = useStore($auth)
+  const owner = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
   const path = projection?.scene_path ?? null
-  const ready = projection?.ready ?? false
-  const [url, setUrl] = useState<string | null>(null)
+  const [image, setImage] = useState<{ owner: string; path: string; url: string } | null>(null)
+  const [failed, setFailed] = useState(false)
+  const [retry, setRetry] = useState(0)
+  const imageRef = useRef<HTMLImageElement>(null)
+  const strings = useStrings()
+  const shown = image?.owner === owner ? image : null
 
   useEffect(() => {
+    const scope = captureAuthScope()
     let current = true
+    let candidate: HTMLImageElement | null = null
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    setFailed(false)
 
-    if (!path || auth.kind !== 'authenticated') {
-      setUrl(null)
+    if (!owner || !path || !scope) {
+      setImage(null)
 
       return () => {
         current = false
@@ -40,87 +47,77 @@ function useFrozenScene(): { ready: boolean; url: string | null } {
 
     void backendApi()
       .apiAsset({ url: path, preferCache: true })
-      .then(next => {
-        if (current) {
-          setUrl(next)
+      .then(async url => {
+        if (!current || !scope()) {
+          return
+        }
+
+        if (!url) {
+          throw new Error('Frozen scene is unavailable')
+        }
+
+        candidate = new Image()
+        candidate.src = url
+        const decoding = candidate.decode()
+        await new Promise<void>((resolve, reject) => {
+          timeout = setTimeout(() => reject(new Error('Frozen scene decode timed out')), 15000)
+          void decoding.then(resolve, reject)
+        }).finally(() => clearTimeout(timeout))
+
+        if (current && scope()) {
+          setImage({ owner, path, url })
         }
       })
-      .catch(error => log.warn('scene-backdrop', 'Frozen scene asset unavailable', error))
+      .catch(error => {
+        if (current && scope()) {
+          setFailed(true)
+          log.warn('scene-backdrop', 'Frozen scene unavailable', error)
+        }
+      })
 
     return () => {
       current = false
-    }
-  }, [path, auth.kind])
+      clearTimeout(timeout)
 
-  return { ready, url }
-}
-
-export function SceneBackdrop(): React.JSX.Element {
-  useVisualProjection()
-  const { ready, url: bgUrl } = useFrozenScene()
-  const theme = useStore($theme)
-  const noBlur = useStore($noBlur)
-  const t = useStrings().living.sceneBackdrop
-  const [viewport, setViewport] = useState({ height: 0, width: 0 })
-  const rootRef = useRef<HTMLDivElement>(null)
-
-  // 烘焙尺寸按容器 ResizeObserver 跟踪（最大化切换也覆盖），量化与吸附见 BAKE_SIZE_GRID。
-  useEffect(() => {
-    const el = rootRef.current
-
-    if (!el) {
-      return
-    }
-
-    let settleTimer: number | undefined
-
-    const ro = new ResizeObserver(() => {
-      const height = el.clientHeight
-      const width = el.clientWidth
-
-      const quantized = {
-        height: height - (height % BAKE_SIZE_GRID),
-        width: width - (width % BAKE_SIZE_GRID)
+      if (candidate) {
+        candidate.src = ''
       }
+    }
+  }, [owner, path, retry])
 
-      setViewport(previous =>
-        previous.height === quantized.height && previous.width === quantized.width ? previous : quantized
-      )
-
-      window.clearTimeout(settleTimer)
-      settleTimer = window.setTimeout(() => {
-        setViewport({ height, width })
-      }, RESIZE_SETTLE_MS)
-    })
-
-    ro.observe(el)
+  useEffect(() => {
+    if (shown && imageRef.current?.complete && imageRef.current.naturalWidth > 0) {
+      $windowScenePresented.set(shown.path)
+    }
 
     return () => {
-      window.clearTimeout(settleTimer)
-      ro.disconnect()
+      if ($windowScenePresented.get() === shown?.path) {
+        $windowScenePresented.set(null)
+      }
     }
-  }, [])
-
-  const status = bgUrl ? 'ready' : ready ? 'none' : 'pending'
-
-  const baked = useBakedScene(noBlur ? null : bgUrl, viewport.width, viewport.height, theme)
+  }, [shown])
 
   return (
-    <div aria-hidden="true" className={styles.root} ref={rootRef}>
-      <div
-        className={cn(styles.backdropImage, styles[`status_${status}`])}
-        data-baked={baked ? 'true' : undefined}
-        style={
-          baked
-            ? { backgroundImage: `url(${baked.dataUrl})` }
-            : bgUrl
-              ? { backgroundImage: `url(${bgUrl})` }
-              : undefined
-        }
-      />
-      {status === 'pending' && !bgUrl && (
-        <div className={styles.pendingGlass}>
-          <p className={styles.pendingText}>{t.pendingText}</p>
+    <div className={styles.root}>
+      {shown && (
+        <img
+          alt=""
+          className={styles.image}
+          onError={() => {
+            $windowScenePresented.set(null)
+            setFailed(true)
+          }}
+          onLoad={() => $windowScenePresented.set(shown.path)}
+          ref={imageRef}
+          src={shown.url}
+        />
+      )}
+      {failed && (
+        <div className={styles.error} role="alert">
+          <span>{strings.creation.previewFailed}</span>
+          <button className={BTN_SUBTLE} onClick={() => setRetry(value => value + 1)} type="button">
+            {strings.creation.retryLoad}
+          </button>
         </div>
       )}
     </div>

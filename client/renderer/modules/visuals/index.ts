@@ -20,7 +20,6 @@ export type {
   PlaybackReceiptKind,
   PlaybackStatus,
   VisualActualSnapshot,
-  VisualComboSummary,
   VisualDetail,
   VisualItem,
   VisualJob,
@@ -29,7 +28,6 @@ export type {
   VisualJobState,
   VisualListResponse,
   VisualMediaKind,
-  VisualPlayback,
   VisualPlayCommand,
   VisualPresentationUpdate,
   VisualsPresentation

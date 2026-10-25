@@ -1,13 +1,6 @@
 import { type BrowserWindow, type IpcMain, screen, type WebContents } from 'electron'
 
-import {
-  DESKTOP_COMPANION_ACTIVITY_PRIORITY,
-  type DesktopCompanionActivityState,
-  IPC,
-  type PresentationMode,
-  type PresentationState,
-  type StageActivity
-} from '@ipc/contracts'
+import { IPC, type PresentationMode, type PresentationState, type StageActivity } from '@ipc/contracts'
 
 interface PresentationAccess {
   isDesktopSender: (sender: WebContents) => boolean
@@ -16,7 +9,6 @@ interface PresentationAccess {
   backgroundWindow: (sender: WebContents) => BrowserWindow | undefined
   assertSettings: (sender: WebContents) => void
   authenticated: () => boolean
-  authIdentity: () => string | null
 }
 
 interface PresentationOperations {
@@ -25,7 +17,6 @@ interface PresentationOperations {
   setMode: (mode: PresentationMode, sender: WebContents) => Promise<PresentationState>
   setDisplay: (id: number, sender: WebContents) => Promise<PresentationState>
   setTrayLayout: (sender: WebContents, raw: unknown) => Promise<void>
-  companionActivity: (source: 'host' | 'desktop', state: DesktopCompanionActivityState, voicePreparing: boolean) => void
   reportReady: () => void
   focus: (sender: WebContents, epoch: number) => Promise<boolean>
   heartbeat: () => void
@@ -54,28 +45,6 @@ export function registerDesktopPresentationIpc(
     }
   }
 
-  register(IPC.invoke.presentationCompanionActivity, (event, raw: unknown) => {
-    const source = access.isDesktopSender(event.sender)
-      ? 'desktop'
-      : access.isSpriteSender(event.sender)
-        ? 'host'
-        : null
-
-    const activity = raw as { state?: unknown; voicePreparing?: unknown; authSessionId?: unknown } | null
-
-    if (
-      !source ||
-      typeof activity?.state !== 'string' ||
-      !Object.hasOwn(DESKTOP_COMPANION_ACTIVITY_PRIORITY, activity.state) ||
-      typeof activity.voicePreparing !== 'boolean'
-    ) {
-      throw new Error('无效伙伴活动。')
-    }
-
-    if (access.authenticated() && activity.authSessionId === access.authIdentity()) {
-      operations.companionActivity(source, activity.state as DesktopCompanionActivityState, activity.voicePreparing)
-    }
-  })
   register(IPC.invoke.presentationSetIgnoreMouseEvents, (event, raw: unknown) => {
     const win = access.desktopWindow(event.sender)
     const value = raw as { ignore?: unknown; forward?: unknown } | null
@@ -175,13 +144,7 @@ export function registerDesktopPresentationIpc(
       throw new Error('仅精灵宿主允许上报活动。')
     }
 
-    if (
-      !activity ||
-      typeof activity.locked !== 'boolean' ||
-      typeof activity.idleSeconds !== 'number' ||
-      !Number.isFinite(activity.idleSeconds) ||
-      !['autonomous', 'normal', 'still'].includes(activity.effectiveTier)
-    ) {
+    if (!activity || typeof activity.locked !== 'boolean') {
       throw new Error('无效活动。')
     }
 

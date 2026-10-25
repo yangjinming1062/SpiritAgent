@@ -1,4 +1,4 @@
-// 主窗口生命周期、侧边伙伴几何与播放资格。
+// 主窗口生命周期与内嵌伙伴的实际可见资格。
 
 import {
   BrowserWindow,
@@ -23,8 +23,7 @@ import { clamp, errorMessage } from '@runtime'
 import { isSenderWindow } from '../security/ipc-trust'
 import { broadcastToAllWindows, createSerialQueue, isWindowShown, setWindowIgnoreMouseEvents } from '../shared/utils'
 
-import { companionSlot, outerBounds, PANEL_SIZE, panelBounds, parseCompanionPreference } from './surface-companion'
-import type { CreatedSurfaceWindow } from './surface-window'
+import { parseCompanionPreference } from './surface-companion'
 
 export interface SurfacesManager {
   closeSurface: () => Promise<void>
@@ -47,7 +46,8 @@ export interface SurfacesManager {
 }
 
 interface SurfacesManagerOptions {
-  createWindow: (payload?: DesktopSurfaceOpenPayload) => Promise<CreatedSurfaceWindow>
+  authIdentity: () => string | null
+  createWindow: (payload?: DesktopSurfaceOpenPayload) => Promise<BrowserWindow>
   getCompanionPreference: () => SurfaceCompanionPreference
   getSpriteWindow: () => BrowserWindow | null
   isQuitting: () => boolean
@@ -60,24 +60,11 @@ interface SurfacesManagerOptions {
   syncSpriteToDisplay?: (display: Electron.Display) => void
 }
 
-const RESTORE_SETTLE_MS = 60
-
-interface SurfaceWindowState extends CreatedSurfaceWindow {
-  side: SurfaceCompanionPreference['side']
-  reason: 'edge' | null
-  expectedBounds: Rectangle | null
-  preservedPanel: Rectangle | null
-  transitioning: boolean
+interface SurfaceWindowState {
+  win: BrowserWindow
   minimizing: boolean
-  adjustmentTimer?: ReturnType<typeof setTimeout>
-  geometryTimer?: ReturnType<typeof setTimeout>
-  restoreTimer?: ReturnType<typeof setTimeout>
-}
-
-function clearLayoutTimers(layout: SurfaceWindowState): void {
-  clearTimeout(layout.adjustmentTimer)
-  clearTimeout(layout.geometryTimer)
-  clearTimeout(layout.restoreTimer)
+  normalBounds: Rectangle | null
+  expanded: boolean
 }
 
 export function createSurfacesManager(options: SurfacesManagerOptions): SurfacesManager {
@@ -89,6 +76,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
   let screenLocked = false
   let stateRevision = 0
   let lastPublishedState = ''
+  let companionVisibility: { senderId: number; authSessionId: string; visible: boolean } | null = null
 
   function findSurfaceWindow(win: BrowserWindow | null): SurfaceWindowState | undefined {
     return surfaceWindow && surfaceWindow.win === win ? surfaceWindow : undefined
@@ -105,29 +93,23 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     const isOpen = surfaceOpen && !!win && !win.isDestroyed()
     const isActive = isOpen && win.isVisible()
     const minimized = isOpen && (win.isMinimized() || !!layout?.minimizing)
-    const maximized = isActive && (win.isMaximized() || !!layout?.transitioning)
 
-    const hiddenReason = !preference.enabled
-      ? null
-      : maximized
-        ? 'maximized'
-        : minimized
-          ? 'minimized'
-          : !isActive
-            ? 'window-hidden'
-            : screenLocked
-              ? 'screen-locked'
-              : (layout?.reason ?? null)
+    const rendered =
+      companionVisibility?.senderId === win?.webContents.id &&
+      companionVisibility?.authSessionId === options.authIdentity() &&
+      companionVisibility?.visible === true
 
-    const slotWidth = maximized ? 0 : (layout?.slotWidth ?? 0)
+    const hiddenReason = minimized
+      ? 'minimized'
+      : !isActive
+        ? 'window-hidden'
+        : screenLocked
+          ? 'screen-locked'
+          : !rendered
+            ? 'layout'
+            : null
 
-    return {
-      hiddenReason,
-      preference,
-      slotWidth,
-      outerWidth: win && !win.isDestroyed() ? win.getBounds().width : 0,
-      visible: preference.enabled && hiddenReason === null && slotWidth > 0
-    }
+    return { hiddenReason, preference, visible: preference.enabled && hiddenReason === null }
   }
 
   function spriteWindowVisible(): boolean {
@@ -164,151 +146,37 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     broadcastToAllWindows(IPC.event.surfaceChanged, state)
   }
 
-  function sameBounds(a: Rectangle, b: Rectangle): boolean {
-    return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
-  }
-
-  function applyCompanionLayout(layout: SurfaceWindowState): void {
-    const { win } = layout
-
-    if (!isCurrentWindow(layout)) {
-      return
-    }
-
-    if (win.isMaximized() || win.isMinimized() || layout.transitioning || layout.minimizing) {
-      publish()
-
-      return
-    }
-
-    const preference = options.getCompanionPreference()
-    const area = screen.getDisplayMatching(layout.panel).workArea
-    const slot = companionSlot(layout.panel, preference.side, preference.enabled, area)
-    const target = outerBounds(layout.panel, preference.side, slot.width)
-    layout.slotWidth = slot.width
-    layout.side = preference.side
-    layout.reason = slot.reason
-
-    if (!sameBounds(win.getBounds(), target)) {
-      // 收起侧栏时先放宽最小宽度；展开后再约束整个物理窗口。
-      layout.expectedBounds = target
-      win.setMinimumSize(PANEL_SIZE.minWidth, PANEL_SIZE.minHeight)
-      win.setBounds(target)
-
-      clearTimeout(layout.adjustmentTimer)
-
-      layout.adjustmentTimer = setTimeout(() => {
-        if (!isCurrentWindow(layout) || layout.expectedBounds !== target) {
-          return
-        }
-
-        layout.adjustmentTimer = undefined
-        layout.expectedBounds = null
-
-        if (!sameBounds(win.getBounds(), target)) {
-          layout.panel = panelBounds(win.getBounds(), layout.side, layout.slotWidth)
-          applyCompanionLayout(layout)
-        }
-      }, 0)
-    }
-
-    win.setMinimumSize(PANEL_SIZE.minWidth + slot.width, PANEL_SIZE.minHeight)
-
-    publish()
-  }
-
-  function registerSurfaceWindow(created: CreatedSurfaceWindow): SurfaceWindowState {
-    const { win } = created
-    const preference = options.getCompanionPreference()
-
-    const layout: SurfaceWindowState = {
-      ...created,
-      expectedBounds: null,
-      preservedPanel: null,
-      reason: null,
-      side: preference.side,
-      transitioning: false,
-      minimizing: false
-    }
-
+  function registerSurfaceWindow(win: BrowserWindow): SurfaceWindowState {
+    const layout: SurfaceWindowState = { win, minimizing: false, normalBounds: null, expanded: false }
     surfaceWindow = layout
 
     if (loadingWindow === win) {
       loadingWindow = null
     }
 
-    const onGeometry = (): void => {
-      if (!isCurrentWindow(layout) || layout.expectedBounds) {
-        return
+    win.on('show', () => publish())
+    win.on('hide', () => publish())
+    win.on('maximize', () => publish())
+    win.on('unmaximize', () => publish())
+    win.on('minimize', () => publish())
+
+    const releaseExpandedLayout = (): void => {
+      if (layout.normalBounds || layout.expanded) {
+        layout.normalBounds = null
+        layout.expanded = false
+        publish(true)
       }
-
-      clearTimeout(layout.geometryTimer)
-
-      // 原生最大化事件可能排在 resize 后面，等本轮事件结束再认定为用户调整。
-      layout.geometryTimer = setTimeout(() => {
-        layout.geometryTimer = undefined
-
-        if (
-          !isCurrentWindow(layout) ||
-          win.isMaximized() ||
-          win.isMinimized() ||
-          layout.transitioning ||
-          layout.expectedBounds
-        ) {
-          return
-        }
-
-        layout.panel = panelBounds(win.getBounds(), layout.side, layout.slotWidth)
-        applyCompanionLayout(layout)
-      }, 0)
     }
 
-    win.on('move', onGeometry)
-    win.on('resize', onGeometry)
-    win.on('maximize', () => {
-      if (!isCurrentWindow(layout)) {
-        return
-      }
-
-      clearTimeout(layout.restoreTimer)
-      layout.restoreTimer = undefined
-
-      layout.preservedPanel ??= panelBounds(win.getNormalBounds(), layout.side, layout.slotWidth)
-      layout.panel = layout.preservedPanel
-      layout.transitioning = false
-      publish()
-    })
-    win.on('unmaximize', () => {
-      if (!isCurrentWindow(layout)) {
-        return
-      }
-
-      layout.transitioning = true
-      publish()
-
-      clearTimeout(layout.restoreTimer)
-
-      layout.restoreTimer = setTimeout(() => {
-        layout.restoreTimer = undefined
-
-        if (!isCurrentWindow(layout) || win.isMaximized()) {
-          return
-        }
-
-        layout.panel = layout.preservedPanel ?? layout.panel
-        layout.preservedPanel = null
-        layout.transitioning = false
-        applyCompanionLayout(layout)
-      }, RESTORE_SETTLE_MS)
-    })
-    win.on('hide', publish)
-    win.on('show', publish)
-    win.on('minimize', publish)
+    win.on('will-move', releaseExpandedLayout)
+    win.on('will-resize', releaseExpandedLayout)
     win.on('restore', () => {
-      layout.minimizing = false
-      applyCompanionLayout(layout)
+      if (isCurrentWindow(layout)) {
+        layout.minimizing = false
+        publish()
+      }
     })
-    applyCompanionLayout(layout)
+    publish()
 
     return layout
   }
@@ -381,7 +249,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
       return
     }
 
-    clearLayoutTimers(layout)
+    companionVisibility = null
     surfaceWindow = null
 
     if (surfaceOpen) {
@@ -545,13 +413,22 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
 
     const layout = findSurfaceWindow(win)
 
-    if (layout) {
-      if (!win.isMaximized()) {
-        layout.preservedPanel ??= { ...layout.panel }
+    // Windows 透明窗的原生展开状态不可靠，使用工作区矩形并保留还原位置。
+    if (process.platform === 'win32' && layout) {
+      if (layout.expanded && layout.normalBounds) {
+        layout.expanded = false
+        layout.normalBounds = fitWindowBounds(layout.normalBounds)
+        win.setContentBounds(layout.normalBounds)
+      } else {
+        const current = win.getContentBounds()
+        layout.normalBounds ??= current
+        layout.expanded = true
+        win.setContentBounds(screen.getDisplayMatching(current).workArea)
       }
 
-      layout.transitioning = true
-      publish()
+      publish(true)
+
+      return
     }
 
     if (win.isMaximized()) {
@@ -565,26 +442,38 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     return isSenderWindow(sender, surfaceWindow?.win) || isSenderWindow(sender, loadingWindow)
   }
 
-  const refreshCompanionGeometry = (): void => {
-    const layout = surfaceWindow
+  function fitWindowBounds(bounds: Rectangle): Rectangle {
+    const area = screen.getDisplayMatching(bounds).workArea
+    const width = Math.min(bounds.width, area.width)
+    const height = Math.min(bounds.height, area.height)
 
-    if (!layout || layout.win.isDestroyed()) {
+    return {
+      width,
+      height,
+      x: clamp(bounds.x, area.x, area.x + Math.max(0, area.width - width)),
+      y: clamp(bounds.y, area.y, area.y + Math.max(0, area.height - height))
+    }
+  }
+
+  const refreshWindowGeometry = (): void => {
+    const win = surfaceWindow?.win
+
+    if (!win || win.isDestroyed() || win.isMaximized() || win.isMinimized()) {
       return
     }
 
-    const area = screen.getDisplayMatching(layout.panel).workArea
+    const bounds = process.platform === 'win32' ? win.getContentBounds() : win.getBounds()
+    const target = surfaceWindow?.expanded ? screen.getDisplayMatching(bounds).workArea : fitWindowBounds(bounds)
 
-    layout.panel = {
-      ...layout.panel,
-      x: clamp(layout.panel.x, area.x, area.x + Math.max(0, area.width - layout.panel.width)),
-      y: clamp(layout.panel.y, area.y, area.y + Math.max(0, area.height - layout.panel.height))
+    if (surfaceWindow?.normalBounds && !surfaceWindow.expanded) {
+      surfaceWindow.normalBounds = target
     }
 
-    if (layout.preservedPanel) {
-      layout.preservedPanel = { ...layout.panel }
+    if (process.platform === 'win32') {
+      win.setContentBounds(target)
+    } else {
+      win.setBounds(target)
     }
-
-    applyCompanionLayout(layout)
   }
 
   const setScreenLocked = (locked: boolean): void => {
@@ -599,9 +488,9 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     powerMonitor.on('lock-screen', () => setScreenLocked(true))
     powerMonitor.on('unlock-screen', () => setScreenLocked(false))
     powerMonitor.on('resume', syncScreenLocked)
-    screen.on('display-added', () => refreshCompanionGeometry())
-    screen.on('display-removed', () => refreshCompanionGeometry())
-    screen.on('display-metrics-changed', () => refreshCompanionGeometry())
+    screen.on('display-added', () => refreshWindowGeometry())
+    screen.on('display-removed', () => refreshWindowGeometry())
+    screen.on('display-metrics-changed', () => refreshWindowGeometry())
   }
 
   const registerIpcHandlers = ({ ipcMain }: { ipcMain: IpcMain }): void => {
@@ -643,12 +532,35 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
       }
     })
     ipcMain.handle(IPC.invoke.surfaceIsMaximized, event => {
-      return Boolean(resolveWindow(event)?.isMaximized())
+      const win = resolveWindow(event)
+
+      return Boolean((win && findSurfaceWindow(win)?.expanded) || win?.isMaximized())
     })
     ipcMain.handle(IPC.invoke.surfaceSetIgnoreMouseEvents, (event, payload?: { forward?: boolean; ignore: boolean }) =>
       setWindowIgnoreMouseEvents(resolveWindow(event), payload)
     )
     ipcMain.handle(IPC.invoke.surfaceGetState, () => snapshot())
+    ipcMain.handle(IPC.invoke.surfaceCompanionVisibility, (event, payload: unknown) => {
+      const identity = options.authIdentity()
+
+      if (
+        !isSurfaceSender(event.sender) ||
+        !payload ||
+        typeof payload !== 'object' ||
+        !identity ||
+        !('authSessionId' in payload) ||
+        payload.authSessionId !== identity ||
+        !('visible' in payload) ||
+        typeof payload.visible !== 'boolean'
+      ) {
+        throw new Error('Invalid companion visibility or surface sender')
+      }
+
+      companionVisibility = { senderId: event.sender.id, authSessionId: identity, visible: payload.visible }
+      publish()
+
+      return snapshot()
+    })
     ipcMain.handle(IPC.invoke.surfaceSetCompanion, (event, raw: unknown) =>
       withMutex(async () => {
         const surface = findSurfaceWindow(BrowserWindow.fromWebContents(event.sender))
@@ -659,12 +571,6 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
         }
 
         await options.saveCompanionPreference(preference)
-
-        if (surface) {
-          applyCompanionLayout(surface)
-        } else if (surfaceWindow) {
-          applyCompanionLayout(surfaceWindow)
-        }
 
         publish()
 

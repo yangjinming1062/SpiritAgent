@@ -1,91 +1,80 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
-import { useVisualProjection } from '@/app/workflows/visual-presentation'
-import { $companionLifecycle, $stageOutfit, ensureCompanionHydrated, SpriteVfxOverlay } from '@/modules/character'
-import { OutfitStage, useMediaPixelHitTest } from '@/modules/character/rendering'
-import { useInteractiveRegion } from '@/shared'
-import { probeInteractiveRegions } from '@/shared/lib/interactive-regions'
-import { cn } from '@/shared/lib/utils'
+import { SceneBackdrop } from '@/app/features/scene/scene-backdrop'
+import { $companionLifecycle, ensureCompanionHydrated } from '@/modules/character'
+import { OutfitStage } from '@/modules/character/rendering'
+import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
-import { $presentation } from '@/shared/store/presentation'
-import { $surfaceCompanion } from '@/shared/store/surfaces'
-import { useStrings } from '@/shared/strings'
+import { $mainStageVisible, reportCompanionVisibility } from '@/shared/store/surfaces'
 
 import styles from './surface-companion.module.css'
 
-export function SurfaceCompanion(): React.JSX.Element | null {
-  useVisualProjection()
-  const state = useStore($surfaceCompanion)
-  const mode = useStore($presentation)
-  const hasSlot = state.slotWidth > 0
+export function SurfaceCompanion({ visible }: { visible: boolean }): React.JSX.Element | null {
   const auth = useStore($auth)
   const lifecycle = useStore($companionLifecycle)
-
-  const visible =
-    state.visible && mode.effectiveMode === 'window' && auth.kind === 'authenticated' && lifecycle === 'ready'
-
-  const strings = useStrings()
-  const wrapperRef = useRef<HTMLDivElement>(null)
-  const mediaHitTest = useMediaPixelHitTest(1)
-  const activeOutfit = useStore($stageOutfit)
-  const hasPortrait = Boolean(activeOutfit?.url)
-
-  const hitTest = useCallback((x: number, y: number): boolean => visible && mediaHitTest(x, y), [visible, mediaHitTest])
-
-  useInteractiveRegion('surface-companion', wrapperRef, undefined, hitTest, 1)
-
-  useLayoutEffect(() => {
-    probeInteractiveRegions(1)
-  }, [state])
+  const sessionId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
+  const ready = sessionId !== null && lifecycle === 'ready'
+  const root = useRef<HTMLDivElement>(null)
+  const [intersecting, setIntersecting] = useState(false)
+  const stageVisible = ready && visible && intersecting
 
   useEffect(() => {
-    const element = wrapperRef.current
+    const element = root.current
 
     if (!element) {
       return
     }
 
-    const observer = new ResizeObserver(() => probeInteractiveRegions(1))
+    const observer = new IntersectionObserver(([entry]) =>
+      setIntersecting(entry.isIntersecting && entry.intersectionRect.width > 0 && entry.intersectionRect.height > 0)
+    )
+
     observer.observe(element)
 
     return () => observer.disconnect()
-  }, [hasSlot])
+  }, [ready])
+
+  useLayoutEffect(() => {
+    $mainStageVisible.set(stageVisible)
+
+    return () => $mainStageVisible.set(false)
+  }, [stageVisible])
 
   useEffect(() => {
-    if (auth.kind !== 'authenticated' || lifecycle !== 'ready' || !visible) {
+    if (!sessionId) {
       return
     }
 
-    void ensureCompanionHydrated()
-  }, [auth.kind, lifecycle, visible])
+    void reportCompanionVisibility(sessionId, stageVisible).catch(error =>
+      log.warn('life-area', 'Visibility report failed', error)
+    )
+  }, [sessionId, stageVisible])
 
-  if (!hasSlot) {
-    return null
-  }
-
-  const slotWidth = state.outerWidth ? `${(state.slotWidth / state.outerWidth) * 100}%` : state.slotWidth
-
-  return (
-    <aside className={styles.slot} style={{ order: state.preference.side === 'left' ? -1 : 1, width: slotWidth }}>
-      <div
-        className={cn(styles.wrapper, hasPortrait && styles.videoWrapper)}
-        onContextMenu={event => event.preventDefault()}
-        ref={wrapperRef}
-        title={strings.common.companionControl.dragTitle(strings.brand.name)}
-      >
-        <div className={styles.inner}>
-          {visible && (
-            <OutfitStage
-              contentAlign={state.preference.side === 'right' ? 'left' : 'right'}
-              eggSize="min(280px, 92%)"
-              windowId={1}
-            />
-          )}
-          {visible && <SpriteVfxOverlay />}
-        </div>
-      </div>
-    </aside>
+  useEffect(
+    () => () => {
+      if (sessionId) {
+        void reportCompanionVisibility(sessionId, false).catch(error =>
+          log.warn('life-area', 'Visibility release failed', error)
+        )
+      }
+    },
+    [sessionId]
   )
+
+  useEffect(() => {
+    if (auth.kind === 'authenticated' && lifecycle === 'ready') {
+      void ensureCompanionHydrated()
+    }
+  }, [auth, lifecycle])
+
+  return ready ? (
+    <div className={styles.stage} ref={root}>
+      <SceneBackdrop />
+      <div className={styles.figure}>
+        <OutfitStage contentAlign="left" eggSize="min(150px, 60%)" windowId={1} />
+      </div>
+    </div>
+  ) : null
 }

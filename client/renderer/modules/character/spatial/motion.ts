@@ -2,9 +2,7 @@ import { clamp } from '@runtime'
 
 import type { Locomotion, Position } from './types'
 
-const WALK_SPEED = 80
 const FLY_SPEED = 400
-const WALK_RANGE_PX = 400
 const SCALE_TRANSITION_MS = 300
 
 interface MotionPorts {
@@ -36,10 +34,6 @@ function easeInOut(t: number): number {
   return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
 }
 
-export function locomotionForDistance(dist: number): 'walk' | 'fly' {
-  return dist > WALK_RANGE_PX ? 'fly' : 'walk'
-}
-
 /** 每个空间运行时独占移动和缩放帧；回调只写所属 store，不持有窗口或 React 生命周期。 */
 export function createSpatialMotion(ports: MotionPorts, frames: FrameScheduler = browserFrames) {
   let rafId: number | null = null
@@ -47,30 +41,23 @@ export function createSpatialMotion(ports: MotionPorts, frames: FrameScheduler =
   let moveTarget: Position | null = null
   let moveStartTime = 0
   let moveDuration = 0
-  let moveOnArrive: (() => void) | null = null
 
   let scaleRafId: number | null = null
   let scaleStartVal = 1
   let scaleTargetVal = 1
   let scaleStartTime = 0
 
-  function cancelMovement(notifyArrive = false): void {
+  function cancelMovement(): void {
     if (rafId !== null) {
       frames.cancel(rafId)
       rafId = null
     }
 
-    const cb = moveOnArrive
     moveStart = null
     moveTarget = null
-    moveOnArrive = null
 
     if (ports.getLocomotion() !== 'drag') {
       ports.setLocomotion('still')
-    }
-
-    if (notifyArrive) {
-      cb?.()
     }
   }
 
@@ -94,29 +81,25 @@ export function createSpatialMotion(ports: MotionPorts, frames: FrameScheduler =
     if (t < 1) {
       rafId = frames.request(tick)
     } else {
-      cancelMovement(true)
+      cancelMovement()
     }
   }
 
-  function moveTo(target: Position, locomotion: 'walk' | 'fly', onArrive?: () => void): void {
+  function moveTo(target: Position): void {
     cancelMovement()
 
     const current = ports.getPosition()
     const dist = Math.hypot(target.x - current.x, target.y - current.y)
 
     if (dist < 2) {
-      onArrive?.()
-
       return
     }
 
-    const speed = locomotion === 'walk' ? WALK_SPEED : FLY_SPEED
     moveStart = { ...current }
     moveTarget = target
     moveStartTime = frames.now()
-    moveDuration = Math.max((dist / speed) * 1000, 200)
-    moveOnArrive = onArrive ?? null
-    ports.setLocomotion(locomotion)
+    moveDuration = Math.max((dist / FLY_SPEED) * 1000, 200)
+    ports.setLocomotion('fly')
     rafId = frames.request(tick)
   }
 

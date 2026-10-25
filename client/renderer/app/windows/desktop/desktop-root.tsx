@@ -382,7 +382,16 @@ export function DesktopRoot(): React.JSX.Element {
       )
     }
 
-    return <AppContentPage containerRef={rootRef} foreground={reading} mediaViewId="desktop-posts" page={id} />
+    return (
+      <AppContentPage
+        containerRef={rootRef}
+        foreground={reading}
+        mediaViewId="desktop-posts"
+        page={id}
+        standaloneLife
+        visible={visible && desktopVisible && uiStateReady && auth.kind === 'authenticated'}
+      />
+    )
   }
 
   if (auth.kind !== 'authenticated') {
@@ -524,7 +533,7 @@ export function DesktopRoot(): React.JSX.Element {
       />
       <DesktopControls
         onOpenChange={controlsOpenChange}
-        onOpenVisuals={() => activatePanel('visuals')}
+        onOpenVisuals={() => void applyAppNavigation({ page: 'companion', companionSection: 'visuals' })}
         open={overlay === 'controls'}
         wallpaperError={Boolean(videoError)}
         wallpaperStatus={wallpaperStatus}

@@ -11,7 +11,7 @@ import { $postsHasUnread } from '@/modules/posts'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import { triggerHaptic } from '@/shared/lib/haptics'
-import { BookOpen, type IconComponent, MessageSquareText, Settings, Sparkles, Users, Video } from '@/shared/lib/icons'
+import { BookOpen, Home, type IconComponent, MessageSquareText, Settings, Sparkles, Users } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
@@ -21,10 +21,9 @@ import styles from './main.module.css'
 
 const NAV_ENTRIES: ReadonlyArray<{ icon: IconComponent; id: Exclude<AppPage, 'settings'> }> = [
   { icon: MessageSquareText, id: 'chat' },
-  { icon: Users, id: 'companion' },
+  { icon: Home, id: 'life' },
   { icon: Sparkles, id: 'posts' },
-  { icon: BookOpen, id: 'diary' },
-  { icon: Video, id: 'visuals' }
+  { icon: BookOpen, id: 'diary' }
 ]
 
 export function MainRail({
@@ -100,7 +99,7 @@ export function MainRail({
               aria-label={unread ? `${labels[id]} (${t.unread})` : labels[id]}
               className={cn(styles.navItem, page === id && styles.navItemActive)}
               key={id}
-              onClick={() => setAppPage(id)}
+              onClick={() => (id === 'chat' ? void openCompanion() : setAppPage(id))}
               type="button"
             >
               <span className={styles.navIcon}>
@@ -113,6 +112,15 @@ export function MainRail({
         })}
       </nav>
       <div className={styles.railFooter}>
+        <button
+          aria-current={page === 'companion' ? 'page' : undefined}
+          className={cn(styles.navItem, page === 'companion' && styles.navItemActive)}
+          onClick={() => setAppPage('companion')}
+          type="button"
+        >
+          <Users aria-hidden="true" size={21} />
+          <span>{labels.companion}</span>
+        </button>
         <button
           aria-current={page === 'settings' ? 'page' : undefined}
           className={cn(styles.navItem, page === 'settings' && styles.navItemActive)}

@@ -17,7 +17,6 @@ import type { ApiSchemas } from '../../../../shared/api.generated'
 type SceneStatus = ApiSchemas['SceneStatus']
 export type ScenePolicy = ApiSchemas['ScenePolicy']
 type SceneImageSize = ApiSchemas['SceneImageDimensions']
-export const SCENE_IMAGE_SIZE: Readonly<SceneImageSize> = { width: 2560, height: 1440 }
 type SceneRegeneration = ApiSchemas['SceneRegenerationResponse']
 export interface SceneAsset {
   id: string

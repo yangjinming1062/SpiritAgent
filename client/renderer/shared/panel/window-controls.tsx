@@ -68,8 +68,12 @@ export function WindowControls(): React.JSX.Element {
     }
 
     window.addEventListener('resize', onResize)
+    const stop = shellApi().surface.onChanged(onResize)
 
-    return () => window.removeEventListener('resize', onResize)
+    return () => {
+      window.removeEventListener('resize', onResize)
+      stop()
+    }
   }, [])
 
   const handleMaximize = async (): Promise<void> => {

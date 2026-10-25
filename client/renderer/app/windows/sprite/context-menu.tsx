@@ -13,8 +13,8 @@ import {
   openContextMenu,
   QUIET_MINUTES,
   resetToHomePosition,
+  returnToHomePosition,
   setDefaultScale,
-  setSpatialLocale,
   startQuiet
 } from '@/modules/character'
 import { useEscapeKey } from '@/shared/hooks/use-escape-key'
@@ -24,7 +24,8 @@ import { cn } from '@/shared/lib/utils'
 import { SURFACE_OVERLAY } from '@/shared/panel/palette'
 import { shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
-import { requestCloseSurface } from '@/shared/store/surfaces'
+import { notifyError } from '@/shared/store/notifications'
+import { requestCloseSurface, requestOpenSurface } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
 
 interface ContextMenuProps {
@@ -91,7 +92,7 @@ export function SpriteContextMenu({ onOpenActivation, onOpenSurface }: ContextMe
     void requestCloseSurface()
     resetToHomePosition()
     setDefaultScale(1)
-    setSpatialLocale('home', { locomotion: 'fly' })
+    returnToHomePosition()
   }
 
   const handleHideSprite = () => {
@@ -169,6 +170,13 @@ export function SpriteContextMenu({ onOpenActivation, onOpenSurface }: ContextMe
         {authed ? (
           <>
             <MenuItem accent icon={Home} label={dict.companion.menu.openMainWindow} onClick={() => onOpenSurface?.()} />
+            <MenuItem
+              icon={Home}
+              label={dict.life.title}
+              onClick={() => {
+                void requestOpenSurface({ page: 'life' }).catch(error => notifyError(error, dict.life.title))
+              }}
+            />
             {presentation.supported && presentation.effectiveMode !== 'desktop' && (
               <MenuItem
                 disabled={busy}

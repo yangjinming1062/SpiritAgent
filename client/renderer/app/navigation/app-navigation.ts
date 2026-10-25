@@ -1,5 +1,6 @@
 import { atom, computed } from 'nanostores'
 
+import { selectLifePursuit } from '@/app/features/life/life-state'
 import { setChatSession, switchSession } from '@/modules/conversation'
 import { log } from '@/shared/lib/log'
 import { definePersistedAtom, registerCompanionStorageKey, registerStorageClearHandler } from '@/shared/lib/storage'
@@ -52,7 +53,6 @@ export const $appNavigationTarget = computed([navigation.$atom, transientNavigat
   ...transient
 }))
 export const $appNavigationRevision = atom(0)
-export const $appNavigation = navigation.$atom
 let writingHash = false
 
 function replaceHash(next: string): void {
@@ -82,7 +82,8 @@ export function readAppNavigationHash(): AppNavigationTarget | null {
     companionSection: page === 'companion' ? detail : undefined,
     settingsTab: params.get('subtab'),
     sessionId: params.get('sessionId'),
-    messageKey: params.get('messageKey')
+    messageKey: params.get('messageKey'),
+    pursuitId: params.has('pursuitId') ? Number(params.get('pursuitId')) : undefined
   })
 }
 
@@ -99,6 +100,10 @@ function writeHash(target: AppNavigationTarget): void {
 
   if (target.messageKey) {
     query.set('messageKey', target.messageKey)
+  }
+
+  if (target.page === 'life' && target.pursuitId) {
+    query.set('pursuitId', String(target.pursuitId))
   }
 
   const detail =
@@ -130,11 +135,20 @@ export async function applyAppNavigation(target: AppNavigationTarget, updateHash
     setChatSession(next.sessionId)
   }
 
+  if (next.page === 'life' && next.pursuitId) {
+    selectLifePursuit(next.pursuitId)
+  }
+
   transientNavigation.set({ messageKey: next.messageKey, sessionId: next.sessionId })
   $appNavigationRevision.set($appNavigationRevision.get() + 1)
 
   if (updateHash) {
-    writeHash({ ...getAppNavigation(), sessionId: next.sessionId, messageKey: next.messageKey })
+    writeHash({
+      ...getAppNavigation(),
+      sessionId: next.sessionId,
+      messageKey: next.messageKey,
+      pursuitId: next.pursuitId
+    })
   }
 
   if (next.sessionId && $gatewayState.get() === 'open') {

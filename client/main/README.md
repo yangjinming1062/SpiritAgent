@@ -54,17 +54,19 @@ macOS 实机验证须从已登录的图形会话启动客户端，SSH 安全会�
 
 ## 窗口与几何
 
-[surfaces.ts](lifecycle/surfaces.ts) 串行管理唯一主窗口，其面板、侧边区域及定时器归同一记录。打开主窗口隐藏精灵宿主，关闭与 Alt+F4 隐藏主窗口并恢复精灵；最小化不恢复精灵，实际销毁才释放几何定时器。账户身份变化收起主窗口并恢复精灵，目标账户视图独立恢复。内容面板矩形是几何锚点，侧边区域只调整原生窗口边界；程序调整与最大化还原期间不把中间事件写回面板。显示器变更同时校正还原位置，主窗口移动时隐藏精灵跟随显示器，渲染状态不传递几何。
+[surfaces.ts](lifecycle/surfaces.ts) 串行管理唯一主窗口。打开主窗口隐藏精灵宿主，关闭与 Alt+F4 隐藏主窗口并恢复精灵；最小化不恢复精灵。账户身份变化收起主窗口并恢复精灵，目标账户视图独立恢复。主窗口直接管理完整内容矩形，内嵌生活区不扩大原生窗口边界；显示器变更校正还原位置，移动时隐藏精灵跟随显示器。
 
 主窗口快照仅在实际状态变化时增加版本并广播；重复几何与显隐事件不重复发布。`surface:open` 校验统一导航目标，现存窗口经导航事件更新页面，不重载 renderer；完成或失败仍回灌当前快照。新窗口通过 `surface:get-state` 取得当前版本。
 
+Windows 透明主窗口通过工作区矩形展开，主进程保存内容区还原矩形并通过现有最大化查询返回该状态；不依赖透明窗可能失真的原生 `isMaximized()`。未手动改变几何时复用原还原矩形，避免高 DPI 下读取与设置的取整误差累积改变尺寸。再次操作还原，手动移动或缩放结束展开状态；显示器变化重新约束当前矩形。macOS 沿用原生最大化。
+
 主窗口按 [surface-companion.ts](lifecycle/surface-companion.ts) 的初始尺寸打开并可自由缩放，不强制画幅；呈现语义见 [窗口与会话](../../docs/DESIGN.md#窗口与会话)。
 
-[surfaces.ts](lifecycle/surfaces.ts) 另负责播放认领（`surface:claim-play`）与锁屏跟踪：同一 `play_id` 只由一个可见舞台认领，认领随账户变化清空，规则见[播放契约](../../docs/PROTOCOL.md#动作素材与影像播放)。
+[surfaces.ts](lifecycle/surfaces.ts) 另负责锁屏跟踪。播放认领由后端影像接口裁决，客户端仅由当前可见舞台提交，规则见[播放契约](../../docs/PROTOCOL.md#动作素材与影像播放)。
 
-[伙伴偏好](lifecycle/surface-companion.ts)在创建窗口前读取，独立保存在本机，不经云同步；原子保存失败向调用方报告，内存继续保留原值。侧边伙伴的偏好与实际可见状态、桌面精灵窗的实际显隐 `spriteVisible`（窗口存在、未隐藏且未最小化）都经 [IPC 快照](../shared/ipc/contracts.ts)传递，渲染层不得用迟到快照覆盖较新版本。精灵窗每次创建都经 [tray.ts](lifecycle/tray.ts) 的 `installCloseInterceptor` 在显示、隐藏、最小化与还原时发布快照，托盘、快捷键与右键隐藏无需各自发布；精灵窗关闭了后台节流，页面可见性 API 不反映隐藏。激活卡片限命中区域，未认证唤起须更新渲染状态，不只 raise 窗口。
+[伙伴偏好](lifecycle/surface-companion.ts)在创建窗口前读取，独立保存在本机，不经云同步；原子保存失败向调用方报告，内存继续保留原值。生活区的偏好与实际可见状态、桌面精灵窗的实际显隐 `spriteVisible`（窗口存在、未隐藏且未最小化）都经 [IPC 快照](../shared/ipc/contracts.ts)传递，渲染层不得用迟到快照覆盖较新版本。内嵌舞台由主窗口经专用 IPC 上报实际布局可见性，主进程核对当前 sender 与鉴权会话，再与偏好、窗口显隐和锁屏状态合并广播；renderer 同时即时关闭本窗隐藏舞台资格，资源实际显示后才允许回执。精灵窗每次创建都经 [tray.ts](lifecycle/tray.ts) 的 `installCloseInterceptor` 在显示、隐藏、最小化与还原时发布快照，托盘、快捷键与右键隐藏无需各自发布；精灵窗关闭了后台节流，页面可见性 API 不反映隐藏。激活卡片限命中区域，未认证唤起须更新渲染状态，不只 raise 窗口。
 
-[sprite-position.ts](shared/sprite-position.ts) 管精灵窗静止位置的落盘与读盘（Home 下的 `companion-position.json`），[sprite.ts](ipc/sprite.ts) 注册位置读写通道、窗口场景快照、目标换算与跨屏移动。场景快照、目标换算与跨屏移动只在窗口模式接受精灵宿主 sender；桌面模式没有独立精灵舞台。拖拽跨屏（`moveToCursorDisplay`）与精灵位置读写保持原入口。默认显示比例经它广播到各窗口。
+[sprite-position.ts](shared/sprite-position.ts) 管精灵窗静止位置与所属屏幕原点的落盘和读盘（userData 下的 `companion-position.json`）。[sprite.ts](ipc/sprite.ts) 注册位置读写、拖拽跨屏（`moveToCursorDisplay`）及默认比例广播；位置写入与跨屏只在窗口模式接受精灵宿主 sender，桌面模式没有独立精灵舞台。
 
 [快捷键](ipc/shortcuts.ts)返回注册冲突与失败。Windows 关窗隐藏到托盘，macOS 保留 Dock；多屏、透明命中见 [Client](../README.md#窗口与主题)，用户行为见 [DESIGN](../../docs/DESIGN.md#窗口与会话)。
 

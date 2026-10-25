@@ -2,7 +2,12 @@ import { useStore } from '@nanostores/react'
 import { atom } from 'nanostores'
 import { useEffect } from 'react'
 
-import { $stageOutfitPresented, observeCharacterStageVisibility, setStageOutfitSource } from '@/modules/character'
+import {
+  $stageOutfitPresented,
+  isCharacterStageVisible,
+  observeCharacterStageVisibility,
+  setStageOutfitSource
+} from '@/modules/character'
 import {
   $visualsPresentation,
   claimVisualPlay,
@@ -17,9 +22,10 @@ import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { backendApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { $presentation } from '@/shared/store/presentation'
-import { isCompanionStageVisible } from '@/shared/store/surfaces'
+import { $surfaceRole } from '@/shared/store/surfaces'
 
 export const $windowVisualProjection = atom<VisualActualSnapshot | null>(null)
+export const $windowScenePresented = atom<string | null>(null)
 const clientId = crypto.randomUUID()
 const settledPlays = new Set<string>()
 let stopProjection: (() => void) | null = null
@@ -30,9 +36,10 @@ function applySources(actual: VisualActualSnapshot | null): void {
   setStageOutfitSource(actual?.outfit_path ? { path: actual.outfit_path, name: actual.outfit_description } : null)
 }
 
-function waitForStage(path: string, current: () => boolean): Promise<void> {
+function waitForStage(path: string, scenePath: string, current: () => boolean): Promise<void> {
   return new Promise((resolve, reject) => {
     let stop = (): void => undefined
+    let subscribed = false
 
     const timeout = window.setTimeout(() => {
       stop()
@@ -40,7 +47,15 @@ function waitForStage(path: string, current: () => boolean): Promise<void> {
     }, 15000)
 
     const check = (): void => {
-      if (!current() || $stageOutfitPresented.get() === path) {
+      if (!subscribed) {
+        return
+      }
+
+      const sourcesReady =
+        $stageOutfitPresented.get() === path &&
+        ($surfaceRole.get() !== 'main' || $windowScenePresented.get() === scenePath)
+
+      if (!current() || sourcesReady) {
         stop()
         window.clearTimeout(timeout)
 
@@ -52,7 +67,16 @@ function waitForStage(path: string, current: () => boolean): Promise<void> {
       }
     }
 
-    stop = $stageOutfitPresented.listen(check)
+    const stops = [
+      $stageOutfitPresented.listen(check),
+      $windowScenePresented.listen(check),
+      observeCharacterStageVisibility(check),
+      $auth.listen(check),
+      $visualsPresentation.listen(check)
+    ]
+
+    stop = () => stops.forEach(dispose => dispose())
+    subscribed = true
     check()
   })
 }
@@ -65,7 +89,7 @@ async function settlePendingPlay(response: VisualsPresentation): Promise<void> {
     !scope ||
     !pending ||
     $presentation.get().effectiveMode !== 'window' ||
-    !isCompanionStageVisible() ||
+    !isCharacterStageVisible() ||
     settledPlays.has(pending.play_id) ||
     projectingPlay ||
     Date.parse(pending.expires_at) <= Date.now()
@@ -79,7 +103,8 @@ async function settlePendingPlay(response: VisualsPresentation): Promise<void> {
   const current = (): boolean =>
     scope() &&
     $presentation.get().effectiveMode === 'window' &&
-    isCompanionStageVisible() &&
+    isCharacterStageVisible() &&
+    Date.parse(pending.expires_at) > Date.now() &&
     $visualsPresentation.get()?.pending_play?.play_id === pending.play_id
 
   let claimed = false
@@ -87,8 +112,12 @@ async function settlePendingPlay(response: VisualsPresentation): Promise<void> {
   try {
     claimed = await claimVisualPlay(pending.play_id, clientId)
 
-    if (!claimed || !current()) {
+    if (!claimed) {
       return
+    }
+
+    if (!current()) {
+      throw new Error('Presentation changed after claim')
     }
 
     for (const path of [pending.outfit.path, pending.scene.path]) {
@@ -120,7 +149,7 @@ async function settlePendingPlay(response: VisualsPresentation): Promise<void> {
       scene_description: pending.scene.description,
       ready: true
     })
-    await waitForStage(pending.outfit.path, current)
+    await waitForStage(pending.outfit.path, pending.scene.path, current)
     await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
 
     if (!current()) {
@@ -141,11 +170,16 @@ async function settlePendingPlay(response: VisualsPresentation): Promise<void> {
     log.warn('visual-presentation', 'Static projection failed', error)
     settledPlays.delete(pending.play_id)
   } finally {
-    projectingPlay = null
+    if (projectingPlay === pending.play_id) {
+      projectingPlay = null
+    }
 
     if (scope()) {
       await refreshVisualPresentation()
-      applySources($visualsPresentation.get()?.actual ?? null)
+
+      if (scope() && !projectingPlay) {
+        applySources($visualsPresentation.get()?.actual ?? null)
+      }
     }
   }
 }
@@ -202,5 +236,6 @@ registerStorageClearHandler(() => {
   stopProjection = null
   projectingPlay = null
   settledPlays.clear()
+  $windowScenePresented.set(null)
   applySources(null)
 })

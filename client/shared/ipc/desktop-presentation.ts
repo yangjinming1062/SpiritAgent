@@ -23,8 +23,6 @@ export interface PresentationState {
   stageAvailable: boolean
   fullscreen: boolean
   compatibilityWarning: string | null
-  companionActivity: DesktopCompanionActivityState
-  voicePreparing: boolean
   displayId: number | null
   /** 交互屏本地 DIP 坐标；原生工作区尚未就绪或已退出桌面时为空。 */
   workArea: { x: number; y: number; width: number; height: number } | null
@@ -47,17 +45,6 @@ export interface DesktopTrayLayout {
     bounds: { x: number; y: number; width: number; height: number }
     clip: { x: number; y: number; width: number; height: number }
   } | null
-}
-
-export type DesktopCompanionActivityState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'working' | 'disconnected'
-
-export const DESKTOP_COMPANION_ACTIVITY_PRIORITY: Record<DesktopCompanionActivityState, number> = {
-  idle: 10,
-  listening: 40,
-  thinking: 50,
-  speaking: 60,
-  working: 70,
-  disconnected: 100
 }
 
 export interface DesktopMediaReference {
@@ -179,11 +166,19 @@ export interface DesktopAccount {
   active: boolean
 }
 
-export const APP_PAGES = ['chat', 'companion', 'visuals', 'posts', 'diary', 'settings'] as const
+export const APP_PAGES = ['chat', 'life', 'posts', 'diary', 'companion', 'settings'] as const
 export type AppPage = (typeof APP_PAGES)[number]
 export const SETTINGS_SECTIONS = ['companionship', 'voice', 'display', 'devices', 'application', 'advanced'] as const
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]
-export const COMPANION_SECTIONS = ['profile', 'voice', 'memory', 'wardrobe', 'environment', 'actions'] as const
+export const COMPANION_SECTIONS = [
+  'profile',
+  'voice',
+  'memory',
+  'wardrobe',
+  'environment',
+  'actions',
+  'visuals'
+] as const
 export type CompanionSection = (typeof COMPANION_SECTIONS)[number]
 
 export interface AppNavigationTarget {
@@ -193,6 +188,7 @@ export interface AppNavigationTarget {
   settingsTab?: 'skills' | 'toolsets'
   sessionId?: string
   messageKey?: string
+  pursuitId?: number
 }
 
 export function normalizeAppNavigation(raw: unknown): AppNavigationTarget {
@@ -214,20 +210,14 @@ export function normalizeAppNavigation(raw: unknown): AppNavigationTarget {
     companionSection,
     settingsTab: section === 'devices' ? settingsTab : undefined,
     sessionId: typeof value.sessionId === 'string' ? value.sessionId : undefined,
-    messageKey: typeof value.messageKey === 'string' ? value.messageKey : undefined
+    messageKey: typeof value.messageKey === 'string' ? value.messageKey : undefined,
+    pursuitId:
+      typeof value.pursuitId === 'number' && Number.isSafeInteger(value.pursuitId) && value.pursuitId > 0
+        ? value.pursuitId
+        : undefined
   }
 }
 
 export interface StageActivity {
-  focus: {
-    category: 'ide' | 'music' | 'reader' | 'gaming' | 'browsing' | 'other' | 'unknown'
-    fullscreen: boolean
-    windowGeom?: { x: number; y: number; w: number; h: number }
-    windowId?: string
-    windowPid?: number
-    runnerInstanceId?: string
-  } | null
   locked: boolean
-  idleSeconds: number
-  effectiveTier: 'autonomous' | 'normal' | 'still'
 }

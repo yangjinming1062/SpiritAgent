@@ -29,7 +29,6 @@ export {
   refreshSceneStatus,
   regenerateScene,
   reloadSceneImage,
-  SCENE_IMAGE_SIZE,
   type SceneAsset,
   type SceneCreationIssue,
   type SceneCreationResult,

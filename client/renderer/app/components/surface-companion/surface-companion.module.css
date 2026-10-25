@@ -1,44 +1,11 @@
-.slot {
-  align-items: flex-end;
-  display: flex;
-  flex: none;
-  height: 100%;
-  min-width: 0;
+.stage {
   position: relative;
-  user-select: none;
-  z-index: 10;
-}
-
-.wrapper {
-  align-items: center;
-  aspect-ratio: 125 / 275;
-  cursor: grab;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  min-height: 0;
-  position: relative;
-  width: 100%;
+  flex: 0 0 clamp(190px, 35vh, 340px);
+  min-height: 190px;
+  overflow: hidden;
+  background: var(--ui-fill-faint);
   -webkit-app-region: drag;
 }
+.figure { position: absolute; inset: 16px 20px 0; }
 
-.wrapper:active {
-  cursor: grabbing;
-}
-
-.videoWrapper {
-  aspect-ratio: auto;
-  height: 100%;
-  overflow: hidden;
-}
-
-.inner {
-  align-items: flex-end;
-  display: flex;
-  height: 100%;
-  inset: 0;
-  justify-content: center;
-  overflow: visible;
-  position: absolute;
-  width: 100%;
-}
+.stage button { -webkit-app-region: no-drag; pointer-events: auto; }

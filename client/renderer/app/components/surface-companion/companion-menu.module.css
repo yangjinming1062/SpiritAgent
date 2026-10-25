@@ -62,18 +62,14 @@
   margin: 4px 0;
 }
 
-.notice,
 .error {
-  color: var(--ui-text-muted);
+  color: var(--ui-danger-fg);
   font-size: 11px;
   line-height: 1.4;
   margin: 6px 8px 4px;
   max-width: 210px;
 }
 
-.error {
-  color: var(--ui-danger-fg);
-}
 
 html[class~='no-blur'] .menu {
   backdrop-filter: none;

@@ -20,11 +20,12 @@ import {
   useIsReadOnlySession
 } from '@/modules/conversation'
 import { usePointerDrag } from '@/shared/hooks/use-pointer-drag'
-import { X } from '@/shared/lib/icons'
+import { Home, X } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { $whisperOpen } from '@/shared/store/chat-visibility'
 import { $gatewayState } from '@/shared/store/gateway'
-import { $surfaceOpen } from '@/shared/store/surfaces'
+import { notifyError } from '@/shared/store/notifications'
+import { $surfaceOpen, requestOpenSurface } from '@/shared/store/surfaces'
 import { getStrings } from '@/shared/strings'
 
 import { $whisperOffset, closeWhisper, setWhisperOffset } from './whisper-store'
@@ -149,6 +150,19 @@ function WhisperPositioner({
         onPointerDown={onHeaderPointerDown}
         style={{ height: `${HEADER_HEIGHT}px` }}
       >
+        <button
+          aria-label={getStrings().life.title}
+          className="mr-auto flex items-center gap-1 rounded px-1 text-xs text-muted hover:bg-fill-hover"
+          onClick={() => {
+            closeWhisper()
+            void requestOpenSurface({ page: 'life' }).catch(error => notifyError(error, getStrings().life.title))
+          }}
+          onPointerDown={event => event.stopPropagation()}
+          type="button"
+        >
+          <Home size={13} />
+          {getStrings().life.title}
+        </button>
         <button
           aria-label={getStrings().whisper.close}
           className="flex size-5 items-center justify-center rounded text-faint transition hover:bg-fill-hover hover:text-strong"

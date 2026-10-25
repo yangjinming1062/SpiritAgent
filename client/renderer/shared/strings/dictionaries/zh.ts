@@ -1,6 +1,48 @@
 import { uiCopy } from '../../../../../shared/ui-copy'
 
 export const dict = {
+  life: {
+    title: '生活',
+    intro: '看看伙伴正在继续的事，和最近发生的变化。',
+    now: '此刻',
+    unavailable: '暂时还没有近况',
+    ongoing: '正在继续的事',
+    noPursuit: '暂时没有正在推进的事',
+    overviewAction: '看看生活',
+    chatAction: '去聊天',
+    show: '展开生活区',
+    hide: '收起生活区',
+    close: '关闭生活区',
+    pursuitsTitle: '在意的事',
+    eventsTitle: '最近的变化',
+    statuses: { all: '全部', active: '进行中', completed: '已完成' },
+    reason: '开始的缘由',
+    desiredResult: '想完成什么',
+    progress: '已有进展',
+    nextStep: '接下来打算',
+    noProgress: '暂时没有已确认的进展',
+    emptyPursuits: '这里还没有记录的事项。',
+    emptyEvents: '暂时没有可展示的生活变化。',
+    moreEvents: '更早的记录',
+    failed: '暂时无法更新生活内容，已有内容仍可查看。',
+    loading: '正在了解近况…',
+    back: '返回生活',
+    previous: '上一页',
+    next: '下一页',
+    details: '查看这件事',
+    openVisual: '查看影像',
+    openPosts: '打开动态',
+    openDiary: '打开日记',
+    eventLabels: {
+      activity: '近况变化',
+      started: '开始了一件事',
+      progressed: '有了进展',
+      completed: '完成了一件事',
+      visual: '制作了影像',
+      post: '发布了动态',
+      diary: '写了日记'
+    }
+  },
   brand: {
     name: '唤生',
     fullName: '唤生桌面'
@@ -31,14 +73,11 @@ export const dict = {
     moreActions: '更多操作',
     creationDetails: '制作资料',
     companionControl: {
-      title: '伙伴',
-      show: '显示伙伴',
+      title: '生活区',
+      show: '显示生活区',
       left: '左侧',
       right: '右侧',
-      temporaryEdge: '侧边空间不足，伙伴暂时收起',
-      temporaryMaximized: '窗口最大化时伙伴暂时收起',
-      saveFailed: '保存伙伴显示设置失败，请重试',
-      dragTitle: (name: string) => `拖动${name}可移动整个窗口`
+      saveFailed: '保存生活区显示设置失败，请重试'
     },
     save: '保存',
     saving: uiCopy.saving,
@@ -572,12 +611,8 @@ export const dict = {
         memory: '记忆',
         wardrobe: '衣柜',
         environment: '环境',
-        actions: '动作'
-      },
-      lifeStatus: {
-        title: '伙伴近况',
-        fallback: '正在安静地陪伴你',
-        activePursuit: '有一件正在推进的事'
+        actions: '动作',
+        visuals: '影像'
       },
       memoryScope: '查看谁的记忆',
       memoryScopeAria: '记忆类型',
@@ -1180,19 +1215,19 @@ export const dict = {
     egg: {
       preparing: '加载伙伴造型中…',
       failed: '伙伴造型加载失败',
-      unavailable: '请在衣柜选择造型',
+      unavailable: '还没有可呈现的影像',
       retry: '重试',
-      openWardrobe: '打开衣柜',
+      openVisuals: '查看影像',
       ariaLabel: '伙伴的蛋'
     }
   },
 
   living: {
     rail: {
-      chat: '聊天',
+      chat: '陪伴',
+      life: '生活',
       posts: '动态',
       diary: '日记',
-      visuals: '影像',
       unread: '有未读信息',
       wardrobe: '衣柜',
       remote: '远程',
@@ -1403,9 +1438,6 @@ export const dict = {
         cancelled: '已取消'
       }
     },
-    sceneBackdrop: {
-      pendingText: '环境准备中'
-    },
     toasts: {
       sceneReady: '已保存到环境库',
       sceneImageRegenerated: '环境图片已更新',
@@ -1527,7 +1559,7 @@ export const dict = {
     avatarUnreadHint: '左键查看未读对话，右键切换账户',
     posts: '动态',
     diary: '日记',
-    visuals: '影像',
+    life: '生活',
     remote: '远程',
     settings: '设置',
     windowMode: '返回窗口模式',

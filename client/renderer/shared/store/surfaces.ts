@@ -12,6 +12,7 @@ import type {
 
 import { $presentation } from './presentation'
 
+export const $mainStageVisible = atom(false)
 export const $surfaceOpen = atom(false)
 export const $surfaceOpenVisible = atom(false)
 export const $surfaceScreenLocked = atom(false)
@@ -21,8 +22,6 @@ let appliedRevision = -1
 export const $surfaceCompanion = atom<SurfaceCompanionState>({
   hiddenReason: 'window-hidden',
   preference: { enabled: true, side: 'right' },
-  slotWidth: 0,
-  outerWidth: 0,
   visible: false
 })
 
@@ -62,6 +61,7 @@ export function isCompanionStageVisible(): boolean {
 
   return (
     role === 'main' &&
+    $mainStageVisible.get() &&
     $presentation.get().effectiveMode === 'window' &&
     $surfaceOpen.get() &&
     $surfaceCompanion.get().visible
@@ -83,6 +83,10 @@ function applySurfaceState(state: DesktopSurfaceChangedEvent): void {
 
 export async function setSurfaceCompanion(preference: SurfaceCompanionPreference): Promise<void> {
   applySurfaceState(await shellApi().surface.setCompanion(preference))
+}
+
+export async function reportCompanionVisibility(authSessionId: string, visible: boolean): Promise<void> {
+  applySurfaceState(await shellApi().surface.companionVisibility({ authSessionId, visible }))
 }
 
 export async function requestOpenSurface(target: DesktopSurfaceOpenPayload = {}): Promise<void> {

@@ -6,6 +6,7 @@ import {
   type AppNavigationTarget,
   IPC,
   isCompanionEditorUiSnapshot,
+  isLifeUiSnapshot,
   isVisualsUiSnapshot,
   type MainUiStateData,
   type MainUiStateSnapshot,
@@ -34,6 +35,10 @@ interface WaitingReply {
 }
 
 function stateData(raw: MainUiStateData): MainUiStateData {
+  if (!isLifeUiSnapshot(raw?.life)) {
+    throw new Error('生活页状态无效。')
+  }
+
   const conversation = raw?.conversation
 
   if (
@@ -69,6 +74,7 @@ function stateData(raw: MainUiStateData): MainUiStateData {
 
   return structuredClone({
     navigation: normalizeAppNavigation(raw.navigation),
+    life: raw.life,
     conversation,
     visuals,
     companionEditors

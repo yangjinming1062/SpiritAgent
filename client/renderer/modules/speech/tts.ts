@@ -4,7 +4,6 @@ import { presentationPorts } from '@/shared/presentation-ports'
 import { speechText } from '@client-shared/speech-text'
 
 import { isLatestGen, nextGen, playDataUrl, stopAudio } from './audio-track'
-import { beginVoicePreparing, endVoicePreparing } from './voice-state'
 
 // 伙伴 TTS 经 `spiritagent:media:tts` REST IPC 调用。
 
@@ -12,7 +11,7 @@ export function stopSpeaking(): void {
   stopAudio()
 }
 
-/** 取音频并播放，返回是否完整播完。全程持有语音准备态；取回时已被更新的播放接管则放弃。取音频或播放抛错交给 onError，latest 表示此时仍是最新一次播放。 */
+/** 取音频并播放，返回是否完整播完；取回时已被更新的播放接管则放弃。取音频或播放抛错交给 onError，latest 表示此时仍是最新一次播放。 */
 export async function playPrepared(
   fetchClip: () => Promise<{ dataUrl: string }>,
   onError: (error: unknown, latest: boolean) => void,
@@ -32,8 +31,6 @@ export async function playPrepared(
       })
     : null
 
-  beginVoicePreparing()
-
   try {
     const clip = await (aborted ? Promise.race([fetchClip(), aborted]) : fetchClip())
 
@@ -52,8 +49,6 @@ export async function playPrepared(
     if (onAbort) {
       signal?.removeEventListener('abort', onAbort)
     }
-
-    endVoicePreparing()
   }
 }
 

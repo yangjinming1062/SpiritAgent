@@ -10,7 +10,6 @@ import { $presentation } from '@/shared/store/presentation'
 import { $runnerPhase } from '@/shared/store/runner-status'
 import { isCompanionStageVisible } from '@/shared/store/surfaces'
 import type { PresentationMode, StageActivity } from '@ipc/contracts'
-import type { DesktopScreenRect } from '@ipc/contracts'
 
 import {
   $effectiveTier,
@@ -24,21 +23,15 @@ import {
 // 本地环境信号取自 Runner 的 system.* 工具，伙伴层直接据此推理（不经 LLM）；Runner 离线或探测失败时空闲时长回到 -1。
 
 export const $screenLocked = atom<boolean>(false)
-// -1 表示本周期无信号（Runner 离线或探测失败），调用方按未知处理。
-export const $lastIdleSeconds = atom<number>(-1)
 
 type FocusCategory = 'ide' | 'music' | 'reader' | 'gaming' | 'browsing' | 'other' | 'unknown'
 
 interface FocusContext {
   category: FocusCategory
   fullscreen: boolean
-  windowGeom?: DesktopScreenRect
-  windowId?: string
-  windowPid?: number
-  runnerInstanceId?: string
 }
 
-export const $focusContext = atom<FocusContext | null>(null)
+const $focusContext = atom<FocusContext | null>(null)
 
 const POLL_INTERVAL_MS = 30_000
 const IDLE_THRESHOLD_SECONDS = 30 * 60
@@ -393,7 +386,6 @@ async function pollSnapshot(generation: number): Promise<void> {
 
   if (snapshotResult === null) {
     // 探测失败：空闲时长置未知，锁屏与焦点保留上次值；档位覆盖仍重算并上报当前生效档位。
-    $lastIdleSeconds.set(-1)
     previousDesktopActivity = null
     maybePushTierOverride()
     await reportCompanionSignal(false)
@@ -403,12 +395,6 @@ async function pollSnapshot(generation: number): Promise<void> {
 
   const snapshot = snapshotResult as SystemSnapshot
 
-  const windowScene = await desktop.sprite.getWindowScene().catch(() => null)
-
-  if (generation !== monitorGeneration) {
-    return
-  }
-
   if (snapshot.locked !== undefined) {
     $screenLocked.set(Boolean(snapshot.locked))
   }
@@ -417,15 +403,11 @@ async function pollSnapshot(generation: number): Promise<void> {
 
   // 非有限空闲值按缺失信号处理（NaN 会透传进后端 LLM prompt）。
   if (!Number.isFinite(idleSeconds)) {
-    $lastIdleSeconds.set(-1)
     previousDesktopActivity = null
     await reportCompanionSignal(false)
 
     return
   }
-
-  // 缓存最近一次有限空闲值供其他模块读取，-1 表示本周期无信号。
-  $lastIdleSeconds.set(idleSeconds)
 
   // 全屏位独立于聚焦分类跟踪，分类缺失时全屏仍压制主动表达。
   const fullscreenProbeOk = snapshot.fullscreen !== undefined
@@ -436,41 +418,10 @@ async function pollSnapshot(generation: number): Promise<void> {
     const focused = snapshot.focused_app as FocusedAppInfo
     const category = classifyFocusedApp(focused)
 
-    const sceneWindow = windowScene?.windows.find(
-      item => item.focused && (!focused.window_id || item.id === focused.window_id)
-    )
-
-    // 栖息只使用主进程统一转换后的视口坐标；探测失败不混入原生物理坐标。
-    const windowGeom =
-      sceneWindow && windowScene
-        ? {
-            x: sceneWindow.x - windowScene.viewport.x,
-            y: sceneWindow.y - windowScene.viewport.y,
-            w: sceneWindow.w,
-            h: sceneWindow.h
-          }
-        : undefined
-
     const cur = $focusContext.get()
 
-    const geomChanged =
-      (windowGeom?.x ?? -1) !== (cur?.windowGeom?.x ?? -1) ||
-      (windowGeom?.y ?? -1) !== (cur?.windowGeom?.y ?? -1) ||
-      (windowGeom?.w ?? -1) !== (cur?.windowGeom?.w ?? -1) ||
-      (windowGeom?.h ?? -1) !== (cur?.windowGeom?.h ?? -1) ||
-      sceneWindow?.id !== cur?.windowId ||
-      sceneWindow?.pid !== cur?.windowPid ||
-      windowScene?.runnerInstanceId !== cur?.runnerInstanceId
-
-    if (!cur || cur.category !== category || cur.fullscreen !== fullscreen || geomChanged) {
-      $focusContext.set({
-        category,
-        fullscreen,
-        runnerInstanceId: windowScene?.runnerInstanceId,
-        windowGeom,
-        windowId: sceneWindow?.id,
-        windowPid: sceneWindow?.pid
-      })
+    if (!cur || cur.category !== category || cur.fullscreen !== fullscreen) {
+      $focusContext.set({ category, fullscreen })
     }
   } else if (fullscreenProbeOk) {
     // focused-app 探测为空但 fullscreen 成功时保留分类，只更新 fullscreen 位。
@@ -500,14 +451,6 @@ async function pollSnapshot(generation: number): Promise<void> {
   }
 
   maybeTriggerIdleExpression(snapshot.locked !== undefined && fullscreenProbeOk ? idleSeconds : -1, $screenLocked.get())
-}
-
-export function applyStageActivity(activity: StageActivity): void {
-  $screenLocked.set(activity.locked)
-  $lastIdleSeconds.set(activity.idleSeconds)
-  $focusContext.set(activity.focus)
-  $effectiveTierOverride.set(activity.effectiveTier)
-  maybeTriggerIdleExpression(activity.idleSeconds, activity.locked)
 }
 
 export function startActivityMonitor(): () => void {
@@ -584,10 +527,7 @@ export function startActivityMonitor(): () => void {
       }
 
       const activity: StageActivity = {
-        locked: $screenLocked.get(),
-        idleSeconds: $lastIdleSeconds.get(),
-        effectiveTier: $effectiveTier.get(),
-        focus: $focusContext.get()
+        locked: $screenLocked.get()
       }
 
       const signature = JSON.stringify([auth.snapshot.sessionId, presentation.stageEpoch, activity])
@@ -616,10 +556,7 @@ export function startActivityMonitor(): () => void {
     },
     $auth.listen(forwardStage),
     $presentation.listen(forwardStage),
-    $screenLocked.listen(forwardStage),
-    $lastIdleSeconds.listen(forwardStage),
-    $focusContext.listen(forwardStage),
-    $effectiveTier.listen(forwardStage)
+    $screenLocked.listen(forwardStage)
   )
   forwardStage()
   unsubs.push(
@@ -656,7 +593,6 @@ export function startActivityMonitor(): () => void {
         runnerReady = false
         monitorGeneration += 1
         polling = false
-        $lastIdleSeconds.set(-1)
         resetDesktopExpression()
         void reportCompanionSignal(false)
       }
@@ -678,7 +614,6 @@ function stopActivityMonitor(): void {
   monitorGeneration += 1
   void reportCompanionSignal(false)
   polling = false
-  $lastIdleSeconds.set(-1)
   lastSignalContext = null
   pendingSignalContextChange = false
   resetDesktopExpression()

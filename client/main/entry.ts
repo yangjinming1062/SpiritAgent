@@ -242,7 +242,6 @@ const { createSurfaceWindow, navigateSurfaceWindow } = createSurfaceWindowFactor
   app,
   appName: APP_NAME,
   getAppIconPath,
-  getCompanionPreference: () => surfaceCompanionPreferences.get(),
   getSurfaces: () => surfaces,
   isMac: IS_MAC,
   isQuitting: () => appQuit.isQuitting(),
@@ -281,6 +280,7 @@ registerPrefsIpc({
 })
 
 surfaces = createSurfacesManager({
+  authIdentity: () => ensureBackendSession().getSession()?.sessionId ?? null,
   createWindow: createSurfaceWindow,
   getCompanionPreference: () => surfaceCompanionPreferences.get(),
   getSpriteWindow: getMainWindow,
@@ -564,7 +564,6 @@ registerUpdateIpc({
 
 registerSpriteIpc({
   deps: {
-    getRunnerBridge: () => runnerHost.getBridge(),
     getSpriteWindow: getMainWindow,
     stageAvailable: () => presentation?.getState().effectiveMode !== 'desktop',
     getUserDataDir: () => app.getPath('userData'),

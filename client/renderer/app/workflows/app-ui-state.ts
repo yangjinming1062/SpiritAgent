@@ -3,6 +3,7 @@ import {
   applyCompanionEditorUiSnapshot,
   captureCompanionEditorUiSnapshot
 } from '@/app/features/companion/companion-editor-state'
+import { $lifeUi, exportLifeUiSnapshot, importLifeUiSnapshot } from '@/app/features/life/life-state'
 import { $visualsUi, exportVisualsUiSnapshot, importVisualsUiSnapshot } from '@/app/features/visuals/visuals-state'
 import {
   $appNavigationRevision,
@@ -44,7 +45,8 @@ export function installAppUiStateSync(): () => void {
   const initialTarget = normalizeAppNavigation({
     ...hashTarget,
     sessionId: search.get('sessionId') ?? hashTarget?.sessionId,
-    messageKey: search.get('messageKey') ?? hashTarget?.messageKey
+    messageKey: search.get('messageKey') ?? hashTarget?.messageKey,
+    pursuitId: search.has('pursuitId') ? Number(search.get('pursuitId')) : hashTarget?.pursuitId
   })
 
   let initialTargetConsumed = false
@@ -60,6 +62,7 @@ export function installAppUiStateSync(): () => void {
   function data(): MainUiStateData {
     return {
       navigation: getAppNavigation(),
+      life: exportLifeUiSnapshot(),
       conversation: exportMainConversationDraftSnapshot(),
       visuals: exportVisualsUiSnapshot(),
       companionEditors: captureCompanionEditorUiSnapshot()
@@ -105,6 +108,7 @@ export function installAppUiStateSync(): () => void {
     }
 
     importMainConversationDraftSnapshot(snapshot.conversation)
+    importLifeUiSnapshot(snapshot.life)
     importVisualsUiSnapshot(snapshot.visuals)
 
     applyCompanionEditorUiSnapshot(snapshot.companionEditors)
@@ -295,6 +299,7 @@ export function installAppUiStateSync(): () => void {
     $chatSessionId.listen(schedulePublish),
     $mainConversationDraftRevision.listen(schedulePublish),
     $visualsUi.listen(schedulePublish),
+    $lifeUi.listen(schedulePublish),
     $companionEditors.listen(schedulePublish),
     $presentation.listen(schedulePublish),
     bridge.onRequest(enqueue)

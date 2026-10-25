@@ -11,7 +11,7 @@ import type { ApiSchemas } from '../../../../shared/api.generated'
 // 音色目录、匹配与设计由后端声音 REST 资源支撑。目录项携带供应商，持久化与合成使用 voiceSelectionId 生成的唯一引用，避免供应商私有 id 冲突。
 
 export type { VoiceOption } from '@/shared/voice-catalog'
-export { voiceProviderLabel, voiceSelectionId } from '@/shared/voice-catalog'
+export { voiceSelectionId } from '@/shared/voice-catalog'
 
 // 请求失败与「没有匹配」分开报告，调用方不能把失败当作无匹配而改选默认音色。
 type VoiceMatch = { ok: true; voice: VoiceOption | null; alternatives: VoiceOption[] } | { ok: false; error: unknown }

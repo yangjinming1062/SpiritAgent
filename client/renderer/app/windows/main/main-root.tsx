@@ -5,9 +5,8 @@ import { useEffect, useRef, useState } from 'react'
 import { AppContentPage } from '@/app/components/app-content-page'
 import { PresentationModeButton } from '@/app/components/presentation-mode-switch'
 import { CompanionMenu } from '@/app/components/surface-companion/companion-menu'
-import { SurfaceCompanion } from '@/app/components/surface-companion/surface-companion'
 import { ConversationPage } from '@/app/features/conversation/conversation-page'
-import { SceneBackdrop } from '@/app/features/scene/scene-backdrop'
+import { LifeArea, LifeDrawer } from '@/app/features/life/life-area'
 import {
   $appNavigationRevision,
   $appNavigationTarget,
@@ -18,6 +17,7 @@ import {
   $chatSessionId,
   $companionSessionId,
   ensureCompanionSession,
+  getConversationRuntime,
   pendingMessages,
   setChatSession,
   switchSession,
@@ -29,6 +29,7 @@ import { hydrateScene } from '@/modules/scene'
 import { useInteractiveRegion, useWindowMouseCapture } from '@/shared'
 import { PanelActivityProvider } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { Home } from '@/shared/lib/icons'
 import { BTN_SUBTLE, WindowControls } from '@/shared/panel'
 import { shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
@@ -36,7 +37,12 @@ import { $mainChatActive } from '@/shared/store/chat-visibility'
 import { $gatewayState } from '@/shared/store/gateway'
 import { notifyError } from '@/shared/store/notifications'
 import { $presentation } from '@/shared/store/presentation'
-import { $surfaceOpenVisible, $surfaceScreenLocked } from '@/shared/store/surfaces'
+import {
+  $surfaceCompanion,
+  $surfaceOpenVisible,
+  $surfaceScreenLocked,
+  setSurfaceCompanion
+} from '@/shared/store/surfaces'
 import { $uiStateError, $uiStateReady, retryUiState } from '@/shared/store/ui-state'
 import { useStrings } from '@/shared/strings'
 import type { AppNavigationTarget, AppPage } from '@ipc/contracts'
@@ -74,10 +80,26 @@ export function MainRoot(): React.JSX.Element {
     posts: t.posts,
     diary: t.diary,
     companion: t.companionFallback,
-    visuals: t.visuals,
+    life: t.life,
     settings: t.settings
   }
 
+  const companion = useStore($surfaceCompanion)
+  const selectedSessionId = useStore($chatSessionId)
+  const selectedRuntime = getConversationRuntime(selectedSessionId)
+  const presetId = useStore(selectedRuntime.$chatSessionPresetId)
+  const readOnly = useStore(selectedRuntime.$chatSessionReadOnly)
+  const workspaceRef = useRef<HTMLDivElement>(null)
+  const [narrow, setNarrow] = useState(true)
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [expandedSession, setExpandedSession] = useState<string | null>(null)
+  const work = page === 'chat' && (readOnly || Boolean(presetId && presetId !== 'companion'))
+
+  const wantsLife =
+    companion.preference.enabled && (!work || (selectedSessionId !== null && expandedSession === selectedSessionId))
+
+  const lifeShown = wantsLife && (!narrow || drawerOpen)
+  const lifeModal = narrow && lifeShown
   const pageTitle = labels[page]
   const authenticated = auth.kind === 'authenticated'
   const accountId = authenticated ? auth.snapshot.accountId : null
@@ -89,6 +111,7 @@ export function MainRoot(): React.JSX.Element {
     authenticated &&
     uiStateReady &&
     !overlayOpen &&
+    !lifeModal &&
     !['starting', 'recovering'].includes(presentation.status)
 
   const reveal = target.messageKey ? { key: target.messageKey, request: navigationRevision } : undefined
@@ -195,11 +218,49 @@ export function MainRoot(): React.JSX.Element {
     void hydrateDiaryUnread()
   }, [visible, foreground, authenticated, accountId, gatewayState])
 
+  useEffect(() => {
+    const element = workspaceRef.current
+
+    if (!element) {
+      return
+    }
+
+    const measure = (): void => setNarrow(element.clientWidth < 960)
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    measure()
+
+    return () => observer.disconnect()
+  }, [])
+
+  const revealLife = (): void => {
+    setExpandedSession(selectedSessionId)
+    setDrawerOpen(true)
+  }
+
+  const openLife = (): void => {
+    revealLife()
+
+    if (!companion.preference.enabled) {
+      void setSurfaceCompanion({ ...companion.preference, enabled: true }).catch(error =>
+        notifyError(error, dict.life.show)
+      )
+    }
+  }
+
+  const closeLife = (): void => {
+    if (narrow) {
+      setDrawerOpen(false)
+    } else {
+      void setSurfaceCompanion({ ...companion.preference, enabled: false }).catch(error =>
+        notifyError(error, dict.life.hide)
+      )
+    }
+  }
+
   return (
     <div className={styles.windowFrame}>
-      <SurfaceCompanion />
       <div className={styles.contentFrame}>
-        <SceneBackdrop />
         <div aria-hidden="true" className={styles.glassPlate} />
         <div className={styles.shell} data-surface="main" ref={shellRef}>
           <header
@@ -212,7 +273,13 @@ export function MainRoot(): React.JSX.Element {
           >
             <div className={styles.titleActions}>
               <PresentationModeButton className={styles.modeButton} />
-              <CompanionMenu />
+              {(narrow || !lifeShown) && (
+                <button aria-label={dict.life.show} className={styles.modeButton} onClick={openLife} type="button">
+                  <Home size={14} />
+                  {dict.life.title}
+                </button>
+              )}
+              <CompanionMenu onShow={revealLife} />
               <WindowControls />
             </div>
           </header>
@@ -240,26 +307,47 @@ export function MainRoot(): React.JSX.Element {
               labels={labels}
               onOverlayChange={setOverlayOpen}
             />
-            <main className={styles.stage} data-page={page}>
-              <div className={styles.pageViewport} hidden={page !== 'chat'}>
-                <ConversationPage
-                  active={page === 'chat' && active}
-                  companionSessionId={companionSessionId}
-                  companionUnread={companionUnread}
-                  containerRef={shellRef}
-                  foreground={foreground}
-                  receiveExternalAttachments={page === 'chat' && visible}
-                  reveal={reveal}
-                  viewId="main-chat"
-                  visible={page === 'chat' && visible}
+            <div className={styles.workspace} ref={workspaceRef}>
+              {!narrow && lifeShown && (
+                <div className={styles.lifeSlot} style={{ order: companion.preference.side === 'left' ? -1 : 1 }}>
+                  <LifeArea onClose={closeLife} visible={visible && authenticated && uiStateReady} />
+                </div>
+              )}
+              {lifeModal && (
+                <LifeDrawer
+                  onClose={() => setDrawerOpen(false)}
+                  side={companion.preference.side}
+                  visible={visible && authenticated && uiStateReady}
                 />
-              </div>
-              <PanelActivityProvider active={active && page !== 'chat'}>
-                {page !== 'chat' && (
-                  <AppContentPage containerRef={shellRef} foreground={active} mediaViewId="main-posts" page={page} />
-                )}
-              </PanelActivityProvider>
-            </main>
+              )}
+              <main className={styles.stage} data-page={page} inert={lifeModal}>
+                <div className={styles.pageViewport} hidden={page !== 'chat'}>
+                  <ConversationPage
+                    active={page === 'chat' && active}
+                    companionSessionId={companionSessionId}
+                    companionUnread={companionUnread}
+                    containerRef={shellRef}
+                    foreground={foreground}
+                    receiveExternalAttachments={page === 'chat' && visible}
+                    reveal={reveal}
+                    viewId="main-chat"
+                    visible={page === 'chat' && visible}
+                  />
+                </div>
+                <PanelActivityProvider active={active && page !== 'chat'}>
+                  {page !== 'chat' && (
+                    <AppContentPage
+                      containerRef={shellRef}
+                      foreground={active}
+                      mediaViewId="main-posts"
+                      page={page}
+                      standaloneLife={!lifeShown}
+                      visible={visible && authenticated && uiStateReady}
+                    />
+                  )}
+                </PanelActivityProvider>
+              </main>
+            </div>
           </div>
         </div>
       </div>

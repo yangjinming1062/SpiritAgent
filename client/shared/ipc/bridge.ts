@@ -17,7 +17,6 @@ export interface DesktopBridge {
     onRequest: EventSubscription<'spiritagent:ui-state:request'>
   }
   presentation: {
-    companionActivity: AsyncIpc<IpcInvokeContract['spiritagent:presentation:companion-activity']>
     setIgnoreMouseEvents: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-ignore-mouse-events']>
     getState: AsyncIpc<IpcInvokeContract['spiritagent:presentation:get-state']>
     requestAccessibility: AsyncIpc<IpcInvokeContract['spiritagent:presentation:request-accessibility']>
@@ -116,6 +115,7 @@ export interface DesktopBridge {
     minimize: AsyncIpc<IpcInvokeContract['spiritagent:surface:minimize']>
     getState: AsyncIpc<IpcInvokeContract['spiritagent:surface:get-state']>
     setCompanion: AsyncIpc<IpcInvokeContract['spiritagent:surface:set-companion']>
+    companionVisibility: AsyncIpc<IpcInvokeContract['spiritagent:surface:companion-visibility']>
     setIgnoreMouseEvents: AsyncIpc<IpcInvokeContract['spiritagent:surface:set-ignore-mouse-events']>
     onChanged: EventSubscription<'spiritagent:surface:changed'>
     onNavigate: EventSubscription<'spiritagent:surface:navigate'>
@@ -152,8 +152,6 @@ export interface DesktopBridge {
     hide: AsyncIpc<IpcInvokeContract['spiritagent:sprite:hide']>
     setIgnoreMouseEvents: AsyncIpc<IpcInvokeContract['spiritagent:sprite:set-ignore-mouse-events']>
     getPosition: AsyncIpc<IpcInvokeContract['spiritagent:sprite:get-position']>
-    getWindowScene: AsyncIpc<IpcInvokeContract['spiritagent:sprite:get-window-scene']>
-    moveToDisplay: AsyncIpc<IpcInvokeContract['spiritagent:sprite:move-to-display']>
     setPosition: AsyncIpc<IpcInvokeContract['spiritagent:sprite:set-position']>
     moveToCursorDisplay: AsyncIpc<IpcInvokeContract['spiritagent:sprite:move-to-cursor-display']>
   }

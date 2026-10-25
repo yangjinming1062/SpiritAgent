@@ -10,7 +10,6 @@ import {
 } from '@/shared/lib/storage'
 import { preferencesApi } from '@/shared/platform/desktop'
 import type { SetSpriteStateOptions, SpriteStateName } from '@/shared/presentation-ports'
-import { DESKTOP_COMPANION_ACTIVITY_PRIORITY, type DesktopCompanionActivityState } from '@ipc/contracts'
 
 import { hydratePersona } from './persona-store'
 import { hydratePortrait } from './portrait-store'
@@ -27,14 +26,13 @@ const lifecyclePersisted = definePersistedEnum<CompanionLifecycle>({
 export const $companionLifecycle = lifecyclePersisted.$atom
 export const setCompanionLifecycle = lifecyclePersisted.set
 
-const $localSpriteState = atom<SpriteStateName>('idle')
-const $desktopCompanionActivity = atom<DesktopCompanionActivityState>('idle')
+export const $spriteState = atom<SpriteStateName>('idle')
 const $previousState = atom<SpriteStateName>('idle')
 
 // 跨模块共享的水合去重缓存：同 key 的并发水合只跑一次。
 const inFlightHydrations = new Map<string, Promise<unknown>>()
 
-// 打扰档位门控主动外发与主动推理（用户主动行为不被门控）：still 停止主动 LLM、normal 轻互动、autonomous 开放视觉与空间表达。
+// 打扰档位门控主动外发与主动推理（用户主动行为不被门控）：still 停止主动 LLM、normal 轻互动、autonomous 开放自主视觉表达。
 export type DisturbanceTier = 'still' | 'normal' | 'autonomous'
 
 const DISTURBANCE_TIERS = ['still', 'normal', 'autonomous'] as const satisfies readonly DisturbanceTier[]
@@ -140,29 +138,18 @@ export const $effectiveTier = computed(
 
 // 表现状态机优先级（DESIGN「状态与播放优先级」）。
 const STATE_PRIORITY: Record<SpriteStateName, number> = {
-  ...DESKTOP_COMPANION_ACTIVITY_PRIORITY,
+  idle: 10,
+  listening: 40,
+  thinking: 50,
+  speaking: 60,
+  working: 70,
+  disconnected: 100,
   emotional: 35,
   interacting: 80
 }
 
 // 瞬态经 $previousState 与计时器自动恢复，因此绕过优先级门控，避免 WORKING/SPEAKING 压制瞬时提示。
 const TRANSIENT_STATES: ReadonlySet<SpriteStateName> = new Set(['emotional', 'interacting'])
-
-// 远端持续活动参与呈现裁决，不进入本地瞬态的恢复目标。
-export const $spriteState = computed(
-  [$localSpriteState, $desktopCompanionActivity],
-  (local, remote): SpriteStateName => {
-    if (TRANSIENT_STATES.has(local)) {
-      return local
-    }
-
-    return STATE_PRIORITY[local] >= STATE_PRIORITY[remote] ? local : remote
-  }
-)
-
-export function setDesktopCompanionActivity(state: DesktopCompanionActivityState): void {
-  $desktopCompanionActivity.set(state)
-}
 
 let transientTimer: ReturnType<typeof setTimeout> | null = null
 let activityCounter = 0
@@ -176,7 +163,7 @@ function clearTransientTimer(): void {
 }
 
 export function setSpriteState(name: SpriteStateName, options?: SetSpriteStateOptions): void {
-  const current = $localSpriteState.get()
+  const current = $spriteState.get()
 
   if (!options?.force && STATE_PRIORITY[name] < STATE_PRIORITY[current] && !TRANSIENT_STATES.has(name)) {
     // 低优先级不能打断高优先级，瞬时状态除外（经计时器自动恢复）。
@@ -188,7 +175,7 @@ export function setSpriteState(name: SpriteStateName, options?: SetSpriteStateOp
       $previousState.set(current)
     }
 
-    $localSpriteState.set(name)
+    $spriteState.set(name)
     clearTransientTimer()
 
     transientTimer = setTimeout(() => {
@@ -200,12 +187,12 @@ export function setSpriteState(name: SpriteStateName, options?: SetSpriteStateOp
   }
 
   clearTransientTimer()
-  $localSpriteState.set(name)
+  $spriteState.set(name)
 }
 
 // 若瞬时过程中有更高优先级状态到达，优先取当前状态。
 function restoreAfterTransient(): void {
-  const currentAfter = $localSpriteState.get()
+  const currentAfter = $spriteState.get()
   const storedPrev = $previousState.get()
 
   const target = !TRANSIENT_STATES.has(currentAfter)
@@ -214,22 +201,12 @@ function restoreAfterTransient(): void {
       ? 'idle'
       : storedPrev
 
-  $localSpriteState.set(target)
-}
-
-// 提前结束仍在进行的指定瞬态（如表达片段收尾），恢复仍有效的持续状态。
-export function endTransientState(name: SpriteStateName): void {
-  if ($localSpriteState.get() !== name || !transientTimer) {
-    return
-  }
-
-  clearTransientTimer()
-  restoreAfterTransient()
+  $spriteState.set(target)
 }
 
 // 拖拽期间持续保持 interacting（撤销在途瞬态计时器），松手时由带时长的 setSpriteState('interacting') 恢复。
 export function holdInteracting(): void {
-  const current = $localSpriteState.get()
+  const current = $spriteState.get()
 
   clearTransientTimer()
 
@@ -237,11 +214,11 @@ export function holdInteracting(): void {
     $previousState.set(current)
   }
 
-  $localSpriteState.set('interacting')
+  $spriteState.set('interacting')
 }
 
 export function reportUserActivity(): void {
-  const current = $localSpriteState.get()
+  const current = $spriteState.get()
 
   if (current !== 'idle' && current !== 'working') {
     return
@@ -260,7 +237,7 @@ export function reportUserActivity(): void {
   activityResetTimer = setTimeout(() => {
     activityCounter = 0
 
-    if ($localSpriteState.get() === 'working') {
+    if ($spriteState.get() === 'working') {
       // working(70) 盖住 idle(10)，不带 force 会被优先级门控吞掉，必须强制退出。
       setSpriteState('idle', { force: true })
     }
@@ -311,8 +288,7 @@ registerStorageClearHandler(() => {
   inFlightHydrations.clear()
 
   activityCounter = 0
-  $localSpriteState.set('idle')
-  $desktopCompanionActivity.set('idle')
+  $spriteState.set('idle')
   $previousState.set('idle')
   $effectiveTierOverride.set(null)
 })

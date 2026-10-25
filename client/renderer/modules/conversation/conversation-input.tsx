@@ -305,12 +305,14 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
     <textarea
       {...commonEditorProps}
       className="w-full flex-1 resize-none bg-transparent border-0 outline-none text-xs text-strong placeholder:text-faint px-1.5 py-1.5 min-h-[2.4em] max-h-[7.2em] leading-snug field-sizing-content overflow-y-auto"
+      data-conversation-input="true"
       ref={setEditorRef}
     />
   ) : (
     <textarea
       {...commonEditorProps}
       className="w-full flex-1 resize-none bg-transparent border-0 outline-none text-xs px-1.5 py-0.5 text-strong placeholder:text-faint min-h-[1.5em] max-h-[7.2em] leading-snug field-sizing-content overflow-y-auto"
+      data-conversation-input="true"
       ref={setEditorRef}
     />
   )

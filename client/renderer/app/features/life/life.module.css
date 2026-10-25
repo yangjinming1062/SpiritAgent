@@ -1,0 +1,223 @@
+.page {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  padding: 28px clamp(20px, 4vw, 44px) 36px;
+  color: var(--ui-text-body);
+  background: var(--ui-app-bg);
+}
+.pageHeading { margin-bottom: 28px; }
+.pageHeading h1 {
+  color: var(--ui-text-strong);
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -.04em;
+}
+.pageHeading p {
+  margin-top: 8px;
+  color: var(--ui-text-muted);
+  font-size: 13px;
+}
+.overview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px;
+}
+.eyebrow {
+  font-size: 11px;
+  font-weight: 550;
+  color: var(--ui-text-muted);
+  letter-spacing: .04em;
+}
+.activity {
+  margin: 0;
+  font-size: 19px;
+  line-height: 1.65;
+  color: var(--ui-text-strong);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.mood {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ui-text-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.focused {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 18px;
+  border-top: 1px solid var(--ui-line-hairline);
+}
+.pursuitLink {
+  color: var(--ui-text-strong);
+  font-size: 14px;
+  line-height: 1.6;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.pursuitLink:hover { color: var(--ui-accent); }
+.pursuitLink:focus-visible, .pursuit:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 3px;
+}
+.quiet, .empty {
+  color: var(--ui-text-muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.empty { padding: 18px 0; }
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.overview > .actions { margin-top: 6px; }
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-top: 30px;
+}
+.section h2 {
+  color: var(--ui-text-strong);
+  font-size: 17px;
+  font-weight: 600;
+}
+.section > button { align-self: flex-start; }
+.pursuits {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 14px;
+}
+.pursuit {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px;
+  text-align: left;
+  border: 1px solid var(--ui-line-hairline);
+  border-radius: 16px;
+  background: var(--ui-fill-faint);
+  cursor: pointer;
+}
+.pursuit:hover {
+  background: var(--ui-fill-hover);
+  border-color: var(--ui-accent-line);
+}
+.pursuit strong {
+  font-size: 15px;
+  color: var(--ui-text-strong);
+}
+.pursuit p {
+  color: var(--ui-text-muted);
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.pursuit time, .detail time {
+  color: var(--ui-text-faint);
+  font-size: 11px;
+}
+.detail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+.detailField { margin-top: 8px; }
+.detailField h3 {
+  font-size: 12px;
+  color: var(--ui-text-muted);
+  margin-bottom: 8px;
+}
+.detailField p {
+  font-size: 14px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.timeline {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.timeline > li {
+  display: flex;
+  gap: 24px;
+  padding: 18px 0;
+  border-top: 1px solid var(--ui-line-hairline);
+}
+.timeline time {
+  flex: 0 0 118px;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--ui-text-faint);
+}
+.eventBody {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.eventBody > p {
+  font-size: 14px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--ui-text-muted);
+}
+.lifeArea {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  background: var(--ui-app-bg);
+  border-inline: 1px solid var(--ui-line-hairline);
+}
+.areaHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  color: var(--ui-text-muted);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.drawerLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+}
+.drawerBackdrop {
+  position: absolute;
+  inset: 0;
+  background: rgb(0 0 0 / 20%);
+}
+.drawer {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: min(380px, calc(100% - 40px));
+  box-shadow: 12px 0 32px rgb(0 0 0 / 15%);
+}
+.drawer[data-side='right'] { inset: 0 0 0 auto; }
+@media (max-width: 700px) {
+  .timeline > li {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .timeline time { flex-basis: auto; }
+}

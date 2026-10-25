@@ -18,8 +18,6 @@ export const $presentation = atom<PresentationState>({
   stageAvailable: false,
   fullscreen: false,
   compatibilityWarning: null,
-  companionActivity: 'idle',
-  voicePreparing: false,
   displayId: null,
   workArea: null,
   systemTray: null,

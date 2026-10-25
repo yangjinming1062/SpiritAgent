@@ -12,7 +12,7 @@ import type { SurfaceCompanionPreference } from '@ipc/contracts'
 
 import styles from './companion-menu.module.css'
 
-export function CompanionMenu(): React.JSX.Element {
+export function CompanionMenu({ onShow }: { onShow?: () => void } = {}): React.JSX.Element {
   const state = useStore($surfaceCompanion)
   const strings = useStrings().common.companionControl
   const [open, setOpen] = useState(false)
@@ -40,6 +40,11 @@ export function CompanionMenu(): React.JSX.Element {
 
     try {
       await setSurfaceCompanion(preference)
+
+      if (preference.enabled) {
+        onShow?.()
+      }
+
       setError(false)
       setOpen(false)
     } catch (cause) {
@@ -50,13 +55,6 @@ export function CompanionMenu(): React.JSX.Element {
       setSaving(false)
     }
   }
-
-  const notice =
-    state.hiddenReason === 'maximized'
-      ? strings.temporaryMaximized
-      : state.hiddenReason === 'edge'
-        ? strings.temporaryEdge
-        : null
 
   return (
     <div className={styles.root} onDoubleClick={event => event.stopPropagation()} ref={rootRef}>
@@ -98,7 +96,6 @@ export function CompanionMenu(): React.JSX.Element {
               {side === 'left' ? strings.left : strings.right}
             </button>
           ))}
-          {notice && <p className={styles.notice}>{notice}</p>}
           {error && (
             <p className={styles.error} role="alert">
               {strings.saveFailed}

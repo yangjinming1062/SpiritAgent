@@ -1,4 +1,4 @@
-import type { ActiveTurnSnapshot, VisualPlaybackReceipt } from '@protocol'
+import type { ActiveTurnSnapshot } from '@protocol'
 
 import type { ApiSchemas } from '../shared/api.generated'
 
@@ -16,8 +16,3 @@ export type Diary = ApiSchemas['DiaryEntryResponse']
 export type Scene = ApiSchemas['SceneResponse']
 
 export type Outfit = ApiSchemas['OutfitResponse']
-
-/** 桌面回执事件在本端的留痕；回执只由桌面提交，手机仅展示。 */
-export interface PlaybackReceipt extends VisualPlaybackReceipt {
-  at: number
-}

@@ -125,8 +125,6 @@ export type CompanionBubble = ApiSchemas['RpcReplyBubbleView']
 export type SessionMessage = ApiSchemas['RpcSessionMessageView']
 
 /** 撤回后把锚点消息的用户正文与图片退回客户端输入框。 */
-export type UndoAnchor = ApiSchemas['UndoAnchor']
-
 export type UndoResponse = ApiSchemas['SessionUndoResult']
 
 export type ActiveTurnSnapshot = ApiSchemas['ActiveTurnView']
@@ -178,12 +176,9 @@ export type PlaybackStatus = ApiSchemas['RpcVisualPlaybackEvent']['status']
 export type PlaybackReceiptKind = NonNullable<ApiSchemas['RpcVisualPlaybackEvent']['receipt_kind']>
 export type ActionClipKind = NonNullable<ApiSchemas['ActionAssetDesign']['clip_kind']>
 export type ActionReviewStatus = ApiSchemas['ActionAssetView']['status']
-export type VisualComboSummary = ApiSchemas['ComboSnapshot']
 export type VisualItem = ApiSchemas['VisualItemView']
 export type VisualJob = ApiSchemas['VisualJobView']
 export type VisualDetail = ApiSchemas['VisualDetailView']
-export type VisualPlayback = ApiSchemas['VisualPlayCommand']
-export type VisualPlaybackReceipt = ApiSchemas['RpcVisualPlaybackEvent']
 export type VisualRegenerateRequest = ApiSchemas['VisualRegenerateRequest']
 export type VisualPresentationUpdate = ApiSchemas['VisualPreferencesRequest']
 export type VisualJobCommandRequest = ApiSchemas['VisualJobCommandRequest']

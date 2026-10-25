@@ -1,6 +1,48 @@
 import type { Dictionary } from './zh'
 
 export const dict: Dictionary = {
+  life: {
+    title: 'Life',
+    intro: 'What your companion is continuing, and what has changed recently.',
+    now: 'Right now',
+    unavailable: 'No recent activity is available yet',
+    ongoing: 'Still on their mind',
+    noPursuit: 'No ongoing pursuits at the moment',
+    overviewAction: 'Explore life',
+    chatAction: 'Open chat',
+    show: 'Show life area',
+    hide: 'Hide life area',
+    close: 'Close life area',
+    pursuitsTitle: 'Things that matter',
+    eventsTitle: 'Recent changes',
+    statuses: { all: 'All', active: 'Ongoing', completed: 'Completed' },
+    reason: 'How it began',
+    desiredResult: 'What they hope to achieve',
+    progress: 'Progress so far',
+    nextStep: 'Planned next',
+    noProgress: 'No confirmed progress yet',
+    emptyPursuits: 'No pursuits have been recorded here yet.',
+    emptyEvents: 'No life changes to display yet.',
+    moreEvents: 'Earlier records',
+    failed: 'Life updates are unavailable. Previously loaded content is still shown.',
+    loading: 'Checking in…',
+    back: 'Back to life',
+    previous: 'Previous',
+    next: 'Next',
+    details: 'Explore this pursuit',
+    openVisual: 'View visual',
+    openPosts: 'Open posts',
+    openDiary: 'Open diary',
+    eventLabels: {
+      activity: 'Activity changed',
+      started: 'Started something',
+      progressed: 'Made progress',
+      completed: 'Finished something',
+      visual: 'Created a visual',
+      post: 'Published a post',
+      diary: 'Wrote a diary entry'
+    }
+  },
   brand: {
     name: 'SpiritAgent',
     fullName: 'SpiritAgent Desktop'
@@ -31,14 +73,11 @@ export const dict: Dictionary = {
     moreActions: 'More actions',
     creationDetails: 'Creation details',
     companionControl: {
-      title: 'Companion',
-      show: 'Show companion',
+      title: 'Life area',
+      show: 'Show life area',
       left: 'Left side',
       right: 'Right side',
-      temporaryEdge: 'Not enough room beside the window; companion is temporarily hidden',
-      temporaryMaximized: 'Companion is temporarily hidden while maximized',
-      saveFailed: 'Could not save companion display settings. Try again.',
-      dragTitle: (name: string) => `Drag ${name} to move the whole window`
+      saveFailed: 'Could not save life area display settings. Try again.'
     },
     save: 'Save',
     saving: 'Saving…',
@@ -596,12 +635,8 @@ export const dict: Dictionary = {
         memory: 'Memories',
         wardrobe: 'Wardrobe',
         environment: 'Environments',
-        actions: 'Actions'
-      },
-      lifeStatus: {
-        title: 'Companion status',
-        fallback: 'Quietly keeping you company',
-        activePursuit: 'One thing is currently in progress'
+        actions: 'Actions',
+        visuals: 'Visuals'
       },
       memoryScope: 'Whose memories',
       memoryScopeAria: 'Memory type',
@@ -1237,19 +1272,19 @@ export const dict: Dictionary = {
     egg: {
       preparing: 'Loading your companion’s look…',
       failed: 'Could not load this look',
-      unavailable: 'Choose a look in the wardrobe',
+      unavailable: 'No visual is available yet',
       retry: 'Retry',
-      openWardrobe: 'Open wardrobe',
+      openVisuals: 'View visuals',
       ariaLabel: 'Companion egg'
     }
   },
 
   living: {
     rail: {
-      chat: 'Chat',
+      chat: 'Companion',
       posts: 'Posts',
       diary: 'Diary',
-      visuals: 'Visuals',
+      life: 'Life',
       unread: 'Unread content',
       wardrobe: 'Wardrobe',
       remote: 'Remote',
@@ -1482,9 +1517,6 @@ export const dict: Dictionary = {
         cancelled: 'Cancelled'
       }
     },
-    sceneBackdrop: {
-      pendingText: 'Preparing the environment'
-    },
     toasts: {
       sceneReady: 'Saved to environment library',
       sceneImageRegenerated: 'Environment image updated',
@@ -1608,7 +1640,7 @@ export const dict: Dictionary = {
     avatarUnreadHint: 'Left-click to open unread chat, right-click to switch account',
     posts: 'Posts',
     diary: 'Diary',
-    visuals: 'Visuals',
+    life: 'Life',
     remote: 'Remote',
     settings: 'Settings',
     windowMode: 'Return to window mode',

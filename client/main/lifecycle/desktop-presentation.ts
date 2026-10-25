@@ -5,8 +5,6 @@ import { app, BrowserWindow, type IpcMain, powerMonitor, screen, type WebContent
 
 import {
   type AppNavigationTarget,
-  DESKTOP_COMPANION_ACTIVITY_PRIORITY,
-  type DesktopCompanionActivityState,
   type DesktopMediaBytes,
   type DesktopMediaReference,
   type DesktopTrayLayout,
@@ -74,14 +72,6 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   let fullscreen = false
   let compatibilityWarning: string | null = null
 
-  const activityBySource: Record<
-    'host' | 'desktop',
-    { state: DesktopCompanionActivityState; voicePreparing: boolean }
-  > = {
-    host: { state: 'idle', voicePreparing: false },
-    desktop: { state: 'idle', voicePreparing: false }
-  }
-
   let effectiveMode: PresentationMode = 'window'
   let prepareDesktopMedia = false
   let status: PresentationState['status'] = 'inactive'
@@ -102,7 +92,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   let trayLayoutRevision = 0
   let disposal: Promise<void> | null = null
   let disposeIpc: (() => void) | null = null
-  let lastActivity: StageActivity = { locked: false, idleSeconds: -1, effectiveTier: 'normal', focus: null }
+  let lastActivity: StageActivity = { locked: false }
   let runningApplications: RunningApplicationsState = { status: 'inactive', error: null, windows: [] }
   const applicationListeners = new Set<(state: RunningApplicationsState) => void>()
   let displayResolutionGeneration = 0
@@ -327,12 +317,6 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       stageAvailable: stageAvailable && desktopUnlocked,
       fullscreen,
       compatibilityWarning,
-      companionActivity:
-        DESKTOP_COMPANION_ACTIVITY_PRIORITY[activityBySource.host.state] >
-        DESKTOP_COMPANION_ACTIVITY_PRIORITY[activityBySource.desktop.state]
-          ? activityBySource.host.state
-          : activityBySource.desktop.state,
-      voicePreparing: activityBySource.host.voicePreparing || activityBySource.desktop.voicePreparing,
       displayId: targetDisplay?.id ?? null,
       workArea: effectiveMode === 'desktop' && status === 'active' ? nativeWorkArea : null,
       systemTray: effectiveMode === 'desktop' && status === 'active' ? nativeSystemTray : null,
@@ -569,7 +553,6 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
   function destroyWindows(): void {
     desktopRendererHealthy = false
-    activityBySource.desktop = { state: 'idle', voicePreparing: false }
     windows.destroy()
     activeDisplay = null
     nativeWorkArea = null
@@ -1441,8 +1424,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         desktopWindow: sender => (isDesktopSender(sender) ? windows.getInteractive() : null),
         backgroundWindow: windows.getBackgroundWindow,
         assertSettings,
-        authenticated: options.authenticated,
-        authIdentity: options.authIdentity
+        authenticated: options.authenticated
       },
       {
         getState: snapshot,
@@ -1454,16 +1436,6 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
           publish()
 
           return snapshot()
-        },
-        companionActivity: (source, state, voicePreparing) => {
-          if (disposed) {
-            return
-          }
-
-          if (activityBySource[source].state !== state || activityBySource[source].voicePreparing !== voicePreparing) {
-            activityBySource[source] = { state, voicePreparing }
-            publish()
-          }
         },
         reportReady: () => {
           const main = windows.getInteractive()
@@ -1625,8 +1597,6 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       suppressAutoRestore = true
       prepareDesktopMedia = false
       background.accountChanged()
-      activityBySource.host = { state: 'idle', voicePreparing: false }
-      activityBySource.desktop = { state: 'idle', voicePreparing: false }
       hostReady = false
       invalidateStartup('桌面准备期间账户已变化。')
 

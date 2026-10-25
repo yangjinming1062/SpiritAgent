@@ -4,26 +4,12 @@ import type React from 'react'
 import { REASONING_EFFORT_VALUES, type ReasoningEffort } from '@/shared/lib/reasoning-effort'
 import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
-import type { SessionMessage } from '@protocol'
 import { clamp } from '@runtime'
 
 import { useConversationView } from './conversation-view'
 
 export const DEFAULT_THRESHOLD = 0.7
 const DEFAULT_TEMPERATURE = 0.7
-
-export interface CompressContextResponse {
-  compressed: boolean
-  messages?: SessionMessage[]
-  reason?: string
-  replaced_count?: number
-  session_id?: string
-  summary?: string
-  usage?: {
-    context_window?: number
-    total_tokens?: number
-  }
-}
 
 export function formatTokenNumber(num: number): string {
   if (num >= 1_000_000) {

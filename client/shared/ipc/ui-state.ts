@@ -7,6 +7,29 @@ import type {
 } from '../../../shared/protocol'
 import { isRecord } from '../is-record'
 
+export interface LifeUiSnapshot {
+  status: 'all' | 'active' | 'completed'
+  pursuitPage: number
+  eventPage: number
+  selectedId: number | null
+  scrollTop: number
+}
+
+export function isLifeUiSnapshot(value: unknown): value is LifeUiSnapshot {
+  return (
+    isRecord(value) &&
+    (value.status === 'all' || value.status === 'active' || value.status === 'completed') &&
+    [value.pursuitPage, value.eventPage].every(
+      page => typeof page === 'number' && Number.isSafeInteger(page) && page >= 0
+    ) &&
+    (value.selectedId === null ||
+      (typeof value.selectedId === 'number' && Number.isSafeInteger(value.selectedId) && value.selectedId > 0)) &&
+    typeof value.scrollTop === 'number' &&
+    Number.isFinite(value.scrollTop) &&
+    value.scrollTop >= 0
+  )
+}
+
 export interface CompanionMemoryDraft {
   content: string
   baseContent: string

@@ -194,7 +194,7 @@ export function DesktopControls({
             >
               <Video aria-hidden="true" size={17} />
               <span>
-                <strong>{t.visuals}</strong>
+                <strong>{strings.visuals.title}</strong>
                 {wallpaperStatus && <span role="status">{wallpaperStatus}</span>}
               </span>
             </button>

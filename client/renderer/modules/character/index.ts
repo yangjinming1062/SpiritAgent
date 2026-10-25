@@ -1,4 +1,4 @@
-export { $screenLocked, applyStageActivity, reportInteractionStat, startActivityMonitor } from './activity'
+export { $screenLocked, reportInteractionStat, startActivityMonitor } from './activity'
 export { pickAvatarImage, type PickedImage, resolvePortraitUrl } from './avatar-image'
 export { $avatarSeeds, hydrateAvatarSeeds, patchAvatarSeeds, refreshAvatarSeeds } from './avatar-seeds-store'
 export {
@@ -22,7 +22,6 @@ export {
   QUIET_MINUTES,
   reportUserActivity,
   setCompanionLifecycle,
-  setDesktopCompanionActivity,
   setDisturbanceTier,
   setSpriteState,
   startQuiet
@@ -30,7 +29,6 @@ export {
 export { FullbodyReferencePanel } from './fullbody-reference-panel'
 export { hydrateFullbodyReference } from './fullbody-reference-store'
 export { GenerationActionsGroup } from './generation-actions'
-export { $lifeRevision, handleLifeUpdated } from './life-store'
 export {
   assembleCharacterPersona,
   assemblePersona,
@@ -100,8 +98,8 @@ export {
   getBaseSpriteWidth,
   initSpatial,
   resetToHomePosition,
+  returnToHomePosition,
   setDefaultScale,
-  setSpatialLocale,
   startDrag,
   syncDefaultScale,
   updateDragPosition
