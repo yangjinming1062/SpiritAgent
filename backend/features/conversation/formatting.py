@@ -213,7 +213,6 @@ def message_text(m: Message | MessageSnapshot) -> str:
 def format_messages_compact(
     msgs: list[Message],
     *,
-    char_cap: int | None = None,
     user_local_tz: str | None = None,
 ) -> str:
     """保留会话与消息来源、发言归属、时间和工具关联；正文换行不能伪装成另一条发言。"""
@@ -223,31 +222,11 @@ def format_messages_compact(
         if msg.content_type == "companion_reply":
             if not (msg.content or "").strip() and not msg.tool_calls:
                 continue
-            source = _companion_context_items(msg, dialogue_only=True)
-            content = []
-            remaining = char_cap
-            truncated = False
-            for bubble in source:
-                if remaining is not None and remaining <= 0:
-                    truncated = True
-                    break
-                if bubble["type"] in {"image", "video", "link"}:
-                    content.append(bubble)
-                    continue
-                original_text = bubble["text"]
-                if not isinstance(original_text, str):
-                    raise ValueError("Dialogue bubbles require text")
-                dialogue = original_text[:remaining]
-                content.append({"type": bubble["type"], "text": dialogue})
-                truncated |= dialogue != original_text
-                if remaining is not None:
-                    remaining -= len(dialogue)
+            content = _companion_context_items(msg, dialogue_only=True)
         else:
-            text = message_text(msg)
-            if not text and not msg.tool_calls:
+            content = message_text(msg)
+            if not content and not msg.tool_calls:
                 continue
-            content = text[:char_cap]
-            truncated = char_cap is not None and len(text) > char_cap
         record = {
             "session_id": str(msg.conversation_id),
             "message_id": str(msg.id),
@@ -258,7 +237,6 @@ def format_messages_compact(
             if msg.created_at
             else None,
             "content": content,
-            "truncated": truncated,
         }
         if msg.subtype:
             record["subtype"] = msg.subtype

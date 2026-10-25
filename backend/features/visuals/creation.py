@@ -205,7 +205,7 @@ async def _opening_review_reference(
     ):
         data, mime = await image_asset_bytes(value)
         return await asyncio.to_thread(build_data_uri, data, mime)
-    # 链参考缺失时沿本次输入恢复；编辑和扩图必须保留原画面，不能改用头像。
+    # 链参考缺失时沿本次输入恢复；编辑必须保留原画面，不能改用头像。
     expected_hash: str | None = None
     if secondary:
         if progress.aligned_outfit_path:
@@ -221,8 +221,6 @@ async def _opening_review_reference(
             path, expected_hash = progress.aligned_outfit_path, progress.aligned_outfit_hash
         else:
             path, expected_hash = snapshot.outfit.path, snapshot.outfit.content_hash
-    elif inputs.expansion is not None:
-        path = progress.previous_pose_path or progress.source_image_path
     elif inputs.image_edit:
         path = progress.previous_pose_path
     else:
@@ -341,10 +339,7 @@ def opening_repair_reference(
     inputs = state.inputs if state is not None else None
     if not isinstance(inputs, CharacterImageInput) or not inputs.image_edit:
         return None
-    for path in (
-        inputs.identity_reference,
-        progress.previous_pose_path or (progress.source_image_path if inputs.expansion is not None else None),
-    ):
+    for path in (inputs.identity_reference, progress.previous_pose_path):
         if path and resolve_asset_reference(path) is not None:
             return path
     raise VisualStateError("画面修复的原始参考无法读取，请重新准备素材")

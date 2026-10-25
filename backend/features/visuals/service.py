@@ -231,7 +231,6 @@ async def regenerate_visual(
             duration_seconds=snapshot.action.duration_seconds,
             action_description=_action_description(snapshot),
             creation_plan=None if changed_general else snapshot.plan,
-            source_image_path=source_image,
             previous_pose_path=None if reuse or source_image is None else source_image,
             pose_path=source_image if reuse else "",
             image_confirmed=reuse,
@@ -507,8 +506,6 @@ async def resume_job(user_id: int, job_id: int) -> VisualJobView:
             raise VisualStateError("生成的成品无法使用，请重新制作")
         if progress.failure_reason == "queue_stopped":
             raise VisualStateError("本次视频制作已结束，请重新制作视频")
-        if progress.expand_image and visual_image_chain_exhausted(progress):
-            raise VisualStateError("本次图片制作没有可用结果，请重新制作图片")
         allow_model_steps = True
         try:
             require_new_generation_call(user_id)

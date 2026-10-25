@@ -1,5 +1,3 @@
-"""admin resource operations; transaction and failure semantics belong to the owning capability."""
-
 from infrastructure.request_errors import RequestError
 from infrastructure.text import apply_partial
 from runtime.channels import terminate_remote_sessions, terminate_user_gateway

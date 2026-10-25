@@ -20,20 +20,15 @@ _GENDER_KEYWORDS: dict[str, list[str]] = {
     "male": ["male", "男", "男声", "少年", "正太"],
 }
 
-# 稳定排序序位：zh → multi → ∅ → en，桶内保持原始顺序；放模块级避免每次调用重新分配
+# 音色按中文、多语言、未标注、英语排序，桶内保持原始顺序。
 _LANGUAGE_BUCKET: dict[str, int] = {"zh": 0, "multi": 1, "": 2, "en": 3}
 
-# 由 _LANGUAGE_BUCKET 派生，保证支持集合与排序顺序不会失同步
 SUPPORTED_VOICE_LANGUAGES: frozenset[str] = frozenset(_LANGUAGE_BUCKET)
 
 
 def normalize_voice_language(value: object) -> str | None:
     """目录查询与偏好匹配共用的语言筛选；未知语言不限制目录。"""
     return value if isinstance(value, str) and value in SUPPORTED_VOICE_LANGUAGES else None
-
-
-def _sort_voices_by_language(voices: list[VoiceEntry]) -> list[VoiceEntry]:
-    return sorted(voices, key=lambda v: _LANGUAGE_BUCKET.get(v.language or "", 4))
 
 
 def _chain_voices(chain: list[ProviderConfig], language: str | None) -> list[VoiceEntry]:
@@ -52,7 +47,7 @@ def _chain_voices(chain: list[ProviderConfig], language: str | None) -> list[Voi
 async def list_tts_voices(db: AsyncSession, user_id: int, language: str | None = None) -> VoicesListResponse:
     """返回全部已配置 TTS 供应商的音色目录，并按当前界面语言收敛。"""
     chain = await resolve_provider_chain(db, user_id, "tts", task=AiTaskKey.companion_voice)
-    voices = _sort_voices_by_language(_chain_voices(chain, language))
+    voices = sorted(_chain_voices(chain, language), key=lambda voice: _LANGUAGE_BUCKET.get(voice.language or "", 4))
     design_chain = await resolve_provider_chain(db, user_id, "tts", task=AiTaskKey.voice_design)
     design_cls = next(
         (

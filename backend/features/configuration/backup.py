@@ -1,6 +1,5 @@
 """模块拥有的备份表、校验与恢复操作。"""
 
-from functools import partial
 from typing import Any
 
 from infrastructure.ai.config import AIConfig
@@ -27,10 +26,8 @@ def _validated_ai_config(value: Any) -> dict[str, Any]:
         raise ValueError(f"Invalid AI config: {fields}") from None
 
 
-def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
-
-    if table == "user_model_configs":
-        payload["ai_config"] = _validated_ai_config(payload.get("ai_config"))
+def _prepare_ai_config(_raw: dict[str, Any], payload: dict[str, Any], _context: BackupContext) -> None:
+    payload["ai_config"] = _validated_ai_config(payload.get("ai_config"))
 
 
 def backup_tables() -> tuple[BackupTable, ...]:
@@ -39,12 +36,11 @@ def backup_tables() -> tuple[BackupTable, ...]:
             "user_model_configs",
             UserModelConfig,
             unique_keys=(),
-            prepare_payload=partial(_prepare, "user_model_configs"),
+            prepare_payload=_prepare_ai_config,
         ),
         BackupTable(
             "user_settings",
             UserSetting,
             unique_keys=("setting_key",),
-            prepare_payload=partial(_prepare, "user_settings"),
         ),
     )

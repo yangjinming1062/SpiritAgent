@@ -126,29 +126,20 @@ async def create_memory(
     tags: list[str],
     source: MemorySource,
     importance: float = 1.0,
-    kind: str = "recall",
-    slot_key: str | None = None,
-    source_event_id: int | None = None,
 ) -> Memory:
     await validate_source(db, scope, source)
-    if kind not in MEMORY_KINDS:
-        raise ValueError("Invalid memory kind")
-    if source_event_id is not None and scope.system_preset_id != "companion":
-        raise ValueError("Life facts belong to the companion preset")
     await memory_write_lock(db, scope)
     row = Memory(
         user_id=scope.user_id,
         system_preset_id=scope.system_preset_id,
         content=content,
         context=context,
-        kind=kind,
-        slot_key=slot_key,
+        kind="recall",
         tags=tags,
         importance=importance,
         source_kind=source.kind,
         source_conversation_id=source.session_id,
         source_batch_id=source.batch_id,
-        source_event_id=source_event_id,
         local_date=source_date(source),
         basis="explicit" if source.kind == "manual" else "system",
     )

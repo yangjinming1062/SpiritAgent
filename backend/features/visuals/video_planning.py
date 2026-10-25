@@ -63,7 +63,6 @@ def nearest_visual_video_resolution(
     target_height: int,
     first_frame: bool = False,
     last_frame: bool = False,
-    reference_videos: bool = False,
 ) -> VisualVideoResolution | None:
     ratio = Fraction(delivery_ratio.replace(":", "/"))
     choices: list[VisualVideoResolution] = []
@@ -71,7 +70,6 @@ def nearest_visual_video_resolution(
         duration=duration,
         first_frame=first_frame,
         last_frame=last_frame,
-        reference_videos=reference_videos,
     ):
         width, height = provider.resolution_size(resolution, native_ratio)
         try:

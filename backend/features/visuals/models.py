@@ -1,8 +1,4 @@
-"""影像库：组合成品、制作工作项与呈现播放事实。
-
-影像成品只收录专门用于伙伴呈现的组合成品（图片或视频）；聊天配图、动态媒体和素材参考图不进入本模块。
-组合快照冻结伙伴身份与衣柜、环境、动作三份素材的引用及描述，素材删除后快照与文件引用继续有效。
-"""
+"""影像库的组合成品、制作工作项与呈现播放事实。"""
 
 from datetime import datetime
 from typing import Any
@@ -245,7 +241,6 @@ class VisualJob(JobRecord):
     snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
     feedback: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     video_feedback: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
-    # 供应商进度与制作阶段状态；格式由 visuals.schemas.VisualJobProgress 定义。
     # 可核验候选；未消费的供应商结果不得恢复为活动提交。
     candidates_json: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
     repair_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))

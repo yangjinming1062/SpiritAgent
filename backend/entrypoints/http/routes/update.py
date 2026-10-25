@@ -53,7 +53,7 @@ async def get_latest_runner_yml(db: DbSession) -> FileResponse:
     "/versions", response_model=UpdateVersionListResponse, openapi_extra=operation_policy(identities=("admin",))
 )
 async def list_versions(_admin: CurrentAdmin, db: DbSession) -> UpdateVersionListResponse:
-    return await updates.list_versions(_admin=_admin, db=db)
+    return await updates.list_versions(db=db)
 
 
 @management_router.post(
@@ -81,7 +81,7 @@ async def update_version(
     _admin: CurrentAdmin,
     db: DbSession,
 ) -> UpdateVersionItem:
-    return await updates.update_version(id=id, payload=payload, _admin=_admin, db=db)
+    return await updates.update_version(id=id, payload=payload, db=db)
 
 
 @management_router.delete(
@@ -90,7 +90,7 @@ async def update_version(
 async def delete_version(
     id: Annotated[ResourceId, Path(ge=1, le=POSTGRES_INT8_MAX)], _admin: CurrentAdmin, db: DbSession
 ) -> MessageResponse:
-    return await updates.delete_version(id=id, _admin=_admin, db=db)
+    return await updates.delete_version(id=id, db=db)
 
 
 @router.get("/{filename:path}", response_class=FileResponse)

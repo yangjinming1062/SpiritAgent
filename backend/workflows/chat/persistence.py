@@ -120,10 +120,6 @@ def _spawn_post_turn_task(
         _BG.add(task, user_id=user_id, on_error=_on_bg_error)
 
 
-async def _persist_tool_call_row(conv_id: int, result: _LLMTurnResult, user_id: int) -> None:
-    await persist_tool_call(conv_id, _turn_data(result), user_id=user_id)
-
-
 async def _persist_interrupted_tool_results(
     call_row: asyncio.Task[None],
     conv_id: int,
@@ -321,7 +317,7 @@ async def _persist_assistant_with_tool_calls_and_results(
     # 调用行提交不随取消中断：取消落在提交或关闭会话的窗口时，仍等它落库后补记结果。
     call_row = (
         _start_persistence_write(
-            _persist_tool_call_row(conv.id, result, dispatch_ctx.user_id), "chat.persist-tool-call"
+            persist_tool_call(conv.id, _turn_data(result), user_id=dispatch_ctx.user_id), "chat.persist-tool-call"
         )
         if persist
         else None

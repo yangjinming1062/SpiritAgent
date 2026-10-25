@@ -666,10 +666,6 @@ function taskGroups() {
     }
     return groups;
 }
-function userOverrideCount(group) {
-    const task = aiTaskChain(group);
-    return (tabCache.models?.items ?? []).filter(item => task ? hasChainOverride(item.ai_config?.tasks?.[task.id]?.chains?.[task.service]) : item.ai_config?.capabilities?.[group]?.length).length;
-}
 function computeReadiness(systemConfig) {
     const result = {};
     for (const definition of tabCache.models?.ai_tasks ?? []) for (const service of definition.services) {
@@ -1224,10 +1220,6 @@ function aiAvailableProviderTypes(editor) {
 function aiProviderOptions(editor, service) {
     const supported = editor.support[service] ?? [];
     return [...editor.config.providers.map(card => ({ ...card, scope: editor === aiEditors.system ? '系统' : '用户' })), ...aiSystemConfig(editor).providers.map(card => ({ ...card, scope: '系统' }))].filter(card => supported.includes(card.provider_type));
-}
-
-function aiModelLabel(card) {
-    return card.scope + ' · ' + card.provider_name + ' · ' + card.model_name + (card.context_window ? ' · 窗 ' + card.context_window : '') + (card.issue ? ' · ' + card.issue : '');
 }
 
 function aiRemovalReferences(editor, group, id) {

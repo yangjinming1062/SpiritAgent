@@ -32,15 +32,10 @@ from features.media.prompts import CHARACTER_VISUAL_STYLE, IMAGE_TRANSPARENT_BAC
 
 def build_image_edit_prompt(feedback: str, *, preserve: str) -> str:
     """图像编辑 prompt：输入图是编辑底图（上一版产物），只按用户本次反馈做增量修改。"""
-    clause = _prompt_clause(feedback)
+    clause = feedback.strip().rstrip("。.!！?？;； ")
     if not clause:
         raise ValueError("image edit requires non-empty feedback")
     return IMAGE_EDIT_TEMPLATE.format(feedback=clause, preserve=preserve)
-
-
-def _prompt_clause(value: str) -> str:
-    """把外部描述收成可嵌入句子的片段，避免装配后出现重复句号。"""
-    return value.strip().rstrip("。.!！?？;； ")
 
 
 def _persona_visual_payload(persona: PersonaSnapshot, feedback: str | None) -> dict[str, str]:

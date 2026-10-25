@@ -1,8 +1,7 @@
 """媒体质量链的无凭据快照、尝试游标和候选选择。"""
 
 import asyncio
-from collections.abc import AsyncIterator, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import Literal
 from uuid import UUID, uuid4
@@ -129,7 +128,6 @@ class MediaChainState(BaseModel):
     stop_reason: str = ""
     result_url: str | None = None
     source_path: str | None = None
-    call_seconds: float = Field(default=0.0, ge=0, allow_inf_nan=False)
     queue_request_id: str | None = None
     video_queue: VideoQueueInfo | None = None
 
@@ -186,16 +184,6 @@ class MediaChainState(BaseModel):
                 "accepted" if all(self.best_qualified(slot) is not None for slot in range(slots)) else "exhausted"
             )
         self.phase = "complete"
-
-
-@asynccontextmanager
-async def media_call_duration(config: ProviderConfig, state: MediaChainState) -> AsyncIterator[ProviderConfig]:
-    """记录媒体调用耗时，不以耗时终止已受理制作。"""
-    started = asyncio.get_running_loop().time()
-    try:
-        yield config
-    finally:
-        state.call_seconds += max(0.0, asyncio.get_running_loop().time() - started)
 
 
 async def resolve_frozen_media_provider(

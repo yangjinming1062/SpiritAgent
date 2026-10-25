@@ -1,5 +1,3 @@
-"""admin resource operations; transaction and failure semantics belong to the owning capability."""
-
 from datetime import date
 
 from features.automation.schemas import NightlyActivityLogItem, NightlyActivityLogListResponse

@@ -1,6 +1,5 @@
 """模块拥有的备份表、校验与恢复操作。"""
 
-from functools import partial
 from typing import Any
 
 from infrastructure.backup import BackupContext, BackupTable
@@ -12,12 +11,10 @@ from features.conversation.backup import validate_automation_conversation
 from .models import CronJob
 
 
-def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
-    user_id = context.user_id
-    if table == "cron_jobs":
-        validate_memory_scope(MemoryScope(user_id, payload.get("system_preset_id")))
-        if payload.get("kind") == "special" and payload["system_preset_id"] != "companion":
-            raise ValueError("Special job belongs to a different preset")
+def _prepare_job(_raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
+    validate_memory_scope(MemoryScope(context.user_id, payload.get("system_preset_id")))
+    if payload.get("kind") == "special" and payload["system_preset_id"] != "companion":
+        raise ValueError("Special job belongs to a different preset")
 
 
 async def _check(db: AsyncSession, raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
@@ -31,7 +28,7 @@ def backup_tables() -> tuple[BackupTable, ...]:
             "cron_jobs",
             CronJob,
             foreign_keys={"conversation_id": "conversations"},
-            prepare_payload=partial(_prepare, "cron_jobs"),
+            prepare_payload=_prepare_job,
             validate_payload=_check,
         ),
     )

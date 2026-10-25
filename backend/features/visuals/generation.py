@@ -26,7 +26,7 @@ from infrastructure.assets.references import asset_paths
 from infrastructure.async_io import cancel_and_wait, cancel_tasks, run_blocking
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
-from infrastructure.media_geometry import can_crop_to_aspect, centered_crop_box
+from infrastructure.media_geometry import MAX_DESKTOP_CROP_FRACTION, centered_crop_box, crop_fraction
 from infrastructure.text import resolve_language, utc_now
 from infrastructure.video_processing.desktop import prepare_desktop_video, sample_desktop_video_frames
 from infrastructure.video_processing.ffmpeg import VideoProcessError, VideoToolUnavailableError
@@ -57,7 +57,6 @@ from features.media.chain import (
 from features.media.character_images import (
     CharacterImageInput,
     ImageChainState,
-    ImageExpansionInput,
     generate_character_images,
 )
 from features.media.identity_review import score_character_frames_with_references
@@ -91,15 +90,12 @@ from .ports import notify_visual_ready
 from .prompts import (
     VISUAL_MOTION_DESIGN,
     VISUAL_POSE_EDIT_TEMPLATE,
-    VISUAL_POSE_EXPAND_TEMPLATE,
     VISUAL_POSE_IMAGE_TEMPLATE,
     VISUAL_POSE_VARIANT_TEMPLATE,
     VISUAL_VIDEO_FRAME_DESCRIPTION,
     VISUAL_VIDEO_LOOP,
     VISUAL_VIDEO_MOTION_TEMPLATE,
     VISUAL_VIDEO_ONCE,
-    VISUAL_VIDEO_REFINE_REVIEW,
-    VISUAL_VIDEO_REFINE_SCORE,
     VISUAL_VIDEO_REVIEW,
     VISUAL_VIDEO_SCORE,
     visual_source_reference_prompt,
@@ -125,11 +121,6 @@ from .video_planning import (
     VisualVideoResolution,
     freeze_visual_video_plans,
     nearest_visual_video_resolution,
-)
-from .video_refinement import (
-    plan_visual_video_refinement,
-    reference_video_ratio,
-    visual_video_refinement_request,
 )
 
 logger = get_logger(__name__)
@@ -266,17 +257,11 @@ def visual_progress_can_resume(progress: VisualJobProgress) -> bool:
         return False
     if visual_progress_has_video_work(progress):
         return True
-    if progress.expand_image and visual_image_chain_exhausted(progress):
-        return False
-    if progress.expand_image and progress.source_image_path:
-        return True
     if progress.video_chain_json:
         video = MediaChainState.model_validate_json(progress.video_chain_json)
         if video.providers and video.phase == "ready" and video.next_index >= len(video.providers):
             return False
     if progress.pose_path:
-        return True
-    if progress.video_refinement is not None:
         return True
     if progress.image_chain_json:
         image = ImageChainState.model_validate_json(progress.image_chain_json)
@@ -485,7 +470,14 @@ def _provider_ratio(provider: VideoGenProvider, source_ratio: str) -> str | None
         value = Fraction(source_ratio.replace(":", "/"))
         lower, upper = (Fraction(str(bound)).limit_denominator(1000) for bound in bounds)
         return source_ratio if lower <= value <= upper else None
-    return reference_video_ratio(provider, source_ratio)
+    target = Fraction(source_ratio.replace(":", "/"))
+    ratios: list[tuple[float, str]] = []
+    for ratio in provider.aspect_ratios:
+        native = Fraction(ratio.replace(":", "/"))
+        loss = crop_fraction(native.numerator, native.denominator, target.numerator, target.denominator)
+        if loss <= MAX_DESKTOP_CROP_FRACTION + 1e-9:
+            ratios.append((loss, ratio))
+    return min(ratios, key=lambda item: item[0])[1] if ratios else None
 
 
 def _delivery_aspect(progress: VisualJobProgress) -> str:
@@ -561,77 +553,6 @@ async def resolve_visual_video_plan(
     )
 
 
-async def _prepare_expansion(user_id: int, job: VisualJob, progress: VisualJobProgress, directory: str) -> None:
-    job_id = job.id
-    source = resolve_asset_reference(progress.previous_pose_path or progress.source_image_path)
-    if source is None:
-        raise VisualStateError("要调整画幅的原图无法读取")
-    original = await asyncio.to_thread(source[0].read_bytes)
-    width, height = await asyncio.to_thread(probe_visual_image, original)
-    if (
-        not progress.image_chain_json
-        and not job.feedback.strip()
-        and can_crop_to_aspect(width, height, progress.target_width, progress.target_height)
-    ):
-        data, _width, _height = await asyncio.to_thread(_frame_bytes, original, _delivery_aspect(progress))
-        progress.image_origin = progress.previous_image_origin
-    else:
-        state = (
-            ImageChainState.model_validate_json(progress.image_chain_json)
-            if progress.image_chain_json
-            else ImageChainState()
-        )
-
-        async def before_submit() -> None:
-            await _require_active_job(user_id, job_id, progress.generation_id)
-
-        async def save_image(value: ImageChainState) -> None:
-            progress.image_chain_json = value.model_dump_json()
-            await _save_progress(user_id, job_id, progress, stage="image")
-
-        reference = await asyncio.to_thread(build_data_uri, original, source[1])
-        paths = await generate_character_images(
-            VISUAL_POSE_EXPAND_TEMPLATE.format(feedback=job.feedback.strip() or "无"),
-            user_id=user_id,
-            task=AiTaskKey.visuals,
-            storage_directory=directory,
-            reference_image=reference,
-            identity_reference=reference,
-            identity_reference_mode="primary",
-            image_edit=True,
-            size=f"{progress.target_width}x{progress.target_height}",
-            aspect_ratio=_delivery_aspect(progress),
-            target_width=progress.target_width,
-            target_height=progress.target_height,
-            nearest_resolution=True,
-            display_width=progress.target_width,
-            display_height=progress.target_height,
-            expansion=ImageExpansionInput(target_width=progress.target_width, target_height=progress.target_height),
-            size_enforced=True,
-            state=state,
-            save_progress=save_image,
-            before_submit=before_submit,
-            selection=progress.image_selection,
-        )
-        generated = resolve_asset_reference(paths[0])
-        if generated is None:
-            raise VisualStateError("调整画幅的生成结果无法读取")
-        data = await asyncio.to_thread(generated[0].read_bytes)
-        progress.image_origin = state.selected_origin()
-    normalized, _width, _height = await _prepare_geometry(progress, data)
-    progress.pose_path = await save_companion_asset_async(
-        normalized,
-        user_id=user_id,
-        label="visual_pose",
-        ext="png",
-        directory=directory,
-    )
-    progress.expand_image = False
-    progress.image_confirmed = False
-    progress.motion_prompt = ""
-    await _save_progress(user_id, job_id, progress, stage="image")
-
-
 async def _prepare_pose(
     user_id: int,
     job: VisualJob,
@@ -639,9 +560,6 @@ async def _prepare_pose(
     progress: VisualJobProgress,
     directory: str,
 ) -> None:
-    if progress.expand_image:
-        await _prepare_expansion(user_id, job, progress, directory)
-        return
     if progress.pose_path:
         return
 
@@ -714,8 +632,6 @@ async def _prepare_pose(
             target_width=progress.target_width,
             target_height=progress.target_height,
             nearest_resolution=True,
-            display_width=progress.target_width,
-            display_height=progress.target_height,
             size_enforced=True,
             state=state,
             save_progress=save_image,
@@ -925,10 +841,8 @@ async def _process_candidate(
             ext="webp",
             directory=directory,
         )
-        image_path = (
-            progress.video_refinement.image_path if progress.video_refinement is not None else progress.pose_path
-        )
-        if progress.video_refinement is not None or result.fitted:
+        image_path = progress.pose_path
+        if result.fitted:
             image_path = await save_companion_asset_async(
                 result.first_frame,
                 user_id=user_id,
@@ -936,17 +850,11 @@ async def _process_candidate(
                 ext="png",
                 directory=directory,
             )
-            if progress.video_refinement is not None:
-                progress.pose_path = image_path
-                progress.visual_description = ""
-                progress.outfit_description = None
         progress.frame_width, progress.frame_height = result.width, result.height
         chain = MediaChainState.model_validate_json(progress.video_chain_json or "{}")
         video_origin = (
             chain.providers[chain.active_index].generation_origin(ServiceType.video_gen)
             if chain.active_index is not None
-            else progress.video_refinement.video_origin
-            if progress.reprocess_only and progress.video_refinement
             else None
         )
         return VisualAsset(
@@ -957,7 +865,7 @@ async def _process_candidate(
             width=result.width,
             height=result.height,
             duration_ms=result.duration_ms,
-            image_origin=None if progress.video_refinement is not None else progress.image_origin,
+            image_origin=progress.image_origin,
             video_origin=video_origin,
             visual_description=progress.visual_description,
             outfit_description=progress.outfit_description or "",
@@ -975,23 +883,12 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
         raise VisualStateError("制作的视频缺失")
     await _require_active_job(user_id, job.id, progress.generation_id)
     resolved = resolve_asset_reference(candidate.media_path)
-    reference_path = (
-        progress.video_refinement.image_path if progress.video_refinement is not None else progress.pose_path
-    )
-    reference = await asyncio.to_thread(read_valid_image_data_uri, reference_path)
+    reference = await asyncio.to_thread(read_valid_image_data_uri, progress.pose_path)
     if resolved is None or not reference:
         raise VisualStateError("视频或已确认的参考画面无法读取")
     samples = await asyncio.to_thread(sample_desktop_video_frames, resolved[0])
     uris = tuple(build_data_uri(frame, "image/webp") for frame in samples.frames)
     references = (reference,)
-    reference_times: tuple[float, ...] = ()
-    if progress.video_refinement is not None:
-        original = resolve_asset_reference(progress.video_refinement.video_path)
-        if original is None:
-            raise VisualStateError("参考视频无法读取")
-        reference_samples = await asyncio.to_thread(sample_desktop_video_frames, original[0])
-        references = tuple(build_data_uri(frame, "image/webp") for frame in reference_samples.frames)
-        reference_times = reference_samples.times_seconds
     async with SESSION_LOCAL() as db:
         language = resolve_language(await get_user_setting(db, user_id, "language"))
 
@@ -1003,15 +900,7 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
             user_id,
             references,
             uris,
-            (VISUAL_VIDEO_REFINE_SCORE if progress.video_refinement is not None else VISUAL_VIDEO_SCORE).format(
-                accept_score=MEDIA_IDENTITY_ACCEPT_SCORE,
-            ),
-            identity_text=json.dumps(
-                {"video_feedback": job.video_feedback, "reference_frame_count": len(references)},
-                ensure_ascii=False,
-            )
-            if progress.video_refinement is not None
-            else "",
+            VISUAL_VIDEO_SCORE.format(accept_score=MEDIA_IDENTITY_ACCEPT_SCORE),
             task=AiTaskKey.visuals,
             before_submit=before_submit,
         )
@@ -1026,22 +915,16 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
                 "duration_seconds": progress.duration_seconds,
                 "frame_times_seconds": samples.times_seconds,
                 "reference_frame_count": len(references),
-                "reference_times_seconds": reference_times,
                 "output_language": language,
+                "action": progress.action_description,
+                "creation_plan": progress.creation_plan.model_dump() if progress.creation_plan else None,
+                "motion_prompt": progress.motion_prompt,
+                "feedback": job.feedback,
+                "customization_priority": progress.customization_priority,
             }
-            if progress.video_refinement is None:
-                review_payload.update(
-                    {
-                        "action": progress.action_description,
-                        "creation_plan": progress.creation_plan.model_dump() if progress.creation_plan else None,
-                        "motion_prompt": progress.motion_prompt,
-                        "feedback": job.feedback,
-                        "customization_priority": progress.customization_priority,
-                    },
-                )
             review = await vision_chat_json(
                 user_id,
-                VISUAL_VIDEO_REFINE_REVIEW if progress.video_refinement is not None else VISUAL_VIDEO_REVIEW,
+                VISUAL_VIDEO_REVIEW,
                 review_payload,
                 response_model=VisualVideoReview,
                 schema_name="visual_video_review",
@@ -1256,24 +1139,13 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
         if not allow_model_steps and progress.candidate is not None and progress.review_verdict is not None:
             await _finish_job(user_id, job_id, progress, allow_followup_work=allow_model_steps)
             return
-        if not allow_model_steps and progress.reprocess_only:
-            raise GenerationWorkPaused
-        if progress.reprocess_only:
-            if not progress.source_path:
-                raise VisualStateError("已保存的视频无法读取，请重新制作")
-            await _save_progress(user_id, job_id, progress, stage="process")
-            progress.candidate = await _process_candidate(user_id, job, progress, directory)
-            await _evaluate_candidate(user_id, job, progress)
-            await _save_progress(user_id, job_id, progress, stage="review")
-            await _finish_job(user_id, job_id, progress, allow_followup_work=allow_model_steps)
-            return
         if not allow_model_steps and not (  # 刻意不含 candidate：待评估候选不算在途视频工作
             progress.source_path
             or _queued_video_request(progress)
             or MediaChainState.model_validate_json(progress.video_chain_json or "{}").result_url
         ):
             raise GenerationWorkPaused
-        if progress.video_refinement is None and not visual_progress_has_video_work(progress):
+        if not visual_progress_has_video_work(progress):
             await _prepare_opening(user_id, job, snapshot, progress, directory)
             progress.image_confirmed = True
             await _save_progress(user_id, job_id, progress, stage="video")
@@ -1310,41 +1182,22 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
                 await db.commit()
         chain = MediaChainState.model_validate_json(progress.video_chain_json or "{}")
         if not chain.providers:
-            if progress.video_refinement is not None:
-                reference_video = resolve_asset_reference(progress.video_refinement.video_path)
-                if reference_video is None:
-                    raise VisualStateError("参考视频无法读取")
-                seconds, providers = await plan_visual_video_refinement(
-                    user_id,
-                    await asyncio.to_thread(reference_video[0].read_bytes),
-                    reference_video[0].suffix.lstrip("."),
-                    aspect_ratio=progress.aspect_ratio,
-                    target_width=progress.target_width,
-                    target_height=progress.target_height,
-                    selection=progress.video_selection,
-                    feedback=job.video_feedback,
-                )
-            else:
-                seconds, providers = await resolve_visual_video_plan(
-                    user_id,
-                    clip_kind=clip_kind,
-                    duration_seconds=progress.duration_seconds,
-                    aspect_ratio=progress.aspect_ratio,
-                    target_width=progress.target_width,
-                    target_height=progress.target_height,
-                    selection=progress.video_selection,
-                )
+            seconds, providers = await resolve_visual_video_plan(
+                user_id,
+                clip_kind=clip_kind,
+                duration_seconds=progress.duration_seconds,
+                aspect_ratio=progress.aspect_ratio,
+                target_width=progress.target_width,
+                target_height=progress.target_height,
+                selection=progress.video_selection,
+            )
             progress.duration_seconds = seconds
             chain = MediaChainState(providers=providers, generation_id=progress.generation_id)
             progress.video_chain_json = chain.model_dump_json()
             await _save_progress(user_id, job_id, progress, stage="video")
-        if progress.video_refinement is None and not visual_progress_has_video_work(progress):
+        if not visual_progress_has_video_work(progress):
             await _check_confirmed_geometry(progress)
-        while (
-            progress.video_refinement is None
-            and not progress.motion_prompt
-            and not visual_progress_has_video_work(progress)
-        ):
+        while not progress.motion_prompt and not visual_progress_has_video_work(progress):
             try:
                 await _prepare_motion(user_id, job, snapshot, progress)
             except VisualMotionError as exc:
@@ -1395,7 +1248,7 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
             if progress.candidate is not None:
                 if not allow_model_steps:
                     raise GenerationWorkPaused
-                if progress.video_refinement is not None or progress.outfit_description is None:
+                if progress.outfit_description is None:
                     await _describe_frame(user_id, job_id, progress)
                 await _evaluate_candidate(user_id, job, progress)
                 result = VisualCandidateResult(
@@ -1428,9 +1281,6 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
                     progress.review_reason = ""
                     chain.result_url = None
                     progress.source_path = None
-                    if progress.video_refinement is not None:
-                        progress.visual_description = ""
-                        progress.outfit_description = None
                     chain.active_index = None
                     chain.phase = "ready"
                     chain.queue_request_id, chain.video_queue = None, None
@@ -1442,12 +1292,6 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
                     chosen = VisualCandidateResult.model_validate_json(best.result_json)
                     progress.candidate, progress.identity_score = chosen.asset, best.score
                     progress.review_verdict, progress.review_reason = chosen.verdict, chosen.reason
-                    if progress.video_refinement is not None:
-                        progress.pose_path = chosen.asset.input_image_path or progress.pose_path
-                        progress.frame_width = chosen.asset.width
-                        progress.frame_height = chosen.asset.height
-                        progress.visual_description = chosen.asset.visual_description
-                        progress.outfit_description = chosen.asset.outfit_description
                 break
             if progress.source_path:
                 await _save_progress(user_id, job_id, progress, stage="process")
@@ -1490,15 +1334,7 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
                 if config is None:
                     raise VisualStateError(video_failure_message("provider_unavailable"))
                 provider = build_provider(config, VideoGenProvider)
-                desired_ratio = (
-                    (
-                        reference_video_ratio(provider, progress.aspect_ratio)
-                        if provider.supports_reference_videos
-                        else None
-                    )
-                    if progress.video_refinement is not None
-                    else _provider_ratio(provider, progress.aspect_ratio)
-                )
+                desired_ratio = _provider_ratio(provider, progress.aspect_ratio)
                 if desired_ratio is None:
                     # 配置恢复后能力声明可能改变；仍不为回退改写确认过的画面。
                     chain.next_index = index + 1
@@ -1515,44 +1351,33 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
                 if not provider.supports_adaptive_aspect_ratio and frozen_ratio not in provider.aspect_ratios:
                     raise VisualStateError("视频模型的冻结画幅已不再可用，请重新选择模型")
                 desired_ratio = frozen_ratio
-                pose: str | None = None
-                if progress.video_refinement is None:
-                    resolved = resolve_asset_reference(progress.pose_path)
-                    if resolved is None:
-                        raise VisualStateError("已确认的起始画面无法读取")
-                    raw_frame = await asyncio.to_thread(resolved[0].read_bytes)
-                    normalized, _width, _height = await asyncio.to_thread(
-                        _frame_bytes,
-                        raw_frame,
-                        None,
-                        provider.first_frame_size_range,
-                    )
-                    pose = build_data_uri(normalized, "image/png")
-                if progress.video_refinement is not None:
-                    request = await visual_video_refinement_request(
-                        job,
-                        progress,
-                        provider,
-                        chain.providers[index].video_resolution,
-                        native_ratio=desired_ratio,
-                    )
-                else:
-                    request = VideoGenRequest(
-                        prompt=VISUAL_VIDEO_MOTION_TEMPLATE.format(
-                            duration_seconds=progress.duration_seconds,
-                            cycle=VISUAL_VIDEO_LOOP if clip_kind == "loop" else VISUAL_VIDEO_ONCE,
-                            motion=progress.motion_prompt,
-                            feedback=job.feedback.strip() or "无",
-                            video_feedback=job.video_feedback.strip() or "无",
-                            customization_priority=progress.customization_priority,
-                            aspect_ratio=desired_ratio,
-                        ),
-                        duration=progress.duration_seconds,
-                        resolution=chain.providers[index].video_resolution,
-                        first_frame_image=pose,
-                        last_frame_image=pose if clip_kind == "loop" else None,
-                        aspect_ratio=None if provider.supports_adaptive_aspect_ratio else desired_ratio,
-                    )
+                resolved = resolve_asset_reference(progress.pose_path)
+                if resolved is None:
+                    raise VisualStateError("已确认的起始画面无法读取")
+                raw_frame = await asyncio.to_thread(resolved[0].read_bytes)
+                normalized, _width, _height = await asyncio.to_thread(
+                    _frame_bytes,
+                    raw_frame,
+                    None,
+                    provider.first_frame_size_range,
+                )
+                pose = build_data_uri(normalized, "image/png")
+                request = VideoGenRequest(
+                    prompt=VISUAL_VIDEO_MOTION_TEMPLATE.format(
+                        duration_seconds=progress.duration_seconds,
+                        cycle=VISUAL_VIDEO_LOOP if clip_kind == "loop" else VISUAL_VIDEO_ONCE,
+                        motion=progress.motion_prompt,
+                        feedback=job.feedback.strip() or "无",
+                        video_feedback=job.video_feedback.strip() or "无",
+                        customization_priority=progress.customization_priority,
+                        aspect_ratio=desired_ratio,
+                    ),
+                    duration=progress.duration_seconds,
+                    resolution=chain.providers[index].video_resolution,
+                    first_frame_image=pose,
+                    last_frame_image=pose if clip_kind == "loop" else None,
+                    aspect_ratio=None if provider.supports_adaptive_aspect_ratio else desired_ratio,
+                )
                 await _require_active_job(user_id, job_id, generation_id)
                 chain.begin(index)
                 chain.phase = "ready"

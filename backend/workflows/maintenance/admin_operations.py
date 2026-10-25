@@ -1,5 +1,3 @@
-"""admin resource operations; transaction and failure semantics belong to the owning capability."""
-
 import asyncio
 import os
 import shutil

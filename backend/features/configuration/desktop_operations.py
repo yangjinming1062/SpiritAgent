@@ -1,5 +1,3 @@
-"""config resource operations; transaction and failure semantics belong to the owning capability."""
-
 from infrastructure.request_errors import RequestError
 from infrastructure.timezone import parse_timezone
 from sqlalchemy.ext.asyncio import AsyncSession

@@ -1,5 +1,3 @@
-"""update resource operations; transaction and failure semantics belong to the owning capability."""
-
 import asyncio
 import json
 import re
@@ -119,7 +117,7 @@ async def get_latest_runner_yml(db: AsyncSession) -> FileResult:
     return FileResult(path=str(manifest_path), media_type="application/yaml", filename="latest-runner.yml")
 
 
-async def list_versions(_admin: str, db: AsyncSession) -> UpdateVersionListResponse:
+async def list_versions(db: AsyncSession) -> UpdateVersionListResponse:
     records = (await db.execute(select(UpdateVersion).order_by(UpdateVersion.created_at.desc()))).scalars().all()
     return UpdateVersionListResponse(items=[UpdateVersionItem.model_validate(record) for record in records])
 
@@ -264,14 +262,14 @@ async def create_version(admin: str, db: AsyncSession, file: UploadSource, relea
     return UpdateVersionItem.model_validate(record)
 
 
-async def update_version(id: int, payload: UpdateVersionUpdate, _admin: str, db: AsyncSession) -> UpdateVersionItem:
+async def update_version(id: int, payload: UpdateVersionUpdate, db: AsyncSession) -> UpdateVersionItem:
     record = await get_or_404(db, UpdateVersion, id=id, message="版本不存在。")
     apply_partial(record, payload)
     await db.commit()
     return UpdateVersionItem.model_validate(record)
 
 
-async def delete_version(id: int, _admin: str, db: AsyncSession) -> MessageResponse:
+async def delete_version(id: int, db: AsyncSession) -> MessageResponse:
     async with _VERSION_LOCK:
         record = await get_or_404(db, UpdateVersion, id=id, message="版本不存在。")
         versions_dir = VERSIONS_DIR / record.version

@@ -861,10 +861,6 @@ async def drain_video_queue() -> None:
             await _close_leader(connection)
 
 
-async def resume_user_video_queue(user_id: int) -> None:
-    await _resume_paused()
-
-
 async def cleanup_video_queue() -> None:
     """按批清理已确认且业务已结算的尝试，活动及未知占用持续保留。"""
     async with SESSION_LOCAL() as db:

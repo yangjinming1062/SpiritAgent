@@ -978,8 +978,7 @@ function OutfitDetail({
             onClick={() =>
               run(async () => {
                 await api.invoke('companion.post_outfit_confirm', {
-                  path: { outfit_id: outfit.id },
-                  body: {}
+                  path: { outfit_id: outfit.id }
                 })
                 await onUpdate()
               })

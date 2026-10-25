@@ -109,7 +109,6 @@ export interface ApiSchemas {
   "OnboardingPatchRequest": { "field": string; "value"?: (string | null) }
   "OnboardingStateResponse": { "answers": { [key: string]: string }; "next_field": (string | null); "complete": boolean }
   "OutfitAdoptRequest": { "source": "import"; "description"?: (string | null); "image": string; "content_type"?: (string | null) }
-  "OutfitConfirmRequest": Record<string, never>
   "OutfitCreateRequest": { "source": "generate"; "description"?: (string | null); "image"?: (string | null); "content_type"?: (string | null) }
   "OutfitImageImportRequest": { "image": string; "content_type"?: (string | null); "source": "import" }
   "OutfitListResponse": { "outfits": Array<ApiSchemas["OutfitResponse"]>; "policy": "locked" | "llm_may_replace" }
@@ -420,7 +419,7 @@ export interface ApiOperations {
   "companion.patch_outfit_policy": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["OutfitPolicyRequest"]; input: { path?: never; query?: never; body: ApiSchemas["OutfitPolicyRequest"] }; response: ApiSchemas["OutfitPolicyResponse"] }
   "companion.post_outfit_prompt": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["OutfitPromptRequest"]; input: { path?: never; query?: never; body: ApiSchemas["OutfitPromptRequest"] }; response: ApiSchemas["ImagePromptResponse"] }
   "companion.post_outfit_regenerate": { path: { "outfit_id": string }; query: Record<string, never>; body: (ApiSchemas["OutfitRegenerateRequest"] | ApiSchemas["OutfitImageImportRequest"]); input: { path: { "outfit_id": string }; query?: never; body: (ApiSchemas["OutfitRegenerateRequest"] | ApiSchemas["OutfitImageImportRequest"]) }; response: ApiSchemas["OutfitResponse"] }
-  "companion.post_outfit_confirm": { path: { "outfit_id": string }; query: Record<string, never>; body: ApiSchemas["OutfitConfirmRequest"]; input: { path: { "outfit_id": string }; query?: never; body?: ApiSchemas["OutfitConfirmRequest"] }; response: ApiSchemas["OutfitResponse"] }
+  "companion.post_outfit_confirm": { path: { "outfit_id": string }; query: Record<string, never>; body: undefined; input: { path: { "outfit_id": string }; query?: never; body?: never }; response: ApiSchemas["OutfitResponse"] }
   "companion.post_retry_outfit_description": { path: { "outfit_id": string }; query: Record<string, never>; body: undefined; input: { path: { "outfit_id": string }; query?: never; body?: never }; response: ApiSchemas["OutfitResponse"] }
   "companion.delete_outfit_route": { path: { "outfit_id": string }; query: Record<string, never>; body: undefined; input: { path: { "outfit_id": string }; query?: never; body?: never }; response: ApiSchemas["CompanionOperationResponse"] }
   "companion.serve_companion_asset": { path: { "user_id": string; "asset_path": string }; query: { "expires"?: (number | null); "sig"?: (string | null) }; body: undefined; input: { path: { "user_id": string; "asset_path": string }; query?: { "expires"?: (number | null); "sig"?: (string | null) }; body?: never }; response: Uint8Array }

@@ -1,5 +1,3 @@
-"""admin resource operations; transaction and failure semantics belong to the owning capability."""
-
 from typing import Any
 
 from infrastructure.ai.config import CAPABILITY_SERVICES, AIConfig, ModelDiscoveryRequest

@@ -151,10 +151,6 @@ class OutfitAdoptRequest(BaseModel):
     content_type: str | None = Field(default=None, max_length=64)
 
 
-class OutfitConfirmRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
 class OutfitResponse(BaseModel):
     description_status: Literal["pending", "processing", "ready", "failed"] = "pending"
     description_error: str | None = None

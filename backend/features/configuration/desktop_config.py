@@ -2,11 +2,6 @@ from typing import Any
 
 DEFAULT_CONFIG = {
     "agent": {"reasoning_effort": "low", "temperature": 0.7},
-    "chat": {
-        "enable_context_compression": True,
-        "title_generation_temperature": 0.3,
-        "compression_temperature": 0.0,
-    },
 }
 
 

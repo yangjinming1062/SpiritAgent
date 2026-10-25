@@ -277,8 +277,7 @@ export function useOutfitDesignSession(
     try {
       // 确认静态造型入柜，穿着由用户显式选择。
       await requestResource('companion.post_outfit_confirm', {
-        path: { outfit_id: draft.id },
-        body: {}
+        path: { outfit_id: draft.id }
       })
 
       if (isLive()) {

@@ -1,8 +1,4 @@
-"""影像库公共契约：组合快照、制作进度与对外 DTO。
-
-组合快照在制作受理时冻结；素材删除后 ID 置空、冻结路径与描述继续有效。
-字段、枚举以本文件为准，文档只解释语义。
-"""
+"""影像库的组合快照、制作进度与对外 DTO。"""
 
 import hashlib
 from datetime import datetime
@@ -126,20 +122,6 @@ class VisualAsset(BaseModel):
     video_feedback: str = ""
 
 
-class VisualVideoRefinement(BaseModel):
-    """视频调整预检输入：以所选原片和修改要求为依据。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    video_path: str = Field(min_length=1)
-    original_video_path: str = Field(min_length=1)
-    image_path: str = Field(min_length=1)
-    width: int = Field(gt=0)
-    height: int = Field(gt=0)
-    duration_ms: int = Field(gt=0)
-    video_origin: GenerationOrigin | None = None
-
-
 class VisualJobProgress(BaseModel):
     """制作工作项的持久化进度；恢复沿冻结输入继续，不重置预算。"""
 
@@ -158,14 +140,10 @@ class VisualJobProgress(BaseModel):
     image_confirmed: bool = False
     aspect_ratio: str = Field(default="16:9", pattern=r"^[1-9]\d*:[1-9]\d*$")
     duration_seconds: int = Field(gt=0)
-    # 重做沿用原合格起始图；要求明确涉及画面变化时重新准备并检查图片。
-    source_image_path: str | None = Field(default=None, min_length=1)
-    expand_image: bool = False
     regenerate_image: bool = False
     frame_width: int | None = Field(default=None, gt=0)
     frame_height: int | None = Field(default=None, gt=0)
     previous_pose_path: str | None = None
-    previous_image_origin: GenerationOrigin | None = None
     image_origin: GenerationOrigin | None = None
     image_selection: ProviderSelection | None = None
     video_selection: ProviderSelection | None = None
@@ -185,7 +163,6 @@ class VisualJobProgress(BaseModel):
     aligned_outfit_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     image_chain_json: str | None = None
     video_chain_json: str | None = None
-    video_refinement: VisualVideoRefinement | None = None
     candidate: VisualAsset | None = None
     identity_score: int | None = None
     review_verdict: Literal["pass", "review"] | None = None
@@ -193,7 +170,6 @@ class VisualJobProgress(BaseModel):
     submission_unknown: bool = False
     failure_reason: str = ""
     source_path: str | None = None
-    reprocess_only: bool = False
     video_queue: VideoQueueInfo | None = None
 
 

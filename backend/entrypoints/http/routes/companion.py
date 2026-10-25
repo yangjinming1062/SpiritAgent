@@ -55,7 +55,6 @@ from features.appearance.schemas import (
     FullbodyReferenceGenerateRequest,
     ImagePromptResponse,
     OutfitAdoptRequest,
-    OutfitConfirmRequest,
     OutfitCreateRequest,
     OutfitImageImportRequest,
     OutfitListResponse,
@@ -678,9 +677,8 @@ async def post_outfit_confirm(
     outfit_id: ResourceId,
     user: CurrentUser,
     db: DbSession,
-    body: OutfitConfirmRequest = Body(default_factory=OutfitConfirmRequest),
 ) -> OutfitResponse:
-    """确认入柜：外观立绘转正为持久参考图（ready）。与同模块其他 POST 一致：以可缺省的空模型收 body，空对象不触发 422。"""
+    """确认入柜，将静态造型发布为持久参考图。"""
     try:
         outfit = await confirm_outfit_view(db, user.id, outfit_id)
     except OutfitError as exc:

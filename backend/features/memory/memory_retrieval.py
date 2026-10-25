@@ -245,11 +245,9 @@ async def retrieve_proactive_memories(
     *,
     query_embedding: MemoryEmbedding | None = None,
     limit: int = 3,
-    min_score: float = 0.002,
 ) -> list[MemoryRecallResult]:
     """检索与当前语境最相关的若干条记忆，用于主动注入对话。"""
     q_str = (query or "").strip()
     if len(q_str) <= 1:
         return []
-    candidates = await retrieve_hybrid_memories(db, scope, q_str, query_embedding=query_embedding, limit=limit)
-    return [candidate for candidate in candidates if candidate.score >= min_score]
+    return await retrieve_hybrid_memories(db, scope, q_str, query_embedding=query_embedding, limit=limit)
