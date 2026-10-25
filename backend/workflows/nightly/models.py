@@ -1,7 +1,8 @@
 from datetime import date, datetime
 
 from infrastructure.models import ModelBase
-from sqlalchemy import JSON, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, text
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -13,7 +14,7 @@ class NightlyActivityLog(ModelBase):
     target_date: Mapped[date] = mapped_column(Date, index=True)
     status: Mapped[str] = mapped_column(String(32), default="running", server_default=text("'running'"))
     summary: Mapped[str | None] = mapped_column(Text, nullable=True, default="")
-    payload: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
+    payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -31,10 +32,11 @@ class NightlyActivityAction(ModelBase):
     log_id: Mapped[int] = mapped_column(ForeignKey("nightly_activity_logs.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     target_date: Mapped[date] = mapped_column(Date, index=True)
+    job_id: Mapped[int | None] = mapped_column(ForeignKey("jobs.id", ondelete="SET NULL"), index=True)
     action_key: Mapped[str] = mapped_column(String(64))
     capability: Mapped[str] = mapped_column(String(64), index=True)
     phase: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(32), default="pending", server_default=text("'pending'"), index=True)
-    arguments: Mapped[dict] = mapped_column(JSON, default=dict, server_default=text("'{}'::json"))
-    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    arguments: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

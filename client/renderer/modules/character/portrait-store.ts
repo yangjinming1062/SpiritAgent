@@ -16,7 +16,7 @@ import { clearAvatarSeeds, hydrateAvatarSeeds, patchAvatarSeeds } from './avatar
 
 interface PersistedPortrait {
   assetUrl: string | null
-  avatarId: number | null
+  avatarId: string | null
 }
 
 const DEFAULT_PORTRAIT: PersistedPortrait = {
@@ -51,14 +51,14 @@ const initialPersisted = portraitPersisted.get()
 export const $portraitUrl = atom<string | null>(null)
 
 // 当前 avatar 行 id ——由 hydrate 与每次创建新行的重生写入。服务端读取当前 avatar 行，这里只是为画廊选择做镜像。
-export const $activeAvatarId = atom<number | null>(initialPersisted.avatarId)
+export const $activeAvatarId = atom<string | null>(initialPersisted.avatarId)
 
 // 头像首次生成、重生与微调共用的本次描述；不持久化，成功加载预览后清空。
 export const $regenFeedback = atom<string>('')
 
 export interface PortraitEntry {
   assetUrl?: string | null
-  avatarId: number | null
+  avatarId: string | null
   portraitUrl: string | null
 }
 
@@ -76,7 +76,7 @@ registerStorageClearHandler(() => {
 })
 
 // 设置当前形象；id 变化时作废上一形象的种子缓存，避免自备图参考图串号。
-function setActiveAvatar(id: number | null): void {
+function setActiveAvatar(id: string | null): void {
   const previousId = $activeAvatarId.get()
 
   $activeAvatarId.set(id)
@@ -93,7 +93,7 @@ function persistPortrait(next: PersistedPortrait): void {
 }
 
 // 头像落地：展示 URL、持久化身份与种子缓存一并更新；assetUrl 为空时种子缓存保持原路径。
-function commitPortrait(url: string, assetUrl: string | null | undefined, avatarId: number | null): void {
+function commitPortrait(url: string, assetUrl: string | null | undefined, avatarId: string | null): void {
   $portraitUrl.set(url)
   persistPortrait({ assetUrl: assetUrl ?? null, avatarId })
   void patchAvatarSeeds({ avatarId, assetUrl: assetUrl ?? undefined, avatarDisplayUrl: url })
@@ -123,7 +123,7 @@ restoreCachedPortrait()
 
 interface PortraitUrls {
   assetUrl?: string | null
-  id?: number | null
+  id?: string | null
 }
 
 export async function applyPortrait(
@@ -253,7 +253,7 @@ export async function hydratePortraitHistory(): Promise<void> {
   }
 }
 
-export async function selectAvatar(avatarId: number): Promise<boolean> {
+export async function selectAvatar(avatarId: string): Promise<boolean> {
   const epoch = currentClearEpoch()
 
   try {

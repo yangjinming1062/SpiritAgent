@@ -1,6 +1,7 @@
 import json
 from typing import Any
 
+from infrastructure.api_ids import ResourceId
 from runtime.tools.domains import search_domains_and_tools
 from runtime.tools.prompts import SEARCH_TOOLS_DESC, SEARCH_TOOLS_PARAM_DESCS
 from runtime.tools.registry import REGISTRY, ToolsRegistry
@@ -23,7 +24,7 @@ SEARCH_TOOLS_SCHEMA = {
 
 async def search_tools_tool(
     query: str,
-    user_id: int,
+    user_id: ResourceId,
     user_settings: dict[str, Any],
     excluded_tool_names: frozenset[str],
     **_: object,

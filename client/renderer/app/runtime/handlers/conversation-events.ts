@@ -16,6 +16,8 @@ import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { getStrings } from '@/shared/strings'
 import type { ChatMediaItem, CompanionBubble } from '@protocol'
 
+import { isResourceId } from '../../../../../shared/resource-id'
+
 import { pendingReplyText } from './pending-reply'
 
 // 会话回合事件：message.*、Slash、压缩与撤回。
@@ -259,7 +261,7 @@ export function handleConversationEvent(
       // 多气泡回合：payload.text 是整轮全文会覆盖最后一个气泡，故保留 last.text；媒体与正文正交，始终挂到最后一格。
       const hadBreak = $turnHadBubbleBreak.get()
 
-      if (bubbles && typeof payload.message_id === 'number') {
+      if (bubbles && isResourceId(payload.message_id)) {
         finalizeCompanionReply(bubbles, payload.message_id, payload.reasoning ?? undefined)
       } else {
         finalizeAssistantMessage(
@@ -268,7 +270,7 @@ export function handleConversationEvent(
           hadBreak ? undefined : (payload.reasoning ?? undefined)
         )
 
-        if (typeof payload.message_id === 'number') {
+        if (isResourceId(payload.message_id)) {
           bindTrailingAssistantMessageId(payload.message_id)
         }
       }
@@ -333,10 +335,7 @@ export function handleConversationEvent(
       clearPendingPrompts()
       markAssistantTerminal({
         error: payload.message,
-        retryMessageId:
-          Number.isSafeInteger(payload.retry_message_id) && (payload.retry_message_id ?? 0) > 0
-            ? (payload.retry_message_id ?? undefined)
-            : undefined
+        retryMessageId: isResourceId(payload.retry_message_id) ? (payload.retry_message_id ?? undefined) : undefined
       })
       syncConversationActivity()
       triggerFootGlowPulse('failed', 2000)

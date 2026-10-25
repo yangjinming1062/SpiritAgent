@@ -106,7 +106,7 @@ function Posts({
   const [posts, setPosts] = useState<Post[]>([])
   const [cursor, setCursor] = useState<string | null>(null)
   const [recoveries, setRecoveries] = useState<Recovery[]>([])
-  const [recoveryOffset, setRecoveryOffset] = useState<number | null>(null)
+  const [recoveryCursor, setRecoveryCursor] = useState<string | null>(null)
   const revision = useRef(0)
   const initialized = useRef(false)
   const postReads = useRef(new Map<string, number>())
@@ -155,21 +155,21 @@ function Posts({
   )
 
   const loadRecovery = useCallback(
-    async (offset = 0) => {
+    async (nextCursor?: string) => {
       const result = await api.invoke('companion_posts.get_publication_recoveries', {
-        query: { state: 'recoverable', offset }
+        query: { state: 'recoverable', cursor: nextCursor }
       })
 
       if (alive()) {
         setRecoveries(previous =>
-          offset === 0
+          nextCursor === undefined
             ? result.items
             : [
                 ...previous,
                 ...result.items.filter(item => !previous.some(old => old.publication_id === item.publication_id))
               ]
         )
-        setRecoveryOffset(result.next_offset)
+        setRecoveryCursor(result.next_cursor)
       }
     },
     [alive, api]
@@ -345,11 +345,11 @@ function Posts({
               </div>
             </section>
           ))}
-          {recoveryOffset !== null ? (
+          {recoveryCursor !== null ? (
             <button
               className="load-more"
               disabled={busy}
-              onClick={() => run(() => loadRecovery(recoveryOffset))}
+              onClick={() => run(() => loadRecovery(recoveryCursor))}
               type="button"
             >
               更多制作记录
@@ -475,6 +475,32 @@ function PostCard({ api, post, refresh }: { api: RemoteApi; post: Post; refresh:
   const { run, busy, error } = useTask()
   const alive = useAlive()
   const [comment, setComment] = usePageState(`post.${post.id}.comment`, '')
+  const [loadedComments, setLoadedComments] = useState<Post['comments']>([])
+  const [commentsLoaded, setCommentsLoaded] = useState(false)
+  const [commentsCursor, setCommentsCursor] = useState<string | null>(null)
+  const commentsRevision = useRef(0)
+  useEffect(() => {
+    if (post.comments_loaded) {
+      commentsRevision.current++
+      setLoadedComments(post.comments)
+      setCommentsLoaded(true)
+      setCommentsCursor(post.comments_next_cursor)
+    }
+  }, [post])
+  const loadComments = async (): Promise<void> => {
+    const revision = commentsRevision.current
+    const page = await api.invoke('companion_posts.get_comments', {
+      path: { post_id: post.id },
+      query: { cursor: commentsLoaded ? commentsCursor : undefined }
+    })
+    if (!alive() || revision !== commentsRevision.current) {
+      return
+    }
+    setLoadedComments(previous => [...new Map([...previous, ...page.comments].map(item => [item.id, item])).values()])
+    setCommentsLoaded(true)
+    setCommentsCursor(page.next_cursor)
+  }
+
   const refreshMedia = () => {
     void run(refresh)
   }
@@ -499,7 +525,7 @@ function PostCard({ api, post, refresh }: { api: RemoteApi; post: Post; refresh:
       ) : null}
       {post.audio_url ? <Media refresh={refreshMedia} type="audio" url={post.audio_url} /> : null}
       <div className="post-comments">
-        {post.comments.map(item => (
+        {loadedComments.map(item => (
           <div className={`comment ${item.role}`} key={item.id}>
             <p>
               <strong>{item.role === 'user' ? '我' : '伙伴'}</strong> {item.content}
@@ -543,6 +569,11 @@ function PostCard({ api, post, refresh }: { api: RemoteApi; post: Post; refresh:
           </div>
         ))}
       </div>
+      {(!commentsLoaded && post.comment_count > 0) || commentsCursor ? (
+        <button disabled={busy} onClick={() => run(loadComments)} type="button">
+          {commentsLoaded ? '更多评论' : `查看评论 (${post.comment_count})`}
+        </button>
+      ) : null}
       {error ? <Notice>{error}</Notice> : null}
       <form
         className="comment-form"

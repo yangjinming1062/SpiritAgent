@@ -2,6 +2,7 @@
 
 from typing import Annotated, Literal
 
+from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 FeatureText = Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000)]
@@ -66,7 +67,7 @@ class CharacterOverrides(BaseModel):
 class CharacterCardSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    avatar_id: int
+    avatar_id: ResourceId | None
     revision: int
     features: CharacterFeatures
     overrides: CharacterOverrides

@@ -4,8 +4,11 @@
 具体环境与道具是否满足动作要求。登记定义本身不启动图片或视频制作。
 """
 
+from typing import Any
+
 from infrastructure.models import ModelBase, TimestampMixin
 from sqlalchemy import ForeignKey, Integer, String, Text, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -17,12 +20,12 @@ class ActionDefinition(ModelBase, TimestampMixin):
     name: Mapped[str] = mapped_column(String(64))
     normalized_name: Mapped[str] = mapped_column(String(128), index=True)
     motion_description: Mapped[str] = mapped_column(Text)
-    use_when_json: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
-    avoid_when_json: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
+    use_when_json: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default=text("'[]'"))
+    avoid_when_json: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default=text("'[]'"))
     # 允许发起本动作的情境类别，如 chat、manual、periodic、user_return。
-    allowed_triggers_json: Mapped[str] = mapped_column(
-        Text,
-        default='["chat", "manual"]',
+    allowed_triggers_json: Mapped[list[str]] = mapped_column(
+        JSONB,
+        default=lambda: ["chat", "manual"],
         server_default=text('\'["chat", "manual"]\''),
     )
     # 播放方式：loop 持续循环，once 为短动作、结束后返回持续画面。
@@ -33,4 +36,4 @@ class ActionDefinition(ModelBase, TimestampMixin):
     status: Mapped[str] = mapped_column(String(24), default="pending", server_default=text("'pending'"), index=True)
     review_reason: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     # 冻结的评审依据：角色身体能力与动作含义；具体环境与道具在组合制作时判断。
-    review_source_json: Mapped[str] = mapped_column(Text)
+    review_source_json: Mapped[dict[str, Any]] = mapped_column(JSONB)

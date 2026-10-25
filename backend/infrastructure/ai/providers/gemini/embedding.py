@@ -1,6 +1,5 @@
 from typing import ClassVar
 
-from infrastructure.ai.embedding_space import MEMORY_EMBEDDING_DIM
 from infrastructure.ai.providers._provider_errors import raise_for_provider_response
 from infrastructure.ai.providers.base import EmbeddingProvider, ProviderConfig, ProviderError, ServiceType
 from infrastructure.ai.providers.http import get_http
@@ -21,13 +20,11 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
         if not texts:
             return []
         model = self.config.model
-        # 默认输出宽度与记忆库列宽不同，按列宽请求截断后的向量
         payload = {
             "requests": [
                 {
                     "model": f"models/{model}",
                     "content": {"parts": [{"text": t}]},
-                    "outputDimensionality": MEMORY_EMBEDDING_DIM,
                 }
                 for t in texts
             ],

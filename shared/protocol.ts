@@ -1,4 +1,5 @@
 import type { ApiOperations, ApiSchemas } from './api.generated'
+import { isResourceId } from './resource-id'
 
 /** 图像迭代意图：微调上一版，或从固定参考重新生成。与后端 ImageReviseMode 对齐。 */
 export type ImageReviseMode = 'edit' | 'regenerate'
@@ -21,6 +22,8 @@ export type CharacterOverrides = ApiSchemas['CharacterOverridesInput']
 export type CharacterCard = ApiSchemas['CharacterCardResponse']
 
 export type MemoryItem = ApiSchemas['MemoryListItem']
+export type MemoryListResponse = ApiSchemas['MemoryListResponse']
+export type MemoryDetail = ApiSchemas['MemoryDetail']
 
 export type MemoryCounts = ApiSchemas['MemoryListResponse']['counts']
 
@@ -89,9 +92,7 @@ export function isTopicFeedbackSnapshot(value: unknown): value is TopicFeedbackS
   }
 
   return (
-    typeof value.topic_id === 'number' &&
-    Number.isInteger(value.topic_id) &&
-    value.topic_id > 0 &&
+    isResourceId(value.topic_id) &&
     (value.value === 'like' || value.value === 'less' || value.value === null) &&
     (value.updated_at === null ||
       (typeof value.updated_at === 'string' && Number.isFinite(Date.parse(value.updated_at))))

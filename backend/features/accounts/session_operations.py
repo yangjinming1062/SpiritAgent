@@ -9,7 +9,8 @@ from runtime.user_maintenance import is_user_in_maintenance
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.accounts.models import LoginRecord, User, lock_user_row
+from features.accounts.locking import lock_account
+from features.accounts.models import LoginRecord, User
 from features.accounts.schemas import ActivateRequest, RefreshRequest, TokenResponse, UserInfo
 from features.accounts.security import create_access_token, decode_activation_code, hash_activation_token
 
@@ -70,7 +71,7 @@ async def refresh_login(
     ip_address: str,
     user_agent: str,
 ) -> TokenResponse:
-    await lock_user_row(db, user_id)
+    await lock_account(db, user_id)
     if is_user_in_maintenance(user_id):
         raise RequestError(status_code=503, message="用户数据正在维护，请稍后重试。")
     row = (
@@ -100,7 +101,7 @@ async def refresh_login(
 
 
 async def logout_login(user_id: int, login_record_id: int, db: AsyncSession) -> None:
-    await lock_user_row(db, user_id)
+    await lock_account(db, user_id)
     login = await db.scalar(
         select(LoginRecord).where(LoginRecord.id == login_record_id, LoginRecord.user_id == user_id),
     )

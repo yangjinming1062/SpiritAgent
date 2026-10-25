@@ -1,117 +1,215 @@
-"""影像库的备份表、校验与恢复操作。"""
+"""影像身份、不可变版本与播放账本的物理表备份。"""
 
-from functools import partial
+from copy import deepcopy
 from typing import Any
 
 from infrastructure.backup import BackupContext, BackupTable
+from infrastructure.text import utc_now
 from runtime.events.emit import emit_ws_event
-from sqlalchemy import select
+from sqlalchemy import BigInteger, column, select, update, values
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.jobs.service import rewrite_job_checkpoints
+from features.media.chain import MediaChainState
 from features.media.contracts import RemovedVideoTask
 
-from .backup_assets import restore_visual_payload, validate_visual_owned_paths
-from .models import VisualItem, VisualJob, VisualPresentation
-from .repository import visual_progress
-from .schemas import parse_job_progress
+from .models import VisualItem, VisualJob, VisualPlayback, VisualPresentation, VisualVersion, VisualVersionAsset
+from .repository import version_view, visual_progress
+from .schemas import ComboSnapshot, parse_job_progress
 
 
-def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
-    restore_visual_payload(table, payload, context.id_map, target_user_id=context.user_id)
+def _prepare_presentation(raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
+    payload["pending_command_json"] = None
+    payload["current_snapshot_json"] = None
+    payload["loop_snapshot_json"] = None
+    payload["state_revision"] = payload.get("state_revision", 0) + 1
+    payload["presentation_epoch"] = payload.get("presentation_epoch", 0) + 1
 
 
-async def _check(
-    table: str,
-    db: AsyncSession,  # noqa: ARG001  # 契约签名与其他模块一致
-    raw: dict[str, Any],  # noqa: ARG001
-    payload: dict[str, Any],
-    context: BackupContext,  # noqa: ARG001
-) -> None:
-    validate_visual_owned_paths(payload, context.asset_owner_id)
-    if table == "visual_jobs":
-        if payload["purpose"] == "regenerate" and (
-            payload.get("target_visual_id") is None or not payload.get("expected_version")
-        ):
-            raise ValueError("重做工作项必须保留目标影像与目标版本。")
-        if payload.get("state") == "succeeded" and payload.get("result_visual_id") is None:
-            raise ValueError("已完成的制作工作项缺少成品影像。")
+def _prepare_playback(raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
+    if payload["status"] in {"queued", "claimed", "started"}:
+        payload["status"] = "interrupted"
+    payload["client_id"] = None
+    payload["expires_at"] = utc_now()
 
 
-async def _link_input_images(
+def _prepare_version(raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
+    snapshot = ComboSnapshot.model_validate(payload["snapshot_json"])
+    payload["snapshot_json"] = snapshot.model_dump(mode="json")
+
+
+def _mapped(context: BackupContext, table: str, value: int | str | None) -> int | None:
+    mapped = context.id_map.get(table, {}).get(str(value)) if value is not None else None
+    return int(mapped) if mapped is not None else None
+
+
+def _remap_snapshot(value: dict, context: BackupContext) -> dict:
+    if not value:
+        return {}
+    snapshot = ComboSnapshot.model_validate(context.rewriter.rewrite(deepcopy(value)))
+    result = snapshot.model_copy(
+        update={
+            "identity": snapshot.identity.model_copy(
+                update={"avatar_id": _mapped(context, "avatar_assets", snapshot.identity.avatar_id)}
+            ),
+            "outfit": snapshot.outfit.model_copy(
+                update={"material_id": _mapped(context, "companion_outfits", snapshot.outfit.material_id)}
+            ),
+            "scene": snapshot.scene.model_copy(
+                update={"material_id": _mapped(context, "companion_scenes", snapshot.scene.material_id)}
+            ),
+            "action": snapshot.action.model_copy(
+                update={"action_id": _mapped(context, "action_definitions", snapshot.action.action_id)}
+            ),
+        }
+    )
+    return result.model_dump(mode="json")
+
+
+async def _rewrite_snapshots(
     db: AsyncSession,
-    raw_rows: list[dict[str, Any]],
-    new_map: dict[str, int | str],
+    model: type[VisualVersion] | type[VisualJob],
+    rows: dict[str, list[dict[str, Any]]],
     context: BackupContext,
 ) -> None:
-    """视频行的输入图链接是同表前向引用，整表写入后按原 ID 回填。"""
+    table = model.__table__
+    patches = [
+        (context.id_map[table.name][str(raw["id"])], _remap_snapshot(raw["snapshot_json"], context))
+        for raw in rows.get(table.name, [])
+        if (table.name, str(raw["id"])) in context.rewriter.inserted_rows
+    ]
+    owner = table.c.user_id if "user_id" in table.c else table.c.owner_id
+    for start in range(0, len(patches), 500):
+        payload = (
+            values(column("row_id", BigInteger), column("snapshot", JSONB))
+            .data(patches[start : start + 500])
+            .alias("restored_snapshots")
+        )
+        await db.execute(
+            update(table)
+            .where(owner == context.user_id, table.c.id == payload.c.row_id)
+            .values(snapshot_json=payload.c.snapshot)
+        )
 
-    for raw in raw_rows:
-        original_id = str(raw["id"])
-        if ("visual_items", original_id) not in context.rewriter.inserted_rows:
-            continue
-        mapped = new_map.get(str(raw["input_image_id"])) if raw.get("input_image_id") is not None else None
-        if mapped is None:
-            continue
-        row = await db.get(VisualItem, new_map[original_id])
-        if row is not None:
-            row.input_image_id = int(mapped)
+
+async def _restore_versions(db: AsyncSession, rows: dict[str, list[dict[str, Any]]], context: BackupContext) -> None:
+    await _rewrite_snapshots(db, VisualVersion, rows, context)
 
 
-async def _existing_job(
-    db: AsyncSession,
-    raw: dict[str, Any],  # noqa: ARG001
-    payload: dict[str, Any],
-    context: BackupContext,
-) -> int | None:
-    """按制作进度的 generation_id 识别已导入的工作项，重复合并不叠加制作历史。"""
+async def _restore_playbacks(db: AsyncSession, rows: dict[str, list[dict[str, Any]]], context: BackupContext) -> None:
+    ids = [
+        context.id_map["visual_playbacks"][str(raw["id"])]
+        for raw in rows.get("visual_playbacks", [])
+        if ("visual_playbacks", str(raw["id"])) in context.rewriter.inserted_rows
+    ]
+    if not ids:
+        return
+    records = await db.execute(
+        select(VisualPlayback, VisualVersion, VisualItem)
+        .join(
+            VisualVersion,
+            VisualVersion.id == VisualPlayback.version_id,
+        )
+        .join(VisualItem, VisualItem.id == VisualVersion.visual_id)
+        .where(VisualPlayback.id.in_(ids), VisualPlayback.user_id == context.user_id)
+    )
+    patches = [
+        (
+            play.id,
+            version_view(item, version)
+            .model_copy(update={"play_id": play.play_id, "receipt_kind": play.receipt_kind})
+            .model_dump(mode="json"),
+        )
+        for play, version, item in records
+    ]
+    for start in range(0, len(patches), 500):
+        payload = (
+            values(column("row_id", BigInteger), column("snapshot", JSONB))
+            .data(patches[start : start + 500])
+            .alias("restored_plays")
+        )
+        await db.execute(
+            update(VisualPlayback.__table__)
+            .where(VisualPlayback.user_id == context.user_id, VisualPlayback.id == payload.c.row_id)
+            .values(snapshot_json=payload.c.snapshot)
+        )
 
-    progress = parse_job_progress(payload.get("progress_json"))
+
+async def _restore_presentation_snapshots(
+    db: AsyncSession, rows: dict[str, list[dict[str, Any]]], context: BackupContext
+) -> None:
+    states = list(await db.scalars(select(VisualPresentation).where(VisualPresentation.user_id == context.user_id)))
+    version_ids = {
+        value for row in states for value in (row.current_version_id, row.loop_version_id) if value is not None
+    }
+    if not version_ids:
+        return
+    versions = list(
+        (
+            await db.execute(
+                select(VisualVersion, VisualItem)
+                .join(VisualItem, VisualItem.id == VisualVersion.visual_id)
+                .where(VisualVersion.id.in_(version_ids), VisualVersion.user_id == context.user_id)
+            )
+        ).all()
+    )
+    frozen = {}
+    for version, item in versions:
+        frozen[version.id] = version_view(item, version).model_dump(mode="json")
+    for state in states:
+        state.current_snapshot_json = frozen.get(state.current_version_id)
+        state.loop_snapshot_json = frozen.get(state.loop_version_id)
+
+
+def _clear_remote_handles(checkpoint: dict | None) -> dict | None:
+    progress = parse_job_progress(checkpoint)
     if progress is None:
         return None
-    for job in await db.scalars(select(VisualJob).where(VisualJob.user_id == context.user_id)):
-        saved = visual_progress(job)
-        if saved is not None and saved.generation_id == progress.generation_id:
-            return job.id
-    return None
+    if progress.video_chain_json:
+        chain = MediaChainState.model_validate_json(progress.video_chain_json)
+        chain.queue_request_id = None
+        chain.video_queue = None
+        progress.video_chain_json = chain.model_dump_json()
+    progress.video_queue = None
+    return progress.model_dump(mode="json")
+
+
+async def _restore_jobs(db: AsyncSession, rows: dict[str, list[dict[str, Any]]], context: BackupContext) -> None:
+    await _rewrite_snapshots(db, VisualJob, rows, context)
+    ids = [
+        context.id_map["visual_jobs"][str(raw["id"])]
+        for raw in rows.get("visual_jobs", [])
+        if ("visual_jobs", str(raw["id"])) in context.rewriter.inserted_rows
+    ]
+    await rewrite_job_checkpoints(db, context.user_id, ids, _clear_remote_handles)
 
 
 def backup_tables() -> tuple[BackupTable, ...]:
     return (
+        BackupTable("visual_items", VisualItem, unique_keys=("source_key",)),
         BackupTable(
-            # 素材库引用允许缺失：快照冻结资料继续有效，列值在恢复映射里置 None。
-            "visual_items",
-            VisualItem,
-            foreign_keys={},
-            unique_keys=("media_kind", "content_hash"),
-            strict_references=False,
-            merge_unique_on_overwrite=True,
-            prepare_payload=partial(_prepare, "visual_items"),
-            validate_payload=partial(_check, "visual_items"),
-            after_rows=_link_input_images,
+            "visual_versions",
+            VisualVersion,
+            unique_keys=("visual_id", "number"),
+            prepare_payload=_prepare_version,
+            restore_context=_restore_versions,
         ),
-        BackupTable(
-            "visual_jobs",
-            VisualJob,
-            foreign_keys={
-                "target_visual_id": "visual_items",
-                "result_visual_id": "visual_items",
-                "result_image_id": "visual_items",
-            },
-            unique_keys=None,
-            strict_references=True,
-            prepare_payload=partial(_prepare, "visual_jobs"),
-            validate_payload=partial(_check, "visual_jobs"),
-            find_existing=_existing_job,
-        ),
+        BackupTable("visual_version_assets", VisualVersionAsset, unique_keys=("version_id", "role", "asset_id")),
+        BackupTable("visual_jobs", VisualJob, restore_context=_restore_jobs),
         BackupTable(
             "visual_presentations",
             VisualPresentation,
-            foreign_keys={"current_visual_id": "visual_items", "loop_visual_id": "visual_items"},
             unique_keys=(),
-            strict_references=True,
-            merge_unique_on_overwrite=True,
-            prepare_payload=partial(_prepare, "visual_presentations"),
-            validate_payload=partial(_check, "visual_presentations"),
+            prepare_payload=_prepare_presentation,
+            restore_context=_restore_presentation_snapshots,
+        ),
+        BackupTable(
+            "visual_playbacks",
+            VisualPlayback,
+            unique_keys=("play_id",),
+            prepare_payload=_prepare_playback,
+            restore_context=_restore_playbacks,
         ),
     )
 

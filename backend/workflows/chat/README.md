@@ -16,6 +16,7 @@
 | [tool_dispatch.py](tool_dispatch.py)、[delegation.py](delegation.py) | 工具批执行与 `DelegateAction` 接管 |
 | [persistence.py](persistence.py)、[会话存储](../../features/conversation/turn_store.py) | 流程组织收尾，会话模块写入调用/结果、终端回复和压缩检查点 |
 | [submissions.py](../../features/conversation/submissions.py) | 用户提交幂等账本、输入原子保存与重启中断标记 |
+| [statistics.py](../../features/conversation/statistics.py) | 消息批次触发器与会话派生统计；与气泡展示共用计数表达式，迁移冻结其 DDL |
 | [context_compressor.py](context_compressor.py)、[message_sanitization.py](message_sanitization.py) | 模型摘要、确定性窗口截断、工具参数 JSON 修复 |
 | [title_generation.py](../../features/conversation/title_generation.py) | 首条用户文字与助手回复生成标题，不发送附件地址 |
 | [native_memory.py](native_memory.py)、[background_review.py](background_review.py) | 即时记忆提案与回合后异步审阅 |
@@ -24,7 +25,7 @@
 
 调用方分别为桌面与远程网页的 HTTP 回合提交、`standard_turns`、`companion_turns` 和委派。HTTP 受理交接由账户任务持有，调用方取消不能中断已经持久化的受理；传入 `persisted_message_id` 时，由调用方保存并发布用户输入，本层不重复插入或通知。
 
-HTTP 提交的结构和输入互斥由 [http_contracts.py](../../features/conversation/http_contracts.py) 统一校验；工作流保留附件归属、配额、消息资格和幂等检查。手动压缩与斜杠压缩共用历史访问守卫和结果装配，响应错误与事件交付仍由各入口决定。
+HTTP 提交的结构和输入互斥由 [http_contracts.py](../../features/conversation/http_contracts.py) 统一校验；工作流保留附件归属、配额、消息资格和幂等检查。批量输入在受理记录锁内一次保存全部消息、附件引用与请求关联；重复提交复用完整消息序列，写入中途失败整批回滚。手动压缩与斜杠压缩共用历史访问守卫和结果装配，响应错误与事件交付仍由各入口决定。
 
 ## 提示词与运行时数据
 

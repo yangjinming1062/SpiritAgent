@@ -15,7 +15,8 @@ from features.updates.service_schemas import (
     ServiceUpdateTaskList,
     ServiceUpdateTaskView,
 )
-from infrastructure.constants import POSTGRES_INT4_MAX
+from infrastructure.api_ids import ResourceId
+from infrastructure.constants import POSTGRES_INT8_MAX
 from infrastructure.database import DbSession
 from infrastructure.http_contracts import operation_policy
 from runtime.responses import MessageResponse
@@ -31,18 +32,12 @@ management_router = get_router(prefix="/api/admin/updates", identity="admin")
 TaskId = Annotated[str, Path(pattern=r"^[0-9A-Za-z_-]{6,32}$")]
 
 
-@router.get(
-    "/latest.yml",
-    response_model=ReleaseManifestResponse,
-)
+@router.get("/latest.yml", response_model=ReleaseManifestResponse)
 async def get_latest_yml(db: DbSession) -> ReleaseManifestResponse:
     return await updates.get_latest_yml(db=db)
 
 
-@router.get(
-    "/latest-mac.yml",
-    response_model=ReleaseManifestResponse,
-)
+@router.get("/latest-mac.yml", response_model=ReleaseManifestResponse)
 async def get_latest_mac_yml(db: DbSession) -> ReleaseManifestResponse:
     return await updates.get_latest_mac_yml(db=db)
 
@@ -55,9 +50,7 @@ async def get_latest_runner_yml(db: DbSession) -> FileResponse:
 
 
 @management_router.get(
-    "/versions",
-    response_model=UpdateVersionListResponse,
-    openapi_extra=operation_policy(identities=("admin",)),
+    "/versions", response_model=UpdateVersionListResponse, openapi_extra=operation_policy(identities=("admin",))
 )
 async def list_versions(_admin: CurrentAdmin, db: DbSession) -> UpdateVersionListResponse:
     return await updates.list_versions(_admin=_admin, db=db)
@@ -80,12 +73,10 @@ async def create_version(
 
 
 @management_router.patch(
-    "/versions/{id}",
-    response_model=UpdateVersionItem,
-    openapi_extra=operation_policy(identities=("admin",)),
+    "/versions/{id}", response_model=UpdateVersionItem, openapi_extra=operation_policy(identities=("admin",))
 )
 async def update_version(
-    id: Annotated[int, Path(ge=1, le=POSTGRES_INT4_MAX)],
+    id: Annotated[ResourceId, Path(ge=1, le=POSTGRES_INT8_MAX)],
     payload: UpdateVersionUpdate,
     _admin: CurrentAdmin,
     db: DbSession,
@@ -94,14 +85,10 @@ async def update_version(
 
 
 @management_router.delete(
-    "/versions/{id}",
-    response_model=MessageResponse,
-    openapi_extra=operation_policy(identities=("admin",)),
+    "/versions/{id}", response_model=MessageResponse, openapi_extra=operation_policy(identities=("admin",))
 )
 async def delete_version(
-    id: Annotated[int, Path(ge=1, le=POSTGRES_INT4_MAX)],
-    _admin: CurrentAdmin,
-    db: DbSession,
+    id: Annotated[ResourceId, Path(ge=1, le=POSTGRES_INT8_MAX)], _admin: CurrentAdmin, db: DbSession
 ) -> MessageResponse:
     return await updates.delete_version(id=id, _admin=_admin, db=db)
 
@@ -113,42 +100,30 @@ async def get_latest_file(filename: str, db: DbSession) -> FileResponse:
 
 
 @management_router.get(
-    "/service/status",
-    response_model=ServiceUpdaterStatus,
-    openapi_extra=operation_policy(identities=("admin",)),
+    "/service/status", response_model=ServiceUpdaterStatus, openapi_extra=operation_policy(identities=("admin",))
 )
 async def get_service_updater_status(_admin: CurrentAdmin) -> ServiceUpdaterStatus:
     return await service_updates.service_updater_status()
 
 
 @management_router.post(
-    "/service/check",
-    response_model=ServiceUpdateTaskAccepted,
-    openapi_extra=operation_policy(identities=("admin",)),
+    "/service/check", response_model=ServiceUpdateTaskAccepted, openapi_extra=operation_policy(identities=("admin",))
 )
 async def start_service_update_check(
-    payload: ServiceUpdateCheckRequest,
-    _admin: CurrentAdmin,
+    payload: ServiceUpdateCheckRequest, _admin: CurrentAdmin
 ) -> ServiceUpdateTaskAccepted:
     return await service_updates.start_service_update_check(payload)
 
 
 @management_router.post(
-    "/service/apply",
-    response_model=ServiceUpdateTaskAccepted,
-    openapi_extra=operation_policy(identities=("admin",)),
+    "/service/apply", response_model=ServiceUpdateTaskAccepted, openapi_extra=operation_policy(identities=("admin",))
 )
-async def apply_service_update(
-    payload: ServiceUpdateApplyRequest,
-    _admin: CurrentAdmin,
-) -> ServiceUpdateTaskAccepted:
+async def apply_service_update(payload: ServiceUpdateApplyRequest, _admin: CurrentAdmin) -> ServiceUpdateTaskAccepted:
     return await service_updates.apply_service_update(payload)
 
 
 @management_router.get(
-    "/service/tasks",
-    response_model=ServiceUpdateTaskList,
-    openapi_extra=operation_policy(identities=("admin",)),
+    "/service/tasks", response_model=ServiceUpdateTaskList, openapi_extra=operation_policy(identities=("admin",))
 )
 async def list_service_update_tasks(_admin: CurrentAdmin) -> ServiceUpdateTaskList:
     return await service_updates.service_update_task_list()
@@ -159,10 +134,7 @@ async def list_service_update_tasks(_admin: CurrentAdmin) -> ServiceUpdateTaskLi
     response_model=ServiceUpdateTaskView,
     openapi_extra=operation_policy(identities=("admin",)),
 )
-async def get_service_update_task(
-    task_id: TaskId,
-    _admin: CurrentAdmin,
-) -> ServiceUpdateTaskView:
+async def get_service_update_task(task_id: TaskId, _admin: CurrentAdmin) -> ServiceUpdateTaskView:
     return await service_updates.service_update_task(task_id)
 
 
@@ -172,8 +144,6 @@ async def get_service_update_task(
     openapi_extra=operation_policy(identities=("admin",)),
 )
 async def get_service_update_task_log(
-    task_id: TaskId,
-    _admin: CurrentAdmin,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    task_id: TaskId, _admin: CurrentAdmin, offset: Annotated[int, Query(ge=0)] = 0
 ) -> ServiceUpdateLogChunk:
     return await service_updates.service_update_task_log(task_id, offset)

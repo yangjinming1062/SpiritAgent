@@ -3,6 +3,7 @@ from typing import Literal
 
 from infrastructure.ai.config import AIConfigPublic, AIConfigUpdate, ProviderDefaults
 from infrastructure.ai.tasks import AiTaskDefinition
+from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field
 from runtime.client_context import ChatRequestClientContext
 
@@ -10,7 +11,7 @@ from runtime.client_context import ChatRequestClientContext
 class UserInfo(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
+    id: ResourceId
     username: str
 
 
@@ -42,7 +43,7 @@ class UserModelConfigRequest(BaseModel):
 
 
 class UserModelConfigListItem(BaseModel):
-    user_id: int
+    user_id: ResourceId
     ai_config: AIConfigPublic
 
 
@@ -87,7 +88,7 @@ class RegenerateActivationRequest(BaseModel):
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
+    id: ResourceId
     username: str
     nightly_activity_enabled: bool
     is_active: bool

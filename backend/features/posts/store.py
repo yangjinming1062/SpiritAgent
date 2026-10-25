@@ -1,35 +1,25 @@
-"""动态持久化、额度预留、评论状态与夜间资料。"""
+"""动态发布事务；内容、评论和附件通过 entries 领域操作。"""
 
-import base64
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from uuid import UUID
 
 from infrastructure.assets.asset_store import signed_companion_asset_url
 from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.config import SETTINGS
-from infrastructure.read_state import ReadStateTable, has_unread, mark_read, unread_ids
+from infrastructure.domain_locks import lock_domain
 from infrastructure.text import ensure_utc, format_local_iso, utc_now
-from pydantic import TypeAdapter
 from runtime.events.emit import emit_ws_event
-from sqlalchemy import func, or_, select, tuple_
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm.attributes import set_committed_value
 
-from features.accounts.locking import lock_account
 from features.accounts.queries import user_is_active
-from features.posts.models import CompanionPost, CompanionPostComment, PostContentType, PostPublication
+from features.entries import queries as entries_queries
+from features.entries import service as entries_service
+from features.entries.contracts import CommentView, EntryError, EntryNotFoundError, EntryView, PostContentType
 from features.posts.ports import notify_post_published
-from features.posts.schemas import (
-    POST_COMMENT_MAX_CHARS,
-    PostCommentResponse,
-    PostContext,
-    PostPublicationResult,
-    PostResponse,
-)
-
-_CURSOR = TypeAdapter(tuple[datetime, UUID])
+from features.posts.publication_models import PostPublication
+from features.posts.schemas import PostCommentResponse, PostContext, PostPublicationResult, PostResponse
 
 
 class PostError(RuntimeError):
@@ -47,162 +37,96 @@ class PostBlockedError(PostError):
 @dataclass(frozen=True)
 class PostInteractions:
     threads: list[dict]
-    posted_ids: list[str]
+    posted_ids: list[int]
 
 
-def response_for_comment(row: CompanionPostComment) -> PostCommentResponse:
+def response_for_comment(row: CommentView) -> PostCommentResponse:
     return PostCommentResponse.model_validate(row, from_attributes=True)
 
 
+def publication_status(row: PostPublication) -> str:
+    return row.outcome or ("result_unknown" if row.state == "unknown" else row.state)
+
+
 def response_for_publication(row: PostPublication) -> PostPublicationResult:
-    return PostPublicationResult(publication_id=row.id, status=row.status, post_id=row.post_id, error=row.error)
+    return PostPublicationResult(
+        publication_id=row.id, status=publication_status(row), post_id=row.post_id, error=row.error
+    )
 
 
-def response_for_post(row: CompanionPost) -> PostResponse:
+def response_for_post(row: EntryView) -> PostResponse:
     return PostResponse.model_validate(row, from_attributes=True).model_copy(
         update={
             "media_url": signed_companion_asset_url(row.media_url) if row.media_url else None,
             "audio_url": signed_companion_asset_url(row.audio_url) if row.audio_url else None,
-        },
+        }
     )
 
 
-async def emit_comment(db: AsyncSession, row: CompanionPostComment) -> None:
-    await db.flush()
-    await db.refresh(row)
-    emit_ws_event(
-        db,
-        user_id=row.user_id,
-        event_type="companion.post.comment",
-        payload={"post_id": row.post_id, "comment": response_for_comment(row).model_dump()},
-    )
-
-
-async def get_post(db: AsyncSession, user_id: int, post_id: str) -> CompanionPost | None:
-    return await db.scalar(
-        select(CompanionPost).where(
-            CompanionPost.id == post_id,
-            CompanionPost.user_id == user_id,
-        ),
-    )
-
-
-async def unread_post_ids(db: AsyncSession, user_id: int) -> list[str]:
-    return await unread_ids(db, user_id, ReadStateTable(CompanionPost))
+async def get_post(db: AsyncSession, user_id: int, post_id: int) -> EntryView | None:
+    return await entries_queries.get_entry(db, user_id, post_id, kind="post")
 
 
 async def has_unread_posts(db: AsyncSession, user_id: int) -> bool:
-    return await has_unread(db, user_id, ReadStateTable(CompanionPost))
+    return await entries_queries.has_unread_entries(db, user_id, "post")
 
 
-async def mark_posts_read(db: AsyncSession, user_id: int, post_ids: Sequence[str]) -> bool:
-    return await mark_read(
-        db,
-        user_id,
-        ReadStateTable(CompanionPost),
-        post_ids,
-        lock_account=lock_account,
-        notify=lambda: emit_ws_event(db, user_id=user_id, event_type="companion.posts.read", payload={}),
-    )
+async def mark_posts_read(db: AsyncSession, user_id: int, post_ids: Sequence[int]) -> bool:
+    unread = await entries_service.mark_entries_read(db, user_id, "post", post_ids)
+    await db.commit()
+    return unread
 
 
 async def list_posts(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    cursor: str | None = None,
-    limit: int = 20,
-) -> tuple[list[CompanionPost], str | None]:
-    stmt = select(CompanionPost).where(CompanionPost.user_id == user_id)
-    if cursor:
-        try:
-            stamp, row_id = _CURSOR.validate_json(base64.urlsafe_b64decode(cursor), strict=True)
-        except (ValueError, TypeError) as exc:
-            raise PostError("无效的动态分页位置") from exc
-        stmt = stmt.where(tuple_(CompanionPost.published_at, CompanionPost.id) < (ensure_utc(stamp), str(row_id)))
-    rows = list(
-        (
-            await db.scalars(
-                stmt.order_by(
-                    CompanionPost.published_at.desc(),
-                    CompanionPost.id.desc(),
-                ).limit(limit + 1),
-            )
-        ).all(),
-    )
-    more = len(rows) > limit
-    rows = rows[:limit]
-    next_cursor = (
-        base64.urlsafe_b64encode(
-            _CURSOR.dump_json((rows[-1].published_at, UUID(rows[-1].id))),
-        ).decode()
-        if more
-        else None
-    )
-    return rows, next_cursor
+    db: AsyncSession, user_id: int, *, cursor: str | None = None, limit: int = 20
+) -> tuple[list[EntryView], str | None, list[int]]:
+    try:
+        return await entries_queries.list_posts(db, user_id, cursor=cursor, limit=limit)
+    except EntryError as exc:
+        raise PostError(str(exc)) from exc
 
 
-async def reserve_publication(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    activity_date: date,
-) -> PostPublication:
-    await lock_account(db, user_id)
+async def reserve_publication(db: AsyncSession, user_id: int, *, activity_date: date) -> PostPublication:
+    await lock_domain(db, user_id, "entries")
     if not await user_is_active(db, user_id):
         raise PostError("账户不可用")
     if await publication_quota_remaining(db, user_id) <= 0:
         raise PostBlockedError("最近24小时的动态发布额度已用完")
     row = PostPublication(
-        user_id=user_id,
-        activity_date=activity_date,
-        request_json={},
-        progress_json={},
-        status="queued",
-        phase="planning",
+        user_id=user_id, activity_date=activity_date, request_json={}, checkpoint={}, state="queued", stage="planning"
     )
     db.add(row)
+    await db.flush()
     await db.commit()
-    await db.refresh(row)
     return row
 
 
 async def publication_quota_remaining(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    exclude_publication_id: str | None = None,
+    db: AsyncSession, user_id: int, *, exclude_publication_id: int | None = None
 ) -> int:
     """已发布、在途及24小时内待核对的任务共同占用账户滚动额度。"""
     since = utc_now() - timedelta(hours=24)
-    posted = await db.scalar(
-        select(func.count())
-        .select_from(CompanionPost)
-        .where(
-            CompanionPost.user_id == user_id,
-            CompanionPost.published_at >= since,
-        ),
-    )
+    posted = await entries_queries.count_posts_since(db, user_id, since)
     reservations = (
         select(func.count())
         .select_from(PostPublication)
         .where(
             PostPublication.user_id == user_id,
             or_(
-                PostPublication.status.in_(("queued", "running")),
-                PostPublication.status.in_(("result_unknown",)) & (PostPublication.reserved_at >= since),
+                PostPublication.state.in_(("queued", "running", "paused")),
+                (PostPublication.state == "unknown") & (PostPublication.reserved_at >= since),
             ),
         )
     )
     if exclude_publication_id is not None:
         reservations = reservations.where(PostPublication.id != exclude_publication_id)
     reserved = await db.scalar(reservations)
-    return max(0, SETTINGS.post_autonomous_per_day - (posted or 0) - (reserved or 0))
+    return max(0, SETTINGS.post_autonomous_per_day - posted - (reserved or 0))
 
 
 async def commit_publication(
     db: AsyncSession,
-    task_id: str,
+    task_id: int,
     *,
     title: str,
     body: str,
@@ -211,20 +135,16 @@ async def commit_publication(
     audio_url: str | None,
     context: PostContext,
     partial: bool,
-) -> CompanionPost:
-    initial = await db.get(PostPublication, task_id)
-    if initial is None:
-        raise PostNotFoundError("发布任务已不存在")
-    await lock_account(db, initial.user_id)
+) -> EntryView:
     task = await db.scalar(
         select(PostPublication)
         .where(PostPublication.id == task_id)
         .with_for_update()
-        .execution_options(populate_existing=True),
+        .execution_options(populate_existing=True)
     )
     if task is None:
         raise PostNotFoundError("发布任务已不存在")
-    if task.post_id:
+    if task.post_id is not None:
         row = await get_post(db, task.user_id, task.post_id)
         if row is None:
             raise PostError("发布记录缺少动态")
@@ -240,129 +160,67 @@ async def commit_publication(
     for path in (media_url, audio_url):
         if path is not None and (not (parsed := parse_companion_asset_path(path)) or parsed[0] != task.user_id):
             raise PostError("动态只能引用本账户的正式媒体资产")
-    row = CompanionPost(
-        user_id=task.user_id,
-        published_at=utc_now(),
+    row = await entries_service.create_post(
+        db,
+        task.user_id,
         activity_date=task.activity_date,
         title=title,
         body=body,
         content_type=content_type.value,
         media_url=media_url,
         audio_url=audio_url,
-        context_json=context.model_dump(),
+        context=context.model_dump(),
     )
-    db.add(row)
-    await db.flush()
-    set_committed_value(row, "comments", [])
     task.post_id = row.id
-    task.status = "partial" if partial else "published"
-    task.phase = "complete"
+    task.state = "succeeded"
+    task.outcome = "partial" if partial else "published"
+    task.stage = "complete"
+    await notify_post_published(db, row.user_id, row.id)
     emit_ws_event(
         db,
         user_id=row.user_id,
         event_type="companion.post.created",
-        payload=response_for_post(row).model_dump(),
+        payload=response_for_post(row).model_dump(mode="json"),
     )
-    await notify_post_published(db, row.user_id, row.id)
     await db.commit()
     return row
 
 
-async def create_comment(db: AsyncSession, user_id: int, post_id: str, content: str) -> CompanionPostComment:
-    content = content.strip()
-    if not content or len(content) > POST_COMMENT_MAX_CHARS:
-        raise PostError(f"评论需要1至{POST_COMMENT_MAX_CHARS}字符")
-    if (
-        await db.scalar(select(CompanionPost.id).where(CompanionPost.id == post_id, CompanionPost.user_id == user_id))
-        is None
-    ):
-        raise PostNotFoundError("找不到动态")
-    row = CompanionPostComment(
-        user_id=user_id,
-        post_id=post_id,
-        role="user",
-        content=content,
-        reply_status="pending",
-        reply_attempts=0,
-    )
-    db.add(row)
-    await emit_comment(db, row)
-    await db.commit()
-    return row
+def entry_error(exc: EntryError) -> PostError:
+    return PostNotFoundError(str(exc)) if isinstance(exc, EntryNotFoundError) else PostError(str(exc))
 
 
-async def _user_comment_for_update(
-    db: AsyncSession,
-    user_id: int,
-    post_id: str,
-    comment_id: str,
-) -> CompanionPostComment:
-    row = await db.scalar(
-        select(CompanionPostComment)
-        .where(
-            CompanionPostComment.id == comment_id,
-            CompanionPostComment.post_id == post_id,
-            CompanionPostComment.user_id == user_id,
-            CompanionPostComment.role == "user",
-        )
-        .with_for_update(),
-    )
-    if row is None:
-        raise PostNotFoundError("找不到评论")
-    return row
+async def create_comment(db: AsyncSession, user_id: int, post_id: int, content: str) -> CommentView:
+    try:
+        result = await entries_service.create_user_comment(db, user_id, post_id, content)
+        await db.commit()
+        return result
+    except EntryError as exc:
+        raise entry_error(exc) from exc
 
 
-async def delete_comment(db: AsyncSession, user_id: int, post_id: str, comment_id: str) -> None:
-    row = await _user_comment_for_update(db, user_id, post_id, comment_id)
-    await db.delete(row)
-    emit_ws_event(
-        db,
-        user_id=user_id,
-        event_type="companion.post.comment.deleted",
-        payload={"post_id": post_id, "comment_id": comment_id},
-    )
-    await db.commit()
+async def delete_comment(db: AsyncSession, user_id: int, post_id: int, comment_id: int) -> None:
+    try:
+        await entries_service.delete_user_comment(db, user_id, post_id, comment_id)
+        await db.commit()
+    except EntryError as exc:
+        raise entry_error(exc) from exc
 
 
-async def retry_reply(db: AsyncSession, user_id: int, post_id: str, comment_id: str) -> CompanionPostComment:
-    row = await _user_comment_for_update(db, user_id, post_id, comment_id)
-    if row.reply_status != "failed":
-        raise PostError("只有失败的回复可以重试")
-    row.reply_status, row.reply_error = "pending", None
-    await emit_comment(db, row)
-    await db.commit()
-    return row
+async def retry_reply(db: AsyncSession, user_id: int, post_id: int, comment_id: int) -> CommentView:
+    try:
+        result = await entries_service.retry_comment_reply(db, user_id, post_id, comment_id)
+        await db.commit()
+        return result
+    except EntryError as exc:
+        raise entry_error(exc) from exc
 
 
 async def collect_post_interactions(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    local_date: date,
-    user_timezone: str,
-    utc_start: datetime,
-    utc_end: datetime,
+    db: AsyncSession, user_id: int, *, local_date: date, user_timezone: str, utc_start: datetime, utc_end: datetime
 ) -> PostInteractions:
-    rows = list(
-        (
-            await db.scalars(
-                select(CompanionPost)
-                .where(
-                    CompanionPost.user_id == user_id,
-                    or_(
-                        CompanionPost.activity_date == local_date,
-                        CompanionPost.comments.any(
-                            (CompanionPostComment.user_id == user_id)
-                            & (CompanionPostComment.created_at >= utc_start)
-                            & (CompanionPostComment.created_at < utc_end),
-                        ),
-                    ),
-                )
-                .order_by(CompanionPost.published_at, CompanionPost.id),
-            )
-        ).all(),
-    )
-    posted_ids = [row.id for row in rows if row.activity_date == local_date]
+    rows = await entries_queries.interaction_entries(db, user_id, local_date, utc_start, utc_end)
+    comments = await entries_queries.comments_for_entries(db, user_id, [row.id for row in rows], before=utc_end)
     threads = [
         {
             "post_id": m.id,
@@ -382,10 +240,9 @@ async def collect_post_interactions(
                     "created_at": format_local_iso(c.created_at, user_timezone),
                     "in_window": utc_start <= ensure_utc(c.created_at) < utc_end,
                 }
-                for c in m.comments
-                if ensure_utc(c.created_at) < utc_end
+                for c in comments.get(m.id, [])
             ],
         }
         for m in rows
     ]
-    return PostInteractions(threads, posted_ids)
+    return PostInteractions(threads, [row.id for row in rows if row.activity_date == local_date])

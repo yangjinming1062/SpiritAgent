@@ -4,7 +4,7 @@ from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import ColumnElement, and_, func, select
+from sqlalchemy import ColumnElement, and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .context_window import context_visible_subtype
@@ -138,24 +138,6 @@ async def latest_user_message_id(db: AsyncSession, user_id: int) -> int:
     )
 
 
-async def advance_memory_review_cursor(
-    db: AsyncSession,
-    user_id: int,
-    preset_id: str,
-    session_id: int,
-    message_id: int,
-) -> None:
-    await db.execute(
-        Conversation.__table__.update()
-        .where(
-            Conversation.id == session_id,
-            Conversation.user_id == user_id,
-            Conversation.system_preset_id == preset_id,
-        )
-        .values(memory_reviewed_message_id=func.greatest(Conversation.memory_reviewed_message_id, message_id)),
-    )
-
-
 async def companion_conversation_users(db: AsyncSession, user_ids: Collection[int], preset_id: str) -> set[int]:
     return set(
         await db.scalars(
@@ -225,4 +207,23 @@ async def nightly_user_message_count(
             ),
         )
         or 0
+    )
+
+
+async def advance_memory_review_cursors(
+    db: AsyncSession, user_id: int, preset_id: str, cursors: dict[int, int]
+) -> None:
+    """同域已完成批次的水位一次更新，调用方拥有审阅事务。"""
+    if not cursors:
+        return
+    await db.execute(
+        Conversation.__table__.update()
+        .where(
+            Conversation.user_id == user_id, Conversation.system_preset_id == preset_id, Conversation.id.in_(cursors)
+        )
+        .values(
+            memory_reviewed_message_id=func.greatest(
+                Conversation.memory_reviewed_message_id, case(cursors, value=Conversation.id)
+            )
+        )
     )

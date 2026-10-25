@@ -1,4 +1,3 @@
-import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -7,7 +6,6 @@ from features.conversation.memory_scope import conversation_memory_scope
 from features.conversation.session_operations import ConversationNotFoundError, all_messages, clear_history
 from features.conversation.slash_commands import SlashCommandContext, SlashCommandResult, register_slash_command
 from features.conversation.snapshots import ConversationSnapshot
-from features.memory.memory_namespaces import normalize_recall_context
 from features.memory.use_cases import remember_manual
 from infrastructure.ai.llm_client import MissingLlmConfigError
 from infrastructure.config import SETTINGS
@@ -143,8 +141,8 @@ async def _slash_remember(ctx: SlashCommandContext) -> SlashCommandResult:
         return SlashCommandResult(status="error", message="要记住的内容不能包含空字符")
     if len(content) > max_chars:
         return SlashCommandResult(status="error", message=f"要记住的内容最多 {max_chars} 个字符，请精简后再试")
-    context = normalize_recall_context("manual")
-    tags = json.dumps(["user_preference"])
+    context = "manual"
+    tags = ["user_preference"]
     importance = 1.5
 
     conv = await _require_owned_conv(ctx.user_id, ctx.session_id)

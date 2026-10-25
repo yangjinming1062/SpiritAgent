@@ -1,11 +1,12 @@
 from datetime import datetime
 from typing import Literal
 
+from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class PairingResponse(BaseModel):
-    id: int
+    id: ResourceId
     url: str | None = Field(default=None, exclude_if=lambda value: value is None)
     expires_at: datetime
     state: Literal["pending", "paired", "cancelled", "expired"]
@@ -19,7 +20,7 @@ class ExchangeRequest(BaseModel):
 class DeviceResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
+    id: ResourceId
     name: str
     expires_at: datetime
     last_seen_at: datetime
@@ -27,7 +28,7 @@ class DeviceResponse(BaseModel):
 
 
 class RemoteUserResponse(BaseModel):
-    id: int
+    id: ResourceId
     username: str
 
 

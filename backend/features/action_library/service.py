@@ -6,16 +6,15 @@
 from datetime import datetime
 
 from infrastructure.config import SETTINGS
+from infrastructure.domain_locks import lock_domain
 from infrastructure.text import ensure_utc
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.accounts.models import lock_user_row
-
 from .models import ActionDefinition
 from .schemas import ActionAssetDesign, ActionAssetSource, ActionAssetStatus, ActionAssetView
-from .views import definition_view, dump_string_list, load_string_list, normalize_action_name
+from .views import definition_view, normalize_action_name
 
 
 async def create_action(
@@ -24,11 +23,11 @@ async def create_action(
     design: ActionAssetDesign,
     *,
     source: ActionAssetSource,
-    review_source_json: str,
+    review_source_json: dict,
 ) -> ActionAssetView:
     """登记一份新的动作素材；评审由 review 模块异步执行。"""
 
-    await lock_user_row(db, user_id)
+    await lock_domain(db, user_id, "actions")
     if source == "autonomous" and not SETTINGS.action_autocreate_enabled:
         raise ValueError("伙伴自主新增动作已关闭")
     existing = await db.scalars(
@@ -42,9 +41,9 @@ async def create_action(
             item.motion_description == design.motion_description
             and item.clip_kind == design.clip_kind
             and item.duration_seconds == design.duration_seconds
-            and load_string_list(item.use_when_json) == design.use_when
-            and load_string_list(item.avoid_when_json) == design.avoid_when
-            and load_string_list(item.allowed_triggers_json) == design.triggers
+            and item.use_when_json == design.use_when
+            and item.avoid_when_json == design.avoid_when
+            and item.allowed_triggers_json == design.triggers
         ):
             return definition_view(item)
     row = ActionDefinition(
@@ -52,9 +51,9 @@ async def create_action(
         name=design.name,
         normalized_name=normalize_action_name(design.name),
         motion_description=design.motion_description,
-        use_when_json=dump_string_list(design.use_when),
-        avoid_when_json=dump_string_list(design.avoid_when),
-        allowed_triggers_json=dump_string_list(design.triggers),
+        use_when_json=list(design.use_when),
+        avoid_when_json=list(design.avoid_when),
+        allowed_triggers_json=list(design.triggers),
         clip_kind=design.clip_kind,
         duration_seconds=design.duration_seconds,
         reason=design.reason,
@@ -69,7 +68,7 @@ async def create_action(
     return definition_view(row)
 
 
-async def ensure_initial_action(db: AsyncSession, user_id: int, *, review_source_json: str) -> ActionAssetView:
+async def ensure_initial_action(db: AsyncSession, user_id: int, *, review_source_json: dict) -> ActionAssetView:
     existing = await db.scalar(
         select(ActionDefinition)
         .where(
@@ -105,11 +104,11 @@ async def update_action(
     design: ActionAssetDesign,
     *,
     expected_updated_at: datetime,
-    review_source_json: str,
+    review_source_json: dict,
 ) -> ActionAssetView | None:
     """编辑动作语义；内容变化后回到待评审，不追溯已生成影像。"""
 
-    await lock_user_row(db, user_id)
+    await lock_domain(db, user_id, "actions")
     row = await db.scalar(
         select(ActionDefinition).where(ActionDefinition.user_id == user_id, ActionDefinition.id == action_id),
     )
@@ -120,9 +119,9 @@ async def update_action(
     row.name = design.name
     row.normalized_name = normalize_action_name(design.name)
     row.motion_description = design.motion_description
-    row.use_when_json = dump_string_list(design.use_when)
-    row.avoid_when_json = dump_string_list(design.avoid_when)
-    row.allowed_triggers_json = dump_string_list(design.triggers)
+    row.use_when_json = list(design.use_when)
+    row.avoid_when_json = list(design.avoid_when)
+    row.allowed_triggers_json = list(design.triggers)
     row.clip_kind = design.clip_kind
     row.duration_seconds = design.duration_seconds
     row.reason = design.reason
@@ -135,7 +134,7 @@ async def update_action(
 
 
 async def delete_action(db: AsyncSession, user_id: int, action_id: int) -> bool:
-    await lock_user_row(db, user_id)
+    await lock_domain(db, user_id, "actions")
     result = await db.execute(
         delete(ActionDefinition).where(ActionDefinition.user_id == user_id, ActionDefinition.id == action_id),
     )
@@ -166,7 +165,7 @@ async def record_review(
 ) -> ActionAssetStatus | None:
     """落库评审结论；approve/reject 为终态，defer 等待显式重试。"""
 
-    await lock_user_row(db, user_id)
+    await lock_domain(db, user_id, "actions")
     row = await db.scalar(
         select(ActionDefinition).where(ActionDefinition.user_id == user_id, ActionDefinition.id == action_id),
     )

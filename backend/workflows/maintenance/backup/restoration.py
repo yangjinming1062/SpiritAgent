@@ -1,5 +1,6 @@
+"""0001 结构的关系图恢复；预检和所选数据分别原子完成。"""
+
 import asyncio
-import json
 import threading
 import uuid
 from dataclasses import dataclass
@@ -9,85 +10,26 @@ from typing import Any
 from features.accounts.backup import create_validation_account
 from features.assets.lifecycle import enqueue_asset_cleanup
 from features.assets.references import collect_live_asset_paths
-from features.companion.backup import cron_source_keys
-from features.configuration.settings.timezone import resolve_user_timezone
 from features.conversation.backup import validate_main_conversation_merge
 from features.media.backup import restore_current_voices
 from features.media.contracts import RemovedVideoTask
-from features.media.voice_queries import custom_voice_tokens
 from features.topics.backup import validate_batch_merges
 from features.visuals.backup import advance_playback_versions, playback_versions, visual_video_tasks_for_removal
-from features.visuals.backup_assets import validate_visual_files
+from infrastructure.assets.paths import parse_companion_asset_path
+from infrastructure.assets.references import asset_paths
 from infrastructure.async_io import run_blocking, settle_task
 from infrastructure.backup import BACKUP_REGISTRY, BackupContext, BackupImportMode
-from infrastructure.config import SETTINGS
 from infrastructure.logger import get_logger
-from sqlalchemy.exc import IntegrityError, StatementError
+from pydantic import ValidationError
+from sqlalchemy import text
+from sqlalchemy.exc import StatementError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from workflows.maintenance.backup.asset_layout import freeze_asset_directory, plan_asset_layout
-from workflows.maintenance.backup.file_packing import (
-    UrlRewriter,
-    planned_asset_mapping,
-    referenced_backup_files,
-    restore_files,
-    validate_row_files,
-)
-from workflows.maintenance.backup.serializers import (
-    ACTION_LIBRARY_TABLES,
-    ATOMIC_SECTION_GROUPS,
-    CONVERSATION_TABLES,
-    IDENTITY_BLOCKED_REASON,
-    IDENTITY_DEPENDENT_REASON,
-    IDENTITY_GROUP,
-    IDENTITY_INCOMPLETE_REASON,
-    IDENTITY_TABLES,
-    POST_TABLES,
-    TABLES,
-    VISUALS_TABLES,
-    insert_rows,
-    read_table_rows,
-)
+from .file_packing import UrlRewriter, plan_asset_mapping, referenced_backup_files, restore_files, validate_row_files
+from .serializers import CONVERSATION_TABLES, TABLES, VISUALS_TABLES, insert_rows, read_table_rows
 
 logger = get_logger(__name__)
-
-# 这些表的 SQL 参数含供应商密钥，数据库错误的堆栈不写入日志。
-_SECRET_TABLES = frozenset({"user_model_configs"})
-BACKUP_RESTORE_ORDER: tuple[str, ...] = (
-    "user_model_configs",
-    "custom_voices",
-    "conversations",
-    "companion_topic_batches",
-    "companion_topics",
-    "companion_topic_feedback",
-    "messages",
-    "companion_topic_usages",
-    *(table for table in TABLES if table not in CONVERSATION_TABLES | {"user_model_configs", "custom_voices"}),
-)
-# conversations 先写入以就绪 rewriter 的会话映射，其余表保持 BACKUP_RESTORE_ORDER 原序。
-RESTORE_SEQUENCE: tuple[str, ...] = ("conversations",) + tuple(
-    table for table in BACKUP_RESTORE_ORDER if table != "conversations"
-)
-# 父类覆盖会改变仍被保留的子类引用，子类未随本次恢复清理时须保留父类；None 表示引用嵌在 JSON / 数组等非关系列中，只要存在保留行就按可能有关联处理。
-OVERWRITE_DEPENDENT_REFERENCES: dict[str, tuple[tuple[str, str | None], ...]] = {
-    "avatar_assets": (("companion_character_cards", "avatar_id"),),
-    "companion_outfits": (("visual_items", "outfit_id"),),
-    "action_definitions": (("visual_items", "action_id"),),
-    "cron_jobs": (("companion_intents", "source_key"),),
-    "conversations": (
-        ("cron_jobs", "conversation_id"),
-        ("memories", None),
-    ),
-    "companion_scenes": (("visual_items", "scene_id"),),
-    "visual_items": (
-        ("visual_items", "input_image_id"),
-        ("visual_jobs", "target_visual_id"),
-        ("visual_presentations", "current_visual_id"),
-        ("visual_presentations", "loop_visual_id"),
-        ("visual_playbacks", "visual_id"),
-    ),
-    "companion_posts": (("companion_diary_entries", None),),
-}
+_SHARED_TABLES = frozenset({"assets", "jobs", "job_requests", "job_assets"})
 
 
 @dataclass(frozen=True)
@@ -112,12 +54,6 @@ class BackupRestoreResult:
     removed_visual_tasks: tuple[RemovedVideoTask, ...]
 
 
-def _failure_reason(exc: Exception) -> str:
-    if isinstance(exc, (KeyError, TypeError, ValueError)):
-        return (str(exc).strip() or type(exc).__name__)[:500]
-    return "数据不符合当前版本约束。"
-
-
 def load_backup_rows(
     extract_root: Path,
     manifest_tables: list[str],
@@ -125,457 +61,161 @@ def load_backup_rows(
     *,
     selected_tables: frozenset[str] | None = None,
 ) -> BackupReadResult:
-    wanted = frozenset(TABLES) if selected_tables is None else selected_tables
-    manifest_set = set(manifest_tables)
-    failures = [
-        BackupImportFailure(
-            section=table,
-            count=row_counts[table],
-            reason="当前版本不支持此数据类别。",
-        )
-        for table in manifest_tables
-        if table not in TABLES
-    ]
-    # 所选类别缺表时报告失败。
-    for table in sorted(wanted - manifest_set):
-        if table not in TABLES:
-            continue
-        failures.append(
-            BackupImportFailure(
-                section=table,
-                count=0,
-                reason="备份未包含此数据类别。",
-            ),
-        )
-    incomplete_conversation_tables = set(manifest_tables) & CONVERSATION_TABLES & wanted
-    incomplete_conversation_backup = (
-        bool(incomplete_conversation_tables) and incomplete_conversation_tables != CONVERSATION_TABLES
-    )
-    if incomplete_conversation_backup:
-        failures.extend(
-            BackupImportFailure(
-                section=table,
-                count=row_counts[table],
-                reason="会话、消息与资讯来源必须同时存在，无法单独恢复。",
-            )
-            for table in manifest_tables
-            if table in incomplete_conversation_tables
-        )
-
+    wanted = set(TABLES) if selected_tables is None else set(selected_tables)
+    failures = []
     rows: dict[str, list[dict[str, Any]]] = {}
-    for table in manifest_tables:
-        if (
-            table not in wanted
-            or table not in TABLES
-            or incomplete_conversation_backup
-            and table in incomplete_conversation_tables
-        ):
+    if set(manifest_tables) != set(TABLES):
+        raise ValueError("Backup tables must match the complete 0001 schema")
+    for table in TABLES:
+        if table not in wanted:
             continue
         try:
             records = read_table_rows(extract_root, table)
             if len(records) != row_counts[table]:
                 raise ValueError("Backup row count does not match manifest")
             rows[table] = records
-        except Exception as exc:
-            logger.warning(
-                "backup table could not be read",
-                extra={"table": table},
-                exc_info=not isinstance(exc, (KeyError, TypeError, ValueError)),
-            )
-            failures.append(
-                BackupImportFailure(
-                    section=table,
-                    count=row_counts[table],
-                    reason=_failure_reason(exc),
-                ),
-            )
-    # 基础身份等成组类别：缺任一表则整组不恢复，避免落成半个身份。
-    for group in ATOMIC_SECTION_GROUPS:
-        if not group & wanted:
+        except (KeyError, TypeError, ValueError) as exc:
+            failures.append(BackupImportFailure(table, row_counts.get(table, 0), str(exc)))
+    if failures:
+        return BackupReadResult({}, tuple(failures))
+    if wanted == set(TABLES):
+        BACKUP_REGISTRY.validate_job_graph(rows)
+    if "jobs" in rows and wanted != set(TABLES):
+        job_ids = {
+            str(record["id"])
+            for name, records in rows.items()
+            if BACKUP_REGISTRY.table(name).inherited_identity == "jobs"
+            for record in records
+        }
+        rows["jobs"] = [record for record in rows["jobs"] if str(record["id"]) in job_ids]
+        for name in ("job_requests", "job_assets"):
+            if name in rows:
+                rows[name] = [record for record in rows[name] if str(record["job_id"]) in job_ids]
+    BACKUP_REGISTRY.validate_job_graph(rows)
+    if rows.get("assets"):
+        ids = {
+            str(record[column])
+            for name, records in rows.items()
+            if name != "assets"
+            for column, parent in BACKUP_REGISTRY.table(name).references.items()
+            if parent == "assets"
+            for record in records
+            if record.get(column) is not None
+        }
+        parsed = parse_companion_asset_path(rows["assets"][0]["path"])
+        referenced = (
+            asset_paths({name: values for name, values in rows.items() if name != "assets"}, parsed[0])
+            if parsed
+            else set()
+        )
+        rows["assets"] = [
+            record for record in rows["assets"] if str(record["id"]) in ids or record["path"] in referenced
+        ]
+    return BackupReadResult(rows, ())
+
+
+async def _finish_relations(db: AsyncSession, rows: dict[str, list[dict[str, Any]]], context: BackupContext) -> None:
+    patches: dict[str, dict[str, dict[str, Any]]] = {}
+    for table, original_id, column, target, target_id in context.rewriter.pending_references:
+        if (table, original_id) not in context.rewriter.inserted_rows:
             continue
-        present = group & set(rows)
-        if present and present != group:
-            reason = (
-                IDENTITY_INCOMPLETE_REASON
-                if group == IDENTITY_TABLES
-                else "会话、消息与资讯来源必须同时恢复。"
-                if group == CONVERSATION_TABLES
-                else "动态与评论必须同时恢复。"
-                if group == POST_TABLES
-                else "衣柜、动作素材与影像必须同时恢复。"
-            )
-            for table in sorted(present):
-                rows.pop(table)
-                failures.append(
-                    BackupImportFailure(
-                        section=table,
-                        count=row_counts.get(table, 0),
-                        reason=reason,
-                    ),
-                )
-    return BackupReadResult(rows=rows, failures=tuple(failures))
+        mapped = context.id_map.get(target, {}).get(target_id)
+        contributor = BACKUP_REGISTRY.table(table)
+        if mapped is None and contributor.strict_references and target in rows:
+            raise ValueError(f"Missing {target} reference in {table}.{column}")
+        row_id = context.id_map[table][original_id]
+        patches.setdefault(table, {}).setdefault(original_id, {"id": row_id})[column] = mapped
+    for table, records in patches.items():
+        await BACKUP_REGISTRY.table(table).patch_rows(db, list(records.values()))
+    for table in TABLES:
+        if table in rows and (callback := BACKUP_REGISTRY.table(table).restore_context) is not None:
+            await callback(db, rows, context)
+    await db.flush()
+    await db.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
 
 
-async def _restore_table(
-    db: AsyncSession,
-    table: str,
-    records: list[dict[str, Any]],
-    rows: dict[str, list[dict[str, Any]]],
-    user_id: int,
-    rewriter: UrlRewriter,
-    id_map: dict[str, dict[str, int | str]],
-    *,
-    mode: BackupImportMode,
-    import_batch_id: str,
-    asset_owner_id: int,
-) -> tuple[dict[str, int | str], int]:
-    new_map, inserted = await insert_rows(
-        db,
-        table,
-        records,
-        user_id,
-        rewriter,
-        id_map,
-        mode=mode,
-        import_batch_id=import_batch_id,
-        asset_owner_id=asset_owner_id,
-    )
-    staged_id_map = {**id_map, table: new_map}
-    if table == "conversations":
-        rewriter.conversations = new_map
-    contributor = BACKUP_REGISTRY.table(table)
-    if contributor.restore_context is not None:
-        context = BackupContext(user_id, asset_owner_id, mode, import_batch_id, rewriter, staged_id_map)
-        await contributor.restore_context(db, rows, context)
-    return new_map, inserted
+async def _insert_graph(
+    db: AsyncSession, rows: dict[str, list[dict[str, Any]]], context: BackupContext
+) -> dict[str, int]:
+    imported: dict[str, int] = {}
+    for table in TABLES:
+        if table not in rows:
+            continue
+        mode = "merge" if table in _SHARED_TABLES else context.mode
+        context.id_map[table], imported[table] = await insert_rows(
+            db,
+            table,
+            rows[table],
+            context.user_id,
+            context.rewriter,
+            context.id_map,
+            mode=mode,
+            import_batch_id=context.import_batch_id,
+            asset_owner_id=context.asset_owner_id,
+        )
+        if table == "conversations":
+            context.rewriter.conversations = context.id_map[table]
+    await _finish_relations(db, rows, context)
+    return imported
 
 
-def _validate_voice_dependencies(
-    table: str,
-    rows: dict[str, list[dict[str, Any]]],
-    successful: set[str],
-    rewriter: UrlRewriter,
-) -> None:
-    tokens: set[str] = set()
-    if table == "conversations":
-        tokens = custom_voice_tokens([row.get("reply_json") for row in rows.get("messages", [])])
-    elif table == "user_settings":
-        for row in rows[table]:
-            if row.get("setting_key") == "companion.voice_id":
-                tokens |= custom_voice_tokens(json.loads(row["setting_value"]))
-    if not tokens:
-        return
-    profiles = {row["token"]: row for row in rows.get("custom_voices", []) if row.get("version", 0) > 0}
-    if "custom_voices" not in successful or not tokens <= profiles.keys():
-        raise ValueError("引用的声音方案无法恢复，此类别已保留原有数据。")
-    for token in tokens:
-        profile = profiles[token]
-        if profile["kind"] == "clone":
-            rewriter.require_file(profile.get("reference_path") or "")
-
-
-async def _preflight_tables(
+async def _preflight(
     db: AsyncSession,
     rows: dict[str, list[dict[str, Any]]],
-    *,
     extract_root: Path,
     source_user_id: int,
     target_user_id: int,
     mode: BackupImportMode,
     import_batch_id: str,
-) -> tuple[set[str], tuple[BackupImportFailure, ...]]:
-    successful: set[str] = set()
-    failures: list[BackupImportFailure] = []
-    conversation_merge_conflict: str | None = None
-    if mode == "merge":
-        try:
-            await validate_main_conversation_merge(db, target_user_id, rows.get("conversations", []))
-            await validate_batch_merges(db, target_user_id, rows)
-        except ValueError as exc:
-            conversation_merge_conflict = str(exc)
-    id_map: dict[str, dict[str, int | str]] = {}
+) -> tuple[BackupImportFailure, ...]:
     rewriter = UrlRewriter(
-        await run_blocking(planned_asset_mapping, extract_root, source_user_id, target_user_id),
+        plan_asset_mapping(rows, source_user_id, target_user_id),
         source_user_id=source_user_id,
         target_user_id=target_user_id,
         extract_root=extract_root,
         conversation_ids=frozenset(str(row["id"]) for row in rows.get("conversations", [])),
     )
-    # 未激活且 token 不外泄：该用户只承载预检行，结束即回滚。
     try:
+        BACKUP_REGISTRY.validate_job_graph(rows)
+        if mode == "merge":
+            await validate_main_conversation_merge(db, target_user_id, rows.get("conversations", []))
+            await validate_batch_merges(db, target_user_id, rows)
+        for table, records in rows.items():
+            await run_blocking(validate_row_files, table, records, rewriter)
         validation_user_id = await create_validation_account(db)
-        for table in BACKUP_RESTORE_ORDER:
-            if table not in rows:
-                continue
-            if table in ACTION_LIBRARY_TABLES - {"companion_outfits"}:
-                continue
-            if table in CONVERSATION_TABLES - {"conversations"} and "conversations" in rows:
-                continue
-            if table == "companion_post_comments" and "companion_posts" in rows:
-                continue
-            # 身份三表与动作两表各自成组预检，避免只写通一半。
-            if table in {"companion_character_cards", "personas"} and "avatar_assets" in rows:
-                continue
-            if table == "conversations":
-                group = tuple(member for member in BACKUP_RESTORE_ORDER if member in CONVERSATION_TABLES)
-            elif table == "avatar_assets" and IDENTITY_TABLES & set(rows):
-                group = tuple(member for member in IDENTITY_GROUP if member in rows)
-            elif table == "companion_outfits":
-                group = tuple(member for member in BACKUP_RESTORE_ORDER if member in ACTION_LIBRARY_TABLES)
-            elif table == "companion_posts":
-                group = ("companion_posts", "companion_post_comments")
-            else:
-                group = (table,)
-            available_rows = {name: rows[name] for name in successful | set(group) if name in rows}
-            staged_map = dict(id_map)
-            try:
-                await run_blocking(_validate_voice_dependencies, table, rows, successful, rewriter)
-                if table == "conversations" and conversation_merge_conflict is not None:
-                    raise ValueError(conversation_merge_conflict)
-                async with db.begin_nested():
-                    for member in group:
-                        await run_blocking(validate_row_files, member, rows[member], rewriter)
-                        staged_map[member], _ = await _restore_table(
-                            db,
-                            member,
-                            rows[member],
-                            available_rows,
-                            validation_user_id,
-                            rewriter,
-                            staged_map,
-                            mode=mode,
-                            import_batch_id=import_batch_id,
-                            # 预检行属于校验用户，包内资产仍按恢复后的真实归属判断。
-                            asset_owner_id=target_user_id,
-                        )
-                    if table == "companion_outfits":
-                        await run_blocking(
-                            validate_visual_files,
-                            available_rows,
-                            extract_root,
-                            source_user_id,
-                            target_user_id,
-                        )
-            except (KeyError, StatementError, TypeError, ValueError) as exc:
-                # 对外原因不含数据库细节，诊断保留在日志里。
-                logger.warning(
-                    "backup table failed current-schema preflight",
-                    extra={"table": table, "error_type": type(exc).__name__},
-                    exc_info=not (table in _SECRET_TABLES and isinstance(exc, StatementError)),
-                )
-                failures.extend(
-                    BackupImportFailure(member, len(rows[member]), _failure_reason(exc))
-                    for member in group
-                    if member in rows
-                )
-                continue
-            id_map = staged_map
-            successful.update(group)
-        if CONVERSATION_TABLES.issubset(rows) and not CONVERSATION_TABLES.issubset(successful):
-            for table in BACKUP_RESTORE_ORDER:
-                if table not in CONVERSATION_TABLES or table not in successful:
-                    continue
-                successful.remove(table)
-                failures.append(
-                    BackupImportFailure(
-                        section=table,
-                        count=len(rows[table]),
-                        reason="配套的会话或消息数据未通过校验，无法单独恢复。",
-                    ),
-                )
-        if IDENTITY_TABLES & set(rows) and not IDENTITY_TABLES.issubset(successful):
-            for table in sorted(IDENTITY_TABLES & successful):
-                successful.remove(table)
-                failures.append(
-                    BackupImportFailure(
-                        section=table,
-                        count=len(rows[table]),
-                        reason=IDENTITY_INCOMPLETE_REASON,
-                    ),
-                )
+        await _insert_graph(
+            db, rows, BackupContext(validation_user_id, target_user_id, mode, import_batch_id, rewriter, {})
+        )
+        return ()
+    except (KeyError, TypeError, ValueError, StatementError) as exc:
+        logger.warning("backup graph failed 0001 preflight", extra={"error_type": type(exc).__name__})
+        if isinstance(exc, ValidationError):
+            reason = "; ".join(
+                f"{'.'.join(map(str, item['loc']))}: {item['msg']}"
+                for item in exc.errors(include_input=False, include_url=False)
+            )[:500]
+        else:
+            reason = (
+                str(exc)[:500] if isinstance(exc, (KeyError, TypeError, ValueError)) else "数据不符合当前数据库约束。"
+            )
+        return tuple(BackupImportFailure(table, len(records), reason) for table, records in rows.items())
     finally:
         await db.rollback()
-    return successful, tuple(failures)
 
 
-async def _has_retained_dependent(
-    db: AsyncSession,
-    table: str,
-    target_user_id: int,
-    validated_rows: dict[str, list[dict[str, Any]]],
-) -> bool:
-    for dependent_table, reference_column in OVERWRITE_DEPENDENT_REFERENCES.get(table, ()):
-        if dependent_table in validated_rows:
+async def _clear_selected(db: AsyncSession, user_id: int, rows: dict[str, list[dict[str, Any]]]) -> None:
+    selected = set(rows) - _SHARED_TABLES - {"user_preferences"}
+    await BACKUP_REGISTRY.detach_retained_job_targets(db, user_id, selected)
+    for child_name in BACKUP_REGISTRY.names:
+        if child_name in selected:
             continue
-        contributor = BACKUP_REGISTRY.table(dependent_table)
-        reference_values = None
-        if table == "cron_jobs":
-            reference_values = cron_source_keys(await BACKUP_REGISTRY.table("cron_jobs").ids(db, target_user_id))
-        if await contributor.has_rows(db, target_user_id, reference_column, reference_values):
-            return True
-    return False
-
-
-async def _delete_user_rows(db: AsyncSession, table: str, user_id: int) -> None:
-    await BACKUP_REGISTRY.table(table).clear(db, user_id)
-
-
-async def _clear_validated_rows(
-    db: AsyncSession,
-    target_user_id: int,
-    validated_rows: dict[str, list[dict[str, Any]]],
-) -> tuple[dict[str, list[dict[str, Any]]], tuple[BackupImportFailure, ...]]:
-    remaining = dict(validated_rows)
-    failures: list[BackupImportFailure] = []
-
-    # 动态与评论同组保护：保留的日记仍引用动态时，在任何清理前阻止两表覆盖。
-    if "companion_posts" in remaining and await _has_retained_dependent(
-        db,
-        "companion_posts",
-        target_user_id,
-        remaining,
-    ):
-        for table in ("companion_posts", "companion_post_comments"):
-            records = remaining.pop(table, None)
-            if records is not None:
-                failures.append(BackupImportFailure(table, len(records), "目标已有日记仍关联动态，无法单独覆盖动态。"))
-    if ACTION_LIBRARY_TABLES.issubset(remaining):
-        library_failure = None
-        if "avatar_assets" in remaining and await _has_retained_dependent(
-            db,
-            "avatar_assets",
-            target_user_id,
-            remaining,
-        ):
-            library_failure = "动作版本引用的基础身份无法安全覆盖。"
-        if library_failure is None:
-            try:
-                async with db.begin_nested():
-                    for table in reversed(TABLES):
-                        if table in ACTION_LIBRARY_TABLES:
-                            await _delete_user_rows(db, table, target_user_id)
-            except IntegrityError:
-                logger.warning(
-                    "visual material group could not be cleared without affecting retained data",
-                    extra={"target_user_id": target_user_id},
-                    exc_info=True,
-                )
-                library_failure = "影像或动作素材仍被其他内容引用，无法成组覆盖。"
-        if library_failure is not None:
-            for table in sorted(ACTION_LIBRARY_TABLES):
-                failures.append(BackupImportFailure(table, len(remaining.pop(table)), library_failure))
-
-    def _drop_identity(reason: str) -> None:
-        for member in sorted(IDENTITY_TABLES & set(remaining)):
-            remaining.pop(member)
-            failures.append(
-                BackupImportFailure(
-                    section=member,
-                    count=len(validated_rows.get(member, ())),
-                    reason=reason,
-                ),
-            )
-
-    # 身份三表一起判断、一起清理，避免先删人设后才发现头像被场景引用。
-    if IDENTITY_TABLES & set(remaining):
-        if await _has_retained_dependent(db, "avatar_assets", target_user_id, remaining):
-            _drop_identity(IDENTITY_BLOCKED_REASON)
-        else:
-            try:
-                async with db.begin_nested():
-                    for member in ("companion_character_cards", "personas", "avatar_assets"):
-                        if member in remaining:
-                            await _delete_user_rows(db, member, target_user_id)
-            except IntegrityError:
-                logger.warning(
-                    "backup identity tables could not be cleared without affecting retained data",
-                    extra={"target_user_id": target_user_id},
-                    exc_info=True,
-                )
-                _drop_identity(IDENTITY_BLOCKED_REASON)
-
-    # 身份未能写入时先摘掉依赖头像映射的动作类别，避免在清理阶段误删。
-    if IDENTITY_TABLES & set(validated_rows) and not set(remaining) >= IDENTITY_TABLES:
-        for table in sorted(ACTION_LIBRARY_TABLES):
-            if table not in remaining:
-                continue
-            remaining.pop(table)
-            failures.append(
-                BackupImportFailure(
-                    section=table,
-                    count=len(validated_rows.get(table, ())),
-                    reason=IDENTITY_DEPENDENT_REASON,
-                ),
-            )
-
+        child = BACKUP_REGISTRY.table(child_name)
+        for column, parent in child.references.items():
+            if parent in selected and await child.has_rows(db, user_id, column):
+                raise ValueError(f"保留的 {child_name} 仍引用 {parent}，请同时选择相关类别。")
     for table in reversed(TABLES):
-        if table in ACTION_LIBRARY_TABLES | IDENTITY_TABLES | CONVERSATION_TABLES:
-            continue
-        # user_preferences 就地更新用户行；messages 随 conversations 级联删除。
-        if table not in remaining or table in {"user_preferences", "messages"}:
-            continue
-        if await _has_retained_dependent(db, table, target_user_id, remaining):
-            remaining.pop(table)
-            failures.append(
-                BackupImportFailure(
-                    section=table,
-                    count=len(validated_rows[table]),
-                    reason="目标现有的关联数据未被本次恢复，无法安全覆盖此类别。",
-                ),
-            )
-            continue
-        try:
-            async with db.begin_nested():
-                await _delete_user_rows(db, table, target_user_id)
-        except IntegrityError:
-            logger.warning(
-                "backup table could not be cleared without affecting retained data",
-                extra={"table": table, "target_user_id": target_user_id},
-                exc_info=True,
-            )
-            remaining.pop(table)
-            failures.append(
-                BackupImportFailure(
-                    section=table,
-                    count=len(validated_rows[table]),
-                    reason="目标现有数据仍被其他内容引用，无法安全覆盖此类别。",
-                ),
-            )
-    if CONVERSATION_TABLES.issubset(remaining):
-        reason = None
-        if await _has_retained_dependent(db, "conversations", target_user_id, remaining):
-            reason = "目标仍有数据关联会话，已保留会话、消息与资讯来源。"
-        else:
-            try:
-                async with db.begin_nested():
-                    for member in reversed(BACKUP_RESTORE_ORDER):
-                        if member in CONVERSATION_TABLES and member != "messages":
-                            await _delete_user_rows(db, member, target_user_id)
-            except IntegrityError:
-                logger.warning(
-                    "backup conversation group could not be cleared",
-                    extra={"target_user_id": target_user_id},
-                    exc_info=True,
-                )
-                reason = "会话关联数据无法安全覆盖，已保留会话、消息与资讯来源。"
-        if reason is not None:
-            for member in sorted(CONVERSATION_TABLES):
-                failures.append(BackupImportFailure(member, len(remaining.pop(member)), reason))
-    # 覆盖清理后仍须成组。
-    for group in (IDENTITY_TABLES, ACTION_LIBRARY_TABLES):
-        present = group & set(remaining)
-        if present and present != group:
-            reason = IDENTITY_INCOMPLETE_REASON if group == IDENTITY_TABLES else "衣柜、动作素材与影像必须同时恢复。"
-            for table in sorted(present):
-                remaining.pop(table)
-                failures.append(
-                    BackupImportFailure(
-                        section=table,
-                        count=len(validated_rows.get(table, ())),
-                        reason=reason,
-                    ),
-                )
-    return remaining, tuple(failures)
+        if table in selected:
+            await BACKUP_REGISTRY.table(table).clear(db, user_id, preserve_unfinished=True)
 
 
 async def _copy_backup_files(
@@ -628,128 +268,45 @@ async def restore_backup_rows(
     mode: BackupImportMode,
 ) -> BackupRestoreResult:
     import_batch_id = uuid.uuid4().hex
-    conversation_files_in_scope = bool(CONVERSATION_TABLES & set(rows))
-    successful_tables, failures = await _preflight_tables(
-        db,
-        rows,
-        extract_root=extract_root,
-        source_user_id=source_user_id,
-        target_user_id=target_user_id,
-        mode=mode,
-        import_batch_id=import_batch_id,
-    )
-    validated_rows = {table: records for table, records in rows.items() if table in successful_tables}
+    failures = await _preflight(db, rows, extract_root, source_user_id, target_user_id, mode, import_batch_id)
     rewriter = UrlRewriter(
-        {},
+        plan_asset_mapping(rows, source_user_id, target_user_id),
         source_user_id=source_user_id,
         target_user_id=target_user_id,
         extract_root=extract_root,
-        conversation_ids=frozenset(str(row["id"]) for row in validated_rows.get("conversations", [])),
+        conversation_ids=frozenset(str(row["id"]) for row in rows.get("conversations", [])),
     )
-    existing_visual_versions = await playback_versions(db, target_user_id)
-    removed_visual_tasks: tuple[RemovedVideoTask, ...] = ()
+    if failures:
+        return BackupRestoreResult({}, 0, failures, rewriter, ())
+    previous_versions = await playback_versions(db, target_user_id)
+    removed_tasks: tuple[RemovedVideoTask, ...] = ()
     try:
         if mode == "overwrite":
-            if VISUALS_TABLES.issubset(validated_rows):
-                removed_visual_tasks = await visual_video_tasks_for_removal(db, target_user_id)
+            if VISUALS_TABLES.issubset(rows):
+                removed_tasks = await visual_video_tasks_for_removal(db, target_user_id)
             await enqueue_asset_cleanup(db, target_user_id, await collect_live_asset_paths(db, target_user_id))
-            validated_rows, clear_failures = await _clear_validated_rows(db, target_user_id, validated_rows)
-            if not VISUALS_TABLES.issubset(validated_rows):
-                removed_visual_tasks = ()
-            failures = (*failures, *clear_failures)
-        id_map: dict[str, dict[str, int | str]] = {}
-        imported: dict[str, int] = {}
-        for table in RESTORE_SEQUENCE:
-            if table not in validated_rows:
-                continue
-            id_map[table], imported[table] = await _restore_table(
-                db,
-                table,
-                validated_rows[table],
-                validated_rows,
-                target_user_id,
-                rewriter,
-                id_map,
-                mode=mode,
-                import_batch_id=import_batch_id,
-                asset_owner_id=target_user_id,
-            )
+            await _clear_selected(db, target_user_id, rows)
+        context = BackupContext(target_user_id, target_user_id, mode, import_batch_id, rewriter, {})
+        imported = await _insert_graph(db, rows, context)
         if {"custom_voices", "user_settings"} <= imported.keys():
             await restore_current_voices(
-                db,
-                target_user_id,
-                validated_rows["custom_voices"],
-                id_map["custom_voices"],
-                mode=mode,
+                db, target_user_id, rows["custom_voices"], context.id_map["custom_voices"], mode=mode
             )
-        layout = plan_asset_layout(
-            validated_rows,
-            source_user_id,
-            target_user_id,
-            await resolve_user_timezone(db, target_user_id) or "UTC",
-            id_map=id_map,
-        )
-        rewriter.set_asset_mapping(layout.mapping, layout.copies)
-        skipped_conversation_files = await _copy_backup_files(
+        skipped = await _copy_backup_files(
             extract_root,
             source_user_id,
             target_user_id,
             rewriter,
-            conversations=id_map.get("conversations", {}),
-            referenced_files=await run_blocking(referenced_backup_files, extract_root, validated_rows),
-            include_conversation_files=conversation_files_in_scope,
+            conversations=context.id_map.get("conversations", {}),
+            referenced_files=await run_blocking(referenced_backup_files, extract_root, rows),
+            include_conversation_files=bool(CONVERSATION_TABLES & rows.keys()),
         )
-        if skipped_conversation_files:
-            failures = (
-                *failures,
-                BackupImportFailure(
-                    section="asset_files",
-                    count=skipped_conversation_files,
-                    reason="对应会话未能恢复，附件缺少可用的目标会话。",
-                ),
-            )
-        await run_blocking(rewriter.scan, validated_rows)
-        for table, original_id in rewriter.inserted_rows:
-            mapping = layout.rows.get((table, original_id), layout.mapping)
-            aliases = {
-                old.replace(f"companion-assets/{source_user_id}/", f"companion-assets/{target_user_id}/", 1): new
-                for old, new in mapping.items()
-            }
-            remap = UrlRewriter({**mapping, **aliases})
-
-            def rewrite_column(column: str, value: Any) -> Any:
-                return freeze_asset_directory(
-                    table,
-                    column,
-                    remap.rewrite(value),
-                    layout.directories[(table, original_id)],
-                )
-
-            await BACKUP_REGISTRY.table(table).rewrite_inserted(db, id_map[table][original_id], rewrite_column)
-        await db.flush()
-        await enqueue_asset_cleanup(
-            db,
-            target_user_id,
-            {path.resolve().relative_to(Path(SETTINGS.data_dir).resolve()).as_posix() for path in rewriter.created},
-        )
+        if skipped:
+            raise ValueError("附件缺少可用的目标会话")
         if VISUALS_TABLES.issubset(imported):
-            await advance_playback_versions(db, target_user_id, existing_visual_versions)
-        if rewriter.missing_paths:
-            failures = (
-                *failures,
-                BackupImportFailure(
-                    "asset_files",
-                    len(rewriter.missing_paths),
-                    "部分历史媒体已清理，记录已恢复，媒体引用保持失效。",
-                ),
-            )
-        return BackupRestoreResult(
-            imported=imported,
-            restored_files=len(rewriter.created),
-            failures=failures,
-            rewriter=rewriter,
-            removed_visual_tasks=removed_visual_tasks,
-        )
+            await advance_playback_versions(db, target_user_id, previous_versions)
+        await db.flush()
+        return BackupRestoreResult(imported, len(rewriter.created), (), rewriter, removed_tasks)
     except BaseException:
         rewriter.rollback()
         raise

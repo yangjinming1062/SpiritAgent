@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any
 
 from features.accounts.backup import BackupUserSnapshot
-from features.memory.backup import embedding_dimension
 from infrastructure.text import utc_now
 
 MANIFEST_FORMAT = "spiritagent-user-backup"
@@ -23,7 +22,7 @@ def build_manifest(
         "exported_by": f"admin:{exported_by}",
         "source_user_id": user.id,
         "source_username": user.username,
-        "embedding_dim": embedding_dimension(),
+        "schema": "0001",
         "tables": list(rows_by_table.keys()),
         "row_counts": {tbl: len(rs) for tbl, rs in rows_by_table.items()},
     }
@@ -34,6 +33,8 @@ def validate_manifest(payload: dict[str, Any] | None) -> None:
         raise ValueError("manifest.json must be a JSON object")
     if payload.get("format") != MANIFEST_FORMAT:
         raise ValueError(f"Unknown backup format: {payload.get('format')!r}")
+    if payload.get("schema") != "0001":
+        raise ValueError("Backup schema must be 0001")
     if not isinstance(payload.get("source_user_id"), int) or isinstance(payload["source_user_id"], bool):
         raise ValueError("manifest.source_user_id must be an integer")
     if not isinstance(payload.get("tables"), list):

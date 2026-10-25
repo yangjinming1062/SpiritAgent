@@ -20,6 +20,7 @@ from features.visuals.queries import (
 from infrastructure.ai.prompt_engineer import call_llm_json
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import load_user_llm_config
+from infrastructure.api_ids import ResourceId
 from infrastructure.correlation import new_request_id
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.text import resolve_prompt_text
@@ -34,10 +35,10 @@ class VisualDecision(BaseModel):
 
     operation: Literal["keep", "play", "create"]
     reason: str = Field(max_length=400)
-    visual_id: int | None = Field(default=None, gt=0)
-    outfit_id: int | None = Field(default=None, gt=0)
-    scene_id: int | None = Field(default=None, gt=0)
-    action_id: int | None = Field(default=None, gt=0)
+    visual_id: ResourceId | None = Field(default=None, gt=0)
+    outfit_id: ResourceId | None = Field(default=None, gt=0)
+    scene_id: ResourceId | None = Field(default=None, gt=0)
+    action_id: ResourceId | None = Field(default=None, gt=0)
     media_kind: Literal["image", "video"] = "image"
     requirements: str = Field(default="", max_length=2000)
 
@@ -80,7 +81,7 @@ async def evaluate_visuals(user_id: int, *, trigger: str, allow_create: bool) ->
     working = [job for job in jobs.jobs if job.state in {"queued", "running", "paused", "unknown"}]
     async with SESSION_LOCAL() as db:
         outfits = await ready_outfit_snapshots(db, user_id)
-        scenes, _total = await list_scene_snapshots(db, user_id, ready_only=True, limit=50)
+        scenes = (await list_scene_snapshots(db, user_id, ready_only=True, limit=50)).scenes
         actions = (await list_actions(db, user_id, status="approved", limit=50)).actions
         recent = await load_recent_context_window(db, user_id)
     can_create = allow_create and not working and bool(outfits and scenes and actions)

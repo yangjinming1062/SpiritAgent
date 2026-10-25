@@ -24,7 +24,6 @@ from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
 from runtime.business_actor import BusinessActor
 from runtime.conversation import (
-    LastSubmissionSnapshot,
     RuntimeSession,
     new_runtime_session,
 )
@@ -75,9 +74,6 @@ def chat_operations(actor: BusinessActor) -> ChatOperations:
         conv = await _require_owned_conv(user_id, params["session_id"])
         return _mount_runtime(conv)
 
-    async def _last_submission(runtime: RuntimeSession) -> LastSubmissionSnapshot | None:
-        return await last_submission(user_id, runtime.conversation_id)
-
     async def _mounted_history(
         conv: ConversationSnapshot,
         *,
@@ -104,7 +100,7 @@ def chat_operations(actor: BusinessActor) -> ChatOperations:
                 # 替换提交可能先于事件发布；持有发布锁时该回合无法收尾或开始下一次替换。
                 conv = latest_conv
                 messages, truncated, next_cursor, message_count = await history_snapshot(conv.id)
-            last_submission = await _last_submission(runtime)
+            submission = await last_submission(user_id, runtime.conversation_id)
             info = await session_runtime_info(user_id, runtime, conv)
             snapshot = deepcopy(runtime.active_turn)
             if snapshot is not None and snapshot.message_ids:
@@ -127,7 +123,7 @@ def chat_operations(actor: BusinessActor) -> ChatOperations:
                 current_seq=current_seq,
                 stream_id=dispatcher.stream_id if dispatcher is not None else None,
                 active_turn=asdict(snapshot) if snapshot is not None else None,
-                last_submission=last_submission,
+                last_submission=submission,
                 truncated=truncated,
                 next_cursor=next_cursor,
                 history_revision=conv.history_revision,

@@ -13,7 +13,6 @@ from features.accounts.queries import list_user_ids, lock_active_user_ids, user_
 from features.automation.cron_jobs import STANDARD_CRON_KIND
 from features.automation.scheduling import DueJob, advance_due_jobs, delete_expired_jobs, due_jobs
 from features.companion.disturbance import get_disturbance_tier, is_still
-from features.companion.intent_models import companion_cron_source_key
 from features.companion.intents import (
     claim_companion_intent,
     enqueue_companion_intent,
@@ -169,7 +168,8 @@ async def _bulk_cas_advance(due_jobs: list[DueJob], now: datetime) -> list[DueJo
                     db,
                     job.user_id,
                     job.prompt,
-                    source_key=companion_cron_source_key(job.id),
+                    source_kind="cron",
+                    cron_job_id=job.id,
                     expires_at=job.expires_at,
                 )
         await db.commit()
@@ -291,7 +291,7 @@ async def _maybe_run_ignored_outreach() -> None:
                 continue
             note_outreach_throttle(uid)
             async with session_scope() as db:
-                await enqueue_companion_intent(db, uid, prompt, source_key="checkin:ignored")
+                await enqueue_companion_intent(db, uid, prompt, source_kind="checkin")
                 await db.commit()
             await queue_companion_intent(uid)
         logger.info(

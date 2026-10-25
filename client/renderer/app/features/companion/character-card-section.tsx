@@ -40,7 +40,7 @@ export function CharacterCardSection({
   onEditRequested,
   onEditorClosed
 }: {
-  avatarId: number
+  avatarId: string
   editorOpen: boolean
   onEditRequested: () => void
   onEditorClosed: () => void
@@ -51,7 +51,7 @@ export function CharacterCardSection({
   const authKind = useStore($auth).kind
   const card = useStore($characterCard)
   const images = useStore($avatarSeeds)
-  const draft = useStore($companionEditors).characterCards[String(avatarId)]
+  const draft = useStore($companionEditors).characterCards[avatarId]
   const editing = !!draft && editorOpen
   const changes = draft?.changes ?? {}
   const revision = draft?.revision ?? 0
@@ -67,14 +67,14 @@ export function CharacterCardSection({
   const setChanges = (next: CharacterOverrides): void => {
     if (draft) {
       updateCompanionEditors({
-        characterCards: { ...$companionEditors.get().characterCards, [String(avatarId)]: { ...draft, changes: next } }
+        characterCards: { ...$companionEditors.get().characterCards, [avatarId]: { ...draft, changes: next } }
       })
     }
   }
 
   const closeEditor = (): void => {
     const cards = { ...$companionEditors.get().characterCards }
-    delete cards[String(avatarId)]
+    delete cards[avatarId]
     updateCompanionEditors({ characterCards: cards })
     setHint(null)
     onEditorClosed()
@@ -179,7 +179,7 @@ export function CharacterCardSection({
                   updateCompanionEditors({
                     characterCards: {
                       ...$companionEditors.get().characterCards,
-                      [String(avatarId)]: {
+                      [avatarId]: {
                         revision: current.revision,
                         features: current.features,
                         automatic: current.automatic,
@@ -372,10 +372,10 @@ export function CharacterCardSection({
 
                     if (
                       isCurrent() &&
-                      JSON.stringify($companionEditors.get().characterCards[String(avatarId)]) === JSON.stringify(draft)
+                      JSON.stringify($companionEditors.get().characterCards[avatarId]) === JSON.stringify(draft)
                     ) {
                       const cards = { ...$companionEditors.get().characterCards }
-                      delete cards[String(avatarId)]
+                      delete cards[avatarId]
                       updateCompanionEditors({ characterCards: cards })
 
                       if (isLive()) {
@@ -400,7 +400,7 @@ export function CharacterCardSection({
                       updateCompanionEditors({
                         characterCards: {
                           ...$companionEditors.get().characterCards,
-                          [String(avatarId)]: {
+                          [avatarId]: {
                             ...draft,
                             revision: current.revision,
                             features: current.features,

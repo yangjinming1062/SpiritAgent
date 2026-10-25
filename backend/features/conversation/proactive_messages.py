@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.topics.store import record_topic_usage
 
+from .asset_bindings import flush_conversation
 from .main_conversation import get_or_create_main_conversation
 from .models import Message
 from .replies import CompanionReply
@@ -17,15 +18,16 @@ async def append_companion_message(db: AsyncSession, user_id: int, reply: Compan
     reply.validate_content(content)
     conversation = await get_or_create_main_conversation(db, user_id, commit=False)
     message = Message(
+        user_id=conversation.user_id,
         conversation_id=conversation.id,
         role="assistant",
         content=content,
         content_type="companion_reply",
-        reply_json=reply.model_dump_json(),
+        reply_json=reply.model_dump(mode="json"),
         subtype="status_proactive",
     )
     db.add(message)
-    await db.flush()
+    await flush_conversation(db)
     await bind_reply_videos(db, message, reply, user_id)
     await record_topic_usage(
         db,

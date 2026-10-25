@@ -20,6 +20,7 @@ from features.media.turn_state import MediaTurnState
 from infrastructure.ai.providers.base import ProviderConfig
 from infrastructure.ai.providers.speech_style import speech_performance_schema, validate_speech_style
 from infrastructure.ai.speech_contracts import SpeechSegment
+from infrastructure.api_ids import ResourceId
 from infrastructure.text import resolve_prompt_text
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, ValidationError
 
@@ -43,7 +44,7 @@ class _ReplyEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["dialogue", "written"]
     bubbles: list[dict[str, JsonValue]]
-    used_topic_ids: list[Annotated[int, Field(gt=0, strict=True)]] = Field(default_factory=list)
+    used_topic_ids: list[Annotated[ResourceId, Field(gt=0, strict=True)]] = Field(default_factory=list)
 
 
 # 英文句点还可用于小数、缩写和省略号，交付前单独检查句界。

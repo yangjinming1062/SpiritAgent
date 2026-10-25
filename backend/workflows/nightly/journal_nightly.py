@@ -11,7 +11,7 @@ from features.companion.narrative_quality import NarrativeQualityError, review_n
 from features.journal.journal_service import get_diary_by_date, publish_diary
 from features.journal.schemas import DIARY_BODY_MAX_CHARS, DiaryContent
 from features.life.context import read_life_context_in_session
-from features.memory.memory_narratives import backfill_diary_embeddings, load_companion_reflection, narrative_date
+from features.memory.memory_narratives import backfill_diary_embeddings, load_companion_reflection
 from features.posts.store import PostInteractions
 from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, call_llm_json
 from infrastructure.ai.tasks import AiTaskKey
@@ -62,7 +62,7 @@ async def project_today(
             reflection = await load_companion_reflection(db, MemoryScope(user_id, "companion"))
             if reflection is not None:
                 previous_reflection = {
-                    "local_date": narrative_date(reflection.context, reflection.source_refs),
+                    "local_date": reflection.local_date,
                     "content": reflection.content,
                 }
     if result is not None:

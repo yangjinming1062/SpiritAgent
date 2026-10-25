@@ -148,54 +148,9 @@ async def validate_batch_merges(db: AsyncSession, user_id: int, rows: BackupRows
             raise ValueError(_RESERVE_MERGE_CONFLICT)
 
 
-async def _find_batch(
-    db: AsyncSession,
-    raw: dict[str, Any],
-    payload: dict[str, Any],
-    context: BackupContext,
-) -> int | None:
-    if context.mode != "merge":
-        return None
-    await db.flush()
-    existing = await db.scalar(
-        select(TopicBatch).where(
-            TopicBatch.user_id == context.user_id,
-            TopicBatch.system_preset_id == payload["system_preset_id"],
-            TopicBatch.activity_date == payload["activity_date"],
-        ),
-    )
-    if existing is not None:
-        _validate_matching_batch(existing, raw)
-        return existing.id
-    return None
-
-
-async def _find_source(
-    db: AsyncSession,
-    raw: dict[str, Any],
-    payload: dict[str, Any],
-    context: BackupContext,
-) -> int | None:
-    if context.mode != "merge":
-        return None
-    await db.flush()
-    existing = await db.scalar(
-        select(CompanionTopic).where(
-            CompanionTopic.user_id == context.user_id,
-            CompanionTopic.system_preset_id == payload["system_preset_id"],
-            CompanionTopic.platform == payload["platform"],
-            CompanionTopic.source_id == payload["source_id"],
-        ),
-    )
-    if existing is not None:
-        _validate_matching_source(existing, payload)
-        return existing.id
-    return None
-
-
 async def _find_usage(
     db: AsyncSession,
-    raw: dict[str, Any],
+    _raw: dict[str, Any],
     payload: dict[str, Any],
     context: BackupContext,
 ) -> int | None:
@@ -213,7 +168,7 @@ async def _find_usage(
     return await db.scalar(query.limit(1))
 
 
-def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
+def _prepare(table: str, _raw: dict[str, Any], payload: dict[str, Any], _context: BackupContext) -> None:
     if payload.get("system_preset_id") != "companion":
         raise ValueError("Invalid topic companion scope")
     if table == "companion_topic_batches":
@@ -225,7 +180,7 @@ def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: 
 async def _check(
     table: str,
     db: AsyncSession,
-    raw: dict[str, Any],
+    _raw: dict[str, Any],
     payload: dict[str, Any],
     context: BackupContext,
 ) -> None:
@@ -266,7 +221,7 @@ def backup_tables() -> tuple[BackupTable, ...]:
         BackupTable(
             "companion_topic_batches",
             TopicBatch,
-            find_existing=_find_batch,
+            unique_keys=("system_preset_id", "activity_date"),
             prepare_payload=partial(_prepare, "companion_topic_batches"),
             validate_payload=partial(_check, "companion_topic_batches"),
         ),
@@ -274,7 +229,7 @@ def backup_tables() -> tuple[BackupTable, ...]:
             "companion_topics",
             CompanionTopic,
             foreign_keys={"batch_id": "companion_topic_batches"},
-            find_existing=_find_source,
+            unique_keys=("system_preset_id", "platform", "source_id"),
             strict_references=True,
             prepare_payload=partial(_prepare, "companion_topics"),
             validate_payload=partial(_check, "companion_topics"),

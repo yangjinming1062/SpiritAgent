@@ -5,7 +5,7 @@ from typing import Any
 from infrastructure.ai.providers.base import ReasoningEffort
 from infrastructure.ai.providers.registry import resolve_context_tokens
 from infrastructure.ai.user_config import UserLlmConfig
-from infrastructure.text import safe_json_loads
+from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -45,15 +45,15 @@ class ToolSnapshot:
 class ActiveTurnSnapshot:
     request_id: str
     origin_kind: str
-    message_ids: list[int] = field(default_factory=list)
-    assistant_message_id: int | None = None
+    message_ids: list[ResourceId] = field(default_factory=list)
+    assistant_message_id: ResourceId | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
     text: str = ""
     reasoning: str = ""
     bubbles: list[dict[str, Any]] = field(default_factory=list)
     tools: list[ToolSnapshot] = field(default_factory=list)
     running: bool = True
-    replace_reply_message_id: int | None = None
+    replace_reply_message_id: ResourceId | None = None
 
 
 @dataclass(frozen=True)
@@ -61,10 +61,10 @@ class LastSubmissionSnapshot:
     request_id: str
     status: str
     error: str | None
-    message_ids: list[int]
-    retry_message_id: int | None
-    replace_reply_message_id: int | None = None
-    result_message_id: int | None = None
+    message_ids: list[ResourceId]
+    retry_message_id: ResourceId | None
+    replace_reply_message_id: ResourceId | None = None
+    result_message_id: ResourceId | None = None
 
 
 class ToolsSyncResult(BaseModel):
@@ -99,22 +99,21 @@ class RuntimeSession:
         )
 
 
-def decode_session_settings(settings_json: str | None) -> dict[str, Any]:
-    decoded = safe_json_loads(settings_json or "")
-    return decoded if isinstance(decoded, dict) else {}
+def copy_session_settings(settings_json: dict[str, Any] | None) -> dict[str, Any]:
+    return dict(settings_json or {})
 
 
 def new_runtime_session(
     *,
     conversation_id: int,
-    settings_json: str | None,
+    settings_json: dict[str, Any] | None,
     kind: str,
     is_automation: bool,
 ) -> RuntimeSession:
-    """为已存在的 DB 会话创建 runtime；settings 解码自 Conversation.settings_json，让回合逻辑不必每次回查 DB。"""
+    """为已存在的 DB 会话创建 runtime；settings 复制自 Conversation.settings_json，让回合逻辑不必每次回查 DB。"""
     return RuntimeSession(
         conversation_id=conversation_id,
-        settings=decode_session_settings(settings_json),
+        settings=copy_session_settings(settings_json),
         kind=kind,
         is_automation=is_automation,
     )

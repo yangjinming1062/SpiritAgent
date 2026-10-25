@@ -34,8 +34,9 @@ from features.conversation.session_operations import (
     get_conversation,
     history_page,
 )
+from infrastructure.api_ids import ResourceId
 from infrastructure.config import SETTINGS
-from infrastructure.constants import POSTGRES_INT4_MAX, POSTGRES_INT8_MAX
+from infrastructure.constants import POSTGRES_INT8_MAX
 from infrastructure.database import DbSession
 from infrastructure.http_contracts import operation_policy
 from runtime.conversation import SessionCreateResult
@@ -62,31 +63,21 @@ async def submit_turn(actor: CurrentActor, session_id: str, body: PromptSubmitRe
     return PromptSubmitResult.model_validate(result)
 
 
-@router.get(
-    "/{session_id}/turns/{request_id}",
-    operation_id="sessions.get_turn",
-    response_model=PromptSubmitResult,
-)
+@router.get("/{session_id}/turns/{request_id}", operation_id="sessions.get_turn", response_model=PromptSubmitResult)
 async def get_turn(actor: CurrentActor, session_id: str, request_id: UUID) -> PromptSubmitResult:
     result = await chat_operations(actor).receipt({"session_id": session_id, "request_id": str(request_id)})
     return PromptSubmitResult.model_validate(result)
 
 
 @router.post(
-    "/{session_id}/turns/{request_id}/cancel",
-    operation_id="sessions.cancel_turn",
-    response_model=TurnCancelResult,
+    "/{session_id}/turns/{request_id}/cancel", operation_id="sessions.cancel_turn", response_model=TurnCancelResult
 )
 async def cancel_turn(actor: CurrentActor, session_id: str, request_id: UUID) -> TurnCancelResult:
     result = await chat_operations(actor).cancel({"session_id": session_id, "request_id": str(request_id)})
     return TurnCancelResult.model_validate(result)
 
 
-@router.get(
-    "/{session_id}/snapshot",
-    operation_id="sessions.snapshot",
-    response_model=SessionSnapshotResponse,
-)
+@router.get("/{session_id}/snapshot", operation_id="sessions.snapshot", response_model=SessionSnapshotResponse)
 async def get_session_snapshot(
     actor: CurrentActor,
     session_id: str,
@@ -100,11 +91,7 @@ async def get_session_snapshot(
     return SessionSnapshotResponse.model_validate(result)
 
 
-@router.post(
-    "/{session_id}/history/undo",
-    operation_id="sessions.undo",
-    response_model=SessionUndoResult,
-)
+@router.post("/{session_id}/history/undo", operation_id="sessions.undo", response_model=SessionUndoResult)
 async def undo_session_history(actor: CurrentActor, session_id: str, body: SessionUndoRequest) -> SessionUndoResult:
     return await chat_operations(actor).undo({**body.model_dump(exclude_unset=True), "session_id": session_id})
 
@@ -127,23 +114,18 @@ async def compress_session_history(actor: CurrentActor, session_id: str) -> Sess
     openapi_extra=operation_policy(wait_for_model=True),
 )
 async def dispatch_session_command(
-    actor: CurrentActor,
-    session_id: str,
-    body: CommandDispatchRequest,
+    actor: CurrentActor, session_id: str, body: CommandDispatchRequest
 ) -> CommandDispatchResult:
     result = await chat_operations(actor).command({**body.model_dump(exclude_unset=True), "session_id": session_id})
     return CommandDispatchResult.model_validate(result)
 
 
-@router.post(
-    "/messages/{message_id}/voice/{bubble_index}",
-    openapi_extra=operation_policy(wait_for_model=True),
-)
+@router.post("/messages/{message_id}/voice/{bubble_index}", openapi_extra=operation_policy(wait_for_model=True))
 @limiter.limit(lambda: f"{SETTINGS.media_tts_rate_limit_per_minute}/minute")
 async def retry_voice_bubble(
     request: Request,
     user: CurrentUser,
-    message_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+    message_id: Annotated[ResourceId, Path(gt=0, le=POSTGRES_INT8_MAX)],
     bubble_index: int,
 ) -> VoiceBubbleView:
     try:
@@ -155,15 +137,13 @@ async def retry_voice_bubble(
     return VoiceBubbleView.model_validate(client_reply_bubbles(reply)[bubble_index])
 
 
-@router.get(
-    "",
-    response_model=DesktopSessionListResponse,
-)
+@router.get("", response_model=DesktopSessionListResponse)
 async def list_sessions(
     user: CurrentUser,
     db: DbSession,
     limit: int = Query(default=40, ge=1, le=100),
-    offset: int = Query(default=0, ge=0, le=POSTGRES_INT8_MAX),
+    cursor: str | None = Query(default=None, max_length=1024),
+    include_total: bool = False,
     min_messages: int = Query(default=0, ge=0, le=POSTGRES_INT8_MAX),
     archived: Literal["only", "exclude", "include"] = "exclude",
     order: Literal["recent", "created", "messages"] = "recent",
@@ -174,7 +154,8 @@ async def list_sessions(
         user.id,
         db,
         limit=limit,
-        offset=offset,
+        cursor=cursor,
+        include_total=include_total,
         min_messages=min_messages,
         archived=archived,
         order=order,
@@ -192,18 +173,12 @@ async def create_session(user: CurrentUser, body: SessionCreateRequest) -> Sessi
     return await session_resource(user.id, conv)
 
 
-@router.get(
-    "/main",
-    response_model=SessionCreateResult,
-)
+@router.get("/main", response_model=SessionCreateResult)
 async def get_main_session(user: CurrentUser) -> SessionCreateResult:
     return await session_resource(user.id, await ensure_main_conversation(user.id))
 
 
-@router.get(
-    "/{session_id}",
-    response_model=SessionCreateResult,
-)
+@router.get("/{session_id}", response_model=SessionCreateResult)
 async def get_session(user: CurrentUser, session_id: str) -> SessionCreateResult:
     try:
         return await session_resource(user.id, await get_conversation(user.id, session_id))
@@ -211,10 +186,7 @@ async def get_session(user: CurrentUser, session_id: str) -> SessionCreateResult
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@router.post(
-    "/{session_id}/forks",
-    response_model=SessionCreateResult,
-)
+@router.post("/{session_id}/forks", response_model=SessionCreateResult)
 async def fork_session(user: CurrentUser, session_id: str, body: SessionForkRequest) -> SessionCreateResult:
     try:
         conv, _ = await fork_conversation(user.id, session_id, body.source_message_id)
@@ -228,14 +200,11 @@ async def fork_session(user: CurrentUser, session_id: str, body: SessionForkRequ
     return await session_resource(user.id, conv)
 
 
-@router.get(
-    "/{session_id}/history",
-    response_model=SessionHistoryResponse,
-)
+@router.get("/{session_id}/history", response_model=SessionHistoryResponse)
 async def get_session_history(
     user: CurrentUser,
     session_id: str,
-    before_id: int | None = Query(default=None, gt=0, le=POSTGRES_INT4_MAX),
+    before_id: ResourceId | None = Query(default=None, gt=0, le=POSTGRES_INT8_MAX),
     limit: int = Query(default=50, ge=1, le=100),
 ) -> SessionHistoryResponse:
     try:
@@ -246,15 +215,9 @@ async def get_session_history(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.patch(
-    "/{session_id}",
-    response_model=SessionCreateResult,
-)
+@router.patch("/{session_id}", response_model=SessionCreateResult)
 async def patch_session(
-    user: CurrentUser,
-    db: DbSession,
-    session_id: str,
-    body: DesktopSessionPatchRequest,
+    user: CurrentUser, db: DbSession, session_id: str, body: DesktopSessionPatchRequest
 ) -> SessionCreateResult:
     try:
         return await patch_session_resource(user.id, db, session_id, body)
@@ -262,13 +225,6 @@ async def patch_session(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@router.delete(
-    "/{session_id}",
-    response_model=DesktopSessionOperationResponse,
-)
-async def delete_session(
-    user: CurrentUser,
-    db: DbSession,
-    session_id: str,
-) -> DesktopSessionOperationResponse:
+@router.delete("/{session_id}", response_model=DesktopSessionOperationResponse)
+async def delete_session(user: CurrentUser, db: DbSession, session_id: str) -> DesktopSessionOperationResponse:
     return await session_management.delete_session(user.id, db, session_id)

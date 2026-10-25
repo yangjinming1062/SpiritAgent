@@ -21,7 +21,7 @@ export interface SetSpriteStateOptions {
 }
 
 interface PresentationPorts {
-  $activeAvatarId: Atom<number | null>
+  $activeAvatarId: Atom<string | null>
   $companionVoiceId: Atom<string>
   $portraitUrl: Atom<string | null>
   $screenLocked: Atom<boolean>

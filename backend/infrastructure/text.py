@@ -228,23 +228,6 @@ def coerce_int(value: Any, default: int | None) -> int | None:
         return default
 
 
-def coerce_non_negative_float(value: Any, default: float = 0.0) -> float:
-    """``max(0.0, float(value))`` + fallback；用于带亚秒精度的活动上下文字段（如 ``seconds_since_last_action``）。"""
-    if value is None:
-        return default
-    try:
-        return max(0.0, float(value))
-    except (TypeError, ValueError):
-        return default
-
-
-def coerce_hour_0_23(value: Any) -> int:
-    """值为 [0, 23] 内的整数时原样返回，否则返 -1 表示「未知 / 越界」（用于 ``local_hour`` 等时段字段的「未知」语义）；不做类型转换。"""
-    if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= 23:
-        return -1
-    return value
-
-
 def approx_text_tokens(text: str) -> int:
     """CJK 字符约 1.3 token/字、西文约 4 字符/token；空串返 0。"""
     if not text:

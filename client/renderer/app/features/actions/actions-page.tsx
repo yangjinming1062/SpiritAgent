@@ -6,10 +6,12 @@ import {
   $actions,
   $actionsError,
   $actionsLoading,
+  $actionsNextCursor,
   type ActionClipKind,
   type ActionDefinition,
   createAction,
   deleteAction,
+  loadMoreActions,
   refreshActions,
   updateAction
 } from '@/modules/visuals'
@@ -74,25 +76,26 @@ export function ActionsPage(): React.JSX.Element {
   const actions = useStore($actions)
   const loading = useStore($actionsLoading)
   const error = useStore($actionsError)
+  const nextCursor = useStore($actionsNextCursor)
   const [query, setQuery] = useState('')
 
   const [editing, setEditing] = useState<
-    { id: null; draft: ActionDraft } | { id: number; draft: ActionDraft; expectedUpdatedAt: string } | null
+    { id: null; draft: ActionDraft } | { id: string; draft: ActionDraft; expectedUpdatedAt: string } | null
   >(null)
 
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    if (auth.kind === 'authenticated') {
-      void refreshActions()
+    if (auth.kind !== 'authenticated') {
+      return
     }
-  }, [auth.kind])
 
-  const visible = query
-    ? actions.filter(action =>
-        `${action.name} ${action.motion_description}`.toLowerCase().includes(query.toLowerCase())
-      )
-    : actions
+    const timer = setTimeout(() => void refreshActions(query), 200)
+
+    return () => clearTimeout(timer)
+  }, [auth.kind, query])
+
+  const visible = actions
 
   const save = (): void => {
     if (!editing) {
@@ -298,6 +301,11 @@ export function ActionsPage(): React.JSX.Element {
           ))}
         </SettingCard>
       )}
+      {nextCursor ? (
+        <button className={BTN_SUBTLE} disabled={loading || busy} onClick={() => void loadMoreActions()} type="button">
+          {t.loadMore}
+        </button>
+      ) : null}
     </SettingsContent>
   )
 }

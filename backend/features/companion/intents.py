@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 
 from infrastructure.config import SETTINGS
 from infrastructure.database import session_scope
+from infrastructure.domain_locks import lock_domain
 from infrastructure.text import utc_now
 from runtime.events.contracts import COMPANION_TURN_EVENT
 from runtime.events.emit import emit_ws_event
@@ -14,7 +15,6 @@ from runtime.user_maintenance import user_request_scope
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.accounts.models import lock_user_row
 from features.companion.disturbance import get_disturbance_tier
 from features.companion.intent_contracts import (
     MAX_COMPANION_FAILURES,
@@ -23,7 +23,7 @@ from features.companion.intent_contracts import (
     CompanionWaitRequest,
     CompanionWakeEvent,
 )
-from features.companion.intent_models import CompanionIntent, companion_cron_source_key
+from features.companion.intent_models import CompanionIntent
 from features.companion.proactive_runtime import (
     can_start_companion_turn,
     get_user_proactive_record,
@@ -67,13 +67,16 @@ async def enqueue_companion_intent(
     user_id: int,
     intent: str,
     *,
-    source_key: str,
+    source_kind: str,
+    cron_job_id: int | None = None,
     expires_at: datetime | None = None,
 ) -> None:
     """在生产者事务中保存触发意图；同来源尚未完成时合并，不重复堆积。"""
+    if not source_kind or (source_kind == "cron") != (cron_job_id is not None):
+        raise ValueError("Cron intents require their source schedule")
     if not intent.strip():
         return
-    await lock_user_row(db, user_id)
+    await lock_domain(db, user_id, "companion_intents")
     now = utc_now()
     if expires_at is not None and expires_at <= now:
         return
@@ -81,7 +84,8 @@ async def enqueue_companion_intent(
         await db.execute(
             select(CompanionIntent.id).where(
                 CompanionIntent.user_id == user_id,
-                CompanionIntent.source_key == source_key,
+                CompanionIntent.source_kind == source_kind,
+                CompanionIntent.cron_job_id == cron_job_id,
                 CompanionIntent.status.in_(_ACTIVE_STATUSES),
                 CompanionIntent.expires_at > now,
             ),
@@ -93,7 +97,8 @@ async def enqueue_companion_intent(
         CompanionIntent(
             user_id=user_id,
             intent=intent,
-            source_key=source_key,
+            source_kind=source_kind,
+            cron_job_id=cron_job_id,
             not_before_at=now,
             wake_at=now,
             expires_at=expires_at or now + timedelta(days=1),
@@ -133,7 +138,7 @@ async def set_companion_wait(
         plan.followup = request
         return plan.intent_id
     async with session_scope() as db:
-        await lock_user_row(db, user_id)
+        await lock_domain(db, user_id, "companion_intents")
         row = (
             (
                 await db.execute(
@@ -181,7 +186,7 @@ async def cancel_companion_wait(user_id: int, intent_id: int) -> bool:
         plan.followup = None
         return True
     async with session_scope() as db:
-        await lock_user_row(db, user_id)
+        await lock_domain(db, user_id, "companion_intents")
         result = await db.execute(
             update(CompanionIntent)
             .where(
@@ -233,8 +238,8 @@ async def has_pending_companion_intent(db: AsyncSession, user_id: int) -> bool:
 
 async def invalidate_cron_companion_intents(db: AsyncSession, user_id: int, job_id: int) -> None:
     """源任务变更与待兑现意图失效共用事务；已开始的执行保留待核对事实。"""
-    await lock_user_row(db, user_id)
-    scope = (CompanionIntent.user_id == user_id) & (CompanionIntent.source_key == companion_cron_source_key(job_id))
+    await lock_domain(db, user_id, "companion_intents")
+    scope = (CompanionIntent.user_id == user_id) & (CompanionIntent.cron_job_id == job_id)
     await db.execute(
         update(CompanionIntent)
         .where(scope, CompanionIntent.status.in_(("waiting", "queued")))
@@ -255,7 +260,7 @@ async def invalidate_cron_companion_intents(db: AsyncSession, user_id: int, job_
 async def queue_companion_intent(user_id: int, event: CompanionWakeEvent | None = None) -> bool:
     """轻量事件合并与到期认领；等待状态持久化，不依赖常驻 LLM 或长 sleep。"""
     async with session_scope() as db:
-        await lock_user_row(db, user_id)
+        await lock_domain(db, user_id, "companion_intents")
         now = utc_now()
         scope = CompanionIntent.user_id == user_id
         await db.execute(
@@ -339,7 +344,7 @@ async def queue_companion_intent(user_id: int, event: CompanionWakeEvent | None 
             db,
             user_id=user_id,
             event_type=COMPANION_TURN_EVENT,
-            payload=CompanionTurnRequest(intent_id=row.id, lease_token=lease_token).model_dump(),
+            payload=CompanionTurnRequest(intent_id=row.id, lease_token=lease_token).model_dump(mode="json"),
         )
         await db.commit()
         return True
@@ -354,7 +359,7 @@ async def claim_companion_intent(user_id: int) -> None:
 
 async def begin_companion_intent(user_id: int, request: CompanionTurnRequest) -> CompanionIntentView | None:
     async with session_scope() as db:
-        await lock_user_row(db, user_id)
+        await lock_domain(db, user_id, "companion_intents")
         now = utc_now()
         row = (
             await db.execute(
@@ -397,7 +402,7 @@ async def finish_companion_intent(
     tools_started: bool = False,
 ) -> bool:
     async with session_scope() as db:
-        await lock_user_row(db, user_id)
+        await lock_domain(db, user_id, "companion_intents")
         row = (
             await db.execute(
                 select(CompanionIntent).where(

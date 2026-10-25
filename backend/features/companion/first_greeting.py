@@ -14,7 +14,6 @@ from features.configuration.settings.values import get_user_setting
 
 logger = get_logger(__name__)
 
-_FIRST_GREETING_SOURCE_KEY = "onboarding:first_greeting"
 # 有效期内仍须通过在线、档位与冷却闸门；逾期静默作废，不补发。
 _FIRST_GREETING_TTL = timedelta(hours=2)
 
@@ -28,7 +27,7 @@ async def enqueue_first_greeting(db: AsyncSession, user_id: int) -> None:
         db,
         user_id,
         resolve_prompt_text(FIRST_MEETING_INTENT_TEXTS, language),
-        source_key=_FIRST_GREETING_SOURCE_KEY,
+        source_kind="first_greeting",
         expires_at=utc_now() + _FIRST_GREETING_TTL,
     )
 

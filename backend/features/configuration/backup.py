@@ -1,6 +1,5 @@
 """模块拥有的备份表、校验与恢复操作。"""
 
-import json
 from functools import partial
 from typing import Any
 
@@ -32,13 +31,6 @@ def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: 
 
     if table == "user_model_configs":
         payload["ai_config"] = _validated_ai_config(payload.get("ai_config"))
-
-    if table == "user_settings":
-        # 读取方逐值 json.loads；无法解析的值不能写入，否则每次读取设置都会失败。
-        try:
-            json.loads(payload.get("setting_value"))
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"Invalid user setting value: {payload.get('setting_key')!r}") from exc
 
 
 def backup_tables() -> tuple[BackupTable, ...]:

@@ -3,6 +3,7 @@
 from datetime import datetime
 from typing import Literal
 
+from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field
 
 from features.media.identity_contracts import CharacterCardSnapshot
@@ -38,7 +39,7 @@ class ActionAssetView(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    id: int
+    id: ResourceId
     name: str
     motion_description: str
     use_when: list[str] = Field(default_factory=list)
@@ -75,6 +76,7 @@ class ActionListResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     actions: list[ActionAssetView]
-    total: int
-    offset: int
+    total: int | None = None
+    has_more: bool
+    next_cursor: str | None = None
     limit: int

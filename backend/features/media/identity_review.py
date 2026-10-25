@@ -19,16 +19,13 @@ from infrastructure.text import parse_llm_json
 from infrastructure.video_processing.frames import action_frame_review_input, measure_action_frame
 from pydantic import BaseModel, ConfigDict, Field
 
-from features.media.chain import MEDIA_IDENTITY_ACCEPT_SCORE, MediaProviderFailedError
+from features.media.chain import MEDIA_IDENTITY_ACCEPT_SCORE
 from features.media.prompts import (
-    CHARACTER_ACTION_IMAGE_REVIEW,
-    CHARACTER_ACTION_VIDEO_REVIEW,
     CHARACTER_IMAGE_GOAL_REVIEW,
     CHARACTER_IMAGE_GOAL_REVIEW_REPAIR,
     CHARACTER_MEDIA_IMAGE_SCORE,
     CHARACTER_MEDIA_SELF_IMAGE_SCORE,
     CHARACTER_MEDIA_VIDEO_SCORE,
-    CHARACTER_VIDEO_PACK_REVIEW,
 )
 
 logger = get_logger(__name__)
@@ -325,50 +322,3 @@ async def score_character_frames_with_references(
         before_submit,
         task=task,
     )
-
-
-async def review_character_frames(
-    user_id: int,
-    identity_uri: str | None,
-    frame_uris: tuple[str, ...],
-    *,
-    task: AiTaskKey,
-    pack_wide: bool = False,
-    image: bool = False,
-    identity_text: str = "",
-    before_submit: Callable[[], Awaitable[None]] | None = None,
-) -> tuple[str, str]:
-    if not identity_uri or not frame_uris:
-        return "review", "参考形象或动作画面无法读取，检查未通过"
-    if pack_wide:
-        prompt = CHARACTER_VIDEO_PACK_REVIEW
-    elif image:
-        prompt = CHARACTER_ACTION_IMAGE_REVIEW
-    else:
-        prompt = CHARACTER_ACTION_VIDEO_REVIEW
-    try:
-        raw = await vision_chat(
-            user_id,
-            prompt,
-            json.dumps({"image_count": len(frame_uris) + 1, "identity": identity_text}, ensure_ascii=False),
-            reference_images=(identity_uri, *frame_uris),
-            before_submit=before_submit,
-            task=task,
-        )
-        payload = parse_llm_json(raw)
-        if isinstance(payload, dict) and payload.get("verdict") in ("pass", "review"):
-            reason = str(payload.get("reason") or "").strip()[:500]
-            return payload["verdict"], reason or "角色外形可能有变化，检查未通过"
-        logger.warning(
-            "character action review output invalid",
-            extra={
-                "user_id": user_id,
-                "category": "non_json" if payload is None else "invalid_verdict",
-                "output_chars": len(raw),
-            },
-        )
-    except LlmCallBlockedError:
-        raise
-    except Exception:
-        logger.warning("character action review failed", extra={"user_id": user_id}, exc_info=True)
-    raise MediaProviderFailedError("自动检查未完成，请稍后继续检查已有素材", reason="quality_unavailable")

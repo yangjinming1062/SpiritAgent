@@ -20,10 +20,11 @@ import type {
 
 export const $visualsItems = atom<VisualItem[]>([])
 export const $visualsJobs = atom<VisualJob[]>([])
-export const $visualsTotal = atom(0)
+export const $visualsTotal = atom<number | null>(null)
+export const $visualsNextCursor = atom<string | null>(null)
 export const $visualsLoading = atom(false)
 export const $visualsError = atom<string | null>(null)
-export const $visualsDetail = atom<{ id: number; detail: VisualDetail } | null>(null)
+export const $visualsDetail = atom<{ id: string; detail: VisualDetail } | null>(null)
 export const $visualsDetailError = atom<string | null>(null)
 export const $visualsPresentation = atom<VisualsPresentation | null>(null)
 export const $visualsPresentationError = atom<string | null>(null)
@@ -34,7 +35,7 @@ let epoch = 0
 let refreshQuery: VisualsListQuery = {}
 let refreshQueued = false
 let refreshRequest: Promise<void> | null = null
-let detailRequest: { id: number; request: Promise<VisualDetail> } | null = null
+let detailRequest: { id: string; request: Promise<VisualDetail> } | null = null
 const playClients = new Map<string, string>()
 
 /**
@@ -77,6 +78,7 @@ export async function refreshVisuals(query?: VisualsListQuery): Promise<void> {
         if (pending === refreshQuery) {
           $visualsItems.set(list.visuals)
           $visualsTotal.set(list.total)
+          $visualsNextCursor.set(list.next_cursor)
           $visualsJobs.set(jobs.jobs)
           $visualsError.set(null)
         }
@@ -102,7 +104,7 @@ export async function refreshVisuals(query?: VisualsListQuery): Promise<void> {
 }
 
 /** 详情按 ID 单读并合并在途请求；迟到回写受账户与代次守卫。 */
-export function loadVisualDetail(visualId: number): Promise<VisualDetail> {
+export function loadVisualDetail(visualId: string): Promise<VisualDetail> {
   const scope = captureAuthScope()
 
   if (detailRequest?.id === visualId) {
@@ -194,7 +196,7 @@ function publishPresentation(response: VisualsPresentation): void {
 }
 
 export async function regenerateVisual(
-  visualId: number,
+  visualId: string,
   body: Parameters<typeof visualsApi.regenerate>[1]
 ): Promise<VisualJob> {
   const job = await visualsApi.regenerate(visualId, body)
@@ -203,7 +205,7 @@ export async function regenerateVisual(
   return job
 }
 
-export async function commandVisualJob(jobId: number, command: VisualJobCommand): Promise<void> {
+export async function commandVisualJob(jobId: string, command: VisualJobCommand): Promise<void> {
   await visualsApi.jobCommand(jobId, { command })
   await refreshVisuals()
 }
@@ -320,7 +322,8 @@ export function resetVisualsForAccount(): void {
   playClients.clear()
   $visualsItems.set([])
   $visualsJobs.set([])
-  $visualsTotal.set(0)
+  $visualsTotal.set(null)
+  $visualsNextCursor.set(null)
   $visualsLoading.set(false)
   $visualsError.set(null)
   $visualsDetail.set(null)

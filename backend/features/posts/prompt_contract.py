@@ -2,7 +2,7 @@
 
 from infrastructure.text import resolve_prompt_text
 
-from features.posts.models import PostContentType
+from features.entries.contracts import PostContentType
 from features.posts.schemas import POST_COMMENT_MAX_CHARS, PostPlan
 
 

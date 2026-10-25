@@ -1,12 +1,13 @@
 from datetime import datetime
 
+from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class UpdateVersionItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
+    id: ResourceId
     version: str
     release_notes: str
     exe_filename: str

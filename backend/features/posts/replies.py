@@ -10,21 +10,21 @@ from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import format_local_iso
 from runtime.background import TaskBag
-from sqlalchemy import select
 
+from features.entries.queries import comments_for_entries, pending_reply, pending_reply_threads
+from features.entries.service import begin_reply, fail_reply, finish_reply
 from features.posts.context import elapsed_seconds, load_post_prompt_context, post_prompt_entry
-from features.posts.models import CompanionPostComment
 from features.posts.prompt_contract import render_post_instructions
 from features.posts.prompts import POST_REPLY_INSTRUCTIONS
 from features.posts.schemas import POST_COMMENT_MAX_CHARS
-from features.posts.store import emit_comment, get_post
+from features.posts.store import get_post
 
 logger = get_logger(__name__)
 _BG = TaskBag("posts.replies")
-_THREADS: dict[tuple[int, str], asyncio.Task[None]] = {}
+_THREADS: dict[tuple[int, int], asyncio.Task[None]] = {}
 
 
-def schedule_companion_reply(user_id: int, post_id: str) -> None:
+def schedule_companion_reply(user_id: int, post_id: int) -> None:
     key = (user_id, post_id)
     if key in _THREADS and not _THREADS[key].done():
         return
@@ -34,20 +34,10 @@ def schedule_companion_reply(user_id: int, post_id: str) -> None:
     _BG.add(task, user_id=user_id)
 
 
-async def _run_thread(user_id: int, post_id: str) -> None:
+async def _run_thread(user_id: int, post_id: int) -> None:
     while True:
         async with SESSION_LOCAL() as db:
-            target = await db.scalar(
-                select(CompanionPostComment)
-                .where(
-                    CompanionPostComment.user_id == user_id,
-                    CompanionPostComment.post_id == post_id,
-                    CompanionPostComment.role == "user",
-                    CompanionPostComment.reply_status.in_(("pending", "running")),
-                )
-                .order_by(CompanionPostComment.created_at, CompanionPostComment.id)
-                .limit(1),
-            )
+            target = await pending_reply(db, user_id, post_id)
         if target is None:
             return
         try:
@@ -57,13 +47,8 @@ async def _run_thread(user_id: int, post_id: str) -> None:
         except Exception:
             logger.exception("Post reply failed", extra={"post_id": post_id, "comment_id": target.id})
             async with SESSION_LOCAL() as db:
-                row = await db.scalar(
-                    select(CompanionPostComment).where(CompanionPostComment.id == target.id).with_for_update(),
-                )
-                if row is not None and row.reply_status in ("pending", "running"):
-                    row.reply_status, row.reply_error = "failed", "回复暂未完成，可以重试"
-                    await emit_comment(db, row)
-                    await db.commit()
+                await fail_reply(db, user_id, target.id)
+                await db.commit()
 
 
 def _validate_reply(text: str) -> None:
@@ -72,32 +57,23 @@ def _validate_reply(text: str) -> None:
         raise LLMRuntimeError(ClassifiedError(FailoverReason.format_error, None, "Empty or oversized comment reply"))
 
 
-async def _generate_reply(user_id: int, post_id: str, comment_id: str) -> None:
+async def _generate_reply(user_id: int, post_id: int, comment_id: int) -> None:
     ctx = await load_post_prompt_context(user_id)
     async with SESSION_LOCAL() as db:
-        target = await db.scalar(
-            select(CompanionPostComment)
-            .where(
-                CompanionPostComment.id == comment_id,
-                CompanionPostComment.user_id == user_id,
-            )
-            .with_for_update(),
-        )
+        target = await begin_reply(db, user_id, post_id, comment_id)
         if target is None:
             return
         post = await get_post(db, user_id, post_id)
         if post is None:
             return
-        target.reply_status, target.reply_error = "running", None
-        target.reply_attempts += 1
         attempt = target.reply_attempts
-        await emit_comment(db, target)
+        comments = (await comments_for_entries(db, user_id, [post_id])).get(post_id, [])
         allowed_users = {
-            c.id for c in post.comments if c.role == "user" and (c.created_at, c.id) <= (target.created_at, target.id)
+            c.id for c in comments if c.role == "user" and (c.created_at, c.id) <= (target.created_at, target.id)
         }
         thread = [
             c
-            for c in post.comments
+            for c in comments
             if c.id in allowed_users or (c.role == "companion" and c.reply_to_comment_id in allowed_users)
         ]
         post_data = post_prompt_entry(post, ctx)
@@ -140,47 +116,13 @@ async def _generate_reply(user_id: int, post_id: str, comment_id: str) -> None:
         )
     ).strip()
     async with SESSION_LOCAL() as db:
-        target = await db.scalar(
-            select(CompanionPostComment)
-            .where(
-                CompanionPostComment.id == comment_id,
-                CompanionPostComment.user_id == user_id,
-            )
-            .with_for_update(),
-        )
-        if target is None or target.reply_attempts != attempt or target.reply_status != "running":
-            return
-        existing = await db.scalar(
-            select(CompanionPostComment).where(CompanionPostComment.reply_to_comment_id == comment_id),
-        )
-        if existing is None:
-            row = CompanionPostComment(
-                user_id=user_id,
-                post_id=post_id,
-                role="companion",
-                content=reply,
-                reply_to_comment_id=comment_id,
-                reply_status="none",
-            )
-            db.add(row)
-            await emit_comment(db, row)
-        target.reply_status, target.reply_error = "completed", None
-        await emit_comment(db, target)
+        await finish_reply(db, user_id, post_id, comment_id, attempt, reply)
         await db.commit()
 
 
 async def resume_replies() -> None:
     async with SESSION_LOCAL() as db:
-        rows = (
-            await db.execute(
-                select(CompanionPostComment.user_id, CompanionPostComment.post_id)
-                .where(
-                    CompanionPostComment.role == "user",
-                    CompanionPostComment.reply_status.in_(("pending", "running")),
-                )
-                .distinct(),
-            )
-        ).all()
+        rows = await pending_reply_threads(db)
     for user_id, post_id in rows:
         schedule_companion_reply(user_id, post_id)
 

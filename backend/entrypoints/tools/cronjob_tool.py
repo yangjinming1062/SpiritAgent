@@ -3,11 +3,19 @@ from typing import Any
 
 from features.automation.cron_jobs import compute_next_run_at, create_job, get_job, list_jobs, remove_job, update_job
 from features.conversation.memory_scope import resolve_memory_scope
+from infrastructure.api_ids import ResourceId
 from infrastructure.database import session_scope
 from infrastructure.text import coerce_int, tool_error, utc_now
 from runtime.memory_scope import MemoryScope
 from runtime.tools.prompts import CRONJOB_DESC, CRONJOB_PARAM_DESCS
 from runtime.tools.registry import ToolsRegistry
+
+
+def _job_payload(job: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: str(value) if key in {"id", "user_id", "conversation_id"} and value is not None else value
+        for key, value in job.items()
+    }
 
 
 def _build_updates(prompt: str | None, name: str | None, schedule: str | None, kind: str | None) -> dict[str, Any]:
@@ -52,12 +60,12 @@ async def _handle_cron_action(
             kind=kind or "standard",
         )
         return json.dumps(
-            {"success": True, "message": f"Cron job '{job.get('name')}' created.", "job": job},
+            {"success": True, "message": f"Cron job '{job.get('name')}' created.", "job": _job_payload(job)},
             ensure_ascii=False,
         )
     if action == "list":
         return json.dumps(
-            {"success": True, "jobs": await list_jobs(scope=scope, include_paused=True)},
+            {"success": True, "jobs": [_job_payload(job) for job in await list_jobs(scope=scope, include_paused=True)]},
             ensure_ascii=False,
         )
     if action not in {"remove", "get", *_UPDATE_VERBS}:
@@ -76,23 +84,23 @@ async def _handle_cron_action(
         job = await get_job(scope=scope, job_id=job_id)
         if not job:
             return tool_error(f"Cron job #{job_id_raw} not found")
-        return json.dumps({"success": True, "job": job}, ensure_ascii=False)
+        return json.dumps({"success": True, "job": _job_payload(job)}, ensure_ascii=False)
 
     updates = _build_updates(prompt, name, schedule, kind) if action == "update" else {"is_paused": action == "pause"}
     job = await update_job(scope=scope, job_id=job_id, updates=updates)
     if not job:
         return tool_error(f"Cron job #{job_id_raw} not found.")
     return json.dumps(
-        {"success": True, "message": f"Cron job #{job['id']} {_UPDATE_VERBS[action]}.", "job": job},
+        {"success": True, "message": f"Cron job #{job['id']} {_UPDATE_VERBS[action]}.", "job": _job_payload(job)},
         ensure_ascii=False,
     )
 
 
 async def cronjob(
     action: str,
-    user_id: int,
+    user_id: ResourceId,
     parent_session_id: str,
-    job_id: int | None = None,
+    job_id: ResourceId | None = None,
     prompt: str | None = None,
     schedule: str | None = None,
     name: str | None = None,
@@ -116,7 +124,7 @@ CRONJOB_SCHEMA = {
         "type": "object",
         "properties": {
             "action": {"type": "string", "description": CRONJOB_PARAM_DESCS["action"]},
-            "job_id": {"type": "integer", "description": CRONJOB_PARAM_DESCS["job_id"]},
+            "job_id": {"type": "string", "pattern": "^[1-9][0-9]*$", "description": CRONJOB_PARAM_DESCS["job_id"]},
             "prompt": {"type": "string", "description": CRONJOB_PARAM_DESCS["prompt"]},
             "schedule": {
                 "type": "string",

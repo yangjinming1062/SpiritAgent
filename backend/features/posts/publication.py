@@ -18,15 +18,16 @@ from infrastructure.assets.asset_store import (
 )
 from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.database import SESSION_LOCAL
+from infrastructure.domain_locks import lock_domain
 from infrastructure.logger import get_logger
+from infrastructure.pagination import decode_timestamp_cursor, encode_timestamp_cursor
 from infrastructure.text import local_date, resolve_language, resolve_prompt_text, utc_now
 from runtime.background import TaskBag
 from runtime.user_maintenance import is_user_in_maintenance
-from sqlalchemy import or_, select, update
+from sqlalchemy import or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import raiseload
+from sqlalchemy.orm import load_only
 
-from features.accounts.locking import lock_account
 from features.accounts.queries import user_is_active
 from features.appearance.character_card import character_snapshot_is_current
 from features.appearance.visual_identity import (
@@ -42,6 +43,9 @@ from features.companion.narrative_quality import NarrativeQualityError, review_n
 from features.companion.queries import complete_user_ids
 from features.configuration.settings.timezone import resolve_user_timezone
 from features.configuration.settings.values import get_user_setting_bool, load_user_settings
+from features.entries.contracts import PostContentType
+from features.entries.queries import recent_posts
+from features.jobs.service import bind_job_assets
 from features.media.character_images import generate_character_images
 from features.media.contracts import VideoJobSnapshot
 from features.media.identity_contracts import CharacterCardSnapshot, CharacterReferenceRole
@@ -58,11 +62,11 @@ from features.media.video_jobs import (
     submit_video_job,
 )
 from features.posts.context import load_post_prompt_context, post_prompt_entry
-from features.posts.models import CompanionPost, PostContentType, PostPublication
 from features.posts.output_contracts import POST_DECISION, parse_post_decision
 from features.posts.ports import notify_post_published
 from features.posts.prompt_contract import render_post_instructions
 from features.posts.prompts import POST_DECISION_REPAIR_TEXTS, POST_PUBLISH_INSTRUCTIONS
+from features.posts.publication_models import PostPublication
 from features.posts.schemas import (
     PostContext,
     PostPlan,
@@ -84,18 +88,10 @@ from features.visuals.queries import prompt_presentation_snapshot
 
 logger = get_logger(__name__)
 _BG = TaskBag("posts.publication")
-_TASKS: dict[str, asyncio.Task[None]] = {}
-_TERMINAL = {
-    "published",
-    "partial",
-    "failed",
-    "blocked",
-    "result_unknown",
-    "declined",
-    "discarded",
-}
-_RECOVERABLE_VIDEO_STATUSES = ("result_unknown",)
-_RECOVERY_LOCKS: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
+_TASKS: dict[int, asyncio.Task[None]] = {}
+_TERMINAL = {"succeeded", "failed", "cancelled"}
+_RECOVERABLE_VIDEO_STATUSES = ("unknown",)
+_RECOVERY_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
 _POSTS_SWITCH = "companion.posts_enabled"
 # 视频分辨率按此顺序取供应商链能接单的第一档：768P 为默认档，720P 先于 1080P，因为部分供应商模型最高到 720p；动态视频刻意不含 512P/480P 低清档。
 _VIDEO_RESOLUTIONS = ("768P", "720P", "1080P")
@@ -171,22 +167,7 @@ async def _creation_input(user_id: int) -> dict:
         raise PostBlockedError("发布开关已关闭")
     ctx = await load_post_prompt_context(user_id)
     async with SESSION_LOCAL() as db:
-        recent = (
-            (
-                await db.execute(
-                    select(CompanionPost)
-                    .options(raiseload(CompanionPost.comments))
-                    .where(
-                        CompanionPost.user_id == user_id,
-                        CompanionPost.published_at >= ctx.now - timedelta(days=3),
-                        CompanionPost.published_at <= ctx.now,
-                    )
-                    .order_by(CompanionPost.published_at, CompanionPost.id),
-                )
-            )
-            .scalars()
-            .all()
-        )
+        recent = await recent_posts(db, user_id, since=ctx.now - timedelta(days=3), until=ctx.now)
         environment = scene_environment(await get_scene_state(db, user_id))
     presentation = await prompt_presentation_snapshot(user_id)
     return {
@@ -289,7 +270,7 @@ async def request_publication(user_id: int) -> PostPublicationResult:
     return response_for_publication(row)
 
 
-def schedule_publication(task_id: str, user_id: int) -> None:
+def schedule_publication(task_id: int, user_id: int) -> None:
     if task_id in _TASKS and not _TASKS[task_id].done():
         return
     task = asyncio.create_task(_run_publication(task_id), name=f"post.publish.{task_id}")
@@ -300,14 +281,14 @@ def schedule_publication(task_id: str, user_id: int) -> None:
 
 def _owned_assets(row: PostPublication) -> list[str]:
     """任务自己保存的图片、语音与旁白；视频动态的主媒体是视频任务的成品，由该任务管理。"""
-    paths = [row.progress_json.get("audio_url")]
+    paths = [(row.checkpoint or {}).get("audio_url")]
     if row.video_job_id is None:
-        paths.append(row.progress_json.get("media_url"))
+        paths.append((row.checkpoint or {}).get("media_url"))
     return [path for path in paths if path]
 
 
 async def _save(
-    task_id: str,
+    task_id: int,
     *,
     phase: str | None = None,
     status: str | None = None,
@@ -320,18 +301,30 @@ async def _save(
         row = await db.scalar(select(PostPublication).where(PostPublication.id == task_id).with_for_update())
         if row is None:
             raise PostError("发布任务已不存在")
-        if row.post_id is not None or row.status in _TERMINAL:
+        if row.post_id is not None or row.state in _TERMINAL:
             return
+        previous_assets = set(_owned_assets(row))
         if phase is not None:
-            row.phase = phase
+            row.stage = phase
         if status is not None:
-            row.status = status
+            outcomes = {
+                "published": "succeeded",
+                "partial": "succeeded",
+                "blocked": "failed",
+                "declined": "cancelled",
+                "discarded": "cancelled",
+            }
+            row.state = outcomes.get(status, "unknown" if status == "result_unknown" else status)
+            row.outcome = status if status in outcomes else None
         row.error = error
         if plan is not None:
             row.plan_json = plan.model_dump(mode="json")
         if request is not None:
             row.request_json = request
-        row.progress_json = {**row.progress_json, **progress}
+        row.checkpoint = {**(row.checkpoint or {}), **progress}
+        added_assets = set(_owned_assets(row)) - previous_assets
+        if added_assets:
+            await bind_job_assets(db, row.user_id, row.id, added_assets, "output")
         # 阻止或失败的任务不会产生动态（已有动态时上方已返回），其保存的资产随之删除；结果未知的任务保留已有产物。
         discarded = _owned_assets(row) if status in ("blocked", "failed") else []
         await enqueue_asset_cleanup(db, row.user_id, discarded)
@@ -341,7 +334,7 @@ async def _save(
         await cleanup_user_assets(user_id)
 
 
-async def _voice(task_id: str, user_id: int, text: str, *, phase: str, directory: str) -> tuple[str, str]:
+async def _voice(task_id: int, user_id: int, text: str, *, phase: str, directory: str) -> tuple[str, str]:
     async with SESSION_LOCAL() as db:
         if user_id not in await complete_user_ids(db, (user_id,)):
             raise PostError("伙伴资料尚未就绪")
@@ -367,7 +360,7 @@ async def _voice(task_id: str, user_id: int, text: str, *, phase: str, directory
 
 
 async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
-    progress = dict(row.progress_json)
+    progress = dict(row.checkpoint)
     directory = progress.get("storage_directory")
     if not isinstance(directory, str) or not directory:
         async with SESSION_LOCAL() as db:
@@ -449,7 +442,7 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
             await _save(row.id, phase="video_submitting", **progress)
             async with SESSION_LOCAL() as db:
                 publication = await db.get(PostPublication, row.id, with_for_update=True)
-                if publication is None or publication.status in _TERMINAL:
+                if publication is None or publication.state in _TERMINAL:
                     raise PostError("发布任务已不可执行")
                 job = await prepare_video_job(
                     db,
@@ -467,7 +460,7 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
                     task=AiTaskKey.posts,
                 )
                 publication.video_job_id = job.id
-                publication.phase = "video_waiting"
+                publication.stage = "video_waiting"
                 await db.commit()
             job_id = job.id
             await submit_video_job(row.user_id, job_id)
@@ -488,16 +481,16 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
     return progress
 
 
-async def _run_publication(task_id: str) -> None:
+async def _run_publication(task_id: int) -> None:
     try:
         async with SESSION_LOCAL() as db:
             row = await db.get(PostPublication, task_id)
-        if row is None or row.status in _TERMINAL:
+        if row is None or row.state in _TERMINAL:
             return
-        if row.phase == "narration_submitting" and row.progress_json.get("media_url"):
-            row.progress_json = {**row.progress_json, "narration_failed": True}
-            await _save(task_id, phase="media_ready", **row.progress_json)
-        elif row.phase.endswith("_submitting"):
+        if row.stage == "narration_submitting" and (row.checkpoint or {}).get("media_url"):
+            row.checkpoint = {**(row.checkpoint or {}), "narration_failed": True}
+            await _save(task_id, phase="media_ready", **(row.checkpoint or {}))
+        elif row.stage.endswith("_submitting"):
             await _save(task_id, status="result_unknown", error="制作请求的结果尚未确认，未重复提交")
             return
         if is_user_in_maintenance(row.user_id):
@@ -592,7 +585,7 @@ async def _run_publication(task_id: str) -> None:
 async def resume_publications() -> None:
     async with SESSION_LOCAL() as db:
         rows = list(
-            (await db.scalars(select(PostPublication).where(PostPublication.status.in_(("queued", "running"))))).all(),
+            (await db.scalars(select(PostPublication).where(PostPublication.state.in_(("queued", "running"))))).all(),
         )
     for row in rows:
         schedule_publication(row.id, row.user_id)
@@ -600,7 +593,7 @@ async def resume_publications() -> None:
         recoveries = list(
             await db.scalars(
                 select(PostPublication).where(
-                    PostPublication.status == "result_unknown",
+                    PostPublication.state == "unknown",
                     PostPublication.video_job_id.is_not(None),
                 ),
             ),
@@ -623,7 +616,7 @@ async def drain_publications() -> None:
     await _BG.drain()
 
 
-def _recovery_lock(task_id: str) -> asyncio.Lock:
+def _recovery_lock(task_id: int) -> asyncio.Lock:
     return _RECOVERY_LOCKS.setdefault(task_id, asyncio.Lock())
 
 
@@ -634,7 +627,7 @@ def _video_job_id(row: PostPublication) -> int | None:
 def _recovery_response(row: PostPublication, job: VideoJobSnapshot | None) -> PostPublicationRecovery:
     video_status: Literal["pending", "ready", "failed", "unknown", "discarded"] = "unknown"
     media_url = None
-    if row.status == "discarded" or (job is not None and job.status == "discarded"):
+    if row.outcome == "discarded" or (job is not None and job.status == "discarded"):
         video_status = "discarded"
     elif job is not None and job.status == "failed":
         video_status = "failed"
@@ -652,14 +645,11 @@ def _recovery_response(row: PostPublication, job: VideoJobSnapshot | None) -> Po
         video_status=video_status,
         media_url=media_url,
         can_discard=row.post_id is None
-        and (
-            row.status in _RECOVERABLE_VIDEO_STATUSES
-            or (row.status == "discarded" and bool(row.progress_json.get("discard_cleanup_pending")))
-        ),
+        and (row.state in _RECOVERABLE_VIDEO_STATUSES or (row.outcome == "discarded" and row.cleanup_pending)),
     )
 
 
-async def publication_recovery(user_id: int, task_id: str, *, query: bool = False) -> PostPublicationRecovery:
+async def publication_recovery(user_id: int, task_id: int, *, query: bool = False) -> PostPublicationRecovery:
     async with _recovery_lock(task_id):
         async with SESSION_LOCAL() as db:
             row = await db.scalar(
@@ -668,7 +658,7 @@ async def publication_recovery(user_id: int, task_id: str, *, query: bool = Fals
         if row is None:
             raise PostNotFoundError("找不到发布任务")
         job_id = _video_job_id(row)
-        if query and row.status in _RECOVERABLE_VIDEO_STATUSES and job_id is not None:
+        if query and row.state in _RECOVERABLE_VIDEO_STATUSES and job_id is not None:
             try:
                 job = await query_post_video_job(user_id, job_id)
             except Exception as exc:
@@ -678,9 +668,9 @@ async def publication_recovery(user_id: int, task_id: str, *, query: bool = Fals
             async with SESSION_LOCAL() as db:
                 job = await get_job(db, job_id, user_id) if job_id else None
         if query and job is not None:
-            if job.status == "succeeded" and row.status in _RECOVERABLE_VIDEO_STATUSES:
+            if job.status == "succeeded" and row.state in _RECOVERABLE_VIDEO_STATUSES:
                 await _publish_checked_video(user_id, task_id)
-            elif job.status == "failed" and row.status in _RECOVERABLE_VIDEO_STATUSES:
+            elif job.status == "failed" and row.state in _RECOVERABLE_VIDEO_STATUSES:
                 await _save(task_id, status="failed", error=job.error_message or "视频未通过检查，内容未发布")
             async with SESSION_LOCAL() as db:
                 row = await db.scalar(
@@ -689,41 +679,61 @@ async def publication_recovery(user_id: int, task_id: str, *, query: bool = Fals
         return _recovery_response(row, job)
 
 
-async def list_publication_recoveries(user_id: int, *, limit: int = 50, offset: int = 0) -> PostPublicationRecoveryList:
+async def list_publication_recoveries(
+    user_id: int, *, limit: int = 50, cursor: str | None = None
+) -> PostPublicationRecoveryList:
+    boundary = decode_timestamp_cursor(cursor)
+    statement = (
+        select(PostPublication)
+        .options(
+            load_only(
+                PostPublication.id,
+                PostPublication.user_id,
+                PostPublication.state,
+                PostPublication.outcome,
+                PostPublication.error,
+                PostPublication.post_id,
+                PostPublication.video_job_id,
+                PostPublication.plan_json,
+                PostPublication.cleanup_pending,
+                PostPublication.created_at,
+                raiseload=True,
+            )
+        )
+        .where(
+            PostPublication.user_id == user_id,
+            or_(
+                PostPublication.state.in_(_RECOVERABLE_VIDEO_STATUSES),
+                (PostPublication.outcome == "discarded") & PostPublication.cleanup_pending.is_(True),
+            ),
+            PostPublication.plan_json["content_type"].as_string() == "video",
+        )
+    )
+    if boundary is not None:
+        statement = statement.where(tuple_(PostPublication.created_at, PostPublication.id) < boundary)
     async with SESSION_LOCAL() as db:
         rows = list(
-            (
-                await db.scalars(
-                    select(PostPublication)
-                    .where(
-                        PostPublication.user_id == user_id,
-                        or_(
-                            PostPublication.status.in_(_RECOVERABLE_VIDEO_STATUSES),
-                            (PostPublication.status == "discarded")
-                            & PostPublication.progress_json["discard_cleanup_pending"].as_boolean().is_(True),
-                        ),
-                        PostPublication.plan_json["content_type"].as_string() == "video",
-                    )
-                    .order_by(PostPublication.created_at.desc(), PostPublication.id.desc())
-                    .offset(offset)
-                    .limit(limit + 1),
-                )
-            ).all(),
+            await db.scalars(
+                statement.order_by(PostPublication.created_at.desc(), PostPublication.id.desc()).limit(limit + 1)
+            )
         )
-        job_ids = [job_id for row in rows[:limit] if (job_id := _video_job_id(row)) is not None]
-        jobs = await get_video_jobs(db, user_id, job_ids)
-    return PostPublicationRecoveryList(
-        items=[_recovery_response(row, jobs.get(_video_job_id(row))) for row in rows[:limit]],
-        next_offset=offset + limit if len(rows) > limit else None,
-    )
+        more = len(rows) > limit
+        rows = rows[:limit]
+        job_ids = [job_id for row in rows if (job_id := _video_job_id(row)) is not None]
+        jobs = await get_video_jobs(db, user_id, job_ids) if job_ids else {}
+        return PostPublicationRecoveryList(
+            items=[_recovery_response(row, jobs.get(_video_job_id(row))) for row in rows],
+            next_cursor=encode_timestamp_cursor(rows[-1].created_at, rows[-1].id) if more else None,
+            has_more=more,
+        )
 
 
-async def _publish_checked_video(user_id: int, task_id: str) -> PostPublicationResult:
+async def _publish_checked_video(user_id: int, task_id: int) -> PostPublicationResult:
     """调用方持恢复锁；核对当前政策与检查结果后发布原视频。"""
     if is_user_in_maintenance(user_id):
         raise PostError("账户正在维护，暂不能发布")
     async with SESSION_LOCAL() as db:
-        await lock_account(db, user_id)
+        await lock_domain(db, user_id, "entries")
         row = await db.scalar(
             select(PostPublication)
             .where(PostPublication.id == task_id, PostPublication.user_id == user_id)
@@ -735,7 +745,7 @@ async def _publish_checked_video(user_id: int, task_id: str) -> PostPublicationR
             await notify_post_published(db, user_id, row.post_id)
             await db.commit()
             return response_for_publication(row)
-        if row.status not in _RECOVERABLE_VIDEO_STATUSES or row.plan_json is None:
+        if row.state not in _RECOVERABLE_VIDEO_STATUSES or row.plan_json is None:
             raise PostError("只有结果待核对的视频动态可以继续发布")
         if not await user_is_active(db, user_id) or user_id not in await complete_user_ids(db, (user_id,)):
             raise PostBlockedError("账户或伙伴资料不可用")
@@ -748,17 +758,17 @@ async def _publish_checked_video(user_id: int, task_id: str) -> PostPublicationR
         job_id = _video_job_id(row)
         if plan.content_type != PostContentType.VIDEO or job_id is None:
             raise PostError("本任务没有可查询的原视频成品")
-        if row.progress_json.get("identity") and not await character_snapshot_is_current(
+        if (row.checkpoint or {}).get("identity") and not await character_snapshot_is_current(
             db,
             user_id,
-            CharacterCardSnapshot.model_validate(row.progress_json["identity"]),
+            CharacterCardSnapshot.model_validate(row.checkpoint["identity"]),
         ):
             raise PostBlockedError("伙伴外形已更新，不能发布旧参考视频")
         try:
             path = await post_video_asset(db, user_id, job_id)
         except ValueError as exc:
             raise PostError(str(exc)) from exc
-        row.progress_json = {**row.progress_json, "media_url": path}
+        row.checkpoint = {**(row.checkpoint or {}), "media_url": path}
         # 发布入口会重读任务；autoflush=False，先保存本事务的发布进度。
         await db.flush()
         await commit_publication(
@@ -768,19 +778,19 @@ async def _publish_checked_video(user_id: int, task_id: str) -> PostPublicationR
             body=plan.body,
             content_type=plan.content_type,
             media_url=path,
-            audio_url=row.progress_json.get("audio_url"),
+            audio_url=(row.checkpoint or {}).get("audio_url"),
             context=PostContext(
                 publication_intent=plan.publication_intent,
                 creation_intent=plan.prompt,
-                narration=plan.narration if row.progress_json.get("audio_url") else "",
-                voice_id=row.progress_json.get("voice_id", ""),
+                narration=plan.narration if (row.checkpoint or {}).get("audio_url") else "",
+                voice_id=(row.checkpoint or {}).get("voice_id", ""),
             ),
-            partial=bool(plan.narration and not row.progress_json.get("audio_url")),
+            partial=bool(plan.narration and not (row.checkpoint or {}).get("audio_url")),
         )
         return response_for_publication(row)
 
 
-async def discard_publication_video(user_id: int, task_id: str) -> PostPublicationResult:
+async def discard_publication_video(user_id: int, task_id: int) -> PostPublicationResult:
     async with _recovery_lock(task_id):
         async with SESSION_LOCAL() as db:
             row = await db.scalar(
@@ -790,22 +800,23 @@ async def discard_publication_video(user_id: int, task_id: str) -> PostPublicati
             )
             if row is None:
                 raise PostNotFoundError("找不到发布任务")
-            if row.status not in (*_RECOVERABLE_VIDEO_STATUSES, "discarded") or row.post_id is not None:
+            if (row.state not in _RECOVERABLE_VIDEO_STATUSES and row.outcome != "discarded") or row.post_id is not None:
                 raise PostError("只有尚未发布的待核对视频动态可以放弃")
-            if row.status == "discarded" and not row.progress_json.get("discard_cleanup_pending"):
+            if row.outcome == "discarded" and not row.cleanup_pending:
                 return response_for_publication(row)
             job_id = _video_job_id(row)
-            row.status = "discarded"
-            row.phase = "complete"
+            row.state = "cancelled"
+            row.outcome = "discarded"
+            row.stage = "complete"
             row.error = "已放弃本次动态，不会自动重新制作或发布"
-            row.progress_json = {**row.progress_json, "discard_cleanup_pending": True}
+            row.cleanup_pending = True
             if job_id is not None:
                 shared = await db.scalar(
                     select(PostPublication.id)
                     .where(
                         PostPublication.user_id == user_id,
                         PostPublication.id != task_id,
-                        PostPublication.status != "discarded",
+                        PostPublication.outcome.is_distinct_from("discarded"),
                         PostPublication.video_job_id == job_id,
                     )
                     .limit(1),
@@ -829,26 +840,31 @@ async def discard_publication_video(user_id: int, task_id: str) -> PostPublicati
             )
             if row is None:
                 raise PostNotFoundError("发布任务已不存在")
-            row.progress_json = {
-                key: value for key, value in row.progress_json.items() if key != "discard_cleanup_pending"
-            }
+            row.cleanup_pending = False
             await db.commit()
         return response_for_publication(row)
 
 
-async def gc_autonomous_publications() -> tuple[int, int]:
-    """完整资料保留七天、精简记录九十天；未知和在途媒体职责不删除。"""
-    compacted = deleted = 0
+async def gc_autonomous_publications() -> int:
+    """七天后释放完整资料，九十天后清理诊断；请求身份和结果关联保留。"""
+    compacted = 0
     cutoff = utc_now() - timedelta(days=7)
     remove_before = utc_now() - timedelta(days=90)
-    cursor: str | None = None
+    cursor: int | None = None
     while True:
         async with SESSION_LOCAL() as db:
             statement = (
                 select(PostPublication)
                 .where(
-                    PostPublication.status.in_(_TERMINAL - set(_RECOVERABLE_VIDEO_STATUSES)),
-                    PostPublication.updated_at < cutoff,
+                    PostPublication.state.in_(_TERMINAL),
+                    PostPublication.finished_at < cutoff,
+                    PostPublication.cleanup_pending.is_(False),
+                    or_(
+                        PostPublication.request_json != {},
+                        PostPublication.plan_json.is_not(None),
+                        PostPublication.checkpoint.is_not(None),
+                        PostPublication.error.is_not(None) & (PostPublication.finished_at < remove_before),
+                    ),
                 )
                 .order_by(PostPublication.id)
                 .limit(200)
@@ -862,10 +878,8 @@ async def gc_autonomous_publications() -> tuple[int, int]:
             cursor = rows[-1].id
             candidates: list[PostPublication] = []
             for row in rows:
-                if (
-                    row.progress_json.get("discard_cleanup_pending")
-                    or is_user_in_maintenance(row.user_id)
-                    or ((task := _TASKS.get(row.id)) is not None and not task.done())
+                if is_user_in_maintenance(row.user_id) or (
+                    (task := _TASKS.get(row.id)) is not None and not task.done()
                 ):
                     continue
                 candidates.append(row)
@@ -883,25 +897,13 @@ async def gc_autonomous_publications() -> tuple[int, int]:
                     job = jobs.get(job_id)
                     if job is not None and job.status not in ("succeeded", "failed", "discarded"):
                         continue
-                keep = {
-                    key: value
-                    for key, value in row.progress_json.items()
-                    if key in ("media_url", "audio_url", "voice_id", "narration_failed")
-                }
-                if row.updated_at < remove_before and row.post_id is None and row.video_job_id is None and not keep:
-                    await db.delete(row)
-                    deleted += 1
-                elif row.request_json or row.plan_json is not None or row.progress_json != keep:
-                    await db.execute(
-                        update(PostPublication)
-                        .where(PostPublication.id == row.id)
-                        .values(
-                            request_json={},
-                            plan_json=None,
-                            progress_json=keep,
-                            updated_at=row.updated_at,
-                        ),
-                    )
+                changed = bool(row.request_json) or row.plan_json is not None or row.checkpoint is not None
+                if changed:
+                    row.request_json = {}
+                    row.plan_json = None
+                    row.checkpoint = None
                     compacted += 1
+                if row.error is not None and row.finished_at is not None and row.finished_at < remove_before:
+                    row.error = None
             await db.commit()
-    return compacted, deleted
+    return compacted

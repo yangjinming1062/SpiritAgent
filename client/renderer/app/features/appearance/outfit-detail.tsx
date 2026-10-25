@@ -9,7 +9,7 @@ import { BTN_GHOST, BTN_SUBTLE, confirmAction, SettingCard, SettingsContent } fr
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
-export function OutfitDetail({ outfitId, onBack }: { outfitId: number; onBack: () => void }): React.JSX.Element {
+export function OutfitDetail({ outfitId, onBack }: { outfitId: string; onBack: () => void }): React.JSX.Element {
   const outfit = useStore($outfits).find(item => item.id === outfitId)
   const dict = useStrings()
   const t = dict.living.outfit

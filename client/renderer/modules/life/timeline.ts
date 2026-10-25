@@ -1,3 +1,5 @@
+import { compareResourceIds, isResourceId } from '../../../../shared/resource-id'
+
 import type { LifeEvent, LifeTimelineEntry } from './types'
 
 function textField(value: unknown, key: string): string {
@@ -85,9 +87,10 @@ export function lifeTimeline(events: readonly LifeEvent[]): LifeTimelineEntry[] 
       continue
     }
 
-    const visualId = numberField(event.result_ref, 'visual_id')
-    const postId = textField(event.result_ref, 'post_id')
-    const diaryId = textField(event.result_ref, 'diary_id')
+    const visual = textField(event.result_ref, 'visual_id')
+    const visualId = isResourceId(visual) ? visual : null
+    const postId = kind === 'post' ? textField(event.result_ref, 'entry_id') : ''
+    const diaryId = kind === 'diary' ? textField(event.result_ref, 'entry_id') : ''
 
     const resultKey = visualId
       ? `visual:${visualId}:${numberField(event.result_ref, 'version') ?? ''}`
@@ -120,5 +123,5 @@ export function lifeTimeline(events: readonly LifeEvent[]): LifeTimelineEntry[] 
 
   return [...entries.values()]
     .map(item => item.entry)
-    .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt) || b.id - a.id)
+    .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt) || compareResourceIds(b.id, a.id))
 }

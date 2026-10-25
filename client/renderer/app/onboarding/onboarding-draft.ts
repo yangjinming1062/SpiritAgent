@@ -127,7 +127,7 @@ export class OnboardingDraft {
     }
 
     const result = await authedResource('companion.put_persona', {
-      body: { definition_json: JSON.stringify(payload) }
+      body: { definition_json: { ...payload } }
     })
 
     if (!isCurrent() || (!result.ok && result.reason === 'unauth')) {

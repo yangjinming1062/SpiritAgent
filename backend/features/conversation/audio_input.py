@@ -12,6 +12,7 @@ from infrastructure.video_processing.audio import audio_wav_bytes
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import select
 
+from features.conversation.asset_bindings import commit_conversation
 from features.conversation.attachments import audio_file_id_from_url, resolve_audio_file
 from features.conversation.models import Conversation, Message
 
@@ -87,7 +88,7 @@ async def _save_audio_details(
                         **({"transcript": transcript} if transcript is not None else {}),
                     },
                 )
-        await db.commit()
+        await commit_conversation(db)
 
 
 async def _transcript(

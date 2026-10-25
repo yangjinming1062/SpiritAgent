@@ -5,11 +5,11 @@
 """
 
 import hashlib
-import json
 from datetime import datetime
 from typing import Literal
 
 from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
+from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field
 
 from features.media.identity_contracts import CharacterCardSnapshot, CharacterReferenceRole
@@ -30,7 +30,7 @@ class ComboMaterialRef(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    material_id: int | None = None
+    material_id: ResourceId | None = None
     name: str = ""
     path: str = Field(min_length=1)
     content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -43,7 +43,7 @@ class ActionMaterialRef(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    action_id: int | None = None
+    action_id: ResourceId | None = None
     name: str = Field(min_length=1)
     motion_description: str = Field(min_length=1)
     clip_kind: ActionClipKind
@@ -145,6 +145,8 @@ class VisualJobProgress(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    schema_version: Literal[1] = 1
+
     generation_id: str
     target_width: int = Field(gt=0, le=VISUAL_MAX_EDGE, strict=True)
     target_height: int = Field(gt=0, le=VISUAL_MAX_EDGE, strict=True)
@@ -201,14 +203,10 @@ def combo_snapshot_hash(snapshot: ComboSnapshot) -> str:
     return hashlib.sha256(snapshot.model_dump_json().encode("utf-8")).hexdigest()
 
 
-def parse_combo_snapshot(value: str) -> ComboSnapshot:
-    return ComboSnapshot.model_validate(json.loads(value))
-
-
-def parse_job_progress(value: str | None) -> VisualJobProgress | None:
+def parse_job_progress(value: dict | None) -> VisualJobProgress | None:
     if not value:
         return None
-    return VisualJobProgress.model_validate(json.loads(value))
+    return VisualJobProgress.model_validate(value)
 
 
 class VisualItemView(BaseModel):
@@ -216,7 +214,7 @@ class VisualItemView(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    id: int
+    id: ResourceId
     media_kind: VisualMediaKind
     clip_kind: ActionClipKind = "loop"
     title: str
@@ -228,13 +226,13 @@ class VisualItemView(BaseModel):
     duration_ms: int | None = None
     version: int
     description: str = ""
-    outfit_id: int | None = None
+    outfit_id: ResourceId | None = None
     outfit_name: str = ""
-    scene_id: int | None = None
+    scene_id: ResourceId | None = None
     scene_title: str = ""
-    action_id: int | None = None
+    action_id: ResourceId | None = None
     action_name: str | None = None
-    input_image_id: int | None = None
+    input_image_id: ResourceId | None = None
     input_image_hash: str | None = None
     created_at: datetime
     updated_at: datetime
@@ -245,10 +243,10 @@ class VisualJobView(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    id: int
+    id: ResourceId
     purpose: str
     target_kind: VisualMediaKind
-    target_visual_id: int | None = None
+    target_visual_id: ResourceId | None = None
     expected_version: int | None = None
     state: VisualJobState
     stage: str
@@ -257,8 +255,8 @@ class VisualJobView(BaseModel):
     repair_count: int = 0
     repair_limit: int = 1
     error: str | None = None
-    result_visual_id: int | None = None
-    result_image_id: int | None = None
+    result_visual_id: ResourceId | None = None
+    result_image_id: ResourceId | None = None
     video_queue: VideoQueueInfo | None = None
     created_at: datetime
     updated_at: datetime
@@ -294,7 +292,7 @@ class VisualPlayCommand(BaseModel):
 
     play_id: str
     status: Literal["queued"] = "queued"
-    visual_id: int
+    visual_id: ResourceId
     visual_version: int
     media_kind: VisualMediaKind
     media_path: str
@@ -316,8 +314,8 @@ class PresentedVisual(BaseModel):
 
     model_config = ConfigDict(extra="forbid", from_attributes=True)
 
-    id: int
-    user_id: int
+    id: ResourceId
+    user_id: ResourceId
     media_kind: VisualMediaKind
     title: str
     status: str
@@ -329,12 +327,13 @@ class PresentedVisual(BaseModel):
     content_hash: str
     description: str
     outfit_description: str = ""
-    snapshot_json: str
+    snapshot_json: dict
     version: int
-    outfit_id: int | None
-    scene_id: int | None
-    action_id: int | None
-    input_image_id: int | None
+    outfit_id: ResourceId | None
+    scene_id: ResourceId | None
+    action_id: ResourceId | None
+    input_image_version_id: ResourceId | None = None
+    input_image_id: ResourceId | None
     input_image_path: str | None
     input_image_hash: str | None
     created_at: datetime
@@ -361,7 +360,7 @@ class ActualPresentationSnapshot(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    visual_id: int | None = None
+    visual_id: ResourceId | None = None
     media_kind: VisualMediaKind | None = None
     visual_version: int | None = None
     visual_description: str = ""
@@ -391,7 +390,7 @@ class VisualPlayOption(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    visual_id: int
+    visual_id: ResourceId
     name: str
     media_kind: VisualMediaKind
     clip_kind: ActionClipKind
@@ -404,8 +403,9 @@ class VisualListResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     visuals: list[VisualItemView]
-    total: int
-    offset: int
+    total: int | None = None
+    has_more: bool
+    next_cursor: str | None = None
     limit: int
 
 
@@ -413,8 +413,9 @@ class VisualJobListResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     jobs: list[VisualJobView]
-    total: int
-    offset: int
+    total: int | None = None
+    has_more: bool
+    next_cursor: str | None = None
     limit: int
 
 

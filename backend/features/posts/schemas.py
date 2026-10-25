@@ -2,11 +2,11 @@
 
 from datetime import datetime
 from typing import Literal
-from uuid import UUID
 
+from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from features.posts.models import PostCommentRole, PostContentType
+from features.entries.contracts import PostCommentRole, PostContentType
 
 ReplyStatus = Literal["none", "pending", "running", "completed", "failed"]
 POST_COMMENT_MAX_CHARS = 500
@@ -14,7 +14,7 @@ POST_COMMENT_MAX_CHARS = 500
 
 class PostPublicationResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    publication_id: str
+    publication_id: ResourceId
     status: Literal[
         "queued",
         "running",
@@ -26,7 +26,7 @@ class PostPublicationResult(BaseModel):
         "declined",
         "discarded",
     ]
-    post_id: str | None
+    post_id: ResourceId | None
     error: str | None
 
 
@@ -39,7 +39,8 @@ class PostPublicationRecovery(PostPublicationResult):
 
 class PostPublicationRecoveryList(BaseModel):
     items: list[PostPublicationRecovery]
-    next_offset: int | None
+    next_cursor: str | None
+    has_more: bool
 
 
 class PostContext(BaseModel):
@@ -79,32 +80,35 @@ class PostPlan(BaseModel):
 
 
 class PostCommentResponse(BaseModel):
-    id: str
-    post_id: str
+    id: ResourceId
+    post_id: ResourceId
     role: PostCommentRole
     content: str
     created_at: datetime
     updated_at: datetime
-    reply_to_comment_id: str | None
+    reply_to_comment_id: ResourceId | None
     reply_status: ReplyStatus
     reply_error: str | None
 
 
 class PostResponse(BaseModel):
-    id: str
+    id: ResourceId
     published_at: datetime
     content_type: PostContentType
     title: str
     body: str
     media_url: str | None
     audio_url: str | None
-    comments: list[PostCommentResponse]
+    comments: list[PostCommentResponse] = Field(default_factory=list)
+    comment_count: int = 0
+    comments_next_cursor: str | None = None
+    comments_loaded: bool = False
 
 
 class PostListResponse(BaseModel):
     posts: list[PostResponse]
     next_cursor: str | None
-    unread_post_ids: list[str]
+    unread_post_ids: list[ResourceId]
 
 
 class PostUnreadResponse(BaseModel):
@@ -113,9 +117,14 @@ class PostUnreadResponse(BaseModel):
 
 class PostReadRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    post_ids: list[UUID] = Field(min_length=1)
+    post_ids: list[ResourceId] = Field(min_length=1)
 
 
 class PostCommentCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     content: str = Field(min_length=1, max_length=POST_COMMENT_MAX_CHARS, pattern=r"^[^\x00]*$")
+
+
+class PostCommentListResponse(BaseModel):
+    comments: list[PostCommentResponse]
+    next_cursor: str | None

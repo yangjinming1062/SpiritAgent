@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Literal, Self
 
+from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 from runtime.presentation import PresentationMode
 
@@ -29,7 +30,7 @@ class CompanionWaitRequest(BaseModel):
 class CompanionIntentView(BaseModel):
     model_config = ConfigDict(from_attributes=True, str_strip_whitespace=True)
 
-    id: int
+    id: ResourceId
     intent: str = Field(min_length=1)
     status: CompanionIntentStatus
     not_before_at: datetime
@@ -51,5 +52,5 @@ class CompanionSignal(BaseModel):
 class CompanionTurnRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    intent_id: int = Field(gt=0)
+    intent_id: ResourceId
     lease_token: str = Field(min_length=1, max_length=64)

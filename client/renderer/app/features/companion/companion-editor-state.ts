@@ -34,6 +34,7 @@ export function memoryBrowser(presetId: string): CompanionMemoryBrowser {
       status: 'active',
       query: '',
       page: 0,
+      cursors: [null],
       selectedId: null,
       editorOpen: false,
       scrollTop: 0

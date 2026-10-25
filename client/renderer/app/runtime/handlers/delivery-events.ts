@@ -13,6 +13,8 @@ import { $chatVisible } from '@/shared/store/chat-visibility'
 import { notify, notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 
+import { isResourceId } from '../../../../../shared/resource-id'
+
 import { pendingReplyText } from './pending-reply'
 
 // 主动消息与通知投递：companion.message / system.notification / 视频任务完成。提醒是否出现由打扰档位、锁屏与聊天可见性共同裁决；精灵旁提示另需精灵实际可见，不可见时由未读承接。
@@ -23,7 +25,7 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
       const payload = event.payload
       const bubbles = payload.bubbles
 
-      if (!payload.session_id || !Number.isSafeInteger(payload.message_id) || payload.message_id <= 0) {
+      if (!payload.session_id || !isResourceId(payload.message_id)) {
         break
       }
 

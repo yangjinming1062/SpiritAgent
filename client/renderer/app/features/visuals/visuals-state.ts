@@ -6,6 +6,7 @@ const fallback: VisualsUiSnapshot = {
   mediaKind: 'all',
   source: '',
   page: 0,
+  cursors: [null],
   selectedId: null,
   detailOpen: false
 }
@@ -17,7 +18,10 @@ const ui = defineAccountUiAtom<VisualsUiSnapshot>({
 })
 
 export const $visualsUi = ui.$atom
-export const updateVisualsUi = ui.set
+
+export function updateVisualsUi(patch: Partial<VisualsUiSnapshot>): void {
+  ui.set(patch.page === 0 ? { ...patch, cursors: [null] } : patch)
+}
 
 export function exportVisualsUiSnapshot(): VisualsUiSnapshot {
   return structuredClone($visualsUi.get())

@@ -7,7 +7,8 @@ from runtime.user_maintenance import is_user_in_maintenance
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.accounts.models import User, lock_user_row
+from features.accounts.locking import lock_account
+from features.accounts.models import User
 from features.accounts.remote.models import RemotePairing, RemoteSession
 from features.accounts.remote.schemas import (
     DeviceListResponse,
@@ -169,6 +170,6 @@ async def revoke_remote_device(device_id: int, user_id: int, db: AsyncSession) -
 
 
 async def revoke_all_remote_devices(user_id: int, db: AsyncSession) -> None:
-    await lock_user_row(db, user_id)
+    await lock_account(db, user_id)
     await revoke_remote_grants(db, user_id)
     await db.commit()

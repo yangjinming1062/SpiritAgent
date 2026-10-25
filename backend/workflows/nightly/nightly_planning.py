@@ -18,12 +18,12 @@ from features.appearance.nightly import create_and_confirm_outfit, get_outfit, l
 from features.automation.cron_jobs import create_job, remove_job
 from features.companion.planning_queries import PersonaPlanningSnapshot, planning_persona
 from features.configuration.settings.values import load_user_settings
+from features.entries.queries import post_summaries
 from features.life.context import read_life_context_in_session
 from features.life.use_cases import read_state
 from features.media.identity_rendering import render_character_appearance
 from features.media.image_generation import resolve_image_gen_chain
 from features.memory.contracts import MemoryListItem
-from features.posts.queries import recent_post_summaries
 from features.scenes.nightly import (
     SceneSnapshot,
     find_pending_scene_id,
@@ -39,6 +39,7 @@ from infrastructure.ai.llm_client import resolve_provider_chain
 from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, LlmJsonValidationError, call_llm_json
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import load_user_llm_config
+from infrastructure.api_ids import ResourceId
 from infrastructure.config import SETTINGS
 from infrastructure.constants import NIGHTLY_REASONING_EFFORT
 from infrastructure.database import SESSION_LOCAL
@@ -150,9 +151,9 @@ class ActionExecutionResult(BaseModel):
     fact: str | None = None
     reason: str | None = None
     dependencies: list[str] | None = None
-    outfit_id: int | None = None
-    scene_id: int | None = None
-    cron_job_id: int | None = None
+    outfit_id: ResourceId | None = None
+    scene_id: ResourceId | None = None
+    cron_job_id: ResourceId | None = None
     expires_at: str | None = None
 
 
@@ -196,7 +197,7 @@ class SceneContext(BaseModel):
 class WardrobeItem(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    id: int
+    id: ResourceId
     name: str
     description: str = ""
     status: str
@@ -207,9 +208,9 @@ class VisualMaterialSelection(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    outfit_id: int
-    scene_id: int
-    action_id: int
+    outfit_id: ResourceId
+    scene_id: ResourceId
+    action_id: ResourceId
 
 
 class RecentActionSummary(BaseModel):
@@ -493,7 +494,7 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
                 .limit(40),
             )
         ).all()
-        recent_posts = await recent_post_summaries(db, user_id, limit=20)
+        recent_posts = await post_summaries(db, user_id, limit=20)
         action_view = await build_action_view(user_id)
         action_snapshot = {"ready_actions": [item.model_dump() for item in action_view.items]}
         presentation_state_row = await presentation_state(user_id)
@@ -703,6 +704,8 @@ async def _set_action_state(
         row.status = status
         if result is not None:
             row.result = result
+            if result.get("job_id") is not None:
+                row.job_id = int(result["job_id"])
         log = await db.get(NightlyActivityLog, row.log_id)
         if log is not None:
             log.updated_at = utc_now()

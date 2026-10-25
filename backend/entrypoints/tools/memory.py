@@ -30,7 +30,7 @@ INSPECT_SCHEMA = {
         "type": "object",
         "properties": {
             "query": {"type": "string"},
-            "before_memory_id": {"type": "integer", "minimum": 1},
+            "before_memory_id": {"type": "string", "pattern": "^[1-9][0-9]*$"},
         },
     },
 }

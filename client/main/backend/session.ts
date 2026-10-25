@@ -5,6 +5,7 @@ import { errorMessage } from '@runtime'
 
 import type { ApiResponse } from '../../../shared/api'
 import { ApiError } from '../../../shared/errors'
+import { isResourceId } from '../../../shared/resource-id'
 import type { SafeStorageApi } from '../security/hardening'
 import type {
   BackendClientContext,
@@ -47,7 +48,7 @@ class SessionError extends Error {
 }
 
 interface SessionUser {
-  id: number
+  id: string
   username: string
 }
 
@@ -138,14 +139,14 @@ function normalizeUser(raw: unknown): null | SessionUser {
 
   const user = raw as { id?: unknown; username?: unknown }
 
-  if (!Number.isSafeInteger(user.id) || Number(user.id) <= 0 || typeof user.username !== 'string' || !user.username) {
+  if (!isResourceId(user.id) || typeof user.username !== 'string' || !user.username) {
     return null
   }
 
-  return { id: Number(user.id), username: user.username }
+  return { id: user.id, username: user.username }
 }
 
-function accountId(baseUrl: string, userId: number): string {
+function accountId(baseUrl: string, userId: string): string {
   return createHash('sha256').update(`${baseUrl}\0${userId}`).digest('hex')
 }
 

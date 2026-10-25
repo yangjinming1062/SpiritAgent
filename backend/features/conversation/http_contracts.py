@@ -2,7 +2,8 @@
 
 from typing import Literal
 
-from infrastructure.constants import POSTGRES_INT4_MAX
+from infrastructure.api_ids import MessageBoundary, ResourceId
+from infrastructure.constants import POSTGRES_INT8_MAX
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from runtime.conversation import LastSubmissionSnapshot, SessionRuntimeInfo, ToolSnapshot
 
@@ -18,15 +19,15 @@ class BusinessRequest(BaseModel):
 class ActiveTurnView(BaseModel):
     request_id: str
     origin_kind: str
-    message_ids: list[int]
-    assistant_message_id: int | None
+    message_ids: list[ResourceId]
+    assistant_message_id: ResourceId | None
     messages: list[SessionMessageView]
     text: str
     reasoning: str
     bubbles: list[ReplyBubbleView]
     tools: list[ToolSnapshot]
     running: bool
-    replace_reply_message_id: int | None
+    replace_reply_message_id: ResourceId | None
 
 
 class SessionSnapshotResponse(BaseModel):
@@ -60,9 +61,9 @@ class PromptSubmitRequest(BusinessRequest):
     text: str | None = Field(default=None, pattern=r"^[^\x00]*$")
     attachments: list[ChatAttachment] | None = None
     batch: list[PromptBatchMessage] | None = Field(default=None, min_length=1)
-    edit_message_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)
-    retry_message_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)
-    replace_reply_message_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)
+    edit_message_id: ResourceId | None = Field(default=None, gt=0, le=POSTGRES_INT8_MAX)
+    retry_message_id: ResourceId | None = Field(default=None, gt=0, le=POSTGRES_INT8_MAX)
+    replace_reply_message_id: ResourceId | None = Field(default=None, gt=0, le=POSTGRES_INT8_MAX)
     response_preference: Literal["text", "voice"] | None = None
 
     @model_validator(mode="after")
@@ -93,14 +94,14 @@ class PromptSubmitResult(BaseModel):
     request_id: str
     status: Literal["accepted", "running", "completed", "cancelled", "interrupted", "failed"]
     error: str | None = None
-    message_ids: list[int] = Field(default_factory=list)
+    message_ids: list[ResourceId] = Field(default_factory=list)
     messages: list[SessionMessageView] = Field(default_factory=list)
-    replace_reply_message_id: int | None = None
-    result_message_id: int | None = None
+    replace_reply_message_id: ResourceId | None = None
+    result_message_id: ResourceId | None = None
 
 
 class SessionUndoRequest(BusinessRequest):
-    source_message_id: int = Field(ge=0, le=POSTGRES_INT4_MAX)
+    source_message_id: MessageBoundary = Field(ge=0, le=POSTGRES_INT8_MAX)
     confirmed: bool = False
 
 
@@ -132,7 +133,7 @@ class SessionClearResult(BaseModel):
 
 
 class RememberCommandResult(BaseModel):
-    memory_id: int
+    memory_id: ResourceId
     content: str
 
 

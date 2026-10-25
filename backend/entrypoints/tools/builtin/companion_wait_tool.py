@@ -3,6 +3,7 @@ from typing import Literal
 
 from features.companion.intent_contracts import CompanionWaitRequest, CompanionWakeEvent
 from features.companion.intents import cancel_companion_wait, list_companion_intents, set_companion_wait
+from infrastructure.api_ids import ResourceId
 from infrastructure.database import session_scope
 from infrastructure.text import tool_error
 from runtime.tools.prompts import COMPANION_WAIT_DESC, COMPANION_WAIT_PARAM_DESCS
@@ -20,7 +21,8 @@ COMPANION_WAIT_SCHEMA: dict[str, object] = {
                 "description": COMPANION_WAIT_PARAM_DESCS["action"],
             },
             "intent_id": {
-                "type": "integer",
+                "type": "string",
+                "pattern": "^[1-9][0-9]*$",
                 "description": COMPANION_WAIT_PARAM_DESCS["intent_id"],
             },
             "intent": {
@@ -52,9 +54,9 @@ COMPANION_WAIT_SCHEMA: dict[str, object] = {
 
 async def companion_wait(
     action: Literal["schedule", "list", "cancel"],
-    user_id: int,
+    user_id: ResourceId,
     intent: str | None = None,
-    intent_id: int | None = None,
+    intent_id: ResourceId | None = None,
     after_seconds: int | None = None,
     wake_on: CompanionWakeEvent | None = None,
     expires_seconds: int = 86400,
@@ -80,7 +82,7 @@ async def companion_wait(
             expires_seconds=expires_seconds,
         )
         result = await set_companion_wait(user_id, request, intent_id)
-        return json.dumps({"intent_id": result, "scheduled": True})
+        return json.dumps({"intent_id": str(result), "scheduled": True})
     except ValueError as exc:
         return tool_error(str(exc))
 

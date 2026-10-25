@@ -19,6 +19,7 @@ import {
   type RpcRequest,
   type SessionSnapshot
 } from '../../../shared/gateway'
+import { isResourceId } from '../../../shared/resource-id'
 import type { RunnerResponse, RunnerTools } from '../../../shared/runner'
 import type { BackendConnection } from '../shared/backend-port'
 
@@ -322,7 +323,7 @@ export function createDesktopGateway(options: GatewayOptions) {
     if (payload.skill_scope) {
       const scope = payload.skill_scope
 
-      if (scope.user_id <= 0 || !Number.isSafeInteger(scope.user_id) || !isSystemPresetId(scope.system_preset_id)) {
+      if (!isResourceId(scope.user_id) || !isSystemPresetId(scope.system_preset_id)) {
         receipts.set(callId, { ok: false, error: 'Invalid server-controlled skill scope' })
         void deliver(callId, epoch)
 

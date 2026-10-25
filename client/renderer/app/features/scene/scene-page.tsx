@@ -6,6 +6,7 @@ import type { PickedImage } from '@/modules/character'
 import {
   $pendingScene,
   $sceneDetails,
+  $sceneHasMore,
   $sceneLibrary,
   $sceneLibraryStatus,
   $scenePage,
@@ -70,6 +71,7 @@ export function ScenePage(): React.JSX.Element {
   const regenerating = useStore($sceneRegenerating)
   const slow = useStore($sceneTaskSlow)
   const total = useStore($sceneTotal)
+  const hasMore = useStore($sceneHasMore)
   const page = useStore($scenePage)
   const query = useStore($sceneQuery)
   const policy = useStore($scenePolicy)
@@ -417,6 +419,7 @@ export function ScenePage(): React.JSX.Element {
           <div className="space-y-4">
             <SceneLibraryView
               entries={library}
+              hasMore={hasMore}
               onCheckStatus={async () => {
                 const isLive = begin()
                 await inspectSceneCreationIssue()

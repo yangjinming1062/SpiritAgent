@@ -49,7 +49,7 @@ export function createConversationState(sessionId: string | null) {
 
   const $chatTurnInFlight = atom<boolean>(false)
   const $stoppingRequestId = atom<string | null>(null)
-  const $replacingReplyMessageId = atom<number | null>(null)
+  const $replacingReplyMessageId = atom<string | null>(null)
 
   const $replaceableAssistantMessage = computed(
     [

@@ -8,6 +8,7 @@ from infrastructure.text import safe_json_loads
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.conversation.asset_bindings import commit_conversation
 from features.conversation.asset_releases import collect_message_asset_releases
 from features.conversation.formatting import message_text
 from features.conversation.last_user_message import find_user_message
@@ -53,6 +54,7 @@ async def replace_user_message(
         )
 
     replacement = Message(
+        user_id=user_id,
         conversation_id=conv.id,
         role="user",
         content=content,
@@ -69,6 +71,6 @@ async def replace_user_message(
             delete(Message).where(Message.conversation_id == conv.id, Message.id >= source_message_id),
         )
         db.add(replacement)
-        await db.commit()
+        await commit_conversation(db)
     await cancel_reply_audio(user_id, removed)
     return replacement

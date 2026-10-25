@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from infrastructure.models import ModelBase, TimestampMixin
 from sqlalchemy import (
@@ -7,9 +7,9 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     String,
-    Text,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from features.companion.policy_contracts import OUTFIT_POLICY_DEFAULT
@@ -25,10 +25,11 @@ class Persona(ModelBase, TimestampMixin):
     """伙伴人设主表：definition_json 存原始字段定义，运行期按 session language 实时渲染。"""
 
     __tablename__ = "personas"
+    id = None
 
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True)
-    definition_json: Mapped[str] = mapped_column(Text, default="{}")
-    personality_tags_json: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    definition_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    personality_tags_json: Mapped[list[Any]] = mapped_column(JSONB, default=list, server_default=text("'[]'"))
     is_complete: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), index=True)
     is_portrait_confirmed: Mapped[bool] = mapped_column(
         Boolean,

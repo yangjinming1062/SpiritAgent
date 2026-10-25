@@ -19,6 +19,7 @@ from features.visuals.queries import prompt_presentation_snapshot
 from infrastructure.ai.llm_client import MissingLlmConfigError
 from infrastructure.ai.prompt_engineer import VisualReasoningError
 from infrastructure.ai.tasks import AiTaskKey
+from infrastructure.api_ids import ResourceId
 from infrastructure.assets.asset_store import read_asset_data_uri
 from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.database import SESSION_LOCAL
@@ -44,7 +45,7 @@ _STRUCTURED_DELIVERY_HINT = (
 )
 
 
-def _video_reference(reference: str, user_id: int) -> str | None:
+def _video_reference(reference: str, user_id: ResourceId) -> str | None:
     """本人资产路径读为 data URI；data URI 与 http(s) 地址原样交给供应商链，其余值无效。"""
     if reference.startswith(("data:image/", "http://", "https://")):
         return reference
@@ -71,10 +72,10 @@ async def _submit_video(
     reference_image: str | None,
     aspect_ratio: str,
     *,
-    user_id: int,
+    user_id: ResourceId,
     task: AiTaskKey,
     parent_session_id: str,
-    source_message_id: int | None,
+    source_message_id: ResourceId | None,
     asset_directory: str,
     structured_reply: bool,
     media_id: str,
@@ -243,9 +244,9 @@ async def video_generation_tool(
 
 
 async def video_generate_status_tool(
-    task_id: int,
+    task_id: ResourceId,
     *,
-    user_id: int,
+    user_id: ResourceId,
     media_turn: MediaTurnState,
     **_: object,
 ) -> str:
@@ -331,7 +332,13 @@ VIDEO_STATUS_SCHEMA = {
     "description": VIDEO_STATUS_DESC,
     "parameters": {
         "type": "object",
-        "properties": {"task_id": {"type": "integer", "description": VIDEO_STATUS_PARAM_DESCS["task_id"]}},
+        "properties": {
+            "task_id": {
+                "type": "string",
+                "pattern": "^[1-9][0-9]*$",
+                "description": VIDEO_STATUS_PARAM_DESCS["task_id"],
+            }
+        },
         "required": ["task_id"],
     },
 }

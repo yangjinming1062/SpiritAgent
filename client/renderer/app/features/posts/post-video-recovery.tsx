@@ -20,7 +20,7 @@ import styles from './posts.module.css'
 export function PostVideoRecovery(): React.JSX.Element | null {
   const t = useStrings().living.posts
   const [items, setItems] = useState<VideoPublicationRecovery[]>([])
-  const [nextOffset, setNextOffset] = useState<number | null>(null)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [discardId, setDiscardId] = useState<string | null>(null)
   const [loadFailed, setLoadFailed] = useState(false)
@@ -31,7 +31,7 @@ export function PostVideoRecovery(): React.JSX.Element | null {
     let cancelled = false
     const isLive = beginAsync()
     setItems([])
-    setNextOffset(null)
+    setNextCursor(null)
     setBusy(null)
     setDiscardId(null)
     setLoadFailed(false)
@@ -44,7 +44,7 @@ export function PostVideoRecovery(): React.JSX.Element | null {
 
       if (result) {
         setItems(result.items)
-        setNextOffset(result.next_offset)
+        setNextCursor(result.next_cursor)
       }
     })
 
@@ -90,7 +90,6 @@ export function PostVideoRecovery(): React.JSX.Element | null {
 
     if (ok) {
       setItems(current => current.filter(item => item.publication_id !== id))
-      setNextOffset(current => (current === null ? null : Math.max(0, current - 1)))
     } else {
       notify({
         kind: 'error',
@@ -101,13 +100,13 @@ export function PostVideoRecovery(): React.JSX.Element | null {
   }
 
   const loadMore = async (): Promise<void> => {
-    if (nextOffset === null) {
+    if (nextCursor === null) {
       return
     }
 
     const isLive = beginAsync()
     setBusy('more')
-    const result = await listVideoPublications(nextOffset)
+    const result = await listVideoPublications(nextCursor)
 
     if (!isLive()) {
       return
@@ -120,7 +119,7 @@ export function PostVideoRecovery(): React.JSX.Element | null {
         ...current,
         ...result.items.filter(item => !current.some(existing => existing.publication_id === item.publication_id))
       ])
-      setNextOffset(result.next_offset)
+      setNextCursor(result.next_cursor)
     } else {
       notify({ kind: 'error', message: t.loadFailed, title: t.loadFailed })
     }
@@ -183,7 +182,7 @@ export function PostVideoRecovery(): React.JSX.Element | null {
           />
         </div>
       ))}
-      {nextOffset !== null && (
+      {nextCursor !== null && (
         <button className={BTN_SUBTLE} disabled={busy !== null} onClick={() => void loadMore()} type="button">
           {t.loadMore}
         </button>

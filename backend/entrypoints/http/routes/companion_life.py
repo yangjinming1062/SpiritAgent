@@ -5,7 +5,8 @@ from typing import Annotated
 from fastapi import HTTPException, Path, Query
 from features.life.schemas import LifeEventListResponse, LifePursuitListResponse, LifePursuitView, LifeStateView
 from features.life.use_cases import read_events, read_pursuit, read_pursuits, read_state
-from infrastructure.constants import POSTGRES_INT4_MAX
+from infrastructure.api_ids import ResourceId
+from infrastructure.constants import POSTGRES_INT8_MAX
 from infrastructure.http_contracts import operation_policy
 
 from entrypoints.http.auth import CurrentUser
@@ -24,16 +25,19 @@ async def get_life(user: CurrentUser) -> LifeStateView:
 async def get_life_pursuits(
     user: CurrentUser,
     status: Annotated[str | None, Query(max_length=16)] = None,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    cursor: Annotated[str | None, Query(max_length=512)] = None,
+    include_total: bool = False,
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
 ) -> LifePursuitListResponse:
-    return await read_pursuits(user.id, status=status, offset=offset, limit=limit)
+    try:
+        return await read_pursuits(user.id, status=status, cursor=cursor, limit=limit, include_total=include_total)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/pursuits/{pursuit_id}", response_model=LifePursuitView, openapi_extra=_IDENTITIES)
 async def get_life_pursuit(
-    user: CurrentUser,
-    pursuit_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+    user: CurrentUser, pursuit_id: Annotated[ResourceId, Path(gt=0, le=POSTGRES_INT8_MAX)]
 ) -> LifePursuitView:
     result = await read_pursuit(user.id, pursuit_id)
     if result is None:
@@ -44,8 +48,14 @@ async def get_life_pursuit(
 @router.get("/events", response_model=LifeEventListResponse, openapi_extra=_IDENTITIES)
 async def get_life_events(
     user: CurrentUser,
-    pursuit_id: Annotated[int | None, Query(gt=0, le=POSTGRES_INT4_MAX)] = None,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    pursuit_id: Annotated[ResourceId | None, Query(gt=0, le=POSTGRES_INT8_MAX)] = None,
+    cursor: Annotated[str | None, Query(max_length=512)] = None,
+    include_total: bool = False,
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
 ) -> LifeEventListResponse:
-    return await read_events(user.id, pursuit_id=pursuit_id, offset=offset, limit=limit)
+    try:
+        return await read_events(
+            user.id, pursuit_id=pursuit_id, cursor=cursor, limit=limit, include_total=include_total
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

@@ -22,11 +22,12 @@ from infrastructure.assets.asset_store import (
     validate_image_bytes,
 )
 from infrastructure.assets.media_download import download_media_result
+from infrastructure.assets.references import asset_paths
 from infrastructure.async_io import cancel_and_wait, cancel_tasks, run_blocking
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.media_geometry import can_crop_to_aspect, centered_crop_box
-from infrastructure.text import resolve_language
+from infrastructure.text import resolve_language, utc_now
 from infrastructure.video_processing.desktop import prepare_desktop_video, sample_desktop_video_frames
 from infrastructure.video_processing.ffmpeg import VideoProcessError, VideoToolUnavailableError
 from PIL import Image, ImageOps
@@ -34,15 +35,15 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
 from runtime.user_maintenance import track_user_task
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from features.appearance.character_card import render_character_identity
 from features.appearance.visual_identity import align_character_reference
 from features.assets.lifecycle import cleanup_asset_directories_after_task
 from features.companion.proactive_runtime import get_presentation_snapshot
 from features.configuration.settings.values import get_user_setting
+from features.jobs.service import bind_job_assets
 from features.life.schemas import LifeEventInput
-from features.life.use_cases import accept_event_in_session
 from features.media.chain import (
     MEDIA_IDENTITY_ACCEPT_SCORE,
     FrozenMediaProvider,
@@ -84,7 +85,7 @@ from .creation import (
 )
 from .geometry import probe_visual_image, visual_aspect_matches, visual_aspect_ratio
 from .life import settle_visual_steps
-from .models import VisualItem, VisualJob
+from .models import VisualJob
 from .naming import schedule_visual_title
 from .ports import notify_visual_ready
 from .prompts import (
@@ -103,15 +104,12 @@ from .prompts import (
     VISUAL_VIDEO_SCORE,
     visual_source_reference_prompt,
 )
+from .publication import PublishedVisual, publish_opening_result, publish_visual_result
 from .repository import (
     VisualStateError,
     dispatch_play_command,
     notify_visuals_updated,
-    presentation_row,
-    publish_image_result,
-    publish_video_result,
-    replace_visual_result,
-    visual_item,
+    publication_rows,
     visual_job_row,
     visual_progress,
     visual_snapshot,
@@ -317,11 +315,19 @@ class JobInputs(NamedTuple):
 
 async def _job_inputs(user_id: int, job_id: int, generation_id: str) -> JobInputs:
     async with SESSION_LOCAL() as db:
-        job = await visual_job_row(db, user_id, job_id)
+        job = await visual_job_row(db, user_id, job_id, lock=True)
         progress = visual_progress(job)
+        if job.purpose == "regenerate" and job.target_visual_id is None and job.state in {"queued", "running"}:
+            job.state, job.stage, job.error = "cancelled", "cancelled", "重做目标已删除，制作已停止"
+            await settle_visual_steps(db, user_id, job)
+            await notify_visuals_updated(db, user_id)
+            await db.commit()
+            raise LlmCallBlockedError("影像重做目标已删除")
         if progress is None or progress.generation_id != generation_id or job.state not in {"queued", "running"}:
             raise LlmCallBlockedError("影像制作任务已经失效")
         snapshot = visual_snapshot(job)
+        if snapshot.identity.avatar_id is None:
+            raise LlmCallBlockedError("制作引用的角色资料已删除")
         db.expunge(job)
         return JobInputs(job=job, snapshot=snapshot, progress=progress)
 
@@ -344,7 +350,13 @@ async def _save_progress(
         saved = visual_progress(job)
         if saved is None or saved.generation_id != progress.generation_id or job.state not in {"queued", "running"}:
             raise LlmCallBlockedError("影像制作任务已经失效")
-        job.progress_json = progress.model_dump_json()
+        checkpoint = progress.model_dump(mode="json")
+        paths = asset_paths([job.snapshot_json, checkpoint], user_id)
+        present = {
+            path for path in paths if (resolved := resolve_asset_reference(path)) is not None and resolved[0].is_file()
+        }
+        await bind_job_assets(db, user_id, job.id, present, "dependency")
+        job.checkpoint = checkpoint
         job.stage = stage
         if repair_count is not None:
             job.repair_count = repair_count
@@ -1091,41 +1103,6 @@ def _publication_snapshot(snapshot: ComboSnapshot, progress: VisualJobProgress) 
     return snapshot.model_copy(update={"plan": progress.creation_plan or snapshot.plan})
 
 
-async def _publish_input_image(
-    db: AsyncSession,
-    user_id: int,
-    job: VisualJob,
-    asset: VisualAsset,
-    *,
-    snapshot: ComboSnapshot,
-) -> VisualItem:
-    """合格起始图独立入库；视频行的 input_image_id 只指向同文件的图片影像。"""
-
-    resolved = resolve_asset_reference(asset.input_image_path or "")
-    if resolved is None:
-        raise VisualStateError("视频的起始画面无法读取")
-    data = await asyncio.to_thread(resolved[0].read_bytes)
-    width, height = await asyncio.to_thread(probe_visual_image, data)
-    item = await publish_image_result(
-        db,
-        user_id,
-        VisualAsset(
-            media_kind="image",
-            media_path=asset.input_image_path or "",
-            width=width,
-            height=height,
-            visual_description=asset.visual_description,
-            outfit_description=asset.outfit_description,
-            creation_plan=asset.creation_plan,
-            feedback=asset.feedback,
-            video_feedback=asset.video_feedback,
-        ),
-        snapshot=snapshot,
-    )
-    job.result_image_id = item.id
-    return item
-
-
 async def _finish_job(
     user_id: int,
     job_id: int,
@@ -1133,15 +1110,14 @@ async def _finish_job(
     *,
     allow_followup_work: bool = True,
 ) -> None:
-    published: VisualItem | None = None
+    published: PublishedVisual | None = None
     async with SESSION_LOCAL() as db:
-        job = await visual_job_row(db, user_id, job_id, lock=True)
+        job, presentation = await publication_rows(db, user_id, job_id)
         saved = visual_progress(job)
         if saved is None or saved.generation_id != progress.generation_id or job.state not in {"queued", "running"}:
             return
         if progress.candidate is None:
             raise VisualStateError("当前制作还没有可用成品")
-        job.progress_json = progress.model_dump_json()
         passed = (
             progress.review_verdict == "pass"
             and progress.identity_score is not None
@@ -1151,31 +1127,52 @@ async def _finish_job(
             raise VisualCreationError(progress.review_reason or "成品未通过检查，请重新生成", "quality_failed")
         snapshot = _publication_snapshot(visual_snapshot(job), progress)
         asset = progress.candidate
-        input_image: VisualItem | None = None
-        if asset.media_kind == "video":
-            input_image = await _publish_input_image(db, user_id, job, asset, snapshot=snapshot)
+        checkpoint = progress.model_dump(mode="json")
+        publication = await publish_visual_result(db, user_id, job, asset, snapshot=snapshot, checkpoint=checkpoint)
+        published = publication.visual
+        completed = publication.completed
+        if completed is None:
+            raise VisualStateError("制作结果未完成提交")
+        persisted = {
+            "state": "succeeded",
+            "stage": "complete",
+            "error": None,
+            "checkpoint": checkpoint,
+            "revision": completed.revision,
+            "finished_at": completed.finished_at,
+            "updated_at": completed.updated_at,
+            "result_visual_id": published.id,
+            "result_version_id": published.current_version_id,
+            "result_image_id": publication.image_id,
+            "result_image_version_id": publication.image_version_id,
+        }
+        for key, value in persisted.items():
+            set_committed_value(job, key, value)
+        await settle_visual_steps(
+            db,
+            user_id,
+            job,
+            result_ref={
+                "visual_id": published.id,
+                "visual_version_id": published.current_version_id,
+                "version": published.version,
+            },
+            additional_events=[
+                LifeEventInput(
+                    event_key=f"visual:{job.id}:{published.id}:{published.version}",
+                    kind="visual.ready",
+                    source="visuals",
+                    fact={"visual_id": published.id, "media_kind": published.media_kind, "version": published.version},
+                    result_ref={
+                        "visual_id": published.id,
+                        "visual_version_id": published.current_version_id,
+                        "version": published.version,
+                    },
+                )
+            ],
+        )
         if job.purpose == "regenerate":
-            if job.target_visual_id is None:
-                raise VisualStateError("重做目标已经丢失，本次结果未替换")
-            target = await visual_item(db, user_id, job.target_visual_id)
-            published = await replace_visual_result(
-                db,
-                user_id,
-                job,
-                target,
-                asset,
-                snapshot=snapshot,
-                input_image=input_image,
-            )
-        elif asset.media_kind == "image":
-            published = await publish_image_result(db, user_id, asset, snapshot=snapshot)
-            job.result_visual_id = published.id
-        else:
-            published = await publish_video_result(db, user_id, asset, snapshot=snapshot, input_image=input_image)
-            job.result_visual_id = published.id
-        job.state, job.stage, job.error = "succeeded", "complete", None
-        if job.purpose == "regenerate":
-            state = await presentation_row(db, user_id)
+            state = presentation
             if (
                 state is not None
                 and state.current_visual_id == published.id
@@ -1183,20 +1180,6 @@ async def _finish_job(
                 and get_presentation_snapshot(user_id) is not None
             ):
                 await dispatch_play_command(db, user_id, published, source="restore")
-        await accept_event_in_session(
-            db,
-            user_id,
-            LifeEventInput(
-                event_key=f"visual:{job.id}:{published.id}:{published.version}",
-                kind="visual.ready",
-                source="visuals",
-                fact={"visual_id": published.id, "media_kind": published.media_kind, "version": published.version},
-                result_ref={"visual_id": published.id, "version": published.version},
-            ),
-        )
-        await settle_visual_steps(
-            db, user_id, job, result_ref={"visual_id": published.id, "version": published.version}
-        )
         await notify_visuals_updated(db, user_id)
         await db.commit()
     if published is not None and allow_followup_work and not published.title.strip():
@@ -1222,7 +1205,7 @@ async def _pause_visual_job(
         progress.paused_by_user = by_user
         progress.submission_unknown = visual_progress_has_unknown_submission(progress)
         progress.failure_reason = "result_unknown" if progress.submission_unknown else "temporary"
-        job.progress_json = progress.model_dump_json()
+        job.checkpoint = progress.model_dump(mode="json")
         job.state, job.stage, job.error = "paused", "paused", None
         await notify_visuals_updated(db, user_id)
         await db.commit()
@@ -1313,13 +1296,16 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
                     or saved.generation_id != progress.generation_id
                 ):
                     return
-                await _publish_input_image(
+                opening = await publish_opening_result(
                     db,
                     user_id,
                     current_job,
                     _opening_asset(job, progress).model_copy(update={"input_image_path": progress.pose_path}),
                     snapshot=_publication_snapshot(snapshot, progress),
                 )
+                set_committed_value(current_job, "result_image_id", opening.id)
+                set_committed_value(current_job, "result_image_version_id", opening.current_version_id)
+                current_job.updated_at = utc_now()
                 await notify_visuals_updated(db, user_id)
                 await db.commit()
         chain = MediaChainState.model_validate_json(progress.video_chain_json or "{}")
@@ -1491,7 +1477,7 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
             owner = VideoQueueOwner(
                 kind="visuals",
                 user_id=user_id,
-                entity_id=job_id,
+                job_id=job_id,
                 generation_id=chain.generation_id,
             )
             if not chain.queue_request_id:
@@ -1689,7 +1675,7 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
                     if visual_progress_has_video_work(saved)
                     else "failed"
                 )
-                row.progress_json = saved.model_dump_json()
+                row.checkpoint = saved.model_dump(mode="json")
                 row.state = "unknown" if saved.submission_unknown else "failed"
                 row.error = _visual_job_error(exc, saved, stage=row.stage)
                 await settle_visual_steps(db, user_id, row)
@@ -1795,7 +1781,7 @@ async def resume_visual_jobs(user_id: int | None = None) -> None:
                         if visual_progress_can_resume(progress)
                         else "failed"
                     )
-                    current.progress_json = progress.model_dump_json()
+                    current.checkpoint = progress.model_dump(mode="json")
                 current.error = (
                     "制作已中断，请手动继续"
                     if not progress or not progress.submission_unknown

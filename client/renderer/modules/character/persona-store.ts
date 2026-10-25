@@ -2,7 +2,6 @@ import { atom } from 'nanostores'
 
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { authedResource } from '@/shared/lib/resource-request'
-import { safeJsonParse } from '@/shared/lib/safe-json'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 import type { PersonaResponse } from '@protocol'
 
@@ -29,7 +28,7 @@ export function applyPersonaResponse(response: PersonaResponse): void {
     return
   }
 
-  const parsed = safeJsonParse<Record<string, string>>(response.definition_json, {})
+  const parsed = response.definition_json
 
   $persona.set({
     biological_type: parsed.biological_type,

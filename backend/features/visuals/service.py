@@ -4,16 +4,16 @@ import asyncio
 from typing import Literal
 from uuid import uuid4
 
+from infrastructure.assets.references import asset_paths
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.text import ensure_utc, utc_now
 from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
-from sqlalchemy import cast, select
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.companion.proactive_runtime import get_presentation_snapshot
+from features.jobs.service import bind_job_assets, bind_job_request, requested_job_id
 from features.life.schemas import LifeStepRequest
-from features.life.use_cases import read_step_by_key_in_session
 
 from .creation import begin_opening_repair
 from .generation import (
@@ -39,6 +39,7 @@ from .repository import (
     playback_row,
     presentation_row,
     presented_item,
+    presented_version,
     require_presentation_row,
     touch_presentation,
     visual_is_short_action,
@@ -109,14 +110,12 @@ async def create_visual_job(
         if source == "autonomous" and not state.autonomous_enabled:
             raise VisualStateError("伙伴自主制作已关闭")
         if request_id:
-            existing = await _requested_job(db, user_id, request_id)
+            existing = await _requested_job(db, user_id, request_id, combo_hash)
             if existing is not None:
-                if (
-                    existing.purpose != "create"
-                    or existing.target_kind != target_kind
-                    or combo_snapshot_hash(visual_snapshot(existing)) != combo_hash
-                ):
+                if existing.purpose != "create" or existing.target_kind != target_kind:
                     raise VisualStateError("这个创建请求已经用于另一次制作")
+                if request_id:
+                    await bind_job_request(db, user_id, existing.id, request_id, combo_hash)
                 await bind_creation_step(db, user_id, existing, life_step)
                 await db.commit()
                 return job_view(existing)
@@ -130,11 +129,13 @@ async def create_visual_job(
         )
         for existing in pending:
             if combo_snapshot_hash(visual_snapshot(existing)) == combo_hash:
+                if request_id:
+                    await bind_job_request(db, user_id, existing.id, request_id, combo_hash)
                 await bind_creation_step(db, user_id, existing, life_step)
                 await db.commit()
                 return job_view(existing)
         progress = VisualJobProgress(
-            generation_id=request_id or uuid4().hex,
+            generation_id=uuid4().hex,
             target_width=combo.target_width,
             target_height=combo.target_height,
             source=source,
@@ -149,15 +150,21 @@ async def create_visual_job(
             user_id=user_id,
             purpose="create",
             target_kind=target_kind,
-            snapshot_json=combo.model_dump_json(),
+            snapshot_json=combo.model_dump(mode="json"),
+            outfit_id=combo.outfit.material_id,
+            scene_id=combo.scene.material_id,
+            action_id=combo.action.action_id,
             feedback=feedback,
             video_feedback=video_feedback,
             state="queued",
             stage="prepare",
-            progress_json=progress.model_dump_json(),
+            checkpoint=progress.model_dump(mode="json"),
         )
         db.add(job)
         await db.flush()
+        await bind_job_assets(db, user_id, job.id, asset_paths(job.snapshot_json, user_id), "input")
+        if request_id:
+            await bind_job_request(db, user_id, job.id, request_id, combo_hash)
         await bind_creation_step(db, user_id, job, life_step)
         await notify_visuals_updated(db, user_id)
         view = job_view(job)
@@ -166,21 +173,14 @@ async def create_visual_job(
     return view
 
 
-async def _requested_job(db: AsyncSession, user_id: int, request_id: str) -> VisualJob | None:
-    """受理幂等核对：步骤记录请求与工作项的绑定，取消清除制作草稿后仍能返回原受理结果。"""
-    step = await read_step_by_key_in_session(db, user_id, request_id)
-    job_id = step.business_ref.get("visual_job_id") if step is not None else None
-    if isinstance(job_id, int):
-        return await db.scalar(select(VisualJob).where(VisualJob.user_id == user_id, VisualJob.id == job_id))
-    return await db.scalar(
-        select(VisualJob)
-        .where(
-            VisualJob.user_id == user_id,
-            cast(VisualJob.progress_json, JSONB)["generation_id"].astext == request_id,
-        )
-        .order_by(VisualJob.id.desc())
-        .limit(1)
-    )
+async def _requested_job(db: AsyncSession, user_id: int, request_id: str, fingerprint: str) -> VisualJob | None:
+    try:
+        job_id = await requested_job_id(db, user_id, request_id, fingerprint)
+    except ValueError as exc:
+        raise VisualStateError(str(exc)) from exc
+    if job_id is None:
+        return None
+    return await db.scalar(select(VisualJob).where(VisualJob.user_id == user_id, VisualJob.id == job_id))
 
 
 async def regenerate_visual(
@@ -200,6 +200,8 @@ async def regenerate_visual(
         if not visual_playable(item):
             raise VisualStateError("影像文件缺失，无法重做")
         snapshot = visual_snapshot(item)
+        if snapshot.identity.avatar_id is None:
+            raise VisualStateError("这份影像的角色资料已删除，请用当前角色重新制作")
         source_image = _source_image(item)
         general = snapshot.feedback if feedback is None else feedback.strip()
         video_requirements = snapshot.video_feedback if video_feedback is None else video_feedback.strip()
@@ -241,15 +243,19 @@ async def regenerate_visual(
             purpose="regenerate",
             target_kind=item.media_kind,
             expected_version=expected_version,
-            snapshot_json=snapshot.model_dump_json(),
+            snapshot_json=snapshot.model_dump(mode="json"),
+            outfit_id=snapshot.outfit.material_id,
+            scene_id=snapshot.scene.material_id,
+            action_id=snapshot.action.action_id,
             feedback=general,
             video_feedback=video_requirements,
             state="queued",
             stage="prepare",
-            progress_json=progress.model_dump_json(),
+            checkpoint=progress.model_dump(mode="json"),
         )
         db.add(job)
         await db.flush()
+        await bind_job_assets(db, user_id, job.id, asset_paths(job.snapshot_json, user_id), "input")
         await notify_visuals_updated(db, user_id)
         view = job_view(job)
         await db.commit()
@@ -289,7 +295,7 @@ async def claim_playback(user_id: int, play_id: str, *, client_id: str) -> bool:
             return False
         if play.client_id is not None and play.client_id != client_id:
             return False
-        item = await db.get(VisualItem, play.visual_id)
+        item = await presented_version(db, user_id, play.version_id)
         presentation = get_presentation_snapshot(user_id)
         stale = (
             presentation is None
@@ -331,26 +337,31 @@ async def restore_presentation(user_id: int) -> VisualPlayCommand | None:
         if state is None:
             return None
         if state.pending_command_json:
-            pending = VisualPlayCommand.model_validate_json(state.pending_command_json)
+            pending = VisualPlayCommand.model_validate(state.pending_command_json)
             if (
                 pending.presentation_epoch == presence.revision
                 and pending.state_revision == state.state_revision
                 and ensure_utc(pending.expires_at) > utc_now()
             ):
                 return pending
-        visual_id = (
-            state.current_visual_id if presence.mode == "window" else state.loop_visual_id or state.current_visual_id
+        version_id = (
+            state.current_version_id if presence.mode == "window" else state.loop_version_id or state.current_version_id
         )
-        if visual_id is None:
+        if version_id is None:
             return None
-        item = await visual_item(db, user_id, visual_id)
+        item = await presented_version(db, user_id, version_id)
+        if item is None:
+            return None
         if presence.mode == "desktop" and visual_is_short_action(item):
-            if item.input_image_id is None:
+            if item.input_image_version_id is None:
                 return None
-            item = await visual_item(db, user_id, item.input_image_id)
+            version_id = item.input_image_version_id
+            item = await presented_version(db, user_id, version_id)
+            if item is None:
+                return None
         if not visual_playable(item):
             raise VisualStateError("恢复的影像文件缺失")
-        _play, command = await dispatch_play_command(db, user_id, item, source="restore")
+        _play, command = await dispatch_play_command(db, user_id, item, source="restore", version_id=version_id)
         await db.commit()
         return command
 
@@ -370,7 +381,7 @@ async def record_playback(
         raise VisualStateError("不支持的播放回执状态")
     terminal: PlaybackStatus = "failed" if status == "interrupted" else status
     async with _lock(user_id), SESSION_LOCAL() as db:
-        play = await playback_row(db, user_id, play_id, lock=True)
+        play = await playback_row(db, user_id, play_id)
         if not client_id or play.client_id != client_id:
             raise VisualStateError("这个播放由其他设备处理")
         if play.status in {"finished", "failed", "expired"}:
@@ -380,7 +391,7 @@ async def record_playback(
                 return
             state = await require_presentation_row(db, user_id)
             presentation = get_presentation_snapshot(user_id)
-            item = await db.get(VisualItem, play.visual_id)
+            item = await presented_version(db, user_id, play.version_id)
             if (
                 play.status != "claimed"
                 or presentation is None
@@ -396,15 +407,26 @@ async def record_playback(
             expected_kind = "window_static" if presentation.mode == "window" else item.media_kind
             if receipt_kind != expected_kind:
                 raise VisualStateError("播放回执与当前呈现方式不一致")
-            frozen = PresentedVisual.model_validate_json(play.snapshot_json).model_copy(
+            frozen = PresentedVisual.model_validate(play.snapshot_json).model_copy(
                 update={"receipt_kind": receipt_kind},
             )
             state.current_visual_id = item.id
-            state.current_snapshot_json = frozen.model_dump_json()
+            state.current_version_id = play.version_id
+            state.current_snapshot_json = frozen.model_dump(mode="json")
             if item.media_kind == "image" or visual_snapshot(item).action.clip_kind == "loop":
                 state.loop_visual_id = item.id
                 state.loop_snapshot_json = state.current_snapshot_json
+                state.loop_version_id = play.version_id
             clear_pending_command(state, play_id)
+            await db.execute(
+                update(VisualPlayback)
+                .where(
+                    VisualPlayback.user_id == user_id,
+                    VisualPlayback.play_id != play_id,
+                    VisualPlayback.status == "started",
+                )
+                .values(status="failed", error="已由新的呈现接替", updated_at=utc_now())
+            )
             play.status = "started"
             play.started_at = utc_now()
             play.receipt_kind = receipt_kind or play.receipt_kind
@@ -430,13 +452,14 @@ async def record_playback(
 async def _settle_short_play(db: AsyncSession, state: VisualPresentation, play: VisualPlayback) -> bool:
     """短动作结束后回到持续影像；更新的播放已接管时不回退。"""
 
-    item = await db.get(VisualItem, play.visual_id)
+    item = await presented_version(db, state.user_id, play.version_id)
     if item is None or not visual_is_short_action(item):
         return False
     current = presented_item(state)
     if current is None or current.play_id != play.play_id or current.receipt_kind == "window_static":
         return False
     state.current_visual_id = state.loop_visual_id
+    state.current_version_id = state.loop_version_id
     state.current_snapshot_json = state.loop_snapshot_json
     return True
 
@@ -457,7 +480,7 @@ async def pause_job(user_id: int, job_id: int) -> VisualJobView:
             progress.paused_by_user = True
             progress.submission_unknown = visual_progress_has_unknown_submission(progress)
             progress.failure_reason = "result_unknown" if progress.submission_unknown else "temporary"
-            job.progress_json = progress.model_dump_json()
+            job.checkpoint = progress.model_dump(mode="json")
             job.state, job.stage, job.error = "paused", "paused", None
             await notify_visuals_updated(db, user_id)
         view = job_view(job)
@@ -496,7 +519,7 @@ async def resume_job(user_id: int, job_id: int) -> VisualJobView:
                 raise
         progress.paused_by_user = False
         progress.failure_reason = ""
-        job.progress_json = progress.model_dump_json()
+        job.checkpoint = progress.model_dump(mode="json")
         job.state, job.stage, job.error = "running", "prepare", None
         await notify_visuals_updated(db, user_id)
         view = job_view(job)
@@ -512,11 +535,9 @@ async def cancel_job(user_id: int, job_id: int) -> VisualJobView:
         job = await visual_job_row(db, user_id, job_id, lock=True)
         if job.state in {"succeeded", "cancelled"}:
             return job_view(job)
-        progress = visual_progress(job)
-        life_step_key = progress.generation_id if progress is not None else None
         await discard_job_draft(db, user_id, job)
         job.state, job.stage, job.error = "cancelled", "cancelled", None
-        await settle_visual_steps(db, user_id, job, generation_id=life_step_key)
+        await settle_visual_steps(db, user_id, job)
         await notify_visuals_updated(db, user_id)
         await db.flush()
         await db.refresh(job)
@@ -556,7 +577,7 @@ async def retry_job(user_id: int, job_id: int) -> VisualJobView:
                 new_budget=True,
             )
             require_new_generation_call(user_id)
-            job.progress_json = progress.model_dump_json()
+            job.checkpoint = progress.model_dump(mode="json")
             job.state, job.stage, job.error = "running", "repairing", None
             await notify_visuals_updated(db, user_id)
             view = job_view(job)

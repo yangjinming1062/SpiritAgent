@@ -1,12 +1,15 @@
 import inspect
 import json
 from collections.abc import Callable, Collection
+from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
+from infrastructure.api_ids import ResourceId
 from infrastructure.logger import get_logger
 from infrastructure.redact import redact_sensitive_text
 from infrastructure.text import tool_error
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
 from runtime.delegation import DelegateAction
@@ -74,6 +77,11 @@ class _BackendTool:
     schema: dict[str, Any]
     func: Callable[..., Any]
     availability_check: AvailabilityCheck | None
+    resource_arguments: dict[str, TypeAdapter]
+
+
+def _resource_annotation(annotation: Any) -> bool:
+    return annotation == ResourceId or any(_resource_annotation(item) for item in get_args(annotation))
 
 
 class ToolsRegistry:
@@ -91,7 +99,31 @@ class ToolsRegistry:
         availability_check: AvailabilityCheck | None = None,
     ) -> None:
         """按 ``schema["name"]`` 添加或替换 backend 工具；重复注册幂等。"""
-        self._backend_tools[schema["name"]] = _BackendTool(schema, func, availability_check)
+        schema = deepcopy(schema)
+        properties = schema.get("parameters", {}).get("properties", {})
+        adapters = {}
+        for name, parameter in inspect.signature(func).parameters.items():
+            if name not in properties or not _resource_annotation(parameter.annotation):
+                continue
+            adapter = TypeAdapter(parameter.annotation)
+            adapters[name] = adapter
+            metadata = {
+                key: value
+                for key, value in properties[name].items()
+                if key
+                not in {
+                    "type",
+                    "anyOf",
+                    "oneOf",
+                    "minimum",
+                    "maximum",
+                    "exclusiveMinimum",
+                    "exclusiveMaximum",
+                    "pattern",
+                }
+            }
+            properties[name] = {**metadata, **adapter.json_schema()}
+        self._backend_tools[schema["name"]] = _BackendTool(schema, func, availability_check, adapters)
 
     def register_memory(self, schema: dict[str, Any]) -> None:
         self._memory_tools[schema["name"]] = schema
@@ -152,6 +184,15 @@ class ToolsRegistry:
             return tool_error(f"Tool {name} not found in backend registry.")
         if (problem := _argument_problem(name, tool.schema, args)) is not None:
             return tool_error(problem)
+        try:
+            args = {
+                key: tool.resource_arguments[key].validate_python(value) if key in tool.resource_arguments else value
+                for key, value in args.items()
+            }
+        except ValidationError:
+            return tool_error(
+                f"Invalid resource identifier for {name}: use a positive decimal string from the previous tool result."
+            )
         try:
             result = tool.func(**{**args, **context})
             if inspect.isawaitable(result):

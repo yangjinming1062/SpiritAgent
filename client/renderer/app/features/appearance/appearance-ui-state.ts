@@ -1,11 +1,13 @@
 import { defineAccountUiAtom } from '@/shared/lib/storage'
 import { isRecord } from '@client-shared/is-record'
 
+import { isResourceId } from '../../../../../shared/resource-id'
+
 interface AppearanceUiState {
-  selectedOutfitId: number | null
+  selectedOutfitId: string | null
   designing: boolean
   text: string
-  draftId: number | null
+  draftId: string | null
   listScrollTop?: number
 }
 
@@ -19,9 +21,7 @@ function validState(value: unknown): value is AppearanceUiState {
     typeof value.text === 'string' &&
     (value.listScrollTop === undefined ||
       (typeof value.listScrollTop === 'number' && Number.isFinite(value.listScrollTop) && value.listScrollTop >= 0)) &&
-    [value.selectedOutfitId, value.draftId].every(
-      id => id === null || (typeof id === 'number' && Number.isSafeInteger(id) && id > 0)
-    )
+    [value.selectedOutfitId, value.draftId].every(id => id === null || isResourceId(id))
   )
 }
 

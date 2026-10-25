@@ -7,7 +7,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import UserSetting
-from .values import decode_setting_value
 
 
 async def timezone_settings(db: AsyncSession, user_ids: Collection[int]) -> list[tuple[int, Any]]:
@@ -17,4 +16,4 @@ async def timezone_settings(db: AsyncSession, user_ids: Collection[int]) -> list
             UserSetting.setting_key == "timezone",
         ),
     )
-    return [(user_id, decode_setting_value(raw)) for user_id, raw in result.tuples()]
+    return [(user_id, raw) for user_id, raw in result.tuples()]

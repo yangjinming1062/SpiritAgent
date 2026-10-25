@@ -24,7 +24,13 @@ import { $gateway } from '@/shared/store/gateway'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import { isRecord } from '@client-shared/is-record'
-import type { MemoryItem, MemoryProfileChange, MemoryProfileUpdateRequest, UserProfileField } from '@protocol'
+import type {
+  MemoryItem,
+  MemoryListResponse,
+  MemoryProfileChange,
+  MemoryProfileUpdateRequest,
+  UserProfileField
+} from '@protocol'
 
 import { $companionEditors, completeMemoryDraft, editMemoryDraft, setMemoryDraft } from './companion-editor-state'
 
@@ -54,18 +60,17 @@ export function useMemoryChanged(presetId: string, refresh: () => Promise<void>)
 }
 
 interface ProfileField {
-  context: string
   key: UserProfileField
   multiline?: boolean
   date?: boolean
 }
 
 const PROFILE_FIELDS: readonly ProfileField[] = [
-  { context: 'user_profile:preferred_name', key: 'user_call_name' },
-  { context: 'user_profile:gender', key: 'user_gender' },
-  { context: 'user_profile:birthday', key: 'user_birthday', date: true },
-  { context: 'user_profile:hobbies', key: 'user_hobbies', multiline: true },
-  { context: 'user_profile:freeform', key: 'user_freeform', multiline: true }
+  { key: 'user_call_name' },
+  { key: 'user_gender' },
+  { key: 'user_birthday', date: true },
+  { key: 'user_hobbies', multiline: true },
+  { key: 'user_freeform', multiline: true }
 ]
 
 export function UserProfileSection(): React.ReactElement {
@@ -94,15 +99,15 @@ export function UserProfileSection(): React.ReactElement {
 
       try {
         const all: MemoryItem[] = []
-        let total = 0
+        let cursor: string | null = null
 
         do {
-          const result = await requestResource('resource_catalog.get_memories', {
+          const result: MemoryListResponse = await requestResource('resource_catalog.get_memories', {
             query: {
               kind: 'user_profile',
               status: 'active',
               system_preset_id: 'companion',
-              offset: all.length,
+              cursor,
               limit: 100
             }
           })
@@ -112,12 +117,12 @@ export function UserProfileSection(): React.ReactElement {
           }
 
           all.push(...result.memories)
-          total = result.total
+          cursor = result.next_cursor ?? null
 
           if (!result.memories.length) {
             break
           }
-        } while (all.length < total)
+        } while (cursor)
 
         setRows(all)
 
@@ -151,7 +156,7 @@ export function UserProfileSection(): React.ReactElement {
   }, [load])
 
   useMemoryChanged('companion', refresh)
-  const rowOf = (field: ProfileField): MemoryItem | undefined => rows?.find(row => row.context === field.context)
+  const rowOf = (field: ProfileField): MemoryItem | undefined => rows?.find(row => row.slot_key === field.key)
   const changed = PROFILE_FIELDS.filter(field => !!drafts[field.key])
   const conflicts = changed.filter(field => drafts[field.key]?.baseVersion !== (rowOf(field)?.content_version ?? 0))
 
@@ -208,7 +213,7 @@ export function UserProfileSection(): React.ReactElement {
           'profileDrafts',
           field.key,
           drafts[field.key],
-          result.memories.find(row => row.context === field.context)
+          result.memories.find(row => row.slot_key === field.key)
         )
       }
 
@@ -230,7 +235,7 @@ export function UserProfileSection(): React.ReactElement {
           !!latest &&
           changed.every(
             field =>
-              (latest.find(row => row.context === field.context)?.content ?? '') === drafts[field.key].content.trim()
+              (latest.find(row => row.slot_key === field.key)?.content ?? '') === drafts[field.key].content.trim()
           )
 
         if (confirmed && latest) {
@@ -239,7 +244,7 @@ export function UserProfileSection(): React.ReactElement {
               'profileDrafts',
               field.key,
               drafts[field.key],
-              latest.find(row => row.context === field.context)
+              latest.find(row => row.slot_key === field.key)
             )
           }
 
@@ -500,7 +505,7 @@ export function UserProfileSection(): React.ReactElement {
             </div>
           </div>
           {rows
-            .filter(row => !PROFILE_FIELDS.some(field => field.context === row.context))
+            .filter(row => !PROFILE_FIELDS.some(field => field.key === row.slot_key))
             .map(row => {
               const key = `extra:${row.id}`
               const draft = drafts[key]
@@ -509,9 +514,7 @@ export function UserProfileSection(): React.ReactElement {
               return (
                 <div className="liquid-glass-card space-y-3 rounded-2xl p-4" key={row.id}>
                   <label className="block">
-                    <span className={FIELD_LABEL}>
-                      {row.context?.replace(/^user_profile:/, '') || dict.settings.persona.profileAdditionalDetail}
-                    </span>
+                    <span className={FIELD_LABEL}>{row.context || dict.settings.persona.profileAdditionalDetail}</span>
                     <textarea
                       className={INPUT_CLASS}
                       disabled={busy}

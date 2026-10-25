@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
-from infrastructure.constants import POSTGRES_INT4_MAX
+from infrastructure.constants import POSTGRES_INT8_MAX
 from infrastructure.database import SESSION_LOCAL, get_db
 from infrastructure.http_contracts import find_http_operation
 from infrastructure.logger import set_request_user_id
@@ -67,7 +67,7 @@ async def session_from_payload(payload: dict, db: AsyncSession) -> tuple[Account
 
     try:
         uid = int(user_id)
-        if not 1 <= uid <= POSTGRES_INT4_MAX:
+        if not 1 <= uid <= POSTGRES_INT8_MAX:
             raise ValueError("invalid account id")
     except (ValueError, TypeError):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="令牌用户标识无效。")

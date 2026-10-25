@@ -1,7 +1,7 @@
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import type { MemoryCounts, MemoryItem, SystemPresetSummary, UserProfileField } from '@protocol'
+import type { MemoryCounts, MemoryDetail, MemoryItem, SystemPresetSummary, UserProfileField } from '@protocol'
 
 import { uiCopy } from '../shared/ui-copy'
 
@@ -29,12 +29,12 @@ const STATUSES: { id: Status; label: string }[] = [
   { id: 'expired', label: '已过期' }
 ]
 
-const PROFILE_FIELDS: { key: UserProfileField; context: string; label: string; rows: number }[] = [
-  { key: 'user_call_name', context: 'user_profile:preferred_name', label: '称呼', rows: 1 },
-  { key: 'user_gender', context: 'user_profile:gender', label: '性别', rows: 1 },
-  { key: 'user_birthday', context: 'user_profile:birthday', label: '生日', rows: 1 },
-  { key: 'user_hobbies', context: 'user_profile:hobbies', label: '爱好', rows: 2 },
-  { key: 'user_freeform', context: 'user_profile:freeform', label: '补充信息', rows: 3 }
+const PROFILE_FIELDS: { key: UserProfileField; label: string; rows: number }[] = [
+  { key: 'user_call_name', label: '称呼', rows: 1 },
+  { key: 'user_gender', label: '性别', rows: 1 },
+  { key: 'user_birthday', label: '生日', rows: 1 },
+  { key: 'user_hobbies', label: '爱好', rows: 2 },
+  { key: 'user_freeform', label: '补充信息', rows: 3 }
 ]
 
 const BASIS_LABELS: Record<MemoryItem['basis'], string> = {
@@ -55,7 +55,7 @@ const STANCE_LABELS: Record<'supports' | 'opposes', string> = {
 }
 
 function memoryTitle(row: MemoryItem): string {
-  return row.context?.replace(/^(recall|user_profile):/, '').replaceAll('_', ' ') || '记忆'
+  return row.context?.replaceAll('_', ' ') || '记忆'
 }
 
 function updatedLabel(value: string): string {
@@ -64,16 +64,6 @@ function updatedLabel(value: string): string {
   return Number.isFinite(date.getTime())
     ? date.toLocaleString('zh-CN', { dateStyle: 'short', timeStyle: 'short' })
     : value
-}
-
-function memoryTags(row: MemoryItem): string[] {
-  try {
-    const parsed: unknown = JSON.parse(row.tags || '[]')
-
-    return Array.isArray(parsed) ? parsed.map(String) : []
-  } catch {
-    return []
-  }
 }
 
 function isActiveMemory(row: MemoryItem): boolean {
@@ -90,7 +80,7 @@ async function readProfile(api: RemoteApi): Promise<MemoryItem[]> {
 }
 
 /** 展开后把卡片顶部对齐到可视区，并聚焦编辑框。 */
-function focusMemoryEditor(id: number): void {
+function focusMemoryEditor(id: string): void {
   requestAnimationFrame(() => {
     const content = document.querySelector<HTMLElement>('.content')
     const card = content?.querySelector<HTMLElement>(`[data-memory-id="${id}"]`)
@@ -104,7 +94,7 @@ function focusMemoryEditor(id: number): void {
 }
 
 /** 收起后焦点回到该条记忆的卡片。 */
-function focusMemoryCard(id: number): void {
+function focusMemoryCard(id: string): void {
   requestAnimationFrame(() => {
     const content = document.querySelector<HTMLElement>('.content')
 
@@ -180,12 +170,14 @@ function MemoryList({ api, preset, refresh }: { api: RemoteApi; preset: string; 
   const [rows, setRows] = useState<MemoryItem[]>([])
   const [counts, setCounts] = useState<MemoryCounts | null>(null)
   const [loaded, setLoaded] = useState(false)
-  const [total, setTotal] = useState(0)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [status, setStatus] = usePageState<Status>(`memory.${preset}.status`, 'active')
   const [search, setSearch] = usePageState(`memory.${preset}.search`, '')
   const [query, setQuery] = useState(search)
-  const [offset, setOffset] = usePageState(`memory.${preset}.offset`, 0)
-  const [expanded, setExpanded] = usePageState<number | null>(`memory.${preset}.expanded`, null)
+  const [page, setPage] = usePageState(`memory.${preset}.page`, 0)
+  const [cursors, setCursors] = usePageState<(string | null)[]>(`memory.${preset}.cursors`, [null])
+  const cursor = cursors[page] ?? null
+  const [expanded, setExpanded] = usePageState<string | null>(`memory.${preset}.expanded`, null)
   const [drafts, setDrafts] = usePageState<MemoryDrafts>(`memory.${preset}.drafts`, {})
   const request = useRef(0)
   const expandedRef = useRef(expanded)
@@ -206,27 +198,27 @@ function MemoryList({ api, preset, refresh }: { api: RemoteApi; preset: string; 
         kind: 'recall',
         q: query,
         limit: 20,
-        offset
+        cursor
       }
     })
     if (alive() && revision === request.current) {
       setRows(result.memories)
-      setTotal(result.total)
+      setNextCursor(result.next_cursor ?? null)
       setCounts(result.counts)
       setLoaded(true)
-      if (offset > 0 && offset >= result.total) {
-        setOffset(Math.max(0, Math.ceil(result.total / 20) - 1) * 20)
+      if (page > 0 && !result.memories.length) {
+        setPage(page - 1)
       }
       if (expandedRef.current !== null && !result.memories.some(row => row.id === expandedRef.current)) {
         setExpanded(null)
       }
     }
-  }, [alive, api, offset, preset, query, setExpanded, setOffset, status])
+  }, [alive, api, cursor, page, preset, query, setExpanded, setPage, status])
 
   useEffect(() => {
     void runLatest(load)
   }, [load, refresh, runLatest])
-  usePageScroll(`memory.${preset}.${status}.${offset}.${query}`, loaded)
+  usePageScroll(`memory.${preset}.${status}.${page}.${query}`, loaded)
 
   const collapse = (focusCard: boolean) => {
     const id = expandedRef.current
@@ -245,7 +237,8 @@ function MemoryList({ api, preset, refresh }: { api: RemoteApi; preset: string; 
         onChange={event => {
           request.current++
           setSearch(event.target.value)
-          setOffset(0)
+          setPage(0)
+          setCursors([null])
           setExpanded(null)
         }}
         placeholder="搜索这个分类里的全部记忆"
@@ -261,7 +254,8 @@ function MemoryList({ api, preset, refresh }: { api: RemoteApi; preset: string; 
             onClick={() => {
               request.current++
               setStatus(item.id)
-              setOffset(0)
+              setPage(0)
+              setCursors([null])
               setExpanded(null)
             }}
             type="button"
@@ -324,22 +318,24 @@ function MemoryList({ api, preset, refresh }: { api: RemoteApi; preset: string; 
       ) : null}
       <div aria-label="记忆分页" className="memory-pagination">
         <button
-          disabled={busy || offset === 0}
+          disabled={busy || page === 0}
           onClick={() => {
-            setOffset(Math.max(0, offset - 20))
+            setPage(Math.max(0, page - 1))
             setExpanded(null)
           }}
           type="button"
         >
           上一页
         </button>
-        <span>
-          {total ? `${Math.floor(offset / 20) + 1} / ${Math.ceil(total / 20)}` : '0'} · 共 {total} 条
-        </span>
+        <span>{page + 1}</span>
         <button
-          disabled={busy || offset + 20 >= total}
+          disabled={busy || !nextCursor}
           onClick={() => {
-            setOffset(offset + 20)
+            if (!nextCursor) {
+              return
+            }
+            setCursors([...cursors.slice(0, page + 1), nextCursor])
+            setPage(page + 1)
             setExpanded(null)
           }}
           type="button"
@@ -435,7 +431,7 @@ function MemoryEditor({
         <textarea
           disabled={busy}
           id={`memory-${row.id}`}
-          maxLength={row.context?.startsWith('user_profile:') ? 2000 : undefined}
+          maxLength={row.kind === 'user_profile' ? 2000 : undefined}
           onChange={event => {
             setSaved(false)
             onDraftsChange(writeMemoryDraft(drafts, row, event.target.value))
@@ -492,16 +488,36 @@ function MemoryEditor({
       <p className="muted">
         {memoryTitle(row)} · 更新于 {updatedLabel(row.updated_at)}
       </p>
-      <MemoryDetails row={row} />
+      <MemoryDetails api={api} key={`${row.id}:${row.content_version}`} preset={preset} row={row} />
     </div>
   )
 }
 
-function MemoryDetails({ row }: { row: MemoryItem }): ReactElement {
-  const tags = memoryTags(row)
+function MemoryDetails({ api, preset, row }: { api: RemoteApi; preset: string; row: MemoryItem }): ReactElement {
+  const [detail, setDetail] = useState<MemoryDetail | null>(null)
+  const { run, busy, error } = useTask()
+  const alive = useAlive()
+  const load = () =>
+    run(async () => {
+      const result = await api.invoke('resource_catalog.get_memory', {
+        path: { memory_id: row.id },
+        query: { system_preset_id: preset }
+      })
+      if (alive()) {
+        setDetail(result)
+      }
+    })
+  const tags = row.tags
 
   return (
-    <details className="optional-details">
+    <details
+      className="optional-details"
+      onToggle={event => {
+        if (event.currentTarget.open && !detail && !busy) {
+          void load()
+        }
+      }}
+    >
       <summary>记忆详情</summary>
       <p className="muted">
         {BASIS_LABELS[row.basis]} · {USAGE_LABELS[row.usage]}
@@ -517,7 +533,15 @@ function MemoryDetails({ row }: { row: MemoryItem }): ReactElement {
           ))}
         </div>
       ) : null}
-      {row.evidence.map((item, index) => (
+      {busy ? <p className="muted">正在加载依据…</p> : null}
+      {error ? (
+        <Notice error={error}>
+          <button onClick={() => void load()} type="button">
+            重新加载
+          </button>
+        </Notice>
+      ) : null}
+      {detail?.evidence.map((item, index) => (
         <blockquote key={`${item.fingerprint}-${index}`}>
           {item.stance ? `${STANCE_LABELS[item.stance]} · ${item.created_at ?? ''}` : null}
           {item.quote}
@@ -541,14 +565,14 @@ function UserProfile({ api, refresh }: { api: RemoteApi; refresh: number }): Rea
   const [draft, setDraft] = usePageState<ProfileDraft | null>('memory.profile.draft', null)
   const [drafts, setDrafts] = usePageState<MemoryDrafts>('memory.companion.drafts', {})
   const [saved, setSaved] = useState(false)
-  const current = (context: string) => rows.find(row => row.context === context)
+  const current = (key: UserProfileField) => rows.find(row => row.slot_key === key)
   const changedFields = PROFILE_FIELDS.filter(
     ({ key }) => draft && (draft.values[key] ?? '').trim() !== (draft.base[key] ?? '')
   )
   const conflictingFields = loaded
-    ? changedFields.filter(({ key, context }) => (current(context)?.content_version ?? 0) !== draft?.versions[key])
+    ? changedFields.filter(({ key }) => (current(key)?.content_version ?? 0) !== draft?.versions[key])
     : []
-  const extras = rows.filter(row => !PROFILE_FIELDS.some(field => field.context === row.context))
+  const extras = rows.filter(row => !PROFILE_FIELDS.some(field => field.key === row.slot_key))
 
   const load = useCallback(async () => {
     const memories = await readProfile(api)
@@ -566,9 +590,9 @@ function UserProfile({ api, refresh }: { api: RemoteApi; refresh: number }): Rea
   const startDraft = (): ProfileDraft => {
     const values: ProfileDraft['values'] = {}
     const versions: ProfileDraft['versions'] = {}
-    PROFILE_FIELDS.forEach(({ key, context }) => {
-      values[key] = current(context)?.content ?? ''
-      versions[key] = current(context)?.content_version ?? 0
+    PROFILE_FIELDS.forEach(({ key }) => {
+      values[key] = current(key)?.content ?? ''
+      versions[key] = current(key)?.content_version ?? 0
     })
 
     return { base: { ...values }, values, versions }
@@ -601,8 +625,8 @@ function UserProfile({ api, refresh }: { api: RemoteApi; refresh: number }): Rea
         },
         read: () => readProfile(api),
         matches: latest =>
-          changedFields.every(({ key, context }) => {
-            const actual = latest.find(row => row.context === context)?.content ?? null
+          changedFields.every(({ key }) => {
+            const actual = latest.find(row => row.slot_key === key)?.content ?? null
 
             return actual === (draft.values[key]?.trim() || null)
           }),
@@ -641,7 +665,7 @@ function UserProfile({ api, refresh }: { api: RemoteApi; refresh: number }): Rea
           </p>
         ) : null}
         <div className="edit-fields">
-          {PROFILE_FIELDS.map(({ key, context, label, rows: size }) => (
+          {PROFILE_FIELDS.map(({ key, label, rows: size }) => (
             <label className="field-label" key={key}>
               {label}
               <textarea
@@ -657,7 +681,7 @@ function UserProfile({ api, refresh }: { api: RemoteApi; refresh: number }): Rea
                   setSaved(false)
                 }}
                 rows={size}
-                value={draft ? (draft.values[key] ?? '') : (current(context)?.content ?? '')}
+                value={draft ? (draft.values[key] ?? '') : (current(key)?.content ?? '')}
               />
             </label>
           ))}
@@ -666,10 +690,10 @@ function UserProfile({ api, refresh }: { api: RemoteApi; refresh: number }): Rea
           <div className="creation-status">
             <p>以下资料已在其他设备修改。草稿已保留，请核对最新内容。</p>
             <dl>
-              {conflictingFields.map(({ key, context, label }) => (
+              {conflictingFields.map(({ key, label }) => (
                 <div key={key}>
                   <dt>{label}</dt>
-                  <dd>{current(context)?.content || '已遗忘'}</dd>
+                  <dd>{current(key)?.content || '已遗忘'}</dd>
                 </div>
               ))}
             </dl>
@@ -682,14 +706,12 @@ function UserProfile({ api, refresh }: { api: RemoteApi; refresh: number }): Rea
                         ...previous,
                         base: {
                           ...previous.base,
-                          ...Object.fromEntries(
-                            conflictingFields.map(({ key, context }) => [key, current(context)?.content ?? ''])
-                          )
+                          ...Object.fromEntries(conflictingFields.map(({ key }) => [key, current(key)?.content ?? '']))
                         },
                         versions: {
                           ...previous.versions,
                           ...Object.fromEntries(
-                            conflictingFields.map(({ key, context }) => [key, current(context)?.content_version ?? 0])
+                            conflictingFields.map(({ key }) => [key, current(key)?.content_version ?? 0])
                           )
                         }
                       }
@@ -869,7 +891,7 @@ function ProfileExtraCard({
             忘记这条资料
           </button>
         </div>
-        <MemoryDetails row={row} />
+        <MemoryDetails api={api} key={`${row.id}:${row.content_version}`} preset="companion" row={row} />
       </div>
     </article>
   )

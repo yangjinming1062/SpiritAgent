@@ -90,9 +90,9 @@ async def _review_action_locked(user_id: int, action_id: int) -> None:
         row = await db.scalar(
             select(ActionDefinition).where(ActionDefinition.user_id == user_id, ActionDefinition.id == action_id),
         )
-        review_source_json = row.review_source_json if row is not None else "{}"
+        review_source_json = row.review_source_json if row is not None else {}
     try:
-        source = ActionReviewSource.model_validate_json(review_source_json or "{}")
+        source = ActionReviewSource.model_validate(review_source_json or {})
     except ValueError:
         source = None
     references: list[str] = []

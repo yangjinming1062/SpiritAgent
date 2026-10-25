@@ -161,7 +161,6 @@ async def _summarize_block(
     temperature: float,
     instructions: str,
     included_indices: set[int] | None,
-    context_length: int,
 ) -> tuple[str, bool, int, int]:
     """通过 Responses API 对输入项生成摘要；响应未完成时保留原上下文。"""
     request = build_responses_kwargs(
@@ -293,7 +292,6 @@ async def _compress_history_with_provider(
             temperature=temperature,
             instructions=instructions,
             included_indices=included_indices,
-            context_length=context_length,
         )
     except Exception as exc:
         logger.warning("context_compressor: summary call failed, leaving history unchanged", exc_info=True)

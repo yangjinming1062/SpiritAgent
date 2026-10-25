@@ -19,7 +19,7 @@ export function Companion({ api, refresh }: { api: RemoteApi; refresh: number })
   const [life, setLife] = useState<{
     current_activity: string
     mood: string | null
-    active_pursuit_id: number | null
+    active_pursuit_id: string | null
   } | null>(null)
   useEffect(() => {
     let alive = true

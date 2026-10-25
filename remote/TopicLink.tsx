@@ -10,16 +10,18 @@ import {
   type TopicFeedbackValue
 } from '@protocol'
 
+import { compareResourceIds } from '../shared/resource-id'
+
 import type { RemoteApi, RemoteGateway } from './api'
 import { errorText } from './api'
 import { Notice, timestamp, useAlive, useTask } from './ui'
 
 interface FeedbackState {
-  feedback: Record<number, TopicFeedbackSnapshot>
-  saving: Set<number>
-  errors: Record<number, string>
+  feedback: Record<string, TopicFeedbackSnapshot>
+  saving: Set<string>
+  errors: Record<string, string>
   reload: () => void
-  update: (id: number, value: TopicFeedbackValue) => Promise<void>
+  update: (id: string, value: TopicFeedbackValue) => Promise<void>
 }
 
 const TopicFeedback = createContext<FeedbackState | null>(null)
@@ -32,20 +34,20 @@ export function TopicFeedbackProvider({
 }: {
   api: RemoteApi
   gateway: RemoteGateway
-  topicIds: number[]
+  topicIds: string[]
   children: ReactNode
 }): ReactElement {
   const alive = useAlive()
   const { runLatest } = useTask()
-  const [feedback, setFeedback] = useState<Record<number, TopicFeedbackSnapshot>>({})
-  const [saving, setSaving] = useState(new Set<number>())
-  const [errors, setErrors] = useState<Record<number, string>>({})
+  const [feedback, setFeedback] = useState<Record<string, TopicFeedbackSnapshot>>({})
+  const [saving, setSaving] = useState(new Set<string>())
+  const [errors, setErrors] = useState<Record<string, string>>({})
   const snapshots = useRef(feedback)
-  const pending = useRef(new Set<number>())
-  const reads = useRef(new Map<number, number>())
-  const topicKey = [...new Set(topicIds)].sort((left, right) => left - right).join(',')
+  const pending = useRef(new Set<string>())
+  const reads = useRef(new Map<string, number>())
+  const topicKey = [...new Set(topicIds)].sort(compareResourceIds).join(',')
   const ids = useRef(topicIds)
-  ids.current = topicKey ? topicKey.split(',').map(Number) : []
+  ids.current = topicKey ? topicKey.split(',') : []
 
   const apply = useCallback(
     (value: TopicFeedbackSnapshot) => {
@@ -73,7 +75,7 @@ export function TopicFeedbackProvider({
           reads.current.set(id, revision)
           return revision
         })
-        const current = (id: number, offset: number) =>
+        const current = (id: string, offset: number) =>
           alive() && ids.current.includes(id) && reads.current.get(id) === revisions[offset]
         try {
           const result = await api.invoke('companion_topics.read_feedback', { query: { topic_ids: batch } })
@@ -130,7 +132,7 @@ export function TopicFeedbackProvider({
     }
   }, [alive, gateway, apply, load, runLatest])
 
-  const update = async (id: number, value: TopicFeedbackValue): Promise<void> => {
+  const update = async (id: string, value: TopicFeedbackValue): Promise<void> => {
     const current = snapshots.current[id]
     if (!alive() || !ids.current.includes(id) || !current || pending.current.has(id)) {
       return

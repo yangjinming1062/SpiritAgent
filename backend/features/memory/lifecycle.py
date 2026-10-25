@@ -3,11 +3,13 @@
 from runtime.lifecycle import RuntimeParticipant
 
 from .memory_review import invalidate_memory_review_locks
-from .memory_store import drain_memory_embeddings
+from .memory_store import drain_memory_embeddings, invalidate_memory_embeddings
 
 
 def runtime_participants() -> tuple[RuntimeParticipant, ...]:
     return (
-        RuntimeParticipant("memory.embeddings", drain=drain_memory_embeddings),
+        RuntimeParticipant(
+            "memory.embeddings", drain=drain_memory_embeddings, invalidate_user=invalidate_memory_embeddings
+        ),
         RuntimeParticipant("memory.review_locks", invalidate_user=invalidate_memory_review_locks),
     )

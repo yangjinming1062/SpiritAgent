@@ -17,7 +17,7 @@ export function AppearancePage(): React.JSX.Element {
   const { selectedOutfitId } = useStore($appearanceUi)
   const [loaded, setLoaded] = useState(false)
   const librarySearch = useAssetLibrarySearch()
-  const setSelectedOutfitId = (id: number | null): void => updateAppearanceUi({ selectedOutfitId: id })
+  const setSelectedOutfitId = (id: string | null): void => updateAppearanceUi({ selectedOutfitId: id })
 
   // 衣柜列表在 auth 就绪后再水合——冷启动直接进入本页时 hydrateAuth 的 IPC 往返尚未完成，提前调用会因 pending 静默跳过。种子图走本地缓存，缺失时补拉。
   useEffect(() => {

@@ -2,7 +2,7 @@ import asyncio
 import base64
 from typing import Annotated
 
-from fastapi import Body, HTTPException, Path, Request, Response, status
+from fastapi import Body, HTTPException, Request, Response, status
 from features.appearance.avatar_service import (
     ALLOWED_AVATAR_UPLOAD_MIME_TYPES,
     AvatarConflictError,
@@ -24,7 +24,11 @@ from features.appearance.character_card import (
     request_character_extraction,
     update_character_card,
 )
-from features.appearance.character_card_models import CharacterCardExtract, CharacterCardResponse, CharacterCardUpdate
+from features.appearance.character_card_contracts import (
+    CharacterCardExtract,
+    CharacterCardResponse,
+    CharacterCardUpdate,
+)
 from features.appearance.character_extraction import schedule_character_extraction
 from features.appearance.outfit_service import (
     OutfitDraftExpiredError,
@@ -104,6 +108,7 @@ from features.companion.views import get_persona_view, update_persona_view
 from infrastructure.ai.error_classifier import LLMRuntimeError
 from infrastructure.ai.llm_client import MissingLlmConfigError
 from infrastructure.ai.prompt_engineer import VisualReasoningError
+from infrastructure.api_ids import ResourceId
 from infrastructure.assets.asset_store import (
     ImagePixelLimitError,
     UnsupportedImageFormatError,
@@ -113,12 +118,10 @@ from infrastructure.assets.asset_store import (
 )
 from infrastructure.assets.http_range import serve_ranged_file
 from infrastructure.config import SETTINGS
-from infrastructure.constants import POSTGRES_INT4_MAX
 from infrastructure.database import DbSession
 from infrastructure.http_contracts import operation_policy
 from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
-from infrastructure.text import safe_json_loads
 from pydantic import ValidationError
 from workflows.companion.operations import companion_idle_expression
 
@@ -131,11 +134,7 @@ router = get_router()
 logger = get_logger(__name__)
 
 
-@router.post(
-    "/interactions",
-    operation_id="companion.record_interaction",
-    response_model=InteractionStatsResult,
-)
+@router.post("/interactions", operation_id="companion.record_interaction", response_model=InteractionStatsResult)
 async def post_interaction(user: CurrentUser, body: InteractionStatsRequest) -> InteractionStatsResult:
     return InteractionStatsResult.model_validate(await record_interaction(user.id, body.kind, body.hour))
 
@@ -167,9 +166,7 @@ async def get_character_card_route(user: CurrentUser, db: DbSession) -> Characte
     openapi_extra=operation_policy(identities=("desktop", "remote")),
 )
 async def patch_character_card_route(
-    body: CharacterCardUpdate,
-    user: CurrentUser,
-    db: DbSession,
+    body: CharacterCardUpdate, user: CurrentUser, db: DbSession
 ) -> CharacterCardResponse:
     try:
         return await update_character_card(db, user.id, body)
@@ -184,10 +181,7 @@ async def patch_character_card_route(
 )
 @limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
 async def extract_character_card_route(
-    request: Request,
-    body: CharacterCardExtract,
-    user: CurrentUser,
-    db: DbSession,
+    request: Request, body: CharacterCardExtract, user: CurrentUser, db: DbSession
 ) -> CharacterCardResponse:
     try:
         result = await request_character_extraction(
@@ -203,21 +197,17 @@ async def extract_character_card_route(
 
 
 @router.get(
-    "/persona",
-    response_model=PersonaResponse,
-    openapi_extra=operation_policy(identities=("desktop", "remote")),
+    "/persona", response_model=PersonaResponse, openapi_extra=operation_policy(identities=("desktop", "remote"))
 )
 async def get_persona(user: CurrentUser, db: DbSession) -> PersonaResponse:
     return await get_persona_view(db, user.id)
 
 
 @router.put(
-    "/persona",
-    response_model=PersonaResponse,
-    openapi_extra=operation_policy(identities=("desktop", "remote")),
+    "/persona", response_model=PersonaResponse, openapi_extra=operation_policy(identities=("desktop", "remote"))
 )
 async def put_persona(body: PersonaUpdate, user: CurrentUser, db: DbSession) -> PersonaResponse:
-    data = safe_json_loads(body.definition_json, default={})
+    data = body.definition_json
     try:
         result = await update_persona_view(db, user.id, data, expected_fields=body.expected_fields)
     except PersonaConflictError as exc:
@@ -228,14 +218,10 @@ async def put_persona(body: PersonaUpdate, user: CurrentUser, db: DbSession) -> 
 
 
 @router.post(
-    "/portrait/confirm",
-    response_model=CompanionOperationResponse,
-    openapi_extra=operation_policy(wait_for_model=True),
+    "/portrait/confirm", response_model=CompanionOperationResponse, openapi_extra=operation_policy(wait_for_model=True)
 )
 async def post_portrait_confirm(
-    body: PortraitConfirmRequest,
-    user: CurrentUser,
-    db: DbSession,
+    body: PortraitConfirmRequest, user: CurrentUser, db: DbSession
 ) -> CompanionOperationResponse:
     try:
         async with get_avatar_job_lock(user.id):
@@ -255,9 +241,7 @@ async def post_portrait_confirm(
 
 
 @router.get(
-    "/avatar",
-    response_model=AvatarAssetResponse,
-    openapi_extra=operation_policy(identities=("desktop", "remote")),
+    "/avatar", response_model=AvatarAssetResponse, openapi_extra=operation_policy(identities=("desktop", "remote"))
 )
 async def get_avatar(user: CurrentUser, db: DbSession) -> AvatarAssetResponse:
     asset = await get_active_avatar_view(db, user.id)
@@ -337,11 +321,7 @@ async def _decode_optional_image(image_b64: str | None, content_type: str | None
     return await _decode_upload_image(image_b64, content_type) if image_b64 else (None, None)
 
 
-@router.post(
-    "/avatar/prompt",
-    response_model=ImagePromptResponse,
-    openapi_extra=operation_policy(wait_for_model=True),
-)
+@router.post("/avatar/prompt", response_model=ImagePromptResponse, openapi_extra=operation_policy(wait_for_model=True))
 @limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
 async def post_avatar_prompt(request: Request, body: AvatarPromptRequest, user: CurrentUser) -> ImagePromptResponse:
     try:
@@ -375,24 +355,14 @@ async def post_avatar_adopt(request: Request, body: FullbodyAdoptRequest, user: 
     return asset
 
 
-@router.get(
-    "/avatar/history",
-    response_model=AvatarHistoryResponse,
-)
+@router.get("/avatar/history", response_model=AvatarHistoryResponse)
 async def get_avatar_history(user: CurrentUser, db: DbSession) -> AvatarHistoryResponse:
     history = await list_avatar_history_view(db, user.id)
     return AvatarHistoryResponse(history=history)
 
 
-@router.put(
-    "/avatar/{avatar_id}/select",
-    response_model=AvatarAssetResponse,
-)
-async def put_avatar_select(
-    avatar_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
-    user: CurrentUser,
-    db: DbSession,
-) -> AvatarAssetResponse:
+@router.put("/avatar/{avatar_id}/select", response_model=AvatarAssetResponse)
+async def put_avatar_select(avatar_id: ResourceId, user: CurrentUser, db: DbSession) -> AvatarAssetResponse:
     try:
         async with get_avatar_job_lock(user.id):
             asset = await select_avatar_view(db, user.id, avatar_id)
@@ -410,10 +380,7 @@ async def put_avatar_select(
 )
 @limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
 async def post_fullbody_reference(
-    request: Request,
-    avatar_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
-    body: FullbodyReferenceGenerateRequest,
-    user: CurrentUser,
+    request: Request, avatar_id: ResourceId, body: FullbodyReferenceGenerateRequest, user: CurrentUser
 ) -> AvatarAssetResponse | FullbodyCandidateResponse:
     raw, content_type = await _decode_optional_image(body.image, body.content_type)
     try:
@@ -441,14 +408,8 @@ async def post_fullbody_reference(
     return asset
 
 
-@router.get(
-    "/avatar/{avatar_id}/fullbody/candidate",
-    response_model=FullbodyCandidateResponse | None,
-)
-async def get_fullbody_candidate(
-    avatar_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
-    user: CurrentUser,
-) -> FullbodyCandidateResponse | None:
+@router.get("/avatar/{avatar_id}/fullbody/candidate", response_model=FullbodyCandidateResponse | None)
+async def get_fullbody_candidate(avatar_id: ResourceId, user: CurrentUser) -> FullbodyCandidateResponse | None:
     return await latest_fullbody_candidate(user.id, avatar_id)
 
 
@@ -458,9 +419,7 @@ async def get_fullbody_candidate(
     openapi_extra=operation_policy(wait_for_model=True),
 )
 async def post_fullbody_candidate_analyze(
-    avatar_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
-    candidate_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
-    user: CurrentUser,
+    avatar_id: ResourceId, candidate_id: ResourceId, user: CurrentUser
 ) -> FullbodyCandidateResponse:
     try:
         return await retry_fullbody_candidate_analysis(user.id, avatar_id, candidate_id)
@@ -476,9 +435,7 @@ async def post_fullbody_candidate_analyze(
     openapi_extra=operation_policy(wait_for_model=True),
 )
 async def post_fullbody_candidate_accept(
-    avatar_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
-    candidate_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
-    user: CurrentUser,
+    avatar_id: ResourceId, candidate_id: ResourceId, user: CurrentUser
 ) -> AvatarAssetResponse:
     try:
         asset = await accept_fullbody_candidate_view(user.id, avatar_id, candidate_id)
@@ -494,10 +451,7 @@ async def post_fullbody_candidate_accept(
 )
 @limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
 async def post_fullbody_confirm(
-    request: Request,
-    avatar_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
-    body: FullbodyConfirmRequest,
-    user: CurrentUser,
+    request: Request, avatar_id: ResourceId, body: FullbodyConfirmRequest, user: CurrentUser
 ) -> AvatarAssetResponse:
     try:
         asset = await confirm_fullbody_seed_view(user.id, avatar_id=avatar_id, expected_url=body.expected_url)
@@ -531,7 +485,7 @@ def _avatar_request_error(exc: AvatarGenerationError | VisualReasoningError) -> 
 @limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
 async def post_fullbody_prompt(
     request: Request,
-    avatar_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+    avatar_id: ResourceId,
     user: CurrentUser,
     body: FullbodyPromptRequest = Body(default_factory=FullbodyPromptRequest),
 ) -> ImagePromptResponse:
@@ -558,10 +512,7 @@ async def post_fullbody_prompt(
 )
 @limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
 async def post_fullbody_adopt(
-    request: Request,
-    avatar_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
-    body: FullbodyAdoptRequest,
-    user: CurrentUser,
+    request: Request, avatar_id: ResourceId, body: FullbodyAdoptRequest, user: CurrentUser
 ) -> AvatarAssetResponse | FullbodyCandidateResponse:
     """自备图采纳：用户外部生成的图像按对应种子生成成功的语义落库。"""
     raw, content_type = await _decode_upload_image(body.image, body.content_type)
@@ -592,9 +543,7 @@ def _outfit_request_error(exc: OutfitError | VisualReasoningError) -> RequestErr
 
 
 @router.get(
-    "/outfits",
-    response_model=OutfitListResponse,
-    openapi_extra=operation_policy(identities=("desktop", "remote")),
+    "/outfits", response_model=OutfitListResponse, openapi_extra=operation_policy(identities=("desktop", "remote"))
 )
 async def get_outfits(user: CurrentUser, db: DbSession) -> OutfitListResponse:
     outfits = await list_outfits(db, user.id)
@@ -610,7 +559,6 @@ async def patch_outfit_policy(body: OutfitPolicyRequest, user: CurrentUser, db: 
     return OutfitPolicyResponse(policy=await set_outfit_policy(db, user.id, body.policy))
 
 
-# 造型素材的创建与采纳不检查形象锁定：服装/发型是可换元素而非身份变更（见 DESIGN「身份、穿着与动态能力」）
 @router.post(
     "/outfits",
     response_model=OutfitResponse,
@@ -624,13 +572,12 @@ async def post_outfit(
 ) -> OutfitResponse:
     try:
         if isinstance(body, OutfitAdoptRequest):
-            raw, content_type = await _decode_upload_image(body.image, body.content_type)
+            raw, _ = await _decode_upload_image(body.image, body.content_type)
             return await adopt_outfit_draft_image_view(
                 db,
                 user.id,
                 description=body.description,
                 data=raw,
-                content_type=content_type,
             )
         raw, content_type = await _decode_optional_image(body.image, body.content_type)
         outfit = await create_outfit_draft_view(
@@ -660,11 +607,7 @@ async def post_outfit(
     response_model=ImagePromptResponse,
     openapi_extra=operation_policy(identities=("desktop", "remote"), upload="image", wait_for_model=True),
 )
-async def post_outfit_prompt(
-    body: OutfitPromptRequest,
-    user: CurrentUser,
-    db: DbSession,
-) -> ImagePromptResponse:
+async def post_outfit_prompt(body: OutfitPromptRequest, user: CurrentUser, db: DbSession) -> ImagePromptResponse:
     if body.outfit_id is not None:
         try:
             prompt = await prepare_outfit_regenerate_prompt(db, user.id, body.outfit_id, feedback=body.feedback)
@@ -699,20 +642,19 @@ async def post_outfit_prompt(
     openapi_extra=operation_policy(identities=("desktop", "remote"), upload="image", wait_for_model=True),
 )
 async def post_outfit_regenerate(
-    outfit_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+    outfit_id: ResourceId,
     body: Annotated[OutfitRegenerateRequest | OutfitImageImportRequest, Body(discriminator="source")],
     user: CurrentUser,
     db: DbSession,
 ) -> OutfitResponse:
     try:
         if isinstance(body, OutfitImageImportRequest):
-            data, content_type = await _decode_upload_image(body.image, body.content_type)
+            data, _ = await _decode_upload_image(body.image, body.content_type)
             return await adopt_outfit_regenerate_image_view(
                 db,
                 user.id,
                 outfit_id,
                 data=data,
-                content_type=content_type,
             )
         outfit = await regenerate_outfit_draft_view(db, user.id, outfit_id, feedback=body.feedback, mode=body.mode)
     except (OutfitError, VisualReasoningError) as exc:
@@ -733,7 +675,7 @@ async def post_outfit_regenerate(
     openapi_extra=operation_policy(identities=("desktop", "remote"), wait_for_model=True),
 )
 async def post_outfit_confirm(
-    outfit_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+    outfit_id: ResourceId,
     user: CurrentUser,
     db: DbSession,
     body: OutfitConfirmRequest = Body(default_factory=OutfitConfirmRequest),
@@ -751,11 +693,7 @@ async def post_outfit_confirm(
     response_model=OutfitResponse,
     openapi_extra=operation_policy(identities=("desktop", "remote"), wait_for_model=True),
 )
-async def post_retry_outfit_description(
-    outfit_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
-    user: CurrentUser,
-    db: DbSession,
-) -> OutfitResponse:
+async def post_retry_outfit_description(outfit_id: ResourceId, user: CurrentUser, db: DbSession) -> OutfitResponse:
     try:
         outfit = await retry_outfit_description_view(db, user.id, outfit_id)
     except OutfitError as exc:
@@ -769,7 +707,7 @@ async def post_retry_outfit_description(
     openapi_extra=operation_policy(identities=("desktop", "remote")),
 )
 async def delete_outfit_route(
-    outfit_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+    outfit_id: ResourceId,
     user: CurrentUser,
     db: DbSession,
 ) -> CompanionOperationResponse:
@@ -782,12 +720,11 @@ async def delete_outfit_route(
 
 # 文件端点按会话或签名放行，不依赖 CurrentUser。
 @router.get(
-    "/asset/{user_id}/{asset_path:path}",
-    openapi_extra=operation_policy(identities=("desktop", "remote", "public")),
+    "/asset/{user_id}/{asset_path:path}", openapi_extra=operation_policy(identities=("desktop", "remote", "public"))
 )
 async def serve_companion_asset(
     request: Request,
-    user_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+    user_id: ResourceId,
     asset_path: str,
     session: OptionalSession,
     expires: int | None = None,

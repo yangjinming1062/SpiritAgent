@@ -1,13 +1,11 @@
 """会话历史读取与气泡统计；按 Message.id 正序重建消息，使工具结果可回填调用名称。"""
 
 from infrastructure.assets.asset_store import client_asset_url
-from infrastructure.text import safe_json_loads
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.conversation.formatting import visible_bubble_count
 from features.conversation.models import Conversation, Message
-from features.conversation.replacement import replaceable_reply_id
+from features.conversation.replacement import replaceable_reply_expression
 from features.conversation.replies import CompanionReply, MediaBubble
 from features.conversation.reply_audio import client_reply_bubbles
 from features.media.contracts import VideoJobSnapshot
@@ -15,14 +13,9 @@ from features.media.queries import get_video_jobs
 
 
 async def count_conversation_bubbles(db: AsyncSession, conversation_id: int) -> int:
-    return (
-        await db.execute(
-            select(func.coalesce(func.sum(visible_bubble_count()), 0))
-            .select_from(Message)
-            .join(Conversation, Conversation.id == Message.conversation_id)
-            .where(Message.conversation_id == conversation_id),
-        )
-    ).scalar_one()
+    return int(
+        await db.scalar(select(Conversation.visible_message_count).where(Conversation.id == conversation_id)) or 0
+    )
 
 
 def client_media_entries(media: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -49,13 +42,17 @@ async def build_session_messages(
     only_ids: list[int] | None = None,
 ) -> list[dict]:
     """按 Message.id 正序重建消息；支持向前分页、最近条数与指定消息集合。"""
-    stmt = select(Message).where(Message.conversation_id == conv_id)
+    stmt = select(Message, replaceable_reply_expression(conv_id).label("replaceable_id")).where(
+        Message.conversation_id == conv_id
+    )
     if before_id is not None:
         stmt = stmt.where(Message.id < before_id)
     if only_ids is not None:
         stmt = stmt.where(Message.id.in_(only_ids))
     stmt = stmt.order_by(Message.id.desc()).limit(latest) if latest is not None else stmt.order_by(Message.id)
-    messages = list((await db.execute(stmt)).scalars().all())
+    rows = (await db.execute(stmt)).all()
+    messages = [row.Message for row in rows]
+    replaceable_id = rows[0].replaceable_id if rows else None
     # 降序取最近若干条后翻回正序：前向重建要求工具调用先于其结果处理
     if latest is not None:
         messages.reverse()
@@ -76,19 +73,16 @@ async def build_session_messages(
     }
     video_jobs: dict[int, VideoJobSnapshot] = {}
     if pending_video_ids:
-        user_id = await db.scalar(select(Conversation.user_id).where(Conversation.id == conv_id))
-        if user_id is not None:
-            video_jobs = await get_video_jobs(db, user_id, pending_video_ids)
+        video_jobs = await get_video_jobs(db, messages[0].user_id, pending_video_ids)
 
     tool_name_by_call_id: dict[str, str] = {}
-    replaceable_id = await replaceable_reply_id(db, conv_id)
     result: list[dict] = []
     for msg in messages:
         item: dict = {"role": msg.role, "content": msg.content, "content_type": msg.content_type}
         if msg.subtype:
             item["subtype"] = msg.subtype
         if msg.media_json:
-            media = safe_json_loads(msg.media_json, default=None)
+            media = msg.media_json or None
             if isinstance(media, list) and media:
                 item["media"] = client_media_entries([e for e in media if isinstance(e, dict)])
         if msg.reply_json:
@@ -117,7 +111,7 @@ async def build_session_messages(
             item["timestamp"] = int(msg.created_at.timestamp() * 1000)
 
         if msg.tool_calls:
-            calls = safe_json_loads(msg.tool_calls, default=None)
+            calls = msg.tool_calls or None
             if isinstance(calls, list):
                 item["tool_calls"] = calls
                 if msg.role == "assistant":

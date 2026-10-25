@@ -17,6 +17,7 @@ from features.media.video_queue.contracts import VideoQueueInfo
 from features.posts.schemas import PostCommentResponse, PostResponse
 from features.topics.schemas import TopicFeedbackSnapshot
 from features.visuals.schemas import PlaybackReceiptKind, PlaybackStatus, VisualPlayCommand
+from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, JsonValue
 
 from entrypoints.desktop.contracts import EmptyResult
@@ -25,7 +26,7 @@ from entrypoints.desktop.contracts import EmptyResult
 class TurnEvent(BaseModel):
     request_id: str | None = None
     origin_kind: str | None = None
-    replace_reply_message_id: int | None = None
+    replace_reply_message_id: ResourceId | None = None
 
 
 class MessageDeltaEvent(TurnEvent):
@@ -40,12 +41,12 @@ class ToolProgressEvent(TurnEvent):
 
 class MessagePersistedEvent(TurnEvent):
     role: str
-    message_ids: list[int]
+    message_ids: list[ResourceId]
     messages: list[SessionMessageView]
 
 
 class MessageBubbleEvent(TurnEvent):
-    message_id: int
+    message_id: ResourceId
     bubble_index: int
     bubble: ReplyBubbleView
 
@@ -63,7 +64,7 @@ class MessageVoiceEvent(MessageBubbleEvent):
 
 class MessageAudioEvent(BaseModel):
     session_id: str
-    message_id: int
+    message_id: ResourceId
     audio_url: str
     duration: float | None = None
     transcript: str | None = None
@@ -94,13 +95,13 @@ class MessageCompleteEvent(TurnEvent):
     media: list[ClientMediaEntry] | None = None
     usage: TokenUsage | None = None
     cache_usage: CacheUsage | None = None
-    message_id: int | None = None
+    message_id: ResourceId | None = None
     can_replace_reply: bool
 
 
 class MessageReplacedEvent(TurnEvent):
     session_id: str
-    replaced_message_id: int
+    replaced_message_id: ResourceId
     message: SessionMessageView
     history_revision: int
 
@@ -119,12 +120,12 @@ class CompressionEvent(TurnEvent):
     session_id: str | None = None
     subtype: str
     text: str
-    message_id: int | None = None
+    message_id: ResourceId | None = None
 
 
 class GatewayErrorEvent(TurnEvent):
     message: str
-    retry_message_id: int | None = None
+    retry_message_id: ResourceId | None = None
 
 
 class SessionStateEvent(TurnEvent):
@@ -132,7 +133,7 @@ class SessionStateEvent(TurnEvent):
     running: bool
     status: str
     error: str | None
-    result_message_id: int | None = None
+    result_message_id: ResourceId | None = None
 
 
 class SessionListChangedEvent(BaseModel):
@@ -142,11 +143,11 @@ class SessionListChangedEvent(BaseModel):
 
 class MemoryChangedEvent(BaseModel):
     system_preset_id: str
-    memory_id: int | None = None
+    memory_id: ResourceId | None = None
 
 
 class ToolScope(BaseModel):
-    user_id: int
+    user_id: ResourceId
     system_preset_id: str
 
 
@@ -172,7 +173,7 @@ class SystemNotificationEvent(BaseModel):
 
 class CompanionMessageEvent(BaseModel):
     session_id: str
-    message_id: int
+    message_id: ResourceId
     bubbles: list[ReplyBubbleView]
 
 
@@ -186,15 +187,15 @@ class VoiceUpdatedEvent(BaseModel):
 
 
 class SceneChangedEvent(BaseModel):
-    scene_id: int | None = None
+    scene_id: ResourceId | None = None
 
 
 class OutfitChangedEvent(BaseModel):
-    outfit_id: int
+    outfit_id: ResourceId
 
 
 class CharacterCardEvent(BaseModel):
-    avatar_id: int
+    avatar_id: ResourceId
     revision: int
     status: Literal["pending", "running", "ready", "failed"]
 
@@ -205,8 +206,8 @@ class VisualUpdatedEvent(BaseModel):
 
 class LifeUpdatedEvent(BaseModel):
     revision: int | None = None
-    pursuit_id: int | None = None
-    step_id: int | None = None
+    pursuit_id: ResourceId | None = None
+    step_id: ResourceId | None = None
     event_key: str | None = None
 
 
@@ -235,7 +236,7 @@ class VideoFailedEvent(BaseModel):
     task_id: str
     session_id: str | None
     error: str | None
-    status_message_id: int | None
+    status_message_id: ResourceId | None
     status_text: str | None
 
 

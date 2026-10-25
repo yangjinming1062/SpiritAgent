@@ -21,13 +21,13 @@ import { patchAvatarSeeds } from './avatar-seeds-store'
 import { $activeAvatarId } from './portrait-store'
 
 interface FullbodyReferenceState {
-  avatarId: number | null
+  avatarId: string | null
   rawUrl: string | null
   previewUrl: string | null
   busy: boolean
   error: 'load' | 'generate' | 'preview' | null
   errorMessage: string | null
-  candidateId: number | null
+  candidateId: string | null
   candidateStatus: 'pending' | 'ready' | 'failed' | null
   candidateError: string | null
   history: FullbodyReferenceVersion[]
@@ -76,7 +76,7 @@ export const $fullbodyReference = atom<FullbodyReferenceState>(EMPTY_STATE)
 
 const MAX_HISTORY = 5
 let operationVersion = 0
-let pending: { avatarId: number; promise: Promise<boolean> } | null = null
+let pending: { avatarId: string; promise: Promise<boolean> } | null = null
 
 function appendHistory(
   current: FullbodyReferenceVersion[],
@@ -95,8 +95,8 @@ function loadHistoryIndex(): FullbodyReferenceIndex {
   return storedJson<FullbodyReferenceIndex>(FULLBODY_HISTORY_STORAGE_KEY, {}, isFullbodyReferenceIndex)
 }
 
-async function resolveHistory(avatarId: number): Promise<FullbodyReferenceVersion[]> {
-  const stored = loadHistoryIndex()[String(avatarId)] ?? []
+async function resolveHistory(avatarId: string): Promise<FullbodyReferenceVersion[]> {
+  const stored = loadHistoryIndex()[avatarId] ?? []
 
   const resolved = await Promise.all(
     stored.slice(-MAX_HISTORY).map(async entry => {
@@ -109,14 +109,13 @@ async function resolveHistory(avatarId: number): Promise<FullbodyReferenceVersio
   return resolved.filter((entry): entry is FullbodyReferenceVersion => entry !== null)
 }
 
-function saveHistory(avatarId: number, entries: FullbodyReferenceVersion[]): void {
+function saveHistory(avatarId: string, entries: FullbodyReferenceVersion[]): void {
   const next = { ...loadHistoryIndex() }
-  const key = String(avatarId)
 
   if (entries.length > 0) {
-    next[key] = entries.map(historyRecord)
+    next[avatarId] = entries.map(historyRecord)
   } else {
-    delete next[key]
+    delete next[avatarId]
   }
 
   persistString(FULLBODY_HISTORY_STORAGE_KEY, Object.keys(next).length > 0 ? JSON.stringify(next) : null)
@@ -136,7 +135,7 @@ registerStorageClearHandler(clearReference)
 $activeAvatarId.listen(clearReference)
 
 // 开始一次改写参考图状态的操作并使更早的操作作废；返回的判活函数在换号、换头像、重置或被更新的操作取代后为 false。
-function beginOperation(avatarId: number): () => boolean {
+function beginOperation(avatarId: string): () => boolean {
   const version = ++operationVersion
   const epoch = currentClearEpoch()
 
@@ -145,7 +144,7 @@ function beginOperation(avatarId: number): () => boolean {
 
 // 全身种子图写入本地缓存，自备图流程直接读取该缓存。preview 解析失败时不要显式传 null：store 的显式 display 分支会冲掉旧展示 URL，导致自备图弹窗突然缺参考图；缺省 undefined 交给 resolveDisplayUrl 保留 previous。
 function syncSeeds(
-  avatarId: number,
+  avatarId: string,
   response: ApiSchemas['AvatarAssetResponse'],
   rawUrl: string | null,
   previewUrl: string | null
@@ -159,7 +158,7 @@ function syncSeeds(
 }
 
 function updateReference(
-  avatarId: number,
+  avatarId: string,
   generate: boolean,
   feedback: string,
   reference: PickedImage | null = null,
@@ -300,7 +299,7 @@ function updateReference(
   return promise
 }
 
-export async function restoreFullbodyReferenceVersion(avatarId: number, versionId: string): Promise<boolean> {
+export async function restoreFullbodyReferenceVersion(avatarId: string, versionId: string): Promise<boolean> {
   const current = $fullbodyReference.get()
   const versionToRestore = current.history.find(entry => entry.id === versionId)
 
@@ -393,7 +392,7 @@ export async function restoreFullbodyReferenceVersion(avatarId: number, versionI
   }
 }
 
-export function clearFullbodyReferenceHistory(avatarId: number): void {
+export function clearFullbodyReferenceHistory(avatarId: string): void {
   saveHistory(avatarId, [])
   const current = $fullbodyReference.get()
 
@@ -402,12 +401,12 @@ export function clearFullbodyReferenceHistory(avatarId: number): void {
   }
 }
 
-export function hydrateFullbodyReference(avatarId: number): Promise<boolean> {
+export function hydrateFullbodyReference(avatarId: string): Promise<boolean> {
   return updateReference(avatarId, false, '')
 }
 
 export function regenerateFullbodyReference(
-  avatarId: number,
+  avatarId: string,
   feedback: string,
   reference: PickedImage | null = null,
   mode: ImageReviseMode = 'regenerate'
@@ -415,7 +414,7 @@ export function regenerateFullbodyReference(
   return updateReference(avatarId, true, feedback, reference, mode)
 }
 
-export async function acceptFullbodyCandidate(avatarId: number): Promise<boolean> {
+export async function acceptFullbodyCandidate(avatarId: string): Promise<boolean> {
   const current = $fullbodyReference.get()
 
   if (current.avatarId !== avatarId || !current.candidateId || current.candidateStatus !== 'ready' || current.busy) {
@@ -488,7 +487,7 @@ export async function acceptFullbodyCandidate(avatarId: number): Promise<boolean
   }
 }
 
-export async function retryFullbodyCandidateAnalysis(avatarId: number): Promise<boolean> {
+export async function retryFullbodyCandidateAnalysis(avatarId: string): Promise<boolean> {
   const current = $fullbodyReference.get()
 
   if (current.avatarId !== avatarId || !current.candidateId || current.busy) {

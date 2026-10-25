@@ -53,7 +53,7 @@ interface PersonaDraft {
 }
 
 interface CardDraft {
-  avatarId: number
+  avatarId: string
   revision: number
   changes: CharacterOverrides
 }
@@ -61,7 +61,7 @@ interface CardDraft {
 type Avatar = ApiResponse<'companion.get_avatar'>
 
 function definitionOf(persona: PersonaResponse): Record<string, unknown> {
-  const value: unknown = JSON.parse(persona.definition_json)
+  const value = persona.definition_json
 
   return isRecord(value) ? value : {}
 }
@@ -142,7 +142,7 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
         write: () =>
           api.invoke('companion.put_persona', {
             body: {
-              definition_json: JSON.stringify(draft.values),
+              definition_json: Object.fromEntries(PERSONA_FIELDS.map(({ key }) => [key, draft.values[key] ?? ''])),
               expected_fields: Object.fromEntries(PERSONA_FIELDS.map(({ key }) => [key, draft.base[key] ?? null]))
             }
           }),

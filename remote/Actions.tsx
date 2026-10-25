@@ -224,23 +224,38 @@ export function Actions({ api, refresh }: { api: RemoteApi; refresh: number }): 
   const alive = useAlive()
   const { run, runLatest, busy, error } = useTask()
   const [rows, setRows] = useState<ActionDefinition[]>([])
-  const [selected, setSelected] = usePageState<number | null>('actions.selected', null)
+  const [hasMore, setHasMore] = useState(false)
+  const nextCursor = useRef<string | null>(null)
+  const [selected, setSelected] = usePageState<string | null>('actions.selected', null)
   const [creating, setCreating] = usePageState('actions.creating', false)
   const [query, setQuery] = usePageState('actions.query', '')
   const [loaded, setLoaded] = useState(false)
   const revision = useRef(0)
-  const editing = rows.find(row => row.id === selected) ?? null
+  const [editing, setEditing] = useState<ActionDefinition | null>(null)
   usePageScroll(`actions.${creating ? 'create' : (selected ?? `list.${query}`)}`, loaded)
 
-  const load = useCallback(async () => {
-    const version = ++revision.current
-    const list = await api.invoke('companion_actions.list_actions', {})
+  const load = useCallback(
+    async (append = false) => {
+      const version = ++revision.current
+      const list = await api.invoke('companion_actions.list_actions', {
+        query: {
+          query: query.trim() || undefined,
+          cursor: append ? (nextCursor.current ?? undefined) : undefined,
+          limit: 50
+        }
+      })
 
-    if (alive() && revision.current === version) {
-      setRows(list.actions)
-      setLoaded(true)
-    }
-  }, [alive, api])
+      if (alive() && revision.current === version) {
+        setRows(previous =>
+          append ? [...previous, ...list.actions.filter(row => !previous.some(old => old.id === row.id))] : list.actions
+        )
+        setHasMore(list.has_more)
+        nextCursor.current = list.next_cursor
+        setLoaded(true)
+      }
+    },
+    [alive, api, query]
+  )
 
   useEffect(() => {
     void runLatest(load)
@@ -253,9 +268,33 @@ export function Actions({ api, refresh }: { api: RemoteApi; refresh: number }): 
     runLatest
   )
 
-  const visible = query.trim()
-    ? rows.filter(row => row.name.includes(query.trim()) || row.motion_description.includes(query.trim()))
-    : rows
+  const visible = rows
+
+  useEffect(() => {
+    if (!selected) {
+      setEditing(null)
+      return
+    }
+    if (editing?.id === selected) {
+      return
+    }
+    let current = true
+    void api
+      .invoke('companion_actions.get_action', { path: { action_id: selected } })
+      .then(action => {
+        if (current && alive()) {
+          setEditing(action)
+        }
+      })
+      .catch(() => {
+        if (current && alive()) {
+          setSelected(null)
+        }
+      })
+    return () => {
+      current = false
+    }
+  }, [alive, api, editing?.id, selected, setSelected])
 
   return (
     <>
@@ -267,6 +306,7 @@ export function Actions({ api, refresh }: { api: RemoteApi; refresh: number }): 
           onClose={() => {
             setCreating(false)
             setSelected(null)
+            setEditing(null)
             focusAfterRender(creating ? '[data-create-asset="action"]' : `[data-card-key="action-${selected}"]`)
           }}
         />
@@ -291,6 +331,7 @@ export function Actions({ api, refresh }: { api: RemoteApi; refresh: number }): 
               onClick={() => {
                 setCreating(true)
                 setSelected(null)
+                setEditing(null)
               }}
               type="button"
             >
@@ -319,11 +360,17 @@ export function Actions({ api, refresh }: { api: RemoteApi; refresh: number }): 
                 onSelect={() => {
                   setCreating(false)
                   setSelected(row.id)
+                  setEditing(row)
                 }}
                 title={row.name || '未命名动作'}
               />
             ))}
           </div>
+          {hasMore ? (
+            <button className="load-more" disabled={busy} onClick={() => void run(() => load(true))} type="button">
+              更多动作
+            </button>
+          ) : null}
           {loaded && visible.length === 0 && !busy ? (
             <Empty title="还没有动作定义">新建动作语义，影像组合时可以派上用场。</Empty>
           ) : null}

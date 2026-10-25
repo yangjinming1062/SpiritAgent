@@ -1,3 +1,4 @@
+import { isResourceId } from '../../../shared/resource-id'
 export type PresentationMode = 'window' | 'desktop'
 
 export interface PresentationDisplay {
@@ -63,7 +64,7 @@ export interface DesktopBackgroundRequest {
   poster: DesktopMediaReference | null
   playId: string | null
   /** 成品身份：稳定 ID + 成品版本 + 呈现代次，签名 URL 不参与识别。 */
-  visualId: number | null
+  visualId: string | null
   visualVersion: number | null
   presentationEpoch: number
   expiresAt: string | null
@@ -188,7 +189,7 @@ export interface AppNavigationTarget {
   settingsTab?: 'skills' | 'toolsets'
   sessionId?: string
   messageKey?: string
-  pursuitId?: number
+  pursuitId?: string
 }
 
 export function normalizeAppNavigation(raw: unknown): AppNavigationTarget {
@@ -211,10 +212,7 @@ export function normalizeAppNavigation(raw: unknown): AppNavigationTarget {
     settingsTab: section === 'devices' ? settingsTab : undefined,
     sessionId: typeof value.sessionId === 'string' ? value.sessionId : undefined,
     messageKey: typeof value.messageKey === 'string' ? value.messageKey : undefined,
-    pursuitId:
-      typeof value.pursuitId === 'number' && Number.isSafeInteger(value.pursuitId) && value.pursuitId > 0
-        ? value.pursuitId
-        : undefined
+    pursuitId: isResourceId(value.pursuitId) ? value.pursuitId : undefined
   }
 }
 

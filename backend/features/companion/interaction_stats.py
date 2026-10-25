@@ -90,15 +90,16 @@ def _format_content(counters: _DailyCounters) -> str:
 
 async def _upsert_memory(user_id: int, counters: _DailyCounters) -> None:
     content = _format_content(counters)
-    tags_json = '["interaction","stats","daily_summary"]'
+    tags = ["interaction", "stats", "daily_summary"]
 
     async with SESSION_LOCAL() as db:
         await store_slotted_memory(
             db,
             MemoryScope(user_id, "companion"),
-            f"interaction_stats:{counters.date}",
+            counters.date,
             content,
-            tags_json,
+            tags,
+            kind="interaction_stats",
             source=MemorySource("interaction", batch_id=counters.date),
         )
         await db.commit()

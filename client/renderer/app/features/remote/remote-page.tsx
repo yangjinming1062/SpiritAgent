@@ -44,7 +44,7 @@ export function RemotePage(): React.JSX.Element {
   const [error, setError] = useState('')
   const [loadError, setLoadError] = useState('')
   const [now, setNow] = useState(Date.now())
-  const [revokeTarget, setRevokeTarget] = useState<number | 'all' | null>(null)
+  const [revokeTarget, setRevokeTarget] = useState<string | null>(null)
   const pairingRevision = useRef(0)
   const devicesRevision = useRef(0)
 

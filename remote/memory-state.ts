@@ -1,4 +1,4 @@
-import type { MemoryItem } from '@protocol'
+import type { MemoryItem, MemoryListResponse } from '@protocol'
 
 import type { ApiInput } from '../shared/api'
 
@@ -16,12 +16,12 @@ export interface MemoryDraft {
 export type MemoryDrafts = Record<string, MemoryDraft>
 
 export function readMemoryDraft(drafts: MemoryDrafts, row: MemoryItem): MemoryDraft | undefined {
-  return drafts[String(row.id)]
+  return drafts[row.id]
 }
 
 /** 写入草稿；内容回到开始编辑时的原文即视为没有修改，删除该条草稿。 */
 export function writeMemoryDraft(drafts: MemoryDrafts, row: MemoryItem, content: string): MemoryDrafts {
-  const previous = drafts[String(row.id)]
+  const previous = drafts[row.id]
   const baseContent = previous?.baseContent ?? row.content
 
   if (content === baseContent) {
@@ -30,7 +30,7 @@ export function writeMemoryDraft(drafts: MemoryDrafts, row: MemoryItem, content:
 
   return {
     ...drafts,
-    [String(row.id)]: { baseContent, content, version: previous?.version ?? row.content_version }
+    [row.id]: { baseContent, content, version: previous?.version ?? row.content_version }
   }
 }
 
@@ -39,18 +39,16 @@ export function storeMemoryDraft(drafts: MemoryDrafts, row: MemoryItem, draft: M
     return clearMemoryDraft(drafts, row)
   }
 
-  return { ...drafts, [String(row.id)]: draft }
+  return { ...drafts, [row.id]: draft }
 }
 
 export function clearMemoryDraft(drafts: MemoryDrafts, row: MemoryItem): MemoryDrafts {
-  const key = String(row.id)
-
-  if (!(key in drafts)) {
+  if (!(row.id in drafts)) {
     return drafts
   }
 
   const next = { ...drafts }
-  delete next[key]
+  delete next[row.id]
 
   return next
 }
@@ -73,14 +71,14 @@ export async function* readActiveMemories(
   api: RemoteApi,
   query: ApiInput<'resource_catalog.get_memories'>['query']
 ): AsyncGenerator<MemoryItem[]> {
-  let offset = 0
+  let cursor: string | null = null
   while (true) {
-    const result = await api.invoke('resource_catalog.get_memories', {
-      query: { ...query, status: 'active', limit: 500, offset }
+    const result: MemoryListResponse = await api.invoke('resource_catalog.get_memories', {
+      query: { ...query, status: 'active', limit: 500, cursor }
     })
     yield result.memories
-    offset += result.memories.length
-    if (!result.memories.length || offset >= result.total) {
+    cursor = result.next_cursor ?? null
+    if (!result.memories.length || !cursor) {
       return
     }
   }
@@ -95,7 +93,7 @@ export async function findSavedMemory(
 ): Promise<MemoryItem | null> {
   for await (const page of readActiveMemories(api, {
     system_preset_id: preset,
-    kind: row.context?.startsWith('user_profile:') ? 'user_profile' : 'recall',
+    kind: row.kind,
     q: content.trim()
   })) {
     const saved = page.find(value => value.id === row.id)

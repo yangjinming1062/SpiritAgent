@@ -112,7 +112,7 @@ function VisualDetailPanel({
   visual
 }: {
   api: RemoteApi
-  currentVisualId: number | null
+  currentVisualId: string | null
   onChanged: () => Promise<void>
   onClose: () => void
   visual: VisualDetail
@@ -232,52 +232,60 @@ export function Visuals({
   const alive = useAlive()
   const { run, runLatest, busy, error } = useTask()
   const [rows, setRows] = useState<VisualItem[]>([])
-  const [total, setTotal] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const nextCursor = useRef<string | null>(null)
   const [jobs, setJobs] = useState<VisualJob[]>([])
-  const [currentVisualId, setCurrentVisualId] = useState<number | null>(null)
+  const [currentVisualId, setCurrentVisualId] = useState<string | null>(null)
   const [selected, setSelected] = usePageState<VisualDetail | null>('visuals.selected', null)
   const [query, setQuery] = usePageState('visuals.query', '')
   const [mediaKind, setMediaKind] = usePageState<'all' | VisualMediaKind>('visuals.mediaKind', 'all')
   const [source, setSource] = usePageState('visuals.source', '')
-  const [browseLimit, setBrowseLimit] = usePageState('visuals.browseLimit', 30)
   const [loaded, setLoaded] = useState(false)
   const revision = useRef(0)
   const selectedId = selected?.id
   usePageScroll(`visuals.${selectedId ?? `list.${query}`}`, loaded)
 
-  const load = useCallback(async () => {
-    const version = ++revision.current
-    const [list, jobList, presentation, detail] = await Promise.all([
-      api.invoke('companion_visuals.list_visuals', {
-        query: {
-          limit: browseLimit,
-          media_kind: mediaKind === 'all' ? undefined : mediaKind,
-          offset: 0,
-          query: query.trim() || undefined,
-          source: source.trim() || undefined
-        }
-      }),
-      api.invoke('companion_visuals.list_visual_jobs', {}),
-      api.invoke('companion_visuals.get_presentation', {}),
-      selectedId
-        ? api.invoke('companion_visuals.get_visual', { path: { visual_id: selectedId } }).catch(failure => {
-            if (failure instanceof ApiError && failure.status === 404) {
-              return null
-            }
-            throw failure
-          })
-        : null
-    ])
+  const load = useCallback(
+    async (append = false) => {
+      const version = ++revision.current
+      const [list, jobList, presentation, detail] = await Promise.all([
+        api.invoke('companion_visuals.list_visuals', {
+          query: {
+            limit: 30,
+            media_kind: mediaKind === 'all' ? undefined : mediaKind,
+            cursor: append ? (nextCursor.current ?? undefined) : undefined,
+            query: query.trim() || undefined,
+            source: source.trim() || undefined
+          }
+        }),
+        api.invoke('companion_visuals.list_visual_jobs', {}),
+        api.invoke('companion_visuals.get_presentation', {}),
+        selectedId
+          ? api.invoke('companion_visuals.get_visual', { path: { visual_id: selectedId } }).catch(failure => {
+              if (failure instanceof ApiError && failure.status === 404) {
+                return null
+              }
+              throw failure
+            })
+          : null
+      ])
 
-    if (alive() && revision.current === version) {
-      setRows(list.visuals)
-      setTotal(list.total)
-      setJobs(jobList.jobs)
-      setCurrentVisualId(presentation.current_visual?.id ?? null)
-      setLoaded(true)
-      setSelected(previous => (previous?.id === selectedId ? detail : previous))
-    }
-  }, [alive, api, browseLimit, mediaKind, query, selectedId, setSelected, source])
+      if (alive() && revision.current === version) {
+        setRows(previous =>
+          append
+            ? [...previous, ...list.visuals.filter(item => !previous.some(existing => existing.id === item.id))]
+            : list.visuals
+        )
+        setHasMore(list.has_more)
+        nextCursor.current = list.next_cursor
+        setJobs(jobList.jobs)
+        setCurrentVisualId(presentation.current_visual?.id ?? null)
+        setLoaded(true)
+        setSelected(previous => (previous?.id === selectedId ? detail : previous))
+      }
+    },
+    [alive, api, mediaKind, query, selectedId, setSelected, source]
+  )
 
   useEffect(() => {
     void runLatest(load)
@@ -300,7 +308,7 @@ export function Visuals({
               onChange={event => {
                 revision.current++
                 setRows([])
-                setBrowseLimit(30)
+                nextCursor.current = null
                 setQuery(event.target.value)
               }}
               placeholder="按名称筛选"
@@ -325,7 +333,7 @@ export function Visuals({
                 <select
                   onChange={event => {
                     revision.current++
-                    setBrowseLimit(30)
+                    nextCursor.current = null
                     setMediaKind(event.target.value === 'all' ? 'all' : (event.target.value as VisualMediaKind))
                   }}
                   value={mediaKind}
@@ -340,7 +348,7 @@ export function Visuals({
                 <input
                   onChange={event => {
                     revision.current++
-                    setBrowseLimit(30)
+                    nextCursor.current = null
                     setSource(event.target.value)
                   }}
                   placeholder="衣柜、环境或动作名称"
@@ -396,13 +404,8 @@ export function Visuals({
           {loaded && rows.length === 0 && !busy ? (
             <Empty title="还没有影像">影像由衣柜、环境和动作素材组合制作，成品会出现在这里。</Empty>
           ) : null}
-          {rows.length < total ? (
-            <button
-              className="load-more"
-              disabled={busy}
-              onClick={() => setBrowseLimit(Math.min(total, rows.length + 30))}
-              type="button"
-            >
+          {hasMore ? (
+            <button className="load-more" disabled={busy} onClick={() => void run(() => load(true))} type="button">
               更多影像
             </button>
           ) : null}

@@ -3,7 +3,7 @@ import { isLifeUiSnapshot, type LifeUiSnapshot } from '@ipc/contracts'
 
 const state = defineAccountUiAtom<LifeUiSnapshot>({
   key: 'da.life.ui',
-  fallback: { status: 'active', pursuitPage: 0, eventPage: 0, selectedId: null, scrollTop: 0 },
+  fallback: { status: 'active', pursuitPage: 0, pursuitCursors: [null], eventPage: 0, selectedId: null, scrollTop: 0 },
   isPersistable: isLifeUiSnapshot
 })
 
@@ -11,7 +11,7 @@ export const $lifeUi = state.$atom
 export const $lifeUiRestoreRevision = state.$importRevision
 export const updateLifeUi = state.set
 
-export function selectLifePursuit(selectedId: number | null): void {
+export function selectLifePursuit(selectedId: string | null): void {
   state.set({ selectedId, eventPage: 0, scrollTop: 0 })
   $lifeUiRestoreRevision.set($lifeUiRestoreRevision.get() + 1)
 }

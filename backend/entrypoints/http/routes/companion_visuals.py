@@ -21,7 +21,8 @@ from features.visuals.schemas import (
     VisualReceiptResponse,
     VisualRegenerateRequest,
 )
-from infrastructure.constants import POSTGRES_INT4_MAX
+from infrastructure.api_ids import ResourceId
+from infrastructure.constants import POSTGRES_INT8_MAX
 from infrastructure.http_contracts import operation_policy
 
 from entrypoints.http.auth import CurrentUser
@@ -35,11 +36,12 @@ async def list_visuals(
     user: CurrentUser,
     query: Annotated[str | None, Query(max_length=200)] = None,
     media_kind: Annotated[Literal["image", "video"] | None, Query()] = None,
-    outfit_id: Annotated[int | None, Query(gt=0, le=POSTGRES_INT4_MAX)] = None,
-    scene_id: Annotated[int | None, Query(gt=0, le=POSTGRES_INT4_MAX)] = None,
-    action_id: Annotated[int | None, Query(gt=0, le=POSTGRES_INT4_MAX)] = None,
+    outfit_id: Annotated[ResourceId | None, Query(gt=0, le=POSTGRES_INT8_MAX)] = None,
+    scene_id: Annotated[ResourceId | None, Query(gt=0, le=POSTGRES_INT8_MAX)] = None,
+    action_id: Annotated[ResourceId | None, Query(gt=0, le=POSTGRES_INT8_MAX)] = None,
     source: Annotated[str | None, Query(max_length=200)] = None,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    cursor: Annotated[ResourceId | None, Query()] = None,
+    include_total: bool = False,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> VisualListResponse:
     return await _visual_queries.list_visuals(
@@ -50,7 +52,8 @@ async def list_visuals(
         scene_id=scene_id,
         action_id=action_id,
         source=source,
-        offset=offset,
+        cursor=cursor,
+        include_total=include_total,
         limit=limit,
     )
 
@@ -59,13 +62,15 @@ async def list_visuals(
 async def list_visual_jobs(
     user: CurrentUser,
     state: Annotated[VisualJobState | None, Query()] = None,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    cursor: Annotated[ResourceId | None, Query()] = None,
+    include_total: bool = False,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> VisualJobListResponse:
     return await _visual_queries.list_jobs(
         user_id=user.id,
         states=[state] if state else None,
-        offset=offset,
+        cursor=cursor,
+        include_total=include_total,
         limit=limit,
     )
 
@@ -91,30 +96,21 @@ async def restore_presentation(user: CurrentUser) -> VisualPlayCommand | None:
 
 @router.get("/{visual_id}", response_model=VisualDetailView)
 async def get_visual(
-    visual_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
-    user: CurrentUser,
+    visual_id: Annotated[ResourceId, Path(gt=0, le=POSTGRES_INT8_MAX)], user: CurrentUser
 ) -> VisualDetailView:
     return await _visuals.visual_detail(user_id=user.id, visual_id=visual_id)
 
 
-@router.post(
-    "/{visual_id}/regenerate",
-    response_model=VisualJobView,
-    status_code=202,
-)
+@router.post("/{visual_id}/regenerate", response_model=VisualJobView, status_code=202)
 async def regenerate_visual(
-    visual_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
-    user: CurrentUser,
-    body: VisualRegenerateRequest,
+    visual_id: Annotated[ResourceId, Path(gt=0, le=POSTGRES_INT8_MAX)], user: CurrentUser, body: VisualRegenerateRequest
 ) -> VisualJobView:
     return await _visuals.regenerate(user_id=user.id, visual_id=visual_id, body=body)
 
 
 @router.post("/jobs/{job_id}/commands", response_model=VisualJobView, status_code=202)
 async def command_visual_job(
-    job_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
-    user: CurrentUser,
-    body: VisualJobCommandRequest,
+    job_id: Annotated[ResourceId, Path(gt=0, le=POSTGRES_INT8_MAX)], user: CurrentUser, body: VisualJobCommandRequest
 ) -> VisualJobView:
     return await _visuals.job_command(user_id=user.id, job_id=job_id, body=body)
 
@@ -125,9 +121,7 @@ async def command_visual_job(
     openapi_extra=operation_policy(identities=("desktop",)),
 )
 async def claim_play(
-    play_id: Annotated[str, Path(min_length=8, max_length=36)],
-    user: CurrentUser,
-    body: VisualClaimRequest,
+    play_id: Annotated[str, Path(min_length=8, max_length=36)], user: CurrentUser, body: VisualClaimRequest
 ) -> VisualClaimResponse:
     return await _visuals.claim_play(user_id=user.id, play_id=play_id, body=body)
 
@@ -138,8 +132,6 @@ async def claim_play(
     openapi_extra=operation_policy(identities=("desktop",)),
 )
 async def receipt_play(
-    play_id: Annotated[str, Path(min_length=8, max_length=36)],
-    user: CurrentUser,
-    body: VisualReceiptRequest,
+    play_id: Annotated[str, Path(min_length=8, max_length=36)], user: CurrentUser, body: VisualReceiptRequest
 ) -> VisualReceiptResponse:
     return await _visuals.receipt_play(user_id=user.id, play_id=play_id, body=body)

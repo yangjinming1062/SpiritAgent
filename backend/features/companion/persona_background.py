@@ -1,5 +1,4 @@
 import asyncio
-import json
 import random
 import time
 
@@ -61,7 +60,7 @@ async def _refresh_once(persona_id: int, user_id: int) -> None:
     # 每次尝试都重新读取 Persona；读/调用/写各持一个短会话，LLM 调用期间不占连接
     t_query = time.monotonic()
     async with SESSION_LOCAL() as db:
-        persona = await db.scalar(select(Persona).where(Persona.id == persona_id))
+        persona = await db.scalar(select(Persona).where(Persona.user_id == persona_id))
         if persona is None:
             return  # 行已消失（用户被删？），无事可做
         definition = load_persona_definition(persona)
@@ -70,7 +69,7 @@ async def _refresh_once(persona_id: int, user_id: int) -> None:
     t_write = time.monotonic()
     async with SESSION_LOCAL() as db:
         # 行锁使依据核对与写入和 PUT 的人设写入互斥；定义已更新时，由那次保存调度的任务写入标签
-        current = await db.scalar(select(Persona).where(Persona.id == persona_id).with_for_update())
+        current = await db.scalar(select(Persona).where(Persona.user_id == persona_id).with_for_update())
         if current is None:
             return
         if personality_tag_inputs(load_persona_definition(current)) != personality_tag_inputs(definition):
@@ -78,9 +77,7 @@ async def _refresh_once(persona_id: int, user_id: int) -> None:
             return
         # 只更新单列，其余列保持 PUT 写入的值
         await db.execute(
-            update(Persona)
-            .where(Persona.id == persona_id)
-            .values(personality_tags_json=json.dumps(tags, ensure_ascii=False)),
+            update(Persona).where(Persona.user_id == persona_id).values(personality_tags_json=tags),
         )
         await db.commit()
     t_commit = time.monotonic()

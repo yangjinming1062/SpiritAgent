@@ -190,30 +190,9 @@ async def resolve_vision_chain(
     )
 
 
-async def resolve_media_chain(
-    db: AsyncSession | None,
-    user_id: int | None,
-    *,
-    task: AiTaskKey,
-    required_modalities: frozenset[ModelModality],
-) -> list[ProviderConfig]:
-    return await resolve_provider_chain(
-        db,
-        user_id,
-        ServiceType.llm,
-        task=task,
-        required_modalities=required_modalities,
-    )
-
-
-def provider_from_config(config: ProviderConfig) -> BaseProvider:
-    cls = resolve(config.service_type, config.provider_name)
-    return cls(config)
-
-
 def build_provider[P: BaseProvider](config: ProviderConfig, provider_type: type[P]) -> P:
     """构造供应商并核对其能力类型；注册表与能力类型不符时明确失败。"""
-    provider = provider_from_config(config)
+    provider = resolve(config.service_type, config.provider_name)(config)
     if not isinstance(provider, provider_type):
         raise LookupError(f"provider {config.provider_name!r} is not a {provider_type.__name__}")
     return provider

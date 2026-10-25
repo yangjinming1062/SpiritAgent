@@ -117,7 +117,7 @@ function AssetCreator({
   kind: 'scene' | 'outfit'
   onCheck: () => Promise<void>
   onClose: () => void
-  onCreated: (id: number) => Promise<void>
+  onCreated: (id: string) => Promise<void>
 }): ReactElement {
   const { run, busy, error } = useTask()
   const alive = useAlive()
@@ -342,49 +342,50 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
   const [rows, setRows] = useState<Scene[]>([])
   const [state, setState] = useState<SceneState | null>(null)
   const [query, setQuery] = usePageState('scene.query', '')
-  const [total, setTotal] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const nextCursor = useRef<string | null>(null)
   const [selected, setSelected] = usePageState<Scene | null>('scene.selected', null)
   const [creating, setCreating] = usePageState('scene.creating', false)
   const [loaded, setLoaded] = useState(false)
   const [policySaving, setPolicySaving] = useState(false)
-  const [browseLimit, setBrowseLimit] = usePageState('scene.browseLimit', 30)
   const revision = useRef(0)
   const selectedId = selected?.id
   usePageScroll(`scene.${creating ? 'create' : (selectedId ?? `list.${query}`)}`, loaded)
 
-  const load = useCallback(async () => {
-    const version = ++revision.current
+  const load = useCallback(
+    async (append = false) => {
+      const version = ++revision.current
 
-    const [library, current, detail] = await Promise.all([
-      Promise.all(
-        Array.from({ length: Math.ceil(browseLimit / 100) }, (_, index) =>
-          api.invoke('companion_scenes.scene_list_route', {
-            query: { q: query, offset: index * 100, limit: Math.min(100, browseLimit - index * 100) }
-          })
+      const [library, current, detail] = await Promise.all([
+        api.invoke('companion_scenes.scene_list_route', {
+          query: { q: query, cursor: append ? (nextCursor.current ?? undefined) : undefined, limit: 30 }
+        }),
+        api.invoke('companion_scenes.read_scene_state'),
+        selectedId
+          ? api.invoke('companion_scenes.scene_detail_route', { path: { scene_id: selectedId } }).catch(failure => {
+              if (failure instanceof ApiError && failure.status === 404) {
+                return null
+              }
+              throw failure
+            })
+          : null
+      ])
+
+      if (alive() && revision.current === version) {
+        setRows(previous =>
+          append
+            ? [...previous, ...library.scenes.filter(row => !previous.some(old => old.id === row.id))]
+            : library.scenes
         )
-      ).then(pages => ({
-        scenes: [...new Map(pages.flatMap(page => page.scenes).map(scene => [scene.id, scene])).values()],
-        total: pages[0]?.total ?? 0
-      })),
-      api.invoke('companion_scenes.read_scene_state'),
-      selectedId
-        ? api.invoke('companion_scenes.scene_detail_route', { path: { scene_id: selectedId } }).catch(failure => {
-            if (failure instanceof ApiError && failure.status === 404) {
-              return null
-            }
-            throw failure
-          })
-        : null
-    ])
-
-    if (alive() && revision.current === version) {
-      setRows(library.scenes)
-      setTotal(library.total)
-      setState(current)
-      setLoaded(true)
-      setSelected(previous => (previous?.id === selectedId ? detail : previous))
-    }
-  }, [alive, api, browseLimit, query, selectedId, setSelected])
+        setHasMore(library.has_more)
+        nextCursor.current = library.next_cursor
+        setState(current)
+        setLoaded(true)
+        setSelected(previous => (previous?.id === selectedId ? detail : previous))
+      }
+    },
+    [alive, api, query, selectedId, setSelected]
+  )
 
   useEffect(() => {
     void runLatest(load)
@@ -404,7 +405,7 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
               onChange={event => {
                 revision.current++
                 setRows([])
-                setBrowseLimit(30)
+                nextCursor.current = null
                 setQuery(event.target.value)
               }}
               placeholder="搜索环境"
@@ -534,13 +535,8 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
           {loaded && rows.length === 0 && !busy ? (
             <Empty title="给伙伴一个新的地方">描述想去的地方，AI 会为你制作环境素材。</Empty>
           ) : null}
-          {rows.length < total ? (
-            <button
-              className="load-more"
-              disabled={busy}
-              onClick={() => setBrowseLimit(Math.min(total, rows.length + 30))}
-              type="button"
-            >
+          {hasMore ? (
+            <button className="load-more" disabled={busy} onClick={() => void run(() => load(true))} type="button">
               更多环境
             </button>
           ) : null}
@@ -770,7 +766,7 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
   const [policySaving, setPolicySaving] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [creating, setCreating] = usePageState('outfit.creating', false)
-  const [selectedId, setSelectedId] = usePageState<number | null>('outfit.selected', null)
+  const [selectedId, setSelectedId] = usePageState<string | null>('outfit.selected', null)
   const revision = useRef(0)
 
   const load = useCallback(async () => {

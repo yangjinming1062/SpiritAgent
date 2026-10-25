@@ -2,6 +2,7 @@ import json
 
 from features.companion.affect_emit import emit_companion_message
 from features.companion.disturbance import is_still
+from infrastructure.api_ids import ResourceId
 from infrastructure.text import tool_error
 from runtime.tools.prompts import SEND_MESSAGE_DESC, SEND_MESSAGE_PARAM_DESCS
 from runtime.tools.registry import ToolsRegistry
@@ -9,7 +10,7 @@ from runtime.tools.registry import ToolsRegistry
 
 async def send_message_tool(
     message: str,
-    user_id: int,
+    user_id: ResourceId,
     **_context: object,
 ) -> str:
     if not isinstance(message, str) or not message.strip():

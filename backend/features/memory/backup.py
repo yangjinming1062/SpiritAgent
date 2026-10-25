@@ -1,194 +1,204 @@
-"""模块拥有的备份表、校验与恢复操作。"""
+"""新数据库格式的记忆备份；向量与日记索引从权威内容重建。"""
 
-from functools import partial
+import hashlib
 from typing import Any, get_args
+from uuid import UUID
 
-from infrastructure.ai.embedding_space import MEMORY_EMBEDDING_DIM
-from infrastructure.backup import BackupContext, BackupRows, BackupTable, IdMap
+from infrastructure.backup import BackupContext, BackupRows, BackupTable
 from runtime.memory_scope import MemoryScope, MemorySource, validate_memory_scope
-from sqlalchemy import Select, delete, or_, select
+from sqlalchemy import Select, delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import MEMORY_SLOT_CONTEXT_PREFIXES, Memory
+from features.conversation.evidence import original_user_messages
 
-_MEMORY_SOURCE_KINDS = frozenset((*get_args(MemorySource.__annotations__["kind"]), "import"))
-
-
-def _original_source(refs: dict[str, Any]) -> Any:
-    return refs.get("original_source", refs)
+from .contracts import MemoryRecord
+from .memory_namespaces import MEMORY_KINDS
+from .models import Memory, MemoryEvidenceRow, MemoryFingerprint, MemoryRevision
 
 
-def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
-    user_id = context.user_id
-    if table == "memories":
-        if (payload.get("context") or "").startswith("diary:") or payload.get("source_kind") == "diary":
-            raise ValueError("Diary indexes must be rebuilt from published diaries")
-        validate_memory_scope(MemoryScope(user_id, payload.get("system_preset_id")))
-        if not isinstance(payload.get("content_version"), int) or payload["content_version"] <= 0:
-            raise ValueError("Invalid memory content version")
-        if not isinstance(payload.get("source_refs"), dict) or not isinstance(payload.get("source_kind"), str):
-            raise ValueError("Memory source is required")
-        if payload.get("status") not in {"active", "candidate", "invalidated", "forgotten"}:
-            raise ValueError("Invalid memory status")
-        if payload.get("basis") not in {"explicit", "inferred", "observed", "system"}:
-            raise ValueError("Invalid memory basis")
-        if payload.get("usage") not in {"background", "contextual"}:
-            raise ValueError("Invalid memory usage")
-        if not isinstance(payload.get("evidence"), list) or not isinstance(payload.get("history"), list):
-            raise ValueError("Memory evidence and history are required")
-        embedding = payload.get("embedding")
-        model_key = payload.get("embedding_model_key")
-        if model_key is not None and (
-            not isinstance(model_key, str)
-            or len(model_key) != 64
-            or any(char not in "0123456789abcdef" for char in model_key)
-        ):
-            raise ValueError("Memory embedding model key is invalid")
-        if embedding is not None:
-            if not isinstance(embedding, list) or not all(isinstance(v, int | float) for v in embedding):
-                raise ValueError("Memory embedding must be a list of numbers")
-            if len(embedding) != MEMORY_EMBEDDING_DIM:
-                raise ValueError(f"Memory embedding dim {len(embedding)} != {MEMORY_EMBEDDING_DIM}")
-        if payload["source_kind"] not in _MEMORY_SOURCE_KINDS:
-            raise ValueError("Invalid memory source kind")
-        payload["source_refs"] = {
-            "imported_memory_id": raw["id"],
-            "original_source": _original_source(payload["source_refs"]),
-        }
-
-
-async def restore_memory_context(
-    db: AsyncSession,
-    rows: dict[str, list[dict[str, Any]]],
-    id_map: IdMap,
-    user_id: int,
-    import_batch_id: str,
-) -> None:
-    conversations = {str(row["id"]): row for row in rows.get("conversations", [])}
-    messages = {str(row["id"]): row for row in rows.get("messages", [])}
-    for raw in rows.get("memories", []):
-        memory = await db.get(Memory, int(id_map["memories"][str(raw["id"])]))
-        # 只处理本批插入的记录；merge 命中的现有槽位保留原来源。
-        if memory.source_refs.get("import_batch_id") != import_batch_id:
-            continue
-        refs = raw["source_refs"]
-        restored: dict[str, Any] = {
-            "imported_memory_id": raw["id"],
-            "import_batch_id": import_batch_id,
-            "original_source": _original_source(refs),
-        }
-        session_id = refs.get("session_id")
-        if session_id is not None and str(session_id) in conversations:
-            conv = conversations[str(session_id)]
-            if conv["system_preset_id"] != raw["system_preset_id"]:
-                raise ValueError("Memory source belongs to a different preset")
-            restored["session_id"] = int(id_map["conversations"][str(session_id)])
-            for mid in refs.get("message_ids", []):
-                message = messages.get(str(mid))
-                if message is not None and str(message["conversation_id"]) != str(session_id):
-                    raise ValueError("Invalid memory source message")
-
-        def remap_evidence(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
-            result = []
-            for item in evidence:
-                entry = dict(item)
-                mid = entry.get("message_id")
-                if mid is not None:
-                    message = messages.get(str(mid))
-                    conv = conversations.get(str(message["conversation_id"])) if message else None
-                    if conv and conv["system_preset_id"] != raw["system_preset_id"]:
-                        raise ValueError("Memory evidence belongs to a different preset")
-                    if not message or not conv or str(mid) not in id_map.get("messages", {}):
-                        entry.pop("message_id", None)
-                        entry.pop("session_id", None)
-                        entry["source_unavailable"] = True
-                    else:
-                        if message["role"] != "user" or message.get("subtype") is not None:
-                            raise ValueError("Memory evidence must reference an original user message")
-                        entry["message_id"] = int(id_map["messages"][str(mid)])
-                        entry["session_id"] = int(id_map["conversations"][str(message["conversation_id"])])
-                result.append(entry)
-            return result
-
-        memory.evidence = remap_evidence(raw["evidence"])
-        if any(e.get("source_unavailable") for e in memory.evidence) and memory.status in {"active", "candidate"}:
-            memory.status = "invalidated"
-            memory.reason = "Original evidence is unavailable after restoration"
-        history = []
-        for old in raw["history"]:
-            item = dict(old)
-            item["id"] = memory.id
-            item["evidence"] = remap_evidence(item.get("evidence", []))
-            history.append(item)
-        memory.history = history
-        restored["message_ids"] = sorted({e["message_id"] for e in memory.evidence if "message_id" in e})
-        memory.source_refs = restored
-        # 赋列表达式使 UPDATE 显式写入原值；否则 onupdate 会把备份中的 updated_at 改成导入时刻。
-        memory.updated_at = Memory.updated_at
-    await db.flush()
-
-
-def embedding_dimension() -> int:
-    return MEMORY_EMBEDDING_DIM
-
-
-def _export(payload: dict[str, Any]) -> None:
-    if payload.get("embedding") is not None:
-        payload["embedding"] = list(map(float, payload["embedding"]))
+def _prepare_memory(raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
+    validate_memory_scope(MemoryScope(context.user_id, payload.get("system_preset_id")))
+    UUID(payload["source_key"])
+    if payload.get("source_event_id") is not None and payload["system_preset_id"] != "companion":
+        raise ValueError("Life facts belong to the companion preset")
+    if payload.get("source_kind") not in get_args(MemorySource.__annotations__["kind"]):
+        raise ValueError("Invalid memory source kind")
+    if payload.get("status") not in {"active", "candidate", "invalidated", "forgotten"}:
+        raise ValueError("Invalid memory status")
+    if payload.get("basis") not in {"explicit", "inferred", "observed", "system"}:
+        raise ValueError("Invalid memory basis")
+    if payload.get("usage") not in {"contextual", "background"}:
+        raise ValueError("Invalid memory usage")
+    if payload.get("kind") not in MEMORY_KINDS or payload["kind"] == "diary":
+        raise ValueError("Invalid memory kind; diary indexes are rebuilt from entries")
+    if not isinstance(payload.get("tags"), list) or not all(isinstance(tag, str) for tag in payload["tags"]):
+        raise ValueError("Memory tags must be strings")
+    if payload.get("status") == "forgotten" and payload.get("content"):
+        raise ValueError("Forgotten memory cannot contain original content")
 
 
 def _query(user_id: int) -> Select[tuple[Memory]]:
-    return select(Memory).where(
-        Memory.user_id == user_id,
-        Memory.source_kind != "diary",
-        or_(Memory.context.is_(None), ~Memory.context.like("diary:%")),
-    )
-
-
-async def _check(db: AsyncSession, raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
-    payload["source_refs"]["import_batch_id"] = context.import_batch_id
-
-
-async def _find_slot(
-    db: AsyncSession,
-    raw: dict[str, Any],
-    payload: dict[str, Any],
-    context: BackupContext,
-) -> int | None:
-    if context.mode != "merge" or not (payload.get("context") or "").startswith(MEMORY_SLOT_CONTEXT_PREFIXES):
-        return None
-    await db.flush()
-    return await db.scalar(
-        select(Memory.id).where(
-            Memory.user_id == context.user_id,
-            Memory.system_preset_id == payload["system_preset_id"],
-            Memory.context == payload["context"],
-        ),
-    )
-
-
-async def clear_diary_indexes(db: AsyncSession, user_id: int) -> None:
-    await db.execute(
-        delete(Memory).where(
-            Memory.user_id == user_id,
-            Memory.system_preset_id == "companion",
-            or_(Memory.source_kind == "diary", Memory.context.like("diary:%")),
-        ),
-    )
+    return select(Memory).where(Memory.user_id == user_id, Memory.kind != "diary")
 
 
 async def _clear(db: AsyncSession, user_id: int) -> None:
-    await db.execute(
-        delete(Memory).where(
-            Memory.user_id == user_id,
-            Memory.source_kind != "diary",
-            or_(Memory.context.is_(None), ~Memory.context.like("diary:%")),
-        ),
-    )
+    await db.execute(delete(Memory).where(Memory.user_id == user_id, Memory.kind != "diary"))
 
 
 async def _restore_context(db: AsyncSession, rows: BackupRows, context: BackupContext) -> None:
-    await restore_memory_context(db, rows, context.id_map, context.user_id, context.import_batch_id)
+    originals = {str(row["id"]): row for row in rows.get("memories", [])}
+    inserted = {key for table, key in context.rewriter.inserted_rows if table == "memories"}
+    messages = {str(row["id"]): row for row in rows.get("messages", [])}
+    conversations = {str(row["id"]): row for row in rows.get("conversations", [])}
+    invalid = set()
+    for table in ("memory_evidence", "memory_revisions"):
+        for raw in rows.get(table, []):
+            memory = originals.get(str(raw["memory_id"]))
+            if memory is not None and memory["status"] == "forgotten":
+                raise ValueError("Forgotten memory cannot retain evidence or revisions")
+    for raw in rows.get("memory_evidence", []):
+        if str(raw["memory_id"]) not in inserted:
+            continue
+        memory = originals.get(str(raw["memory_id"]))
+        if memory is None:
+            raise ValueError("Memory evidence lacks its memory")
+        message = messages.get(str(raw.get("message_id")))
+        conversation = conversations.get(str(message["conversation_id"])) if message else None
+        if conversation and conversation["system_preset_id"] != memory["system_preset_id"]:
+            raise ValueError("Memory evidence belongs to another preset")
+        if message and (message["role"] != "user" or message.get("subtype") is not None):
+            raise ValueError("Memory evidence must refer to an original user message")
+        if not message or not conversation:
+            mapped = context.id_map.get("memories", {}).get(str(raw["memory_id"]))
+            if mapped is not None:
+                invalid.add(mapped)
+    by_scope: dict[str, list[dict[str, Any]]] = {}
+    for raw in rows.get("memory_evidence", []):
+        memory = originals.get(str(raw["memory_id"]))
+        if memory is not None and str(raw["memory_id"]) in inserted:
+            by_scope.setdefault(memory["system_preset_id"], []).append(raw)
+    for preset, evidence_rows in by_scope.items():
+        mapped_ids = {
+            int(mapped)
+            for raw in evidence_rows
+            if (mapped := context.id_map.get("messages", {}).get(str(raw.get("message_id")))) is not None
+        }
+        source_rows = await original_user_messages(db, context.user_id, preset, mapped_ids) if mapped_ids else {}
+        for raw in evidence_rows:
+            mapped_id = context.id_map.get("messages", {}).get(str(raw.get("message_id")))
+            source = source_rows.get(int(mapped_id)) if mapped_id is not None else None
+            fingerprint = (
+                hashlib.sha256(f"{source.created_at.isoformat()}\n{source.content}".encode()).hexdigest()
+                if source
+                else None
+            )
+            if source is None or raw["quote"] not in source.content or fingerprint != raw["fingerprint"]:
+                invalid.add(context.id_map["memories"][str(raw["memory_id"])])
+    suppressed: dict[str, set[str]] = {}
+    for raw in rows.get("memory_fingerprints", []):
+        validate_memory_scope(MemoryScope(context.user_id, raw["system_preset_id"]))
+        memory = originals.get(str(raw.get("memory_id")))
+        if memory is not None and memory["system_preset_id"] != raw["system_preset_id"]:
+            raise ValueError("Memory fingerprint belongs to another preset")
+        if not isinstance(raw["suppressed"], bool):
+            raise ValueError("Invalid memory fingerprint suppression state")
+        if raw["suppressed"]:
+            suppressed.setdefault(raw["system_preset_id"], set()).add(raw["fingerprint"])
+    for preset, fingerprints in suppressed.items():
+        await db.execute(
+            update(MemoryFingerprint)
+            .where(
+                MemoryFingerprint.user_id == context.user_id,
+                MemoryFingerprint.system_preset_id == preset,
+                MemoryFingerprint.fingerprint.in_(fingerprints),
+            )
+            .values(suppressed=True)
+        )
+    if invalid:
+        await db.execute(
+            update(Memory)
+            .where(
+                Memory.user_id == context.user_id, Memory.id.in_(invalid), Memory.status.in_(("active", "candidate"))
+            )
+            .values(
+                status="invalidated",
+                reason="Original evidence is unavailable after restoration",
+                updated_at=Memory.updated_at,
+            )
+        )
+    for raw in rows.get("memories", []):
+        if str(raw["id"]) not in inserted:
+            continue
+        source = conversations.get(str(raw.get("source_conversation_id")))
+        if source is not None and source["system_preset_id"] != raw["system_preset_id"]:
+            raise ValueError("Memory source belongs to another preset")
+
+
+def _prepare_revision(raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
+    snapshot = MemoryRecord.model_validate(payload["snapshot"])
+    if snapshot.status == "forgotten":
+        raise ValueError("Forgotten memory revisions must not be retained")
+    snapshot.id = payload["memory_id"]
+    for evidence in snapshot.evidence:
+        if evidence.message_id is not None:
+            mapped = context.id_map.get("messages", {}).get(str(evidence.message_id))
+            evidence.message_id = int(mapped) if mapped is not None else None
+            evidence.source_unavailable = True if mapped is None else None
+    payload["snapshot"] = snapshot.model_dump(mode="json")
+
+
+def _evidence_query(user_id: int) -> Select[tuple[MemoryEvidenceRow]]:
+    return (
+        select(MemoryEvidenceRow)
+        .join(Memory, Memory.id == MemoryEvidenceRow.memory_id)
+        .where(MemoryEvidenceRow.user_id == user_id, Memory.kind != "diary")
+    )
+
+
+def _revision_query(user_id: int) -> Select[tuple[MemoryRevision]]:
+    return (
+        select(MemoryRevision)
+        .join(Memory, Memory.id == MemoryRevision.memory_id)
+        .where(MemoryRevision.user_id == user_id, Memory.kind != "diary")
+    )
+
+
+def _fingerprint_query(user_id: int) -> Select[tuple[MemoryFingerprint]]:
+    return (
+        select(MemoryFingerprint)
+        .outerjoin(Memory, Memory.id == MemoryFingerprint.memory_id)
+        .where(MemoryFingerprint.user_id == user_id, or_(MemoryFingerprint.memory_id.is_(None), Memory.kind != "diary"))
+    )
+
+
+async def _find_memory(
+    db: AsyncSession, raw: dict[str, Any], payload: dict[str, Any], context: BackupContext
+) -> int | None:
+    key = ("memory_import_keys", context.user_id, context.import_batch_id)
+    indexes = db.info.get(key)
+    if indexes is None:
+        rows = (
+            await db.execute(
+                select(Memory.id, Memory.source_key, Memory.system_preset_id, Memory.kind, Memory.slot_key).where(
+                    Memory.user_id == context.user_id
+                )
+            )
+        ).all()
+        indexes = (
+            {row.source_key: (row.id, row.system_preset_id) for row in rows},
+            {(row.system_preset_id, row.kind, row.slot_key): row.id for row in rows if row.slot_key is not None},
+        )
+        db.info[key] = indexes
+    sources, slots = indexes
+    if existing := sources.get(payload["source_key"]):
+        if existing[1] != payload["system_preset_id"]:
+            raise ValueError("Imported memory source belongs to another preset")
+        return existing[0]
+    return (
+        slots.get((payload["system_preset_id"], payload["kind"], payload["slot_key"]))
+        if payload["slot_key"] is not None
+        else None
+    )
 
 
 def backup_tables() -> tuple[BackupTable, ...]:
@@ -196,12 +206,35 @@ def backup_tables() -> tuple[BackupTable, ...]:
         BackupTable(
             "memories",
             Memory,
+            foreign_keys={"source_conversation_id": "conversations", "source_event_id": "life_events"},
             export_query=_query,
-            export_payload=_export,
-            prepare_payload=partial(_prepare, "memories"),
-            validate_payload=_check,
-            find_existing=_find_slot,
+            prepare_payload=_prepare_memory,
             custom_delete=_clear,
+            find_existing=_find_memory,
             restore_context=_restore_context,
+        ),
+        BackupTable(
+            "memory_evidence",
+            MemoryEvidenceRow,
+            export_query=_evidence_query,
+            foreign_keys={"memory_id": "memories", "message_id": "messages"},
+            unique_keys=("memory_id", "fingerprint", "quote", "stance"),
+            skip_existing_parent="memory_id",
+        ),
+        BackupTable(
+            "memory_revisions",
+            MemoryRevision,
+            export_query=_revision_query,
+            foreign_keys={"memory_id": "memories"},
+            unique_keys=("memory_id", "content_version"),
+            prepare_payload=_prepare_revision,
+            skip_existing_parent="memory_id",
+        ),
+        BackupTable(
+            "memory_fingerprints",
+            MemoryFingerprint,
+            export_query=_fingerprint_query,
+            foreign_keys={"memory_id": "memories"},
+            unique_keys=("memory_id", "fingerprint"),
         ),
     )

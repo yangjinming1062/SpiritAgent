@@ -18,7 +18,7 @@ export interface SessionSnapshotPort {
   hasToken: boolean
   sessionId: string
   tokenExpiresAt: number
-  user: { id: number; username: string }
+  user: { id: string; username: string }
 }
 
 /** 会话运行时需要的完整会话面（activate/restore/logout/refresh）。 */

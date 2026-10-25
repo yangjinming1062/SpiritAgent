@@ -38,7 +38,7 @@ from infrastructure.config import SETTINGS
 from infrastructure.constants import CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT
 from infrastructure.database import session_scope
 from infrastructure.logger import get_logger
-from infrastructure.text import resolve_prompt_text, safe_json_loads, utc_now
+from infrastructure.text import resolve_prompt_text, utc_now
 from runtime.client_context import ChatRequestClientContext
 from runtime.presets import COMPANION_PRESET_ID
 from runtime.tools.domains import apply_search_tools_catalog
@@ -146,7 +146,7 @@ async def compress_session_history(
             context_window=inputs.ctx_length,
         )
     async with session_scope() as db:
-        await persist_compression_checkpoint(db, conv.id, info)
+        await persist_compression_checkpoint(db, conv.id, info, user_id=user_id)
         history = await context_messages(db, conv)
     return ManualCompressionResult(
         info=info,
@@ -271,7 +271,7 @@ async def _run_chat_turn(
                         raise ValueError("Persisted user message does not belong to this turn")
                     user_message_id = persisted_message_id
                 else:
-                    user_message_id = await persist_user_message(db, conv.id, req.message)
+                    user_message_id = await persist_user_message(db, conv.id, req.message, user_id=user_id)
                     await emitter.send_json(
                         {
                             "type": "message.persisted",
@@ -283,9 +283,7 @@ async def _run_chat_turn(
             # 回合起点重读 user_settings（PUT /api/config 后下一回合即生效）；会话级覆写再覆盖其上，只构建一次供门控与派发共用。
             effective_settings = merge_session_settings(
                 await load_user_settings(db, user_id),
-                session_settings
-                if session_settings is not None
-                else safe_json_loads(conv.settings_json or "", default={}),
+                session_settings if session_settings is not None else (conv.settings_json or {}),
             )
             # 主动回合在此一次加载历史：既取最近用户发言，也传给 build_turn_inputs 免二次读取。
             history: list[MessageSnapshot] | None = None
@@ -388,6 +386,7 @@ async def _run_chat_turn(
                         db,
                         conv.id,
                         compress_info,
+                        user_id=user_id,
                         notify_user_id=user_id if headless else None,
                     )
                 # 自动压缩单行插入；手动 /压缩 走 command.result + hydrate=true，互斥互补。

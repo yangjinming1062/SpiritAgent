@@ -50,7 +50,7 @@ export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, e
   const [sealingPortrait, setSealingPortrait] = useState(false)
   const sealingRef = useRef(false)
   const [portraitUrl, setPortraitUrl] = useState<string | null>(null)
-  const [portraitPreviewId, setPortraitPreviewId] = useState<number | null>(null)
+  const [portraitPreviewId, setPortraitPreviewId] = useState<string | null>(null)
   const [portraitPanelHint, setPortraitPanelHint] = useState<string | null>(null)
   const [avatarSelfSourceOpen, setAvatarSelfSourceOpen] = useState(false)
   const [refImage, setRefImage] = useState<PickedImage | null>(null)
@@ -221,7 +221,7 @@ export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, e
   }
 
   // 确认头像并进入全身阶段；失败落到确认步骤展示原因，可原地重试。
-  const sealPortrait = async (expectedAvatarId: number | null = portraitPreviewId): Promise<void> => {
+  const sealPortrait = async (expectedAvatarId: string | null = portraitPreviewId): Promise<void> => {
     if (sealingRef.current || expectedAvatarId === null) {
       return
     }

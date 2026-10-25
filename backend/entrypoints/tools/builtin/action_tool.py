@@ -5,6 +5,7 @@ from typing import Any
 
 from features.action_library import queries as action_queries
 from features.action_library.schemas import ABSOLUTE_MAX_DURATION_SECONDS
+from infrastructure.api_ids import ResourceId
 from infrastructure.database import SESSION_LOCAL
 from runtime.tools.registry import ToolsRegistry
 from workflows.companion_action_prompts import ACTION_DESIGN_MOTION_DESCRIPTION
@@ -23,9 +24,10 @@ ACTION_DESIGN_TOOL_DESCRIPTION = (
 
 
 async def action_search_tool(
-    user_id: int,
+    user_id: ResourceId,
     query: str = "",
     limit: int = 10,
+    cursor: ResourceId | None = None,
     **_: Any,
 ) -> str:
     async with SESSION_LOCAL() as db:
@@ -34,13 +36,21 @@ async def action_search_tool(
             user_id,
             query=query,
             limit=max(1, min(limit, 20)),
+            cursor=cursor,
         )
-    return json.dumps([item.model_dump(mode="json") for item in result.actions], ensure_ascii=False)
+    return json.dumps(
+        {
+            "actions": [item.model_dump(mode="json") for item in result.actions],
+            "has_more": result.has_more,
+            "next_cursor": str(result.next_cursor) if result.next_cursor is not None else None,
+        },
+        ensure_ascii=False,
+    )
 
 
 async def action_inspect_tool(
-    user_id: int,
-    action_id: int,
+    user_id: ResourceId,
+    action_id: ResourceId,
     **_: Any,
 ) -> str:
     async with SESSION_LOCAL() as db:
@@ -53,7 +63,7 @@ async def action_inspect_tool(
 async def action_design_tool(
     name: str,
     motion_description: str,
-    user_id: int,
+    user_id: ResourceId,
     use_when: list[str] | None = None,
     avoid_when: list[str] | None = None,
     allowed_triggers: list[str] | None = None,
@@ -73,7 +83,7 @@ async def action_design_tool(
         duration_seconds=duration_seconds,
         clip_kind=clip_kind,
     )
-    return json.dumps(result, ensure_ascii=False)
+    return json.dumps({**result, "action_id": str(result["action_id"])}, ensure_ascii=False)
 
 
 def register(registry: ToolsRegistry) -> None:
@@ -82,6 +92,11 @@ def register(registry: ToolsRegistry) -> None:
             "action_search",
             action_search_tool,
             {
+                "cursor": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]*$",
+                    "description": "继续读取时使用上次返回的 next_cursor；首次查询省略。",
+                },
                 "query": {
                     "type": "string",
                     "description": "完整关键词文本匹配；留空不筛选。返回数量仍受 limit 限制。",
@@ -95,8 +110,8 @@ def register(registry: ToolsRegistry) -> None:
             action_inspect_tool,
             {
                 "action_id": {
-                    "type": "integer",
-                    "minimum": 1,
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]*$",
                     "description": "动作标识，来自 action_search 或 action_design。",
                 },
             },

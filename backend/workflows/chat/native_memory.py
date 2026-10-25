@@ -10,6 +10,7 @@ from features.memory.memory_review import assess_memory_changes
 from infrastructure.ai.error_classifier import LLMRuntimeError
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import resolve_user_llm_config
+from infrastructure.api_ids import parse_resource_id
 from infrastructure.database import session_scope
 from infrastructure.logger import get_logger
 from infrastructure.text import tool_error, utc_now
@@ -17,14 +18,6 @@ from runtime.memory_scope import MemoryScope, MemorySource
 from sqlalchemy.exc import SQLAlchemyError
 
 logger = get_logger(__name__)
-
-# 记忆 ID 是 int4 主键。
-_MEMORY_ID_MAX = 2**31 - 1
-
-
-def _is_memory_id(value: object) -> bool:
-    """页游标由模型给出：只接受 int4 范围内的正整数，bool、浮点、字符串与越界值不进入 SQL 条件。"""
-    return type(value) is int and 1 <= value <= _MEMORY_ID_MAX
 
 
 class NativeMemory:
@@ -41,10 +34,8 @@ class NativeMemory:
                 before_memory_id = args.get("before_memory_id")
                 if query is not None and not isinstance(query, str):
                     return tool_error("query must be a string")
-                if before_memory_id is not None and not _is_memory_id(before_memory_id):
-                    return tool_error(
-                        "before_memory_id must be a positive integer memory ID, such as next_before_memory_id from the previous result",
-                    )
+                if before_memory_id is not None:
+                    before_memory_id = parse_resource_id(before_memory_id)
                 async with session_scope() as db:
                     self._inspection = await load_review_context(
                         db,
@@ -59,7 +50,8 @@ class NativeMemory:
                     if r.status == "active" and (not r.expires_at or datetime.fromisoformat(r.expires_at) > utc_now())
                 ]
                 payload = replace(self._inspection, memories=maintenance).payload()
-                payload["next_before_memory_id"] = min((r.id for r in self._inspection.memories), default=None)
+                boundary = min((r.id for r in self._inspection.memories), default=None)
+                payload["next_before_memory_id"] = str(boundary) if boundary is not None else None
                 return json.dumps(payload, ensure_ascii=False)
             if tool_name == "memory_retain":
                 if self._inspection is None:
@@ -79,7 +71,8 @@ class NativeMemory:
                     {
                         "result": "reviewed",
                         "changes": [
-                            r.model_dump() if r.status == "active" else {"id": r.id, "status": r.status} for r in rows
+                            r.model_dump(mode="json") if r.status == "active" else {"id": str(r.id), "status": r.status}
+                            for r in rows
                         ],
                         "note": "No changes means nothing new was retained. Do not claim a candidate is an established fact.",
                     },
@@ -109,7 +102,9 @@ class NativeMemory:
                         query_embedding=vector,
                         diary_date=diary_date,
                     )
-                return json.dumps({"memories": [row.model_dump() for row in rows]}, default=str, ensure_ascii=False)
+                return json.dumps(
+                    {"memories": [row.model_dump(mode="json") for row in rows]}, default=str, ensure_ascii=False
+                )
             return tool_error(f"Unknown memory tool: {tool_name}")
         except (ValueError, LLMRuntimeError) as exc:
             # 校验失败与已脱敏的 LLM 失败，原因交给模型决定纠正或放弃。

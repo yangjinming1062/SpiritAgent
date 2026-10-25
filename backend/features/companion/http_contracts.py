@@ -2,6 +2,7 @@
 
 from typing import Literal
 
+from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -28,5 +29,5 @@ class IdleExpressionRequest(CompanionRequest):
 
 class IdleExpressionResult(BaseModel):
     expressed: bool
-    action_id: int | None = None
+    action_id: ResourceId | None = None
     reason: str = ""

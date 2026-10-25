@@ -1,15 +1,15 @@
 """Outbox 的引用与历史失效操作。"""
 
-import json
 from collections.abc import Collection
+from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import WSEvent
 
 
-async def live_event_payloads(db: AsyncSession, user_id: int) -> tuple[str, ...]:
+async def live_event_payloads(db: AsyncSession, user_id: int) -> tuple[dict[str, Any], ...]:
     return tuple(
         await db.scalars(
             select(WSEvent.payload).where(WSEvent.user_id == user_id, WSEvent.status.in_(("PENDING", "PROCESSING"))),
@@ -17,7 +17,7 @@ async def live_event_payloads(db: AsyncSession, user_id: int) -> tuple[str, ...]
     )
 
 
-async def settled_event_payloads(db: AsyncSession, user_id: int) -> tuple[tuple[int, str], ...]:
+async def settled_event_payloads(db: AsyncSession, user_id: int) -> tuple[tuple[int, dict[str, Any]], ...]:
     return tuple(
         (row.id, row.payload)
         for row in await db.scalars(
@@ -38,28 +38,23 @@ async def invalidate_history_events(
     message_ids: Collection[int],
     job_ids: Collection[str],
     session_ids: Collection[str],
-) -> tuple[str, ...]:
-    released: list[str] = []
-    stale_ids: list[int] = []
-    for event in await db.scalars(select(WSEvent).where(WSEvent.user_id == user_id)):
-        try:
-            payload = json.loads(event.payload)
-        except (ValueError, TypeError):
-            continue
-        if not isinstance(payload, dict):
-            continue
-        belongs = (
-            payload.get("message_id") in message_ids
-            or payload.get("status_message_id") in message_ids
-            or event.event_type.startswith("video_gen.")
-            and str(payload.get("task_id")) in job_ids
-            or str(payload.get("session_id")) in session_ids
-            and event.event_type
-            in {"message.voice", "message.media", "companion.message", "video_gen.completed", "video_gen.failed"}
-        )
-        if belongs:
-            released.append(event.payload)
-            stale_ids.append(event.id)
-    if stale_ids:
-        await db.execute(delete(WSEvent).where(WSEvent.id.in_(stale_ids)))
-    return tuple(released)
+) -> tuple[dict[str, Any], ...]:
+    message_keys = [str(value) for value in message_ids]
+    job_keys = [str(value) for value in job_ids]
+    session_keys = [str(value) for value in session_ids]
+    if not message_keys and not job_keys and not session_keys:
+        return ()
+    belongs = or_(
+        WSEvent.payload["message_id"].astext.in_(message_keys),
+        WSEvent.payload["status_message_id"].astext.in_(message_keys),
+        and_(WSEvent.event_type.startswith("video_gen."), WSEvent.payload["task_id"].astext.in_(job_keys)),
+        and_(
+            WSEvent.payload["session_id"].astext.in_(session_keys),
+            WSEvent.event_type.in_(
+                ("message.voice", "message.media", "companion.message", "video_gen.completed", "video_gen.failed")
+            ),
+        ),
+    )
+    return tuple(
+        await db.scalars(delete(WSEvent).where(WSEvent.user_id == user_id, belongs).returning(WSEvent.payload))
+    )

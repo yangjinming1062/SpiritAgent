@@ -31,14 +31,14 @@ interface DesignMessage {
 }
 
 interface DesignDraft {
-  id: number
+  id: string
   previewUrl: string
 }
 
 // 衣柜设计会话持有输入、草稿与提交状态；结果不明时先在衣柜核对，不能直接重复制作。
 export function useOutfitDesignSession(
-  onConfirmed: (outfitId: number) => void,
-  onDrafted?: (outfitId: number) => void
+  onConfirmed: (outfitId: string) => void,
+  onDrafted?: (outfitId: string) => void
 ): {
   messages: DesignMessage[]
   draft: DesignDraft | null
@@ -53,7 +53,7 @@ export function useOutfitDesignSession(
   confirm: () => Promise<void>
   attachRefImage: () => Promise<void>
   clearRefImage: () => void
-  adoptDraft: (id: number, previewUrl: string) => void
+  adoptDraft: (id: string, previewUrl: string) => void
   restoreReference: () => void
   reset: () => void
 } {
@@ -338,7 +338,7 @@ export function useOutfitDesignSession(
 
   // 从列表里的既有草稿续上设计会话（微调 / 直接确认入柜）。
   const adoptDraft = useCallback(
-    (id: number, previewUrl: string): void => {
+    (id: string, previewUrl: string): void => {
       reset()
       msgIdRef.current += 1
       setMessages([
@@ -388,7 +388,7 @@ async function runCreate(description: string, image: PickedImage | null): Promis
 }
 
 async function runRegenerate(
-  id: number,
+  id: string,
   feedback: string,
   mode: ImageReviseMode
 ): Promise<ApiSchemas['OutfitResponse']> {

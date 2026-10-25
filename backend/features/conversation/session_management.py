@@ -1,22 +1,38 @@
 import asyncio
-import json
+import base64
 from contextlib import AsyncExitStack
-from typing import Literal
+from datetime import UTC, datetime
+from typing import Any, Literal
 
+from infrastructure.api_ids import POSTGRES_BIGINT_MAX, ResourceId
 from infrastructure.assets.write_protection import user_asset_lock
 from infrastructure.attachments import gc_session as attachments_gc_session
 from infrastructure.constants import SEARCH_INPUT_MAX_LEN, SESSION_PREVIEW_MAX_CHARS, SQL_LIKE_ESCAPE_CHAR
 from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
-from runtime.conversation import decode_session_settings
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from runtime.conversation import copy_session_settings
 from runtime.events.emit import emit_ws_event
 from runtime.presets import resolve_preset_meta
 from runtime.turn_ownership import conversation_is_running, conversation_lock
-from sqlalchemy import BigInteger, String, asc, case, cast, desc, func, literal, or_, select
+from sqlalchemy import (
+    BigInteger,
+    ColumnElement,
+    DateTime,
+    String,
+    and_,
+    case,
+    cast,
+    func,
+    literal,
+    literal_column,
+    or_,
+    select,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.conversation.asset_releases import collect_message_asset_releases
-from features.conversation.formatting import message_contains_text, visible_bubble_count
+from features.conversation.formatting import message_contains_text
 from features.conversation.main_conversation import SPECIAL_KIND
 from features.conversation.models import Conversation, Message, parse_session_id
 from features.conversation.reply_audio import cancel_reply_audio
@@ -37,9 +53,9 @@ _preview_subquery = (
     select(func.substr(Message.content, 1, SESSION_PREVIEW_MAX_CHARS))
     .where(
         Message.conversation_id == Conversation.id,
-        Message.role == "user",
+        Message.role == literal_column("'user'"),
         Message.content.isnot(None),
-        Message.content != "",
+        Message.content != literal_column("''"),
     )
     .order_by(Message.id)
     .limit(1)
@@ -86,43 +102,117 @@ async def _get_conversation_or_404(db: AsyncSession, user_id: int, session_id: s
     return conv
 
 
+class _SessionCursor(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    mode: Literal["archived", "recent", "created", "messages"]
+    identifier: ResourceId
+    system: bool = False
+    pinned_at: AwareDatetime | None = None
+    order_time: AwareDatetime | None = None
+    message_count: int | None = Field(default=None, ge=0, le=POSTGRES_BIGINT_MAX)
+
+
+def _session_cursor(raw: str | None, mode: str) -> _SessionCursor | None:
+    if raw is None:
+        return None
+    try:
+        if not raw or len(raw) > 1024:
+            raise ValueError("Invalid cursor")
+        value = _SessionCursor.model_validate_json(base64.b64decode(raw, altchars=b"-_", validate=True))
+        if (
+            value.mode != mode
+            or (mode == "messages" and value.message_count is None)
+            or (mode != "messages" and value.order_time is None)
+        ):
+            raise ValueError("Cursor sort does not match")
+        return value
+    except (ValueError, TypeError) as exc:
+        raise RequestError(status_code=422, message="会话分页位置无效，请重新加载列表") from exc
+
+
+def _session_sort(mode: str, message_count: ColumnElement | None = None) -> list[tuple[ColumnElement, bool]]:
+    if mode == "archived":
+        return [(Conversation.archived_at, True), (Conversation.id, False)]
+    metric = (
+        message_count
+        if mode == "messages"
+        else Conversation.created_at
+        if mode == "created"
+        else Conversation.updated_at
+    )
+    if metric is None:
+        raise ValueError("Message order requires statistics")
+    return [
+        (case((Conversation.kind == SPECIAL_KIND, 1), else_=0), True),
+        (case((Conversation.pinned_at.is_not(None), 1), else_=0), True),
+        (
+            func.coalesce(Conversation.pinned_at, literal(datetime(1970, 1, 1, tzinfo=UTC), DateTime(timezone=True))),
+            True,
+        ),
+        (metric, True),
+        (Conversation.id, False),
+    ]
+
+
+def _after_session_cursor(ordering: list[tuple[ColumnElement, bool]], cursor: _SessionCursor) -> ColumnElement[bool]:
+    values: list[Any] = (
+        [cursor.order_time, cursor.identifier]
+        if cursor.mode == "archived"
+        else [
+            int(cursor.system),
+            int(cursor.pinned_at is not None),
+            cursor.pinned_at or datetime(1970, 1, 1, tzinfo=UTC),
+            cursor.message_count if cursor.mode == "messages" else cursor.order_time,
+            cursor.identifier,
+        ]
+    )
+    equal: list[ColumnElement[bool]] = []
+    alternatives = []
+    for (column, descending), value in zip(ordering, values, strict=True):
+        alternatives.append(and_(*equal, column < value if descending else column > value))
+        equal.append(column == value)
+    return or_(*alternatives)
+
+
+def _encode_session_cursor(conv: Conversation, mode: str, message_count: int) -> str:
+    value = _SessionCursor(
+        mode=mode,
+        identifier=conv.id,
+        system=conv.kind == SPECIAL_KIND,
+        pinned_at=conv.pinned_at,
+        order_time=conv.archived_at
+        if mode == "archived"
+        else conv.created_at
+        if mode == "created"
+        else conv.updated_at
+        if mode == "recent"
+        else None,
+        message_count=message_count if mode == "messages" else None,
+    )
+    return base64.urlsafe_b64encode(value.model_dump_json().encode()).decode()
+
+
 async def list_sessions(
     user_id: int,
     db: AsyncSession,
     limit: int = 40,
-    offset: int = 0,
+    cursor: str | None = None,
     min_messages: int = 0,
     archived: Literal["only", "exclude", "include"] = "exclude",
     order: Literal["recent", "created", "messages"] = "recent",
     include_subagents: bool = False,
     query: str | None = None,
     companion_name: str | None = None,
+    include_total: bool = False,
 ) -> DesktopSessionListResponse:
-    q = select(Conversation, _preview_subquery).where(Conversation.user_id == user_id)
-
-    msg_stats = (
-        select(
-            Message.conversation_id,
-            func.coalesce(func.sum(visible_bubble_count()), 0).label("msg_count"),
-            func.coalesce(func.sum(Message.prompt_tokens), 0).label("input_tok"),
-            func.coalesce(func.sum(Message.completion_tokens), 0).label("output_tok"),
-            func.count(Message.id).filter(Message.tool_calls.isnot(None)).label("tool_count"),
-        )
-        .join(Conversation, Conversation.id == Message.conversation_id)
-        .where(Conversation.user_id == user_id)
-        .group_by(Message.conversation_id)
-        .subquery()
-    )
-    q = q.outerjoin(msg_stats, Conversation.id == msg_stats.c.conversation_id)
-    q = q.add_columns(msg_stats.c.msg_count, msg_stats.c.input_tok, msg_stats.c.output_tok, msg_stats.c.tool_count)
-
+    conditions = [Conversation.user_id == user_id]
     if archived == "only":
-        q = q.where(Conversation.archived_at.isnot(None))
+        conditions.append(Conversation.archived_at.is_not(None))
     elif archived == "exclude":
-        q = q.where(Conversation.archived_at.is_(None))
+        conditions.append(Conversation.archived_at.is_(None))
         if not include_subagents:
-            q = q.where(Conversation.parent_id.is_(None))
-    # parent_id 只标记子 Agent 会话，派生会话照常列出；include_subagents 只约束未归档列表，归档视图保留子会话。
+            conditions.append(Conversation.parent_id.is_(None))
     if query:
         query = query[:SEARCH_INPUT_MAX_LEN]
         escaped = (
@@ -132,63 +222,66 @@ async def list_sessions(
         )
         pattern = f"%{escaped}%"
         display_title = case(
-            (Conversation.kind == SPECIAL_KIND, literal(companion_name, String())),
-            else_=Conversation.title,
+            (Conversation.kind == SPECIAL_KIND, literal(companion_name, String())), else_=Conversation.title
         )
         content_ids = (
             select(Message.conversation_id)
-            .join(Conversation, Conversation.id == Message.conversation_id)
-            .where(Conversation.user_id == user_id, message_contains_text(query))
+            .where(Message.user_id == user_id, message_contains_text(query))
             .distinct()
             .correlate(None)
         )
-        q = q.where(
+        conditions.append(
             or_(
                 display_title.ilike(pattern, escape=SQL_LIKE_ESCAPE_CHAR),
                 cast(Conversation.id, String).like(pattern, escape=SQL_LIKE_ESCAPE_CHAR),
                 Conversation.id.in_(content_ids),
-            ),
+            )
         )
+    mode = "archived" if archived == "only" else order
+    position = _session_cursor(cursor, mode)
     if min_messages > 0:
-        q = q.where(func.coalesce(msg_stats.c.msg_count, 0) >= literal(min_messages, BigInteger()))
-
-    total_q = (await db.execute(select(func.count()).select_from(q.subquery()))).scalar_one()
-
-    if archived == "only":
-        # 归档视图按归档时间倒序，方便刚归档的先出现；order 参数对归档列表无意义。
-        q = q.order_by(desc(Conversation.archived_at))
-    else:
-        # 系统对话、手动置顶优先，再按所选字段排序和分页。
-        order_col = {
-            "recent": desc(Conversation.updated_at),
-            "created": desc(Conversation.created_at),
-            "messages": desc(func.coalesce(msg_stats.c.msg_count, 0)),
-        }[order]
-        q = q.order_by(
-            desc(Conversation.kind == SPECIAL_KIND),
-            asc(Conversation.pinned_at.is_(None)),
-            desc(Conversation.pinned_at),
-            order_col,
-            Conversation.id,
+        conditions.append(Conversation.visible_message_count >= literal(min_messages, BigInteger()))
+    selection = select(Conversation.id).where(*conditions)
+    total = int(await db.scalar(select(func.count()).select_from(selection.subquery())) or 0) if include_total else None
+    ordering = _session_sort(mode, Conversation.visible_message_count)
+    if position is not None:
+        selection = selection.where(_after_session_cursor(ordering, position))
+    page = (
+        selection.order_by(*(column.desc() if descending else column.asc() for column, descending in ordering))
+        .limit(limit + 1)
+        .cte("session_page")
+    )
+    statement = (
+        select(
+            Conversation,
+            _preview_subquery,
+            Conversation.visible_message_count.label("msg_count"),
+            Conversation.input_token_count,
+            Conversation.output_token_count,
+            Conversation.tool_call_count,
         )
-
-    rows = (await db.execute(q.offset(offset).limit(limit))).all()
-
-    sessions = []
-    for conv, preview, mc, it, ot, tc in rows:
-        sessions.append(
-            _conversation_to_session_info(
-                conv,
-                msg_count=int(mc or 0),
-                input_tok=int(it or 0),
-                output_tok=int(ot or 0),
-                tool_count=int(tc or 0),
-                preview=preview,
-                companion_name=companion_name,
-            ),
+        .join(page, Conversation.id == page.c.id)
+        .order_by(*(column.desc() if descending else column.asc() for column, descending in ordering))
+    )
+    rows = list((await db.execute(statement)).all())
+    more = len(rows) > limit
+    rows = rows[:limit]
+    sessions = [
+        _conversation_to_session_info(
+            conv,
+            msg_count=int(mc or 0),
+            input_tok=int(it or 0),
+            output_tok=int(ot or 0),
+            tool_count=int(tc or 0),
+            preview=preview,
+            companion_name=companion_name,
         )
-
-    return DesktopSessionListResponse(limit=limit, offset=offset, total=total_q, sessions=sessions)
+        for conv, preview, mc, it, ot, tc in rows
+    ]
+    next_cursor = _encode_session_cursor(rows[-1][0], mode, int(rows[-1].msg_count or 0)) if more else None
+    return DesktopSessionListResponse(
+        limit=limit, total=total, sessions=sessions, has_more=more, next_cursor=next_cursor
+    )
 
 
 async def patch_session(
@@ -226,13 +319,13 @@ async def patch_session(
         else:
             conv.archived_at = None
     if body.settings is not None:
-        settings = decode_session_settings(conv.settings_json)
+        settings = copy_session_settings(conv.settings_json)
         for key, value in body.settings.model_dump(exclude_unset=True).items():
             if value is None:
                 settings.pop(key, None)
             else:
                 settings[key] = value
-        conv.settings_json = json.dumps(settings, ensure_ascii=False)
+        conv.settings_json = settings
     if metadata:
         emit_ws_event(db, user_id=user_id, event_type="session.list_changed", payload={"session_id": str(conv.id)})
     await db.commit()

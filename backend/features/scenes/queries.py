@@ -4,12 +4,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from infrastructure.assets import asset_store
-from sqlalchemy import func, or_, select
+from sqlalchemy import ColumnElement, Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
-from features.companion.visual_state import persona_snapshot
+from features.companion.visual_state import read_scene_policy
 from features.media.character_images import ImageChainState
-from features.scenes.models import CompanionScene, ScenePolicy, SceneSource, SceneStatus
+from features.scenes.models import CompanionScene, SceneJob, ScenePolicy, SceneSource, SceneStatus
 from features.scenes.query_contracts import SceneSnapshot
 from features.scenes.schemas import SceneImageDimensions, SceneImageSize, SceneResponse
 
@@ -28,30 +29,6 @@ async def get_scene(db: AsyncSession, user_id: int, scene_id: int) -> CompanionS
     )
 
 
-async def get_pending_scene(db: AsyncSession, user_id: int) -> CompanionScene | None:
-    return await db.scalar(
-        select(CompanionScene)
-        .where(
-            CompanionScene.user_id == user_id,
-            CompanionScene.status == SceneStatus.PENDING.value,
-        )
-        .order_by(CompanionScene.id.desc())
-        .limit(1),
-    )
-
-
-async def get_regenerating_scene(db: AsyncSession, user_id: int) -> CompanionScene | None:
-    return await db.scalar(
-        select(CompanionScene)
-        .where(
-            CompanionScene.user_id == user_id,
-            CompanionScene.regeneration_status == "pending",
-        )
-        .order_by(CompanionScene.id.desc())
-        .limit(1),
-    )
-
-
 async def get_pending_scene_task(db: AsyncSession, user_id: int) -> CompanionScene | None:
     return await db.scalar(
         select(CompanionScene)
@@ -59,7 +36,7 @@ async def get_pending_scene_task(db: AsyncSession, user_id: int) -> CompanionSce
             CompanionScene.user_id == user_id,
             or_(
                 CompanionScene.status == SceneStatus.PENDING.value,
-                CompanionScene.regeneration_status == "pending",
+                CompanionScene.replacement_job.has(SceneJob.availability == "pending"),
             ),
         )
         .order_by(CompanionScene.id.desc())
@@ -70,24 +47,66 @@ async def get_pending_scene_task(db: AsyncSession, user_id: int) -> CompanionSce
 async def scene_policy(db: AsyncSession, user_id: int) -> ScenePolicy:
     """自主添置政策；未完成资料时按可自主处理。"""
 
-    persona = await persona_snapshot(db, user_id)
-    return ScenePolicy(persona.scene_policy) if persona else ScenePolicy.LLM_MAY_REPLACE
+    policy = await read_scene_policy(db, user_id)
+    return ScenePolicy(policy) if policy else ScenePolicy.LLM_MAY_REPLACE
+
+
+def _snapshot_statement(conditions: list[ColumnElement[bool]], *, state_only: bool = False) -> Select:
+    initial = aliased(SceneJob, flat=True)
+    replacement = aliased(SceneJob, flat=True)
+    direct = [
+        getattr(CompanionScene, name) for name in SceneSnapshot.model_fields if name in CompanionScene.__table__.c
+    ]
+    retry = and_(
+        CompanionScene.status == "failed",
+        CompanionScene.source == "generated",
+        CompanionScene.media_path == "",
+        CompanionScene.prompt != "",
+        CompanionScene.target_size_json.is_not(None),
+        func.coalesce(initial.stage, "prepare").not_in(("submitting", "review_failed")),
+        func.coalesce(initial.checkpoint["phase"].astext, "") != "submitting",
+        func.coalesce(initial.checkpoint["stop_reason"].astext, "") != "result_unknown",
+    )
+    statement = (
+        select(
+            *direct,
+            func.coalesce(initial.stage, "prepare").label("stage"),
+            initial.error.label("error"),
+            func.coalesce(initial.attempt_count, 0).label("attempt_count"),
+            replacement.availability.label("regeneration_status"),
+            replacement.stage.label("regeneration_stage"),
+            replacement.error.label("regeneration_error"),
+            replacement.token.label("regeneration_task_id"),
+            retry.label("can_retry_generation"),
+        )
+        .select_from(CompanionScene)
+        .outerjoin(initial, initial.id == CompanionScene.initial_job_id)
+        .outerjoin(
+            replacement,
+            replacement.id == CompanionScene.replacement_job_id,
+        )
+        .where(*conditions)
+    )
+    if state_only:
+        statement = statement.where(
+            or_(CompanionScene.status.in_(("ready", "pending")), replacement.availability == "pending")
+        )
+    return statement
 
 
 async def get_scene_state(db: AsyncSession, user_id: int) -> SceneState:
     policy = await scene_policy(db, user_id)
-    ready = (
-        await db.scalars(
-            select(CompanionScene)
-            .where(CompanionScene.user_id == user_id, CompanionScene.status == SceneStatus.READY.value)
-            .order_by(CompanionScene.id.desc()),
+    rows = (
+        await db.execute(
+            _snapshot_statement([CompanionScene.user_id == user_id], state_only=True).order_by(CompanionScene.id.desc())
         )
-    ).all()
+    ).mappings()
+    items = [SceneSnapshot.model_validate(dict(row)) for row in rows]
     return SceneState(
         policy=policy,
-        ready=tuple(SceneSnapshot.model_validate(row) for row in ready),
-        pending=_snapshot(await get_pending_scene(db, user_id)),
-        regenerating=_snapshot(await get_regenerating_scene(db, user_id)),
+        ready=tuple(row for row in items if row.status == "ready"),
+        pending=next((row for row in items if row.status == "pending"), None),
+        regenerating=next((row for row in items if row.regeneration_status == "pending"), None),
     )
 
 
@@ -96,57 +115,65 @@ async def list_scenes(
     user_id: int,
     *,
     query: str = "",
-    offset: int = 0,
+    cursor: int | None = None,
     limit: int = 30,
     ready_only: bool = False,
-) -> tuple[list[CompanionScene], int]:
+    include_total: bool = False,
+) -> tuple[list[SceneSnapshot], int | None, str | None]:
     conditions = [CompanionScene.user_id == user_id]
     if ready_only:
         conditions.extend(
             [
-                CompanionScene.status == SceneStatus.READY.value,
+                CompanionScene.status == "ready",
                 CompanionScene.title != "",
                 CompanionScene.description != "",
                 CompanionScene.media_path != "",
-            ],
+            ]
         )
     if needle := query.strip():
         conditions.append(
             or_(
                 CompanionScene.title.icontains(needle, autoescape=True),
                 CompanionScene.description.icontains(needle, autoescape=True),
-            ),
+            )
         )
-    total = await db.scalar(select(func.count()).select_from(CompanionScene).where(*conditions))
+    total = (
+        int(await db.scalar(select(func.count()).select_from(CompanionScene).where(*conditions)) or 0)
+        if include_total
+        else None
+    )
+    if cursor is not None:
+        conditions.append(CompanionScene.id < cursor)
+    limit = min(100, max(1, limit))
     rows = list(
         (
-            await db.scalars(
-                select(CompanionScene)
-                .where(*conditions)
-                .order_by(CompanionScene.id.desc())
-                .offset(max(0, offset))
-                .limit(min(100, max(1, limit))),
-            )
-        ).all(),
+            await db.execute(_snapshot_statement(conditions).order_by(CompanionScene.id.desc()).limit(limit + 1))
+        ).mappings()
     )
-    return rows, int(total or 0)
+    items = [SceneSnapshot.model_validate(dict(row)) for row in rows[:limit]]
+    return items, total, str(items[-1].id) if len(rows) > limit else None
 
 
 def can_retry_scene_generation(row: CompanionScene | SceneSnapshot) -> bool:
+    if isinstance(row, SceneSnapshot):
+        return row.can_retry_generation
     if (
-        row.status != SceneStatus.FAILED.value
+        row.initial_job is None
+        or row.status != SceneStatus.FAILED.value
         or row.source != SceneSource.GENERATED.value
         or row.media_path
         or not row.prompt
         or not row.target_size_json
-        or row.stage in {"submitting", "review_failed"}
+        or row.initial_job.stage in {"submitting", "review_failed"}
     ):
         return False
-    state = ImageChainState.model_validate_json(row.generation_state_json) if row.generation_state_json else None
+    state = ImageChainState.model_validate(row.initial_job.checkpoint) if row.initial_job.checkpoint else None
     return state is None or (state.phase != "submitting" and state.stop_reason != "result_unknown")
 
 
 def response_for_scene(row: CompanionScene | SceneSnapshot) -> SceneResponse:
+    if isinstance(row, CompanionScene):
+        row = scene_view(row)
     return SceneResponse.model_validate(
         {
             "id": row.id,
@@ -156,7 +183,7 @@ def response_for_scene(row: CompanionScene | SceneSnapshot) -> SceneResponse:
             "origin": row.origin,
             "source": row.source,
             **{
-                key: schema.model_validate_json(value) if value else None
+                key: schema.model_validate(value) if value else None
                 for key, value, schema in (
                     ("target_size", row.target_size_json, SceneImageSize),
                     ("source_size", row.source_size_json, SceneImageDimensions),
@@ -188,7 +215,12 @@ def response_for_scene(row: CompanionScene | SceneSnapshot) -> SceneResponse:
 
 def scene_environment(state: SceneState) -> dict[str, Any]:
     """纯素材列表：policy 与素材状态，不表示当前所在环境。"""
-    materials = [*state.ready, *(row for row in (state.pending, state.regenerating) if row is not None)]
+    materials = list(
+        {
+            row.id: row
+            for row in [*state.ready, *(row for row in (state.pending, state.regenerating) if row is not None)]
+        }.values()
+    )
     return {
         "policy": state.policy.value,
         "materials": [
@@ -199,9 +231,23 @@ def scene_environment(state: SceneState) -> dict[str, Any]:
     }
 
 
-def _snapshot(row: CompanionScene | None) -> SceneSnapshot | None:
-    return SceneSnapshot.model_validate(row) if row is not None else None
+def scene_view(row: CompanionScene) -> SceneSnapshot:
+    initial, replacement = row.initial_job, row.replacement_job
+    return SceneSnapshot.model_validate(
+        {
+            **{name: getattr(row, name) for name in SceneSnapshot.model_fields if name in CompanionScene.__table__.c},
+            "stage": initial.stage if initial is not None else "prepare",
+            "error": initial.error if initial is not None else None,
+            "attempt_count": initial.attempt_count if initial is not None else 0,
+            "regeneration_status": replacement.availability if replacement is not None else None,
+            "regeneration_stage": replacement.stage if replacement is not None else None,
+            "regeneration_error": replacement.error if replacement is not None else None,
+            "regeneration_task_id": replacement.token if replacement is not None else None,
+            "can_retry_generation": can_retry_scene_generation(row),
+        }
+    )
 
 
 async def scene_snapshot(db: AsyncSession, user_id: int, scene_id: int) -> SceneSnapshot | None:
-    return _snapshot(await get_scene(db, user_id, scene_id))
+    row = await get_scene(db, user_id, scene_id)
+    return scene_view(row) if row is not None else None

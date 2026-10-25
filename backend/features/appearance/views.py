@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from features.appearance import avatar_service as _avatar
 from features.appearance import outfit_service as _outfit
 from features.appearance.character_card import character_card_response, get_character_card
-from features.appearance.character_card_models import CharacterCardResponse
+from features.appearance.character_card_contracts import CharacterCardResponse
 from features.appearance.response_builders import avatar_response, outfit_response
 from features.appearance.schemas import AvatarAssetResponse, FullbodyCandidateResponse, ImageReviseMode, OutfitResponse
 
@@ -164,7 +164,6 @@ async def adopt_outfit_draft_image_view(
     *,
     description: str | None,
     data: bytes,
-    content_type: str | None,
 ) -> OutfitResponse:
     return outfit_response(
         await _outfit.adopt_outfit_draft_image(
@@ -172,7 +171,6 @@ async def adopt_outfit_draft_image_view(
             user_id=user_id,
             description=description,
             data=data,
-            content_type=content_type,
         ),
     )
 
@@ -183,7 +181,6 @@ async def adopt_outfit_regenerate_image_view(
     outfit_id: int,
     *,
     data: bytes,
-    content_type: str | None,
 ) -> OutfitResponse:
     return outfit_response(
         await _outfit.adopt_outfit_regenerate_image(
@@ -191,7 +188,6 @@ async def adopt_outfit_regenerate_image_view(
             user_id=user_id,
             outfit_id=outfit_id,
             data=data,
-            content_type=content_type,
         ),
     )
 

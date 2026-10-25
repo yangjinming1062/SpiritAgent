@@ -16,3 +16,8 @@ async def complete_user_ids(db: AsyncSession, user_ids: Collection[int]) -> set[
     return set(
         await db.scalars(select(Persona.user_id).where(Persona.user_id.in_(user_ids), Persona.is_complete.is_(True))),
     )
+
+
+async def read_companion_name(db: AsyncSession, user_id: int) -> str | None:
+    value = await db.scalar(select(Persona.definition_json["name"]).where(Persona.user_id == user_id))
+    return value.strip() or None if isinstance(value, str) else None

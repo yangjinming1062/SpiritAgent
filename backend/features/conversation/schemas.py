@@ -1,6 +1,7 @@
 from typing import Literal
 
-from infrastructure.constants import POSTGRES_INT4_MAX, TITLE_MAX_CHARS
+from infrastructure.api_ids import MessageBoundary, ResourceId
+from infrastructure.constants import POSTGRES_INT8_MAX, TITLE_MAX_CHARS
 from pydantic import BaseModel, ConfigDict, Field
 from runtime.conversation import SessionSettingsPatch
 
@@ -27,8 +28,9 @@ class DesktopSessionInfo(BaseModel):
 
 class DesktopSessionListResponse(BaseModel):
     limit: int
-    offset: int
-    total: int
+    total: int | None = None
+    has_more: bool
+    next_cursor: str | None
     sessions: list[DesktopSessionInfo]
 
 
@@ -41,12 +43,12 @@ class SessionCreateRequest(BaseModel):
 class SessionForkRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    source_message_id: int = Field(ge=0, le=POSTGRES_INT4_MAX)
+    source_message_id: MessageBoundary = Field(ge=0, le=POSTGRES_INT8_MAX)
 
 
 class SessionHistoryResponse(BaseModel):
     messages: list[SessionMessageView]
-    next_cursor: int | None
+    next_cursor: ResourceId | None
     has_more: bool
 
 

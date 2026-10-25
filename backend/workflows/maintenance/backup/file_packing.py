@@ -1,3 +1,4 @@
+import hashlib
 import json
 import math
 import os
@@ -11,7 +12,6 @@ from typing import Any
 from urllib.parse import unquote, urlsplit
 from uuid import uuid4
 
-from features.action_library.schemas import ActionReviewSource
 from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.assets.references import ASSET_TOKEN_TRAILING_PUNCTUATION
 from infrastructure.config import SETTINGS
@@ -23,9 +23,9 @@ URL_PREFIXES: dict[str, str] = {
     "/api/media/audios/": "desktop-attachments/",
 }
 
-# 用户维度、整目录按 user_id 重命名的资产根目录；备份按该常量在父子两代实例间搬迁。
+# 正式资产只允许位于源账户目录内。
 USER_ASSET_ROOT = "companion-assets"
-# 遍历正文中嵌套 JSON 的深度上限；导出不继续收集，恢复按类拒绝无法完整校验的资料。
+# 遍历正文中嵌套 JSON 的深度上限；导出不继续收集，恢复拒绝无法完整校验的资料。
 _MAX_JSON_DEPTH = 64
 _TEMP_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]+")
 _TEMP_IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp", "image/tiff"})
@@ -128,13 +128,7 @@ class UrlRewriter:
         self._available_files: dict[str, Path | None] = {}
         self.missing_paths: set[str] = set()
         self.inserted_rows: set[tuple[str, str]] = set()
-        self.asset_copies: dict[str, str] = {}
-
-    def set_asset_mapping(self, mapping: dict[str, str], copies: dict[str, str]) -> None:
-        self._mapping.update(mapping)
-        self.asset_copies = copies
-        self._available_files.clear()
-        self.missing_paths.clear()
+        self.pending_references: list[tuple[str, str, str, str, str]] = []
 
     def _temporary_source(self, file_id: str) -> Path | None:
         if not _TEMP_ID_PATTERN.fullmatch(file_id):
@@ -302,67 +296,26 @@ class UrlRewriter:
 def validate_row_files(table: str, rows: list[dict[str, Any]], rewriter: UrlRewriter) -> None:
     """预检工作线程核对必需文件；会话历史可保留失效引用，身份与发布资产须可用。"""
     rewriter.scan(rows)
-    for row in rows:
-        required: list[Any] = []
-        if table == "custom_voices" and row.get("is_current"):
-            required.append(row.get("preview_path"))
-            if row.get("kind") == "clone":
-                required.append(row.get("reference_path"))
-        elif table == "avatar_assets":
-            required.append(row.get("asset_url"))
-            if row.get("seed_fullbody_url") or row.get("is_fullbody_confirmed"):
-                required.append(row.get("seed_fullbody_url"))
-        elif table == "companion_outfits" and row.get("status") == "ready":
-            required.append(row.get("fullbody_url"))
-        elif table == "action_definitions":
-            source = ActionReviewSource.model_validate_json(row["review_source_json"])
-            required.extend((source.identity_path, source.portrait_path))
-        elif table == "companion_scenes":
-            if row.get("status") == "ready":
-                required.append(row.get("media_path"))
-            if row.get("upload_source_path"):
-                required.append(row["upload_source_path"])
-        elif table == "visual_items":
-            required.append(row.get("media_path"))
-            for optional_path in (row.get("poster_path"), row.get("input_image_path")):
-                if optional_path:
-                    required.append(optional_path)
-        elif table == "visual_jobs":
-            if row.get("progress_json"):
-                progress = json.loads(row["progress_json"])
-                required.extend(
-                    path
-                    for path in (
-                        progress.get("pose_path"),
-                        progress.get("previous_pose_path"),
-                        progress.get("source_image_path"),
-                    )
-                    if path
-                )
-                candidate = progress.get("candidate")
-                if candidate:
-                    required.extend(
-                        path for path in (candidate.get("media_path"), candidate.get("poster_path")) if path
-                    )
-            if row.get("candidates_json"):
-                for candidate in json.loads(row["candidates_json"]):
-                    if isinstance(candidate, dict) and candidate.get("media_path"):
-                        required.append(candidate["media_path"])
-        elif table == "companion_posts":
-            if row.get("content_type") != "text":
-                required.append(row.get("media_url"))
-            if row.get("audio_url"):
-                required.append(row["audio_url"])
-        for reference in required:
-            if not isinstance(reference, str) or not reference:
-                raise ValueError("必需的身份、场景或已发布媒体缺少引用，无法恢复此类别。")
-            rewriter.require_file(reference)
+    if table == "assets":
+        for row in rows:
+            path = row.get("path")
+            if not isinstance(path, str) or not path:
+                raise ValueError("资产缺少存储路径")
+            rewriter.require_file(path)
 
 
 def collect_files_for_export(user_id: int, rows: dict[str, list[dict[str, Any]]]) -> list[Path]:
     root = Path(SETTINGS.data_dir).resolve()
     files: set[Path] = set()
-    files.update(path for path in (root / USER_ASSET_ROOT / str(user_id)).rglob("*") if path.is_file())
+    for asset in rows.get("assets", []):
+        relative = asset.get("path")
+        parsed = parse_companion_asset_path(relative)
+        if parsed is None or parsed[0] != user_id:
+            raise ValueError("资产目录不属于导出账户")
+        path = root / relative
+        if not path.is_file():
+            raise ValueError("正式资产文件缺失，无法生成完整备份")
+        files.add(path)
     session_ids = {str(row["id"]) for row in rows.get("conversations", [])}
     for session_id in session_ids:
         files.update(path for path in (root / "desktop-attachments" / session_id).rglob("*") if path.is_file())
@@ -388,16 +341,22 @@ def _user_asset_target(relative: PurePosixPath, source_uid: int, target_uid: int
     return None
 
 
-def planned_asset_mapping(extract_root: Path, source_uid: int, target_uid: int) -> dict[str, str]:
-    """包内账户资产恢复后的路径映射，与 restore_files 同一规则但不复制文件，供预检与写入判断一致。"""
-    source_root = (extract_root / "files").resolve()
+def plan_asset_mapping(
+    rows: dict[str, list[dict[str, Any]]], source_user_id: int, target_user_id: int
+) -> dict[str, str]:
+    """按正式资产库存规划不可变恢复路径，供预检、写入和文件复制共用。"""
     mapping: dict[str, str] = {}
-    for source in source_root.rglob("*"):
-        if not source.is_file():
-            continue
-        relative = PurePosixPath(source.relative_to(source_root).as_posix())
-        if (target := _user_asset_target(relative, source_uid, target_uid)) is not None:
-            mapping[str(relative)] = target.as_posix()
+    for row in rows.get("assets", []):
+        source = row["path"]
+        parsed = parse_companion_asset_path(source)
+        if parsed is None or parsed[0] != source_user_id:
+            raise ValueError("备份资产不属于源账户")
+        digest = row.get("content_hash")
+        if not isinstance(digest, str) or len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+            raise ValueError("备份资产缺少有效的内容哈希")
+        mapping[source] = str(
+            PurePosixPath("companion-assets", str(target_user_id), "imports", digest, PurePosixPath(source).name)
+        )
     return mapping
 
 
@@ -436,6 +395,9 @@ def _stage_copy(source: Path, target: Path, rewriter: UrlRewriter, stop: threadi
         except FileExistsError:
             if not target.is_file():
                 raise ValueError("Backup destination exists and is not a file")
+            with source.open("rb") as left, target.open("rb") as right:
+                if hashlib.file_digest(left, "sha256").digest() != hashlib.file_digest(right, "sha256").digest():
+                    raise ValueError("Backup destination has different file content")
         else:
             rewriter.created.append(target)
     finally:
@@ -495,24 +457,12 @@ def restore_files(
             if target.exists():
                 if not target.is_file():
                     raise ValueError("Backup destination exists and is not a file")
+                with source.open("rb") as left, target.open("rb") as right:
+                    if hashlib.file_digest(left, "sha256").digest() != hashlib.file_digest(right, "sha256").digest():
+                        raise ValueError("Backup destination has different file content")
             else:
                 _stage_copy(source, target, rewriter, stop)
             rewriter._mapping[str(relative)] = target_relative.as_posix()
-        # 共享源素材在不同资产包中各自拥有副本；复制失败仍由 rewriter 统一回滚。
-        for target_relative, source_relative in rewriter.asset_copies.items():
-            _ensure_running(stop)
-            if source_relative not in referenced_files:
-                continue
-            source = source_root / source_relative
-            target = root / target_relative
-            if source.resolve() != source:
-                raise ValueError("Backup source contains symbolic links")
-            if target.resolve() != target or not target.is_relative_to(root):
-                raise ValueError("Backup destination escapes data directory")
-            if not source.is_file() or target.exists():
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            _stage_copy(source, target, rewriter, stop)
         for old, new in temp_ids.items():
             _ensure_running(stop)
             rewriter._mapping[f"/api/media/files/{old}"] = f"/api/media/files/{new}"

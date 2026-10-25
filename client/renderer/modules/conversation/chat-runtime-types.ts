@@ -12,7 +12,7 @@ export interface ChatMessageListItem {
   role: 'user' | 'assistant'
   subtype?: string
   /** 后端 Message.id——fork/undo 回传 source_message_id；hydrate 历史行与活路径绑定后都有值。 */
-  backendMessageId?: number
+  backendMessageId?: string
   timestamp?: number
 }
 
@@ -32,7 +32,7 @@ export interface ChatMessageBody {
   toolName?: string | null
   tools?: string[]
   error?: string
-  retryMessageId?: number
+  retryMessageId?: string
   cancelled?: boolean
   requestId?: string
   attachments?: ChatAttachment[]
@@ -57,7 +57,7 @@ export interface PendingPromptItem {
 
 export interface ChatEditDraft {
   sessionId: string
-  sourceMessageId: number
+  sourceMessageId: string
   text: string
   /** 原消息的多模态附件；编辑期只读展示，提交时由服务端随修订消息保留。 */
   attachments?: ChatAttachment[]

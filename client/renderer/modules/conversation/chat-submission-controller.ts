@@ -8,10 +8,11 @@ import { errorMessage, sleep } from '@runtime'
 
 import type { GatewayEventPayloads } from '../../../../shared/api.generated'
 import { ApiError } from '../../../../shared/errors'
+import { isResourceId } from '../../../../shared/resource-id'
 import { createTurnCancellation, type TurnReference } from '../../../../shared/turn-cancellation'
 
 import type { ChatMessageController } from './chat-message-controller'
-import { extractMessageContent, isPositiveInt, splitUserText } from './chat-message-rules'
+import { extractMessageContent, splitUserText } from './chat-message-rules'
 import {
   type ConversationSubmission,
   readConversationTurn,
@@ -27,7 +28,7 @@ export function createChatSubmissionController(
   state: ConversationState,
   messages: ChatMessageController,
   isCurrent: () => boolean,
-  onReplyReplaced: (replacedMessageId: number, message: SessionMessage) => void
+  onReplyReplaced: (replacedMessageId: string, message: SessionMessage) => void
 ) {
   const {
     $chatSessionId,
@@ -225,13 +226,13 @@ export function createChatSubmissionController(
     }
   }
 
-  function bindTrailingUserMessageIds(ids: number[], requestId?: string): void {
+  function bindTrailingUserMessageIds(ids: string[], requestId?: string): void {
     if (!requestId || requestId !== state.submission.submittedRequestId) {
       return
     }
 
     // 只绑定本批气泡；拆泡超出消息 ID 数时沿用最后一个 ID，与历史水合一致。
-    const validIds = ids.filter(isPositiveInt)
+    const validIds = ids.filter(isResourceId)
 
     if (validIds.length === 0) {
       return
@@ -313,7 +314,7 @@ export function createChatSubmissionController(
   function mergePersistedUserMessages(
     messages: SessionMessage[],
     requestId?: string,
-    ids: number[] = [],
+    ids: string[] = [],
     trackActive = true
   ): void {
     bindTrailingUserMessageIds(ids, requestId)
@@ -333,7 +334,7 @@ export function createChatSubmissionController(
     const added: ChatMessageListItem[] = []
 
     for (const message of messages) {
-      if (message.role !== 'user' || !isPositiveInt(message.id) || seen.has(message.id)) {
+      if (message.role !== 'user' || !isResourceId(message.id) || seen.has(message.id)) {
         continue
       }
 
@@ -474,7 +475,7 @@ export function createChatSubmissionController(
 
     state.submission.activeRequestId = pending.requestId
     const replacedId = pending.params.replace_reply_message_id
-    $replacingReplyMessageId.set(typeof replacedId === 'number' ? replacedId : null)
+    $replacingReplyMessageId.set(isResourceId(replacedId) ? replacedId : null)
     $chatTurnInFlight.set(true)
 
     const recovery = (async (): Promise<void> => {

@@ -8,30 +8,38 @@ from typing import Any
 
 from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.assets.write_protection import user_asset_lock
-from infrastructure.backup import BackupContext, BackupRows, BackupTable, IdMap
+from infrastructure.backup import BackupContext, BackupRows, BackupTable
 from runtime.memory_scope import MemoryScope, validate_memory_scope
-from sqlalchemy import delete, select
+from sqlalchemy import bindparam, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.conversation.asset_releases import collect_message_asset_releases
+from features.media.voice_queries import resolve_custom_voice_references
 from features.topics.schemas import TopicCardSnapshot
 from features.topics.store import validate_restored_topic_cards
 
+from .asset_bindings import message_voice_references
 from .context_window import CHECKPOINT_SUBTYPE
-from .models import Conversation, Message
+from .models import Conversation, Message, MessageAsset, MessageVoiceRef
 from .replies import CompanionReply, LinkBubble, MediaBubble
+from .submission_models import PromptSubmission, SubmissionMessage
 
 
 def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
     user_id = context.user_id
+    if table == "prompt_submissions" and payload.get("status") in {"accepted", "running"}:
+        payload["status"] = "completed" if raw.get("result_message_id") is not None else "interrupted"
+        payload["error"] = (
+            None if raw.get("result_message_id") is not None else "恢复的请求未继续执行，请核对已保存的结果后再操作。"
+        )
     if table == "messages" and payload.get("conversation_id") is None:
         raise ValueError("Message conversation is missing from backup")
 
     if table == "messages":
         if payload.get("generation_origin_json"):
-            payload["generation_origin_json"] = GenerationOrigin.model_validate_json(
+            payload["generation_origin_json"] = GenerationOrigin.model_validate(
                 payload["generation_origin_json"],
-            ).model_dump_json()
+            ).model_dump(mode="json")
         through_id = payload.get("summary_through_message_id")
         if payload.get("subtype") == CHECKPOINT_SUBTYPE:
             if type(through_id) is not int or through_id <= 0:
@@ -84,17 +92,15 @@ def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: 
         payload["content"] = json.dumps(source, ensure_ascii=False)
         # 改写后模型不变式的重验由 messages 恢复钩子对 reply_json 的解析兜底。
         reply.validate_content(payload["content"])
-        payload["reply_json"] = reply.model_dump_json()
+        payload["reply_json"] = reply.model_dump(mode="json")
 
 
-async def restore_conversation_context(
-    db: AsyncSession,
-    rows: dict[str, list[dict[str, Any]]],
-    id_map: IdMap,
-) -> None:
+async def restore_conversation_context(db: AsyncSession, rows: BackupRows, context: BackupContext) -> None:
+    id_map = context.id_map
     messages = {str(row["id"]): row for row in rows.get("messages", [])}
+    checkpoints = []
     for original_id, raw in messages.items():
-        if raw.get("subtype") != CHECKPOINT_SUBTYPE:
+        if raw.get("subtype") != CHECKPOINT_SUBTYPE or ("messages", original_id) not in context.rewriter.inserted_rows:
             continue
         source_id = str(raw["summary_through_message_id"])
         source = messages.get(source_id)
@@ -104,34 +110,50 @@ async def restore_conversation_context(
             or source.get("subtype") == CHECKPOINT_SUBTYPE
         ):
             raise ValueError("Conversation summary boundary is missing from backup")
-        checkpoint = await db.get(Message, int(id_map["messages"][original_id]))
-        checkpoint.summary_through_message_id = int(id_map["messages"][source_id])
+        checkpoints.append(
+            {"restore_id": int(id_map["messages"][original_id]), "boundary": int(id_map["messages"][source_id])}
+        )
+    if checkpoints:
+        await db.execute(
+            update(Message.__table__)
+            .where(Message.id == bindparam("restore_id"))
+            .values(summary_through_message_id=bindparam("boundary")),
+            checkpoints,
+        )
     by_conversation: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
-    for message in sorted(messages.values(), key=lambda message: int(message["id"])):
+    for message in messages.values():
         by_conversation[str(message["conversation_id"])].append(message)
+    watermarks = []
     for raw in rows.get("conversations", []):
         original_id = str(raw["id"])
-        ordered_messages = by_conversation[original_id]
-        original_ids = [int(message["id"]) for message in ordered_messages]
-        mapped_ids = [int(id_map["messages"][str(mid)]) for mid in original_ids]
+        if ("conversations", original_id) not in context.rewriter.inserted_rows:
+            continue
         watermark = raw["context_after_message_id"]
         if watermark:
-            conv = await db.get(Conversation, int(id_map["conversations"][original_id]))
-            conv.context_after_message_id = max(
+            boundary = max(
                 (
-                    mapped_id
-                    for original, mapped_id in zip(original_ids, mapped_ids, strict=True)
-                    if original <= watermark
+                    int(id_map["messages"][str(message["id"])])
+                    for message in by_conversation[original_id]
+                    if int(message["id"]) <= watermark
                 ),
                 default=0,
             )
-    await db.flush()
+            watermarks.append({"restore_id": int(id_map["conversations"][original_id]), "boundary": boundary})
+    if watermarks:
+        await db.execute(
+            update(Conversation.__table__)
+            .where(Conversation.id == bindparam("restore_id"))
+            .values(context_after_message_id=bindparam("boundary")),
+            watermarks,
+        )
 
 
 CONVERSATION_MERGE_CONFLICT_REASON = "系统对话已有历史，或任一侧上下文已清理，无法合并；请取消会话恢复或使用覆盖模式。"
 
 
 async def validate_conversation_merge(db: AsyncSession, existing: Conversation, raw: dict[str, Any]) -> None:
+    if existing.source_key == raw.get("source_key"):
+        return
     if (
         raw.get("context_after_message_id")
         or existing.context_after_message_id
@@ -184,30 +206,35 @@ async def _find_main_conversation(
 
 
 async def _lineages(
-    db: AsyncSession,
-    rows: list[dict[str, Any]],
-    new_map: dict[str, int | str],
-    context: BackupContext,
+    db: AsyncSession, rows: list[dict[str, Any]], new_map: dict[str, int | str], context: BackupContext
 ) -> None:
+    originals = {str(row["id"]): row for row in rows}
+    patches = []
     for raw in rows:
         if ("conversations", str(raw["id"])) not in context.rewriter.inserted_rows:
             continue
         parent_id, forked_from_id = raw.get("parent_id"), raw.get("forked_from_id")
         if parent_id is None and forked_from_id is None:
             continue
-        conversation = await db.get(Conversation, new_map[str(raw["id"])])
         if parent_id is not None:
-            if str(parent_id) not in new_map:
-                raise ValueError("Conversation parent is missing from backup")
-            conversation.parent_id = new_map[str(parent_id)]
-            parent = await db.get(Conversation, conversation.parent_id)
-            if parent.user_id != context.user_id or parent.system_preset_id != conversation.system_preset_id:
+            parent = originals.get(str(parent_id))
+            if parent is None or str(parent_id) not in new_map or parent["system_preset_id"] != raw["system_preset_id"]:
                 raise ValueError("Conversation parent belongs to a different scope")
-        if forked_from_id is not None:
-            conversation.forked_from_id = new_map.get(str(forked_from_id))
-        await db.flush()
-        if raw.get("updated_at") is not None:
-            conversation.updated_at = datetime.fromisoformat(raw["updated_at"])
+        patches.append(
+            {
+                "restore_id": int(new_map[str(raw["id"])]),
+                "parent": new_map.get(str(parent_id)),
+                "fork": new_map.get(str(forked_from_id)),
+                "stamp": datetime.fromisoformat(raw["updated_at"]),
+            }
+        )
+    if patches:
+        await db.execute(
+            update(Conversation.__table__)
+            .where(Conversation.id == bindparam("restore_id"))
+            .values(parent_id=bindparam("parent"), forked_from_id=bindparam("fork"), updated_at=bindparam("stamp")),
+            patches,
+        )
 
 
 async def _clear(db: AsyncSession, user_id: int) -> None:
@@ -219,15 +246,15 @@ async def _clear(db: AsyncSession, user_id: int) -> None:
 
 async def _check_cards(
     db: AsyncSession,
-    raw: dict[str, Any],
+    _raw: dict[str, Any],
     payload: dict[str, Any],
     context: BackupContext,
 ) -> None:
     reply_json = payload.get("reply_json")
     # 冷路径廉价短路：非 JSON 字面量 "link" 的交付快照不可能含卡片气泡。
-    if not reply_json or '"link"' not in reply_json:
+    if not reply_json:
         return
-    reply = CompanionReply.model_validate_json(reply_json)
+    reply = CompanionReply.model_validate(reply_json)
     cards = [
         TopicCardSnapshot.model_validate(bubble.model_dump())
         for bubble in reply.bubbles
@@ -238,14 +265,69 @@ async def _check_cards(
 
 
 async def _restore_context(db: AsyncSession, rows: BackupRows, context: BackupContext) -> None:
-    await restore_conversation_context(db, rows, context.id_map)
+    await restore_conversation_context(db, rows, context)
+    inserted = {identity for table, identity in context.rewriter.inserted_rows if table == "messages"}
+    references = {
+        str(row["id"]): message_voice_references(row.get("reply_json"))
+        for row in rows.get("messages", [])
+        if str(row["id"]) in inserted
+    }
+    voices = await resolve_custom_voice_references(
+        db, context.user_id, {voice for values in references.values() for voice in values}
+    )
+    actual: dict[str, set[int]] = defaultdict(set)
+    for reference in rows.get("message_voice_refs", []):
+        identity = str(reference["message_id"])
+        if identity in inserted:
+            mapped = context.id_map.get("custom_voices", {}).get(str(reference["voice_id"]))
+            if mapped is None:
+                raise ValueError("Message voice reference is missing from backup")
+            actual[identity].add(int(mapped))
+    for identity, values in references.items():
+        expected = {voices.identities[value] for value in values if value in voices.identities}
+        if actual.get(identity, set()) != expected:
+            raise ValueError("Message voice bindings do not match the saved reply")
 
 
 def backup_tables() -> tuple[BackupTable, ...]:
     return (
         BackupTable(
+            "message_voice_refs",
+            MessageVoiceRef,
+            foreign_keys={"message_id": "messages", "voice_id": "custom_voices"},
+            unique_keys=("message_id", "voice_id"),
+            strict_references=True,
+            skip_existing_parent="message_id",
+        ),
+        BackupTable(
+            "message_assets",
+            MessageAsset,
+            foreign_keys={"message_id": "messages", "asset_id": "assets"},
+            unique_keys=("message_id", "asset_id"),
+        ),
+        BackupTable(
+            "prompt_submissions",
+            PromptSubmission,
+            foreign_keys={
+                "conversation_id": "conversations",
+                "replace_reply_message_id": "messages",
+                "result_message_id": "messages",
+            },
+            unique_keys=("request_id",),
+            prepare_payload=partial(_prepare, "prompt_submissions"),
+        ),
+        BackupTable(
+            "submission_messages",
+            SubmissionMessage,
+            foreign_keys={"submission_id": "prompt_submissions", "message_id": "messages"},
+            unique_keys=("submission_id", "message_id"),
+        ),
+        BackupTable(
             "conversations",
             Conversation,
+            excluded_columns=frozenset(
+                {"visible_message_count", "input_token_count", "output_token_count", "tool_call_count"}
+            ),
             prepare_payload=partial(_prepare, "conversations"),
             find_existing=_find_main_conversation,
             after_rows=_lineages,

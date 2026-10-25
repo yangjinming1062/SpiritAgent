@@ -1,5 +1,4 @@
 import contextlib
-import json
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, time, timedelta
 from functools import partial
@@ -15,7 +14,7 @@ from features.life.context import read_life_context_in_session
 from features.memory.memory_admin import list_memories
 from features.memory.memory_bootstrap import read_user_profile
 from features.memory.memory_format import format_memory_record
-from features.memory.memory_narratives import load_companion_reflection, narrative_date, save_companion_reflection
+from features.memory.memory_narratives import load_companion_reflection, save_companion_reflection
 from features.memory.memory_review import review_memories
 from features.memory.memory_store import backfill_memory_embeddings, store_slotted_memory
 from features.posts.store import collect_post_interactions
@@ -104,7 +103,7 @@ async def _stage_4_reflection(
         if previous_result is not None:
             return previous_result
         previous = await load_companion_reflection(db, scope)
-        previous_date = narrative_date(previous.context, previous.source_refs) if previous is not None else None
+        previous_date = previous.local_date if previous is not None else None
         if previous_date is not None and previous_date >= local_date_str:
             await save_narrative_result(db, log_id, "reflection", True)
             await db.commit()
@@ -205,9 +204,11 @@ async def _write_action_memory(
         embedding_item = await store_slotted_memory(
             db,
             scope,
-            f"recall:nightly_actions:{local_date_str}",
+            f"nightly_actions:{local_date_str}",
             content[: SETTINGS.memory_recall_max_content_chars],
-            json.dumps(["other"]),
+            ["other"],
+            kind="recall",
+            context="夜间活动",
             source=MemorySource("reflection", batch_id=local_date_str),
         )
         await db.flush()

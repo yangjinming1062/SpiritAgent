@@ -16,6 +16,11 @@ const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function resourceId(value) {
+    if (typeof value !== 'string' || !/^[1-9][0-9]*$/.test(value) || value.length > 19 || (value.length === 19 && value > '9223372036854775807')) throw new Error('资源标识无效');
+    return value;
+}
+function idArgument(value) { return esc(JSON.stringify(resourceId(value))); }
 const getItems = (data) => data?.items ?? [];
 
 function pill(text, type = 'muted') { return `<span class="pill pill--${type}">${esc(text)}</span>`; }
@@ -258,15 +263,15 @@ function renderUsers(data) {
             <td>${overrideCell}</td>
             <td><div class="cell-meta">${fmtDate(u.created_at)}</div></td>
             <td class="td-actions">
-                <button class="btn btn--ghost btn--sm" onclick="editUser(${u.id})">编辑</button>
-                <button class="btn btn--ghost btn--sm" onclick="manageActivation(${u.id})">激活码</button>
+                <button class="btn btn--ghost btn--sm" onclick="editUser(${idArgument(u.id)})">编辑</button>
+                <button class="btn btn--ghost btn--sm" onclick="manageActivation(${idArgument(u.id)})">激活码</button>
                 ${menuHtml([
-                    { label: overrides ? '编辑能力覆盖' : '设置能力覆盖', onclick: `openAiUserScope(${u.id})` },
-                    { label: u.is_active ? '停用账户' : '启用账户', onclick: `toggleUser(${u.id})` },
-                    { label: '导出备份', onclick: `exportUserPrompt(${u.id})` },
-                    { label: '导入备份', onclick: `importUserPrompt(${u.id})` },
+                    { label: overrides ? '编辑能力覆盖' : '设置能力覆盖', onclick: `openAiUserScope(${idArgument(u.id)})` },
+                    { label: u.is_active ? '停用账户' : '启用账户', onclick: `toggleUser(${idArgument(u.id)})` },
+                    { label: '导出备份', onclick: `exportUserPrompt(${idArgument(u.id)})` },
+                    { label: '导入备份', onclick: `importUserPrompt(${idArgument(u.id)})` },
                     '|',
-                    { label: '彻底删除', onclick: `deleteUser(${u.id})`, danger: true },
+                    { label: '彻底删除', onclick: `deleteUser(${idArgument(u.id)})`, danger: true },
                 ])}
             </td>
         </tr>`;
@@ -321,7 +326,7 @@ async function showCreateUser() {
 }
 
 function findCachedUser(id) {
-    return (tabCache.users?.items ?? []).find(u => u.id === Number(id)) ?? null;
+    return (tabCache.users?.items ?? []).find(u => u.id === resourceId(id)) ?? null;
 }
 
 async function editUser(id) {
@@ -350,7 +355,7 @@ async function saveUser() {
     // 编辑时激活码只随后端地址变化；未变化时不弹出激活码。
     const previousCode = id ? findCachedUser(id)?.activation_code : null;
     try {
-        const data = id ? await invoke('admin.update_user', { path: { user_id: Number(id) }, body: payload })
+        const data = id ? await invoke('admin.update_user', { path: { user_id: resourceId(id) }, body: payload })
             : await invoke('admin.create_user', { body: payload });
         closeModal('userModal');
         toast(id ? '用户已更新' : '用户已创建');
@@ -363,7 +368,7 @@ async function patchActivationUser(id, body, { regenerate = false, btn, busy, do
     const original = btn ? btn.textContent : null;
     if (btn) { btn.disabled = true; btn.textContent = busy; }
     try {
-        const data = await invoke(regenerate ? 'admin.regenerate_activation' : 'admin.update_user', { path: { user_id: Number(id) }, body });
+        const data = await invoke(regenerate ? 'admin.regenerate_activation' : 'admin.update_user', { path: { user_id: resourceId(id) }, body });
         if (data.activation_code && onCode) onCode(data.activation_code);
         toast(done);
         loadUsers();
@@ -454,7 +459,7 @@ async function toggleUser(id) {
     try {
         const user = findCachedUser(id);
         if (!user) throw new Error('用户数据尚未加载');
-        await invoke('admin.update_user', { path: { user_id: Number(id) }, body: { is_active: !user.is_active } });
+        await invoke('admin.update_user', { path: { user_id: resourceId(id) }, body: { is_active: !user.is_active } });
         toast('状态已切换');
         loadUsers();
     } catch (e) { toast(e.message, 'err'); }
@@ -463,32 +468,38 @@ async function toggleUser(id) {
 async function deleteUser(id) {
     if (!confirm('确定彻底删除此用户及其所有关联数据？此操作不可撤销。')) return;
     try {
-        await invoke('admin.delete_user', { path: { user_id: Number(id) } });
+        await invoke('admin.delete_user', { path: { user_id: resourceId(id) } });
         toast('用户已删除');
         loadUsers();
     } catch (e) { toast(e.message, 'err'); }
 }
 
-// 键与 services/domains/backup/serializers.py 的 TABLES 及恢复失败分区 asset_files 对应。
+// 名称与当前备份物理表及恢复失败分区对应。
 const BACKUP_SECTION_LABELS = Object.freeze({
-    user_preferences: '用户偏好', conversations: '会话', messages: '消息',
-    user_model_configs: '模型配置与凭据', avatar_assets: '角色形象', companion_character_cards: '角色卡',
+    user_preferences: '用户偏好', conversations: '会话', messages: '消息', message_assets: '消息附件',
+    assets: '资产清单', jobs: '任务记录', job_requests: '任务请求', job_assets: '任务附件',
+    appearance_assets: '形象附件', character_analysis_jobs: '形象分析', companion_fullbody_candidates: '待采纳形象',
+    visual_versions: '影像版本', visual_version_assets: '影像附件', visual_playbacks: '播放记录', scene_jobs: '场景制作',
+    video_gen_jobs: '视频制作', post_publications: '动态发布',
+    memory_evidence: '记忆证据', memory_revisions: '记忆修订', memory_fingerprints: '遗忘指纹',
+    life_states: '生活状态', life_pursuits: '持续事项', life_steps: '执行步骤', life_events: '生活事件', pursuit_evidence: '事项证据',
+    user_model_configs: '模型配置与凭据', avatar_assets: '角色形象',
     companion_outfits: '衣柜', action_definitions: '动作素材',
     companion_scenes: '场景', visual_items: '影像成品', visual_jobs: '影像制作工作项', visual_presentations: '影像呈现状态', personas: '角色定义', user_settings: '用户设置',
     cron_jobs: '定时任务', companion_intents: '主动陪伴意图', memories: '长期记忆',
-    companion_posts: '动态', companion_post_comments: '动态评论',
-    companion_diary_entries: '日记', asset_files: '资产文件',
+    companion_entries: '动态与日记', entry_comments: '评论', entry_links: '内容引用', entry_assets: '内容附件',
+     asset_files: '资产文件',
 });
 // 与 backup/serializers.py 的 BACKUP_SECTIONS 对齐；页面只负责勾选，表映射以服务端为准。
 const BACKUP_SCOPE_HINTS = Object.freeze({
     all: '恢复备份中的全部数据类别。',
-    identity: '恢复人设、头像与全身参考（含确认状态）、角色卡。音色需勾选设置，场景需单独恢复；缺少引导资料时继续完成对应步骤，不自动生成素材。',
-    custom: '只恢复勾选的类别。衣柜、动作素材与影像成组恢复，勾选其中一项时会一起恢复；其他未勾选的数据保留。',
+    identity: '恢复人设、形象资料、衣柜、待采纳形象及其附件。音色需勾选设置；不会自动开始制作。',
+    custom: '恢复勾选类别及必需关联。衣柜、环境、动作与影像成组恢复，动态和日记合并恢复；所选资料全部通过校验后才写入。',
 });
 const BACKUP_MODE_LABELS = Object.freeze({ overwrite: '覆盖', merge: '合并' });
 const BACKUP_SCOPE_LABELS = Object.freeze({
     all: '全部数据', identity: '基础身份', custom: '自定义',
-    conversations: '会话记录', memories: '长期记忆', posts: '动态', diary: '日记',
+    conversations: '会话记录', memories: '长期记忆', entries: '动态与日记',
     wardrobe: '衣柜与动作素材', scenes: '场景', visuals: '影像', automation: '定时与意图', settings: '设置与凭据',
 });
 let backupImportRunning = false;
@@ -519,7 +530,7 @@ async function exportUser(id) {
     btn.disabled = true;
     try {
         let disposition = '';
-        const bytes = await invoke('admin.export_user_backup', { path: { user_id: Number(id) } }, {
+        const bytes = await invoke('admin.export_user_backup', { path: { user_id: resourceId(id) } }, {
             timeoutMs: 180_000,
             onResponse: response => { disposition = response.headers.get('Content-Disposition') || ''; },
         });
@@ -583,7 +594,7 @@ async function submitUserBackup() {
         const fd = new FormData();
         fd.append('file', file);
         const data = await invoke('admin.import_user_backup', {
-            path: { user_id: Number(userId) }, query: { mode, sections }, body: fd,
+            path: { user_id: resourceId(userId) }, query: { mode, sections }, body: fd,
         }, { timeoutMs: 180_000 });
         const total = Object.values(data.imported || {}).reduce((a, b) => a + b, 0);
         const restoredFiles = Number(data.restored_files) || 0;
@@ -600,7 +611,7 @@ async function submitUserBackup() {
             });
             status.textContent = `导入完成（尽力恢复）：${summary}\n未能导入：\n${details.join('\n')}`;
             status.style.color = 'var(--amber)';
-            toast(`用户 #${userId} 已部分导入，请查看失败内容`, 'warn');
+            toast(`用户 #${userId} 未导入，请查看校验结果`, 'warn');
             loadUsers();
         } else {
             status.textContent = `导入完成（${modeLabel(data.mode)}）：${summary}`;
@@ -863,7 +874,7 @@ async function changeAiScope(value) {
     }
     resetAiDiscovery();
     aiView.scope = String(value);
-    aiView.userId = value === 'system' ? null : Number(value);
+    aiView.userId = value === 'system' ? null : resourceId(value);
     if (value !== 'system') showModelConfigForUserSilent(aiView.userId);
     $('#aiScopeSelect').value = aiView.scope;
     renderAiScope();
@@ -925,7 +936,7 @@ async function saveAiScope() {
     updateSaveActions();
     try {
         if (scope === 'system') await invoke('admin.update_system_settings', { body: { ai_config: payload } });
-        else await invoke('admin.upsert_model_config', { path: { user_id: Number(aiView.userId) }, body: { ai_config: payload } });
+        else await invoke('admin.upsert_model_config', { path: { user_id: resourceId(aiView.userId) }, body: { ai_config: payload } });
         const saved = savedAiConfig(payload);
         if (scope === 'system') { lastSystemAiRaw = saved; aiEditors.system.config = cloneAiConfig(saved); }
         else { lastUserAiRaw = saved; aiEditors.user.config = cloneAiConfig(saved); }
@@ -961,7 +972,7 @@ function discardAiEdits() {
 function loadOverviewIfActive() { if ($('#panel-overview').classList.contains('active')) void loadOverview(); }
 async function deleteModelConfig(userId) {
     if (!confirm('确定删除此用户的全部覆盖配置？删除后该用户继承系统配置。')) return;
-    try { await invoke('admin.delete_model_config', { path: { user_id: Number(userId) } }); tabCache.models.items = tabCache.models.items.filter(item => item.user_id !== userId); clearAiDirty(); await refreshAiCache(); showModelConfigForUserSilent(userId); renderAiScope(); toast('用户覆盖配置已清除'); }
+    try { await invoke('admin.delete_model_config', { path: { user_id: resourceId(userId) } }); tabCache.models.items = tabCache.models.items.filter(item => item.user_id !== userId); clearAiDirty(); await refreshAiCache(); showModelConfigForUserSilent(userId); renderAiScope(); toast('用户覆盖配置已清除'); }
     catch (error) { toast(error.message, 'err'); }
 }
 async function openAiUserScope(userId) { showTab('ai'); await loadAiView(); await changeAiScope(String(userId)); }
@@ -1435,7 +1446,7 @@ function aiModelMetadataHtml(metadata) {
 
 async function requestAiModelDiscovery(state, options = {}) {
     return invoke('admin.discover_ai_models', { body: {
-        provider: JSON.parse(state.snapshot), user_id: state.editorName === 'system' ? null : Number(state.userId), service: aiService(state.group), ...options
+        provider: JSON.parse(state.snapshot), user_id: state.editorName === 'system' ? null : resourceId(state.userId), service: aiService(state.group), ...options
     } });
 }
 
@@ -2457,7 +2468,7 @@ async function loadLogs() {
     const dateVal = $('#logDate').value;
     try {
         const data = await invoke('admin.list_nightly_activity_logs', { query: {
-            ...(userId ? { user_id: Number(userId) } : {}), ...(dateVal ? { target_date: dateVal } : {}),
+            ...(userId ? { user_id: resourceId(userId) } : {}), ...(dateVal ? { target_date: dateVal } : {}),
         } });
         tabCache.logs = data;
         renderLogs(data);
@@ -2478,13 +2489,13 @@ function renderLogs(data) {
         unit: '条记录', cols: 6, empty: '暂无夜间活动记录', emptyHint: '当夜间流水线运行后会在此展示',
         row: r => {
             const [statusLabel, statusTone] = Object.hasOwn(LOG_STATUS, r.status) ? LOG_STATUS[r.status] : [r.status, 'muted'];
-            return `<tr style="cursor:pointer" onclick="openLogDetail(${r.id})">
+            return `<tr style="cursor:pointer" onclick="openLogDetail(${idArgument(r.id)})">
                 <td class="td-id">${r.id}</td>
                 <td><div class="cell-strong">用户 ${esc(String(r.user_id))}</div><div class="cell-sub">${esc(r.summary || '')}</div></td>
                 <td>${esc(r.target_date)}</td>
                 <td>${pill(statusLabel, statusTone)}</td>
                 <td>${fmtDate(r.updated_at || r.created_at)}</td>
-                <td class="td-actions"><button class="btn btn--ghost btn--sm" onclick="event.stopPropagation(); openLogDetail(${r.id})">查看</button></td>
+                <td class="td-actions"><button class="btn btn--ghost btn--sm" onclick="event.stopPropagation(); openLogDetail(${idArgument(r.id)})">查看</button></td>
             </tr>`;
         },
     });
@@ -2530,10 +2541,10 @@ function renderVersions(data) {
                 <td><div>${fmtDate(v.created_at)}</div><div class="cell-sub">${esc(v.created_by) || '—'}</div></td>
                 <td class="td-actions">
                     ${v.is_active
-                        ? `<button class="btn btn--ghost btn--sm" onclick="setActive(${v.id}, false)">下线</button>`
-                        : `<button class="btn btn--primary btn--sm" onclick="setActive(${v.id}, true)">上线</button>`}
+                        ? `<button class="btn btn--ghost btn--sm" onclick="setActive(${idArgument(v.id)}, false)">下线</button>`
+                        : `<button class="btn btn--primary btn--sm" onclick="setActive(${idArgument(v.id)}, true)">上线</button>`}
                     ${menuHtml([
-                        { label: '永久删除', onclick: `deleteVersion(${v.id})`, danger: true },
+                        { label: '永久删除', onclick: `deleteVersion(${idArgument(v.id)})`, danger: true },
                     ])}
                 </td>
             </tr>`;
@@ -2543,7 +2554,7 @@ function renderVersions(data) {
 
 async function setActive(id, active) {
     try {
-        await invoke('update.update_version', { path: { id: Number(id) }, body: { is_active: active } });
+        await invoke('update.update_version', { path: { id: resourceId(id) }, body: { is_active: active } });
         toast(active ? '版本已上线' : '版本已下线');
         loadVersions();
     } catch (e) { toast(e.message, 'err'); }
@@ -2552,7 +2563,7 @@ async function setActive(id, active) {
 async function deleteVersion(id) {
     if (!confirm('确定永久删除此版本及其文件？此操作不可撤销。')) return;
     try {
-        await invoke('update.delete_version', { path: { id: Number(id) } });
+        await invoke('update.delete_version', { path: { id: resourceId(id) } });
         toast('版本已删除');
         loadVersions();
     } catch (e) { toast(e.message, 'err'); }

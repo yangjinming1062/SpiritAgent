@@ -1,5 +1,3 @@
-from infrastructure.text import safe_json_loads
-
 from features.appearance.avatar_service import re_sign_bare_path
 from features.appearance.models import AvatarAsset, CompanionOutfit
 from features.appearance.schemas import AvatarAssetResponse, OutfitResponse
@@ -7,7 +5,7 @@ from features.appearance.schemas import AvatarAssetResponse, OutfitResponse
 
 def avatar_response(asset: AvatarAsset) -> AvatarAssetResponse:
     """仅在响应出口签名，存储对象始终保留裸路径。"""
-    prompt_payload = safe_json_loads(asset.prompt_json, default={})
+    prompt_payload = asset.prompt_json or {}
     payload = prompt_payload if isinstance(prompt_payload, dict) else {}
     return AvatarAssetResponse(
         id=asset.id,

@@ -9,13 +9,13 @@ import {
   $lifeDetailLoading,
   $lifeEvents,
   $lifeEventsError,
+  $lifeEventsHasMore,
   $lifeEventsLoading,
-  $lifeEventsTotal,
   $lifePursuits,
   $lifePursuitsError,
+  $lifePursuitsHasMore,
   $lifePursuitsLoading,
-  $lifePursuitsTotal,
-  LIFE_PAGE_SIZE,
+  $lifePursuitsNextCursor,
   lifeTimeline,
   loadLifeDetail,
   loadLifeEvents,
@@ -42,12 +42,14 @@ export function LifePage({
   const revision = useLife(visible)
   const ui = useStore($lifeUi)
   const restoreRevision = useStore($lifeUiRestoreRevision)
+  const pursuitCursor = ui.pursuitCursors[ui.pursuitPage]
   const pursuits = useStore($lifePursuits)
-  const pursuitsTotal = useStore($lifePursuitsTotal)
+  const pursuitsHasMore = useStore($lifePursuitsHasMore)
+  const pursuitsNextCursor = useStore($lifePursuitsNextCursor)
   const pursuitsLoading = useStore($lifePursuitsLoading)
   const pursuitsError = useStore($lifePursuitsError)
   const events = useStore($lifeEvents)
-  const eventsTotal = useStore($lifeEventsTotal)
+  const eventsHasMore = useStore($lifeEventsHasMore)
   const eventsLoading = useStore($lifeEventsLoading)
   const eventsError = useStore($lifeEventsError)
   const detail = useStore($lifeDetail)
@@ -66,9 +68,9 @@ export function LifePage({
 
   useEffect(() => {
     if (visible) {
-      void loadLifePursuits(ui.status, ui.pursuitPage)
+      void loadLifePursuits(ui.status, pursuitCursor)
     }
-  }, [visible, revision, ui.status, ui.pursuitPage])
+  }, [visible, revision, ui.status, pursuitCursor])
 
   useEffect(() => {
     if (visible) {
@@ -118,22 +120,17 @@ export function LifePage({
 
   const pagination = (
     page: number,
-    total: number,
+    hasMore: boolean,
     busy: boolean,
     onChange: (value: number) => void
   ): React.ReactNode =>
-    page > 0 || total > LIFE_PAGE_SIZE ? (
+    page > 0 || hasMore ? (
       <div className={styles.pagination}>
         <button className={BTN_SUBTLE} disabled={busy || page === 0} onClick={() => onChange(page - 1)} type="button">
           {t.previous}
         </button>
         <span>{page + 1}</span>
-        <button
-          className={BTN_SUBTLE}
-          disabled={busy || (page + 1) * LIFE_PAGE_SIZE >= total}
-          onClick={() => onChange(page + 1)}
-          type="button"
-        >
+        <button className={BTN_SUBTLE} disabled={busy || !hasMore} onClick={() => onChange(page + 1)} type="button">
           {t.next}
         </button>
       </div>
@@ -202,14 +199,14 @@ export function LifePage({
           <h2>{t.pursuitsTitle}</h2>
           <CapsuleTabs
             ariaLabel={t.pursuitsTitle}
-            onChange={status => updateLifeUi({ status, pursuitPage: 0 })}
+            onChange={status => updateLifeUi({ status, pursuitPage: 0, pursuitCursors: [null] })}
             options={(['active', 'completed', 'all'] as const).map(value => ({ value, label: t.statuses[value] }))}
             value={ui.status}
           />
           {pursuitsError && (
             <ErrorBanner
               message={t.failed}
-              onRetry={() => void loadLifePursuits(ui.status, ui.pursuitPage)}
+              onRetry={() => void loadLifePursuits(ui.status, pursuitCursor)}
               retryLabel={strings.common.retry}
             />
           )}
@@ -236,7 +233,15 @@ export function LifePage({
               ))}
             </div>
           )}
-          {pagination(ui.pursuitPage, pursuitsTotal, pursuitsLoading, pursuitPage => updateLifeUi({ pursuitPage }))}
+          {pagination(ui.pursuitPage, pursuitsHasMore, pursuitsLoading, pursuitPage =>
+            updateLifeUi({
+              pursuitPage,
+              pursuitCursors:
+                pursuitPage > ui.pursuitPage && pursuitsNextCursor
+                  ? [...ui.pursuitCursors.slice(0, ui.pursuitPage + 1), pursuitsNextCursor]
+                  : ui.pursuitCursors
+            })
+          )}
         </section>
       )}
       <section className={styles.section}>
@@ -303,7 +308,7 @@ export function LifePage({
             )}
           </ol>
         )}
-        {(ui.eventPage + 1) * LIFE_PAGE_SIZE < eventsTotal && (
+        {eventsHasMore && (
           <button
             className={BTN_SUBTLE}
             disabled={eventsLoading}

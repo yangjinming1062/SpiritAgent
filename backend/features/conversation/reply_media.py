@@ -2,6 +2,7 @@
 
 import contextlib
 import json
+from copy import deepcopy
 
 from infrastructure.assets.asset_store import client_asset_url, resolve_companion_asset_path
 from infrastructure.assets.paths import parse_companion_asset_path
@@ -9,6 +10,7 @@ from runtime.events.emit import emit_ws_event
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.conversation.asset_bindings import flush_conversation, sync_message_assets
 from features.conversation.context_window import load_context_messages
 from features.conversation.main_conversation import MEDIA_FAILURE_SUBTYPE, MEDIA_STATUS_SUBTYPE
 from features.conversation.models import Conversation, Message
@@ -60,7 +62,7 @@ async def load_media_turn(
                 if isinstance(bubble, MediaBubble):
                     state.artifacts[bubble.media_id] = MediaArtifact(**bubble.model_dump())
         if message.role == "assistant" and message.tool_calls:
-            for call in json.loads(message.tool_calls):
+            for call in deepcopy(message.tool_calls):
                 if call.get("name") in {
                     "image_generate",
                     "image_regenerate",
@@ -174,7 +176,8 @@ async def bind_reply_videos(db: AsyncSession, message: Message, reply: Companion
         artifact = MediaArtifact(bubble.media_id, "video", bubble.goal_id, bubble.status, job_id=job.id)
         apply_video_status(artifact, job)
         bubble.status, bubble.url, bubble.error = artifact.status, artifact.url, artifact.error
-    message.reply_json = reply.model_dump_json()
+    message.reply_json = reply.model_dump(mode="json")
+    await sync_message_assets(db)
 
 
 async def update_video_reply(db: AsyncSession, job: VideoJobSnapshot) -> None:
@@ -200,7 +203,8 @@ async def update_video_reply(db: AsyncSession, job: VideoJobSnapshot) -> None:
         if artifact.status == "pending":
             return
         bubble.status, bubble.url, bubble.error = artifact.status, artifact.url, artifact.error
-        message.reply_json = reply.model_dump_json()
+        message.reply_json = reply.model_dump(mode="json")
+        await sync_message_assets(db)
         emit_ws_event(
             db,
             user_id=job.user_id,
@@ -247,13 +251,14 @@ async def deliver_video_result(db: AsyncSession, job: VideoJobSnapshot) -> None:
             conversation = await db.get(Conversation, int(job.session_id))
             if conversation is not None and conversation.user_id == job.user_id:
                 status_message = Message(
+                    user_id=conversation.user_id,
                     conversation_id=conversation.id,
                     role="system",
                     subtype=MEDIA_FAILURE_SUBTYPE,
                     content=f"[视频任务 {job.id} 未完成] {job.error_message}",
                 )
                 db.add(status_message)
-                await db.flush()
+                await flush_conversation(db)
         emit_ws_event(
             db,
             user_id=job.user_id,
@@ -275,11 +280,12 @@ async def deliver_video_result(db: AsyncSession, job: VideoJobSnapshot) -> None:
         if conversation is not None and conversation.user_id == job.user_id:
             db.add(
                 Message(
+                    user_id=conversation.user_id,
                     conversation_id=conversation.id,
                     role="system",
                     subtype=MEDIA_STATUS_SUBTYPE,
                     content=f"[视频已生成 task {job.id}] {client_url}",
-                    media_json=json.dumps([{"type": "video", "url": job.video_url}], ensure_ascii=False),
+                    media_json=[{"type": "video", "url": job.video_url}],
                 ),
             )
     emit_ws_event(

@@ -91,19 +91,19 @@ export interface VoicePlaybackScope {
 }
 
 export interface VoicePlaybackUpdate extends VoicePlaybackScope, VoicePlaybackRecord {
-  messageId: number
+  messageId: string
   bubbleIndex: number
 }
 
 export interface VoicePlaybackRemoval extends VoicePlaybackScope {
-  messageIds?: number[]
+  messageIds?: string[]
 }
 
 export interface VoicePlaybackChanged extends VoicePlaybackScope {
   snapshot: VoicePlaybackSnapshot
 }
 
-export function voicePlaybackKey(messageId: number, bubbleIndex: number): string {
+export function voicePlaybackKey(messageId: string, bubbleIndex: number): string {
   return `${messageId}:${bubbleIndex}`
 }
 

@@ -4,8 +4,9 @@ from dataclasses import dataclass
 from typing import Literal, overload
 
 from infrastructure.ai.selection import GenerationOrigin
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.selectable import ScalarSelect
 
 from features.conversation.context_window import context_message_watermark
 from features.conversation.formatting import message_text
@@ -27,7 +28,7 @@ class ReplyReplacement:
     @property
     def generation_origin(self) -> GenerationOrigin | None:
         return (
-            GenerationOrigin.model_validate_json(self.previous.generation_origin_json)
+            GenerationOrigin.model_validate(self.previous.generation_origin_json)
             if self.previous.generation_origin_json
             else None
         )
@@ -37,7 +38,7 @@ class ReplyReplacement:
 async def _replacement_candidates(
     db: AsyncSession,
     conv: Conversation | None,
-    message_id: int | None = None,
+    message_id: int,
     *,
     with_message: Literal[False],
 ) -> tuple[int, int]: ...
@@ -47,7 +48,7 @@ async def _replacement_candidates(
 async def _replacement_candidates(
     db: AsyncSession,
     conv: Conversation | None,
-    message_id: int | None = None,
+    message_id: int,
     *,
     with_message: Literal[True],
 ) -> tuple[Message, Message]: ...
@@ -56,7 +57,7 @@ async def _replacement_candidates(
 async def _replacement_candidates(
     db: AsyncSession,
     conv: Conversation | None,
-    message_id: int | None = None,
+    message_id: int,
     *,
     with_message: bool,
 ) -> tuple[int, int] | tuple[Message, Message]:
@@ -68,7 +69,7 @@ async def _replacement_candidates(
         Message.role,
         Message.subtype,
         Message.tool_calls.is_(None).label("terminal"),
-        or_(Message.content != "", Message.media_json != "", Message.reply_json != "").label("has_content"),
+        or_(Message.content != "", Message.media_json != [], Message.reply_json != {}).label("has_content"),
     )
     source_stmt = select(Message.id, Message.subtype)
     if with_message:
@@ -83,7 +84,7 @@ async def _replacement_candidates(
     ).one_or_none()
     if (
         latest is None
-        or (message_id is not None and latest.id != message_id)
+        or latest.id != message_id
         or latest.role != "assistant"
         or latest.subtype is not None
         or not latest.terminal
@@ -104,26 +105,10 @@ async def _replacement_candidates(
     return (source.Message, latest.Message) if with_message else (source.id, latest.id)
 
 
-async def _replacement_messages(
-    db: AsyncSession,
-    conv: Conversation | None,
-    message_id: int | None = None,
-) -> tuple[Message, Message]:
-    return await _replacement_candidates(db, conv, message_id, with_message=True)
-
-
-async def _replacement_ids(
-    db: AsyncSession,
-    conv: Conversation | None,
-    message_id: int | None = None,
-) -> tuple[int, int]:
-    return await _replacement_candidates(db, conv, message_id, with_message=False)
-
-
 async def replacement_source_id(db: AsyncSession, user_id: int, session_id: str, message_id: int) -> int:
     """校验换回答资格并返回可复用的用户消息 id；缺行或不合格仍抛换回答禁用错误。"""
     conv = await Conversation.by_session_id(db, session_id, user_id)
-    return (await _replacement_ids(db, conv, message_id))[0]
+    return (await _replacement_candidates(db, conv, message_id, with_message=False))[0]
 
 
 async def reply_replacement_target(
@@ -134,12 +119,63 @@ async def reply_replacement_target(
 ) -> ReplyReplacement:
     """调用方持有会话锁；摘要覆盖或新消息出现后，旧回答不再允许更换。"""
     conv = await Conversation.by_session_id(db, session_id, user_id)
-    source, target = await _replacement_messages(db, conv, message_id)
+    source, target = await _replacement_candidates(db, conv, message_id, with_message=True)
     return ReplyReplacement(source.id, message_text(source), message_snapshot(target))
 
 
-async def replaceable_reply_id(db: AsyncSession, conv_id: int) -> int | None:
-    try:
-        return (await _replacement_ids(db, await db.get(Conversation, conv_id)))[1]
-    except ReplyReplacementNotAllowedError:
-        return None
+def replaceable_reply_expression(conv_id: int) -> ScalarSelect[int]:
+    """列表读取在原查询中附带替换资格，写操作仍重新核对完整原始回合。"""
+    latest = (
+        select(
+            Message.id,
+            Message.role,
+            Message.subtype,
+            Message.tool_calls,
+            Message.content,
+            Message.media_json,
+            Message.reply_json,
+        )
+        .where(Message.conversation_id == conv_id, Message.role.in_(("user", "assistant")))
+        .order_by(Message.id.desc())
+        .limit(1)
+        .subquery()
+    )
+    source = (
+        select(Message.id, Message.subtype)
+        .where(Message.conversation_id == conv_id, Message.role == "user")
+        .order_by(Message.id.desc())
+        .limit(1)
+        .subquery()
+    )
+    checkpoint = (
+        select(Message.summary_through_message_id)
+        .where(
+            Message.conversation_id == conv_id,
+            Message.id > Conversation.context_after_message_id,
+            Message.subtype == "compress_summary",
+        )
+        .order_by(Message.id.desc())
+        .limit(1)
+        .correlate(Conversation)
+        .scalar_subquery()
+    )
+    return (
+        select(latest.c.id)
+        .select_from(Conversation)
+        .join(latest, true())
+        .join(source, true())
+        .where(
+            Conversation.id == conv_id,
+            Conversation.is_automation.is_(False),
+            Conversation.parent_id.is_(None),
+            Conversation.kind.in_(("standard", "special")),
+            latest.c.role == "assistant",
+            latest.c.subtype.is_(None),
+            latest.c.tool_calls.is_(None),
+            or_(latest.c.content != "", latest.c.media_json != [], latest.c.reply_json != {}),
+            source.c.subtype.is_(None),
+            source.c.id < latest.c.id,
+            source.c.id > func.greatest(Conversation.context_after_message_id, func.coalesce(checkpoint, 0)),
+        )
+        .scalar_subquery()
+    )

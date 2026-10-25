@@ -8,6 +8,7 @@ import {
   type VoicePlaybackUpdate
 } from '@ipc/contracts'
 
+import { isResourceId } from '../../../shared/resource-id'
 import type { BackendSessionPort } from '../shared/backend-port'
 import { broadcastToAllWindows } from '../shared/utils'
 
@@ -63,8 +64,7 @@ export function registerVoicePlaybackIpc({
     const owner = access(update)
 
     if (
-      !Number.isSafeInteger(update.messageId) ||
-      update.messageId <= 0 ||
+      !isResourceId(update.messageId) ||
       !Number.isSafeInteger(update.bubbleIndex) ||
       update.bubbleIndex < 0 ||
       typeof update.listened !== 'boolean' ||
@@ -89,7 +89,7 @@ export function registerVoicePlaybackIpc({
 
     if (
       removal.messageIds !== undefined &&
-      (!Array.isArray(removal.messageIds) || removal.messageIds.some(id => !Number.isSafeInteger(id) || id <= 0))
+      (!Array.isArray(removal.messageIds) || removal.messageIds.some(id => !isResourceId(id)))
     ) {
       throw new Error('Invalid voice playback removal')
     }

@@ -16,6 +16,7 @@ from infrastructure.ai.providers.base import (
 )
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import client_asset_url, save_companion_asset_async, unlink_companion_asset
+from infrastructure.assets.references import asset_paths
 from infrastructure.assets.write_protection import protect_asset_write, user_asset_lock
 from infrastructure.constants import (
     MAX_VOICE_DESIGN_PROMPT_CHARS,
@@ -34,12 +35,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.assets.lifecycle import enqueue_asset_cleanup
+from features.assets.service import ensure_assets_in_session
 from features.configuration.settings.values import get_user_setting, lock_user_setting, put_user_settings
+from features.media.voice_assets import commit_voices, flush_voices
 
 from .speech import _reference_bytes
 from .voice_contracts import VoiceConfirmResponse, VoicePreviewResponse, VoiceSampleResponse
 from .voice_models import CustomVoice
-from .voice_queries import custom_voice_reference
+from .voice_queries import _custom_voice_row, custom_voice_reference
 
 _SAMPLE_TTL = timedelta(hours=24)
 
@@ -104,7 +107,7 @@ async def upload_voice_sample(user_id: int, file: UploadSource) -> VoiceSampleRe
                     expires_at=utc_now() + _SAMPLE_TTL,
                 ),
             )
-            await db.commit()
+            await commit_voices(db)
     except BaseException:
         await asyncio.to_thread(unlink_companion_asset, path)
         raise
@@ -162,7 +165,7 @@ async def _save_preview(
                     expires_at=utc_now() + _SAMPLE_TTL,
                 ),
             )
-            await db.commit()
+            await commit_voices(db)
     except BaseException:
         await asyncio.to_thread(unlink_companion_asset, path)
         raise
@@ -298,7 +301,7 @@ async def confirm_voice(user_id: int, candidate_id: str, expected_version: int) 
                 user_id,
                 [path for path in (previous.reference_path, previous.preview_path) if path],
             )
-            await db.flush()
+            await flush_voices(db)
         candidate.is_current = True
         candidate.version = current_version + 1
         candidate.expires_at = None
@@ -310,7 +313,7 @@ async def confirm_voice(user_id: int, candidate_id: str, expected_version: int) 
             event_type="companion.voice.updated",
             payload={"voice_id": voice_id, "version": candidate.version},
         )
-        await db.commit()
+        await commit_voices(db)
         return VoiceConfirmResponse(voice_id=voice_id, version=candidate.version)
 
 
@@ -320,6 +323,12 @@ async def read_current_voice(db: AsyncSession, user_id: int) -> str:
 
 
 async def write_current_voice(db: AsyncSession, user_id: int, voice_id: str) -> str:
+    try:
+        row = await _custom_voice_row(db, user_id, voice_id, lock=True)
+        if row is not None:
+            await ensure_assets_in_session(db, user_id, asset_paths([row.reference_path, row.preview_path], user_id))
+    except ValueError as exc:
+        raise RequestError(status_code=400, message=str(exc)) from exc
     await put_user_settings(db, user_id, {"companion.voice_id": voice_id})
-    await db.commit()
+    await commit_voices(db)
     return voice_id

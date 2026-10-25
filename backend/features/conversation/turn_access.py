@@ -1,13 +1,10 @@
 """聊天回合、委派和标题生成使用的会话数据入口。"""
 
-from infrastructure.constants import DEFAULT_SESSION_TITLE
 from infrastructure.database import session_scope
-from sqlalchemy import cast, select
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.conversation.context_window import load_context_messages
-from features.conversation.formatting import message_text
 from features.conversation.main_conversation import get_or_create_main_conversation
 from features.conversation.memory_scope import conversation_memory_scope
 from features.conversation.models import Conversation, Message
@@ -77,7 +74,7 @@ async def context_messages(db: AsyncSession, conv: ConversationSnapshot) -> list
 
 async def conversation_topic_ids(db: AsyncSession, conv: ConversationSnapshot) -> tuple[int, ...]:
     """来源引用跨摘要保留，清空水位前的分享不再进入当前会话上下文。"""
-    references = cast(Message.reply_json, JSONB)["used_topic_ids"]
+    references = Message.reply_json["used_topic_ids"]
     used_topics = await db.scalars(
         select(references)
         .distinct()
@@ -107,24 +104,3 @@ async def create_delegated_conversation(user_id: int, parent_id: int | None) -> 
         db.add(conv)
         await db.commit()
         return str(conv.id)
-
-
-async def first_user_text(conversation_id: int) -> str:
-    async with session_scope() as db:
-        row = await db.scalar(
-            select(Message)
-            .where(Message.conversation_id == conversation_id, Message.role == "user")
-            .order_by(Message.id)
-            .limit(1),
-        )
-        return message_text(row) if row is not None else ""
-
-
-async def update_default_title(conversation_id: int, title: str) -> bool:
-    async with session_scope() as db:
-        conv = await db.scalar(select(Conversation).where(Conversation.id == conversation_id))
-        if conv is None or conv.title != DEFAULT_SESSION_TITLE:
-            return False
-        conv.title = title
-        await db.commit()
-        return True

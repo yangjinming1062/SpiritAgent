@@ -11,7 +11,7 @@ from workflows.visuals_companion import load_action_review_source
 async def complete_character_initialization(user_id: int) -> None:
     async with SESSION_LOCAL() as db:
         source = await load_action_review_source(db, user_id)
-        await ensure_initial_action(db, user_id, review_source_json=source.model_dump_json())
+        await ensure_initial_action(db, user_id, review_source_json=source.model_dump(mode="json"))
         emit_ws_event(db, user_id=user_id, event_type="companion.visual.initial_requested", payload={})
         await db.commit()
     await schedule_initial_scene(user_id)

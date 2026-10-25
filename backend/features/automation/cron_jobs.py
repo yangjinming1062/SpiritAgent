@@ -5,13 +5,13 @@ from typing import Any
 from croniter import croniter
 from infrastructure.config import SETTINGS
 from infrastructure.database import session_scope
+from infrastructure.domain_locks import lock_domain
 from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
 from runtime.memory_scope import MemoryScope, validate_memory_scope
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.accounts.models import lock_user_row
 from features.automation.models import CronJob
 from features.conversation.automation_queries import create_task_conversation, owned_task_conversation_id
 
@@ -119,7 +119,7 @@ async def create_job(
     validate_memory_scope(scope)
     user_id = scope.user_id
     async with session_scope() as db:
-        await lock_user_row(db, user_id)
+        await lock_domain(db, user_id, "automation")
         job = CronJob(
             user_id=user_id,
             system_preset_id=scope.system_preset_id,
@@ -180,7 +180,7 @@ async def update_job(
     validate_memory_scope(scope)
     user_id = scope.user_id
     async with session_scope() as db:
-        await lock_user_row(db, user_id)
+        await lock_domain(db, user_id, "automation")
         job = await _get_scoped_job(db, scope, job_id)
         if not job:
             return None
@@ -207,7 +207,7 @@ async def remove_job(scope: MemoryScope, job_id: int) -> bool:
     validate_memory_scope(scope)
     user_id = scope.user_id
     async with session_scope() as db:
-        await lock_user_row(db, user_id)
+        await lock_domain(db, user_id, "automation")
         job = await _get_scoped_job(db, scope, job_id)
         if not job:
             return False

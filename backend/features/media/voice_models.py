@@ -20,6 +20,8 @@ class CustomVoice(ModelBase, TimestampMixin):
     prompt: Mapped[str] = mapped_column(Text, default="")
     reference_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     preview_path: Mapped[str] = mapped_column(Text, default="")
+    reference_asset_id: Mapped[int | None] = mapped_column(ForeignKey("assets.id", ondelete="RESTRICT"))
+    preview_asset_id: Mapped[int | None] = mapped_column(ForeignKey("assets.id", ondelete="RESTRICT"))
     duration: Mapped[float] = mapped_column(Float, default=0)
     version: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     expected_version: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))

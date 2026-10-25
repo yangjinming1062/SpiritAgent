@@ -108,8 +108,3 @@ def prepare_action_frame(data: bytes, *, preserve_resolution: bool = False) -> b
     image.save(output, format="PNG")
     logger.info("action frame prepared", extra={"method": method, "width": image.width, "height": image.height})
     return output.getvalue()
-
-
-def action_frame_video_input(data: bytes) -> bytes:
-    """当前视频接口不承诺保留输入 alpha；显式合成白底，透明原图仍独立保存。"""
-    return _action_frame_on_background(data, (255, 255, 255))

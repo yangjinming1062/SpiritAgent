@@ -2,6 +2,7 @@
 
 from typing import Annotated, Literal
 
+from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, Field, JsonValue
 
 from features.conversation.replies import LinkBubble, TextBubble, VoiceBubbleView
@@ -32,7 +33,7 @@ class ClientMediaEntry(BaseModel):
 
 
 class SessionMessageFields(BaseModel):
-    id: int = 0
+    id: ResourceId = 0
     role: Literal["assistant", "system", "tool", "user"]
     content: str | None
     subtype: str = ""

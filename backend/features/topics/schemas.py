@@ -3,6 +3,7 @@
 from datetime import date, datetime
 from typing import Any, Literal
 
+from infrastructure.api_ids import ResourceId
 from infrastructure.web.social_content import SocialContent, SocialPlatform
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -12,7 +13,7 @@ TopicFeedbackValue = Literal["like", "less"]
 class TopicBatchSnapshot(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
+    id: ResourceId
     activity_date: date
     started_at: datetime
     window_start: datetime
@@ -39,7 +40,7 @@ class TopicSelection(BaseModel):
 
 class TopicCardSnapshot(BaseModel):
     type: Literal["link"] = "link"
-    topic_id: int
+    topic_id: ResourceId
     title: str
     platform: SocialPlatform
     url: str
@@ -69,6 +70,6 @@ class TopicFeedbackRequest(BaseModel):
 
 
 class TopicFeedbackSnapshot(BaseModel):
-    topic_id: int
+    topic_id: ResourceId
     value: TopicFeedbackValue | None
     updated_at: datetime | None

@@ -20,8 +20,10 @@ from features.companion.appearance_ports import set_appearance_readiness_reader
 from features.companion.intents import invalidate_cron_companion_intents
 from features.configuration.queries import user_ai_config
 from features.conversation.reply_media import deliver_video_result
-from features.journal.journal_indexes import delete_diary_record
-from features.life.ports import set_life_event_projector
+from features.entries.ports import set_entry_projector
+from features.entries.service import delete_diary
+from features.journal.journal_indexes import rebuild_diary_indexes
+from features.life.ports import set_life_events_projector
 from features.media.delivery import set_video_result_handler
 from features.media.reference_reader import MediaReferenceReaders, set_media_reference_readers
 from features.media.video_jobs import inspect_video_queue_owner as inspect_media_video_owner
@@ -69,10 +71,10 @@ from runtime.events.contracts import COMPANION_TURN_EVENT
 from runtime.events.loop import register_internal_event_handler
 from runtime.tools.registry import REGISTRY
 from workflows.automation.companion_turns import execute_companion_turn
-from workflows.life_events import project_life_event_to_memory, record_post_published
+from workflows.life_events import project_life_events_to_memory, record_post_published
 from workflows.onboarding.character_ready import complete_character_initialization
 from workflows.visual_decisions import initialize_visuals, schedule_visual_selection
-from workflows.visual_planning import visual_material_links, visual_planning_context
+from workflows.visual_planning import visual_planning_context
 
 from bootstrap.assets import register_asset_contributions
 
@@ -146,8 +148,9 @@ def wire_domain_hooks() -> None:
     register_channel_lifecycle(
         ChannelLifecycle(close_desktop=terminate_user_gateway, close_remote=terminate_remote_sessions),
     )
-    set_diary_delete_handler(delete_diary_record)
-    set_life_event_projector(project_life_event_to_memory)
+    set_entry_projector(rebuild_diary_indexes)
+    set_diary_delete_handler(delete_diary)
+    set_life_events_projector(project_life_events_to_memory)
     set_post_published_handler(record_post_published)
     set_media_reference_readers(
         MediaReferenceReaders(
@@ -161,7 +164,6 @@ def wire_domain_hooks() -> None:
     configure_visual_hooks(
         planning_reader=visual_planning_context,
         ready_handler=schedule_visual_selection,
-        link_reader=visual_material_links,
     )
     set_appearance_readiness_reader(appearance_readiness)
 

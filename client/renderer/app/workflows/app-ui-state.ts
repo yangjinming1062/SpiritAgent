@@ -46,7 +46,7 @@ export function installAppUiStateSync(): () => void {
     ...hashTarget,
     sessionId: search.get('sessionId') ?? hashTarget?.sessionId,
     messageKey: search.get('messageKey') ?? hashTarget?.messageKey,
-    pursuitId: search.has('pursuitId') ? Number(search.get('pursuitId')) : hashTarget?.pursuitId
+    pursuitId: search.has('pursuitId') ? (search.get('pursuitId') ?? undefined) : hashTarget?.pursuitId
   })
 
   let initialTargetConsumed = false

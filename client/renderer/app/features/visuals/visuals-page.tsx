@@ -15,6 +15,7 @@ import {
   $visualsItems,
   $visualsJobs,
   $visualsLoading,
+  $visualsNextCursor,
   $visualsPresentation,
   $visualsTotal,
   clearVisualDetail,
@@ -72,6 +73,7 @@ export function VisualsPage(): React.JSX.Element {
   const items = useStore($visualsItems)
   const jobs = useStore($visualsJobs)
   const total = useStore($visualsTotal)
+  const nextCursor = useStore($visualsNextCursor)
   const loading = useStore($visualsLoading)
   const error = useStore($visualsError)
   const detailState = useStore($visualsDetail)
@@ -95,11 +97,12 @@ export function VisualsPage(): React.JSX.Element {
       query: ui.query || undefined,
       media_kind: ui.mediaKind === 'all' ? undefined : ui.mediaKind,
       source: ui.source || undefined,
-      offset: ui.page * PAGE_SIZE,
+      cursor: ui.cursors[ui.page] ?? undefined,
+      include_total: true,
       limit: PAGE_SIZE
     })
     void refreshVisualPresentation()
-  }, [authenticated, ui.query, ui.mediaKind, ui.source, ui.page])
+  }, [authenticated, ui.query, ui.mediaKind, ui.source, ui.page, ui.cursors])
 
   // 素材统计只为就绪提示服务：仅挂载时拉一次，且不覆盖环境页的搜索与页码。
   useEffect(() => {
@@ -107,7 +110,7 @@ export function VisualsPage(): React.JSX.Element {
       return
     }
 
-    void refreshActions()
+    void refreshActions('')
     void hydrateWardrobe()
 
     if ($sceneLibrary.get().length === 0) {
@@ -322,11 +325,14 @@ export function VisualsPage(): React.JSX.Element {
             >
               {t.prev}
             </button>
-            <span className="text-[11px] text-faint">{t.total(total)}</span>
+            <span className="text-[11px] text-faint">{total !== null ? t.total(total) : null}</span>
             <button
               className={BTN_SUBTLE}
-              disabled={busy || (ui.page + 1) * PAGE_SIZE >= total}
-              onClick={() => updateVisualsUi({ page: ui.page + 1 })}
+              disabled={busy || !nextCursor}
+              onClick={() =>
+                nextCursor &&
+                updateVisualsUi({ page: ui.page + 1, cursors: [...ui.cursors.slice(0, ui.page + 1), nextCursor] })
+              }
               type="button"
             >
               {t.next}
@@ -413,7 +419,7 @@ function VisualDetailPanel({
   const duration = formatDuration(detail.duration_ms, t.seconds)
 
   // 素材被删除后 ID 置空，冻结来源的名称与描述继续可读。
-  const materialLabel = (materialId: number | null, frozenName: string): string =>
+  const materialLabel = (materialId: string | null, frozenName: string): string =>
     materialId === null ? `${frozenName}（${deleted}）` : frozenName
 
   return (

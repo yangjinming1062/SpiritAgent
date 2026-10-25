@@ -103,7 +103,7 @@ function createPlaybackStore() {
     return loading
   }
 
-  function captureVoiceProgress(messageId: number, bubbleIndex: number) {
+  function captureVoiceProgress(messageId: string, bubbleIndex: number) {
     const owner = scope
     const key = voicePlaybackKey(messageId, bubbleIndex)
     let lastSaved = 0
@@ -150,7 +150,7 @@ function createPlaybackStore() {
     }
   }
 
-  function removeVoicePlayback(sessionId: string, messageIds?: number[]): void {
+  function removeVoicePlayback(sessionId: string, messageIds?: string[]): void {
     const auth = $auth.get()
 
     if (auth.kind !== 'authenticated' || messageIds?.length === 0) {
@@ -162,7 +162,7 @@ function createPlaybackStore() {
 
     if (scope?.sessionId === sessionId) {
       for (const key of pending.keys()) {
-        if (!removed || removed.has(Number(key.split(':')[0]))) {
+        if (!removed || removed.has(key.split(':')[0])) {
           pending.delete(key)
         }
       }
@@ -228,11 +228,11 @@ export function voicePlaybackReady(sessionId: string | null): Promise<void> {
   return getVoicePlaybackStore(sessionId).voicePlaybackReady()
 }
 
-export function captureVoiceProgress(messageId: number, bubbleIndex: number, sessionId: string | null) {
+export function captureVoiceProgress(messageId: string, bubbleIndex: number, sessionId: string | null) {
   return getVoicePlaybackStore(sessionId).captureVoiceProgress(messageId, bubbleIndex)
 }
 
-export function removeVoicePlayback(sessionId: string, messageIds?: number[]): void {
+export function removeVoicePlayback(sessionId: string, messageIds?: string[]): void {
   getVoicePlaybackStore(sessionId).removeVoicePlayback(sessionId, messageIds)
 }
 

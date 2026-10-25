@@ -22,6 +22,7 @@ from infrastructure.text import safe_json_loads
 from sqlalchemy import ColumnElement, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.conversation.asset_bindings import commit_conversation
 from features.conversation.models import Message
 
 logger = get_logger(__name__)
@@ -291,7 +292,7 @@ async def enforce_session_quota(db: AsyncSession, session_id: str, incoming_byte
     parsed = _parse_message_parts(messages)
     rewritten = _rewrite_rows(parsed, file_ids, session_id)
     if rewritten:
-        await db.commit()
+        await commit_conversation(db)
     await asyncio.to_thread(_unlink_files, victims)
     logger.info(
         "session media quota eviction",
@@ -329,7 +330,7 @@ async def prune_media_in_range(
     if not file_ids:
         return
     rewritten = _rewrite_rows(parsed, file_ids, session_id)
-    await db.commit()
+    await commit_conversation(db)
     root = session_dir(session_id).resolve()
     targets = [target for file_id in file_ids if (target := (root / file_id).resolve()).is_relative_to(root)]
     removed = await asyncio.to_thread(_unlink_files, targets)
@@ -426,7 +427,7 @@ async def copy_forked_media_attachments(db: AsyncSession, source_session_id: str
         if new_parts != parts:
             message.content = json.dumps(new_parts, ensure_ascii=False)
             rewritten += 1
-    await db.commit()
+    await commit_conversation(db)
     return rewritten
 
 

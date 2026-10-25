@@ -34,7 +34,7 @@ import { SlashCommandPopover } from './slash-command-popover'
 
 export interface ChatSubmitState {
   editAttachments?: ChatAttachment[]
-  editMessageId?: number
+  editMessageId?: string
   gatewayState: ConnectionState
   isGenerating: boolean
   isReadOnlySession: boolean
@@ -128,7 +128,7 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
     editorRef.current = node
   }, [])
 
-  const focusedEditRef = useRef<number | undefined>(undefined)
+  const focusedEditRef = useRef<string | undefined>(undefined)
 
   // 仅开始编辑消息时聚焦，抽屉关闭或窗口恢复资格不抢走返回焦点。
   useEffect(() => {

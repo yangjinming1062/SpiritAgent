@@ -15,7 +15,7 @@ Stable explicit facts need not expire from age alone. Temporary feelings, routin
 expires_at, when set, must be an ISO 8601 timestamp with an explicit timezone. Interpret it relative to the supplied current time (now) and user_timezone. Candidates and active inferred patterns require a future review expiry appropriate to uncertainty; this is not a user deadline or a scheduled reminder. Preserve actual stated deadlines without inventing them.
 
 ## Existing records
-maintenance_only_memories are the existing records; a record's id and content_version are the memory_id and expected_version for revising it. source_kind manual marks a record the user wrote or edited directly: it is the user's own explicit statement even without quotes, so keep it unless a newer user message explicitly contradicts it. Structured onboarding/profile rows (context user_profile:...) are direct user input: do not duplicate them. When a newer direct profile edit conflicts with learned memory, compare original evidence/edit times and invalidate the learned claim. If the user explicitly contradicts an obsolete profile row, invalidate it and create a separately supported replacement in the same batch. A profile row may only be invalidated or forgotten here. Do not modify persona or settings.
+maintenance_only_memories are the existing records; a record's id and content_version are the memory_id and expected_version for revising it. source_kind manual marks a record the user wrote or edited directly: it is the user's own explicit statement even without quotes, so keep it unless a newer user message explicitly contradicts it. Structured onboarding/profile rows (kind user_profile) are direct user input: do not duplicate them. When a newer direct profile edit conflicts with learned memory, compare original evidence/edit times and invalidate the learned claim. If the user explicitly contradicts an obsolete profile row, invalidate it and create a separately supported replacement in the same batch. A profile row may only be invalidated or forgotten here. Do not modify persona or settings.
 
 ## Maintenance
 Inspect supplied records first and revise the same atomic fact instead of creating duplicates. Decisions describe new claims or revisions to supplied records; omit unchanged records, which remain in place. Keep independently revisable facts in separate records, including preferences applying in different situations. Each decision retaining a claim must preserve the relevant supporting and opposing evidence. Within the schema's evidence limit, omit duplicate or redundant supporting quotes rather than material opposing evidence; reused evidence is not a new observation. Invalidating an unsupported record may use no evidence. Resolve corrections by revising or invalidating obsolete claims, never by leaving contradictions active. A correction changes only the affected fact, not unrelated supported claims. When merging duplicates, retain independent facts and invalidate redundant records in the same batch. Invalidated means excluded from all use.
@@ -35,13 +35,13 @@ If untrusted_proposal is present, independently assess it against the original e
 Null values for both memory_id and expected_version create a record. Updating a supplied record requires both its real ID and version, at most once per batch; never invent IDs. An expired record remains unusable and may be renewed only with current supplied support. For a retained claim, evidence.stance describes whether the quote supports or opposes that claim; active and candidate require supporting evidence. Output JSON only, without Markdown, commentary, or dialogue.
 """
 
-# 已知 user_* 键的友好上下文标签；未知键回落为 user_profile:<raw_key>。
+# 已知 user_* 槽位的显示标签；数据库类别与槽位独立保存。
 CONTEXT_LABELS: dict[str, str] = {
-    "user_call_name": "user_profile:preferred_name",
-    "user_gender": "user_profile:gender",
-    "user_birthday": "user_profile:birthday",
-    "user_hobbies": "user_profile:hobbies",
-    "user_freeform": "user_profile:freeform",
+    "user_call_name": "preferred_name",
+    "user_gender": "gender",
+    "user_birthday": "birthday",
+    "user_hobbies": "hobbies",
+    "user_freeform": "freeform",
 }
 
 USER_PROFILE_LABELS_TEXTS: dict[str, str] = {

@@ -15,7 +15,8 @@ from sqlalchemy import (
     or_,
     select,
 )
-from sqlalchemy.dialects.postgresql import JSONB, JSONPATH, aggregate_order_by
+from sqlalchemy.dialects.postgresql import JSONB, aggregate_order_by
+from sqlalchemy.orm.util import AliasedClass
 
 from features.conversation.models import Conversation, Message
 from features.conversation.replies import (
@@ -48,16 +49,7 @@ def message_contains_text(query: str) -> ColumnElement[bool]:
     )
     text_match = parts.c.value["text"].astext.icontains(query, autoescape=True)
     bubble_match = select(1).select_from(parts).where(text_match).correlate(Message).exists()
-    saved_reply = case(
-        (
-            and_(
-                Message.reply_json.op("IS JSON", is_comparison=True)(literal_column("OBJECT")),
-                func.pg_input_is_valid(Message.reply_json, "jsonb"),
-            ),
-            cast(Message.reply_json, JSONB),
-        ),
-        else_=literal_column("'{}'::jsonb"),
-    )
+    saved_reply = func.coalesce(Message.reply_json, literal_column("'{}'::jsonb"))
     saved_bubbles = saved_reply.op("->", return_type=JSONB)("bubbles")
     link_parts = (
         func.jsonb_array_elements(
@@ -104,75 +96,81 @@ def message_contains_text(query: str) -> ColumnElement[bool]:
     )
 
 
-def _visible_message_text() -> ColumnElement[str | None]:
+def _visible_message_text(message: type[Message] | AliasedClass[Message] = Message) -> ColumnElement[str | None]:
     """多模态正文只取字符串 input_text 并保留数组顺序，与 extractMessageContent 一致。"""
     parts = (
-        func.jsonb_array_elements(cast(Message.content, JSONB))
+        func.jsonb_array_elements(cast(message.content, JSONB))
         .table_valued(column("value", JSONB), with_ordinality="position")
         .render_derived()
     )
     joined = (
         select(func.string_agg(parts.c.value["text"].astext, aggregate_order_by("\n", parts.c.position)))
         .where(parts.c.value["type"].astext == "input_text", func.jsonb_typeof(parts.c.value["text"]) == "string")
-        .correlate(Message)
+        .correlate(message)
         .scalar_subquery()
     )
     return case(
-        (and_(Message.content_type == "multimodal_v1", _is_json_array()), joined),
-        else_=Message.content,
+        (and_(message.content_type == "multimodal_v1", _is_json_array(message.content)), joined),
+        else_=message.content,
     )
 
 
-def _companion_user_bubble_count() -> ColumnElement[int]:
+def _companion_user_bubble_count(message: type[Message] | AliasedClass[Message] = Message) -> ColumnElement[int]:
     """陪伴用户行分段去空；空正文或纯附件与界面一致，至少保留一泡。"""
     segments = (
-        func.regexp_split_to_table(_visible_message_text(), _BLANK_LINE_SPLIT).table_valued("segment").render_derived()
+        func.regexp_split_to_table(_visible_message_text(message), _BLANK_LINE_SPLIT)
+        .table_valued("segment")
+        .render_derived()
     )
     return (
         select(func.greatest(func.count(), 1))
         .select_from(segments)
         .where(func.btrim(segments.c.segment, _DISPLAY_WHITESPACE) != "")
-        .correlate(Message)
+        .correlate(message)
         .scalar_subquery()
     )
 
 
-def visible_bubble_count() -> ColumnElement[int]:
+def visible_bubble_count(
+    message: type[Message] | AliasedClass[Message] = Message,
+    conversation: type[Conversation] | AliasedClass[Conversation] = Conversation,
+) -> ColumnElement[int]:
     """已保存消息的聊天气泡数；查询须关联 Conversation，系统状态与工具记录不计。"""
-    reply_bubbles = func.jsonb_array_length(cast(Message.content, JSONB))
+    saved_bubbles = message.reply_json["bubbles"]
+    reply_bubbles = func.jsonb_array_length(saved_bubbles)
     assistant_text = func.btrim(
-        func.regexp_replace(_visible_message_text(), _MEDIA_MARKER, "", "g"),
+        func.regexp_replace(_visible_message_text(message), _MEDIA_MARKER, "", "g"),
         _DISPLAY_WHITESPACE,
     )
     has_media = case(
         (
-            _is_json_array(Message.media_json),
-            cast(Message.media_json, JSONB).path_exists(cast('strict $[*] ? (@.type() == "object")', JSONPATH)),
+            func.jsonb_typeof(message.media_json) == "array",
+            message.media_json.path_exists(literal_column("'strict $[*] ? (@.type() == \"object\")'::jsonpath")),
         ),
         else_=false(),
     )
     return case(
         (
             and_(
-                Message.role == "user",
-                Conversation.system_preset_id == COMPANION_PRESET_ID,
-                Conversation.parent_id.is_(None),
-                or_(Message.subtype.is_(None), Message.subtype == ""),
+                message.role == "user",
+                conversation.system_preset_id == COMPANION_PRESET_ID,
+                conversation.parent_id.is_(None),
+                or_(message.subtype.is_(None), message.subtype == ""),
             ),
-            _companion_user_bubble_count(),
+            _companion_user_bubble_count(message),
         ),
-        (Message.role == "user", 1),
+        (message.role == "user", 1),
         (
-            and_(Message.role == "assistant", Message.content_type == "companion_reply"),
-            case((_is_json_array(), reply_bubbles), else_=0),
+            and_(message.role == "assistant", message.content_type == "companion_reply"),
+            case((func.jsonb_typeof(saved_bubbles) == "array", reply_bubbles), else_=0),
         ),
-        (and_(Message.role == "assistant", or_(assistant_text != "", has_media)), 1),
+        (and_(message.role == "assistant", or_(assistant_text != "", has_media)), 1),
         else_=0,
     )
 
 
 def _companion_context_items(message: Message | MessageSnapshot, *, dialogue_only: bool) -> list[dict[str, JsonValue]]:
-    delivery, source = CompanionReply.load_saved_snapshot(message.reply_json or "", message.content or "")
+    delivery, source = CompanionReply.load_saved_snapshot(message.reply_json or {}, message.content or "")
     media = {b.media_id: b for b in delivery.bubbles if isinstance(b, MediaBubble)}
     links = {b.topic_id: b for b in delivery.bubbles if isinstance(b, LinkBubble)}
     return [
@@ -265,7 +263,7 @@ def format_messages_compact(
         if msg.subtype:
             record["subtype"] = msg.subtype
         if msg.tool_calls:
-            record["tool_calls"] = safe_json_loads(msg.tool_calls, default=[])
+            record["tool_calls"] = msg.tool_calls or []
         if msg.tool_call_id:
             record["tool_call_id"] = msg.tool_call_id
         records.append(record)

@@ -9,6 +9,7 @@ from features.scenes.query_contracts import SceneSnapshot
 from features.scenes.service import SceneError
 from features.scenes.snapshots import list_scene_snapshots, schedule_scene_snapshot
 from features.scenes.turn_state import SceneTurnState
+from infrastructure.api_ids import ResourceId
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.text import tool_error
 from runtime.tools.prompts import SCENE_TOOL_DESCRIPTIONS
@@ -17,7 +18,7 @@ from runtime.tools.registry import ToolsRegistry
 
 def _asset(row: SceneSnapshot) -> dict[str, Any]:
     return {
-        "id": row.id,
+        "id": str(row.id),
         "title": row.title,
         "description": row.description,
         "status": row.status,
@@ -31,21 +32,26 @@ def _result(**payload: Any) -> str:
 
 
 async def scene_list_tool(
-    user_id: int,
+    user_id: ResourceId,
     scene_turn: SceneTurnState,
     query: str = "",
-    offset: int = 0,
+    cursor: ResourceId | None = None,
     limit: int = 30,
     **_: Any,
 ) -> str:
     async with SESSION_LOCAL() as db:
-        rows, total = await list_scene_snapshots(db, user_id, query=query, offset=offset, limit=limit, ready_only=True)
+        page = await list_scene_snapshots(db, user_id, query=query, cursor=cursor, limit=limit, ready_only=True)
         policy = await scene_policy(db, user_id)
     scene_turn.inspected = True
-    return _result(scenes=[_asset(row) for row in rows], total=total, offset=max(0, offset), policy=policy.value)
+    return _result(
+        scenes=[_asset(row) for row in page.scenes],
+        has_more=page.has_more,
+        next_cursor=page.next_cursor,
+        policy=policy.value,
+    )
 
 
-async def scene_get_tool(scene_id: int, user_id: int, **_: Any) -> str:
+async def scene_get_tool(scene_id: ResourceId, user_id: ResourceId, **_: Any) -> str:
     async with SESSION_LOCAL() as db:
         row = await scene_snapshot(db, user_id, scene_id)
     if row is None:
@@ -55,7 +61,7 @@ async def scene_get_tool(scene_id: int, user_id: int, **_: Any) -> str:
 
 async def scene_create_tool(
     notes: str,
-    user_id: int,
+    user_id: ResourceId,
     scene_turn: SceneTurnState,
     **_: Any,
 ) -> str:
@@ -89,12 +95,16 @@ def register(registry: ToolsRegistry) -> None:
             scene_list_tool,
             {
                 "query": {"type": "string"},
-                "offset": {"type": "integer", "minimum": 0},
+                "cursor": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]*$",
+                    "description": "继续读取时使用上次返回的 next_cursor；首次读取省略。",
+                },
                 "limit": {"type": "integer", "minimum": 1, "maximum": 100},
             },
             [],
         ),
-        ("scene_get", scene_get_tool, {"scene_id": {"type": "integer", "minimum": 1}}, ["scene_id"]),
+        ("scene_get", scene_get_tool, {"scene_id": {"type": "string", "pattern": "^[1-9][0-9]*$"}}, ["scene_id"]),
         (
             "scene_create",
             scene_create_tool,

@@ -1,24 +1,17 @@
-"""角色透明化：静态图细化 alpha 与前景颜色；视频分割保留有限时域稳定。"""
+"""角色静态图片透明化：细化 alpha 与前景颜色。"""
 
 import math
-import tempfile
 from pathlib import Path
 
 import numpy as np
 import onnxruntime as ort
-from numpy.typing import NDArray
 from PIL import Image, ImageFilter
 
 from infrastructure.config import SETTINGS
 from infrastructure.video_processing.ffmpeg import (
     VideoProcessError,
-    alpha_input_args,
-    ffmpeg_stdout,
-    probe_video,
-    run_ffmpeg,
 )
 
-Array = NDArray[np.float32]
 _IMAGE_MATTING_MAX_PIXELS = 1_000_000
 
 
@@ -37,8 +30,6 @@ class ForegroundMatte:
         options.intra_op_num_threads = 4
         self.session = ort.InferenceSession(str(model_path), sess_options=options, providers=["CPUExecutionProvider"])
         self.input_name = self.session.get_inputs()[0].name
-        self.previous_rgb: Array | None = None
-        self.previous_alpha: Array | None = None
 
     def apply(self, image: Image.Image) -> Image.Image:
         rgb = np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0
@@ -50,11 +41,6 @@ class ForegroundMatte:
         # 不逐帧 min/max 拉伸，否则每帧概率标尺变化会放大边缘闪烁。
         alpha = np.asarray(Image.fromarray(np.clip(mask, 0, 1)).resize(image.size, Image.Resampling.BILINEAR))
         alpha = np.clip((alpha - 0.02) / 0.96, 0, 1)
-        if self.previous_rgb is not None and self.previous_alpha is not None and rgb.shape == self.previous_rgb.shape:
-            stationary = np.max(np.abs(rgb - self.previous_rgb), axis=2) < 3 / 255
-            consistent = np.abs(alpha - self.previous_alpha) < 0.15
-            alpha = np.where(stationary & consistent, 0.75 * alpha + 0.25 * self.previous_alpha, alpha)
-        self.previous_rgb, self.previous_alpha = rgb, alpha
         # 只在均匀背景且语义边缘半透明时去背景混色；实体 RGB 不改动。
         border = np.concatenate(
             (rgb[:3].reshape(-1, 3), rgb[-3:].reshape(-1, 3), rgb[:, :3].reshape(-1, 3), rgb[:, -3:].reshape(-1, 3)),
@@ -132,59 +118,3 @@ def _refine_image_edges(image: Image.Image, segmented: Image.Image) -> Image.Ima
 def matte_image(image: Image.Image, model_path: Path) -> Image.Image:
     """静态图片以 ISNet 建立三分图，再求解 alpha 与前景颜色；保留原画布。"""
     return _refine_image_edges(image, ForegroundMatte(model_path).apply(image))
-
-
-def matte_video(src: Path, dst: Path) -> None:
-    """保留有效原生 alpha，否则逐帧 ISNet 抠像；输出 FFV1/BGRA 中间片段。"""
-    probe = probe_video(src)
-    if probe.width * probe.height > 3840 * 2160:
-        raise VideoProcessError("动作素材分辨率超出处理上限")
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    native_alpha = False
-    if probe.has_alpha:
-        # 在原分辨率上取最小 alpha；缩小后再判断会抹掉细窄的透明边缘。
-        stats = ffmpeg_stdout(
-            [
-                *alpha_input_args(probe),
-                "-i",
-                str(src),
-                "-vf",
-                "alphaextract,scale=in_range=full:out_range=full,format=yuv444p,"
-                "signalstats,metadata=mode=print:key=lavfi.signalstats.YMIN:file=-",
-                "-f",
-                "null",
-                "-",
-            ],
-            failure_message="视频透明通道解码失败",
-        )
-        minima = [
-            int(line.split("=", 1)[1])
-            for line in stats.decode().splitlines()
-            if line.startswith("lavfi.signalstats.YMIN=")
-        ]
-        if not minima:
-            raise VideoProcessError("视频透明通道解码失败")
-        native_alpha = min(minima) <= 8
-    if native_alpha:
-        run_ffmpeg(
-            [*alpha_input_args(probe), "-i", str(src), "-an", "-c:v", "ffv1", "-pix_fmt", "bgra", str(dst)],
-            label="透明解码",
-        )
-        return
-    matte = ForegroundMatte(require_matting_model())
-    with tempfile.TemporaryDirectory(prefix="video-matte-") as tmp:
-        work = Path(tmp)
-        frames = work / "frames"
-        frames.mkdir()
-        run_ffmpeg(["-i", str(src), "-vf", "fps=24", str(frames / "f%05d.png")], label="抽帧")
-        paths = sorted(frames.glob("f*.png"))
-        if not paths:
-            raise VideoProcessError("视频未解码出有效画面")
-        for path in paths:
-            with Image.open(path) as frame:
-                result = matte.apply(frame)
-            result.save(path)
-        run_ffmpeg(
-            ["-framerate", "24", "-i", str(frames / "f%05d.png"), "-an", "-c:v", "ffv1", "-pix_fmt", "bgra", str(dst)],
-            label="透明化",
-        )

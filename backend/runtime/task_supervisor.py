@@ -85,16 +85,11 @@ class TaskSupervisor:
         *,
         owner: str | None = None,
         user_id: int | None = None,
-        only_user_tasks: bool = False,
         respect_maintenance_policy: bool = False,
     ) -> int:
         cancelled = 0
         interrupted = False
-        while pending := tuple(
-            task
-            for task in self.tasks(owner=owner, user_id=user_id)
-            if not only_user_tasks or self._tasks[task].user_id is not None
-        ):
+        while pending := self.tasks(owner=owner, user_id=user_id):
             cancelled += cancel_tasks(
                 task for task in pending if not respect_maintenance_policy or self._tasks[task].cancel_on_maintenance
             )
@@ -106,9 +101,9 @@ class TaskSupervisor:
             raise asyncio.CancelledError
         return cancelled
 
-    async def drain(self, *, owner: str | None = None, only_user_tasks: bool = False) -> None:
+    async def drain(self, *, owner: str | None = None) -> None:
         """逐轮取消并等待，覆盖任务收尾期间派生的新工作。"""
-        await self._drain(owner=owner, only_user_tasks=only_user_tasks)
+        await self._drain(owner=owner)
 
 
 TASK_SUPERVISOR = TaskSupervisor()

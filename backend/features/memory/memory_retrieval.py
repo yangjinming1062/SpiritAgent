@@ -1,22 +1,21 @@
+import math
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from itertools import zip_longest
 from typing import Literal
 
-from infrastructure.ai.embedding_space import MEMORY_EMBEDDING_DIM
 from infrastructure.ai.llm_client import embedding_model_key, generate_embedding, resolve_embedding_provider
+from infrastructure.api_ids import ResourceId
 from infrastructure.database import session_scope
 from pydantic import BaseModel
 from runtime.memory_scope import MemoryScope
 from sqlalchemy import ColumnElement, case, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
 
-from features.memory.memory_namespaces import RESERVED_FROM_RECALL, context_not_in
-from features.memory.memory_narratives import narrative_date
+from features.memory.memory_namespaces import RESERVED_FROM_RECALL
 from features.memory.memory_store import active_memory_filter, schedule_embedding_rebuild, scope_filter
-from features.memory.models import Memory
+from features.memory.models import Memory, MemoryEmbeddingRow
 
 # RRF 平滑常数（TREC/IR 标准取值）
 RRF_K: int = 60
@@ -31,10 +30,10 @@ _WORD_CHAR_PATTERN = re.compile(r"[^\W_]")
 
 
 class MemoryRecallResult(BaseModel):
-    id: int
+    id: ResourceId
     content: str
     context: str | None
-    tags: str | None
+    tags: list[str]
     importance: float
     basis: str
     kind: Literal["diary", "reflection", "recall"]
@@ -96,26 +95,28 @@ async def _dense_search(
     limit: int,
 ) -> list[Memory]:
     """稠密语义检索：用 pgvector ``<=>`` 余弦距离算子在 DB 端排序与截断。"""
-    stmt = select(Memory).where(
-        scope_filter(scope),
-        active_memory_filter(),
-        Memory.embedding.isnot(None),
-        Memory.embedding_model_key == query_embedding.model_key,
-        *[context_not_in(p) for p in RESERVED_FROM_RECALL],
+    # 精确计算只作用于相同作用域、模型、维度和内容版本的向量。
+    candidates = (
+        select(Memory.id.label("memory_id"), MemoryEmbeddingRow.embedding)
+        .join(MemoryEmbeddingRow, MemoryEmbeddingRow.memory_id == Memory.id)
+        .where(
+            scope_filter(scope),
+            active_memory_filter(),
+            Memory.kind.not_in(RESERVED_FROM_RECALL),
+            MemoryEmbeddingRow.model_key == query_embedding.model_key,
+            MemoryEmbeddingRow.dimensions == len(query_embedding.vector),
+            MemoryEmbeddingRow.content_version == Memory.content_version,
+        )
+        .cte("scoped_embeddings")
+        .prefix_with("MATERIALIZED")
     )
-    candidates = stmt.cte("scoped_memories").prefix_with("MATERIALIZED")
-    scoped = aliased(Memory, candidates)
     return list(
-        (
-            await db.scalars(
-                select(scoped)
-                .order_by(
-                    scoped.embedding.cosine_distance(query_embedding.vector),
-                    scoped.id,
-                )
-                .limit(limit),
-            )
-        ).all(),
+        await db.scalars(
+            select(Memory)
+            .join(candidates, candidates.c.memory_id == Memory.id)
+            .order_by(candidates.c.embedding.cosine_distance(query_embedding.vector), Memory.id)
+            .limit(limit)
+        )
     )
 
 
@@ -140,7 +141,7 @@ async def _sparse_search(
             scope_filter(scope),
             active_memory_filter(),
             or_(*conditions),
-            *[context_not_in(p) for p in RESERVED_FROM_RECALL],
+            Memory.kind.not_in(RESERVED_FROM_RECALL),
         )
         .order_by(keyword_match_score(keywords).desc(), Memory.updated_at.desc(), Memory.id.desc())
         .limit(limit)
@@ -149,15 +150,15 @@ async def _sparse_search(
 
 
 async def embed_memory_text(user_id: int, text: str) -> MemoryEmbedding | None:
-    """记忆链路的向量生成入口：独立短会话解析用户级 embedding 供应商，维度校验列宽；未配置、调用失败或维度不符时返回 None，检索降级为纯关键词路径。"""
+    """记忆链路的向量生成入口：独立短会话解析用户级 embedding 供应商，校验非空有限向量；未配置或调用失败时返回 None，检索降级为纯关键词路径。"""
     if not (text := (text or "").strip()):
         return None
     async with session_scope() as db:
         provider = await resolve_embedding_provider(db, user_id)
     vec = await generate_embedding(text, provider, user_id=user_id, purpose="query")
-    if provider is None or not vec or len(vec) != MEMORY_EMBEDDING_DIM:
+    if provider is None or not vec or not all(math.isfinite(value) for value in vec):
         return None
-    schedule_embedding_rebuild(user_id)
+    schedule_embedding_rebuild(user_id, model_key=embedding_model_key(provider.config), dimensions=len(vec))
     return MemoryEmbedding(vec, embedding_model_key(provider.config))
 
 
@@ -179,7 +180,8 @@ async def retrieve_hybrid_memories(
             select(Memory).where(
                 scope_filter(scope),
                 active_memory_filter(),
-                Memory.context == f"diary:{diary_date.isoformat()}",
+                Memory.kind == "diary",
+                Memory.local_date == diary_date,
             ),
         )
         return [_memory_result(row, 1.0)] if row is not None else []
@@ -217,9 +219,8 @@ async def retrieve_hybrid_memories(
 
 
 def _memory_result(mem: Memory, score: float) -> MemoryRecallResult:
-    context = mem.context or ""
     kind: Literal["diary", "reflection", "recall"] = (
-        "diary" if context.startswith("diary:") else "reflection" if context.startswith("reflection:") else "recall"
+        "diary" if mem.kind == "diary" else "reflection" if mem.kind == "reflection" else "recall"
     )
     return MemoryRecallResult(
         id=mem.id,
@@ -229,7 +230,7 @@ def _memory_result(mem: Memory, score: float) -> MemoryRecallResult:
         importance=max(0.1, mem.importance or 1.0),
         basis=mem.basis,
         kind=kind,
-        local_date=narrative_date(mem.context, mem.source_refs),
+        local_date=mem.local_date.isoformat() if mem.local_date else None,
         source_kind=mem.source_kind,
         expires_at=mem.expires_at,
         score=score,

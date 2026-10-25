@@ -139,7 +139,7 @@ flowchart TD
 
 ### 角色卡与并发写入
 
-全身确认登记持久化分析任务：头像提取头部，全身图提取身体，定义见[模型](../backend/features/appearance/character_card_models.py)与 [CHARACTER_CARD_EXTRACTION](../backend/features/appearance/prompts.py)。
+全身确认登记持久化分析任务：头像提取头部，全身图提取身体，定义见[模型](../backend/features/appearance/character_card_contracts.py)与 [CHARACTER_CARD_EXTRACTION](../backend/features/appearance/prompts.py)。
 
 - 两部分成功后原子发布并启动初始资产；来源未变只补失败部分，重启恢复中断任务。模型等待不设时长上限且不持事务，回写核对身份、源路径及批次。
 - 重提取保留已发布资料，成功合并最新用户覆盖；下游只消费生效特征。普通媒体与素材设计不反写角色卡，全身采纳只更新身体。

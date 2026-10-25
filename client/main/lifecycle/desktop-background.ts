@@ -5,6 +5,8 @@ import {
   normalizeUiTheme
 } from '@ipc/contracts'
 
+import { isResourceId } from '../../../shared/resource-id'
+
 function mediaReference(raw: unknown): DesktopMediaReference | null {
   if (raw === null) {
     return null
@@ -33,7 +35,7 @@ function mediaReference(raw: unknown): DesktopMediaReference | null {
 
 export function parseDesktopBackgroundRequest(raw: unknown): DesktopBackgroundRequest {
   const value = raw as Partial<DesktopBackgroundRequest> | null
-  const validId = (id: unknown): boolean => id === null || (Number.isSafeInteger(id) && Number(id) > 0)
+  const validId = (id: unknown): boolean => id === null || isResourceId(id)
 
   if (
     !value ||
@@ -67,7 +69,7 @@ export function parseDesktopBackgroundRequest(raw: unknown): DesktopBackgroundRe
     video: mediaReference(value.video),
     poster: mediaReference(value.poster),
     playId: value.playId,
-    visualId: value.visualId as number | null,
+    visualId: value.visualId as string | null,
     visualVersion: value.visualVersion as number | null,
     presentationEpoch: value.presentationEpoch!,
     expiresAt: value.expiresAt,

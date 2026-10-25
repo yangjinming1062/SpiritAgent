@@ -172,7 +172,7 @@ async def design_action_reference(
             user_id,
             design,
             source=source,
-            review_source_json=review_source.model_dump_json(),
+            review_source_json=review_source.model_dump(mode="json"),
         )
         await db.commit()
     if view.status == "pending":
@@ -216,7 +216,7 @@ async def update_action_reference(user_id: int, action_id: int, body: ActionAsse
             action_id,
             body,
             expected_updated_at=body.expected_updated_at,
-            review_source_json=source.model_dump_json(),
+            review_source_json=source.model_dump(mode="json"),
         )
         await db.commit()
     if view is not None:

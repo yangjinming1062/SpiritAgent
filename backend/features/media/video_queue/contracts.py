@@ -3,9 +3,10 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
+from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field
 
-type VideoQueueKind = Literal["media", "action", "desktop", "visuals"]
+type VideoQueueKind = Literal["media", "visuals"]
 type VideoQueueReadiness = Literal["ready", "pending", "paused", "gone"]
 
 
@@ -13,8 +14,8 @@ class VideoQueueOwner(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     kind: VideoQueueKind
-    user_id: int
-    entity_id: int
+    user_id: ResourceId
+    job_id: ResourceId
     generation_id: str
 
 
@@ -36,8 +37,8 @@ class VideoQueueRequestView(BaseModel):
     id: str
     revision: int
     kind: VideoQueueKind
-    entity_id: int | None
-    user_id: int | None
+    job_id: ResourceId | None
+    user_id: ResourceId | None
     model: str
     state: str
     cancel_requested: bool

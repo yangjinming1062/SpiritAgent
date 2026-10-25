@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
+from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 MemoryCategory = Literal[
@@ -16,14 +17,14 @@ MemoryCategory = Literal[
 
 class EvidenceQuote(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    message_id: int = Field(gt=0, le=2147483647)
+    message_id: ResourceId
     quote: str = Field(min_length=1, max_length=1000)
     stance: Literal["supports", "opposes"]
 
 
 class MemoryDecision(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    memory_id: int | None = Field(default=None, gt=0, le=2147483647)
+    memory_id: ResourceId | None = None
     expected_version: int | None = Field(default=None, gt=0)
     content: str = Field(min_length=1, max_length=2000)
     topic: str = Field(min_length=1, max_length=200)

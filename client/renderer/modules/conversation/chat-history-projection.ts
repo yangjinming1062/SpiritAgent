@@ -1,5 +1,7 @@
 import type { CompanionBubble, SessionMessage } from '@protocol'
 
+import { isResourceId } from '../../../../shared/resource-id'
+
 import { chatDisplayText } from './chat-display-text'
 import { extractMessageContent, splitUserText } from './chat-message-rules'
 import type { ChatMessageBody, ChatMessageListItem, ConversationHistorySync } from './chat-runtime-types'
@@ -14,7 +16,7 @@ export function projectSessionMessages(
   }: {
     splitUserBubbles: boolean
     nextMessageId: () => string
-    projectBubble: (bubble: CompanionBubble, messageId?: number) => Partial<ChatMessageBody>
+    projectBubble: (bubble: CompanionBubble, messageId?: string) => Partial<ChatMessageBody>
   }
 ) {
   const items: ChatMessageListItem[] = []
@@ -93,7 +95,7 @@ export function projectSessionMessages(
         role: m.role === 'user' ? 'user' : 'assistant',
         // 普通消息的空 subtype 与实时消息统一，供编辑资格判断使用。
         subtype: m.subtype || undefined,
-        backendMessageId: typeof m.id === 'number' ? m.id : undefined,
+        backendMessageId: isResourceId(m.id) ? m.id : undefined,
         timestamp: m.timestamp
       })
 
@@ -156,7 +158,7 @@ export function mergeLiveHistoryRows(
   history: ChatMessageListItem[],
   liveList: ChatMessageListItem[]
 ): ChatMessageListItem[] {
-  const liveGroups = new Map<number, ChatMessageListItem[]>()
+  const liveGroups = new Map<string, ChatMessageListItem[]>()
 
   for (const item of liveList) {
     if (item.backendMessageId !== undefined) {
@@ -166,7 +168,7 @@ export function mergeLiveHistoryRows(
     }
   }
 
-  const replaced = new Set<number>()
+  const replaced = new Set<string>()
 
   const merged = history.flatMap(item => {
     if (item.backendMessageId === undefined || !liveGroups.has(item.backendMessageId)) {

@@ -14,7 +14,7 @@ import { isRecord } from '@client-shared/is-record'
 import { resolvePortraitUrl } from './avatar-image'
 
 interface AvatarSeeds {
-  avatarId: number | null
+  avatarId: string | null
   /** 半身头像展示 URL（asset_url），独立全身参考的自备图参考图。 */
   avatarUrl: string | null
   /** 独立全身种子图展示 URL（seed_fullbody_url），换装 / 场景的自备图参考图。 */
@@ -22,7 +22,7 @@ interface AvatarSeeds {
 }
 
 interface PersistedAvatarSeeds {
-  avatarId: number | null
+  avatarId: string | null
   /** 后端原始 asset 路径，展示前需 resolve。 */
   assetUrl: string | null
   /** 后端原始全身种子路径。 */
@@ -30,7 +30,7 @@ interface PersistedAvatarSeeds {
 }
 
 interface AvatarSeedsPatch {
-  avatarId?: number | null
+  avatarId?: string | null
   assetUrl?: string | null
   fullbodySeedUrl?: string | null
   /** 已解析好的展示 URL；缺省时由对应 raw 路径解析。 */
@@ -79,7 +79,7 @@ function persistRaw(next: PersistedAvatarSeeds): void {
 }
 
 /** 清空种子缓存并作废在途读写：形象切换（portrait-store 调用）与换号清理共用。 */
-export function clearAvatarSeeds(avatarId: number | null = null): void {
+export function clearAvatarSeeds(avatarId: string | null = null): void {
   seedEpoch += 1
   inflight = null
   persistRaw({ ...EMPTY_PERSISTED, avatarId })
@@ -109,7 +109,7 @@ function resolveDisplayUrl(
 }
 
 async function publishResolved(
-  avatarId: number | null,
+  avatarId: string | null,
   raw: { assetUrl: string | null; fullbodySeedUrl: string | null },
   options?: { cacheOnly?: boolean; merge?: boolean }
 ): Promise<AvatarSeeds> {

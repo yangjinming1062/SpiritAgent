@@ -5,12 +5,12 @@ export interface ApiSchemas {
   "AIConfigUpdate": { "providers": Array<ApiSchemas["ProviderCardUpdate"]>; "capabilities": ApiSchemas["CapabilityChainsInput"]; "tasks"?: { [key: string]: ApiSchemas["TaskConfigInput"] } }
   "ActionAssetDesign": { "name": string; "motion_description": string; "use_when"?: Array<string>; "avoid_when"?: Array<string>; "allowed_triggers"?: Array<string>; "clip_kind"?: "once" | "loop"; "duration_seconds"?: number; "reason"?: string }
   "ActionAssetUpdate": { "name": string; "motion_description": string; "use_when"?: Array<string>; "avoid_when"?: Array<string>; "allowed_triggers"?: Array<string>; "clip_kind"?: "once" | "loop"; "duration_seconds"?: number; "reason"?: string; "expected_updated_at": string }
-  "ActionAssetView": { "id": number; "name": string; "motion_description": string; "use_when": Array<string>; "avoid_when": Array<string>; "allowed_triggers": Array<string>; "clip_kind": "once" | "loop"; "duration_seconds": number; "reason": string; "source": "user_requested" | "autonomous" | "preset"; "status": "pending" | "reviewing" | "approved" | "deferred" | "rejected"; "review_reason": string; "created_at": string; "updated_at": string }
-  "ActionListResponse": { "actions": Array<ApiSchemas["ActionAssetView"]>; "total": number; "offset": number; "limit": number }
-  "ActionMaterialRef": { "action_id": (number | null); "name": string; "motion_description": string; "clip_kind": "once" | "loop"; "duration_seconds": number; "use_when": Array<string>; "avoid_when": Array<string>; "allowed_triggers": Array<string>; "revision": (string | null) }
+  "ActionAssetView": { "id": string; "name": string; "motion_description": string; "use_when": Array<string>; "avoid_when": Array<string>; "allowed_triggers": Array<string>; "clip_kind": "once" | "loop"; "duration_seconds": number; "reason": string; "source": "user_requested" | "autonomous" | "preset"; "status": "pending" | "reviewing" | "approved" | "deferred" | "rejected"; "review_reason": string; "created_at": string; "updated_at": string }
+  "ActionListResponse": { "actions": Array<ApiSchemas["ActionAssetView"]>; "total": (number | null); "has_more": boolean; "next_cursor": (string | null); "limit": number }
+  "ActionMaterialRef": { "action_id": (string | null); "name": string; "motion_description": string; "clip_kind": "once" | "loop"; "duration_seconds": number; "use_when": Array<string>; "avoid_when": Array<string>; "allowed_triggers": Array<string>; "revision": (string | null) }
   "ActivateRequest": { "code": string; "client_version"?: string; "client_context"?: (ApiSchemas["ChatRequestClientContext"] | null) }
-  "ActiveTurnView": { "request_id": string; "origin_kind": string; "message_ids": Array<number>; "assistant_message_id": (number | null); "messages": Array<ApiSchemas["SessionMessageView"]>; "text": string; "reasoning": string; "bubbles": Array<ApiSchemas["ReplyBubbleView"]>; "tools": Array<ApiSchemas["ToolSnapshot"]>; "running": boolean; "replace_reply_message_id": (number | null) }
-  "ActualPresentationSnapshot": { "visual_id": (number | null); "media_kind": ("image" | "video" | null); "visual_version": (number | null); "visual_description": string; "visual_path": (string | null); "outfit_path": (string | null); "outfit_hash": (string | null); "outfit_description": string; "scene_path": (string | null); "scene_hash": (string | null); "scene_description": string; "identity_path": (string | null); "identity_hash": (string | null); "identity_reference_role": "portrait" | "fullbody"; "ready": boolean }
+  "ActiveTurnView": { "request_id": string; "origin_kind": string; "message_ids": Array<string>; "assistant_message_id": (string | null); "messages": Array<ApiSchemas["SessionMessageView"]>; "text": string; "reasoning": string; "bubbles": Array<ApiSchemas["ReplyBubbleView"]>; "tools": Array<ApiSchemas["ToolSnapshot"]>; "running": boolean; "replace_reply_message_id": (string | null) }
+  "ActualPresentationSnapshot": { "visual_id": (string | null); "media_kind": ("image" | "video" | null); "visual_version": (number | null); "visual_description": string; "visual_path": (string | null); "outfit_path": (string | null); "outfit_hash": (string | null); "outfit_description": string; "scene_path": (string | null); "scene_hash": (string | null); "scene_description": string; "identity_path": (string | null); "identity_hash": (string | null); "identity_reference_role": "portrait" | "fullbody"; "ready": boolean }
   "AdminLoginRequest": { "username": string; "password": string }
   "AdminTokenResponse": { "access_token": string; "expires_in": number }
   "AiTaskDefinition": { "id": ApiSchemas["AiTaskKey"]; "group": string; "label": string; "services": Array<string>; "service_usage": { [key: string]: Array<string> } }
@@ -18,7 +18,7 @@ export interface ApiSchemas {
   "AiTaskKeyInput": "companion_chat" | "work_chat" | "scheduled_task" | "proactive" | "memory_review" | "memory_embedding" | "nightly" | "posts" | "appearance" | "outfit" | "scene" | "visuals" | "speech_input" | "companion_voice" | "speech_preview" | "voice_design" | "voice_clone"
   "ApiError": { "code": string; "message": string; "details": ApiSchemas["JsonValue"]; "request_id": string }
   "ApiErrorResponse": { "error": ApiSchemas["ApiError"] }
-  "AvatarAssetResponse": { "id": number; "asset_url": string; "seed_fullbody_url": string; "is_fullbody_confirmed": boolean; "prompt": string; "status": "succeeded" }
+  "AvatarAssetResponse": { "id": string; "asset_url": string; "seed_fullbody_url": string; "is_fullbody_confirmed": boolean; "prompt": string; "status": "succeeded" }
   "AvatarFromImageRequest": { "source": "reference"; "image": string; "content_type"?: (string | null); "description"?: (string | null); "presentation_image"?: (string | null); "presentation_content_type"?: (string | null) }
   "AvatarGenerateRequest": { "source": "generate"; "mode"?: ("edit" | "regenerate" | null); "feedback"?: (string | null) }
   "AvatarHistoryResponse": { "history": Array<ApiSchemas["AvatarAssetResponse"]> }
@@ -29,10 +29,10 @@ export interface ApiSchemas {
   "CapabilityChainsInput": { "llm"?: Array<ApiSchemas["CapabilityCardInput"]>; "stt"?: Array<ApiSchemas["CapabilityCardInput"]>; "tts"?: Array<ApiSchemas["CapabilityCardInput"]>; "image_gen"?: Array<ApiSchemas["CapabilityCardInput"]>; "video_gen"?: Array<ApiSchemas["CapabilityCardInput"]>; "embedding"?: Array<ApiSchemas["CapabilityCardInput"]> }
   "ChainPolicy": { "chain": Array<string> }
   "ChainPolicyInput": { "chain"?: Array<string> }
-  "CharacterCardExtract": { "expected_avatar_id": number; "expected_revision": number }
-  "CharacterCardResponse": { "avatar_id": number; "revision": number; "features": ApiSchemas["CharacterFeatures"]; "overrides": ApiSchemas["CharacterOverrides"]; "automatic": ApiSchemas["CharacterFeatures"]; "status": "pending" | "running" | "ready" | "failed"; "portrait_status": "pending" | "running" | "ready" | "failed"; "body_status": "pending" | "running" | "ready" | "failed"; "error": (string | null) }
-  "CharacterCardSnapshot": { "avatar_id": number; "revision": number; "features": ApiSchemas["CharacterFeatures"]; "overrides": ApiSchemas["CharacterOverrides"] }
-  "CharacterCardUpdate": { "expected_avatar_id": number; "expected_revision": number; "changes": ApiSchemas["CharacterOverridesInput"] }
+  "CharacterCardExtract": { "expected_avatar_id": string; "expected_revision": number }
+  "CharacterCardResponse": { "avatar_id": string; "revision": number; "features": ApiSchemas["CharacterFeatures"]; "overrides": ApiSchemas["CharacterOverrides"]; "automatic": ApiSchemas["CharacterFeatures"]; "status": "pending" | "running" | "ready" | "failed"; "portrait_status": "pending" | "running" | "ready" | "failed"; "body_status": "pending" | "running" | "ready" | "failed"; "error": (string | null) }
+  "CharacterCardSnapshot": { "avatar_id": (string | null); "revision": number; "features": ApiSchemas["CharacterFeatures"]; "overrides": ApiSchemas["CharacterOverrides"] }
+  "CharacterCardUpdate": { "expected_avatar_id": string; "expected_revision": number; "changes": ApiSchemas["CharacterOverridesInput"] }
   "CharacterFeatures": { "body_shape": string; "proportions": string; "limbs_and_appendages": string; "body_surface": string; "head_shape": string; "facial_features": string; "facial_surface": string; "head_identifiers": string }
   "CharacterOverrides": { "head_shape": (string | null); "facial_features": (string | null); "facial_surface": (string | null); "head_identifiers": (string | null); "body_shape": (string | null); "proportions": (string | null); "limbs_and_appendages": (string | null); "body_surface": (string | null) }
   "CharacterOverridesInput": { "head_shape"?: (string | null); "facial_features"?: (string | null); "facial_surface"?: (string | null); "head_identifiers"?: (string | null); "body_shape"?: (string | null); "proportions"?: (string | null); "limbs_and_appendages"?: (string | null); "body_surface"?: (string | null) }
@@ -42,7 +42,7 @@ export interface ApiSchemas {
   "ChatVideoUploadResponse": { "url": string }
   "ClientMediaBubble": { "type": "image" | "video"; "media_id": string; "status": "pending" | "ready" | "failed" | "result_unknown"; "url": (string | null); "error": (string | null); "video_queue": (ApiSchemas["VideoQueueInfo"] | null) }
   "ClientMediaEntry": { "type": "image" | "video" | "audio"; "url": string; "audio_url": (string | null); "duration": (number | null); "transcript": (string | null) }
-  "ComboMaterialRef": { "material_id": (number | null); "name": string; "path": string; "content_hash": string; "description": string; "revision": (string | null) }
+  "ComboMaterialRef": { "material_id": (string | null); "name": string; "path": string; "content_hash": string; "description": string; "revision": (string | null) }
   "ComboSnapshot": { "identity": ApiSchemas["CharacterCardSnapshot"]; "identity_path": string; "identity_hash": string; "portrait_path": string; "portrait_hash": string; "identity_reference_role": "portrait" | "fullbody"; "outfit": ApiSchemas["ComboMaterialRef"]; "scene": ApiSchemas["ComboMaterialRef"]; "action": ApiSchemas["ActionMaterialRef"]; "plan": (ApiSchemas["VisualCreationPlan"] | null); "target_width": number; "target_height": number; "requirements": string; "feedback": string; "video_feedback": string; "persona": { [key: string]: string } }
   "CommandDispatchRequest": { "command": string; "args"?: (Array<(string | number | number)> | string | null); "confirmed"?: boolean }
   "CommandDispatchResult": { "command": string; "result": ApiSchemas["CommandResult"] }
@@ -50,7 +50,7 @@ export interface ApiSchemas {
   "CommandResult": { "status": "ok" | "error"; "message": string; "payload": (ApiSchemas["SessionClearResult"] | ApiSchemas["SessionCompressionResult"] | ApiSchemas["RememberCommandResult"] | null); "hydrate": boolean }
   "CommandSummary": { "name": string; "aliases": Array<string>; "description": string; "requires_confirmation": boolean }
   "CompanionOperationResponse": { "ok": boolean }
-  "CompanionSessionMessageView": { "id": number; "role": "assistant"; "content": (string | null); "subtype": string; "reasoning": (string | null); "timestamp": number; "can_replace_reply": boolean; "media": Array<ApiSchemas["ClientMediaEntry"]>; "tool_calls": ApiSchemas["JsonValue"]; "tool_call_id": (string | null); "tool_name": string; "content_type": "companion_reply"; "bubbles": Array<ApiSchemas["ReplyBubbleView"]> }
+  "CompanionSessionMessageView": { "id": string; "role": "assistant"; "content": (string | null); "subtype": string; "reasoning": (string | null); "timestamp": number; "can_replace_reply": boolean; "media": Array<ApiSchemas["ClientMediaEntry"]>; "tool_calls": ApiSchemas["JsonValue"]; "tool_call_id": (string | null); "tool_name": string; "content_type": "companion_reply"; "bubbles": Array<ApiSchemas["ReplyBubbleView"]> }
   "CompressionUsage": { "total_tokens": number; "context_window": number }
   "CurrentVoiceRequest": { "voice_id": string }
   "CurrentVoiceResponse": { "voice_id": string }
@@ -58,52 +58,53 @@ export interface ApiSchemas {
   "DesktopConfigPutRequest": { "config": { [key: string]: ApiSchemas["JsonValueInput"] } }
   "DesktopConfigResponse": { "config": { [key: string]: ApiSchemas["JsonValue"] } }
   "DesktopSessionInfo": { "id": string; "kind": string; "title": (string | null); "started_at": number; "last_active": number; "message_count": number; "input_tokens": number; "output_tokens": number; "tool_call_count": number; "preview": (string | null); "pinned": boolean; "archived": boolean; "system_preset_id": (string | null); "system_preset_icon_key": (string | null) }
-  "DesktopSessionListResponse": { "limit": number; "offset": number; "total": number; "sessions": Array<ApiSchemas["DesktopSessionInfo"]> }
+  "DesktopSessionListResponse": { "limit": number; "total": (number | null); "has_more": boolean; "next_cursor": (string | null); "sessions": Array<ApiSchemas["DesktopSessionInfo"]> }
   "DesktopSessionOperationResponse": { "ok": boolean }
   "DesktopSessionPatchRequest": { "title"?: (string | null); "pinned"?: (boolean | null); "archived"?: (boolean | null); "settings"?: (ApiSchemas["SessionSettingsPatch"] | null) }
   "DeviceListResponse": { "items": Array<ApiSchemas["DeviceResponse"]> }
-  "DeviceResponse": { "id": number; "name": string; "expires_at": string; "last_seen_at": string; "created_at": string }
+  "DeviceResponse": { "id": string; "name": string; "expires_at": string; "last_seen_at": string; "created_at": string }
   "DiaryEntryResponse": { "id": string; "entry_date": string; "title": string; "body": string; "post_ids": Array<string>; "created_at": (string | null); "updated_at": (string | null) }
   "DiaryListResponse": { "entries": Array<ApiSchemas["DiaryEntryResponse"]>; "unread_diary_ids": Array<string> }
   "DiaryReadRequest": { "diary_ids": Array<string> }
   "DiaryUnreadResponse": { "has_unread": boolean }
   "ExchangeRequest": { "token": string; "device_name"?: string }
   "FullbodyAdoptRequest": { "image": string; "content_type"?: (string | null) }
-  "FullbodyCandidateResponse": { "id": number; "avatar_id": number; "image_url": string; "status": "pending" | "ready" | "failed" | "accepted" | "rejected"; "error": (string | null) }
+  "FullbodyCandidateResponse": { "id": string; "avatar_id": string; "image_url": string; "status": "pending" | "ready" | "failed" | "accepted" | "rejected"; "error": (string | null) }
   "FullbodyConfirmRequest": { "expected_url": string }
   "FullbodyPromptRequest": { "feedback"?: (string | null) }
-  "FullbodyReferenceGenerateRequest": { "feedback"?: (string | null); "image"?: (string | null); "content_type"?: (string | null); "mode": "edit" | "regenerate"; "candidate_id"?: (number | null) }
+  "FullbodyReferenceGenerateRequest": { "feedback"?: (string | null); "image"?: (string | null); "content_type"?: (string | null); "mode": "edit" | "regenerate"; "candidate_id"?: (string | null) }
   "GatewayTicketRequest": { "stream_id"?: (string | null) }
   "GatewayTicketResponse": { "ticket": string; "expires_in": number }
   "IdleExpressionRequest": { "trigger"?: "periodic" | "user_return"; "idle_seconds"?: (number | null); "local_hour"?: (number | null) }
-  "IdleExpressionResult": { "expressed": boolean; "action_id": (number | null); "reason": string }
+  "IdleExpressionResult": { "expressed": boolean; "action_id": (string | null); "reason": string }
   "ImagePromptResponse": { "prompt": string }
   "InteractionStatsRequest": { "kind": "chat_turn"; "hour": number }
   "InteractionStatsResult": { "recorded": "chat_turn"; "threshold_met": boolean; "peak_hour": (number | null) }
   "JsonValue": unknown
   "JsonValueInput": unknown
-  "LastSubmissionSnapshot": { "request_id": string; "status": string; "error": (string | null); "message_ids": Array<number>; "retry_message_id": (number | null); "replace_reply_message_id": (number | null); "result_message_id": (number | null) }
-  "LifeEventListResponse": { "items": Array<ApiSchemas["LifeEventView"]>; "total": number }
-  "LifeEventView": { "id": number; "event_key": string; "kind": string; "source": string; "subject": string; "fact": { [key: string]: unknown }; "occurred_at": string; "pursuit_id": (number | null); "step_id": (number | null); "result_ref": { [key: string]: unknown }; "is_meaningful": boolean }
-  "LifePursuitListResponse": { "items": Array<ApiSchemas["LifePursuitView"]>; "total": number }
-  "LifePursuitView": { "id": number; "title": string; "reason": string; "desired_result": string; "progress": string; "next_step": string; "status": string; "started_at": string; "completed_at": (string | null); "result_ref": { [key: string]: unknown }; "updated_at": string }
-  "LifeStateView": { "user_id": number; "current_activity": string; "current_scene": { [key: string]: unknown }; "mood": (string | null); "active_pursuit_id": (number | null); "next_review_at": (string | null); "revision": number; "scene_revision": number; "updated_at": string }
-  "LinkBubble": { "type": "link"; "topic_id": number; "title": string; "platform": "x" | "xiaohongshu" | "douyin"; "url": string; "published_at": string }
+  "LastSubmissionSnapshot": { "request_id": string; "status": string; "error": (string | null); "message_ids": Array<string>; "retry_message_id": (string | null); "replace_reply_message_id": (string | null); "result_message_id": (string | null) }
+  "LifeEventListResponse": { "items": Array<ApiSchemas["LifeEventView"]>; "total": (number | null); "has_more": boolean; "next_cursor": (string | null) }
+  "LifeEventView": { "id": string; "event_key": string; "kind": string; "source": string; "subject": string; "fact": { [key: string]: unknown }; "occurred_at": string; "pursuit_id": (string | null); "step_id": (string | null); "result_ref": { [key: string]: unknown }; "is_meaningful": boolean }
+  "LifePursuitListResponse": { "items": Array<ApiSchemas["LifePursuitView"]>; "total": (number | null); "has_more": boolean; "next_cursor": (string | null) }
+  "LifePursuitView": { "id": string; "title": string; "reason": string; "desired_result": string; "progress": string; "next_step": string; "status": string; "started_at": string; "completed_at": (string | null); "result_ref": { [key: string]: unknown }; "updated_at": string }
+  "LifeStateView": { "user_id": string; "current_activity": string; "current_scene": { [key: string]: unknown }; "mood": (string | null); "active_pursuit_id": (string | null); "next_review_at": (string | null); "revision": number; "scene_revision": number; "updated_at": string }
+  "LinkBubble": { "type": "link"; "topic_id": string; "title": string; "platform": "x" | "xiaohongshu" | "douyin"; "url": string; "published_at": string }
   "MemoryDeleteResponse": { "deleted": boolean }
-  "MemoryEvidence": { "fingerprint": string; "message_id"?: (number | null); "session_id"?: (number | null); "quote"?: (string | null); "stance"?: ("supports" | "opposes" | null); "created_at"?: (string | null); "source_unavailable"?: (boolean | null) }
-  "MemoryListItem": { "id": number; "content_version": number; "content": string; "context": (string | null); "tags": (string | null); "basis": "explicit" | "inferred" | "observed" | "system"; "status": "active" | "candidate" | "invalidated" | "forgotten"; "usage": "contextual" | "background"; "reason": string; "source_kind": string; "updated_at": string; "evidence": Array<ApiSchemas["MemoryEvidence"]>; "expires_at": (string | null); "reviewed_at": (string | null); "system_preset_id": string; "importance": number; "created_at": string }
-  "MemoryListResponse": { "memories": Array<ApiSchemas["MemoryListItem"]>; "counts": { [key: string]: number }; "total": number; "system_preset_id": string }
+  "MemoryDetail": { "id": string; "content_version": number; "content": string; "context": string; "kind": string; "slot_key": (string | null); "category": (string | null); "tags": Array<string>; "basis": "explicit" | "inferred" | "observed" | "system"; "status": "active" | "candidate" | "invalidated" | "forgotten"; "usage": "contextual" | "background"; "reason": string; "source_kind": string; "updated_at": string; "expires_at": (string | null); "reviewed_at": (string | null); "system_preset_id": string; "importance": number; "created_at": string; "evidence": Array<ApiSchemas["MemoryEvidence"]>; "revisions": Array<{ [key: string]: unknown }> }
+  "MemoryEvidence": { "fingerprint": string; "message_id"?: (string | null); "quote"?: (string | null); "stance"?: ("supports" | "opposes" | null); "created_at"?: (string | null); "source_unavailable"?: (boolean | null) }
+  "MemoryListItem": { "id": string; "content_version": number; "content": string; "context": string; "kind": string; "slot_key": (string | null); "category": (string | null); "tags": Array<string>; "basis": "explicit" | "inferred" | "observed" | "system"; "status": "active" | "candidate" | "invalidated" | "forgotten"; "usage": "contextual" | "background"; "reason": string; "source_kind": string; "updated_at": string; "expires_at": (string | null); "reviewed_at": (string | null); "system_preset_id": string; "importance": number; "created_at": string }
+  "MemoryListResponse": { "memories": Array<ApiSchemas["MemoryListItem"]>; "counts": { [key: string]: number }; "total": (number | null); "has_more": boolean; "next_cursor": (string | null); "system_preset_id": string }
   "MemoryProfileChange": { "field": "user_call_name" | "user_gender" | "user_birthday" | "user_hobbies" | "user_freeform"; "value": (string | null); "expected_version": number }
   "MemoryProfileRequest": { "system_preset_id": "companion"; "changes": Array<ApiSchemas["MemoryProfileChange"]> }
   "MemoryProfileResponse": { "memories": Array<ApiSchemas["MemoryListItem"]>; "system_preset_id": "companion" }
   "MemoryUpdateRequest": { "system_preset_id": string; "content": string; "expected_version": number }
   "MessageResponse": { "message": string }
-  "ModelDiscoveryRequest": { "provider": ApiSchemas["ProviderCardUpdate"]; "user_id"?: (number | null); "service": "llm" | "stt" | "tts" | "image_gen" | "video_gen" | "embedding"; "model_name"?: (string | null); "catalog_id"?: (string | null); "refresh"?: boolean }
+  "ModelDiscoveryRequest": { "provider": ApiSchemas["ProviderCardUpdate"]; "user_id"?: (string | null); "service": "llm" | "stt" | "tts" | "image_gen" | "video_gen" | "embedding"; "model_name"?: (string | null); "catalog_id"?: (string | null); "refresh"?: boolean }
   "ModelDiscoveryResponse": { "models": Array<ApiSchemas["ModelMetadata"]>; "candidates": { [key: string]: Array<ApiSchemas["ModelMetadata"]> }; "warnings": Array<string>; "unsupported": boolean; "catalog_updated_at": (string | null) }
   "ModelMetadata": { "model_name": string; "display_name": string; "services": Array<string>; "context_window": (number | null); "max_output_tokens": (number | null); "input_modalities": (Array<ApiSchemas["ModelModality"]> | null); "output_modalities": (Array<ApiSchemas["ModelModality"]> | null); "catalog_id": (string | null); "canonical_slug": (string | null); "catalog_url": (string | null); "field_sources": { [key: string]: string } }
   "ModelModality": "text" | "image" | "audio" | "video" | "embeddings"
   "ModelModalityInput": "text" | "image" | "audio" | "video" | "embeddings"
-  "NightlyActivityLogItem": { "id": number; "user_id": number; "target_date": string; "status": string; "summary": (string | null); "payload": ({ [key: string]: unknown } | null); "created_at": (string | null); "updated_at": (string | null) }
+  "NightlyActivityLogItem": { "id": string; "user_id": string; "target_date": string; "status": string; "summary": (string | null); "payload": ({ [key: string]: unknown } | null); "created_at": (string | null); "updated_at": (string | null) }
   "NightlyActivityLogListResponse": { "items": Array<ApiSchemas["NightlyActivityLogItem"]> }
   "OnboardingPatchRequest": { "field": string; "value"?: (string | null) }
   "OnboardingStateResponse": { "answers": { [key: string]: string }; "next_field": (string | null); "complete": boolean }
@@ -114,30 +115,31 @@ export interface ApiSchemas {
   "OutfitListResponse": { "outfits": Array<ApiSchemas["OutfitResponse"]>; "policy": "locked" | "llm_may_replace" }
   "OutfitPolicyRequest": { "policy": "locked" | "llm_may_replace" }
   "OutfitPolicyResponse": { "policy": "locked" | "llm_may_replace" }
-  "OutfitPromptRequest": { "outfit_id"?: (number | null); "feedback"?: (string | null); "description"?: (string | null); "image"?: (string | null); "content_type"?: (string | null) }
+  "OutfitPromptRequest": { "outfit_id"?: (string | null); "feedback"?: (string | null); "description"?: (string | null); "image"?: (string | null); "content_type"?: (string | null) }
   "OutfitRegenerateRequest": { "source": "generate"; "feedback"?: (string | null); "mode": "edit" | "regenerate" }
-  "OutfitResponse": { "description_status": "pending" | "processing" | "ready" | "failed"; "description_error": (string | null); "id": number; "name": string; "description": (string | null); "fullbody_url": string; "status": string }
-  "PairingResponse": { "id": number; "url"?: (string | null); "expires_at": string; "state": "pending" | "paired" | "cancelled" | "expired" }
-  "PersonaResponse": { "definition_json": string; "is_complete": boolean; "personality_tags": Array<string>; "current_mood": (string | null) }
-  "PersonaUpdate": { "definition_json": string; "expected_fields"?: ({ [key: string]: (string | null) } | null) }
-  "PlainSessionMessageView": { "id": number; "role": "assistant" | "system" | "tool" | "user"; "content": (string | null); "subtype": string; "reasoning": (string | null); "timestamp": number; "can_replace_reply": boolean; "media": Array<ApiSchemas["ClientMediaEntry"]>; "tool_calls": ApiSchemas["JsonValue"]; "tool_call_id": (string | null); "tool_name": string; "content_type": "multimodal_v1" | "text" }
-  "PortraitConfirmRequest": { "expected_avatar_id": number }
+  "OutfitResponse": { "description_status": "pending" | "processing" | "ready" | "failed"; "description_error": (string | null); "id": string; "name": string; "description": (string | null); "fullbody_url": string; "status": string }
+  "PairingResponse": { "id": string; "url"?: (string | null); "expires_at": string; "state": "pending" | "paired" | "cancelled" | "expired" }
+  "PersonaResponse": { "definition_json": { [key: string]: string }; "is_complete": boolean; "personality_tags": Array<string>; "current_mood": (string | null) }
+  "PersonaUpdate": { "definition_json": { [key: string]: (string | null) }; "expected_fields"?: ({ [key: string]: (string | null) } | null) }
+  "PlainSessionMessageView": { "id": string; "role": "assistant" | "system" | "tool" | "user"; "content": (string | null); "subtype": string; "reasoning": (string | null); "timestamp": number; "can_replace_reply": boolean; "media": Array<ApiSchemas["ClientMediaEntry"]>; "tool_calls": ApiSchemas["JsonValue"]; "tool_call_id": (string | null); "tool_name": string; "content_type": "multimodal_v1" | "text" }
+  "PortraitConfirmRequest": { "expected_avatar_id": string }
   "PostCommentCreateRequest": { "content": string }
+  "PostCommentListResponse": { "comments": Array<ApiSchemas["PostCommentResponse"]>; "next_cursor": (string | null) }
   "PostCommentResponse": { "id": string; "post_id": string; "role": ApiSchemas["PostCommentRole"]; "content": string; "created_at": string; "updated_at": string; "reply_to_comment_id": (string | null); "reply_status": "none" | "pending" | "running" | "completed" | "failed"; "reply_error": (string | null) }
   "PostCommentRole": "user" | "companion"
   "PostContentType": "text" | "image" | "video" | "audio"
   "PostListResponse": { "posts": Array<ApiSchemas["PostResponse"]>; "next_cursor": (string | null); "unread_post_ids": Array<string> }
   "PostPublicationRecovery": { "publication_id": string; "status": "queued" | "running" | "published" | "partial" | "failed" | "blocked" | "result_unknown" | "declined" | "discarded"; "post_id": (string | null); "error": (string | null); "title": string; "video_status": "pending" | "ready" | "failed" | "unknown" | "discarded"; "media_url": (string | null); "can_discard": boolean }
-  "PostPublicationRecoveryList": { "items": Array<ApiSchemas["PostPublicationRecovery"]>; "next_offset": (number | null) }
+  "PostPublicationRecoveryList": { "items": Array<ApiSchemas["PostPublicationRecovery"]>; "next_cursor": (string | null); "has_more": boolean }
   "PostPublicationResult": { "publication_id": string; "status": "queued" | "running" | "published" | "partial" | "failed" | "blocked" | "result_unknown" | "declined" | "discarded"; "post_id": (string | null); "error": (string | null) }
   "PostReadRequest": { "post_ids": Array<string> }
-  "PostResponse": { "id": string; "published_at": string; "content_type": ApiSchemas["PostContentType"]; "title": string; "body": string; "media_url": (string | null); "audio_url": (string | null); "comments": Array<ApiSchemas["PostCommentResponse"]> }
+  "PostResponse": { "id": string; "published_at": string; "content_type": ApiSchemas["PostContentType"]; "title": string; "body": string; "media_url": (string | null); "audio_url": (string | null); "comments": Array<ApiSchemas["PostCommentResponse"]>; "comment_count": number; "comments_next_cursor": (string | null); "comments_loaded": boolean }
   "PostUnreadResponse": { "has_unread": boolean }
   "PromptBatchMessage": { "text": string; "attachments"?: (Array<ApiSchemas["ChatAttachment"]> | null) }
   "PromptPresetListResponse": { "presets": Array<ApiSchemas["PromptPresetSummary"]> }
   "PromptPresetSummary": { "id": string; "name": string; "description": string; "icon_key": string }
-  "PromptSubmitRequest": { "request_id": string; "text"?: (string | null); "attachments"?: (Array<ApiSchemas["ChatAttachment"]> | null); "batch"?: (Array<ApiSchemas["PromptBatchMessage"]> | null); "edit_message_id"?: (number | null); "retry_message_id"?: (number | null); "replace_reply_message_id"?: (number | null); "response_preference"?: ("text" | "voice" | null) }
-  "PromptSubmitResult": { "queued": boolean; "request_id": string; "status": "accepted" | "running" | "completed" | "cancelled" | "interrupted" | "failed"; "error": (string | null); "message_ids": Array<number>; "messages": Array<ApiSchemas["SessionMessageView"]>; "replace_reply_message_id": (number | null); "result_message_id": (number | null) }
+  "PromptSubmitRequest": { "request_id": string; "text"?: (string | null); "attachments"?: (Array<ApiSchemas["ChatAttachment"]> | null); "batch"?: (Array<ApiSchemas["PromptBatchMessage"]> | null); "edit_message_id"?: (string | null); "retry_message_id"?: (string | null); "replace_reply_message_id"?: (string | null); "response_preference"?: ("text" | "voice" | null) }
+  "PromptSubmitResult": { "queued": boolean; "request_id": string; "status": "accepted" | "running" | "completed" | "cancelled" | "interrupted" | "failed"; "error": (string | null); "message_ids": Array<string>; "messages": Array<ApiSchemas["SessionMessageView"]>; "replace_reply_message_id": (string | null); "result_message_id": (string | null) }
   "ProviderCardPublic": { "id": string; "name": string; "provider_type": string; "api_key": string; "base_url": string; "api_key_set": boolean }
   "ProviderCardUpdate": { "id": string; "name": string; "provider_type": string; "api_key"?: string; "base_url"?: string; "api_key_set"?: boolean; "clear_api_key"?: boolean }
   "ProviderDefaults": { "base_url": string; "requires_api_key": boolean; "supports_voice_design": boolean; "voice_design_model": (string | null); "supports_voice_clone": boolean; "voice_clone_model": (string | null); "input_modalities": Array<ApiSchemas["ModelModality"]> }
@@ -145,28 +147,28 @@ export interface ApiSchemas {
   "RegenerateActivationRequest": { "base_url"?: (string | null) }
   "ReleaseManifestFileItem": { "url": string; "sha512": string; "size": number }
   "ReleaseManifestResponse": { "version": string; "releaseDate": string; "releaseNotes": string; "path": string; "sha512": string; "files": Array<ApiSchemas["ReleaseManifestFileItem"]> }
-  "RememberCommandResult": { "memory_id": number; "content": string }
+  "RememberCommandResult": { "memory_id": string; "content": string }
   "RemoteSessionResponse": { "user": ApiSchemas["RemoteUserResponse"]; "device": ApiSchemas["DeviceResponse"]; "csrf_token": string }
-  "RemoteUserResponse": { "id": number; "username": string }
+  "RemoteUserResponse": { "id": string; "username": string }
   "ReplyAudio": { "url": string; "duration": number }
   "ReplyBubbleView": (ApiSchemas["TextBubble"] | ApiSchemas["VoiceBubbleView"] | ApiSchemas["ClientMediaBubble"] | ApiSchemas["LinkBubble"])
   "RpcCacheUsage": { "request_count": number; "reported_request_count": number; "input_tokens": (number | null); "cached_input_tokens": (number | null); "cache_hit_rate": (number | null) }
-  "RpcCharacterCardEvent": { "avatar_id": number; "revision": number; "status": "pending" | "running" | "ready" | "failed" }
+  "RpcCharacterCardEvent": { "avatar_id": string; "revision": number; "status": "pending" | "running" | "ready" | "failed" }
   "RpcClientMediaBubble": { "type": "image" | "video"; "media_id": string; "status": "pending" | "ready" | "failed" | "result_unknown"; "url": (string | null); "error": (string | null); "video_queue": (ApiSchemas["RpcVideoQueueInfo"] | null) }
   "RpcClientMediaEntry": { "type": "image" | "video" | "audio"; "url": string; "audio_url": (string | null); "duration": (number | null); "transcript": (string | null) }
-  "RpcComboMaterialRef": { "material_id": (number | null); "name": string; "path": string; "content_hash": string; "description": string; "revision": (string | null) }
+  "RpcComboMaterialRef": { "material_id": (string | null); "name": string; "path": string; "content_hash": string; "description": string; "revision": (string | null) }
   "RpcCommandDispatchResult": { "command": string; "result": ApiSchemas["RpcCommandResult"] }
   "RpcCommandResult": { "status": "ok" | "error"; "message": string; "payload": (ApiSchemas["RpcSessionClearResult"] | ApiSchemas["RpcSessionCompressionResult"] | ApiSchemas["RpcRememberCommandResult"] | null); "hydrate": boolean }
-  "RpcCompanionMessageEvent": { "session_id": string; "message_id": number; "bubbles": Array<ApiSchemas["RpcReplyBubbleView"]> }
-  "RpcCompanionSessionMessageView": { "id": number; "role": "assistant"; "content": (string | null); "subtype": string; "reasoning": (string | null); "timestamp": number; "can_replace_reply": boolean; "media": Array<ApiSchemas["RpcClientMediaEntry"]>; "tool_calls": ApiSchemas["RpcJsonValue"]; "tool_call_id": (string | null); "tool_name": string; "content_type": "companion_reply"; "bubbles": Array<ApiSchemas["RpcReplyBubbleView"]> }
+  "RpcCompanionMessageEvent": { "session_id": string; "message_id": string; "bubbles": Array<ApiSchemas["RpcReplyBubbleView"]> }
+  "RpcCompanionSessionMessageView": { "id": string; "role": "assistant"; "content": (string | null); "subtype": string; "reasoning": (string | null); "timestamp": number; "can_replace_reply": boolean; "media": Array<ApiSchemas["RpcClientMediaEntry"]>; "tool_calls": ApiSchemas["RpcJsonValue"]; "tool_call_id": (string | null); "tool_name": string; "content_type": "companion_reply"; "bubbles": Array<ApiSchemas["RpcReplyBubbleView"]> }
   "RpcCompanionSignalResult": { "queued": boolean }
-  "RpcCompressionEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (number | null); "session_id": (string | null); "subtype": string; "text": string; "message_id": (number | null) }
+  "RpcCompressionEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (string | null); "session_id": (string | null); "subtype": string; "text": string; "message_id": (string | null) }
   "RpcCompressionUsage": { "total_tokens": number; "context_window": number }
   "RpcDiaryDeletedEvent": { "diary_id": string; "entry_date": string }
   "RpcDiaryEntryResponse": { "id": string; "entry_date": string; "title": string; "body": string; "post_ids": Array<string>; "created_at": (string | null); "updated_at": (string | null) }
   "RpcEmptyResult": { [key: string]: unknown }
   "RpcGatewayAckResult": { "acked": number; "pruned": number }
-  "RpcGatewayErrorEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (number | null); "message": string; "retry_message_id": (number | null) }
+  "RpcGatewayErrorEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (string | null); "message": string; "retry_message_id": (string | null) }
   "RpcGatewayResumeResult": { "stream_id": string; "current_seq": number; "recovery": "replayed" | "snapshot_required"; "replayed_count": number; "pending_calls": Array<string> }
   "RpcInputCompanionSignal": { "available": boolean; "presentation_mode": "desktop" | "window"; "event"?: ("desktop_available" | "context_changed" | null) }
   "RpcInputEmptyRequest": Record<string, never>
@@ -177,55 +179,55 @@ export interface ApiSchemas {
   "RpcInputToolResultRequest": { "call_id": string; "result": ApiSchemas["RpcInputJsonValue"] }
   "RpcInputToolsSyncRequest": { "skill_scope_version": 1; "tools": Array<ApiSchemas["RpcInputRunnerToolSchema"]> }
   "RpcJsonValue": unknown
-  "RpcLifeUpdatedEvent": { "revision": (number | null); "pursuit_id": (number | null); "step_id": (number | null); "event_key": (string | null) }
-  "RpcLinkBubble": { "type": "link"; "topic_id": number; "title": string; "platform": "x" | "xiaohongshu" | "douyin"; "url": string; "published_at": string }
-  "RpcMemoryChangedEvent": { "system_preset_id": string; "memory_id": (number | null) }
-  "RpcMessageAudioEvent": { "session_id": string; "message_id": number; "audio_url": string; "duration": (number | null); "transcript": (string | null) }
-  "RpcMessageBubbleEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (number | null); "message_id": number; "bubble_index": number; "bubble": ApiSchemas["RpcReplyBubbleView"] }
-  "RpcMessageCompleteEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (number | null); "text": (string | null); "bubbles": (Array<ApiSchemas["RpcReplyBubbleView"]> | null); "reasoning": (string | null); "media": (Array<ApiSchemas["RpcClientMediaEntry"]> | null); "usage": (ApiSchemas["RpcTokenUsage"] | null); "cache_usage": (ApiSchemas["RpcCacheUsage"] | null); "message_id": (number | null); "can_replace_reply": boolean }
+  "RpcLifeUpdatedEvent": { "revision": (number | null); "pursuit_id": (string | null); "step_id": (string | null); "event_key": (string | null) }
+  "RpcLinkBubble": { "type": "link"; "topic_id": string; "title": string; "platform": "x" | "xiaohongshu" | "douyin"; "url": string; "published_at": string }
+  "RpcMemoryChangedEvent": { "system_preset_id": string; "memory_id": (string | null) }
+  "RpcMessageAudioEvent": { "session_id": string; "message_id": string; "audio_url": string; "duration": (number | null); "transcript": (string | null) }
+  "RpcMessageBubbleEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (string | null); "message_id": string; "bubble_index": number; "bubble": ApiSchemas["RpcReplyBubbleView"] }
+  "RpcMessageCompleteEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (string | null); "text": (string | null); "bubbles": (Array<ApiSchemas["RpcReplyBubbleView"]> | null); "reasoning": (string | null); "media": (Array<ApiSchemas["RpcClientMediaEntry"]> | null); "usage": (ApiSchemas["RpcTokenUsage"] | null); "cache_usage": (ApiSchemas["RpcCacheUsage"] | null); "message_id": (string | null); "can_replace_reply": boolean }
   "RpcMessageDeletedEvent": { "session_id": string; "messages": Array<ApiSchemas["RpcSessionMessageView"]>; "deleted_count": number; "anchor": ApiSchemas["RpcUndoAnchor"] }
-  "RpcMessageDeltaEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (number | null); "text": string }
+  "RpcMessageDeltaEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (string | null); "text": string }
   "RpcMessageEditedEvent": { "session_id": string; "messages": Array<ApiSchemas["RpcSessionMessageView"]> }
-  "RpcMessageMediaEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (number | null); "message_id": number; "bubble_index": number; "bubble": ApiSchemas["RpcClientMediaBubble"]; "session_id": string; "media_id": string }
-  "RpcMessagePersistedEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (number | null); "role": string; "message_ids": Array<number>; "messages": Array<ApiSchemas["RpcSessionMessageView"]> }
-  "RpcMessageReplacedEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (number | null); "session_id": string; "replaced_message_id": number; "message": ApiSchemas["RpcSessionMessageView"]; "history_revision": number }
-  "RpcMessageVoiceEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (number | null); "message_id": number; "bubble_index": number; "bubble": ApiSchemas["RpcVoiceBubbleView"]; "session_id": string }
+  "RpcMessageMediaEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (string | null); "message_id": string; "bubble_index": number; "bubble": ApiSchemas["RpcClientMediaBubble"]; "session_id": string; "media_id": string }
+  "RpcMessagePersistedEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (string | null); "role": string; "message_ids": Array<string>; "messages": Array<ApiSchemas["RpcSessionMessageView"]> }
+  "RpcMessageReplacedEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (string | null); "session_id": string; "replaced_message_id": string; "message": ApiSchemas["RpcSessionMessageView"]; "history_revision": number }
+  "RpcMessageVoiceEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (string | null); "message_id": string; "bubble_index": number; "bubble": ApiSchemas["RpcVoiceBubbleView"]; "session_id": string }
   "RpcMoodEvent": { "mood": string }
-  "RpcOutfitChangedEvent": { "outfit_id": number }
-  "RpcPlainSessionMessageView": { "id": number; "role": "assistant" | "system" | "tool" | "user"; "content": (string | null); "subtype": string; "reasoning": (string | null); "timestamp": number; "can_replace_reply": boolean; "media": Array<ApiSchemas["RpcClientMediaEntry"]>; "tool_calls": ApiSchemas["RpcJsonValue"]; "tool_call_id": (string | null); "tool_name": string; "content_type": "multimodal_v1" | "text" }
+  "RpcOutfitChangedEvent": { "outfit_id": string }
+  "RpcPlainSessionMessageView": { "id": string; "role": "assistant" | "system" | "tool" | "user"; "content": (string | null); "subtype": string; "reasoning": (string | null); "timestamp": number; "can_replace_reply": boolean; "media": Array<ApiSchemas["RpcClientMediaEntry"]>; "tool_calls": ApiSchemas["RpcJsonValue"]; "tool_call_id": (string | null); "tool_name": string; "content_type": "multimodal_v1" | "text" }
   "RpcPostCommentDeletedEvent": { "post_id": string; "comment_id": string }
   "RpcPostCommentEvent": { "post_id": string; "comment": ApiSchemas["RpcPostCommentResponse"] }
   "RpcPostCommentResponse": { "id": string; "post_id": string; "role": ApiSchemas["RpcPostCommentRole"]; "content": string; "created_at": string; "updated_at": string; "reply_to_comment_id": (string | null); "reply_status": "none" | "pending" | "running" | "completed" | "failed"; "reply_error": (string | null) }
   "RpcPostCommentRole": "user" | "companion"
   "RpcPostContentType": "text" | "image" | "video" | "audio"
-  "RpcPostResponse": { "id": string; "published_at": string; "content_type": ApiSchemas["RpcPostContentType"]; "title": string; "body": string; "media_url": (string | null); "audio_url": (string | null); "comments": Array<ApiSchemas["RpcPostCommentResponse"]> }
-  "RpcRememberCommandResult": { "memory_id": number; "content": string }
+  "RpcPostResponse": { "id": string; "published_at": string; "content_type": ApiSchemas["RpcPostContentType"]; "title": string; "body": string; "media_url": (string | null); "audio_url": (string | null); "comments": Array<ApiSchemas["RpcPostCommentResponse"]>; "comment_count": number; "comments_next_cursor": (string | null); "comments_loaded": boolean }
+  "RpcRememberCommandResult": { "memory_id": string; "content": string }
   "RpcReplyAudio": { "url": string; "duration": number }
   "RpcReplyBubbleView": (ApiSchemas["RpcTextBubble"] | ApiSchemas["RpcVoiceBubbleView"] | ApiSchemas["RpcClientMediaBubble"] | ApiSchemas["RpcLinkBubble"])
-  "RpcSceneChangedEvent": { "scene_id": (number | null) }
+  "RpcSceneChangedEvent": { "scene_id": (string | null) }
   "RpcSessionClearResult": { "session_id": string; "cleared_count": number; "messages": Array<ApiSchemas["RpcSessionMessageView"]> }
   "RpcSessionCompressionResult": { "session_id": string; "compressed": boolean; "reason": (string | null); "usage": ApiSchemas["RpcCompressionUsage"]; "replaced_count": (number | null); "summary": (string | null); "messages": (Array<ApiSchemas["RpcSessionMessageView"]> | null) }
   "RpcSessionListChangedEvent": { "session_id": string; "deleted": boolean }
   "RpcSessionMessageView": (ApiSchemas["RpcPlainSessionMessageView"] | ApiSchemas["RpcCompanionSessionMessageView"])
-  "RpcSessionStateEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (number | null); "messages": (Array<ApiSchemas["RpcSessionMessageView"]> | null); "running": boolean; "status": string; "error": (string | null); "result_message_id": (number | null) }
+  "RpcSessionStateEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (string | null); "messages": (Array<ApiSchemas["RpcSessionMessageView"]> | null); "running": boolean; "status": string; "error": (string | null); "result_message_id": (string | null) }
   "RpcSystemNotificationEvent": { "kind": "error" | "success"; "title": string; "message": string; "session_id": string }
   "RpcTextBubble": { "type": "text"; "text": string }
   "RpcTokenUsage": { "prompt_tokens": (number | null); "completion_tokens": (number | null); "total_tokens": (number | null); "input_tokens": (number | null); "output_tokens": (number | null); "reasoning_tokens": (number | null); "context_window": (number | null) }
   "RpcToolCallEvent": { "call_id": string; "name": string; "args": { [key: string]: ApiSchemas["RpcJsonValue"] }; "session_id": (string | null); "headless": boolean; "skill_scope": (ApiSchemas["RpcToolScope"] | null) }
   "RpcToolCancelEvent": { "call_id": string }
-  "RpcToolProgressEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (number | null); "name": (string | null); "call_id": (string | null); "status": "running" | "complete" }
+  "RpcToolProgressEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (string | null); "name": (string | null); "call_id": (string | null); "status": "running" | "complete" }
   "RpcToolResultResult": { "status": "accepted" | "no_longer_pending" }
-  "RpcToolScope": { "user_id": number; "system_preset_id": string }
+  "RpcToolScope": { "user_id": string; "system_preset_id": string }
   "RpcToolsSyncResult": { "count": number }
-  "RpcTopicFeedbackSnapshot": { "topic_id": number; "value": ("like" | "less" | null); "updated_at": (string | null) }
-  "RpcTurnEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (number | null) }
+  "RpcTopicFeedbackSnapshot": { "topic_id": string; "value": ("like" | "less" | null); "updated_at": (string | null) }
+  "RpcTurnEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (string | null) }
   "RpcUndoAnchor": { "text": string; "attachments": Array<ApiSchemas["RpcUndoAttachment"]> }
   "RpcUndoAttachment": { "type": "image"; "url": string }
   "RpcVideoCompletedEvent": { "task_id": string; "session_id": (string | null); "url": string; "media": Array<ApiSchemas["RpcClientMediaEntry"]>; "warning": (string | null) }
-  "RpcVideoFailedEvent": { "task_id": string; "session_id": (string | null); "error": (string | null); "status_message_id": (number | null); "status_text": (string | null) }
+  "RpcVideoFailedEvent": { "task_id": string; "session_id": (string | null); "error": (string | null); "status_message_id": (string | null); "status_text": (string | null) }
   "RpcVideoQueueEvent": { "task_id": string; "session_id": (string | null); "media_id": (string | null); "video_queue": (ApiSchemas["RpcVideoQueueInfo"] | null) }
   "RpcVideoQueueInfo": { "state": "waiting" | "rate_limited" | "blocked"; "next_retry_at": (string | null) }
-  "RpcVisualPlayCommand": { "play_id": string; "status": "queued"; "visual_id": number; "visual_version": number; "media_kind": "image" | "video"; "media_path": string; "poster_path": (string | null); "input_image_hash": (string | null); "clip_kind": "once" | "loop"; "loop": boolean; "transition": "natural" | "fade"; "presentation_epoch": number; "state_revision": number; "source": "manual" | "autonomous" | "restore" | "remote"; "expires_at": string; "outfit": ApiSchemas["RpcComboMaterialRef"]; "scene": ApiSchemas["RpcComboMaterialRef"] }
+  "RpcVisualPlayCommand": { "play_id": string; "status": "queued"; "visual_id": string; "visual_version": number; "media_kind": "image" | "video"; "media_path": string; "poster_path": (string | null); "input_image_hash": (string | null); "clip_kind": "once" | "loop"; "loop": boolean; "transition": "natural" | "fade"; "presentation_epoch": number; "state_revision": number; "source": "manual" | "autonomous" | "restore" | "remote"; "expires_at": string; "outfit": ApiSchemas["RpcComboMaterialRef"]; "scene": ApiSchemas["RpcComboMaterialRef"] }
   "RpcVisualPlaybackEvent": { "play_id": string; "status": "queued" | "claimed" | "started" | "finished" | "failed" | "expired"; "receipt_kind": ("image" | "video" | "window_static" | null) }
   "RpcVisualUpdatedEvent": { "version": number }
   "RpcVoiceBubbleView": { "type": "voice"; "text": string; "audio": (ApiSchemas["RpcReplyAudio"] | null) }
@@ -237,7 +239,7 @@ export interface ApiSchemas {
   "RunnerInputConfigReplaceRequest": { "config": { [key: string]: ApiSchemas["RunnerInputJsonValue"] } }
   "RunnerInputJsonValue": unknown
   "RunnerInputRunnerEmptyRequest": Record<string, never>
-  "RunnerInputSkillScopeRequest": { "user_id": number; "system_preset_id": "companion" | "copywriter" | "language_teacher" | "general" }
+  "RunnerInputSkillScopeRequest": { "user_id": string; "system_preset_id": "companion" | "copywriter" | "language_teacher" | "general" }
   "RunnerInputToolExecuteRequest": { "name": string; "args"?: { [key: string]: ApiSchemas["RunnerInputJsonValue"] }; "call_id"?: (string | null); "skill_scope"?: (ApiSchemas["RunnerInputSkillScopeRequest"] | null) }
   "RunnerJsonValue": unknown
   "RunnerRunnerCallResult": { "call_id": string; "status": "claimed" | "completed" | "failed" | "unknown" | "not_found"; "result": ApiSchemas["RunnerJsonValue"]; "error": (string | null); "claimed_at": (number | number | null); "finished_at": (number | number | null) }
@@ -256,8 +258,8 @@ export interface ApiSchemas {
   "SceneGenerateRequest": { "source": "generate"; "notes"?: (string | null); "image"?: (string | null); "content_type"?: "image/png" | "image/jpeg" | "image/webp" | "image/gif" }
   "SceneImageDimensions": { "width": number; "height": number }
   "SceneImageSize": { "width": number; "height": number }
-  "SceneImportRequest": { "image": string; "content_type"?: (string | null); "source": "import"; "scene_id"?: (number | null) }
-  "SceneListResponse": { "scenes": Array<ApiSchemas["SceneResponse"]>; "total": number; "offset": number; "limit": number }
+  "SceneImportRequest": { "image": string; "content_type"?: (string | null); "source": "import"; "scene_id"?: (string | null) }
+  "SceneListResponse": { "scenes": Array<ApiSchemas["SceneResponse"]>; "total": (number | null); "has_more": boolean; "next_cursor": (string | null); "limit": number }
   "SceneOrigin": "onboarding" | "llm" | "nightly" | "user_request"
   "ScenePolicy": "locked" | "llm_may_replace"
   "ScenePolicyInput": "locked" | "llm_may_replace"
@@ -265,7 +267,7 @@ export interface ApiSchemas {
   "ScenePolicyResponse": { "policy": ApiSchemas["ScenePolicy"] }
   "ScenePromptRequest": { "notes"?: (string | null) }
   "SceneRegenerationResponse": { "task_id": string; "status": "pending" | "ready" | "failed" | "cancelled"; "stage": string; "error": (string | null) }
-  "SceneResponse": { "id": number; "status": ApiSchemas["SceneStatus"]; "stage": string; "can_retry_generation": boolean; "origin": ApiSchemas["SceneOrigin"]; "source": ApiSchemas["SceneSource"]; "target_size": (ApiSchemas["SceneImageSize"] | null); "source_size": (ApiSchemas["SceneImageDimensions"] | null); "image_size": (ApiSchemas["SceneImageDimensions"] | null); "title": string; "description": string; "requirements": string; "prompt": string; "url": string; "error": (string | null); "attempt_count": number; "requested_at": (string | null); "ready_at": (string | null); "regeneration": (ApiSchemas["SceneRegenerationResponse"] | null) }
+  "SceneResponse": { "id": string; "status": ApiSchemas["SceneStatus"]; "stage": string; "can_retry_generation": boolean; "origin": ApiSchemas["SceneOrigin"]; "source": ApiSchemas["SceneSource"]; "target_size": (ApiSchemas["SceneImageSize"] | null); "source_size": (ApiSchemas["SceneImageDimensions"] | null); "image_size": (ApiSchemas["SceneImageDimensions"] | null); "title": string; "description": string; "requirements": string; "prompt": string; "url": string; "error": (string | null); "attempt_count": number; "requested_at": (string | null); "ready_at": (string | null); "regeneration": (ApiSchemas["SceneRegenerationResponse"] | null) }
   "SceneSource": "generated" | "user_upload"
   "SceneStateResponse": { "policy": ApiSchemas["ScenePolicy"]; "materials": Array<ApiSchemas["SceneResponse"]>; "generation_pending": boolean }
   "SceneStatus": "pending" | "ready" | "description_failed" | "failed" | "cancelled"
@@ -286,13 +288,13 @@ export interface ApiSchemas {
   "SessionCompressionResult": { "session_id": string; "compressed": boolean; "reason": (string | null); "usage": ApiSchemas["CompressionUsage"]; "replaced_count": (number | null); "summary": (string | null); "messages": (Array<ApiSchemas["SessionMessageView"]> | null) }
   "SessionCreateRequest": { "system_preset_id": string }
   "SessionCreateResult": { "session_id": string; "info": ApiSchemas["SessionRuntimeInfo"] }
-  "SessionForkRequest": { "source_message_id": number }
-  "SessionHistoryResponse": { "messages": Array<ApiSchemas["SessionMessageView"]>; "next_cursor": (number | null); "has_more": boolean }
+  "SessionForkRequest": { "source_message_id": string }
+  "SessionHistoryResponse": { "messages": Array<ApiSchemas["SessionMessageView"]>; "next_cursor": (string | null); "has_more": boolean }
   "SessionMessageView": (ApiSchemas["PlainSessionMessageView"] | ApiSchemas["CompanionSessionMessageView"])
   "SessionRuntimeInfo": { "model": (string | null); "provider": string; "running": boolean; "system_preset_id": string; "settings": { [key: string]: unknown }; "context_window": (number | null); "kind": string; "is_automation": boolean }
   "SessionSettingsPatch": { "temperature"?: (number | null); "context_compression_threshold"?: (number | null); "reasoning_effort"?: ("none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | null) }
   "SessionSnapshotResponse": { "session_id": string; "message_count": number; "messages": Array<ApiSchemas["SessionMessageView"]>; "info": ApiSchemas["SessionRuntimeInfo"]; "current_seq": (number | null); "stream_id": (string | null); "active_turn": (ApiSchemas["ActiveTurnView"] | null); "last_submission": (ApiSchemas["LastSubmissionSnapshot"] | null); "truncated": boolean; "next_cursor": (string | null); "history_revision": number }
-  "SessionUndoRequest": { "source_message_id": number; "confirmed"?: boolean }
+  "SessionUndoRequest": { "source_message_id": string; "confirmed"?: boolean }
   "SessionUndoResult": { "session_id": string; "deleted_count": number; "anchor": ApiSchemas["UndoAnchor"]; "messages": Array<ApiSchemas["SessionMessageView"]> }
   "SpeechToTextResponse": { "text": string }
   "TaskConfig": { "chains": { [key: string]: ApiSchemas["ChainPolicy"] } }
@@ -301,41 +303,41 @@ export interface ApiSchemas {
   "TokenResponse": { "access_token": string; "expires_in": number; "user": ApiSchemas["UserInfo"] }
   "ToolSnapshot": { "name": (string | null); "call_id": (string | null); "status": string }
   "TopicFeedbackRequest": { "value": ("like" | "less" | null) }
-  "TopicFeedbackSnapshot": { "topic_id": number; "value": ("like" | "less" | null); "updated_at": (string | null) }
+  "TopicFeedbackSnapshot": { "topic_id": string; "value": ("like" | "less" | null); "updated_at": (string | null) }
   "TtsRequest": { "text"?: string; "voice"?: string; "language"?: string }
   "TurnCancelResult": { "request_id": string; "cancelled": boolean }
   "UndoAnchor": { "text": string; "attachments": Array<ApiSchemas["UndoAttachment"]> }
   "UndoAttachment": { "type": "image"; "url": string }
-  "UpdateVersionItem": { "id": number; "version": string; "release_notes": string; "exe_filename": string; "exe_sha512": string; "exe_size": number; "mac_filename": (string | null); "mac_sha512": (string | null); "mac_size": (number | null); "runner_filename": (string | null); "is_active": boolean; "created_at": string; "created_by": (string | null) }
+  "UpdateVersionItem": { "id": string; "version": string; "release_notes": string; "exe_filename": string; "exe_sha512": string; "exe_size": number; "mac_filename": (string | null); "mac_sha512": (string | null); "mac_size": (number | null); "runner_filename": (string | null); "is_active": boolean; "created_at": string; "created_by": (string | null) }
   "UpdateVersionListResponse": { "items": Array<ApiSchemas["UpdateVersionItem"]> }
   "UpdateVersionUpdate": { "release_notes"?: (string | null); "is_active"?: (boolean | null) }
   "UserBackupImportFailure": { "section": string; "count": number; "reason": string }
   "UserBackupImportResponse": { "mode": "overwrite" | "merge"; "sections": Array<string>; "imported": { [key: string]: number }; "restored_files": number; "failed": Array<ApiSchemas["UserBackupImportFailure"]> }
   "UserCreate": { "username": string; "base_url": string; "nightly_activity_enabled"?: boolean }
-  "UserInfo": { "id": number; "username": string }
+  "UserInfo": { "id": string; "username": string }
   "UserListResponse": { "items": Array<ApiSchemas["UserResponse"]> }
-  "UserModelConfigListItem": { "user_id": number; "ai_config": ApiSchemas["AIConfigPublic"] }
+  "UserModelConfigListItem": { "user_id": string; "ai_config": ApiSchemas["AIConfigPublic"] }
   "UserModelConfigListResponse": { "items": Array<ApiSchemas["UserModelConfigListItem"]>; "ai_provider_support": { [key: string]: Array<string> }; "ai_provider_defaults": { [key: string]: { [key: string]: ApiSchemas["ProviderDefaults"] } }; "system_ai_config": ApiSchemas["AIConfigPublic"]; "ai_tasks": Array<ApiSchemas["AiTaskDefinition"]> }
   "UserModelConfigRequest": { "ai_config": ApiSchemas["AIConfigUpdate"] }
-  "UserResponse": { "id": number; "username": string; "nightly_activity_enabled": boolean; "is_active": boolean; "created_at": string; "activation_code": string }
+  "UserResponse": { "id": string; "username": string; "nightly_activity_enabled": boolean; "is_active": boolean; "created_at": string; "activation_code": string }
   "UserUpdate": { "nightly_activity_enabled"?: (boolean | null); "is_active"?: (boolean | null); "base_url"?: (string | null) }
   "VideoQueueAttachTask": { "expected_revision": number; "note": string; "action": "attach_task"; "task_id": string }
   "VideoQueueConfirmFinished": { "expected_revision": number; "note": string; "action": "confirm_finished"; "task_id"?: null }
   "VideoQueueInfo": { "state": "waiting" | "rate_limited" | "blocked"; "next_retry_at": (string | null) }
-  "VideoQueueKind": "media" | "action" | "desktop" | "visuals"
+  "VideoQueueKind": "media" | "visuals"
   "VideoQueueLaneView": { "id": string; "provider": string; "provider_names": Array<string>; "next_retry_at": (string | null); "requests": Array<ApiSchemas["VideoQueueRequestView"]> }
   "VideoQueueList": { "queues": Array<ApiSchemas["VideoQueueLaneView"]> }
-  "VideoQueueRequestView": { "id": string; "revision": number; "kind": ApiSchemas["VideoQueueKind"]; "entity_id": (number | null); "user_id": (number | null); "model": string; "state": string; "cancel_requested": boolean; "provider_task_id": (string | null); "created_at": string; "updated_at": string; "error_message": (string | null) }
+  "VideoQueueRequestView": { "id": string; "revision": number; "kind": ApiSchemas["VideoQueueKind"]; "job_id": (string | null); "user_id": (string | null); "model": string; "state": string; "cancel_requested": boolean; "provider_task_id": (string | null); "created_at": string; "updated_at": string; "error_message": (string | null) }
   "VisualClaimRequest": { "client_id": string }
   "VisualClaimResponse": { "claimed": boolean }
   "VisualCreationPlan": { "activity": string; "opening_description": string; "required_props": Array<string>; "motion_requirements": string }
-  "VisualDetailView": { "id": number; "media_kind": "image" | "video"; "clip_kind": "once" | "loop"; "title": string; "status": string; "media_url": string; "poster_url": (string | null); "width": number; "height": number; "duration_ms": (number | null); "version": number; "description": string; "outfit_id": (number | null); "outfit_name": string; "scene_id": (number | null); "scene_title": string; "action_id": (number | null); "action_name": (string | null); "input_image_id": (number | null); "input_image_hash": (string | null); "created_at": string; "updated_at": string; "snapshot": ApiSchemas["ComboSnapshot"]; "replaced_at_version": (number | null); "jobs": Array<ApiSchemas["VisualJobView"]> }
-  "VisualItemView": { "id": number; "media_kind": "image" | "video"; "clip_kind": "once" | "loop"; "title": string; "status": string; "media_url": string; "poster_url": (string | null); "width": number; "height": number; "duration_ms": (number | null); "version": number; "description": string; "outfit_id": (number | null); "outfit_name": string; "scene_id": (number | null); "scene_title": string; "action_id": (number | null); "action_name": (string | null); "input_image_id": (number | null); "input_image_hash": (string | null); "created_at": string; "updated_at": string }
+  "VisualDetailView": { "id": string; "media_kind": "image" | "video"; "clip_kind": "once" | "loop"; "title": string; "status": string; "media_url": string; "poster_url": (string | null); "width": number; "height": number; "duration_ms": (number | null); "version": number; "description": string; "outfit_id": (string | null); "outfit_name": string; "scene_id": (string | null); "scene_title": string; "action_id": (string | null); "action_name": (string | null); "input_image_id": (string | null); "input_image_hash": (string | null); "created_at": string; "updated_at": string; "snapshot": ApiSchemas["ComboSnapshot"]; "replaced_at_version": (number | null); "jobs": Array<ApiSchemas["VisualJobView"]> }
+  "VisualItemView": { "id": string; "media_kind": "image" | "video"; "clip_kind": "once" | "loop"; "title": string; "status": string; "media_url": string; "poster_url": (string | null); "width": number; "height": number; "duration_ms": (number | null); "version": number; "description": string; "outfit_id": (string | null); "outfit_name": string; "scene_id": (string | null); "scene_title": string; "action_id": (string | null); "action_name": (string | null); "input_image_id": (string | null); "input_image_hash": (string | null); "created_at": string; "updated_at": string }
   "VisualJobCommandRequest": { "command": "pause" | "resume" | "cancel" | "retry" }
-  "VisualJobListResponse": { "jobs": Array<ApiSchemas["VisualJobView"]>; "total": number; "offset": number; "limit": number }
-  "VisualJobView": { "id": number; "purpose": string; "target_kind": "image" | "video"; "target_visual_id": (number | null); "expected_version": (number | null); "state": "queued" | "running" | "paused" | "succeeded" | "failed" | "cancelled" | "unknown"; "stage": string; "feedback": string; "video_feedback": string; "repair_count": number; "repair_limit": number; "error": (string | null); "result_visual_id": (number | null); "result_image_id": (number | null); "video_queue": (ApiSchemas["VideoQueueInfo"] | null); "created_at": string; "updated_at": string }
-  "VisualListResponse": { "visuals": Array<ApiSchemas["VisualItemView"]>; "total": number; "offset": number; "limit": number }
-  "VisualPlayCommand": { "play_id": string; "status": "queued"; "visual_id": number; "visual_version": number; "media_kind": "image" | "video"; "media_path": string; "poster_path": (string | null); "input_image_hash": (string | null); "clip_kind": "once" | "loop"; "loop": boolean; "transition": "natural" | "fade"; "presentation_epoch": number; "state_revision": number; "source": "manual" | "autonomous" | "restore" | "remote"; "expires_at": string; "outfit": ApiSchemas["ComboMaterialRef"]; "scene": ApiSchemas["ComboMaterialRef"] }
+  "VisualJobListResponse": { "jobs": Array<ApiSchemas["VisualJobView"]>; "total": (number | null); "has_more": boolean; "next_cursor": (string | null); "limit": number }
+  "VisualJobView": { "id": string; "purpose": string; "target_kind": "image" | "video"; "target_visual_id": (string | null); "expected_version": (number | null); "state": "queued" | "running" | "paused" | "succeeded" | "failed" | "cancelled" | "unknown"; "stage": string; "feedback": string; "video_feedback": string; "repair_count": number; "repair_limit": number; "error": (string | null); "result_visual_id": (string | null); "result_image_id": (string | null); "video_queue": (ApiSchemas["VideoQueueInfo"] | null); "created_at": string; "updated_at": string }
+  "VisualListResponse": { "visuals": Array<ApiSchemas["VisualItemView"]>; "total": (number | null); "has_more": boolean; "next_cursor": (string | null); "limit": number }
+  "VisualPlayCommand": { "play_id": string; "status": "queued"; "visual_id": string; "visual_version": number; "media_kind": "image" | "video"; "media_path": string; "poster_path": (string | null); "input_image_hash": (string | null); "clip_kind": "once" | "loop"; "loop": boolean; "transition": "natural" | "fade"; "presentation_epoch": number; "state_revision": number; "source": "manual" | "autonomous" | "restore" | "remote"; "expires_at": string; "outfit": ApiSchemas["ComboMaterialRef"]; "scene": ApiSchemas["ComboMaterialRef"] }
   "VisualPreferencesRequest": { "autonomous_enabled"?: (boolean | null); "target_width"?: (number | null); "target_height"?: (number | null) }
   "VisualPresentationResponse": { "current_visual": (ApiSchemas["VisualItemView"] | null); "loop_visual": (ApiSchemas["VisualItemView"] | null); "autonomous_enabled": boolean; "target_width": (number | null); "target_height": (number | null); "presentation_epoch": number; "state_revision": number; "pending_play": (ApiSchemas["VisualPlayCommand"] | null); "actual": ApiSchemas["ActualPresentationSnapshot"] }
   "VisualReceiptRequest": { "status": "started" | "finished" | "failed" | "interrupted"; "client_id": string; "receipt_kind"?: ("image" | "video" | "window_static" | null); "error"?: (string | null) }
@@ -375,22 +377,22 @@ export interface ApiOperations {
   "admin.discover_ai_models": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["ModelDiscoveryRequest"]; input: { path?: never; query?: never; body: ApiSchemas["ModelDiscoveryRequest"] }; response: ApiSchemas["ModelDiscoveryResponse"] }
   "admin.list_users": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["UserListResponse"] }
   "admin.create_user": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["UserCreate"]; input: { path?: never; query?: never; body: ApiSchemas["UserCreate"] }; response: ApiSchemas["UserResponse"] }
-  "admin.update_user": { path: { "user_id": number }; query: Record<string, never>; body: ApiSchemas["UserUpdate"]; input: { path: { "user_id": number }; query?: never; body: ApiSchemas["UserUpdate"] }; response: ApiSchemas["UserResponse"] }
-  "admin.delete_user": { path: { "user_id": number }; query: Record<string, never>; body: undefined; input: { path: { "user_id": number }; query?: never; body?: never }; response: ApiSchemas["MessageResponse"] }
-  "admin.regenerate_activation": { path: { "user_id": number }; query: Record<string, never>; body: ApiSchemas["RegenerateActivationRequest"]; input: { path: { "user_id": number }; query?: never; body: ApiSchemas["RegenerateActivationRequest"] }; response: ApiSchemas["UserResponse"] }
+  "admin.update_user": { path: { "user_id": string }; query: Record<string, never>; body: ApiSchemas["UserUpdate"]; input: { path: { "user_id": string }; query?: never; body: ApiSchemas["UserUpdate"] }; response: ApiSchemas["UserResponse"] }
+  "admin.delete_user": { path: { "user_id": string }; query: Record<string, never>; body: undefined; input: { path: { "user_id": string }; query?: never; body?: never }; response: ApiSchemas["MessageResponse"] }
+  "admin.regenerate_activation": { path: { "user_id": string }; query: Record<string, never>; body: ApiSchemas["RegenerateActivationRequest"]; input: { path: { "user_id": string }; query?: never; body: ApiSchemas["RegenerateActivationRequest"] }; response: ApiSchemas["UserResponse"] }
   "admin.list_model_configs": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["UserModelConfigListResponse"] }
   "admin.runtime_info": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: { [key: string]: string } }
   "admin.get_system_settings": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: { [key: string]: ApiSchemas["JsonValue"] } }
   "admin.update_system_settings": { path: Record<string, never>; query: Record<string, never>; body: { [key: string]: ApiSchemas["JsonValueInput"] }; input: { path?: never; query?: never; body: { [key: string]: ApiSchemas["JsonValueInput"] } }; response: { [key: string]: ApiSchemas["JsonValue"] } }
-  "admin.list_nightly_activity_logs": { path: Record<string, never>; query: { "user_id"?: (number | null); "target_date"?: (string | null) }; body: undefined; input: { path?: never; query?: { "user_id"?: (number | null); "target_date"?: (string | null) }; body?: never }; response: ApiSchemas["NightlyActivityLogListResponse"] }
+  "admin.list_nightly_activity_logs": { path: Record<string, never>; query: { "user_id"?: (string | null); "target_date"?: (string | null) }; body: undefined; input: { path?: never; query?: { "user_id"?: (string | null); "target_date"?: (string | null) }; body?: never }; response: ApiSchemas["NightlyActivityLogListResponse"] }
   "admin.xiaohongshu_login_status": { path: Record<string, never>; query: { "session_id"?: (string | null) }; body: undefined; input: { path?: never; query?: { "session_id"?: (string | null) }; body?: never }; response: ApiSchemas["XiaohongshuAdminLoginStatus"] }
   "admin.refresh_xiaohongshu_login_qrcode": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["XhsLoginQrCode"] }
   "admin.submit_xiaohongshu_login_verification": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["XhsLoginVerification"]; input: { path?: never; query?: never; body: ApiSchemas["XhsLoginVerification"] }; response: ApiSchemas["XiaohongshuAdminLoginStatus"] }
   "admin.clear_xiaohongshu_saved_login": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["MessageResponse"] }
-  "admin.upsert_model_config": { path: { "user_id": number }; query: Record<string, never>; body: ApiSchemas["UserModelConfigRequest"]; input: { path: { "user_id": number }; query?: never; body: ApiSchemas["UserModelConfigRequest"] }; response: ApiSchemas["MessageResponse"] }
-  "admin.delete_model_config": { path: { "user_id": number }; query: Record<string, never>; body: undefined; input: { path: { "user_id": number }; query?: never; body?: never }; response: ApiSchemas["MessageResponse"] }
-  "admin.export_user_backup": { path: { "user_id": number }; query: Record<string, never>; body: undefined; input: { path: { "user_id": number }; query?: never; body?: never }; response: Uint8Array }
-  "admin.import_user_backup": { path: { "user_id": number }; query: { "mode"?: "overwrite" | "merge"; "sections"?: (Array<string> | null) }; body: FormData; input: { path: { "user_id": number }; query?: { "mode"?: "overwrite" | "merge"; "sections"?: (Array<string> | null) }; body: FormData }; response: ApiSchemas["UserBackupImportResponse"] }
+  "admin.upsert_model_config": { path: { "user_id": string }; query: Record<string, never>; body: ApiSchemas["UserModelConfigRequest"]; input: { path: { "user_id": string }; query?: never; body: ApiSchemas["UserModelConfigRequest"] }; response: ApiSchemas["MessageResponse"] }
+  "admin.delete_model_config": { path: { "user_id": string }; query: Record<string, never>; body: undefined; input: { path: { "user_id": string }; query?: never; body?: never }; response: ApiSchemas["MessageResponse"] }
+  "admin.export_user_backup": { path: { "user_id": string }; query: Record<string, never>; body: undefined; input: { path: { "user_id": string }; query?: never; body?: never }; response: Uint8Array }
+  "admin.import_user_backup": { path: { "user_id": string }; query: { "mode"?: "overwrite" | "merge"; "sections"?: (Array<string> | null) }; body: FormData; input: { path: { "user_id": string }; query?: { "mode"?: "overwrite" | "merge"; "sections"?: (Array<string> | null) }; body: FormData }; response: ApiSchemas["UserBackupImportResponse"] }
   "gateway.gateway_ticket": { path: Record<string, never>; query: Record<string, never>; body: (ApiSchemas["GatewayTicketRequest"] | null); input: { path?: never; query?: never; body?: (ApiSchemas["GatewayTicketRequest"] | null) }; response: ApiSchemas["GatewayTicketResponse"] }
   "companion.record_interaction": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["InteractionStatsRequest"]; input: { path?: never; query?: never; body: ApiSchemas["InteractionStatsRequest"] }; response: ApiSchemas["InteractionStatsResult"] }
   "companion.idle_expression": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["IdleExpressionRequest"]; input: { path?: never; query?: never; body: ApiSchemas["IdleExpressionRequest"] }; response: ApiSchemas["IdleExpressionResult"] }
@@ -405,75 +407,77 @@ export interface ApiOperations {
   "companion.post_avatar_prompt": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["AvatarPromptRequest"]; input: { path?: never; query?: never; body: ApiSchemas["AvatarPromptRequest"] }; response: ApiSchemas["ImagePromptResponse"] }
   "companion.post_avatar_adopt": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["FullbodyAdoptRequest"]; input: { path?: never; query?: never; body: ApiSchemas["FullbodyAdoptRequest"] }; response: ApiSchemas["AvatarAssetResponse"] }
   "companion.get_avatar_history": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["AvatarHistoryResponse"] }
-  "companion.put_avatar_select": { path: { "avatar_id": number }; query: Record<string, never>; body: undefined; input: { path: { "avatar_id": number }; query?: never; body?: never }; response: ApiSchemas["AvatarAssetResponse"] }
-  "companion.post_fullbody_reference": { path: { "avatar_id": number }; query: Record<string, never>; body: ApiSchemas["FullbodyReferenceGenerateRequest"]; input: { path: { "avatar_id": number }; query?: never; body: ApiSchemas["FullbodyReferenceGenerateRequest"] }; response: (ApiSchemas["AvatarAssetResponse"] | ApiSchemas["FullbodyCandidateResponse"]) }
-  "companion.get_fullbody_candidate": { path: { "avatar_id": number }; query: Record<string, never>; body: undefined; input: { path: { "avatar_id": number }; query?: never; body?: never }; response: (ApiSchemas["FullbodyCandidateResponse"] | null) }
-  "companion.post_fullbody_candidate_analyze": { path: { "avatar_id": number; "candidate_id": number }; query: Record<string, never>; body: undefined; input: { path: { "avatar_id": number; "candidate_id": number }; query?: never; body?: never }; response: ApiSchemas["FullbodyCandidateResponse"] }
-  "companion.post_fullbody_candidate_accept": { path: { "avatar_id": number; "candidate_id": number }; query: Record<string, never>; body: undefined; input: { path: { "avatar_id": number; "candidate_id": number }; query?: never; body?: never }; response: ApiSchemas["AvatarAssetResponse"] }
-  "companion.post_fullbody_confirm": { path: { "avatar_id": number }; query: Record<string, never>; body: ApiSchemas["FullbodyConfirmRequest"]; input: { path: { "avatar_id": number }; query?: never; body: ApiSchemas["FullbodyConfirmRequest"] }; response: ApiSchemas["AvatarAssetResponse"] }
-  "companion.post_fullbody_prompt": { path: { "avatar_id": number }; query: Record<string, never>; body: ApiSchemas["FullbodyPromptRequest"]; input: { path: { "avatar_id": number }; query?: never; body?: ApiSchemas["FullbodyPromptRequest"] }; response: ApiSchemas["ImagePromptResponse"] }
-  "companion.post_fullbody_adopt": { path: { "avatar_id": number }; query: Record<string, never>; body: ApiSchemas["FullbodyAdoptRequest"]; input: { path: { "avatar_id": number }; query?: never; body: ApiSchemas["FullbodyAdoptRequest"] }; response: (ApiSchemas["AvatarAssetResponse"] | ApiSchemas["FullbodyCandidateResponse"]) }
+  "companion.put_avatar_select": { path: { "avatar_id": string }; query: Record<string, never>; body: undefined; input: { path: { "avatar_id": string }; query?: never; body?: never }; response: ApiSchemas["AvatarAssetResponse"] }
+  "companion.post_fullbody_reference": { path: { "avatar_id": string }; query: Record<string, never>; body: ApiSchemas["FullbodyReferenceGenerateRequest"]; input: { path: { "avatar_id": string }; query?: never; body: ApiSchemas["FullbodyReferenceGenerateRequest"] }; response: (ApiSchemas["AvatarAssetResponse"] | ApiSchemas["FullbodyCandidateResponse"]) }
+  "companion.get_fullbody_candidate": { path: { "avatar_id": string }; query: Record<string, never>; body: undefined; input: { path: { "avatar_id": string }; query?: never; body?: never }; response: (ApiSchemas["FullbodyCandidateResponse"] | null) }
+  "companion.post_fullbody_candidate_analyze": { path: { "avatar_id": string; "candidate_id": string }; query: Record<string, never>; body: undefined; input: { path: { "avatar_id": string; "candidate_id": string }; query?: never; body?: never }; response: ApiSchemas["FullbodyCandidateResponse"] }
+  "companion.post_fullbody_candidate_accept": { path: { "avatar_id": string; "candidate_id": string }; query: Record<string, never>; body: undefined; input: { path: { "avatar_id": string; "candidate_id": string }; query?: never; body?: never }; response: ApiSchemas["AvatarAssetResponse"] }
+  "companion.post_fullbody_confirm": { path: { "avatar_id": string }; query: Record<string, never>; body: ApiSchemas["FullbodyConfirmRequest"]; input: { path: { "avatar_id": string }; query?: never; body: ApiSchemas["FullbodyConfirmRequest"] }; response: ApiSchemas["AvatarAssetResponse"] }
+  "companion.post_fullbody_prompt": { path: { "avatar_id": string }; query: Record<string, never>; body: ApiSchemas["FullbodyPromptRequest"]; input: { path: { "avatar_id": string }; query?: never; body?: ApiSchemas["FullbodyPromptRequest"] }; response: ApiSchemas["ImagePromptResponse"] }
+  "companion.post_fullbody_adopt": { path: { "avatar_id": string }; query: Record<string, never>; body: ApiSchemas["FullbodyAdoptRequest"]; input: { path: { "avatar_id": string }; query?: never; body: ApiSchemas["FullbodyAdoptRequest"] }; response: (ApiSchemas["AvatarAssetResponse"] | ApiSchemas["FullbodyCandidateResponse"]) }
   "companion.get_outfits": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["OutfitListResponse"] }
   "companion.post_outfit": { path: Record<string, never>; query: Record<string, never>; body: (ApiSchemas["OutfitCreateRequest"] | ApiSchemas["OutfitAdoptRequest"]); input: { path?: never; query?: never; body: (ApiSchemas["OutfitCreateRequest"] | ApiSchemas["OutfitAdoptRequest"]) }; response: ApiSchemas["OutfitResponse"] }
   "companion.patch_outfit_policy": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["OutfitPolicyRequest"]; input: { path?: never; query?: never; body: ApiSchemas["OutfitPolicyRequest"] }; response: ApiSchemas["OutfitPolicyResponse"] }
   "companion.post_outfit_prompt": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["OutfitPromptRequest"]; input: { path?: never; query?: never; body: ApiSchemas["OutfitPromptRequest"] }; response: ApiSchemas["ImagePromptResponse"] }
-  "companion.post_outfit_regenerate": { path: { "outfit_id": number }; query: Record<string, never>; body: (ApiSchemas["OutfitRegenerateRequest"] | ApiSchemas["OutfitImageImportRequest"]); input: { path: { "outfit_id": number }; query?: never; body: (ApiSchemas["OutfitRegenerateRequest"] | ApiSchemas["OutfitImageImportRequest"]) }; response: ApiSchemas["OutfitResponse"] }
-  "companion.post_outfit_confirm": { path: { "outfit_id": number }; query: Record<string, never>; body: ApiSchemas["OutfitConfirmRequest"]; input: { path: { "outfit_id": number }; query?: never; body?: ApiSchemas["OutfitConfirmRequest"] }; response: ApiSchemas["OutfitResponse"] }
-  "companion.post_retry_outfit_description": { path: { "outfit_id": number }; query: Record<string, never>; body: undefined; input: { path: { "outfit_id": number }; query?: never; body?: never }; response: ApiSchemas["OutfitResponse"] }
-  "companion.delete_outfit_route": { path: { "outfit_id": number }; query: Record<string, never>; body: undefined; input: { path: { "outfit_id": number }; query?: never; body?: never }; response: ApiSchemas["CompanionOperationResponse"] }
-  "companion.serve_companion_asset": { path: { "user_id": number; "asset_path": string }; query: { "expires"?: (number | null); "sig"?: (string | null) }; body: undefined; input: { path: { "user_id": number; "asset_path": string }; query?: { "expires"?: (number | null); "sig"?: (string | null) }; body?: never }; response: Uint8Array }
-  "companion_actions.list_actions": { path: Record<string, never>; query: { "query"?: (string | null); "clip_kind"?: ("once" | "loop" | null); "status"?: (string | null); "offset"?: number; "limit"?: number }; body: undefined; input: { path?: never; query?: { "query"?: (string | null); "clip_kind"?: ("once" | "loop" | null); "status"?: (string | null); "offset"?: number; "limit"?: number }; body?: never }; response: ApiSchemas["ActionListResponse"] }
+  "companion.post_outfit_regenerate": { path: { "outfit_id": string }; query: Record<string, never>; body: (ApiSchemas["OutfitRegenerateRequest"] | ApiSchemas["OutfitImageImportRequest"]); input: { path: { "outfit_id": string }; query?: never; body: (ApiSchemas["OutfitRegenerateRequest"] | ApiSchemas["OutfitImageImportRequest"]) }; response: ApiSchemas["OutfitResponse"] }
+  "companion.post_outfit_confirm": { path: { "outfit_id": string }; query: Record<string, never>; body: ApiSchemas["OutfitConfirmRequest"]; input: { path: { "outfit_id": string }; query?: never; body?: ApiSchemas["OutfitConfirmRequest"] }; response: ApiSchemas["OutfitResponse"] }
+  "companion.post_retry_outfit_description": { path: { "outfit_id": string }; query: Record<string, never>; body: undefined; input: { path: { "outfit_id": string }; query?: never; body?: never }; response: ApiSchemas["OutfitResponse"] }
+  "companion.delete_outfit_route": { path: { "outfit_id": string }; query: Record<string, never>; body: undefined; input: { path: { "outfit_id": string }; query?: never; body?: never }; response: ApiSchemas["CompanionOperationResponse"] }
+  "companion.serve_companion_asset": { path: { "user_id": string; "asset_path": string }; query: { "expires"?: (number | null); "sig"?: (string | null) }; body: undefined; input: { path: { "user_id": string; "asset_path": string }; query?: { "expires"?: (number | null); "sig"?: (string | null) }; body?: never }; response: Uint8Array }
+  "companion_actions.list_actions": { path: Record<string, never>; query: { "query"?: (string | null); "clip_kind"?: ("once" | "loop" | null); "status"?: (string | null); "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body: undefined; input: { path?: never; query?: { "query"?: (string | null); "clip_kind"?: ("once" | "loop" | null); "status"?: (string | null); "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body?: never }; response: ApiSchemas["ActionListResponse"] }
   "companion_actions.create_action": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["ActionAssetDesign"]; input: { path?: never; query?: never; body: ApiSchemas["ActionAssetDesign"] }; response: ApiSchemas["ActionAssetView"] }
-  "companion_actions.get_action": { path: { "action_id": number }; query: Record<string, never>; body: undefined; input: { path: { "action_id": number }; query?: never; body?: never }; response: ApiSchemas["ActionAssetView"] }
-  "companion_actions.update_action": { path: { "action_id": number }; query: Record<string, never>; body: ApiSchemas["ActionAssetUpdate"]; input: { path: { "action_id": number }; query?: never; body: ApiSchemas["ActionAssetUpdate"] }; response: ApiSchemas["ActionAssetView"] }
-  "companion_actions.delete_action": { path: { "action_id": number }; query: Record<string, never>; body: undefined; input: { path: { "action_id": number }; query?: never; body?: never }; response: undefined }
-  "companion_visuals.list_visuals": { path: Record<string, never>; query: { "query"?: (string | null); "media_kind"?: ("image" | "video" | null); "outfit_id"?: (number | null); "scene_id"?: (number | null); "action_id"?: (number | null); "source"?: (string | null); "offset"?: number; "limit"?: number }; body: undefined; input: { path?: never; query?: { "query"?: (string | null); "media_kind"?: ("image" | "video" | null); "outfit_id"?: (number | null); "scene_id"?: (number | null); "action_id"?: (number | null); "source"?: (string | null); "offset"?: number; "limit"?: number }; body?: never }; response: ApiSchemas["VisualListResponse"] }
-  "companion_visuals.list_visual_jobs": { path: Record<string, never>; query: { "state"?: ("queued" | "running" | "paused" | "succeeded" | "failed" | "cancelled" | "unknown" | null); "offset"?: number; "limit"?: number }; body: undefined; input: { path?: never; query?: { "state"?: ("queued" | "running" | "paused" | "succeeded" | "failed" | "cancelled" | "unknown" | null); "offset"?: number; "limit"?: number }; body?: never }; response: ApiSchemas["VisualJobListResponse"] }
+  "companion_actions.get_action": { path: { "action_id": string }; query: Record<string, never>; body: undefined; input: { path: { "action_id": string }; query?: never; body?: never }; response: ApiSchemas["ActionAssetView"] }
+  "companion_actions.update_action": { path: { "action_id": string }; query: Record<string, never>; body: ApiSchemas["ActionAssetUpdate"]; input: { path: { "action_id": string }; query?: never; body: ApiSchemas["ActionAssetUpdate"] }; response: ApiSchemas["ActionAssetView"] }
+  "companion_actions.delete_action": { path: { "action_id": string }; query: Record<string, never>; body: undefined; input: { path: { "action_id": string }; query?: never; body?: never }; response: undefined }
+  "companion_visuals.list_visuals": { path: Record<string, never>; query: { "query"?: (string | null); "media_kind"?: ("image" | "video" | null); "outfit_id"?: (string | null); "scene_id"?: (string | null); "action_id"?: (string | null); "source"?: (string | null); "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body: undefined; input: { path?: never; query?: { "query"?: (string | null); "media_kind"?: ("image" | "video" | null); "outfit_id"?: (string | null); "scene_id"?: (string | null); "action_id"?: (string | null); "source"?: (string | null); "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body?: never }; response: ApiSchemas["VisualListResponse"] }
+  "companion_visuals.list_visual_jobs": { path: Record<string, never>; query: { "state"?: ("queued" | "running" | "paused" | "succeeded" | "failed" | "cancelled" | "unknown" | null); "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body: undefined; input: { path?: never; query?: { "state"?: ("queued" | "running" | "paused" | "succeeded" | "failed" | "cancelled" | "unknown" | null); "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body?: never }; response: ApiSchemas["VisualJobListResponse"] }
   "companion_visuals.get_presentation": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["VisualPresentationResponse"] }
   "companion_visuals.put_presentation": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["VisualPreferencesRequest"]; input: { path?: never; query?: never; body: ApiSchemas["VisualPreferencesRequest"] }; response: ApiSchemas["VisualPresentationResponse"] }
   "companion_visuals.restore_presentation": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: (ApiSchemas["VisualPlayCommand"] | null) }
-  "companion_visuals.get_visual": { path: { "visual_id": number }; query: Record<string, never>; body: undefined; input: { path: { "visual_id": number }; query?: never; body?: never }; response: ApiSchemas["VisualDetailView"] }
-  "companion_visuals.regenerate_visual": { path: { "visual_id": number }; query: Record<string, never>; body: ApiSchemas["VisualRegenerateRequest"]; input: { path: { "visual_id": number }; query?: never; body: ApiSchemas["VisualRegenerateRequest"] }; response: ApiSchemas["VisualJobView"] }
-  "companion_visuals.command_visual_job": { path: { "job_id": number }; query: Record<string, never>; body: ApiSchemas["VisualJobCommandRequest"]; input: { path: { "job_id": number }; query?: never; body: ApiSchemas["VisualJobCommandRequest"] }; response: ApiSchemas["VisualJobView"] }
+  "companion_visuals.get_visual": { path: { "visual_id": string }; query: Record<string, never>; body: undefined; input: { path: { "visual_id": string }; query?: never; body?: never }; response: ApiSchemas["VisualDetailView"] }
+  "companion_visuals.regenerate_visual": { path: { "visual_id": string }; query: Record<string, never>; body: ApiSchemas["VisualRegenerateRequest"]; input: { path: { "visual_id": string }; query?: never; body: ApiSchemas["VisualRegenerateRequest"] }; response: ApiSchemas["VisualJobView"] }
+  "companion_visuals.command_visual_job": { path: { "job_id": string }; query: Record<string, never>; body: ApiSchemas["VisualJobCommandRequest"]; input: { path: { "job_id": string }; query?: never; body: ApiSchemas["VisualJobCommandRequest"] }; response: ApiSchemas["VisualJobView"] }
   "companion_visuals.claim_play": { path: { "play_id": string }; query: Record<string, never>; body: ApiSchemas["VisualClaimRequest"]; input: { path: { "play_id": string }; query?: never; body: ApiSchemas["VisualClaimRequest"] }; response: ApiSchemas["VisualClaimResponse"] }
   "companion_visuals.receipt_play": { path: { "play_id": string }; query: Record<string, never>; body: ApiSchemas["VisualReceiptRequest"]; input: { path: { "play_id": string }; query?: never; body: ApiSchemas["VisualReceiptRequest"] }; response: ApiSchemas["VisualReceiptResponse"] }
   "companion_journal.get_diary": { path: Record<string, never>; query: { "from"?: (string | null); "to"?: (string | null); "limit"?: number }; body: undefined; input: { path?: never; query?: { "from"?: (string | null); "to"?: (string | null); "limit"?: number }; body?: never }; response: ApiSchemas["DiaryListResponse"] }
   "companion_journal.get_diary_unread": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["DiaryUnreadResponse"] }
   "companion_journal.read_diary": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["DiaryReadRequest"]; input: { path?: never; query?: never; body: ApiSchemas["DiaryReadRequest"] }; response: ApiSchemas["DiaryUnreadResponse"] }
   "companion_life.get_life": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["LifeStateView"] }
-  "companion_life.get_life_pursuits": { path: Record<string, never>; query: { "status"?: (string | null); "offset"?: number; "limit"?: number }; body: undefined; input: { path?: never; query?: { "status"?: (string | null); "offset"?: number; "limit"?: number }; body?: never }; response: ApiSchemas["LifePursuitListResponse"] }
-  "companion_life.get_life_pursuit": { path: { "pursuit_id": number }; query: Record<string, never>; body: undefined; input: { path: { "pursuit_id": number }; query?: never; body?: never }; response: ApiSchemas["LifePursuitView"] }
-  "companion_life.get_life_events": { path: Record<string, never>; query: { "pursuit_id"?: (number | null); "offset"?: number; "limit"?: number }; body: undefined; input: { path?: never; query?: { "pursuit_id"?: (number | null); "offset"?: number; "limit"?: number }; body?: never }; response: ApiSchemas["LifeEventListResponse"] }
+  "companion_life.get_life_pursuits": { path: Record<string, never>; query: { "status"?: (string | null); "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body: undefined; input: { path?: never; query?: { "status"?: (string | null); "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body?: never }; response: ApiSchemas["LifePursuitListResponse"] }
+  "companion_life.get_life_pursuit": { path: { "pursuit_id": string }; query: Record<string, never>; body: undefined; input: { path: { "pursuit_id": string }; query?: never; body?: never }; response: ApiSchemas["LifePursuitView"] }
+  "companion_life.get_life_events": { path: Record<string, never>; query: { "pursuit_id"?: (string | null); "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body: undefined; input: { path?: never; query?: { "pursuit_id"?: (string | null); "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body?: never }; response: ApiSchemas["LifeEventListResponse"] }
   "companion_posts.get_posts": { path: Record<string, never>; query: { "cursor"?: (string | null); "limit"?: number }; body: undefined; input: { path?: never; query?: { "cursor"?: (string | null); "limit"?: number }; body?: never }; response: ApiSchemas["PostListResponse"] }
   "companion_posts.get_posts_unread": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["PostUnreadResponse"] }
   "companion_posts.read_posts": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["PostReadRequest"]; input: { path?: never; query?: never; body: ApiSchemas["PostReadRequest"] }; response: ApiSchemas["PostUnreadResponse"] }
-  "companion_posts.get_publication_recoveries": { path: Record<string, never>; query: { "state": "recoverable"; "limit"?: number; "offset"?: number }; body: undefined; input: { path?: never; query: { "state": "recoverable"; "limit"?: number; "offset"?: number }; body?: never }; response: ApiSchemas["PostPublicationRecoveryList"] }
+  "companion_posts.get_publication_recoveries": { path: Record<string, never>; query: { "state": "recoverable"; "limit"?: number; "cursor"?: (string | null) }; body: undefined; input: { path?: never; query: { "state": "recoverable"; "limit"?: number; "cursor"?: (string | null) }; body?: never }; response: ApiSchemas["PostPublicationRecoveryList"] }
   "companion_posts.get_publication_recovery": { path: { "publication_id": string }; query: Record<string, never>; body: undefined; input: { path: { "publication_id": string }; query?: never; body?: never }; response: ApiSchemas["PostPublicationRecovery"] }
   "companion_posts.query_publication_recovery": { path: { "publication_id": string }; query: Record<string, never>; body: undefined; input: { path: { "publication_id": string }; query?: never; body?: never }; response: ApiSchemas["PostPublicationRecovery"] }
   "companion_posts.discard_publication": { path: { "publication_id": string }; query: Record<string, never>; body: undefined; input: { path: { "publication_id": string }; query?: never; body?: never }; response: ApiSchemas["PostPublicationResult"] }
   "companion_posts.get_post_detail": { path: { "post_id": string }; query: Record<string, never>; body: undefined; input: { path: { "post_id": string }; query?: never; body?: never }; response: ApiSchemas["PostResponse"] }
   "companion_posts.post_comment": { path: { "post_id": string }; query: Record<string, never>; body: ApiSchemas["PostCommentCreateRequest"]; input: { path: { "post_id": string }; query?: never; body: ApiSchemas["PostCommentCreateRequest"] }; response: ApiSchemas["PostCommentResponse"] }
+  "companion_posts.get_comments": { path: { "post_id": string }; query: { "cursor"?: (string | null); "limit"?: number }; body: undefined; input: { path: { "post_id": string }; query?: { "cursor"?: (string | null); "limit"?: number }; body?: never }; response: ApiSchemas["PostCommentListResponse"] }
   "companion_posts.remove_comment": { path: { "post_id": string; "comment_id": string }; query: Record<string, never>; body: undefined; input: { path: { "post_id": string; "comment_id": string }; query?: never; body?: never }; response: undefined }
   "companion_posts.retry_comment_reply": { path: { "post_id": string; "comment_id": string }; query: Record<string, never>; body: undefined; input: { path: { "post_id": string; "comment_id": string }; query?: never; body?: never }; response: ApiSchemas["PostCommentResponse"] }
   "companion_scenes.read_scene_state": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["SceneStateResponse"] }
   "companion_scenes.create_scene": { path: Record<string, never>; query: Record<string, never>; body: (ApiSchemas["SceneGenerateRequest"] | ApiSchemas["SceneImportRequest"]); input: { path?: never; query?: never; body: (ApiSchemas["SceneGenerateRequest"] | ApiSchemas["SceneImportRequest"]) }; response: ApiSchemas["SceneResponse"] }
-  "companion_scenes.scene_list_route": { path: Record<string, never>; query: { "q"?: string; "offset"?: number; "limit"?: number }; body: undefined; input: { path?: never; query?: { "q"?: string; "offset"?: number; "limit"?: number }; body?: never }; response: ApiSchemas["SceneListResponse"] }
+  "companion_scenes.scene_list_route": { path: Record<string, never>; query: { "q"?: string; "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body: undefined; input: { path?: never; query?: { "q"?: string; "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body?: never }; response: ApiSchemas["SceneListResponse"] }
   "companion_scenes.post_scene_prompt": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["ScenePromptRequest"]; input: { path?: never; query?: never; body: ApiSchemas["ScenePromptRequest"] }; response: ApiSchemas["SceneResponse"] }
-  "companion_scenes.post_scene_discard": { path: { "scene_id": number }; query: Record<string, never>; body: undefined; input: { path: { "scene_id": number }; query?: never; body?: never }; response: ApiSchemas["SceneResponse"] }
-  "companion_scenes.post_scene_regenerate": { path: { "scene_id": number }; query: Record<string, never>; body: undefined; input: { path: { "scene_id": number }; query?: never; body?: never }; response: ApiSchemas["SceneResponse"] }
-  "companion_scenes.delete_scene_route": { path: { "scene_id": number }; query: Record<string, never>; body: undefined; input: { path: { "scene_id": number }; query?: never; body?: never }; response: ApiSchemas["CompanionOperationResponse"] }
-  "companion_scenes.scene_detail_route": { path: { "scene_id": number }; query: Record<string, never>; body: undefined; input: { path: { "scene_id": number }; query?: never; body?: never }; response: ApiSchemas["SceneResponse"] }
-  "companion_scenes.scene_edit_route": { path: { "scene_id": number }; query: Record<string, never>; body: ApiSchemas["SceneDescriptionRequest"]; input: { path: { "scene_id": number }; query?: never; body: ApiSchemas["SceneDescriptionRequest"] }; response: ApiSchemas["SceneResponse"] }
+  "companion_scenes.post_scene_discard": { path: { "scene_id": string }; query: Record<string, never>; body: undefined; input: { path: { "scene_id": string }; query?: never; body?: never }; response: ApiSchemas["SceneResponse"] }
+  "companion_scenes.post_scene_regenerate": { path: { "scene_id": string }; query: Record<string, never>; body: undefined; input: { path: { "scene_id": string }; query?: never; body?: never }; response: ApiSchemas["SceneResponse"] }
+  "companion_scenes.delete_scene_route": { path: { "scene_id": string }; query: Record<string, never>; body: undefined; input: { path: { "scene_id": string }; query?: never; body?: never }; response: ApiSchemas["CompanionOperationResponse"] }
+  "companion_scenes.scene_detail_route": { path: { "scene_id": string }; query: Record<string, never>; body: undefined; input: { path: { "scene_id": string }; query?: never; body?: never }; response: ApiSchemas["SceneResponse"] }
+  "companion_scenes.scene_edit_route": { path: { "scene_id": string }; query: Record<string, never>; body: ApiSchemas["SceneDescriptionRequest"]; input: { path: { "scene_id": string }; query?: never; body: ApiSchemas["SceneDescriptionRequest"] }; response: ApiSchemas["SceneResponse"] }
   "companion_scenes.patch_scene_policy": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["ScenePolicyRequest"]; input: { path?: never; query?: never; body: ApiSchemas["ScenePolicyRequest"] }; response: ApiSchemas["ScenePolicyResponse"] }
-  "companion_scenes.scene_analyze_route": { path: { "scene_id": number }; query: Record<string, never>; body: undefined; input: { path: { "scene_id": number }; query?: never; body?: never }; response: ApiSchemas["SceneResponse"] }
-  "companion_topics.read_feedback": { path: Record<string, never>; query: { "topic_ids"?: Array<number> }; body: undefined; input: { path?: never; query?: { "topic_ids"?: Array<number> }; body?: never }; response: Array<ApiSchemas["TopicFeedbackSnapshot"]> }
-  "companion_topics.update_feedback": { path: { "topic_id": number }; query: Record<string, never>; body: ApiSchemas["TopicFeedbackRequest"]; input: { path: { "topic_id": number }; query?: never; body: ApiSchemas["TopicFeedbackRequest"] }; response: ApiSchemas["TopicFeedbackSnapshot"] }
+  "companion_scenes.scene_analyze_route": { path: { "scene_id": string }; query: Record<string, never>; body: undefined; input: { path: { "scene_id": string }; query?: never; body?: never }; response: ApiSchemas["SceneResponse"] }
+  "companion_topics.read_feedback": { path: Record<string, never>; query: { "topic_ids"?: Array<string> }; body: undefined; input: { path?: never; query?: { "topic_ids"?: Array<string> }; body?: never }; response: Array<ApiSchemas["TopicFeedbackSnapshot"]> }
+  "companion_topics.update_feedback": { path: { "topic_id": string }; query: Record<string, never>; body: ApiSchemas["TopicFeedbackRequest"]; input: { path: { "topic_id": string }; query?: never; body: ApiSchemas["TopicFeedbackRequest"] }; response: ApiSchemas["TopicFeedbackSnapshot"] }
   "resource_catalog.get_presets": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["PromptPresetListResponse"] }
   "resource_catalog.get_commands": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["CommandListResponse"] }
-  "resource_catalog.get_memories": { path: Record<string, never>; query: { "system_preset_id": string; "kind"?: (string | null); "status"?: "active" | "candidate" | "invalidated" | "expired"; "tag"?: (string | null); "q"?: (string | null); "limit"?: number; "offset"?: number }; body: undefined; input: { path?: never; query: { "system_preset_id": string; "kind"?: (string | null); "status"?: "active" | "candidate" | "invalidated" | "expired"; "tag"?: (string | null); "q"?: (string | null); "limit"?: number; "offset"?: number }; body?: never }; response: ApiSchemas["MemoryListResponse"] }
+  "resource_catalog.get_memories": { path: Record<string, never>; query: { "system_preset_id": string; "kind"?: (string | null); "status"?: "active" | "candidate" | "invalidated" | "expired"; "tag"?: (string | null); "q"?: (string | null); "limit"?: number; "cursor"?: (string | null); "include_total"?: boolean }; body: undefined; input: { path?: never; query: { "system_preset_id": string; "kind"?: (string | null); "status"?: "active" | "candidate" | "invalidated" | "expired"; "tag"?: (string | null); "q"?: (string | null); "limit"?: number; "cursor"?: (string | null); "include_total"?: boolean }; body?: never }; response: ApiSchemas["MemoryListResponse"] }
   "resource_catalog.patch_memory_profile": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["MemoryProfileRequest"]; input: { path?: never; query?: never; body: ApiSchemas["MemoryProfileRequest"] }; response: ApiSchemas["MemoryProfileResponse"] }
-  "resource_catalog.patch_memory": { path: { "memory_id": number }; query: Record<string, never>; body: ApiSchemas["MemoryUpdateRequest"]; input: { path: { "memory_id": number }; query?: never; body: ApiSchemas["MemoryUpdateRequest"] }; response: ApiSchemas["MemoryListItem"] }
-  "resource_catalog.delete_memory": { path: { "memory_id": number }; query: { "system_preset_id": string }; body: undefined; input: { path: { "memory_id": number }; query: { "system_preset_id": string }; body?: never }; response: ApiSchemas["MemoryDeleteResponse"] }
+  "resource_catalog.get_memory": { path: { "memory_id": string }; query: { "system_preset_id": string }; body: undefined; input: { path: { "memory_id": string }; query: { "system_preset_id": string }; body?: never }; response: ApiSchemas["MemoryDetail"] }
+  "resource_catalog.patch_memory": { path: { "memory_id": string }; query: Record<string, never>; body: ApiSchemas["MemoryUpdateRequest"]; input: { path: { "memory_id": string }; query?: never; body: ApiSchemas["MemoryUpdateRequest"] }; response: ApiSchemas["MemoryListItem"] }
+  "resource_catalog.delete_memory": { path: { "memory_id": string }; query: { "system_preset_id": string }; body: undefined; input: { path: { "memory_id": string }; query: { "system_preset_id": string }; body?: never }; response: ApiSchemas["MemoryDeleteResponse"] }
   "voices.list_voices": { path: Record<string, never>; query: { "language"?: (string | null) }; body: undefined; input: { path?: never; query?: { "language"?: (string | null) }; body?: never }; response: ApiSchemas["VoicesListResponse"] }
   "voices.get_current_voice": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["CurrentVoiceResponse"] }
   "voices.put_current_voice": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["CurrentVoiceRequest"]; input: { path?: never; query?: never; body: ApiSchemas["CurrentVoiceRequest"] }; response: ApiSchemas["CurrentVoiceResponse"] }
@@ -496,14 +500,14 @@ export interface ApiOperations {
   "media.text_to_speech": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["TtsRequest"]; input: { path?: never; query?: never; body: ApiSchemas["TtsRequest"] }; response: Uint8Array }
   "page.admin_login": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["AdminLoginRequest"]; input: { path?: never; query?: never; body: ApiSchemas["AdminLoginRequest"] }; response: ApiSchemas["AdminTokenResponse"] }
   "remote.create_pairing": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["PairingResponse"] }
-  "remote.pairing_status": { path: { "pairing_id": number }; query: Record<string, never>; body: undefined; input: { path: { "pairing_id": number }; query?: never; body?: never }; response: ApiSchemas["PairingResponse"] }
-  "remote.cancel_pairing": { path: { "pairing_id": number }; query: Record<string, never>; body: undefined; input: { path: { "pairing_id": number }; query?: never; body?: never }; response: ApiSchemas["MessageResponse"] }
+  "remote.pairing_status": { path: { "pairing_id": string }; query: Record<string, never>; body: undefined; input: { path: { "pairing_id": string }; query?: never; body?: never }; response: ApiSchemas["PairingResponse"] }
+  "remote.cancel_pairing": { path: { "pairing_id": string }; query: Record<string, never>; body: undefined; input: { path: { "pairing_id": string }; query?: never; body?: never }; response: ApiSchemas["MessageResponse"] }
   "remote.exchange_pairing": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["ExchangeRequest"]; input: { path?: never; query?: never; body: ApiSchemas["ExchangeRequest"] }; response: ApiSchemas["RemoteSessionResponse"] }
   "remote.current_remote_session": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["RemoteSessionResponse"] }
   "remote.logout_remote_session": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["MessageResponse"] }
   "remote.list_remote_devices": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["DeviceListResponse"] }
   "remote.revoke_all_remote_devices": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["MessageResponse"] }
-  "remote.revoke_remote_device": { path: { "device_id": number }; query: Record<string, never>; body: undefined; input: { path: { "device_id": number }; query?: never; body?: never }; response: ApiSchemas["MessageResponse"] }
+  "remote.revoke_remote_device": { path: { "device_id": string }; query: Record<string, never>; body: undefined; input: { path: { "device_id": string }; query?: never; body?: never }; response: ApiSchemas["MessageResponse"] }
   "sessions.submit_turn": { path: { "session_id": string }; query: Record<string, never>; body: ApiSchemas["PromptSubmitRequest"]; input: { path: { "session_id": string }; query?: never; body: ApiSchemas["PromptSubmitRequest"] }; response: ApiSchemas["PromptSubmitResult"] }
   "sessions.get_turn": { path: { "session_id": string; "request_id": string }; query: Record<string, never>; body: undefined; input: { path: { "session_id": string; "request_id": string }; query?: never; body?: never }; response: ApiSchemas["PromptSubmitResult"] }
   "sessions.cancel_turn": { path: { "session_id": string; "request_id": string }; query: Record<string, never>; body: undefined; input: { path: { "session_id": string; "request_id": string }; query?: never; body?: never }; response: ApiSchemas["TurnCancelResult"] }
@@ -511,23 +515,23 @@ export interface ApiOperations {
   "sessions.undo": { path: { "session_id": string }; query: Record<string, never>; body: ApiSchemas["SessionUndoRequest"]; input: { path: { "session_id": string }; query?: never; body: ApiSchemas["SessionUndoRequest"] }; response: ApiSchemas["SessionUndoResult"] }
   "sessions.compress": { path: { "session_id": string }; query: Record<string, never>; body: undefined; input: { path: { "session_id": string }; query?: never; body?: never }; response: ApiSchemas["SessionCompressionResult"] }
   "sessions.command": { path: { "session_id": string }; query: Record<string, never>; body: ApiSchemas["CommandDispatchRequest"]; input: { path: { "session_id": string }; query?: never; body: ApiSchemas["CommandDispatchRequest"] }; response: ApiSchemas["CommandDispatchResult"] }
-  "sessions.retry_voice_bubble": { path: { "message_id": number; "bubble_index": number }; query: Record<string, never>; body: undefined; input: { path: { "message_id": number; "bubble_index": number }; query?: never; body?: never }; response: ApiSchemas["VoiceBubbleView"] }
-  "sessions.list_sessions": { path: Record<string, never>; query: { "limit"?: number; "offset"?: number; "min_messages"?: number; "archived"?: "only" | "exclude" | "include"; "order"?: "recent" | "created" | "messages"; "include_subagents"?: boolean; "q"?: (string | null) }; body: undefined; input: { path?: never; query?: { "limit"?: number; "offset"?: number; "min_messages"?: number; "archived"?: "only" | "exclude" | "include"; "order"?: "recent" | "created" | "messages"; "include_subagents"?: boolean; "q"?: (string | null) }; body?: never }; response: ApiSchemas["DesktopSessionListResponse"] }
+  "sessions.retry_voice_bubble": { path: { "message_id": string; "bubble_index": number }; query: Record<string, never>; body: undefined; input: { path: { "message_id": string; "bubble_index": number }; query?: never; body?: never }; response: ApiSchemas["VoiceBubbleView"] }
+  "sessions.list_sessions": { path: Record<string, never>; query: { "limit"?: number; "cursor"?: (string | null); "include_total"?: boolean; "min_messages"?: number; "archived"?: "only" | "exclude" | "include"; "order"?: "recent" | "created" | "messages"; "include_subagents"?: boolean; "q"?: (string | null) }; body: undefined; input: { path?: never; query?: { "limit"?: number; "cursor"?: (string | null); "include_total"?: boolean; "min_messages"?: number; "archived"?: "only" | "exclude" | "include"; "order"?: "recent" | "created" | "messages"; "include_subagents"?: boolean; "q"?: (string | null) }; body?: never }; response: ApiSchemas["DesktopSessionListResponse"] }
   "sessions.create_session": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["SessionCreateRequest"]; input: { path?: never; query?: never; body: ApiSchemas["SessionCreateRequest"] }; response: ApiSchemas["SessionCreateResult"] }
   "sessions.get_main_session": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["SessionCreateResult"] }
   "sessions.get_session": { path: { "session_id": string }; query: Record<string, never>; body: undefined; input: { path: { "session_id": string }; query?: never; body?: never }; response: ApiSchemas["SessionCreateResult"] }
   "sessions.patch_session": { path: { "session_id": string }; query: Record<string, never>; body: ApiSchemas["DesktopSessionPatchRequest"]; input: { path: { "session_id": string }; query?: never; body: ApiSchemas["DesktopSessionPatchRequest"] }; response: ApiSchemas["SessionCreateResult"] }
   "sessions.delete_session": { path: { "session_id": string }; query: Record<string, never>; body: undefined; input: { path: { "session_id": string }; query?: never; body?: never }; response: ApiSchemas["DesktopSessionOperationResponse"] }
   "sessions.fork_session": { path: { "session_id": string }; query: Record<string, never>; body: ApiSchemas["SessionForkRequest"]; input: { path: { "session_id": string }; query?: never; body: ApiSchemas["SessionForkRequest"] }; response: ApiSchemas["SessionCreateResult"] }
-  "sessions.get_session_history": { path: { "session_id": string }; query: { "before_id"?: (number | null); "limit"?: number }; body: undefined; input: { path: { "session_id": string }; query?: { "before_id"?: (number | null); "limit"?: number }; body?: never }; response: ApiSchemas["SessionHistoryResponse"] }
+  "sessions.get_session_history": { path: { "session_id": string }; query: { "before_id"?: (string | null); "limit"?: number }; body: undefined; input: { path: { "session_id": string }; query?: { "before_id"?: (string | null); "limit"?: number }; body?: never }; response: ApiSchemas["SessionHistoryResponse"] }
   "update.get_latest_yml": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["ReleaseManifestResponse"] }
   "update.get_latest_mac_yml": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["ReleaseManifestResponse"] }
   "update.get_latest_runner_yml": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: Uint8Array }
   "update.get_latest_file": { path: { "filename": string }; query: Record<string, never>; body: undefined; input: { path: { "filename": string }; query?: never; body?: never }; response: Uint8Array }
   "update.list_versions": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["UpdateVersionListResponse"] }
   "update.create_version": { path: Record<string, never>; query: Record<string, never>; body: FormData; input: { path?: never; query?: never; body: FormData }; response: ApiSchemas["UpdateVersionItem"] }
-  "update.update_version": { path: { "id": number }; query: Record<string, never>; body: ApiSchemas["UpdateVersionUpdate"]; input: { path: { "id": number }; query?: never; body: ApiSchemas["UpdateVersionUpdate"] }; response: ApiSchemas["UpdateVersionItem"] }
-  "update.delete_version": { path: { "id": number }; query: Record<string, never>; body: undefined; input: { path: { "id": number }; query?: never; body?: never }; response: ApiSchemas["MessageResponse"] }
+  "update.update_version": { path: { "id": string }; query: Record<string, never>; body: ApiSchemas["UpdateVersionUpdate"]; input: { path: { "id": string }; query?: never; body: ApiSchemas["UpdateVersionUpdate"] }; response: ApiSchemas["UpdateVersionItem"] }
+  "update.delete_version": { path: { "id": string }; query: Record<string, never>; body: undefined; input: { path: { "id": string }; query?: never; body?: never }; response: ApiSchemas["MessageResponse"] }
   "update.get_service_updater_status": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["ServiceUpdaterStatus"] }
   "update.start_service_update_check": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["ServiceUpdateCheckRequest"]; input: { path?: never; query?: never; body: ApiSchemas["ServiceUpdateCheckRequest"] }; response: ApiSchemas["ServiceUpdateTaskAccepted"] }
   "update.apply_service_update": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["ServiceUpdateApplyRequest"]; input: { path?: never; query?: never; body: ApiSchemas["ServiceUpdateApplyRequest"] }; response: ApiSchemas["ServiceUpdateTaskAccepted"] }
@@ -1604,6 +1608,18 @@ export const API_OPERATIONS = {
     "wait_for_model": false,
     "ipc": true
   },
+  "companion_posts.get_comments": {
+    "path": "/api/companion/posts/{post_id}/comments",
+    "method": "GET",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "desktop",
+      "remote"
+    ],
+    "wait_for_model": false,
+    "ipc": true
+  },
   "companion_posts.remove_comment": {
     "path": "/api/companion/posts/{post_id}/comments/{comment_id}",
     "method": "DELETE",
@@ -1823,6 +1839,18 @@ export const API_OPERATIONS = {
   "resource_catalog.patch_memory_profile": {
     "path": "/api/memories/profile",
     "method": "PATCH",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "desktop",
+      "remote"
+    ],
+    "wait_for_model": false,
+    "ipc": true
+  },
+  "resource_catalog.get_memory": {
+    "path": "/api/memories/{memory_id}",
+    "method": "GET",
     "encoding": "json",
     "response": "json",
     "identities": [

@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 
+from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict
 
 from .video_queue.contracts import VideoQueueInfo
@@ -11,13 +12,13 @@ from .video_queue.contracts import VideoQueueInfo
 class VideoJobSnapshot(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    id: int
-    user_id: int
+    id: ResourceId
+    user_id: ResourceId
     session_id: str | None
-    source_message_id: int | None
+    source_message_id: ResourceId | None
     structured_reply: bool
     media_id: str | None
-    reply_message_id: int | None
+    reply_message_id: ResourceId | None
     status: str
     video_url: str | None
     candidate_video_url: str | None
@@ -33,14 +34,14 @@ class VideoJobAssetReferences(BaseModel):
 
     video_url: str | None
     candidate_video_url: str | None
-    params_json: str
-    generation_state_json: str
+    params_json: dict
+    generation_state_json: dict
 
 
 class ReleasedVideoJobs(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    job_ids: frozenset[int]
+    job_ids: frozenset[ResourceId]
     references: tuple[VideoJobAssetReferences, ...]
 
 

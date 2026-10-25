@@ -51,6 +51,12 @@ class CustomVoiceSnapshot:
     reference_path: str | None
 
 
+@dataclass(frozen=True)
+class VoiceReferenceBindings:
+    identities: dict[str, int]
+    asset_paths: tuple[str, ...]
+
+
 class VoicePromptResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

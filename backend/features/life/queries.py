@@ -1,14 +1,14 @@
 """只读查询；调用方不直接读取 Life ORM。"""
 
-import json
 from collections.abc import Collection
 from datetime import datetime
 
+from infrastructure.pagination import decode_timestamp_cursor, encode_timestamp_cursor
 from infrastructure.text import utc_now
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import LifeEvent, LifePursuit, LifeState, LifeStep
+from .models import RESULT_REFERENCE_FIELDS, LifeEvent, LifePursuit, LifeState, LifeStep
 from .schemas import (
     EVIDENCE_EVENT_KINDS,
     EVIDENCE_EVENTS_PER_PURSUIT,
@@ -23,19 +23,11 @@ from .schemas import (
 )
 
 
-def _json(raw: str | None) -> dict:
-    try:
-        value = json.loads(raw or "{}")
-    except (TypeError, ValueError):
-        return {}
-    return value if isinstance(value, dict) else {}
-
-
 def state_view(row: LifeState) -> LifeStateView:
     return LifeStateView(
         user_id=row.user_id,
         current_activity=row.current_activity,
-        current_scene=_json(row.current_scene_json),
+        current_scene=row.current_scene_json,
         mood=row.mood,
         active_pursuit_id=row.active_pursuit_id,
         next_review_at=row.next_review_at,
@@ -61,6 +53,15 @@ def empty_state_view(user_id: int) -> LifeStateView:
     )
 
 
+def result_reference(row: LifeStep | LifeEvent) -> dict:
+    result = dict(row.result_ref_json)
+    for key, field in RESULT_REFERENCE_FIELDS.items():
+        value = getattr(row, field)
+        if value is not None:
+            result[key] = value
+    return result
+
+
 def pursuit_view(row: LifePursuit) -> LifePursuitView:
     return LifePursuitView(
         id=row.id,
@@ -72,7 +73,7 @@ def pursuit_view(row: LifePursuit) -> LifePursuitView:
         status=row.status,
         started_at=row.started_at,
         completed_at=row.completed_at,
-        result_ref=_json(row.result_ref_json),
+        result_ref=row.result_ref_json,
         updated_at=row.updated_at,
     )
 
@@ -85,8 +86,8 @@ def step_view(row: LifeStep) -> LifeStepView:
         kind=row.kind,
         description=row.description,
         state=row.state,
-        business_ref=_json(row.business_ref_json),
-        result_ref=_json(row.result_ref_json),
+        business_ref={"job_id": row.job_id, "generation_id": row.generation_id} if row.job_id is not None else {},
+        result_ref=result_reference(row),
         error=row.error,
         started_at=row.started_at,
         finished_at=row.finished_at,
@@ -100,11 +101,11 @@ def event_view(row: LifeEvent) -> LifeEventView:
         kind=row.kind,
         source=row.source,
         subject=row.subject,
-        fact=_json(row.fact_json),
+        fact=row.fact_json,
         occurred_at=row.occurred_at,
         pursuit_id=row.pursuit_id,
         step_id=row.step_id,
-        result_ref=_json(row.result_ref_json),
+        result_ref=result_reference(row),
         is_meaningful=row.is_meaningful,
     )
 
@@ -172,7 +173,12 @@ async def pursuit_evidence(
             LifeEvent.subject == "companion",
             LifeEvent.is_meaningful.is_(True),
             LifeEvent.kind.in_(EVIDENCE_EVENT_KINDS),
-            LifeEvent.result_ref_json != "{}",
+            or_(
+                LifeEvent.result_ref_json != {},
+                LifeEvent.result_entry_id.is_not(None),
+                LifeEvent.result_visual_id.is_not(None),
+                LifeEvent.result_job_id.is_not(None),
+            ),
         )
         .subquery()
     )
@@ -190,23 +196,36 @@ async def list_pursuits(
     user_id: int,
     *,
     status: str | None = None,
-    offset: int = 0,
+    cursor: str | None = None,
     limit: int = 20,
+    include_total: bool = False,
 ) -> LifePursuitListResponse:
     where = [LifePursuit.user_id == user_id]
     if status:
         where.append(LifePursuit.status == status)
-    total = int(await db.scalar(select(func.count()).select_from(LifePursuit).where(*where)) or 0)
+    total = (
+        int(await db.scalar(select(func.count()).select_from(LifePursuit).where(*where)) or 0)
+        if include_total
+        else None
+    )
+    if before := decode_timestamp_cursor(cursor):
+        where.append(tuple_(LifePursuit.updated_at, LifePursuit.id) < before)
     rows = list(
         await db.scalars(
             select(LifePursuit)
             .where(*where)
             .order_by(LifePursuit.updated_at.desc(), LifePursuit.id.desc())
-            .offset(offset)
-            .limit(limit),
-        ),
+            .limit(limit + 1)
+        )
     )
-    return LifePursuitListResponse(items=[pursuit_view(row) for row in rows], total=total)
+    more = len(rows) > limit
+    rows = rows[:limit]
+    return LifePursuitListResponse(
+        items=[pursuit_view(row) for row in rows],
+        total=total,
+        has_more=more,
+        next_cursor=encode_timestamp_cursor(rows[-1].updated_at, rows[-1].id) if more else None,
+    )
 
 
 async def list_events(
@@ -215,22 +234,30 @@ async def list_events(
     *,
     pursuit_id: int | None = None,
     before: datetime | None = None,
-    offset: int = 0,
+    cursor: str | None = None,
     limit: int = 20,
+    include_total: bool = False,
 ) -> LifeEventListResponse:
     where = [LifeEvent.user_id == user_id]
     if pursuit_id is not None:
         where.append(LifeEvent.pursuit_id == pursuit_id)
     if before is not None:
         where.append(LifeEvent.occurred_at < before)
-    total = int(await db.scalar(select(func.count()).select_from(LifeEvent).where(*where)) or 0)
+    total = (
+        int(await db.scalar(select(func.count()).select_from(LifeEvent).where(*where)) or 0) if include_total else None
+    )
+    if position := decode_timestamp_cursor(cursor):
+        where.append(tuple_(LifeEvent.occurred_at, LifeEvent.id) < position)
     rows = list(
         await db.scalars(
-            select(LifeEvent)
-            .where(*where)
-            .order_by(LifeEvent.occurred_at.desc(), LifeEvent.id.desc())
-            .offset(offset)
-            .limit(limit),
-        ),
+            select(LifeEvent).where(*where).order_by(LifeEvent.occurred_at.desc(), LifeEvent.id.desc()).limit(limit + 1)
+        )
     )
-    return LifeEventListResponse(items=[event_view(row) for row in rows], total=total)
+    more = len(rows) > limit
+    rows = rows[:limit]
+    return LifeEventListResponse(
+        items=[event_view(row) for row in rows],
+        total=total,
+        has_more=more,
+        next_cursor=encode_timestamp_cursor(rows[-1].occurred_at, rows[-1].id) if more else None,
+    )

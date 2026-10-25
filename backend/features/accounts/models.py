@@ -10,10 +10,8 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
-    select,
     text,
 )
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 if TYPE_CHECKING:
@@ -74,8 +72,3 @@ class AdminSession(ModelBase):
     username: Mapped[str] = mapped_column(String(64), index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
-
-
-async def lock_user_row(db: AsyncSession, user_id: int) -> None:
-    """锁定用户行直到所在事务结束；序列化同用户的任务、陪伴意图、动态额度与日记状态变更。"""
-    await db.execute(select(User.id).where(User.id == user_id).with_for_update())

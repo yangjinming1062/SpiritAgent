@@ -15,6 +15,7 @@ export {
   hydratePosts,
   hydratePostsUnread,
   loadMorePosts,
+  loadPostComments,
   markPostsRead,
   onPostEvent,
   type PostCommentEntry,

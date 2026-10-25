@@ -12,7 +12,7 @@ async def get_or_create_persona_row(db: AsyncSession, user_id: int) -> Persona:
     if row is None:
         await db.execute(
             insert(Persona)
-            .values(user_id=user_id, definition_json="{}")
+            .values(user_id=user_id, definition_json={})
             .on_conflict_do_nothing(index_elements=[Persona.user_id]),
         )
         row = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one()

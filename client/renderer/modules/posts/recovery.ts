@@ -6,9 +6,9 @@ import type { ApiSchemas } from '../../../../shared/api.generated'
 export type VideoPublicationRecovery = ApiSchemas['PostPublicationRecovery']
 type VideoPublicationRecoveryList = ApiSchemas['PostPublicationRecoveryList']
 
-export async function listVideoPublications(offset = 0): Promise<VideoPublicationRecoveryList | null> {
+export async function listVideoPublications(cursor?: string): Promise<VideoPublicationRecoveryList | null> {
   const result = await authedResource('companion_posts.get_publication_recoveries', {
-    query: { state: 'recoverable', offset }
+    query: { state: 'recoverable', cursor }
   })
 
   return apiSucceeded(result, 'posts', 'video recovery list failed') ? result.value : null

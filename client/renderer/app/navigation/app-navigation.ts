@@ -83,7 +83,7 @@ export function readAppNavigationHash(): AppNavigationTarget | null {
     settingsTab: params.get('subtab'),
     sessionId: params.get('sessionId'),
     messageKey: params.get('messageKey'),
-    pursuitId: params.has('pursuitId') ? Number(params.get('pursuitId')) : undefined
+    pursuitId: params.has('pursuitId') ? (params.get('pursuitId') ?? undefined) : undefined
   })
 }
 

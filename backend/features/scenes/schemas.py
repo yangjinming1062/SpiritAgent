@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Literal
 
-from infrastructure.constants import POSTGRES_INT4_MAX
+from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from features.appearance.schemas import ImageAdoptRequest
@@ -36,7 +36,7 @@ class SceneRegenerationResponse(BaseModel):
 
 
 class SceneResponse(BaseModel):
-    id: int
+    id: ResourceId
     status: SceneStatus
     stage: str
     can_retry_generation: bool = False
@@ -59,8 +59,9 @@ class SceneResponse(BaseModel):
 
 class SceneListResponse(BaseModel):
     scenes: list[SceneResponse]
-    total: int
-    offset: int
+    total: int | None = None
+    has_more: bool
+    next_cursor: str | None = None
     limit: int
 
 
@@ -115,4 +116,4 @@ class ScenePolicyResponse(BaseModel):
 
 class SceneImportRequest(ImageAdoptRequest):
     source: Literal["import"]
-    scene_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)
+    scene_id: ResourceId | None = Field(default=None, gt=0)

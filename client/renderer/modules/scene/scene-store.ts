@@ -69,6 +69,8 @@ export const $sceneTaskSlow = atom(false)
 export const $sceneCreationIssue = atom<SceneCreationIssue | null>(null)
 export const $sceneMutationIssues = atom<Record<string, SceneMutationIssue>>({})
 export const $sceneTotal = atom(0)
+export const $sceneHasMore = atom(false)
+let scenePageCursors: (string | undefined)[] = [undefined]
 export const $scenePage = atom(0)
 export const $sceneQuery = atom('')
 export const PAGE_SIZE = 24
@@ -88,7 +90,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 let pollCount = 0
 
 function toScene(row: SceneWire, url: string, imageLoadFailed = false): SceneAsset {
-  return { ...row, assetUrl: row.url || '', id: String(row.id), url, thumbnailUrl: url, imageLoadFailed }
+  return { ...row, assetUrl: row.url || '', url, thumbnailUrl: url, imageLoadFailed }
 }
 
 /** 把场景图片解析为可用 src；失败抛出，由调用方决定保留旧图还是占位。 */
@@ -150,7 +152,7 @@ async function resolveScene(row: SceneWire, retryImage = false): Promise<SceneAs
   } catch (error) {
     log.warn('scene', 'Scene image could not be loaded:', error)
 
-    return toScene(row, detailCache.get(String(row.id))?.url ?? '', true)
+    return toScene(row, detailCache.get(row.id)?.url ?? '', true)
   }
 }
 
@@ -262,6 +264,8 @@ registerStorageClearHandler(() => {
   $sceneMutationIssues.set({})
   $scenePolicy.set('llm_may_replace')
   $sceneTotal.set(0)
+  $sceneHasMore.set(false)
+  scenePageCursors = [undefined]
   $scenePage.set(0)
   $sceneQuery.set('')
 })
@@ -281,9 +285,16 @@ export async function loadSceneLibrary(query = $sceneQuery.get(), page = $sceneP
     return false
   }
 
+  if (query !== $sceneQuery.get() || page === 0) {
+    page = 0
+    scenePageCursors = [undefined]
+  } else if (page >= scenePageCursors.length) {
+    page = $scenePage.get()
+  }
+
   // 同参数并发读共享一次请求：重复进入创建页不再重发同样的列表读。
   // 已被更新的读取代的请求不复用——复用它只会拿到 false，这次查询就停在旧结果上。
-  const key = `${query} ${page}`
+  const key = `${query}\0${page}`
   const pending = sceneLibraryRequests.get(key)
 
   if (pending && pending.requestId === listRequest) {
@@ -301,7 +312,7 @@ export async function loadSceneLibrary(query = $sceneQuery.get(), page = $sceneP
     $sceneLibraryStatus.set('loading')
 
     const result = await authedResource('companion_scenes.scene_list_route', {
-      query: { q: query, offset: page * PAGE_SIZE, limit: PAGE_SIZE }
+      query: { q: query, cursor: scenePageCursors[page], include_total: true, limit: PAGE_SIZE }
     })
 
     if (!apiSucceeded(result, 'scene', 'Scene library could not be loaded:') || !result.value) {
@@ -321,7 +332,14 @@ export async function loadSceneLibrary(query = $sceneQuery.get(), page = $sceneP
 
     cacheSceneDetails(entries, read)
     $sceneLibrary.set(entries.map(entry => detailCache.get(entry.id) ?? entry))
-    $sceneTotal.set(value.total)
+    $sceneTotal.set(value.total ?? 0)
+    $sceneHasMore.set(value.has_more)
+    scenePageCursors = scenePageCursors.slice(0, page + 1)
+
+    if (value.next_cursor) {
+      scenePageCursors.push(value.next_cursor)
+    }
+
     $sceneLibraryStatus.set('loaded')
 
     if (page > 0 && entries.length === 0) {
@@ -362,7 +380,7 @@ async function fetchSceneDetail(
     startEvent === eventVersion &&
     read >= (detailReads.get(sceneId) ?? -1)
 
-  const result = await authedResource('companion_scenes.scene_detail_route', { path: { scene_id: Number(sceneId) } })
+  const result = await authedResource('companion_scenes.scene_detail_route', { path: { scene_id: sceneId } })
 
   if (!isCurrent()) {
     return null
@@ -376,7 +394,7 @@ async function fetchSceneDetail(
     throw new Error(backendDetailMessage(result.error, getStrings().living.toasts.sceneStatusRefreshFailed))
   }
 
-  if (!result.value || String(result.value.id) !== sceneId) {
+  if (!result.value || result.value.id !== sceneId) {
     throw new Error(getStrings().living.toasts.sceneStatusRefreshFailed)
   }
 
@@ -481,7 +499,7 @@ export async function hydrateScene(options: { skipLibraryRefresh?: boolean } = {
   try {
     // 环境素材不再有"当前环境"；呈现环境由当前影像的冻结素材决定。
     const pendingMaterial = state.materials.find(item => item.status === 'pending') ?? null
-    const regeneratingMaterial = state.materials.find(item => item.regeneration) ?? null
+    const regeneratingMaterial = state.materials.find(item => item.regeneration?.status === 'pending') ?? null
     const pending = pendingMaterial ? await resolveScene(pendingMaterial) : null
     const regenerating = regeneratingMaterial ? await resolveScene(regeneratingMaterial) : null
 
@@ -687,7 +705,7 @@ export async function createScene(input: SceneGenerationInput = {}): Promise<Sce
       return { kind: 'unavailable' }
     }
 
-    return { kind: 'created', sceneId: String(row.id) }
+    return { kind: 'created', sceneId: row.id }
   } catch (error) {
     if (epoch === currentClearEpoch()) {
       const issue: SceneCreationIssue = {
@@ -715,7 +733,7 @@ export async function prepareScenePrompt(
 ): Promise<{ id: string; prompt: string }> {
   const row = await mutate('companion_scenes.post_scene_prompt', { body: input })
 
-  return { id: String(row.id), prompt: row.prompt }
+  return { id: row.id, prompt: row.prompt }
 }
 
 export async function adoptSceneImage(
@@ -725,44 +743,38 @@ export async function adoptSceneImage(
   const result = await mutate('companion_scenes.create_scene', {
     body: {
       source: 'import',
-      scene_id: sceneId ? Number(sceneId) : undefined,
+      scene_id: sceneId ? sceneId : undefined,
       image: image.base64,
       content_type: image.contentType
     }
   })
 
-  return result ? String(result.id) : null
+  return result?.id ?? null
 }
 
 export async function cancelSceneTask(sceneId: string): Promise<SceneWire> {
-  return mutateSceneRow(() =>
-    sceneRequest('companion_scenes.post_scene_discard', { path: { scene_id: Number(sceneId) } })
-  )
+  return mutateSceneRow(() => sceneRequest('companion_scenes.post_scene_discard', { path: { scene_id: sceneId } }))
 }
 
 export async function deleteScene(sceneId: string): Promise<void> {
-  await mutate('companion_scenes.delete_scene_route', { path: { scene_id: Number(sceneId) } })
+  await mutate('companion_scenes.delete_scene_route', { path: { scene_id: sceneId } })
 }
 
 export async function editScene(sceneId: string, title: string, description: string): Promise<SceneWire> {
   return mutateSceneRow(() =>
     sceneRequest('companion_scenes.scene_edit_route', {
-      path: { scene_id: Number(sceneId) },
+      path: { scene_id: sceneId },
       body: { title, description }
     })
   )
 }
 
 export async function regenerateScene(sceneId: string): Promise<void> {
-  await mutateSceneRow(() =>
-    sceneRequest('companion_scenes.post_scene_regenerate', { path: { scene_id: Number(sceneId) } })
-  )
+  await mutateSceneRow(() => sceneRequest('companion_scenes.post_scene_regenerate', { path: { scene_id: sceneId } }))
 }
 
 export async function analyzeScene(sceneId: string): Promise<SceneWire> {
-  return mutateSceneRow(() =>
-    sceneRequest('companion_scenes.scene_analyze_route', { path: { scene_id: Number(sceneId) } })
-  )
+  return mutateSceneRow(() => sceneRequest('companion_scenes.scene_analyze_route', { path: { scene_id: sceneId } }))
 }
 
 export async function setScenePolicy(policy: ScenePolicy): Promise<void> {

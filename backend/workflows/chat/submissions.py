@@ -17,14 +17,13 @@ from features.conversation.session_operations import edit_message_input, replace
 from features.conversation.submissions import (
     SubmissionConflictError,
     find_submission,
-    persist_submission_input,
+    persist_submission_inputs,
     record_submission_state,
     reserve_submission,
 )
-from features.conversation.turn_store import persist_extra_user_messages
 from infrastructure.ai.user_config import load_user_llm_config
+from infrastructure.api_ids import parse_resource_id
 from infrastructure.config import SETTINGS
-from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
 from runtime.business_actor import BusinessActor
@@ -71,7 +70,7 @@ def create_submission_handler(
         edit_message_id = body.edit_message_id
         retry_message_id = body.retry_message_id
         replace_reply_message_id = body.replace_reply_message_id
-        precursor_user_message_ids: list[int] = []
+        precursor_messages: list[ChatMessageRequest] = []
         replacement = None
         batch = body.batch
         if replace_reply_message_id is not None:
@@ -102,14 +101,10 @@ def create_submission_handler(
             last_item = validated_batch[-1]
             text = last_item["text"]
             attachments = last_item["attachments"]
-            precursor_items = validated_batch[:-1]
-            if precursor_items:
-                async with SESSION_LOCAL() as db:
-                    precursor_user_message_ids = await persist_extra_user_messages(
-                        db,
-                        runtime.conversation_id,
-                        precursor_items,
-                    )
+            precursor_messages = [
+                ChatMessageRequest(content=item["text"], attachments=item["attachments"])
+                for item in validated_batch[:-1]
+            ]
         else:
             text = body.text or ""
             attachments = _validate_attachments(body.attachments, runtime.session_id)
@@ -146,21 +141,21 @@ def create_submission_handler(
                 )
             except EditNotAllowedError as exc:
                 raise RequestError(422, str(exc)) from exc
-        persisted_message_id = await persist_submission_input(
+        input_ids = await persist_submission_inputs(
             user_id,
             runtime.conversation_id,
             params["request_id"],
-            req.message,
+            [*precursor_messages, req.message],
             persisted_message_id=persisted_message_id,
-            precursor_ids=precursor_user_message_ids,
         )
+        persisted_message_id = input_ids[-1]
         if edited_messages is not None:
             await publish_history_change(
                 "message.edited",
                 {"session_id": runtime.session_id, "messages": edited_messages},
                 session_id=runtime.session_id,
             )
-        snapshot.message_ids = [*precursor_user_message_ids, persisted_message_id]
+        snapshot.message_ids = input_ids
         if replacement is None:
             await emitter.send_json(
                 {
@@ -344,7 +339,7 @@ def create_submission_handler(
 
     async def prompt_submit(session_id: str, body: PromptSubmitRequest) -> dict:
         try:
-            session_id = str(int(session_id))
+            session_id = str(parse_resource_id(session_id))
         except (TypeError, ValueError) as exc:
             raise RequestError(404, "会话不存在") from exc
         try:

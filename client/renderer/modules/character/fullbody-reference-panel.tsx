@@ -41,7 +41,7 @@ import { $portraitUrl } from './portrait-store'
 import { SelfSourceImageFlow, type SelfSourceReferenceImage } from './self-source-image'
 
 interface FullbodyReferencePanelProps {
-  avatarId: number
+  avatarId: string
   onContinue?: (expectedUrl: string) => Promise<void>
   onBack?: () => void
 }
@@ -72,7 +72,7 @@ export function FullbodyReferencePanel({
   const [loadedPreviewKey, setLoadedPreviewKey] = useState<string | null>(null)
 
   const adoptedImageRef = useRef<{
-    avatarId: number
+    avatarId: string
     image: PickedImage
     url: string
     isCurrent: () => boolean

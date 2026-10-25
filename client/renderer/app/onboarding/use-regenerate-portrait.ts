@@ -11,7 +11,7 @@ interface UseRegeneratePortraitOptions {
   refImage?: PickedImage | null
   /** 只在已有身份参考时随重绘提交，仅调整光线、色调与构图；没有身份参考时不使用。 */
   presentationRef?: PickedImage | null
-  onRegenerated?: (urls: { avatar: string; id: number | null }) => void
+  onRegenerated?: (urls: { avatar: string; id: string | null }) => void
   onError?: (message: string) => void
 }
 

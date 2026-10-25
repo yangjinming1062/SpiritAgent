@@ -53,7 +53,12 @@ def _scene_http_error(exc: SceneError) -> RequestError:
 
 async def read_scene_state(user_id: int, db: AsyncSession) -> SceneStateResponse:
     state = await get_scene_state(db, user_id)
-    rows = [*state.ready, *(row for row in (state.pending, state.regenerating) if row is not None)]
+    rows = list(
+        {
+            row.id: row
+            for row in [*state.ready, *(row for row in (state.pending, state.regenerating) if row is not None)]
+        }.values()
+    )
     return SceneStateResponse(
         policy=state.policy,
         materials=[response_for_scene(row) for row in rows],
@@ -129,14 +134,18 @@ async def scene_list_route(
     user_id: int,
     db: AsyncSession,
     q: str = "",
-    offset: int = 0,
+    cursor: int | None = None,
+    include_total: bool = False,
     limit: int = 30,
 ) -> SceneListResponse:
-    rows, total = await list_scenes(db, user_id, query=q, offset=offset, limit=limit)
+    rows, total, next_cursor = await list_scenes(
+        db, user_id, query=q, cursor=cursor, limit=limit, include_total=include_total
+    )
     return SceneListResponse(
         scenes=[response_for_scene(row) for row in rows],
         total=total,
-        offset=offset,
+        next_cursor=next_cursor,
+        has_more=next_cursor is not None,
         limit=limit,
     )
 

@@ -96,7 +96,7 @@ async function mutateCard(write: () => Promise<AuthedApiResult<CharacterCard>>):
 }
 
 export function saveCharacterCard(
-  expectedAvatarId: number,
+  expectedAvatarId: string,
   expectedRevision: number,
   changes: CharacterOverrides
 ): Promise<boolean> {
@@ -107,7 +107,7 @@ export function saveCharacterCard(
   )
 }
 
-export async function extractCharacterCard(expectedAvatarId: number, expectedRevision: number): Promise<void> {
+export async function extractCharacterCard(expectedAvatarId: string, expectedRevision: number): Promise<void> {
   await mutateCard(() =>
     authedResource('companion.extract_character_card_route', {
       body: { expected_avatar_id: expectedAvatarId, expected_revision: expectedRevision }

@@ -438,7 +438,16 @@ def check(backend: Path) -> list[str]:
             if isinstance(definitions.get(resolved), (ast.Assign, ast.AnnAssign, ast.TypeAlias))
             else set()
         )
-        if (
+        shared_job_contract = resolved == ("infrastructure.job_models", "JobRecord") and (
+            owner(source) == "features.jobs"
+            or any(
+                module == source
+                and isinstance(definition, ast.ClassDef)
+                and any(isinstance(base, ast.Name) and base.id == symbol for base in definition.bases)
+                for (module, _), definition in definitions.items()
+            )
+        )
+        if not shared_job_contract and (
             resolved in models
             or model_aliases
             or not symbol

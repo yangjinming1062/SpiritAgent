@@ -1,3 +1,5 @@
+import { compareResourceIds, isResourceId } from '../shared/resource-id'
+
 import type { GatewayEvent } from './api'
 import type { ActiveTurn, SessionMessage } from './types'
 
@@ -90,12 +92,12 @@ export function mergeMessages(previous: SessionMessage[], incoming: SessionMessa
   const messages = new Map(previous.map(message => [message.id, message]))
   incoming.forEach(message => messages.set(message.id, message))
 
-  return [...messages.values()].sort((left, right) => (left.id ?? 0) - (right.id ?? 0))
+  return [...messages.values()].sort((left, right) => compareResourceIds(left.id, right.id))
 }
 
 export function activeReplyIsPersisted(turn: ActiveTurn | null, messages: SessionMessage[]): boolean {
   return (
-    typeof turn?.assistant_message_id === 'number' &&
+    isResourceId(turn?.assistant_message_id) &&
     messages.some(
       message =>
         message.id === turn.assistant_message_id &&

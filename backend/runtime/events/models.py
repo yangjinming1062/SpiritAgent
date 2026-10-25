@@ -1,7 +1,9 @@
 from datetime import datetime
+from typing import Any
 
 from infrastructure.models import ModelBase
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, func, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -11,7 +13,7 @@ class WSEvent(ModelBase):
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     event_type: Mapped[str] = mapped_column(String(128))
-    payload: Mapped[str] = mapped_column(Text)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
     status: Mapped[str] = mapped_column(String(16), default="PENDING", server_default=text("'PENDING'"), index=True)
     retry_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))

@@ -1,6 +1,8 @@
 import { getStrings } from '@/shared/strings'
 import type { ActiveTurnSnapshot, SessionMessage, SessionRuntimeInfo, SessionSnapshot } from '@protocol'
 
+import { compareResourceIds, isResourceId } from '../../../../shared/resource-id'
+
 import { mergeLiveHistoryRows, preserveLiveHistoryRows, projectSessionMessages } from './chat-history-projection'
 import type { ChatMessageController } from './chat-message-controller'
 import type { ConversationState } from './chat-runtime-state'
@@ -49,8 +51,8 @@ export function createChatHistoryController(
 
   let lastSnapshotReadId = 0
 
-  function replaceAssistantReplyMessage(replacedMessageId: number, message: SessionMessage): void {
-    if (!isCurrent() || typeof message.id !== 'number') {
+  function replaceAssistantReplyMessage(replacedMessageId: string, message: SessionMessage): void {
+    if (!isCurrent() || !isResourceId(message.id)) {
       return
     }
 
@@ -58,7 +60,12 @@ export function createChatHistoryController(
     const bodies = $chatMessageBodies.get()
     const replacedIndex = original.findIndex(item => item.backendMessageId === replacedMessageId)
 
-    if (replacedIndex < 0 && original.some(item => (item.backendMessageId ?? 0) >= (message.id ?? 0))) {
+    if (
+      replacedIndex < 0 &&
+      original.some(
+        item => item.backendMessageId !== undefined && compareResourceIds(item.backendMessageId, message.id) >= 0
+      )
+    ) {
       return
     }
 
@@ -271,7 +278,7 @@ export function createChatHistoryController(
     mergePersistedUserMessages(snapshot.messages ?? [], snapshot.request_id, snapshot.message_ids)
     const assistantMessageId = snapshot.assistant_message_id
 
-    if (typeof assistantMessageId === 'number') {
+    if (isResourceId(assistantMessageId)) {
       snapshot.bubbles.forEach((bubble, index) => appendCompanionBubble(assistantMessageId, index, bubble))
     } else {
       for (const bubble of snapshot.bubbles) {

@@ -6,7 +6,8 @@ from fastapi import Path, Query
 from features.action_library import queries as _action_queries
 from features.action_library import use_cases as _actions
 from features.action_library.schemas import ActionAssetDesign, ActionAssetUpdate, ActionAssetView, ActionListResponse
-from infrastructure.constants import POSTGRES_INT4_MAX
+from infrastructure.api_ids import ResourceId
+from infrastructure.constants import POSTGRES_INT8_MAX
 from infrastructure.database import DbSession
 from infrastructure.request_errors import RequestError
 from workflows.visuals_companion import design_action_reference, update_action_reference
@@ -24,7 +25,8 @@ async def list_actions(
     query: Annotated[str | None, Query(max_length=200)] = None,
     clip_kind: Annotated[Literal["once", "loop"] | None, Query()] = None,
     status: Annotated[str | None, Query(max_length=24)] = None,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    cursor: Annotated[ResourceId | None, Query()] = None,
+    include_total: bool = False,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> ActionListResponse:
     return await _action_queries.list_actions(
@@ -33,16 +35,15 @@ async def list_actions(
         query=query,
         clip_kind=clip_kind,
         status=status,
-        offset=offset,
+        cursor=cursor,
+        include_total=include_total,
         limit=limit,
     )
 
 
 @router.get("/{action_id}", response_model=ActionAssetView)
 async def get_action(
-    action_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
-    user: CurrentUser,
-    db: DbSession,
+    action_id: Annotated[ResourceId, Path(gt=0, le=POSTGRES_INT8_MAX)], user: CurrentUser, db: DbSession
 ) -> ActionAssetView:
     return await _actions.read_action(user_id=user.id, db=db, action_id=action_id)
 
@@ -69,9 +70,7 @@ async def create_action(user: CurrentUser, db: DbSession, body: ActionAssetDesig
 
 @router.patch("/{action_id}", response_model=ActionAssetView)
 async def update_action(
-    action_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
-    user: CurrentUser,
-    body: ActionAssetUpdate,
+    action_id: Annotated[ResourceId, Path(gt=0, le=POSTGRES_INT8_MAX)], user: CurrentUser, body: ActionAssetUpdate
 ) -> ActionAssetView:
     try:
         result = await update_action_reference(user.id, action_id, body)
@@ -84,8 +83,6 @@ async def update_action(
 
 @router.delete("/{action_id}", status_code=204)
 async def delete_action(
-    action_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
-    user: CurrentUser,
-    db: DbSession,
+    action_id: Annotated[ResourceId, Path(gt=0, le=POSTGRES_INT8_MAX)], user: CurrentUser, db: DbSession
 ) -> None:
     await _actions.delete_action(user_id=user.id, db=db, action_id=action_id)

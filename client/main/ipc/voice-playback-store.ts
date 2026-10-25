@@ -115,7 +115,7 @@ export function createVoicePlaybackStore({ spiritagentHome }: { spiritagentHome:
 
   return {
     get: (access: PlaybackAccess) => transact(access),
-    update: (access: PlaybackAccess, messageId: number, bubbleIndex: number, record: VoicePlaybackRecord) =>
+    update: (access: PlaybackAccess, messageId: string, bubbleIndex: number, record: VoicePlaybackRecord) =>
       transact(access, snapshot => {
         const key = voicePlaybackKey(messageId, bubbleIndex)
 
@@ -127,14 +127,12 @@ export function createVoicePlaybackStore({ spiritagentHome }: { spiritagentHome:
           revision: snapshot.revision + 1
         }
       }),
-    remove: (access: PlaybackAccess, messageIds?: number[]) => {
+    remove: (access: PlaybackAccess, messageIds?: string[]) => {
       const removed = messageIds && new Set(messageIds)
 
       return transact(access, snapshot => ({
         records: removed
-          ? Object.fromEntries(
-              Object.entries(snapshot.records).filter(([key]) => !removed.has(Number(key.split(':')[0])))
-            )
+          ? Object.fromEntries(Object.entries(snapshot.records).filter(([key]) => !removed.has(key.split(':')[0])))
           : {},
         revision: snapshot.revision + 1
       }))

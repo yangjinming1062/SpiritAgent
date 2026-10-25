@@ -11,6 +11,7 @@ from features.accounts.gateway import GatewayIdentity
 from features.accounts.session_operations import is_login_active
 from features.companion.proactive_runtime import observe_companion_presence
 from features.conversation.session_operations import ensure_main_conversation
+from infrastructure.api_ids import ResourceId
 from infrastructure.async_io import cancel_and_wait, cancel_tasks
 from infrastructure.config import SETTINGS
 from infrastructure.constants import JSONRPC_INVALID_PARAMS
@@ -82,7 +83,7 @@ _USER_LOCKS: dict[int, asyncio.Lock] = {}
 _MAX_IN_FLIGHT_REQUESTS = 32
 
 
-def _user_lock(user_id: int) -> asyncio.Lock:
+def _user_lock(user_id: ResourceId) -> asyncio.Lock:
     return _USER_LOCKS.setdefault(user_id, asyncio.Lock())
 
 
@@ -106,8 +107,8 @@ async def _noop_send(data: dict[str, Any]) -> bool:
 
 
 async def _terminate_user_gateway_locked(
-    user_id: int,
-    login_record_id: int | None = None,
+    user_id: ResourceId,
+    login_record_id: ResourceId | None = None,
 ) -> None:
     session = _USER_SESSIONS.get(user_id)
     if session is None or (login_record_id is not None and session.login_record_id != login_record_id):
@@ -129,12 +130,12 @@ async def _terminate_user_gateway_locked(
     release_account_runtime(user_id, "desktop")
 
 
-async def terminate_user_gateway(user_id: int, *, login_record_id: int | None = None) -> None:
+async def terminate_user_gateway(user_id: ResourceId, *, login_record_id: ResourceId | None = None) -> None:
     async with _user_lock(user_id):
         await _terminate_user_gateway_locked(user_id, login_record_id)
 
 
-async def terminate_remote_sessions(user_id: int, device_id: int | None = None) -> None:
+async def terminate_remote_sessions(user_id: ResourceId, device_id: ResourceId | None = None) -> None:
     async with _user_lock(user_id):
         for connection_id, session in list(_REMOTE_SESSIONS.get(user_id, {}).items()):
             if device_id is not None and session.device_id != device_id:
@@ -152,7 +153,7 @@ async def terminate_remote_sessions(user_id: int, device_id: int | None = None) 
         release_unused_account_runtime(user_id)
 
 
-async def _expire_disconnected_gateway(user_id: int) -> None:
+async def _expire_disconnected_gateway(user_id: ResourceId) -> None:
     try:
         await asyncio.sleep(SETTINGS.desktop_disconnect_grace_seconds)
         async with _user_lock(user_id):
@@ -162,7 +163,7 @@ async def _expire_disconnected_gateway(user_id: int) -> None:
         pass
 
 
-async def _expire_disconnected_remote(user_id: int, connection_id: str, session: UserGatewaySession) -> None:
+async def _expire_disconnected_remote(user_id: ResourceId, connection_id: str, session: UserGatewaySession) -> None:
     try:
         await asyncio.sleep(SETTINGS.desktop_disconnect_grace_seconds)
         async with _user_lock(user_id):

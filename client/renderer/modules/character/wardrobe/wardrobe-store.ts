@@ -10,11 +10,12 @@ import { $auth } from '@/shared/store/auth'
 import { isRecord } from '@client-shared/is-record'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
+import { isResourceId } from '../../../../../shared/resource-id'
 
 type OutfitStatus = ApiSchemas['OutfitResponse']['status']
 
 export interface WardrobeOutfit {
-  id: number
+  id: string
   name: string
   description: string | null
   descriptionStatus: 'pending' | 'processing' | 'ready' | 'failed'
@@ -43,7 +44,7 @@ const snapshot = definePersistedAtom<WardrobeSnapshot>({
 function isOutfitResponse(value: unknown): value is OutfitResponse {
   return (
     isRecord(value) &&
-    typeof value.id === 'number' &&
+    isResourceId(value.id) &&
     typeof value.name === 'string' &&
     (value.description === null || typeof value.description === 'string') &&
     typeof value.description_status === 'string' &&
@@ -220,12 +221,12 @@ export async function setOutfitPolicy(policy: OutfitPolicy): Promise<boolean> {
   }
 }
 
-export async function deleteOutfit(outfitId: number): Promise<void> {
+export async function deleteOutfit(outfitId: string): Promise<void> {
   await requestResource('companion.delete_outfit_route', { path: { outfit_id: outfitId } })
   await hydrateWardrobe({ force: true })
 }
 
-export async function retryOutfitDescription(outfitId: number): Promise<void> {
+export async function retryOutfitDescription(outfitId: string): Promise<void> {
   await requestResource('companion.post_retry_outfit_description', { path: { outfit_id: outfitId } })
   await hydrateWardrobe({ force: true })
 }

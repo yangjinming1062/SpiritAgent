@@ -3,7 +3,6 @@
 import features.accounts.models
 import features.accounts.remote.models
 import features.action_library.models
-import features.appearance.character_card_models
 import features.appearance.models
 import features.assets.models
 import features.automation.models
@@ -13,16 +12,23 @@ import features.configuration.models
 import features.configuration.settings.models
 import features.conversation.models
 import features.conversation.submission_models
-import features.journal.models
+import features.entries.models
+import features.jobs.models  # noqa: F401 -- 持久任务与请求登记。
 import features.life.models
 import features.media.models
 import features.media.video_queue.models
 import features.media.voice_models
 import features.memory.models
-import features.posts.models
+import features.posts.publication_models
 import features.scenes.models
 import features.topics.models
 import features.updates.models  # noqa: F401 -- 显式 ORM 登记。
 import features.visuals.models  # noqa: F401 -- 显式 ORM 登记。
 import runtime.events.models  # noqa: F401 -- 显式 ORM 登记。
 import workflows.nightly.models  # noqa: F401 -- 显式 ORM 登记。
+from features.conversation.statistics import register_conversation_statistics
+from infrastructure.models import ModelBase
+from infrastructure.schema import finalize_owned_relations
+
+finalize_owned_relations(ModelBase.metadata)
+register_conversation_statistics(ModelBase.metadata)

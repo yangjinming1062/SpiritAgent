@@ -6,6 +6,7 @@ from typing import Any
 from features.appearance.queries import ready_outfit_snapshots
 from features.visuals.queries import list_jobs, list_visuals, visual_detail
 from features.visuals.repository import VisualNotFoundError
+from infrastructure.api_ids import ResourceId
 from infrastructure.database import SESSION_LOCAL
 from runtime.tools.registry import ToolsRegistry
 from workflows.visuals_companion import generate_visual_reference, play_visual_reference
@@ -30,7 +31,7 @@ VISUAL_PLAY_TOOL_DESCRIPTION = (
 
 
 async def visual_search_tool(
-    user_id: int,
+    user_id: ResourceId,
     query: str = "",
     media_kind: str | None = None,
     limit: int = 10,
@@ -42,13 +43,13 @@ async def visual_search_tool(
     return result.model_dump_json()
 
 
-async def outfit_list_tool(user_id: int, query: str = "", **_: Any) -> str:
+async def outfit_list_tool(user_id: ResourceId, query: str = "", **_: Any) -> str:
     async with SESSION_LOCAL() as db:
         items = await ready_outfit_snapshots(db, user_id)
     needle = query.strip().casefold()
     return json.dumps(
         [
-            {"id": item.id, "name": item.name, "description": item.description}
+            {"id": str(item.id), "name": item.name, "description": item.description}
             for item in items
             if not needle or needle in f"{item.name}\n{item.description}".casefold()
         ],
@@ -57,9 +58,9 @@ async def outfit_list_tool(user_id: int, query: str = "", **_: Any) -> str:
 
 
 async def visual_inspect_tool(
-    user_id: int,
-    visual_id: int | None = None,
-    job_id: int | None = None,
+    user_id: ResourceId,
+    visual_id: ResourceId | None = None,
+    job_id: ResourceId | None = None,
     **_: Any,
 ) -> str:
     if visual_id is not None:
@@ -76,10 +77,10 @@ async def visual_inspect_tool(
 
 
 async def visual_generate_tool(
-    outfit_id: int,
-    scene_id: int,
-    action_id: int,
-    user_id: int,
+    outfit_id: ResourceId,
+    scene_id: ResourceId,
+    action_id: ResourceId,
+    user_id: ResourceId,
     tool_call_id: str,
     parent_session_id: str,
     media_kind: str = "image",
@@ -99,18 +100,30 @@ async def visual_generate_tool(
         video_feedback=video_feedback,
         request_id=f"tool:{parent_session_id}:{tool_call_id}",
     )
-    return json.dumps(result, ensure_ascii=False)
+    return json.dumps(
+        {
+            key: str(value) if key in {"job_id", "visual_id"} and value is not None else value
+            for key, value in result.items()
+        },
+        ensure_ascii=False,
+    )
 
 
 async def visual_play_tool(
-    visual_id: int,
-    user_id: int,
+    visual_id: ResourceId,
+    user_id: ResourceId,
     reason: str = "",
     proactive_turn: bool = False,
     **_: Any,
 ) -> str:
     result = await play_visual_reference(user_id, visual_id, reason=reason, proactive_turn=proactive_turn)
-    return json.dumps(result, ensure_ascii=False)
+    return json.dumps(
+        {
+            key: str(value) if key in {"job_id", "visual_id"} and value is not None else value
+            for key, value in result.items()
+        },
+        ensure_ascii=False,
+    )
 
 
 def register(registry: ToolsRegistry) -> None:
@@ -139,10 +152,14 @@ def register(registry: ToolsRegistry) -> None:
             "visual_inspect",
             visual_inspect_tool,
             {
-                "visual_id": {"type": "integer", "minimum": 1, "description": "已生成图片或视频的 visual_id。"},
+                "visual_id": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]*$",
+                    "description": "已生成图片或视频的 visual_id。",
+                },
                 "job_id": {
-                    "type": "integer",
-                    "minimum": 1,
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]*$",
                     "description": "某次制作的 id；不传 visual_id 时从最近 20 次制作中选择它。",
                 },
             },
@@ -153,12 +170,12 @@ def register(registry: ToolsRegistry) -> None:
             visual_generate_tool,
             {
                 "outfit_id": {
-                    "type": "integer",
-                    "minimum": 1,
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]*$",
                     "description": "造型的 outfit_id；一套造型包含服装、发型、妆容与配饰。",
                 },
-                "scene_id": {"type": "integer", "minimum": 1, "description": "环境图片的 scene_id。"},
-                "action_id": {"type": "integer", "minimum": 1, "description": "动作的 action_id。"},
+                "scene_id": {"type": "string", "pattern": "^[1-9][0-9]*$", "description": "环境图片的 scene_id。"},
+                "action_id": {"type": "string", "pattern": "^[1-9][0-9]*$", "description": "动作的 action_id。"},
                 "media_kind": {
                     "type": "string",
                     "enum": ["image", "video"],
@@ -179,7 +196,11 @@ def register(registry: ToolsRegistry) -> None:
             "visual_play",
             visual_play_tool,
             {
-                "visual_id": {"type": "integer", "minimum": 1, "description": "要显示的图片或播放的视频的 visual_id。"},
+                "visual_id": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]*$",
+                    "description": "要显示的图片或播放的视频的 visual_id。",
+                },
                 "reason": {"type": "string", "maxLength": 200, "description": "现在使用这张图片或这段视频的简短缘由。"},
             },
             ["visual_id"],

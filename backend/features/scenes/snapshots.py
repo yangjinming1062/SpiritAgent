@@ -2,8 +2,8 @@
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .queries import list_scenes
-from .query_contracts import SceneSnapshot
+from .queries import list_scenes, scene_view
+from .query_contracts import SceneSnapshot, SceneSnapshotPage
 from .service import schedule_scene_generation
 
 
@@ -12,12 +12,16 @@ async def list_scene_snapshots(
     user_id: int,
     *,
     query: str = "",
-    offset: int = 0,
+    cursor: int | None = None,
     limit: int = 30,
     ready_only: bool = False,
-) -> tuple[list[SceneSnapshot], int]:
-    rows, total = await list_scenes(db, user_id, query=query, offset=offset, limit=limit, ready_only=ready_only)
-    return [SceneSnapshot.model_validate(row) for row in rows], total
+) -> SceneSnapshotPage:
+    rows, total, next_cursor = await list_scenes(
+        db, user_id, query=query, cursor=cursor, limit=limit, ready_only=ready_only
+    )
+    return SceneSnapshotPage(
+        scenes=rows, total=total, next_cursor=next_cursor, has_more=next_cursor is not None, limit=limit
+    )
 
 
 async def schedule_scene_snapshot(
@@ -33,4 +37,4 @@ async def schedule_scene_snapshot(
         notes=notes,
         reference_image=reference_image,
     )
-    return SceneSnapshot.model_validate(row)
+    return scene_view(row)

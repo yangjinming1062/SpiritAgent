@@ -1,5 +1,7 @@
 """外观模块公开的身份引用。"""
 
+from typing import Any
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,28 +40,14 @@ async def confirmed_media_reference_paths(db: AsyncSession, user_id: int) -> tup
     )
 
 
-async def active_avatar_snapshot(db: AsyncSession, user_id: int) -> AvatarSnapshot | None:
-    row = await db.scalar(select(AvatarAsset).where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True)))
-    return AvatarSnapshot.model_validate(row) if row is not None else None
-
-
 async def avatar_snapshot(db: AsyncSession, user_id: int, avatar_id: int) -> AvatarSnapshot | None:
     row = await db.scalar(select(AvatarAsset).where(AvatarAsset.user_id == user_id, AvatarAsset.id == avatar_id))
     return AvatarSnapshot.model_validate(row) if row is not None else None
 
 
-async def outfit_snapshot(db: AsyncSession, user_id: int, outfit_id: int | None) -> OutfitSnapshot | None:
-    if outfit_id is None:
-        return None
-    row = await db.scalar(
-        select(CompanionOutfit).where(CompanionOutfit.user_id == user_id, CompanionOutfit.id == outfit_id),
-    )
-    return OutfitSnapshot.model_validate(row) if row is not None else None
-
-
-def outfit_identity_matches(source_json: str, identity_reference_path: str) -> bool:
+def outfit_identity_matches(source_json: dict[str, Any], identity_reference_path: str) -> bool:
     """只核对全身来源；角色卡文字修订不改变身体身份。"""
-    source = OutfitSource.model_validate_json(source_json)
+    source = OutfitSource.model_validate(source_json)
     return bool(identity_reference_path) and source.identity_reference_path == identity_reference_path
 
 

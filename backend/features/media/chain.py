@@ -118,6 +118,8 @@ class MediaCandidate(BaseModel):
 class MediaChainState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    schema_version: Literal[1] = 1
+
     generation_id: str = Field(default_factory=lambda: uuid4().hex)
     providers: list[FrozenMediaProvider] = Field(default_factory=list)
     next_index: int = 0

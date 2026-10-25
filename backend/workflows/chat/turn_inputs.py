@@ -25,12 +25,11 @@ from features.memory.memory_format import (
 from features.memory.memory_retrieval import MemoryEmbedding, MemoryRecallResult, retrieve_proactive_memories
 from infrastructure.ai.llm_client import (
     MissingLlmConfigError,
-    resolve_media_chain,
     resolve_provider_chain,
 )
 from infrastructure.ai.providers.base import ProviderConfig, ReasoningEffort
 from infrastructure.ai.providers.registry import resolve_context_tokens
-from infrastructure.ai.responses import approx_responses_tokens, message_to_response_items, request_input_modalities
+from infrastructure.ai.responses import approx_responses_tokens, message_to_response_items
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.config import SETTINGS
 from infrastructure.constants import DEFAULT_LANGUAGE, SESSION_TO_GLOBAL_KEY_ALIASES, TEMPERATURE_MAX, TEMPERATURE_MIN
@@ -142,48 +141,16 @@ def db_message_to_response_items(msg: MessageSnapshot) -> list[dict[str, Any]]:
     if msg.role == "system":
         return [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": content_val}]}]
 
-    if (
-        msg.role == "assistant"
-        and not (msg.tool_calls or "").strip()
-        and not is_multimodal
-        and not str(content_val).strip()
-    ):
+    if msg.role == "assistant" and not msg.tool_calls and not is_multimodal and not str(content_val).strip():
         return []
 
     item: dict[str, Any] = {"role": msg.role, "content": content_val}
     if msg.tool_call_id:
         item["tool_call_id"] = msg.tool_call_id
     items = message_to_response_items(item)
-    if msg.role == "assistant" and msg.tool_calls and (calls := safe_json_loads(msg.tool_calls)) is not None:
-        items.extend(call for call in calls if isinstance(call, dict))
+    if msg.role == "assistant" and msg.tool_calls:
+        items.extend(call for call in msg.tool_calls if isinstance(call, dict))
     return items
-
-
-async def resolve_context_provider_chain(
-    db: AsyncSession,
-    user_id: int,
-    input_items: list[dict[str, Any]],
-    *,
-    task: AiTaskKey,
-) -> list[ProviderConfig]:
-    """仅按本次请求仍携带的媒体选链，包括多模态工具结果。"""
-    required = request_input_modalities(input_items)
-    chain = await resolve_media_chain(
-        db,
-        user_id,
-        task=task,
-        required_modalities=required,
-    )
-    if not chain and "audio" in required:
-        chain = await resolve_media_chain(
-            db,
-            user_id,
-            task=task,
-            required_modalities=required - {"audio"},
-        )
-    if not chain:
-        raise MissingLlmConfigError("no provider configured for service 'llm'")
-    return chain
 
 
 def user_text_item(text: str) -> dict[str, Any]:

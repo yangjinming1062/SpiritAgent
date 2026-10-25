@@ -10,9 +10,9 @@ import {
   type TopicFeedbackValue
 } from '@protocol'
 
-export const $topicFeedback = map<Record<number, TopicFeedbackSnapshot>>({})
-export const $topicFeedbackSaving = map<Record<number, boolean>>({})
-const reads = new Map<number, Promise<void>>()
+export const $topicFeedback = map<Record<string, TopicFeedbackSnapshot>>({})
+export const $topicFeedbackSaving = map<Record<string, boolean>>({})
+const reads = new Map<string, Promise<void>>()
 
 registerStorageClearHandler(() => {
   reads.clear()
@@ -26,7 +26,7 @@ export function onTopicFeedbackUpdated(payload: unknown): void {
   }
 }
 
-export function loadTopicFeedback(topicId: number): Promise<void> {
+export function loadTopicFeedback(topicId: string): Promise<void> {
   const existing = reads.get(topicId)
 
   if (existing) {
@@ -68,7 +68,7 @@ export function loadTopicFeedback(topicId: number): Promise<void> {
   return request
 }
 
-export async function setTopicFeedback(topicId: number, value: TopicFeedbackValue): Promise<void> {
+export async function setTopicFeedback(topicId: string, value: TopicFeedbackValue): Promise<void> {
   const isCurrent = captureAuthScope()
 
   if (!isCurrent || $topicFeedbackSaving.get()[topicId]) {

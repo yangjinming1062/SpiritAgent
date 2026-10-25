@@ -2,6 +2,7 @@
 
 import asyncio
 
+from infrastructure.api_ids import ResourceId
 from infrastructure.config import SETTINGS
 from infrastructure.correlation import begin_local_scope
 from infrastructure.logger import get_logger
@@ -16,7 +17,7 @@ async def drain() -> None:
     await scheduling.drain()
 
 
-def invalidate_user_scheduler_state(user_id: int) -> None:
+def invalidate_user_scheduler_state(user_id: ResourceId) -> None:
     scheduling.invalidate_user_scheduler_state(user_id)
 
 

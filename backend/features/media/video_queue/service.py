@@ -31,11 +31,12 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from features.jobs.service import settled_job_ids
 from features.media.chain import FrozenMediaProvider, resolve_frozen_media_provider, video_provider_failure_reason
 from features.media.video_polling import poll_video_task
 
 from .contracts import VideoQueueInfo, VideoQueueKind, VideoQueueOwner, VideoQueueStoppedError
-from .models import VideoQueueLane, VideoQueueRequest
+from .models import ProviderAttempt, ProviderLane
 from .ports import inspect_owner
 
 logger = get_logger(__name__)
@@ -60,16 +61,16 @@ def _diagnostic(request_id: str, message: str | None) -> str | None:
     return redact_sensitive_text(message)
 
 
-def _owner(row: VideoQueueRequest) -> VideoQueueOwner | None:
-    if row.user_id is None or row.entity_id is None:
+def _owner(row: ProviderAttempt) -> VideoQueueOwner | None:
+    if row.user_id is None or row.job_id is None:
         return None
-    return VideoQueueOwner(kind=row.kind, user_id=row.user_id, entity_id=row.entity_id, generation_id=row.generation_id)
+    return VideoQueueOwner(kind=row.owner_kind, user_id=row.user_id, job_id=row.job_id, generation_id=row.generation_id)
 
 
 async def _lane_id(config: ProviderConfig) -> int:
     async with SESSION_LOCAL() as db:
         await db.execute(
-            insert(VideoQueueLane)
+            insert(ProviderLane)
             .values(
                 token=uuid4().hex,
                 provider=config.provider_name,
@@ -78,9 +79,9 @@ async def _lane_id(config: ProviderConfig) -> int:
             .on_conflict_do_nothing(constraint="uq_video_queue_credential"),
         )
         lane_id = await db.scalar(
-            select(VideoQueueLane.id).where(
-                VideoQueueLane.provider == config.provider_name,
-                VideoQueueLane.credential_fingerprint == sha256_hex(config.api_key),
+            select(ProviderLane.id).where(
+                ProviderLane.provider == config.provider_name,
+                ProviderLane.credential_fingerprint == sha256_hex(config.api_key),
             ),
         )
         await db.commit()
@@ -89,12 +90,12 @@ async def _lane_id(config: ProviderConfig) -> int:
     return lane_id
 
 
-async def _read(request_id: str) -> tuple[VideoQueueRequest, VideoQueueLane]:
+async def _read(request_id: str) -> tuple[ProviderAttempt, ProviderLane]:
     async with SESSION_LOCAL() as db:
-        row = await db.scalar(select(VideoQueueRequest).where(VideoQueueRequest.token == request_id))
+        row = await db.scalar(select(ProviderAttempt).where(ProviderAttempt.token == request_id))
         if row is None:
             raise VideoQueueStoppedError("视频制作任务已结束")
-        lane = await db.get(VideoQueueLane, row.lane_id)
+        lane = await db.get(ProviderLane, row.lane_id)
         if lane is None:
             raise RuntimeError("Video queue lane is missing")
         return row, lane
@@ -102,7 +103,7 @@ async def _read(request_id: str) -> tuple[VideoQueueRequest, VideoQueueLane]:
 
 async def _change(request_id: str, *, expected: tuple[str, ...] | None = None, **values: object) -> bool:
     async with SESSION_LOCAL() as db:
-        row = await db.scalar(select(VideoQueueRequest).where(VideoQueueRequest.token == request_id).with_for_update())
+        row = await db.scalar(select(ProviderAttempt).where(ProviderAttempt.token == request_id).with_for_update())
         if row is None or (expected is not None and row.state not in expected):
             return False
         for key, value in values.items():
@@ -130,17 +131,17 @@ async def enqueue_video_attempt(
     lane_id = await _lane_id(config)
     async with SESSION_LOCAL() as db:
         await db.execute(
-            insert(VideoQueueRequest)
+            insert(ProviderAttempt)
             .values(
                 token=uuid4().hex,
                 lane_id=lane_id,
                 user_id=owner.user_id,
-                kind=owner.kind,
-                entity_id=owner.entity_id,
+                owner_kind=owner.kind,
+                job_id=owner.job_id,
                 generation_id=owner.generation_id,
                 attempt_index=attempt_index,
-                frozen_json=frozen.model_dump_json(),
-                request_json=_REQUEST.dump_json(request).decode() if request is not None else None,
+                frozen_json=frozen.model_dump(mode="json"),
+                request_json=_REQUEST.dump_python(request, mode="json") if request is not None else None,
                 model=frozen.model,
                 state="processing" if provider_task_id else "queued",
                 provider_task_id=provider_task_id,
@@ -153,14 +154,14 @@ async def enqueue_video_attempt(
             .on_conflict_do_nothing(constraint="uq_video_queue_attempt"),
         )
         row = await db.scalar(
-            select(VideoQueueRequest)
+            select(ProviderAttempt)
             .where(
-                VideoQueueRequest.generation_id == owner.generation_id,
-                VideoQueueRequest.attempt_index == attempt_index,
+                ProviderAttempt.generation_id == owner.generation_id,
+                ProviderAttempt.attempt_index == attempt_index,
             )
             .with_for_update(),
         )
-        if row is None or _owner(row) != owner or row.frozen_json != frozen.model_dump_json():
+        if row is None or _owner(row) != owner or row.frozen_json != frozen.model_dump(mode="json"):
             raise VideoQueueStoppedError("视频制作任务的归属或冻结配置不一致")
         if provider_task_id:
             if row.provider_task_id and row.provider_task_id != provider_task_id:
@@ -181,7 +182,7 @@ async def enqueue_video_attempt(
         return row.token
 
 
-def _queue_info(row: VideoQueueRequest, lane: VideoQueueLane) -> VideoQueueInfo | None:
+def _queue_info(row: ProviderAttempt, lane: ProviderLane) -> VideoQueueInfo | None:
     if row.state == "blocked":
         return VideoQueueInfo(state="blocked")
     if row.state in _PENDING:
@@ -196,11 +197,11 @@ async def get_video_attempt_status(request_id: str) -> VideoJobStatus | None:
     return _status(row)
 
 
-def _status(row: VideoQueueRequest) -> VideoJobStatus | None:
+def _status(row: ProviderAttempt) -> VideoJobStatus | None:
     if row.state in ("stopped", "cancelled") or (row.cancel_requested and row.state in _TERMINAL):
         raise VideoQueueStoppedError("本次视频制作已结束，请按需重新发起")
     if row.result_json:
-        return _STATUS.validate_json(row.result_json)
+        return _STATUS.validate_python(row.result_json)
     if row.state == "failed":
         try:
             reason = FailoverReason(row.error_reason or "unknown")
@@ -258,7 +259,7 @@ async def wait_video_attempt(
 
 async def acknowledge_video_attempt(request_id: str) -> None:
     async with SESSION_LOCAL() as db:
-        row = await db.scalar(select(VideoQueueRequest).where(VideoQueueRequest.token == request_id).with_for_update())
+        row = await db.scalar(select(ProviderAttempt).where(ProviderAttempt.token == request_id).with_for_update())
         if row is None or row.state not in _TERMINAL or row.consumed_at is not None:
             return
         row.consumed_at, row.request_json = utc_now(), None
@@ -269,7 +270,7 @@ async def acknowledge_video_attempt(request_id: str) -> None:
 async def cancel_video_attempt(request_id: str) -> bool:
     """幂等请求取消，返回任务是否存在；远端占用保留到确定终态。"""
     async with SESSION_LOCAL() as db:
-        row = await db.scalar(select(VideoQueueRequest).where(VideoQueueRequest.token == request_id).with_for_update())
+        row = await db.scalar(select(ProviderAttempt).where(ProviderAttempt.token == request_id).with_for_update())
         if row is None:
             return False
         if row.state in _TERMINAL or row.cancel_requested:
@@ -285,7 +286,7 @@ async def cancel_video_attempt(request_id: str) -> bool:
 
 async def pause_video_attempt(request_id: str) -> None:
     async with SESSION_LOCAL() as db:
-        row = await db.scalar(select(VideoQueueRequest).where(VideoQueueRequest.token == request_id).with_for_update())
+        row = await db.scalar(select(ProviderAttempt).where(ProviderAttempt.token == request_id).with_for_update())
         if row is None or row.state in _TERMINAL:
             return
         row.pause_requested = True
@@ -298,17 +299,17 @@ async def pause_video_attempt(request_id: str) -> None:
 
 async def cancel_owner_video_attempts(
     kind: VideoQueueKind,
-    entity_id: int,
+    job_id: int,
     generation_id: str | None = None,
 ) -> None:
     async with SESSION_LOCAL() as db:
-        query = select(VideoQueueRequest.token).where(
-            VideoQueueRequest.kind == kind,
-            VideoQueueRequest.entity_id == entity_id,
-            VideoQueueRequest.state.not_in(_TERMINAL),
+        query = select(ProviderAttempt.token).where(
+            ProviderAttempt.owner_kind == kind,
+            ProviderAttempt.job_id == job_id,
+            ProviderAttempt.state.not_in(_TERMINAL),
         )
         if generation_id is not None:
-            query = query.where(VideoQueueRequest.generation_id == generation_id)
+            query = query.where(ProviderAttempt.generation_id == generation_id)
         tokens = list(await db.scalars(query))
     for token in tokens:
         await cancel_video_attempt(token)
@@ -317,14 +318,14 @@ async def cancel_owner_video_attempts(
 async def anonymize_user_video_queue(user_id: int) -> None:
     """清除用户内容，远端未决占用留到确认结束，不能随账户级联删除。"""
     async with SESSION_LOCAL() as db:
-        tokens = list(await db.scalars(select(VideoQueueRequest.token).where(VideoQueueRequest.user_id == user_id)))
+        tokens = list(await db.scalars(select(ProviderAttempt.token).where(ProviderAttempt.user_id == user_id)))
     for token in tokens:
         await cancel_video_attempt(token)
         async with SESSION_LOCAL() as db:
-            row = await db.scalar(select(VideoQueueRequest).where(VideoQueueRequest.token == token).with_for_update())
+            row = await db.scalar(select(ProviderAttempt).where(ProviderAttempt.token == token).with_for_update())
             if row is None:
                 continue
-            row.user_id, row.entity_id = None, None
+            row.user_id, row.job_id = None, None
             row.request_json, row.result_json, row.resolution_note = None, None, None
             row.error_reason, row.error_status_code, row.error_message = None, None, None
             row.consumed_at = utc_now() if row.state in _TERMINAL else None
@@ -333,7 +334,7 @@ async def anonymize_user_video_queue(user_id: int) -> None:
             await db.commit()
 
 
-async def _readiness(row: VideoQueueRequest, *, before_submit: bool = True) -> str:
+async def _readiness(row: ProviderAttempt, *, before_submit: bool = True) -> str:
     owner = _owner(row)
     if owner is None:
         return "gone"
@@ -342,14 +343,14 @@ async def _readiness(row: VideoQueueRequest, *, before_submit: bool = True) -> s
     return await inspect_owner(owner, before_submit, row.token)
 
 
-async def _config(row: VideoQueueRequest, lane: VideoQueueLane) -> ProviderConfig | None:
+async def _config(row: ProviderAttempt, lane: ProviderLane) -> ProviderConfig | None:
     remembered = _CONFIGS.get(row.token) if row.state in _ACTIVE else None
     if remembered is not None:
         return remembered
     if row.user_id is None:
         return None
-    frozen = FrozenMediaProvider.model_validate_json(row.frozen_json)
-    if row.cancel_requested and row.entity_id is None:
+    frozen = FrozenMediaProvider.model_validate(row.frozen_json)
+    if row.cancel_requested and row.job_id is None:
         async with SESSION_LOCAL() as db:
             current = await resolve_model_config(
                 db,
@@ -373,19 +374,19 @@ async def _config(row: VideoQueueRequest, lane: VideoQueueLane) -> ProviderConfi
 
 async def _finish(request_id: str, status: VideoJobStatus) -> None:
     async with SESSION_LOCAL() as db:
-        row = await db.scalar(select(VideoQueueRequest).where(VideoQueueRequest.token == request_id).with_for_update())
+        row = await db.scalar(select(ProviderAttempt).where(ProviderAttempt.token == request_id).with_for_update())
         if row is None or row.state not in _ACTIVE or row.provider_task_id != status.task_id:
             return
         row.request_json = None
-        if row.cancel_requested or row.user_id is None or row.entity_id is None:
+        if row.cancel_requested or row.user_id is None or row.job_id is None:
             row.state, row.result_json = "cancelled", None
             row.error_reason, row.error_status_code, row.error_message = None, None, None
-            if row.user_id is None or row.entity_id is None:
+            if row.user_id is None or row.job_id is None:
                 row.consumed_at = utc_now()
         else:
             status = replace(status, error=_diagnostic(row.token, status.error))
             row.state = "succeeded" if status.status == "succeeded" else "failed"
-            row.result_json = _STATUS.dump_json(status).decode()
+            row.result_json = _STATUS.dump_python(status, mode="json")
             row.error_reason = video_provider_failure_reason(status.error) if status.status == "failed" else None
             row.error_message = redact_sensitive_text(status.error)
         row.revision += 1
@@ -405,65 +406,65 @@ async def _block(request_id: str, message: str) -> None:
     row, _lane = await _read(request_id)
     if row.provider_task_id:
         async with SESSION_LOCAL() as db:
-            lane = await db.get(VideoQueueLane, row.lane_id, with_for_update=True)
+            lane = await db.get(ProviderLane, row.lane_id, with_for_update=True)
             if lane is not None:
                 lane.not_before = max(lane.not_before or utc_now(), utc_now() + timedelta(seconds=60))
                 await db.commit()
 
 
-async def _select_lane_request(lane_id: int) -> tuple[VideoQueueRequest, VideoQueueLane] | None:
+async def _select_lane_request(lane_id: int) -> tuple[ProviderAttempt, ProviderLane] | None:
     async with SESSION_LOCAL() as db:
-        lane = await db.get(VideoQueueLane, lane_id, with_for_update=True)
+        lane = await db.get(ProviderLane, lane_id, with_for_update=True)
         if lane is None:
             return None
         if lane.not_before and lane.not_before > utc_now():
             return None
         active = await db.scalar(
-            select(VideoQueueRequest)
+            select(ProviderAttempt)
             .where(
-                VideoQueueRequest.lane_id == lane_id,
-                VideoQueueRequest.state.in_(_ACTIVE),
+                ProviderAttempt.lane_id == lane_id,
+                ProviderAttempt.state.in_(_ACTIVE),
             )
-            .order_by(VideoQueueRequest.enqueued_at, VideoQueueRequest.id)
+            .order_by(ProviderAttempt.enqueued_at, ProviderAttempt.id)
             .limit(1),
         )
         if active is not None:
             return active, lane
         queued = await db.scalar(
-            select(VideoQueueRequest)
+            select(ProviderAttempt)
             .where(
-                VideoQueueRequest.lane_id == lane_id,
-                VideoQueueRequest.state.in_(("queued", "rate_limited")),
+                ProviderAttempt.lane_id == lane_id,
+                ProviderAttempt.state.in_(("queued", "rate_limited")),
             )
-            .order_by(VideoQueueRequest.enqueued_at, VideoQueueRequest.id)
+            .order_by(ProviderAttempt.enqueued_at, ProviderAttempt.id)
             .limit(1),
         )
         return (queued, lane) if queued is not None else None
 
 
-async def _claim(row: VideoQueueRequest) -> bool:
+async def _claim(row: ProviderAttempt) -> bool:
     async with SESSION_LOCAL() as db:
-        lane = await db.get(VideoQueueLane, row.lane_id, with_for_update=True)
+        lane = await db.get(ProviderLane, row.lane_id, with_for_update=True)
         if lane is None or (lane.not_before and lane.not_before > utc_now()):
             return False
         active = await db.scalar(
-            select(VideoQueueRequest.id)
+            select(ProviderAttempt.id)
             .where(
-                VideoQueueRequest.lane_id == lane.id,
-                VideoQueueRequest.state.in_(_ACTIVE),
+                ProviderAttempt.lane_id == lane.id,
+                ProviderAttempt.state.in_(_ACTIVE),
             )
             .limit(1),
         )
         first = await db.scalar(
-            select(VideoQueueRequest.id)
+            select(ProviderAttempt.id)
             .where(
-                VideoQueueRequest.lane_id == lane.id,
-                VideoQueueRequest.state.in_(("queued", "rate_limited")),
+                ProviderAttempt.lane_id == lane.id,
+                ProviderAttempt.state.in_(("queued", "rate_limited")),
             )
-            .order_by(VideoQueueRequest.enqueued_at, VideoQueueRequest.id)
+            .order_by(ProviderAttempt.enqueued_at, ProviderAttempt.id)
             .limit(1),
         )
-        current = await db.get(VideoQueueRequest, row.id, with_for_update=True)
+        current = await db.get(ProviderAttempt, row.id, with_for_update=True)
         if (
             active is not None
             or first != row.id
@@ -478,14 +479,14 @@ async def _claim(row: VideoQueueRequest) -> bool:
         return True
 
 
-async def _cooldown(row: VideoQueueRequest, exc: Exception) -> None:
+async def _cooldown(row: ProviderAttempt, exc: Exception) -> None:
     delay = getattr(exc, "retry_after_seconds", None)
     if delay is None:
         delay = min(300, 30 * 2 ** min(row.rate_limit_count, 4))
     retry_at = utc_now() + timedelta(seconds=max(1.0, float(delay)))
     async with SESSION_LOCAL() as db:
-        lane = await db.get(VideoQueueLane, row.lane_id, with_for_update=True)
-        current = await db.get(VideoQueueRequest, row.id, with_for_update=True)
+        lane = await db.get(ProviderLane, row.lane_id, with_for_update=True)
+        current = await db.get(ProviderAttempt, row.id, with_for_update=True)
         if lane is None or current is None or current.state != "submitting":
             return
         lane.not_before = max(lane.not_before or retry_at, retry_at)
@@ -504,19 +505,19 @@ class _RemoteCancelled(Exception):
 
 async def _confirm_cancelled(request_id: str, task_id: str) -> None:
     async with SESSION_LOCAL() as db:
-        row = await db.scalar(select(VideoQueueRequest).where(VideoQueueRequest.token == request_id).with_for_update())
+        row = await db.scalar(select(ProviderAttempt).where(ProviderAttempt.token == request_id).with_for_update())
         if row is None or row.state not in _ACTIVE or row.provider_task_id != task_id:
             return
         row.state, row.request_json, row.result_json = "cancelled", None, None
         row.error_reason, row.error_status_code, row.error_message = None, None, None
-        if row.user_id is None or row.entity_id is None:
+        if row.user_id is None or row.job_id is None:
             row.consumed_at = utc_now()
         row.revision += 1
         row.updated_at = utc_now()
         await db.commit()
 
 
-async def _poll(row: VideoQueueRequest, config: ProviderConfig) -> None:
+async def _poll(row: ProviderAttempt, config: ProviderConfig) -> None:
     provider = build_provider(config, VideoGenProvider)
 
     async def before_poll() -> None:
@@ -618,9 +619,9 @@ async def _run_lane(lane_id: int) -> None:
         if current.pause_requested or readiness == "paused":
             await _change(row.token, expected=("claimed",), state="paused")
             return
-        request = _REQUEST.validate_json(current.request_json or "")
+        request = _REQUEST.validate_python(current.request_json or {})
         async with SESSION_LOCAL() as db:
-            claimed = await db.get(VideoQueueRequest, row.id, with_for_update=True)
+            claimed = await db.get(ProviderAttempt, row.id, with_for_update=True)
             if claimed is None or claimed.state != "claimed":
                 return
             if claimed.cancel_requested or claimed.pause_requested:
@@ -726,7 +727,7 @@ async def _run_lane(lane_id: int) -> None:
 
 async def _resume_paused() -> None:
     async with SESSION_LOCAL() as db:
-        rows = list(await db.scalars(select(VideoQueueRequest).where(VideoQueueRequest.state == "paused")))
+        rows = list(await db.scalars(select(ProviderAttempt).where(ProviderAttempt.state == "paused")))
     for row in rows:
         try:
             readiness = await _readiness(row)
@@ -758,9 +759,9 @@ async def _dispatch() -> None:
             async with SESSION_LOCAL() as db:
                 lane_ids = list(
                     await db.scalars(
-                        select(VideoQueueRequest.lane_id)
+                        select(ProviderAttempt.lane_id)
                         .where(
-                            VideoQueueRequest.state.in_(_ACTIVE + ("queued", "rate_limited")),
+                            ProviderAttempt.state.in_(_ACTIVE + ("queued", "rate_limited")),
                         )
                         .distinct(),
                     ),
@@ -800,21 +801,21 @@ async def prepare_video_queue() -> None:
     try:
         async with SESSION_LOCAL() as db:
             await db.execute(
-                update(VideoQueueRequest)
-                .where(VideoQueueRequest.state == "claimed")
+                update(ProviderAttempt)
+                .where(ProviderAttempt.state == "claimed")
                 .values(
                     state="queued",
-                    revision=VideoQueueRequest.revision + 1,
+                    revision=ProviderAttempt.revision + 1,
                 ),
             )
             await db.execute(
-                update(VideoQueueRequest)
-                .where(VideoQueueRequest.state == "submitting")
+                update(ProviderAttempt)
+                .where(ProviderAttempt.state == "submitting")
                 .values(
                     state="blocked",
                     error_reason="result_unknown",
                     error_message="视频提交中断，等待核对原任务",
-                    revision=VideoQueueRequest.revision + 1,
+                    revision=ProviderAttempt.revision + 1,
                 ),
             )
             await db.commit()
@@ -865,25 +866,26 @@ async def resume_user_video_queue(user_id: int) -> None:
 
 
 async def cleanup_video_queue() -> None:
+    """按批清理已确认且业务已结算的尝试，活动及未知占用持续保留。"""
     async with SESSION_LOCAL() as db:
-        rows = list(
-            await db.scalars(
-                select(VideoQueueRequest).where(
-                    VideoQueueRequest.state.in_(_TERMINAL),
-                    (VideoQueueRequest.kind == "action")
-                    | (VideoQueueRequest.consumed_at < utc_now() - timedelta(days=7)),
-                ),
-            ),
-        )
-    for row in rows:
-        if await _readiness(row, before_submit=False) != "gone":
-            continue
-        async with SESSION_LOCAL() as db:
-            await db.execute(
-                delete(VideoQueueRequest).where(
-                    VideoQueueRequest.id == row.id,
-                    VideoQueueRequest.revision == row.revision,
-                    VideoQueueRequest.state.in_(_TERMINAL),
-                ),
+        settled = await settled_job_ids(db)
+        released = ProviderAttempt.job_id.is_(None)
+        if settled:
+            released = released | ProviderAttempt.job_id.in_(settled)
+        await db.execute(
+            delete(ProviderAttempt).where(
+                released,
+                ProviderAttempt.capability == "video",
+                ProviderAttempt.state.in_(_TERMINAL),
+                ProviderAttempt.consumed_at < utc_now() - timedelta(days=7),
             )
-            await db.commit()
+        )
+        if settled:
+            await db.execute(
+                delete(ProviderAttempt).where(
+                    ProviderAttempt.job_id.in_(settled),
+                    ProviderAttempt.capability == "image",
+                    ProviderAttempt.enqueued_at < utc_now() - timedelta(days=90),
+                )
+            )
+        await db.commit()

@@ -13,7 +13,7 @@ from infrastructure.async_io import cancel_and_wait
 from infrastructure.correlation import begin_local_scope
 from infrastructure.database import session_scope
 from infrastructure.logger import get_logger
-from infrastructure.text import safe_json_loads, utc_now
+from infrastructure.text import utc_now
 from sqlalchemy import Row, and_, or_, select, update
 
 from runtime.background import BackgroundTask
@@ -303,8 +303,7 @@ async def _dispatch_claimed_batch() -> tuple[int, bool]:
 
     backpressure = False
     handled_delivered_ids: list[int] = []
-    for event_id, event_type, payload_str, user_id, _, retry_count in claimed:
-        payload = safe_json_loads(payload_str)
+    for event_id, event_type, payload, user_id, _, retry_count in claimed:
         if payload is None:
             logger.warning("Skipping and failing unparseable WSEvent", extra={"event_id": event_id})
             await _mark_event_failure(event_id, retry_count, error="Unparseable JSON payload")

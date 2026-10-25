@@ -5,7 +5,7 @@ from datetime import date
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-DiaryDelete = Callable[[AsyncSession, int, date], Awaitable[str | None]]
+DiaryDelete = Callable[[AsyncSession, int, date], Awaitable[int | None]]
 _delete_diary: DiaryDelete | None = None
 
 
@@ -14,7 +14,7 @@ def set_diary_delete_handler(handler: DiaryDelete) -> None:
     _delete_diary = handler
 
 
-async def delete_diary_record(db: AsyncSession, user_id: int, entry_date: date) -> str | None:
+async def delete_diary_record(db: AsyncSession, user_id: int, entry_date: date) -> int | None:
     if _delete_diary is None:
         raise RuntimeError("Diary deletion has not been registered")
     return await _delete_diary(db, user_id, entry_date)

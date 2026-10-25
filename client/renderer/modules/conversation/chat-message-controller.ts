@@ -7,8 +7,9 @@ import type {
   VideoQueueState
 } from '@protocol'
 
+import { isResourceId } from '../../../../shared/resource-id'
+
 import { chatDisplayText } from './chat-display-text'
-import { isPositiveInt } from './chat-message-rules'
 import type { ConversationState } from './chat-runtime-state'
 import type { ChatMessageBody, ChatMessageListItem } from './chat-runtime-types'
 import { nextChatMessageId } from './conversation-state'
@@ -30,12 +31,12 @@ export function createChatMessageController(state: ConversationState) {
   const mediaUpdates = new Map<string, CompanionMediaBubble>()
   const videoQueueUpdates = new Map<string, VideoQueueState | null>()
 
-  const mediaUpdateKey = (messageId: number, mediaId: string): string => `${messageId}:${mediaId}`
+  const mediaUpdateKey = (messageId: string, mediaId: string): string => `${messageId}:${mediaId}`
 
   // 逐泡交付中的回复组（首泡行 id）：后台交付插入与完成帧对账的定位锚点。
-  let inflightReply: { messageId: number; firstId: string } | null = null
+  let inflightReply: { messageId: string; firstId: string } | null = null
 
-  function companionBubbleBody(bubble: CompanionBubble, messageId?: number): Partial<ChatMessageBody> {
+  function companionBubbleBody(bubble: CompanionBubble, messageId?: string): Partial<ChatMessageBody> {
     if (bubble.type === 'link') {
       return { text: `${bubble.title}\n${bubble.url}`, replyType: 'link', replyLink: bubble }
     }
@@ -109,7 +110,7 @@ export function createChatMessageController(state: ConversationState) {
 
   // 历史可能先于落库事件返回；活气泡替换同一后端消息的快照，沿用历史位置。
   function reconcilePersistedMessages(list: ChatMessageListItem[], boundIds: Set<string>): void {
-    const groups = new Map<number, ChatMessageListItem[]>()
+    const groups = new Map<string, ChatMessageListItem[]>()
 
     for (const item of list) {
       if (boundIds.has(item.id) && item.backendMessageId !== undefined) {
@@ -119,7 +120,7 @@ export function createChatMessageController(state: ConversationState) {
       }
     }
 
-    const inserted = new Set<number>()
+    const inserted = new Set<string>()
 
     const merged = list.flatMap(item => {
       const group = item.backendMessageId === undefined ? undefined : groups.get(item.backendMessageId)
@@ -144,9 +145,9 @@ export function createChatMessageController(state: ConversationState) {
     $chatMessageList.set(merged)
   }
 
-  function bindTrailingAssistantMessageId(messageId: number): void {
+  function bindTrailingAssistantMessageId(messageId: string): void {
     // bubble.break 会拆出多段助手气泡，但 DB 只有一行；同一 id 挂到上次用户之后所有未绑定的普通助手行。
-    if (!isPositiveInt(messageId)) {
+    if (!isResourceId(messageId)) {
       return
     }
 
@@ -171,7 +172,7 @@ export function createChatMessageController(state: ConversationState) {
   }
 
   /** 追加一行本地状态行（如 `status_command_result`、`compress_summary`），渲染层按 subtype 显示为居中 pill 或摘要卡片。 */
-  function pushStatusPill(subtype: string, text: string, backendMessageId?: number): void {
+  function pushStatusPill(subtype: string, text: string, backendMessageId?: string): void {
     if (
       backendMessageId !== undefined &&
       $chatMessageList.get().some(item => item.backendMessageId === backendMessageId)
@@ -352,7 +353,7 @@ export function createChatMessageController(state: ConversationState) {
   }
 
   // 同消息气泡组内按 replyIndex 空位插入（完成帧对账补建）；无组时落到在途回复位置。
-  function companionBubbleInsertAt(list: ChatMessageListItem[], messageId: number, index: number): number {
+  function companionBubbleInsertAt(list: ChatMessageListItem[], messageId: string, index: number): number {
     let groupStart = -1
     let insertAt = -1
 
@@ -378,7 +379,7 @@ export function createChatMessageController(state: ConversationState) {
 
   function insertCompanionBubbleRow(
     list: ChatMessageListItem[],
-    messageId: number,
+    messageId: string,
     index: number,
     bubble: CompanionBubble,
     extras?: { reasoning?: string; proactive?: boolean }
@@ -405,7 +406,7 @@ export function createChatMessageController(state: ConversationState) {
   }
 
   // 已存在的气泡按补丁处理（与 message.voice 同语义）；返回是否命中。
-  function patchCompanionBubble(messageId: number, index: number, bubble: CompanionBubble): boolean {
+  function patchCompanionBubble(messageId: string, index: number, bubble: CompanionBubble): boolean {
     for (const item of $chatMessageList.get()) {
       const body = $chatMessageBodies.get()[item.id]
 
@@ -428,7 +429,7 @@ export function createChatMessageController(state: ConversationState) {
   }
 
   // 逐泡交付（message.bubble）：按到达顺序追加单个气泡，重复到达按补丁处理；首个气泡替换流式等待气泡。
-  function appendCompanionBubble(messageId: number, index: number, bubble: CompanionBubble): void {
+  function appendCompanionBubble(messageId: string, index: number, bubble: CompanionBubble): void {
     if (patchCompanionBubble(messageId, index, bubble)) {
       return
     }
@@ -458,7 +459,7 @@ export function createChatMessageController(state: ConversationState) {
 
   function finalizeCompanionReply(
     bubbles: CompanionBubble[],
-    messageId: number,
+    messageId: string,
     reasoning?: string,
     proactive = false
   ): void {
@@ -561,7 +562,7 @@ export function createChatMessageController(state: ConversationState) {
     }
   }
 
-  function updateMediaBubble(messageId: number, mediaId: string, bubble: CompanionMediaBubble): void {
+  function updateMediaBubble(messageId: string, mediaId: string, bubble: CompanionMediaBubble): void {
     if (bubble.media_id !== mediaId) {
       return
     }
@@ -591,7 +592,7 @@ export function createChatMessageController(state: ConversationState) {
     }
   }
 
-  function updateVoiceBubble(messageId: number, index: number, bubble: CompanionBubble): void {
+  function updateVoiceBubble(messageId: string, index: number, bubble: CompanionBubble): void {
     if (bubble.type !== 'voice') {
       return
     }
@@ -628,7 +629,7 @@ export function createChatMessageController(state: ConversationState) {
   }: {
     error?: string
     cancelled?: boolean
-    retryMessageId?: number
+    retryMessageId?: string
     beforePending?: boolean
   } = {}): void {
     inflightReply = null

@@ -3,6 +3,7 @@ from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 from infrastructure.ai.speech_contracts import SPEECH_STYLE_ADAPTER, SpeechSegment, SpeechStyle
+from infrastructure.api_ids import ResourceId
 from infrastructure.assets.paths import parse_companion_asset_path
 from pydantic import BaseModel, ConfigDict, Field, RootModel, StringConstraints, field_validator, model_validator
 
@@ -59,7 +60,7 @@ class LinkBubbleInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["link"]
-    topic_id: int = Field(gt=0, strict=True)
+    topic_id: ResourceId = Field(gt=0, strict=True)
 
 
 class LinkBubble(LinkBubbleInput):
@@ -96,7 +97,7 @@ class MediaBubble(MediaBubbleInput):
     error: str | None = None
     # 服务端绑定，不下发模型也不由客户端决定归属。
     goal_id: str = Field(min_length=1, max_length=128)
-    job_id: int | None = Field(default=None, gt=0)
+    job_id: ResourceId | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def validate_asset_state(self) -> "MediaBubble":
@@ -148,7 +149,7 @@ class CompanionReply(BaseModel):
     audio_directory: str | None = Field(default=None, pattern=r"^[0-9]{8}$")
     # 来源快照由服务端冻结；模型等待跨午夜后仍可提交已获准的当前回复。
     topic_context_at: datetime | None = None
-    used_topic_ids: list[Annotated[int, Field(gt=0, strict=True)]] = Field(default_factory=list)
+    used_topic_ids: list[Annotated[ResourceId, Field(gt=0, strict=True)]] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_topic_references(self) -> "CompanionReply":
@@ -170,15 +171,15 @@ class CompanionReply(BaseModel):
         return value
 
     @classmethod
-    def load_saved_snapshot(cls, reply_json: str, content: str) -> tuple["CompanionReply", CompanionReplyInput]:
+    def load_saved_snapshot(cls, reply_json: dict, content: str) -> tuple["CompanionReply", CompanionReplyInput]:
         """读取交付快照并核对其与原文一致；返回交付态与原文解析结果。"""
-        reply = cls.model_validate_json(reply_json)
+        reply = cls.model_validate(reply_json)
         source = CompanionReplyInput.model_validate_json(content)
         reply._compare_source(source)
         return reply, source
 
     @classmethod
-    def from_saved_snapshot(cls, reply_json: str, content: str) -> "CompanionReply":
+    def from_saved_snapshot(cls, reply_json: dict, content: str) -> "CompanionReply":
         """读取交付快照并核对其与原文的气泡、正文及演绎一致。"""
         return cls.load_saved_snapshot(reply_json, content)[0]
 

@@ -6,8 +6,7 @@ JSONRPC_METHOD_NOT_FOUND: int = -32601
 JSONRPC_INVALID_PARAMS: int = -32602
 JSONRPC_INTERNAL_ERROR: int = -32603
 
-# Integer 主键进入数据库前的输入上限。
-POSTGRES_INT4_MAX: int = 2**31 - 1
+# BIGINT 主键进入数据库前的输入上限。
 POSTGRES_INT8_MAX: int = 2**63 - 1
 
 # LLM 预算、温度边界与标题/摘要回退值。

@@ -1,7 +1,35 @@
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, RootModel
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    JsonValue,
+    PlainSerializer,
+    RootModel,
+    WithJsonSchema,
+)
+
+
+def _account_id(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int | str):
+        raise ValueError("invalid account id")
+    if isinstance(value, str) and (not value.isascii() or not value.isdecimal() or value.startswith("0")):
+        raise ValueError("invalid account id")
+    result = int(value)
+    if not 0 < result < 2**63:
+        raise ValueError("account id out of range")
+    return result
+
+
+AccountId = Annotated[
+    int,
+    BeforeValidator(_account_id),
+    PlainSerializer(str, return_type=str, when_used="json"),
+    WithJsonSchema({"type": "string", "pattern": "^[1-9][0-9]*$"}),
+]
 
 
 class RpcError(Exception):
@@ -16,7 +44,7 @@ class RpcError(Exception):
 
 class SkillScopeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    user_id: int = Field(gt=0, strict=True)
+    user_id: AccountId
     system_preset_id: Literal["companion", "copywriter", "language_teacher", "general"]
 
 

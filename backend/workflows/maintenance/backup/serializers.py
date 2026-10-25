@@ -18,54 +18,66 @@ CONVERSATION_TABLES = frozenset(
     {
         "conversations",
         "messages",
+        "message_assets",
+        "message_voice_refs",
         "companion_topic_batches",
         "companion_topics",
         "companion_topic_feedback",
         "companion_topic_usages",
-    },
+        "video_gen_jobs",
+    }
 )
-VISUALS_TABLES = frozenset({"visual_items", "visual_jobs", "visual_presentations"})
+VISUALS_TABLES = frozenset(
+    {
+        "visual_items",
+        "visual_versions",
+        "visual_version_assets",
+        "visual_jobs",
+        "visual_presentations",
+        "visual_playbacks",
+    }
+)
 ACTION_LIBRARY_TABLES = VISUALS_TABLES | {
     "companion_outfits",
     "action_definitions",
+    "companion_scenes",
+    "scene_jobs",
+    "appearance_assets",
+    "avatar_assets",
+    "personas",
+    "character_analysis_jobs",
+    "companion_fullbody_candidates",
 }
-POST_TABLES = frozenset({"companion_posts", "companion_post_comments"})
-IDENTITY_TABLES = frozenset({"personas", "avatar_assets", "companion_character_cards"})
-# 导入勾选粒度：分组 ID → 表；Admin 与 API 共用，不在页面里再维护表名。
+POST_TABLES = frozenset(
+    {"companion_entries", "entry_links", "entry_assets", "entry_comments", "post_publications", "video_gen_jobs"}
+)
 BACKUP_SECTIONS: dict[str, tuple[str, ...]] = {
-    "identity": ("personas", "avatar_assets", "companion_character_cards"),
-    "conversations": (
-        "conversations",
-        "custom_voices",
-        "companion_topic_batches",
-        "companion_topics",
-        "companion_topic_feedback",
-        "messages",
-        "companion_topic_usages",
+    "identity": (
+        "personas",
+        "avatar_assets",
+        "companion_outfits",
+        "companion_fullbody_candidates",
+        "character_analysis_jobs",
+        "appearance_assets",
     ),
-    "memories": ("memories",),
-    "posts": ("companion_posts", "companion_post_comments"),
-    "diary": ("companion_diary_entries",),
-    # 衣柜、动作素材与影像共用同一组冻结引用，任一分组都会恢复整组。
-    "wardrobe": tuple(table for table in TABLES if table in ACTION_LIBRARY_TABLES),
-    "scenes": ("companion_scenes",),
-    "visuals": tuple(table for table in TABLES if table in ACTION_LIBRARY_TABLES),
-    "automation": ("cron_jobs", "companion_intents"),
+    "conversations": tuple(sorted(CONVERSATION_TABLES)),
+    "memories": ("memories", "memory_evidence", "memory_revisions", "memory_fingerprints"),
+    "entries": tuple(sorted(POST_TABLES)),
+    "wardrobe": tuple(sorted(ACTION_LIBRARY_TABLES)),
+    "scenes": tuple(sorted(ACTION_LIBRARY_TABLES)),
+    "visuals": tuple(sorted(ACTION_LIBRARY_TABLES)),
+    "automation": (
+        "cron_jobs",
+        "companion_intents",
+        "life_pursuits",
+        "life_steps",
+        "life_events",
+        "life_states",
+        "pursuit_evidence",
+    ),
     "settings": ("user_model_configs", "custom_voices", "user_settings", "user_preferences"),
 }
 BACKUP_SECTION_IDS = tuple(BACKUP_SECTIONS)
-# 选中即整组恢复，不允许落成半个身份/会话/影像组。
-ATOMIC_SECTION_GROUPS: tuple[frozenset[str], ...] = (
-    IDENTITY_TABLES,
-    CONVERSATION_TABLES,
-    ACTION_LIBRARY_TABLES,
-    POST_TABLES,
-)
-# 预检时身份三表成组写入的顺序：先头像，再角色卡与人设。
-IDENTITY_GROUP: tuple[str, ...] = ("avatar_assets", "companion_character_cards", "personas")
-IDENTITY_INCOMPLETE_REASON = "基础身份必须同时包含人设、头像与角色卡。"
-IDENTITY_BLOCKED_REASON = "目标现有影像等仍引用身份，无法安全覆盖基础身份；请一并恢复这些类别，或先处理引用。"
-IDENTITY_DEPENDENT_REASON = "缺少可映射的基础身份，无法恢复此类别。"
 
 
 def tables_for_sections(sections: Sequence[str] | None) -> tuple[frozenset[str], list[str]]:
@@ -85,16 +97,26 @@ def tables_for_sections(sections: Sequence[str] | None) -> tuple[frozenset[str],
     tables: set[str] = set()
     for item in normalized:
         tables.update(BACKUP_SECTIONS[item])
+    # 共享资产和任务记录采用合并恢复，不清除其他类别正在使用的记录。
+    tables.update(name for name in ("assets", "jobs", "job_requests", "job_assets") if name in TABLES)
+    changed = True
+    while changed:
+        before = set(tables)
+        for table in tuple(tables):
+            if table in BACKUP_REGISTRY.names:
+                contributor = BACKUP_REGISTRY.table(table)
+                tables.update(
+                    target
+                    for column, target in contributor.references.items()
+                    if target in TABLES and not contributor.column_nullable(column)
+                )
+        changed = before != tables
     return frozenset(tables), normalized
 
 
 @cache
 def _columns(table: str) -> tuple[str, ...]:
     return tuple(column.name for column in BACKUP_REGISTRY.table(table).columns)
-
-
-async def serialize_rows(db: AsyncSession, table: str, user_id: int, *, batch_size: int = 1000) -> list[dict[str, Any]]:
-    return await BACKUP_REGISTRY.table(table).export(db, user_id, batch_size=batch_size)
 
 
 def _build_payload(table: str, raw: dict[str, Any], context: BackupContext) -> dict[str, Any]:
@@ -114,20 +136,24 @@ def _build_payload(table: str, raw: dict[str, Any], context: BackupContext) -> d
         elif column.kind == "date":
             payload[column.name] = date.fromisoformat(value)
     payload = context.rewriter.rewrite(payload)
-    for key, ref_table in contributor.foreign_keys.items():
+    for key, ref_table in contributor.references.items():
+        if key == contributor.identity_name:
+            continue
         value = raw.get(key)
-        mapped = context.id_map.get(ref_table, {}).get(str(value)) if value is not None else None
-        if (
-            value is not None
-            and mapped is None
-            and (contributor.strict_references or ref_table in context.id_map and key != "avatar_id")
-        ):
-            raise ValueError(f"Missing {ref_table} reference in {table}.{key}")
+        if value is None:
+            payload[key] = None
+            continue
+        mapped = context.id_map.get(ref_table, {}).get(str(value))
+        if mapped is None:
+            if contributor.column_nullable(key):
+                context.rewriter.pending_references.append((table, str(raw["id"]), key, ref_table, str(value)))
+            else:
+                raise ValueError(f"Missing {ref_table} reference in {table}.{key}")
         payload[key] = mapped
     if contributor.prepare_payload is not None:
         contributor.prepare_payload(raw, payload, context)
-    if table not in {"messages", "user_preferences"}:
-        payload["user_id"] = context.user_id
+    if contributor.ownership_column is not None:
+        payload[contributor.ownership_column] = context.user_id
     return payload
 
 

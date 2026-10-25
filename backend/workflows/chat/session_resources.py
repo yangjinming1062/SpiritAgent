@@ -3,8 +3,7 @@
 from dataclasses import asdict
 from typing import Literal
 
-from features.companion.definition import parse_persona_definition
-from features.companion.visual_state import persona_snapshot
+from features.companion.queries import read_companion_name
 from features.configuration.settings.values import load_user_settings
 from features.conversation.ai_routing import conversation_ai_task
 from features.conversation.schemas import DesktopSessionListResponse, DesktopSessionPatchRequest
@@ -19,7 +18,7 @@ from runtime.conversation import (
     SessionCreateResult,
     SessionRuntimeInfo,
     build_runtime_info,
-    decode_session_settings,
+    copy_session_settings,
     new_runtime_session,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,20 +31,21 @@ async def list_session_resources(
     db: AsyncSession,
     *,
     limit: int = 40,
-    offset: int = 0,
+    cursor: str | None = None,
+    include_total: bool = False,
     min_messages: int = 0,
     archived: Literal["only", "exclude", "include"] = "exclude",
     order: Literal["recent", "created", "messages"] = "recent",
     include_subagents: bool = False,
     query: str | None = None,
 ) -> DesktopSessionListResponse:
-    persona = await persona_snapshot(db, user_id)
-    name = parse_persona_definition(persona.definition_json).get("name", "").strip() if persona else ""
+    name = await read_companion_name(db, user_id)
     return await list_sessions(
         user_id,
         db,
         limit=limit,
-        offset=offset,
+        cursor=cursor,
+        include_total=include_total,
         min_messages=min_messages,
         archived=archived,
         order=order,
@@ -95,7 +95,7 @@ async def patch_session_resource(
     if runtime is not None:
         async with runtime.snapshot_lock:
             conv = await patch_session(user_id, db, session_id, patch)
-            runtime.settings = decode_session_settings(conv.settings_json)
+            runtime.settings = copy_session_settings(conv.settings_json)
     else:
         conv = await patch_session(user_id, db, session_id, patch)
         account = get_account_runtime(user_id)
@@ -104,5 +104,5 @@ async def patch_session_resource(
             # HTTP 写入期间可能由另一设备首次挂载；锁内重读，避免旧响应覆盖较新的设置。
             async with mounted.snapshot_lock:
                 conv = await get_conversation(user_id, str(conv.id))
-                mounted.settings = decode_session_settings(conv.settings_json)
+                mounted.settings = copy_session_settings(conv.settings_json)
     return await session_resource(user_id, conv)

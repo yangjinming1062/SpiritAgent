@@ -25,6 +25,7 @@
 | 正式资产写入、签名与回收 | [asset_store.py](infrastructure/assets/asset_store.py)、[资产领域](features/assets/README.md) |
 | 桌面与 Runner 更新分发 | [update.py](entrypoints/http/routes/update.py)、[update_releases.py](features/updates/releases.py) |
 | 服务更新（后端一键更新） | [updater/](updater/)、[service_updater.py](infrastructure/web/service_updater.py)、[service_operations.py](features/updates/service_operations.py)；接入步骤见[服务更新](#服务更新) |
+| 数据库设计、关系与查询性能 | [数据库设计](../docs/DATABASE.md)、[ORM 注册](bootstrap/models.py)、[完整基线](alembic/versions/0001_baseline.py) |
 | 备份与覆盖恢复 | [admin.py](entrypoints/http/routes/admin.py)、[backup](workflows/maintenance/backup/)、[maintenance.py](workflows/maintenance/user.py) |
 | 提示词、装配与任务恢复 | [提示词索引](#提示词定位)、[bootstrap/lifecycle.py](bootstrap/lifecycle.py) |
 
@@ -38,13 +39,15 @@
 | `features` | 各业务的数据、规则、公开操作与查询、提示词、持久任务状态及恢复 |
 | `runtime` | 账户回合与锁、连接和调用关联、任务监督、事件交付与公共运行时类型 |
 | `infrastructure` | 数据库、配置加载、网络、供应商、文件和媒体处理 |
-| `alembic` | 当前数据库基线与后续结构、数据迁移 |
+| `alembic` | 完整空库基线与结构版本入口 |
 
 ### 模块依赖边界
 
 允许的依赖方向：`entrypoints → workflows / features / runtime / infrastructure`，`workflows → features / runtime / infrastructure`，`features → runtime / infrastructure`，`runtime → infrastructure`。反向一律禁止：基础设施不导入业务与运行时，业务不导入流程与协议入口，流程不导入入口与装配，入口不导入装配。双向协调放入流程，反向通知使用 bootstrap 登记的明确回调。各模块直接从能力所属文件导入，不经包级 facade。
 
 ORM 留在数据所属模块。跨模块读取使用冻结 DTO 或只读快照，写入使用公开操作；普通用例管理短事务，需原子完成的跨模块流程通过各模块提供的事务内操作共享同一事务。供应商等待始终在事务外。Pydantic 用于校验结构，dataclass 用于进程内值对象。
+
+[JobRecord](infrastructure/job_models.py) 是共享任务存储契约：业务持久模型可继承并拥有自己的 joined-table 详情，jobs 模块负责通用任务操作。此基础类型依赖不允许访问另一业务的详情 ORM。动态和日记正文、评论及附件统一归 entries；资产、任务、事实与投影的完整关系见 [数据库设计](../docs/DATABASE.md)。
 
 业务实现依赖保持单向；例如动作读取外观和媒体，动态使用媒体并读取陪伴/记忆，陪伴读取记忆和会话证据。媒体不读取动态表或修改消息，分别通过显式任务关联和事务内结果处理器交付。角色就绪和影像动作等协作端口由 [registrations.py](bootstrap/registrations.py) 装配。纯 DTO、枚举与静态词表不承担业务操作。
 
@@ -66,9 +69,11 @@ ORM 留在数据所属模块。跨模块读取使用冻结 DTO 或只读快照�
 
 运营参数由 [system_settings.py](features/configuration/system_settings.py) 管理：串行合并候选值 → 整批校验 → 事务提交 → 原位更新 `SETTINGS` → 刷新日志或连接池。数据库动态值在启动时再次覆盖环境变量和 TOML；启动专用键不能从后台修改。校验或提交失败不改运行时，非法持久值中止启动。保存接口执行数值边界校验，管理页输入范围只作提示。
 
-`system_settings` 和点键 `user_settings` 逐值 JSON 编码。用户设置只经 [settings/values.py](features/configuration/settings/values.py) 读写，消费方直接使用解码值。
+用户点键配置只经 [settings/values.py](features/configuration/settings/values.py) 批量读写；值编码和模型配置的存储边界见 [配置字段字典](../docs/DATABASE_FIELDS.md#账户配置与设备身份)。
 
-启动自动执行 `alembic upgrade head`，[完整基线](alembic/versions/0003_baseline.py) 的修订号为 `0003`，只定义当前结构、扩展、索引与 outbox 唤醒触发器。空库直接建表；已处于该修订的数据库不执行结构或数据操作。结构变更新建迁移，比对 ORM 类型、默认值与索引；autogenerate 不能完整核对部分索引的条件、方法及操作符类。基线降级会删除业务表，仅用于空库验证；生产恢复使用完整备份。
+[0001 完整基线](alembic/versions/0001_baseline.py) 只用于空库，建立表、扩展、约束、索引、会话统计与 outbox 唤醒触发器。使用该基线重新部署时，由运营者清空并重建目标数据库；启动执行 `alembic upgrade head`，不删除数据库、不转换历史结构或读取旧备份。`system_settings` 保留原表名、列结构和逐值 JSON 文本编码，由运营者人工导入已备份配置，其余应用数据从空库开始。
+
+模型与基线同步维护；核对内容包括类型、默认值、外键、索引谓词、操作符类和触发器，不能只依赖 autogenerate。基线降级仅用于隔离空库验收。
 
 ### 装配与启停
 
@@ -84,7 +89,7 @@ HTTP、调度与资产清理共用 [user_maintenance.py](runtime/user_maintenanc
 
 ### 事件与交付
 
-事务内异步通知经 `emit_ws_event` 写 outbox，聊天流另走会话 emitter。持久化与端到端恢复语义归 PROTOCOL；实现入口为 [event_store/loop.py](runtime/events/loop.py)。
+事务内异步通知经 `emit_ws_event` 写 outbox，聊天流另走会话 emitter。持久化与端到端恢复语义归 PROTOCOL；实现入口为 [events/loop.py](runtime/events/loop.py)。
 
 回路按本进程持有的桌面或远程 dispatcher 认领事件；只有远程连接时，依据[事件契约](entrypoints/desktop/event_contracts.py)的受众筛选精确事件名称，桌面执行与主动回合指令仍要求桌面连接（含断线宽限）。内部处理器派生任务即标记送达，投递失败按预算退避并转死信。LISTEN 专线探活、重连与周期扫描共同唤醒；[outbox_gc.py](runtime/events/outbox_gc.py) 不过期清理普通离线待投递行，过期主动回合请求另行处理。
 
@@ -98,7 +103,7 @@ HTTP、调度与资产清理共用 [user_maintenance.py](runtime/user_maintenanc
 
 覆盖恢复和删除用户先经 `user.py` 阻止新操作并通过统一生命周期登记收敛在途任务，完成后重读持久状态恢复可继续任务。用户文件只落正式资产 `companion-assets/{user_id}/`、会话附件 `desktop-attachments/{session_id}/`、带用户元数据的 `temp-media/`；新增路径须同时纳入删除和备份。删除正式资产或会话附件失败保留用户行供重试，临时文件另由逐文件和过期清理兜底。备份类别、密钥范围及覆盖规则统一见 PROTOCOL。
 
-[backup.py](bootstrap/backup.py) 显式登记各模块的表贡献者；所属模块提供导出、校验、恢复和引用重建，备份流程消费描述与快照，不直接操作业务 ORM。影像关联与日记索引由所属模块恢复。
+[backup.py](bootstrap/backup.py) 显式登记各模块的物理表贡献者；备份按依赖排序批量写入，任务详情复用共享父表主键，循环外键在完整关系图写入后连接。所选范围先预检再原子恢复，资产库存及任务身份合并保留；影像快照和日记索引由所属模块重建。备份流程只消费贡献契约，不直接访问业务 ORM。
 
 ## 业务调度
 
@@ -118,7 +123,7 @@ HTTP、调度与资产清理共用 [user_maintenance.py](runtime/user_maintenanc
 
 ## 供应商与网络错误
 
-通用回退、安全重试与结果未知归 [模型失败与重试预算](../docs/PROTOCOL.md#模型失败与重试预算)。实现分别在 [llm_fallback.py](infrastructure/ai/llm_fallback.py)、[error_classifier.py](infrastructure/ai/error_classifier.py)、[providers/http.py](infrastructure/ai/providers/http.py)；媒体质量链由 [media_chain.py](features/media/chain.py) 管理，选材与恢复归 PIPELINE。
+通用回退、安全重试与结果未知归 [模型失败与重试预算](../docs/PROTOCOL.md#模型失败与重试预算)。实现分别在 [llm_fallback.py](infrastructure/ai/llm_fallback.py)、[error_classifier.py](infrastructure/ai/error_classifier.py)、[providers/http.py](infrastructure/ai/providers/http.py)；媒体质量链由 [chain.py](features/media/chain.py) 管理，选材与恢复归 PIPELINE。
 
 出站网络层见 [network.py](infrastructure/network.py)。模型、媒体下载、Tavily、Brave HTTP 请求按协议读取 `HTTP_PROXY` / `HTTPS_PROXY`，回退 `ALL_PROXY`；进程环境优先于 `.env`。`NO_PROXY` 支持域名、IP、端口、`*` 和 IPv4 / IPv6 CIDR，网段只匹配 URL 中的 IP；模板已排除内网和 Tailscale，短名称或自定义域名需自行添加。DDGS 的显式代理使用 `DDGS_PROXY`。
 
@@ -183,7 +188,7 @@ Caddy 自动签发续期证书并代理 HTTP 与 WS；Backend 的明文 10620 �
 
 - ComfyUI 自动匹配 Qwen 权重，卡片要求见 [AI 配置契约](../docs/PROTOCOL.md#ai-配置与密钥)；图像能力与长等待归 PIPELINE。
 - LLM 支持 Responses API；能力卡片须填写已部署模型 ID 、模型服务实际加载的上下文窗口与输出 Token 上限，供压缩、调用预算和会话容量展示使用。适配器按地址缓存 `/props` 探测结果；无工具结构输出中，llama.cpp 使用 `response_format.json_schema`，Strata 使用 `text.format`。两者按会话或任务的推理强度下发 `reasoning.effort`（`none` 关闭思考），未识别服务不下发推理参数和原生结构约束。其余由提示词与应用校验约束。归一化温度按 1:1 下发（界面 0.7 即 0.7），本地模型的推荐值多在 0–1。
-- embedding 固定使用记忆向量任务配置的模型；链为空、无效或调用失败时记忆用关键词召回。维度适配见 [embedding.py](infrastructure/ai/providers/local/embedding.py)：仅默认模型允许 MRL 截断，短向量归一化补零，其他超宽向量拒绝。向量空间与补齐规则见 [记忆读取与恢复](features/memory/README.md#读取召回与恢复)。
+- embedding 使用记忆向量任务配置的模型；链为空、无效或调用失败时记忆用关键词召回。[适配器](infrastructure/ai/providers/local/embedding.py)保留供应商原生维度，校验向量元素有限、向量非零且批次同宽。检索匹配模型标识、维度和内容版本，不截断或补零到固定宽度；向量空间与补齐规则见 [记忆读取与恢复](features/memory/README.md#读取召回与恢复)。
 
 ### 运营参数
 

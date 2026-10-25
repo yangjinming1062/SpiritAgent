@@ -91,10 +91,6 @@ export function extractMessageContent(m: SessionMessage): Pick<ChatMessageBody, 
   return { text: texts.join('\n').trim(), attachments: attachments.length ? attachments : undefined }
 }
 
-export function isPositiveInt(value: unknown): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value > 0
-}
-
 export function splitUserText(text: string): string[] {
   return text
     .split(/\r?\n(?:[ \t]*\r?\n)+/)

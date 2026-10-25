@@ -15,6 +15,7 @@ import {
   deletePostComment,
   hydratePosts,
   loadMorePosts,
+  loadPostComments,
   markPostsRead,
   type PostCommentEntry,
   retryPostReply
@@ -190,7 +191,14 @@ function PostsContent({
                 url={m.mediaUrl}
               />
             ) : null}
-            <PostComments comments={m.comments} companionName={companionName} postId={m.id} />
+            <PostComments
+              commentCount={m.commentCount}
+              comments={m.comments}
+              commentsLoaded={m.commentsLoaded}
+              companionName={companionName}
+              hasMore={Boolean(m.commentsNextCursor)}
+              postId={m.id}
+            />
           </article>
         )
       })}
@@ -266,13 +274,17 @@ function PostBody({
 
 function PostComments(props: {
   comments: PostCommentEntry[]
+  commentCount: number
+  commentsLoaded: boolean
+  hasMore: boolean
   companionName: string
   postId: string
 }): React.JSX.Element {
-  const { comments, companionName, postId } = props
+  const { comments, commentCount, commentsLoaded, hasMore, companionName, postId } = props
   const t = useStrings().living.posts
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
+  const [loadingComments, setLoadingComments] = useState(false)
 
   const submit = async (): Promise<void> => {
     const content = draft.trim()
@@ -318,6 +330,25 @@ function PostComments(props: {
           }}
         />
       ))}
+      {((!commentsLoaded && commentCount > 0) || hasMore) && (
+        <button
+          className={BTN_SUBTLE}
+          disabled={loadingComments}
+          onClick={() => {
+            setLoadingComments(true)
+            void loadPostComments(postId)
+              .then(ok => {
+                if (!ok) {
+                  notify({ kind: 'error', message: t.loadFailed, title: t.loadFailed })
+                }
+              })
+              .finally(() => setLoadingComments(false))
+          }}
+          type="button"
+        >
+          {loadingComments ? t.loading : commentsLoaded ? t.commentsMore : `${t.commentsLoad} (${commentCount})`}
+        </button>
+      )}
       <div className={styles.commentInputRow}>
         <input
           aria-label={t.commentPlaceholder}

@@ -120,14 +120,15 @@ def _spawn_post_turn_task(
         _BG.add(task, user_id=user_id, on_error=_on_bg_error)
 
 
-async def _persist_tool_call_row(conv_id: int, result: _LLMTurnResult) -> None:
-    await persist_tool_call(conv_id, _turn_data(result))
+async def _persist_tool_call_row(conv_id: int, result: _LLMTurnResult, user_id: int) -> None:
+    await persist_tool_call(conv_id, _turn_data(result), user_id=user_id)
 
 
 async def _persist_interrupted_tool_results(
     call_row: asyncio.Task[None],
     conv_id: int,
     results: list[tuple[str, Any]],
+    user_id: int,
 ) -> None:
     """等调用行提交结束再写中断结果：结果行 id 须排在调用行之后，调用行未落库时不写孤立结果。"""
     try:
@@ -139,7 +140,7 @@ async def _persist_interrupted_tool_results(
             exc_info=True,
         )
         return
-    await persist_tool_results(conv_id, results)
+    await persist_tool_results(conv_id, results, user_id=user_id)
 
 
 async def _persist_assistant_no_tool_turn(
@@ -319,7 +320,11 @@ async def _persist_assistant_with_tool_calls_and_results(
     progress = _BatchProgress()
     # 调用行提交不随取消中断：取消落在提交或关闭会话的窗口时，仍等它落库后补记结果。
     call_row = (
-        _start_persistence_write(_persist_tool_call_row(conv.id, result), "chat.persist-tool-call") if persist else None
+        _start_persistence_write(
+            _persist_tool_call_row(conv.id, result, dispatch_ctx.user_id), "chat.persist-tool-call"
+        )
+        if persist
+        else None
     )
     try:
         if call_row is not None:
@@ -335,6 +340,7 @@ async def _persist_assistant_with_tool_calls_and_results(
                         call_row,
                         conv.id,
                         interrupted_tool_results(tool_calls_list, progress),
+                        dispatch_ctx.user_id,
                     ),
                     "chat.persist-interrupted-tools",
                 ),
@@ -355,7 +361,11 @@ async def _persist_assistant_with_tool_calls_and_results(
         # 工具已经执行，结果保存同样不随取消中断。
         await _wait_persistence_write(
             _start_persistence_write(
-                persist_tool_results(conv.id, [(res["tool_call_id"], res.get("content", "")) for res in tool_results]),
+                persist_tool_results(
+                    conv.id,
+                    [(res["tool_call_id"], res.get("content", "")) for res in tool_results],
+                    user_id=dispatch_ctx.user_id,
+                ),
                 "chat.persist-tool-results",
             ),
         )

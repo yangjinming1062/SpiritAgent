@@ -7,11 +7,13 @@ from infrastructure.ai.prompt_engineer import VisualReasoningError
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import contains_eager
 
-from features.appearance.character_card_models import CharacterCardResponse, CharacterCardUpdate, CompanionCharacterCard
-from features.appearance.models import AvatarAsset
+from features.appearance.asset_bindings import commit_appearance, flush_appearance
+from features.appearance.character_card_contracts import CharacterCardResponse, CharacterCardUpdate
+from features.appearance.models import AvatarAsset, CharacterAnalysisJob
 from features.media.identity_contracts import CharacterCardSnapshot, CharacterFeatures, CharacterOverrides
-from features.media.prompts import CHARACTER_IDENTITY_TEMPLATE, CHARACTER_PROFILE_TEMPLATE, VIDEO_IDENTITY_TEMPLATE
+from features.media.prompts import CHARACTER_IDENTITY_TEMPLATE
 
 
 class CharacterCardConflictError(ValueError):
@@ -25,48 +27,61 @@ class CharacterCardNotReadyError(VisualReasoningError):
 CARD_NOT_ANALYZED = "角色资料尚未分析完成，请在角色卡中查看进度或重试"
 
 
-async def get_character_card(db: AsyncSession, user_id: int, *, lock: bool = False) -> CompanionCharacterCard | None:
+async def get_character_card(db: AsyncSession, user_id: int, *, lock: bool = False) -> AvatarAsset | None:
+    # 合并后的卡与头像是同一行；刷新锁定视图前必须保存调用方本事务的修改及资产关联。
+    if any(
+        isinstance(row, (AvatarAsset, CharacterAnalysisJob))
+        and row.user_id == user_id
+        and (row in db.new or db.is_modified(row, include_collections=False))
+        for row in set(db.new) | set(db.dirty)
+    ):
+        await flush_appearance(db, user_id)
     query = (
-        select(CompanionCharacterCard)
-        .join(AvatarAsset, AvatarAsset.id == CompanionCharacterCard.avatar_id)
-        .where(CompanionCharacterCard.user_id == user_id, AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True))
+        select(AvatarAsset)
+        .join(AvatarAsset.analysis_job)
+        .options(contains_eager(AvatarAsset.analysis_job))
+        .where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True))
         .execution_options(populate_existing=True)
     )
     if lock:
-        query = query.with_for_update(of=CompanionCharacterCard)
+        query = query.with_for_update()
     return await db.scalar(query)
 
 
-def _card_features(card: CompanionCharacterCard) -> tuple[CharacterFeatures, CharacterOverrides, CharacterFeatures]:
+def _card_features(card: AvatarAsset) -> tuple[CharacterFeatures, CharacterOverrides, CharacterFeatures]:
     """返回自动特征、用户覆盖与两者合并后的生效特征。"""
-    automatic = CharacterFeatures.model_validate_json(card.automatic_json)
-    overrides = CharacterOverrides.model_validate_json(card.overrides_json)
+    automatic = CharacterFeatures.model_validate(card.automatic_json)
+    overrides = CharacterOverrides.model_validate(card.overrides_json)
     features = CharacterFeatures.model_validate({**automatic.model_dump(), **overrides.model_dump(exclude_none=True)})
     return automatic, overrides, features
 
 
-def character_card_response(card: CompanionCharacterCard) -> CharacterCardResponse:
+def extraction_status(state: str) -> str:
+    return {"queued": "pending", "running": "running", "succeeded": "ready"}.get(state, "failed")
+
+
+def character_card_response(card: AvatarAsset) -> CharacterCardResponse:
     automatic, overrides, features = _card_features(card)
     return CharacterCardResponse.model_validate(
         {
-            "avatar_id": card.avatar_id,
+            "avatar_id": card.id,
             "revision": card.revision,
             "features": features,
             "overrides": overrides,
             "automatic": automatic,
-            "status": card.status,
-            "portrait_status": card.portrait_status,
-            "body_status": card.body_status,
-            "error": card.error,
+            "status": extraction_status(card.analysis_job.state),
+            "portrait_status": card.analysis_job.portrait_status,
+            "body_status": card.analysis_job.body_status,
+            "error": card.analysis_job.error,
         },
     )
 
 
-def card_snapshot(card: CompanionCharacterCard) -> CharacterCardSnapshot:
+def card_snapshot(card: AvatarAsset) -> CharacterCardSnapshot:
     """由已加载的角色卡行构造冻结快照；仅处理 revision>0 的卡。"""
     _, overrides, features = _card_features(card)
     return CharacterCardSnapshot(
-        avatar_id=card.avatar_id,
+        avatar_id=card.id,
         revision=card.revision,
         features=features,
         overrides=overrides,
@@ -95,22 +110,18 @@ async def require_ready_character_snapshot(db: AsyncSession, user_id: int) -> Ch
     card = await get_character_card(db, user_id)
     if card is None or card.revision == 0:
         raise CharacterCardNotReadyError(CARD_NOT_ANALYZED)
-    if card.status == "failed":
+    if card.analysis_job.state == "failed":
         raise CharacterCardNotReadyError("角色资料分析失败，请先在角色卡中重试分析，再调整全身图")
-    if card.status != "ready":
+    if card.analysis_job.state != "succeeded":
         raise CharacterCardNotReadyError("角色资料正在分析，请待分析完成后再调整全身图")
     return card_snapshot(card)
 
 
 async def character_snapshot_is_current(db: AsyncSession, user_id: int, snapshot: CharacterCardSnapshot) -> bool:
+    if snapshot.avatar_id is None:
+        return False
     card = await get_character_card(db, user_id, lock=True)
-    return card is not None and card.avatar_id == snapshot.avatar_id and card.revision == snapshot.revision
-
-
-def render_character_profile(snapshot: CharacterCardSnapshot | None) -> str:
-    if snapshot is None:
-        return ""
-    return CHARACTER_PROFILE_TEMPLATE.format(features=json.dumps(snapshot.features.model_dump(), ensure_ascii=False))
+    return card is not None and card.id == snapshot.avatar_id and card.revision == snapshot.revision
 
 
 def render_character_identity(snapshot: CharacterCardSnapshot | None) -> str:
@@ -121,54 +132,44 @@ def render_character_identity(snapshot: CharacterCardSnapshot | None) -> str:
     )
 
 
-def render_character_video_identity(snapshot: CharacterCardSnapshot | None) -> str:
-    """首帧驱动的动作视频专用：外形文字只补充首帧，不使用以身份参考图为准的图像任务条款。"""
-    if snapshot is None:
-        return ""
-    return VIDEO_IDENTITY_TEMPLATE.format(
-        features=json.dumps(snapshot.features.model_dump(exclude_defaults=True), ensure_ascii=False),
-    )
-
-
-def emit_character_card_updated(db: AsyncSession, card: CompanionCharacterCard) -> None:
+def emit_character_card_updated(db: AsyncSession, card: AvatarAsset) -> None:
     emit_ws_event(
         db,
         user_id=card.user_id,
         event_type="companion.character_card.updated",
-        payload={"avatar_id": card.avatar_id, "revision": card.revision, "status": card.status},
+        payload={"avatar_id": card.id, "revision": card.revision, "status": extraction_status(card.analysis_job.state)},
     )
 
 
-def register_character_card(db: AsyncSession, avatar: AvatarAsset) -> CompanionCharacterCard:
-    card = CompanionCharacterCard(
+def register_character_card(db: AsyncSession, avatar: AvatarAsset) -> AvatarAsset:
+    avatar.analysis_job = CharacterAnalysisJob(
         user_id=avatar.user_id,
         avatar_id=avatar.id,
         extraction_id=str(uuid4()),
         portrait_source_path=avatar.asset_url,
         body_source_path=avatar.seed_fullbody_url,
-        revision=0,
-        status="pending",
+        state="queued",
     )
-    db.add(card)
-    emit_character_card_updated(db, card)
-    return card
+    avatar.revision = 0
+    emit_character_card_updated(db, avatar)
+    return avatar
 
 
 async def update_character_card(db: AsyncSession, user_id: int, request: CharacterCardUpdate) -> CharacterCardResponse:
     card = await get_character_card(db, user_id, lock=True)
     if card is None or card.revision == 0:
         raise CharacterCardNotReadyError("请等待角色资料分析完成后再编辑")
-    if card.avatar_id != request.expected_avatar_id or card.revision != request.expected_revision:
+    if card.id != request.expected_avatar_id or card.revision != request.expected_revision:
         raise CharacterCardConflictError("角色卡已更新，请重新加载后合并修改；当前草稿已保留")
-    previous = CharacterOverrides.model_validate_json(card.overrides_json)
+    previous = CharacterOverrides.model_validate(card.overrides_json)
     merged = CharacterOverrides.model_validate(
         {**previous.model_dump(), **request.changes.model_dump(exclude_unset=True)},
     )
     if previous != merged:
-        card.overrides_json = merged.model_dump_json(exclude_none=True)
+        card.overrides_json = merged.model_dump(mode="json", exclude_none=True)
         card.revision += 1
         emit_character_card_updated(db, card)
-    await db.commit()
+    await commit_appearance(db, user_id)
     return character_card_response(card)
 
 
@@ -182,28 +183,31 @@ async def request_character_extraction(
     card = await get_character_card(db, user_id, lock=True)
     if card is None:
         raise CharacterCardNotReadyError("请先确认头像和全身形象")
-    if card.avatar_id != expected_avatar_id or card.revision != expected_revision:
+    if card.id != expected_avatar_id or card.revision != expected_revision:
         raise CharacterCardConflictError("角色卡已更新，请重新加载")
-    if card.status in ("pending", "running"):
+    if card.analysis_job.state in ("queued", "running"):
         return character_card_response(card)
-    avatar = await db.get(AvatarAsset, card.avatar_id)
+    avatar = await db.get(AvatarAsset, card.id)
     if avatar is None or not avatar.is_fullbody_confirmed:
         raise CharacterCardNotReadyError("请先确认全身形象")
-    same_sources = card.portrait_source_path == avatar.asset_url and card.body_source_path == avatar.seed_fullbody_url
-    keep_parts = card.status == "failed" and same_sources
+    same_sources = (
+        card.analysis_job.portrait_source_path == avatar.asset_url
+        and card.analysis_job.body_source_path == avatar.seed_fullbody_url
+    )
+    keep_parts = card.analysis_job.state == "failed" and same_sources
     if not keep_parts:
-        card.portrait_result_json = card.body_result_json = "{}"
-        card.portrait_status = card.body_status = "pending"
+        card.analysis_job.portrait_result_json = card.analysis_job.body_result_json = {}
+        card.analysis_job.portrait_status = card.analysis_job.body_status = "pending"
     else:
-        if card.portrait_status != "ready":
-            card.portrait_status = "pending"
-        if card.body_status != "ready":
-            card.body_status = "pending"
-    card.portrait_source_path = avatar.asset_url
-    card.body_source_path = avatar.seed_fullbody_url
-    card.extraction_id = str(uuid4())
-    card.status = "pending"
-    card.error = None
+        if card.analysis_job.portrait_status != "ready":
+            card.analysis_job.portrait_status = "pending"
+        if card.analysis_job.body_status != "ready":
+            card.analysis_job.body_status = "pending"
+    card.analysis_job.portrait_source_path = avatar.asset_url
+    card.analysis_job.body_source_path = avatar.seed_fullbody_url
+    card.analysis_job.extraction_id = str(uuid4())
+    card.analysis_job.state = "queued"
+    card.analysis_job.error = None
     emit_character_card_updated(db, card)
-    await db.commit()
+    await commit_appearance(db, user_id)
     return character_card_response(card)

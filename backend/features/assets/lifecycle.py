@@ -19,12 +19,12 @@ from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
 from runtime.user_maintenance import track_user_task
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.assets.contributions import cleanup_obsolete_references, forget_deleted_references, protected_asset_paths
-from features.assets.models import AssetCleanupPending
+from features.assets.models import Asset
 from features.assets.references import (
     AssetReferencesUnavailable,
     collect_live_asset_paths,
@@ -66,20 +66,24 @@ async def enqueue_asset_cleanup_entries(
     if not owned:
         return
     now = utc_now()
-    statement = insert(AssetCleanupPending).values(
+    statement = insert(Asset).values(
         [
-            {"user_id": user_id, "path": path, "requested_at": now, "not_before": not_before or now}
+            {"user_id": user_id, "path": path, "requested_at": now, "not_before": not_before or now, "state": "cleanup"}
             for path, not_before in sorted(owned.items())
         ],
     )
-    keys = [AssetCleanupPending.user_id, AssetCleanupPending.path]
+    keys = [Asset.user_id, Asset.path]
     await db.execute(
         statement.on_conflict_do_update(
             index_elements=keys,
-            set_={"not_before": func.least(AssetCleanupPending.not_before, statement.excluded.not_before)},
+            set_={
+                "not_before": func.least(Asset.not_before, statement.excluded.not_before),
+                "state": "cleanup",
+                "requested_at": now,
+            },
         )
         if expedite
-        else statement.on_conflict_do_nothing(index_elements=keys),
+        else statement.on_conflict_do_update(index_elements=keys, set_={"state": "cleanup", "requested_at": now}),
     )
 
 
@@ -192,24 +196,22 @@ async def _cleanup_user_assets(user_id: int, *, discover: bool = False) -> int:
 
     deleted_ids: list[int] = []
     deleted_paths: list[str] = []
-    errors: dict[int, str] = {}
     async with user_asset_lock(user_id), SESSION_LOCAL() as db:
-        # 一致快照防止采纳在不同表的两次查询之间转移引用，造成两端都未读到。
-        if db.get_bind().dialect.name == "postgresql":
-            await db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+        # 先锁资产行再读业务引用，与引用登记共用顺序；跳过正在被业务采纳的文件。
+        pending = list(
+            await db.scalars(
+                select(Asset)
+                .where(Asset.user_id == user_id, Asset.not_before <= utc_now(), Asset.state == "cleanup")
+                .order_by(Asset.id)
+                .limit(200)
+                .with_for_update(skip_locked=True)
+            )
+        )
         try:
             referenced = await collect_live_asset_paths(db, user_id)
         except AssetReferencesUnavailable:
             logger.warning("Asset cleanup deferred: references unavailable", extra={"user_id": user_id}, exc_info=True)
             return 0
-        pending = list(
-            await db.scalars(
-                select(AssetCleanupPending).where(
-                    AssetCleanupPending.user_id == user_id,
-                    AssetCleanupPending.not_before <= utc_now(),
-                ),
-            ),
-        )
         for entry in pending:
             if entry.path in referenced or asset_write_in_progress(entry.path):
                 continue
@@ -218,32 +220,26 @@ async def _cleanup_user_assets(user_id: int, *, discover: bool = False) -> int:
                 if (Path(SETTINGS.data_dir) / entry.path).exists():
                     raise OSError("Asset remains on disk after cleanup")
             except OSError as exc:
-                errors[entry.id] = str(exc)[:1000]
+                entry.attempts += 1
+                entry.last_error = str(exc)[:1000]
                 logger.warning(
                     "Asset cleanup will retry",
                     extra={"user_id": user_id, "path": entry.path},
                     exc_info=True,
                 )
             else:
+                entry.state = "deleted"
+                entry.last_error = None
                 deleted_ids.append(entry.id)
                 deleted_paths.append(entry.path)
+        await db.commit()
         await run_blocking(_remove_empty_directories, user_id)
 
-    # 进程在此处退出时文件已删除、待办仍在；下一次按文件不存在幂等收敛。
-    async with SESSION_LOCAL() as db:
-        for entry_id, error in errors.items():
-            await db.execute(
-                update(AssetCleanupPending)
-                .where(AssetCleanupPending.id == entry_id)
-                .values(
-                    attempts=AssetCleanupPending.attempts + 1,
-                    last_error=error,
-                ),
-            )
-        if deleted_ids:
-            await db.execute(delete(AssetCleanupPending).where(AssetCleanupPending.id.in_(deleted_ids)))
+    # 资产终态先提交并释放行锁，再清理业务诊断字段，避免反向等待制作行锁。
+    if deleted_paths:
+        async with SESSION_LOCAL() as db:
             await forget_deleted_references(db, user_id, deleted_paths)
-        await db.commit()
+            await db.commit()
     return len(deleted_ids)
 
 

@@ -1,4 +1,3 @@
-import json
 from collections.abc import Mapping
 from typing import Any
 
@@ -173,7 +172,7 @@ async def update_persona(
     for voice_field in ("voice", "voice_setup_skipped"):
         if current_draft.get(voice_field):
             cleaned[voice_field] = current_draft[voice_field]
-    persona.definition_json = json.dumps(cleaned, ensure_ascii=False)
+    persona.definition_json = cleaned
     # persona_extras 不缓存：build_system_prompt_extras 运行期按 session language 从 definition_json 实时渲染，避免英语会话拿到 onboarding 烤进去的中文头部。
     persona.is_complete = True
     session_id = await ensure_main_conversation_for_user(db, persona.user_id, commit=False)
@@ -284,7 +283,7 @@ async def submit_onboarding_field(
                 draft.pop("voice_setup_skipped" if field == "voice" else "voice", None)
             else:
                 draft.pop(field, None)
-            persona.definition_json = json.dumps(draft, ensure_ascii=False)
+            persona.definition_json = draft
             completed = pending_step == "voice" and bool(
                 draft.get("voice") or draft.get("voice_setup_skipped") == "true",
             )
@@ -304,7 +303,7 @@ async def submit_onboarding_field(
         draft[field] = value.strip()[:_ONBOARDING_MAX_LEN]
     else:
         draft.pop(field, None)
-    persona.definition_json = json.dumps(draft, ensure_ascii=False)
+    persona.definition_json = draft
     await db.commit()
     answers = draft
     missing_character = next((f for f in _CHARACTER_ONBOARDING_FIELDS if not answers.get(f)), None)

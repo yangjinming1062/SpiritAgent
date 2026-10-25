@@ -11,9 +11,9 @@ from runtime.memory_scope import MemoryScope
 
 from features.companion.prompt_runtime import load_companion_prompt_context
 from features.conversation.context_window import load_companion_dialogue
+from features.entries.contracts import EntryView
 from features.memory.memory_bootstrap import build_user_profile_extras
 from features.memory.memory_format import format_companion_reflection_block
-from features.posts.models import CompanionPost
 from features.posts.schemas import PostContext
 from features.posts.store import PostError
 
@@ -63,7 +63,7 @@ def elapsed_seconds(later: datetime, earlier: datetime) -> int:
     return int((ensure_utc(later) - ensure_utc(earlier)).total_seconds())
 
 
-def post_prompt_entry(post: CompanionPost, context: PostPromptContext) -> dict[str, Any]:
+def post_prompt_entry(post: EntryView, context: PostPromptContext) -> dict[str, Any]:
     return {
         "id": post.id,
         "title": post.title,

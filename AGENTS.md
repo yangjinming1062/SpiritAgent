@@ -18,6 +18,7 @@
 | 激活、账户切换、凭据、配置与更新 | [信任边界](docs/ARCHITECTURE.md#信任边界与安全)、[账户体验](docs/DESIGN.md#激活与账户切换)、[安全契约](docs/PROTOCOL.md#安全更新与备份) | [Client](client/README.md#任务入口)、[Backend 任务入口](backend/README.md#任务入口) |
 | 首次安装、修复与内置技能 | [安装与修复](installer/README.md#安装与修复) | [Installer 任务入口](installer/README.md#任务入口)、[内置技能文档](installer/README.md#内置技能文档) |
 | 后端配置、部署、供应商与管理后台 | [部署边界](docs/ARCHITECTURE.md#部署与运行时边界)、[AI 配置与密钥](docs/PROTOCOL.md#ai-配置与密钥) | [Backend 任务入口](backend/README.md#任务入口)、[配置与迁移](backend/README.md#配置与迁移)、[部署与排障](backend/README.md#部署与排障) |
+| 数据库结构、实体关系与持久化性能 | [数据库设计](docs/DATABASE.md)、[字段语义字典](docs/DATABASE_FIELDS.md) | [ORM 注册](backend/bootstrap/models.py)、[完整基线](backend/alembic/versions/0001_baseline.py)、[Backend 数据边界](backend/README.md#数据与运行可靠性) |
 | 备份与覆盖恢复 | [恢复契约](docs/PROTOCOL.md#备份校验与覆盖恢复) | [Backend 任务入口](backend/README.md#任务入口) |
 | 提示词与供应商输入 | [提示词规范](RULES.md#提示词设计与修改规范) | [文本与装配索引](backend/README.md#提示词定位)、[生成链验证](docs/PIPELINE.md#完整提示词链检查入口) |
 | 构建、检查与发布 | [Scripts](scripts/README.md) | 文档改动核对事实和链接；发布流程见该文档 |

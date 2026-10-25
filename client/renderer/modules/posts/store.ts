@@ -30,6 +30,9 @@ export interface PostEntry {
   audioUrl: string | null
   body: string
   comments: PostCommentEntry[]
+  commentCount: number
+  commentsLoaded: boolean
+  commentsNextCursor: string | null
   publishedAt: string
   id: string
   contentType: PostContentType
@@ -76,6 +79,9 @@ function post(w: PostWire): PostEntry {
     audioUrl: w.audio_url,
     body: w.body,
     comments: w.comments.map(comment),
+    commentCount: w.comment_count,
+    commentsLoaded: w.comments_loaded,
+    commentsNextCursor: w.comments_next_cursor,
     publishedAt: w.published_at,
     id: w.id,
     contentType: w.content_type,
@@ -97,7 +103,10 @@ function mergeComments(old: PostCommentEntry[], incoming: PostCommentEntry[]): P
 
   return [...map.values()]
     .filter(c => !deletedComments.has(c.id))
-    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.id.localeCompare(b.id))
+    .sort(
+      (a, b) =>
+        Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.id.length - b.id.length || a.id.localeCompare(b.id)
+    )
 }
 
 function upsertPosts(wires: PostWire[]): void {
@@ -109,18 +118,35 @@ function upsertPosts(wires: PostWire[]): void {
 
   for (const w of wires) {
     const value = post(w)
-    value.comments = mergeComments(merged.get(value.id)?.comments ?? [], value.comments)
+    const previous = merged.get(value.id)
+    value.comments = mergeComments(previous?.comments ?? [], value.comments)
+
+    if (!w.comments_loaded && previous?.commentsLoaded) {
+      value.commentsLoaded = true
+      value.commentsNextCursor = previous.commentsNextCursor
+    }
+
     merged.set(value.id, value)
   }
 
   $posts.set(
-    [...merged.values()].sort((a, b) => b.publishedAt.localeCompare(a.publishedAt) || b.id.localeCompare(a.id))
+    [...merged.values()].sort(
+      (a, b) => b.publishedAt.localeCompare(a.publishedAt) || b.id.length - a.id.length || b.id.localeCompare(a.id)
+    )
   )
 }
 
 function upsertComment(w: CommentWire): void {
   $posts.set(
-    $posts.get().map(m => (m.id === w.post_id ? { ...m, comments: mergeComments(m.comments, [comment(w)]) } : m))
+    $posts.get().map(m => {
+      if (m.id !== w.post_id) {
+        return m
+      }
+
+      const comments = mergeComments(m.comments, [comment(w)])
+
+      return { ...m, comments, commentCount: Math.max(m.commentCount, comments.length) }
+    })
   )
 }
 
@@ -179,6 +205,46 @@ export async function loadMorePosts(): Promise<boolean> {
   return (await fetchPage(true)) !== null
 }
 
+export async function loadPostComments(postId: string): Promise<boolean> {
+  const current = $posts.get().find(item => item.id === postId)
+
+  if (!current || (current.commentsLoaded && !current.commentsNextCursor)) {
+    return true
+  }
+
+  const epoch = currentClearEpoch()
+
+  const result = await authedResource('companion_posts.get_comments', {
+    path: { post_id: postId },
+    query: { cursor: current.commentsLoaded ? current.commentsNextCursor : undefined }
+  })
+
+  if (epoch !== currentClearEpoch() || !apiSucceeded(result, 'posts', 'comments load failed')) {
+    return false
+  }
+
+  const page = result.value
+
+  if (!page) {
+    return false
+  }
+
+  $posts.set(
+    $posts.get().map(item =>
+      item.id === postId
+        ? {
+            ...item,
+            comments: mergeComments(item.comments, page.comments.map(comment)),
+            commentsLoaded: true,
+            commentsNextCursor: page.next_cursor
+          }
+        : item
+    )
+  )
+
+  return true
+}
+
 type CommentOperation = 'companion_posts.post_comment' | 'companion_posts.retry_comment_reply'
 
 async function postCommentResult<K extends CommentOperation>(operation: K, input: ApiInput<K>): Promise<boolean> {
@@ -205,9 +271,21 @@ export function retryPostReply(id: string, commentId: string): Promise<boolean> 
 }
 
 function removeComment(postId: string, commentId: string): void {
+  if (deletedComments.has(commentId)) {
+    return
+  }
+
   deletedComments.add(commentId)
   $posts.set(
-    $posts.get().map(m => (m.id === postId ? { ...m, comments: m.comments.filter(c => c.id !== commentId) } : m))
+    $posts.get().map(m =>
+      m.id === postId
+        ? {
+            ...m,
+            comments: m.comments.filter(c => c.id !== commentId),
+            commentCount: Math.max(0, m.commentCount - 1)
+          }
+        : m
+    )
   )
 }
 
@@ -255,7 +333,10 @@ function isPost(value: unknown): value is PostWire {
     (value.media_url === null || typeof value.media_url === 'string') &&
     (value.audio_url === null || typeof value.audio_url === 'string') &&
     Array.isArray(value.comments) &&
-    value.comments.every(isComment)
+    value.comments.every(isComment) &&
+    typeof value.comment_count === 'number' &&
+    typeof value.comments_loaded === 'boolean' &&
+    (value.comments_next_cursor === null || typeof value.comments_next_cursor === 'string')
   )
 }
 

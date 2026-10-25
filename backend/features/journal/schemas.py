@@ -1,8 +1,8 @@
 """日记 REST 契约。"""
 
 from datetime import date, datetime
-from uuid import UUID
 
+from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field
 
 DIARY_BODY_MAX_CHARS = 2000
@@ -16,18 +16,18 @@ class DiaryContent(BaseModel):
 
 
 class DiaryEntryResponse(BaseModel):
-    id: str
+    id: ResourceId
     entry_date: date
     title: str
     body: str
-    post_ids: list[str] = Field(default_factory=list)
+    post_ids: list[ResourceId] = Field(default_factory=list)
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
 
 class DiaryListResponse(BaseModel):
     entries: list[DiaryEntryResponse]
-    unread_diary_ids: list[str]
+    unread_diary_ids: list[ResourceId]
 
 
 class DiaryUnreadResponse(BaseModel):
@@ -37,4 +37,4 @@ class DiaryUnreadResponse(BaseModel):
 class DiaryReadRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    diary_ids: list[UUID] = Field(min_length=1)
+    diary_ids: list[ResourceId] = Field(min_length=1)

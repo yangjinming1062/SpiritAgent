@@ -5,14 +5,17 @@ import { useEffect, useRef, useState } from 'react'
 import { $chatSessionId } from '@/modules/conversation'
 import {
   $archivedLoading,
+  $archivedNextCursor,
   $archivedSessions,
   $archiveOpen,
   $searchLoading,
+  $searchNextCursor,
   $searchResults,
   $sessions,
   $sessionSearch,
   $sessionsError,
   $sessionsLoading,
+  $sessionsNextCursor,
   $sessionSort,
   $systemPresets,
   $systemPresetsFetched,
@@ -113,6 +116,9 @@ export function SessionSidebar({
   const authSessionId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
   const sessions = useStore($sessions)
   const loading = useStore($sessionsLoading)
+  const sessionsNextCursor = useStore($sessionsNextCursor)
+  const searchNextCursor = useStore($searchNextCursor)
+  const archivedNextCursor = useStore($archivedNextCursor)
   const sessionsError = useStore($sessionsError)
   const sort = useStore($sessionSort)
   const search = useStore($sessionSearch)
@@ -258,7 +264,7 @@ export function SessionSidebar({
         {searchActive ? (
           <div>
             <div className="mb-1 px-1.5 text-[11px] font-medium text-muted">{t.searchResultsHeading}</div>
-            {searchLoading ? (
+            {searchLoading && searchResults.length === 0 ? (
               <div className="py-6 text-center text-muted">{t.searching}</div>
             ) : searchResults.length === 0 ? (
               <div className="py-6 text-center text-muted">{t.noMatch}</div>
@@ -383,6 +389,16 @@ export function SessionSidebar({
             </div>
           </>
         )}
+        {(searchActive ? searchNextCursor : sessionsNextCursor) && (
+          <button
+            className="w-full rounded-xl py-2 text-xs text-muted"
+            disabled={searchActive ? searchLoading : loading}
+            onClick={() => void (searchActive ? runSessionSearch(search, true) : fetchSessions(true))}
+            type="button"
+          >
+            {t.loadMore}
+          </button>
+        )}
       </div>
 
       {/* 底部归档与展开切换 */}
@@ -397,7 +413,7 @@ export function SessionSidebar({
         </button>
         {archiveOpen && (
           <div className="mt-2 max-h-48 space-y-1 overflow-y-auto pr-0.5">
-            {archivedLoading ? (
+            {archivedLoading && archivedSessions.length === 0 ? (
               <div className="py-2 text-center text-muted">{t.archive.loading}</div>
             ) : archivedSessions.length === 0 ? (
               <div className="py-2 text-center text-muted">{t.archive.empty}</div>
@@ -425,6 +441,16 @@ export function SessionSidebar({
                   session={s}
                 />
               ))
+            )}
+            {archivedNextCursor && (
+              <button
+                className="w-full rounded-xl py-2 text-xs text-muted"
+                disabled={archivedLoading}
+                onClick={() => void fetchArchived(true)}
+                type="button"
+              >
+                {t.loadMore}
+              </button>
             )}
           </div>
         )}

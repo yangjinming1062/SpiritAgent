@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -12,7 +13,7 @@ class ConversationSnapshot:
     kind: str
     parent_id: int | None
     is_automation: bool
-    settings_json: str | None
+    settings_json: dict[str, Any] | None
     context_after_message_id: int
     title: str
     history_revision: int = 0
@@ -26,14 +27,14 @@ class MessageSnapshot:
     subtype: str | None
     content: str | None
     tool_call_id: str | None
-    tool_calls: str | None
+    tool_calls: list[dict[str, Any]] | None
     prompt_tokens: int
     completion_tokens: int
     turn_duration_ms: int
     content_type: str
-    media_json: str | None
-    reply_json: str | None
+    media_json: list[dict[str, Any]] | None
+    reply_json: dict[str, Any] | None
     reasoning_content: str | None
     summary_through_message_id: int | None
     created_at: datetime
-    generation_origin_json: str | None = None
+    generation_origin_json: dict[str, Any] | None = None

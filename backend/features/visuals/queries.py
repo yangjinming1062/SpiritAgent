@@ -1,14 +1,15 @@
 """影像库的只读查询与对外视图装配；签名 URL 只在响应出口生成。"""
 
+from datetime import timedelta
+
 from infrastructure.assets.asset_store import client_asset_url, resolve_asset_reference
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.text import ensure_utc, utc_now
-from sqlalchemy import cast, func, or_, select
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import func, or_, select
 
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
 
-from .models import VisualItem, VisualJob, VisualPresentation
+from .models import VisualItem, VisualJob, VisualPresentation, VisualVersion
 from .repository import VisualNotFoundError, presented_item, visual_playable, visual_snapshot
 from .schemas import (
     ActualPresentationSnapshot,
@@ -61,7 +62,7 @@ def item_view(item: VisualItem | PresentedVisual, snapshot: ComboSnapshot | None
 
 
 def job_view(job: VisualJob) -> VisualJobView:
-    progress = parse_job_progress(job.progress_json)
+    progress = parse_job_progress(job.checkpoint)
     return VisualJobView(
         id=job.id,
         purpose=job.purpose,
@@ -92,7 +93,8 @@ async def list_visuals(
     scene_id: int | None = None,
     action_id: int | None = None,
     source: str | None = None,
-    offset: int = 0,
+    cursor: int | None = None,
+    include_total: bool = False,
     limit: int = 50,
 ) -> VisualListResponse:
     """成品分页；制作工作项由 list_jobs 单独读取。"""
@@ -112,7 +114,7 @@ async def list_visuals(
             filters.append(VisualItem.action_id == action_id)
         if source and source.strip():
             pattern = f"%{source.strip()}%"
-            snapshot = cast(VisualItem.snapshot_json, JSONB)
+            snapshot = VisualVersion.snapshot_json
             filters.append(
                 or_(
                     snapshot["outfit"]["name"].astext.ilike(pattern),
@@ -120,16 +122,69 @@ async def list_visuals(
                     snapshot["action"]["name"].astext.ilike(pattern),
                 ),
             )
-        total = await db.scalar(select(func.count()).select_from(VisualItem).where(*filters)) or 0
-        items = list(
-            await db.scalars(
-                select(VisualItem).where(*filters).order_by(VisualItem.id.desc()).offset(offset).limit(limit),
-            ),
+        total = (
+            (
+                await db.scalar(
+                    select(func.count())
+                    .select_from(VisualItem)
+                    .join(VisualVersion, VisualVersion.id == VisualItem.current_version_id)
+                    .where(*filters)
+                )
+                or 0
+            )
+            if include_total
+            else None
         )
+        if cursor is not None:
+            filters.append(VisualItem.id < cursor)
+        fields = (
+            VisualItem.id,
+            VisualItem.media_kind,
+            VisualItem.clip_kind,
+            VisualItem.title,
+            VisualItem.status,
+            VisualItem.description,
+            VisualItem.outfit_id,
+            VisualItem.scene_id,
+            VisualItem.action_id,
+            VisualItem.created_at,
+            VisualItem.updated_at,
+            VisualVersion.number.label("version"),
+            VisualVersion.media_path,
+            VisualVersion.poster_path,
+            VisualVersion.width,
+            VisualVersion.height,
+            VisualVersion.duration_ms,
+            VisualVersion.input_image_id,
+            VisualVersion.input_image_hash,
+            VisualVersion.snapshot_json["outfit"]["name"].astext.label("outfit_name"),
+            VisualVersion.snapshot_json["scene"]["name"].astext.label("scene_title"),
+            VisualVersion.snapshot_json["action"]["name"].astext.label("action_name"),
+        )
+        rows = list(
+            (
+                await db.execute(
+                    select(*fields)
+                    .select_from(VisualItem)
+                    .join(VisualVersion, VisualVersion.id == VisualItem.current_version_id)
+                    .where(*filters)
+                    .order_by(VisualItem.id.desc())
+                    .limit(limit + 1)
+                )
+            ).mappings()
+        )
+        views = []
+        for row in rows[:limit]:
+            values = dict(row)
+            values["media_url"] = client_asset_url(values.pop("media_path"))
+            poster = values.pop("poster_path")
+            values["poster_url"] = client_asset_url(poster) if poster else None
+            views.append(VisualItemView.model_validate(values))
         return VisualListResponse(
-            visuals=[item_view(item) for item in items],
+            visuals=views,
             total=total,
-            offset=offset,
+            has_more=len(rows) > limit,
+            next_cursor=str(rows[limit - 1]["id"]) if len(rows) > limit else None,
             limit=limit,
         )
 
@@ -146,6 +201,7 @@ async def visual_detail(user_id: int, visual_id: int) -> VisualDetailView:
                 select(VisualJob)
                 .where(
                     VisualJob.user_id == user_id,
+                    or_(VisualJob.finished_at.is_(None), VisualJob.finished_at >= utc_now() - timedelta(days=90)),
                     or_(
                         VisualJob.target_visual_id == visual_id,
                         VisualJob.result_visual_id == visual_id,
@@ -168,20 +224,61 @@ async def list_jobs(
     user_id: int,
     *,
     states: list[VisualJobState] | None = None,
-    offset: int = 0,
+    cursor: int | None = None,
+    include_total: bool = False,
     limit: int = 50,
 ) -> VisualJobListResponse:
     async with SESSION_LOCAL() as db:
-        filters = [VisualJob.user_id == user_id]
+        filters = [
+            VisualJob.user_id == user_id,
+            or_(VisualJob.finished_at.is_(None), VisualJob.finished_at >= utc_now() - timedelta(days=90)),
+        ]
         if states:
             filters.append(VisualJob.state.in_(states))
-        total = await db.scalar(select(func.count()).select_from(VisualJob).where(*filters)) or 0
-        jobs = list(
-            await db.scalars(
-                select(VisualJob).where(*filters).order_by(VisualJob.id.desc()).offset(offset).limit(limit),
-            ),
+        total = (
+            (await db.scalar(select(func.count()).select_from(VisualJob).where(*filters)) or 0)
+            if include_total
+            else None
         )
-        return VisualJobListResponse(jobs=[job_view(job) for job in jobs], total=total, offset=offset, limit=limit)
+        if cursor is not None:
+            filters.append(VisualJob.id < cursor)
+        fields = (
+            VisualJob.id,
+            VisualJob.purpose,
+            VisualJob.target_kind,
+            VisualJob.target_visual_id,
+            VisualJob.expected_version,
+            VisualJob.state,
+            VisualJob.stage,
+            VisualJob.feedback,
+            VisualJob.video_feedback,
+            VisualJob.repair_count,
+            VisualJob.repair_limit,
+            VisualJob.error,
+            VisualJob.result_visual_id,
+            VisualJob.result_image_id,
+            VisualJob.created_at,
+            VisualJob.updated_at,
+            VisualJob.checkpoint["video_queue"].label("video_queue"),
+        )
+        rows = list(
+            (
+                await db.execute(
+                    select(*fields)
+                    .select_from(VisualJob)
+                    .where(*filters)
+                    .order_by(VisualJob.id.desc())
+                    .limit(limit + 1)
+                )
+            ).mappings()
+        )
+        return VisualJobListResponse(
+            jobs=[VisualJobView.model_validate(dict(row)) for row in rows[:limit]],
+            total=total,
+            has_more=len(rows) > limit,
+            next_cursor=str(rows[limit - 1]["id"]) if len(rows) > limit else None,
+            limit=limit,
+        )
 
 
 async def presentation_state(user_id: int) -> VisualPresentationView:
@@ -209,7 +306,7 @@ def _pending_command(row: VisualPresentation) -> VisualPlayCommand | None:
 
     if not row.pending_command_json:
         return None
-    command = VisualPlayCommand.model_validate_json(row.pending_command_json)
+    command = VisualPlayCommand.model_validate(row.pending_command_json)
     return None if ensure_utc(command.expires_at) <= utc_now() else command
 
 
@@ -274,27 +371,37 @@ async def visual_play_catalog(user_id: int, trigger: str) -> list[VisualPlayOpti
     """按动作触发条件过滤可播影像；播放方式与条件来自组合快照的动作引用。"""
 
     async with SESSION_LOCAL() as db:
-        items = list(
-            await db.scalars(
-                select(VisualItem).where(VisualItem.user_id == user_id).order_by(VisualItem.id.desc()),
-            ),
+        rows = await db.execute(
+            select(
+                VisualItem.id,
+                VisualItem.media_kind,
+                VisualItem.clip_kind,
+                VisualVersion.media_path,
+                VisualVersion.snapshot_json["action"].label("action"),
+            )
+            .select_from(VisualItem)
+            .join(VisualVersion, VisualVersion.id == VisualItem.current_version_id)
+            .where(
+                VisualItem.user_id == user_id,
+                VisualItem.status == "ready",
+                VisualItem.allowed_triggers.contains([trigger]),
+            )
+            .order_by(VisualItem.id.desc())
         )
-    options: list[VisualPlayOption] = []
-    for item in items:
-        if not visual_playable(item):
-            continue
-        snapshot = visual_snapshot(item)
-        if trigger not in snapshot.action.allowed_triggers:
-            continue
-        options.append(
-            VisualPlayOption(
-                visual_id=item.id,
-                name=snapshot.action.name,
-                media_kind=_media_kind(item.media_kind),
-                clip_kind=snapshot.action.clip_kind,
-                duration_seconds=snapshot.action.duration_seconds,
-                use_when=list(snapshot.action.use_when),
-                avoid_when=list(snapshot.action.avoid_when),
-            ),
-        )
-    return options
+        options = []
+        for row in rows:
+            if resolve_asset_reference(row.media_path) is None:
+                continue
+            action = row.action
+            options.append(
+                VisualPlayOption(
+                    visual_id=row.id,
+                    name=action["name"],
+                    media_kind=row.media_kind,
+                    clip_kind=row.clip_kind,
+                    duration_seconds=action["duration_seconds"],
+                    use_when=action["use_when"],
+                    avoid_when=action["avoid_when"],
+                )
+            )
+        return options

@@ -24,6 +24,7 @@
 | [AGENTS.md](AGENTS.md) | Agent 阅读路由；其他 Agent 入口引用它 |
 | [RULES.md](RULES.md) | 项目协作与维护要求 |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | 模块、依赖、状态归属、信任边界和平台支持 |
+| [DATABASE.md](docs/DATABASE.md)、[DATABASE_FIELDS.md](docs/DATABASE_FIELDS.md) | 实体关系、设计理由、删除语义与测量依据；字段语义及权威源码索引 |
 | [DESIGN.md](docs/DESIGN.md) | 产品体验、设计理由及故障表现 |
 | [PROTOCOL.md](docs/PROTOCOL.md) | 跨模块通信、交付、状态、安全与兼容契约 |
 | [PIPELINE.md](docs/PIPELINE.md) | 形象生成流程、供应商能力、产物与恢复要求 |

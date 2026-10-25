@@ -13,18 +13,18 @@ from features.configuration.queries import user_ai_configs
 from features.media.chain import FrozenMediaProvider
 
 from .contracts import VideoQueueLaneView, VideoQueueList, VideoQueueRequestView, VideoQueueResolution
-from .models import VideoQueueLane, VideoQueueRequest
+from .models import ProviderAttempt, ProviderLane
 from .service import cancel_video_attempt
 
 logger = get_logger(__name__)
 
 
-def _request_view(row: VideoQueueRequest) -> VideoQueueRequestView:
+def _request_view(row: ProviderAttempt) -> VideoQueueRequestView:
     return VideoQueueRequestView(
         id=row.token,
         revision=row.revision,
-        kind=row.kind,
-        entity_id=row.entity_id,
+        kind=row.owner_kind,
+        job_id=row.job_id,
         user_id=row.user_id,
         model=row.model,
         state=row.state,
@@ -39,11 +39,12 @@ def _request_view(row: VideoQueueRequest) -> VideoQueueRequestView:
 async def list_video_queue(db: AsyncSession) -> VideoQueueList:
     rows = list(
         await db.scalars(
-            select(VideoQueueRequest)
+            select(ProviderAttempt)
             .where(
-                VideoQueueRequest.state.not_in(("succeeded", "failed", "cancelled", "stopped")),
+                ProviderAttempt.state.not_in(("succeeded", "failed", "cancelled", "stopped")),
+                ProviderAttempt.capability == "video",
             )
-            .order_by(VideoQueueRequest.enqueued_at, VideoQueueRequest.id),
+            .order_by(ProviderAttempt.enqueued_at, ProviderAttempt.id),
         ),
     )
     if not rows:
@@ -51,8 +52,8 @@ async def list_video_queue(db: AsyncSession) -> VideoQueueList:
     lanes = {
         row.id: row
         for row in await db.scalars(
-            select(VideoQueueLane).where(
-                VideoQueueLane.id.in_({row.lane_id for row in rows}),
+            select(ProviderLane).where(
+                ProviderLane.id.in_({row.lane_id for row in rows}),
             ),
         )
     }
@@ -73,7 +74,7 @@ async def list_video_queue(db: AsyncSession) -> VideoQueueList:
                 requests=[],
             ),
         )
-        frozen = FrozenMediaProvider.model_validate_json(row.frozen_json)
+        frozen = FrozenMediaProvider.model_validate(row.frozen_json)
         name = names.get(frozen.provider_id)
         if name and name not in view.provider_names:
             view.provider_names.append(name)
@@ -87,7 +88,7 @@ async def resolve_video_queue(
     payload: VideoQueueResolution,
     admin: str,
 ) -> VideoQueueRequestView:
-    row = await db.scalar(select(VideoQueueRequest).where(VideoQueueRequest.token == request_id).with_for_update())
+    row = await db.scalar(select(ProviderAttempt).where(ProviderAttempt.token == request_id).with_for_update())
     if row is None:
         raise RequestError(status_code=404, message="视频队列任务不存在")
     if row.state != "blocked" or row.revision != payload.expected_revision:
@@ -103,7 +104,7 @@ async def resolve_video_queue(
     else:
         row.state, row.request_json, row.error_reason = "stopped", None, "queue_stopped"
         row.error_message = "已核对结束本次视频制作"
-        if row.user_id is None or row.entity_id is None:
+        if row.user_id is None or row.job_id is None:
             row.consumed_at = utc_now()
     await db.commit()
     logger.warning(
@@ -130,7 +131,7 @@ async def cancel_video_queue_request(request_id: str, admin: str) -> MessageResp
 
 
 async def retry_video_queue_lane(db: AsyncSession, lane_id: str, admin: str) -> MessageResponse:
-    lane = await db.scalar(select(VideoQueueLane).where(VideoQueueLane.token == lane_id).with_for_update())
+    lane = await db.scalar(select(ProviderLane).where(ProviderLane.token == lane_id).with_for_update())
     if lane is None:
         raise RequestError(status_code=404, message="视频队列不存在")
     prior_not_before = lane.not_before

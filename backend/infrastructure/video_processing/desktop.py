@@ -8,7 +8,6 @@ from PIL import Image
 
 from infrastructure.media_geometry import centered_crop_box
 from infrastructure.video_processing.ffmpeg import (
-    VideoProbe,
     VideoProcessError,
     ffmpeg_stdout,
     probe_video,
@@ -203,82 +202,3 @@ def prepare_desktop_video(
         label="桌面视频处理",
     )
     return _desktop_result(dst, expected_size, fitted=fitted)
-
-
-def prepare_fitted_external_desktop_video(src: Path, dst: Path, *, aspect_ratio: str) -> DesktopVideoResult:
-    """生成裁切副本，保留源时间轴及音轨；调用方独立保留原文件。"""
-    run_ffmpeg(["-xerror", "-i", str(src), "-map", "0:v:0", "-f", "null", "-"], label="桌面视频解码检查")
-    video_filter, expected_size, fitted = _fit_filter(extract_desktop_first_frame(src), aspect_ratio)
-    probe = probe_video(src)
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    audio_args = ["-c:a", "copy"] if all(codec in {"aac", "mp3"} for codec in probe.audio_codecs) else ["-c:a", "aac"]
-    run_ffmpeg(
-        [
-            "-i",
-            str(src),
-            "-map",
-            "0:v:0",
-            "-map",
-            "0:a?",
-            "-sn",
-            "-dn",
-            "-vf",
-            video_filter,
-            "-fps_mode",
-            "passthrough",
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-preset",
-            "medium",
-            "-crf",
-            "20",
-            *audio_args,
-            "-movflags",
-            "+faststart",
-            str(dst),
-        ],
-        label="桌面视频画幅适配",
-    )
-    return _desktop_result(dst, expected_size, fitted=fitted)
-
-
-def validate_desktop_video_playback(src: Path) -> VideoProbe:
-    """核对直接播放所需的容器与编码；不限制供生成模型使用的参考输入。返回已校验的探测结果。"""
-    probe = probe_video(src)
-    if probe.codec_name not in {"h264", "vp8", "vp9", "av1"}:
-        raise VideoProcessError("桌面播放器不支持该视频编码")
-    container = probe.format_name.split(",", 1)[0]
-    if container not in {"mov", "mp4", "matroska", "webm"}:
-        raise VideoProcessError("桌面播放器不支持该视频容器")
-    if any(codec not in {"aac", "mp3", "opus", "vorbis"} for codec in probe.audio_codecs):
-        raise VideoProcessError("桌面播放器不支持该音频编码")
-    # Chromium 的 H.264 硬件/软件路径要求常见的 8-bit 4:2:0；10-bit、4:2:2
-    # 和 4:4:4 即使能被 FFmpeg 解码，也不能保证桌面视频元素可播放。
-    h264_profile = probe.profile.casefold()
-    if probe.codec_name == "h264" and (
-        probe.pix_fmt not in {"yuv420p", "yuvj420p"}
-        or h264_profile in {"high 10", "high 4:2:2", "high 4:4:4 predictive"}
-    ):
-        raise VideoProcessError("桌面播放器不支持该 H.264 像素格式")
-    if probe.codec_name in {"vp8", "vp9"} and container not in {"matroska", "webm"}:
-        raise VideoProcessError("桌面播放器不支持该 VPx 视频容器")
-    return probe
-
-
-def prepare_external_desktop_video(src: Path) -> DesktopVideoResult:
-    """验证外部视频并生成缩略图；视频文件本身保持原字节、画幅、帧率和音轨。"""
-    probe = validate_desktop_video_playback(src)
-    # 完整解码只用于确认文件可读，不生成新的交付视频。
-    run_ffmpeg(
-        ["-xerror", "-i", str(src), "-map", "0:v:0", "-f", "null", "-"],
-        label="桌面视频解码检查",
-    )
-    first_frame = extract_desktop_first_frame(src)
-    with Image.open(BytesIO(first_frame)) as frame, BytesIO() as output:
-        width, height = frame.size
-        frame.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
-        frame.save(output, format="WEBP", quality=90)
-        cover = output.getvalue()
-    return DesktopVideoResult(width, height, round(probe.duration_seconds * 1000), cover, first_frame)

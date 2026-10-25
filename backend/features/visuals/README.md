@@ -12,18 +12,19 @@
 | `queries.py` | 影像分页与详情、工作项列表、呈现状态、实际呈现快照、按触发条件的可播目录 |
 | `use_cases.py` | HTTP 薄壳：参数收敛与 RequestError 转换（404/409/400） |
 | `generation.py` | 进程内按工作项单飞的制作流水线：图片链→图片检查→运动设计→视频队列→视频检查→发布 |
-| `life.py` | 同事务绑定创作请求、按工作项结算或重试全部关联生活步骤；兼容原制作键 |
+| `publication.py` | 一条有界写入语句采纳身份、不可变版本、资产引用和任务结果，并组合公共任务完成守卫 |
+| `life.py` | 同事务绑定创作请求、按工作项结算或重试全部关联生活步骤 |
 | `video_queue.py` | 公共视频队列的任务有效性检查（owner kind 为 `visuals`） |
-| `lifecycle.py` / `backup.py` / `backup_assets.py` / `asset_references.py` | 恢复登记、备份表与素材校验、活引用收集 |
+| `lifecycle.py` / `backup.py` / `asset_references.py` | 恢复登记、备份表与素材校验、活引用收集 |
 
-## 易错约束
+## 制作、呈现与恢复
 
-- `VisualJob` 一条等于一次新建或重做。目标含视频时先发布起始图影像（`media_kind='image'`）再发布视频影像；图片按 `(user_id, content_hash)` 去重，同内容复用既有行；封面只写 `poster_path` 不建行。视频行的 `input_image_path/input_image_hash` 冻结真实输入图，`input_image_id` 只指向同文件的图片影像，文件不同则留空。
-- 重做成功在事务内核对 `target_visual_id + expected_version` 后同 ID 替换（`version+1`）；失败、暂停、取消一律保留旧成品，草稿文件交统一回收。
-- 呈现指针在已认领的开播回执中切换：图片与 loop 动作同时更新 `loop_visual_id`，冷却只看 `started_at`/结账时间。短动作（视频 + `once`）在回执到达终态时回到 `loop_visual`，收尾由 `record_playback` 的回执路径完成。
-- `repository.presented_item` 投影冻结快照，`service.restore_presentation` 登记恢复播放，事实归属见[呈现契约](../../../docs/PROTOCOL.md#影像成品与模式隔离)。
-- 待播指令存 `pending_command_json`；认领按 `presentation_epoch + state_revision + 过期时间 + 自主资格` 重新校验，恢复与换号用 `backup.advance_playback_versions` 作废旧指令。
-- 提交结果未知（`submission_unknown`）时保留占用不重投，工作项进入 `unknown` 状态等人工处理；恢复备份时视频队列句柄一律清空。
-- 库与工作项变化走 `notify_visuals_updated`（不推进 `state_revision`），呈现状态变化走 `touch_presentation`（递增修订），两者都广播 `companion.visual.updated`；避免制作进度保存打断在途播放认领。
-- 自主播放资格与冷却常量在 `policy.py`；触发条件、播放方式与生成要求都来自组合快照，不在本模块内改写。
-- 受理键由 workflow 用工具调用、夜间动作账本或本次自主决定的身份产生，`_requested_job` 优先经生活步骤的业务引用解析工作项；新请求的在途去重复用完整组合哈希。契约见 [自主制作契约](../../../docs/PROTOCOL.md#影像成品与模式隔离)。
+- 一个视频工作项可能先采纳起始图，再采纳视频；图片内容去重不能与请求幂等混用。视频的输入图关系必须指向实际使用的文件与版本，封面不另建成品。
+- 成品写入统一经 `publication.py`：采纳重核目标与预期版本，追加不可变版本后切换当前指针。失败、暂停或取消保留可用成品，文件交统一回收；共享状态和领域关系见 [字段字典](../../../docs/DATABASE_FIELDS.md#影像播放与媒体制作)。
+- `repository.presented_item` 返回事务内的实际呈现快照；认领及回执读取指定版本，重做不能改写已经呈现的事实。待播指令重新核对代次、修订、时效和自主资格，恢复用 `backup.advance_playback_versions` 作废既有指令。产品播放语义归 [呈现契约](../../../docs/PROTOCOL.md#影像成品与模式隔离)。
+- `notify_visuals_updated` 只通知库及工作项变化，不推进呈现修订；呈现编辑经 `touch_presentation`，开播／终态回执负责持续画面的交接，制作进度不得打断在途认领。
+- workflow 从工具调用、夜间账本或一次自主决定产生请求身份。在途复用比较完整冻结组合，具体资格与冷却由 `policy.py` 判断；本模块不改写调用方的生成要求。
+
+列表使用 ID 游标与摘要投影；可播放目录在数据库过滤。保留范围见 [必要历史](../../../docs/DATABASE.md#必要历史)，回收须检查当前影像、呈现、播放及任务引用。
+
+恢复先映射物理关系，再重建呈现快照并作废待播命令；未知提交与供应商句柄遵循 [备份契约](../../../docs/PROTOCOL.md#备份校验与覆盖恢复)。冻结组合中的来源 ID 同步映射，已删除来源保留描述和文件、ID 留空，不能误绑定新库重用的身份。当前角色卡仍要求有效头像；历史身份缺失不妨碍查看成品，重新制作须使用当前角色。

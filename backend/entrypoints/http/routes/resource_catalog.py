@@ -1,6 +1,6 @@
-from typing import Annotated, Literal
+from typing import Literal
 
-from fastapi import HTTPException, Path, Query
+from fastapi import HTTPException, Query
 from features.conversation.request_contracts import PromptPresetListResponse, PromptPresetSummary
 from features.conversation.slash_commands import list_commands_for_user
 from features.memory.admin_contracts import (
@@ -10,13 +10,14 @@ from features.memory.admin_contracts import (
     MemoryProfileResponse,
     MemoryUpdateRequest,
 )
-from features.memory.contracts import MemoryConflictError, MemoryListItem
+from features.memory.contracts import MemoryConflictError, MemoryDetail, MemoryListItem
 from features.memory.memory_admin import update_memory, update_user_profile
 from features.memory.use_cases import (
     forget_manual_memory,
+    get_memory_detail,
     list_memory_view,
 )
-from infrastructure.constants import POSTGRES_INT4_MAX, POSTGRES_INT8_MAX
+from infrastructure.api_ids import ResourceId
 from infrastructure.http_contracts import operation_policy
 from pydantic import BaseModel
 from runtime.memory_scope import MemoryScope, validate_memory_scope
@@ -39,10 +40,7 @@ class CommandListResponse(BaseModel):
     commands: list[CommandSummary]
 
 
-@router.get(
-    "/presets",
-    response_model=PromptPresetListResponse,
-)
+@router.get("/presets", response_model=PromptPresetListResponse)
 async def get_presets(user: CurrentUser) -> PromptPresetListResponse:
     return PromptPresetListResponse(
         presets=[
@@ -52,18 +50,12 @@ async def get_presets(user: CurrentUser) -> PromptPresetListResponse:
     )
 
 
-@router.get(
-    "/commands",
-    response_model=CommandListResponse,
-)
+@router.get("/commands", response_model=CommandListResponse)
 async def get_commands(user: CurrentUser) -> CommandListResponse:
     return CommandListResponse(commands=[CommandSummary.model_validate(row) for row in list_commands_for_user()])
 
 
-@router.get(
-    "/memories",
-    response_model=MemoryListResponse,
-)
+@router.get("/memories", response_model=MemoryListResponse)
 async def get_memories(
     user: CurrentUser,
     system_preset_id: str,
@@ -72,19 +64,19 @@ async def get_memories(
     tag: str | None = None,
     q: str | None = Query(default=None, pattern=r"^[^\x00]*$"),
     limit: int = Query(default=100, ge=1, le=500),
-    offset: int = Query(default=0, ge=0, le=POSTGRES_INT8_MAX),
+    cursor: str | None = None,
+    include_total: bool = False,
 ) -> MemoryListResponse:
     scope = _scope(user.id, system_preset_id)
     try:
-        return await list_memory_view(scope, kind=kind, status=status, tag=tag, query=q, limit=limit, offset=offset)
+        return await list_memory_view(
+            scope, kind=kind, status=status, tag=tag, query=q, limit=limit, cursor=cursor, include_total=include_total
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@router.patch(
-    "/memories/profile",
-    response_model=MemoryProfileResponse,
-)
+@router.patch("/memories/profile", response_model=MemoryProfileResponse)
 async def patch_memory_profile(user: CurrentUser, body: MemoryProfileRequest) -> MemoryProfileResponse:
     scope = _scope(user.id, body.system_preset_id)
     try:
@@ -95,16 +87,18 @@ async def patch_memory_profile(user: CurrentUser, body: MemoryProfileRequest) ->
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+@router.get("/memories/{memory_id}", response_model=MemoryDetail)
+async def get_memory(user: CurrentUser, memory_id: ResourceId, system_preset_id: str) -> MemoryDetail:
+    row = await get_memory_detail(_scope(user.id, system_preset_id), memory_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return row
+
+
 @router.patch(
-    "/memories/{memory_id}",
-    response_model=MemoryListItem,
-    openapi_extra=operation_policy(wait_for_model=True),
+    "/memories/{memory_id}", response_model=MemoryListItem, openapi_extra=operation_policy(wait_for_model=True)
 )
-async def patch_memory(
-    user: CurrentUser,
-    memory_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
-    body: MemoryUpdateRequest,
-) -> MemoryListItem:
+async def patch_memory(user: CurrentUser, memory_id: ResourceId, body: MemoryUpdateRequest) -> MemoryListItem:
     scope = _scope(user.id, body.system_preset_id)
     try:
         row = await update_memory(scope, memory_id, content=body.content, expected_version=body.expected_version)
@@ -117,13 +111,10 @@ async def patch_memory(
     return row
 
 
-@router.delete(
-    "/memories/{memory_id}",
-    response_model=MemoryDeleteResponse,
-)
+@router.delete("/memories/{memory_id}", response_model=MemoryDeleteResponse)
 async def delete_memory(
     user: CurrentUser,
-    memory_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+    memory_id: ResourceId,
     system_preset_id: str,
 ) -> MemoryDeleteResponse:
     scope = _scope(user.id, system_preset_id)

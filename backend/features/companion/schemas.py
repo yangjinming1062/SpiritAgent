@@ -1,8 +1,9 @@
+import json
 from typing import Literal
 
 from infrastructure.ai.voice_types import VoiceEntry
-from infrastructure.constants import POSTGRES_INT4_MAX
-from pydantic import BaseModel, ConfigDict, Field
+from infrastructure.api_ids import ResourceId
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from features.media.voice_contracts import CustomVoiceSummary
 
@@ -13,12 +14,20 @@ PersonaEditableField = Literal["name", "personality", "relationship", "speaking_
 class PersonaUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    definition_json: str = Field(min_length=1, max_length=_PERSONA_JSON_MAX_LEN)
+    definition_json: dict[str, str | None] = Field(min_length=1, max_length=64)
+
+    @field_validator("definition_json")
+    @classmethod
+    def validate_definition_size(cls, value: dict[str, str | None]) -> dict[str, str | None]:
+        if len(json.dumps(value, ensure_ascii=False)) > _PERSONA_JSON_MAX_LEN:
+            raise ValueError("Persona definition is too large")
+        return value
+
     expected_fields: dict[PersonaEditableField, str | None] | None = None
 
 
 class PersonaResponse(BaseModel):
-    definition_json: str
+    definition_json: dict[str, str]
     is_complete: bool
     personality_tags: list[str] = Field(default_factory=list)
     current_mood: str | None = None
@@ -27,7 +36,7 @@ class PersonaResponse(BaseModel):
 class PortraitConfirmRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    expected_avatar_id: int = Field(gt=0, le=POSTGRES_INT4_MAX)
+    expected_avatar_id: ResourceId
 
 
 class VoicesListResponse(BaseModel):

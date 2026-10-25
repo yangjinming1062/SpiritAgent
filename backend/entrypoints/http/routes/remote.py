@@ -1,6 +1,4 @@
-from typing import Annotated
-
-from fastapi import Depends, Path, Request, Response
+from fastapi import Depends, Request, Response
 from features.accounts.remote import use_cases as remote_use_cases
 from features.accounts.remote.schemas import (
     DeviceListResponse,
@@ -13,8 +11,8 @@ from features.accounts.remote.security import (
     REMOTE_SESSION_TTL_SECONDS,
     require_remote_origin,
 )
+from infrastructure.api_ids import ResourceId
 from infrastructure.config import SETTINGS
-from infrastructure.constants import POSTGRES_INT4_MAX
 from infrastructure.database import DbSession
 from infrastructure.http_contracts import operation_policy
 from runtime.channels import terminate_remote_sessions
@@ -32,7 +30,6 @@ async def _private_response(response: Response) -> None:
 
 
 router = get_router(dependencies=[Depends(_private_response)])
-ResourceId = Annotated[int, Path(ge=1, le=POSTGRES_INT4_MAX)]
 
 
 @router.post("/pairings", response_model=PairingResponse)
@@ -40,34 +37,23 @@ async def create_pairing(session: CurrentSession, db: DbSession) -> PairingRespo
     return await remote_use_cases.create_pairing(session[0].id, db)
 
 
-@router.get(
-    "/pairings/{pairing_id}",
-    response_model=PairingResponse,
-)
+@router.get("/pairings/{pairing_id}", response_model=PairingResponse)
 async def pairing_status(pairing_id: ResourceId, session: CurrentSession, db: DbSession) -> PairingResponse:
     return await remote_use_cases.pairing_status(pairing_id, session[0].id, db)
 
 
-@router.delete(
-    "/pairings/{pairing_id}",
-    response_model=MessageResponse,
-)
+@router.delete("/pairings/{pairing_id}", response_model=MessageResponse)
 async def cancel_pairing(pairing_id: ResourceId, session: CurrentSession, db: DbSession) -> MessageResponse:
     await remote_use_cases.cancel_pairing(pairing_id, session[0].id, db)
     return MessageResponse(message="二维码已取消。")
 
 
 @router.post(
-    "/session/exchange",
-    response_model=RemoteSessionResponse,
-    openapi_extra=operation_policy(identities=("remote",)),
+    "/session/exchange", response_model=RemoteSessionResponse, openapi_extra=operation_policy(identities=("remote",))
 )
 @limiter.limit(lambda: f"{SETTINGS.login_rate_limit_per_minute}/minute", key_func=get_remote_address)
 async def exchange_pairing(
-    payload: ExchangeRequest,
-    request: Request,
-    response: Response,
-    db: DbSession,
+    payload: ExchangeRequest, request: Request, response: Response, db: DbSession
 ) -> RemoteSessionResponse:
     require_remote_origin(request)
     exchange = await remote_use_cases.exchange_pairing(payload, db, request.cookies.get(REMOTE_COOKIE))
@@ -105,10 +91,7 @@ async def list_remote_devices(session: CurrentSession, db: DbSession) -> DeviceL
     return await remote_use_cases.list_remote_devices(session[0].id, db)
 
 
-@router.delete(
-    "/devices/{device_id}",
-    response_model=MessageResponse,
-)
+@router.delete("/devices/{device_id}", response_model=MessageResponse)
 async def revoke_remote_device(device_id: ResourceId, session: CurrentSession, db: DbSession) -> MessageResponse:
     await remote_use_cases.revoke_remote_device(device_id, session[0].id, db)
     await terminate_remote_sessions(session[0].id, device_id)

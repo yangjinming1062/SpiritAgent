@@ -18,8 +18,12 @@ async def inspect_visual_video_owner(
     request_id: str | None = None,
 ) -> Literal["ready", "pending", "paused", "gone"]:
     async with SESSION_LOCAL() as db:
-        job = await db.get(VisualJob, owner.entity_id)
-        if job is None or job.user_id != owner.user_id:
+        job = await db.get(VisualJob, owner.job_id)
+        if (
+            job is None
+            or job.user_id != owner.user_id
+            or (job.purpose == "regenerate" and job.target_visual_id is None)
+        ):
             return "gone"
         progress = visual_progress(job)
         if progress is None or not progress.video_chain_json or job.state not in {"queued", "running"}:
@@ -38,7 +42,7 @@ async def inspect_visual_video_owner(
     if not before_submit:
         return "ready"
     try:
-        await _require_active_job(owner.user_id, owner.entity_id, chain.generation_id)
+        await _require_active_job(owner.user_id, owner.job_id, chain.generation_id)
     except GenerationWorkPaused:
         return "paused"
     return "ready"

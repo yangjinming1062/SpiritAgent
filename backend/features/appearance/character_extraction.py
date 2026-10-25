@@ -10,6 +10,7 @@ from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
 from runtime.user_maintenance import is_user_in_maintenance, track_user_task
 from sqlalchemy import select
 
+from features.appearance.asset_bindings import commit_appearance
 from features.appearance.avatar_service import (
     AvatarGenerationError,
     extract_card_features,
@@ -17,9 +18,8 @@ from features.appearance.avatar_service import (
     prepare_initial_fullbody,
 )
 from features.appearance.character_card import emit_character_card_updated, get_character_card
-from features.appearance.character_card_models import CompanionCharacterCard
 from features.appearance.completion import notify_character_ready
-from features.appearance.models import AvatarAsset
+from features.appearance.models import AvatarAsset, CharacterAnalysisJob
 from features.media.identity_contracts import BodyFeatures, CharacterFeatures, PortraitFeatures
 
 logger = get_logger(__name__)
@@ -59,9 +59,9 @@ async def resume_character_extractions() -> None:
     async with SESSION_LOCAL() as db:
         users = (
             await db.scalars(
-                select(CompanionCharacterCard.user_id)
-                .join(AvatarAsset, AvatarAsset.id == CompanionCharacterCard.avatar_id)
-                .where(AvatarAsset.active.is_(True), CompanionCharacterCard.status.in_(("pending", "running"))),
+                select(AvatarAsset.user_id)
+                .join(AvatarAsset.analysis_job)
+                .where(AvatarAsset.active.is_(True), CharacterAnalysisJob.state.in_(("queued", "running"))),
             )
         ).all()
     for user_id in users:
@@ -71,11 +71,15 @@ async def resume_character_extractions() -> None:
 async def _extract_part(user_id: int, extraction_id: str, part: Literal["portrait", "body"]) -> None:
     async with SESSION_LOCAL() as db:
         card = await get_character_card(db, user_id, lock=True)
-        if card is None or card.extraction_id != extraction_id or getattr(card, f"{part}_status") == "ready":
+        if (
+            card is None
+            or card.analysis_job.extraction_id != extraction_id
+            or getattr(card.analysis_job, f"{part}_status") == "ready"
+        ):
             return
-        source_path = getattr(card, f"{part}_source_path")
-        setattr(card, f"{part}_status", "running")
-        await db.commit()
+        source_path = getattr(card.analysis_job, f"{part}_source_path")
+        setattr(card.analysis_job, f"{part}_status", "running")
+        await commit_appearance(db, user_id)
     result: PortraitFeatures | BodyFeatures | None = None
     error: str | None = None
 
@@ -96,23 +100,23 @@ async def _extract_part(user_id: int, extraction_id: str, part: Literal["portrai
         error = "头像特征分析失败，请重试" if part == "portrait" else "身体特征分析失败，请重试"
     async with get_avatar_job_lock(user_id), SESSION_LOCAL() as db:
         card = await get_character_card(db, user_id, lock=True)
-        if card is None or card.extraction_id != extraction_id:
+        if card is None or card.analysis_job.extraction_id != extraction_id:
             return
-        avatar = await db.get(AvatarAsset, card.avatar_id)
+        avatar = await db.get(AvatarAsset, card.id)
         if (
             avatar is None
-            or avatar.asset_url != card.portrait_source_path
-            or avatar.seed_fullbody_url != card.body_source_path
+            or avatar.asset_url != card.analysis_job.portrait_source_path
+            or avatar.seed_fullbody_url != card.analysis_job.body_source_path
         ):
             error = "参考图片已更新，请重新提取角色资料"
             result = None
-        setattr(card, f"{part}_status", "ready" if result is not None else "failed")
+        setattr(card.analysis_job, f"{part}_status", "ready" if result is not None else "failed")
         if result is not None:
-            setattr(card, f"{part}_result_json", result.model_dump_json())
+            setattr(card.analysis_job, f"{part}_result_json", result.model_dump(mode="json"))
         if error:
-            card.error = error
+            card.analysis_job.error = error
         emit_character_card_updated(db, card)
-        await db.commit()
+        await commit_appearance(db, user_id)
 
 
 async def _extract_character(user_id: int) -> None:
@@ -120,13 +124,13 @@ async def _extract_character(user_id: int) -> None:
     try:
         async with SESSION_LOCAL() as db:
             card = await get_character_card(db, user_id, lock=True)
-            if card is None or card.status not in ("pending", "running"):
+            if card is None or card.analysis_job.state not in ("queued", "running"):
                 return
-            extraction_id = card.extraction_id
-            card.status = "running"
-            card.error = None
+            extraction_id = card.analysis_job.extraction_id
+            card.analysis_job.state = "running"
+            card.analysis_job.error = None
             emit_character_card_updated(db, card)
-            await db.commit()
+            await commit_appearance(db, user_id)
         if not await prepare_initial_fullbody(user_id, extraction_id=extraction_id):
             return
         results = await asyncio.gather(
@@ -139,29 +143,29 @@ async def _extract_character(user_id: int) -> None:
                 raise result
         async with get_avatar_job_lock(user_id), SESSION_LOCAL() as db:
             card = await get_character_card(db, user_id, lock=True)
-            if card is None or card.extraction_id != extraction_id:
+            if card is None or card.analysis_job.extraction_id != extraction_id:
                 return
-            avatar = await db.get(AvatarAsset, card.avatar_id)
+            avatar = await db.get(AvatarAsset, card.id)
             valid_sources = (
                 avatar is not None
-                and avatar.asset_url == card.portrait_source_path
-                and avatar.seed_fullbody_url == card.body_source_path
+                and avatar.asset_url == card.analysis_job.portrait_source_path
+                and avatar.seed_fullbody_url == card.analysis_job.body_source_path
             )
-            if card.portrait_status == card.body_status == "ready" and valid_sources:
+            if card.analysis_job.portrait_status == card.analysis_job.body_status == "ready" and valid_sources:
                 features = CharacterFeatures(
-                    **PortraitFeatures.model_validate_json(card.portrait_result_json).model_dump(),
-                    **BodyFeatures.model_validate_json(card.body_result_json).model_dump(),
+                    **PortraitFeatures.model_validate(card.analysis_job.portrait_result_json).model_dump(),
+                    **BodyFeatures.model_validate(card.analysis_job.body_result_json).model_dump(),
                 )
-                card.automatic_json = features.model_dump_json()
+                card.automatic_json = features.model_dump(mode="json")
                 card.revision += 1
-                card.status = "ready"
-                card.error = None
+                card.analysis_job.state = "succeeded"
+                card.analysis_job.error = None
             else:
-                card.status = "failed"
-                card.error = card.error or "参考图片已更新，请重新提取角色资料"
-            ready = card.status == "ready"
+                card.analysis_job.state = "failed"
+                card.analysis_job.error = card.analysis_job.error or "参考图片已更新，请重新提取角色资料"
+            ready = card.analysis_job.state == "succeeded"
             emit_character_card_updated(db, card)
-            await db.commit()
+            await commit_appearance(db, user_id)
         if ready:
             await notify_character_ready(user_id)
     except GenerationWorkPaused:
@@ -170,20 +174,24 @@ async def _extract_character(user_id: int) -> None:
         logger.exception("character card task failed", extra={"user_id": user_id})
         async with SESSION_LOCAL() as db:
             card = await get_character_card(db, user_id, lock=True)
-            if card is not None and card.extraction_id == extraction_id and card.status == "running":
-                card.status = "failed"
+            if (
+                card is not None
+                and card.analysis_job.extraction_id == extraction_id
+                and card.analysis_job.state == "running"
+            ):
+                card.analysis_job.state = "failed"
                 if isinstance(exc, AvatarGenerationError):
-                    card.body_status = "failed"
-                    card.error = str(exc)
+                    card.analysis_job.body_status = "failed"
+                    card.analysis_job.error = str(exc)
                 else:
-                    card.error = "角色资料分析中断，请重试"
+                    card.analysis_job.error = "角色资料分析中断，请重试"
                 emit_character_card_updated(db, card)
-                await db.commit()
+                await commit_appearance(db, user_id)
 
 
 async def resume_user_character_extraction(user_id: int) -> None:
     async with SESSION_LOCAL() as db:
         card = await get_character_card(db, user_id)
-        pending = card is not None and card.status in ("pending", "running")
+        pending = card is not None and card.analysis_job.state in ("queued", "running")
     if pending:
         schedule_character_extraction(user_id)

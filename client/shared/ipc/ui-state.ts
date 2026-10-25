@@ -5,13 +5,15 @@ import type {
   MemoryListRequest,
   PersonaEditableField
 } from '../../../shared/protocol'
+import { isResourceId } from '../../../shared/resource-id'
 import { isRecord } from '../is-record'
 
 export interface LifeUiSnapshot {
   status: 'all' | 'active' | 'completed'
   pursuitPage: number
+  pursuitCursors: (string | null)[]
   eventPage: number
-  selectedId: number | null
+  selectedId: string | null
   scrollTop: number
 }
 
@@ -22,8 +24,12 @@ export function isLifeUiSnapshot(value: unknown): value is LifeUiSnapshot {
     [value.pursuitPage, value.eventPage].every(
       page => typeof page === 'number' && Number.isSafeInteger(page) && page >= 0
     ) &&
-    (value.selectedId === null ||
-      (typeof value.selectedId === 'number' && Number.isSafeInteger(value.selectedId) && value.selectedId > 0)) &&
+    Array.isArray(value.pursuitCursors) &&
+    typeof value.pursuitPage === 'number' &&
+    value.pursuitPage < value.pursuitCursors.length &&
+    value.pursuitCursors[0] === null &&
+    value.pursuitCursors.every(cursor => cursor === null || typeof cursor === 'string') &&
+    (value.selectedId === null || isResourceId(value.selectedId)) &&
     typeof value.scrollTop === 'number' &&
     Number.isFinite(value.scrollTop) &&
     value.scrollTop >= 0
@@ -40,7 +46,8 @@ export interface CompanionMemoryBrowser {
   status: NonNullable<MemoryListRequest['status']>
   query: string
   page: number
-  selectedId: number | null
+  cursors: (string | null)[]
+  selectedId: string | null
   editorOpen: boolean
   scrollTop: number
 }
@@ -134,10 +141,11 @@ export function isCompanionEditorUiSnapshot(value: unknown): value is CompanionE
         typeof browser.page === 'number' &&
         Number.isSafeInteger(browser.page) &&
         browser.page >= 0 &&
-        (browser.selectedId === null ||
-          (typeof browser.selectedId === 'number' &&
-            Number.isSafeInteger(browser.selectedId) &&
-            browser.selectedId > 0)) &&
+        Array.isArray(browser.cursors) &&
+        browser.cursors.length > browser.page &&
+        browser.cursors[0] === null &&
+        browser.cursors.every(cursor => cursor === null || typeof cursor === 'string') &&
+        (browser.selectedId === null || isResourceId(browser.selectedId)) &&
         typeof browser.editorOpen === 'boolean' &&
         typeof browser.scrollTop === 'number' &&
         Number.isFinite(browser.scrollTop) &&
@@ -155,7 +163,8 @@ export interface VisualsUiSnapshot {
   mediaKind: 'all' | 'image' | 'video'
   source: string
   page: number
-  selectedId: number | null
+  cursors: (string | null)[]
+  selectedId: string | null
   detailOpen: boolean
 }
 
@@ -168,8 +177,10 @@ export function isVisualsUiSnapshot(value: unknown): value is VisualsUiSnapshot 
     typeof value.page === 'number' &&
     Number.isSafeInteger(value.page) &&
     value.page >= 0 &&
-    (value.selectedId === null ||
-      (typeof value.selectedId === 'number' && Number.isSafeInteger(value.selectedId) && value.selectedId > 0)) &&
+    Array.isArray(value.cursors) &&
+    value.cursors.every(cursor => cursor === null || isResourceId(cursor)) &&
+    value.page < value.cursors.length &&
+    (value.selectedId === null || isResourceId(value.selectedId)) &&
     typeof value.detailOpen === 'boolean'
   )
 }
@@ -203,7 +214,7 @@ export interface MainConversationDraftSnapshot {
     externalPaths: string[]
     editing: {
       sessionId: string
-      sourceMessageId: number
+      sourceMessageId: string
       text: string
       attachments?: ChatAttachment[]
     } | null

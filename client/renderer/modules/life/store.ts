@@ -69,16 +69,34 @@ function createLifeResource<T>(fallback: T) {
   return { $data, $loading, $error, load, clear }
 }
 
-const pursuits = createLifeResource<{ items: LifePursuit[]; total: number }>({ items: [], total: 0 })
-const events = createLifeResource<{ items: LifeEvent[]; total: number }>({ items: [], total: 0 })
+interface LifePageData<T> {
+  items: T[]
+  has_more: boolean
+  next_cursor: string | null
+}
+interface LifeEventPage extends LifePageData<LifeEvent> {
+  page: number
+  revision: number
+}
+const pursuits = createLifeResource<LifePageData<LifePursuit>>({ items: [], has_more: false, next_cursor: null })
+
+const events = createLifeResource<LifeEventPage>({
+  items: [],
+  has_more: false,
+  next_cursor: null,
+  page: -1,
+  revision: -1
+})
+
 const detail = createLifeResource<LifePursuit | null>(null)
 
 export const $lifePursuits = computed(pursuits.$data, value => value.items)
-export const $lifePursuitsTotal = computed(pursuits.$data, value => value.total)
+export const $lifePursuitsHasMore = computed(pursuits.$data, value => value.has_more)
+export const $lifePursuitsNextCursor = computed(pursuits.$data, value => value.next_cursor)
 export const $lifePursuitsLoading = pursuits.$loading
 export const $lifePursuitsError = pursuits.$error
 export const $lifeEvents = computed(events.$data, value => value.items)
-export const $lifeEventsTotal = computed(events.$data, value => value.total)
+export const $lifeEventsHasMore = computed(events.$data, value => value.has_more)
 export const $lifeEventsLoading = events.$loading
 export const $lifeEventsError = events.$error
 export const $lifeDetail = detail.$data
@@ -164,40 +182,55 @@ export function refreshLife(): Promise<void> {
   return request
 }
 
-export function loadLifePursuits(status: 'all' | 'active' | 'completed', page: number): Promise<void> {
-  return pursuits.load(`pursuits:${status}:${page}`, () =>
+export function loadLifePursuits(status: 'all' | 'active' | 'completed', cursor: string | null): Promise<void> {
+  return pursuits.load(`pursuits:${status}:${cursor ?? ''}`, () =>
     requestResource('companion_life.get_life_pursuits', {
-      query: { status: status === 'all' ? undefined : status, offset: page * LIFE_PAGE_SIZE, limit: LIFE_PAGE_SIZE }
+      query: { status: status === 'all' ? undefined : status, cursor, limit: LIFE_PAGE_SIZE }
     })
   )
 }
 
-export function loadLifeEvents(page: number, pursuitId?: number): Promise<void> {
+export function loadLifeEvents(page: number, pursuitId?: string): Promise<void> {
   return events.load(`events:${pursuitId ?? ''}`, async current => {
-    const items: LifeEvent[] = []
-    const end = (page + 1) * LIFE_PAGE_SIZE
-    let total = end
+    const cached = events.$data.get()
+    const revision = $lifeRevision.get()
+    let items = cached.items
+    let nextCursor = cached.next_cursor
+    let hasMore = cached.has_more
+    let loadedPage = cached.page
 
-    // 累计已展开的范围再投影，同一结果跨接口分页时仍只展示一次。
-    while (items.length < Math.min(end, total) && current()) {
+    if (loadedPage < 0 || cached.revision !== revision) {
       const response = await requestResource('companion_life.get_life_events', {
-        query: { pursuit_id: pursuitId, offset: items.length, limit: Math.min(50, end - items.length) }
+        query: { pursuit_id: pursuitId, limit: LIFE_PAGE_SIZE }
       })
 
-      total = response.total
-
-      items.push(...response.items)
-
-      if (response.items.length === 0) {
-        break
+      if (loadedPage < 0 || !response.has_more) {
+        items = response.items
+        nextCursor = response.next_cursor
+        hasMore = response.has_more
+        loadedPage = 0
+      } else {
+        // 事件为事实记录；刷新补齐头页，已展开的较早范围继续沿原游标读取。
+        items = [...new Map([...cached.items, ...response.items].map(item => [item.id, item])).values()]
       }
     }
 
-    return { items, total }
+    while (loadedPage < page && hasMore && nextCursor && current()) {
+      const response = await requestResource('companion_life.get_life_events', {
+        query: { pursuit_id: pursuitId, cursor: nextCursor, limit: LIFE_PAGE_SIZE }
+      })
+
+      items = [...new Map([...items, ...response.items].map(item => [item.id, item])).values()]
+      nextCursor = response.next_cursor
+      hasMore = response.has_more
+      loadedPage++
+    }
+
+    return { items, next_cursor: nextCursor, has_more: hasMore, page: loadedPage, revision }
   })
 }
 
-export function loadLifeDetail(pursuitId: number | null): Promise<void> {
+export function loadLifeDetail(pursuitId: string | null): Promise<void> {
   if (pursuitId === null) {
     detail.clear()
 

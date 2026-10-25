@@ -132,12 +132,12 @@ export function PersonaSection({
       const expectedFields = Object.fromEntries(fields.map(({ key }) => [key, draft.base[key]]))
 
       const body: PersonaUpdateRequest = {
-        definition_json: JSON.stringify({
+        definition_json: {
           name: draft.values.name.trim(),
           personality: draft.values.personality.trim(),
           relationship: draft.values.relationship.trim(),
           speaking_style: draft.values.speaking_style.trim()
-        }),
+        },
         expected_fields: expectedFields
       }
 

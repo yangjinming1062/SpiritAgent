@@ -43,6 +43,7 @@ interface SceneLibraryViewProps {
   slow: boolean
   status: 'idle' | 'loading' | 'loaded' | 'error'
   total: number
+  hasMore: boolean
 }
 
 export function SceneLibraryView({
@@ -63,7 +64,8 @@ export function SceneLibraryView({
   regenerating,
   slow,
   status,
-  total
+  total,
+  hasMore
 }: SceneLibraryViewProps): React.JSX.Element {
   const strings = useStrings()
   const t = strings.living.scene
@@ -248,7 +250,7 @@ export function SceneLibraryView({
         </SettingCard>
       ) : null}
 
-      {total > PAGE_SIZE ? (
+      {page > 0 || hasMore ? (
         <div className="flex items-center justify-between gap-3">
           <button className={BTN_SUBTLE} disabled={page === 0} onClick={() => onSetPage(page - 1)} type="button">
             {t.previous}
@@ -256,12 +258,7 @@ export function SceneLibraryView({
           <span className={HINT_TEXT}>
             {page + 1} / {Math.ceil(total / PAGE_SIZE)}
           </span>
-          <button
-            className={BTN_SUBTLE}
-            disabled={(page + 1) * PAGE_SIZE >= total}
-            onClick={() => onSetPage(page + 1)}
-            type="button"
-          >
+          <button className={BTN_SUBTLE} disabled={!hasMore} onClick={() => onSetPage(page + 1)} type="button">
             {t.next}
           </button>
         </div>

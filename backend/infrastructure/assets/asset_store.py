@@ -328,42 +328,6 @@ def _is_generation_id(value: str) -> bool:
     return len(value) == 32 and all(char in "0123456789abcdef" for char in value)
 
 
-def action_source_asset_path(user_id: int, generation_id: str, attempt: int, ext: str, *, directory: str) -> str:
-    if user_id <= 0 or attempt < 0 or ext not in {"mp4", "webm", "mov", "mkv"} or not _is_generation_id(generation_id):
-        raise ValueError("invalid action source asset key")
-    return _asset_path(user_id, directory, f"action_{generation_id}_a{attempt}.{ext}")
-
-
-async def save_action_source_asset_async(
-    data: bytes,
-    *,
-    user_id: int,
-    generation_id: str,
-    attempt: int,
-    ext: str,
-    directory: str,
-) -> str:
-    return await _save_generation_asset_async(
-        data,
-        user_id,
-        action_source_asset_path(user_id, generation_id, attempt, ext, directory=directory),
-    )
-
-
-def action_pose_asset_path(user_id: int, generation_id: str, *, directory: str) -> str:
-    if user_id <= 0 or not _is_generation_id(generation_id):
-        raise ValueError("invalid action pose asset key")
-    return _asset_path(user_id, directory, f"action_pose_{generation_id}.png")
-
-
-async def save_action_pose_asset_async(data: bytes, *, user_id: int, generation_id: str, directory: str) -> str:
-    return await _save_generation_asset_async(
-        data,
-        user_id,
-        action_pose_asset_path(user_id, generation_id, directory=directory),
-    )
-
-
 def image_chain_asset_path(
     user_id: int,
     generation_id: str,

@@ -10,7 +10,7 @@ from features.companion.proactive_runtime import get_presentation_snapshot, get_
 
 from .models import VisualItem, VisualPlayback, VisualPresentation
 from .repository import visual_is_short_action, visual_plays_as_loop
-from .schemas import ComboSnapshot, PresentedVisual, parse_combo_snapshot
+from .schemas import ComboSnapshot, PresentedVisual
 
 LOOP_HOLD_SECONDS = 10 * 60
 ONCE_REPEAT_SECONDS = 30 * 60
@@ -26,7 +26,7 @@ def _presented_at(play: VisualPlayback) -> datetime:
 async def visual_autonomous_block_reason(
     db: AsyncSession,
     presentation: VisualPresentation,
-    item: VisualItem,
+    item: VisualItem | PresentedVisual,
     *,
     snapshot: ComboSnapshot | None = None,
     excluded_play_id: str | None = None,
@@ -38,10 +38,10 @@ async def visual_autonomous_block_reason(
     if presence is None or not record.available:
         return "unavailable"
     if presentation.current_visual_id == item.id and presentation.current_snapshot_json:
-        current = PresentedVisual.model_validate_json(presentation.current_snapshot_json)
+        current = PresentedVisual.model_validate(presentation.current_snapshot_json)
         if current.version == item.version:
             return "already_current"
-    snapshot = snapshot if snapshot is not None else parse_combo_snapshot(item.snapshot_json)
+    snapshot = snapshot if snapshot is not None else ComboSnapshot.model_validate(item.snapshot_json)
     now = utc_now()
     plays = [
         play
@@ -53,13 +53,9 @@ async def visual_autonomous_block_reason(
         )
         if play.play_id != excluded_play_id
     ]
-    items = {
-        row.id: row
-        for row in await db.scalars(select(VisualItem).where(VisualItem.id.in_({play.visual_id for play in plays})))
-    }
     for play in plays:
-        target = items.get(play.visual_id)
-        if target is None or not visual_is_short_action(target, parse_combo_snapshot(target.snapshot_json)):
+        target = PresentedVisual.model_validate(play.snapshot_json) if play.snapshot_json else None
+        if target is None or not visual_is_short_action(target, ComboSnapshot.model_validate(target.snapshot_json)):
             continue
         pending = (
             play.status in {"queued", "claimed"}

@@ -55,7 +55,7 @@ const CARD_ACTION_CLASS =
 
 // 衣柜是静态造型素材库：列表与详情只管理全身图与描述，不涉及穿着与呈现选择。
 interface OutfitSectionProps {
-  onSelectOutfit: (id: number) => void
+  onSelectOutfit: (id: string) => void
   search: AssetLibrarySearch
 }
 
@@ -68,7 +68,7 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
   const t = dict.living.outfit
   const common = dict.common
   const selfSourceDict = dict.selfSource
-  const [busyId, setBusyId] = useState<number | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
   const [policyBusy, setPolicyBusy] = useState(false)
   const [zoomUrl, setZoomUrl] = useState<string | null>(null)
   const [failedPreview, setFailedPreview] = useState<string | null>(null)
@@ -191,7 +191,7 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
     }
   }, [session.busy, session.draft, session.lastRequest])
 
-  const withBusy = (id: number, action: () => Promise<unknown>): void => {
+  const withBusy = (id: string, action: () => Promise<unknown>): void => {
     const epoch = currentClearEpoch()
     setBusyId(id)
     void action().finally(() => {
@@ -201,7 +201,7 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
     })
   }
 
-  const completeDescription = async (id: number): Promise<void> => {
+  const completeDescription = async (id: string): Promise<void> => {
     const epoch = currentClearEpoch()
 
     try {
@@ -215,7 +215,7 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
     }
   }
 
-  const removeOutfit = async (id: number): Promise<void> => {
+  const removeOutfit = async (id: string): Promise<void> => {
     const epoch = currentClearEpoch()
 
     try {

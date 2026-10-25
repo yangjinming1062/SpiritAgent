@@ -38,9 +38,9 @@ async function runSessionAction({
   $inFlight: WritableAtom<SessionActionRequest | null>
   /** 当前气泡的本地 id；同类操作同一时刻只允许一个 RPC 在飞，并发点击靠此 id 排他。 */
   messageId: string
-  run: (sessionId: string, sourceMessageId: number) => Promise<unknown>
+  run: (sessionId: string, sourceMessageId: string) => Promise<unknown>
   /** 后端 Message.id——直接回传给会话 RPC 作为 source_message_id。 */
-  sourceMessageId: number
+  sourceMessageId: string
   sourceSessionId: string | null
 }): Promise<void> {
   const isCurrent = captureAuthScope()
@@ -83,8 +83,8 @@ interface MessageSessionActionState {
 export interface MessageSessionActions {
   fork: MessageSessionActionState
   undo: MessageSessionActionState
-  runFork(sourceMessageId: number): Promise<void>
-  runUndo(sourceMessageId: number): Promise<void>
+  runFork(sourceMessageId: string): Promise<void>
+  runUndo(sourceMessageId: string): Promise<void>
 }
 
 /** 消息菜单里的 fork / undo：同类操作同一时刻只允许一个在途 RPC，undo 执行前须二次确认。 */

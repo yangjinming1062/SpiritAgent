@@ -19,7 +19,7 @@ from features.media.video_queue.service import anonymize_user_video_queue
 from infrastructure.assets.asset_store import delete_user_assets
 from infrastructure.async_io import run_blocking
 from infrastructure.attachments import gc_session as attachments_gc_session
-from infrastructure.backup import BackupImportMode
+from infrastructure.backup import BACKUP_REGISTRY, BackupImportMode
 from infrastructure.file_results import DeferredCleanup, FileResult
 from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
@@ -41,7 +41,6 @@ from workflows.maintenance.backup.manifest import load_manifest
 from workflows.maintenance.backup.restoration import BackupRestoreResult, load_backup_rows, restore_backup_rows
 from workflows.maintenance.backup.serializers import (
     TABLES,
-    serialize_rows,
     tables_for_sections,
 )
 from workflows.maintenance.user import user_maintenance
@@ -82,7 +81,7 @@ async def export_user_backup(user_id: int, admin: str, db: AsyncSession) -> File
     await db.rollback()
     await db.connection(execution_options={"isolation_level": "REPEATABLE READ", "postgresql_readonly": True})
     user = await require_account(db, user_id)
-    rows_by_table = {tbl: await serialize_rows(db, tbl, user_id) for tbl in TABLES}
+    rows_by_table = {table: await BACKUP_REGISTRY.table(table).export(db, user_id) for table in TABLES}
     # 用 commit 而非 rollback 结束快照：rollback 会使 user 过期，打包线程读取其属性将触发懒加载；打包与下载可能持续数分钟，不能占着事务。
     await db.commit()
     files = await run_blocking(collect_files_for_export, user_id, rows_by_table)
@@ -121,7 +120,7 @@ async def import_user_backup(
     mode: BackupImportMode,
     sections: list[str] | None,
 ) -> UserBackupImportResponse:
-    """按所选分组恢复备份，覆盖仅清理通过当前结构和关联校验的数据类别。"""
+    """预检选中数据图后原子恢复，失败不改变目标账户。"""
     if not file.filename or not file.filename.endswith(".zip"):
         raise RequestError(status_code=status.HTTP_400_BAD_REQUEST, message="上传文件必须是 .zip。")
     try:
@@ -130,7 +129,7 @@ async def import_user_backup(
         raise RequestError(status_code=status.HTTP_400_BAD_REQUEST, message=str(exc)) from exc
     await require_account(db, user_id)
     # 上传落盘、解压与维护等待都可能持续数分钟，期间不持有数据库事务。
-    await db.rollback()
+    await db.commit()
 
     with tempfile.TemporaryDirectory(prefix="spiritagent-import-") as tmp_dir:
         zip_path = Path(tmp_dir) / "upload.zip"
@@ -155,13 +154,27 @@ async def import_user_backup(
         except ValueError as exc:
             raise RequestError(status_code=status.HTTP_400_BAD_REQUEST, message=f"备份无效：{exc}") from exc
         source_uid = int(manifest["source_user_id"])
-        read_result = await run_blocking(
-            load_backup_rows,
-            extract_root,
-            list(manifest["tables"]),
-            dict(manifest["row_counts"]),
-            selected_tables=selected_tables,
-        )
+        try:
+            read_result = await run_blocking(
+                load_backup_rows,
+                extract_root,
+                list(manifest["tables"]),
+                dict(manifest["row_counts"]),
+                selected_tables=selected_tables,
+            )
+        except ValueError as exc:
+            raise RequestError(status_code=400, message="备份数据结构或任务关联无效，请核对备份内容。") from exc
+        if read_result.failures:
+            return UserBackupImportResponse(
+                mode=mode,
+                sections=resolved_sections,
+                imported={},
+                restored_files=0,
+                failed=[
+                    UserBackupImportFailure(section=item.section, count=item.count, reason=item.reason)
+                    for item in read_result.failures
+                ],
+            )
         restore_result: BackupRestoreResult | None = None
         async with user_maintenance(user_id), configuration_lock:
             await require_account(db, user_id)
@@ -174,6 +187,19 @@ async def import_user_backup(
                     read_result.rows,
                     mode=mode,
                 )
+                if restore_result.failures:
+                    await db.rollback()
+                    restore_result.rewriter.rollback()
+                    return UserBackupImportResponse(
+                        mode=mode,
+                        sections=resolved_sections,
+                        imported={},
+                        restored_files=0,
+                        failed=[
+                            UserBackupImportFailure(section=item.section, count=item.count, reason=item.reason)
+                            for item in restore_result.failures
+                        ],
+                    )
                 if await persona_is_complete(db, user_id):
                     await ensure_main_conversation_for_user(db, user_id, commit=False)
                 await db.commit()

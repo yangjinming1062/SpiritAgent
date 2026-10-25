@@ -4,7 +4,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 
 from infrastructure.config import SETTINGS
-from infrastructure.text import safe_json_loads
 from pydantic import BaseModel, ConfigDict
 from runtime.presentation import PresentationMode
 from sqlalchemy import select
@@ -105,5 +104,5 @@ def can_start_companion_turn(user_id: int) -> bool:
 
 async def get_personality_tags(db: AsyncSession, user_id: int) -> list[str]:
     raw = (await db.execute(select(Persona.personality_tags_json).where(Persona.user_id == user_id))).scalar()
-    parsed = safe_json_loads(raw, default=[]) if raw else []
+    parsed = raw or []
     return [tag for tag in parsed if isinstance(tag, str)] if isinstance(parsed, list) else []

@@ -58,6 +58,11 @@ async def change_outfit_policy(db: AsyncSession, user_id: int, policy: str) -> N
     row.outfit_policy = policy
 
 
+async def read_scene_policy(db: AsyncSession, user_id: int) -> str | None:
+    """环境读取只需要添置政策，不加载人设正文或生活状态。"""
+    return await db.scalar(select(Persona.scene_policy).where(Persona.user_id == user_id))
+
+
 async def change_scene_policy(db: AsyncSession, user_id: int, policy: str) -> PersonaSnapshot:
     row = await _persona_row(db, user_id)
     row.scene_policy = policy

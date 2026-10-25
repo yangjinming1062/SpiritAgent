@@ -2,8 +2,10 @@ export {
   $actions,
   $actionsError,
   $actionsLoading,
+  $actionsNextCursor,
   createAction,
   deleteAction,
+  loadMoreActions,
   refreshActions,
   resetActionsForAccount,
   updateAction
@@ -40,6 +42,7 @@ export {
   $visualsItems,
   $visualsJobs,
   $visualsLoading,
+  $visualsNextCursor,
   $visualsPresentation,
   $visualsPresentationError,
   $visualsTotal,

@@ -1270,6 +1270,8 @@ export const dict = {
       empty: '暂无动态',
       loadFailed: '动态加载失败',
       noTitle: '无题',
+      commentsLoad: '查看评论',
+      commentsMore: '更多评论',
       commentPlaceholder: '写评论…',
       commentSend: '发送',
       commentSending: '发送中…',
@@ -1472,6 +1474,7 @@ export const dict = {
       new: '新建对话',
       searchAria: '搜索会话',
       searchPlaceholder: '搜索会话…',
+      loadMore: '加载更多',
       searchResultsHeading: '搜索结果',
       searching: '搜索中…',
       noMatch: '没有找到匹配会话',
@@ -1631,6 +1634,7 @@ export const dict = {
   },
 
   actions: {
+    loadMore: '加载更多动作',
     title: '动作',
     intro: '维护动作的语义定义：名称、动作内容、适用条件、类型与时长。影像制作会按这里的定义执行。',
     searchAria: '搜索动作',

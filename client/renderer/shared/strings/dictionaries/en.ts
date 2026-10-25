@@ -1328,6 +1328,8 @@ export const dict: Dictionary = {
       empty: 'No posts captured yet.',
       loadFailed: "Couldn't load posts",
       noTitle: 'Untitled',
+      commentsLoad: 'View comments',
+      commentsMore: 'More comments',
       commentPlaceholder: 'Write a comment…',
       commentSend: 'Send',
       commentSending: 'Sending…',
@@ -1553,6 +1555,7 @@ export const dict: Dictionary = {
       new: 'New conversation',
       searchAria: 'Search conversations',
       searchPlaceholder: 'Search conversations…',
+      loadMore: 'Load more',
       searchResultsHeading: 'Search results',
       searching: 'Searching…',
       noMatch: 'No matching conversations',
@@ -1712,6 +1715,7 @@ export const dict: Dictionary = {
   },
 
   actions: {
+    loadMore: 'Load more actions',
     title: 'Actions',
     intro:
       'Maintain action semantics: name, motion, applicable conditions, type and duration. Visual creation follows these definitions.',

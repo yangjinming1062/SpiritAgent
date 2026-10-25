@@ -5,11 +5,11 @@ export function createRemotePairing(): Promise<RemotePairing> {
   return requestResource('remote.create_pairing')
 }
 
-export function getRemotePairing(id: number): Promise<RemotePairing> {
+export function getRemotePairing(id: string): Promise<RemotePairing> {
   return requestResource('remote.pairing_status', { path: { pairing_id: id } })
 }
 
-export async function cancelRemotePairing(id: number): Promise<void> {
+export async function cancelRemotePairing(id: string): Promise<void> {
   await requestResource('remote.cancel_pairing', { path: { pairing_id: id } })
 }
 
@@ -17,7 +17,7 @@ export function listRemoteDevices(): Promise<{ items: RemoteDevice[] }> {
   return requestResource('remote.list_remote_devices')
 }
 
-export async function revokeRemoteDevice(id: number): Promise<void> {
+export async function revokeRemoteDevice(id: string): Promise<void> {
   await requestResource('remote.revoke_remote_device', { path: { device_id: id } })
 }
 

@@ -47,14 +47,18 @@ export function isCompanionSession(session: null | SessionInfo | undefined): boo
 
 export const $sessions = atom<SessionInfo[]>([])
 export const $sessionsLoading = atom(false)
+export const $sessionsNextCursor = atom<string | null>(null)
 export const $sessionsError = atom<string | null>(null)
 export const $sessionNavigationError = atom<{ sessionId: string | null; error: string } | null>(null)
 export const $sessionSort = atom<SessionSort>(parseSessionSort(storedString(SESSION_SORT_KEY)))
 export const $sessionSearch = atom('')
 export const $searchResults = atom<SessionInfo[]>([])
 export const $searchLoading = atom(false)
+export const $searchNextCursor = atom<string | null>(null)
+let searchCursorQuery = ''
 export const $archivedSessions = atom<SessionInfo[]>([])
 export const $archivedLoading = atom(false)
+export const $archivedNextCursor = atom<string | null>(null)
 export const $archiveOpen = atom(false)
 
 // 系统预设元数据（不含 body，body 永远不下发到客户端）。预设体变更需后端重启，所以进程内缓存足够。
@@ -136,7 +140,13 @@ export function setSessionSort(sort: SessionSort): void {
   void fetchSessions()
 }
 
-export async function fetchSessions(): Promise<void> {
+export async function fetchSessions(append = false): Promise<void> {
+  const cursor = append ? $sessionsNextCursor.get() : null
+
+  if (append && (!cursor || $sessionsLoading.get())) {
+    return
+  }
+
   const authCurrent = captureAuthScope()
 
   if (!authCurrent) {
@@ -149,10 +159,16 @@ export async function fetchSessions(): Promise<void> {
   $sessionsError.set(null)
 
   try {
-    const res = await requestResource('sessions.list_sessions', { query: { order: $sessionSort.get() } })
+    const res = await requestResource('sessions.list_sessions', { query: { order: $sessionSort.get(), cursor } })
 
     if (isCurrent()) {
-      const sessions = res.sessions || []
+      const incomingIds = new Set(res.sessions.map(session => session.id))
+
+      const sessions = append
+        ? [...$sessions.get().filter(session => !incomingIds.has(session.id)), ...res.sessions]
+        : res.sessions
+
+      $sessionsNextCursor.set(res.next_cursor)
       // 列表只返回一页；当前会话不在其中时沿用本地条目，避免专业对话因找不到当前会话而切走。
       const activeId = $chatSessionId.get()
       const active = sessions.some(s => s.id === activeId) ? undefined : $sessions.get().find(s => s.id === activeId)
@@ -175,7 +191,13 @@ export async function fetchSessions(): Promise<void> {
   }
 }
 
-export async function fetchArchived(): Promise<void> {
+export async function fetchArchived(append = false): Promise<void> {
+  const cursor = append ? $archivedNextCursor.get() : null
+
+  if (append && (!cursor || $archivedLoading.get())) {
+    return
+  }
+
   const authCurrent = captureAuthScope()
 
   if (!authCurrent) {
@@ -187,10 +209,16 @@ export async function fetchArchived(): Promise<void> {
   $archivedLoading.set(true)
 
   try {
-    const res = await requestResource('sessions.list_sessions', { query: { archived: 'only', limit: 100 } })
+    const res = await requestResource('sessions.list_sessions', { query: { archived: 'only', limit: 100, cursor } })
 
     if (isCurrent()) {
-      $archivedSessions.set(res.sessions || [])
+      const incomingIds = new Set(res.sessions.map(session => session.id))
+      $archivedSessions.set(
+        append
+          ? [...$archivedSessions.get().filter(session => !incomingIds.has(session.id)), ...res.sessions]
+          : res.sessions
+      )
+      $archivedNextCursor.set(res.next_cursor)
     }
   } catch (err) {
     if (isCurrent()) {
@@ -203,12 +231,19 @@ export async function fetchArchived(): Promise<void> {
   }
 }
 
-export async function runSessionSearch(query: string): Promise<void> {
+export async function runSessionSearch(query: string, append = false): Promise<void> {
   const q = query.trim()
+  const cursor = append ? $searchNextCursor.get() : null
+
+  if (append && (!cursor || $searchLoading.get() || q !== searchCursorQuery)) {
+    return
+  }
 
   if (!q) {
     searchToken++
     $searchResults.set([])
+    $searchNextCursor.set(null)
+    searchCursorQuery = ''
     $searchLoading.set(false)
 
     return
@@ -225,10 +260,17 @@ export async function runSessionSearch(query: string): Promise<void> {
   $searchLoading.set(true)
 
   try {
-    const res = await requestResource('sessions.list_sessions', { query: { q, archived: 'include' } })
+    const res = await requestResource('sessions.list_sessions', { query: { q, archived: 'include', cursor } })
 
     if (isCurrent()) {
-      $searchResults.set(res.sessions || [])
+      const incomingIds = new Set(res.sessions.map(session => session.id))
+      $searchResults.set(
+        append
+          ? [...$searchResults.get().filter(session => !incomingIds.has(session.id)), ...res.sessions]
+          : res.sessions
+      )
+      $searchNextCursor.set(res.next_cursor)
+      searchCursorQuery = q
     }
   } catch (err) {
     if (isCurrent()) {
@@ -497,7 +539,7 @@ function forkSessionInfo(sourceSessionId: string, res: SessionSnapshot): Session
 }
 
 /** 从源会话某条消息派生新会话并挂载 hydrate；发起后已换号或换网关返回 null，请求失败向上抛出。 */
-export async function forkConversation(sourceSessionId: string, sourceMessageId: number): Promise<string | null> {
+export async function forkConversation(sourceSessionId: string, sourceMessageId: string): Promise<string | null> {
   const isCurrent = captureAuthScope()
 
   if (!isCurrent) {
@@ -546,7 +588,7 @@ export async function forkConversation(sourceSessionId: string, sourceMessageId:
 }
 
 /** 撤回消息：同会话内硬删除 Message.id >= source_message_id 的全部行（含锚点），锚点载荷落回输入框作草稿；发起后已换号或换网关返回 null，请求失败向上抛出。 */
-export async function undoToMessage(sessionId: string, sourceMessageId: number): Promise<UndoResponse | null> {
+export async function undoToMessage(sessionId: string, sourceMessageId: string): Promise<UndoResponse | null> {
   const isCurrent = captureAuthScope()
 
   if (!isCurrent) {
@@ -952,6 +994,10 @@ registerStorageClearHandler(() => {
   companionLoad = null
   companionLoadEpoch = -1
   $sessions.set([])
+  $sessionsNextCursor.set(null)
+  $searchNextCursor.set(null)
+  $archivedNextCursor.set(null)
+  searchCursorQuery = ''
   $sessionsLoading.set(false)
   $sessionsError.set(null)
   $sessionNavigationError.set(null)

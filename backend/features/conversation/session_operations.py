@@ -1,7 +1,7 @@
 """会话入口使用的查询与修改用例；ORM 行不离开所属模块。"""
 
 import asyncio
-import json
+from copy import deepcopy
 from typing import Any
 
 from infrastructure.assets.write_protection import user_asset_lock
@@ -12,7 +12,7 @@ from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from runtime.conversation import LastSubmissionSnapshot
 from runtime.events.emit import emit_ws_event
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, exists, func, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.conversation.asset_releases import collect_message_asset_releases
@@ -23,7 +23,7 @@ from features.conversation.formatting import message_text
 from features.conversation.history import build_session_messages, count_conversation_bubbles
 from features.conversation.http_contracts import SessionUndoResult
 from features.conversation.main_conversation import get_or_create_main_conversation
-from features.conversation.models import Conversation, Message
+from features.conversation.models import Conversation, Message, parse_session_id
 from features.conversation.replacement import ReplyReplacement, reply_replacement_target
 from features.conversation.reply_audio import cancel_reply_audio
 from features.conversation.retry import ReplyRetryNotAllowedError, get_reply_retry_message
@@ -66,7 +66,6 @@ async def create_conversation(user_id: int, preset_id: str) -> ConversationSnaps
         conv = Conversation(user_id=user_id, system_preset_id=preset_id)
         db.add(conv)
         await db.commit()
-        await db.refresh(conv)
         return conversation_snapshot(conv)
 
 
@@ -106,13 +105,25 @@ async def history_snapshot(
 
 async def history_page(user_id: int, session_id: str, before_id: int | None, limit: int) -> dict[str, Any]:
     async with SESSION_LOCAL() as db:
-        conv = await _owned(db, user_id, session_id)
-        if (
-            before_id is not None
-            and await db.scalar(select(Message.id).where(Message.id == before_id, Message.conversation_id == conv.id))
-            is None
-        ):
+        cursor_exists = (
+            exists(
+                select(Message.id).where(Message.id == before_id, Message.conversation_id == Conversation.id)
+            ).correlate(Conversation)
+            if before_id is not None
+            else true()
+        )
+        owned = (
+            await db.execute(
+                select(Conversation, cursor_exists.label("valid_cursor")).where(
+                    Conversation.id == parse_session_id(session_id), Conversation.user_id == user_id
+                )
+            )
+        ).one_or_none()
+        if owned is None:
+            raise ConversationNotFoundError("会话不存在")
+        if not owned.valid_cursor:
             raise ValueError("History cursor is unavailable")
+        conv = owned.Conversation
         rows = await build_session_messages(conv.id, db, before_id=before_id, latest=limit + 1)
     has_more = len(rows) > limit
     messages = rows[-limit:]
@@ -133,7 +144,7 @@ async def last_submission(user_id: int, conversation_id: int) -> LastSubmissionS
         )
         if row is None:
             return None
-        ids = json.loads(row.message_ids_json)
+        ids = deepcopy(row.message_ids)
         retry_id = None
         if row.status == "failed" and ids and row.replace_reply_message_id is None:
             try:

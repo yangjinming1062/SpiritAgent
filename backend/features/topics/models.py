@@ -4,7 +4,8 @@ from datetime import date, datetime
 from typing import Any
 
 from infrastructure.models import ModelBase, TimestampMixin
-from sqlalchemy import JSON, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -25,7 +26,7 @@ class TopicBatch(ModelBase, TimestampMixin):
     status: Mapped[str] = mapped_column(String(16), default="collecting", server_default=text("'collecting'"))
     search_requests: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     detail_requests: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
-    checkpoint: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    checkpoint: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     error: Mapped[str | None] = mapped_column(String(160), nullable=True)
 
 

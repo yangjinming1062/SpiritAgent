@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ApiResponse, HttpCallOptions } from '../shared/api'
 import { EVENT_POLICIES } from '../shared/api.generated'
 import { eventsAfterSnapshot, isRecord } from '../shared/gateway'
+import { compareResourceIds, isResourceId } from '../shared/resource-id'
 import { createTurnCancellation, type TurnReference } from '../shared/turn-cancellation'
 
 import type { GatewayEvent, RemoteApi, RemoteGateway } from './api'
@@ -36,8 +37,8 @@ interface PendingPrompt {
   id: string
   text: string
   attachments: ChatAttachment[]
-  retry?: number
-  replace?: number
+  retry?: string
+  replace?: string
 }
 
 function readPendingPrompt(key: string): PendingPrompt | null {
@@ -54,10 +55,8 @@ function readPendingPrompt(key: string): PendingPrompt | null {
     typeof value.id !== 'string' ||
     typeof value.text !== 'string' ||
     !Array.isArray(value.attachments) ||
-    (value.retry !== undefined &&
-      (typeof value.retry !== 'number' || !Number.isInteger(value.retry) || value.retry <= 0)) ||
-    (value.replace !== undefined &&
-      (typeof value.replace !== 'number' || !Number.isInteger(value.replace) || value.replace <= 0))
+    (value.retry !== undefined && !isResourceId(value.retry)) ||
+    (value.replace !== undefined && !isResourceId(value.replace))
   ) {
     throw new Error('待确认的消息记录无法读取，请核对会话后重新登录')
   }
@@ -78,8 +77,8 @@ function readPendingPrompt(key: string): PendingPrompt | null {
     id: value.id,
     text: value.text,
     attachments,
-    retry: typeof value.retry === 'number' ? value.retry : undefined,
-    replace: typeof value.replace === 'number' ? value.replace : undefined
+    retry: isResourceId(value.retry) ? value.retry : undefined,
+    replace: isResourceId(value.replace) ? value.replace : undefined
   }
 }
 
@@ -122,13 +121,14 @@ export function Chat({
   gateway: RemoteGateway
   connected: boolean
   refresh: number
-  userId: number
-  device: number
+  userId: string
+  device: string
 }): ReactElement {
   const alive = useAlive()
   const { run, runLatest, busy, error } = useTask()
   const [sessions, setSessions] = useState<SessionInfo[]>([])
-  const [sessionTotal, setSessionTotal] = useState(0)
+  const [sessionNextCursor, setSessionNextCursor] = useState<string | null>(null)
+  const sessionListRevision = useRef(0)
 
   const [seenAt, setSeenAt] = useState<Record<string, number>>(() => {
     try {
@@ -164,7 +164,7 @@ export function Chat({
   const attachmentsRef = useRef(attachments)
   attachmentsRef.current = attachments
   const [failure, setFailure] = useState('')
-  const [retryMessage, setRetryMessage] = useState<number | null>(null)
+  const [retryMessage, setRetryMessage] = useState<string | null>(null)
   const [recording, setRecording] = useState(false)
   const [transcribing, setTranscribing] = useState(false)
   const selectedRef = useRef(selected)
@@ -285,16 +285,17 @@ export function Chat({
   }, [releaseRecording])
 
   const loadSessions = useCallback(
-    async (offset = 0) => {
-      const result = await api.invoke('sessions.list_sessions', { query: { limit: 100, offset } })
+    async (cursor: string | null = null) => {
+      const revision = ++sessionListRevision.current
+      const result = await api.invoke('sessions.list_sessions', { query: { limit: 100, cursor } })
 
-      if (alive()) {
+      if (alive() && revision === sessionListRevision.current) {
         setSessions(previous =>
-          offset
+          cursor
             ? [...previous, ...result.sessions.filter(session => !previous.some(old => old.id === session.id))]
             : result.sessions
         )
-        setSessionTotal(result.total)
+        setSessionNextCursor(result.next_cursor)
       }
     },
     [api, alive]
@@ -326,7 +327,7 @@ export function Chat({
         }
 
         const incoming = mergeMessages(result.messages, result.active_turn?.messages ?? [])
-        const firstId = incoming[0]?.id ?? 0
+        const firstId = incoming[0]?.id
         // 快照已覆盖的全量替换仍使旧分页失效，不能重放它的旧正文。
         const historyReplaced =
           (result.history_revision ?? 0) !== (historyRevisions.current.get(id) ?? 0) ||
@@ -341,7 +342,7 @@ export function Chat({
         setMessages(previous =>
           result.truncated && !historyReplaced
             ? mergeMessages(
-                previous.filter(message => (message.id ?? 0) < firstId),
+                previous.filter(message => firstId !== undefined && compareResourceIds(message.id, firstId) < 0),
                 incoming
               )
             : incoming
@@ -529,7 +530,7 @@ export function Chat({
       }
       if (
         event.payload.status === 'completed' &&
-        typeof event.payload.replace_reply_message_id === 'number' &&
+        isResourceId(event.payload.replace_reply_message_id) &&
         Array.isArray(event.payload.messages)
       ) {
         const reply = event.payload.messages.find(
@@ -628,7 +629,7 @@ export function Chat({
     })
   }
 
-  const submit = async (retry?: number, replace?: number) => {
+  const submit = async (retry?: string, replace?: string) => {
     const id = selectedRef.current
 
     if (!id || readOnly || turn?.running) {
@@ -914,11 +915,11 @@ export function Chat({
             </button>
           ))}
         </div>
-        {sessions.length < sessionTotal ? (
+        {sessionNextCursor !== null ? (
           <button
             className="load-more"
             disabled={busy}
-            onClick={() => run(() => loadSessions(sessions.length))}
+            onClick={() => run(() => loadSessions(sessionNextCursor))}
             type="button"
           >
             更多会话
@@ -1006,7 +1007,7 @@ export function Chat({
             disabled={busy}
             onClick={() =>
               run(async () => {
-                const before = messages.find(message => typeof message.id === 'number')?.id
+                const before = messages.find(message => isResourceId(message.id))?.id
                 const height = listRef.current?.scrollHeight ?? 0
 
                 const result = await api.invoke('sessions.get_session_history', {
@@ -1222,8 +1223,8 @@ function Message({
   message: SessionMessage
   api: RemoteApi
   refresh: () => void
-  userId: number
-  device: number
+  userId: string
+  device: string
   replace?: () => void
   replacing?: boolean
   replaceDisabled?: boolean
@@ -1311,10 +1312,10 @@ function Bubble({
   bubble: CompanionBubble
   api: RemoteApi
   refresh: () => void
-  messageId?: number
+  messageId?: string
   index?: number
-  userId?: number
-  device?: number
+  userId?: string
+  device?: string
 }): ReactElement {
   const { run, busy, error } = useTask()
   const audioRef = useRef<HTMLAudioElement>(null)

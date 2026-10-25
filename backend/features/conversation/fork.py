@@ -6,6 +6,7 @@ from infrastructure.assets.write_protection import user_asset_lock
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.conversation.asset_bindings import commit_conversation, flush_conversation
 from features.conversation.context_window import CHECKPOINT_SUBTYPE
 from features.conversation.main_conversation import STANDARD_KIND, UI_ONLY_SUBTYPES
 from features.conversation.memory_scope import conversation_memory_scope
@@ -92,9 +93,9 @@ async def _fork_conversation_from_message(
         is_renamable=True,
     )
     db.add(new_conv)
-    await db.flush()
+    await flush_conversation(db)
 
-    # 统计列清零；tool_calls / media_json / content_type 原样复制以保证工具调用链自洽。
+    # 副本不累计原生成 Token；tool_calls / media_json / content_type 原样复制以保证工具调用链自洽。
     copies: dict[int, Message] = {}
     for row in rows:
         copied_reply = row.reply_json
@@ -105,8 +106,9 @@ async def _fork_conversation_from_message(
                     bubble.job_id = None
                     if bubble.status == "pending":
                         bubble.status, bubble.url, bubble.error = "failed", None, "生成任务属于原会话"
-            copied_reply = reply.model_dump_json()
+            copied_reply = reply.model_dump(mode="json")
         copy = Message(
+            user_id=user_id,
             conversation_id=new_conv.id,
             role=row.role,
             subtype=row.subtype,
@@ -125,7 +127,7 @@ async def _fork_conversation_from_message(
         )
         db.add(copy)
         copies[row.id] = copy
-    await db.flush()
+    await flush_conversation(db)
     for row in rows:
         if row.subtype == CHECKPOINT_SUBTYPE:
             boundary = copies.get(row.summary_through_message_id)
@@ -133,7 +135,7 @@ async def _fork_conversation_from_message(
                 raise SourceNotFoundError("摘要覆盖边界不在可派生历史中")
             copies[row.id].summary_through_message_id = boundary.id
 
-    await db.commit()
+    await commit_conversation(db)
 
     return ForkResult(session_id=str(new_conv.id), message_count=len(rows))
 

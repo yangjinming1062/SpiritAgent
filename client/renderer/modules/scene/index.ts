@@ -2,6 +2,7 @@ export {
   $pendingScene,
   $sceneCreationIssue,
   $sceneDetails,
+  $sceneHasMore,
   $sceneLibrary,
   $sceneLibraryStatus,
   $sceneMutationIssues,

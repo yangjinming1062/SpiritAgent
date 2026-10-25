@@ -16,6 +16,7 @@ from runtime.events.emit import emit_ws_event
 from sqlalchemy import select
 
 from features.configuration.settings.timezone import resolve_user_timezone
+from features.conversation.asset_bindings import commit_conversation
 from features.conversation.models import Conversation, Message
 from features.conversation.replies import CompanionReply, LinkBubble, MediaBubble, ReplyAudio, VoiceBubble
 from features.media.speech import synthesize_speech
@@ -163,8 +164,8 @@ async def _synthesize_reply_audio(
                     row.created_at,
                     timezone=await resolve_user_timezone(db, user_id) or "UTC",
                 )
-                row.reply_json = reply.model_dump_json()
-                await db.commit()
+                row.reply_json = reply.model_dump(mode="json")
+                await commit_conversation(db)
             directory = reply.audio_directory
         if bubble_index is not None and (
             not 0 <= bubble_index < len(reply.bubbles) or reply.bubbles[bubble_index].type != "voice"
@@ -208,7 +209,7 @@ async def _synthesize_reply_audio(
                                 raise LookupError("Voice bubble changed during synthesis")
                             latest.bubbles[index] = bubble
                             reply = latest
-                            current.reply_json = reply.model_dump_json()
+                            current.reply_json = reply.model_dump(mode="json")
                             emit_ws_event(
                                 db,
                                 user_id=user_id,

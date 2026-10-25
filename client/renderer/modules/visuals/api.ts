@@ -20,11 +20,12 @@ import type {
 export interface VisualsListQuery {
   query?: string
   media_kind?: VisualMediaKind
-  outfit_id?: number
-  scene_id?: number
-  action_id?: number
+  outfit_id?: string
+  scene_id?: string
+  action_id?: string
   source?: string
-  offset?: number
+  cursor?: string
+  include_total?: boolean
   limit?: number
 }
 
@@ -39,12 +40,12 @@ export interface VisualReceiptBody {
 export const visualsApi = {
   list: (query: VisualsListQuery): Promise<VisualListResponse> =>
     requestResource('companion_visuals.list_visuals', { query }),
-  detail: (visualId: number): Promise<VisualDetail> =>
+  detail: (visualId: string): Promise<VisualDetail> =>
     requestResource('companion_visuals.get_visual', { path: { visual_id: visualId } }),
-  regenerate: (visualId: number, body: VisualRegenerateRequest): Promise<VisualJob> =>
+  regenerate: (visualId: string, body: VisualRegenerateRequest): Promise<VisualJob> =>
     requestResource('companion_visuals.regenerate_visual', { path: { visual_id: visualId }, body }),
   jobs: (): Promise<VisualJobListResponse> => requestResource('companion_visuals.list_visual_jobs'),
-  jobCommand: (jobId: number, body: VisualJobCommandRequest): Promise<VisualJob> =>
+  jobCommand: (jobId: string, body: VisualJobCommandRequest): Promise<VisualJob> =>
     requestResource('companion_visuals.command_visual_job', { path: { job_id: jobId }, body }),
   presentation: (): Promise<VisualsPresentation> => requestResource('companion_visuals.get_presentation'),
   updatePresentation: (body: VisualPresentationUpdate): Promise<VisualsPresentation> =>
@@ -57,11 +58,12 @@ export const visualsApi = {
 }
 
 export const actionsApi = {
-  list: (): Promise<ActionListResponse> => requestResource('companion_actions.list_actions'),
+  list: (query: { query?: string; cursor?: string; limit?: number } = {}): Promise<ActionListResponse> =>
+    requestResource('companion_actions.list_actions', { query }),
   create: (body: ActionDefinitionRequest): Promise<ActionDefinition> =>
     requestResource('companion_actions.create_action', { body }),
-  update: (actionId: number, body: ActionUpdateRequest): Promise<ActionDefinition> =>
+  update: (actionId: string, body: ActionUpdateRequest): Promise<ActionDefinition> =>
     requestResource('companion_actions.update_action', { path: { action_id: actionId }, body }),
-  remove: (actionId: number): Promise<void> =>
+  remove: (actionId: string): Promise<void> =>
     requestResource('companion_actions.delete_action', { path: { action_id: actionId } })
 }

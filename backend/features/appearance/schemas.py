@@ -1,6 +1,6 @@
 from typing import Literal
 
-from infrastructure.constants import POSTGRES_INT4_MAX
+from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SucceededStatus = Literal["succeeded"]
@@ -10,7 +10,7 @@ ImageReviseMode = Literal["edit", "regenerate"]
 
 
 class AvatarAssetResponse(BaseModel):
-    id: int
+    id: ResourceId
     asset_url: str
     seed_fullbody_url: str = ""
     is_fullbody_confirmed: bool = False
@@ -19,8 +19,8 @@ class AvatarAssetResponse(BaseModel):
 
 
 class FullbodyCandidateResponse(BaseModel):
-    id: int
-    avatar_id: int
+    id: ResourceId
+    avatar_id: ResourceId
     image_url: str
     status: Literal["pending", "ready", "failed", "accepted", "rejected"]
     error: str | None = None
@@ -33,7 +33,7 @@ class FullbodyReferenceGenerateRequest(BaseModel):
     image: str | None = Field(default=None, max_length=8 * 1024 * 1024)
     content_type: str | None = Field(default=None, max_length=64)
     mode: ImageReviseMode
-    candidate_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)
+    candidate_id: ResourceId | None = Field(default=None)
 
 
 class FullbodyConfirmRequest(BaseModel):
@@ -123,7 +123,7 @@ class OutfitRegenerateRequest(BaseModel):
 class OutfitPromptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    outfit_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)
+    outfit_id: ResourceId | None = Field(default=None)
     feedback: str | None = Field(default=None, max_length=500)
 
     description: str | None = Field(default=None, max_length=500)
@@ -158,7 +158,7 @@ class OutfitConfirmRequest(BaseModel):
 class OutfitResponse(BaseModel):
     description_status: Literal["pending", "processing", "ready", "failed"] = "pending"
     description_error: str | None = None
-    id: int
+    id: ResourceId
     name: str
     description: str | None = None
     fullbody_url: str = ""

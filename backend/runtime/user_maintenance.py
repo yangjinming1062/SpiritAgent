@@ -91,8 +91,3 @@ def track_user_task(
 async def cancel_user_tasks(user_id: int) -> int:
     """取消可中断任务，并等待付费生成等不可中断任务与其派生任务全部落地。"""
     return await TASK_SUPERVISOR.quiesce_user(user_id)
-
-
-async def drain_user_tasks() -> None:
-    """进程停止时取消并等待全部用户后台任务，覆盖只登记在这里、不属于任何模块任务集合的任务。"""
-    await TASK_SUPERVISOR.drain(only_user_tasks=True)
