@@ -1,14 +1,17 @@
 """模块拥有的备份表、校验与恢复操作。"""
 
 from typing import Any
+from uuid import uuid4
 
 from infrastructure.ai.config import AIConfig
 from infrastructure.backup import BackupContext, BackupTable
 from infrastructure.config import SETTINGS
+from infrastructure.web.social_platforms import get_social_platform
+from infrastructure.web.social_sources import validate_social_credentials
 from pydantic import ValidationError
 
 from .ai_config import validate_ai_config
-from .models import UserModelConfig
+from .models import UserModelConfig, UserSocialAccount
 from .settings.models import UserSetting
 
 
@@ -30,6 +33,20 @@ def _prepare_ai_config(_raw: dict[str, Any], payload: dict[str, Any], _context: 
     payload["ai_config"] = _validated_ai_config(payload.get("ai_config"))
 
 
+def _prepare_social_account(_raw: dict[str, Any], payload: dict[str, Any], _context: BackupContext) -> None:
+    try:
+        get_social_platform(payload["platform"])
+        if payload.get("credentials") is not None:
+            if payload.get("state") not in {"configured", "login_required"}:
+                raise ValueError("Invalid social account state")
+            payload["credentials"] = validate_social_credentials(payload["platform"], payload["credentials"])
+        elif payload.get("state") != "unconfigured":
+            raise ValueError("Missing social credentials")
+    except (ValueError, KeyError, TypeError):
+        raise ValueError("Invalid social account credentials") from None
+    payload["revision"] = str(uuid4())
+
+
 def backup_tables() -> tuple[BackupTable, ...]:
     return (
         BackupTable(
@@ -37,6 +54,22 @@ def backup_tables() -> tuple[BackupTable, ...]:
             UserModelConfig,
             unique_keys=(),
             prepare_payload=_prepare_ai_config,
+        ),
+        BackupTable(
+            "user_social_accounts",
+            UserSocialAccount,
+            unique_keys=("platform",),
+            excluded_columns=frozenset(
+                {
+                    "revision",
+                    "login_revision",
+                    "login_session_id",
+                    "login_state",
+                    "login_expires_at",
+                    "login_verification_error",
+                }
+            ),
+            prepare_payload=_prepare_social_account,
         ),
         BackupTable(
             "user_settings",

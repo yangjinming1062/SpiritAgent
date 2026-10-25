@@ -17,6 +17,7 @@
 | 生活近况与持续事项 | [生活模块](renderer/modules/life/)、[独立生活区与页面](renderer/app/features/life/)；窗口外壳装配生活区，聊天组件保持纯对话 |
 | 主窗口、导航与统一设置 | [main-root.tsx](renderer/app/windows/main/main-root.tsx)、[伙伴入口](renderer/app/features/companion/companion-page.tsx)、[动态](renderer/app/features/posts/posts-page.tsx)、[日记](renderer/app/features/diary/diary-page.tsx)、[app-settings.tsx](renderer/app/features/settings/app-settings.tsx)；导航归 `app/navigation`，跨模式视图快照归 `main/ipc/ui-state.ts` |
 | 伙伴显示、比例与主动偏好 | [companion-page.tsx](renderer/app/features/settings/companion-page.tsx)、[interaction-page.tsx](renderer/app/features/settings/interaction-page.tsx) → [spatial.ts](renderer/modules/character/spatial.ts)、[activity.ts](renderer/modules/character/activity.ts) |
+| 账户资讯来源与扫码登录 | [social-accounts-section.tsx](renderer/app/features/settings/social-accounts-section.tsx)；平台名称与登录方式使用共享生成契约，凭证草稿只在组件内存保存 |
 | 桌面模式、影像与 Dock | [desktop-presentation.ts](main/lifecycle/desktop-presentation.ts)、[desktop-dock.ts](main/ipc/desktop-dock.ts)、[影像模块](renderer/modules/visuals/)、[desktop renderer](renderer/app/windows/desktop/)、[Windows 宿主](desktop-windows/README.md)、[macOS 模块](desktop-macos/README.md) |
 | 设置同步与 Runner 更新 | [runner-config.ts](main/ipc/runner-config.ts)、[config-sync.ts](main/shared/lib/config-sync.ts)、[updater.ts](main/runner/updater.ts) |
 | 桌面应用更新 | [update.ts](main/ipc/update.ts)、[auto-updater.ts](main/lifecycle/auto-updater.ts) → [update-bridge.ts](renderer/shared/lib/update-bridge.ts)、[about-page.tsx](renderer/app/features/settings/about-page.tsx) |

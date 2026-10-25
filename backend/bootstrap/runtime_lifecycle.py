@@ -5,6 +5,7 @@ from entrypoints.scheduler.cron import stop_scheduler
 from features.action_library.lifecycle import runtime_participants as action_participants
 from features.appearance.lifecycle import runtime_participants as appearance_participants
 from features.companion.lifecycle import runtime_participants as companion_participants
+from features.configuration.social_accounts import runtime_participants as social_account_participants
 from features.conversation.submissions import recover_interrupted_submissions
 from features.media.lifecycle import runtime_participants as media_participants
 from features.media.video_queue.lifecycle import runtime_participants as video_queue_participants
@@ -35,6 +36,7 @@ def configure_runtime_lifecycle() -> None:
             RuntimeParticipant("onboarding.initial_assets", recover=resume_initial_appearance),
             *post_participants(),
             *companion_participants(),
+            *social_account_participants(),
             *memory_participants(),
             RuntimeParticipant("chat.submissions", prepare=recover_interrupted_submissions),
             RuntimeParticipant("desktop.connections", settle=drain_user_sessions),

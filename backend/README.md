@@ -21,6 +21,7 @@
 | 管理后台、配置与用户维护 | [admin.py](entrypoints/http/routes/admin.py)、[后台结构](static/admin.html)、[交互](static/admin.js)、[样式](static/admin.css)、[配置与迁移](#配置与迁移) |
 | 供应商与任务链 | [ai_tasks.py](infrastructure/ai/tasks.py)、[registrations.py](bootstrap/registrations.py)、[providers/base.py](infrastructure/ai/providers/base.py)、[llm_client.py](infrastructure/ai/llm_client.py) |
 | 桌面配置同步 | [config.py](entrypoints/http/routes/config.py)、[desktop_config.py](features/configuration/desktop_config.py) |
+| 账户资讯来源与扫码登录 | [social_accounts.py](entrypoints/http/routes/social_accounts.py)、[账户来源](features/configuration/social_accounts.py)；采集入口见[话题模块](features/topics/README.md) |
 | 附件、上传视频与语音 | [media.py](entrypoints/http/routes/media.py)、[sessions.py](entrypoints/http/routes/sessions.py)、[chat_attachments.py](features/conversation/attachments.py) |
 | 正式资产写入、签名与回收 | [asset_store.py](infrastructure/assets/asset_store.py)、[资产领域](features/assets/README.md) |
 | 桌面与 Runner 更新分发 | [update.py](entrypoints/http/routes/update.py)、[update_releases.py](features/updates/releases.py) |
@@ -149,13 +150,15 @@ Compose 和后端共用 `.env` 的 PostgreSQL 凭据，后端默认连接 `postg
 
 ### 免费社交资讯来源
 
-X 使用固定版本的 `twscrape` 请求定义和解析器，经 Backend 的有界 HTTP 请求读取。在管理后台「系统参数 → 社交资讯来源」填写 X 登录 Cookie，支持开发者工具复制的 Cookie 请求头或浏览器导出的 JSON，须包含有效的 `auth_token` 和 `ct0`；保存时只保留这两个字段，即时生效，登录失效后在同处更新。敏感值不回显，留空保留原值，勾选清除后保存才删除。`.env` 的 `X_SEARCH_COOKIES` 仍可用于初始配置，后台保存的数据库值优先。代码和库不收费，网络、服务器与账户维护仍由部署方承担；未配置的平台不参与夜间检索。
+用户在客户端「设置 → 陪伴」的资讯来源区域配置个人登录。X 支持 Cookie 请求头或浏览器导出的 JSON，须包含 `auth_token`、`ct0`，保存时只保留这两个字段；后端使用固定版本 `twscrape` 的请求定义和解析器进行有界读取。保存只表示结构有效，平台拒绝登录时提示重新配置。小红书采用扫码和按需短信验证。账户隔离、清除与分享行为统一见 [主动信息与来源分享](../docs/PROTOCOL.md#主动信息与来源分享)。
 
-小红书采集服务随默认 Compose 一起启动，在官方 `v2.5.5` 源码上构建登录验证扩展，复用官方镜像的 Linux amd64 浏览器；固定源码、补丁与接口约束见 [采集服务](infrastructure/web/xiaohongshu_service/README.md)。Backend 默认连接 `http://xiaohongshu-mcp:18060`，`.env` 的非空 `XHS_MCP_BASE_URL` 可覆盖该地址；管理页保存的配置优先。服务的 `18060` 只绑定宿主机回环，健康检查不要求平台登录，Backend 不等待其健康状态启动。
+小红书采集服务随默认 Compose 一起启动，在固定官方 `v2.5.5` 源码上构建账户隔离与登录验证扩展，复用官方镜像的 Linux amd64 浏览器；补丁、内部接口及资源上限见 [采集服务](infrastructure/web/xiaohongshu_service/README.md)。Backend 默认连接 `http://xiaohongshu-mcp:18060`，`.env` 的非空 `XHS_MCP_BASE_URL` 可覆盖该地址，管理页保存的服务配置优先。服务仅暴露宿主机回环端口，健康检查不要求平台登录，Backend 不等待其健康状态启动。
 
-在管理后台「系统参数 → 社交资讯来源」确认服务地址和与采集服务相同的鉴权令牌，保存后获取登录二维码，用小红书 App 扫码并确认。平台要求短信验证时，面板显示验证码输入框，提交到本次扫码的同一浏览器会话；验证码不保存，错误可重新输入。验证界面加载与提交后的跳转会继续检查状态，单次操作异常后也会有限次检查实际登录结果，不自动重发验证码。登录验证到期后重新获取二维码，刷新和清除登录会关闭旧会话。识别到滑块等不支持的验证时，面板显示明确状态并停止自动检查。使用项目构建的采集服务，部署时在 `backend` 目录执行 `docker compose up -d --build backend xiaohongshu-mcp`。采集服务的启动令牌仍由 `.env` 的 `XHS_MCP_AUTH_TOKEN` 配置；管理页保存的令牌只用于 Backend 访问该服务。平台未登录或服务不可用时检索独立失败，不阻塞记忆、反思和日记。
+管理后台「系统参数 → 社交资讯来源」仅维护服务地址、内部访问令牌和夜间预算。在 `.env` 配置非空 `XHS_MCP_AUTH_TOKEN`，Backend 与服务使用相同令牌；管理页保存的令牌只用于 Backend 访问服务。`XHS_MAX_BROWSERS` 限制全服务浏览器并发，默认四个，扫码会话也占用名额。部署或升级时在 `backend` 目录执行 `docker compose up -d --build backend xiaohongshu-mcp`。`/health` 成功只表示服务可用，不证明任何账户已登录。
 
-登录 Cookies 和浏览器状态保存在专用 `xiaohongshu_data` 卷，重新创建容器会保留；登录失效时重新扫码。该卷属于运营者的采集账户，不进入产品用户备份。管理页「停止检查」只停止当前页面轮询，存活会话到期或刷新时关闭。登录管理接口仅允许管理员访问，二维码不缓存，服务令牌和 Cookie 不下发。浏览器出站代理可通过 `XHS_PROXY` 配置，Backend 访问服务的短名称须包含在 `NO_PROXY`。夜间采集只调用登录状态、搜索和详情读取接口，搜索的一天内筛选仍由实际发布时间再次校验；健康接口成功不代表已登录或取得有效内容。
+平台 Cookie 只持久化在账户数据库，采集服务每次接收所属账户凭证并创建隔离浏览器，不再使用全局登录文件或登录数据卷。扫码成功后由后台任务保存凭证；关闭设置页面不取消登录，服务重启丢失的扫码会话需重新开始。登录接口与二维码不缓存，公开响应不回传 Cookie。浏览器出站代理可通过 `XHS_PROXY` 配置，Backend 访问服务的短名称须包含在 `NO_PROXY`。采集只读取来源内容，搜索的一天内筛选仍由实际发布时间再次校验。
+
+新增平台时，在 [平台定义](infrastructure/web/social_platforms.py)登记公开标识、名称、登录方式和原文规则，在 [适配器注册](infrastructure/web/social_sources.py)登记凭证类型、可用性及采集／登录工厂，再生成共享契约。账户存储、登录结果提交、夜间预算与分享流程共用既有实现；新的登录交互类型才需要补充客户端表单。
 
 ### 服务更新
 

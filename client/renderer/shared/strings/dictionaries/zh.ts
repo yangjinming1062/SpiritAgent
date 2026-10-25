@@ -562,11 +562,49 @@ export const dict = {
         autonomous: { label: '自由互动', hint: '可以主动说话并与你自然互动' }
       },
       smartHeading: '伙伴的日常',
-      smartHint: '伙伴自己记录生活、分享你们感兴趣的新内容；这两项与陪伴档位各自独立。',
+      smartHint: '伙伴可以自己记录生活，与陪伴档位独立设置。',
       postsEnabled: '动态创作',
-      postsEnabledDesc: '允许伙伴全天自主创作并发布文字、图片、视频或语音动态，离线时也可发布；所有类型共用发布限额',
-      informationDiscovery: '关注新资讯',
-      informationDiscoveryDesc: '允许伙伴夜间关注你们感兴趣的新内容，在合适的时候分享。'
+      postsEnabledDesc: '允许伙伴全天自主创作并发布文字、图片、视频或语音动态，离线时也可发布；所有类型共用发布限额'
+    },
+    socialAccounts: {
+      title: '资讯来源',
+      hint: '连接你的平台账号后，伙伴会在夜间寻找你们感兴趣的新内容，并在合适的时候分享。清除连接只停止后续检索，已经取得的资讯仍可分享。',
+      loadFailed: '资讯来源加载失败，请重试。',
+      retry: '重新加载',
+      unavailable: '此来源暂不可用，请联系管理员。',
+      states: { unconfigured: '未配置', configured: '已配置', login_required: '需要重新登录' },
+      cookieLabel: '登录 Cookie',
+      cookieHint: '支持 Cookie 请求头或浏览器导出的 Cookie JSON，需包含 auth_token 和 ct0。凭证仅用于读取资讯。',
+      cookiePlaceholder: '粘贴登录 Cookie；留空不会更改已保存的凭证',
+      save: '保存凭证',
+      saving: '正在保存…',
+      clear: '清除连接',
+      clearing: '正在清除…',
+      login: '扫码登录',
+      refreshing: '正在获取二维码…',
+      refreshQr: '获取新二维码',
+      qrAlt: (platform: string) => `${platform}登录二维码`,
+      qrHint: (platform: string) => `使用${platform} App 扫码并确认登录。关闭此页面后，已经发起的登录仍可完成。`,
+      qrResumed: '有一项登录正在进行。可继续检查状态，或获取新二维码。',
+      expiresIn: (seconds: number) => `二维码与验证会话将在 ${seconds} 秒后到期`,
+      check: '检查登录状态',
+      cancel: '取消本次登录',
+      canceling: '正在取消…',
+      codeLabel: '短信验证码',
+      codeHint: '填写本次扫码收到的 6 位短信验证码。',
+      submitCode: '提交验证码',
+      submittingCode: '正在提交…',
+      invalidCode: '验证码不正确或已失效，请检查后重新输入。',
+      loginStates: {
+        awaiting_scan: '等待扫码',
+        sms_required: '需要短信验证',
+        verifying: '正在验证',
+        verification_required: '请先在对应平台完成其他安全验证，再重新扫码',
+        logged_in: '登录成功',
+        expired: '登录会话已到期，请重新扫码'
+      },
+      pollingStopped: '自动检查已暂停，可手动检查登录状态或获取新二维码。',
+      operationFailed: '操作未完成，请重试。'
     },
     persona: {
       characterCard: {
@@ -883,7 +921,6 @@ export const dict = {
     replaceReply: '换一个回答',
     replacingReply: '换一个回答中…',
     topic: {
-      platforms: { x: 'X', xiaohongshu: '小红书', douyin: '抖音' },
       open: '查看原文',
       unavailable: '原始链接不可用',
       like: '喜欢这类',

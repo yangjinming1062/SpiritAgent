@@ -10,6 +10,7 @@ import {
   type TopicFeedbackValue
 } from '@protocol'
 
+import { SOCIAL_PLATFORMS } from '../shared/api.generated'
 import { compareResourceIds } from '../shared/resource-id'
 
 import type { RemoteApi, RemoteGateway } from './api'
@@ -179,12 +180,11 @@ export function TopicLink({ bubble }: { bubble: CompanionLinkBubble }): ReactEle
   const busy = state.saving.has(bubble.topic_id)
   const error = state.errors[bubble.topic_id]
   const url = companionLinkUrl(bubble)
-  const platforms = { x: 'X', xiaohongshu: '小红书', douyin: '抖音' }
 
   return (
     <div className="topic-link">
       <small className="muted">
-        {platforms[bubble.platform]} · {timestamp(bubble.published_at)}
+        {SOCIAL_PLATFORMS[bubble.platform].labels.zh} · {timestamp(bubble.published_at)}
       </small>
       <p>{bubble.title}</p>
       {url ? (

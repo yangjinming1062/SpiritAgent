@@ -17,6 +17,7 @@ from .page import router as page_router
 from .remote import router as remote_router
 from .resource_catalog import router as resource_catalog_router
 from .sessions import router as sessions_router
+from .social_accounts import router as social_accounts_router
 from .update import management_router as update_management_router
 from .update import router as update_router
 from .user import router as user_router
@@ -41,6 +42,7 @@ ROUTERS = (
     page_router,
     remote_router,
     sessions_router,
+    social_accounts_router,
     update_router,
     update_management_router,
     user_router,

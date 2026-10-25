@@ -581,14 +581,52 @@ export const dict: Dictionary = {
         autonomous: { label: 'Free to interact', hint: 'May speak and interact naturally' }
       },
       smartHeading: 'Everyday life',
-      smartHint:
-        'Your companion keeps a life of its own and shares things you both enjoy. Both are independent of the intensity tier.',
+      smartHint: 'Let your companion record its life independently of the companionship intensity.',
       postsEnabled: 'Post creation',
-      informationDiscovery: 'Discover new content',
-      informationDiscoveryDesc:
-        'Let your companion explore recent content related to your interests overnight and share when it fits.',
       postsEnabledDesc:
         'Let your companion create text, image, video or audio posts at any time, including while offline. All types share the posting limit.'
+    },
+    socialAccounts: {
+      title: 'Content sources',
+      hint: 'Connect your platform accounts so your companion can find shared interests overnight and share when it fits. Clearing a connection stops future searches; content already collected may still be shared.',
+      loadFailed: "Couldn't load content sources. Try again.",
+      retry: 'Reload',
+      unavailable: 'This source is unavailable. Contact your administrator.',
+      states: { unconfigured: 'Not configured', configured: 'Configured', login_required: 'Sign in again' },
+      cookieLabel: 'Login Cookie',
+      cookieHint:
+        'Paste a Cookie request header or browser Cookie JSON export containing auth_token and ct0. Credentials are used only to read content.',
+      cookiePlaceholder: 'Paste login Cookies; leaving this empty keeps your saved credentials',
+      save: 'Save credentials',
+      saving: 'Saving…',
+      clear: 'Clear connection',
+      clearing: 'Clearing…',
+      login: 'Sign in with QR code',
+      refreshing: 'Getting QR code…',
+      refreshQr: 'Get a new QR code',
+      qrAlt: (platform: string) => `${platform} login QR code`,
+      qrHint: (platform: string) =>
+        `Scan with the ${platform} app and confirm. An ongoing login can finish after you close this page.`,
+      qrResumed: 'A login is in progress. Check its status or get a new QR code.',
+      expiresIn: (seconds: number) => `The QR code and verification session expire in ${seconds} seconds`,
+      check: 'Check login status',
+      cancel: 'Cancel this login',
+      canceling: 'Canceling…',
+      codeLabel: 'SMS verification code',
+      codeHint: 'Enter the 6-digit SMS code for this QR login.',
+      submitCode: 'Submit code',
+      submittingCode: 'Submitting…',
+      invalidCode: 'The code is incorrect or expired. Check it and try again.',
+      loginStates: {
+        awaiting_scan: 'Waiting for scan',
+        sms_required: 'SMS verification required',
+        verifying: 'Verifying',
+        verification_required: 'Complete other security checks in the platform app, then scan a new QR code',
+        logged_in: 'Signed in',
+        expired: 'Login session expired. Scan a new QR code.'
+      },
+      pollingStopped: 'Automatic checks paused. Check the login status or get a new QR code.',
+      operationFailed: "Couldn't complete the action. Try again."
     },
     persona: {
       characterCard: {
@@ -937,7 +975,6 @@ export const dict: Dictionary = {
     replaceReply: 'Try another answer',
     replacingReply: 'Preparing another answer…',
     topic: {
-      platforms: { x: 'X', xiaohongshu: 'Xiaohongshu', douyin: 'Douyin' },
       open: 'View original',
       unavailable: 'Original link unavailable',
       like: 'More like this',

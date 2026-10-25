@@ -13,7 +13,7 @@ RUN echo "5f970a3d7d95b1fdee21d2a9a6418877b1d258ff08e20bce1216e1f0ea316069  /tmp
 RUN go mod vendor
 COPY upstream.patch login_admin.go ./
 RUN git apply --unidiff-zero --check upstream.patch && git apply --unidiff-zero upstream.patch \
-    && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=vendor -ldflags="-s -w -X main.version=v2.5.5-spiritagent-login" -o /out/app .
+    && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=vendor -ldflags="-s -w -X main.version=v2.5.5-spiritagent-accounts" -o /out/app .
 
 FROM xpzouying/xiaohongshu-mcp:v2.5.5
 COPY --from=builder /out/app /app/app

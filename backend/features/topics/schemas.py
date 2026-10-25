@@ -4,7 +4,8 @@ from datetime import date, datetime
 from typing import Any, Literal
 
 from infrastructure.api_ids import ResourceId
-from infrastructure.web.social_content import SocialContent, SocialPlatform
+from infrastructure.web.social_content import SocialContent
+from infrastructure.web.social_platforms import SocialPlatform
 from pydantic import BaseModel, ConfigDict, Field
 
 TopicFeedbackValue = Literal["like", "less"]

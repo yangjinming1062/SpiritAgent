@@ -2,7 +2,7 @@
 
 本文维护实体边界、设计理由、关键删除语义和查询测量。字段含义与权威源码入口见 [字段语义字典](DATABASE_FIELDS.md)，完整结构以 [ORM 注册](../backend/bootstrap/models.py)和 [0001 基线](../backend/alembic/versions/0001_baseline.py)为准。产品行为归 [DESIGN](DESIGN.md)，跨端与恢复契约归 [PROTOCOL](PROTOCOL.md)。
 
-数据库使用 PostgreSQL、`vector` 与 `pg_trgm`，当前有 **62 张应用表**，不含 Alembic 版本表。设计面向单账户单伙伴和小范围使用；后端单实例边界见 [ARCHITECTURE](ARCHITECTURE.md#部署与运行时边界)。
+数据库使用 PostgreSQL、`vector` 与 `pg_trgm`，当前有 **63 张应用表**，不含 Alembic 版本表。设计面向单账户单伙伴和小范围使用；后端单实例边界见 [ARCHITECTURE](ARCHITECTURE.md#部署与运行时边界)。
 
 ## 共同约束
 
@@ -23,6 +23,7 @@ flowchart LR
     user_settings -->|user_id| users
     custom_voices -->|user_id| users
     user_model_configs -->|user_id PK| users
+    user_social_accounts -->|user_id| users
     personas -->|user_id PK| users
     custom_voices -->|preview_asset_id / reference_asset_id| assets
     subgraph global_tables[全局记录]
@@ -32,7 +33,7 @@ flowchart LR
     end
 ```
 
-登录、设备授权和管理员身份有不同的撤销范围，因此分别建模。用户配置按键保存结构化值，模型配置独立；系统运营参数的编码与水合见[配置字段字典](DATABASE_FIELDS.md#账户配置与设备身份)。伙伴定义只管理人格和政策，生活与实际呈现各有独立状态。
+登录、设备授权和管理员身份有不同的撤销范围，因此分别建模。用户配置按键保存结构化值，模型配置与资讯来源凭证独立，后两者不进入普通设置同步。资讯来源按账户与平台唯一，凭证修订保护采集与迟到结果，独立登录修订允许扫码期间继续使用原凭证；系统运营参数的编码与水合见[配置字段字典](DATABASE_FIELDS.md#账户配置与设备身份)。伙伴定义只管理人格和政策，生活与实际呈现各有独立状态。
 
 ## 会话、消息与话题
 

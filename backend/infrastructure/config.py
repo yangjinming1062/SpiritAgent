@@ -13,7 +13,6 @@ from sqlalchemy import URL
 
 from infrastructure.ai.config import AIConfig
 from infrastructure.constants import ATTACHMENT_VIDEO_MAX_BYTES
-from infrastructure.web.social_credentials import parse_x_search_cookies
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
@@ -142,14 +141,10 @@ class Settings(BaseSettings):
     tavily_api_key: str = Field(default="", validation_alias="TAVILY_API_KEY")
     tavily_base_url: str = Field(default="", validation_alias="TAVILY_BASE_URL")
 
-    social_search_backend: Literal["free", "tikhub"] = Field(default="free", validation_alias="SOCIAL_SEARCH_BACKEND")
-    x_search_cookies: str = Field(default="", max_length=30000, validation_alias="X_SEARCH_COOKIES")
     xhs_mcp_base_url: str = Field(default="", validation_alias="XHS_MCP_BASE_URL")
     xhs_mcp_auth_token: str = Field(default="", max_length=4096, validation_alias="XHS_MCP_AUTH_TOKEN")
     # 服务更新器共享 socket 目录；目录为空或没有 socket 时按未启用处理。
     service_updater_socket_dir: str = Field(default="", validation_alias="SERVICE_UPDATER_SOCKET_DIR")
-    tikhub_api_key: str = Field(default="", validation_alias="TIKHUB_API_KEY")
-    tikhub_base_url: str = Field(default="https://api.tikhub.io", validation_alias="TIKHUB_BASE_URL")
     topic_search_requests_per_night: int = Field(
         default=6,
         ge=0,
@@ -307,24 +302,6 @@ class Settings(BaseSettings):
             return str((BACKEND_DIR / p).resolve())
         return str(p.resolve())
 
-    @field_validator("tikhub_base_url", mode="after")
-    @classmethod
-    def _validate_tikhub_base_url(cls, value: str) -> str:
-        parsed = urlsplit(value.strip())
-        hostname = (parsed.hostname or "").lower()
-        if (
-            parsed.scheme != "https"
-            or not (hostname == "tikhub.io" or hostname.endswith(".tikhub.io"))
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.port not in (None, 443)
-            or parsed.path not in ("", "/")
-            or parsed.query
-            or parsed.fragment
-        ):
-            raise ValueError("TikHub 地址必须是官方域名下的 HTTPS 服务根地址")
-        return value.strip().rstrip("/")
-
     @field_validator("xhs_mcp_base_url", mode="after")
     @classmethod
     def _validate_xhs_mcp_base_url(cls, value: str) -> str:
@@ -356,16 +333,6 @@ class Settings(BaseSettings):
         if value and not token or any(ord(character) < 33 or ord(character) > 126 for character in token):
             raise ValueError("小红书服务令牌必须由无空格的可见 ASCII 字符组成")
         return token
-
-    @field_validator("x_search_cookies", mode="after")
-    @classmethod
-    def _validate_x_search_cookies(cls, value: str) -> str:
-        if not value:
-            return ""
-        cookies = parse_x_search_cookies(value)
-        if not cookies:
-            raise ValueError("X 登录 Cookie 需为包含有效 auth_token 和 ct0 的 Cookie 请求头或浏览器导出的 JSON")
-        return "; ".join(f"{name}={cookie}" for name, cookie in cookies.items())
 
 
 SETTINGS = Settings()

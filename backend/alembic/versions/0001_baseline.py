@@ -376,7 +376,7 @@ def upgrade() -> None:
         sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("system_preset_id", sa.String(length=32), nullable=False),
         sa.Column("batch_id", sa.BigInteger(), nullable=False),
-        sa.Column("platform", sa.String(length=16), nullable=False),
+        sa.Column("platform", sa.String(length=32), nullable=False),
         sa.Column("source_id", sa.String(length=96), nullable=False),
         sa.Column("url", sa.String(length=2048), nullable=False),
         sa.Column("title", sa.String(length=300), nullable=False),
@@ -1219,6 +1219,33 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("user_id", name=op.f("user_model_configs_pkey")),
         sa.UniqueConstraint("user_id", "source_key", name="uq_user_model_configs_source"),
+    )
+    op.create_table(
+        "user_social_accounts",
+        sa.Column("user_id", sa.BigInteger(), nullable=False),
+        sa.Column("platform", sa.String(length=32), nullable=False),
+        sa.Column("credentials", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("revision", sa.String(length=36), nullable=False),
+        sa.Column("state", sa.String(length=24), nullable=False),
+        sa.Column("login_revision", sa.String(length=36), nullable=True),
+        sa.Column("login_session_id", sa.String(length=96), nullable=True),
+        sa.Column("login_state", sa.String(length=32), nullable=True),
+        sa.Column("login_expires_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("login_verification_error", sa.String(length=24), nullable=True),
+        sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
+        sa.Column(
+            "source_key", sa.String(length=36), server_default=sa.text("(gen_random_uuid())::text"), nullable=False
+        ),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.CheckConstraint(
+            "state IN ('unconfigured', 'configured', 'login_required')",
+            name=op.f("ck_user_social_accounts_social_account_state"),
+        ),
+        sa.PrimaryKeyConstraint("id", name="user_social_accounts_pkey"),
+        sa.UniqueConstraint("user_id", "platform", name="uq_user_social_accounts_platform"),
+        sa.UniqueConstraint("user_id", "id", name="uq_user_social_accounts_owner_id"),
+        sa.UniqueConstraint("user_id", "source_key", name="uq_user_social_accounts_source"),
     )
     op.create_table(
         "user_settings",
@@ -2259,6 +2286,14 @@ def upgrade() -> None:
         op.f("user_settings_user_id_fkey"), "user_settings", "users", ["user_id"], ["id"], ondelete="CASCADE"
     )
     op.create_foreign_key(
+        op.f("user_social_accounts_user_id_fkey"),
+        "user_social_accounts",
+        "users",
+        ["user_id"],
+        ["id"],
+        ondelete="CASCADE",
+    )
+    op.create_foreign_key(
         "fk_video_gen_jobs_conversation_id_owner",
         "video_gen_jobs",
         "conversations",
@@ -2952,6 +2987,7 @@ def downgrade() -> None:
     op.drop_constraint("fk_video_gen_jobs_id_owner", "video_gen_jobs", type_="foreignkey")
     op.drop_constraint("fk_video_gen_jobs_reply_message_id_owner", "video_gen_jobs", type_="foreignkey")
     op.drop_constraint("fk_video_gen_jobs_source_message_id_owner", "video_gen_jobs", type_="foreignkey")
+    op.drop_constraint(op.f("user_social_accounts_user_id_fkey"), "user_social_accounts", type_="foreignkey")
     op.drop_constraint(op.f("user_settings_user_id_fkey"), "user_settings", type_="foreignkey")
     op.drop_constraint(op.f("user_model_configs_user_id_fkey"), "user_model_configs", type_="foreignkey")
     op.drop_constraint("fk_submission_messages_message_id_owner", "submission_messages", type_="foreignkey")
@@ -3096,6 +3132,7 @@ def downgrade() -> None:
     op.drop_table("visual_items")
     op.drop_table("video_gen_jobs")
     op.drop_table("users")
+    op.drop_table("user_social_accounts")
     op.drop_table("user_settings")
     op.drop_table("user_model_configs")
     op.drop_table("update_versions")

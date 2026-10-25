@@ -3,13 +3,11 @@ import type React from 'react'
 import { useEffect, useMemo, useState } from 'react'
 
 import {
-  $informationDiscoveryEnabled,
   $postsEnabled,
   $responsePreference,
   $userPreferredTier,
   type DisturbanceTier,
   endQuiet,
-  informationDiscoveryPref,
   postsEnabledPref,
   type ResponsePreference,
   setDisturbanceTier,
@@ -33,6 +31,8 @@ import { getSpiritAgentConfig, saveSpiritAgentConfig } from '@/shared/spiritagen
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
+import { SocialAccountsSection } from './social-accounts-section'
+
 const DISTURBANCE_TIERS: readonly DisturbanceTier[] = ['still', 'normal', 'autonomous']
 
 const RECORDING_OPTIONS = [15, 30, 60, 120, 300] as const
@@ -45,7 +45,6 @@ export function InteractionPage({ part = 'companionship' }: { part?: 'companions
   const tier = useStore($userPreferredTier)
   const responsePreference = useStore($responsePreference)
   const postsEnabled = useStore($postsEnabled)
-  const informationDiscoveryEnabled = useStore($informationDiscoveryEnabled)
 
   const [maxRecordingSeconds, setMaxRecordingSeconds] = useState<number>(DEFAULT_RECORDING_SECONDS)
   const [isSavingRecordTime, setIsSavingRecordTime] = useState(false)
@@ -188,15 +187,9 @@ export function InteractionPage({ part = 'companionship' }: { part?: 'companions
               <SettingRow description={t.postsEnabledDesc} label={t.postsEnabled}>
                 <Toggle ariaLabel={t.postsEnabled} checked={postsEnabled} onChange={postsEnabledPref.set} />
               </SettingRow>
-              <SettingRow description={t.informationDiscoveryDesc} label={t.informationDiscovery}>
-                <Toggle
-                  ariaLabel={t.informationDiscovery}
-                  checked={informationDiscoveryEnabled}
-                  onChange={informationDiscoveryPref.set}
-                />
-              </SettingRow>
             </SettingCard>
           </section>
+          <SocialAccountsSection />
         </>
       )}
     </div>

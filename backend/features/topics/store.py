@@ -13,7 +13,6 @@ from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.locking import lock_account
-from features.configuration.settings.values import get_user_setting_bool
 
 from .models import CompanionTopic, TopicBatch, TopicFeedback, TopicUsage
 from .schemas import (
@@ -228,17 +227,14 @@ async def load_prompt_topics(
     historical_topic_ids: Sequence[int] = (),
 ) -> list[TopicSnapshot]:
     used = _used(scope)
-    enabled = await get_user_setting_bool(db, scope.user_id, "companion.information_discovery_enabled", default=False)
     return await _load_topic_snapshots(
         db,
         scope,
-        or_(_active(now) if enabled else False, CompanionTopic.id.in_(historical_topic_ids) & used),
+        or_(_active(now), CompanionTopic.id.in_(historical_topic_ids) & used),
     )
 
 
 async def has_unshared_topics(db: AsyncSession, scope: MemoryScope, now: datetime) -> bool:
-    if not await get_user_setting_bool(db, scope.user_id, "companion.information_discovery_enabled", default=False):
-        return False
     return (
         await db.scalar(
             select(CompanionTopic.id)

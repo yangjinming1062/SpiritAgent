@@ -75,7 +75,7 @@ BACKUP_SECTIONS: dict[str, tuple[str, ...]] = {
         "life_states",
         "pursuit_evidence",
     ),
-    "settings": ("user_model_configs", "custom_voices", "user_settings", "user_preferences"),
+    "settings": ("user_model_configs", "user_social_accounts", "custom_voices", "user_settings", "user_preferences"),
 }
 BACKUP_SECTION_IDS = tuple(BACKUP_SECTIONS)
 

@@ -6,14 +6,18 @@ import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { cn } from '@/shared/lib/utils'
 import { $gatewayState } from '@/shared/store/gateway'
+import { $locale } from '@/shared/store/locale'
 import { useStrings } from '@/shared/strings'
 import { type CompanionLinkBubble, companionLinkUrl, type TopicFeedbackValue } from '@protocol'
+
+import { SOCIAL_PLATFORMS } from '../../../../shared/api.generated'
 
 import { formatConversationTime } from './conversation-time'
 import { $topicFeedback, $topicFeedbackSaving, loadTopicFeedback, setTopicFeedback } from './topic-feedback-store'
 
 export function ChatLinkCard({ bubble }: { bubble: CompanionLinkBubble }): ReactElement {
   const dict = useStrings().chat.topic
+  const locale = useStore($locale)
   const active = usePanelActivity()
   const begin = useAsyncGuard()
   const feedback = useStore($topicFeedback, { keys: [bubble.topic_id], deps: [bubble.topic_id] })[bubble.topic_id]
@@ -54,7 +58,7 @@ export function ChatLinkCard({ bubble }: { bubble: CompanionLinkBubble }): React
       data-message-text
     >
       <span className="text-[11px] text-muted">
-        {dict.platforms[bubble.platform]}
+        {SOCIAL_PLATFORMS[bubble.platform].labels[locale]}
         {time ? ` · ${time}` : ''}
       </span>
       <p className="whitespace-pre-wrap break-words font-medium text-strong">{bubble.title}</p>

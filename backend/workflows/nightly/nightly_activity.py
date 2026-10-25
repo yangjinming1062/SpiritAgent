@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from features.accounts.queries import nightly_account
 from features.companion.planning_queries import PersonaPlanningSnapshot, planning_persona
 from features.configuration.settings.timezone import resolve_user_timezone
-from features.configuration.settings.values import get_user_setting, get_user_setting_bool
+from features.configuration.settings.values import get_user_setting
 from features.conversation.evidence import OriginalMessageSnapshot, nightly_messages, nightly_user_message_count
 from features.life.context import read_life_context_in_session
 from features.memory.memory_admin import list_memories
@@ -26,7 +26,6 @@ from infrastructure.constants import NIGHTLY_REASONING_EFFORT
 from infrastructure.database import session_scope
 from infrastructure.logger import get_logger
 from infrastructure.text import format_local_iso, resolve_language, resolve_prompt_text, utc_now
-from infrastructure.web.social_sources import source_configured
 from runtime.memory_scope import EmbeddingItem, MemoryScope, MemorySource, validate_memory_scope
 from runtime.presets import COMPANION_PRESET_ID
 from sqlalchemy import select
@@ -340,12 +339,6 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         life_context = (await read_life_context_in_session(db, user_id)).prompt_payload()
         persona = _persona_brief(persona_snapshot)
         previous_reflection = await load_companion_reflection(db, scope)
-        information_discovery_enabled = await get_user_setting_bool(
-            db,
-            user_id,
-            "companion.information_discovery_enabled",
-            default=False,
-        )
 
     clean_messages = _clean_messages(today_messages, tz_str)
     today_msg_count = sum(1 for message in today_messages if message.role == "user")
@@ -373,7 +366,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
     }
 
     topic_reserve: list[dict[str, Any]] = []
-    if user.nightly_activity_enabled and information_discovery_enabled and source_configured():
+    if user.nightly_activity_enabled:
         try:
             topic_result = await discover_topics(
                 scope,

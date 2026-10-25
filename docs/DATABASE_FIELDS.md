@@ -1,6 +1,6 @@
 # 数据库字段语义字典
 
-本页帮助从业务概念定位持久字段、关系约束及其所有者，覆盖当前 62 张应用表。精确列名、PostgreSQL 类型、空值、默认值、枚举、索引和约束以各行链接的模型及 [完整 0001 基线](../backend/alembic/versions/0001_baseline.py)为准；不另存一份 DDL。实体关系、设计理由、删除语义和测量依据见 [数据库设计](DATABASE.md)。
+本页帮助从业务概念定位持久字段、关系约束及其所有者，覆盖当前 63 张应用表。精确列名、PostgreSQL 类型、空值、默认值、枚举、索引和约束以各行链接的模型及 [完整 0001 基线](../backend/alembic/versions/0001_baseline.py)为准；不另存一份 DDL。实体关系、设计理由、删除语义和测量依据见 [数据库设计](DATABASE.md)。
 
 ## 公共字段与关系入口
 
@@ -28,6 +28,7 @@
 | [user_settings](../backend/features/configuration/settings/models.py) | 按账户和配置键保存结构化值；批量读写入口在同目录 `values.py` |
 | [system_settings](../backend/features/configuration/settings/models.py) | 系统运营参数的键与逐值 JSON 文本；水合、校验与热更新见 [配置与迁移](../backend/README.md#配置与迁移) |
 | [user_model_configs](../backend/features/configuration/models.py) | 以 `user_id` 为主键的模型配置；引用和能力校验归配置领域 |
+| [user_social_accounts](../backend/features/configuration/models.py) | 按账户与平台唯一保存凭证、连接状态和修订；扫码会话另有登录修订，凭证不进入普通配置同步 |
 | [personas](../backend/features/companion/models.py) | 以 `user_id` 为主键的伙伴定义与创作政策；当前生活、呈现状态各有独立权威 |
 | [custom_voices](../backend/features/media/voice_models.py) | 设计／克隆方案版本、当前槽位及试听／参考资产；被消息引用的版本继续保留 |
 | [update_versions](../backend/features/updates/models.py) | 全局更新包版本与发布资料，不属于某个产品账户 |

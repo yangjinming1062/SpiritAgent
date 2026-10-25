@@ -8,7 +8,8 @@ from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-SocialPlatform = Literal["x", "xiaohongshu", "douyin"]
+from .social_platforms import SocialPlatform, get_social_platform
+
 RequestGuard = Callable[[], Awaitable[None]]
 
 
@@ -23,34 +24,30 @@ def failure_reason(status_code: int) -> str:
     return "login_required" if status_code in {401, 403} else "rate_limited" if status_code == 429 else "source_failed"
 
 
-def validate_source_url(platform: SocialPlatform, source_id: str, url: str) -> str:
-    """只接受能与平台内容 ID 对应的 HTTPS 原文地址，不接受短链和跳转链接。"""
+def validate_platform_url(platform: SocialPlatform, url: str) -> str:
+    """平台链接只能使用注册的 HTTPS 原文域名。"""
     parsed = urlsplit(url)
     if parsed.scheme != "https" or parsed.username or parsed.password or parsed.port not in {None, 443}:
         raise ValueError("Invalid topic source URL")
-    hosts = {
-        "x": {"x.com", "www.x.com", "twitter.com", "www.twitter.com"},
-        "xiaohongshu": {"xiaohongshu.com", "www.xiaohongshu.com"},
-        "douyin": {"douyin.com", "www.douyin.com"},
-    }
-    if parsed.hostname not in hosts[platform] or parsed.fragment:
+    definition = get_social_platform(platform)
+    if parsed.hostname not in definition.hosts or parsed.fragment:
         raise ValueError("Invalid topic source host")
-    if platform == "x":
-        valid = bool(re.fullmatch(r"/[A-Za-z0-9_]+/status/" + re.escape(source_id), parsed.path))
-    elif platform == "xiaohongshu":
-        valid = bool(re.fullmatch(r"/(?:explore|discovery/item)/" + re.escape(source_id), parsed.path))
-    else:
-        valid = bool(re.fullmatch(r"/(?:video|note)/" + re.escape(source_id), parsed.path))
-    if not valid:
+    return url
+
+
+def validate_source_url(platform: SocialPlatform, source_id: str, url: str) -> str:
+    """只接受能与平台内容 ID 对应的 HTTPS 原文地址，不接受短链和跳转链接。"""
+    parsed = urlsplit(validate_platform_url(platform, url))
+    definition = get_social_platform(platform)
+    if not re.fullmatch(definition.path_pattern.format(source_id=re.escape(source_id)), parsed.path):
         raise ValueError("Topic source URL does not match content ID")
     query = parse_qs(parsed.query)
-    allowed = {"xsec_token", "xsec_source"} if platform == "xiaohongshu" else set()
     return urlunsplit(
         (
             "https",
             parsed.hostname,
             parsed.path,
-            urlencode({key: values[0] for key, values in query.items() if key in allowed}),
+            urlencode({key: values[0] for key, values in query.items() if key in definition.query_keys}),
             "",
         ),
     )

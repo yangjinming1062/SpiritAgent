@@ -197,6 +197,7 @@ def generate() -> str:
     from entrypoints.desktop.contracts import RPC_CONTRACTS
     from entrypoints.desktop.event_contracts import EVENT_CONTRACTS
     from infrastructure.api_errors import ApiErrorResponse
+    from infrastructure.web.social_platforms import SOCIAL_PLATFORMS
     from spirit_agent_runner.contracts.rpc import RUNNER_CONTRACTS, RUNNER_EVENTS
 
     assert_presets_match_runner()
@@ -323,6 +324,13 @@ def generate() -> str:
     event_policy_json = json.dumps(event_policies, ensure_ascii=False, indent=2)
     lines.append(f"export const EVENT_POLICIES = {event_policy_json} as const")
     lines.append("export const SYSTEM_PRESET_IDS = " + json.dumps(preset_ids(), ensure_ascii=False) + " as const")
+    platform_metadata = {
+        platform: {"auth_kind": definition.auth_kind, "hosts": definition.hosts, "labels": definition.labels}
+        for platform, definition in SOCIAL_PLATFORMS.items()
+    }
+    lines.append(
+        "export const SOCIAL_PLATFORMS = " + json.dumps(platform_metadata, ensure_ascii=False, indent=2) + " as const"
+    )
     return "\n".join(lines) + "\n"
 
 

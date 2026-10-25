@@ -1,108 +1,131 @@
---- a/service.go
-+++ b/service.go
-@@ -23 +23 @@
--	logins loginSessions
-+	logins adminLoginSessions
-@@ -54,0 +55 @@
-+	SessionID  string `json:"session_id,omitempty"`
-@@ -98,0 +100,4 @@
-+	s.logins.mutation.Lock()
-+	defer s.logins.mutation.Unlock()
-+	if ctx.Err() != nil { return errLoginFailed }
-+	s.logins.invalidate()
-@@ -138,64 +143 @@
--	b := newBrowser()
--	page := b.NewPage()
--
--	deferFunc := func() {
--		_ = page.Close()
--		b.Close()
--	}
--
--	loginAction := xiaohongshu.NewLogin(page)
--
--	img, loggedIn, err := loginAction.FetchQrcodeImage(ctx)
--	if err != nil || loggedIn {
--		defer deferFunc()
--	}
--	if err != nil {
--		return nil, err
--	}
--
--	timeout := 4 * time.Minute
--
--	if !loggedIn {
--		s.waitScanInBackground(loginAction, page, deferFunc, timeout)
--	}
--
--	return &LoginQrcodeResponse{
--		Timeout: func() string {
--			if loggedIn {
--				return "0s"
--			}
--			return timeout.String()
--		}(),
--		Img:        img,
--		IsLoggedIn: loggedIn,
--	}, nil
--}
--
--// waitScanInBackground 在后台等用户扫码，扫上了就存 cookie。
--//
--// 浏览器必须一直活着才检测得到扫码，所以这里不能提前关；但也不能任由它堆积——
--// 再取一次二维码就会把上一个还在等的会话关掉，同一时刻只留一个。
--func (s *XiaohongshuService) waitScanInBackground(
--	loginAction *xiaohongshu.LoginAction, page *rod.Page, closeBrowser func(), timeout time.Duration,
--) {
--	ctxTimeout, cancel := context.WithTimeout(context.Background(), timeout)
--	seq := s.logins.start(cancel)
--	logrus.Infof("等待扫码登录，会话 #%d，超时 %s", seq, timeout)
--
--	go func() {
--		defer closeBrowser()
--		defer cancel()
--		defer s.logins.finish(seq)
--
--		if loginAction.WaitForLogin(ctxTimeout) {
--			if err := saveCookies(page); err != nil {
--				logrus.Errorf("扫码成功但保存 cookies 失败，会话 #%d: %v", seq, err)
--				return
--			}
--			logrus.Infof("扫码登录成功，cookies 已保存，会话 #%d", seq)
--			return
--		}
--
--		// 没等到扫码：要么超时，要么被新取的二维码取代
--		logrus.Infof("登录会话 #%d 结束，未检测到扫码（超时或已被新的二维码取代）", seq)
--	}()
-+	return s.adminLoginQrcode(ctx)
 --- a/routes.go
 +++ b/routes.go
-@@ -15,0 +16 @@
-+	router.Use(loginAdminHeaders())
-@@ -49,0 +51,2 @@
-+		api.GET("/login/session", appServer.loginSessionHandler)
-+		api.POST("/login/verification", appServer.loginVerificationHandler)
---- a/handlers_api.go
-+++ b/handlers_api.go
-@@ -82,0 +83 @@
-+		"login_session_cancelled": true,
+@@ -4 +4,2 @@
+-	"net/http"
++    "net/http"
++    "strings"
+@@ -6,2 +7 @@
+-	"github.com/gin-gonic/gin"
+-	"github.com/modelcontextprotocol/go-sdk/mcp"
++    "github.com/gin-gonic/gin"
+@@ -10 +10 @@
+-// setupRoutes 设置路由配置
++// Only Backend-facing, account-scoped reads and login operations are exposed.
+@@ -12,59 +12,22 @@
+-	// 设置 Gin 模式
+-	gin.SetMode(gin.ReleaseMode)
+-
+-	router := gin.New()
+-	router.Use(gin.Logger())
+-	router.Use(gin.Recovery())
+-
+-	// 添加中间件
+-	router.Use(errorHandlingMiddleware())
+-	router.Use(corsMiddleware())
+-
+-	// 健康检查
+-	router.GET("/health", healthHandler)
+-
+-	// MCP 端点 - 使用官方 SDK 的 Streamable HTTP Handler
+-	mcpHandler := mcp.NewStreamableHTTPHandler(
+-		func(r *http.Request) *mcp.Server {
+-			return appServer.mcpServer
+-		},
+-		&mcp.StreamableHTTPOptions{
+-			JSONResponse: true, // 支持 JSON 响应
+-			// 换取客户端可跳过 initialize 握手直接调工具。代价是服务端无法反向
+-			// 请求客户端（sampling / elicitation / roots），眼下一处都没用到；
+-			// 要用得先摘掉这行。
+-			Stateless: true,
+-		},
+-	)
+-	protected := router.Group("")
+-	protected.Use(authMiddleware(appServer.authToken))
+-
+-	protected.Any("/mcp", gin.WrapH(mcpHandler))
+-	protected.Any("/mcp/*path", gin.WrapH(mcpHandler))
+-
+-	// API 路由组
+-	api := protected.Group("/api/v1")
+-	{
+-		api.GET("/login/status", appServer.checkLoginStatusHandler)
+-		api.GET("/login/qrcode", appServer.getLoginQrcodeHandler)
+-		api.DELETE("/login/cookies", appServer.deleteCookiesHandler)
+-		api.POST("/publish", appServer.publishHandler)
+-		api.POST("/publish_video", appServer.publishVideoHandler)
+-		api.GET("/feeds/list", appServer.listFeedsHandler)
+-		api.GET("/feeds/search", appServer.searchFeedsHandler)
+-		api.POST("/feeds/search", appServer.searchFeedsHandler)
+-		api.POST("/feeds/detail", appServer.getFeedDetailHandler)
+-		api.POST("/user/profile", appServer.userProfileHandler)
+-		api.POST("/feeds/comment", appServer.postCommentHandler)
+-		api.POST("/feeds/comment/reply", appServer.replyCommentHandler)
+-		api.POST("/feeds/like", appServer.likeFeedHandler)
+-		api.POST("/feeds/favorite", appServer.favoriteFeedHandler)
+-		api.GET("/user/me", appServer.myProfileHandler)
+-		api.GET("/notifications/unread", appServer.getUnreadCountHandler)
+-		api.GET("/notifications/list", appServer.listNotificationsHandler)
+-		api.POST("/notifications/list", appServer.listNotificationsHandler)
+-		api.POST("/notifications/reply", appServer.replyNotificationHandler)
+-		api.POST("/notifications/like", appServer.likeNotificationHandler)
+-	}
+-
+-	return router
++    initializeAccountBrowsers()
++    gin.SetMode(gin.ReleaseMode)
++    router := gin.New()
++    router.Use(gin.Logger(), gin.Recovery(), errorHandlingMiddleware())
++    router.GET("/health", healthHandler)
++    api := router.Group("/api/v1/accounts")
++    api.Use(func(c *gin.Context) {
++        c.Header("Cache-Control", "no-store")
++        if strings.TrimSpace(appServer.authToken) == "" {
++            respondError(c, http.StatusServiceUnavailable, "SERVICE_AUTH_REQUIRED", "采集服务尚未配置访问令牌", nil)
++            c.Abort()
++            return
++        }
++        c.Next()
++    }, authMiddleware(appServer.authToken))
++    api.POST("/login/qrcode", appServer.accountLoginQrcodeHandler)
++    api.POST("/login/session", appServer.accountLoginSessionHandler)
++    api.POST("/login/verification", appServer.accountLoginVerificationHandler)
++    api.POST("/login/cancel", appServer.accountLoginCancelHandler)
++    api.POST("/feeds/search", appServer.accountSearchHandler)
++    api.POST("/feeds/detail", appServer.accountDetailHandler)
++    return router
 --- a/browser/browser.go
 +++ b/browser/browser.go
 @@ -3,0 +4 @@
 +	"context"
-@@ -13,0 +15 @@
+@@ -10 +10,0 @@
+-	"github.com/xpzouying/xiaohongshu-mcp/cookies"
+@@ -13,0 +14,2 @@
 +	context context.Context
-@@ -47,0 +50,5 @@
++	cookies string
+@@ -47,0 +50,10 @@
 +}
 +
-+// WithContext binds only explicitly configured login browsers to their session lifecycle.
++// WithContext binds the browser to its owning request or login session.
 +func WithContext(ctx context.Context) Option {
-+	return func(c *browserConfig) { c.context = ctx }
-@@ -99,0 +107,3 @@
-+	if cfg.context != nil {
-+		opts = append(opts, headless_browser.WithContext(cfg.context))
-+	}
++    return func(c *browserConfig) { c.context = ctx }
++}
++
++// WithCookies supplies only the current account; no process-wide file is read.
++func WithCookies(value string) Option {
++    return func(c *browserConfig) { c.cookies = value }
+@@ -89,10 +101,2 @@
+-	// 加载 cookies
+-	cookiePath := cookies.GetCookiesFilePath()
+-	cookieLoader := cookies.NewLoadCookie(cookiePath)
+-
+-	if data, err := cookieLoader.LoadCookies(); err == nil {
+-		opts = append(opts, headless_browser.WithCookies(string(data)))
+-		logrus.Debugf("loaded cookies from filesuccessfully")
+-	} else {
+-		logrus.Warnf("failed to load cookies: %v", err)
+-	}
++    opts = append(opts, headless_browser.WithCookies(cfg.cookies))
++    if cfg.context != nil { opts = append(opts, headless_browser.WithContext(cfg.context)) }
 --- a/vendor/github.com/xpzouying/headless_browser/headless_browser.go
 +++ b/vendor/github.com/xpzouying/headless_browser/headless_browser.go
 @@ -4,0 +5 @@
@@ -110,36 +133,40 @@
 @@ -32,0 +34 @@
 +	Context context.Context
 @@ -176,0 +179,5 @@
-+// WithContext keeps browser events on an explicit login-session lifecycle.
++// WithContext keeps browser events on the owning request or login lifecycle.
 +func WithContext(ctx context.Context) Option {
-+	return func(c *Config) { c.Context = ctx }
++    return func(c *Config) { c.Context = ctx }
 +}
 +
 @@ -188,0 +196,11 @@
-+	if cfg.Context != nil {
-+		l.Context(cfg.Context)
-+		defer func() {
-+			if failure := recover(); failure != nil {
-+				l.Kill()
-+				l.Cleanup()
-+				panic(failure)
-+			}
-+		}()
-+	}
++    if cfg.Context != nil {
++        l.Context(cfg.Context)
++        defer func() {
++            if failure := recover(); failure != nil {
++                l.Kill()
++                l.Cleanup()
++                panic(failure)
++            }
++        }()
++    }
 +
 @@ -226,4 +244,3 @@
 -	browser := rod.New().
 -		ControlURL(url).
 -		Trace(cfg.Trace).
 -		MustConnect()
-+	browser := rod.New().ControlURL(url).Trace(cfg.Trace)
-+	if cfg.Context != nil { browser = browser.Context(cfg.Context) }
-+	browser = browser.MustConnect()
-@@ -316,0 +334,7 @@
-+// CloseWithContext bounds CDP shutdown and always reaps the local browser process.
++    browser := rod.New().ControlURL(url).Trace(cfg.Trace)
++    if cfg.Context != nil { browser = browser.Context(cfg.Context) }
++    browser = browser.MustConnect()
+@@ -319,0 +337,7 @@
++// CloseWithContext always releases the local process and temporary profile.
 +func (b *Browser) CloseWithContext(ctx context.Context) {
-+	defer b.launcher.Cleanup()
-+	defer b.launcher.Kill()
-+	_ = b.browser.Context(ctx).Close()
++    defer b.launcher.Cleanup()
++    defer b.launcher.Kill()
++    _ = b.browser.Context(ctx).Close()
 +}
 +
+--- a/app_server.go
++++ b/app_server.go
+@@ -61,0 +62 @@
++	stopAccountBrowsers()

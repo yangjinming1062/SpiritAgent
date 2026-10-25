@@ -40,7 +40,7 @@ class CompanionTopic(ModelBase, TimestampMixin):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     system_preset_id: Mapped[str] = mapped_column(String(32))
     batch_id: Mapped[int] = mapped_column(ForeignKey("companion_topic_batches.id", ondelete="CASCADE"))
-    platform: Mapped[str] = mapped_column(String(16))
+    platform: Mapped[str] = mapped_column(String(32))
     source_id: Mapped[str] = mapped_column(String(96))
     url: Mapped[str] = mapped_column(String(2048))
     title: Mapped[str] = mapped_column(String(300))

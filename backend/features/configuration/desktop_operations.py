@@ -11,7 +11,7 @@ from features.configuration.settings.values import load_user_settings, put_user_
 
 
 async def get_config(user: AccountIdentity, db: AsyncSession) -> DesktopConfigResponse:
-    values = {"companion.information_discovery_enabled": False} | await load_user_settings(db, user.id)
+    values = await load_user_settings(db, user.id)
     return DesktopConfigResponse(config=settings_to_config(values))
 
 
@@ -26,13 +26,8 @@ async def put_config(body: DesktopConfigPutRequest, user: AccountIdentity, db: A
         if zone is None:
             raise RequestError(status_code=422, message="时区必须为有效的 IANA 时区")
         updates["timezone"] = zone.key
-    if "companion.information_discovery_enabled" in updates and not isinstance(
-        updates["companion.information_discovery_enabled"],
-        bool,
-    ):
-        raise RequestError(status_code=422, message="主动信息检索开关必须为布尔值")
     try:
-        config = settings_to_config({"companion.information_discovery_enabled": False} | values | updates)
+        config = settings_to_config(values | updates)
     except ValueError as exc:
         raise RequestError(status_code=422, message=str(exc)) from exc
     await put_user_settings(db, user.id, updates)

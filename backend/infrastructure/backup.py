@@ -19,6 +19,7 @@ BackupImportMode = Literal["overwrite", "merge"]
 BACKUP_TABLE_ORDER: list[str] = [
     "user_preferences",
     "user_model_configs",
+    "user_social_accounts",
     "custom_voices",
     "user_settings",
     "assets",

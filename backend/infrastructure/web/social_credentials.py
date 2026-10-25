@@ -3,6 +3,8 @@
 import json
 import re
 
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
 _X_COOKIE_NAMES = ("auth_token", "ct0")
 
 
@@ -85,3 +87,64 @@ def parse_x_search_cookies(raw: str) -> dict[str, str]:
             return {}
         selected[name] = value
     return {name: selected[name] for name in _X_COOKIE_NAMES} if len(selected) == 2 else {}
+
+
+class XCredentials(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    cookies: str = Field(min_length=1, max_length=30000, repr=False)
+
+    @field_validator("cookies")
+    @classmethod
+    def normalize_cookies(cls, value: str) -> str:
+        parsed = parse_x_search_cookies(value)
+        if not parsed:
+            raise ValueError("X Cookie 必须包含有效的 auth_token 和 ct0")
+        return "; ".join(f"{key}={value}" for key, value in parsed.items())
+
+
+class XiaohongshuCookie(BaseModel):
+    model_config = ConfigDict(extra="ignore", hide_input_in_errors=True, allow_inf_nan=False)
+
+    name: str = Field(min_length=1, max_length=256)
+    value: str = Field(max_length=16000, repr=False)
+    domain: str = Field(min_length=1, max_length=256)
+    path: str = Field(default="/", max_length=2048)
+    expires: float = -1
+    httpOnly: bool = False
+    secure: bool = True
+    sameSite: str | None = None
+
+    @field_validator("domain")
+    @classmethod
+    def validate_domain(cls, value: str) -> str:
+        domain = value.lower().removeprefix(".")
+        if domain != "xiaohongshu.com" and not domain.endswith(".xiaohongshu.com"):
+            raise ValueError("Invalid Xiaohongshu Cookie domain")
+        return value
+
+    @field_validator("name", "value", "domain", "path")
+    @classmethod
+    def validate_cookie_text(cls, value: str) -> str:
+        if any(ord(character) < 32 or ord(character) == 127 for character in value):
+            raise ValueError("Invalid Cookie characters")
+        return value
+
+
+class XiaohongshuCredentials(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    cookies: list[XiaohongshuCookie] = Field(min_length=1, max_length=100, repr=False)
+
+    @field_validator("cookies")
+    @classmethod
+    def require_login_cookie(cls, value: list[XiaohongshuCookie]) -> list[XiaohongshuCookie]:
+        if not any(cookie.name == "web_session" and cookie.value for cookie in value):
+            raise ValueError("Xiaohongshu login Cookie is missing")
+        return value
+
+    @model_validator(mode="after")
+    def validate_size(self) -> "XiaohongshuCredentials":
+        if len(self.model_dump_json(exclude_none=True).encode("utf-8")) > 100000:
+            raise ValueError("Xiaohongshu Cookie data is too large")
+        return self

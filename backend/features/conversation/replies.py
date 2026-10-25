@@ -1,10 +1,11 @@
 from datetime import date, datetime
 from typing import Annotated, Literal
-from urllib.parse import urlsplit
 
 from infrastructure.ai.speech_contracts import SPEECH_STYLE_ADAPTER, SpeechSegment, SpeechStyle
 from infrastructure.api_ids import ResourceId
 from infrastructure.assets.paths import parse_companion_asset_path
+from infrastructure.web.social_content import validate_platform_url
+from infrastructure.web.social_platforms import SocialPlatform
 from pydantic import BaseModel, ConfigDict, Field, RootModel, StringConstraints, field_validator, model_validator
 
 
@@ -65,22 +66,13 @@ class LinkBubbleInput(BaseModel):
 
 class LinkBubble(LinkBubbleInput):
     title: str = Field(min_length=1)
-    platform: Literal["x", "xiaohongshu", "douyin"]
+    platform: SocialPlatform
     url: str = Field(min_length=1)
     published_at: str = Field(min_length=1)
 
     @model_validator(mode="after")
     def validate_source(self) -> "LinkBubble":
-        hosts = {
-            "x": {"x.com", "www.x.com", "twitter.com", "www.twitter.com"},
-            "xiaohongshu": {"www.xiaohongshu.com", "xiaohongshu.com"},
-            "douyin": {"www.douyin.com", "douyin.com"},
-        }
-        url = urlsplit(self.url)
-        if url.scheme != "https" or url.hostname not in hosts[self.platform] or url.username or url.password:
-            raise ValueError("A shared source must use its platform's HTTPS URL")
-        if url.port not in (None, 443):
-            raise ValueError("A source link cannot specify a non-HTTPS port")
+        validate_platform_url(self.platform, self.url)
         return self
 
     @field_validator("published_at")

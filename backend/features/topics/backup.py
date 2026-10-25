@@ -7,6 +7,7 @@ from typing import Any
 from infrastructure.backup import BackupContext, BackupRows, BackupTable
 from infrastructure.text import ensure_utc
 from infrastructure.web.social_content import SocialContent, validate_source_url
+from infrastructure.web.social_platforms import get_social_platform
 from sqlalchemy import func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -54,8 +55,7 @@ def _validate_matching_batch(existing: TopicBatch, raw: dict[str, Any]) -> None:
 def _source_snapshot(raw: dict[str, Any]) -> tuple[Any, ...]:
     if any(not isinstance(raw.get(field), str) for field in _SOURCE_STRINGS) or not isinstance(raw.get("url"), str):
         raise ValueError("Invalid topic source snapshot")
-    if raw["platform"] not in {"x", "xiaohongshu", "douyin"}:
-        raise ValueError("Invalid topic source platform")
+    get_social_platform(raw["platform"])
     return (
         *[raw[field] for field in _SOURCE_STRINGS],
         _backup_datetime(raw.get("published_at")),

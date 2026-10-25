@@ -8,11 +8,13 @@ from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from features.accounts.queries import nightly_account
-from features.configuration.settings.values import get_user_setting_bool
+from features.configuration.social_accounts import credential_is_current, load_social_credentials, mark_login_required
+from features.configuration.social_schemas import SocialCredentialSnapshot
 from features.topics.schemas import TopicSelection
 from features.topics.store import (
     begin_batch,
     finish_failed_batch,
+    load_batch,
     load_batch_topics,
     publish_batch,
     recent_topic_feedback,
@@ -27,8 +29,9 @@ from infrastructure.config import SETTINGS
 from infrastructure.constants import NIGHTLY_REASONING_EFFORT
 from infrastructure.database import session_scope
 from infrastructure.text import resolve_prompt_text, utc_now
-from infrastructure.web.social_content import RequestGuard, SocialContent, SocialPlatform, SocialSourceError
-from infrastructure.web.social_sources import available_platforms, create_social_client, source_configured
+from infrastructure.web.social_content import RequestGuard, SocialContent, SocialSourceError
+from infrastructure.web.social_platforms import SocialPlatform, get_social_platform
+from infrastructure.web.social_sources import create_social_client
 from pydantic import BaseModel, ConfigDict, Field
 from runtime.memory_scope import MemoryScope
 
@@ -38,7 +41,7 @@ from workflows.nightly.window import NightlyWindowClosedError, require_nightly_w
 
 
 class DiscoveryDisabledError(LlmCallBlockedError):
-    """启动或请求前发现账户/信息检索开关不可用。"""
+    """启动或请求前发现账户或夜间政策不可用。"""
 
 
 class _RequestBudgetExhausted(RuntimeError):
@@ -78,7 +81,7 @@ class _SelectionPlan(BaseModel):
 class _Checkpoint(BaseModel):
     model_config = ConfigDict(extra="forbid")
     context: dict[str, Any]
-    source_backend: Literal["free", "tikhub"] = "free"
+    source_revisions: dict[str, str] = Field(default_factory=dict)
     queries: list[_SearchRequest] = Field(default_factory=list)
     query_plan_done: bool = False
     search_index: int = 0
@@ -112,16 +115,8 @@ def _inside_window(candidate: SocialContent, start: datetime, end: datetime) -> 
 async def _configured(scope: MemoryScope) -> None:
     async with session_scope() as db:
         account = await nightly_account(db, scope.user_id)
-        enabled = await get_user_setting_bool(
-            db,
-            scope.user_id,
-            "companion.information_discovery_enabled",
-            default=False,
-        )
-    if account is None or not account.is_active or not account.nightly_activity_enabled or not enabled:
-        raise DiscoveryDisabledError("主动信息检索已关闭或账户不可用")
-    if not source_configured():
-        raise DiscoveryDisabledError("未配置可用的社交资讯来源")
+    if account is None or not account.is_active or not account.nightly_activity_enabled:
+        raise DiscoveryDisabledError("夜间检索已关闭或账户不可用")
 
 
 async def _enabled(scope: MemoryScope, timezone: ZoneInfo) -> None:
@@ -138,12 +133,9 @@ async def _before_batch_call(
     scope: MemoryScope,
     timezone: ZoneInfo,
     expires_at: datetime,
-    source_backend: Literal["free", "tikhub"],
 ) -> None:
     await _enabled(scope, timezone)
     _require_batch_lifetime(expires_at)
-    if SETTINGS.social_search_backend != source_backend:
-        raise DiscoveryDisabledError("采集方式已变更")
 
 
 async def _save(scope: MemoryScope, batch_id: int, checkpoint: _Checkpoint) -> None:
@@ -158,28 +150,31 @@ async def _remote_call[T](
     timezone: ZoneInfo,
     expires_at: datetime,
     platform: SocialPlatform,
-    source_backend: Literal["free", "tikhub"],
+    source_revision: str,
     kind: Literal["search", "detail"],
     operation: Callable[[RequestGuard], Awaitable[T]],
 ) -> T:
     async def before_request() -> None:
-        await _before_batch_call(scope, timezone, expires_at, source_backend)
-        if platform not in available_platforms():
-            raise DiscoveryDisabledError("采集方式或平台配置已变更")
+        await _before_batch_call(scope, timezone, expires_at)
         limit = (
             SETTINGS.topic_search_requests_per_night if kind == "search" else SETTINGS.topic_detail_requests_per_night
         )
         async with session_scope() as db:
+            if not await credential_is_current(db, scope.user_id, platform, source_revision):
+                raise SocialSourceError("Platform credentials changed", code=409, reason="configuration_changed")
             permitted = await reserve_request(db, batch_id, scope, kind=kind, limit=limit)
             await db.commit()
         if not permitted:
             raise _RequestBudgetExhausted(kind)
 
     for attempt in range(2):
-        await _before_batch_call(scope, timezone, expires_at, source_backend)
         try:
             return await operation(before_request)
         except SocialSourceError as exc:
+            if exc.reason == "login_required":
+                async with session_scope() as db:
+                    await mark_login_required(db, scope.user_id, platform, source_revision)
+                    await db.commit()
             # 限流/额度与请求参数失败留给下一夜；只有网络或服务故障做一次预算内重试。
             if attempt or exc.code is not None and exc.code < 500:
                 raise
@@ -246,8 +241,16 @@ async def _collect(
     end: datetime,
     expires_at: datetime,
     checkpoint: _Checkpoint,
+    connections: dict[str, SocialCredentialSnapshot],
 ) -> None:
-    client = create_social_client()
+    clients = {}
+    for platform, connection in connections.items():
+        if checkpoint.source_revisions.get(platform) != connection.revision:
+            continue
+        try:
+            clients[platform] = create_social_client(platform, connection.credentials)
+        except ValueError:
+            checkpoint.errors.append({"platform": platform, "operation": "configure", "reason": "source_unavailable"})
     candidate_limit = SETTINGS.topic_candidate_limit
     while (
         not checkpoint.search_done
@@ -256,16 +259,18 @@ async def _collect(
     ):
         request = checkpoint.queries[checkpoint.search_index]
         try:
+            client = clients.get(request.platform)
+            if client is None:
+                raise SocialSourceError("Platform credentials changed", code=409, reason="configuration_changed")
             page = await _remote_call(
                 scope,
                 batch_id,
                 timezone,
                 expires_at,
                 request.platform,
-                checkpoint.source_backend,
+                checkpoint.source_revisions[request.platform],
                 "search",
                 lambda guard: client.search(
-                    request.platform,
                     request.query,
                     window_start=start,
                     window_end=end,
@@ -327,13 +332,16 @@ async def _collect(
         index = by_id[checkpoint.details[checkpoint.detail_index]]
         candidate = checkpoint.candidates[index]
         try:
+            client = clients.get(candidate.platform)
+            if client is None:
+                raise SocialSourceError("Platform credentials changed", code=409, reason="configuration_changed")
             detailed = await _remote_call(
                 scope,
                 batch_id,
                 timezone,
                 expires_at,
                 candidate.platform,
-                checkpoint.source_backend,
+                checkpoint.source_revisions[candidate.platform],
                 "detail",
                 lambda guard: client.detail(candidate, before_request=guard),
             )
@@ -367,6 +375,9 @@ async def discover_topics(
     available_from = datetime.combine(activity_date, time.min, timezone).astimezone(UTC)
     expires_at = datetime.combine(activity_date + timedelta(days=1), time.min, timezone).astimezone(UTC)
     async with session_scope() as db:
+        connections = await load_social_credentials(db, scope.user_id)
+        if not connections and await load_batch(db, scope, activity_date) is None:
+            return TopicDiscoveryResult(status="skipped", summary={"reason": "unconfigured"})
         batch = await begin_batch(
             db,
             scope,
@@ -385,7 +396,7 @@ async def discover_topics(
         _Checkpoint.model_validate(batch.checkpoint)
         if batch.checkpoint
         else _Checkpoint(
-            source_backend=SETTINGS.social_search_backend,
+            source_revisions={platform: connection.revision for platform, connection in connections.items()},
             context={
                 **context,
                 "recent_topics": recent,
@@ -404,14 +415,14 @@ async def discover_topics(
         )
     await _save(scope, batch.id, checkpoint)
     try:
-        if checkpoint.source_backend != SETTINGS.social_search_backend:
-            raise DiscoveryDisabledError("采集方式已变更")
+        if not checkpoint.source_revisions and not checkpoint.candidates:
+            raise DiscoveryDisabledError("未配置可用的资讯来源")
         config = await load_user_llm_config(scope.user_id, AiTaskKey.nightly)
-        before_call = partial(_before_batch_call, scope, timezone, batch.expires_at, checkpoint.source_backend)
+        before_call = partial(_before_batch_call, scope, timezone, batch.expires_at)
         if not checkpoint.query_plan_done:
             limit = SETTINGS.topic_search_requests_per_night
             if limit and SETTINGS.topic_candidate_limit and SETTINGS.topic_reserve_limit:
-                platforms = available_platforms()
+                platforms = tuple(get_social_platform(platform).id for platform in checkpoint.source_revisions)
                 plan = await call_llm_json(
                     config,
                     resolve_prompt_text(TOPIC_SEARCH_TEXTS, language),
@@ -442,13 +453,18 @@ async def discover_topics(
                 batch.window_end,
                 batch.expires_at,
                 checkpoint,
+                connections,
             )
         eligible = {
             _candidate_id(candidate): candidate
             for candidate in checkpoint.candidates
             if candidate.has_evidence and _inside_window(candidate, batch.window_start, batch.window_end)
         }
-        if checkpoint.queries and not checkpoint.search_successes:
+        if (
+            checkpoint.queries
+            and not checkpoint.search_successes
+            and any(error.get("reason") != "configuration_changed" for error in checkpoint.errors)
+        ):
             raise SocialSourceError("All topic searches failed")
         if checkpoint.selections is None:
             if eligible and SETTINGS.topic_reserve_limit:
@@ -489,8 +505,6 @@ async def discover_topics(
         # 已提交请求的结果先留检查点；停用或跨过当地午夜后不再发布新储备。
         await _configured(scope)
         _require_batch_lifetime(batch.expires_at)
-        if SETTINGS.social_search_backend != checkpoint.source_backend:
-            raise DiscoveryDisabledError("采集方式已变更")
         async with session_scope() as db:
             completed = await publish_batch(db, batch.id, scope, selections, limit=SETTINGS.topic_reserve_limit)
             topics = await load_batch_topics(db, scope, batch.id)
@@ -502,7 +516,7 @@ async def discover_topics(
                 "batch_id": batch.id,
                 "candidates": len(checkpoint.candidates),
                 "eligible": len(eligible),
-                "source_backend": checkpoint.source_backend,
+                "platforms": list(checkpoint.source_revisions),
                 "selected": len(topics),
                 "search_requests": completed.search_requests,
                 "detail_requests": completed.detail_requests,

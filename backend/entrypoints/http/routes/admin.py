@@ -1,15 +1,12 @@
-from collections.abc import Callable, Coroutine
 from datetime import date
-from typing import Annotated, Any
+from typing import Annotated
 
 import features.accounts.admin_operations as account_admin
 import features.configuration.admin_operations as configuration_admin
-import features.configuration.social_accounts as social_accounts
 import workflows.maintenance.admin_operations as maintenance_admin
 import workflows.nightly.log_queries as nightly_logs
-from fastapi import Depends, File, Path, Query, Request, UploadFile
+from fastapi import Depends, File, Path, Query, UploadFile
 from fastapi.responses import FileResponse
-from fastapi.routing import APIRoute
 from features.accounts.deps import get_current_admin_token
 from features.accounts.schemas import (
     RegenerateActivationRequest,
@@ -22,7 +19,6 @@ from features.accounts.schemas import (
     UserUpdate,
 )
 from features.automation.schemas import NightlyActivityLogListResponse
-from features.configuration.social_accounts import XiaohongshuAdminLoginStatus
 from features.configuration.system_settings import get_system_settings_for_admin
 from features.media.video_queue import admin as video_queue_admin
 from features.media.video_queue.contracts import VideoQueueList, VideoQueueRequestView, VideoQueueResolution
@@ -34,33 +30,15 @@ from infrastructure.config import SETTINGS
 from infrastructure.constants import POSTGRES_INT8_MAX
 from infrastructure.database import DbSession
 from infrastructure.http_contracts import operation_policy
-from infrastructure.web.xiaohongshu import XhsLoginQrCode, XhsLoginVerification
 from pydantic import JsonValue
 from runtime.responses import MessageResponse
-from starlette.responses import Response
 from workflows.maintenance.backup.serializers import BACKUP_SECTION_IDS
 
 from entrypoints.http.auth import CurrentAdmin
 from entrypoints.http.file_results import file_response
 from entrypoints.http.routing import get_router
 
-
-class _AdminRoute(APIRoute):
-    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
-        handler = super().get_route_handler()
-
-        async def handle(request: Request) -> Response:
-            login_management = request.url.path.startswith("/api/admin/social/xiaohongshu/login")
-            response = await handler(request)
-            if login_management:
-                response.headers["Cache-Control"] = "no-store"
-            return response
-
-        return handle
-
-
 router = get_router(dependencies=[Depends(get_current_admin_token)], identity="admin")
-router.route_class = _AdminRoute
 QueueToken = Annotated[str, Path(pattern=r"^[0-9a-f]{32}$")]
 
 
@@ -150,28 +128,6 @@ async def list_nightly_activity_logs(
 ) -> NightlyActivityLogListResponse:
     """查询夜间自主活动日志。可选按 user_id 和 target_date 过滤。"""
     return await nightly_logs.list_nightly_activity_logs(db=db, user_id=user_id, target_date=target_date)
-
-
-@router.get("/social/xiaohongshu/login/status", response_model=XiaohongshuAdminLoginStatus)
-async def xiaohongshu_login_status(
-    session_id: str | None = Query(default=None, pattern=r"^[A-Za-z0-9_-]{16,96}$"),
-) -> XiaohongshuAdminLoginStatus:
-    return await social_accounts.login_status(session_id=session_id)
-
-
-@router.post("/social/xiaohongshu/login/qrcode", response_model=XhsLoginQrCode)
-async def refresh_xiaohongshu_login_qrcode() -> XhsLoginQrCode:
-    return await social_accounts.refresh_login_qrcode()
-
-
-@router.post("/social/xiaohongshu/login/verification", response_model=XiaohongshuAdminLoginStatus)
-async def submit_xiaohongshu_login_verification(payload: XhsLoginVerification) -> XiaohongshuAdminLoginStatus:
-    return await social_accounts.submit_login_verification(payload)
-
-
-@router.delete("/social/xiaohongshu/login", response_model=MessageResponse)
-async def clear_xiaohongshu_saved_login() -> MessageResponse:
-    return await social_accounts.clear_saved_login()
 
 
 @router.put("/users/{user_id}/model-config")

@@ -64,12 +64,10 @@ export {
 export {
   $autoplayVoice,
   $companionVoiceId,
-  $informationDiscoveryEnabled,
   $postsEnabled,
   $responsePreference,
   applyServerCompanionVoiceId,
   autoplayVoicePref,
-  informationDiscoveryPref,
   initCompanionPrefsSync,
   postsEnabledPref,
   type ResponsePreference,

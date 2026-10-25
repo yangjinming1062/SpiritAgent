@@ -1,4 +1,5 @@
 import type { ApiOperations, ApiSchemas } from './api.generated'
+import { SOCIAL_PLATFORMS } from './api.generated'
 import { isResourceId } from './resource-id'
 
 /** 图像迭代意图：微调上一版，或从固定参考重新生成。与后端 ImageReviseMode 对齐。 */
@@ -63,16 +64,14 @@ export type TopicFeedbackSnapshot = ApiSchemas['TopicFeedbackSnapshot']
 export function companionLinkUrl(bubble: CompanionLinkBubble): string | null {
   try {
     const url = new URL(bubble.url)
-    const domains = {
-      x: ['x.com', 'twitter.com'],
-      xiaohongshu: ['xiaohongshu.com'],
-      douyin: ['douyin.com']
-    }[bubble.platform]
+    const hosts = SOCIAL_PLATFORMS[bubble.platform].hosts
 
     return url.protocol === 'https:' &&
       !url.username &&
       !url.password &&
-      domains?.some(domain => url.hostname === domain || url.hostname.endsWith(`.${domain}`))
+      !url.port &&
+      !url.hash &&
+      hosts.some(host => url.hostname === host)
       ? url.href
       : null
   } catch {

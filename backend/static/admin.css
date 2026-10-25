@@ -232,18 +232,6 @@ summary { cursor: pointer; }
 .subhead:first-child { margin-top: 0; }
 .settings-empty { padding: 40px; text-align: center; color: var(--text-3); }
 .secret-clear { font-size: 11px; color: var(--text-3); }
-.social-login-card { padding: 16px; margin-top: 16px; border: 1px solid var(--border-2); border-radius: var(--radius-sm); background: var(--surface-2); }
-.social-login-head, .social-login-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
-.social-login-head { justify-content: space-between; margin-bottom: 8px; }
-.social-login-head h3 { margin: 0; }
-.social-login-actions { margin-top: 14px; }
-.social-login-qr { display: flex; align-items: center; flex-wrap: wrap; gap: 20px; margin-top: 18px; }
-.social-login-qr img { width: 200px; height: 200px; flex: none; border: 10px solid white; border-radius: var(--radius-sm); background: white; object-fit: contain; }
-.social-login-qr > div { flex: 1; min-width: 180px; }
-.social-login-verification { margin-top: 18px; max-width: 440px; }
-.social-login-verification-input { display: flex; align-items: center; gap: 10px; }
-.social-login-verification-input input { flex: 1; letter-spacing: .15em; }
-.social-login-verification-input button { flex: none; }
 .social-login-error { margin: 12px 0 0; color: var(--red); font-size: 12px; }
 .table-scroll { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 12px; }

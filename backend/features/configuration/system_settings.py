@@ -38,8 +38,6 @@ SENSITIVE_KEYS: frozenset[str] = frozenset(
     {
         "brave_search_api_key",
         "tavily_api_key",
-        "tikhub_api_key",
-        "x_search_cookies",
         "xhs_mcp_auth_token",
     },
 )
@@ -47,12 +45,7 @@ SENSITIVE_KEYS: frozenset[str] = frozenset(
 
 def _validation_fields(exc: ValidationError) -> str:
     fields = {".".join(str(part) for part in error["loc"]) for error in exc.errors()}
-    return ", ".join(
-        f"{field}（需包含 auth_token 和 ct0 的 Cookie 请求头或浏览器 JSON 导出）"
-        if field.lower() == "x_search_cookies"
-        else field
-        for field in sorted(fields)
-    )
+    return ", ".join(sorted(fields))
 
 
 async def _validate_user_ai_references(db: AsyncSession, system: AIConfig) -> None:

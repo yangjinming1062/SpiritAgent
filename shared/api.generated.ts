@@ -88,7 +88,7 @@ export interface ApiSchemas {
   "LifePursuitListResponse": { "items": Array<ApiSchemas["LifePursuitView"]>; "total": (number | null); "has_more": boolean; "next_cursor": (string | null) }
   "LifePursuitView": { "id": string; "title": string; "reason": string; "desired_result": string; "progress": string; "next_step": string; "status": string; "started_at": string; "completed_at": (string | null); "result_ref": { [key: string]: unknown }; "updated_at": string }
   "LifeStateView": { "user_id": string; "current_activity": string; "current_scene": { [key: string]: unknown }; "mood": (string | null); "active_pursuit_id": (string | null); "next_review_at": (string | null); "revision": number; "scene_revision": number; "updated_at": string }
-  "LinkBubble": { "type": "link"; "topic_id": string; "title": string; "platform": "x" | "xiaohongshu" | "douyin"; "url": string; "published_at": string }
+  "LinkBubble": { "type": "link"; "topic_id": string; "title": string; "platform": "x" | "xiaohongshu"; "url": string; "published_at": string }
   "MemoryDeleteResponse": { "deleted": boolean }
   "MemoryDetail": { "id": string; "content_version": number; "content": string; "context": string; "kind": string; "slot_key": (string | null); "category": (string | null); "tags": Array<string>; "basis": "explicit" | "inferred" | "observed" | "system"; "status": "active" | "candidate" | "invalidated" | "forgotten"; "usage": "contextual" | "background"; "reason": string; "source_kind": string; "updated_at": string; "expires_at": (string | null); "reviewed_at": (string | null); "system_preset_id": string; "importance": number; "created_at": string; "evidence": Array<ApiSchemas["MemoryEvidence"]>; "revisions": Array<{ [key: string]: unknown }> }
   "MemoryEvidence": { "fingerprint": string; "message_id"?: (string | null); "quote"?: (string | null); "stance"?: ("supports" | "opposes" | null); "created_at"?: (string | null); "source_unavailable"?: (boolean | null) }
@@ -179,7 +179,7 @@ export interface ApiSchemas {
   "RpcInputToolsSyncRequest": { "skill_scope_version": 1; "tools": Array<ApiSchemas["RpcInputRunnerToolSchema"]> }
   "RpcJsonValue": unknown
   "RpcLifeUpdatedEvent": { "revision": (number | null); "pursuit_id": (string | null); "step_id": (string | null); "event_key": (string | null) }
-  "RpcLinkBubble": { "type": "link"; "topic_id": string; "title": string; "platform": "x" | "xiaohongshu" | "douyin"; "url": string; "published_at": string }
+  "RpcLinkBubble": { "type": "link"; "topic_id": string; "title": string; "platform": "x" | "xiaohongshu"; "url": string; "published_at": string }
   "RpcMemoryChangedEvent": { "system_preset_id": string; "memory_id": (string | null) }
   "RpcMessageAudioEvent": { "session_id": string; "message_id": string; "audio_url": string; "duration": (number | null); "transcript": (string | null) }
   "RpcMessageBubbleEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (string | null); "message_id": string; "bubble_index": number; "bubble": ApiSchemas["RpcReplyBubbleView"] }
@@ -295,6 +295,12 @@ export interface ApiSchemas {
   "SessionSnapshotResponse": { "session_id": string; "message_count": number; "messages": Array<ApiSchemas["SessionMessageView"]>; "info": ApiSchemas["SessionRuntimeInfo"]; "current_seq": (number | null); "stream_id": (string | null); "active_turn": (ApiSchemas["ActiveTurnView"] | null); "last_submission": (ApiSchemas["LastSubmissionSnapshot"] | null); "truncated": boolean; "next_cursor": (string | null); "history_revision": number }
   "SessionUndoRequest": { "source_message_id": string; "confirmed"?: boolean }
   "SessionUndoResult": { "session_id": string; "deleted_count": number; "anchor": ApiSchemas["UndoAnchor"]; "messages": Array<ApiSchemas["SessionMessageView"]> }
+  "SocialAccountList": { "accounts": Array<ApiSchemas["SocialAccountView"]> }
+  "SocialAccountView": { "platform": "x" | "xiaohongshu"; "auth_kind": "cookie" | "qr"; "available": boolean; "configured": boolean; "state": "unconfigured" | "configured" | "login_required"; "login": (ApiSchemas["SocialLoginStatus"] | null) }
+  "SocialCredentialsRequest": { "credentials": string }
+  "SocialLoginQrCode": { "image": string; "expires_at": string; "session_id": string }
+  "SocialLoginStatus": { "session_id": string; "state": "awaiting_scan" | "sms_required" | "verifying" | "verification_required" | "logged_in" | "expired"; "expires_at": string; "verification_error": ("invalid_code" | null) }
+  "SocialVerificationRequest": { "code": string }
   "SpeechToTextResponse": { "text": string }
   "TaskConfig": { "chains": { [key: string]: ApiSchemas["ChainPolicy"] } }
   "TaskConfigInput": { "chains"?: { [key: string]: ApiSchemas["ChainPolicyInput"] } }
@@ -356,9 +362,6 @@ export interface ApiSchemas {
   "VoicePromptResponse": { "prompt": string; "provider": string }
   "VoiceSampleResponse": { "sample_id": string; "url": string; "duration": number; "mime_type": string }
   "VoicesListResponse": { "providers": Array<string>; "voices": Array<ApiSchemas["VoiceEntry"]>; "supports_voice_design": boolean; "voice_design_guide": string; "supports_voice_prompt_generation": boolean; "supports_voice_clone": boolean; "custom_voices": Array<ApiSchemas["CustomVoiceSummary"]> }
-  "XhsLoginQrCode": { "is_logged_in": boolean; "image": (string | null); "expires_at": (string | null); "session_id": (string | null) }
-  "XhsLoginVerification": { "session_id": string; "code": string }
-  "XiaohongshuAdminLoginStatus": { "is_logged_in": boolean; "username": (string | null); "user_id": (string | null); "session_id": (string | null); "state": ("awaiting_scan" | "sms_required" | "verifying" | "verification_required" | "logged_in" | "expired" | null); "expires_at": (string | null); "verification_error": ("invalid_code" | null); "configured": boolean }
   "create_version": { "file": string; "release_notes"?: string }
   "import_user_backup": { "file": string }
   "speech_to_text": { "audio_file"?: (string | null) }
@@ -384,10 +387,6 @@ export interface ApiOperations {
   "admin.get_system_settings": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: { [key: string]: ApiSchemas["JsonValue"] } }
   "admin.update_system_settings": { path: Record<string, never>; query: Record<string, never>; body: { [key: string]: ApiSchemas["JsonValueInput"] }; input: { path?: never; query?: never; body: { [key: string]: ApiSchemas["JsonValueInput"] } }; response: { [key: string]: ApiSchemas["JsonValue"] } }
   "admin.list_nightly_activity_logs": { path: Record<string, never>; query: { "user_id"?: (string | null); "target_date"?: (string | null) }; body: undefined; input: { path?: never; query?: { "user_id"?: (string | null); "target_date"?: (string | null) }; body?: never }; response: ApiSchemas["NightlyActivityLogListResponse"] }
-  "admin.xiaohongshu_login_status": { path: Record<string, never>; query: { "session_id"?: (string | null) }; body: undefined; input: { path?: never; query?: { "session_id"?: (string | null) }; body?: never }; response: ApiSchemas["XiaohongshuAdminLoginStatus"] }
-  "admin.refresh_xiaohongshu_login_qrcode": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["XhsLoginQrCode"] }
-  "admin.submit_xiaohongshu_login_verification": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["XhsLoginVerification"]; input: { path?: never; query?: never; body: ApiSchemas["XhsLoginVerification"] }; response: ApiSchemas["XiaohongshuAdminLoginStatus"] }
-  "admin.clear_xiaohongshu_saved_login": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["MessageResponse"] }
   "admin.upsert_model_config": { path: { "user_id": string }; query: Record<string, never>; body: ApiSchemas["UserModelConfigRequest"]; input: { path: { "user_id": string }; query?: never; body: ApiSchemas["UserModelConfigRequest"] }; response: ApiSchemas["MessageResponse"] }
   "admin.delete_model_config": { path: { "user_id": string }; query: Record<string, never>; body: undefined; input: { path: { "user_id": string }; query?: never; body?: never }; response: ApiSchemas["MessageResponse"] }
   "admin.export_user_backup": { path: { "user_id": string }; query: Record<string, never>; body: undefined; input: { path: { "user_id": string }; query?: never; body?: never }; response: Uint8Array }
@@ -523,6 +522,13 @@ export interface ApiOperations {
   "sessions.delete_session": { path: { "session_id": string }; query: Record<string, never>; body: undefined; input: { path: { "session_id": string }; query?: never; body?: never }; response: ApiSchemas["DesktopSessionOperationResponse"] }
   "sessions.fork_session": { path: { "session_id": string }; query: Record<string, never>; body: ApiSchemas["SessionForkRequest"]; input: { path: { "session_id": string }; query?: never; body: ApiSchemas["SessionForkRequest"] }; response: ApiSchemas["SessionCreateResult"] }
   "sessions.get_session_history": { path: { "session_id": string }; query: { "before_id"?: (string | null); "limit"?: number }; body: undefined; input: { path: { "session_id": string }; query?: { "before_id"?: (string | null); "limit"?: number }; body?: never }; response: ApiSchemas["SessionHistoryResponse"] }
+  "social_accounts.list_social_accounts": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["SocialAccountList"] }
+  "social_accounts.put_social_credentials": { path: { "platform": "x" | "xiaohongshu" }; query: Record<string, never>; body: ApiSchemas["SocialCredentialsRequest"]; input: { path: { "platform": "x" | "xiaohongshu" }; query?: never; body: ApiSchemas["SocialCredentialsRequest"] }; response: ApiSchemas["SocialAccountView"] }
+  "social_accounts.clear_social_account": { path: { "platform": "x" | "xiaohongshu" }; query: Record<string, never>; body: undefined; input: { path: { "platform": "x" | "xiaohongshu" }; query?: never; body?: never }; response: ApiSchemas["SocialAccountView"] }
+  "social_accounts.start_social_login": { path: { "platform": "x" | "xiaohongshu" }; query: Record<string, never>; body: undefined; input: { path: { "platform": "x" | "xiaohongshu" }; query?: never; body?: never }; response: ApiSchemas["SocialLoginQrCode"] }
+  "social_accounts.get_social_login": { path: { "platform": "x" | "xiaohongshu"; "session_id": string }; query: Record<string, never>; body: undefined; input: { path: { "platform": "x" | "xiaohongshu"; "session_id": string }; query?: never; body?: never }; response: ApiSchemas["SocialLoginStatus"] }
+  "social_accounts.cancel_social_login": { path: { "platform": "x" | "xiaohongshu"; "session_id": string }; query: Record<string, never>; body: undefined; input: { path: { "platform": "x" | "xiaohongshu"; "session_id": string }; query?: never; body?: never }; response: ApiSchemas["SocialAccountView"] }
+  "social_accounts.verify_social_login": { path: { "platform": "x" | "xiaohongshu"; "session_id": string }; query: Record<string, never>; body: ApiSchemas["SocialVerificationRequest"]; input: { path: { "platform": "x" | "xiaohongshu"; "session_id": string }; query?: never; body: ApiSchemas["SocialVerificationRequest"] }; response: ApiSchemas["SocialLoginStatus"] }
   "update.get_latest_yml": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["ReleaseManifestResponse"] }
   "update.get_latest_mac_yml": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["ReleaseManifestResponse"] }
   "update.get_latest_runner_yml": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: Uint8Array }
@@ -784,50 +790,6 @@ export const API_OPERATIONS = {
   "admin.list_nightly_activity_logs": {
     "path": "/api/admin/nightly-activity-logs",
     "method": "GET",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "admin"
-    ],
-    "wait_for_model": false,
-    "ipc": false
-  },
-  "admin.xiaohongshu_login_status": {
-    "path": "/api/admin/social/xiaohongshu/login/status",
-    "method": "GET",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "admin"
-    ],
-    "wait_for_model": false,
-    "ipc": false
-  },
-  "admin.refresh_xiaohongshu_login_qrcode": {
-    "path": "/api/admin/social/xiaohongshu/login/qrcode",
-    "method": "POST",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "admin"
-    ],
-    "wait_for_model": false,
-    "ipc": false
-  },
-  "admin.submit_xiaohongshu_login_verification": {
-    "path": "/api/admin/social/xiaohongshu/login/verification",
-    "method": "POST",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "admin"
-    ],
-    "wait_for_model": false,
-    "ipc": false
-  },
-  "admin.clear_xiaohongshu_saved_login": {
-    "path": "/api/admin/social/xiaohongshu/login",
-    "method": "DELETE",
     "encoding": "json",
     "response": "json",
     "identities": [
@@ -2419,6 +2381,83 @@ export const API_OPERATIONS = {
     "wait_for_model": false,
     "ipc": true
   },
+  "social_accounts.list_social_accounts": {
+    "path": "/api/social-accounts",
+    "method": "GET",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "desktop"
+    ],
+    "wait_for_model": false,
+    "ipc": true
+  },
+  "social_accounts.put_social_credentials": {
+    "path": "/api/social-accounts/{platform}/credentials",
+    "method": "PUT",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "desktop"
+    ],
+    "wait_for_model": false,
+    "ipc": true
+  },
+  "social_accounts.clear_social_account": {
+    "path": "/api/social-accounts/{platform}",
+    "method": "DELETE",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "desktop"
+    ],
+    "wait_for_model": false,
+    "ipc": true
+  },
+  "social_accounts.start_social_login": {
+    "path": "/api/social-accounts/{platform}/login",
+    "method": "POST",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "desktop"
+    ],
+    "wait_for_model": false,
+    "ipc": true
+  },
+  "social_accounts.get_social_login": {
+    "path": "/api/social-accounts/{platform}/login/{session_id}",
+    "method": "GET",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "desktop"
+    ],
+    "wait_for_model": false,
+    "ipc": true
+  },
+  "social_accounts.cancel_social_login": {
+    "path": "/api/social-accounts/{platform}/login/{session_id}",
+    "method": "DELETE",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "desktop"
+    ],
+    "wait_for_model": false,
+    "ipc": true
+  },
+  "social_accounts.verify_social_login": {
+    "path": "/api/social-accounts/{platform}/login/{session_id}/verification",
+    "method": "POST",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "desktop"
+    ],
+    "wait_for_model": false,
+    "ipc": true
+  },
   "update.get_latest_yml": {
     "path": "/api/update/latest.yml",
     "method": "GET",
@@ -2924,3 +2963,29 @@ export const EVENT_POLICIES = {
   }
 } as const
 export const SYSTEM_PRESET_IDS = ["companion", "copywriter", "language_teacher", "general"] as const
+export const SOCIAL_PLATFORMS = {
+  "x": {
+    "auth_kind": "cookie",
+    "hosts": [
+      "x.com",
+      "www.x.com",
+      "twitter.com",
+      "www.twitter.com"
+    ],
+    "labels": {
+      "zh": "X",
+      "en": "X"
+    }
+  },
+  "xiaohongshu": {
+    "auth_kind": "qr",
+    "hosts": [
+      "xiaohongshu.com",
+      "www.xiaohongshu.com"
+    ],
+    "labels": {
+      "zh": "小红书",
+      "en": "Xiaohongshu"
+    }
+  }
+} as const
