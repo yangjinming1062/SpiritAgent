@@ -27,7 +27,7 @@
 | 环境素材、动作与影像页 | [scene-store.ts](modules/scene/scene-store.ts)、[动作页](app/features/actions/actions-page.tsx)、[影像页](app/features/visuals/visuals-page.tsx)、[影像状态](modules/visuals/) |
 | 生活区、事项与生活记录 | [生活模块](modules/life/)、[生活页面](app/features/life/) |
 | 文案与主题 | [strings/dictionaries](shared/strings/dictionaries/)、[shared/panel](shared/panel/)；`en` 按 `zh` 类型校验，界面外壳与显示件文案取自字典，引导问答、人格预设与模块兜底失败文案仍是硬编码中文 |
-| 通用显示件 | [shared/panel](shared/panel/)（`Spinner`/`LoadingBlock`/`EmptyState`/`ErrorBanner`/`SaveStatus`/`ActionRow`/`Badge`/`Pill`/`Disclosure`/`Placeholder`）、[shared/components](shared/components/)（`CopyButton`/`ImageLightboxButton`/`ReferenceImageField`）；空态、加载态、失败态、确认与焦点约束由这些件统一，业务页只提供文案与回调 |
+| 通用显示件 | [shared/panel](shared/panel/)、[shared/components](shared/components/)；业务页提供文案与回调，显示、确认与焦点约束由共享件统一 |
 | 跨端文案与错误归类 | 根 [shared](../../shared/)（`ui-copy.ts`、`error-classification.ts`）；两端的中性措辞与失败归类只在此定义，客户端与手机端共用 |
 
 ## 装配与状态归属
@@ -50,7 +50,7 @@
 
 制作页通过 `shared/panel` 的 `CreationWorkspace` 将页头和操作区放在正文滚动容器之外，`CreationFeedback` 在相关按钮或预览旁呈现普通文字与图标，不显示横幅或预留顶部状态区域。按钮已表达当前阶段时，调用处省略反馈标题，相应操作区通过 `aria-live` 播报阶段变化；反馈保留补充说明、耗时提醒与恢复操作，无内容时不占位。`CreationActionBar` 只维护操作区样式、不自行吸附。业务模块投影真实阶段与恢复能力，公共组件不发请求、不推测进度。结果未知时先核对服务端状态，结束本地等待提醒不等于取消原任务。
 
-列表与表单页的显示件统一取 `shared/panel` 与 `shared/components`：`LoadingBlock` 表示加载、`EmptyState` 表示空或失败、`ErrorBanner` 表示与状态绑定的失败、`SaveStatus` 表示自动保存状态、`ActionRow` 表示并列动作、`Disclosure` 表示折叠区、`Spinner`／`Badge`／`Pill`／`Placeholder` 表示局部元素。折叠与确认的焦点约束及确认弹窗状态由 `use-dialog-focus` 与 `ConfirmDialog` 统一承担。共享件只呈现已判定的状态与回调，不发请求、不读 store、不推测进度，也不在组件里写死文案。
+共享显示件只呈现调用方判定的状态与文案，不发业务请求、不读业务 store、不推测进度。折叠与确认的焦点约束由 `use-dialog-focus` 与 `ConfirmDialog` 统一承担。
 
 声音管理与引导复用同一制作组件。[voice-creation-store.ts](app/features/companion/voice-creation-store.ts) 按账户会话保存设计、克隆请求与输入和候选，页面失活或卸载不取消制作；录音、样本上传、播放与页面确认回调继续遵守活动资格。换号和账户清理使原任务回调失效，显式取消仍等待原任务的服务端回执。声音页介绍与当前声音摘要在正文中滚动，分类与主操作保留于有界制作区，进度放在主操作旁。`DirectoryShell` 在矮窄面板改用可横向滚动的单行分类，并保持所选分类可见，为最小桌面面板保留制作空间。
 
@@ -76,11 +76,9 @@
 
 [desktop-visual-wallpaper.ts](app/windows/desktop/desktop-visual-wallpaper.ts) 消费影像呈现状态与播放指令，负责播放认领与回执；桌面播放完整影像，图片即持续画面，视频按动作 `clip_kind` 循环或短时播放后返回保留的持续画面。`queued` 只表示受理，实际回执才更新呈现事实，回执区分完整图片、完整视频与窗口静态投影。播放缓存与预加载按稳定 ID、成品版本与剥除签名后的不可变路径识别，签名 URL 不作持久键。影像、制作与播放账本语义见[影像呈现契约](../../docs/PROTOCOL.md#影像成品与模式隔离)。
 
-[影像页](app/features/visuals/visuals-page.tsx) 展示合格成品与独立的制作区：成品卡给出封面、名称、媒体类型与来源素材摘要，制作区呈现工作项状态并提供暂停、继续、取消与重试。详情含完整预览、组合来源、实际尺寸与制作状态，支持附修改要求的重做；重做期间继续展示当前成品。库内预览不产生播放回执。素材被删除的影像仍展示冻结来源与成品。空状态显示真实素材准备情况与联系伙伴入口，不伪造伙伴台词。筛选按名称、媒体类型与来源素材，支持分页；页面状态经 UI 快照参与视图交接。
+[影像页](app/features/visuals/visuals-page.tsx) 按库、制作区与详情拆分，动作页独立维护动作语义定义与评审状态。重做期间保留当前成品，源素材删除后仍使用冻结来源；库内预览不产生播放回执。筛选、选中项与滚动位置经 UI 快照交接，迟到结果受账户与请求代次守卫，制作完成不抢选或重新打开已离开的页面。
 
 衣柜与环境素材的库页共用 [asset-library-header.tsx](app/components/asset-library-header.tsx) 的设置卡片、搜索与创建工具栏，以及 [asset-library-card.tsx](app/components/asset-library-card.tsx) 的紧凑卡片和按可用宽度排列的网格。各页面提供状态与操作，公共组件不发业务请求。衣柜在页面所有者内按名称和描述即时筛选本地列表，进入详情或创建页再返回保留筛选；环境沿用服务端搜索与分页，搜索需提交。卡片预览按素材类型选档位展示：竖版立绘 4/5，宽幅素材 16/9，均不裁切原图。
-
-影像页按库、制作区与详情拆分；动作页独立维护动作语义定义与评审状态，不展示任何制作进度。页面复用 UI 快照交接筛选、选中项与滚动位置；迟到结果受账户与请求代次守卫，制作完成不抢选或重新打开已离开的页面。
 
 [背景播放器](app/windows/desktop/desktop-background-entry.tsx) 双缓冲等待实际呈现的首帧；共同基准且允许自然衔接的短动作在循环接点切入，其余画面及上传视频的循环接点使用淡化。短动作返回仍有效的保留循环，影像或素材替换后不能返回旧画面。管理预览、视频和过渡帧共用 [画幅布局](../shared/desktop-media-geometry.ts)，按实际媒体与视口确定裁切或居中内容区域，完整显示时让出模糊底层；库页缩略图完整展示原图。播放规则归 [PIPELINE](../../docs/PIPELINE.md#组合影像制作)。媒体加载失败保留当前画面，按主进程暂停状态控制播放并回收媒体 URL。切换前先预加载持续画面，成功后才请求切换；主进程媒体桥同时守卫账户和选中路径。
 

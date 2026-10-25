@@ -1,7 +1,7 @@
 import type { BrowserWindow, IpcMain } from 'electron'
 
 import { type DesktopRunnerState, IPC, type RunnerCallOutcome, type RunnerCallRequest } from '@ipc/contracts'
-import { errorMessage, sleep } from '@runtime'
+import { errorMessage } from '@runtime'
 
 import { isJsonValue } from '../../../shared/gateway'
 import type { RunnerBridge, RunnerBridgeEvent, RunnerBridgeOptions, RunnerBridgeStatus } from '../runner/bridge'
@@ -273,37 +273,6 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
   }
 
   function registerIpc(ipcMain: IpcMain): void {
-    ipcMain.handle(IPC.invoke.runnerGetTools, async () => {
-      const deadline = Date.now() + 6000
-
-      while (Date.now() < deadline) {
-        const bridge = runnerBridge
-
-        if (bridge) {
-          const tools = bridge.getTools()
-
-          if (tools.length > 0) {
-            return tools
-          }
-
-          const status = bridge.getStatus()
-
-          if (
-            status.phase === 'error' ||
-            status.phase === 'stopped' ||
-            status.phase === 'stopping' ||
-            status.phase === 'idle'
-          ) {
-            return []
-          }
-        }
-
-        await sleep(100)
-      }
-
-      return runnerBridge?.getTools() || []
-    })
-
     // 渲染层直调（窗口查询、点击预演、情境快照），不带 call_id，不记调用日志。
     ipcMain.handle(IPC.invoke.runnerInvoke, async (event, name: string, args?: Record<string, unknown>) => {
       assertSpriteHost(event.sender, options.getMainWindow(), 'runner:invoke')

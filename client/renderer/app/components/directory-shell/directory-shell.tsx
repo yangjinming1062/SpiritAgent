@@ -5,7 +5,7 @@ import type { IconComponent } from '@/shared/lib/icons'
 
 import styles from './directory-shell.module.css'
 
-export interface DirectoryEntry<T extends string> {
+interface DirectoryEntry<T extends string> {
   id: T
   icon: IconComponent
   label: string

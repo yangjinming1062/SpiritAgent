@@ -1,5 +1,3 @@
-// 引导阶段类型，以及 ``onBack`` 转移决策的纯函数（与组件状态机隔离）。输出是下一个状态意图或 null(表示"无变化")。
-
 export type Phase =
   | 'q-character'
   | 'portrait-generate'

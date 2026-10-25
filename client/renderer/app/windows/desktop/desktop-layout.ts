@@ -1,10 +1,6 @@
 import { useCallback, useState } from 'react'
 
-import { APP_PAGES } from '@ipc/contracts'
-
-export const DESKTOP_APPS = APP_PAGES
-
-export type DesktopApp = (typeof DESKTOP_APPS)[number]
+import type { AppPage } from '@ipc/contracts'
 
 export interface DesktopRect {
   x: number
@@ -14,7 +10,7 @@ export interface DesktopRect {
 }
 
 export interface DesktopWindowState {
-  id: DesktopApp
+  id: AppPage
   bounds: DesktopRect
   minimized: boolean
   maximized: boolean
@@ -24,15 +20,9 @@ interface DesktopLayout {
   windows: DesktopWindowState[]
 }
 
-export function fitRect(
-  rect: DesktopRect,
-  width: number,
-  height: number,
-  minWidth = 560,
-  minHeight = 360
-): DesktopRect {
-  const w = Math.min(Math.max(minWidth, rect.width), Math.max(1, width))
-  const h = Math.min(Math.max(minHeight, rect.height), Math.max(1, height))
+export function fitRect(rect: DesktopRect, width: number, height: number): DesktopRect {
+  const w = Math.min(Math.max(560, rect.width), Math.max(1, width))
+  const h = Math.min(Math.max(360, rect.height), Math.max(1, height))
 
   return {
     width: w,
@@ -46,11 +36,10 @@ export function useDesktopLayout() {
   // 启动不恢复上次打开的窗口：窗口集合只在本次会话内有效，不跨启动落盘。
   const [layout, setLayout] = useState<DesktopLayout>(() => ({ windows: [] }))
 
-  const activate = useCallback((id: DesktopApp): void => {
+  const activate = useCallback((id: AppPage): void => {
     setLayout(current => {
       const last = current.windows.at(-1)
 
-      // 已置前的窗口提前返回，避免重复激活改变窗口顺序。
       if (last?.id === id && !last.minimized) {
         return current
       }
@@ -78,13 +67,13 @@ export function useDesktopLayout() {
     })
   }, [])
 
-  const updateWindow = (id: DesktopApp, patch: Partial<DesktopWindowState>): void =>
+  const updateWindow = (id: AppPage, patch: Partial<DesktopWindowState>): void =>
     setLayout(current => ({
       ...current,
       windows: current.windows.map(item => (item.id === id ? { ...item, ...patch, id } : item))
     }))
 
-  const close = (id: DesktopApp): void =>
+  const close = (id: AppPage): void =>
     setLayout(current => ({
       ...current,
       windows: current.windows.filter(item => item.id !== id)

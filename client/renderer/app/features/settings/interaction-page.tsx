@@ -38,7 +38,6 @@ const DISTURBANCE_TIERS: readonly DisturbanceTier[] = ['still', 'normal', 'auton
 const RECORDING_OPTIONS = [15, 30, 60, 120, 300] as const
 const DEFAULT_RECORDING_SECONDS = 60
 
-// 伙伴回应方式、打扰档位和日常开关。
 export function InteractionPage({ part = 'companionship' }: { part?: 'companionship' | 'voice' }): React.ReactElement {
   const dict = useStrings()
   const t = dict.settings.interaction

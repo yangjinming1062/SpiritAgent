@@ -11,9 +11,9 @@ const REPO_ROOT = path.resolve(DESKTOP_ROOT, '..')
 const OUT_DIR = path.join(DESKTOP_ROOT, 'build')
 const OUT_FILE = path.join(OUT_DIR, 'install-stamp.json')
 
-function tryExec(cmd, opts) {
+function tryExec(cmd) {
   try {
-    return execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], ...opts }).trim()
+    return execSync(cmd, { cwd: REPO_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
   } catch {
     return null
   }
@@ -25,26 +25,26 @@ function fromCI() {
   const branch = process.env.GITHUB_REF_NAME || process.env.GITHUB_HEAD_REF || null
   return {
     commit: sha,
-    branch: branch,
-    dirty: false, // CI builds from a checkout-of-ref by definition
+    branch,
+    dirty: false,
     source: 'ci'
   }
 }
 
 function fromLocalGit() {
-  const sha = tryExec('git rev-parse HEAD', { cwd: REPO_ROOT })
+  const sha = tryExec('git rev-parse HEAD')
   if (!sha) return null
-  const branch = tryExec('git rev-parse --abbrev-ref HEAD', { cwd: REPO_ROOT })
-  // `git status --porcelain -uno` is empty iff tracked files match HEAD. We exclude untracked files (-uno) intentionally: a developer who's checked out an installer scratch dir alongside the repo shouldn't poison every local build with a [DIRTY] stamp. We DO care about tracked-but-modified files because those mean the .exe content differs from the commit being pinned.
-  const status = tryExec('git status --porcelain -uno', { cwd: REPO_ROOT })
+  const branch = tryExec('git rev-parse --abbrev-ref HEAD')
+  // 只记录受 Git 跟踪文件的改动，未跟踪的临时目录不影响构建来源。
+  const status = tryExec('git status --porcelain -uno')
   if (status === null) {
     console.warn('[write-build-stamp] WARNING: `git status` failed; marking the build dirty.')
   }
   const dirty = status === null || status.length > 0
   return {
     commit: sha,
-    branch: branch === 'HEAD' ? null : branch, // detached HEAD -> null
-    dirty: dirty,
+    branch: branch === 'HEAD' ? null : branch,
+    dirty,
     source: 'local'
   }
 }

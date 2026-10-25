@@ -3,10 +3,7 @@ import { useState } from 'react'
 
 import { PortraitLightbox } from '@/shared/components/portrait-lightbox'
 
-/**
- * 可放大的图片缩略图：点击打开灯箱。灯箱状态由本组件持有，
- * `onOpenChange` 让外层在灯箱打开时停用自己的 Esc（例如外层向导）。
- */
+// 灯箱打开时通过 onOpenChange 停用外层向导的 Esc。
 export function ImageLightboxButton({
   ariaLabel,
   children,
@@ -15,11 +12,9 @@ export function ImageLightboxButton({
   onOpenChange,
   url
 }: {
-  /** 放大按钮的无障碍名称。 */
   ariaLabel?: string
   children: ReactNode
   className?: string
-  /** 灯箱标题。 */
   name: string
   onOpenChange?: (open: boolean) => void
   url: string

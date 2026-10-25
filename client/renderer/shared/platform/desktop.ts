@@ -23,7 +23,7 @@ type GatewayPort = Pick<
 >
 type RunnerPort = Pick<
   DesktopBridge,
-  'runnerInvoke' | 'runnerGetState' | 'runnerGetTools' | 'onRunnerStatus' | 'runnerConfig' | 'skills' | 'toolsets'
+  'runnerInvoke' | 'runnerGetState' | 'onRunnerStatus' | 'runnerConfig' | 'skills' | 'toolsets'
 >
 type FileBridgePort = Pick<
   DesktopBridge,
@@ -56,7 +56,7 @@ type PreferencesPort = Pick<
   DesktopBridge,
   'prefs' | 'shortcuts' | 'setUiTheme' | 'onUiThemeChanged' | 'onPrefsHydrated'
 >
-type SystemPort = Pick<DesktopBridge, 'log' | 'onPowerResume' | 'getVersion' | 'update'>
+type SystemPort = Pick<DesktopBridge, 'log' | 'getVersion' | 'update'>
 type MediaPort = Pick<DesktopBridge, 'voicePlayback'> & {
   media: Pick<DesktopBridge['media'], 'onboardingAudio'> & {
     [K in 'stt' | 'tts' | 'uploadAudio' | 'uploadVoiceSample']: ApiValueCall<DesktopBridge['media'][K]>

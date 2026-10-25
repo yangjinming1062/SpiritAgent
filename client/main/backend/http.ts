@@ -3,22 +3,14 @@ import type { Net } from 'electron'
 import { errorMessage, sleep } from '@runtime'
 
 import { type ApiArguments, type ApiOperationKey, type ApiResponse } from '../../../shared/api'
-import { resolveNormalizedBackendUrl } from '../shared/config'
 
 import { createBackendClient } from './client'
-
-interface BackendHttpOptions {
-  electronNet: Net
-  spiritagentHome: null | string
-}
 
 export function createElectronFetch(electronNet: Pick<Net, 'fetch'>): typeof globalThis.fetch {
   return (input, init) => electronNet.fetch(input instanceof URL ? input.href : input, init)
 }
 
-export function createBackendHttp({ electronNet, spiritagentHome }: BackendHttpOptions) {
-  const fetchImpl = createElectronFetch(electronNet)
-
+export function createBackendHttp(fetchImpl: typeof globalThis.fetch) {
   function invoke<K extends ApiOperationKey>(
     baseUrl: string,
     token: string | undefined,
@@ -64,11 +56,7 @@ export function createBackendHttp({ electronNet, spiritagentHome }: BackendHttpO
     throw new Error(`SpiritAgent backend did not become ready: ${errorMessage(lastError) || 'timeout'}`)
   }
 
-  async function resolveRemoteBackend(): Promise<null | string> {
-    return resolveNormalizedBackendUrl(spiritagentHome)
-  }
-
-  return { invoke, mintWsTicket, resolveRemoteBackend, waitForSpiritAgent }
+  return { invoke, mintWsTicket, waitForSpiritAgent }
 }
 
 export type BackendHttp = ReturnType<typeof createBackendHttp>

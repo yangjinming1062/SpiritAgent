@@ -50,7 +50,6 @@ export interface DesktopTrayLayout {
 
 export interface DesktopMediaReference {
   url: string
-  contentHash?: string
 }
 
 export interface DesktopMediaBytes {

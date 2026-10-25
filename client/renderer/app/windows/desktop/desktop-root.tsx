@@ -32,12 +32,13 @@ import { $surfaceScreenLocked } from '@/shared/store/surfaces'
 import { $uiStateReady } from '@/shared/store/ui-state'
 import { useStrings } from '@/shared/strings'
 import { DESKTOP_LAYOUT, getDesktopRailLayout } from '@client-shared/desktop-layout'
+import type { AppPage } from '@ipc/contracts'
 
 import { DesktopAvatarSignal } from './desktop-avatar-signal'
 import { DesktopBottomBar } from './desktop-bottom-bar'
 import { DesktopCompanionBubble } from './desktop-companion-bubble'
 import { DesktopControls } from './desktop-controls'
-import { type DesktopApp, useDesktopLayout } from './desktop-layout'
+import { useDesktopLayout } from './desktop-layout'
 import { DesktopProductNav } from './desktop-product-nav'
 import { useDesktopVisualWallpaper } from './desktop-visual-wallpaper'
 import { DesktopWindow } from './desktop-window'
@@ -215,7 +216,7 @@ export function DesktopRoot(): React.JSX.Element {
   }, [])
 
   const activatePanel = useCallback(
-    (id: DesktopApp): void => {
+    (id: AppPage): void => {
       setAppPage(id)
       setOverlay(null)
       activate(id)
@@ -362,7 +363,7 @@ export function DesktopRoot(): React.JSX.Element {
 
   useDismissOnOutside(menuRef, accountOpen, () => setOverlay(null))
 
-  const page = (id: DesktopApp, visible: boolean): React.ReactNode => {
+  const page = (id: AppPage, visible: boolean): React.ReactNode => {
     const reading = visible && activePanel === id
 
     if (id === 'chat') {
@@ -377,7 +378,6 @@ export function DesktopRoot(): React.JSX.Element {
           reveal={unreadReveal}
           viewId="desktop-main"
           visible={visible && desktopVisible}
-          windowId={1}
         />
       )
     }

@@ -33,7 +33,7 @@ import { usePendingConversationFeed } from './use-pending-conversation-feed'
 const SIDEBAR_COLLAPSED_KEY = registerCompanionStorageKey('da.conversation.sidebarCollapsed')
 const sidebarCollapsed = definePersistedBoolean({ key: SIDEBAR_COLLAPSED_KEY, fallback: false })
 
-export interface ConversationPageProps {
+interface ConversationPageProps {
   active: boolean
   visible: boolean
   foreground: boolean
@@ -43,7 +43,6 @@ export interface ConversationPageProps {
   containerRef: RefObject<HTMLElement | null>
   viewId: string
   receiveExternalAttachments?: boolean
-  windowId?: number
 }
 
 export function ConversationPage({
@@ -55,8 +54,7 @@ export function ConversationPage({
   reveal,
   containerRef,
   viewId,
-  receiveExternalAttachments = true,
-  windowId = 1
+  receiveExternalAttachments = true
 }: ConversationPageProps): React.JSX.Element {
   const sessionId = useStore($chatSessionId)
   const runtime = getConversationRuntime(sessionId)
@@ -225,7 +223,7 @@ export function ConversationPage({
               <RunRail closeLabel={t.closeExecution} id={railId} onClose={closeRail} title={t.execution} />
             </>
           )}
-          <MediaViewerOverlay containerRef={containerRef} viewId={viewId} windowId={windowId} />
+          <MediaViewerOverlay containerRef={containerRef} viewId={viewId} windowId={1} />
         </ConversationViewProvider>
       </div>
     </PanelActivityProvider>
@@ -254,7 +252,6 @@ function MainChat({
   const runtime = getConversationRuntime(sessionId)
   const sessionPresetId = useStore(runtime.$chatSessionPresetId)
   const preset = presets.find(preset => preset.id === sessionPresetId)
-  const dict = useStrings()
   const strings = useStrings()
   const t = strings.chat.nav
 
@@ -269,7 +266,13 @@ function MainChat({
           <div className={styles.identity}>
             <strong>{title}</strong>
             <span>
-              {readOnly ? t.readOnly : preset ? presetDisplayName(dict, preset) : companion ? t.companion : t.assistant}
+              {readOnly
+                ? t.readOnly
+                : preset
+                  ? presetDisplayName(strings, preset)
+                  : companion
+                    ? t.companion
+                    : t.assistant}
             </span>
           </div>
           {railAction}

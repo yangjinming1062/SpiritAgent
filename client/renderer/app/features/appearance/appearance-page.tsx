@@ -10,7 +10,6 @@ import { $appearanceUi, updateAppearanceUi } from './appearance-ui-state'
 import { OutfitDetail } from './outfit-detail'
 import { OutfitSection } from './outfit-section'
 
-// 衣柜页按造型素材组织；窗口模式显示设置归设置页统一管理。
 export function AppearancePage(): React.JSX.Element {
   const authKind = useStore($auth).kind
   const outfits = useStore($outfits)
@@ -19,7 +18,7 @@ export function AppearancePage(): React.JSX.Element {
   const librarySearch = useAssetLibrarySearch()
   const setSelectedOutfitId = (id: string | null): void => updateAppearanceUi({ selectedOutfitId: id })
 
-  // 衣柜列表在 auth 就绪后再水合——冷启动直接进入本页时 hydrateAuth 的 IPC 往返尚未完成，提前调用会因 pending 静默跳过。种子图走本地缓存，缺失时补拉。
+  // 冷启动须等待鉴权，否则水合会跳过读取。
   useEffect(() => {
     if (authKind === 'authenticated') {
       let current = true

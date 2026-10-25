@@ -22,7 +22,6 @@ export function SettingsSectionIntro({ title, hint }: { title: string; hint?: st
   )
 }
 
-// 分组胶囊：多行 SettingRow 之间用 hairline 分隔。清透档走液态玻璃，不铺乳白实底。
 export function SettingCard({
   ariaLabel,
   children,
@@ -113,7 +112,6 @@ export function Toggle({
   )
 }
 
-// 数值滑杆：品牌蓝已填充段（--sa-slider-fill 由内联注入）+ 圆钮，皮肤在 styles.css 的 .sa-slider。
 export function Slider({
   value,
   min,
@@ -194,7 +192,6 @@ export function Spinner({
   size = 'md',
   tone = 'faint'
 }: {
-  /** 读屏下的状态名称。 */
   ariaLabel?: string
   className?: string
   role?: string
@@ -261,7 +258,6 @@ export function SearchField({
   /** 搜索框的无障碍名称。必填，避免出现没有名称的搜索输入。 */
   ariaLabel: string
   className?: string
-  /** 需要聚焦或读取输入框时传入。 */
   inputRef?: Ref<HTMLInputElement>
   onKeyDown?: React.KeyboardEventHandler<HTMLInputElement>
   type?: 'text' | 'search'

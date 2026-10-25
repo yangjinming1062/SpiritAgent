@@ -18,24 +18,12 @@ interface MotionPorts {
   maxScale: number
 }
 
-export interface FrameScheduler {
-  request: (callback: (now: number) => void) => number
-  cancel: (id: number) => void
-  now: () => number
-}
-
-const browserFrames: FrameScheduler = {
-  request: callback => requestAnimationFrame(callback),
-  cancel: id => cancelAnimationFrame(id),
-  now: () => performance.now()
-}
-
 function easeInOut(t: number): number {
   return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
 }
 
 /** 每个空间运行时独占移动和缩放帧；回调只写所属 store，不持有窗口或 React 生命周期。 */
-export function createSpatialMotion(ports: MotionPorts, frames: FrameScheduler = browserFrames) {
+export function createSpatialMotion(ports: MotionPorts) {
   let rafId: number | null = null
   let moveStart: Position | null = null
   let moveTarget: Position | null = null
@@ -49,7 +37,7 @@ export function createSpatialMotion(ports: MotionPorts, frames: FrameScheduler =
 
   function cancelMovement(): void {
     if (rafId !== null) {
-      frames.cancel(rafId)
+      cancelAnimationFrame(rafId)
       rafId = null
     }
 
@@ -79,7 +67,7 @@ export function createSpatialMotion(ports: MotionPorts, frames: FrameScheduler =
     ports.setPosition(t === 1 ? ports.clampPosition(position) : position)
 
     if (t < 1) {
-      rafId = frames.request(tick)
+      rafId = requestAnimationFrame(tick)
     } else {
       cancelMovement()
     }
@@ -97,15 +85,15 @@ export function createSpatialMotion(ports: MotionPorts, frames: FrameScheduler =
 
     moveStart = { ...current }
     moveTarget = target
-    moveStartTime = frames.now()
+    moveStartTime = performance.now()
     moveDuration = Math.max((dist / FLY_SPEED) * 1000, 200)
     ports.setLocomotion('fly')
-    rafId = frames.request(tick)
+    rafId = requestAnimationFrame(tick)
   }
 
   function stopScale(): void {
     if (scaleRafId !== null) {
-      frames.cancel(scaleRafId)
+      cancelAnimationFrame(scaleRafId)
       scaleRafId = null
     }
   }
@@ -117,7 +105,7 @@ export function createSpatialMotion(ports: MotionPorts, frames: FrameScheduler =
     ports.setScale(scaleStartVal + (scaleTargetVal - scaleStartVal) * eased)
 
     if (t < 1) {
-      scaleRafId = frames.request(tickScale)
+      scaleRafId = requestAnimationFrame(tickScale)
     } else {
       scaleRafId = null
     }
@@ -135,10 +123,10 @@ export function createSpatialMotion(ports: MotionPorts, frames: FrameScheduler =
 
     scaleStartVal = ports.getScale()
     scaleTargetVal = clamped
-    scaleStartTime = frames.now()
+    scaleStartTime = performance.now()
 
     if (scaleRafId === null) {
-      scaleRafId = frames.request(tickScale)
+      scaleRafId = requestAnimationFrame(tickScale)
     }
   }
 

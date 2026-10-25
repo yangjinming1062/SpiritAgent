@@ -85,7 +85,7 @@ import { resolveDesktopHome } from './security/paths'
 import type { BackendSessionPort } from './shared/backend-port'
 import { createConfigSync, uiThemeFromConfig } from './shared/lib/config-sync'
 import * as runnerConfigStore from './shared/lib/runner-config-store'
-import { broadcastToAllWindows, fileExists, sendToWindow } from './shared/utils'
+import { broadcastToAllWindows, fileExists } from './shared/utils'
 
 const DEV_SERVER = process.env.SPIRITAGENT_DESKTOP_DEV_SERVER
 const IS_PACKAGED = app.isPackaged
@@ -134,14 +134,12 @@ const APP_NAME = '唤生'
 
 const electronFetch = createElectronFetch(electronNet)
 
-const backendHttp = createBackendHttp({
-  electronNet,
-  spiritagentHome: SPIRITAGENT_HOME
-})
+const backendHttp = createBackendHttp(electronFetch)
 
 const { ensureBackend, resetBackendCache } = createEnsureBackend({
   appName: APP_NAME,
   backendHttp,
+  spiritagentHome: SPIRITAGENT_HOME,
   logBootStep: message => rememberLog(`[boot] ${message}`),
   getAuthToken: () => sessionRuntime.ensureBackendSession().getToken(),
   getCurrentBaseUrl: () => ensureBackendSession().getSession()?.baseUrl ?? null
@@ -210,9 +208,7 @@ const windowHandlers = createWindowHandlers({
   isPackaged: IS_PACKAGED,
   menu: Menu,
   openExternalUrl,
-  powerMonitor,
   rememberLog,
-  sendPowerResume: () => sendToWindow(mainWindow, IPC.event.powerResume),
   session,
   zoomPersistence
 })
@@ -612,7 +608,6 @@ void app.whenReady().then(async () => {
   windowHandlers.installMediaPermissions()
   windowHandlers.installContentSecurityPolicy()
   windowHandlers.configureSpellChecker(app)
-  windowHandlers.registerPowerResumeListeners()
   syncShortcutsFromConfig()
   autoUpdater.setup()
 

@@ -108,7 +108,7 @@ export function createBackendAssetReader({
 
     if (request?.preferCache && accountId) {
       // 缓存命中无需等待后端就绪，离线启动也能恢复本机资产。
-      const cached = await assetDiskCache.get(accountId, raw, request.contentHash)
+      const cached = await assetDiskCache.get(accountId, raw)
       assertCurrentAuth()
 
       if (cached) {
@@ -128,7 +128,6 @@ export function createBackendAssetReader({
           accountId,
           preferCache: request?.preferCache,
           baseUrl: connection.baseUrl,
-          contentHash: request?.contentHash,
           fetchFn: fetchImpl,
           rawUrl: raw,
           timeoutMs: assetFetchTimeoutMs,
@@ -223,7 +222,7 @@ export function registerConnectionIpc({
 
       const asset = request?.cacheOnly
         ? accountId
-          ? await assetDiskCache.get(accountId, assetUrl(request), request.contentHash)
+          ? await assetDiskCache.get(accountId, assetUrl(request))
           : null
         : await readAsset(event.sender, request)
 

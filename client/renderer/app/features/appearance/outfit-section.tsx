@@ -53,7 +53,6 @@ import { $appearanceUi, $appearanceUiImportRevision, updateAppearanceUi } from '
 const CARD_ACTION_CLASS =
   'inline-flex h-6 items-center justify-center rounded-lg bg-fill-faint px-1.5 text-muted transition hover:bg-fill-hover hover:text-strong disabled:pointer-events-none disabled:opacity-40'
 
-// 衣柜是静态造型素材库：列表与详情只管理全身图与描述，不涉及穿着与呈现选择。
 interface OutfitSectionProps {
   onSelectOutfit: (id: string) => void
   search: AssetLibrarySearch

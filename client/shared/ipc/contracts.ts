@@ -520,14 +520,9 @@ export interface IpcInvokeContract {
   'spiritagent:api:asset': (request: {
     preferCache?: boolean
     cacheOnly?: boolean
-    contentHash?: string
     url: string
   }) => Promise<string | null> | string | null
-  'spiritagent:api:asset-buffer': (request: {
-    preferCache?: boolean
-    contentHash?: string
-    url: string
-  }) => Promise<Uint8Array> | Uint8Array
+  'spiritagent:api:asset-buffer': (request: { preferCache?: boolean; url: string }) => Promise<Uint8Array> | Uint8Array
 
   // 会话历史本地缓存：请求携带发起时的鉴权会话，主进程核对后按账户隔离。
   'spiritagent:session-history:get': (
@@ -568,7 +563,6 @@ export interface IpcInvokeContract {
   // Runner
   'spiritagent:runner:invoke': (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown
   'spiritagent:runner:get-state': () => DesktopRunnerState | Promise<DesktopRunnerState>
-  'spiritagent:runner:get-tools': () => Array<Record<string, unknown>> | Promise<Array<Record<string, unknown>>>
   'spiritagent:runner-config:read': () =>
     | { config: Record<string, unknown>; ok: true }
     | { error: string; ok: false }
@@ -655,7 +649,6 @@ export interface IpcEventContract {
   'spiritagent:voice-playback:changed': [payload: VoicePlaybackChanged]
   'spiritagent:auth:changed': [payload: DesktopAuthBroadcast]
   'spiritagent:auth:session-expired': [sessionId: string]
-  'spiritagent:power-resume': []
   'spiritagent:prefs-hydrated': [payload: DesktopPrefsHydrated]
   'spiritagent:runner:status': [payload: DesktopRunnerStatusEvent]
   'spiritagent:shortcuts:changed': [payload: DesktopShortcutsState]
@@ -750,7 +743,6 @@ export const IPC = {
     version: 'spiritagent:version',
     runnerInvoke: 'spiritagent:runner:invoke',
     runnerGetState: 'spiritagent:runner:get-state',
-    runnerGetTools: 'spiritagent:runner:get-tools',
     runnerConfigRead: 'spiritagent:runner-config:read',
     runnerConfigPatch: 'spiritagent:runner-config:patch',
     prefsApplyServerVoice: 'spiritagent:prefs:apply-server-voice',
@@ -801,7 +793,6 @@ export const IPC = {
     voicePlaybackChanged: 'spiritagent:voice-playback:changed',
     authChanged: 'spiritagent:auth:changed',
     authSessionExpired: 'spiritagent:auth:session-expired',
-    powerResume: 'spiritagent:power-resume',
     prefsHydrated: 'spiritagent:prefs-hydrated',
     runnerStatus: 'spiritagent:runner:status',
     shortcutsChanged: 'spiritagent:shortcuts:changed',

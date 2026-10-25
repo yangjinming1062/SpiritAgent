@@ -202,7 +202,6 @@ export function SessionSidebar({
 
   return (
     <aside className="flex h-full w-full min-h-0 flex-col overflow-hidden text-xs">
-      {/* 顶部操作：Sessions 标题与 + 新建按钮 */}
       <div className="flex items-center justify-between px-3.5 pt-3 pb-1">
         <h3 className="text-sm font-semibold tracking-wide text-strong">{t.title}</h3>
         <div className="flex items-center gap-1">
@@ -219,7 +218,6 @@ export function SessionSidebar({
         </div>
       </div>
 
-      {/* 搜索与排序 */}
       <div className="flex items-center justify-between gap-1.5 px-3 py-1.5">
         <div className="min-w-0 flex-1">
           <SearchField
@@ -250,7 +248,6 @@ export function SessionSidebar({
         </div>
       </div>
 
-      {/* 会话列表区域 */}
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-2.5 pb-3 scrollbar-thin">
         {sessionsError && (
           <ErrorBanner
@@ -401,7 +398,6 @@ export function SessionSidebar({
         )}
       </div>
 
-      {/* 底部归档与展开切换 */}
       <div className="border-t border-line-hairline bg-transparent p-2.5">
         <button
           className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-line-standard bg-fill-faint py-1.5 text-xs text-muted transition hover:border-line-strong hover:bg-fill-hover hover:text-strong active:scale-98"

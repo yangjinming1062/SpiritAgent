@@ -144,7 +144,7 @@ function buildDesktopTrayStyle(arch = process.arch) {
     writeManifest(manifest, file)
     preparePackaging(buildRoot, file, arch)
     console.log(`[desktop-tray-style] reusing ${arch} module: ${packaged}`)
-    return packaged
+    return
   }
   if (process.platform !== 'win32') throw new Error('Windows 桌面托盘组件只能在 Windows 上编译。')
   const { compiler, env } = findToolchain(arch)
@@ -217,7 +217,6 @@ function buildDesktopTrayStyle(arch = process.arch) {
     writeManifest(manifest, file)
     preparePackaging(buildRoot, file, arch)
     console.log(`Windows desktop tray style built for ${arch}: ${packaged}`)
-    return packaged
   } finally {
     fs.rmSync(staging, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
   }

@@ -782,7 +782,7 @@ export async function setScenePolicy(policy: ScenePolicy): Promise<void> {
 }
 
 /** 场景素材变更的事件计数；仅用于中止与刷新竞争中的过期详情读取。 */
-export function onSceneEvent(_event: { payload?: unknown; type: string }): void {
+export function onSceneEvent(): void {
   eventVersion += 1
   void hydrateScene()
 }

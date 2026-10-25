@@ -6,6 +6,7 @@ import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useClipboard } from '@/shared/hooks/use-clipboard'
 import { failureText } from '@/shared/lib/ipc-error'
+import { requestResource } from '@/shared/lib/resource-request'
 import {
   BTN_GHOST,
   BTN_PRIMARY,
@@ -17,14 +18,6 @@ import {
   SettingsSubsection,
   Spinner
 } from '@/shared/panel'
-import {
-  cancelRemotePairing,
-  createRemotePairing,
-  getRemotePairing,
-  listRemoteDevices,
-  revokeAllRemoteDevices,
-  revokeRemoteDevice
-} from '@/shared/spiritagent'
 import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import type { RemoteDevice, RemotePairing } from '@protocol'
@@ -53,7 +46,7 @@ export function RemotePage(): React.JSX.Element {
     const revision = ++devicesRevision.current
 
     try {
-      const result = await listRemoteDevices()
+      const result = await requestResource('remote.list_remote_devices')
 
       if (isLive() && revision === devicesRevision.current) {
         setDevices(result.items)
@@ -136,7 +129,7 @@ export function RemotePage(): React.JSX.Element {
       }
 
       try {
-        const result = await getRemotePairing(pairingId)
+        const result = await requestResource('remote.pairing_status', { path: { pairing_id: pairingId } })
 
         if (!isLive()) {
           return
@@ -212,7 +205,7 @@ export function RemotePage(): React.JSX.Element {
   }
 
   function connect(): Promise<void> {
-    return updatePairing(createRemotePairing, t.connectFailed)
+    return updatePairing(() => requestResource('remote.create_pairing'), t.connectFailed)
   }
 
   async function cancelCode(): Promise<void> {
@@ -222,9 +215,9 @@ export function RemotePage(): React.JSX.Element {
 
     const id = pairing.id
     await updatePairing(async () => {
-      await cancelRemotePairing(id)
+      await requestResource('remote.cancel_pairing', { path: { pairing_id: id } })
 
-      return getRemotePairing(id)
+      return requestResource('remote.pairing_status', { path: { pairing_id: id } })
     }, t.cancelFailed)
   }
 
@@ -254,9 +247,9 @@ export function RemotePage(): React.JSX.Element {
 
     try {
       if (revokeTarget === 'all') {
-        await revokeAllRemoteDevices()
+        await requestResource('remote.revoke_all_remote_devices')
       } else {
-        await revokeRemoteDevice(revokeTarget)
+        await requestResource('remote.revoke_remote_device', { path: { device_id: revokeTarget } })
       }
 
       if (isLive()) {

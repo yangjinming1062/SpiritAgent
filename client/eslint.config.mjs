@@ -20,7 +20,6 @@ export default [
       '**/dist-electron/**',
       'assets/**',
       'public/**',
-      'src/**/*.js',
       '*.config.*'
     ]
   },
@@ -157,11 +156,10 @@ export default [
     }
   },
   {
-    // 生产渲染面（精灵窗 / 工具窗 / 共享层）禁止裸 fetch：后端签名 URL 是相对路径，渲染进程 origin（dev 的 vite / 打包后的 file://）解析不到，请求会打到 vite 拿回 Vite 的 HTML 入口回退。后端数据与字节一律走主进程桥（api / apiAsset / apiAssetBuffer）。确需直连处逐行 eslint-disable 写明 URL 来源。
+    // 后端相对 URL 在 Vite/file origin 下无法解析，数据与字节统一走主进程桥；直连例外注明 URL 来源。
     files: [
       'renderer/app/**/*.{ts,tsx}',
       'renderer/modules/**/*.{ts,tsx}',
-      'renderer/modules/character/rendering/**/*.{ts,tsx}',
       'renderer/shared/**/*.{ts,tsx}'
     ],
     rules: {

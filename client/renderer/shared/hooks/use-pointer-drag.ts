@@ -17,7 +17,7 @@ export interface UsePointerDragOptions {
   threshold?: number
 }
 
-// 通用指针拖拽 hook：返回 { delta, onPointerDown }。delta 为越过阈值后的实时累计位移（松手归 0），onCommit 松手时拿最终累计位移，便于「视觉 base+live delta、提交 base+=final」。不适用：拖拽过程需要额外领域逻辑（locomotion、缩放、屏幕边缘吸附等）——那种情况直接挂 onPointerDown + 内部管理 listeners，参见 sprite-stage.tsx。
+// delta 是越过阈值后的累计位移，松手归零；角色拖拽的移动与缩放逻辑由舞台自行管理。
 export function usePointerDrag(opts: UsePointerDragOptions = {}): {
   delta: PointerDragDelta
   onPointerDown: (e: ReactPointerEvent<HTMLElement>) => void
@@ -37,7 +37,6 @@ export function usePointerDrag(opts: UsePointerDragOptions = {}): {
     }
   }, [panelActive])
 
-  // 卸载时释放 window 级监听，避免拖拽中途 unmount 泄漏。
   useEffect(() => {
     return () => {
       detachRef.current?.()
@@ -46,7 +45,6 @@ export function usePointerDrag(opts: UsePointerDragOptions = {}): {
   }, [])
 
   const onPointerDown = (e: ReactPointerEvent<HTMLElement>): void => {
-    // 仅响应左键，其他按钮直接吞掉。
     if (e.button !== 0) {
       return
     }

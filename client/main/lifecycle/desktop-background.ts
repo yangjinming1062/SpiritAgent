@@ -18,8 +18,7 @@ function mediaReference(raw: unknown): DesktopMediaReference | null {
     !value ||
     typeof value.url !== 'string' ||
     value.url.length > 8192 ||
-    !value.url.startsWith('/api/companion/asset/') ||
-    (value.contentHash !== undefined && !/^[a-f0-9]{64}$/i.test(value.contentHash))
+    !value.url.startsWith('/api/companion/asset/')
   ) {
     throw new Error('无效桌面媒体资源。')
   }
@@ -30,7 +29,7 @@ function mediaReference(raw: unknown): DesktopMediaReference | null {
     throw new Error('无效桌面媒体路径。')
   }
 
-  return { url: value.url, ...(value.contentHash ? { contentHash: value.contentHash } : {}) }
+  return { url: value.url }
 }
 
 export function parseDesktopBackgroundRequest(raw: unknown): DesktopBackgroundRequest {

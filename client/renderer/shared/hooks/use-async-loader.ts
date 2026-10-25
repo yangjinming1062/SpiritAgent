@@ -1,6 +1,6 @@
 import { type Dispatch, type SetStateAction, useCallback, useEffect, useRef, useState } from 'react'
 
-// 规范的「挂载时拉取、持有结果、暴露错误」循环：调用方传入 resolve 出数据（或抛出）的 load，hook 负责挂载、卸载时取消、错误状态以及手动 reload。
+// 卸载使在途结果失效，不取消底层请求。
 
 export type AsyncLoader<T> = {
   data: T | null

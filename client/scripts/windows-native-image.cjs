@@ -89,7 +89,6 @@ function assertStaticRuntime(filePath) {
     )
   )
   if (externalRuntime) throw new Error(`Windows desktop component requires an external C++ runtime: ${externalRuntime}`)
-  return imports
 }
 
 module.exports = { assertStaticRuntime, readWindowsExecutableArch }

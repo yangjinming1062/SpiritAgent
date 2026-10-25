@@ -248,7 +248,7 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
         const chosen = items[highlightIdx]
 
         if (chosen) {
-          handleSlashSelect(chosen.cmd)
+          handleSlashSelect(chosen)
         }
 
         return
@@ -266,7 +266,7 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
 
         if (chosen) {
           e.preventDefault()
-          handleSlashSelect(chosen.cmd)
+          handleSlashSelect(chosen)
 
           return
         }

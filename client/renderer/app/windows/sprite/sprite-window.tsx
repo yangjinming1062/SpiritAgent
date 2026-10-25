@@ -57,28 +57,19 @@ export function SpriteWindow(): React.JSX.Element {
   useEffect(() => {
     const stopSpatial = initSpatial()
 
-    // 挂载时预热 AudioContext：冷启动 resume 100–200ms 期间 MediaElementSource 重路由会丢首帧，预热把这段时间提前到用户抵达前；onboarding-flow 自己也调一次覆盖新用户路径。
+    // 提前预热，避免首次播放时 resume 与 MediaElementSource 重路由叠加丢首帧。
     warmAudioContext()
 
-    // 挂载时一次性水合 runner-status atom（与 hydrateAuth 同款），让伙伴侧消费者直接读 $runnerPhase，不必各自实现 subscribe+同步 getter。
     void hydrateRunnerStatus()
 
     return stopSpatial
   }, [])
 
-  // 托盘「激活...」对偶：主进程只调 showMainWindow() 不够，激活浮层是 React state，关掉后必须显式翻回来否则死锁。
+  // 托盘唤起还须恢复 React 浮层状态。
   useMainProcessListener('onTrayActivate', () => setActivationOpen(true), [])
 
-  // 托盘「一键归位」：将精灵落位与状态重置回默认 Home 位置
-  useMainProcessListener(
-    'onTrayResetPosition',
-    () => {
-      resetToHomePosition()
-    },
-    []
-  )
+  useMainProcessListener('onTrayResetPosition', resetToHomePosition, [])
 
-  // 未鉴权时自动开激活浮层：首次 hydrateAuth 完成（pending→unauthenticated）以及移除账户或会话失效后，保障未激活用户的激活入口可用。
   useEffect(() => {
     if (auth.kind === 'unauthenticated') {
       setActivationOpen(true)
@@ -106,11 +97,9 @@ export function SpriteWindow(): React.JSX.Element {
   }, [])
 
   const authed = auth.kind === 'authenticated'
-  // 引导没有关闭入口（DESIGN「引导与后台准备」）：已激活且未完成时始终显示，完成后由 lifecycle 收起。
   const showOnboarding = authed && lifecycle === 'onboarding'
   const showCompanion = authed && lifecycle === 'ready' && !activationOpen
 
-  // lifecycle 由 useAccountLifecycle 统一解析；本窗只据此决定向导，就绪后才启动活动监视并水合立绘。
   useEffect(() => {
     if (auth.kind !== 'authenticated' || lifecycle !== 'ready') {
       return
@@ -134,7 +123,7 @@ export function SpriteWindow(): React.JSX.Element {
     }
   }, [auth.kind, lifecycle])
 
-  // 检测云端目录里已下架的伙伴 voice id（供应商裁剪/改名或换供应商）；后端对未知 id 宽容，这里只是一次性提示不是硬错误。
+  // 供应商目录变化会使已选音色失效，提示用户重新选择。
   useEffect(() => {
     if (lifecycle !== 'ready' || gatewayState !== 'open' || validityCheckedRef.current) {
       return
@@ -147,7 +136,6 @@ export function SpriteWindow(): React.JSX.Element {
         return
       }
 
-      // 清除过期的 id，使下次 speak() 不再带 voice 参数。
       setCompanionVoiceId('')
 
       const voice = getStrings().notifications.voice

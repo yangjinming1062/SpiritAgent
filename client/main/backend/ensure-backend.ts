@@ -1,10 +1,12 @@
 import type { BackendConnection } from '../shared/backend-port'
+import { resolveNormalizedBackendUrl } from '../shared/config'
 
 import type { BackendHttp } from './http'
 
 interface EnsureBackendDeps {
   appName: string
-  backendHttp: Pick<BackendHttp, 'resolveRemoteBackend' | 'waitForSpiritAgent'>
+  backendHttp: Pick<BackendHttp, 'waitForSpiritAgent'>
+  spiritagentHome: string
   /** 启动阶段写入桌面日志，供排查连接过程。 */
   logBootStep: (message: string) => void
   getAuthToken: () => string | null
@@ -36,7 +38,7 @@ export function createEnsureBackend(deps: EnsureBackendDeps): {
     const token = deps.getAuthToken()
     const currentBaseUrl = deps.getCurrentBaseUrl()
     deps.logBootStep(`Resolving ${deps.appName} backend`)
-    const baseUrl = currentBaseUrl ?? (await deps.backendHttp.resolveRemoteBackend())
+    const baseUrl = currentBaseUrl ?? resolveNormalizedBackendUrl(deps.spiritagentHome)
     assertCurrent(startGeneration)
 
     if (!baseUrl) {

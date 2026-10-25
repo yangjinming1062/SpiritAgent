@@ -90,7 +90,6 @@ export const QUESTIONS: readonly Question[] = [
     audioTag: 'onboarding.q5',
     presets: PERSONALITY_PRESETS
   },
-  // speaking_style 是后端 schema 必填项，用专门一道题收集，与其它角色字段一起进 enterPortraitStage 的 PUT。
   {
     key: 'speaking_style',
     text: '您希望我说话的风格是什么样的？',
@@ -159,7 +158,7 @@ export const LOCKED_FIELD_LABELS: Partial<Record<QKey, string>> = {
 // 分段边界由 voice 题位置决定：之前是角色子阶段，它是声音子阶段，之后是用户子阶段（对应后端 ONBOARDING_FIELDS 顺序）。
 const VOICE_Q_INDEX = QUESTIONS.findIndex(q => q.key === 'voice')
 export const CHARACTER_QUESTIONS: readonly Question[] = QUESTIONS.slice(0, VOICE_Q_INDEX)
-export const VOICE_QUESTIONS: readonly Question[] = QUESTIONS.slice(VOICE_Q_INDEX, VOICE_Q_INDEX + 1)
+const VOICE_QUESTIONS: readonly Question[] = QUESTIONS.slice(VOICE_Q_INDEX, VOICE_Q_INDEX + 1)
 export const USER_QUESTIONS: readonly Question[] = QUESTIONS.slice(VOICE_Q_INDEX + 1)
 
 export const PHASE_QUESTIONS: Record<Phase, readonly Question[]> = {
@@ -174,9 +173,9 @@ export const PHASE_QUESTIONS: Record<Phase, readonly Question[]> = {
 }
 
 // resume 的 next_field 路由到 q-user（voice 另有分支）；从 USER_QUESTIONS 推导，题目增删自动同步。
-export const POST_CHARACTER_FIELDS: ReadonlySet<string> = new Set(USER_QUESTIONS.map(q => q.key))
+const POST_CHARACTER_FIELDS: ReadonlySet<string> = new Set(USER_QUESTIONS.map(q => q.key))
 
-export interface ResumeTarget {
+interface ResumeTarget {
   phase: Phase
   qIndex?: number
   imageSealed?: boolean

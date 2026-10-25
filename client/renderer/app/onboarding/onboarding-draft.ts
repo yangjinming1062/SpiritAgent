@@ -9,7 +9,7 @@ import type { ApiSchemas } from '../../../../shared/api.generated'
 
 import type { QKey } from './onboarding-questions'
 
-export type OnboardingResumeState = ApiSchemas['OnboardingStateResponse']
+type OnboardingResumeState = ApiSchemas['OnboardingStateResponse']
 
 // 串行草稿写入归引导视图持有；释放后，排队任务与重试均不能使用新账户。
 export class OnboardingDraft {

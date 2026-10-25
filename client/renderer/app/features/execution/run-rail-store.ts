@@ -6,20 +6,19 @@ import type { ConversationRuntime } from '@/modules/conversation'
 import { deepEqual } from '@/shared/lib/deep-equal'
 import type { ChatMediaItem } from '@protocol'
 
-export interface ToolStep {
+interface ToolStep {
   name: string
   /** 是否为当前正在跑的步骤（最后一条且 assistant 回合尚未 finalize） */
   active: boolean
 }
 
-export interface RunRound {
-  /** 工具步骤顺序列表 */
+interface RunRound {
   steps: ToolStep[]
   /** 当前回合是否还在 in-flight */
   active: boolean
 }
 
-export interface RailArtifact {
+interface RailArtifact {
   id: string
   media: ChatMediaItem
 }

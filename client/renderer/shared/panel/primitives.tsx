@@ -6,8 +6,6 @@ import { PAGE_INSET_X } from '../layout/page-inset'
 
 import { CHIP, CHIP_FILTER_ACTIVE } from './palette'
 
-// 设置页基元：视觉词汇取自 panel palette；容器背景由所在窗口提供，此处只约束正文宽度并提供滚动 + 内边距。
-
 export function SettingsContent({
   children,
   contentClassName,
@@ -28,7 +26,6 @@ export function SettingsContent({
 
 export type PillTone = 'muted' | 'primary' | 'accent' | 'success' | 'warning'
 
-// 状态胶囊的视觉词汇：中性与激活沿用设置页基色，强调/成功/警告是实底低透明。
 const PILL_TONE: Record<PillTone, string> = {
   muted: CHIP,
   primary: CHIP_FILTER_ACTIVE,

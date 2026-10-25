@@ -3,7 +3,7 @@ import path from 'node:path'
 
 import { errorMessage } from '@runtime'
 
-import type { ApiResponse } from '../../../shared/api'
+import type { ApiResponse, HttpFetch } from '../../../shared/api'
 import { ApiError } from '../../../shared/errors'
 import { isResourceId } from '../../../shared/resource-id'
 import type { SafeStorageApi } from '../security/hardening'
@@ -15,7 +15,7 @@ import type {
 } from '../shared/backend-port'
 import { atomicWriteFile, createSerialQueue, safeReadJson } from '../shared/utils'
 
-import { createBackendClient, type FetchFunction, normalizeBaseUrl } from './client'
+import { createBackendClient, normalizeBaseUrl } from './client'
 
 const SESSION_FILENAME = 'agent-session.json'
 const SESSION_SCHEMA_VERSION = 3
@@ -94,7 +94,7 @@ export interface AccountSummary {
 
 export interface BackendSessionOptions {
   appVersion?: string
-  fetchImpl: FetchFunction
+  fetchImpl: HttpFetch
   log?: (chunk: string) => void
   now?: () => number
   safeStorage?: null | SafeStorageApi

@@ -190,7 +190,6 @@ const desktopBridge = {
     tts: (payload: MediaTtsPayload) => invoke(IPC.invoke.mediaTts, payload)
   },
   onAuthChanged: (cb: (payload: DesktopAuthBroadcast) => void) => subscribe(IPC.event.authChanged, cb),
-  onPowerResume: (cb: () => void) => subscribe(IPC.event.powerResume, cb),
   onRunnerStatus: (cb: (payload: DesktopRunnerStatusEvent) => void) => subscribe(IPC.event.runnerStatus, cb),
   onSessionExpired: (cb: EventCallback<typeof IPC.event.authSessionExpired>) =>
     subscribe(IPC.event.authSessionExpired, cb),
@@ -207,7 +206,6 @@ const desktopBridge = {
     read: () => invoke(IPC.invoke.runnerConfigRead)
   },
   runnerGetState: () => invoke(IPC.invoke.runnerGetState),
-  runnerGetTools: () => invoke(IPC.invoke.runnerGetTools),
   runnerInvoke: (name: string, args: Record<string, unknown>) => invoke(IPC.invoke.runnerInvoke, name, args),
   selectPaths: (options?: SpiritAgentSelectPathsOptions) => invoke(IPC.invoke.selectPaths, options),
   prefs: {

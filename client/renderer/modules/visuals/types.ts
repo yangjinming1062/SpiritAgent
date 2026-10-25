@@ -1,5 +1,3 @@
-// 影像与动作的对外类型以 shared/protocol.ts 的共享契约为准，两端共用同一份定义。
-// 桌面消费面额外的播放指令、冻结来源与呈现快照在本文件显式建模。
 import type {
   ActionClipKind,
   ActionDefinition,

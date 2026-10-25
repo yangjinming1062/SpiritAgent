@@ -39,7 +39,6 @@ export function OnboardingProgress({ step }: { step: number }): React.JSX.Elemen
 
 export function PortraitPanel({
   avatarUrl,
-  hint,
   history,
   name,
   onPreviewReady,
@@ -47,7 +46,6 @@ export function PortraitPanel({
   selectedIdx
 }: {
   avatarUrl: string | null
-  hint: string | null
   history?: HistoryGalleryItem[]
   name: string
   onPreviewReady?: (url: string | null) => void
@@ -65,7 +63,6 @@ export function PortraitPanel({
     <div className="flex flex-col items-center gap-2">
       <PortraitThumb label={t.avatarLabel} name={name} onReady={onPreviewReady} url={avatarUrl} />
       {gallery}
-      {hint && <p className="text-xs text-danger-fg">{hint}</p>}
     </div>
   )
 }
@@ -137,7 +134,7 @@ function PortraitThumb({
   )
 }
 
-// 提到顶层：否则 useInteractiveRegion 的 effect 会在每次渲染时重新注册。
+// 稳定函数引用，避免每次渲染重新登记命中区域。
 const interactiveRegionRect = (el: HTMLElement): DOMRect | null => {
   const rect = el.getBoundingClientRect()
 
@@ -146,8 +143,7 @@ const interactiveRegionRect = (el: HTMLElement): DOMRect | null => {
 
 const DRAG_THRESHOLD = 6
 
-// 可拖拽对话框容器：位置状态与拖拽监听收敛在此，指针移动只重渲染本容器，表单内容经 children 传入不随拖拽重渲染。
-// 注册可见矩形到 interactive-regions，SpriteStage 命中测试只在表单卡片上捕获；卸载时恢复穿透。
+// 拖拽只重渲染容器，children 中的表单保持稳定；命中仅覆盖可见卡片。
 export function DraggableDialog({ children }: { children: React.ReactNode }): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const [dialogOffset, setDialogOffset] = useState({ dx: 0, dy: 0 })
@@ -231,7 +227,7 @@ export function DraggableDialog({ children }: { children: React.ReactNode }): Re
   )
 }
 
-// 放到 OnboardingFlow 外面：否则它订阅的 $regenFeedback 会在每次按键时让整个对话框重渲染。
+// 反馈订阅限于输入框，避免每次按键重渲染整个引导。
 export function RegenFeedbackInput({
   disabled,
   id,
@@ -258,7 +254,7 @@ export function RegenFeedbackInput({
   )
 }
 
-// 同 RegenFeedbackInput：微调按钮的 disabled 依赖反馈非空，订阅放独立小组件避免整框重渲染。
+// 按钮独立订阅反馈，避免改变禁用态时重渲染整个引导。
 export function EditAvatarButton({
   busy,
   disabledByReference,

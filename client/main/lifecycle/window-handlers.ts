@@ -1,4 +1,4 @@
-import type { BrowserWindow, Menu, PowerMonitor, session } from 'electron'
+import type { BrowserWindow, Menu, session } from 'electron'
 
 import { errorMessage } from '@runtime'
 
@@ -16,9 +16,7 @@ interface WindowHandlersOptions {
   isPackaged: boolean
   menu: typeof Menu
   openExternalUrl: (url: string) => boolean
-  powerMonitor: PowerMonitor
   rememberLog: (chunk: string) => void
-  sendPowerResume: () => void
   session: typeof session
   zoomPersistence: ZoomPersistence
   contextMenuHelpers: ContextMenuHelpers
@@ -32,9 +30,7 @@ export function createWindowHandlers({
   isPackaged,
   menu,
   openExternalUrl,
-  powerMonitor,
   rememberLog,
-  sendPowerResume,
   session,
   zoomPersistence,
   contextMenuHelpers
@@ -311,18 +307,6 @@ export function createWindowHandlers({
     })
   }
 
-  let powerResumeRegistered = false
-
-  function registerPowerResumeListeners(): void {
-    if (powerResumeRegistered) {
-      return
-    }
-
-    powerResumeRegistered = true
-    powerMonitor.on('resume', sendPowerResume)
-    powerMonitor.on('unlock-screen', sendPowerResume)
-  }
-
   function configureSpellChecker(app: { getLocale?: () => string | null }): void {
     try {
       const available = session.defaultSession.availableSpellCheckerLanguages || []
@@ -343,7 +327,6 @@ export function createWindowHandlers({
     installContentSecurityPolicy,
     installMediaPermissions,
     installStandardWindowHandlers,
-    installSurfaceWindowHandlers,
-    registerPowerResumeListeners
+    installSurfaceWindowHandlers
   }
 }

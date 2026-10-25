@@ -95,9 +95,9 @@ export function createDesktopBackgroundRuntime(options: DesktopBackgroundOptions
       return
     }
 
-    // 资源识别按不可变路径（剥除签名 query）与内容哈希，签名 URL 变化不触发重载。
+    // 资源路径不可变，签名 query 变化不触发重载。
     const sameMedia = (a: DesktopMediaReference | null, b: DesktopMediaReference | null): boolean =>
-      a?.url.split('?')[0] === b?.url.split('?')[0] && a?.contentHash === b?.contentHash
+      a?.url.split('?')[0] === b?.url.split('?')[0]
 
     const unchanged =
       loadedBackground &&

@@ -1,5 +1,3 @@
-// 当前对话的工具调用与产物。
-
 import { useStore } from '@nanostores/react'
 import { type ReactNode, useEffect, useMemo, useRef } from 'react'
 
@@ -27,7 +25,6 @@ export function RunRail({
   const round = useStore($runRound)
   const artifacts = useStore($artifacts)
   const t = useStrings().conversation.runRail
-  const railRef = useRef<HTMLElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
   const cycleFocus = createFocusCycleHandler('button, a[href], input, audio[controls], video[controls], [tabindex="0"]')
 
@@ -50,7 +47,6 @@ export function RunRail({
 
         cycleFocus(event)
       }}
-      ref={railRef}
       role="dialog"
     >
       <header className={styles.runRailHeader}>

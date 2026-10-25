@@ -10,7 +10,6 @@ import { mimeTypeForPath } from '../shared/mime'
 import { atomicWriteFile, isAccountId } from '../shared/utils'
 
 interface AssetMeta {
-  contentHash?: string
   etag?: string
   key: string
   mime: string
@@ -30,7 +29,6 @@ export interface AssetDiskCacheOptions {
 export interface EnsureAssetOptions {
   preferCache?: boolean
   baseUrl?: string
-  contentHash?: string
   fetchFn?: typeof globalThis.fetch
   rawUrl: string
   timeoutMs?: number
@@ -40,20 +38,10 @@ export interface EnsureAssetOptions {
 export interface AssetDiskCache {
   clear: (accountId: string) => Promise<void>
   ensureCached: (opts: EnsureAssetOptions & { accountId: string }) => Promise<CachedAsset>
-  get: (accountId: string, rawUrl: string, contentHash?: string) => Promise<CachedAsset | null>
+  get: (accountId: string, rawUrl: string) => Promise<CachedAsset | null>
 }
 
-function normalizeAssetKey(rawUrl: string, contentHash?: string): string {
-  const hash = contentHash?.trim().toLowerCase()
-
-  if (hash) {
-    if (!/^[a-f0-9]{64}$/.test(hash)) {
-      throw new Error('asset contentHash must be a SHA-256 digest')
-    }
-
-    return hash
-  }
-
+function normalizeAssetKey(rawUrl: string): string {
   try {
     const parsed = new URL(rawUrl, 'http://127.0.0.1:8000')
     const { searchParams } = parsed
@@ -106,7 +94,7 @@ export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetD
   return {
     clear: async accountId => (await forAccount(accountId)).clear(),
     ensureCached: async opts => (await forAccount(opts.accountId)).ensureCached(opts),
-    get: async (accountId, rawUrl, contentHash) => (await forAccount(accountId)).get(rawUrl, contentHash)
+    get: async (accountId, rawUrl) => (await forAccount(accountId)).get(rawUrl)
   }
 }
 
@@ -143,11 +131,8 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
   }
 
   // meta 与字节同批读出，调用方复用同一份 etag。
-  async function readCachedEntry(
-    rawUrl: string,
-    contentHash?: string
-  ): Promise<{ asset: CachedAsset; meta: AssetMeta } | null> {
-    const key = normalizeAssetKey(rawUrl, contentHash)
+  async function readCachedEntry(rawUrl: string): Promise<{ asset: CachedAsset; meta: AssetMeta } | null> {
+    const key = normalizeAssetKey(rawUrl)
     const binPath = getBinPath(key)
 
     try {
@@ -163,10 +148,10 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
     }
   }
 
-  async function get(rawUrl: string, contentHash?: string): Promise<CachedAsset | null> {
+  async function get(rawUrl: string): Promise<CachedAsset | null> {
     const readEpoch = epoch
     await clearing
-    const entry = await readCachedEntry(rawUrl, contentHash)
+    const entry = await readCachedEntry(rawUrl)
 
     return readEpoch === epoch ? (entry?.asset ?? null) : null
   }
@@ -199,19 +184,19 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
   async function download(opts: EnsureAssetOptions, cancellation: AbortSignal): Promise<CachedAsset> {
     await ensureDir()
 
-    const { baseUrl, contentHash, fetchFn = defaultFetchFn || globalThis.fetch, rawUrl, timeoutMs, token } = opts
+    const { baseUrl, fetchFn = defaultFetchFn || globalThis.fetch, rawUrl, timeoutMs, token } = opts
 
     if (!rawUrl) {
       throw new Error('asset url is required')
     }
 
-    const key = normalizeAssetKey(rawUrl, contentHash)
+    const key = normalizeAssetKey(rawUrl)
     const binPath = getBinPath(key)
-    const cachedEntry = await readCachedEntry(rawUrl, contentHash)
+    const cachedEntry = await readCachedEntry(rawUrl)
     const localCached = cachedEntry?.asset ?? null
     cancellation.throwIfAborted()
 
-    if (localCached && (contentHash || opts.preferCache)) {
+    if (localCached && opts.preferCache) {
       return localCached
     }
 
@@ -332,7 +317,7 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
 
       await atomicWriteFile(
         getMetaPath(key),
-        JSON.stringify({ contentHash, etag, key, mime, size: body.byteLength } satisfies AssetMeta)
+        JSON.stringify({ etag, key, mime, size: body.byteLength } satisfies AssetMeta)
       )
     } catch (writeErr) {
       return serveStaleOrThrow(writeErr, 'Write error')
@@ -355,7 +340,7 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
     }
 
     const raw = String(opts?.rawUrl || '')
-    const key = normalizeAssetKey(raw, opts?.contentHash)
+    const key = normalizeAssetKey(raw)
 
     const pending = inFlightDownloads.get(key)
 

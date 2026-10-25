@@ -2,10 +2,11 @@
 
 const path = require('node:path')
 const fs = require('node:fs')
-const { assertStaticRuntime, readWindowsExecutableArch, windowsArchFromBuilder } = require('./build-desktop-host.cjs')
+const { windowsArchFromBuilder } = require('./build-desktop-host.cjs')
 const { macosArchFromBuilder, readMacosArchitectures } = require('./build-desktop-macos.cjs')
 const { prepareMacosAppIdentity } = require('./macos-app-identity.cjs')
 const { prepareWindowsDpiManifest } = require('./windows-dpi-manifest.cjs')
+const { assertStaticRuntime, readWindowsExecutableArch } = require('./windows-native-image.cjs')
 
 exports.default = async function afterPack(context) {
   if (context.electronPlatformName === 'darwin') {

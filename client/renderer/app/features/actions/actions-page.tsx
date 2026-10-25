@@ -68,7 +68,6 @@ function lines(value: string): string[] {
     .filter(Boolean)
 }
 
-/** 动作页只维护动作语义定义与评审状态，不涉及任何影像制作。 */
 export function ActionsPage(): React.JSX.Element {
   const dict = useStrings()
   const t = dict.actions

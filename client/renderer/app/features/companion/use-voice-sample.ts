@@ -231,5 +231,5 @@ export function useVoiceSample(active: boolean) {
     }
   }
 
-  return { sample, recording, busy, error, start, stop, upload, cancel, clearError: () => setError(null) }
+  return { sample, recording, busy, error, start, stop, upload, clearError: () => setError(null) }
 }

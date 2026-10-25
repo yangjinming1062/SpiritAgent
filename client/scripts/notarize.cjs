@@ -66,10 +66,9 @@ function resolveCredentials() {
     return { args: ['--key', keyPath, '--key-id', keyId, '--issuer', issuer], secrets: [rawApiKey], cleanup }
   }
 
-  const keychainProfile = profile || String(process.env.APPLE_KEYCHAIN_PROFILE || '').trim()
-  if (!keychainProfile) return null
+  if (!profile) return null
   const keychain = String(process.env.APPLE_KEYCHAIN || '').trim()
-  const args = ['--keychain-profile', keychainProfile]
+  const args = ['--keychain-profile', profile]
   if (keychain) args.push('--keychain', keychain)
   return { args, secrets: [] }
 }

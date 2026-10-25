@@ -51,12 +51,11 @@ function readMacosExecutableArch(filename) {
   throw new Error('Cannot determine the development Electron architecture')
 }
 
-function run(command, args, options = {}) {
-  const result = spawnSync(command, args, { stdio: 'inherit', timeout: 180_000, ...options })
+function run(command, args) {
+  const result = spawnSync(command, args, { stdio: 'inherit', timeout: 180_000 })
   if (result.error || result.status !== 0) {
     throw new Error(`${command} failed: ${result.error?.message || `exit ${result.status ?? 'unknown'}`}`)
   }
-  return result
 }
 
 function hasNodeHeaders(directory) {
@@ -129,7 +128,7 @@ function buildDesktopMacos(arch = process.arch, { ifNeeded = false } = {}) {
         readMacosArchitectures(output).join() === arch
       ) {
         console.log(`[desktop-macos] reusing ${arch} development component: ${output}`)
-        return output
+        return
       }
     } catch (error) {
       console.warn(`[desktop-macos] development component must be rebuilt: ${error.message}`)
@@ -174,7 +173,6 @@ function buildDesktopMacos(arch = process.arch, { ifNeeded = false } = {}) {
     fs.rmSync(temporary, { force: true })
   }
   console.log(`[desktop-macos] built ${arch}: ${output}`)
-  return output
 }
 
 module.exports = { buildDesktopMacos, macosArchFromBuilder, readMacosArchitectures, readMacosExecutableArch }

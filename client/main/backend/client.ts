@@ -4,11 +4,9 @@ import { createHttpClient, type HttpFetch } from '../../../shared/api'
 import { ApiError } from '../../../shared/errors'
 import type { BackendClientPort } from '../shared/backend-port'
 
-export type FetchFunction = HttpFetch
-
 interface BackendClientOptions {
   baseUrl: string
-  fetch: FetchFunction
+  fetch: HttpFetch
   /** 登录后的账户令牌；给出时随请求带上 Authorization。 */
   token?: string
 }

@@ -6,9 +6,10 @@ const { spawn, execSync } = require('node:child_process')
 const { createConcurrently } = require('concurrently')
 const waitOn = require('wait-on')
 let electronPath = require('electron')
-const { buildDesktopHost, readWindowsExecutableArch, targets } = require('./build-desktop-host.cjs')
+const { buildDesktopHost, targets } = require('./build-desktop-host.cjs')
 const { buildDesktopMacos, readMacosExecutableArch } = require('./build-desktop-macos.cjs')
 const { prepareDevelopmentElectron } = require('./windows-dpi-manifest.cjs')
+const { readWindowsExecutableArch } = require('./windows-native-image.cjs')
 
 const DEV_SERVER_URL = 'http://127.0.0.1:5174'
 delete process.env.ELECTRON_RUN_AS_NODE

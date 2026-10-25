@@ -1,9 +1,5 @@
 import { BTN_SUBTLE } from '@/shared/panel/palette'
 
-/**
- * 参考图字段：缩略图、选择或更换、移除，以及选择失败的行内说明。
- * 只呈现已选状态与回调，选图流程由调用方持有。
- */
 export function ReferenceImageField({
   alt,
   busy = false,
@@ -22,12 +18,9 @@ export function ReferenceImageField({
   imageUrl: string | null
   onPick: () => void
   onRemove?: () => void
-  /** 没有已选参考图时的按钮文案。 */
   pickLabel: string
   removeLabel: string
-  /** 已有参考图时的按钮文案。 */
   replaceLabel?: string
-  /** 缩略图容器样式。 */
   thumbClassName?: string
 }): React.JSX.Element {
   return (

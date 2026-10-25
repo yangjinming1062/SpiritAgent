@@ -46,7 +46,7 @@ function buildDesktopHost(target = targets[process.arch], { ifNeeded = false } =
       ) {
         assertStaticRuntime(packaged)
         console.log(`[desktop-host] reusing ${arch} development helper: ${packaged}`)
-        return packaged
+        return
       }
     } catch (error) {
       console.warn(`[desktop-host] development helper must be rebuilt: ${error.message}`)
@@ -87,10 +87,9 @@ function buildDesktopHost(target = targets[process.arch], { ifNeeded = false } =
   fs.mkdirSync(path.dirname(packaged), { recursive: true })
   fs.copyFileSync(source, packaged)
   console.log(`Windows desktop host built for ${target}: ${packaged}`)
-  return packaged
 }
 
-module.exports = { assertStaticRuntime, buildDesktopHost, readWindowsExecutableArch, targets, windowsArchFromBuilder }
+module.exports = { buildDesktopHost, targets, windowsArchFromBuilder }
 
 if (require.main === module) {
   try {

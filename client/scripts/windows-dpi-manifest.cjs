@@ -4,7 +4,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
 const { NtExecutable, NtExecutableResource } = require('resedit')
-const { readWindowsExecutableArch } = require('./build-desktop-host.cjs')
+const { readWindowsExecutableArch } = require('./windows-native-image.cjs')
 
 const awareness = 'PerMonitorV2, PerMonitor'
 
@@ -36,7 +36,6 @@ function prepareWindowsDpiManifest(executablePath) {
     resources.outputResource(exe)
     fs.writeFileSync(executablePath, Buffer.from(exe.generate()))
   }
-  return changed
 }
 
 function prepareDevelopmentElectron(originalPath) {

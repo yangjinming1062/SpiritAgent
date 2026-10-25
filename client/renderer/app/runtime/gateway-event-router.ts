@@ -186,7 +186,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       break
 
     case 'companion.scene.updated':
-      onSceneEvent(event)
+      onSceneEvent()
 
       break
 

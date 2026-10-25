@@ -115,48 +115,31 @@ function fuzzyScore(query: string, target: string): number {
   return score
 }
 
-export interface ScoredSlashCommand {
-  cmd: SlashCommandMeta
-  score: number
-  /** 实际匹配上的展示 token（name 或 alias），用于弹层显示。 */
-  matchedKey: string
-}
-
 /** 按 query 模糊过滤命令列表，按得分降序；主名+别名+description 取最高分。 */
-export function fuzzyFilterCommands(query: string, limit = 8): ScoredSlashCommand[] {
+export function fuzzyFilterCommands(query: string, limit = 8): SlashCommandMeta[] {
   const cmds = listLocalSlashCommands()
 
   if (!query) {
-    return cmds.map(cmd => ({ cmd, score: 100, matchedKey: cmd.name }))
+    return cmds
   }
 
-  const scored: ScoredSlashCommand[] = []
+  const scored: { cmd: SlashCommandMeta; score: number }[] = []
 
   for (const cmd of cmds) {
-    let best: { score: number; key: string } | null = null
+    let score = fuzzyScore(query, cmd.description) * 0.5
 
     for (const key of [cmd.name, ...cmd.aliases]) {
-      const s = fuzzyScore(query, key)
-
-      if (s > 0 && (!best || s > best.score)) {
-        best = { score: s, key }
-      }
+      score = Math.max(score, fuzzyScore(query, key))
     }
 
-    const descScore = fuzzyScore(query, cmd.description) * 0.5
-
-    if (descScore > 0 && (!best || descScore > best.score)) {
-      best = { score: descScore, key: cmd.description }
-    }
-
-    if (best) {
-      scored.push({ cmd, score: best.score, matchedKey: best.key })
+    if (score > 0) {
+      scored.push({ cmd, score })
     }
   }
 
   scored.sort((a, b) => b.score - a.score || a.cmd.name.localeCompare(b.cmd.name))
 
-  return scored.slice(0, limit)
+  return scored.slice(0, limit).map(item => item.cmd)
 }
 
 /** 登录后通过 REST 拉取命令元数据；同一鉴权会话共用在途请求，账户失效后丢弃结果。 */

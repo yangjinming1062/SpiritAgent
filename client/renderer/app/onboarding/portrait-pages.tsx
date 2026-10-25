@@ -259,7 +259,6 @@ export function PortraitPages({
               <h2 className={styles.questionTitle}>{t.confirmTitle}</h2>
               <PortraitPanel
                 avatarUrl={portraitUrl}
-                hint={null}
                 history={currentHistoryItems}
                 name={answers.name?.trim() || t.defaultName}
                 onPreviewReady={setReadyPreviewUrl}
@@ -276,7 +275,7 @@ export function PortraitPages({
                   bodyClassName="space-y-3"
                   className="rounded-xl border border-line-hairline p-3"
                   open={!portraitUrl ? true : undefined}
-                  summaryClassName="mb-3text-xs text-body"
+                  summaryClassName="mb-3 text-xs text-body"
                   title={t.adjustSummary}
                   variant="bordered"
                 >
@@ -371,7 +370,7 @@ export function PortraitPages({
       <SelfSourceImageFlow
         adopt={adoptAvatarSeed}
         fetchPrompt={fetchAvatarPrompt}
-        hint="{t.ownImageHint}"
+        hint={t.ownImageHint}
         onClose={() => setAvatarSelfSourceOpen(false)}
         onUseAi={() => {
           setAvatarSelfSourceOpen(false)

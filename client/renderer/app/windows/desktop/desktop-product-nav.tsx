@@ -4,11 +4,12 @@ import { useEffect, useRef, useState } from 'react'
 import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { useStrings } from '@/shared/strings'
+import type { AppPage } from '@ipc/contracts'
 
-import { type DesktopApp, type DesktopWindowState } from './desktop-layout'
+import type { DesktopWindowState } from './desktop-layout'
 import styles from './desktop.module.css'
 
-const DESKTOP_NAV_APPS = ['life', 'posts', 'diary', 'companion', 'settings'] as const satisfies readonly DesktopApp[]
+const DESKTOP_NAV_APPS = ['life', 'posts', 'diary', 'companion', 'settings'] as const satisfies readonly AppPage[]
 
 type DesktopNavApp = (typeof DESKTOP_NAV_APPS)[number]
 
@@ -24,12 +25,12 @@ export function DesktopProductNav({
   onMenuOpenChange
 }: {
   windows: DesktopWindowState[]
-  activeWindow?: DesktopApp
+  activeWindow?: AppPage
   postsUnread: boolean
   diaryUnread: boolean
   overlayActive: boolean
-  onActivate: (id: DesktopApp) => void
-  onClose: (id: DesktopApp) => void
+  onActivate: (id: AppPage) => void
+  onClose: (id: AppPage) => void
   onBeforeOpen: () => void
   onMenuOpenChange: (open: boolean) => void
 }): React.JSX.Element {

@@ -71,7 +71,7 @@ export interface DesktopBridge {
   api: DesktopApiInvoke
   /** 把后端服务的二进制资产以 data URL 的形式取回；仅查本地缓存时未命中返回 null。 */
   apiAsset: AsyncIpc<IpcInvokeContract['spiritagent:api:asset']>
-  /** 把后端服务的二进制资产以原始字节取回——用于视频片段等大体积负载,不能接受 base64 膨胀。支持通过 contentHash 做磁盘缓存。 */
+  /** 原始字节避免大体积媒体的 base64 膨胀。 */
   apiAssetBuffer: AsyncIpc<IpcInvokeContract['spiritagent:api:asset-buffer']>
   sessionHistory: {
     get: AsyncIpc<IpcInvokeContract['spiritagent:session-history:get']>
@@ -96,7 +96,6 @@ export interface DesktopBridge {
   log: AsyncIpc<IpcInvokeContract['spiritagent:log:emit']>
   runnerInvoke: AsyncIpc<IpcInvokeContract['spiritagent:runner:invoke']>
   runnerGetState: AsyncIpc<IpcInvokeContract['spiritagent:runner:get-state']>
-  runnerGetTools: AsyncIpc<IpcInvokeContract['spiritagent:runner:get-tools']>
   setUiTheme: (payload: IpcSendContract['spiritagent:ui-theme'][0]) => void
   prefs: {
     applyServerVoice: AsyncIpc<IpcInvokeContract['spiritagent:prefs:apply-server-voice']>
@@ -155,7 +154,6 @@ export interface DesktopBridge {
     setPosition: AsyncIpc<IpcInvokeContract['spiritagent:sprite:set-position']>
     moveToCursorDisplay: AsyncIpc<IpcInvokeContract['spiritagent:sprite:move-to-cursor-display']>
   }
-  onPowerResume: EventSubscription<'spiritagent:power-resume'>
   onSessionExpired: EventSubscription<'spiritagent:auth:session-expired'>
   onAuthChanged: EventSubscription<'spiritagent:auth:changed'>
   onRunnerStatus: EventSubscription<'spiritagent:runner:status'>
