@@ -154,13 +154,13 @@ X 使用固定版本的 `twscrape` 请求定义和解析器，经 Backend 的有
 
 ### 服务更新
 
-管理后台「服务更新」页完成 `backend` 的更新：检查更新、拉取代码、构建镜像、重启并核对实际运行版本。执行体是独立容器 [updater](updater/README.md)，与后端进程解耦——更新期间后端可被替换，更新器自身不受影响；页面请求经共享 Unix socket（`updater_socket` 卷）转交给它。
+管理后台「服务更新」页完成 `backend` 的更新：检查更新、拉取代码、构建镜像、重启并核对实际运行版本。执行体是独立容器 [updater](updater/README.md)，随默认 Compose 一起启动，与后端进程解耦——更新期间后端可被替换，更新器自身不受影响；页面请求经共享 Unix socket（`updater_socket` 卷）转交给它。
 
 首次接入需 SSH 到服务器完成一次性准备，之后常规更新都在管理页完成：
 
 1. 准备部署密钥与 `known_hosts`，放入仓库 `deploy/` 目录（`deploy_key`、`known_hosts`）。该目录已在 `.gitignore` 中，否则未跟踪文件会让预检拒绝更新。
 2. 在 `backend/.env` 填写 `UPDATER_REPO_DIR`，即仓库在宿主机的绝对路径（容器内按同一路径挂载，相对目录挂载与命名卷才指向原部署）。
-3. 执行 `docker compose --profile updater up -d --build updater`。
+3. 执行 `docker compose up -d --build updater`。
 
 更新顺序为预检（仓库、SSH、Docker、compose）→ 获取 upstream → 仅 fast-forward 推进当前分支 → 构建 `backend` → 重建并等待健康 → 核对运行镜像。预检要求当前分支有 upstream、工作区干净且没有本地领先或分叉；页面提交的更新绑定检查时确认的提交，远端在检查后变化则要求重新检查。
 

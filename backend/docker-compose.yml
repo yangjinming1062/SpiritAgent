@@ -17,16 +17,13 @@ services:
       timeout: 3s
       retries: 5
 
-  # 服务更新器（--profile updater）：管理后台「服务更新」页的执行体。
-  # 首次启用需 SSH 到服务器配置仓库路径与部署密钥，步骤见 README「服务更新」。
+  # 服务更新器：管理后台「服务更新」页的执行体，随默认 Compose 一起启动。
   updater:
     build:
       context: ..
       dockerfile: backend/updater/Dockerfile
     container_name: spiritagent-updater
     restart: unless-stopped
-    profiles:
-      - updater
     environment:
       REPO_DIR: ${UPDATER_REPO_DIR:-/srv/spiritagent}
     volumes:
@@ -52,7 +49,7 @@ services:
     environment:
       <<: *postgres_credentials
       XHS_MCP_BASE_URL: ${XHS_MCP_BASE_URL:-http://xiaohongshu-mcp:18060}
-      # 更新器共享 socket 目录；未启用 profile 时为空目录，页面按未接入处理。
+      # 更新器共享 socket 目录；updater 未运行时为空目录，页面按未接入处理。
       SERVICE_UPDATER_SOCKET_DIR: /run/updater
     extra_hosts:
       - "host.docker.internal:host-gateway"
