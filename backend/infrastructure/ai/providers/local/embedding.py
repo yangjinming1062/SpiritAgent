@@ -36,9 +36,8 @@ class LocalEmbeddingProvider(OpenAIEmbeddingProvider):
             raise ProviderError("local embedding response contains invalid or inconsistent vectors")
         result: list[list[float]] = []
         for vector in vectors:
-            values = vector
-            norm = hypot(*values)
+            norm = hypot(*vector)
             if not norm or not isfinite(norm):
                 raise ProviderError("local embedding cannot be normalized")
-            result.append([value / norm for value in values])
+            result.append([value / norm for value in vector])
         return result

@@ -99,10 +99,6 @@ class RuntimeSession:
         )
 
 
-def copy_session_settings(settings_json: dict[str, Any] | None) -> dict[str, Any]:
-    return dict(settings_json or {})
-
-
 def new_runtime_session(
     *,
     conversation_id: int,
@@ -113,7 +109,7 @@ def new_runtime_session(
     """为已存在的 DB 会话创建 runtime；settings 复制自 Conversation.settings_json，让回合逻辑不必每次回查 DB。"""
     return RuntimeSession(
         conversation_id=conversation_id,
-        settings=copy_session_settings(settings_json),
+        settings=dict(settings_json or {}),
         kind=kind,
         is_automation=is_automation,
     )
@@ -127,10 +123,9 @@ def build_runtime_info(
     system_preset_id: str,
 ) -> SessionRuntimeInfo:
     """发给 renderer 的会话运行信息；settings 为会话覆盖叠加生效推理参数。"""
-    provider = llm_config.provider_name or "openai"
     return SessionRuntimeInfo(
         model=llm_config.model_name,
-        provider=provider,
+        provider=llm_config.provider_name,
         running=runtime.busy,
         system_preset_id=system_preset_id,
         settings=settings,

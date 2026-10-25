@@ -26,7 +26,7 @@
 | [remote_pairings](../backend/features/accounts/remote/models.py) | 一次性配对授权摘要、期限与兑换状态 |
 | [remote_sessions](../backend/features/accounts/remote/models.py) | 设备身份、凭据摘要与撤销状态；独立于桌面登录 |
 | [user_settings](../backend/features/configuration/settings/models.py) | 按账户和配置键保存结构化值；批量读写入口在同目录 `values.py` |
-| [system_settings](../backend/features/configuration/settings/models.py) | 系统运营参数的键和值文本；保留表名、列结构及逐值 JSON 编码，人工导入边界见 [配置与迁移](../backend/README.md#配置与迁移) |
+| [system_settings](../backend/features/configuration/settings/models.py) | 系统运营参数的键与逐值 JSON 文本；水合、校验与热更新见 [配置与迁移](../backend/README.md#配置与迁移) |
 | [user_model_configs](../backend/features/configuration/models.py) | 以 `user_id` 为主键的模型配置；引用和能力校验归配置领域 |
 | [personas](../backend/features/companion/models.py) | 以 `user_id` 为主键的伙伴定义与创作政策；当前生活、呈现状态各有独立权威 |
 | [custom_voices](../backend/features/media/voice_models.py) | 设计／克隆方案版本、当前槽位及试听／参考资产；被消息引用的版本继续保留 |

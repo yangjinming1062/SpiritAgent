@@ -138,7 +138,7 @@ async def evaluate_visuals(user_id: int, *, trigger: str, allow_create: bool) ->
     ):
         return {"expressed": False, "action_id": None, "reason": "state_changed"}
     if decision.operation == "play" and any(item.visual_id == decision.visual_id for item in options):
-        result = await play_visual_reference(user_id, decision.visual_id, reason=decision.reason, proactive_turn=True)
+        result = await play_visual_reference(user_id, decision.visual_id, proactive_turn=True)
         return {
             "expressed": result.get("status") == "queued",
             "action_id": decision.visual_id,

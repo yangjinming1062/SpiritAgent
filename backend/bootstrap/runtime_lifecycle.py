@@ -1,8 +1,7 @@
 """集中登记模块的准备、恢复、维护与关闭能力。"""
 
 from entrypoints.desktop.handlers import drain as drain_user_sessions
-from entrypoints.scheduler.cron import drain as drain_cron
-from entrypoints.scheduler.cron import invalidate_user_scheduler_state, stop_scheduler
+from entrypoints.scheduler.cron import stop_scheduler
 from features.action_library.lifecycle import runtime_participants as action_participants
 from features.appearance.lifecycle import runtime_participants as appearance_participants
 from features.companion.lifecycle import runtime_participants as companion_participants
@@ -17,6 +16,8 @@ from features.visuals.lifecycle import runtime_participants as visuals_participa
 from runtime.events.loop import drain_event_tasks, stop_event_loop
 from runtime.lifecycle import RUNTIME_LIFECYCLE, RuntimeParticipant
 from workflows.onboarding.initial_appearance import resume_initial_appearance
+from workflows.scheduling import drain as drain_scheduling
+from workflows.scheduling import invalidate_user_scheduler_state
 from workflows.visual_decisions import drain_visual_decisions
 
 
@@ -41,7 +42,7 @@ def configure_runtime_lifecycle() -> None:
                 "scheduler",
                 invalidate_user=invalidate_user_scheduler_state,
                 stop_producer=stop_scheduler,
-                drain=drain_cron,
+                drain=drain_scheduling,
             ),
             RuntimeParticipant("events", stop_producer=stop_event_loop, drain=drain_event_tasks),
         ),

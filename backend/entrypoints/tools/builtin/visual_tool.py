@@ -112,11 +112,10 @@ async def visual_generate_tool(
 async def visual_play_tool(
     visual_id: ResourceId,
     user_id: ResourceId,
-    reason: str = "",
     proactive_turn: bool = False,
     **_: Any,
 ) -> str:
-    result = await play_visual_reference(user_id, visual_id, reason=reason, proactive_turn=proactive_turn)
+    result = await play_visual_reference(user_id, visual_id, proactive_turn=proactive_turn)
     return json.dumps(
         {
             key: str(value) if key in {"job_id", "visual_id"} and value is not None else value
@@ -201,7 +200,6 @@ def register(registry: ToolsRegistry) -> None:
                     "pattern": "^[1-9][0-9]*$",
                     "description": "要显示的图片或播放的视频的 visual_id。",
                 },
-                "reason": {"type": "string", "maxLength": 200, "description": "现在使用这张图片或这段视频的简短缘由。"},
             },
             ["visual_id"],
         ),

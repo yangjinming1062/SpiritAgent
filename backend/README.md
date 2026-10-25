@@ -71,7 +71,7 @@ ORM 留在数据所属模块。跨模块读取使用冻结 DTO 或只读快照�
 
 用户点键配置只经 [settings/values.py](features/configuration/settings/values.py) 批量读写；值编码和模型配置的存储边界见 [配置字段字典](../docs/DATABASE_FIELDS.md#账户配置与设备身份)。
 
-[0001 完整基线](alembic/versions/0001_baseline.py) 只用于空库，建立表、扩展、约束、索引、会话统计与 outbox 唤醒触发器。使用该基线重新部署时，由运营者清空并重建目标数据库；启动执行 `alembic upgrade head`，不删除数据库、不转换历史结构或读取旧备份。`system_settings` 保留原表名、列结构和逐值 JSON 文本编码，由运营者人工导入已备份配置，其余应用数据从空库开始。
+[0001 完整基线](alembic/versions/0001_baseline.py) 面向空库，建立表、扩展、约束、索引、会话统计与 outbox 唤醒触发器。启动执行 `alembic upgrade head`，不自动清库或转换历史结构；备份只接受当前[恢复契约](../docs/PROTOCOL.md#备份校验与覆盖恢复)定义的格式。
 
 模型与基线同步维护；核对内容包括类型、默认值、外键、索引谓词、操作符类和触发器，不能只依赖 autogenerate。基线降级仅用于隔离空库验收。
 
@@ -79,13 +79,13 @@ ORM 留在数据所属模块。跨模块读取使用冻结 DTO 或只读快照�
 
 [registrations.py](bootstrap/registrations.py) 是供应商、工具、内部事件和域钩子的装配入口；导入业务包不注册能力，未登记能力明确失败。
 
-[lifecycle.py](bootstrap/lifecycle.py) 依次执行安全配置检查与迁移、配置水合、模块准备、调度与事件启动、模块恢复、正式资产核查。各业务参与者及其顺序由 [runtime_lifecycle.py](bootstrap/runtime_lifecycle.py) 维护，新增恢复能力在该处登记。
+[lifecycle.py](bootstrap/lifecycle.py) 依次执行安全配置检查与迁移、配置水合、模块准备、调度与事件启动、模块恢复、正式资产核查。参与者的准备、恢复、维护和关闭能力及顺序在 [runtime_lifecycle.py](bootstrap/runtime_lifecycle.py) 登记。
 
-模块的准备、恢复、维护和关闭能力在 [runtime_lifecycle.py](bootstrap/runtime_lifecycle.py) 显式登记。停机关闭清理、调度与事件生产入口，收敛已受理回合和各模块任务，再释放数据库、Web 供应商和 LLM 连接池。[task_supervisor.py](runtime/task_supervisor.py) 统一登记所有者、账户、单飞任务和错误回报；任务状态机及付费恢复语义仍归业务模块。任务取消、等待与写盘线程收尾共用 [async_io.py](infrastructure/async_io.py)，重复取消等待方也须等目标释放资源后再传播。
+停机先关闭生产入口，收敛已受理回合和各模块任务，再释放数据库、Web 供应商和 LLM 连接池。[task_supervisor.py](runtime/task_supervisor.py) 统一登记所有者、账户、单飞任务和错误回报；业务拥有任务状态机。任务取消、等待与写盘线程收尾共用 [async_io.py](infrastructure/async_io.py)，重复取消等待方也须等目标释放资源后再传播。
 
 HTTP、调度与资产清理共用 [user_maintenance.py](runtime/user_maintenance.py) 的请求租约，退出时保护计数释放。启动与分钟清理按账户依次回收遗留视频和正式资产，维护中的账户留待下轮；小时清理逐项隔离失败，避免一项失败跳过其他清理。
 
-[chat_accounts.py](runtime/chat_accounts.py) 持有账户受理回合，会话互斥和工具调用关联不依附发起连接。连接持有身份权限、ACK、重放和断线宽限；桌面与 Remote 共用聊天用例，各自检查连接权限。`MANAGER`、账户运行态及等待表遵守单进程部署边界。
+[chat_accounts.py](runtime/chat_accounts.py) 持有账户受理回合；连接持有身份、ACK、重放和断线宽限。dispatcher 在断线时清空发送器，未写出的事件不记为送达，重连后补发；完整恢复语义见[序号与恢复](../docs/PROTOCOL.md#序号与恢复)。
 
 ### 事件与交付
 
@@ -95,7 +95,7 @@ HTTP、调度与资产清理共用 [user_maintenance.py](runtime/user_maintenanc
 
 ## 数据与运行可靠性
 
-数据库读写采用短事务，模型等待在事务外；关系显式预加载，时间戳带时区。请求 `DbSession` 与鉴权共用会话，响应结束才关闭。鉴权通过后提交只读事务，路由在等待用户锁、调用模型、打包及文件或流式下发前也须提交。`expire_on_commit=False` 保留已加载对象，不能用回滚代替提交。
+关系显式预加载，时间戳带时区。请求 `DbSession` 与鉴权共用会话，响应结束才关闭。鉴权通过后提交只读事务，路由在等待用户锁、调用模型、打包及文件或流式下发前也须提交。`expire_on_commit=False` 保留已加载对象，不能用回滚代替提交；跨模块事务约束见[模块依赖边界](#模块依赖边界)。
 
 大字节处理、FFmpeg 和文件复制卸载到工作线程。随机命名正式资产取消时删除未交接文件；预登记固定路径的生成资产取消时等待原子写完并保留，交由任务恢复。裸路径、签名、引用和回收由资产领域统一处理。
 
@@ -192,7 +192,7 @@ Caddy 自动签发续期证书并代理 HTTP 与 WS；Backend 的明文 10620 �
 
 ### 运营参数
 
-`/admin/` 维护三级 AI 配置、用户覆盖与运营参数，保存即时生效；继承、凭据与预算见 [AI 配置契约](../docs/PROTOCOL.md#ai-配置与密钥)。管理页复用共享 HTTP 核心，`pnpm --dir remote build` 同时构建手机页面与 `admin-http.js`；源码运行 Backend 前须完成该构建，Docker 镜像已包含产物。自主动态快照的保留期由 [publication.py](features/posts/publication.py) 实现，启动及小时维护负责回收；未知、在途、永久幂等和仍有引用的记录保留。
+`/admin/` 维护三级 AI 配置、用户覆盖与运营参数；继承、凭据与预算见 [AI 配置契约](../docs/PROTOCOL.md#ai-配置与密钥)。管理页复用共享 HTTP 核心，`pnpm --dir remote build` 同时构建手机页面与 `admin-http.js`；源码运行 Backend 前须完成该构建，Docker 镜像已包含产物。
 
 ### LLM 调试日志
 
@@ -215,9 +215,7 @@ Caddy 自动签发续期证书并代理 HTTP 与 WS；Backend 的明文 10620 �
 | [夜间](workflows/nightly/prompts.py)、[话题检索](workflows/nightly/topic_prompts.py) | 规划、阶段账本、检查点、日记与反思；夜间话题检索方向与筛选 |
 | [工具](runtime/tools/prompts.py)、[伙伴动作](workflows/companion_action_prompts.py) | 通用工具说明、验图、网页摘要、本机操作及统一动作能力；参数类型与必填项仍在工具 schema |
 
-检查文本同时检查动态装配：聊天 `prompt_blocks`/`system_prompt` 的工具开关、时间和模式，`streaming`/`reply_delivery` 的实际语音与媒体能力，`tool_availability` 的可执行集合，夜间能力目录与预算，动态 `prompt_contract` 的 schema 约束，以及环境检查、出镜参考、动作定义和影像制作的各自分支。基础预设预览不代表最终请求。
-
-[声音设计装配](workflows/voice_design.py) 直接使用实际 TTS 适配器的 `VOICE_DESIGN_GUIDE`，根据角色资料、当前描述和修改意见生成声线描述，指南不进入朗读正文。Runner 的工具 schema 独立维护，发布脚本 [gen_release_notes.py](../scripts/gen_release_notes.py) 自行维护摘要指令。验证沿实际请求、原始返回、解析、存储和呈现核对，静态等价与真实模型质量分别报告；命令归 [提示词调试](../scripts/README.md#提示词调试)。
+[声音设计装配](workflows/voice_design.py) 使用实际 TTS 适配器的 `VOICE_DESIGN_GUIDE`，指南不进入朗读正文。Runner 的工具 schema 独立维护，发布脚本 [gen_release_notes.py](../scripts/gen_release_notes.py) 自行维护摘要指令。动态装配与消费链见[完整提示词链检查入口](../docs/PIPELINE.md#完整提示词链检查入口)，命令归 [提示词调试](../scripts/README.md#提示词调试)。
 
 ## 契约与验证
 

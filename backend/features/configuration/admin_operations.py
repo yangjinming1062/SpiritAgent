@@ -44,16 +44,6 @@ async def list_model_configs(db: AsyncSession) -> UserModelConfigListResponse:
     )
 
 
-async def runtime_info() -> dict[str, str]:
-    """把 ``public_base_url`` 暴露给 admin 页：创建账号时自动填进激活码的 ``baseUrl``，留空时前端再降级到 ``http://localhost:10620``。"""
-    return {"public_base_url": SETTINGS.public_base_url}
-
-
-async def get_system_settings() -> dict[str, Any]:
-    """获取系统全部动态配置项（敏感 Key 自动脱敏）。"""
-    return get_system_settings_for_admin()
-
-
 async def update_system_settings(payload: dict[str, Any], db: AsyncSession) -> dict[str, Any]:
     """更新系统动态配置，实时持久化到数据库并热重载生效。"""
     try:

@@ -8,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from features.life.queries import get_life_mood
 
 from .persona_background import schedule_personality_tag_refresh
-from .persona_service import get_or_create_persona, load_persona_definition, update_persona
+from .persona_service import load_persona_definition, update_persona
+from .repository import get_or_create_persona_row
 from .schemas import PersonaResponse
 
 
@@ -25,7 +26,7 @@ def _response(
 
 
 async def get_persona_view(db: AsyncSession, user_id: int) -> PersonaResponse:
-    persona = await get_or_create_persona(db, user_id)
+    persona = await get_or_create_persona_row(db, user_id)
     mood = await get_life_mood(db, user_id)
     return _response(
         persona.is_complete,

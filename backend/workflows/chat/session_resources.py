@@ -18,7 +18,6 @@ from runtime.conversation import (
     SessionCreateResult,
     SessionRuntimeInfo,
     build_runtime_info,
-    copy_session_settings,
     new_runtime_session,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -95,7 +94,7 @@ async def patch_session_resource(
     if runtime is not None:
         async with runtime.snapshot_lock:
             conv = await patch_session(user_id, db, session_id, patch)
-            runtime.settings = copy_session_settings(conv.settings_json)
+            runtime.settings = dict(conv.settings_json or {})
     else:
         conv = await patch_session(user_id, db, session_id, patch)
         account = get_account_runtime(user_id)
@@ -104,5 +103,5 @@ async def patch_session_resource(
             # HTTP 写入期间可能由另一设备首次挂载；锁内重读，避免旧响应覆盖较新的设置。
             async with mounted.snapshot_lock:
                 conv = await get_conversation(user_id, str(conv.id))
-                mounted.settings = copy_session_settings(conv.settings_json)
+                mounted.settings = dict(conv.settings_json or {})
     return await session_resource(user_id, conv)

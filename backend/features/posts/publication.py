@@ -620,10 +620,6 @@ def _recovery_lock(task_id: int) -> asyncio.Lock:
     return _RECOVERY_LOCKS.setdefault(task_id, asyncio.Lock())
 
 
-def _video_job_id(row: PostPublication) -> int | None:
-    return row.video_job_id
-
-
 def _recovery_response(row: PostPublication, job: VideoJobSnapshot | None) -> PostPublicationRecovery:
     video_status: Literal["pending", "ready", "failed", "unknown", "discarded"] = "unknown"
     media_url = None
@@ -657,7 +653,7 @@ async def publication_recovery(user_id: int, task_id: int, *, query: bool = Fals
             )
         if row is None:
             raise PostNotFoundError("找不到发布任务")
-        job_id = _video_job_id(row)
+        job_id = row.video_job_id
         if query and row.state in _RECOVERABLE_VIDEO_STATUSES and job_id is not None:
             try:
                 job = await query_post_video_job(user_id, job_id)
@@ -719,10 +715,10 @@ async def list_publication_recoveries(
         )
         more = len(rows) > limit
         rows = rows[:limit]
-        job_ids = [job_id for row in rows if (job_id := _video_job_id(row)) is not None]
+        job_ids = [job_id for row in rows if (job_id := row.video_job_id) is not None]
         jobs = await get_video_jobs(db, user_id, job_ids) if job_ids else {}
         return PostPublicationRecoveryList(
-            items=[_recovery_response(row, jobs.get(_video_job_id(row))) for row in rows],
+            items=[_recovery_response(row, jobs.get(row.video_job_id)) for row in rows],
             next_cursor=encode_timestamp_cursor(rows[-1].created_at, rows[-1].id) if more else None,
             has_more=more,
         )
@@ -755,7 +751,7 @@ async def _publish_checked_video(user_id: int, task_id: int) -> PostPublicationR
         if remaining <= 0:
             raise PostBlockedError("最近24小时的动态发布额度已用完")
         plan = PostPlan.model_validate(row.plan_json)
-        job_id = _video_job_id(row)
+        job_id = row.video_job_id
         if plan.content_type != PostContentType.VIDEO or job_id is None:
             raise PostError("本任务没有可查询的原视频成品")
         if (row.checkpoint or {}).get("identity") and not await character_snapshot_is_current(
@@ -804,7 +800,7 @@ async def discard_publication_video(user_id: int, task_id: int) -> PostPublicati
                 raise PostError("只有尚未发布的待核对视频动态可以放弃")
             if row.outcome == "discarded" and not row.cleanup_pending:
                 return response_for_publication(row)
-            job_id = _video_job_id(row)
+            job_id = row.video_job_id
             row.state = "cancelled"
             row.outcome = "discarded"
             row.stage = "complete"
@@ -892,7 +888,7 @@ async def gc_autonomous_publications() -> int:
                 ]
                 jobs.update(await get_video_jobs(db, user_id, job_ids))
             for row in candidates:
-                job_id = _video_job_id(row)
+                job_id = row.video_job_id
                 if job_id is not None:
                     job = jobs.get(job_id)
                     if job is not None and job.status not in ("succeeded", "failed", "discarded"):

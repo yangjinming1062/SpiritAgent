@@ -115,10 +115,9 @@ def probe_video(path: Path) -> VideoProbe:
     streams = payload.get("streams") or []
     if not streams:
         raise VideoProcessError("视频文件中没有视频流")
-    video_stream = next((item for item in streams if item.get("codec_type") == "video"), None)
-    if video_stream is None:
+    stream = next((item for item in streams if item.get("codec_type") == "video"), None)
+    if stream is None:
         raise VideoProcessError("视频文件中没有视频流")
-    stream = video_stream
     width = int(stream.get("width") or 0)
     height = int(stream.get("height") or 0)
     if width <= 0 or height <= 0:
@@ -154,27 +153,6 @@ def alpha_input_args(probe: VideoProbe) -> list[str]:
     if probe.codec_name == "vp8" and probe.has_alpha:
         return ["-c:v", "libvpx"]
     return []
-
-
-def probe_alpha_side_data(path: Path) -> bool:
-    """检查 WebM 的 alpha 辅助数据是否存在；像素有效性由交付处理器另行验证。"""
-    args = [
-        _binary("ffprobe"),
-        "-v",
-        "error",
-        "-select_streams",
-        "v:0",
-        "-show_packets",
-        "-show_entries",
-        "packet=side_data_types",
-        "-of",
-        "csv=p=0",
-        str(path),
-    ]
-    proc = _run(args)
-    if proc.returncode != 0:
-        raise VideoProcessError("视频透明通道验收失败", internal=proc.stderr.decode("utf-8", "replace")[:2000])
-    return "Matroska BlockAdditional" in proc.stdout.decode("utf-8", "replace")
 
 
 def _alpha_mode(stream: dict) -> int:

@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import uuid4
 
-from infrastructure.api_errors import api_error, redact_message
+from infrastructure.api_errors import api_error
 from infrastructure.async_io import cancel_and_wait, cancel_tasks
 from infrastructure.constants import (
     JSON_RPC_VERSION,
@@ -58,7 +58,7 @@ _HOLD_TIMEOUT_SECONDS = 10.0
 class JsonRpcDispatcher:
     def __init__(self, send: Sender) -> None:
         self.stream_id = uuid4().hex
-        self._send = send
+        self._sender: Sender | None = send
         self.replay_buffer = ReplayBuffer()
         self._handlers: dict[str, Handler] = {}
         self._concurrent_methods: set[str] = set()
@@ -76,16 +76,16 @@ class JsonRpcDispatcher:
             int,
         ] = {}  # seq → outbox 事件 ID：任一发送路径送达时回收为 delivered 记账
 
-    def set_sender(self, send: Sender) -> None:
-        self._send = send
+    def set_sender(self, send: Sender | None) -> None:
+        self._sender = send
+
+    async def _send(self, frame: dict[str, Any]) -> bool:
+        sender = self._sender
+        return await sender(frame) if sender is not None else False
 
     def start_writer(self) -> None:
         if self._writer_task is None or self._writer_task.done():
             self._writer_task = asyncio.create_task(self._writer_loop())
-
-    @property
-    def writer_task(self) -> asyncio.Task | None:
-        return self._writer_task
 
     async def stop_writer(self) -> None:
         tasks = [task for task in (self._writer_task, self._hold_timeout_task) if task is not None]
@@ -307,10 +307,6 @@ class JsonRpcDispatcher:
 
     async def push_event(self, event_type: str, payload: Any = None, session_id: str | None = None) -> None:
         await self.enqueue_event(event_type, payload, session_id=session_id)
-
-    async def push_error_event(self, message: str, session_id: str | None = None) -> None:
-        # push_event 绕开 _reply_error，原始异常文本必须在此处显式 redact（PROTOCOL「错误信封」）
-        await self.push_event("error", {"message": redact_message(message)}, session_id=session_id)
 
     async def _send_frames(self, frames: list[BufferedFrame]) -> bool:
         """按序发送缓冲帧并记账；发送失败即停，未发帧不得标记 sent，否则 writer 会误记 delivered、outbox 事件失去重投。"""

@@ -112,7 +112,7 @@ class ChatEventEmitter:
                 "status": "complete" if raw_type == "tool_end" else "running",
             }
         if raw_type == "error":
-            # 错误帧在此离开服务端边界：与 push_error_event 一样脱敏；``detail`` 只供无头消费者，不下发。
+            # 错误帧在此离开服务端边界：脱敏；``detail`` 只供无头消费者，不下发。
             message = data.get("message", "Unknown error")
             return {
                 "message": redact_message(message) if isinstance(message, str) else message,

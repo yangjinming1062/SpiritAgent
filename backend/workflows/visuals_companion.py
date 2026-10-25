@@ -284,7 +284,6 @@ async def play_visual_reference(
     user_id: int,
     visual_id: int,
     *,
-    reason: str = "",
     proactive_turn: bool = False,
 ) -> dict[str, Any]:
     """请求呈现已有影像；受理不等于已播放，实际回执才更新呈现事实。"""

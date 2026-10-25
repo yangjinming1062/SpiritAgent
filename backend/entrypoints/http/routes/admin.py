@@ -23,12 +23,14 @@ from features.accounts.schemas import (
 )
 from features.automation.schemas import NightlyActivityLogListResponse
 from features.configuration.social_accounts import XiaohongshuAdminLoginStatus
+from features.configuration.system_settings import get_system_settings_for_admin
 from features.media.video_queue import admin as video_queue_admin
 from features.media.video_queue.contracts import VideoQueueList, VideoQueueRequestView, VideoQueueResolution
 from infrastructure.ai.config import ModelDiscoveryRequest
 from infrastructure.ai.models import ModelDiscoveryResponse
 from infrastructure.api_ids import ResourceId
 from infrastructure.backup import BackupImportMode
+from infrastructure.config import SETTINGS
 from infrastructure.constants import POSTGRES_INT8_MAX
 from infrastructure.database import DbSession
 from infrastructure.http_contracts import operation_policy
@@ -125,13 +127,13 @@ async def list_model_configs(db: DbSession) -> UserModelConfigListResponse:
 @router.get("/runtime-info")
 async def runtime_info() -> dict[str, str]:
     """把 ``public_base_url`` 暴露给 admin 页：创建账号时自动填进激活码的 ``baseUrl``，留空时前端再降级到 ``http://localhost:10620``。"""
-    return await configuration_admin.runtime_info()
+    return {"public_base_url": SETTINGS.public_base_url}
 
 
 @router.get("/system-settings")
 async def get_system_settings() -> dict[str, JsonValue]:
     """获取系统全部动态配置项（敏感 Key 自动脱敏）。"""
-    return await configuration_admin.get_system_settings()
+    return get_system_settings_for_admin()
 
 
 @router.put("/system-settings")

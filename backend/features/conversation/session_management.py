@@ -11,7 +11,6 @@ from infrastructure.constants import SEARCH_INPUT_MAX_LEN, SESSION_PREVIEW_MAX_C
 from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
-from runtime.conversation import copy_session_settings
 from runtime.events.emit import emit_ws_event
 from runtime.presets import resolve_preset_meta
 from runtime.turn_ownership import conversation_is_running, conversation_lock
@@ -319,7 +318,7 @@ async def patch_session(
         else:
             conv.archived_at = None
     if body.settings is not None:
-        settings = copy_session_settings(conv.settings_json)
+        settings = dict(conv.settings_json or {})
         for key, value in body.settings.model_dump(exclude_unset=True).items():
             if value is None:
                 settings.pop(key, None)

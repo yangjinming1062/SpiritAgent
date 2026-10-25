@@ -11,18 +11,12 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         super().__init__(config)
         self._client = get_async_client(config.api_key, config.base_url)
 
-    def _request_dimensions(self) -> int | None:
-        """需要供应商按指定宽度输出时返回维度；默认使用模型原生宽度。"""
-        return None
-
     async def embed(self, texts: list[str], *, purpose: str = "db") -> list[list[float]]:
         if not texts:
             return []
-        dimensions = self._request_dimensions()
         res = await self._client.embeddings.create(
             input=texts,
             model=self.config.model,
-            **({"dimensions": dimensions} if dimensions is not None else {}),
         )
         items = sorted(res.data, key=lambda item: item.index)
         if [item.index for item in items] != list(range(len(texts))):

@@ -1,4 +1,4 @@
-"""新数据库格式的记忆备份；向量与日记索引从权威内容重建。"""
+"""记忆备份；向量与日记索引从权威内容重建。"""
 
 import hashlib
 from typing import Any, get_args

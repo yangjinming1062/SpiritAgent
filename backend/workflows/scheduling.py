@@ -113,6 +113,12 @@ def _log_task_error(name: str, task: asyncio.Task) -> None:
         logger.error("cron: background task failed", exc_info=exc, extra={"task": name})
 
 
+async def _run_scoped(factory: Callable[[], Coroutine[Any, Any, object]]) -> None:
+    # 后台工作跨越多个 tick，日志使用独立请求身份。
+    begin_local_scope()
+    await factory()
+
+
 def _spawn_scan(name: str, factory: Callable[[], Coroutine[Any, Any, None]]) -> None:
     """扫描移出 tick 关键路径；同名扫描仍在飞则跳过本轮。"""
     running = _SCANS.get(name)
@@ -120,12 +126,7 @@ def _spawn_scan(name: str, factory: Callable[[], Coroutine[Any, Any, None]]) -> 
         logger.warning("cron: scan still in flight, skipping", extra={"scan": name})
         return
 
-    async def _scoped() -> None:
-        # 扫描是独立于 tick 的工作单元，mint 自己的 request_id 才能把它跨越几轮 tick 的日志归到一起。
-        begin_local_scope()
-        await factory()
-
-    task = asyncio.create_task(_scoped(), name=f"scheduler.{name}")
+    task = asyncio.create_task(_run_scoped(factory), name=f"scheduler.{name}")
     _SCANS[name] = task
     _BG.add(task, on_error=partial(_log_task_error, name))
 
@@ -136,11 +137,7 @@ def _spawn_scope_task(name: str, scope: MemoryScope, factory: Callable[[], Corou
     if (running := _SCOPE_TASKS.get(key)) is not None and not running.done():
         return
 
-    async def _scoped() -> None:
-        begin_local_scope()
-        await factory()
-
-    task = asyncio.create_task(_scoped(), name=f"scheduler.{name}.{scope}")
+    task = asyncio.create_task(_run_scoped(factory), name=f"scheduler.{name}.{scope}")
     _SCOPE_TASKS[key] = task
 
     def _discard(completed: asyncio.Task) -> None:

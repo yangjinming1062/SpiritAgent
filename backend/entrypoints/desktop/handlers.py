@@ -102,10 +102,6 @@ async def drain() -> None:
         await terminate_remote_sessions(user_id)
 
 
-async def _noop_send(data: dict[str, Any]) -> bool:
-    return False
-
-
 async def _terminate_user_gateway_locked(
     user_id: ResourceId,
     login_record_id: ResourceId | None = None,
@@ -115,7 +111,7 @@ async def _terminate_user_gateway_locked(
         release_unused_account_runtime(user_id)
         return
     _USER_SESSIONS.pop(user_id, None)
-    session.dispatcher.set_sender(_noop_send)
+    session.dispatcher.set_sender(None)
     if (websocket := MANAGER.active_connections.get(user_id)) is not None:
         MANAGER.disconnect(websocket, user_id)
         with contextlib.suppress(Exception):
@@ -141,7 +137,7 @@ async def terminate_remote_sessions(user_id: ResourceId, device_id: ResourceId |
             if device_id is not None and session.device_id != device_id:
                 continue
             _REMOTE_SESSIONS[user_id].pop(connection_id, None)
-            session.dispatcher.set_sender(_noop_send)
+            session.dispatcher.set_sender(None)
             if session.websocket is not None:
                 with contextlib.suppress(Exception):
                     await session.websocket.close(code=1012 if is_user_in_maintenance(user_id) else 1008)
@@ -291,7 +287,7 @@ async def handle_chat_websocket(websocket: WebSocket, ticket: GatewayIdentity) -
         if MANAGER.active_connections.get(user_id) is websocket:
             MANAGER.disconnect(websocket, user_id)
             observe_companion_presence(user_id, False, presentation_mode=None)
-            session.dispatcher.set_sender(_noop_send)
+            session.dispatcher.set_sender(None)
             session.websocket = None
             task = asyncio.create_task(_expire_disconnected_gateway(user_id))
             _GRACE_TIMER_TASKS.add(task)
@@ -361,7 +357,7 @@ async def handle_remote_websocket(websocket: WebSocket, identity: GatewayIdentit
                 and session.websocket is websocket
             ):
                 session.websocket = None
-                session.dispatcher.set_sender(_noop_send)
+                session.dispatcher.set_sender(None)
                 task = asyncio.create_task(_expire_disconnected_remote(user_id, session.connection_id, session))
                 _GRACE_TIMER_TASKS.add(task)
                 TASK_SUPERVISOR.register(task, owner="channels.remote.grace", user_id=user_id)

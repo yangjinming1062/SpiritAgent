@@ -1,4 +1,4 @@
-"""更新器对外契约；Backend 维护同名的管理端镜像模型（跨进程边界，两侧允许版本偏移）。"""
+"""更新器对外契约；与 Backend 的 features/updates/service_schemas.py 同步维护。"""
 
 from datetime import datetime
 from typing import Literal

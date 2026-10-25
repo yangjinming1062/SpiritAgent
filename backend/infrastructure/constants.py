@@ -29,7 +29,6 @@ SESSION_TO_GLOBAL_KEY_ALIASES: dict[str, str] = {
 }
 
 # 附件、语音与生成资产：协议判别与供应商硬限。
-ATTACHMENT_TYPE_IMAGE: str = "image"  # 视觉模型以 image_url 消费。
 ATTACHMENT_TYPE_VIDEO: str = "video"  # 上传后以 input_video 消费。
 ATTACHMENT_TYPE_AUDIO: str = "audio"
 # data URL 字符上限：覆盖 base64 膨胀（4/3），守住 WS 单帧与 DB TEXT 行体量。

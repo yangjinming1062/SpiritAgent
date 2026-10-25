@@ -11,9 +11,6 @@ from features.memory.prompts import CONTEXT_LABELS, USER_PROFILE_LABELS_TEXTS
 
 _USER_PROFILE_TAGS = ["onboarding", "user_profile"]
 
-# CONTEXT_LABELS 的值→键反查表：read_user_profile 用它把 context 槽位还原为 user_* 原始键。
-_REVERSE_CONTEXT_LABELS: dict[str, str] = {v: k for k, v in CONTEXT_LABELS.items()}
-
 
 async def _active_profile_rows(db: AsyncSession, scope: MemoryScope) -> list[Memory]:
     rows = await db.scalars(

@@ -36,10 +36,6 @@ class TaskBusyError(RuntimeError):
         self.active_task_id = active_task_id
 
 
-def _new_task_id() -> str:
-    return secrets.token_hex(12)
-
-
 def _preflight_failure(issues: list[PreflightIssue]) -> StageError:
     return StageError("预检未通过：" + "；".join(issue.message for issue in issues[:3]), reason="preflight_failed")
 
@@ -95,7 +91,7 @@ class TaskEngine:
             return existing, True
         if (active := self._store.active) is not None:
             raise TaskBusyError(active.task_id)
-        task_id = _new_task_id()
+        task_id = secrets.token_hex(12)
         record = TaskRecord(
             task_id=task_id,
             request_id=request_id,

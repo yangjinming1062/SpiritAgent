@@ -120,11 +120,6 @@ def _validate_user_profile(definition: dict[str, Any]) -> dict[str, str]:
     return profile
 
 
-async def get_or_create_persona(db: AsyncSession, user_id: int) -> Persona:
-    """查询人设，不存在则插入一行；并发首次创建由唯一约束收敛到同一行。刻意不 commit，以便调用方把 user_profile 与 persona 放在同一事务里写。"""
-    return await get_or_create_persona_row(db, user_id)
-
-
 async def update_persona(
     db: AsyncSession,
     user_id: int,
@@ -134,7 +129,7 @@ async def update_persona(
 ) -> Persona:
     if not isinstance(definition, dict):
         raise PersonaValidationError("persona definition must be an object")
-    persona = await get_or_create_persona(db, user_id)
+    persona = await get_or_create_persona_row(db, user_id)
     await db.refresh(persona, with_for_update=True)
     current_draft = load_persona_definition(persona)
     if expected_fields is not None:
@@ -183,7 +178,7 @@ async def update_persona(
 
 
 async def confirm_portrait(db: AsyncSession, user_id: int) -> None:
-    persona = await get_or_create_persona(db, user_id)
+    persona = await get_or_create_persona_row(db, user_id)
     persona.is_portrait_confirmed = True
     persona.portrait_confirmed_at = func.now()
     await db.commit()
@@ -234,7 +229,7 @@ async def _next_onboarding_step(db: AsyncSession, user_id: int, persona: Persona
 
 async def get_onboarding_state(db: AsyncSession, user_id: int) -> OnboardingStateResponse:
     """从数据库恢复引导进度；可选个人资料不阻断完成。"""
-    persona = await get_or_create_persona(db, user_id)
+    persona = await get_or_create_persona_row(db, user_id)
     draft = load_persona_definition(persona)
     next_step = await _next_onboarding_step(db, user_id, persona, draft)
     if next_step is None:
@@ -261,7 +256,7 @@ async def submit_onboarding_field(
         value = _onboarding_profile_value(field, value)
     if field == "user_birthday":
         _validate_birthday(value)
-    persona = await get_or_create_persona(db, user_id)
+    persona = await get_or_create_persona_row(db, user_id)
     await db.refresh(persona, with_for_update=True)
     if persona.is_complete:
         if field.startswith("user_"):
