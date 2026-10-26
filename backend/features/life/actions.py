@@ -45,7 +45,15 @@ class DesignAction(ActionInput):
 
 class ReadingAction(ActionInput):
     capability: Literal["content.read"]
-    purpose: str = Field(min_length=1, max_length=2000, description="本次阅读要了解的问题，以及笔记需要记录什么")
+    purpose: str = Field(
+        min_length=1,
+        max_length=2000,
+        description=(
+            "伙伴现在为什么想读、希望弄清什么，以及与当前事项或已有认识的关系；没有关联时不编造。 / "
+            "Why the companion wants to read now, what to understand, and how it relates to a current pursuit or "
+            "prior understanding; do not invent a connection."
+        ),
+    )
     query: str = Field(default="", max_length=500, description="未指定 urls 且仍有阅读余量时搜索一次的关键词")
     urls: list[str] = Field(
         default_factory=list,

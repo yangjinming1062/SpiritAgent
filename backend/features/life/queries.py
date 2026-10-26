@@ -152,6 +152,11 @@ async def get_pursuit(db: AsyncSession, user_id: int, pursuit_id: int) -> LifePu
     return await db.scalar(select(LifePursuit).where(LifePursuit.user_id == user_id, LifePursuit.id == pursuit_id))
 
 
+async def get_pursuit_view(db: AsyncSession, user_id: int, pursuit_id: int) -> LifePursuitView | None:
+    row = await get_pursuit(db, user_id, pursuit_id)
+    return pursuit_view(row) if row is not None else None
+
+
 async def due_review_user_ids(db: AsyncSession, user_ids: Collection[int], now: datetime) -> set[int]:
     """缺少生活状态的就绪账户也需要首次判断。"""
     if not user_ids:

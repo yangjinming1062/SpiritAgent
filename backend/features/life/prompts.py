@@ -3,8 +3,8 @@
 from typing import Any
 
 LIFE_FACT_GUIDANCE = {
-    "zh": "生活资料中的 activity_kind 与事件 fact_type 区分：intent 是意向，virtual_activity 是虚拟生活情景，execution 是实际执行过程，result 是已确认的成果。按主体、发生时间和结果范围理解记录；意向、虚拟情景、受理、失败或未知结果均不能当作完成经历。作品完成不证明经历过画中活动；阅读只涵盖已提供的正文、摘要或摘录，保留来源和范围，不扩写为读完整篇或整本书。事项暂停或放弃不等于完成。",
-    "en": "In life data, activity_kind and event fact_type distinguish intent, virtual_activity (a simulated life scene), execution (actual execution status), and result (a confirmed outcome). Preserve subject, occurrence time and result scope. Intent, simulated scenes, acceptance, failure and unknown outcomes are not completed experiences. Making artwork does not establish experiencing its depicted activity. Reading covers only the supplied text, summary or excerpt: retain sources and scope without claiming to have read a whole article or book. Pausing or abandoning a matter is not completion. ",
+    "zh": "生活资料中的 activity_kind 与事件 fact_type 区分：intent 是意向，virtual_activity 是虚拟生活情景，execution 是实际执行过程，result 是已确认的成果。按主体、发生时间和结果范围理解记录；意向、虚拟情景、受理、失败或未知结果均不能当作完成经历。作品完成不证明经历过画中活动；阅读只涵盖已提供的正文、摘要或摘录，保留来源和范围，不扩写为读完整篇或整本书。阅读笔记中的个人理解与未解问题可承接后续选择、交流或日记，仍需区分来源观点和自己的看法；是否分享取决于当前情境，不必复述每次阅读。事项暂停或放弃不等于完成。",
+    "en": "In life data, activity_kind and event fact_type distinguish intent, virtual_activity (a simulated life scene), execution (actual execution status), and result (a confirmed outcome). Preserve subject, occurrence time and result scope. Intent, simulated scenes, acceptance, failure and unknown outcomes are not completed experiences. Making artwork does not establish experiencing its depicted activity. Reading covers only the supplied text, summary or excerpt: retain sources and scope without claiming to have read a whole article or book. Personal interpretations and open questions in reading notes may inform later choices, conversation or diary entries; keep source claims distinct from your views. Whether to share depends on the current situation, without recounting every reading. Pausing or abandoning a matter is not completion. ",
 }
 
 _INTERNAL_CONTENT_FIELDS = frozenset(
@@ -16,6 +16,9 @@ _INTERNAL_CONTENT_FIELDS = frozenset(
         "visual_id",
         "visual_version_id",
         "pursuit_id",
+        "active_pursuit_id",
+        "activity_step_id",
+        "previous_pursuit_id",
         "step_id",
         "event_id",
         "post_id",

@@ -185,7 +185,7 @@ async def _execute(user_id: int, step: LifeStepView) -> None:
         await design_action_reference(user_id, life_step=request, **action.model_dump(exclude={"capability"}))
     elif isinstance(action, ReadingAction):
         await mark_step_submitted(user_id, step.id)
-        reading = await read_content(user_id, step.id, action)
+        reading = await read_content(user_id, step)
         await _finish_reading(user_id, step.id, reading)
     else:
         raise ValueError("不支持的生活能力")
