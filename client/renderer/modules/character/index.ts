@@ -21,8 +21,8 @@ export {
   pushEffectiveDisturbanceTier,
   QUIET_MINUTES,
   reportUserActivity,
+  selectDisturbanceTier,
   setCompanionLifecycle,
-  setDisturbanceTier,
   setSpriteState,
   startQuiet
 } from './companion-store'

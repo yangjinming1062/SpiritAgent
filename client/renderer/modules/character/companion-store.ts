@@ -115,6 +115,12 @@ export function endQuiet(): void {
   setQuietUntil(null)
 }
 
+// 先保存偏好再结束临时安静，避免跨窗口同步时短暂按旧偏好生效。
+export function selectDisturbanceTier(tier: DisturbanceTier): void {
+  setDisturbanceTier(tier)
+  endQuiet()
+}
+
 // 其他窗口写入档位偏好或临时安静后，经 storage 事件同步到本窗；key 为 null 表示存储被整体清空。
 export function syncDisturbanceFromStorage(key: string | null): void {
   if (key === DISTURBANCE_TIER_KEY || key === null) {

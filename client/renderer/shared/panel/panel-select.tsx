@@ -10,6 +10,7 @@ export function PanelSelect<T extends string>({
   value,
   options,
   onChange,
+  onReselect,
   disabled = false,
   widthClass = 'w-36',
   ariaLabel
@@ -17,6 +18,7 @@ export function PanelSelect<T extends string>({
   value: T
   options: ReadonlyArray<{ value: T; label: string }>
   onChange: (next: T) => void
+  onReselect?: (value: T) => void
   disabled?: boolean
   widthClass?: string
   ariaLabel?: string
@@ -91,9 +93,11 @@ export function PanelSelect<T extends string>({
       return
     }
 
-    // 与原生 select 一致：值未变化时只收起弹层，不向消费方报告变更。
+    // 重选仍可触发显式操作；值未变化时不报告变更。
     if (option.value !== value) {
       onChange(option.value)
+    } else {
+      onReselect?.(option.value)
     }
 
     close()

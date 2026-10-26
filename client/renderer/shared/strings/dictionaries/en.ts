@@ -872,11 +872,8 @@ export const dict: Dictionary = {
     },
 
     application: {
-      title: 'App and accounts',
-      hint: 'Manage accounts, language, shortcuts, and updates.',
-      accountsLabel: 'Accounts',
-      accountsDescription: 'Switch companions or add another account.',
-      manageAccounts: 'Manage accounts',
+      title: 'App',
+      hint: 'Manage language, keyboard shortcuts, and app updates.',
       languageLabel: 'Language',
       languageSaveFailed: 'Language could not be saved. Try again.',
       shortcutsTitle: 'Keyboard shortcuts',
@@ -897,7 +894,7 @@ export const dict: Dictionary = {
         voice: 'Replies and recording',
         display: 'Display and appearance',
         devices: 'Devices and abilities',
-        application: 'App and accounts',
+        application: 'App',
         advanced: 'Advanced settings'
       }
     },

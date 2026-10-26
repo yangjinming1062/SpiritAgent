@@ -824,11 +824,8 @@ export const dict = {
     },
 
     application: {
-      title: '应用与账户',
-      hint: '管理账户、语言、快捷键和应用更新。',
-      accountsLabel: '账户',
-      accountsDescription: '切换账户，或添加另一个账户。',
-      manageAccounts: '管理账户',
+      title: '应用',
+      hint: '管理界面语言、快捷键和应用更新。',
       languageLabel: '界面语言',
       languageSaveFailed: '语言未能保存，请重试',
       shortcutsTitle: '快捷键',
@@ -849,7 +846,7 @@ export const dict = {
         voice: '回应与录音',
         display: '显示与外观',
         devices: '设备与能力',
-        application: '应用与账户',
+        application: '应用',
         advanced: '高级设置'
       }
     },

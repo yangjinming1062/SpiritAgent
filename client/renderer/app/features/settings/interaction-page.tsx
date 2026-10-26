@@ -7,10 +7,9 @@ import {
   $responsePreference,
   $userPreferredTier,
   type DisturbanceTier,
-  endQuiet,
   postsEnabledPref,
   type ResponsePreference,
-  setDisturbanceTier,
+  selectDisturbanceTier,
   setResponsePreference
 } from '@/modules/character'
 import { triggerHaptic } from '@/shared/lib/haptics'
@@ -103,12 +102,6 @@ export function InteractionPage({ part = 'companionship' }: { part?: 'companions
     }
   }
 
-  // 明确选择档位即结束临时安静；先写偏好，精灵窗同步时不会短暂按旧偏好生效。生效档位由精灵窗经 storage 同步后立即重算并推送（含活动覆盖），本窗不推送。
-  const selectTier = (id: DisturbanceTier): void => {
-    setDisturbanceTier(id)
-    endQuiet()
-  }
-
   return (
     <div className="space-y-6">
       {part === 'companionship' && <SettingsSectionIntro hint={t.intro} title={t.title} />}
@@ -163,7 +156,7 @@ export function InteractionPage({ part = 'companionship' }: { part?: 'companions
                       isSelected && 'bg-accent-soft/35'
                     )}
                     key={id}
-                    onClick={() => selectTier(id)}
+                    onClick={() => selectDisturbanceTier(id)}
                     role="radio"
                     type="button"
                   >

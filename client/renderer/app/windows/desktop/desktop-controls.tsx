@@ -3,7 +3,7 @@ import type React from 'react'
 import { useEffect, useId, useRef, useState } from 'react'
 
 import { usePresentationModeSwitch } from '@/app/components/presentation-mode-switch'
-import { $userPreferredTier, setDisturbanceTier } from '@/modules/character'
+import { $userPreferredTier, selectDisturbanceTier } from '@/modules/character'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { Monitor, SlidersHorizontal, Video, Wifi, WifiOff, X } from '@/shared/lib/icons'
@@ -219,7 +219,8 @@ export function DesktopControls({
               <span>{t.disturbance}</span>
               <PanelSelect
                 ariaLabel={t.disturbance}
-                onChange={setDisturbanceTier}
+                onChange={selectDisturbanceTier}
+                onReselect={selectDisturbanceTier}
                 options={[
                   { value: 'still', label: t.still },
                   { value: 'normal', label: t.normal },

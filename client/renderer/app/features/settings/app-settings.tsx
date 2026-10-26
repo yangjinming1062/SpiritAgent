@@ -1,8 +1,7 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 
-import { AccountMenu } from '@/app/features/accounts/account-menu'
 import { RemotePage } from '@/app/features/remote/remote-page'
 import {
   $appNavigationTarget,
@@ -11,10 +10,9 @@ import {
   SETTINGS_SECTIONS
 } from '@/app/navigation/app-navigation'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import { triggerHaptic } from '@/shared/lib/haptics'
 import { Brain, Globe, type IconComponent, Info, Monitor, SlidersHorizontal, Volume2 } from '@/shared/lib/icons'
-import { BTN_SUBTLE, Disclosure, PanelSelect, SettingCard, SettingRow, SettingsSectionIntro } from '@/shared/panel'
+import { Disclosure, PanelSelect, SettingCard, SettingRow, SettingsSectionIntro } from '@/shared/panel'
 import { runnerApi } from '@/shared/platform/desktop'
 import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
@@ -44,18 +42,8 @@ const ICONS: Record<SettingsSection, IconComponent> = {
 function ApplicationSettings(): React.JSX.Element {
   const locale = useStore($locale)
   const strings = useStrings()
-  const [accountOpen, setAccountOpen] = useState(false)
   const [savingLanguage, setSavingLanguage] = useState(false)
-  const accountRef = useRef<HTMLDivElement>(null)
-  const buttonRef = useRef<HTMLButtonElement>(null)
   const begin = useAsyncGuard()
-
-  const closeAccounts = (): void => {
-    setAccountOpen(false)
-    buttonRef.current?.focus()
-  }
-
-  useDismissOnOutside(accountRef, accountOpen, closeAccounts)
 
   const changeLanguage = async (value: string): Promise<void> => {
     const live = begin()
@@ -82,24 +70,6 @@ function ApplicationSettings(): React.JSX.Element {
     <div className="space-y-5">
       <SettingsSectionIntro hint={strings.settings.application.hint} title={strings.settings.application.title} />
       <SettingCard>
-        <SettingRow
-          description={strings.settings.application.accountsDescription}
-          label={strings.settings.application.accountsLabel}
-        >
-          <div className="relative" ref={accountRef}>
-            <button
-              aria-expanded={accountOpen}
-              aria-haspopup="menu"
-              className={BTN_SUBTLE}
-              onClick={() => setAccountOpen(open => !open)}
-              ref={buttonRef}
-              type="button"
-            >
-              {strings.settings.application.manageAccounts}
-            </button>
-            {accountOpen && <AccountMenu onClose={closeAccounts} />}
-          </div>
-        </SettingRow>
         <SettingRow label={strings.settings.application.languageLabel}>
           <PanelSelect
             ariaLabel={strings.settings.application.languageLabel}
