@@ -47,7 +47,6 @@ from features.appearance.avatar_service import (
 from features.appearance.character_card import (
     CharacterCardNotReadyError,
     character_snapshot_is_current,
-    get_character_card,
     render_character_identity,
     require_character_snapshot,
 )
@@ -646,7 +645,7 @@ async def confirm_outfit(
     user_id: int,
     outfit_id: int,
 ) -> CompanionOutfit:
-    """验收透明草稿并入柜，成为可被出镜媒体引用的造型素材。"""
+    """验收已保存的透明草稿并入柜，保留生成时的来源。"""
     async with get_avatar_job_lock(user_id):
         outfit = await _get_outfit(db, user_id, outfit_id)
         if outfit is None:
@@ -655,9 +654,7 @@ async def confirm_outfit(
             raise OutfitStateError("仅草稿可以确认")
         original_url = outfit.fullbody_url
         original_source = outfit.source_json
-        source = OutfitSource.model_validate(original_source)
-        if source.character_card_revision is None:
-            raise OutfitStateError("外观缺少身份来源，请重新生成或上传")
+        OutfitSource.model_validate(original_source)
         await commit_appearance(db, user_id)
         draft = await asyncio.to_thread(read_portrait_bytes, original_url)
         if draft is None:
@@ -684,16 +681,6 @@ async def confirm_outfit(
                 or outfit.source_json != original_source
             ):
                 raise OutfitStateError("外观已发生变化，请刷新后重试")
-            card = await get_character_card(db, user_id, lock=True)
-            if (
-                card is None
-                or card.analysis_job.state != "succeeded"
-                or card.revision != source.character_card_revision
-            ):
-                raise OutfitStateError("角色卡已更新，请重新生成外观后再确认")
-            avatar = await get_active_avatar(db, user_id)
-            if avatar is None or avatar.seed_fullbody_url != source.identity_reference_path:
-                raise OutfitStateError("全身形象已变化，请重新生成外观后再确认")
             outfit.fullbody_url = persisted or original_url
             outfit.status = "ready"
             emit_ws_event(

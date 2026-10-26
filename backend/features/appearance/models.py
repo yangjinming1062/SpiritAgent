@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 
 class OutfitSource(BaseModel):
-    """着装设计来源、已接受反馈与生成时的身份修订守卫。"""
+    """着装设计来源、已接受反馈与生成时的身份快照。"""
 
     model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
 
@@ -36,7 +36,7 @@ class OutfitSource(BaseModel):
     reference_image_path: str | None = None
     reference_description: str | None = None
     feedback_history: list[str] = Field(default_factory=list)
-    # 生成时的角色卡修订与全身身份图路径；确认据此判断外观是否仍对应当前身份。
+    # 角色卡修订用于追溯；全身来源用于下游选择身份与造型参考的职责。
     character_card_revision: int | None = None
     identity_reference_path: str = Field(min_length=1)
 
@@ -46,7 +46,7 @@ class OutfitSource(BaseModel):
         return value or None
 
     def dump(self) -> dict[str, Any]:
-        """写入来源及身份守卫，省略空值。"""
+        """写入来源及身份快照，省略空值。"""
         return self.model_dump(mode="json", exclude_none=True)
 
 
@@ -74,7 +74,7 @@ class CompanionOutfit(ModelBase, TimestampMixin):
     asset_id: Mapped[int | None] = mapped_column(ForeignKey("assets.id", ondelete="RESTRICT"))
     # draft → ready | expired
     status: Mapped[str] = mapped_column(String(16), default="draft", server_default=text("'draft'"), index=True)
-    # 生成来源与身份修订守卫，结构见 OutfitSource
+    # 生成来源与身份快照，结构见 OutfitSource
     source_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
     is_initial: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
 
