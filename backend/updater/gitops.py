@@ -46,16 +46,26 @@ async def _git(settings: UpdaterSettings, *args: str, timeout: float | None = No
     )
 
 
-async def _git_value(settings: UpdaterSettings, *args: str) -> str:
-    """读取必须成功的仓库字段；失败按仓库不可用上抛，保留末行诊断。"""
+async def _git_value(
+    settings: UpdaterSettings,
+    *args: str,
+    stage: UpdateStage = "preflight",
+    reason: str = "repository_failed",
+    log: LineSink | None = None,
+) -> str:
+    """执行必须成功的 git 命令并返回输出；失败保留诊断。"""
 
     output = await _git(settings, *args)
+    if log is not None:
+        for line in (output.stdout + "\n" + output.stderr).splitlines():
+            if line:
+                await log(line)
     if output.code != 0:
-        detail = (output.stderr or output.stdout).strip().splitlines()
+        detail = redact_text((output.stderr or output.stdout).strip())
         raise GitError(
-            f"git {args[0]} 失败：{detail[-1] if detail else f'exit={output.code}'}",
-            stage="preflight",
-            reason="repository_failed",
+            f"git {args[0]} 失败：{detail or f'exit={output.code}'}",
+            stage=stage,
+            reason=reason,
         )
     return output.stdout.strip()
 
@@ -66,12 +76,7 @@ async def repo_status(settings: UpdaterSettings) -> RepoStatus:
     branch = await _git_value(settings, "rev-parse", "--abbrev-ref", "HEAD")
     if branch == "HEAD":
         raise GitError("仓库处于 detached HEAD 状态，无法确定要更新的分支。", stage="preflight", reason="detached_head")
-    # porcelain 首列是索引/工作区状态码，任何非空码（含未跟踪 '??'）都算脏。
-    dirty = any(
-        line[:2].strip()
-        for line in (await _git(settings, "status", "--porcelain")).stdout.splitlines()
-        if len(line) >= 2
-    )
+    dirty = bool(await _git_value(settings, "status", "--porcelain"))
     status = RepoStatus(branch=branch, current_commit=await _git_value(settings, "rev-parse", "HEAD"), dirty=dirty)
     # 分支可能没有配置 upstream（命令非零退出），按未设置处理而不是仓库故障。
     upstream = await _git(settings, "rev-parse", "--abbrev-ref", f"{branch}@{{upstream}}")
@@ -130,8 +135,6 @@ def preflight_issues(status: RepoStatus) -> list[PreflightIssue]:
         issues.append(
             PreflightIssue(check="upstream", message=f"当前分支 {status.branch} 没有 upstream，无法确定远端。")
         )
-    if status.dirty:
-        issues.append(PreflightIssue(check="worktree", message="工作区有未提交修改，更新会拒绝推进。"))
     if status.ahead > 0:
         issues.append(
             PreflightIssue(
@@ -152,8 +155,8 @@ async def ssh_probe(settings: UpdaterSettings) -> tuple[bool, str]:
     return False, detail[-1] if detail else "未知错误"
 
 
-async def fetch(settings: UpdaterSettings) -> RepoStatus:
-    await _git(settings, "fetch", "--prune", "--no-tags", "origin")
+async def fetch(settings: UpdaterSettings, log: LineSink) -> RepoStatus:
+    await _git_value(settings, "fetch", "--prune", "--no-tags", "origin", stage="fetch", reason="fetch_failed", log=log)
     return await repo_status(settings)
 
 
@@ -172,14 +175,22 @@ async def fast_forward(settings: UpdaterSettings, target_commit: str, log: LineS
             stage="fast_forward",
             reason="target_changed",
         )
-    if status.current_commit == target:
-        await log(f"仓库已在目标提交 {target[:12]}，跳过推进")
-        return status
     ancestor = await _git(settings, "merge-base", "--is-ancestor", status.current_commit, target)
     if ancestor.code != 0:
         raise GitError(
             "目标提交不能通过 fast-forward 到达；需人工处理分叉。", stage="fast_forward", reason="not_fast_forward"
         )
-    await log(f"git merge --ff-only {target[:12]}")
-    await _git(settings, "merge", "--ff-only", target)
+    # 即使已在目标提交也交给 Git 校验，避免同版本重试绕过未解决冲突检查。
+    await log(f"git merge --ff-only --no-autostash --no-overwrite-ignore {target[:12]}")
+    await _git_value(
+        settings,
+        "merge",
+        "--ff-only",
+        "--no-autostash",
+        "--no-overwrite-ignore",
+        target,
+        stage="fast_forward",
+        reason="merge_failed",
+        log=log,
+    )
     return await repo_status(settings)

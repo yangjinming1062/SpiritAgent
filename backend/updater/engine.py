@@ -17,7 +17,7 @@ from updater.redact import redact_text
 from updater.runner import LineSink, stream_command
 from updater.state import StateStore, TaskRecord, utc_now
 
-# 更新器自身不可用的预检项；脏工作区、本地领先等仓库状态问题只在页面提示。
+# 更新器自身不可用的预检项；本地领先等仓库状态问题只在页面提示。
 UNAVAILABLE_CHECKS = frozenset({"repository", "docker", "compose", "ssh"})
 
 
@@ -58,6 +58,8 @@ async def collect_preflight(
         status = RepoStatus()
     else:
         issues.extend(gitops.preflight_issues(status))
+        if status.dirty:
+            await emit("工作区有未提交修改；推进时由 Git 检查是否可安全保留。")
     issues.extend(await compose.toolchain_issues(settings))
     try:
         remote_ok, detail = await gitops.ssh_probe(settings)
@@ -146,7 +148,7 @@ class TaskEngine:
             raise _preflight_failure(issues)
         self._stage(record, "fetch")
         await record.log.append("== 获取 upstream 最新提交 ==")
-        status = await gitops.fetch(self._settings)
+        status = await gitops.fetch(self._settings, record.log.append)
         await record.log.append(f"分支 {status.branch}：落后 {status.behind} 个提交。")
         record.check = CheckResult(repo=status, incoming=status.incoming, issues=issues)
 
@@ -156,7 +158,7 @@ class TaskEngine:
             raise _preflight_failure(issues)
         self._stage(record, "fetch")
         await record.log.append("== 获取 upstream 最新提交 ==")
-        await gitops.fetch(self._settings)
+        await gitops.fetch(self._settings, record.log.append)
         self._stage(record, "fast_forward")
         await record.log.append("== fast-forward 推进服务器分支 ==")
         commit = (await gitops.fast_forward(self._settings, record.target_commit, record.log.append)).current_commit

@@ -2508,7 +2508,7 @@ function applyServiceUpdateStatus(data) {
 
 function renderServiceUpdateRepo(repo, runtime) {
     $('#svcRepoCommit').textContent = repo.current_commit ? repo.current_commit.slice(0, 12) : '未知';
-    $('#svcRepoBranch').textContent = repo.branch ? `分支 ${repo.branch}${repo.upstream ? ` · ${repo.upstream}` : ''}` : '';
+    $('#svcRepoBranch').textContent = repo.branch ? `分支 ${repo.branch}${repo.upstream ? ` · ${repo.upstream}` : ''}${repo.dirty ? ' · 有未提交修改' : ''}` : '';
     $('#svcHealth').textContent = runtime && runtime.state === 'running' && runtime.health !== 'unhealthy' ? '运行中' : '待恢复';
     $('#svcRuntime').textContent = runtime
         ? `backend ${SVC_HEALTH_LABELS[runtime.health] || runtime.health}` +
