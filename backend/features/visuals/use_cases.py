@@ -4,6 +4,7 @@ from infrastructure.assets.asset_store import client_asset_url
 from infrastructure.request_errors import RequestError
 
 from . import queries, service
+from .client_assets import client_material, client_play_command
 from .repository import VisualError, VisualNotFoundError, VisualStateError
 from .schemas import (
     VisualClaimRequest,
@@ -27,18 +28,17 @@ def _http_error(exc: VisualError) -> RequestError:
 
 
 async def _presentation_response(user_id: int, presentation: VisualPresentationView) -> VisualPresentationResponse:
+    actual = await queries.actual_presentation_snapshot(user_id)
+    if presentation.pending_play is not None:
+        presentation = presentation.model_copy(update={"pending_play": client_play_command(presentation.pending_play)})
     if presentation.static_presentation is not None:
         static = presentation.static_presentation
         presentation = presentation.model_copy(
             update={
                 "static_presentation": static.model_copy(
                     update={
-                        "outfit": static.outfit.model_copy(update={"path": client_asset_url(static.outfit.path)})
-                        if static.outfit
-                        else None,
-                        "scene": static.scene.model_copy(update={"path": client_asset_url(static.scene.path)})
-                        if static.scene
-                        else None,
+                        "outfit": client_material(static.outfit) if static.outfit else None,
+                        "scene": client_material(static.scene) if static.scene else None,
                         "identity_path": client_asset_url(static.identity_path) if static.identity_path else None,
                     }
                 )
@@ -46,7 +46,14 @@ async def _presentation_response(user_id: int, presentation: VisualPresentationV
         )
     return VisualPresentationResponse(
         **presentation.model_dump(),
-        actual=await queries.actual_presentation_snapshot(user_id),
+        actual=actual.model_copy(
+            update={
+                "visual_path": client_asset_url(actual.visual_path) if actual.visual_path else None,
+                "outfit_path": client_asset_url(actual.outfit_path) if actual.outfit_path else None,
+                "scene_path": client_asset_url(actual.scene_path) if actual.scene_path else None,
+                "identity_path": client_asset_url(actual.identity_path) if actual.identity_path else None,
+            }
+        ),
     )
 
 
@@ -112,7 +119,8 @@ async def presentation_state(user_id: int) -> VisualPresentationResponse:
 
 async def restore_presentation(user_id: int) -> VisualPlayCommand | None:
     try:
-        return await service.restore_presentation(user_id)
+        command = await service.restore_presentation(user_id)
+        return client_play_command(command) if command is not None else None
     except VisualError as exc:
         raise _http_error(exc) from exc
 

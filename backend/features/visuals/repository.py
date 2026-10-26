@@ -16,6 +16,7 @@ from features.assets.lifecycle import enqueue_asset_cleanup
 from features.companion.proactive_runtime import get_presentation_snapshot
 
 from .asset_references import live_asset_paths
+from .client_assets import client_play_command
 from .models import VisualItem, VisualJob, VisualPlayback, VisualPresentation, VisualVersion
 from .schemas import (
     ActionClipKind,
@@ -330,7 +331,12 @@ async def dispatch_play_command(
     }.items():
         set_committed_value(state, key, value)
     emit_ws_event(db, user_id=user_id, event_type="companion.visual.updated", payload={"version": revision})
-    emit_ws_event(db, user_id=user_id, event_type="companion.visual.play", payload=pending)
+    emit_ws_event(
+        db,
+        user_id=user_id,
+        event_type="companion.visual.play",
+        payload=client_play_command(command).model_dump(mode="json"),
+    )
     return play, command
 
 
