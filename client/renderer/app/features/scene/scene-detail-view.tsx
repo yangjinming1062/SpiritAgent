@@ -255,7 +255,7 @@ export function SceneDetailView({
   const uncertaintyDescription = uncertain?.pending
     ? strings.creation.canLeave
     : uncertain
-      ? `${uncertain.message} ${uncertain.inspected ? t.inspectionHint : ''}`
+      ? `${uncertain.message} ${uncertain.inspected ? strings.creation.inspectionHint : ''}`
       : null
 
   const generationTitle =
@@ -329,7 +329,7 @@ export function SceneDetailView({
                 onClick={() => setUncertain(current => (current === uncertain && current.inspected ? null : current))}
                 type="button"
               >
-                {t.finishWaiting}
+                {strings.creation.finishWaiting}
               </button>
             ) : null}
           </>

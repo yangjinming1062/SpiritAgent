@@ -109,9 +109,13 @@ async def mark_presentation_evaluated(user_id: int, revision: int) -> None:
             await db.commit()
 
 
-async def presentation_revision_matches(db: AsyncSession, user_id: int, revision: int) -> bool:
+async def current_presentation_revision(db: AsyncSession, user_id: int) -> int:
     state = await get_or_create_state(db, user_id, lock=True)
-    return state.presentation_revision == revision
+    return state.presentation_revision
+
+
+async def presentation_revision_matches(db: AsyncSession, user_id: int, revision: int) -> bool:
+    return await current_presentation_revision(db, user_id) == revision
 
 
 async def read_pursuit(user_id: int, pursuit_id: int) -> LifePursuitDetail | None:

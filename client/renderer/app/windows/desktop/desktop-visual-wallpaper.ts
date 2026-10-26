@@ -9,10 +9,11 @@ import {
   type PlaybackStatus,
   refreshVisualPresentation,
   refreshVisuals,
+  sendStaticReceipt,
   sendVisualReceipt,
+  staticPresentationKey,
   type VisualMediaKind,
-  type VisualPlayCommand,
-  visualsApi
+  type VisualPlayCommand
 } from '@/modules/visuals'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
@@ -214,24 +215,38 @@ export function useDesktopVisualWallpaper(): void {
       }
 
       if (staticTarget?.request_id === receipt.playId) {
+        const currentPresentation = $presentation.get()
+        const key = staticPresentationKey(staticTarget)
+
         if (
-          (receipt.status === 'started' || receipt.status === 'failed') &&
-          !staticReceipts.current.has(receipt.playId)
+          currentPresentation.effectiveMode !== 'desktop' ||
+          currentPresentation.status !== 'active' ||
+          $surfaceScreenLocked.get() ||
+          (staticTarget.retry_at !== null && Date.parse(staticTarget.retry_at) > Date.now())
         ) {
-          staticReceipts.current.add(receipt.playId)
-          void visualsApi
-            .receiptStatic({
-              request_id: receipt.playId,
-              presentation_epoch: staticTarget.presentation_epoch,
-              state_revision: staticTarget.state_revision,
-              receipt_kind: 'desktop_static',
-              status: receipt.status,
-              error: receipt.error ?? null
-            })
-            .then(() => refreshVisualPresentation())
+          return
+        }
+
+        if ((receipt.status === 'started' || receipt.status === 'failed') && !staticReceipts.current.has(key)) {
+          staticReceipts.current.add(key)
+          void sendStaticReceipt({
+            request_id: receipt.playId,
+            presentation_epoch: staticTarget.presentation_epoch,
+            state_revision: staticTarget.state_revision,
+            receipt_kind: 'desktop_static',
+            status: receipt.status,
+            error: receipt.error ?? null
+          })
             .catch(error => {
-              staticReceipts.current.delete(receipt.playId)
-              log.warn('desktop-visual', 'Static receipt failed', error)
+              if (scope()) {
+                staticReceipts.current.delete(key)
+                log.warn('desktop-visual', 'Static receipt failed', error)
+              }
+            })
+            .finally(() => {
+              if (scope()) {
+                void refreshVisualPresentation()
+              }
             })
         }
 
@@ -294,6 +309,10 @@ export function useDesktopVisualWallpaper(): void {
 
     const scope = captureAuthScope()
     let disposed = false
+
+    if (staticTarget?.retry_at && Date.parse(staticTarget.retry_at) > Date.now()) {
+      return
+    }
 
     const request: DesktopBackgroundRequest = {
       authSessionId,

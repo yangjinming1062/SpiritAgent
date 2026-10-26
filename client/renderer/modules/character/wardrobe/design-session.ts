@@ -1,8 +1,9 @@
 import { useStore } from '@nanostores/react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { atom } from 'nanostores'
+import { useCallback, useEffect } from 'react'
 
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import { useLatestRef } from '@/shared/hooks/use-latest-ref'
+import { captureAuthScope } from '@/shared/lib/authed-api'
 import {
   loadCreationDraftImage,
   saveCreationDraftImage,
@@ -20,7 +21,7 @@ import type { ApiSchemas } from '../../../../../shared/api.generated'
 import { ApiError } from '../../../../../shared/errors'
 import { pickAvatarImage, type PickedImage, resolvePortraitUrl } from '../avatar-image'
 
-import { hydrateWardrobe } from './wardrobe-store'
+import { $outfits, $wardrobeStatus, hydrateWardrobe } from './wardrobe-store'
 
 interface DesignMessage {
   id: number
@@ -33,12 +34,73 @@ interface DesignMessage {
 interface DesignDraft {
   id: string
   previewUrl: string
+  sourcePath: string | null
 }
 
-// 衣柜设计会话持有输入、草稿与提交状态；结果不明时先在衣柜核对，不能直接重复制作。
+interface DesignState {
+  messages: DesignMessage[]
+  draft: DesignDraft | null
+  refImage: PickedImage | null
+  stage: 'generating' | 'confirming' | null
+  restoringReference: boolean
+  resultUnknown: boolean
+  inspected: boolean
+  previewError: boolean
+  lastRequest: { image: PickedImage | null; text: string; mode: ImageReviseMode } | null
+  revision: number
+  referenceRevision: number
+}
+
+const EMPTY_STATE: DesignState = {
+  messages: [],
+  draft: null,
+  refImage: null,
+  stage: null,
+  restoringReference: false,
+  resultUnknown: false,
+  inspected: false,
+  previewError: false,
+  lastRequest: null,
+  revision: 0,
+  referenceRevision: 0
+}
+
+// 在途操作按草稿持有，离页只解除视图回调，结果仍写回原草稿；null 为尚未生成的新设计。
+const $sessions = atom<ReadonlyMap<string | null, DesignState>>(new Map())
+let nextRevision = 0
+let nextMessageId = 0
+
+registerStorageClearHandler(() => $sessions.set(new Map()))
+
+function readSession(id: string | null): DesignState {
+  return $sessions.get().get(id) ?? EMPTY_STATE
+}
+
+function updateSession(id: string | null, patch: Partial<DesignState>): void {
+  const sessions = new Map($sessions.get())
+  sessions.set(id, { ...readSession(id), ...patch })
+  $sessions.set(sessions)
+}
+
+function push(id: string | null, message: Omit<DesignMessage, 'id'>): void {
+  updateSession(id, { messages: [...readSession(id).messages, { ...message, id: ++nextMessageId }] })
+}
+
+function isCurrent(id: string | null, revision: number, scope: () => boolean): boolean {
+  return scope() && readSession(id).revision === revision
+}
+
+function resultUnknown(error: unknown): boolean {
+  const status = ipcErrorStatus(error)
+
+  return status === null || (status >= 500 && !(error instanceof ApiError && error.code === 'generation_failed'))
+}
+
+// 结果不明时保留所属草稿的提交保护，切换设计不能释放它。
 export function useOutfitDesignSession(
+  selectedDraftId: string | null,
   onConfirmed: (outfitId: string) => void,
-  onDrafted?: (outfitId: string) => void
+  onDrafted: (outfitId: string, submittedText: string) => void
 ): {
   messages: DesignMessage[]
   draft: DesignDraft | null
@@ -46,130 +108,119 @@ export function useOutfitDesignSession(
   busy: boolean
   stage: 'loading' | 'generating' | 'confirming' | null
   resultUnknown: boolean
+  inspected: boolean
   previewError: boolean
-  lastRequest: { image: PickedImage | null; text: string; mode: ImageReviseMode } | null
+  lastRequest: DesignState['lastRequest']
+  tasks: ReadonlyMap<string | null, 'generating' | 'confirming' | 'unknown'>
   send: (text: string, mode: ImageReviseMode) => void
   retry: () => void
   confirm: () => Promise<void>
   attachRefImage: () => Promise<void>
   clearRefImage: () => void
-  adoptDraft: (id: string, previewUrl: string) => void
+  adoptDraft: (id: string, previewUrl: string, sourcePath: string | null) => void
+  inspectResult: () => Promise<void>
+  finishWaiting: () => void
   restoreReference: () => void
-  reset: () => void
 } {
-  const [messages, setMessages] = useState<DesignMessage[]>([])
+  const sessions = useStore($sessions)
+  const state = sessions.get(selectedDraftId) ?? EMPTY_STATE
+  const outfits = useStore($outfits)
+  const wardrobeStatus = useStore($wardrobeStatus)
   const authKind = useStore($auth).kind
-  const [draft, setDraft] = useState<DesignDraft | null>(null)
-  const [refImage, setRefImage] = useState<PickedImage | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [stage, setStage] = useState<'generating' | 'confirming' | null>(null)
-  const [resultUnknown, setResultUnknown] = useState(false)
-  const [previewError, setPreviewError] = useState(false)
-  const [restoringReference, setRestoringReference] = useState(true)
-
-  const [lastRequest, setLastRequest] = useState<{
-    image: PickedImage | null
-    text: string
-    mode: ImageReviseMode
-  } | null>(null)
-
   const begin = useAsyncGuard()
-  const onDraftedRef = useLatestRef(onDrafted)
-  const generatingRef = useRef(false)
-  const msgIdRef = useRef(0)
-  const revisionRef = useRef(0)
-  const referenceRevisionRef = useRef(0)
-
-  const reset = useCallback((): void => {
-    revisionRef.current += 1
-    referenceRevisionRef.current += 1
-    generatingRef.current = false
-    setBusy(false)
-    setStage(null)
-    setResultUnknown(false)
-    setPreviewError(false)
-    setMessages([])
-    setDraft(null)
-    setRefImage(null)
-    setRestoringReference(false)
-    setLastRequest(null)
-  }, [])
 
   useEffect(() => {
-    const unregister = registerStorageClearHandler(reset)
-
-    return () => {
-      unregister()
-      revisionRef.current += 1
+    if (wardrobeStatus !== 'loaded') {
+      return
     }
-  }, [reset])
+
+    const drafts = new Set(outfits.filter(outfit => outfit.status === 'draft').map(outfit => outfit.id))
+    const next = new Map($sessions.get())
+
+    for (const [id, session] of next) {
+      if (id !== null && !session.stage && !drafts.has(id)) {
+        next.delete(id)
+      }
+    }
+
+    if (next.size !== $sessions.get().size) {
+      $sessions.set(next)
+    }
+  }, [outfits, sessions, wardrobeStatus])
 
   const restoreReference = useCallback((): void => {
-    const isLive = begin()
-    const revision = revisionRef.current
-    const referenceRevision = ++referenceRevisionRef.current
-    setRestoringReference(true)
+    if (selectedDraftId !== null || readSession(null).stage) {
+      return
+    }
+
+    const scope = captureAuthScope()
+
+    if (!scope) {
+      return
+    }
+
+    const referenceRevision = ++nextRevision
+    updateSession(null, { restoringReference: true, referenceRevision })
     void loadCreationDraftImage('outfit').then(image => {
-      if (isLive() && revision === revisionRef.current && referenceRevision === referenceRevisionRef.current) {
-        setRefImage(image)
-        setRestoringReference(false)
+      if (scope() && readSession(null).referenceRevision === referenceRevision) {
+        updateSession(null, { refImage: image, restoringReference: false })
       }
     })
-  }, [begin])
+  }, [selectedDraftId])
 
   useEffect(() => {
     if (authKind === 'authenticated') {
       restoreReference()
     }
 
-    return subscribeCreationDraftImage('outfit', () => {
-      if (generatingRef.current) {
-        reset()
-      }
-
-      restoreReference()
-    })
-  }, [authKind, reset, restoreReference])
-
-  // isLive 来自发起操作时的 begin()；revision 被 reset、卸载或更新的独占操作递增后，旧操作即失效。
-  const isCurrent = useCallback((revision: number, isLive: () => boolean): boolean => {
-    return isLive() && revision === revisionRef.current
-  }, [])
-
-  const push = useCallback((message: Omit<DesignMessage, 'id'>): void => {
-    msgIdRef.current += 1
-    setMessages(prev => [...prev, { ...message, id: msgIdRef.current }])
-  }, [])
+    return subscribeCreationDraftImage('outfit', restoreReference)
+  }, [authKind, restoreReference])
 
   const runDesign = useCallback(
-    (text: string, image: PickedImage | null, withDraft: DesignDraft | null, mode: ImageReviseMode): void => {
+    (text: string, image: PickedImage | null, mode: ImageReviseMode): void => {
+      const scope = captureAuthScope()
       const isLive = begin()
+      let id = selectedDraftId
+      const current = readSession(id)
+      const withDraft = current.draft
 
-      if (!isLive() || generatingRef.current) {
+      if (
+        !scope ||
+        !isLive() ||
+        current.stage ||
+        current.restoringReference ||
+        current.resultUnknown ||
+        (id !== null && !withDraft)
+      ) {
         return
       }
 
-      const revision = ++revisionRef.current
-      generatingRef.current = true
-      setBusy(true)
-      setStage('generating')
-      setResultUnknown(false)
-      setPreviewError(false)
-      setLastRequest(null)
-
-      push({ imageUrl: image?.previewUrl, role: 'user', text: text || getStrings().living.outfit.design.byReference })
+      const revision = ++nextRevision
+      updateSession(id, {
+        revision,
+        stage: 'generating',
+        resultUnknown: false,
+        inspected: false,
+        previewError: false,
+        lastRequest: null,
+        refImage: null,
+        referenceRevision: ++nextRevision
+      })
+      push(id, {
+        imageUrl: image?.previewUrl,
+        role: 'user',
+        text: text || getStrings().living.outfit.design.byReference
+      })
 
       void (async () => {
         try {
-          // 有草稿后按用户意图走微调或重新生成（后端 regenerate 均不收图）；参考图仅用于首次生成。
           const res = withDraft ? await runRegenerate(withDraft.id, text, mode) : await runCreate(text, image)
 
-          // 切换草稿后旧任务只刷新库，不再覆盖当前选择。
-          if (isLive()) {
-            void hydrateWardrobe()
+          if (scope()) {
+            void hydrateWardrobe({ force: true })
           }
 
-          if (!isCurrent(revision, isLive)) {
+          if (!isCurrent(id, revision, scope)) {
             return
           }
 
@@ -179,46 +230,52 @@ export function useOutfitDesignSession(
             throw new Error('invalid outfit response')
           }
 
+          // 先绑定服务端 ID，避免列表先显示新草稿时绕过仍在加载图片的任务。
+          if (id === null) {
+            void saveCreationDraftImage('outfit', null)
+            const next = new Map($sessions.get())
+            next.set(res.id, readSession(null))
+            next.delete(null)
+            $sessions.set(next)
+            id = res.id
+          }
+
+          if (isLive()) {
+            onDrafted(res.id, text)
+          }
+
           const resolved = await resolvePortraitUrl(rawUrl)
 
-          if (!isCurrent(revision, isLive)) {
+          if (!isCurrent(id, revision, scope)) {
             return
           }
 
-          onDraftedRef.current?.(res.id)
-
-          if (!resolved) {
-            setDraft({ id: res.id, previewUrl: withDraft?.previewUrl ?? '' })
-            setPreviewError(true)
-            push({ role: 'system', text: getStrings().living.outfit.design.previewFailed, tone: 'info' })
-
-            return
-          }
-
-          setDraft({ id: res.id, previewUrl: resolved })
-          void saveCreationDraftImage('outfit', null)
-
-          push({
+          updateSession(id, {
+            draft: {
+              id: res.id,
+              previewUrl: resolved ?? withDraft?.previewUrl ?? '',
+              sourcePath: rawUrl.split('?')[0]
+            },
+            previewError: !resolved
+          })
+          push(id, {
             role: 'system',
-            // 首次生成无「微调」可言（send 对无草稿请求强制 edit），按是否基于已有草稿区分文案。
-            text:
-              withDraft && mode === 'edit'
+            text: !resolved
+              ? getStrings().living.outfit.design.previewFailed
+              : withDraft && mode === 'edit'
                 ? getStrings().living.outfit.design.refined
                 : getStrings().living.outfit.design.drafted,
             tone: 'info'
           })
         } catch (err) {
-          if (!isCurrent(revision, isLive)) {
+          if (!isCurrent(id, revision, scope)) {
             return
           }
 
           const timedOut = err instanceof ApiError && err.code === 'timeout'
-          const unknown = timedOut || ipcErrorStatus(err) === null || ipcErrorStatus(err) === 409
-          setResultUnknown(unknown)
-
-          // 保留本次输入与参考图；只有明确失败才提供直接重试。
-          setLastRequest({ image, text, mode })
-          push({
+          const unknown = resultUnknown(err)
+          updateSession(id, { resultUnknown: unknown, inspected: false, lastRequest: { image, text, mode } })
+          push(id, {
             role: 'system',
             text: unknown
               ? getStrings().living.outfit.design.timedOut
@@ -227,151 +284,207 @@ export function useOutfitDesignSession(
           })
           log.warn('wardrobe-design', timedOut ? 'generation result timed out' : 'generation failed', err)
         } finally {
-          if (isCurrent(revision, isLive)) {
-            generatingRef.current = false
-            setBusy(false)
-            setStage(null)
+          if (isCurrent(id, revision, scope)) {
+            updateSession(id, { stage: null })
           }
         }
       })()
     },
-    [begin, isCurrent, onDraftedRef, push]
+    [begin, onDrafted, selectedDraftId]
   )
 
   const send = useCallback(
     (text: string, mode: ImageReviseMode = 'edit'): void => {
+      const current = readSession(selectedDraftId)
       const trimmed = text.trim()
 
-      if (generatingRef.current || resultUnknown || previewError || (!draft && !trimmed && !refImage)) {
+      if (current.previewError || (!current.draft && !trimmed && !current.refImage)) {
         return
       }
 
-      const image = refImage
-      setRefImage(null)
-
-      runDesign(trimmed, image, draft, draft ? mode : 'edit')
+      runDesign(trimmed, current.refImage, current.draft ? mode : 'edit')
     },
-    [draft, previewError, refImage, resultUnknown, runDesign]
+    [runDesign, selectedDraftId]
   )
 
   const retry = useCallback((): void => {
-    if (generatingRef.current || resultUnknown || !lastRequest) {
-      return
-    }
+    const { lastRequest } = readSession(selectedDraftId)
 
-    runDesign(lastRequest.text, lastRequest.image, draft, lastRequest.mode)
-  }, [draft, lastRequest, resultUnknown, runDesign])
+    if (lastRequest) {
+      runDesign(lastRequest.text, lastRequest.image, lastRequest.mode)
+    }
+  }, [runDesign, selectedDraftId])
 
   const confirm = useCallback(async (): Promise<void> => {
+    const scope = captureAuthScope()
     const isLive = begin()
+    const id = selectedDraftId
+    const current = readSession(id)
+    const { draft } = current
 
-    if (!isLive() || !draft?.previewUrl || generatingRef.current || resultUnknown || previewError) {
+    if (!scope || !isLive() || !draft?.previewUrl || current.stage || current.resultUnknown || current.previewError) {
       return
     }
 
-    const revision = ++revisionRef.current
-    generatingRef.current = true
-    setBusy(true)
-    setStage('confirming')
+    const revision = ++nextRevision
+    updateSession(id, { revision, stage: 'confirming' })
 
     try {
-      // 确认静态造型入柜，穿着由用户显式选择。
-      await requestResource('companion.post_outfit_confirm', {
-        path: { outfit_id: draft.id }
-      })
+      await requestResource('companion.post_outfit_confirm', { path: { outfit_id: draft.id } })
 
-      if (isLive()) {
-        void hydrateWardrobe()
+      if (scope()) {
+        void hydrateWardrobe({ force: true })
       }
 
-      if (isCurrent(revision, isLive)) {
-        setDraft(null)
-        setMessages([])
-        void saveCreationDraftImage('outfit', null)
-        onConfirmed(draft.id)
+      if (isCurrent(id, revision, scope)) {
+        updateSession(id, { draft: null, messages: [] })
+
+        if (isLive()) {
+          onConfirmed(draft.id)
+        }
       }
     } catch (err) {
-      if (!isCurrent(revision, isLive)) {
+      if (!isCurrent(id, revision, scope)) {
         return
       }
 
-      push({ role: 'system', text: backendDetailMessage(err, getStrings().living.outfit.confirmFailed), tone: 'error' })
-      setResultUnknown(ipcErrorStatus(err) === null || ipcErrorStatus(err) === 409)
+      push(id, {
+        role: 'system',
+        text: backendDetailMessage(err, getStrings().living.outfit.confirmFailed),
+        tone: 'error'
+      })
+      updateSession(id, { resultUnknown: resultUnknown(err), inspected: false })
       log.warn('wardrobe-design', 'confirm failed', err)
     } finally {
-      if (isCurrent(revision, isLive)) {
-        generatingRef.current = false
-        setBusy(false)
-        setStage(null)
+      if (isCurrent(id, revision, scope)) {
+        updateSession(id, { stage: null })
       }
     }
-  }, [begin, draft, isCurrent, onConfirmed, previewError, push, resultUnknown])
+  }, [begin, onConfirmed, selectedDraftId])
 
   const attachRefImage = useCallback(async (): Promise<void> => {
+    const scope = captureAuthScope()
     const isLive = begin()
-    const revision = revisionRef.current
-    const referenceRevision = ++referenceRevisionRef.current
-    setRestoringReference(false)
+
+    if (!scope || selectedDraftId !== null || readSession(null).stage) {
+      return
+    }
+
+    const referenceRevision = ++nextRevision
+    updateSession(null, { referenceRevision, restoringReference: false })
     const picked = await pickAvatarImage(getStrings().living.outfit.design.pickReferenceTitle)
 
-    if (!picked || !isCurrent(revision, isLive) || referenceRevision !== referenceRevisionRef.current) {
+    if (!picked || !scope() || !isLive() || readSession(null).referenceRevision !== referenceRevision) {
       return
     }
 
     if ('error' in picked) {
-      push({ role: 'system', text: picked.error, tone: 'error' })
+      push(null, { role: 'system', text: picked.error, tone: 'error' })
 
       return
     }
 
-    setRefImage(picked.image)
+    updateSession(null, { refImage: picked.image })
     void saveCreationDraftImage('outfit', picked.image)
-  }, [begin, isCurrent, push])
+  }, [begin, selectedDraftId])
 
   const clearRefImage = useCallback((): void => {
-    referenceRevisionRef.current += 1
-    setRestoringReference(false)
-    setRefImage(null)
+    updateSession(null, { referenceRevision: ++nextRevision, restoringReference: false, refImage: null })
     void saveCreationDraftImage('outfit', null)
   }, [])
 
-  // 从列表里的既有草稿续上设计会话（微调 / 直接确认入柜）。
-  const adoptDraft = useCallback(
-    (id: string, previewUrl: string): void => {
-      reset()
-      msgIdRef.current += 1
-      setMessages([
-        {
-          id: msgIdRef.current,
-          role: 'system',
-          text: previewUrl
-            ? getStrings().living.outfit.design.resumeReady
-            : getStrings().living.outfit.design.resumePreviewMissing,
-          tone: 'info'
-        }
-      ])
-      setDraft({ id, previewUrl })
-    },
-    [reset]
-  )
+  const adoptDraft = useCallback((id: string, previewUrl: string, sourcePath: string | null): void => {
+    const current = readSession(id)
+    const path = sourcePath?.split('?')[0] ?? null
+    const preview = previewUrl || current.draft?.previewUrl || ''
+    const reconciled = current.resultUnknown && path !== null && current.draft?.sourcePath !== path
+
+    if (
+      current.stage ||
+      (!reconciled &&
+        current.draft &&
+        current.draft.sourcePath === path &&
+        current.draft.previewUrl === preview &&
+        current.previewError === !previewUrl)
+    ) {
+      return
+    }
+
+    updateSession(id, {
+      draft: { id, previewUrl: preview, sourcePath: path },
+      previewError: !previewUrl,
+      ...(reconciled ? { resultUnknown: false, inspected: false, lastRequest: null } : {})
+    })
+
+    if (current.messages.length === 0) {
+      push(id, {
+        role: 'system',
+        text: previewUrl
+          ? getStrings().living.outfit.design.resumeReady
+          : getStrings().living.outfit.design.resumePreviewMissing,
+        tone: 'info'
+      })
+    }
+  }, [])
+
+  const inspectResult = useCallback(async (): Promise<void> => {
+    const scope = captureAuthScope()
+    const current = readSession(selectedDraftId)
+
+    if (!scope || !current.resultUnknown || current.stage) {
+      return
+    }
+
+    updateSession(selectedDraftId, { inspected: false })
+    await hydrateWardrobe({ force: true })
+
+    if (isCurrent(selectedDraftId, current.revision, scope) && $wardrobeStatus.get() === 'loaded') {
+      updateSession(selectedDraftId, { inspected: true })
+    }
+  }, [selectedDraftId])
+
+  const finishWaiting = useCallback((): void => {
+    const current = readSession(selectedDraftId)
+
+    if (current.resultUnknown && current.inspected && !current.stage) {
+      updateSession(selectedDraftId, {
+        revision: ++nextRevision,
+        resultUnknown: false,
+        inspected: false,
+        refImage: current.refImage ?? current.lastRequest?.image ?? null,
+        lastRequest: null
+      })
+    }
+  }, [selectedDraftId])
+
+  const tasks = new Map<string | null, 'generating' | 'confirming' | 'unknown'>()
+
+  for (const [id, session] of sessions) {
+    if (session.stage || session.resultUnknown) {
+      tasks.set(id, session.stage ?? 'unknown')
+    }
+  }
 
   return {
-    messages,
-    draft,
-    refImage,
-    busy: busy || restoringReference,
-    stage: restoringReference ? 'loading' : stage,
-    resultUnknown,
-    previewError,
-    lastRequest,
+    messages: state.messages,
+    draft: state.draft,
+    refImage: state.refImage,
+    busy: Boolean(state.stage) || state.restoringReference,
+    stage: state.restoringReference ? 'loading' : state.stage,
+    resultUnknown: state.resultUnknown,
+    inspected: state.inspected,
+    previewError: state.previewError,
+    lastRequest: state.lastRequest,
+    tasks,
     send,
     retry,
     confirm,
     attachRefImage,
     clearRefImage,
     adoptDraft,
-    restoreReference,
-    reset
+    inspectResult,
+    finishWaiting,
+    restoreReference
   }
 }
 

@@ -150,7 +150,9 @@ export const dict = {
     retryLoad: '重新加载预览',
     previewFailed: '预览暂时没有加载成功，制作结果仍已保存。',
     imageLoadFailed: '图片加载失败',
-    checkResult: '核对已有结果'
+    checkResult: '核对已有结果',
+    finishWaiting: '已核对，结束等待',
+    inspectionHint: '核对最新内容后，可以结束本次等待提醒。这不会取消已受理的制作，迟到的任务或结果仍可能稍后出现。'
   },
 
   selfSource: {
@@ -1424,8 +1426,6 @@ export const dict = {
       checking: '核对生成结果中…',
       checkStatus: '刷新制作状态',
       inspectLibrary: '查看并核对场景库',
-      finishWaiting: '已核对，结束等待',
-      inspectionHint: '核对最新内容后，可以结束本次等待提醒。这不会取消已受理的制作，迟到的任务或结果仍可能稍后出现。',
       submissionUnknown: '创建请求的结果暂未确认，请先刷新状态并检查场景库。确认前不会重复创建。',
       intro: '描述一个喜欢的地方，AI 会把它变成聊天窗口的背景。满意后再使用。',
       referenceHint: '参考图提供环境与构图线索，伙伴自身形象不会在场景图中重复出现。',

@@ -55,6 +55,8 @@ export {
   refreshVisuals,
   regenerateVisual,
   resetVisualsForAccount,
+  sendStaticReceipt,
   sendVisualReceipt,
-  setVisualPreferences
+  setVisualPreferences,
+  staticPresentationKey
 } from './visuals-store'

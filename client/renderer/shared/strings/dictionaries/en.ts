@@ -157,7 +157,10 @@ export const dict: Dictionary = {
     retryLoad: 'Reload preview',
     previewFailed: 'The preview could not load. Your result is still saved.',
     imageLoadFailed: 'Image failed to load',
-    checkResult: 'Check existing result'
+    checkResult: 'Check existing result',
+    finishWaiting: 'I have checked — finish waiting',
+    inspectionHint:
+      'After checking the latest content, you can close this waiting reminder. This does not cancel accepted work; a delayed task or result may still appear.'
   },
 
   selfSource: {
@@ -1502,9 +1505,6 @@ export const dict: Dictionary = {
       checking: 'Checking the generation result…',
       checkStatus: 'Refresh creation status',
       inspectLibrary: 'Inspect the scene library',
-      finishWaiting: 'I have checked — finish waiting',
-      inspectionHint:
-        'After checking the latest content, you can close this waiting reminder. This does not cancel accepted work; a delayed task or result may still appear.',
       submissionUnknown:
         'The creation request has not been confirmed. Refresh its status and check the background library first. No duplicate request will be submitted while it is unresolved.',
       intro:

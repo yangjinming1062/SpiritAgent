@@ -14,6 +14,7 @@ import type {
   VisualJobListResponse,
   VisualListResponse,
   VisualMediaKind,
+  VisualPlayCommand,
   VisualPresentationUpdate,
   VisualRegenerateRequest,
   VisualsPresentation
@@ -52,6 +53,8 @@ export const visualsApi = {
   jobCommand: (jobId: string, body: VisualJobCommandRequest): Promise<VisualJob> =>
     requestResource('companion_visuals.command_visual_job', { path: { job_id: jobId }, body }),
   presentation: (): Promise<VisualsPresentation> => requestResource('companion_visuals.get_presentation'),
+  restorePresentation: (): Promise<VisualPlayCommand | null> =>
+    requestResource('companion_visuals.restore_presentation'),
   updatePresentation: (body: VisualPresentationUpdate): Promise<VisualsPresentation> =>
     requestResource('companion_visuals.put_presentation', { body }),
   /** 播放认领与回执仅桌面承载使用；同一 play_id 只由一个可见舞台认领。 */

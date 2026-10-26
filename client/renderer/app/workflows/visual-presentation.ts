@@ -12,9 +12,10 @@ import {
   $visualsPresentation,
   claimVisualPlay,
   refreshVisualPresentation,
+  sendStaticReceipt,
   sendVisualReceipt,
+  staticPresentationKey,
   type VisualActualSnapshot,
-  visualsApi,
   type VisualsPresentation
 } from '@/modules/visuals'
 import { captureAuthScope } from '@/shared/lib/authed-api'
@@ -73,6 +74,7 @@ function waitForStage(path: string, scenePath: string, current: () => boolean): 
       $windowScenePresented.listen(check),
       observeCharacterStageVisibility(check),
       $auth.listen(check),
+      $presentation.listen(check),
       $visualsPresentation.listen(check)
     ]
 
@@ -229,82 +231,85 @@ function ensureVisualProjection(): void {
 async function settleStaticProjection(response: VisualsPresentation): Promise<void> {
   const target = response.static_presentation
   const scope = captureAuthScope()
+  const key = target ? staticPresentationKey(target) : ''
 
   if (
     !target ||
     !scope ||
     projectingPlay ||
-    settledPlays.has(target.request_id) ||
+    settledPlays.has(key) ||
+    (target.retry_at !== null && Date.parse(target.retry_at) > Date.now()) ||
     !isCharacterStageVisible() ||
     $presentation.get().effectiveMode !== 'window'
   ) {
     return
   }
 
-  projectingPlay = target.request_id
+  projectingPlay = key
 
-  const current = (): boolean =>
-    scope() &&
-    isCharacterStageVisible() &&
-    $presentation.get().effectiveMode === 'window' &&
-    $visualsPresentation.get()?.static_presentation?.request_id === target.request_id
+  const current = (): boolean => {
+    const latest = $visualsPresentation.get()
+
+    return (
+      scope() &&
+      isCharacterStageVisible() &&
+      $presentation.get().effectiveMode === 'window' &&
+      !latest?.pending_play &&
+      Boolean(latest?.static_presentation && staticPresentationKey(latest.static_presentation) === key)
+    )
+  }
 
   try {
-    if (target.outfit && target.scene) {
-      applySources({
-        ...response.actual,
-        visual_id: null,
-        visual_version: null,
-        media_kind: null,
-        visual_description: '',
-        visual_path: null,
-        outfit_path: target.outfit.path,
-        outfit_hash: target.outfit.content_hash,
-        outfit_description: target.outfit.description,
-        scene_path: target.scene.path,
-        scene_hash: target.scene.content_hash,
-        scene_description: target.scene.description,
-        identity_path: target.identity_path,
-        identity_hash: target.identity_hash,
-        ready: true
-      })
-      await waitForStage(target.outfit.path, target.scene.path, current)
-    } else {
-      applySources(null)
-    }
+    let renderError: string | null = null
 
-    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+    try {
+      if (target.outfit && target.scene) {
+        applySources({
+          ...response.actual,
+          visual_id: null,
+          visual_version: null,
+          media_kind: null,
+          visual_description: '',
+          visual_path: null,
+          outfit_path: target.outfit.path,
+          outfit_hash: target.outfit.content_hash,
+          outfit_description: target.outfit.description,
+          scene_path: target.scene.path,
+          scene_hash: target.scene.content_hash,
+          scene_description: target.scene.description,
+          identity_path: target.identity_path,
+          identity_hash: target.identity_hash,
+          ready: true
+        })
+        await waitForStage(target.outfit.path, target.scene.path, current)
+      } else {
+        applySources(null)
+      }
+
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+    } catch (error) {
+      renderError = String(error)
+    }
 
     if (!current()) {
       return
     }
 
-    await visualsApi.receiptStatic({
+    settledPlays.add(key)
+    await sendStaticReceipt({
       request_id: target.request_id,
       presentation_epoch: target.presentation_epoch,
       state_revision: target.state_revision,
       receipt_kind: 'window_static',
-      status: 'started',
-      error: null
+      status: renderError ? 'failed' : 'started',
+      error: renderError
     })
-    settledPlays.add(target.request_id)
   } catch (error) {
-    settledPlays.add(target.request_id)
-
-    if (current()) {
-      await visualsApi
-        .receiptStatic({
-          request_id: target.request_id,
-          presentation_epoch: target.presentation_epoch,
-          state_revision: target.state_revision,
-          receipt_kind: 'window_static',
-          status: 'failed',
-          error: String(error)
-        })
-        .catch(failure => log.warn('visual-presentation', 'Static receipt failed', failure))
+    if (scope()) {
+      log.warn('visual-presentation', 'Static receipt failed', error)
     }
   } finally {
-    if (projectingPlay === target.request_id) {
+    if (projectingPlay === key) {
       projectingPlay = null
     }
 

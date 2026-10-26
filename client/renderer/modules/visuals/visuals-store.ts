@@ -1,10 +1,13 @@
 import { atom } from 'nanostores'
 
 import { captureAuthScope } from '@/shared/lib/authed-api'
+import { ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
+import { isRecord } from '@client-shared/is-record'
 
 import type { ApiSchemas } from '../../../../shared/api.generated'
+import { ApiError } from '../../../../shared/errors'
 
 import type { VisualReceiptBody, VisualsListQuery } from './api'
 import { visualsApi } from './api'
@@ -244,6 +247,62 @@ export async function sendVisualReceipt(playId: string, body: Omit<VisualReceipt
 
   if (body.status !== 'started') {
     playClients.delete(playId)
+  }
+}
+
+export function staticPresentationKey(
+  target: Pick<ApiSchemas['StaticReceipt'], 'request_id' | 'presentation_epoch' | 'state_revision'>
+): string {
+  return `${target.request_id}:${target.presentation_epoch}:${target.state_revision}`
+}
+
+/** 旧回执被拒绝后由调用方回源；传输失败保留错误，不转报成图片加载失败。 */
+export async function sendStaticReceipt(body: ApiSchemas['StaticReceipt']): Promise<boolean> {
+  const scope = captureAuthScope()
+  const presentation = $visualsPresentation.get()
+  const target = presentation?.static_presentation
+
+  if (
+    !scope ||
+    !target ||
+    presentation?.pending_play ||
+    $visualPlayback.get() ||
+    staticPresentationKey(target) !== staticPresentationKey(body)
+  ) {
+    return false
+  }
+
+  try {
+    await visualsApi.receiptStatic(body)
+
+    return true
+  } catch (error) {
+    if (!scope()) {
+      return false
+    }
+
+    if (ipcErrorStatus(error) !== 409) {
+      throw error
+    }
+
+    log.info(
+      'visuals',
+      'Static receipt superseded',
+      staticPresentationKey(body),
+      error instanceof ApiError ? error.business.details : null
+    )
+
+    // 在线代次未变时，普通档位也须收敛已被生活或偏好更新作废的静态目标。
+    if (
+      error instanceof ApiError &&
+      error.code === 'static_presentation_expired' &&
+      isRecord(error.business.details) &&
+      ['life_changed', 'state_changed'].includes(String(error.business.details.reason))
+    ) {
+      await visualsApi.restorePresentation()
+    }
+
+    return false
   }
 }
 

@@ -24,7 +24,6 @@ import {
 import { PortraitLightbox } from '@/shared'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
-import { saveCreationDraftImage } from '@/shared/lib/creation-draft-image'
 import { ArrowBackUp, ArrowLeft, FileImage, ImageIcon, Pencil, Send, Trash2 } from '@/shared/lib/icons'
 import { log } from '@/shared/lib/log'
 import { requestResource } from '@/shared/lib/resource-request'
@@ -48,7 +47,12 @@ import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import type { ImageReviseMode } from '@protocol'
 
-import { $appearanceUi, $appearanceUiImportRevision, updateAppearanceUi } from './appearance-ui-state'
+import {
+  $appearanceUi,
+  $appearanceUiImportRevision,
+  selectAppearanceDraft,
+  updateAppearanceUi
+} from './appearance-ui-state'
 
 const CARD_ACTION_CLASS =
   'inline-flex h-6 items-center justify-center rounded-lg bg-fill-faint px-1.5 text-muted transition hover:bg-fill-hover hover:text-strong disabled:pointer-events-none disabled:opacity-40'
@@ -81,7 +85,6 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
   const setDesigning = (next: boolean): void => updateAppearanceUi({ designing: next })
   const setText = (next: string): void => updateAppearanceUi({ text: next })
   const [outfitSelfSourceOpen, setOutfitSelfSourceOpen] = useState(false)
-  const submittedText = useRef<string | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const messagesRef = useRef<HTMLDivElement>(null)
   const begin = useAsyncGuard()
@@ -129,7 +132,12 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
 
   // 确认入柜后重拉列表——新装转为参考图就绪。
   const session = useOutfitDesignSession(
+    draftId,
     id => {
+      if ($appearanceUi.get().draftId !== draftId || !$appearanceUi.get().designing) {
+        return
+      }
+
       updateAppearanceUi({
         designing: false,
         text: '',
@@ -138,30 +146,38 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
       })
       void hydrateWardrobe()
     },
-    id => updateAppearanceUi({ draftId: id })
+    (id, submittedText) => {
+      const current = $appearanceUi.get()
+      const draftTexts = { ...current.draftTexts }
+      const inputKey = draftId ?? 'new'
+
+      if (draftTexts[inputKey]?.trim() === submittedText) {
+        delete draftTexts[inputKey]
+      }
+
+      updateAppearanceUi({
+        draftTexts,
+        ...(current.draftId === draftId
+          ? { draftId: id, text: current.text.trim() === submittedText ? '' : current.text }
+          : {})
+      })
+    }
   )
 
   const observedImportRevision = useRef(importRevision)
   const currentDraft = session.draft
   const adoptDraft = session.adoptDraft
-  const resetSession = session.reset
   const restoreReference = session.restoreReference
   useEffect(() => {
     const imported = observedImportRevision.current !== importRevision
     observedImportRevision.current = importRevision
 
     if (imported) {
-      submittedText.current = null
       setOutfitSelfSourceOpen(false)
       setZoomUrl(null)
-      resetSession()
     }
 
     if (draftId === null) {
-      if (!imported && currentDraft) {
-        resetSession()
-      }
-
       if (imported) {
         restoreReference()
       }
@@ -169,26 +185,27 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
       return
     }
 
-    const saved = outfits.find(outfit => outfit.id === draftId && outfit.status === 'draft')
+    const saved = outfits.find(outfit => outfit.id === draftId)
 
-    if (saved?.fullbodyUrl && (imported || currentDraft?.id !== saved.id)) {
-      adoptDraft(saved.id, saved.fullbodyUrl)
+    if (wardrobeStatus === 'loaded' && !session.busy && saved?.status !== 'draft') {
+      updateAppearanceUi({
+        draftId: null,
+        designing: false,
+        text: '',
+        selectedOutfitId: saved?.status === 'ready' ? saved.id : null
+      })
+
+      return
     }
-  }, [adoptDraft, currentDraft, draftId, importRevision, outfits, resetSession, restoreReference])
+
+    if (saved?.status === 'draft' && (!currentDraft || (wardrobeStatus === 'loaded' && !session.busy))) {
+      adoptDraft(saved.id, saved.fullbodyUrl ?? '', saved.fullbodyPath)
+    }
+  }, [adoptDraft, currentDraft, draftId, importRevision, outfits, restoreReference, session.busy, wardrobeStatus])
 
   useEffect(() => {
     messagesRef.current?.scrollTo?.({ top: messagesRef.current.scrollHeight })
   }, [session.messages])
-
-  useEffect(() => {
-    if (!session.busy && session.draft?.previewUrl && !session.lastRequest && submittedText.current !== null) {
-      if ($appearanceUi.get().text === submittedText.current) {
-        updateAppearanceUi({ text: '' })
-      }
-
-      submittedText.current = null
-    }
-  }, [session.busy, session.draft, session.lastRequest])
 
   const withBusy = (id: string, action: () => Promise<unknown>): void => {
     const epoch = currentClearEpoch()
@@ -229,14 +246,7 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
   }
 
   const startDesign = (): void => {
-    if (session.busy) {
-      return
-    }
-
-    session.reset()
-    updateAppearanceUi({ draftId: null, text: '' })
-    void saveCreationDraftImage('outfit', null)
-    setDesigning(true)
+    selectAppearanceDraft(null)
     requestAnimationFrame(() => inputRef.current?.focus())
   }
 
@@ -259,9 +269,35 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
   const hasInput = !!text.trim() || !!session.refImage
 
   const viewWardrobe = (): void => {
-    void hydrateWardrobe()
+    void hydrateWardrobe({ revalidateAssets: previewFailed })
     setDesigning(false)
   }
+
+  const unknownActions = (
+    <>
+      <button
+        className={BTN_SUBTLE}
+        disabled={wardrobeStatus === 'loading'}
+        onClick={() => {
+          setDesigning(false)
+          void session.inspectResult()
+        }}
+        type="button"
+      >
+        {wardrobeStatus === 'loading' ? common.loading : dict.creation.checkResult}
+      </button>
+      {session.inspected && (
+        <button
+          className={BTN_SUBTLE}
+          disabled={wardrobeStatus === 'loading'}
+          onClick={session.finishWaiting}
+          type="button"
+        >
+          {dict.creation.finishWaiting}
+        </button>
+      )}
+    </>
+  )
 
   // 首次生成（无草稿）：描述/参考图创建新设计。
   const sendCreation = (): void => {
@@ -271,7 +307,6 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
     }
 
     session.send(text, 'edit')
-    submittedText.current = text
   }
 
   // 草稿反馈的两个显式操作（DESIGN「形象获取与确认」）：微调编辑上一版须带反馈，重新生成允许空反馈整体重绘。
@@ -281,7 +316,6 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
     }
 
     session.send(text, mode)
-    submittedText.current = text
   }
 
   // 自备图（着装立绘）：有草稿时提示词/采纳都走草稿重绘语境，否则走创建语境。
@@ -322,7 +356,7 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
       return
     }
 
-    void hydrateWardrobe()
+    void hydrateWardrobe({ force: true })
 
     const resolved = res?.fullbody_url ? await resolvePortraitUrl(res.fullbody_url) : null
 
@@ -337,7 +371,7 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
     // 从采纳后的草稿续上设计会话，可继续描述微调或直接确认入柜。
     if (res?.id) {
       updateAppearanceUi({ draftId: res.id })
-      session.adoptDraft(res.id, resolved ?? '')
+      session.adoptDraft(res.id, resolved ?? '', res.fullbody_url)
     }
 
     setText('')
@@ -353,15 +387,19 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
     latestMessage?.tone === 'error') && (
     <CreationFeedback
       actions={
-        session.resultUnknown || previewFailed ? (
+        session.resultUnknown ? (
+          unknownActions
+        ) : previewFailed ? (
           <button className={BTN_SUBTLE} onClick={viewWardrobe} type="button">
-            {session.resultUnknown ? dict.creation.checkResult : dict.creation.retryLoad}
+            {dict.creation.retryLoad}
           </button>
         ) : undefined
       }
       description={
         session.resultUnknown
-          ? t.design.timedOut
+          ? session.inspected
+            ? dict.creation.inspectionHint
+            : t.design.timedOut
           : previewFailed
             ? t.design.previewFailed
             : latestMessage?.tone === 'error'
@@ -629,11 +667,21 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
             {(session.busy || session.resultUnknown) && (
               <CreationFeedback
                 actions={
-                  <button className={BTN_SUBTLE} onClick={() => setDesigning(true)} type="button">
-                    {t.actions.continueDesign}
-                  </button>
+                  session.resultUnknown ? (
+                    unknownActions
+                  ) : (
+                    <button className={BTN_SUBTLE} onClick={() => setDesigning(true)} type="button">
+                      {t.actions.continueDesign}
+                    </button>
+                  )
                 }
-                description={session.resultUnknown ? t.design.timedOut : dict.creation.preserveCurrent}
+                description={
+                  session.resultUnknown
+                    ? session.inspected
+                      ? dict.creation.inspectionHint
+                      : t.design.timedOut
+                    : dict.creation.preserveCurrent
+                }
                 state={session.resultUnknown ? 'unknown' : 'working'}
                 title={session.resultUnknown ? dict.creation.unknown : t.generating}
               />
@@ -657,7 +705,6 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
               ]}
             >
               <AssetLibraryToolbar
-                createDisabled={session.busy}
                 createLabel={t.startAction}
                 onCreate={startDesign}
                 onQueryChange={search.onQueryChange}
@@ -668,17 +715,21 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
 
             <AssetLibraryGrid>
               {visibleOutfits.map(outfit => {
-                const statusLabel = t.statusLabels[outfit.status] ?? ''
+                const task = session.tasks.get(outfit.id)
+
+                const statusLabel =
+                  task === 'unknown'
+                    ? dict.creation.unknown
+                    : task === 'confirming'
+                      ? common.saving
+                      : task === 'generating'
+                        ? t.generating
+                        : (t.statusLabels[outfit.status] ?? '')
+
                 const canEdit = outfit.status === 'draft'
 
                 const continueDesign = (): void => {
-                  if (session.busy) {
-                    return
-                  }
-
-                  updateAppearanceUi({ draftId: outfit.id })
-                  session.adoptDraft(outfit.id, outfit.fullbodyUrl ?? '')
-                  setDesigning(true)
+                  selectAppearanceDraft(outfit.id)
                 }
 
                 const openOutfit = (): void => {
@@ -729,7 +780,6 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
                               <button
                                 aria-label={t.actions.continueDesign}
                                 className={CARD_ACTION_CLASS}
-                                disabled={session.busy}
                                 onClick={continueDesign}
                                 title={t.actions.continueDesignTitle}
                                 type="button"
@@ -752,7 +802,7 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
                             <button
                               aria-label={t.actions.delete}
                               className={cn(CARD_ACTION_CLASS, 'hover:text-danger-fg')}
-                              disabled={busyId === outfit.id}
+                              disabled={busyId === outfit.id || Boolean(task)}
                               onClick={() => {
                                 void confirmAction({
                                   title: t.actions.deleteTitle,

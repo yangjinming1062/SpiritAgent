@@ -134,12 +134,12 @@ export function SceneLibraryView({
                   onClick={() => finishSceneCreationWait(creationIssue)}
                   type="button"
                 >
-                  {t.finishWaiting}
+                  {strings.creation.finishWaiting}
                 </button>
               ) : null}
             </>
           }
-          description={creationIssue.inspected ? t.inspectionHint : t.submissionUnknown}
+          description={creationIssue.inspected ? strings.creation.inspectionHint : t.submissionUnknown}
           state="unknown"
           title={strings.creation.unknown}
         />

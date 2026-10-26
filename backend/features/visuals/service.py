@@ -7,12 +7,11 @@ from uuid import uuid4
 from infrastructure.assets.references import asset_paths
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.text import ensure_utc, utc_now
-from runtime.events.emit import emit_ws_event
 from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.companion.proactive_runtime import get_presentation_snapshot
+from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
 from features.jobs.service import bind_job_assets, bind_job_request, requested_job_id
 from features.life.schemas import LifeStepRequest
 from features.life.use_cases import presentation_revision_matches, require_step_submission
@@ -64,6 +63,7 @@ from .schemas import (
     VisualPresentationView,
     combo_snapshot_hash,
 )
+from .static_presentation import restore_static_presentation
 
 _LOCKS: dict[int, asyncio.Lock] = {}
 
@@ -341,16 +341,10 @@ async def restore_presentation(user_id: int) -> VisualPlayCommand | None:
     """恢复持续呈现，不重播旧短动作，也不开始制作。"""
     async with _lock(user_id), SESSION_LOCAL() as db:
         presence = get_presentation_snapshot(user_id)
-        if presence is None:
+        if presence is None or not get_user_proactive_record(user_id).available:
             raise VisualStateError("桌面呈现上下文尚未就绪")
         state = await presentation_row(db, user_id, lock=True)
         if state is None:
-            return None
-        if state.pending_static_json or state.current_static_json:
-            emit_ws_event(
-                db, user_id=user_id, event_type="companion.life.presentation_requested", payload={"force": True}
-            )
-            await db.commit()
             return None
         if state.pending_command_json:
             pending = VisualPlayCommand.model_validate(state.pending_command_json)
@@ -360,6 +354,9 @@ async def restore_presentation(user_id: int) -> VisualPlayCommand | None:
                 and ensure_utc(pending.expires_at) > utc_now()
             ):
                 return pending
+        if await restore_static_presentation(db, user_id, state, presentation_epoch=presence.revision):
+            await db.commit()
+            return None
         version_id = (
             state.current_version_id if presence.mode == "window" else state.loop_version_id or state.current_version_id
         )

@@ -1,6 +1,7 @@
 """现有画面的保留、静态素材派发与实际显示回执。"""
 
 from datetime import timedelta
+from uuid import uuid4
 
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.request_errors import RequestError
@@ -9,7 +10,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
-from features.life.use_cases import presentation_revision_matches
+from features.life.use_cases import current_presentation_revision, presentation_revision_matches
 
 from .models import VisualPlayback, VisualPresentation
 from .repository import emit_playback_receipt, require_presentation_row, touch_presentation
@@ -85,33 +86,80 @@ async def keep_presentation(
         return True
 
 
+async def restore_static_presentation(
+    db: AsyncSession, user_id: int, state: VisualPresentation, *, presentation_epoch: int
+) -> bool:
+    """重连与模式交接复用冻结素材，以新回执身份恢复；不重新选择或制作内容。"""
+    raw = state.pending_static_json or state.current_static_json
+    if raw is None:
+        return False
+    snapshot = StaticPresentation.model_validate(raw)
+    life_revision = await current_presentation_revision(db, user_id)
+    if (
+        state.pending_static_json is not None
+        and not state.pending_command_json
+        and snapshot.presentation_epoch == presentation_epoch
+        and snapshot.life_revision == life_revision
+        and snapshot.state_revision == state.state_revision
+    ):
+        return True
+    await _cancel_pending_command(db, state)
+    await touch_presentation(db, user_id)
+    state.presentation_epoch = presentation_epoch
+    state.pending_static_json = snapshot.model_copy(
+        update={
+            "request_id": uuid4().hex,
+            "presentation_epoch": presentation_epoch,
+            "state_revision": state.state_revision,
+            "life_revision": life_revision,
+            "receipt_kind": None,
+            "retry_at": snapshot.retry_at if snapshot.presentation_epoch == presentation_epoch else None,
+        }
+    ).model_dump(mode="json")
+    return True
+
+
+def _stale_receipt(reason: str) -> RequestError:
+    return RequestError(
+        status_code=409,
+        message="静态呈现回执已过期或不属于当前显示方式",
+        code="static_presentation_expired",
+        details={"reason": reason},
+    )
+
+
 async def record_static_receipt(user_id: int, body: StaticReceipt) -> None:
     async with SESSION_LOCAL() as db:
         state = await require_presentation_row(db, user_id, lock=True)
         raw = state.pending_static_json or state.current_static_json
         presence = get_presentation_snapshot(user_id)
-        if not raw or presence is None:
-            raise RequestError(status_code=409, message="静态呈现已失效")
+        if not raw:
+            raise _stale_receipt("target_replaced")
         snapshot = StaticPresentation.model_validate(raw)
-        expected_kind = "window_static" if presence.mode == "window" else "desktop_static"
-        if (
-            state.pending_command_json
-            or snapshot.request_id != body.request_id
-            or body.presentation_epoch != presence.revision
-            or body.presentation_epoch != snapshot.presentation_epoch
-            or body.receipt_kind != expected_kind
-            or not get_user_proactive_record(user_id).available
-            or not await presentation_revision_matches(db, user_id, snapshot.life_revision)
-        ):
-            raise RequestError(status_code=409, message="静态呈现回执已过期或不属于当前显示方式")
-        if state.pending_static_json is not None and state.state_revision != snapshot.state_revision:
-            raise RequestError(status_code=409, message="静态呈现已被更新")
+        # 已记账的同一回执仅确认幂等，不受后续生活或在线变化影响，也不恢复旧呈现。
         if (
             state.pending_static_json is None
+            and snapshot.request_id == body.request_id
+            and snapshot.presentation_epoch == body.presentation_epoch
             and snapshot.receipt_kind == body.receipt_kind
-            and body.state_revision == snapshot.state_revision
+            and snapshot.state_revision == body.state_revision
         ):
             return
+        if presence is None:
+            raise _stale_receipt("presence_expired")
+        expected_kind = "window_static" if presence.mode == "window" else "desktop_static"
+        if state.pending_command_json or snapshot.request_id != body.request_id:
+            raise _stale_receipt("target_replaced")
+        if body.presentation_epoch != presence.revision or body.presentation_epoch != snapshot.presentation_epoch:
+            raise _stale_receipt("presentation_changed")
+        if body.receipt_kind != expected_kind:
+            raise _stale_receipt("mode_changed")
+        if not get_user_proactive_record(user_id).available:
+            raise _stale_receipt("stage_unavailable")
+        if not await presentation_revision_matches(db, user_id, snapshot.life_revision):
+            raise _stale_receipt("life_changed")
+        if state.pending_static_json is not None and state.state_revision != snapshot.state_revision:
+            raise _stale_receipt("state_changed")
         if (
             body.status == "failed"
             and snapshot.retry_at is not None
@@ -119,7 +167,7 @@ async def record_static_receipt(user_id: int, body: StaticReceipt) -> None:
         ):
             return
         if body.state_revision != snapshot.state_revision:
-            raise RequestError(status_code=409, message="静态呈现已被更新")
+            raise _stale_receipt("state_changed")
         await touch_presentation(db, user_id)
         if body.status == "failed":
             state.pending_static_json = snapshot.model_copy(
