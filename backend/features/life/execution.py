@@ -21,6 +21,8 @@ from .schemas import LifeEventInput, LifeStepView
 from .service import LifeInputError, create_step, get_or_create_state, record_event
 from .settlement import settle_business_steps
 
+_RETRY_DELAY = timedelta(minutes=15)
+
 
 async def enqueue_action(
     db: AsyncSession,
@@ -59,6 +61,20 @@ async def enqueue_action(
         if expires_at is not None:
             row.checkpoint = {"expires_at": expires_at.isoformat()}
         row.not_before = action.not_before or utc_now()
+        if pursuit_id is not None:
+            last_failure = await db.scalar(
+                select(func.max(LifeStep.finished_at)).where(
+                    LifeStep.user_id == user_id,
+                    LifeStep.pursuit_id == pursuit_id,
+                    LifeStep.kind == row.kind,
+                    LifeStep.state == "failed",
+                )
+            )
+            if last_failure is not None and (retry_at := ensure_utc(last_failure) + _RETRY_DELAY) > ensure_utc(
+                row.not_before
+            ):
+                row.not_before = retry_at
+                row.disposition, row.wait_reason = "waiting", "上次执行失败，稍后再试"
         row.is_creation = row.kind in CREATION_CAPABILITIES
         await db.flush()
     return step_view(row)
@@ -151,7 +167,7 @@ async def defer_step(
         if row.state != "planned":
             return
         row.disposition, row.wait_reason = disposition, reason
-        row.not_before = until or utc_now() + timedelta(minutes=15)
+        row.not_before = until or utc_now() + _RETRY_DELAY
         state.revision += 1
         emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"step_id": step_id})
         await db.commit()

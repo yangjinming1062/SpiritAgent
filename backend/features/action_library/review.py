@@ -4,7 +4,7 @@
 """
 
 import asyncio
-from typing import Any
+from typing import Any, Literal
 
 from infrastructure.ai.error_classifier import LlmCallBlockedError
 from infrastructure.ai.models import ModelModality
@@ -50,7 +50,7 @@ def schedule_action_review(user_id: int, action_id: int) -> None:
 class ActionReviewVerdict(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    decision: str = Field(pattern=r"^(approve|defer|reject)$")
+    decision: Literal["approve", "defer", "reject"]
     reason: str = Field(min_length=1, max_length=200)
 
 
@@ -62,7 +62,9 @@ async def review_action(user_id: int, action_id: int) -> None:
             await _review_action_locked(user_id, action_id)
         except BaseException:
             async with SESSION_LOCAL() as db:
-                await record_review(db, user_id, action_id, decision="defer", reason="评审未完成，请显式重试")
+                await record_review(
+                    db, user_id, action_id, decision="defer", reason="动作评审未完成，需检查失败原因后手动重试"
+                )
                 await db.commit()
             raise
 
