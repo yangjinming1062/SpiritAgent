@@ -239,6 +239,8 @@ class Settings(BaseSettings):
     )
     # 小于等于 0 表示不限额，因此不设下界。
     scene_llm_create_per_24h: int = Field(default=1, validation_alias="SCENE_LLM_CREATE_PER_24H")
+    life_actions_per_day: int = Field(default=8, ge=0, le=100, validation_alias="LIFE_ACTIONS_PER_DAY")
+    life_creations_per_day: int = Field(default=4, ge=0, le=100, validation_alias="LIFE_CREATIONS_PER_DAY")
     scene_store_max_attempts: int = Field(default=3, gt=0, validation_alias="SCENE_STORE_MAX_ATTEMPTS")
     # 动态每日配额为 0 时不允许发布。
     post_autonomous_per_day: int = Field(default=3, ge=0, validation_alias="POST_AUTONOMOUS_PER_DAY")

@@ -1,10 +1,10 @@
 import { IconDeviceTv } from '@tabler/icons-react'
 import type { ReactElement } from 'react'
-import { useEffect, useState } from 'react'
 
 import { Actions } from './Actions'
 import type { RemoteApi } from './api'
 import { Assets } from './Assets'
+import { LifeSummary } from './LifeSummary'
 import { MemoryView } from './Memory'
 import { Profile } from './Profile'
 import { focusAfterRender, PageHeader, usePageState } from './ui'
@@ -16,30 +16,6 @@ type Section = 'action' | 'memory' | 'outfit' | 'profile' | 'scene' | 'voice'
 export function Companion({ api, refresh }: { api: RemoteApi; refresh: number }): ReactElement {
   const [savedSection, setSection] = usePageState<Section>('companion.section', 'profile')
   const [visuals, setVisuals] = usePageState('companion.visuals', false)
-  const [life, setLife] = useState<{
-    current_activity: string
-    mood: string | null
-    active_pursuit_id: string | null
-  } | null>(null)
-  useEffect(() => {
-    let alive = true
-    void api
-      .invoke('companion_life.get_life', {})
-      .then(value => {
-        if (alive) {
-          setLife(value)
-        }
-      })
-      .catch(() => {
-        if (alive) {
-          setLife(null)
-        }
-      })
-
-    return () => {
-      alive = false
-    }
-  }, [api, refresh])
   const items = [
     { id: 'profile', title: '资料' },
     { id: 'voice', title: '声音' },
@@ -86,14 +62,7 @@ export function Companion({ api, refresh }: { api: RemoteApi; refresh: number })
           <small>浏览成品画面或重做，实际呈现由伙伴自主决定</small>
         </span>
       </button>
-      {life ? (
-        <section aria-label="伙伴近况" className="card companion-life-card">
-          <strong>伙伴近况</strong>
-          <p>{life.current_activity || '正在安静地陪伴你'}</p>
-          {life.mood ? <small>{life.mood}</small> : null}
-          {life.active_pursuit_id ? <small>有一件正在推进的事</small> : null}
-        </section>
-      ) : null}
+      <LifeSummary api={api} refresh={refresh} />
       {section === 'profile' ? (
         <>
           <PageHeader subtitle="名字、性格和你们的相处方式" title="伙伴资料" />

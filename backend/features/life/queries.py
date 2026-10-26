@@ -8,6 +8,7 @@ from infrastructure.text import utc_now
 from sqlalchemy import func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .actions import ReadingResult
 from .models import RESULT_REFERENCE_FIELDS, LifeEvent, LifePursuit, LifeState, LifeStep
 from .schemas import (
     EVIDENCE_EVENT_KINDS,
@@ -27,6 +28,10 @@ def state_view(row: LifeState) -> LifeStateView:
     return LifeStateView(
         user_id=row.user_id,
         current_activity=row.current_activity,
+        activity_kind=row.activity_kind,
+        activity_started_at=row.activity_started_at,
+        activity_step_id=row.activity_step_id,
+        presentation_revision=row.presentation_revision,
         current_scene=row.current_scene_json,
         mood=row.mood,
         active_pursuit_id=row.active_pursuit_id,
@@ -71,6 +76,11 @@ def pursuit_view(row: LifePursuit) -> LifePursuitView:
         progress=row.progress,
         next_step=row.next_step,
         status=row.status,
+        status_reason=row.status_reason,
+        status_source=row.status_source,
+        status_changed_at=row.status_changed_at,
+        resume_after=row.resume_after,
+        previous_pursuit_id=row.previous_pursuit_id,
         started_at=row.started_at,
         completed_at=row.completed_at,
         result_ref=row.result_ref_json,
@@ -86,7 +96,20 @@ def step_view(row: LifeStep) -> LifeStepView:
         kind=row.kind,
         description=row.description,
         state=row.state,
-        business_ref={"job_id": row.job_id, "generation_id": row.generation_id} if row.job_id is not None else {},
+        source=row.source,
+        action=row.action_json,
+        disposition=row.disposition,
+        wait_reason=row.wait_reason,
+        not_before=row.not_before,
+        reading_result=ReadingResult.model_validate(row.reading_result_json).model_dump(
+            exclude={"sources": {"__all__": {"content"}}}
+        )
+        if row.reading_result_json
+        else None,
+        business_ref={
+            **({"job_id": row.job_id, "generation_id": row.generation_id} if row.job_id is not None else {}),
+            **({"action_id": row.business_action_id} if row.business_action_id is not None else {}),
+        },
         result_ref=result_reference(row),
         error=row.error,
         started_at=row.started_at,
@@ -101,6 +124,7 @@ def event_view(row: LifeEvent) -> LifeEventView:
         kind=row.kind,
         source=row.source,
         subject=row.subject,
+        fact_type=row.fact_type,
         fact=row.fact_json,
         occurred_at=row.occurred_at,
         pursuit_id=row.pursuit_id,
@@ -173,11 +197,10 @@ async def pursuit_evidence(
             LifeEvent.subject == "companion",
             LifeEvent.is_meaningful.is_(True),
             LifeEvent.kind.in_(EVIDENCE_EVENT_KINDS),
+            LifeEvent.fact_type == "result",
             or_(
                 LifeEvent.result_ref_json != {},
-                LifeEvent.result_entry_id.is_not(None),
-                LifeEvent.result_visual_id.is_not(None),
-                LifeEvent.result_job_id.is_not(None),
+                *(getattr(LifeEvent, field).is_not(None) for field in RESULT_REFERENCE_FIELDS.values()),
             ),
         )
         .subquery()

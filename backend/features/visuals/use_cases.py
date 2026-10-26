@@ -1,5 +1,6 @@
 """影像库请求用例；只做参数收敛与错误转换，业务语义在 service 与 queries。"""
 
+from infrastructure.assets.asset_store import client_asset_url
 from infrastructure.request_errors import RequestError
 
 from . import queries, service
@@ -26,6 +27,23 @@ def _http_error(exc: VisualError) -> RequestError:
 
 
 async def _presentation_response(user_id: int, presentation: VisualPresentationView) -> VisualPresentationResponse:
+    if presentation.static_presentation is not None:
+        static = presentation.static_presentation
+        presentation = presentation.model_copy(
+            update={
+                "static_presentation": static.model_copy(
+                    update={
+                        "outfit": static.outfit.model_copy(update={"path": client_asset_url(static.outfit.path)})
+                        if static.outfit
+                        else None,
+                        "scene": static.scene.model_copy(update={"path": client_asset_url(static.scene.path)})
+                        if static.scene
+                        else None,
+                        "identity_path": client_asset_url(static.identity_path) if static.identity_path else None,
+                    }
+                )
+            }
+        )
     return VisualPresentationResponse(
         **presentation.model_dump(),
         actual=await queries.actual_presentation_snapshot(user_id),

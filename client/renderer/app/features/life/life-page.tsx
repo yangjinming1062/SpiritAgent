@@ -25,6 +25,9 @@ import { BTN_GHOST, BTN_SUBTLE, CapsuleTabs, ErrorBanner, LoadingBlock } from '@
 import { $locale } from '@/shared/store/locale'
 import { useStrings } from '@/shared/strings'
 
+import { isResourceId } from '../../../../../shared/resource-id'
+import { updateAppearanceUi } from '../appearance/appearance-ui-state'
+import { updateSceneUi } from '../scene/scene-ui-state'
 import { updateVisualsUi } from '../visuals/visuals-state'
 
 import { LifeOverview } from './life-overview'
@@ -65,6 +68,30 @@ export function LifePage({
 
   const formatDate = (value: string): string =>
     Number.isNaN(Date.parse(value)) ? '' : formatter.format(new Date(value))
+
+  const openResult = (kind: 'visual' | 'outfit' | 'scene' | 'action', id: unknown): void => {
+    if (!isResourceId(id)) {
+      return
+    }
+
+    if (kind === 'visual') {
+      updateVisualsUi({ selectedId: id, detailOpen: true })
+    }
+
+    if (kind === 'outfit') {
+      updateAppearanceUi({ selectedOutfitId: id })
+    }
+
+    if (kind === 'scene') {
+      updateSceneUi({ view: { kind: 'detail', sceneId: id } })
+    }
+
+    void applyAppNavigation({
+      page: 'companion',
+      companionSection:
+        kind === 'visual' ? 'visuals' : kind === 'outfit' ? 'wardrobe' : kind === 'scene' ? 'environment' : 'actions'
+    })
+  }
 
   useEffect(() => {
     if (visible) {
@@ -167,15 +194,14 @@ export function LifePage({
             <LoadingBlock label={t.loading} />
           ) : detail?.id === ui.selectedId ? (
             <article className={styles.detail}>
-              <span className={styles.eyebrow}>
-                {detail.status === 'completed' ? t.statuses.completed : t.statuses.active}
-              </span>
+              <span className={styles.eyebrow}>{t.statuses[detail.status]}</span>
               <h2>{detail.title}</h2>
               <time dateTime={detail.started_at}>{formatDate(detail.started_at)}</time>
               {[
                 [t.reason, detail.reason],
                 [t.desiredResult, detail.desired_result],
                 [t.progress, detail.progress || t.noProgress],
+                [t.changeReason, detail.status_reason],
                 ...(detail.status === 'active' && detail.next_step ? [[t.nextStep, detail.next_step]] : [])
               ].map(
                 ([label, text]) =>
@@ -186,11 +212,58 @@ export function LifePage({
                     </div>
                   )
               )}
-              {detail.completed_at && (
-                <time dateTime={detail.completed_at}>
-                  {t.statuses.completed} · {formatDate(detail.completed_at)}
+              {detail.status_changed_at && (
+                <time dateTime={detail.status_changed_at}>
+                  {t.statuses[detail.status]} · {formatDate(detail.status_changed_at)}
                 </time>
               )}
+              <h3>{t.stepsTitle}</h3>
+              {detail.steps.map(step => (
+                <div className={styles.detailField} key={step.id}>
+                  <strong>
+                    {t.stepStates[step.state]} · {step.description}
+                  </strong>
+                  {step.wait_reason && <p>{step.wait_reason}</p>}
+                  {step.error && step.error !== step.wait_reason && <p>{step.error}</p>}
+                  {(
+                    [
+                      ['visual', step.result_ref.visual_id, t.openVisual],
+                      ['outfit', step.result_ref.outfit_id, t.openOutfit],
+                      ['scene', step.result_ref.scene_id, t.openScene],
+                      ['action', step.result_ref.action_id, t.openAction]
+                    ] as const
+                  ).map(([kind, id, label]) =>
+                    isResourceId(id) ? (
+                      <button className={BTN_SUBTLE} key={kind} onClick={() => openResult(kind, id)} type="button">
+                        {label}
+                      </button>
+                    ) : null
+                  )}
+                  {step.started_at && <time dateTime={step.started_at}>{formatDate(step.started_at)}</time>}
+                  {step.reading_result && (
+                    <details>
+                      <summary>{t.readingNotes}</summary>
+                      <p>{step.reading_result.notes}</p>
+                      <ul>
+                        {step.reading_result.sources.map(source => (
+                          <li key={source.url}>
+                            <a href={source.url} rel="noreferrer" target="_blank">
+                              {source.title || source.url}
+                            </a>{' '}
+                            ·{' '}
+                            {source.content_kind === 'summary'
+                              ? t.sourceSummary
+                              : source.excerpted
+                                ? t.sourceExcerpt
+                                : t.sourceText}
+                            <time dateTime={source.retrieved_at}> · {formatDate(source.retrieved_at)}</time>
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                </div>
+              ))}
             </article>
           ) : null}
         </section>
@@ -200,7 +273,10 @@ export function LifePage({
           <CapsuleTabs
             ariaLabel={t.pursuitsTitle}
             onChange={status => updateLifeUi({ status, pursuitPage: 0, pursuitCursors: [null] })}
-            options={(['active', 'completed', 'all'] as const).map(value => ({ value, label: t.statuses[value] }))}
+            options={(['active', 'paused', 'completed', 'abandoned', 'all'] as const).map(value => ({
+              value,
+              label: t.statuses[value]
+            }))}
             value={ui.status}
           />
           {pursuitsError && (
@@ -223,9 +299,7 @@ export function LifePage({
                   onClick={() => selectLifePursuit(pursuit.id)}
                   type="button"
                 >
-                  <span className={styles.eyebrow}>
-                    {pursuit.status === 'completed' ? t.statuses.completed : t.statuses.active}
-                  </span>
+                  <span className={styles.eyebrow}>{t.statuses[pursuit.status]}</span>
                   <strong>{pursuit.title}</strong>
                   <p>{pursuit.progress || pursuit.reason}</p>
                   <time dateTime={pursuit.updated_at}>{formatDate(pursuit.updated_at)}</time>

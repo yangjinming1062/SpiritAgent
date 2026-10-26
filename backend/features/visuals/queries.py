@@ -15,6 +15,7 @@ from .schemas import (
     ActualPresentationSnapshot,
     ComboSnapshot,
     PresentedVisual,
+    StaticPresentation,
     VisualDetailView,
     VisualItemView,
     VisualJobListResponse,
@@ -298,6 +299,7 @@ async def presentation_state(user_id: int) -> VisualPresentationView:
             presentation_epoch=row.presentation_epoch,
             state_revision=row.state_revision,
             pending_play=pending,
+            static_presentation=row.pending_static_json or row.current_static_json,
         )
 
 
@@ -313,6 +315,30 @@ def _pending_command(row: VisualPresentation) -> VisualPlayCommand | None:
 async def _presentation_snapshot(user_id: int, *, for_prompt: bool) -> ActualPresentationSnapshot:
     async with SESSION_LOCAL() as db:
         row = await db.scalar(select(VisualPresentation).where(VisualPresentation.user_id == user_id))
+        if row and row.current_static_json:
+            static = StaticPresentation.model_validate(row.current_static_json)
+            if static.outfit is None or static.scene is None:
+                return ActualPresentationSnapshot()
+            presence = get_presentation_snapshot(user_id)
+            outfit_path = _existing(static.outfit.path)
+            scene_path = _existing(static.scene.path)
+            return ActualPresentationSnapshot(
+                outfit_path=outfit_path,
+                outfit_hash=static.outfit.content_hash if outfit_path else None,
+                outfit_description=static.outfit.description,
+                scene_path=scene_path,
+                scene_hash=static.scene.content_hash if scene_path else None,
+                scene_description=static.scene.description,
+                identity_path=_existing(static.identity_path),
+                identity_hash=static.identity_hash,
+                ready=static.receipt_kind is not None
+                and presence is not None
+                and static.presentation_epoch == presence.revision
+                and static.receipt_kind == ("window_static" if presence.mode == "window" else "desktop_static")
+                and outfit_path is not None
+                and scene_path is not None
+                and get_user_proactive_record(user_id).available,
+            )
         item = presented_item(row) if row else None
         if item is None or item.user_id != user_id:
             return ActualPresentationSnapshot()
@@ -377,6 +403,9 @@ async def visual_play_catalog(user_id: int, trigger: str) -> list[VisualPlayOpti
                 VisualItem.media_kind,
                 VisualItem.clip_kind,
                 VisualVersion.media_path,
+                VisualVersion.description,
+                VisualVersion.outfit_description,
+                VisualVersion.snapshot_json["scene"]["description"].astext.label("scene_description"),
                 VisualVersion.snapshot_json["action"].label("action"),
             )
             .select_from(VisualItem)
@@ -400,6 +429,9 @@ async def visual_play_catalog(user_id: int, trigger: str) -> list[VisualPlayOpti
                     media_kind=row.media_kind,
                     clip_kind=row.clip_kind,
                     duration_seconds=action["duration_seconds"],
+                    description=row.description,
+                    outfit_description=row.outfit_description,
+                    scene_description=row.scene_description or "",
                     use_when=action["use_when"],
                     avoid_when=action["avoid_when"],
                 )

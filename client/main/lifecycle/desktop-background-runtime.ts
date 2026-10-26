@@ -88,8 +88,15 @@ export function createDesktopBackgroundRuntime(options: DesktopBackgroundOptions
       loadedBackground = null
       currentBackground = {
         ...emptyDesktopBackground(accountEpoch, ++backgroundRevision, request.theme),
-        reduceMotion: request.reduceMotion
+        reduceMotion: request.reduceMotion,
+        playId: request.playId,
+        presentationEpoch: request.presentationEpoch
       }
+
+      if (request.playId) {
+        dispatchedPlays.set(request.playId, { accountEpoch, revision: currentBackground.revision })
+      }
+
       sendBackground()
 
       return
@@ -110,16 +117,19 @@ export function createDesktopBackgroundRuntime(options: DesktopBackgroundOptions
       request.geometryMode === loadedBackground.geometryMode &&
       request.inputImageHash === loadedBackground.inputImageHash &&
       sameMedia(request.video, loadedBackground.video) &&
+      sameMedia(request.outfit, loadedBackground.outfit) &&
       sameMedia(request.poster, loadedBackground.poster)
 
     let video = currentBackground.video
     let poster = currentBackground.poster
+    let outfit = currentBackground.outfit
 
     if (!unchanged) {
       try {
-        ;[video, poster] = await Promise.all([
+        ;[video, poster, outfit] = await Promise.all([
           request.video ? options.loadMedia(sender, request.video) : null,
-          request.poster ? options.loadMedia(sender, request.poster) : null
+          request.poster ? options.loadMedia(sender, request.poster) : null,
+          request.outfit ? options.loadMedia(sender, request.outfit) : null
         ])
 
         if (video && !/^video\/(?:mp4|quicktime)(?:;|$)/i.test(video.mime)) {
@@ -128,6 +138,10 @@ export function createDesktopBackgroundRuntime(options: DesktopBackgroundOptions
 
         if (poster && !/^image\/(?:png|jpeg|webp|gif)(?:;|$)/i.test(poster.mime)) {
           throw new Error('桌面封面格式不可用。')
+        }
+
+        if (outfit && !/^image\/(?:png|webp)(?:;|$)/i.test(outfit.mime)) {
+          throw new Error('桌面静态造型格式不可用。')
         }
       } catch (error) {
         if (valid() && request.playId) {
@@ -159,18 +173,19 @@ export function createDesktopBackgroundRuntime(options: DesktopBackgroundOptions
 
     requestedBackground = request
 
-    const { authSessionId: _authSessionId, video: _video, poster: _poster, ...settings } = request
+    const { authSessionId: _authSessionId, video: _video, poster: _poster, outfit: _outfit, ...settings } = request
     currentBackground = {
       ...settings,
       accountEpoch,
       revision: unchanged ? currentBackground.revision : ++backgroundRevision,
       video,
-      poster
+      poster,
+      outfit
     }
     currentBackground.paused = backgroundPaused()
     loadedBackground = request
 
-    if (request.playId && video) {
+    if (request.playId && (video || poster)) {
       dispatchedPlays.set(request.playId, { accountEpoch, revision: currentBackground.revision })
     }
 

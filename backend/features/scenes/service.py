@@ -1,6 +1,7 @@
 """场景素材生成与分析；供应商等待不持有数据库会话。"""
 
 import asyncio
+import hashlib
 import json
 from datetime import timedelta
 from uuid import uuid4
@@ -34,6 +35,9 @@ from features.companion.visual_state import (
     persona_snapshot,
 )
 from features.configuration.settings.values import get_user_setting
+from features.jobs.service import bind_job_request, requested_job_id
+from features.life.schemas import LifeStepRequest
+from features.life.use_cases import bind_step_in_session, require_step_submission, update_business_steps_in_session
 from features.media.character_images import ImageChainState, ImageProgressWriter, generate_scene_images
 from features.media.image_generation import ImageGenerationError, ImageReviewUnavailableError
 from features.media.provider_attempts import count_scene_submissions, record_scene_submission
@@ -79,6 +83,10 @@ class SceneNotFoundError(SceneError):
 
 
 class SceneStateError(SceneError):
+    pass
+
+
+class SceneBusyError(SceneStateError):
     pass
 
 
@@ -131,6 +139,17 @@ async def _event(db: AsyncSession, user_id: int, event_type: str, scene_id: int 
         scene = await get_scene(db, user_id, scene_id)
         if scene is not None:
             await sync_scene_assets(db, scene)
+            job = scene.initial_job
+            if job is not None and job.state in {"succeeded", "failed", "cancelled", "unknown"}:
+                await update_business_steps_in_session(
+                    db,
+                    user_id,
+                    kind="scene.create",
+                    business_ref={"job_id": job.id},
+                    state="completed" if job.state == "succeeded" else job.state,
+                    result_ref={"job_id": job.id, "scene_id": scene.id} if job.state == "succeeded" else {},
+                    error=job.error,
+                )
         if scene is not None and scene.status == "ready":
             emit_ws_event(db, user_id=user_id, event_type="companion.visual.initial_requested", payload={})
 
@@ -172,12 +191,26 @@ async def _new_scene(
     notes: str,
     source: str,
     reference_image: str | None = None,
+    life_step: LifeStepRequest | None = None,
 ) -> CompanionScene:
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
+        fingerprint = hashlib.sha256(notes.encode()).hexdigest()
+        if life_step is not None:
+            job_id = await requested_job_id(db, user_id, life_step.idempotency_key, fingerprint)
+            if job_id is not None:
+                existing = await db.scalar(
+                    select(CompanionScene).where(
+                        CompanionScene.user_id == user_id, CompanionScene.initial_job_id == job_id
+                    )
+                )
+                if existing is None:
+                    raise SceneStateError("原制作目标已删除，不能重新提交同一请求")
+                return existing
+        await require_step_submission(db, user_id, life_step)
         persona = await _persona(db, user_id)
         await _check_policy(db, persona, origin)
         if await get_pending_scene_task(db, user_id) is not None:
-            raise SceneStateError("已有场景正在准备，请等待完成或取消该任务")
+            raise SceneBusyError("已有场景正在准备，请等待完成或取消该任务")
         if origin == SceneOrigin.ONBOARDING.value and await db.scalar(
             select(CompanionScene.id).where(CompanionScene.user_id == user_id).limit(1),
         ):
@@ -200,6 +233,9 @@ async def _new_scene(
         row.initial_job.stage = "waiting_upload" if source == SceneSource.USER_UPLOAD.value else "prepare"
         db.add(row)
         await db.flush()
+        if life_step is not None:
+            await bind_job_request(db, user_id, row.initial_job.id, life_step.idempotency_key, fingerprint)
+            await bind_step_in_session(db, user_id, life_step, business_ref={"job_id": row.initial_job.id})
         await _event(db, persona.user_id, "companion.scene.updated", row.id)
         await db.commit()
         return row
@@ -211,6 +247,7 @@ async def schedule_scene_generation(
     origin: str,
     notes: str | None = None,
     reference_image: bytes | None = None,
+    life_step: LifeStepRequest | None = None,
 ) -> CompanionScene:
     row = await _new_scene(
         user_id,
@@ -218,6 +255,7 @@ async def schedule_scene_generation(
         notes=notes or "",
         source=SceneSource.GENERATED.value,
         reference_image=await _prepare_reference_image(reference_image) if reference_image is not None else None,
+        life_step=life_step,
     )
     _launch_task(row.id, user_id)
     return row

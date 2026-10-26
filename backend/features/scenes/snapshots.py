@@ -2,6 +2,8 @@
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.life.schemas import LifeStepRequest
+
 from .queries import list_scenes, scene_view
 from .query_contracts import SceneSnapshot, SceneSnapshotPage
 from .service import schedule_scene_generation
@@ -30,11 +32,13 @@ async def schedule_scene_snapshot(
     origin: str,
     notes: str | None = None,
     reference_image: bytes | None = None,
+    life_step: LifeStepRequest | None = None,
 ) -> SceneSnapshot:
     row = await schedule_scene_generation(
         user_id,
         origin=origin,
         notes=notes,
         reference_image=reference_image,
+        life_step=life_step,
     )
     return scene_view(row)

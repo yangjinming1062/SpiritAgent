@@ -153,6 +153,8 @@ flowchart LR
 ```mermaid
 flowchart LR
     life_states -->|active_pursuit_id| life_pursuits
+    life_states -->|activity_step_id| life_steps
+    life_pursuits -->|previous_pursuit_id| life_pursuits
     life_steps -->|pursuit_id| life_pursuits
     life_steps -->|job_id / result_job_id| jobs
     life_steps -->|result_entry_id| companion_entries
@@ -172,7 +174,7 @@ flowchart LR
     companion_intents -->|cron_job_id| cron_jobs
 ```
 
-当前生活、持续事项、执行步骤和事实事件分别保存。步骤连接真实任务，结果和完成证据使用实体关系；计划、受理和当前桌面画面都不能替代完成证据。删除任务或成品只解除结果指针，不抹掉已发生事实。
+当前生活、持续事项、执行步骤和事实事件分别保存，结果和完成证据通过实体关系关联。永久阅读成果独立于临时检查点；请求额度和提交事实独立于可覆盖的生活历史，避免旧备份抹掉已消费额度或触发重投。删除任务或成品只解除结果指针，不抹掉已发生事实。
 
 夜间日志按本地业务日期组织，动作关联实际任务以支持恢复核对。Cron 与陪伴意图分别管理计划调度和有界主动回合；短期在线信号不是长期生活事实。行为边界见 [生活契约](PROTOCOL.md#生活状态与生活事件)和[调度契约](PROTOCOL.md#调度)。
 

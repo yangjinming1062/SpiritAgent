@@ -290,6 +290,7 @@ async def dispatch_play_command(
             state_revision=revision,
             presentation_epoch=presentation.revision,
             pending_command_json=pending,
+            pending_static_json=None,
             updated_at=now,
         )
         .returning(VisualPresentation.user_id)

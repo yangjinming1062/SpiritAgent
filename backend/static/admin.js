@@ -1916,6 +1916,8 @@ const SETTINGS_SECTIONS = [
             ['sub', '场景、动态与安全配额'],
             ['grid', [
                 num('scene_llm_create_per_24h', '角色自主新增场景上限 (/24小时)'),
+                num('life_actions_per_day', '每账户每日自主执行上限（白天与夜间共用）', 1, { min: 0, max: 100 }),
+                num('life_creations_per_day', '其中每日自主创作上限', 1, { min: 0, max: 100 }),
                 num('scene_store_max_attempts', '场景图片转存最大重试次数', 1, { min: 1 }),
                 num('post_autonomous_per_day', '伙伴自主发布动态配额 (/24小时)', 1, { min: 0 }),
                 num('max_attachments_per_turn', '单回合附件数量上限', 1),

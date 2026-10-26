@@ -193,6 +193,18 @@ function publishPresentation(response: VisualsPresentation): void {
 
   $visualsPresentation.set(response)
   $visualsPresentationError.set(null)
+
+  const command = $visualPlayback.get()
+
+  if (
+    command &&
+    (command.presentation_epoch < response.presentation_epoch ||
+      (command.presentation_epoch === response.presentation_epoch &&
+        command.state_revision < response.state_revision) ||
+      Date.parse(command.expires_at) <= Date.now())
+  ) {
+    $visualPlayback.set(null)
+  }
 }
 
 export async function regenerateVisual(
@@ -237,12 +249,18 @@ export async function sendVisualReceipt(playId: string, body: Omit<VisualReceipt
 
 function publishPlayCommand(command: VisualPlayCommand): void {
   const previous = $visualPlayback.get()
+  const presentation = $visualsPresentation.get()
 
   if (
-    previous &&
-    (previous.play_id === command.play_id ||
-      previous.presentation_epoch > command.presentation_epoch ||
-      (previous.presentation_epoch === command.presentation_epoch && previous.state_revision > command.state_revision))
+    (presentation &&
+      (presentation.presentation_epoch > command.presentation_epoch ||
+        (presentation.presentation_epoch === command.presentation_epoch &&
+          presentation.state_revision > command.state_revision))) ||
+    (previous &&
+      (previous.play_id === command.play_id ||
+        previous.presentation_epoch > command.presentation_epoch ||
+        (previous.presentation_epoch === command.presentation_epoch &&
+          previous.state_revision > command.state_revision)))
   ) {
     return
   }

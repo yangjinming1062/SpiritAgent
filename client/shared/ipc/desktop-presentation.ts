@@ -61,6 +61,7 @@ export interface DesktopBackgroundRequest {
   authSessionId: string
   video: DesktopMediaReference | null
   poster: DesktopMediaReference | null
+  outfit: DesktopMediaReference | null
   playId: string | null
   /** 成品身份：稳定 ID + 成品版本 + 呈现代次，签名 URL 不参与识别。 */
   visualId: string | null
@@ -78,11 +79,15 @@ export interface DesktopBackgroundRequest {
   clear: boolean
 }
 
-export interface DesktopBackground extends Omit<DesktopBackgroundRequest, 'authSessionId' | 'video' | 'poster'> {
+export interface DesktopBackground extends Omit<
+  DesktopBackgroundRequest,
+  'authSessionId' | 'video' | 'poster' | 'outfit'
+> {
   accountEpoch: number
   revision: number
   video: DesktopMediaBytes | null
   poster: DesktopMediaBytes | null
+  outfit: DesktopMediaBytes | null
 }
 
 export interface DesktopBackgroundPlayback {

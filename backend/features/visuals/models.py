@@ -284,6 +284,8 @@ class VisualPresentation(ModelBase, TimestampMixin):
     )
 
     id = None
+    pending_static_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
+    current_static_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     current_version_id: Mapped[int | None] = mapped_column(BigInteger)
     loop_version_id: Mapped[int | None] = mapped_column(BigInteger)

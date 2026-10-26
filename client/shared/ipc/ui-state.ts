@@ -9,7 +9,7 @@ import { isResourceId } from '../../../shared/resource-id'
 import { isRecord } from '../is-record'
 
 export interface LifeUiSnapshot {
-  status: 'all' | 'active' | 'completed'
+  status: 'all' | 'active' | 'paused' | 'completed' | 'abandoned'
   pursuitPage: number
   pursuitCursors: (string | null)[]
   eventPage: number
@@ -20,7 +20,11 @@ export interface LifeUiSnapshot {
 export function isLifeUiSnapshot(value: unknown): value is LifeUiSnapshot {
   return (
     isRecord(value) &&
-    (value.status === 'all' || value.status === 'active' || value.status === 'completed') &&
+    (value.status === 'all' ||
+      value.status === 'active' ||
+      value.status === 'paused' ||
+      value.status === 'completed' ||
+      value.status === 'abandoned') &&
     [value.pursuitPage, value.eventPage].every(
       page => typeof page === 'number' && Number.isSafeInteger(page) && page >= 0
     ) &&

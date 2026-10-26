@@ -14,6 +14,7 @@ import {
   refreshVisualPresentation,
   sendVisualReceipt,
   type VisualActualSnapshot,
+  visualsApi,
   type VisualsPresentation
 } from '@/modules/visuals'
 import { captureAuthScope } from '@/shared/lib/authed-api'
@@ -205,7 +206,11 @@ function ensureVisualProjection(): void {
     }
 
     if (response) {
-      void settlePendingPlay(response)
+      if (response.static_presentation && !response.pending_play) {
+        void settleStaticProjection(response)
+      } else {
+        void settlePendingPlay(response)
+      }
     }
   }
 
@@ -219,6 +224,94 @@ function ensureVisualProjection(): void {
 
   apply($visualsPresentation.get())
   void refreshVisualPresentation()
+}
+
+async function settleStaticProjection(response: VisualsPresentation): Promise<void> {
+  const target = response.static_presentation
+  const scope = captureAuthScope()
+
+  if (
+    !target ||
+    !scope ||
+    projectingPlay ||
+    settledPlays.has(target.request_id) ||
+    !isCharacterStageVisible() ||
+    $presentation.get().effectiveMode !== 'window'
+  ) {
+    return
+  }
+
+  projectingPlay = target.request_id
+
+  const current = (): boolean =>
+    scope() &&
+    isCharacterStageVisible() &&
+    $presentation.get().effectiveMode === 'window' &&
+    $visualsPresentation.get()?.static_presentation?.request_id === target.request_id
+
+  try {
+    if (target.outfit && target.scene) {
+      applySources({
+        ...response.actual,
+        visual_id: null,
+        visual_version: null,
+        media_kind: null,
+        visual_description: '',
+        visual_path: null,
+        outfit_path: target.outfit.path,
+        outfit_hash: target.outfit.content_hash,
+        outfit_description: target.outfit.description,
+        scene_path: target.scene.path,
+        scene_hash: target.scene.content_hash,
+        scene_description: target.scene.description,
+        identity_path: target.identity_path,
+        identity_hash: target.identity_hash,
+        ready: true
+      })
+      await waitForStage(target.outfit.path, target.scene.path, current)
+    } else {
+      applySources(null)
+    }
+
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+
+    if (!current()) {
+      return
+    }
+
+    await visualsApi.receiptStatic({
+      request_id: target.request_id,
+      presentation_epoch: target.presentation_epoch,
+      state_revision: target.state_revision,
+      receipt_kind: 'window_static',
+      status: 'started',
+      error: null
+    })
+    settledPlays.add(target.request_id)
+  } catch (error) {
+    settledPlays.add(target.request_id)
+
+    if (current()) {
+      await visualsApi
+        .receiptStatic({
+          request_id: target.request_id,
+          presentation_epoch: target.presentation_epoch,
+          state_revision: target.state_revision,
+          receipt_kind: 'window_static',
+          status: 'failed',
+          error: String(error)
+        })
+        .catch(failure => log.warn('visual-presentation', 'Static receipt failed', failure))
+    }
+  } finally {
+    if (projectingPlay === target.request_id) {
+      projectingPlay = null
+    }
+
+    if (scope()) {
+      await refreshVisualPresentation()
+    }
+  }
 }
 
 export function useVisualProjection(): void {

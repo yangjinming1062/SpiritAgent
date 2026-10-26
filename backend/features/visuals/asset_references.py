@@ -17,6 +17,12 @@ async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
     ids = list(await db.scalars(select(VisualVersionAsset.asset_id).where(VisualVersionAsset.user_id == user_id)))
     paths = set((await asset_paths_in_session(db, user_id, ids)).values())
     paths |= await job_asset_paths(db, user_id)
+    for pending, current in await db.execute(
+        select(VisualPresentation.pending_static_json, VisualPresentation.current_static_json).where(
+            VisualPresentation.user_id == user_id
+        )
+    ):
+        paths |= asset_paths([pending, current], user_id)
     # 尚未交接的供应商候选仍由工作项保护；发布后依赖由版本关联表持有。
     for row in await db.scalars(
         select(VisualJob).where(

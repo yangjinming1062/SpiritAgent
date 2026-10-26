@@ -22,6 +22,13 @@ class ToolDomain:
 
 DOMAIN_CATALOG: tuple[ToolDomain, ...] = (
     ToolDomain(
+        id="life",
+        description_zh="伙伴的持续事项与阅读成果",
+        description_en="Companion pursuits and reading results",
+        aliases=("life", "生活", "事项", "计划", "暂停", "放弃"),
+        extra_tools=("life_inspect", "life_adjust"),
+    ),
+    ToolDomain(
         id="browser",
         description_zh="浏览与操作网页",
         description_en="Browse and automate web pages",

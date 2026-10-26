@@ -28,6 +28,8 @@ LIFE_SPACE_TOOL_NAMES = VISUAL_TOOL_NAMES | frozenset(
     {
         "send_message_tool",
         "companion_wait",
+        "life_inspect",
+        "life_adjust",
         "scene_list",
         "scene_get",
         "scene_create",

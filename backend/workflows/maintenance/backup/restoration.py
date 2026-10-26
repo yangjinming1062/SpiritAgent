@@ -29,7 +29,7 @@ from .file_packing import UrlRewriter, plan_asset_mapping, referenced_backup_fil
 from .serializers import CONVERSATION_TABLES, TABLES, VISUALS_TABLES, insert_rows, read_table_rows
 
 logger = get_logger(__name__)
-_SHARED_TABLES = frozenset({"assets", "jobs", "job_requests", "job_assets"})
+_SHARED_TABLES = frozenset({"assets", "jobs", "job_requests", "job_assets", "life_action_admissions"})
 
 
 @dataclass(frozen=True)

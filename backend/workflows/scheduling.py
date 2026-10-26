@@ -30,7 +30,9 @@ from features.companion.queries import complete_user_ids
 from features.configuration.settings.queries import timezone_settings
 from features.configuration.settings.values import get_user_setting
 from features.conversation.evidence import companion_conversation_users
+from features.life.execution import execution_user_ids
 from features.life.queries import due_review_user_ids
+from features.life.use_cases import pending_presentation_users
 from features.memory.memory_learning import list_memory_review_scopes
 from features.memory.memory_review import memory_review_backed_off, review_memories
 from features.posts.autonomous import scan_autonomous_posts
@@ -52,6 +54,8 @@ from runtime.user_maintenance import is_user_in_maintenance, user_request_scope
 
 from workflows.automation.standard_turns import execute_standard_turn
 from workflows.life_decisions import consider_life
+from workflows.life_execution import run_life_execution
+from workflows.life_presentation import evaluate_life_presentation
 from workflows.nightly.nightly_activity import run_nightly_pipeline
 from workflows.nightly.scheduling import close_expired_logs, unfinished_logs
 from workflows.nightly.window import in_nightly_window
@@ -336,10 +340,24 @@ async def _maybe_run_life_scan() -> None:
         active_users = await list_user_ids(db, active_only=True)
         completed = await complete_user_ids(db, active_users)
         users = await due_review_user_ids(db, completed, now)
+        executors = await execution_user_ids(db, now)
+        presentation_users = await pending_presentation_users(db)
     for user_id in sorted(users):
         if is_user_in_maintenance(user_id):
             continue
         _spawn_scope_task("life_state", MemoryScope(user_id, COMPANION_PRESET_ID), partial(consider_life, user_id))
+    for user_id in sorted(executors & set(completed)):
+        if not is_user_in_maintenance(user_id):
+            _spawn_scope_task(
+                "life_execution", MemoryScope(user_id, COMPANION_PRESET_ID), partial(run_life_execution, user_id)
+            )
+    for user_id in sorted((presentation_users | set(MANAGER.local_user_ids())) & set(completed)):
+        if not is_user_in_maintenance(user_id):
+            _spawn_scope_task(
+                "life_presentation",
+                MemoryScope(user_id, COMPANION_PRESET_ID),
+                partial(evaluate_life_presentation, user_id),
+            )
 
 
 async def _maybe_run_outbox_gc(now: datetime) -> None:

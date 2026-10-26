@@ -15,7 +15,22 @@ export const dict = {
     close: '关闭生活区',
     pursuitsTitle: '在意的事',
     eventsTitle: '最近的变化',
-    statuses: { all: '全部', active: '进行中', completed: '已完成' },
+    statuses: { all: '全部', active: '进行中', paused: '已暂停', completed: '已完成', abandoned: '已放下' },
+    factTypes: { intent: '打算', virtual_activity: '生活情景', execution: '实际执行', result: '已确认成果' },
+    stepStates: {
+      planned: '等待执行',
+      running: '执行中',
+      completed: '已完成',
+      failed: '执行失败',
+      cancelled: '已取消',
+      unknown: '结果待核对'
+    },
+    stepsTitle: '实际行动',
+    changeReason: '调整原因',
+    readingNotes: '阅读笔记',
+    sourceSummary: '摘要',
+    sourceExcerpt: '摘录',
+    sourceText: '正文',
     reason: '开始的缘由',
     desiredResult: '想完成什么',
     progress: '已有进展',
@@ -31,6 +46,9 @@ export const dict = {
     next: '下一页',
     details: '查看这件事',
     openVisual: '查看影像',
+    openOutfit: '查看造型',
+    openScene: '查看环境',
+    openAction: '查看动作',
     openPosts: '打开动态',
     openDiary: '打开日记',
     eventLabels: {
@@ -40,7 +58,13 @@ export const dict = {
       completed: '完成了一件事',
       visual: '制作了影像',
       post: '发布了动态',
-      diary: '写了日记'
+      diary: '写了日记',
+      paused: '暂时停一停',
+      resumed: '继续这件事',
+      abandoned: '放下了这件事',
+      step: '完成了一个步骤',
+      failed: '执行未成功',
+      unknown: '结果待核对'
     }
   },
   brand: {

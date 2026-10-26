@@ -7,6 +7,7 @@
 | [api.ts](api.ts)、[App.tsx](App.tsx) | 身份、请求撤销与连接生命周期；退出或授权失效收敛全部资源 |
 | [Chat.tsx](Chat.tsx)、[TopicLink.tsx](TopicLink.tsx) | 会话列表、按预设新建与聊天；通过共享快照协调器缓冲事件，按会话水位合并，保留未确认提交标识并先查询回执；话题反馈按当前会话去重、每批最多 100 项读取并统一订阅，同一话题共用反馈与保存状态 |
 | [Feed.tsx](Feed.tsx) | 动态与日记分别读取和分页，共用渲染后校验当前页面、可见性与焦点的已读确认流程 |
+| [LifeSummary.tsx](LifeSummary.tsx) | 伙伴近况、事项和步骤的只读展示；刷新不推进生活判断，失败保留当前查询内容并允许重试 |
 | [Companion.tsx](Companion.tsx)、[Profile.tsx](Profile.tsx)、[Memory.tsx](Memory.tsx)、[memory-state.ts](memory-state.ts)、[Assets.tsx](Assets.tsx)、[Voice.tsx](Voice.tsx)、[Actions.tsx](Actions.tsx)、[Visuals.tsx](Visuals.tsx) | 伙伴常驻分类与各分类页、影像独立入口；资料与角色卡编辑、记忆卡片内维护、衣柜与环境素材、声音方案、动作语义定义、影像成品与制作工作项；创作、详情与列表分层，按原任务恢复制作 |
 | [ui.tsx](ui.tsx)、[save-result.ts](save-result.ts) | 页面任务、账户内草稿、前台轮询、图片选择与媒体资源生命周期；保存失败后的回读核对共用流程，各表单定义提交值比对与冲突展示；媒体加载失败只重试媒体加载 |
 

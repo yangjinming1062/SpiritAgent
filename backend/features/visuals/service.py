@@ -7,6 +7,7 @@ from uuid import uuid4
 from infrastructure.assets.references import asset_paths
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.text import ensure_utc, utc_now
+from runtime.events.emit import emit_ws_event
 from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from features.companion.proactive_runtime import get_presentation_snapshot
 from features.jobs.service import bind_job_assets, bind_job_request, requested_job_id
 from features.life.schemas import LifeStepRequest
+from features.life.use_cases import presentation_revision_matches, require_step_submission
 
 from .creation import begin_opening_repair
 from .generation import (
@@ -64,6 +66,10 @@ from .schemas import (
 )
 
 _LOCKS: dict[int, asyncio.Lock] = {}
+
+
+class VisualPresentationConflictError(VisualStateError):
+    """判断期间生活或呈现已变化，应按最新状态重评。"""
 
 
 def _lock(user_id: int) -> asyncio.Lock:
@@ -119,6 +125,7 @@ async def create_visual_job(
                 await bind_creation_step(db, user_id, existing, life_step)
                 await db.commit()
                 return job_view(existing)
+        await require_step_submission(db, user_id, life_step)
         pending = await db.scalars(
             select(VisualJob).where(
                 VisualJob.user_id == user_id,
@@ -267,13 +274,17 @@ async def play_visual(
     visual_id: int,
     *,
     source: PlaybackSource,
-    expected_version: int | None = None,
+    expected_state_revision: int | None = None,
+    expected_life_revision: int | None = None,
 ) -> VisualPlayCommand:
     async with SESSION_LOCAL() as db:
         state = await require_presentation_row(db, user_id, lock=True)
+        if (expected_state_revision is not None and state.state_revision != expected_state_revision) or (
+            expected_life_revision is not None
+            and not await presentation_revision_matches(db, user_id, expected_life_revision)
+        ):
+            raise VisualPresentationConflictError("活动或呈现已变化，请重新判断")
         item = await visual_item(db, user_id, visual_id)
-        if expected_version is not None and expected_version != item.version:
-            raise VisualStateError("影像已按新版本更新，请刷新后重试")
         if not visual_playable(item):
             raise VisualStateError("影像文件缺失，请重新制作")
         snapshot = visual_snapshot(item)
@@ -334,6 +345,12 @@ async def restore_presentation(user_id: int) -> VisualPlayCommand | None:
             raise VisualStateError("桌面呈现上下文尚未就绪")
         state = await presentation_row(db, user_id, lock=True)
         if state is None:
+            return None
+        if state.pending_static_json or state.current_static_json:
+            emit_ws_event(
+                db, user_id=user_id, event_type="companion.life.presentation_requested", payload={"force": True}
+            )
+            await db.commit()
             return None
         if state.pending_command_json:
             pending = VisualPlayCommand.model_validate(state.pending_command_json)
@@ -410,6 +427,7 @@ async def record_playback(
                 update={"receipt_kind": receipt_kind},
             )
             state.current_visual_id = item.id
+            state.current_static_json = state.pending_static_json = None
             state.current_version_id = play.version_id
             state.current_snapshot_json = frozen.model_dump(mode="json")
             if item.media_kind == "image" or visual_snapshot(item).action.clip_kind == "loop":

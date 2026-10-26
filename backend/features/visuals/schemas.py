@@ -246,6 +246,31 @@ class VisualDetailView(VisualItemView):
     jobs: list[VisualJobView] = Field(default_factory=list)
 
 
+class StaticPresentation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: str
+    presentation_epoch: int
+    state_revision: int
+    life_revision: int
+    outfit: ComboMaterialRef | None = None
+    scene: ComboMaterialRef | None = None
+    identity_path: str | None = None
+    identity_hash: str | None = None
+    receipt_kind: Literal["window_static", "desktop_static"] | None = None
+    error: str | None = None
+    retry_at: datetime | None = None
+
+
+class StaticReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: str
+    presentation_epoch: int
+    state_revision: int
+    receipt_kind: Literal["window_static", "desktop_static"]
+    status: Literal["started", "failed"]
+    error: str | None = Field(default=None, max_length=2000)
+
+
 class VisualPresentationView(BaseModel):
     """呈现状态与偏好：当前影像、持续画面和自主开关。"""
 
@@ -259,6 +284,7 @@ class VisualPresentationView(BaseModel):
     presentation_epoch: int = 0
     state_revision: int = 0
     pending_play: "VisualPlayCommand | None" = None
+    static_presentation: StaticPresentation | None = None
 
 
 class VisualPlayCommand(BaseModel):
@@ -371,6 +397,9 @@ class VisualPlayOption(BaseModel):
     media_kind: VisualMediaKind
     clip_kind: ActionClipKind
     duration_seconds: int
+    description: str
+    outfit_description: str
+    scene_description: str
     use_when: list[str] = Field(default_factory=list)
     avoid_when: list[str] = Field(default_factory=list)
 

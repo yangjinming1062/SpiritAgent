@@ -4,7 +4,13 @@ from datetime import datetime
 from typing import Any, Literal
 
 from infrastructure.api_ids import ResourceId
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_serializer
+
+from .actions import LifeAction, NextAction, ReadingResultView
+from .prompts import life_content_payload
+
+FactType = Literal["intent", "virtual_activity", "execution", "result"]
+PursuitStatus = Literal["active", "paused", "completed", "abandoned"]
 
 UNRESOLVED_STEP_STATES = frozenset({"planned", "running", "unknown"})
 TERMINAL_STEP_STATES = frozenset({"completed", "failed", "cancelled", "unknown"})
@@ -12,7 +18,7 @@ EVIDENCE_EVENT_KINDS = frozenset({"life.step.completed", "visual.ready", "post.p
 EVIDENCE_EVENTS_PER_PURSUIT = 24
 
 
-_REFERENCE_KEYS = frozenset(
+LIFE_REFERENCE_KEYS = frozenset(
     {
         "job_id",
         "entry_id",
@@ -27,6 +33,8 @@ _REFERENCE_KEYS = frozenset(
         "outfit_id",
         "scene_id",
         "action_id",
+        "reading_step_id",
+        "cron_job_id",
     }
 )
 _REFERENCE_LIST_KEYS = frozenset({"event_ids", "evidence_event_ids", "step_ids"})
@@ -39,7 +47,7 @@ def _wire_result(value: Any) -> Any:
         return value
     result = {}
     for key, item in value.items():
-        if key in _REFERENCE_KEYS and isinstance(item, int) and not isinstance(item, bool):
+        if key in LIFE_REFERENCE_KEYS and isinstance(item, int) and not isinstance(item, bool):
             result[key] = str(item)
         elif key in _REFERENCE_LIST_KEYS and isinstance(item, list):
             result[key] = [
@@ -56,12 +64,25 @@ class LifeResultView(BaseModel):
     def serialize_references(self, value: dict) -> dict:
         return _wire_result(value)
 
+    def prompt_payload(self) -> dict[str, Any]:
+        payload = self.model_dump(mode="json", exclude={"event_key", "idempotency_key", "business_ref", "action"})
+        result = payload.pop("result_ref", {})
+        payload["has_result"] = bool(result)
+        payload["result"] = life_content_payload(result)
+        if "fact" in payload:
+            payload["fact"] = life_content_payload(payload["fact"])
+        return payload
+
 
 class LifeStateView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     user_id: ResourceId
     current_activity: str
+    activity_kind: FactType = "virtual_activity"
+    activity_started_at: datetime | None = None
+    activity_step_id: ResourceId | None = None
+    presentation_revision: int = 0
     current_scene: dict
     mood: str | None
     active_pursuit_id: ResourceId | None
@@ -80,7 +101,12 @@ class LifePursuitView(LifeResultView):
     desired_result: str
     progress: str
     next_step: str
-    status: str
+    status: PursuitStatus
+    status_reason: str = ""
+    status_source: str = "companion"
+    status_changed_at: datetime | None = None
+    resume_after: datetime | None = None
+    previous_pursuit_id: ResourceId | None = None
     started_at: datetime
     completed_at: datetime | None
     result_ref: dict
@@ -95,7 +121,13 @@ class LifeStepView(LifeResultView):
     idempotency_key: str
     kind: str
     description: str
-    state: str
+    state: Literal["planned", "running", "completed", "failed", "cancelled", "unknown"]
+    source: str = "life"
+    action: LifeAction | None = None
+    disposition: str = "ready"
+    wait_reason: str = ""
+    not_before: datetime | None = None
+    reading_result: ReadingResultView | None = None
     business_ref: dict
     result_ref: dict
     error: str | None
@@ -111,6 +143,7 @@ class LifeEventView(LifeResultView):
     kind: str
     source: str
     subject: str
+    fact_type: FactType = "execution"
     fact: dict
     occurred_at: datetime
     pursuit_id: ResourceId | None
@@ -126,16 +159,26 @@ class LifeContext(BaseModel):
 
     state: LifeStateView
     active_pursuits: list[LifePursuitView] = Field(default_factory=list)
+    paused_pursuits: list[LifePursuitView] = Field(default_factory=list)
     recent_events: list[LifeEventView] = Field(default_factory=list)
 
     def prompt_payload(self) -> dict[str, Any]:
-        return self.model_dump(
-            mode="json",
-            exclude={
-                "state": {"user_id", "next_review_at", "scene_revision", "updated_at"},
-                "recent_events": {"__all__": {"event_key"}},
-            },
-        )
+        return {
+            "state": self.state.model_dump(
+                mode="json",
+                exclude={
+                    "user_id",
+                    "next_review_at",
+                    "revision",
+                    "scene_revision",
+                    "presentation_revision",
+                    "updated_at",
+                },
+            ),
+            "active_pursuits": [item.prompt_payload() for item in self.active_pursuits],
+            "paused_pursuits": [item.prompt_payload() for item in self.paused_pursuits],
+            "recent_events": [item.prompt_payload() for item in self.recent_events],
+        }
 
 
 class LifePursuitListResponse(BaseModel):
@@ -157,15 +200,36 @@ class LifeDecisionFields(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    operation: Literal["keep", "update", "start_pursuit", "advance_pursuit", "complete_pursuit"] = "keep"
+    operation: Literal[
+        "keep",
+        "update",
+        "start_pursuit",
+        "advance_pursuit",
+        "complete_pursuit",
+        "pause_pursuit",
+        "resume_pursuit",
+        "abandon_pursuit",
+        "redirect_pursuit",
+    ] = "keep"
+    activity_kind: Literal["intent", "virtual_activity"] | None = Field(
+        default=None, description="意向或虚拟生活情景；真实执行及成果由实际任务记录"
+    )
+    next_action: NextAction | None = Field(
+        default=None, description="登记一个实际可执行的下一步；无须行动时省略，不代表已执行"
+    )
+    status_reason: str = Field(default="", max_length=2000, description="暂停、恢复、放弃或改变方向的具体原因")
+    resume_after: AwareDatetime | None = Field(
+        default=None, description="伙伴自行暂停后最早重新判断的时间，须包含时区；无确定时间时为空"
+    )
     current_activity: str | None = Field(
-        default=None, max_length=2000, description="伙伴当前的具体活动；不变时省略或为 null"
+        default=None, max_length=2000, description="伙伴此刻正在做或打算做的具体生活活动；活动本身不变时省略或为 null"
     )
     current_scene: dict | None = Field(
-        default=None, description="更新后的完整情境信息，保留未改变的内容；不变时省略或为 null"
+        default=None,
+        description="伙伴所处的生活环境与情境，如地点、周围事物和当前状况；变化时提供完整信息并保留未变内容，不变时省略或为 null。事项状态、进展和依据由对应事项字段表达",
     )
     mood: str | None = Field(default=None, max_length=200, description="伙伴当前心情；不变时省略或为 null")
-    pursuit_id: ResourceId | None = Field(default=None, gt=0, description="要推进或完成的已有事情的 id")
+    pursuit_id: ResourceId | None = Field(default=None, gt=0, description="本次推进、结束或调整的已有事情的 id")
     pursuit_title: str = Field(default="", max_length=160, description="新事情的简短标题")
     pursuit_reason: str = Field(default="", max_length=1000, description="现在开始这件事的具体缘由")
     pursuit_result: str = Field(default="", max_length=1000, description="怎样才算完成这件事，须能根据结果判断")
@@ -185,6 +249,8 @@ class LifeDecisionRequest(LifeDecisionFields):
 
     expected_revision: int = Field(ge=0)
     next_review_at: datetime | None = None
+    source: Literal["companion", "user"] = "companion"
+    request_id: str | None = Field(default=None, max_length=180)
 
 
 class LifeStepRequest(BaseModel):
@@ -201,13 +267,10 @@ class LifePursuitEvidence(BaseModel):
     events: list[LifeEventView] = Field(default_factory=list)
 
     def prompt_payload(self) -> dict[str, Any]:
-        return self.model_dump(
-            mode="json",
-            exclude={
-                "steps": {"__all__": {"idempotency_key", "business_ref"}},
-                "events": {"__all__": {"event_key"}},
-            },
-        )
+        return {
+            "steps": [item.prompt_payload() for item in self.steps],
+            "events": [item.prompt_payload() for item in self.events],
+        }
 
 
 class LifeEventInput(BaseModel):
@@ -217,9 +280,14 @@ class LifeEventInput(BaseModel):
     kind: str = Field(min_length=1, max_length=48)
     source: str = Field(min_length=1, max_length=48)
     subject: Literal["companion", "user", "system"] = "companion"
+    fact_type: FactType = "execution"
     fact: dict = Field(default_factory=dict)
     occurred_at: datetime | None = None
     pursuit_id: ResourceId | None = Field(default=None, gt=0)
     step_id: ResourceId | None = Field(default=None, gt=0)
     result_ref: dict = Field(default_factory=dict)
     is_meaningful: bool = True
+
+
+class LifePursuitDetail(LifePursuitView):
+    steps: list[LifeStepView] = Field(default_factory=list)

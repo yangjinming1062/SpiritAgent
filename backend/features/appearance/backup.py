@@ -8,18 +8,23 @@ from infrastructure.backup import BackupContext, BackupTable
 
 from features.media.identity_contracts import CharacterFeatures, CharacterOverrides
 
-from .models import AppearanceAsset, AvatarAsset, CharacterAnalysisJob, CompanionOutfit, FullbodyCandidate, OutfitSource
+from .models import (
+    AppearanceAsset,
+    AvatarAsset,
+    CharacterAnalysisJob,
+    CompanionOutfit,
+    FullbodyCandidate,
+    OutfitCreationJob,
+    OutfitSource,
+)
 
 
 def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
-
     if table == "avatar_assets":
         for field in ("generation_origin_json", "fullbody_generation_origin_json"):
             if payload.get(field):
                 payload[field] = GenerationOrigin.model_validate(payload[field]).model_dump(mode="json")
-
-    if table == "avatar_assets":
-        revision = payload.get("revision")
+        revision = payload["revision"]
         if not isinstance(revision, int) or isinstance(revision, bool) or revision < 0:
             raise ValueError("Invalid character card revision")
         payload["automatic_json"] = CharacterFeatures.model_validate(payload["automatic_json"]).model_dump(mode="json")
@@ -37,6 +42,12 @@ def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: 
 
 def backup_tables() -> tuple[BackupTable, ...]:
     return (
+        BackupTable(
+            "outfit_creation_jobs",
+            OutfitCreationJob,
+            foreign_keys={"id": "jobs", "result_outfit_id": "companion_outfits"},
+            strict_references=True,
+        ),
         BackupTable(
             "avatar_assets",
             AvatarAsset,

@@ -234,6 +234,13 @@ async def load_prompt_topics(
     )
 
 
+async def read_saved_topics(db: AsyncSession, scope: MemoryScope, topic_ids: Sequence[int]) -> list[TopicSnapshot]:
+    """阅读已有来源不受主动分享时窗限制，也不新增分享记录。"""
+    if not topic_ids:
+        return []
+    return await _load_topic_snapshots(db, scope, CompanionTopic.id.in_(topic_ids))
+
+
 async def has_unshared_topics(db: AsyncSession, scope: MemoryScope, now: datetime) -> bool:
     return (
         await db.scalar(

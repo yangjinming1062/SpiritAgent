@@ -630,6 +630,7 @@ def upgrade() -> None:
         sa.Column("kind", sa.String(length=48), nullable=False),
         sa.Column("source", sa.String(length=48), nullable=False),
         sa.Column("subject", sa.String(length=24), server_default=sa.text("'companion'"), nullable=False),
+        sa.Column("fact_type", sa.String(length=24), server_default="execution", nullable=False),
         sa.Column("fact_json", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'"), nullable=False),
         sa.Column("occurred_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("pursuit_id", sa.BigInteger(), nullable=True),
@@ -638,6 +639,9 @@ def upgrade() -> None:
         sa.Column("result_visual_id", sa.BigInteger(), nullable=True),
         sa.Column("result_visual_version_id", sa.BigInteger(), nullable=True),
         sa.Column("result_entry_id", sa.BigInteger(), nullable=True),
+        sa.Column("result_outfit_id", sa.BigInteger(), nullable=True),
+        sa.Column("result_scene_id", sa.BigInteger(), nullable=True),
+        sa.Column("result_action_id", sa.BigInteger(), nullable=True),
         sa.Column(
             "result_ref_json", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'"), nullable=False
         ),
@@ -648,6 +652,9 @@ def upgrade() -> None:
         ),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.CheckConstraint(
+            "fact_type IN ('intent', 'virtual_activity', 'execution', 'result')", name=op.f("ck_life_events_fact_type")
+        ),
         sa.CheckConstraint("subject IN ('companion', 'user', 'system')", name=op.f("ck_life_events_event_subject")),
         sa.PrimaryKeyConstraint("id", name=op.f("life_events_pkey")),
         sa.UniqueConstraint("user_id", "event_key", name="uq_life_events_user_key"),
@@ -666,6 +673,11 @@ def upgrade() -> None:
         sa.Column("status", sa.String(length=16), server_default=sa.text("'active'"), nullable=False),
         sa.Column("started_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("status_reason", sa.Text(), server_default="", nullable=False),
+        sa.Column("status_source", sa.String(length=16), server_default="companion", nullable=False),
+        sa.Column("status_changed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("resume_after", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("previous_pursuit_id", sa.BigInteger(), nullable=True),
         sa.Column(
             "result_ref_json", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'"), nullable=False
         ),
@@ -675,7 +687,10 @@ def upgrade() -> None:
         ),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.CheckConstraint("status IN ('active', 'completed')", name=op.f("ck_life_pursuits_pursuit_status")),
+        sa.CheckConstraint(
+            "status IN ('active', 'paused', 'completed', 'abandoned')", name=op.f("ck_life_pursuits_pursuit_status")
+        ),
+        sa.CheckConstraint("status_source IN ('user', 'companion')", name=op.f("ck_life_pursuits_status_source")),
         sa.PrimaryKeyConstraint("id", name=op.f("life_pursuits_pkey")),
         sa.UniqueConstraint("user_id", "id", name="uq_life_pursuits_owner_id"),
         sa.UniqueConstraint("user_id", "idempotency_key", name="uq_life_pursuits_user_idempotency"),
@@ -685,6 +700,11 @@ def upgrade() -> None:
         "life_states",
         sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("current_activity", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("activity_kind", sa.String(length=24), server_default="virtual_activity", nullable=False),
+        sa.Column("activity_started_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("activity_step_id", sa.BigInteger(), nullable=True),
+        sa.Column("presentation_revision", sa.Integer(), server_default="0", nullable=False),
+        sa.Column("presentation_evaluated_revision", sa.Integer(), server_default="0", nullable=False),
         sa.Column(
             "current_scene_json",
             postgresql.JSONB(astext_type=sa.Text()),
@@ -701,7 +721,14 @@ def upgrade() -> None:
         ),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.CheckConstraint("revision >= 0 AND scene_revision >= 0", name=op.f("ck_life_states_revisions_nonnegative")),
+        sa.CheckConstraint(
+            "activity_kind IN ('intent', 'virtual_activity', 'execution', 'result')",
+            name=op.f("ck_life_states_activity_kind"),
+        ),
+        sa.CheckConstraint(
+            "revision >= 0 AND scene_revision >= 0 AND presentation_revision >= 0 AND presentation_evaluated_revision >= 0",
+            name=op.f("ck_life_states_revisions_nonnegative"),
+        ),
         sa.PrimaryKeyConstraint("user_id", name=op.f("life_states_pkey")),
         sa.UniqueConstraint("user_id", "source_key", name="uq_life_states_source"),
     )
@@ -710,15 +737,29 @@ def upgrade() -> None:
         sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("pursuit_id", sa.BigInteger(), nullable=True),
         sa.Column("idempotency_key", sa.String(length=160), nullable=False),
-        sa.Column("kind", sa.String(length=32), server_default=sa.text("'virtual'"), nullable=False),
+        sa.Column("kind", sa.String(length=32), nullable=False),
         sa.Column("description", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("state", sa.String(length=16), server_default=sa.text("'planned'"), nullable=False),
+        sa.Column("action_json", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
+        sa.Column("checkpoint", postgresql.JSONB(astext_type=sa.Text()), server_default="{}", nullable=False),
+        sa.Column("reading_result_json", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
+        sa.Column("disposition", sa.String(length=24), server_default="ready", nullable=False),
+        sa.Column("wait_reason", sa.Text(), server_default="", nullable=False),
+        sa.Column("not_before", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("budget_date", sa.Date(), nullable=True),
+        sa.Column("is_creation", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
+        sa.Column("source", sa.String(length=24), server_default="life", nullable=False),
+        sa.Column("attempts", sa.Integer(), server_default="0", nullable=False),
+        sa.Column("business_action_id", sa.BigInteger(), nullable=True),
         sa.Column("job_id", sa.BigInteger(), nullable=True),
         sa.Column("generation_id", sa.String(length=64), nullable=True),
         sa.Column("result_job_id", sa.BigInteger(), nullable=True),
         sa.Column("result_visual_id", sa.BigInteger(), nullable=True),
         sa.Column("result_visual_version_id", sa.BigInteger(), nullable=True),
         sa.Column("result_entry_id", sa.BigInteger(), nullable=True),
+        sa.Column("result_outfit_id", sa.BigInteger(), nullable=True),
+        sa.Column("result_scene_id", sa.BigInteger(), nullable=True),
+        sa.Column("result_action_id", sa.BigInteger(), nullable=True),
         sa.Column(
             "result_ref_json", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'"), nullable=False
         ),
@@ -732,9 +773,17 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.CheckConstraint(
+            "disposition IN ('ready','waiting','permission_required','unavailable','executing','done','failed','cancelled','unknown')",
+            name=op.f("ck_life_steps_step_disposition"),
+        ),
+        sa.CheckConstraint(
+            "reading_result_json IS NULL OR kind = 'content.read'", name=op.f("ck_life_steps_reading_result_kind")
+        ),
+        sa.CheckConstraint(
             "state IN ('planned', 'running', 'completed', 'failed', 'cancelled', 'unknown')",
             name=op.f("ck_life_steps_step_state"),
         ),
+        sa.CheckConstraint("attempts >= 0", name=op.f("ck_life_steps_step_attempts")),
         sa.PrimaryKeyConstraint("id", name=op.f("life_steps_pkey")),
         sa.UniqueConstraint("user_id", "id", name="uq_life_steps_owner_id"),
         sa.UniqueConstraint("user_id", "idempotency_key", name="uq_life_steps_user_idempotency"),
@@ -1378,6 +1427,8 @@ def upgrade() -> None:
     )
     op.create_table(
         "visual_presentations",
+        sa.Column("pending_static_json", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
+        sa.Column("current_static_json", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
         sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("current_version_id", sa.BigInteger(), nullable=True),
         sa.Column("loop_version_id", sa.BigInteger(), nullable=True),
@@ -1469,6 +1520,366 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name=op.f("ws_events_pkey")),
         sa.UniqueConstraint("user_id", "id", name="uq_ws_events_owner_id"),
         sa.UniqueConstraint("user_id", "source_key", name="uq_ws_events_source"),
+    )
+    op.create_table(
+        "outfit_creation_jobs",
+        sa.Column("id", sa.BigInteger(), nullable=False),
+        sa.Column("owner_id", sa.BigInteger(), nullable=False),
+        sa.Column("description", sa.Text(), nullable=False),
+        sa.Column("result_outfit_id", sa.BigInteger(), nullable=True),
+        sa.PrimaryKeyConstraint("id", name=op.f("outfit_creation_jobs_pkey")),
+        sa.UniqueConstraint("owner_id", "id", name="uq_outfit_creation_jobs_owner_id"),
+    )
+    op.create_table(
+        "life_action_admissions",
+        sa.Column("user_id", sa.BigInteger(), nullable=False),
+        sa.Column("request_id", sa.String(length=160), nullable=False),
+        sa.Column("capability", sa.String(length=32), nullable=False),
+        sa.Column("budget_date", sa.Date(), nullable=False),
+        sa.Column("is_creation", sa.Boolean(), nullable=False),
+        sa.Column("submitted", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
+        sa.Column("admitted_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
+        sa.Column(
+            "source_key", sa.String(length=36), server_default=sa.text("(gen_random_uuid())::text"), nullable=False
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("life_action_admissions_pkey")),
+        sa.UniqueConstraint("user_id", "id", name="uq_life_action_admissions_owner_id"),
+        sa.UniqueConstraint("user_id", "request_id", name="uq_life_admission_request"),
+        sa.UniqueConstraint("user_id", "source_key", name="uq_life_action_admissions_source"),
+    )
+    op.create_foreign_key(
+        op.f("life_action_admissions_user_id_fkey"),
+        "life_action_admissions",
+        "users",
+        ["user_id"],
+        ["id"],
+        ondelete="CASCADE",
+    )
+    op.create_index("ix_life_admission_budget", "life_action_admissions", ["user_id", "budget_date"], unique=False)
+    op.create_foreign_key(
+        "fk_life_event_result_version",
+        "life_events",
+        "visual_versions",
+        ["result_visual_id", "result_visual_version_id"],
+        ["visual_id", "id"],
+        ondelete="SET NULL",
+        initially="DEFERRED",
+        deferrable=True,
+        match="FULL",
+    )
+    op.create_foreign_key(
+        "fk_life_events_pursuit_id_owner",
+        "life_events",
+        "life_pursuits",
+        ["user_id", "pursuit_id"],
+        ["user_id", "id"],
+        ondelete="SET NULL (pursuit_id)",
+    )
+    op.create_foreign_key(
+        "fk_life_events_result_action_id_owner",
+        "life_events",
+        "action_definitions",
+        ["user_id", "result_action_id"],
+        ["user_id", "id"],
+        ondelete="SET NULL (result_action_id)",
+    )
+    op.create_foreign_key(
+        "fk_life_events_result_entry_id_owner",
+        "life_events",
+        "companion_entries",
+        ["user_id", "result_entry_id"],
+        ["user_id", "id"],
+        ondelete="SET NULL (result_entry_id)",
+    )
+    op.create_foreign_key(
+        "fk_life_events_result_job_id_owner",
+        "life_events",
+        "jobs",
+        ["user_id", "result_job_id"],
+        ["user_id", "id"],
+        ondelete="SET NULL (result_job_id)",
+    )
+    op.create_foreign_key(
+        "fk_life_events_result_outfit_id_owner",
+        "life_events",
+        "companion_outfits",
+        ["user_id", "result_outfit_id"],
+        ["user_id", "id"],
+        ondelete="SET NULL (result_outfit_id)",
+    )
+    op.create_foreign_key(
+        "fk_life_events_result_scene_id_owner",
+        "life_events",
+        "companion_scenes",
+        ["user_id", "result_scene_id"],
+        ["user_id", "id"],
+        ondelete="SET NULL (result_scene_id)",
+    )
+    op.create_foreign_key(
+        "fk_life_events_result_visual_id_owner",
+        "life_events",
+        "visual_items",
+        ["user_id", "result_visual_id"],
+        ["user_id", "id"],
+        ondelete="NO ACTION",
+        initially="DEFERRED",
+        deferrable=True,
+    )
+    op.create_foreign_key(
+        "fk_life_events_result_visual_version_id_owner",
+        "life_events",
+        "visual_versions",
+        ["user_id", "result_visual_version_id"],
+        ["user_id", "id"],
+        ondelete="NO ACTION",
+        initially="DEFERRED",
+        deferrable=True,
+    )
+    op.create_foreign_key(
+        "fk_life_events_step_id_owner",
+        "life_events",
+        "life_steps",
+        ["user_id", "step_id"],
+        ["user_id", "id"],
+        ondelete="SET NULL (step_id)",
+    )
+    op.create_foreign_key(
+        op.f("life_events_user_id_fkey"), "life_events", "users", ["user_id"], ["id"], ondelete="CASCADE"
+    )
+    op.create_index(op.f("ix_life_events_occurred_at"), "life_events", ["occurred_at"], unique=False)
+    op.create_index(op.f("ix_life_events_pursuit_id"), "life_events", ["pursuit_id"], unique=False)
+    op.create_index(
+        "ix_life_events_pursuit_occurred",
+        "life_events",
+        ["user_id", "pursuit_id", sa.literal_column("occurred_at DESC"), sa.literal_column("id DESC")],
+        unique=False,
+    )
+    op.create_index(op.f("ix_life_events_step_id"), "life_events", ["step_id"], unique=False)
+    op.create_index(op.f("ix_life_events_user_id"), "life_events", ["user_id"], unique=False)
+    op.create_index("ix_life_events_user_kind", "life_events", ["user_id", "kind"], unique=False)
+    op.create_index(
+        "ix_life_events_user_occurred",
+        "life_events",
+        ["user_id", sa.literal_column("occurred_at DESC"), sa.literal_column("id DESC")],
+        unique=False,
+    )
+    op.create_foreign_key(
+        "fk_life_pursuits_previous_pursuit_id_owner",
+        "life_pursuits",
+        "life_pursuits",
+        ["user_id", "previous_pursuit_id"],
+        ["user_id", "id"],
+        ondelete="SET NULL (previous_pursuit_id)",
+    )
+    op.create_foreign_key(
+        op.f("life_pursuits_user_id_fkey"), "life_pursuits", "users", ["user_id"], ["id"], ondelete="CASCADE"
+    )
+    op.create_index(op.f("ix_life_pursuits_status"), "life_pursuits", ["status"], unique=False)
+    op.create_index(op.f("ix_life_pursuits_user_id"), "life_pursuits", ["user_id"], unique=False)
+    op.create_index(
+        "ix_life_pursuits_user_status",
+        "life_pursuits",
+        ["user_id", "status", sa.literal_column("updated_at DESC"), sa.literal_column("id DESC")],
+        unique=False,
+    )
+    op.create_index(
+        "ix_life_pursuits_user_updated",
+        "life_pursuits",
+        ["user_id", sa.literal_column("updated_at DESC"), sa.literal_column("id DESC")],
+        unique=False,
+    )
+    op.create_foreign_key(
+        "fk_life_states_active_pursuit_id_owner",
+        "life_states",
+        "life_pursuits",
+        ["user_id", "active_pursuit_id"],
+        ["user_id", "id"],
+        ondelete="SET NULL (active_pursuit_id)",
+    )
+    op.create_foreign_key(
+        "fk_life_states_activity_step_id_owner",
+        "life_states",
+        "life_steps",
+        ["user_id", "activity_step_id"],
+        ["user_id", "id"],
+        ondelete="SET NULL (activity_step_id)",
+    )
+    op.create_foreign_key(
+        op.f("life_states_user_id_fkey"), "life_states", "users", ["user_id"], ["id"], ondelete="CASCADE"
+    )
+    op.create_index(op.f("ix_life_states_active_pursuit_id"), "life_states", ["active_pursuit_id"], unique=False)
+    op.create_index(op.f("ix_life_states_next_review_at"), "life_states", ["next_review_at"], unique=False)
+    op.create_foreign_key(
+        "fk_life_step_result_version",
+        "life_steps",
+        "visual_versions",
+        ["result_visual_id", "result_visual_version_id"],
+        ["visual_id", "id"],
+        ondelete="SET NULL",
+        initially="DEFERRED",
+        deferrable=True,
+        match="FULL",
+    )
+    op.create_foreign_key(
+        "fk_life_steps_business_action_id_owner",
+        "life_steps",
+        "action_definitions",
+        ["user_id", "business_action_id"],
+        ["user_id", "id"],
+        ondelete="SET NULL (business_action_id)",
+    )
+    op.create_foreign_key(
+        "fk_life_steps_job_id_owner",
+        "life_steps",
+        "jobs",
+        ["user_id", "job_id"],
+        ["user_id", "id"],
+        ondelete="SET NULL (job_id)",
+    )
+    op.create_foreign_key(
+        "fk_life_steps_pursuit_id_owner",
+        "life_steps",
+        "life_pursuits",
+        ["user_id", "pursuit_id"],
+        ["user_id", "id"],
+        ondelete="SET NULL (pursuit_id)",
+    )
+    op.create_foreign_key(
+        "fk_life_steps_result_action_id_owner",
+        "life_steps",
+        "action_definitions",
+        ["user_id", "result_action_id"],
+        ["user_id", "id"],
+        ondelete="SET NULL (result_action_id)",
+    )
+    op.create_foreign_key(
+        "fk_life_steps_result_entry_id_owner",
+        "life_steps",
+        "companion_entries",
+        ["user_id", "result_entry_id"],
+        ["user_id", "id"],
+        ondelete="SET NULL (result_entry_id)",
+    )
+    op.create_foreign_key(
+        "fk_life_steps_result_job_id_owner",
+        "life_steps",
+        "jobs",
+        ["user_id", "result_job_id"],
+        ["user_id", "id"],
+        ondelete="SET NULL (result_job_id)",
+    )
+    op.create_foreign_key(
+        "fk_life_steps_result_outfit_id_owner",
+        "life_steps",
+        "companion_outfits",
+        ["user_id", "result_outfit_id"],
+        ["user_id", "id"],
+        ondelete="SET NULL (result_outfit_id)",
+    )
+    op.create_foreign_key(
+        "fk_life_steps_result_scene_id_owner",
+        "life_steps",
+        "companion_scenes",
+        ["user_id", "result_scene_id"],
+        ["user_id", "id"],
+        ondelete="SET NULL (result_scene_id)",
+    )
+    op.create_foreign_key(
+        "fk_life_steps_result_visual_id_owner",
+        "life_steps",
+        "visual_items",
+        ["user_id", "result_visual_id"],
+        ["user_id", "id"],
+        ondelete="NO ACTION",
+        initially="DEFERRED",
+        deferrable=True,
+    )
+    op.create_foreign_key(
+        "fk_life_steps_result_visual_version_id_owner",
+        "life_steps",
+        "visual_versions",
+        ["user_id", "result_visual_version_id"],
+        ["user_id", "id"],
+        ondelete="NO ACTION",
+        initially="DEFERRED",
+        deferrable=True,
+    )
+    op.create_foreign_key(
+        op.f("life_steps_user_id_fkey"), "life_steps", "users", ["user_id"], ["id"], ondelete="CASCADE"
+    )
+    op.create_index("ix_life_steps_budget", "life_steps", ["user_id", "budget_date"], unique=False)
+    op.create_index("ix_life_steps_due", "life_steps", ["state", "not_before", "user_id"], unique=False)
+    op.create_index(op.f("ix_life_steps_job_id"), "life_steps", ["job_id"], unique=False)
+    op.create_index(op.f("ix_life_steps_pursuit_id"), "life_steps", ["pursuit_id"], unique=False)
+    op.create_index(op.f("ix_life_steps_state"), "life_steps", ["state"], unique=False)
+    op.create_index(op.f("ix_life_steps_user_id"), "life_steps", ["user_id"], unique=False)
+    op.create_index("ix_life_steps_user_state", "life_steps", ["user_id", "state"], unique=False)
+    op.create_foreign_key(
+        "fk_outfit_creation_jobs_id_owner",
+        "outfit_creation_jobs",
+        "jobs",
+        ["owner_id", "id"],
+        ["user_id", "id"],
+        ondelete="CASCADE",
+    )
+    op.create_foreign_key(
+        "fk_outfit_creation_jobs_result_outfit_id_owner",
+        "outfit_creation_jobs",
+        "companion_outfits",
+        ["owner_id", "result_outfit_id"],
+        ["user_id", "id"],
+        ondelete="SET NULL (result_outfit_id)",
+    )
+    op.create_foreign_key(
+        "fk_presentation_current_pair",
+        "visual_presentations",
+        "visual_versions",
+        ["current_visual_id", "current_version_id"],
+        ["visual_id", "id"],
+        ondelete="SET NULL",
+        initially="DEFERRED",
+        deferrable=True,
+        match="FULL",
+    )
+    op.create_foreign_key(
+        "fk_presentation_loop_pair",
+        "visual_presentations",
+        "visual_versions",
+        ["loop_visual_id", "loop_version_id"],
+        ["visual_id", "id"],
+        ondelete="SET NULL",
+        initially="DEFERRED",
+        deferrable=True,
+        match="FULL",
+    )
+    op.create_foreign_key(
+        "fk_visual_presentations_current_visual_id_owner",
+        "visual_presentations",
+        "visual_items",
+        ["user_id", "current_visual_id"],
+        ["user_id", "id"],
+        ondelete="NO ACTION",
+        initially="DEFERRED",
+        deferrable=True,
+    )
+    op.create_foreign_key(
+        "fk_visual_presentations_loop_visual_id_owner",
+        "visual_presentations",
+        "visual_items",
+        ["user_id", "loop_visual_id"],
+        ["user_id", "id"],
+        ondelete="NO ACTION",
+        initially="DEFERRED",
+        deferrable=True,
+    )
+    op.create_foreign_key(
+        op.f("visual_presentations_user_id_fkey"),
+        "visual_presentations",
+        "users",
+        ["user_id"],
+        ["id"],
+        ondelete="CASCADE",
     )
     op.create_foreign_key(
         op.f("action_definitions_user_id_fkey"), "action_definitions", "users", ["user_id"], ["id"], ondelete="CASCADE"
@@ -1846,152 +2257,6 @@ def upgrade() -> None:
         op.f("job_requests_user_id_fkey"), "job_requests", "users", ["user_id"], ["id"], ondelete="CASCADE"
     )
     op.create_foreign_key(op.f("jobs_user_id_fkey"), "jobs", "users", ["user_id"], ["id"], ondelete="CASCADE")
-    op.create_foreign_key(
-        "fk_life_event_result_version",
-        "life_events",
-        "visual_versions",
-        ["result_visual_id", "result_visual_version_id"],
-        ["visual_id", "id"],
-        ondelete="SET NULL",
-        initially="DEFERRED",
-        deferrable=True,
-        match="FULL",
-    )
-    op.create_foreign_key(
-        "fk_life_events_pursuit_id_owner",
-        "life_events",
-        "life_pursuits",
-        ["user_id", "pursuit_id"],
-        ["user_id", "id"],
-        ondelete="SET NULL (pursuit_id)",
-    )
-    op.create_foreign_key(
-        "fk_life_events_result_entry_id_owner",
-        "life_events",
-        "companion_entries",
-        ["user_id", "result_entry_id"],
-        ["user_id", "id"],
-        ondelete="SET NULL (result_entry_id)",
-    )
-    op.create_foreign_key(
-        "fk_life_events_result_job_id_owner",
-        "life_events",
-        "jobs",
-        ["user_id", "result_job_id"],
-        ["user_id", "id"],
-        ondelete="SET NULL (result_job_id)",
-    )
-    op.create_foreign_key(
-        "fk_life_events_result_visual_id_owner",
-        "life_events",
-        "visual_items",
-        ["user_id", "result_visual_id"],
-        ["user_id", "id"],
-        ondelete="NO ACTION",
-        initially="DEFERRED",
-        deferrable=True,
-    )
-    op.create_foreign_key(
-        "fk_life_events_result_visual_version_id_owner",
-        "life_events",
-        "visual_versions",
-        ["user_id", "result_visual_version_id"],
-        ["user_id", "id"],
-        ondelete="NO ACTION",
-        initially="DEFERRED",
-        deferrable=True,
-    )
-    op.create_foreign_key(
-        "fk_life_events_step_id_owner",
-        "life_events",
-        "life_steps",
-        ["user_id", "step_id"],
-        ["user_id", "id"],
-        ondelete="SET NULL (step_id)",
-    )
-    op.create_foreign_key(
-        op.f("life_events_user_id_fkey"), "life_events", "users", ["user_id"], ["id"], ondelete="CASCADE"
-    )
-    op.create_foreign_key(
-        op.f("life_pursuits_user_id_fkey"), "life_pursuits", "users", ["user_id"], ["id"], ondelete="CASCADE"
-    )
-    op.create_foreign_key(
-        "fk_life_states_active_pursuit_id_owner",
-        "life_states",
-        "life_pursuits",
-        ["user_id", "active_pursuit_id"],
-        ["user_id", "id"],
-        ondelete="SET NULL (active_pursuit_id)",
-    )
-    op.create_foreign_key(
-        op.f("life_states_user_id_fkey"), "life_states", "users", ["user_id"], ["id"], ondelete="CASCADE"
-    )
-    op.create_foreign_key(
-        "fk_life_step_result_version",
-        "life_steps",
-        "visual_versions",
-        ["result_visual_id", "result_visual_version_id"],
-        ["visual_id", "id"],
-        ondelete="SET NULL",
-        initially="DEFERRED",
-        deferrable=True,
-        match="FULL",
-    )
-    op.create_foreign_key(
-        "fk_life_steps_job_id_owner",
-        "life_steps",
-        "jobs",
-        ["user_id", "job_id"],
-        ["user_id", "id"],
-        ondelete="SET NULL (job_id)",
-    )
-    op.create_foreign_key(
-        "fk_life_steps_pursuit_id_owner",
-        "life_steps",
-        "life_pursuits",
-        ["user_id", "pursuit_id"],
-        ["user_id", "id"],
-        ondelete="SET NULL (pursuit_id)",
-    )
-    op.create_foreign_key(
-        "fk_life_steps_result_entry_id_owner",
-        "life_steps",
-        "companion_entries",
-        ["user_id", "result_entry_id"],
-        ["user_id", "id"],
-        ondelete="SET NULL (result_entry_id)",
-    )
-    op.create_foreign_key(
-        "fk_life_steps_result_job_id_owner",
-        "life_steps",
-        "jobs",
-        ["user_id", "result_job_id"],
-        ["user_id", "id"],
-        ondelete="SET NULL (result_job_id)",
-    )
-    op.create_foreign_key(
-        "fk_life_steps_result_visual_id_owner",
-        "life_steps",
-        "visual_items",
-        ["user_id", "result_visual_id"],
-        ["user_id", "id"],
-        ondelete="NO ACTION",
-        initially="DEFERRED",
-        deferrable=True,
-    )
-    op.create_foreign_key(
-        "fk_life_steps_result_visual_version_id_owner",
-        "life_steps",
-        "visual_versions",
-        ["user_id", "result_visual_version_id"],
-        ["user_id", "id"],
-        ondelete="NO ACTION",
-        initially="DEFERRED",
-        deferrable=True,
-    )
-    op.create_foreign_key(
-        op.f("life_steps_user_id_fkey"), "life_steps", "users", ["user_id"], ["id"], ondelete="CASCADE"
-    )
     op.create_foreign_key(
         op.f("login_records_user_id_fkey"), "login_records", "users", ["user_id"], ["id"], ondelete="CASCADE"
     )
@@ -2461,56 +2726,6 @@ def upgrade() -> None:
         op.f("visual_playbacks_user_id_fkey"), "visual_playbacks", "users", ["user_id"], ["id"], ondelete="CASCADE"
     )
     op.create_foreign_key(
-        "fk_presentation_current_pair",
-        "visual_presentations",
-        "visual_versions",
-        ["current_visual_id", "current_version_id"],
-        ["visual_id", "id"],
-        ondelete="SET NULL",
-        initially="DEFERRED",
-        deferrable=True,
-        match="FULL",
-    )
-    op.create_foreign_key(
-        "fk_presentation_loop_pair",
-        "visual_presentations",
-        "visual_versions",
-        ["loop_visual_id", "loop_version_id"],
-        ["visual_id", "id"],
-        ondelete="SET NULL",
-        initially="DEFERRED",
-        deferrable=True,
-        match="FULL",
-    )
-    op.create_foreign_key(
-        "fk_visual_presentations_current_visual_id_owner",
-        "visual_presentations",
-        "visual_items",
-        ["user_id", "current_visual_id"],
-        ["user_id", "id"],
-        ondelete="NO ACTION",
-        initially="DEFERRED",
-        deferrable=True,
-    )
-    op.create_foreign_key(
-        "fk_visual_presentations_loop_visual_id_owner",
-        "visual_presentations",
-        "visual_items",
-        ["user_id", "loop_visual_id"],
-        ["user_id", "id"],
-        ondelete="NO ACTION",
-        initially="DEFERRED",
-        deferrable=True,
-    )
-    op.create_foreign_key(
-        op.f("visual_presentations_user_id_fkey"),
-        "visual_presentations",
-        "users",
-        ["user_id"],
-        ["id"],
-        ondelete="CASCADE",
-    )
-    op.create_foreign_key(
         "fk_visual_version_assets_asset_id_owner",
         "visual_version_assets",
         "assets",
@@ -2722,44 +2937,6 @@ def upgrade() -> None:
     op.create_index("ix_jobs_recovery", "jobs", ["kind", "state", "not_before"], unique=False)
     op.create_index(op.f("ix_jobs_user_id"), "jobs", ["user_id"], unique=False)
     op.create_index("ix_jobs_user_state_id", "jobs", ["user_id", "state", "id"], unique=False)
-    op.create_index(op.f("ix_life_events_occurred_at"), "life_events", ["occurred_at"], unique=False)
-    op.create_index(op.f("ix_life_events_pursuit_id"), "life_events", ["pursuit_id"], unique=False)
-    op.create_index(
-        "ix_life_events_pursuit_occurred",
-        "life_events",
-        ["user_id", "pursuit_id", sa.literal_column("occurred_at DESC"), sa.literal_column("id DESC")],
-        unique=False,
-    )
-    op.create_index(op.f("ix_life_events_step_id"), "life_events", ["step_id"], unique=False)
-    op.create_index(op.f("ix_life_events_user_id"), "life_events", ["user_id"], unique=False)
-    op.create_index("ix_life_events_user_kind", "life_events", ["user_id", "kind"], unique=False)
-    op.create_index(
-        "ix_life_events_user_occurred",
-        "life_events",
-        ["user_id", sa.literal_column("occurred_at DESC"), sa.literal_column("id DESC")],
-        unique=False,
-    )
-    op.create_index(op.f("ix_life_pursuits_status"), "life_pursuits", ["status"], unique=False)
-    op.create_index(op.f("ix_life_pursuits_user_id"), "life_pursuits", ["user_id"], unique=False)
-    op.create_index(
-        "ix_life_pursuits_user_status",
-        "life_pursuits",
-        ["user_id", "status", sa.literal_column("updated_at DESC"), sa.literal_column("id DESC")],
-        unique=False,
-    )
-    op.create_index(
-        "ix_life_pursuits_user_updated",
-        "life_pursuits",
-        ["user_id", sa.literal_column("updated_at DESC"), sa.literal_column("id DESC")],
-        unique=False,
-    )
-    op.create_index(op.f("ix_life_states_active_pursuit_id"), "life_states", ["active_pursuit_id"], unique=False)
-    op.create_index(op.f("ix_life_states_next_review_at"), "life_states", ["next_review_at"], unique=False)
-    op.create_index(op.f("ix_life_steps_job_id"), "life_steps", ["job_id"], unique=False)
-    op.create_index(op.f("ix_life_steps_pursuit_id"), "life_steps", ["pursuit_id"], unique=False)
-    op.create_index(op.f("ix_life_steps_state"), "life_steps", ["state"], unique=False)
-    op.create_index(op.f("ix_life_steps_user_id"), "life_steps", ["user_id"], unique=False)
-    op.create_index("ix_life_steps_user_state", "life_steps", ["user_id", "state"], unique=False)
     op.create_index(op.f("ix_login_records_is_active"), "login_records", ["is_active"], unique=False)
     op.create_index(op.f("ix_login_records_login_at"), "login_records", ["login_at"], unique=False)
     op.create_index(op.f("ix_login_records_user_id"), "login_records", ["user_id"], unique=False)
@@ -2938,6 +3115,18 @@ FOR EACH STATEMENT EXECUTE FUNCTION notify_ws_event();
 
 
 def downgrade() -> None:
+    op.drop_constraint(op.f("life_action_admissions_user_id_fkey"), "life_action_admissions", type_="foreignkey")
+    op.drop_constraint("fk_life_events_result_action_id_owner", "life_events", type_="foreignkey")
+    op.drop_constraint("fk_life_events_result_scene_id_owner", "life_events", type_="foreignkey")
+    op.drop_constraint("fk_life_events_result_outfit_id_owner", "life_events", type_="foreignkey")
+    op.drop_constraint("fk_life_pursuits_previous_pursuit_id_owner", "life_pursuits", type_="foreignkey")
+    op.drop_constraint("fk_life_states_activity_step_id_owner", "life_states", type_="foreignkey")
+    op.drop_constraint("fk_life_steps_result_outfit_id_owner", "life_steps", type_="foreignkey")
+    op.drop_constraint("fk_life_steps_business_action_id_owner", "life_steps", type_="foreignkey")
+    op.drop_constraint("fk_life_steps_result_action_id_owner", "life_steps", type_="foreignkey")
+    op.drop_constraint("fk_life_steps_result_scene_id_owner", "life_steps", type_="foreignkey")
+    op.drop_constraint("fk_outfit_creation_jobs_result_outfit_id_owner", "outfit_creation_jobs", type_="foreignkey")
+    op.drop_constraint("fk_outfit_creation_jobs_id_owner", "outfit_creation_jobs", type_="foreignkey")
     op.execute("DROP TRIGGER IF EXISTS ws_event_notify_trigger ON ws_events")
     op.execute("DROP FUNCTION IF EXISTS notify_ws_event()")
     op.execute("DROP TRIGGER IF EXISTS messages_statistics_insert ON messages")
@@ -3123,6 +3312,8 @@ def downgrade() -> None:
     op.drop_constraint("fk_appearance_assets_candidate_id_owner", "appearance_assets", type_="foreignkey")
     op.drop_constraint("fk_appearance_assets_outfit_id_owner", "appearance_assets", type_="foreignkey")
     op.drop_constraint(op.f("action_definitions_user_id_fkey"), "action_definitions", type_="foreignkey")
+    op.drop_table("life_action_admissions")
+    op.drop_table("outfit_creation_jobs")
     op.drop_table("ws_events")
     op.drop_table("visual_versions")
     op.drop_table("visual_version_assets")

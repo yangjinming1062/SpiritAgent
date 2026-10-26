@@ -16,15 +16,20 @@ from features.media.contracts import RemovedVideoTask
 
 from .models import VisualItem, VisualJob, VisualPlayback, VisualPresentation, VisualVersion, VisualVersionAsset
 from .repository import version_view, visual_progress
-from .schemas import ComboSnapshot, parse_job_progress
+from .schemas import ComboSnapshot, StaticPresentation, parse_job_progress
 
 
 def _prepare_presentation(raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
     payload["pending_command_json"] = None
+    payload["pending_static_json"] = None
+    if payload["current_static_json"]:
+        payload["current_static_json"] = StaticPresentation.model_validate(payload["current_static_json"]).model_dump(
+            mode="json"
+        )
     payload["current_snapshot_json"] = None
     payload["loop_snapshot_json"] = None
-    payload["state_revision"] = payload.get("state_revision", 0) + 1
-    payload["presentation_epoch"] = payload.get("presentation_epoch", 0) + 1
+    payload["state_revision"] += 1
+    payload["presentation_epoch"] += 1
 
 
 def _prepare_playback(raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
@@ -140,6 +145,26 @@ async def _restore_presentation_snapshots(
     db: AsyncSession, rows: dict[str, list[dict[str, Any]]], context: BackupContext
 ) -> None:
     states = list(await db.scalars(select(VisualPresentation).where(VisualPresentation.user_id == context.user_id)))
+    for state in states:
+        if state.current_static_json:
+            static = StaticPresentation.model_validate(context.rewriter.rewrite(deepcopy(state.current_static_json)))
+            state.current_static_json = static.model_copy(
+                update={
+                    "outfit": static.outfit.model_copy(
+                        update={"material_id": _mapped(context, "companion_outfits", static.outfit.material_id)}
+                    )
+                    if static.outfit
+                    else None,
+                    "scene": static.scene.model_copy(
+                        update={"material_id": _mapped(context, "companion_scenes", static.scene.material_id)}
+                    )
+                    if static.scene
+                    else None,
+                    "presentation_epoch": state.presentation_epoch,
+                    "state_revision": state.state_revision,
+                    "receipt_kind": None,
+                }
+            ).model_dump(mode="json")
     version_ids = {
         value for row in states for value in (row.current_version_id, row.loop_version_id) if value is not None
     }

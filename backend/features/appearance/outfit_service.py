@@ -51,7 +51,8 @@ from features.appearance.character_card import (
     render_character_identity,
     require_character_snapshot,
 )
-from features.appearance.models import AvatarAsset, CompanionOutfit, OutfitSource
+from features.appearance.models import AvatarAsset, CompanionOutfit, OutfitCreationJob, OutfitSource
+from features.appearance.outfit_progress import read_outfit_progress, save_outfit_progress
 from features.appearance.prompt_assembly import build_image_edit_prompt, build_outfit_prompt, describe_garment_image
 from features.appearance.prompts import EDIT_PRESERVE_OUTFIT, OUTFIT_DESCRIBE_SYSTEM
 from features.appearance.response_builders import outfit_response
@@ -65,7 +66,12 @@ from features.companion.persona_service import load_persona_definition
 from features.companion.policy_contracts import OUTFIT_POLICY_DEFAULT
 from features.companion.visual_state import change_outfit_policy, ensure_persona_snapshot, persona_snapshot
 from features.configuration.settings.values import get_user_setting
-from features.media.character_images import ImageChainState, generate_character_images, image_asset_bytes
+from features.media.character_images import (
+    ImageChainState,
+    ImageProgressWriter,
+    generate_character_images,
+    image_asset_bytes,
+)
 from features.media.identity_contracts import CharacterCardSnapshot
 from features.media.image_generation import ImageGenerationError
 
@@ -278,9 +284,11 @@ async def _generate_outfit_fullbody(
     outfit_id: int,
     image_edit: bool = False,
     selection: ProviderSelection | None = None,
+    image_state: ImageChainState | None = None,
+    save_progress: ImageProgressWriter | None = None,
 ) -> tuple[str, GenerationOrigin | None]:
     async def generate(text: str) -> tuple[list[str], GenerationOrigin | None]:
-        state = ImageChainState()
+        state = image_state if image_state is not None else ImageChainState()
         paths = await generate_character_images(
             text,
             user_id=user_id,
@@ -294,6 +302,7 @@ async def _generate_outfit_fullbody(
             task=AiTaskKey.outfit,
             state=state,
             selection=selection,
+            save_progress=save_progress,
         )
         return paths, state.selected_origin()
 
@@ -317,8 +326,9 @@ async def _generate_outfit_fullbody(
     except OSError as exc:
         raise AvatarGenerationError("生成结果保存失败，请稍后重试", internal=f"{type(exc).__name__}: {exc}") from exc
     finally:
-        for path in paths:
-            await asyncio.to_thread(unlink_companion_asset, path)
+        if save_progress is None:
+            for path in paths:
+                await asyncio.to_thread(unlink_companion_asset, path)
 
 
 async def _outfit_requirement(user_id: int, source: OutfitSource) -> str:
@@ -443,18 +453,41 @@ async def create_outfit_draft(
     description: str | None,
     image: bytes | None = None,
     content_type: str | None = None,
+    job_id: int | None = None,
 ) -> CompanionOutfit:
     """根据文字与可选服装参考图创建外观草稿。"""
     effective_description = _new_outfit_description(description, image)
+
+    progress = await read_outfit_progress(user_id, job_id) if job_id is not None else {}
+    if progress.get("outfit_id"):
+        existing = await _get_outfit(db, user_id, int(progress["outfit_id"]))
+        if existing is not None:
+            return existing
 
     context = await _outfit_generation_context(db, user_id)
     avatar, _, identity, _ = context
     identity_uri = await _require_fullbody_seed_readable(avatar)
     # 先领取序列值；生成等待不持有事务，也不暴露尚无图片的空草稿。
-    outfit_id = await db.scalar(select(func.nextval(func.pg_get_serial_sequence("companion_outfits", "id"))))
+    outfit_id = progress.get("outfit_id") or await db.scalar(
+        select(func.nextval(func.pg_get_serial_sequence("companion_outfits", "id")))
+    )
     if outfit_id is None:
         raise OutfitStateError("外观编号分配失败")
     await commit_appearance(db, user_id)
+    if job_id is not None:
+        if (
+            progress.get("identity_revision", identity.revision) != identity.revision
+            or progress.get("identity_path", avatar.seed_fullbody_url) != avatar.seed_fullbody_url
+        ):
+            raise OutfitStateError("角色身份已变化，不能继续原制作")
+        await save_outfit_progress(
+            user_id,
+            job_id,
+            outfit_id=outfit_id,
+            identity_revision=identity.revision,
+            identity_path=avatar.seed_fullbody_url,
+            paths={avatar.seed_fullbody_url},
+        )
     await _require_outfit_matting(user_id)
 
     source = OutfitSource(
@@ -470,6 +503,13 @@ async def create_outfit_draft(
         image=image,
         content_type=content_type,
     )
+
+    async def save_image(state: ImageChainState) -> None:
+        if job_id is not None:
+            await save_outfit_progress(
+                user_id, job_id, image_chain=state.model_dump(mode="json"), paths=state.stored_paths()
+            )
+
     draft_url, origin = await _generate_outfit_fullbody(
         user_id,
         prompt=prompt,
@@ -477,6 +517,8 @@ async def create_outfit_draft(
         identity_reference=identity_uri,
         identity=identity,
         outfit_id=outfit_id,
+        image_state=ImageChainState.model_validate(progress.get("image_chain", {})) if job_id is not None else None,
+        save_progress=save_image if job_id is not None else None,
     )
 
     source.generation_origin = origin
@@ -502,6 +544,12 @@ async def create_outfit_draft(
                 source_json=source.dump(),
             )
             db.add(outfit)
+            if job_id is not None:
+                await db.flush()
+                creation = await db.get(OutfitCreationJob, job_id)
+                if creation is None or creation.user_id != user_id:
+                    raise OutfitStateError("原造型制作任务已失效")
+                creation.result_outfit_id = outfit.id
             await commit_appearance(db, user_id)
     except BaseException:
         await db.rollback()
@@ -644,6 +692,9 @@ async def confirm_outfit(
                 raise OutfitStateError("全身形象已变化，请重新生成外观后再确认")
             outfit.fullbody_url = persisted or original_url
             outfit.status = "ready"
+            emit_ws_event(
+                db, user_id=user_id, event_type="companion.life.presentation_requested", payload={"force": True}
+            )
             emit_ws_event(
                 db,
                 user_id=user_id,

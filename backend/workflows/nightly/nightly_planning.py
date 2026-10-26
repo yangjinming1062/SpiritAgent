@@ -3,7 +3,6 @@
 import asyncio
 import json
 import re
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from functools import partial
@@ -12,34 +11,26 @@ from zoneinfo import ZoneInfo
 
 from features.accounts.queries import nightly_account
 from features.action_library.queries import list_actions
-from features.action_library.schemas import ActionAssetDesign
 from features.appearance.character_card import load_character_snapshot
-from features.appearance.nightly import create_and_confirm_outfit, get_outfit, list_outfits
+from features.appearance.nightly import list_outfits
 from features.automation.cron_jobs import create_job, remove_job
 from features.companion.planning_queries import PersonaPlanningSnapshot, planning_persona
 from features.configuration.settings.values import load_user_settings
 from features.entries.queries import post_summaries
+from features.life.actions import LIFE_ACTION, NextAction
 from features.life.context import read_life_context_in_session
-from features.life.use_cases import read_state
+from features.life.execution import claim_step, finish_step, mark_step_submitted, reserve_external_action
+from features.life.use_cases import read_step, step_for_request
 from features.media.identity_rendering import render_character_appearance
 from features.media.image_generation import resolve_image_gen_chain
 from features.memory.contracts import MemoryListItem
-from features.scenes.nightly import (
-    SceneSnapshot,
-    find_pending_scene_id,
-    planning_scene,
-    ready_scenes,
-    scene_snapshot,
-    schedule_nightly_scene,
-)
-from features.scenes.service import resume_scene_generation
+from features.scenes.queries import get_scene_state, scene_environment
 from features.visuals.queries import presentation_state
-from features.visuals.repository import VisualStateError
 from infrastructure.ai.llm_client import resolve_provider_chain
 from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, LlmJsonValidationError, call_llm_json
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import load_user_llm_config
-from infrastructure.api_ids import ResourceId
+from infrastructure.api_ids import ResourceId, parse_resource_id
 from infrastructure.config import SETTINGS
 from infrastructure.constants import NIGHTLY_REASONING_EFFORT
 from infrastructure.database import SESSION_LOCAL
@@ -52,30 +43,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from workflows.companion_action_prompts import ACTION_DESIGN_MOTION_DESCRIPTION
 from workflows.companion_actions import build_action_view
+from workflows.life_execution import submit_life_action
 from workflows.nightly.models import NightlyActivityAction, NightlyActivityLog
 from workflows.nightly.output_contracts import NightlyPlanOutput
 from workflows.nightly.prompts import (
-    NIGHTLY_FACT_TEXTS,
     NIGHTLY_JSON_REPAIR_TEXTS,
     OUTREACH_CONTEXT_TEMPLATES,
     PLANNING_SYSTEM_PROMPT,
 )
 from workflows.nightly.window import in_nightly_window, require_nightly_window
-from workflows.visuals_companion import ComboAssemblyError, design_action_reference, generate_visual_reference
 
 logger = get_logger(__name__)
 
 _POLL_SECONDS = 3.0
-ActionStatus = Literal["succeeded", "partial", "skipped", "blocked", "failed", "interrupted", "result_unknown"]
+ActionStatus = Literal["succeeded", "skipped", "blocked", "failed", "interrupted", "result_unknown"]
 _TERMINAL_ACTION_STATUSES = frozenset(
-    ("succeeded", "partial", "skipped", "blocked", "failed", "interrupted", "result_unknown"),
+    ("succeeded", "skipped", "blocked", "failed", "interrupted", "result_unknown"),
 )
-_SUCCESS_ACTION_STATUSES = frozenset(("succeeded", "partial"))
-# 在途动作记下这些子任务 id 后，进程重启可以核对原任务续跑而不重复付费。
-_PROGRESS_KEYS = {"outfit.create": "outfit_id", "scene.create": "scene_id"}
 _ACTION_ID_PATTERN = re.compile(r"[^a-zA-Z0-9_-]+")
-_MAX_ACTIONS = 8
-_MAX_PAID_ACTIONS = 4
 
 
 class NightlyCapability(BaseModel):
@@ -99,26 +84,9 @@ class DateContext(BaseModel):
     user_timezone: str
 
 
-class _ActionArgs(BaseModel):
-    """执行前校验规划参数：去除首尾空白后再核对长度与取值；不合规时整项失败，不截断或替换为默认值。"""
+class OutreachScheduleArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
-
-
-class OutfitCreateArgs(_ActionArgs):
-    description: str = Field(min_length=1, max_length=500)
-
-
-class SceneCreateArgs(_ActionArgs):
-    notes: str = Field(min_length=1)
-
-
-class VisualCreateArgs(_ActionArgs):
-    requirements: str = Field(min_length=1, max_length=2000)
-    media_kind: Literal["image", "video"] = "image"
-
-
-class OutreachScheduleArgs(_ActionArgs):
     name: str = Field(default="主动联系", max_length=100)
     # 规划给出用户本地时刻，时区换算由代码完成。
     local_time: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
@@ -263,11 +231,10 @@ class PlanningContext(BaseModel):
 
 @dataclass(frozen=True)
 class _ActionRun:
-    """单个账本动作的执行上下文；resume 为上次落账的进度，facts 为已成功动作的事实（执行中追加）。"""
+    """单个账本动作的执行上下文。"""
 
     user_id: int
     row_id: int
-    resume: dict[str, Any]
     context: PlanningContext
     date_context: DateContext
     facts: list[str]
@@ -289,8 +256,7 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
         phase=10,
         description="构思并生成一套新的穿着造型并保存；只在已有造型都不合适或有特殊节点时使用。",
         arguments={
-            "description": "string（非空，最多 500 字符）：完整的新造型设计，包括服装、配色及需要改变的发型、妆容或配饰；保持角色固定身份，不写场景或动作。",
-            "reason": "string（可选）：已有造型不能满足的需要，以及本次新建造型的依据。",
+            "description": "string（非空，最多 4000 字符）：完整的新造型设计，包括服装、配色及需要改变的发型、妆容或配饰；保持角色固定身份，不写场景或动作。",
         },
         exclusive_group="outfit",
         paid=True,
@@ -302,7 +268,6 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
         "不描绘你本人，其他人物、动物、肖像或雕像可以按环境需要出现；与造型相互独立，也不改动正在呈现的画面。",
         arguments={
             "notes": "string（非空）：环境的地点、陈设、光线与氛围，统一按真实拍摄的环境照片呈现，不写画风；不描绘你本人，其他人物、动物、肖像或雕像可按环境需要安排。",
-            "reason": "string（可选）：已有环境图片不合适、需要新建的依据。",
         },
         exclusive_group="scene",
         paid=True,
@@ -353,10 +318,6 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
     ),
 )
 _CAPABILITY_BY_NAME = {cap.name: cap for cap in _CAPABILITIES}
-
-
-def _text(value: Any) -> str:
-    return value.strip() if isinstance(value, str) else ""
 
 
 def _invalid_arguments(exc: ValidationError) -> ActionExecutionResult:
@@ -468,8 +429,7 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
         persona = await planning_persona(db, user_id)
         life_context = await read_life_context_in_session(db, user_id)
         outfits = await list_outfits(db, user_id)
-        scene = await planning_scene(db, user_id)
-        scene_rows = await ready_scenes(db, user_id)
+        scene = await get_scene_state(db, user_id)
         character = await load_character_snapshot(db, user_id)
         settings = await load_user_settings(db, user_id, ("language",))
         reference_image_available = await _image_provider_available(
@@ -484,8 +444,7 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
             task=AiTaskKey.scene,
             has_reference=False,
         )
-        video_task = AiTaskKey.visuals
-        video_available = await _provider_available(db, user_id, "video_gen", task=video_task)
+        video_available = await _provider_available(db, user_id, "video_gen", task=AiTaskKey.visuals)
         recent_actions = (
             await db.scalars(
                 select(NightlyActivityAction)
@@ -506,7 +465,7 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
         action_materials = (await list_actions(db, user_id, status="approved", limit=20)).actions
         # 影像制作各选一份 ready 素材（最新可用项），模型只提供制作要求。
         ready_outfit = next((item for item in outfits if item.status == "ready"), None)
-        ready_scene = scene_rows[0] if scene_rows else None
+        ready_scene = scene.ready[0] if scene.ready else None
         ready_action = action_materials[0] if action_materials else None
         visual_materials = (
             VisualMaterialSelection(
@@ -536,8 +495,8 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
         ),
         life_context=life_context.prompt_payload(),
         scene=SceneContext(
-            environment=scene.environment,
-            generation_pending=scene.generation_pending,
+            environment=scene_environment(scene),
+            generation_pending=scene.pending is not None or scene.regenerating is not None,
         ),
         wardrobe=[
             WardrobeItem(
@@ -586,24 +545,21 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
     paid_count = 0
     actions: list[PlannedAction] = []
     for action in raw_plan.actions:
-        if len(actions) >= _MAX_ACTIONS:
+        if len(actions) >= SETTINGS.life_actions_per_day:
             break
-        capability_name = _text(action.capability)
+        capability_name = action.capability.strip()
         spec = _CAPABILITY_BY_NAME.get(capability_name)
         if spec is None or capability_name not in available_names:
             continue
         if spec.exclusive_group and spec.exclusive_group in seen_groups:
             continue
-        if spec.paid and paid_count >= _MAX_PAID_ACTIONS:
+        if spec.paid and paid_count >= SETTINGS.life_creations_per_day:
             continue
         # 能力或预算过滤不删除前置条件；执行端对未完成的依赖跳过后续动作。
         # 依赖 ID 无效只跳过该动作，依赖它的后续动作在执行端因前置未完成而跳过。
         dependencies = action.depends_on
         if not all(_is_action_id(dep) for dep in dependencies):
             continue
-        args = dict(action.arguments)
-        if capability_name == "action.design":
-            args = {key: value for key, value in args.items() if key in spec.arguments}
         if spec.paid:
             paid_count += 1
         if spec.exclusive_group:
@@ -614,7 +570,7 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
                 capability=capability_name,
                 phase=spec.phase,
                 depends_on=dependencies,
-                arguments=args,
+                arguments=action.arguments,
             ),
         )
     outfit_ids = {action.id for action in actions if action.capability.startswith("outfit.")}
@@ -678,16 +634,8 @@ async def _load_action_rows(log_id: int) -> list[NightlyActivityAction]:
         for row in rows:
             if row.status != "running":
                 continue
-            progress_key = _PROGRESS_KEYS.get(row.capability)
-            if progress_key and isinstance(row.result, dict) and row.result.get(progress_key):
-                # 继续同一业务任务；执行器依据子管线的持久化检查点恢复。
-                row.status = "pending"
-            else:
-                row.status = "interrupted"
-                row.result = {
-                    "status": "interrupted",
-                    "reason": "上次进程在动作执行中终止；没有可核对的内部任务 id，为避免重复付费或重复副作用，本动作不自动重放",
-                }
+            # 每项副作用先以 nightly 请求身份登记生活步骤；恢复由原步骤判断是否已提交。
+            row.status = "pending"
         await db.commit()
     return rows
 
@@ -712,142 +660,16 @@ async def _set_action_state(
         await db.commit()
 
 
-async def _save_progress(run: _ActionRun, **progress: int | str) -> None:
-    """付费子任务一经提交就把可核对的 id 写入账本，重启后续跑原任务而不重复提交。"""
-    await _set_action_state(run.row_id, "running", {"status": "running", **progress})
-
-
-async def _runtime_block_reason(user_id: int, capability: str, resume: dict[str, Any]) -> str | None:
+async def _runtime_block_reason(user_id: int, capability: str) -> str | None:
     """动作真正执行前重读总控、政策与开关，避免长耗时计划期间用户关锁后仍产生副作用。"""
     async with SESSION_LOCAL() as db:
         user = await nightly_account(db, user_id)
         persona = await planning_persona(db, user_id)
-        pending_scene_id = await find_pending_scene_id(db, user_id) if capability == "scene.create" else None
     if user is None or not user.nightly_activity_enabled:
         return "nightly activity disabled"
     if reason := _policy_block(capability, _policies(persona)):
         return reason
-    if pending_scene_id is not None and pending_scene_id != resume.get("scene_id"):
-        return "another scene generation is already pending"
     return None
-
-
-def _fact(run: _ActionRun, key: str, **values: str) -> str:
-    return NIGHTLY_FACT_TEXTS[resolve_language(run.context.language)][key].format(**values)
-
-
-def _scene_fact(run: _ActionRun, scene: SceneSnapshot) -> str:
-    return _fact(run, "scene", title=scene.title, description=scene.description)
-
-
-async def _execute_outfit_create(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
-    try:
-        description = OutfitCreateArgs.model_validate(args).description
-    except ValidationError as exc:
-        return _invalid_arguments(exc)
-    resume_outfit_id = run.resume.get("outfit_id")
-    if resume_outfit_id is None:
-        async with SESSION_LOCAL() as db:
-            outfit = await create_and_confirm_outfit(db, run.user_id, description)
-        await _save_progress(run, outfit_id=outfit.id)
-    else:
-        async with SESSION_LOCAL() as db:
-            outfit = await get_outfit(db, run.user_id, int(resume_outfit_id))
-        # 确认是同步的：恢复时缺失或未就绪说明外观已被删除 / 重绘回草稿，不能盲目重做付费生成。
-        if outfit is None or outfit.user_id != run.user_id or outfit.status != "ready":
-            return ActionExecutionResult(
-                status="failed",
-                outfit_id=int(resume_outfit_id),
-                reason="outfit is not ready after confirm",
-            )
-    display_name = outfit.name if outfit.name != "新外观" else description[:40]
-    return ActionExecutionResult(
-        status="succeeded",
-        outfit_id=outfit.id,
-        fact=_fact(run, "outfit_create", name=display_name),
-    )
-
-
-async def _wait_for_scene(
-    user_id: int,
-    scene_id: int,
-) -> SceneSnapshot | None:
-    while True:
-        async with SESSION_LOCAL() as db:
-            row = await scene_snapshot(db, user_id, scene_id)
-        if (
-            row is None
-            or row.user_id != user_id
-            or row.status
-            in (
-                "failed",
-                "cancelled",
-                "description_failed",
-            )
-        ):
-            return None
-        if row.status == "ready":
-            return row
-        await asyncio.sleep(_POLL_SECONDS)
-
-
-async def _execute_scene_create(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
-    try:
-        parsed_args = SceneCreateArgs.model_validate(args)
-    except ValidationError as exc:
-        return _invalid_arguments(exc)
-    scene_id = run.resume.get("scene_id")
-    if scene_id is None:
-        scene_id = await schedule_nightly_scene(run.user_id, parsed_args.notes)
-        await _save_progress(run, scene_id=scene_id)
-    else:
-        scene_id = int(scene_id)
-        await resume_scene_generation(run.user_id, scene_id)
-    ready = await _wait_for_scene(run.user_id, scene_id)
-    if ready is None:
-        return ActionExecutionResult(
-            status="interrupted",
-            scene_id=scene_id,
-            reason="环境图片尚未就绪，不能记录完成事实；可查询原任务",
-        )
-    return ActionExecutionResult(status="succeeded", scene_id=ready.id, fact=_scene_fact(run, ready))
-
-
-async def _execute_visual_create(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
-    try:
-        parsed_args = VisualCreateArgs.model_validate(args)
-    except ValidationError as exc:
-        return _invalid_arguments(exc)
-    materials = run.context.visual_materials
-    if materials is None:
-        return ActionExecutionResult(status="blocked", reason="no ready materials for a visual")
-    if parsed_args.media_kind == "video" and not run.context.providers.video:
-        return ActionExecutionResult(status="blocked", reason="video provider unavailable")
-    if parsed_args.media_kind == "image" and not run.context.providers.image_reference:
-        return ActionExecutionResult(status="blocked", reason="image provider unavailable")
-    # 自主制作开关在执行前重读，避免长耗时计划期间用户关闭后仍产生付费制作。
-    state = await presentation_state(run.user_id)
-    if not state.autonomous_enabled:
-        return ActionExecutionResult(status="blocked", reason="autonomous visual creation disabled")
-    if (await read_state(run.user_id)).revision != run.context.life_context.get("state", {}).get("revision"):
-        return ActionExecutionResult(status="blocked", reason="life state changed; replan the visual")
-    # 由规划期选定的一组 ready 素材冻结组合，提交即受理；制作与入库由影像模块完成。
-    try:
-        await generate_visual_reference(
-            run.user_id,
-            outfit_id=materials.outfit_id,
-            scene_id=materials.scene_id,
-            action_id=materials.action_id,
-            requirements=parsed_args.requirements,
-            media_kind=parsed_args.media_kind,
-            request_id=f"nightly:{run.row_id}",
-        )
-    except (ComboAssemblyError, VisualStateError) as exc:
-        return ActionExecutionResult(status="failed", reason=str(exc))
-    return ActionExecutionResult(
-        status="succeeded",
-        fact=_fact(run, "visual_create", summary=parsed_args.requirements[:40]),
-    )
 
 
 def _near_term_cron(now: datetime) -> str:
@@ -914,43 +736,101 @@ async def _execute_outreach_schedule(run: _ActionRun, args: dict[str, Any]) -> A
     )
 
 
-async def _execute_action_design(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
-    """登记动作语义定义；登记不绑定呈现目标，也不表示已有可播影像。"""
-
-    state = await presentation_state(run.user_id)
-    if not state.autonomous_enabled:
-        return ActionExecutionResult(status="blocked", reason="autonomous action creation disabled")
-    documented = _CAPABILITY_BY_NAME["action.design"].arguments
-    try:
-        request = ActionAssetDesign.model_validate(
-            {key: value for key, value in args.items() if key in documented},
-        )
-    except ValidationError as exc:
-        return _invalid_arguments(exc)
-    await design_action_reference(
-        run.user_id,
-        name=request.name,
-        motion_description=request.motion_description,
-        use_when=request.use_when,
-        avoid_when=request.avoid_when,
-        allowed_triggers=request.allowed_triggers,
-        reason=request.reason,
-        duration_seconds=request.duration_seconds,
-        clip_kind=request.clip_kind,
-        source="autonomous",
+async def _execute_life_action(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
+    request_id = f"nightly:{run.row_id}"
+    async with SESSION_LOCAL() as db:
+        original = await step_for_request(db, run.user_id, request_id)
+        action_row = await db.get(NightlyActivityAction, run.row_id)
+        if action_row is None:
+            return ActionExecutionResult(status="failed", reason="nightly action no longer exists")
+        capability = action_row.capability
+    if original is not None:
+        if original.action is None:
+            return ActionExecutionResult(status="failed", reason="saved action has no executable input")
+        action = original.action
+    else:
+        payload = {"capability": "visual.generate" if capability == "visual.create" else capability, **args}
+        if capability == "visual.create":
+            materials = run.context.visual_materials
+            if materials is None:
+                return ActionExecutionResult(status="blocked", reason="no ready materials")
+            payload.update(outfit_id=materials.outfit_id, scene_id=materials.scene_id, action_id=materials.action_id)
+        action = LIFE_ACTION.validate_python(payload)
+    planned_pursuit = run.context.life_context.get("state", {}).get("active_pursuit_id")
+    pursuit_id = (
+        original.pursuit_id if original else parse_resource_id(planned_pursuit) if planned_pursuit is not None else None
     )
-    return ActionExecutionResult(status="succeeded", fact=_fact(run, "action_registered", name=request.name))
+    step = await submit_life_action(
+        run.user_id,
+        NextAction(
+            description=str(
+                args.get("requirements")
+                or args.get("description")
+                or args.get("notes")
+                or args.get("reason")
+                or capability
+            ),
+            action=action,
+        ),
+        request_id=request_id,
+        pursuit_id=pursuit_id,
+        source="nightly",
+    )
+    while step.state == "running":
+        await asyncio.sleep(_POLL_SECONDS)
+        current = await read_step(run.user_id, step.id)
+        if current is None:
+            return ActionExecutionResult(status="interrupted", reason="execution no longer exists")
+        step = current
+    if step.state == "planned":
+        await finish_step(
+            run.user_id, step.id, state="cancelled", error=step.wait_reason or "当前条件不允许开始夜间活动"
+        )
+        return ActionExecutionResult(status="blocked", reason=step.wait_reason)
+    if step.state != "completed":
+        return ActionExecutionResult(
+            status="result_unknown" if step.state == "unknown" else "failed", reason=step.error or step.wait_reason
+        )
+    facts = {
+        "outfit.create": "已完成并保存造型素材",
+        "scene.create": "已完成并保存环境图片",
+        "action.design": "动作定义已通过评审",
+        "visual.create": "已完成并保存图片或视频",
+    }
+    return ActionExecutionResult(
+        status="succeeded",
+        fact=facts[capability],
+        outfit_id=step.result_ref.get("outfit_id"),
+        scene_id=step.result_ref.get("scene_id"),
+    )
 
 
-CapabilityExecutor = Callable[[_ActionRun, dict[str, Any]], Awaitable[ActionExecutionResult]]
-
-_EXECUTORS: dict[str, CapabilityExecutor] = {
-    "outfit.create": _execute_outfit_create,
-    "scene.create": _execute_scene_create,
-    "visual.create": _execute_visual_create,
-    "outreach.schedule": _execute_outreach_schedule,
-    "action.design": _execute_action_design,
-}
+async def _execute_budgeted_outreach(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
+    step = await reserve_external_action(
+        run.user_id, request_id=f"nightly:{run.row_id}", kind="outreach.schedule", description="安排后续联系"
+    )
+    if step.state == "completed":
+        return ActionExecutionResult(status="succeeded", cron_job_id=step.result_ref.get("cron_job_id"))
+    if step.state != "planned":
+        return ActionExecutionResult(status="result_unknown", reason="原联系安排须先核对")
+    claimed = await claim_step(run.user_id, step.id, ZoneInfo(run.date_context.user_timezone))
+    if claimed is None:
+        await finish_step(run.user_id, step.id, state="cancelled", error="今日额度或执行条件不满足")
+        return ActionExecutionResult(status="blocked", reason="今日额度或执行条件不满足")
+    try:
+        await mark_step_submitted(run.user_id, step.id)
+        result = await _execute_outreach_schedule(run, args)
+        await finish_step(
+            run.user_id,
+            step.id,
+            state="completed" if result.status == "succeeded" else "failed",
+            result={"cron_job_id": result.cron_job_id} if result.cron_job_id else {},
+            error=result.reason,
+        )
+        return result
+    except BaseException:
+        await finish_step(run.user_id, step.id, state="unknown", error="联系安排中断，须核对原任务")
+        raise
 
 
 async def _execute_persisted_action(
@@ -974,25 +854,26 @@ async def _execute_persisted_action(
     ]
     if unsatisfied:
         return ActionExecutionResult(status="skipped", reason="dependency not completed", dependencies=unsatisfied)
-    resume = row.result or {}
     run = _ActionRun(
         user_id=user_id,
         row_id=row.id,
-        resume=resume,
         context=context,
         date_context=date_context,
         facts=facts,
     )
     # 执行前复核与状态写入同样逐项隔离：一项失败只记入该项，不中断后续动作。
     try:
-        if blocked_reason := await _runtime_block_reason(user_id, row.capability, resume):
-            return ActionExecutionResult(status="blocked", reason=blocked_reason)
-        progress_key = _PROGRESS_KEYS.get(row.capability)
-        submitted = progress_key is not None and resume.get(progress_key) is not None
-        if not submitted and not in_nightly_window(utc_now(), ZoneInfo(date_context.user_timezone)):
-            return ActionExecutionResult(status="blocked", reason="nightly window ended")
+        async with SESSION_LOCAL() as db:
+            original = await step_for_request(db, user_id, f"nightly:{row.id}")
+        if original is None or original.state == "planned":
+            if blocked_reason := await _runtime_block_reason(user_id, row.capability):
+                return ActionExecutionResult(status="blocked", reason=blocked_reason)
+            if not in_nightly_window(utc_now(), ZoneInfo(date_context.user_timezone)):
+                return ActionExecutionResult(status="blocked", reason="nightly window ended")
         await _set_action_state(row.id, "running")
-        return await _EXECUTORS[row.capability](run, arguments.get("values", {}))
+        if row.capability == "outreach.schedule":
+            return await _execute_budgeted_outreach(run, arguments.get("values", {}))
+        return await _execute_life_action(run, arguments.get("values", {}))
     except Exception as exc:
         logger.warning(
             "nightly capability action failed",
@@ -1033,9 +914,7 @@ async def _execute_persisted_actions(
     rows = await _load_action_rows(log_id)
     by_key = {row.action_key: row for row in rows}
     facts = [
-        str(row.result["fact"])
-        for row in rows
-        if row.status in _SUCCESS_ACTION_STATUSES and row.result and row.result.get("fact")
+        str(row.result["fact"]) for row in rows if row.status == "succeeded" and row.result and row.result.get("fact")
     ]
     results: dict[str, ActionExecutionResult] = {}
     for row in rows:
@@ -1055,7 +934,7 @@ async def _execute_persisted_actions(
                     "nightly action state write failed",
                     extra={"user_id": user_id, "action": row.action_key, "status": row.status},
                 )
-            if result.status in _SUCCESS_ACTION_STATUSES and result.fact:
+            if result.status == "succeeded" and result.fact:
                 facts.append(result.fact)
         results[row.action_key] = result
     return results
@@ -1084,8 +963,8 @@ async def run_nightly_planning(
             return PlanningResult(rationale="夜间窗口已结束")
         payload = {
             "plan_limits": {
-                "max_actions": _MAX_ACTIONS,
-                "max_paid_actions": _MAX_PAID_ACTIONS,
+                "max_actions": SETTINGS.life_actions_per_day,
+                "max_paid_actions": SETTINGS.life_creations_per_day,
             },
             "contextual_memories": contextual_memories,
             "background_memories_state": background_memories,

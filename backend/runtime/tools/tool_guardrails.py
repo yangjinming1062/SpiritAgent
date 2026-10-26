@@ -40,6 +40,7 @@ _STALL_AFTER_ROUNDS = 3
 _EFFECT_TOOLS = frozenset(
     {
         "companion_wait",
+        "life_adjust",
         "visual_play",
         "visual_generate",
         "action_design",

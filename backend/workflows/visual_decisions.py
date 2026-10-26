@@ -8,6 +8,7 @@ from features.appearance.queries import ready_outfit_snapshots
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
 from features.companion.prompt_runtime import load_companion_prompt_context
 from features.conversation.context_window import load_recent_context_window
+from features.life.actions import NextAction, VisualAction
 from features.life.use_cases import read_state
 from features.scenes.snapshots import list_scene_snapshots
 from features.visuals.queries import (
@@ -27,7 +28,9 @@ from infrastructure.text import resolve_prompt_text
 from pydantic import BaseModel, ConfigDict, Field
 from runtime.task_supervisor import TASK_SUPERVISOR
 
-from workflows.visuals_companion import generate_visual_reference, play_visual_reference
+from workflows.life_execution import submit_life_action
+from workflows.life_presentation import evaluate_life_presentation
+from workflows.visuals_companion import play_visual_reference
 
 
 class VisualDecision(BaseModel):
@@ -151,14 +154,21 @@ async def evaluate_visuals(user_id: int, *, trigger: str, allow_create: bool) ->
         and decision.scene_id in {item.id for item in scenes}
         and decision.action_id in {item.id for item in actions}
     ):
-        await generate_visual_reference(
+        await submit_life_action(
             user_id,
-            outfit_id=decision.outfit_id,
-            scene_id=decision.scene_id,
-            action_id=decision.action_id,
-            media_kind=decision.media_kind,
-            requirements=decision.requirements,
+            NextAction(
+                description=decision.reason or decision.requirements,
+                action=VisualAction(
+                    capability="visual.generate",
+                    outfit_id=decision.outfit_id,
+                    scene_id=decision.scene_id,
+                    action_id=decision.action_id,
+                    media_kind=decision.media_kind,
+                    requirements=decision.requirements,
+                ),
+            ),
             request_id=f"decision:{new_request_id()}",
+            pursuit_id=context.life_context.state.active_pursuit_id,
         )
         return {"expressed": False, "action_id": None, "reason": "generation_accepted"}
     return {"expressed": False, "action_id": None, "reason": "keep_current"}
@@ -167,20 +177,17 @@ async def evaluate_visuals(user_id: int, *, trigger: str, allow_create: bool) ->
 def schedule_visual_selection(user_id: int) -> None:
     if user_id in _TASKS and not _TASKS[user_id].done():
         return
-    task = asyncio.create_task(_select_ready(user_id), name=f"visual.selection.{user_id}")
+    task = asyncio.create_task(evaluate_life_presentation(user_id, force=True), name=f"visual.selection.{user_id}")
     _TASKS[user_id] = task
     TASK_SUPERVISOR.register(task, owner="visuals.decisions", user_id=user_id)
     task.add_done_callback(lambda finished: _TASKS.pop(user_id, None) if _TASKS.get(user_id) is finished else None)
 
 
-async def _select_ready(user_id: int) -> None:
-    await evaluate_visuals(user_id, trigger="ready", allow_create=False)
-
-
 async def initialize_visuals(user_id: int, _payload: dict[str, Any]) -> None:
     async with _INITIAL_LOCKS.setdefault(user_id, asyncio.Lock()):
         existing, jobs = await list_visuals(user_id, limit=1), await list_jobs(user_id, limit=1)
-        if existing.total or jobs.total:
+        if existing.visuals or jobs.jobs:
+            await evaluate_life_presentation(user_id, force=True)
             return
         await evaluate_visuals(user_id, trigger="initial", allow_create=True)
 

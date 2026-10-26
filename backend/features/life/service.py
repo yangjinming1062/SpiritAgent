@@ -15,7 +15,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_dirty, set_committed_value
 from sqlalchemy.sql.selectable import CTE
 
-from .models import RESULT_REFERENCE_FIELDS, LifeEvent, LifePursuit, LifeState, LifeStep, PursuitEvidence
+from .models import (
+    RESULT_REFERENCE_FIELDS,
+    LifeActionAdmission,
+    LifeEvent,
+    LifePursuit,
+    LifeState,
+    LifeStep,
+    PursuitEvidence,
+)
 from .ports import LifeEventProjection, project_life_events
 from .queries import result_reference
 from .schemas import (
@@ -81,6 +89,7 @@ def _event_matches(row: LifeEvent, event: LifeEventInput) -> bool:
         row.kind == event.kind
         and row.source == event.source
         and row.subject == event.subject
+        and row.fact_type == event.fact_type
         and row.fact_json == event.fact
         and row.pursuit_id == event.pursuit_id
         and row.step_id == event.step_id
@@ -88,7 +97,7 @@ def _event_matches(row: LifeEvent, event: LifeEventInput) -> bool:
         == {
             key: parse_resource_id(value) if key in RESULT_REFERENCE_FIELDS and value is not None else value
             for key, value in event.result_ref.items()
-            if key not in {"job_id", "entry_id", "visual_id", "visual_version_id"} or value is not None
+            if key not in RESULT_REFERENCE_FIELDS or value is not None
         }
         and row.is_meaningful == event.is_meaningful
     )
@@ -150,11 +159,19 @@ def apply_decision(row: LifeState, decision: LifeDecisionRequest) -> None:
     if row.revision != decision.expected_revision:
         raise LifeStateConflictError("生活状态已在其他流程更新，请重新读取后重试")
     if decision.operation != "keep":
+        if (decision.current_activity is not None and decision.current_activity != row.current_activity) or (
+            decision.activity_kind is not None and decision.activity_kind != row.activity_kind
+        ):
+            row.activity_started_at = utc_now()
+            row.activity_step_id = None
+            row.activity_kind = decision.activity_kind or "virtual_activity"
+            row.presentation_revision += 1
         if decision.current_activity is not None:
             row.current_activity = decision.current_activity
         if decision.current_scene is not None and decision.current_scene != deepcopy(row.current_scene_json or {}):
             row.current_scene_json = deepcopy(decision.current_scene)
             row.scene_revision += 1
+            row.presentation_revision += 1
         if decision.mood is not None:
             row.mood = decision.mood
     if decision.next_review_at is not None:
@@ -197,6 +214,8 @@ async def ensure_pursuit(
         title=title.strip(),
         reason=reason,
         desired_result=desired_result,
+        status_reason=reason,
+        status_changed_at=utc_now(),
     )
     try:
         async with db.begin_nested():
@@ -234,6 +253,7 @@ async def _evidence_events(
             or not event.is_meaningful
             or event.pursuit_id not in (None, pursuit.id)
             or event.kind not in EVIDENCE_EVENT_KINDS
+            or event.fact_type != "result"
             or not result_reference(event)
         ):
             raise LifeInputError("事项证据必须是实际完成的步骤或已发布结果")
@@ -309,6 +329,9 @@ async def advance_pursuit(db: AsyncSession, user_id: int, decision: LifeDecision
     if completing:
         pursuit.status = "completed"
         pursuit.completed_at = utc_now()
+        pursuit.status_changed_at = pursuit.completed_at
+        pursuit.status_source = decision.source
+        pursuit.status_reason = decision.status_reason.strip() or decision.progress.strip()
         pursuit.next_step = ""
         pursuit.result_ref_json = {
             "evidence_count": len(evidence_ids),
@@ -339,6 +362,7 @@ async def advance_pursuit(db: AsyncSession, user_id: int, decision: LifeDecision
             else f"pursuit:{pursuit.id}:revision:{state.revision}:progressed",
             kind="life.pursuit.completed" if completing else "life.pursuit.progressed",
             source="life_decision",
+            fact_type="result" if evidence else "intent",
             pursuit_id=pursuit.id,
             fact={"title": pursuit.title, "progress": pursuit.progress, "next_step": pursuit.next_step},
             result_ref=deepcopy(pursuit.result_ref_json) if completing else {"evidence_count": len(evidence_ids)},
@@ -424,6 +448,7 @@ async def _record_event_batch(
                 "kind": item.kind,
                 "source": item.source,
                 "subject": item.subject,
+                "fact_type": item.fact_type,
                 "fact_json": deepcopy(item.fact),
                 "occurred_at": item.occurred_at or utc_now(),
                 "pursuit_id": item.pursuit_id,
@@ -514,12 +539,20 @@ async def start_step(
     ):
         return row
     row.state = "running"
+    row.disposition, row.wait_reason = "executing", ""
     row.started_at = row.started_at or utc_now()
     row.finished_at = None
     row.error = None
     if was_failed:
         assign_result(row, {})
     if business_ref is not None:
+        await db.execute(
+            update(LifeActionAdmission)
+            .where(LifeActionAdmission.user_id == user_id, LifeActionAdmission.request_id == row.idempotency_key)
+            .values(submitted=True)
+        )
+        if business_ref.get("action_id") is not None:
+            row.business_action_id = parse_resource_id(business_ref["action_id"])
         job_id = business_ref.get("job_id")
         row.job_id = parse_resource_id(job_id) if job_id is not None else None
         row.generation_id = business_ref.get("generation_id")

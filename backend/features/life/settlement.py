@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_dirty, set_committed_value
 from sqlalchemy.sql.selectable import CTE
 
-from .models import LifeEvent, LifePursuit, LifeStep
+from .models import LifeActionAdmission, LifeEvent, LifePursuit, LifeStep
 from .queries import result_reference
 from .schemas import TERMINAL_STEP_STATES, LifeEventInput
 from .service import LifeInputError, LifeStateConflictError, _record_event_batch, get_or_create_state, result_values
@@ -58,16 +58,21 @@ async def settle_business_steps(
 ) -> int | None:
     if state != "running" and state not in TERMINAL_STEP_STATES:
         raise LifeInputError("不支持的步骤状态")
-    if business_ref.get("job_id") is None:
+    if not any(business_ref.get(key) is not None for key in ("job_id", "step_id", "action_id")):
         raise LifeInputError("业务步骤必须关联真实任务")
-    job_id = parse_resource_id(business_ref["job_id"])
+    job_id = parse_resource_id(business_ref["job_id"]) if business_ref.get("job_id") is not None else None
+    reference = LifeStep.job_id == job_id
+    if business_ref.get("step_id") is not None:
+        reference = LifeStep.id == parse_resource_id(business_ref["step_id"])
+    elif business_ref.get("action_id") is not None:
+        reference = LifeStep.business_action_id == parse_resource_id(business_ref["action_id"])
     life_state = await get_or_create_state(db, user_id, lock=True)
     pending = [row for row in db.dirty if isinstance(row, LifeStep | LifePursuit)]
     if pending:
         if any(inspect(row).attrs.user_id.loaded_value != user_id for row in pending):
             raise LifeStateConflictError("不能在当前账户事务提交其他账户的生活变更")
         await db.flush()
-    protected = {"completed", "cancelled"} | ({"failed", "unknown"} if state != "cancelled" else set())
+    protected = {"completed", "cancelled"} | ({"failed"} if state != "cancelled" else set())
     outcome = case((LifeStep.state.in_(protected), LifeStep.state), else_=literal(state))
     known = (
         select(LifeEvent.id)
@@ -82,7 +87,7 @@ async def settle_business_steps(
     query = (
         select(LifeStep, LifePursuit, known.label("known_outcome"))
         .outerjoin(LifePursuit, and_(LifePursuit.id == LifeStep.pursuit_id, LifePursuit.user_id == user_id))
-        .where(LifeStep.user_id == user_id, LifeStep.kind == kind, LifeStep.job_id == job_id)
+        .where(LifeStep.user_id == user_id, LifeStep.kind == kind, reference)
         .order_by(LifeStep.id)
     )
     rows = list((await db.execute(query.execution_options(populate_existing=True))).all())
@@ -94,6 +99,7 @@ async def settle_business_steps(
     events = list(additional_events)
     step_objects = {}
     pursuit_objects = {}
+    submitted_requests = set()
     for row, pursuit, known_outcome in rows:
         step_objects[row.id] = row
         if pursuit is not None:
@@ -125,8 +131,12 @@ async def settle_business_steps(
         final_result = deepcopy(result_ref or {}) if changed else result_reference(row)
         final_error = error if changed else row.error
         if changed:
+            if state in {"completed", "unknown"}:
+                submitted_requests.add(row.idempotency_key)
             step_changes[row.id] = {
                 "state": state,
+                "disposition": "done" if state == "completed" else state,
+                "wait_reason": error or "",
                 "finished_at": now,
                 "error": error,
                 **result_values(final_result),
@@ -152,6 +162,7 @@ async def settle_business_steps(
                 event_key=f"step:{row.id}:{final_state}",
                 kind=f"life.step.{final_state}",
                 source="life_step",
+                fact_type="result" if final_state == "completed" else "execution",
                 step_id=row.id,
                 pursuit_id=row.pursuit_id,
                 fact={"description": row.description, "state": final_state, "error": final_error or ""},
@@ -165,12 +176,19 @@ async def settle_business_steps(
                     event_key=f"pursuit:{pursuit.id}:step:{row.id}:progressed",
                     kind="life.pursuit.progressed",
                     source="life_step",
+                    fact_type="result",
                     pursuit_id=pursuit.id,
                     step_id=row.id,
                     fact={"title": pursuit.title, "progress": current["progress"], "next_step": current["next_step"]},
                     result_ref=deepcopy(final_result),
                 )
             )
+    if submitted_requests:
+        await db.execute(
+            update(LifeActionAdmission)
+            .where(LifeActionAdmission.user_id == user_id, LifeActionAdmission.request_id.in_(submitted_requests))
+            .values(submitted=True)
+        )
     # 大批次分块，避免 PostgreSQL 参数上限；常见任务在一条数据修改 CTE 中完成。
     changes = []
     for model, updates, label in (
@@ -185,6 +203,11 @@ async def settle_business_steps(
                 await db.execute(select(literal(1)).add_cte(change))
             else:
                 changes.append(change)
+    if step_changes:
+        life_state.next_review_at = now
+        if life_state.activity_step_id in step_changes:
+            life_state.activity_step_id = None
+            life_state.activity_kind = "result" if state == "completed" else "intent"
     await _record_event_batch(db, user_id, events, life_state, state_changes=len(step_changes), changes=changes)
     for objects, updates in ((step_objects, step_changes), (pursuit_objects, pursuit_changes)):
         for identifier, change in updates.items():

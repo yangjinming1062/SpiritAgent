@@ -14,6 +14,25 @@
   --soft: #e7efeb;
   --line: #e6e9e3;
 }
+.companion-life-card {
+  display: grid;
+  gap: 10px;
+  overflow-wrap: anywhere;
+}
+.companion-life-card article,
+.companion-life-card section {
+  display: grid;
+  gap: 10px;
+}
+.companion-life-card article {
+  padding-top: 16px;
+}
+.companion-life-card p {
+  margin: 0;
+}
+.companion-life-card summary {
+  cursor: pointer;
+}
 .topic-link {
   display: grid;
   gap: 10px;

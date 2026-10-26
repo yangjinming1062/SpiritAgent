@@ -11,7 +11,8 @@ import {
   refreshVisuals,
   sendVisualReceipt,
   type VisualMediaKind,
-  type VisualPlayCommand
+  type VisualPlayCommand,
+  visualsApi
 } from '@/modules/visuals'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
@@ -20,6 +21,7 @@ import { $auth } from '@/shared/store/auth'
 import { $presentation } from '@/shared/store/presentation'
 import { $surfaceScreenLocked } from '@/shared/store/surfaces'
 import { $theme } from '@/shared/store/theme'
+import type { DesktopBackgroundRequest } from '@ipc/contracts'
 
 function hasTerminalReceipt(statuses: ReadonlySet<PlaybackStatus> | undefined): boolean {
   return statuses !== undefined && [...statuses].some(status => status !== 'started')
@@ -55,11 +57,12 @@ export function useDesktopVisualWallpaper(): void {
   const publishedKey = useRef('')
   const paused = locked || presentation.fullscreen || reduceMotion
 
-  const state = projection ?? null
   // 持续画面优先于当前影像；图片即持续画面，视频按 clip_kind 循环或短时播放。
-  const baseline = state?.loop_visual ?? state?.current_visual ?? null
+  const baseline = projection?.loop_visual ?? projection?.current_visual ?? null
 
-  const pendingPlay = requested ?? state?.pending_play ?? null
+  const pendingPlay = requested ?? projection?.pending_play ?? null
+  const staticTarget = pendingPlay ? null : projection?.static_presentation
+  const staticReceipts = useRef(new Set<string>())
 
   const recordReceipt = useCallback((playId: string, status: ReceiptStatus, error?: string): void => {
     const scope = captureAuthScope()
@@ -115,6 +118,7 @@ export function useDesktopVisualWallpaper(): void {
     claimedPlays.current.clear()
     claimedKinds.current.clear()
     receiptQueues.current.clear()
+    staticReceipts.current.clear()
     setClaimed(null)
   }, [authSessionId])
 
@@ -202,16 +206,35 @@ export function useDesktopVisualWallpaper(): void {
   }, [active, authSessionId, pendingPlay, clientId, recordReceipt])
 
   useEffect(() => {
-    if (claimed && (!active || !authSessionId || Date.parse(claimed.expires_at) <= Date.now())) {
-      recordReceipt(claimed.play_id, 'failed', 'Playback interrupted')
-    }
-  }, [active, authSessionId, claimed, recordReceipt])
-
-  useEffect(() => {
     const scope = captureAuthScope()
 
     return shellApi().presentation.onBackgroundPlayback(receipt => {
       if (!scope?.()) {
+        return
+      }
+
+      if (staticTarget?.request_id === receipt.playId) {
+        if (
+          (receipt.status === 'started' || receipt.status === 'failed') &&
+          !staticReceipts.current.has(receipt.playId)
+        ) {
+          staticReceipts.current.add(receipt.playId)
+          void visualsApi
+            .receiptStatic({
+              request_id: receipt.playId,
+              presentation_epoch: staticTarget.presentation_epoch,
+              state_revision: staticTarget.state_revision,
+              receipt_kind: 'desktop_static',
+              status: receipt.status,
+              error: receipt.error ?? null
+            })
+            .then(() => refreshVisualPresentation())
+            .catch(error => {
+              staticReceipts.current.delete(receipt.playId)
+              log.warn('desktop-visual', 'Static receipt failed', error)
+            })
+        }
+
         return
       }
 
@@ -228,28 +251,41 @@ export function useDesktopVisualWallpaper(): void {
         recordReceipt(receipt.playId, status, receipt.error)
       }
     })
-  }, [authSessionId, recordReceipt])
+  }, [authSessionId, recordReceipt, staticTarget])
 
   const activeCommand =
     claimed &&
     Date.parse(claimed.expires_at) > Date.now() &&
-    claimed.presentation_epoch === (state?.presentation_epoch ?? 0)
+    claimed.presentation_epoch >= (projection?.presentation_epoch ?? 0) &&
+    (claimed.state_revision >= (projection?.state_revision ?? 0) ||
+      (claimed.visual_id === projection?.current_visual?.id &&
+        claimed.visual_version === projection.current_visual.version))
       ? claimed
       : null
+
+  useEffect(() => {
+    if (claimed && (!active || !authSessionId || !activeCommand)) {
+      recordReceipt(claimed.play_id, 'failed', 'Playback interrupted')
+    }
+  }, [active, authSessionId, claimed, activeCommand, recordReceipt])
 
   const selectedMediaKind = activeCommand?.media_kind ?? baseline?.media_kind
 
   const videoUrl =
-    selectedMediaKind === 'video'
+    !staticTarget && selectedMediaKind === 'video'
       ? firstNonBlank(assetPath(activeCommand?.media_path), assetPath(baseline?.media_url))
       : null
 
-  const posterUrl = firstNonBlank(
-    assetPath(activeCommand?.media_kind === 'image' ? activeCommand.media_path : null),
-    assetPath(activeCommand?.poster_path),
-    assetPath(baseline?.poster_url),
-    assetPath(baseline?.media_kind === 'image' ? baseline?.media_url : null)
-  )
+  const posterUrl = staticTarget
+    ? assetPath(staticTarget.scene?.path)
+    : firstNonBlank(
+        assetPath(activeCommand?.media_kind === 'image' ? activeCommand.media_path : null),
+        assetPath(activeCommand?.poster_path),
+        assetPath(baseline?.poster_url),
+        assetPath(baseline?.media_kind === 'image' ? baseline?.media_url : null)
+      )
+
+  const outfitUrl = staticTarget ? assetPath(staticTarget.outfit?.path) : null
 
   useEffect(() => {
     if (!active || !authSessionId) {
@@ -258,7 +294,31 @@ export function useDesktopVisualWallpaper(): void {
 
     const scope = captureAuthScope()
     let disposed = false
-    const key = `${activeCommand?.play_id ?? 'baseline'}:${activeCommand?.visual_version ?? baseline?.version ?? 0}:${videoUrl ?? ''}`
+
+    const request: DesktopBackgroundRequest = {
+      authSessionId,
+      video: videoUrl ? { url: videoUrl } : null,
+      poster: posterUrl ? { url: posterUrl } : null,
+      outfit: outfitUrl ? { url: outfitUrl } : null,
+      playId: staticTarget?.request_id ?? activeCommand?.play_id ?? null,
+      visualId: staticTarget ? null : (activeCommand?.visual_id ?? baseline?.id ?? null),
+      visualVersion: staticTarget ? null : (activeCommand?.visual_version ?? baseline?.version ?? null),
+      presentationEpoch: staticTarget?.presentation_epoch ?? projection?.presentation_epoch ?? 0,
+      expiresAt: staticTarget ? null : (activeCommand?.expires_at ?? null),
+      kind: !staticTarget && activeCommand ? (activeCommand.loop ? 'loop' : 'once') : 'loop',
+      // 短动作结束后返回保留的持续画面；独立播放不关联基准。
+      continuity:
+        !staticTarget && (activeCommand?.input_image_hash ?? baseline?.input_image_hash) ? 'base' : 'independent',
+      transition: staticTarget ? 'fade' : (activeCommand?.transition ?? 'natural'),
+      geometryMode: 'target',
+      inputImageHash: staticTarget ? null : (activeCommand?.input_image_hash ?? baseline?.input_image_hash ?? null),
+      theme,
+      reduceMotion,
+      paused,
+      clear: !videoUrl && !posterUrl
+    }
+
+    const key = JSON.stringify(request)
 
     if (publishedKey.current === key) {
       return
@@ -267,32 +327,14 @@ export function useDesktopVisualWallpaper(): void {
     publishedKey.current = key
 
     void shellApi()
-      .presentation.setBackground({
-        authSessionId,
-        video: videoUrl ? { url: videoUrl } : null,
-        poster: posterUrl ? { url: posterUrl } : null,
-        playId: activeCommand?.play_id ?? null,
-        visualId: activeCommand?.visual_id ?? baseline?.id ?? null,
-        visualVersion: activeCommand?.visual_version ?? baseline?.version ?? null,
-        presentationEpoch: state?.presentation_epoch ?? 0,
-        expiresAt: activeCommand?.expires_at ?? null,
-        kind: activeCommand ? (activeCommand.loop ? 'loop' : 'once') : 'loop',
-        // 短动作结束后返回保留的持续画面；独立播放不关联基准。
-        continuity: (activeCommand?.input_image_hash ?? baseline?.input_image_hash) ? 'base' : 'independent',
-        transition: activeCommand?.transition ?? 'natural',
-        geometryMode: 'target',
-        inputImageHash: activeCommand?.input_image_hash ?? baseline?.input_image_hash ?? null,
-        theme,
-        reduceMotion,
-        paused,
-        clear: !videoUrl && !posterUrl
-      })
+      .presentation.setBackground(request)
       .catch(error => {
         if (disposed || !scope?.()) {
           return
         }
 
         log.warn('desktop-visual', 'Background publish failed', error)
+        publishedKey.current = ''
 
         if (activeCommand) {
           recordReceipt(activeCommand.play_id, 'failed', String(error))
@@ -309,9 +351,11 @@ export function useDesktopVisualWallpaper(): void {
     baseline?.id,
     baseline?.version,
     baseline?.input_image_hash,
-    state?.presentation_epoch,
+    projection?.presentation_epoch,
     videoUrl,
     posterUrl,
+    outfitUrl,
+    staticTarget,
     theme,
     reduceMotion,
     paused,

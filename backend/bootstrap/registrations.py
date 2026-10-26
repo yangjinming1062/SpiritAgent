@@ -7,6 +7,7 @@ from entrypoints.tools import memory as memory_tools
 from entrypoints.tools.builtin.action_tool import register as register_actions
 from entrypoints.tools.builtin.companion_wait_tool import register as register_companion_wait
 from entrypoints.tools.builtin.image_generation_tool import register as register_image_generation
+from entrypoints.tools.builtin.life_tool import register as register_life_tools
 from entrypoints.tools.builtin.scene_tool import register as register_scene
 from entrypoints.tools.builtin.send_message_tool import register as register_send_message
 from entrypoints.tools.builtin.video_generation_tool import register as register_video_generation
@@ -72,6 +73,7 @@ from runtime.events.loop import register_internal_event_handler
 from runtime.tools.registry import REGISTRY
 from workflows.automation.companion_turns import execute_companion_turn
 from workflows.life_events import project_life_events_to_memory, record_post_published
+from workflows.life_presentation import life_presentation_requested
 from workflows.onboarding.character_ready import complete_character_initialization
 from workflows.visual_decisions import initialize_visuals, schedule_visual_selection
 from workflows.visual_planning import visual_planning_context
@@ -116,6 +118,7 @@ def register_tools() -> None:
     register_actions(REGISTRY)
     register_visuals(REGISTRY)
     register_companion_wait(REGISTRY)
+    register_life_tools(REGISTRY)
     register_image_generation(REGISTRY)
     register_scene(REGISTRY)
     register_send_message(REGISTRY)
@@ -128,6 +131,7 @@ def register_tools() -> None:
 def register_internal_event_handlers() -> None:
     register_internal_event_handler(COMPANION_TURN_EVENT, execute_companion_turn)
     register_internal_event_handler("companion.visual.initial_requested", initialize_visuals)
+    register_internal_event_handler("companion.life.presentation_requested", life_presentation_requested)
 
 
 def wire_domain_hooks() -> None:

@@ -1,5 +1,7 @@
 import { requestResource } from '@/shared/lib/resource-request'
 
+import type { ApiSchemas } from '../../../../shared/api.generated'
+
 import type {
   ActionDefinition,
   ActionDefinitionRequest,
@@ -38,6 +40,8 @@ export interface VisualReceiptBody {
 }
 
 export const visualsApi = {
+  receiptStatic: (body: ApiSchemas['StaticReceipt']): Promise<{ ok: boolean }> =>
+    requestResource('companion_visuals.static_receipt', { body }),
   list: (query: VisualsListQuery): Promise<VisualListResponse> =>
     requestResource('companion_visuals.list_visuals', { query }),
   detail: (visualId: string): Promise<VisualDetail> =>

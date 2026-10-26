@@ -7,6 +7,8 @@ import { backgroundMedia } from '@/shared/platform/desktop'
 import { desktopMediaLayout } from '@client-shared/desktop-media-geometry'
 import type { DesktopBackground, DesktopBackgroundPlayback } from '@ipc/contracts'
 
+import { prepareStaticPoster } from './static-poster'
+
 interface VideoSlot {
   element: HTMLVideoElement
   media: DesktopBackground | null
@@ -660,6 +662,16 @@ function DesktopWallpaper() {
       document.documentElement.dataset.theme = media.theme
       document.documentElement.dataset.palette = media.theme.startsWith('night') ? 'night' : 'day'
 
+      if (media.clear) {
+        requestAnimationFrame(() => {
+          if (!disposed && nextImageGeneration === imageGeneration) {
+            acknowledgeImage(media, 'started')
+          }
+        })
+
+        return
+      }
+
       for (const slot of slots) {
         if (slot.media?.playId === media.playId && (media.playId !== null || slot.media.revision === media.revision)) {
           slot.media = {
@@ -755,15 +767,11 @@ function DesktopWallpaper() {
           return
         }
 
-        const nextPoster = URL.createObjectURL(
-          new Blob([new Uint8Array(media.poster.bytes)], { type: media.poster.mime })
-        )
+        let preparedPoster: string | null = null
+        void prepareStaticPoster(media.poster, media.outfit)
+          .then(nextPoster => {
+            preparedPoster = nextPoster
 
-        const candidate = new Image()
-        candidate.src = nextPoster
-        void candidate
-          .decode()
-          .then(() => {
             if (disposed || nextImageGeneration !== imageGeneration) {
               URL.revokeObjectURL(nextPoster)
 
@@ -808,7 +816,9 @@ function DesktopWallpaper() {
             })
           })
           .catch(error => {
-            URL.revokeObjectURL(nextPoster)
+            if (preparedPoster) {
+              URL.revokeObjectURL(preparedPoster)
+            }
 
             if (!disposed && nextImageGeneration === imageGeneration) {
               acknowledgeImage(media, 'failed', String(error))

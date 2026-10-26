@@ -15,7 +15,27 @@ export const dict: Dictionary = {
     close: 'Close life area',
     pursuitsTitle: 'Things that matter',
     eventsTitle: 'Recent changes',
-    statuses: { all: 'All', active: 'Ongoing', completed: 'Completed' },
+    statuses: { all: 'All', active: 'Ongoing', paused: 'Paused', completed: 'Completed', abandoned: 'Set aside' },
+    factTypes: {
+      intent: 'Intention',
+      virtual_activity: 'Life scene',
+      execution: 'Execution',
+      result: 'Confirmed result'
+    },
+    stepStates: {
+      planned: 'Waiting',
+      running: 'In progress',
+      completed: 'Completed',
+      failed: 'Failed',
+      cancelled: 'Cancelled',
+      unknown: 'Outcome unconfirmed'
+    },
+    stepsTitle: 'Actions',
+    changeReason: 'Reason for the change',
+    readingNotes: 'Reading notes',
+    sourceSummary: 'Summary',
+    sourceExcerpt: 'Excerpt',
+    sourceText: 'Text',
     reason: 'How it began',
     desiredResult: 'What they hope to achieve',
     progress: 'Progress so far',
@@ -31,6 +51,9 @@ export const dict: Dictionary = {
     next: 'Next',
     details: 'Explore this pursuit',
     openVisual: 'View visual',
+    openOutfit: 'View outfit',
+    openScene: 'View environment',
+    openAction: 'View action',
     openPosts: 'Open posts',
     openDiary: 'Open diary',
     eventLabels: {
@@ -40,7 +63,13 @@ export const dict: Dictionary = {
       completed: 'Finished something',
       visual: 'Created a visual',
       post: 'Published a post',
-      diary: 'Wrote a diary entry'
+      diary: 'Wrote a diary entry',
+      paused: 'Paused a pursuit',
+      resumed: 'Resumed a pursuit',
+      abandoned: 'Set a pursuit aside',
+      step: 'Completed a step',
+      failed: 'Execution failed',
+      unknown: 'Outcome unconfirmed'
     }
   },
   brand: {

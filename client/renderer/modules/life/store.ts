@@ -5,7 +5,7 @@ import { log } from '@/shared/lib/log'
 import { requestResource } from '@/shared/lib/resource-request'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 
-import type { LifeEvent, LifePursuit, LifeState } from './types'
+import type { LifeEvent, LifePursuit, LifePursuitDetail, LifeState } from './types'
 
 export const $lifeRevision = atom(0)
 export const $lifeState = atom<LifeState | null>(null)
@@ -88,7 +88,7 @@ const events = createLifeResource<LifeEventPage>({
   revision: -1
 })
 
-const detail = createLifeResource<LifePursuit | null>(null)
+const detail = createLifeResource<LifePursuitDetail | null>(null)
 
 export const $lifePursuits = computed(pursuits.$data, value => value.items)
 export const $lifePursuitsHasMore = computed(pursuits.$data, value => value.has_more)
@@ -182,7 +182,7 @@ export function refreshLife(): Promise<void> {
   return request
 }
 
-export function loadLifePursuits(status: 'all' | 'active' | 'completed', cursor: string | null): Promise<void> {
+export function loadLifePursuits(status: 'all' | LifePursuit['status'], cursor: string | null): Promise<void> {
   return pursuits.load(`pursuits:${status}:${cursor ?? ''}`, () =>
     requestResource('companion_life.get_life_pursuits', {
       query: { status: status === 'all' ? undefined : status, cursor, limit: LIFE_PAGE_SIZE }

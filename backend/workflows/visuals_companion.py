@@ -152,6 +152,7 @@ async def design_action_reference(
     duration_seconds: int = 4,
     clip_kind: ActionClipKind = "once",
     source: ActionAssetSource = "autonomous",
+    life_step: LifeStepRequest | None = None,
 ) -> dict[str, Any]:
     """登记动作素材并安排语义评审；不创建图片或视频制作。"""
 
@@ -173,6 +174,7 @@ async def design_action_reference(
             design,
             source=source,
             review_source_json=review_source.model_dump(mode="json"),
+            life_step=life_step,
         )
         await db.commit()
     if view.status == "pending":
@@ -235,6 +237,7 @@ async def generate_visual_reference(
     requirements: str = "",
     feedback: str = "",
     video_feedback: str = "",
+    life_step: LifeStepRequest | None = None,
 ) -> dict[str, Any]:
     """冻结本次组合并提交制作工作项；空影像库也能开始第一次制作。"""
 
@@ -254,9 +257,13 @@ async def generate_visual_reference(
                 target_height=state.target_height,
             )
             await db.commit()
-        request_key = "life:visual:" + hashlib.sha256(request_id.encode("utf-8")).hexdigest()
+        request_key = (
+            life_step.idempotency_key
+            if life_step is not None
+            else "life:visual:" + hashlib.sha256(request_id.encode("utf-8")).hexdigest()
+        )
         life_state = await read_state(user_id)
-        request = LifeStepRequest(
+        request = life_step or LifeStepRequest(
             idempotency_key=request_key,
             kind="visual.generate",
             description=f"制作伙伴影像：{combo.action.name}",
@@ -285,6 +292,8 @@ async def play_visual_reference(
     visual_id: int,
     *,
     proactive_turn: bool = False,
+    expected_state_revision: int | None = None,
+    expected_life_revision: int | None = None,
 ) -> dict[str, Any]:
     """请求呈现已有影像；受理不等于已播放，实际回执才更新呈现事实。"""
 
@@ -292,7 +301,16 @@ async def play_visual_reference(
         record = get_user_proactive_record(user_id)
         if record.busy_count or await get_disturbance_tier(user_id) != "autonomous":
             return {"status": "blocked", "message": "当前活动或打扰档位不适合自主呈现"}
-    command = await visuals_service.play_visual(user_id, visual_id, source="autonomous")
+    try:
+        command = await visuals_service.play_visual(
+            user_id,
+            visual_id,
+            source="autonomous",
+            expected_state_revision=expected_state_revision,
+            expected_life_revision=expected_life_revision,
+        )
+    except visuals_service.VisualPresentationConflictError:
+        return {"status": "state_changed"}
     return {
         "play_id": command.play_id,
         "visual_id": command.visual_id,

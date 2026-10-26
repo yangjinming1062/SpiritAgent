@@ -35,6 +35,31 @@ export function lifeTimeline(events: readonly LifeEvent[]): LifeTimelineEntry[] 
     let priority = 0
 
     switch (event.kind) {
+      case 'life.pursuit.paused':
+
+      case 'life.pursuit.active':
+
+      case 'life.pursuit.abandoned':
+        kind =
+          event.kind === 'life.pursuit.paused'
+            ? 'paused'
+            : event.kind === 'life.pursuit.active'
+              ? 'resumed'
+              : 'abandoned'
+        text = [textField(event.fact, 'title'), textField(event.fact, 'reason')].filter(Boolean).join(' · ')
+
+        break
+
+      case 'life.step.completed':
+
+      case 'life.step.failed':
+
+      case 'life.step.unknown':
+        kind = event.kind === 'life.step.completed' ? 'step' : event.kind === 'life.step.failed' ? 'failed' : 'unknown'
+        text = textField(event.fact, 'description')
+
+        break
+
       case 'life.state.changed':
         kind = 'activity'
         text = textField(event.fact, 'current_activity')

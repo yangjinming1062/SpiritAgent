@@ -39,6 +39,7 @@ VISUALS_TABLES = frozenset(
 )
 ACTION_LIBRARY_TABLES = VISUALS_TABLES | {
     "companion_outfits",
+    "outfit_creation_jobs",
     "action_definitions",
     "companion_scenes",
     "scene_jobs",
@@ -56,6 +57,7 @@ BACKUP_SECTIONS: dict[str, tuple[str, ...]] = {
         "personas",
         "avatar_assets",
         "companion_outfits",
+        "outfit_creation_jobs",
         "companion_fullbody_candidates",
         "character_analysis_jobs",
         "appearance_assets",
@@ -70,6 +72,7 @@ BACKUP_SECTIONS: dict[str, tuple[str, ...]] = {
         "cron_jobs",
         "companion_intents",
         "life_pursuits",
+        "life_action_admissions",
         "life_steps",
         "life_events",
         "life_states",

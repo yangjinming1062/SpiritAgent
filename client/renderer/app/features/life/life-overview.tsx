@@ -4,6 +4,7 @@ import type React from 'react'
 import { $appPage, applyAppNavigation } from '@/app/navigation/app-navigation'
 import { $chatSessionId, ensureCompanionSession } from '@/modules/conversation'
 import { $lifeError, $lifeFocusedPursuit, $lifeLoading, $lifeState, refreshLife } from '@/modules/life'
+import { $visualsPresentation } from '@/modules/visuals'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { BTN_GHOST, BTN_SUBTLE, ErrorBanner, LoadingBlock } from '@/shared/panel'
@@ -29,6 +30,7 @@ export function LifeOverview({
   const failed = useStore($lifeError)
   const strings = useStrings()
   const t = strings.life
+  const visual = useStore($visualsPresentation)
   const beginAsync = useAsyncGuard()
 
   const openChat = async (): Promise<void> => {
@@ -67,6 +69,18 @@ export function LifeOverview({
         <p className={styles.activity}>{state?.current_activity || t.unavailable}</p>
       )}
       {state?.mood && <p className={styles.mood}>{state.mood}</p>}
+      {visual?.static_presentation?.error && <p role="status">{visual.static_presentation.error}</p>}
+      {state && (
+        <small>
+          {t.factTypes[state.activity_kind]}
+          {state.activity_started_at && (
+            <>
+              {' '}
+              · <time dateTime={state.activity_started_at}>{new Date(state.activity_started_at).toLocaleString()}</time>
+            </>
+          )}
+        </small>
+      )}
       {failed && (
         <ErrorBanner message={t.failed} onRetry={() => void refreshLife()} retryLabel={strings.common.retry} />
       )}

@@ -73,6 +73,8 @@
 | [scene_jobs](../backend/features/scenes/models.py) | 一次环境制作的专有输入和采纳目标；共享控制状态属于 `jobs` |
 | [action_definitions](../backend/features/action_library/models.py) | 动作含义、适用条件、播放方式及评审依据；名称用于检索，不是独立身份或可播放证明 |
 
+自主造型的持久任务见 [OutfitCreationJob](../backend/features/appearance/models.py)，请求及执行控制复用共享任务，采纳结果引用衣柜素材。
+
 ## 影像、播放与媒体制作
 
 | 表 / 定义 | 字段语义与主要约束 |
@@ -101,10 +103,11 @@
 
 | 表 / 定义 | 字段语义与主要约束 |
 |---|---|
-| [life_states](../backend/features/life/models.py) | 当前生活、聚焦事项及修订；是生活写入的串行锁入口，不代表桌面已经呈现 |
-| [life_pursuits](../backend/features/life/models.py) | 持续事项、进展及完成结果；完成须满足 [生活证据契约](PROTOCOL.md#生活状态与生活事件) |
-| [life_steps](../backend/features/life/models.py) | 执行步骤及实际任务外键；结果通过内容／影像／版本等明确外键保存 |
-| [life_events](../backend/features/life/models.py) | 已发生事实、主体和来源；事件键用于幂等，来源或结果删除不抹掉事实内容 |
+| [life_states](../backend/features/life/models.py) | 当前活动及事实性质、开始时间、执行步骤、聚焦事项与修订；是生活写入的串行锁入口，呈现评估水位不证明已经显示 |
+| [life_pursuits](../backend/features/life/models.py) | 持续事项、进展、状态变更来源与理由、改方向前的事项及完成结果；完成须满足 [生活证据契约](PROTOCOL.md#生活状态与生活事件) |
+| [life_steps](../backend/features/life/models.py) | 类型化动作、请求身份、执行条件、检查点及本地日额度归属；结果经内容、影像、素材或动作外键关联，阅读正文范围与笔记长期保留 |
+| [life_action_admissions](../backend/features/life/models.py) | 按请求保存额度归属和提交事实；覆盖恢复按请求合并并保留已提交事实，不依赖可被覆盖的事项历史计数 |
+| [life_events](../backend/features/life/models.py) | 记录内容及其性质、主体和来源；事件键用于幂等，来源或结果删除不抹掉事实内容 |
 | [pursuit_evidence](../backend/features/life/models.py) | 事项完成所引用的事实事件，证据不嵌入不可核对的 JSON 列表 |
 | [nightly_activity_logs](../backend/workflows/nightly/models.py) | 账户本地日期的阶段账本、预算及完成情况 |
 | [nightly_activity_actions](../backend/workflows/nightly/models.py) | 日志内动作身份、真实任务及结果；执行恢复不以计划冒充完成 |

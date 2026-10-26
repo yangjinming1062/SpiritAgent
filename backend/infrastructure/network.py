@@ -337,6 +337,16 @@ class _ProxyRoutingAsyncTransport(httpx.AsyncBaseTransport):
                 raise result
 
 
+async def validate_public_url(url: str) -> None:
+    """转交网页提取服务前也校验原文目标，不允许携带凭据或访问私有地址。"""
+    parsed = urlparse(url)
+    if parsed.scheme not in {"https", "http"} or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("阅读来源必须是公开 HTTP 或 HTTPS 网页")
+    await asyncio.to_thread(
+        _resolve_and_validate, parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80)
+    )
+
+
 def safe_outbound_async_client(**kwargs: Any) -> httpx.AsyncClient:
     """带建连期 SSRF 守卫的 AsyncClient 工厂；不跟随重定向，``download_capped`` 自行逐跳校验。"""
     transport = safe_outbound_async_transport(trust_env=kwargs.get("trust_env", True))

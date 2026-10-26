@@ -51,7 +51,7 @@ logger = get_logger(__name__)
 # 传给 planning 阶段的 recall 行数（用作高亮）。
 _PLANNING_RECALL_HIGHLIGHTS: int = 10
 # 规划动作以这些状态结束时，整晚记为部分失败。
-_FAILED_ACTION_STATUSES = frozenset(("failed", "interrupted", "partial", "result_unknown"))
+_FAILED_ACTION_STATUSES = frozenset(("failed", "interrupted", "result_unknown"))
 
 
 def _local_day_utc_bounds(day: date, tz_str: str) -> tuple[datetime, datetime]:
@@ -173,7 +173,7 @@ async def _update_log(
 def _successful_action_facts(actions: dict[str, ActionExecutionResult]) -> list[dict[str, Any]]:
     facts: list[dict[str, Any]] = []
     for action_key, action in actions.items():
-        if action.status not in ("succeeded", "partial") or not (fact := (action.fact or "").strip()):
+        if action.status != "succeeded" or not (fact := (action.fact or "").strip()):
             continue
         item: dict[str, Any] = {
             "action_key": action_key,

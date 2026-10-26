@@ -1045,6 +1045,7 @@ async def _finish_job(
                     event_key=f"visual:{job.id}:{published.id}:{published.version}",
                     kind="visual.ready",
                     source="visuals",
+                    fact_type="result",
                     fact={"visual_id": published.id, "media_kind": published.media_kind, "version": published.version},
                     result_ref={
                         "visual_id": published.id,

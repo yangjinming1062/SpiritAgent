@@ -50,6 +50,15 @@ class OutfitSource(BaseModel):
         return self.model_dump(mode="json", exclude_none=True)
 
 
+class OutfitCreationJob(JobRecord):
+    __tablename__ = "outfit_creation_jobs"
+    __mapper_args__ = {"polymorphic_identity": "outfit.create"}
+    id: Mapped[int] = mapped_column(BigInteger, ForeignKey("jobs.id", ondelete="CASCADE"), primary_key=True)
+    owner_id: Mapped[int] = mapped_column(BigInteger)
+    description: Mapped[str] = mapped_column(Text)
+    result_outfit_id: Mapped[int | None] = mapped_column(ForeignKey("companion_outfits.id", ondelete="SET NULL"))
+
+
 class CompanionOutfit(ModelBase, TimestampMixin):
     """衣柜造型素材及其着装参考；ready 表示静态造型图就绪。"""
 

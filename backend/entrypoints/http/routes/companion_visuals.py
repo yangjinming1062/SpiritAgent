@@ -6,6 +6,7 @@ from fastapi import Path, Query
 from features.visuals import queries as _visual_queries
 from features.visuals import use_cases as _visuals
 from features.visuals.schemas import (
+    StaticReceipt,
     VisualClaimRequest,
     VisualClaimResponse,
     VisualDetailView,
@@ -21,6 +22,7 @@ from features.visuals.schemas import (
     VisualReceiptResponse,
     VisualRegenerateRequest,
 )
+from features.visuals.static_presentation import record_static_receipt
 from infrastructure.api_ids import ResourceId
 from infrastructure.constants import POSTGRES_INT8_MAX
 from infrastructure.http_contracts import operation_policy
@@ -78,6 +80,16 @@ async def list_visual_jobs(
 @router.get("/presentation", response_model=VisualPresentationResponse)
 async def get_presentation(user: CurrentUser) -> VisualPresentationResponse:
     return await _visuals.presentation_state(user_id=user.id)
+
+
+@router.post(
+    "/presentation/static-receipt",
+    response_model=VisualReceiptResponse,
+    openapi_extra=operation_policy(identities=("desktop",)),
+)
+async def static_receipt(user: CurrentUser, body: StaticReceipt) -> VisualReceiptResponse:
+    await record_static_receipt(user.id, body)
+    return VisualReceiptResponse(ok=True)
 
 
 @router.put("/presentation", response_model=VisualPresentationResponse)

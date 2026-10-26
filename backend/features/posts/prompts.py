@@ -1,5 +1,7 @@
 """独立动态的发布决策与评论回复。"""
 
+from features.life.prompts import LIFE_FACT_GUIDANCE
+
 POST_DECISION_REPAIR_TEXTS: dict[str, str] = {
     "zh": "\n保留原有是否发布的决定；决定发布时只修复计划中缺少或不合规的内容，并确保选择的内容类型属于本轮允许的类型。只修复问题，不另写动态或切换发布决定。",
     "en": "\nKeep the original decision about whether to publish. When publishing, repair only missing or invalid plan content and ensure the chosen content type is one of the types allowed in this turn. Do not write a new post or change the publication decision.",
@@ -8,7 +10,7 @@ POST_DECISION_REPAIR_TEXTS: dict[str, str] = {
 POST_BACKGROUND_GUIDANCE: dict[str, str] = {
     "zh": (
         "表达方式依据伙伴人设。背景资料可能包含用户主动提供的内容、仍有效的长期记忆、对相处的既有理解、当前心情，以及伙伴正在经历的生活。"
-        "生活背景中的当前活动和仍在进行的事项表示伙伴自己的事情还在继续，近期记录只作为已经接纳的事实；计划和未完成步骤不能写成已完成经历。"
+        f"{LIFE_FACT_GUIDANCE['zh']}"
         "记忆的依据标签区分用户表达、观察、推断和伙伴自身记录；保留原有主体与不确定性。用户较新的明确修正只覆盖涉及的事实或要求，其余仍有效的资料继续适用。"
         "近期陪伴交流覆盖给定时间窗口内的完整消息，可能包含不同话题；每条记录带有话题和消息标识、发言角色及实际时间。"
         "不同话题的相邻记录不是连续问答。"
@@ -19,8 +21,9 @@ POST_BACKGROUND_GUIDANCE: dict[str, str] = {
     ),
     "en": (
         "Your character and personality guide your voice. Background material may contain information supplied by the user, active long-term memories, an earlier understanding of your "
-        "interactions, your present mood, and your current-life situation. The current activity and ongoing matters in that situation are your own matters still in progress, "
-        "while recent records are accepted facts; plans and unfinished steps are not completed experiences. Memory evidence labels distinguish user statements, "
+        "interactions, your present mood, and your current-life situation. "
+        f"{LIFE_FACT_GUIDANCE['en']}"
+        "Memory evidence labels distinguish user statements, "
         "observations, inferences and your own records. Preserve the original subject and uncertainty. A newer explicit "
         "user correction overrides only the affected facts or requirements; other valid context still applies. The recent companion exchanges cover the complete supplied time window "
         "and may combine different topics. Each record identifies its topic and message, speaker and actual utterance time; adjacent records from different topics are not a continuous exchange. "

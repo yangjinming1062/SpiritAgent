@@ -12,6 +12,14 @@ from runtime.events.emit import emit_ws_event
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.life.schemas import LifeStepRequest
+from features.life.use_cases import (
+    bind_step_in_session,
+    require_step_submission,
+    step_for_request,
+    update_business_steps_in_session,
+)
+
 from .models import ActionDefinition
 from .schemas import ActionAssetDesign, ActionAssetSource, ActionAssetStatus, ActionAssetView
 from .views import definition_view, normalize_action_name
@@ -24,10 +32,19 @@ async def create_action(
     *,
     source: ActionAssetSource,
     review_source_json: dict,
+    life_step: LifeStepRequest | None = None,
 ) -> ActionAssetView:
     """登记一份新的动作素材；评审由 review 模块异步执行。"""
 
     await lock_domain(db, user_id, "actions")
+    if life_step is not None:
+        original = await step_for_request(db, user_id, life_step.idempotency_key)
+        if original is not None and original.business_ref.get("action_id"):
+            row = await db.get(ActionDefinition, original.business_ref["action_id"])
+            if row is None or row.user_id != user_id:
+                raise ValueError("原动作已删除，不能重新执行同一请求")
+            return definition_view(row)
+    await require_step_submission(db, user_id, life_step)
     if source == "autonomous" and not SETTINGS.action_autocreate_enabled:
         raise ValueError("伙伴自主新增动作已关闭")
     existing = await db.scalars(
@@ -45,6 +62,9 @@ async def create_action(
             and item.avoid_when_json == design.avoid_when
             and item.allowed_triggers_json == design.triggers
         ):
+            if life_step is not None:
+                await bind_step_in_session(db, user_id, life_step, business_ref={"action_id": item.id})
+                await settle_action_steps(db, item)
             return definition_view(item)
     row = ActionDefinition(
         user_id=user_id,
@@ -64,6 +84,8 @@ async def create_action(
     )
     db.add(row)
     await db.flush()
+    if life_step is not None:
+        await bind_step_in_session(db, user_id, life_step, business_ref={"action_id": row.id})
     emit_ws_event(db, user_id=user_id, event_type="companion.action.updated", payload={})
     return definition_view(row)
 
@@ -180,8 +202,23 @@ async def record_review(
     row.status = status
     row.review_reason = reason
     await db.flush()
+    await settle_action_steps(db, row)
     emit_ws_event(db, user_id=user_id, event_type="companion.action.updated", payload={})
     return status
+
+
+async def settle_action_steps(db: AsyncSession, row: ActionDefinition) -> None:
+    if row.status not in {"approved", "rejected", "deferred"}:
+        return
+    await update_business_steps_in_session(
+        db,
+        row.user_id,
+        kind="action.design",
+        business_ref={"action_id": row.id},
+        state="completed" if row.status == "approved" else "failed",
+        result_ref={"action_id": row.id} if row.status == "approved" else {},
+        error=row.review_reason if row.status != "approved" else None,
+    )
 
 
 async def recover_interrupted_reviews(db: AsyncSession, user_id: int | None = None) -> int:
@@ -195,6 +232,7 @@ async def recover_interrupted_reviews(db: AsyncSession, user_id: int | None = No
     for row in result.scalars():
         row.status = "deferred"
         row.review_reason = "评审中断，请手动重试"
+        await settle_action_steps(db, row)
         count += 1
     if count:
         await db.flush()
