@@ -417,8 +417,8 @@ export const dict: Dictionary = {
       companion: 'Companion'
     },
     companion: {
-      heading: 'Companion display',
-      hint: 'Adjust the companion scale and position.',
+      heading: 'Size and position',
+      hint: 'Adjust the companion scale and position in window mode.',
       companionSize: 'Companion size',
       companionSizeHint: 'Default display scale of your companion.',
       scaleAria: 'Companion size',
@@ -591,9 +591,10 @@ export const dict: Dictionary = {
       }
     },
     interaction: {
-      title: 'Companionship intensity',
+      title: 'Companionship',
       intro: 'How the companion responds and when it may interrupt you.',
-      voiceHeading: 'Responses & recording',
+      voiceHeading: 'Voice interaction',
+      voiceIntro: 'Choose your preferred reply format and the maximum length of a voice recording.',
       responsePreference: 'Response preference',
       responsePreferenceText: 'Prefer text',
       responsePreferenceVoice: 'Prefer voice',
@@ -799,7 +800,7 @@ export const dict: Dictionary = {
       hintSaveFailed: 'Save failed, try again.'
     },
     theme: {
-      heading: 'Theme',
+      heading: 'Interface theme',
       hint: "Themes apply to the main window, whisper and desktop mode interfaces; the companion's appearance is unaffected.",
       themesHeading: 'Theme presets',
       themesAriaLabel: 'Theme presets',
@@ -875,13 +876,13 @@ export const dict: Dictionary = {
     },
 
     application: {
-      title: 'App',
-      hint: 'Manage language, keyboard shortcuts, and app updates.',
+      title: 'App settings',
+      hint: 'Choose the interface language.',
+      generalTitle: 'General',
       languageLabel: 'Language',
       languageSaveFailed: 'Language could not be saved. Try again.',
       shortcutsTitle: 'Keyboard shortcuts',
-      companionSizeTitle: 'Companion size and position',
-      windowModeTitle: 'Window and desktop mode',
+      displayHint: 'Choose the display mode, screen, and the companion size and position in window mode.',
       advancedHint: 'The recommended defaults work for everyday use. Adjust these options only when you need to.',
       conversationTitle: 'Conversation parameters',
       conversationHint: 'Reasoning, randomness, and long conversations.',
@@ -892,17 +893,20 @@ export const dict: Dictionary = {
       settingsLabel: 'Settings',
       sections: {
         companionship: 'Companionship',
-        voice: 'Replies and recording',
-        display: 'Display and appearance',
-        devices: 'Devices and abilities',
-        application: 'App',
+        voice: 'Voice interaction',
+        sources: 'News sources',
+        theme: 'Interface theme',
+        display: 'Companion display',
+        devices: 'Mobile access',
+        capabilities: 'Capabilities',
+        application: 'App settings',
         advanced: 'Advanced settings'
       }
     },
 
     presentation: {
-      title: 'Where your companion appears',
-      hint: 'Choose where your companion appears.',
+      title: 'Window and desktop',
+      hint: 'Choose window or desktop mode and the screen your companion uses.',
       displayModeLabel: 'Display mode',
       displayLabel: 'Display',
       displayAria: 'Interactive display',

@@ -402,8 +402,8 @@ export const dict = {
       companion: '伙伴'
     },
     companion: {
-      heading: '伙伴显示',
-      hint: '调整伙伴的显示比例和位置。',
+      heading: '大小与位置',
+      hint: '调整窗口模式下伙伴的显示比例和位置。',
       companionSize: '伙伴大小',
       companionSizeHint: '伙伴形象的默认显示比例。',
       scaleAria: '伙伴大小',
@@ -567,9 +567,10 @@ export const dict = {
       }
     },
     interaction: {
-      title: '陪伴强度',
+      title: '陪伴方式',
       intro: '选择伙伴什么时候主动找你，以及平时可以做些什么。',
-      voiceHeading: '回应与录音',
+      voiceHeading: '语音交互',
+      voiceIntro: '选择伙伴的回应方式和单条语音的录音时长。',
       responsePreference: '回应偏好',
       responsePreferenceText: '偏好文字',
       responsePreferenceVoice: '偏好语音',
@@ -765,7 +766,7 @@ export const dict = {
       hintSaveFailed: '保存失败，稍后再试'
     },
     theme: {
-      heading: '主题',
+      heading: '界面主题',
       hint: '主题应用到主窗口、轻语和桌面模式的界面，伙伴形象不受影响。',
       themesHeading: '主题方案',
       themesAriaLabel: '主题方案',
@@ -826,13 +827,13 @@ export const dict = {
     },
 
     application: {
-      title: '应用',
-      hint: '管理界面语言、快捷键和应用更新。',
+      title: '应用设置',
+      hint: '设置应用的界面语言。',
+      generalTitle: '通用',
       languageLabel: '界面语言',
       languageSaveFailed: '语言未能保存，请重试',
       shortcutsTitle: '快捷键',
-      companionSizeTitle: '伙伴大小与位置',
-      windowModeTitle: '窗口与桌面模式',
+      displayHint: '选择伙伴的显示模式、显示屏，以及窗口模式下的大小与位置。',
       advancedHint: '日常使用保持默认值即可，需要时再调整以下选项。',
       conversationTitle: '对话参数',
       conversationHint: '思考深度、表达随机性和长对话处理。',
@@ -843,17 +844,20 @@ export const dict = {
       settingsLabel: '设置',
       sections: {
         companionship: '陪伴方式',
-        voice: '回应与录音',
-        display: '显示与外观',
-        devices: '设备与能力',
-        application: '应用',
+        voice: '语音交互',
+        sources: '资讯来源',
+        theme: '界面主题',
+        display: '伙伴显示',
+        devices: '手机访问',
+        capabilities: '能力管理',
+        application: '应用设置',
         advanced: '高级设置'
       }
     },
 
     presentation: {
-      title: '伙伴出现在哪里',
-      hint: '选择让伙伴出现在窗口旁，还是住进电脑桌面。',
+      title: '窗口与桌面',
+      hint: '选择窗口或桌面模式，以及伙伴使用的显示屏。',
       displayModeLabel: '显示方式',
       displayLabel: '显示屏',
       displayAria: '交互显示器',

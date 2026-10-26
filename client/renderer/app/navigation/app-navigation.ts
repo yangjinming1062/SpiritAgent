@@ -13,6 +13,7 @@ import {
   type CompanionSection,
   normalizeAppNavigation,
   SETTINGS_SECTIONS,
+  SETTINGS_TABS,
   type SettingsSection
 } from '@ipc/contracts'
 
@@ -35,8 +36,7 @@ const navigation = definePersistedAtom<AppNavigationTarget>({
       SETTINGS_SECTIONS.some(section => section === candidate.section) &&
       COMPANION_SECTIONS.some(section => section === candidate.companionSection) &&
       (candidate.settingsTab === undefined ||
-        candidate.settingsTab === 'skills' ||
-        candidate.settingsTab === 'toolsets')
+        Object.values(SETTINGS_TABS).some(tabs => tabs.some(tab => tab === candidate.settingsTab)))
     )
   }
 })
@@ -90,7 +90,7 @@ export function readAppNavigationHash(): AppNavigationTarget | null {
 function writeHash(target: AppNavigationTarget): void {
   const query = new URLSearchParams()
 
-  if (target.page === 'settings' && target.section === 'devices' && target.settingsTab) {
+  if (target.page === 'settings' && target.settingsTab) {
     query.set('subtab', target.settingsTab)
   }
 

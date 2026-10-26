@@ -64,7 +64,7 @@
   max-width: 880px;
   width: 100%;
 }
-.devicesTabs {
+.tabs {
   border-bottom: 1px solid var(--ui-line-hairline);
   flex-shrink: 0;
   padding: 20px clamp(24px, 4vw, 56px) 16px;
@@ -91,7 +91,7 @@
   .scroller {
     padding: 24px 20px 40px;
   }
-  .devicesTabs {
+  .tabs {
     padding: 16px 20px;
   }
 }

@@ -5,7 +5,7 @@ import { AccessibilityPermissionButton } from '@/app/components/accessibility-pe
 import { usePresentationModeSwitch } from '@/app/components/presentation-mode-switch'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { presentationDisplayOptions } from '@/shared/lib/presentation-displays'
-import { BTN_SUBTLE, PanelSelect, SettingCard, SettingRow, SettingsSectionIntro } from '@/shared/panel'
+import { BTN_SUBTLE, HINT_TEXT, PanelSelect, SECTION_TITLE, SettingCard, SettingRow } from '@/shared/panel'
 import { desktopPlatform, shellApi } from '@/shared/platform/desktop'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
@@ -38,8 +38,9 @@ export function PresentationPage(): React.JSX.Element {
   }
 
   return (
-    <div className="space-y-8">
-      <SettingsSectionIntro hint={strings.settings.presentation.hint} title={strings.settings.presentation.title} />
+    <section className="space-y-3">
+      <h3 className={SECTION_TITLE}>{strings.settings.presentation.title}</h3>
+      <p className={HINT_TEXT}>{strings.settings.presentation.hint}</p>
       <SettingCard className="overflow-visible">
         <SettingRow
           description={
@@ -94,6 +95,6 @@ export function PresentationPage(): React.JSX.Element {
           {state.switchBlockedReason || state.failureReason || state.compatibilityWarning}
         </p>
       )}
-    </div>
+    </section>
   )
 }

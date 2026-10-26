@@ -3,7 +3,7 @@ import type React from 'react'
 import { useEffect } from 'react'
 
 import { $defaultScale, resetToHomePosition, setDefaultScale, syncDefaultScale } from '@/modules/character'
-import { BTN_SUBTLE, SettingCard, SettingRow, SettingsSectionIntro, Slider } from '@/shared/panel'
+import { BTN_SUBTLE, HINT_TEXT, SECTION_TITLE, SettingCard, SettingRow, Slider } from '@/shared/panel'
 import { shellApi } from '@/shared/platform/desktop'
 import { $presentation } from '@/shared/store/presentation'
 import { useStrings } from '@/shared/strings'
@@ -17,8 +17,9 @@ export function CompanionPage(): React.JSX.Element {
   useEffect(() => shellApi().sprite.onDefaultScaleChanged(syncDefaultScale), [])
 
   return (
-    <div className="space-y-6">
-      <SettingsSectionIntro hint={t.hint} title={t.heading} />
+    <section className="space-y-3">
+      <h3 className={SECTION_TITLE}>{t.heading}</h3>
+      <p className={HINT_TEXT}>{t.hint}</p>
       <SettingCard>
         <SettingRow description={t.companionSizeHint} label={t.companionSize}>
           <div className="flex w-48 items-center gap-3">
@@ -42,6 +43,6 @@ export function CompanionPage(): React.JSX.Element {
           </button>
         </SettingRow>
       </SettingCard>
-    </div>
+    </section>
   )
 }

@@ -11,7 +11,6 @@ import {
   setSettingsSection,
   SETTINGS_SECTIONS
 } from '@/app/navigation/app-navigation'
-import { PanelActivityProvider } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { triggerHaptic } from '@/shared/lib/haptics'
 import {
@@ -20,7 +19,9 @@ import {
   Globe,
   type IconComponent,
   Info,
+  Keyboard,
   Monitor,
+  Palette,
   SlidersHorizontal,
   Sparkles,
   Volume2
@@ -30,7 +31,7 @@ import { runnerApi } from '@/shared/platform/desktop'
 import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
-import type { SettingsSection } from '@ipc/contracts'
+import type { SettingsSection, SettingsTab } from '@ipc/contracts'
 
 import { AboutPage } from './about-page'
 import styles from './app-settings.module.css'
@@ -38,6 +39,7 @@ import { CompanionPage } from './companion-page'
 import { InteractionPage } from './interaction-page'
 import { PresentationPage } from './presentation-page'
 import { ShortcutsPage } from './shortcuts-page'
+import { SocialAccountsSection } from './social-accounts-section'
 import { InferencePage } from './station/inference-page'
 import { RunnerPage } from './station/runner-page'
 import { SkillsPage } from './station/skills-page'
@@ -47,8 +49,11 @@ import { ThemePage } from './theme-page'
 const ICONS: Record<SettingsSection, IconComponent> = {
   companionship: SlidersHorizontal,
   voice: Volume2,
+  sources: Globe,
+  theme: Palette,
   display: Monitor,
-  devices: Globe,
+  devices: IconDeviceMobile,
+  capabilities: Sparkles,
   application: Info,
   advanced: Brain
 }
@@ -97,10 +102,6 @@ function ApplicationSettings(): React.JSX.Element {
           />
         </SettingRow>
       </SettingCard>
-      <Disclosure title={strings.settings.application.shortcutsTitle}>
-        <ShortcutsPage />
-      </Disclosure>
-      <AboutPage />
     </div>
   )
 }
@@ -109,21 +110,21 @@ export function AppSettings(): React.JSX.Element {
   const section = useStore($settingsSection)
   const target = useStore($appNavigationTarget)
   const scrollerRef = useRef<HTMLDivElement>(null)
-  const devicesTab = target.settingsTab ?? 'remote'
+  const settingsTab = target.settingsTab ?? (section === 'capabilities' ? 'skills' : 'general')
   const strings = useStrings()
   const labels = strings.settings.application.sections
 
   useEffect(() => {
     scrollerRef.current?.scrollTo(0, 0)
-  }, [devicesTab])
+  }, [settingsTab])
 
-  const selectDevicesTab = (next: 'remote' | 'skills' | 'toolsets'): void => {
-    if (next !== devicesTab) {
+  const selectTab = (next: SettingsTab): void => {
+    if (next !== settingsTab) {
       triggerHaptic()
       void applyAppNavigation({
         page: 'settings',
-        section: 'devices',
-        settingsTab: next === 'remote' ? undefined : next
+        section,
+        settingsTab: next
       })
     }
   }
@@ -141,34 +142,35 @@ export function AppSettings(): React.JSX.Element {
       case 'voice':
         return <InteractionPage part="voice" />
 
+      case 'sources':
+        return <SocialAccountsSection />
+
+      case 'theme':
+        return <ThemePage />
+
       case 'display':
         return (
-          <div className="space-y-5">
-            <ThemePage />
-            <Disclosure title={strings.settings.application.companionSizeTitle}>
-              <CompanionPage />
-            </Disclosure>
-            <Disclosure title={strings.settings.application.windowModeTitle}>
-              <PresentationPage />
-            </Disclosure>
+          <div className="space-y-6">
+            <SettingsSectionIntro hint={strings.settings.application.displayHint} title={labels.display} />
+            <PresentationPage />
+            <CompanionPage />
           </div>
         )
 
       case 'devices':
-        return (
-          <>
-            <div hidden={devicesTab !== 'remote'}>
-              <PanelActivityProvider active={devicesTab === 'remote'}>
-                <RemotePage />
-              </PanelActivityProvider>
-            </div>
-            {devicesTab === 'skills' && <SkillsPage />}
-            {devicesTab === 'toolsets' && <ToolsetsPage />}
-          </>
-        )
+        return <RemotePage />
+
+      case 'capabilities':
+        return settingsTab === 'toolsets' ? <ToolsetsPage /> : <SkillsPage />
 
       case 'application':
-        return <ApplicationSettings />
+        return settingsTab === 'shortcuts' ? (
+          <ShortcutsPage />
+        ) : settingsTab === 'about' ? (
+          <AboutPage />
+        ) : (
+          <ApplicationSettings />
+        )
 
       case 'advanced':
         return (
@@ -222,18 +224,25 @@ export function AppSettings(): React.JSX.Element {
             widthClass="w-full"
           />
         </div>
-        {section === 'devices' && (
-          <div className={styles.devicesTabs}>
+        {(section === 'capabilities' || section === 'application') && (
+          <div className={styles.tabs}>
             <div className={styles.content}>
-              <CapsuleTabs
-                ariaLabel={labels.devices}
-                onChange={selectDevicesTab}
-                options={[
-                  { value: 'remote', label: strings.settings.remote.heading, icon: IconDeviceMobile },
-                  { value: 'skills', label: strings.skills.tabSkills, icon: Sparkles },
-                  { value: 'toolsets', label: strings.skills.tabToolsets, icon: Command }
-                ]}
-                value={devicesTab}
+              <CapsuleTabs<SettingsTab>
+                ariaLabel={labels[section]}
+                onChange={selectTab}
+                options={
+                  section === 'capabilities'
+                    ? [
+                        { value: 'skills', label: strings.skills.tabSkills, icon: Sparkles },
+                        { value: 'toolsets', label: strings.skills.tabToolsets, icon: Command }
+                      ]
+                    : [
+                        { value: 'general', label: strings.settings.application.generalTitle, icon: SlidersHorizontal },
+                        { value: 'shortcuts', label: strings.settings.application.shortcutsTitle, icon: Keyboard },
+                        { value: 'about', label: strings.settings.nav.about, icon: Info }
+                      ]
+                }
+                value={settingsTab}
               />
             </div>
           </div>

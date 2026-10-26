@@ -23,7 +23,13 @@ import type {
   MainConversationDraftSnapshot,
   VisualsUiSnapshot
 } from './ui-state'
-export { APP_PAGES, COMPANION_SECTIONS, normalizeAppNavigation, SETTINGS_SECTIONS } from './desktop-presentation'
+export {
+  APP_PAGES,
+  COMPANION_SECTIONS,
+  normalizeAppNavigation,
+  SETTINGS_SECTIONS,
+  SETTINGS_TABS
+} from './desktop-presentation'
 export type {
   AppNavigationTarget,
   AppPage,
@@ -47,6 +53,7 @@ export type {
   PresentationMode,
   PresentationState,
   SettingsSection,
+  SettingsTab,
   StageActivity
 } from './desktop-presentation'
 export type { CompanionEditorUiSnapshot, LifeUiSnapshot, VisualsUiSnapshot } from './ui-state'

@@ -30,8 +30,6 @@ import { getSpiritAgentConfig, saveSpiritAgentConfig } from '@/shared/spiritagen
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
-import { SocialAccountsSection } from './social-accounts-section'
-
 const DISTURBANCE_TIERS: readonly DisturbanceTier[] = ['still', 'normal', 'autonomous']
 
 const RECORDING_OPTIONS = [15, 30, 60, 120, 300] as const
@@ -104,11 +102,13 @@ export function InteractionPage({ part = 'companionship' }: { part?: 'companions
 
   return (
     <div className="space-y-6">
-      {part === 'companionship' && <SettingsSectionIntro hint={t.intro} title={t.title} />}
+      <SettingsSectionIntro
+        hint={part === 'companionship' ? t.intro : t.voiceIntro}
+        title={part === 'companionship' ? t.title : t.voiceHeading}
+      />
 
       {part === 'voice' ? (
         <section>
-          <p className={cn(SECTION_TITLE, 'mb-2')}>{t.voiceHeading}</p>
           <SettingCard>
             <SettingRow description={t.responsePreferenceDesc} label={t.responsePreference} stacked>
               <div className="max-w-xs">
@@ -182,7 +182,6 @@ export function InteractionPage({ part = 'companionship' }: { part?: 'companions
               </SettingRow>
             </SettingCard>
           </section>
-          <SocialAccountsSection />
         </>
       )}
     </div>

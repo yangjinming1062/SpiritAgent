@@ -36,7 +36,7 @@ export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
     if (target.page === 'settings' && target.section) {
       url.hash = `#/settings/${target.section}`
 
-      if (target.section === 'devices' && target.settingsTab) {
+      if (target.settingsTab) {
         url.hash += `?subtab=${target.settingsTab}`
       }
     } else if (target.page === 'companion' && target.companionSection) {

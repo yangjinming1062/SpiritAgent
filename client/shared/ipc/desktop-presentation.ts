@@ -173,8 +173,23 @@ export interface DesktopAccount {
 
 export const APP_PAGES = ['chat', 'life', 'posts', 'diary', 'companion', 'settings'] as const
 export type AppPage = (typeof APP_PAGES)[number]
-export const SETTINGS_SECTIONS = ['companionship', 'voice', 'display', 'devices', 'application', 'advanced'] as const
+export const SETTINGS_SECTIONS = [
+  'companionship',
+  'voice',
+  'sources',
+  'theme',
+  'display',
+  'devices',
+  'capabilities',
+  'application',
+  'advanced'
+] as const
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]
+export const SETTINGS_TABS = {
+  capabilities: ['skills', 'toolsets'],
+  application: ['general', 'shortcuts', 'about']
+} as const
+export type SettingsTab = (typeof SETTINGS_TABS)[keyof typeof SETTINGS_TABS][number]
 export const COMPANION_SECTIONS = [
   'profile',
   'voice',
@@ -190,7 +205,7 @@ export interface AppNavigationTarget {
   page?: AppPage
   section?: SettingsSection
   companionSection?: CompanionSection
-  settingsTab?: 'skills' | 'toolsets'
+  settingsTab?: SettingsTab
   sessionId?: string
   messageKey?: string
   pursuitId?: string
@@ -207,13 +222,16 @@ export function normalizeAppNavigation(raw: unknown): AppNavigationTarget {
 
   const companionSection = COMPANION_SECTIONS.find(item => item === value.companionSection)
 
-  const settingsTab = value.settingsTab === 'skills' || value.settingsTab === 'toolsets' ? value.settingsTab : undefined
+  const settingsTab =
+    section === 'capabilities' || section === 'application'
+      ? SETTINGS_TABS[section].find(item => item === value.settingsTab)
+      : undefined
 
   return {
     page: page ?? (section ? 'settings' : companionSection ? 'companion' : undefined),
     section,
     companionSection,
-    settingsTab: section === 'devices' ? settingsTab : undefined,
+    settingsTab,
     sessionId: typeof value.sessionId === 'string' ? value.sessionId : undefined,
     messageKey: typeof value.messageKey === 'string' ? value.messageKey : undefined,
     pursuitId: isResourceId(value.pursuitId) ? value.pursuitId : undefined

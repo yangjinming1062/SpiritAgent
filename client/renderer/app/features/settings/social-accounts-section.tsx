@@ -16,9 +16,9 @@ import {
   HINT_TEXT,
   INPUT_CLASS,
   Pill,
-  SECTION_TITLE,
   SettingCard,
   SETTINGS_ROW_TITLE,
+  SettingsSectionIntro,
   Spinner
 } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
@@ -82,9 +82,8 @@ function SocialAccountsSession(): React.JSX.Element {
   }, [])
 
   return (
-    <section className="space-y-2">
-      <h3 className={SECTION_TITLE}>{t.title}</h3>
-      <p className={cn(HINT_TEXT, 'max-w-xl')}>{t.hint}</p>
+    <section className="space-y-3">
+      <SettingsSectionIntro hint={t.hint} title={t.title} />
       {loading && !accounts.length ? <Spinner /> : null}
       <ErrorBanner message={error} onRetry={() => void load()} retryLabel={t.retry} />
       {accounts.map(account => (
