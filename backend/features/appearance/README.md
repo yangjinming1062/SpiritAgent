@@ -1,35 +1,30 @@
 # 外观
 
-拥有头像、全身身份、角色卡、衣柜造型素材及其生成、上传与采纳。头像与角色特征共用 `avatar_assets`，可恢复分析保存在继承共享任务的 `character_analysis_jobs`；候选和采纳保持独立。参考与产物归 [PIPELINE](../../../docs/PIPELINE.md#身份造型与参考输入)，跨端状态归 PROTOCOL；公共媒体制作、场景和动作分别归所属模块。
+负责头像、全身身份、角色卡和衣柜素材的生成、上传、分析与采纳。身份与参考职责以 [PIPELINE](../../../docs/PIPELINE.md#身份造型与参考输入) 为准；数据关系见 [字段字典](../../../docs/DATABASE_FIELDS.md)。
 
 ## 关键入口
 
-| 入口 | 职责 |
+| 修改任务 | 入口 |
 |---|---|
-| [avatar_service.py](avatar_service.py) | 头像、全身草稿/候选、身份确认与默认外观 |
-| [character_card.py](character_card.py)、[character_extraction.py](character_extraction.py) | 角色卡读写、修订守卫、分部特征提取与恢复 |
-| [outfit_service.py](outfit_service.py) | 外观草稿、生成、自备图、确认、删除与描述补全 |
-| [prompt_assembly.py](prompt_assembly.py)、[visual_identity.py](visual_identity.py) | 外观指令和聊天/动态出镜身份与参考装配 |
-| [queries.py](queries.py)、[views.py](views.py) | 跨模块冻结身份与外观快照、对外响应 |
-| [lifecycle.py](lifecycle.py)、[backup.py](backup.py)、[asset_references.py](asset_references.py) | 任务登记、模块备份与资产引用贡献 |
-| [初始资产流程](../../workflows/onboarding/initial_appearance.py) | 角色卡就绪后协调初始场景 |
+| 头像、全身与身份确认 | [avatar_service.py](avatar_service.py) |
+| 角色卡编辑、分析与恢复 | [character_card.py](character_card.py)、[character_extraction.py](character_extraction.py) |
+| 衣柜草稿、上传、确认与描述 | [outfit_service.py](outfit_service.py)、[outfit_jobs.py](outfit_jobs.py) |
+| 生成输入与出镜参考 | [prompt_assembly.py](prompt_assembly.py)、[visual_identity.py](visual_identity.py) |
+| 跨域读取与资产交接 | [queries.py](queries.py)、[views.py](views.py)、[asset_bindings.py](asset_bindings.py) |
+| 启停、备份与回收贡献 | [lifecycle.py](lifecycle.py)、[backup.py](backup.py)、[asset_references.py](asset_references.py) |
 
 ## 制作与采纳
 
-形象、衣柜和角色卡共用 `get_avatar_job_lock(user_id)`；角色卡编辑另用行锁和预期修订。冻结资料后在事务外调用供应商，写回重核身份、源路径和状态，更新与事件同事务提交。正式文件以资产外键登记，裸路径保留为展示快照，响应出口签名。写入通过 `asset_bindings.py` 在 flush 与 commit 前统一维护文件关联。
+形象、衣柜和角色卡共用账户外观锁；角色卡编辑另核对行锁和预期修订。供应商读取冻结输入，结果写回再核对身份、源图与任务。文件外键由 `asset_bindings.py` 在 flush/commit 前维护，状态与事件共同提交；裸路径仅用于冻结资料和展示，响应出口签名。
 
-确认身份前直接保存用户原图草稿，`confirm_fullbody_seed` 持久化原图并原子登记身份和角色卡任务，随后即可继续引导。角色卡任务先在事务外准备透明全身图，再核对头像、原图与任务归属，原子发布处理结果和独立默认外观，之后才分析双图与派生初始资产。复用角色卡的失败重试、重启及维护恢复；透明处理失败保留原图，尚无默认外观且未发布角色资料时允许重新上传，原图替换与任务重置同事务提交。确认后的生成结果保存为候选，分析和采纳分离。采纳重核原图和修订，未采纳候选与历史已采纳参考分别回收。全身与换装共用透明图片处理，不能仅凭文件后缀接受透明产物。
+身份确认先保存原图并登记角色卡任务，再异步准备透明全身和默认造型。透明处理失败保留原图；默认造型及角色资料尚未发布时可替换上传，原图变更与任务重置共同提交。生成候选、分析结果和正式采纳分开保存，采纳时核对原图与修订，避免迟到结果覆盖新身份。透明图必须经过实际处理与检查，不能按文件后缀判定。
 
-`OutfitSource` 是衣柜来源 JSON 的唯一解析结构，读取与备份恢复均校验字段和类型。媒体按[全身来源与参考职责](../../../docs/PIPELINE.md#固定身份与可变造型)冻结身份、身体和造型分工，不读取本次未使用的默认着装。命名与描述按账户/外观单飞，以实际采纳图片为依据，写回核对路径；失败或重启中断保留原名、已完成描述和诊断。下游制作按任务冻结造型资料。
-
-衣柜内建制作与外部提示词共用设计准备，外部交付补充画幅与透明背景说明。草稿换图在各自分支核对原图与身份后，共用提交与回收登记；AI 写回使用生成前冻结的来源，上传替换在锁内重读来源。
+衣柜以 `OutfitSource` 保存来源，读取和恢复使用同一结构校验。内建制作与外部提示词共用设计准备；AI 换图沿生成前冻结的来源写回，上传替换在锁内重读。确认入柜只验收当前草稿和图片，不因后续角色卡变化否定已生成草稿，原始来源继续供下游区分身份、身体与造型参考。
 
 ## 后台任务与初始资产
 
-自主造型通过 `outfit_jobs.py` 在生成前保存共享任务、请求身份及生活步骤；`outfit_progress.py` 保存图片链检查点并保护其资产。生成与确认复用衣柜流程，重启复用原任务，未知提交不再次生成。造型结果与步骤结算使用同一事务。
+自主造型受理时经 `outfit_jobs.py` 保存请求和生活步骤，`outfit_progress.py` 维护图片链检查点与资产保护；成品采纳和关联步骤结算共用事务。命名与描述按账户/造型单飞，以实际图片为依据，写回重核路径；失败保留已有名称、描述和诊断。
 
-确认入柜只验收已保存的草稿和图片，不再核对当前角色卡修订、分析状态或全身来源；保留原始来源供下游选择参考职责，用户确认与自主制作共用此发布流程。首套默认造型在后台透明准备完成时登记为初始造型素材。角色卡就绪后仅协调初始场景；描述任务按已有进度恢复，不创建动作或视频。
+角色卡就绪后由 [initial_appearance.py](../../workflows/onboarding/initial_appearance.py) 协调初始场景，不顺带创建动作或视频。重启与账户维护复用原任务及进度，收妥已提交结果后暂停后续付费阶段；未知提交不重新生成。读取素材不触发补齐制作。
 
-维护期间收敛已提交结果并落盘，暂停后续付费步骤；角色准备、描述失败及备份恢复各按所属状态处理，不因读取衣柜或启动而重复付费。
-
-验证入口归 [Scripts](../../../scripts/README.md)。核对候选采纳、身份变化、并发修订、描述单飞、维护和重启；真实透明度、模型输入与客户端呈现分别验收。
+验证按 [Scripts](../../../scripts/README.md) 执行，覆盖身份替换、候选采纳、并发修订、描述单飞和维护恢复；真实透明度、供应商输入与客户端呈现分别验收。

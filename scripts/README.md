@@ -4,92 +4,91 @@
 
 ## 按改动选择验证
 
-先按[源码启动说明](../README.md#从源码启动)准备依赖。验证范围按改动选择：
-
-| 改动 | 检查 |
-|---|---|
-| 文档 | 事实、相对路径、锚点、图表分支与渲染；`git diff --check` 只检查空白 |
-| Python | 提交前 hook；Backend 依赖变化另跑分层检查 |
-| Client | `pnpm --dir client lint`（含路径解析后的模块／窗口边界、平台桥访问与静态值依赖环）、`pnpm --dir client typecheck` |
-| 手机远程页面 | `pnpm --dir remote lint`、`pnpm --dir remote typecheck`、`pnpm --dir remote build`；扫码、麦克风和后台恢复须在 iOS Safari、Android Chrome 实机验收 |
-| 共享协议 `shared/`、预设目录 | 先执行 `backend/.venv/Scripts/python.exe scripts/generate_protocol.py --check`（其他环境使用 Backend Python），再同时执行 Client 与 Remote 的 lint、typecheck 和构建；Remote lint 及提交前格式化覆盖全部手写共享 TS，生成的 `api.generated.ts` 只核对生成漂移 |
-| Windows 桌面 helper | 在 Windows 执行 `pnpm --dir client build:native`，生成 Rust host 与同架构 C++/WinRT 托盘样式模块；`cargo check --locked` 只覆盖 Rust；透明呈现、交互与恢复另做实机验收 |
-| macOS 桌面模块 | 在 macOS 执行 `pnpm --dir client build:native`，用 Xcode CLT 与 C Node-API 头构建目标 Electron 架构；`builder --dir --mac --arm64`／`--x64` 检查包内 Mach-O 和资源，层级、权限与交接另做下文实机验收 |
-| preload、构建入口或资源 | `pnpm --dir client build` 并核对实际产物 |
-| Installer 前端与编排 | `pnpm --dir installer build`，以及完整载荷下的目标平台 Tauri 构建和安装验收 |
-| wheel 或安装载荷 | 隔离安装门禁、精确版本与对应平台构建 |
-| 音频 | 专项静态检查，必要时合成并试听 |
-
-提交前完整入口（以 [.pre-commit-config.yaml](../.pre-commit-config.yaml) 为准）：
+命令默认在仓库根运行，依赖准备见[源码启动](../README.md#从源码启动)。按变化选择专项检查，提交前执行完整入口：
 
 ```bash
 uv tool run --python 3.13 pre-commit run -a
 ```
 
-hook 包含自动修正，仅在修改完成、准备提交时执行，随后检查差异并复验；开发过程使用只读专项检查，不反复运行格式化。hook 不包含 Client typecheck、Backend 架构检查或原生验收。构建可能修改构建信息和版本清单，交付时区分静态、构建与真实运行结果。
+该命令含自动修正，**仅在修改完成、准备提交时执行**，随后检查差异并复验；开发过程中使用只读检查。hook 清单以 [.pre-commit-config.yaml](../.pre-commit-config.yaml) 为准，不包含 Client typecheck、Backend 分层或原生实机验收。
 
-修改协议后运行 `scripts/generate_protocol.py` 更新生成契约；`--check` 只检查漂移。生成阶段同时校验后端预设目录与 Runner 允许预设是否一致，不一致时命令失败，跨端预设清单与 Runner 契约都从后端目录派生。
+| 改动 | 专项验证 |
+|---|---|
+| 文档 | 核对源码事实、相对路径、标题锚点、图表分支与渲染；`git diff --check` 只查空白 |
+| Python | 导入门禁；Backend 或 Runner 边界变化另跑本页架构检查 |
+| Client | `pnpm --dir client lint`、`pnpm --dir client typecheck`；preload、资源或构建入口变化再跑 `pnpm --dir client build` 并检查产物 |
+| Remote | `pnpm --dir remote lint`、`pnpm --dir remote typecheck`、`pnpm --dir remote build`；扫码、麦克风和后台恢复另测 iOS Safari 与 Android Chrome |
+| 共享协议／预设 | `backend/.venv/Scripts/python.exe scripts/generate_protocol.py --check`（其他平台用 Backend Python），再跑 Client 和 Remote 的 lint、typecheck、build |
+| Windows 原生 | `pnpm --dir client build:native` 构建 Rust host 与同架构托盘 DLL；`cargo check --locked` 只覆盖 Rust，另执行 Windows 实机清单 |
+| macOS 原生 | 在 macOS 执行 `pnpm --dir client build:native`，再以 `pnpm --dir client exec electron-builder --dir --mac --arm64` 构建对应包（x64 替换架构参数），并执行本页实机清单 |
+| Installer／wheel | `pnpm --dir installer build`、完整载荷下的目标平台 Tauri 构建及安装修复；wheel 另做隔离安装检查 |
+| 音频／模型行为 | 音频专项检查与试听；模型修改核对实际请求、真实返回和消费结果，生成链范围见 [PIPELINE](../docs/PIPELINE.md#验证) |
+
+协议修改后用 `generate_protocol.py` 更新生成契约；它同时核对 Backend 与 Runner 预设清单，`--check` 只查漂移。构建可能修改版本清单与构建信息，检查最终差异，并区分静态、构建与真实运行证据。
+
+## 持续生活验收
+
+体验标准归 [DESIGN](../docs/DESIGN.md#当前能力与体验验收)，执行边界与已知差距见 [生活模块](../backend/features/life/README.md)。以下是验收方法，不是已有运行结论。
+
+完成伙伴引导并配置所需模型、能力和有限额度，记录代码版本、时区、平台与供应商。首轮可连续观察七个本地日；未覆盖跨日、等待或恢复时延长观察，不能只以天数达标。选择可核对来源或成果的生活目标，不每天人工下发步骤冒充自主推进。
+
+以生活页、手机伙伴页和自然交流观察变化，必要时经[生活接口](../backend/entrypoints/http/routes/companion_life.py)关联事项、步骤、业务任务与成果。记录“缘由 → 行动或等待 → 结果 → 后续影响”，并观察用户不查看执行详情能否察觉延续。
+
+| 场景 | 核对内容 |
+|---|---|
+| 自主开始与跨日继续 | 动机有性格或经历依据；条件允许时实际行动，等待有原因，后续选择承接已有结果 |
+| 事实与分享 | 阅读范围、来源和作品可核查；计划、虚拟情景、执行与成果不混淆；经历进入后续选择、聊天或日记，允许不分享 |
+| 暂停、放下与转向 | 明确指令、普通闲聊和自主决定的来源分别核对；用户暂停不被擅自恢复，旧事项保留迟到成果及转向关系 |
+| 安静与多端 | 静止档不主动打扰，允许的云端生活继续；三端读取同一事项；自主档验证选新画面，静止档验证已有静态目标恢复，切换不新增制作 |
+| 失败、额度与恢复 | 在隔离环境覆盖能力不可用、额度耗尽、明确失败、未知提交、断线与重启；沿原请求核对，不伪造成功、不重复付费、不清零已用额度、不串账户 |
+
+自然使用与故障注入分开留证；记录人工介入、配置变化、失败样本和未覆盖项，材料脱敏。数据库恢复与平台呈现仍须各自验收，单次成功或静态检查不能证明长期行为稳定。
 
 ## macOS 桌面验收
 
-支持 macOS 12 及以上的 arm64、x64；不接受 universal 桌面模块打包。原生构建与系统 API 边界见 [模块说明](../client/desktop-macos/README.md)，Windows 的 helper 和恢复验收见下节。自动检查与构建不能替代目标系统验收。
+平台与构建前提见 [macOS 模块](../client/desktop-macos/README.md)。记录系统、Electron、架构、屏幕和权限状态；开发版与打包版都需验证，跨平台构建结果不能替代实机行为。
 
-| 场景 | 验收依据 |
+| 范围 | 必测条件与结果 |
 |---|---|
-| 原生加载与打包 | 开发与打包 Electron 均能加载对应架构的 `desktop_macos.node`；缺文件、错误架构和接口不匹配保留原因，旧窗口未关闭前拒绝进入；正式签名包验证模块签名与公证结果 |
-| 图层与输入 | 动态背景位于 Finder 图标下；点击、框选、拖放与键盘正常；底栏与内部窗口可交互，透明空白穿透；普通应用可覆盖界面，显式打开功能可置前，Dock 和菜单栏保持系统行为 |
-| 工作区与显示器 | 覆盖 Dock 位于左／右／下方、尺寸和自动隐藏变化、菜单栏、Retina／非 Retina 混合屏、负坐标、切交互屏、拔屏、旋转及缩放；底栏和弹层避让系统区域，产品内容区避让底栏，其他应用工作区不被修改 |
-| Spaces 与全屏 | 切换 Space、Mission Control、Stage Manager 和原生／普通全屏，视频与交互层行为一致；全屏暂停媒体且不抢焦点，退出恢复；旧 Space 窗口 ID 不可操作，首次已最小化窗口不猜测归属 |
-| 辅助功能权限 | 无权限仍能进入、交接、浏览目录、固定和启动；运行投影显示授权引导，关闭与迁移禁用；手动授权／撤销后刷新，操作前再次校验；普通启动回执不假称已定位窗口 |
-| 目录与启动条 | 系统、共享与用户 `.app`，多层目录、中文名、损坏包、缺失／卸载、符号链接、搜索、分批图标、拖入、修复、排序、重启固定恢复；本屏优先、异屏迁移和新启动定位均复核实际窗口；最小化恢复、不支持的全屏／模态操作、正常关闭与保存提示保留真实结果 |
-| 生命周期与隔离 | 页面、会话、草稿及阅读位置双向交接；录音／转写／上传阻止切换；换号、鉴权失效、退出、更新取消、renderer 崩溃、休眠唤醒、进入中取消均可回窗口；迟到查询和动作不作用新会话；原生进程硬崩溃后下次启动留窗口模式 |
-| Windows | 按下节清单验证 helper、托盘、AppBar、程序任务、前台授权与 guardian |
+| 加载与打包 | arm64、x64 分别构建；缺文件、错误架构、接口不匹配时拒绝交接并保留来源窗口；正式包验证签名与公证 |
+| 图层与输入 | Finder 图标位于背景之上，原生框选、键盘和拖放可用；空白穿透，功能区可交互；外部应用可覆盖界面，显式操作才置前 |
+| 屏幕与工作区 | Dock 各方向、自动隐藏、菜单栏、混合 Retina、负坐标、旋转、拔屏与切屏；产品避让系统区域，不改变其他应用工作区 |
+| Spaces 与全屏 | 切换 Space、Mission Control、Stage Manager、全屏时媒体与交互层同步；旧窗口 ID 不可操作，首次最小化窗口不猜归属，恢复不抢焦点 |
+| 辅助功能 | 无权限仍能进入、交接、浏览、固定与启动，窗口投影提供引导、关闭迁移禁用；授予或撤销后刷新，动作前重核权限，启动受理不冒称窗口已定位 |
+| 目录与运行窗口 | 系统／共享／用户应用、多层目录、中文、符号链接、坏包及卸载；搜索、图标分批、拖入、修复、排序和固定恢复；本屏恢复、跨屏迁移、新启动定位、最小化及模态限制均核实真实窗口 |
+| 生命周期 | 双向交接页面、会话、草稿和阅读位置；录音／转写／上传阻止切换；换号、撤权、退出、更新取消、renderer 崩溃、休眠与进入中取消均收敛；迟到动作不作用新会话，原生崩溃后首启留窗口模式 |
 
 ## Windows 桌面验收
 
-记录 Windows 版本、Electron 与 helper 架构、显示器布局和 DPI；按下表实测并保留预期、结果和失败后的恢复情况。`cargo check`、模拟和 macOS 构建不能代替 Windows 验收，核心输入、层级或恢复不成立时保留窗口模式。
+记录 Windows、Electron、host／DLL 架构、屏幕与 DPI。依据 [Windows 宿主](../client/desktop-windows/README.md)及[启动器契约](../docs/PROTOCOL.md#桌面呈现与本机启动器)验证，保留失败后的恢复结果；输入、层级或恢复不成立时使用窗口模式。
 
-| 范围 | 必须验证的行为 |
+| 范围 | 必测条件与结果 |
 |---|---|
-| 输入与层级 | 在透明图标层与传统 WorkerW 结构分别验证视频位于原生图标下方；中文输入法、焦点、复制粘贴、选择文件和拖放；内部开窗或重复点击取得前台，外部程序可覆盖界面，后台校正不抢前台，透明空白交给 Explorer；桌面视频无独立悬浮精灵，窗口模式精灵正常恢复 |
-| 原生桌面文件 | 文件、文件夹、快捷方式、回收站及 OneDrive／公共桌面项目沿用原生图标与名称；双击、右键、框选、重命名、复制粘贴、删除撤销及文件拖放可用；覆盖大量图标、不同大小、自动与手动排列、原本隐藏图标的偏好，退出保留用户整理结果 |
-| 原生系统托盘 | 整排原生图标、文字和系统信息位于 Dock 右侧五个产品图标后，共用完整玻璃背景，无独立系统底色条；第三方原图保持颜色，24 DIP 底片四角均圆润，在深色视频下清晰可辨；应用明暗主题切换同步系统前景。应用图标单击、双击、右键、悬停提示及 Windows 隐藏图标菜单，输入法切换、快捷设置、音量、电池、日历和通知正常；连续展开与收起隐藏图标菜单时，原生行保持 Dock 槽位，不瞬移到屏幕右侧，不把系统弹窗误判为全屏；Win+B、键盘导航、Esc 及弹窗锚点随平移位置正确，无抢焦点、遮挡或点击拦截；只集成本屏原有托盘，TrafficMonitor 等第三方面板不并入，其他屏幕的托盘保持可用；图标增减及系统显隐设置即时收敛，覆盖自动隐藏、高对比度及全屏；不支持透明结构或 Windows 持续拒绝位置时恢复窗口模式并显示原因 |
-| 工作区与系统操作 | 顶部无新增预留或空带，底部按共享布局预留 96 DIP 并计入已有系统占用，图标避开完整底栏与头像；已有及新启动窗口的还原、最大化、贴边、拖动、缩放使用实际工作区，内部窗口不重复扣除底栏；菜单及功能窗口不扩大 AppBar 预留；全屏收起、退出恢复页面与草稿且不抢前台；Win+D、Alt+Tab、任务视图和虚拟桌面 |
-| 多屏与电源 | 混合 DPI、负坐标、竖屏及三屏；首次使用当前屏、已有选择在线时优先原屏、缺屏时直接启用当前屏、手动切屏；拔屏退出后再次点击可进入，重接不自动接管且下次启用优先原屏；启动缺屏自动回退，显示器列表完整可选且展开不使卡片内容偏移；锁屏及休眠恢复；仅交互屏显示视频背景，其余屏的任务栏、开始菜单、图标双击、右键、拖放、最大化及贴边保持可用，覆盖原本隐藏图标或任务栏的偏好 |
-| 接管与恢复 | 快捷键冲突拒绝接管；紧急恢复、切回窗口、切屏、换号、鉴权失败、退出及更新注销 AppBar、恢复工作区、托盘原始 XAML 与合成样式、任务栏原始几何及置顶、裁剪区域与显隐状态，透明界面的原始区域不变，桌面文件继续可操作并保留外部窗口摆放；Explorer 重启后重新识别层级、托盘尺寸、透明样式与注册，失败时回退 |
-| 进程故障 | 分别终止主进程、各 renderer、host 和 guardian，检查恢复或失联兜底，确认无残留底部预留及任务栏裁剪；host 死亡或续租失效时 Explorer 内样式恢复原值。当前完整结构的 journal 可恢复，缺失窗口区域列表、托盘位置列表或托盘 DPI 时拒绝读取并保留诊断；恢复失败保留 journal，下次启动先恢复且不自动重试接管；重新构建和启用使用新 hash DLL，旧载入文件不覆盖 |
-| 主窗口与模式交接 | 窗口模式先显示精灵，菜单、托盘、快捷键、通知及投喂复用同一主窗口；原生关闭恢复精灵，最小化不恢复；两种模式接续账户页面、会话、草稿、附件和阅读位置，目标恢复失败回到来源；录音、转写和上传期间所有切换入口禁用并说明原因 |
-| 底栏与弹层 | 常规宽屏、窄屏、竖屏及 125%／150% DPI 下头像始终位于屏幕中线，两翼按内容扩展；Dock 左翼独立滚动，五个产品图标与整排托盘共用右翼横向滚动，滚动后的原生显示与命中只限视口，固有尺寸不被裁剪结果改写；控制入口独立于底栏，透明界面、菜单和鼠标捕获不挡托盘，缺少布局、布局清空或全屏时收起原生行，迟到代次不能重新显示；所有程序常驻；生活、动态、日记、伙伴与设置五个彩色功能图标打开、最小化、恢复、置前、关闭与未读状态清楚，动态与日记各自提醒，最小化不使图标变淡；头像左键打开陪伴聊天并定位未读，右键与键盘菜单键打开账户菜单，无未读时外围柔和呼吸，有未读时中央横向青白色发光声波可见且头像仍可辨识，装饰不裁切或遮挡相邻入口；账户菜单、目录与控制面板互斥、向上避让、菜单间隙不穿透，支持键盘、Esc 与焦点归还；明暗主题、中英文、关闭模糊及减少动态效果下的静态柔光环或静态声波 |
-| 桌面内容可读性 | 明暗主题、复杂壁纸及后方高对比文字下，功能窗口、应用目录、影像制作表单和共享弹层使用实底，不透出后方文字；圆角、边框、阴影和底栏玻璃感正常，透明空白仍可操作 Explorer |
-| 桌面控制 | 收起入口异常提示；面板日期时间、连接状态、影像准备或错误及跳转；交互屏、打扰档位、返回窗口模式和退出 |
-| 桌面业务 | 桌面只有一个对话承载，主对话可切换陪伴与专业会话，同会话无重复提交或播放；后台面板保留未读；头像仅由陪伴文字未读或未听语音切换为发光声波，不随录音或实时音量变化，进入会话清除文字未读，语音完整播完后清除未听，清除后恢复呼吸光环，动态与日记独立提示；首帧切换、循环与短暂动作返回，加载失败保留旧画面，换号清除旧媒体 |
-| Dock 目录 | 对照[启动器契约](../docs/PROTOCOL.md#桌面呈现与本机启动器)覆盖各来源、去重和排除项，包括无快捷方式及打包应用；所有程序入口在空固定区及 Dock 溢出时常驻，网格适配窄屏、高 DPI 和长名称；中英文、exe / 包名搜索和中文路径，全部已扫描条目可搜索；图标按可见区域分批补齐，局部失败或超时不阻塞其余条目，固定标记刷新失败仍接收同代图标，重扫拒绝旧句柄；面板打开超过缓存期限后打包应用仍可校验并启动，卸载或 AppsFolder 读取失败须拒绝启动 |
-| Dock 配置 | 程序点击只启动或恢复，不写固定配置；独立固定按钮防止重复加入，已固定项可启动，连续固定不关闭面板或改变网格排序；空固定区可将运行程序拖到所有程序入口固定，原位拖回不误固定；文件浏览、拖放和带参数快捷方式；打包应用重启或更新仍可启动；目标失效修复保留 ID 与顺序，取消或写盘失败保留原配置；面板不穿透，支持方向键、Enter、Tab 和 Esc；外部点击及失焦收起，文件选择期间保留，启动后不抢回焦点，迟到结果不关闭新面板 |
-| Dock 运行 | 启动前已有窗口、新启动、最小化、末窗口关闭及虚拟桌面切换均收敛，纯后台进程排除；多窗口归并、最近或指定窗口恢复、单个或全部关闭及取消保存提示；遮挡后重复点击置前，模态和跨屏行为正确，切换中视频背景与界面层级稳定；运行标记和窗口菜单只包含交互屏，跨屏拖动及时更新，关闭全部不波及其他屏幕；固定程序点击优先本屏，否则只迁移最近窗口，覆盖最大化及最小化；本屏全屏、超工作区及最小化还原保留原布局；人为延迟原生处理（含几何已更新而调用未返回）时持续确认且心跳与停止保持响应，16 个线程或预留占满后迁移与工作区约束自动重试，取消后不再校正或抢前台；覆盖前台暂空、短暂失焦、授权期间换模态或自行换屏、旧授权回执及多轮取消后复用宿主；新启动、快捷方式、打包应用和 Jump List 新窗口定位本屏，并发或匹配歧义不误搬 Windows 独立启动的窗口；程序右键显示并执行 Windows Jump List 的 New Window、Agents Window 等任务，旧任务 ID、损坏任务和无任务程序静默回退；旧 ID 或激活失败不重复启动；固定、拖拽排序和取消固定回流 |
-| 打包 | 各目标架构分别打包，resources 内 helper、manifest 选定的托盘样式 DLL 与应用架构一致且无需外部 VC／UCRT；manifest 指向随包当前 hash 文件；桌面五个功能 SVG 图标在打包后的本地页面正常加载 |
+| 层级与输入 | 透明图标层及传统 WorkerW；视频在原生图标下，透明空白穿透；输入法、焦点、文件选择、拖放、复制粘贴与外部应用覆盖正常，后台校正不抢前台 |
+| 原生桌面 | 用户／公共／OneDrive 项目、回收站、大量图标和不同排列；双击、右键、框选、改名、删除撤销及拖放保持原生行为，退出保留用户整理与显隐偏好 |
+| 托盘显示与交互 | 本屏原生行嵌入底栏、主题前景和第三方位图可辨；不接管其他屏或第三方面板；图标增减、显隐设置、滚动裁剪与命中一致；单／双击、右键、悬停、Win+B、隐藏图标菜单及系统弹窗正确定位，反复开关不漂移、不误判全屏；结构不支持时回窗口 |
+| 工作区与系统行为 | 底部预留采用共享布局，顶部无额外空带，内部窗口不重复扣除；已有／新启动窗口的还原、最大化、贴边与拖动遵守实际工作区；弹层不扩大预留，Win+D、Alt+Tab、任务视图及全屏可恢复且不抢焦点 |
+| 多屏与电源 | 混合 DPI、负坐标、竖屏、三屏、切屏、拔屏、首选屏缺失与重接；只交互屏受影响，其余屏任务栏和图标可用；锁屏、休眠恢复；缺屏回退保留首选，重接不自动接管 |
+| 正常与异常恢复 | 快捷键冲突拒绝接管；返回窗口、切屏、换号、撤权、退出、更新与紧急恢复释放 AppBar，并恢复托盘样式、任务栏几何／裁剪／显隐；Explorer 重启重识别，失败回退；外部程序摆放保留 |
+| 进程与 journal | 分别终止主进程、renderer、host、guardian，核对失联兜底；host 死亡或续租失效恢复样式；不完整 journal 拒绝读取并留诊断，恢复失败保留记录，下次启动先恢复；使用新 hash DLL，不覆盖已加载文件 |
+| 交接与界面 | 窗口／桌面接续页面、会话、草稿、附件和阅读位置，目标失败回来源；录音／转写／上传阻止切换；宽窄屏与高 DPI 下头像居中、两翼滚动、原生命中随裁剪；菜单互斥、键盘与焦点恢复、实底内容和降低动态降级可用 |
+| 业务与媒体 | 同会话无重复提交或播放，未读与未听按真实阅读／收听分别清除；生活、动态、日记提醒独立；首帧切换、循环、短动作返回、静态回退、加载失败保留旧画面，换号清除旧媒体 |
+| 目录与固定 | 各来源、去重、排除项、无快捷方式和打包应用；长名称／中文搜索、分批图标与局部失败不阻断目录；缓存过期重新验证启动，重扫拒绝旧句柄；固定与启动分离，拖放、带参数快捷方式、排序、修复和写盘失败保留配置 |
+| 运行与窗口动作 | 本屏优先、异屏迁移、多窗口／模态、最大化／最小化、末窗关闭与虚拟桌面切换；关闭保留保存提示且不波及异屏；慢响应、并发预算耗尽、前台暂空、取消与旧授权回执不导致重复启动或抢前台；新启动和 Jump List 定位本屏，匹配歧义不误搬窗口 |
+| 安装产物 | 各架构 helper、托盘样式 DLL 与应用一致，无外部 VC／UCRT 依赖；manifest 指向随包 hash 文件，打包页面加载图标与本地资源 |
 
-所有恢复进程同时被强制终止不能保证即时恢复，还须验证下次启动处理待恢复 journal。
+所有恢复进程同时被强制终止时不保证即时复原，必须另验下次启动处理待恢复 journal。
 
 ## 导入检查
 
-[`check_imports.py`](check_imports.py) 检查 Backend / Runner 的 future annotations、TYPE_CHECKING 名字泄漏和包级 facade，使用 Python 3.13：
-
 ```bash
 uv run --no-project --python 3.13 python scripts/check_imports.py --strict-imports
-uv run --no-project --python 3.13 python scripts/check_imports.py --fix
-```
-
-不带 `--strict-imports` 时违规仅输出诊断、退出码为 0；`--fix` 只自动移除 future annotations，修改后重跑严格模式。
-
-默认只检查源码，跳过模块根目录的 `build/`、`dist/` 及各层 `.venv`、`__pycache__`；显式传入文件仍逐个检查。实际 wheel 另由 `check_runner_package.py` 隔离安装校验。
-
-[`check_runner_architecture.py`](check_runner_architecture.py) 检查 Runner 的层间依赖、跨能力私有访问、模块导入环、禁用的顶层包引用，以及导入时注册和资源所有权。`contracts` 保持纯契约；基础设施显式接收配置，不读取调用作用域；运行时不导入具体能力，能力间通过注入端口协作，文件能力可依赖执行能力的公开租约 API。常量、类型别名和 `ContextVar` 绑定允许保留在模块级。该门禁纳入 pre-commit，也可独立运行：
-
-```bash
 uv run --no-project --python 3.13 python scripts/check_runner_architecture.py
 ```
 
-使用 `--runner <包目录>` 可检查临时样本；它只静态解析源码，不导入 Runner 或启动资源。资源回收、线程取消与真实工具行为仍须单独验证。
+[导入检查](check_imports.py)覆盖 Backend／Runner 的 future annotations、TYPE_CHECKING 泄漏与包级 facade。不加 `--strict-imports` 时违规仅诊断、退出码仍为 0；`--fix` 只移除 future annotations，修正后须重跑严格模式。默认跳过构建目录、虚拟环境和缓存，显式文件仍检查。
+
+[Runner 分层检查](check_runner_architecture.py)静态核对依赖、跨能力私有访问、导入环、导入副作用与资源所有权；`--runner <目录>` 可检查临时样本，不启动 Runner。规则语义归 [Runner](../runner/README.md#装配调用与资源)，实际 wheel 和资源回收须另验。
 
 ## Backend 架构检查
 
@@ -97,7 +96,7 @@ uv run --no-project --python 3.13 python scripts/check_runner_architecture.py
 uv run --no-project --python 3.13 python scripts/check_services_architecture.py
 ```
 
-[`check_services_architecture.py`](check_services_architecture.py) 覆盖导入解析、模块与业务实现环、目录方向、跨业务 ORM/私有入口、公开返回 ORM、入口 SQL 和禁用的顶层目录。纯 DTO、类型别名与静态词表不构成业务实现依赖。默认检查 Backend；`--backend <目录>` 可对临时样例验证规则。修改边界时同步 [Backend](../backend/README.md#模块依赖边界) 的数据归属与设计理由。
+[检查器](check_services_architecture.py)核对 Backend 导入、依赖环、目录方向、跨业务 ORM／私有入口、公开返回 ORM、入口 SQL 和禁用目录；纯类型与静态词表不算业务依赖。`--backend <目录>` 可检查临时样本，规则语义归 [Backend](../backend/README.md#模块依赖边界)。
 
 ## 提示词调试
 
@@ -107,7 +106,7 @@ uv run --project backend python scripts/debug_prompt.py -m "你好" --persona-na
 uv run --project backend python scripts/debug_prompt.py --db --user-id 1 --preset companion
 ```
 
-[`debug_prompt.py`](debug_prompt.py) 展示基础预设、画像、工具与单条输入，不执行模型回合，也不包含全部动态语音协议。默认使用模拟资料；`--db` 需要后端配置和数据库。真实发送请求仍通过 [Backend 调试日志](../backend/README.md#llm-调试日志) 核对。
+[调试器](debug_prompt.py)展示基础预设、画像、工具与单条输入，默认用模拟资料，`--db` 需要配置及数据库。它不执行模型回合，也不覆盖全部动态协议；真实请求使用 [Backend 调试日志](../backend/README.md#llm-调试日志)核查，不能把调试输出当成供应商实际输入。
 
 ## 引导音频
 
@@ -115,67 +114,56 @@ uv run --project backend python scripts/debug_prompt.py --db --user-id 1 --prese
 
 ## Client 开发与打包脚本
 
-[`client/scripts/`](../client/scripts/) 的关键门禁：`assert-root-install.cjs` 检查 Client 根依赖，`write-build-stamp.cjs` 记录提交来源，`assert-dist-built.cjs` 检查所有入口页面及其本地 JS、样式和预加载资源。`launch-dev-electron.cjs` 管理开发进程，打包钩子准备 Windows helper 和 DPI manifest。
+[Client scripts](../client/scripts/) 的安装、构建和打包门禁由 [package.json](../client/package.json)调用：根依赖校验、构建来源记录、全入口页面／资源检查，以及目标平台原生模块准备。`build` 与 `beforePack` 都验证产物，直接调用 builder 仍需先构建。
 
-`build` 收尾与 `beforePack` 均校验渲染产物，直接调用 `builder` 仍须先完成构建；Windows helper 的架构或静态运行库门禁失败会中止打包。开发准备见 [桌面宿主构建](../client/desktop-windows/README.md#构建)。
+macOS `afterPack` 检查架构，并由 [macos-app-identity.cjs](../client/scripts/macos-app-identity.cjs)给主执行文件派生应用专属 UUID，避免与其他 Electron 应用混淆本地网络授权（[Apple TN3178](https://developer.apple.com/documentation/technotes/tn3178-checking-for-and-resolving-build-uuid-problems)）。该步修复 ad-hoc 签名，不改变 Framework／helper；主执行文件不再匹配 Electron 官方 dSYM。整包本地验签可用 `CSC_IDENTITY_AUTO_DISCOVERY=false pnpm --dir client exec electron-builder --dir --mac --arm64 -c.mac.identity=-`。
 
-macOS `afterPack` 校验原生模块架构，再由 [macos-app-identity.cjs](../client/scripts/macos-app-identity.cjs) 按应用 ID 与原始 Electron build UUID 派生主执行文件 UUID，避免与其他 Electron 应用混淆本地网络授权（[Apple TN3178](https://developer.apple.com/documentation/technotes/tn3178-checking-for-and-resolving-build-uuid-problems)）。此步骤只改主执行文件并修复其 ad-hoc 签名，之后仍由 builder 完成所选身份的签名；Framework 与 helper 的 UUID 保持不变，仅小型启动器不再匹配 Electron 官方 dSYM。本地整包验签可用 `CSC_IDENTITY_AUTO_DISCOVERY=false pnpm --dir client exec electron-builder --dir --mac --arm64 -c.mac.identity=-`，正式交付仍需 Apple 证书签名与公证。
-
-macOS `afterSign` 调用 [notarize.cjs](../client/scripts/notarize.cjs)，electron-builder 内建公证关闭。支持 keychain profile、Apple ID 及 API key，参数与优先级见脚本；未配置时跳过，部分配置报错。外部命令有超时，临时 ZIP 和内联 key 文件在结束时清理；真实签名与公证须在 macOS 验证。
+`afterSign` 调用 [notarize.cjs](../client/scripts/notarize.cjs)，关闭 builder 内建公证；支持 keychain profile、Apple ID 和 API key，未配置跳过、部分配置报错，超时与临时文件由脚本清理。正式签名和公证必须在 macOS 实机验证，不能由 ad-hoc 结果替代。
 
 ## 手机远程页面构建
 
-`pnpm --dir remote build` 编译独立浏览器入口，产物位于 `remote/dist/`。Backend 在 `/remote/` 同源提供页面；开发入口为 `pnpm --dir remote dev`。
+`pnpm --dir remote dev` 启动浏览器开发入口，`pnpm --dir remote build` 产出 `remote/dist/`。Backend 同源托管 `/remote/`。
 
-[Backend Dockerfile](../backend/Dockerfile) 使用 Remote 独立锁定的 Node.js / pnpm 依赖构建手机网页和管理端共享 HTTP 产物，再复制到 Python 镜像的 `static/remote/`；构建上下文为仓库根。[.dockerignore](../.dockerignore) 只允许必要的 Remote 与共享协议构建源进入上下文，排除桌面产物、运行数据和凭据。固定文件名的管理端 HTTP 脚本禁止长期缓存。
+[Backend Dockerfile](../backend/Dockerfile)从仓库根上下文构建 Remote 与管理端共享 HTTP 产物，再复制至镜像；[.dockerignore](../.dockerignore)排除桌面产物、数据与凭据。管理端固定文件名脚本不能长期缓存。运行与设备恢复见 [Remote](../remote/README.md)。
 
 ## 构建安装器
 
-[`build.py`](build.py) 依次同步版本、构建 Runner wheel、构建 Client、暂存 payload、构建 Tauri Installer。准备 uv、Node.js / pnpm、Rust / Cargo 和目标平台工具链；Windows helper 前提见上节。Backend Docker 独立部署。
-
-以下版本仅为示例，命令会修改 Client、Installer 和 Runner 的版本清单：
+[build.py](build.py)同步版本、构建 Runner wheel 与 Client、暂存载荷，再构建 Tauri Installer。准备 uv、Node.js／pnpm、Rust／Cargo 与目标平台工具链；Backend 镜像独立构建。
 
 ```bash
 uv run --no-project --python 3.13 python scripts/build.py --version 1.2.3
 ```
 
-`--target mac|win` 默认按宿主推断，必须在对应系统构建；`--skip-runner` / `--skip-desktop` 仍要求同版本既有产物，`--output` 覆盖默认 `release/`。Runner 从独立临时源码副本构建；正式暂存只接受目标版本唯一 wheel，核对包内 Python 文件清单与字节均和源码一致，并在仓库外的临时 venv 安装，校验模块入口、版本、依赖和静态工具定义。单独诊断：
+示例版本会修改版本清单。`--target mac|win` 默认按宿主推断，必须在对应系统构建；`--skip-runner`／`--skip-desktop` 仍要求同版本产物，`--output` 更改输出目录。
+
+Runner 在临时源码副本构建；暂存只接受目标版本的唯一 wheel，核对源码字节并在仓库外 venv 安装检查入口、版本、依赖和工具定义。诊断命令如下，默认选择最新 wheel，正式检查应使用 `--wheel <路径>` 指定产物：
 
 ```bash
 uv run --no-project --python 3.13 python scripts/check_runner_package.py
 ```
 
-单独检查默认取修改时间最新的 wheel，可用 `--wheel` 指定输入；需要可用的依赖源，不能替代正式构建的精确版本门禁。包内 `--version` 与 `--check` 不启动运行时资源，后者也供 Installer 和 Client 安装健康检查使用。暂存与 Tauri 资源补丁由 [build_helpers.py](lib/build_helpers.py) 实现，Tauri 构建结束后恢复资源配置。
+载荷和 Tauri 配置由 [build_helpers.py](lib/build_helpers.py)准备，构建结束恢复配置。macOS 输出安装器 DMG 及规范文件名副本；Windows 输出 Setup EXE 和 update ZIP。Windows ZIP 包含桌面产物、blockmap、单一 Runner wheel 与签名清单，需 PowerShell、openssl 及[签名私钥](release-keys/README.md)。
 
-| 平台 | `release/` 产物 |
-|---|---|
-| macOS | 安装器 DMG；同时保留 Tauri 原始文件名和 `SpiritAgent-Setup-<version>.dmg` 别名 |
-| Windows | `SpiritAgent-Setup-<version>.exe` 和 `SpiritAgent-<version>-update.zip` |
-
-Windows 安装器内嵌 NSIS 包；update ZIP 由 [UpdateManifest.ps1](lib/UpdateManifest.ps1) 打包桌面产物及 blockmap、`runner/` 下的单 wheel、签名 `latest-runner.yml` 和 `manifest.json`。技能随桌面包交付，Backend 上传后按库存重建桌面清单。生成 ZIP 需要 PowerShell、openssl 和[更新签名私钥](release-keys/README.md)，缺失或签名失败中止构建。
-
-`--sign-identity`（可配合 `--notary-profile`）和 `--cert-thumbprint` 作用于 `client/release/` 的桌面端产物，再复制进 payload；`build.py` 不签安装器本身。Client 的 `.app` 公证另由上一节的环境配置驱动，不能把桌面产物签名等同于整套安装器已签名。
+`--sign-identity`／`--notary-profile` 与 `--cert-thumbprint` 作用于桌面产物，不签 Installer 本身；Client `.app` 公证另由上一节配置控制。产物、载荷与安装修复验收见 [Installer](../installer/README.md)。
 
 ## 发布
 
-推送 `vX.Y.Z` tag 触发 [release.yml](../.github/workflows/release.yml)。构建只接受三段数字，其他 `v*` tag 会触发后失败。版本来自 tag；双平台产物与 notes 汇总为草稿 release，核对后发布。已有 release 仅补产物和 notes，不改变发布状态。
+推送三段数字 `vX.Y.Z` tag 触发 [release.yml](../.github/workflows/release.yml)，双平台产物与说明汇总为草稿，核对后发布；其他 `v*` tag 会触发后失败。已有 release 仅补产物和说明，不改变发布状态。
 
-GitHub release 与客户端更新是两个入口：自动更新需在 Backend 管理端“版本管理”上传 update ZIP，再由当前后端分发，通信与验签见 [PROTOCOL](../docs/PROTOCOL.md#自更新签名)。当前构建入口只生成 Windows update ZIP，macOS DMG 不等于可直接上传的同类更新包。
+GitHub 安装包与应用内更新分开交付。Windows 更新 ZIP 需上传 Backend 管理端，由该后端分发；macOS 当前 DMG 不能当作同类更新 ZIP。CI 的签名 Secret 解释和私钥边界归 [签名配置](release-keys/README.md)，工作流尚未配置平台证书签名与 macOS 公证。
 
-跨端契约变更需同步发布 Backend、Client 和 Remote。先按[备份与覆盖恢复](../docs/PROTOCOL.md#备份校验与覆盖恢复)建立数据与素材恢复点，停止新任务并收敛在途工作；数据库变化通过新增 Alembic 迁移承接。核对存量副本中的记录、关联、素材和草稿后切换，验收通过再开放写入；失败恢复同一备份点的数据、素材和代码。
-
-CI 的 `SPIRITAGENT_UPDATE_SIGNING_KEY` Secret 存 PEM 内容；工作流落地临时文件后传路径。notes 用的 `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL_NAME` 均为 repo secrets，缺失会使 notes 任务失败。工作流未配置平台证书签名或 macOS 公证，不能把 CI 构建成功视为已完成二者。
+跨端契约同时发布 Backend、Client 与 Remote。切换前按[恢复契约](../docs/PROTOCOL.md#备份校验与覆盖恢复)建立数据、素材和代码恢复点，停止新任务并收敛在途工作；存量数据库变化需新增迁移。核对记录、关联、素材与草稿后开放写入，失败恢复同一备份点。版本说明需要的模型配置见下节。
 
 ## Release notes
 
-[`gen_release_notes.py`](gen_release_notes.py) 按版本排序选前一个 tag，或由 `--from-tag` 指定区间，生成中文说明。以下 tag 须替换为仓库实际版本：
+[gen_release_notes.py](gen_release_notes.py)按版本排序寻找前一 tag，或接受显式起点；用实际 tag 替换示例：
 
 ```bash
 uv run --project backend python scripts/gen_release_notes.py v1.3.0
 uv run --project backend python scripts/gen_release_notes.py v1.3.0 --from-tag v1.2.0 --output notes.md
 ```
 
-模型生成要求环境提供 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL_NAME`（OpenAI 兼容 `chat/completions` 接口，base URL 含 `/v1`），任一缺失或请求失败脚本报错退出。notes 来源是提交资料，发布前须核对产品影响、兼容要求和验证表述。
+环境需提供 `LLM_API_KEY`、`LLM_BASE_URL`（含 `/v1`）和 `LLM_MODEL_NAME`，调用 OpenAI 兼容 `chat/completions`；缺失或失败即报错，CI 使用同名 repo secrets。说明由提交资料生成，发布前核对产品影响、兼容要求与验证结论。
 
 ## 共享图标资源
 

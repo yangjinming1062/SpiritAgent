@@ -1,94 +1,75 @@
 # 对话编排
 
-桌面、远程网页、Cron、主动陪伴与子 Agent 共用的回合执行层：装配上下文、调用模型、派发工具、保存和交付回复。会话及交付语义归 [PROTOCOL](../../../docs/PROTOCOL.md#会话与消息)，媒体等待与恢复归 PIPELINE；本页维护内部装配、历史边界和任务所有权。
+桌面、手机、Cron、主动陪伴和子 Agent 共用的回合执行层，负责上下文、模型调用、工具派发及回复交付。会话与跨端恢复归 [PROTOCOL](../../../docs/PROTOCOL.md#会话与消息)，本页维护内部装配、历史边界与任务所有权。
 
 ## 关键入口
 
-| 入口 | 职责 |
+| 修改任务 | 入口 |
 |---|---|
-| [operations.py](operations.py)、[submissions.py](submissions.py)、[history_commands.py](history_commands.py) | HTTP 业务操作、账户受理、提交幂等与历史用例；连接控制留在 entrypoints |
-| [orchestrator.py](orchestrator.py) | `run_chat_turn`：会话互斥、工具循环与取消收尾、委派、回退锁定及终态 |
-| [turn_inputs.py](turn_inputs.py) | 所有会话共用的参数继承与解析、历史转换、工具集合、资料域和 Token 估算 |
-| [session_resources.py](session_resources.py) | 会话列表角色名投影与搜索、会话生效参数和账户运行态同步 |
-| [prompt_presets.py](prompt_presets.py)、[prompt_blocks.py](prompt_blocks.py)、[system_prompt.py](system_prompt.py) | 预设体、排除集合、共享块与每次调用前的环境/动作快照 |
-| [streaming.py](streaming.py) | 实际请求、日期与语音/媒体能力、流式和缓冲调用、回复恢复 |
-| [reply_delivery.py](reply_delivery.py)、[bubble.py](bubble.py)、[reply_links.py](reply_links.py) | 回复 schema、语音分句与校验、文本分泡、媒体地址来源 |
-| [tool_dispatch.py](tool_dispatch.py)、[delegation.py](delegation.py) | 工具批执行与 `DelegateAction` 接管 |
-| [persistence.py](persistence.py)、[会话存储](../../features/conversation/turn_store.py) | 流程组织收尾，会话模块写入调用/结果、终端回复和压缩检查点 |
-| [submissions.py](../../features/conversation/submissions.py) | 用户提交幂等账本、输入原子保存与重启中断标记 |
-| [statistics.py](../../features/conversation/statistics.py) | 消息批次触发器与会话派生统计；与气泡展示共用计数表达式，迁移冻结其 DDL |
-| [context_compressor.py](context_compressor.py)、[message_sanitization.py](message_sanitization.py) | 模型摘要、确定性窗口截断、工具参数 JSON 修复 |
-| [title_generation.py](../../features/conversation/title_generation.py) | 首条用户文字与助手回复生成标题，不发送附件地址 |
-| [native_memory.py](native_memory.py)、[background_review.py](background_review.py) | 即时记忆提案与回合后异步审阅 |
-| [chat_emitter.py](chat_emitter.py)、[turn_errors.py](turn_errors.py) | 交付接口、`HeadlessEmitter` 与脱敏错误帧 |
-| [images.py](images.py) | 协调会话媒体状态、外观冻结参考、验图和一次重做预算 |
+| 业务操作、受理与历史修改 | [operations.py](operations.py)、[submissions.py](submissions.py)、[history_commands.py](history_commands.py) |
+| 回合互斥、工具循环和取消 | [orchestrator.py](orchestrator.py)、[tool_dispatch.py](tool_dispatch.py)、[delegation.py](delegation.py) |
+| 参数、历史与模型资料 | [turn_inputs.py](turn_inputs.py)、[system_prompt.py](system_prompt.py)、[prompt_presets.py](prompt_presets.py)、[prompt_blocks.py](prompt_blocks.py) |
+| 模型请求、回退与结构恢复 | [streaming.py](streaming.py)、[reply_delivery.py](reply_delivery.py) |
+| 压缩与确定性截断 | [context_compressor.py](context_compressor.py)、[message_sanitization.py](message_sanitization.py) |
+| 保存、气泡和来源绑定 | [persistence.py](persistence.py)、[bubble.py](bubble.py)、[reply_links.py](reply_links.py) |
+| 会话列表、参数与标题 | [session_resources.py](session_resources.py)、[title_generation.py](../../features/conversation/title_generation.py) |
+| 即时记忆与异步审阅 | [native_memory.py](native_memory.py)、[background_review.py](background_review.py) |
+| 交付、错误与媒体协调 | [chat_emitter.py](chat_emitter.py)、[turn_errors.py](turn_errors.py)、[images.py](images.py) |
 
-调用方分别为桌面与远程网页的 HTTP 回合提交、`standard_turns`、`companion_turns` 和委派。HTTP 受理交接由账户任务持有，调用方取消不能中断已经持久化的受理；传入 `persisted_message_id` 时，由调用方保存并发布用户输入，本层不重复插入或通知。
+## 受理与所有权
 
-HTTP 提交的结构和输入互斥由 [http_contracts.py](../../features/conversation/http_contracts.py) 统一校验；工作流保留附件归属、配额、消息资格和幂等检查。批量输入在受理记录锁内一次保存全部消息、附件引用与请求关联；重复提交复用完整消息序列，写入中途失败整批回滚。手动压缩与斜杠压缩共用历史访问守卫和结果装配，响应错误与事件交付仍由各入口决定。
+HTTP 受理由账户任务持有，调用方取消不能中断已持久受理。结构与输入互斥由 [http_contracts.py](../../features/conversation/http_contracts.py) 校验，工作流核对附件、额度和消息资格；[会话提交账本](../../features/conversation/submissions.py) 在锁内原子保存完整消息序列、附件和请求，重复提交复用原结果。传入 `persisted_message_id` 时输入已由调用方保存并发布，编排不再插入或通知。
+
+`run_chat_turn` 的会话锁覆盖回合及取消收尾。工具调用/结果写入必须完成后才能释放锁，资产保护覆盖工具返回到父回合提交的间隔。终端保存归 [turn_store.py](../../features/conversation/turn_store.py)，不得把尚未落库的结果留给无所属的后台任务。
+
+`ephemeral` 用于主动陪伴，请求作为本轮尾部资料，压缩检查点仍保存；`headless` 控制本机桌面工作态，`has_viewer` 控制缓冲和气泡停顿。委派建立父会话下的子会话，继承预设、设置和限制，以 `HeadlessEmitter` 捕获结果；生活空间及再次委派在执行层排除，子会话输入不能成为用户事实证据。
 
 ## 提示词与运行时数据
 
-预设和记忆域由会话决定，工具排除由预设、用户开关和本轮限制共同形成；装配、搜索解锁和派发共用同一集合。陪伴、自动化和委派有独立预设体；工作面预设在共享工作体前追加自己的双语角色头部，没有角色头部的预设只用工作体；缺少登记或头部明确失败。
+预设决定人格与记忆域，预设、用户开关和本轮状态共同决定工具集合；装配、搜索解锁、披露与派发使用同一资格。工作预设按登记加入双语角色头部，缺少定义明确失败。文本导航见 [Backend](../../README.md#提示词定位)。
 
-- 桌面主回合与主动陪伴每轮刷新呈现环境；陪伴另读取场景、着装和动作。子 Agent 不装配陪伴人格、等待意图或实时环境，普通自动化不装配呈现环境。专业与自动化的工具边界由 `prompt_presets.py` 统一声明。
-- 呈现资料与工具资格由 [companion_actions.py](../companion_actions.py) 每轮投影：窗口读取静态造型与环境资料，桌面读取成品画面描述；动作定义、素材查询和影像制作可在空库使用，点播要求存在符合触发条件的可播影像。披露、搜索和派发共用本轮工具集合，执行时再核对目标、模式与版本。
-- 日期行发送前按用户本地日刷新；陪伴历史按原消息时间重建跨日标记和发言时刻，时刻资料位于对应发言之前，不写入正文。实时环境、等待及本轮资料留在尾部，不进入历史摘要。
-- 正常请求按当前音色与可信产物装配回复结构；`TurnInputs.reply_persona` 单独保存修复所需人设，避免压缩或截断丢失。修复与手动重试的资料范围和预算由 PROTOCOL 统一定义。
-- 推理与最终输出分开保存，推理不回灌历史；只解析完成响应的 `output_text`。当前尝试的推理在接受结果前暂存，失败后连同正文与工具草稿清理，不能进入下一模型的上下文。
-- 当天可分享发现及相关的已分享来源每轮刷新，候选作为外部资料留在调用尾部，不写入历史；回复引用与来源快照、使用记录归[话题模块](../../features/topics/README.md)。
+陪伴每回合装配统一生活背景，每次模型调用刷新实际呈现资料，窗口/桌面的可见事实由 [companion_actions.py](../companion_actions.py) 投影。普通自动化和子 Agent 不装配陪伴人格及生活空间工具；子 Agent 也不继承实时环境或等待意图。素材查询、动作设计与制作可在空库使用，点播须有当前合格成品，执行时再次核对目标与版本。
 
-文本定义见 [prompts](../../README.md#提示词定位)，检查实际请求还须核对供应商原生参数。
+日期按用户本地日刷新，历史时刻置于对应发言前；环境、等待和本轮来源资料留在尾部，不进入历史摘要。来源候选及引用绑定由 [话题模块](../../features/topics/README.md) 管理。结构化回复根据音色和可信产物装配，`reply_persona` 独立保存修复所需人设，避免压缩丢失。
+
+推理与交付正文分别保存，只接受完成响应的正文。失败尝试的正文、推理及工具草稿不能进入下一供应商的请求；工具开始和参数增量不代表实际执行。
+
+### 工具披露与记忆访问
+
+首轮披露搜索元工具和已启用等待能力；陪伴默认媒体集合由 `prompt_presets.py` 定义，其余按域解锁。每次调用前依据真实产物重算可用集合：验图须有就绪图，重做须有本轮问题及剩余额度，已受理图片请求或结果未知时不再次披露新图片生成，没有视频任务时不披露查询。
+
+历史解锁不能绕过当前资格。记忆维护政策随 `memory_inspect` 解锁，与独立审阅共用文本；召回与修改只经 [记忆入口](../../features/memory/README.md)。
 
 ## 上下文与记忆
 
 ### 摘要边界与原始证据
 
-上下文压缩通过 [context_window.py](../../features/conversation/context_window.py) 读取历史。`summary_through_message_id` 指定真实覆盖边界，历史按 `Message.id` 升序读取；边界无效时失败，不能按插入时间猜测。
+历史通过 [context_window.py](../../features/conversation/context_window.py) 按消息 ID 读取，`summary_through_message_id` 是真实覆盖边界；无效边界直接失败，分叉与恢复重映射引用，不能按时间猜测。
 
-- 压缩不拆开同一消息的展开项、并行调用和结果。按模型窗口预留输出与余量，只摘要能容纳的完整前缀；超预算单条保留原文并失败。
-- 检查点只由 `context_compressor.py` 生成，交付正文与保存内容一致；分叉和恢复重映射覆盖边界。
-- 检查点数量只统计本次覆盖的用户发言和助手最终回复，不计工具调用、结果、推理、时间资料或既有摘要。陪伴摘要只接收实际对话、相关时间和既有摘要；日期分界独立保留，不随工具记录一起过滤。工作及自动化摘要保留工具执行证据。预算仍按完整调用/结果批次确定覆盖边界。
-- 摘要只保存媒体引用与内容未提供标记，不把 base64 当文字；清理已覆盖历史时，未覆盖原文仍须保持媒体可用。
+压缩只处理能完整容纳的历史前缀，不拆消息展开项、并行调用及结果。陪伴摘要保留真实交流和时间，工作/自动化摘要保留工具证据；计数只包含用户发言和助手最终回复。媒体只传引用与未提供内容标记，不把 base64 当文字。检查点交付与保存一致，清理已覆盖历史时仍保护未覆盖媒体。
 
 ### 窗口预算与截断
 
-Token 估算以最近带用量的助手行和其后增量为基线；无基线、与全量差异超过 `max(200, 20%)` 或本轮有额外尾部资料时改用全量估算。
+有可靠用量基线时估算增量，否则全量估算，判定阈值由 `turn_inputs.py` 维护。确定性截断优先保留摘要/检查点和最近输入，按调用身份扩展到完整工具批次；连续用户输入使用独立较大预算，删减带原长度标记，重试沿原输入应用同一规则。
 
-- 确定性截断优先保留摘要和检查点，再保留最近输入，按 `call_id` 向前扩展到整批调用及结果。历史单项上限不约束末尾连续用户输入，后者以窗口四分之一作为较大预算，截断带原长度标记；手动重试沿原输入使用同一预算。
-- 正常请求在截断后按卡片与协议能力筛选实际保留媒体；音频优先原生，转写回退与首家尝试等待结果或明确错误，格式恢复按实际请求重新筛选。摘要沿所属任务的 LLM 链，并按摘要模型和聊天窗口的共同预算保留完整批次。不能发送保留了媒体却无对应能力的请求。
-- 多模态工具结果以 `multimodal_v1` 存储并还原为数组，仅近期条目保留媒体，旧历史留占位。调用已保存而结果缺失时补记结果未知，避免孤立调用破坏整条请求。
-- 删除提示与最近用户锚点只能作补充前缀，日期和时间元数据不能代替当前请求。
-
-### 工具披露与记忆访问
-
-首轮提供搜索元工具和已启用的等待能力；非委派陪伴回合默认披露 `COMPANION_MEDIA_TOOL_NAMES` 中本轮允许的基础媒体工具，其余按域解锁，未压缩历史保留解锁结果。验图只在有就绪图片时披露，重做只在本轮当前版本有真实问题且仍有额度时披露，参数限定为可用图片及验图标识；`image_generate` 在本回合受理图片请求后不再披露；每次调用前重算，历史解锁和搜索结果不能绕过状态边界。完整维护政策随 `memory_inspect` 解锁，与独立审核共用文本。召回和提交只经[记忆公共入口](../../features/memory/README.md)，不直接写记录。
+实际请求在截断后重新筛选媒体能力，音频原生或转写路径须得到结果或明确错误后继续。多模态工具结果按 `multimodal_v1` 还原，旧媒体留占位；缺失工具结果记为未知，不能发送孤立调用。删除提示、日期和时间只能补充上下文，不能替代当前用户请求。
 
 ## 回合执行与交付
 
-`run_chat_turn` 的会话锁覆盖整个回合和取消收尾。工具循环不设轮数上限，以完成目标为导向持续执行；无进展守卫收束为最终回复，模型等待不按耗时终止，等待、取消和有效期约束统一见 [模型失败与重试预算](../../../docs/PROTOCOL.md#模型失败与重试预算)。
+工具批次仅对白名单只读调用或互不重叠文件操作并发。参数先修复和校验，再派发；错误也成对交付开始/结束事件，不泄露原始异常或用户参数。
 
-- 全批只读白名单调用或互不重叠的文件操作才并发。工具参数先修复并校验为 JSON 对象，失败不派发，仍成对发出工具开始/完成并返回参数错误；后端工具另按各自 schema 核对必填项，以及声明 `additionalProperties: false` 的多余参数，错误列出可用参数而不暴露内部异常。日志只记长度，不记录参数中的用户数据。
-- 工具调用行与结果的写入任务必须在取消时等待落完，再释放会话锁，不能把写库留在后台。资产写入保护覆盖工具返回到父回合提交的间隔。
-- 陪伴回合受理图片或视频请求后只再保留两个工具步（`MEDIA_FOLLOW_UP_STEPS`），其后的模型调用沿用最终回复重试的无工具请求形态：不披露工具，llama.cpp 服务上另带结构约束。回复交付不是工具调用，弱模型常在媒体就绪后继续发起无关调用而不输出回复，此处由执行层确定性收束。工作回合与陪伴聊天共用 `ToolCallGuardrailController.must_conclude` 的确定性收束（连续三个工具步没有新信息：全部失败，或只重复本回合已有调用且结果不变；或动作型工具成功后再过两个工具步），同样落为无工具的最终回复；主动回合不参与守卫收束，由意图有效期约束。守卫另限制状态型工具的回合内调用次数（`companion_wait` 为 4），避免保存与取消交替空转；没有视频任务时不披露 `video_generate_status`。
-- `ephemeral` 仅用于主动陪伴，请求留作尾部资料，压缩检查点仍保存；`headless` 决定本机执行的桌面工作态，`has_viewer` 决定缓冲与气泡停顿，两者分别处理。
-- 非子 Agent 的陪伴预设会话使用完整结构校验；其他有观看者的回合可流式交付，无头和无观看者回合缓冲正文。文本流只按代码围栏外的 Markdown `---` 分泡，跨 chunk 保留候选前缀和原空行。
-- 委派在父会话下建子会话，继承预设、用户设置与限制；`HeadlessEmitter` 捕获事件，最终结果作为工具结果返回。生活空间和进一步委派工具由执行层排除；子会话消息不作为用户事实证据。
-- 成功、异常及取消均关闭响应流，缓冲正文在连接释放后交付；`streaming.py` 只在实际交付正文时锁定回退，`orchestrator.py` 依据链回调的 `has_next_attempt` 分开管理恢复资格与消耗。最终回复阶段跨模型保留无工具状态；工具开始及参数增量仍是未执行草稿，不据此进入最终回复阶段，音频适配器也须透传这些状态。具体预算与停止边界由上述协议定义。
-- 回合缓存统计只在模型生成及响应消费期间采集，包含工具续轮、格式修复和供应商回退；工具执行、委派与回合后任务不继承父回合统计。完成帧携带临时汇总，既有上下文用量仍取最后一次响应。
+循环按 [tool_guardrails.py](../../runtime/tools/tool_guardrails.py) 检查失败重复、无进展和动作后的核对额度，媒体另按 [turn_state.py](../../features/media/turn_state.py) 收束；达到条件后切为无工具最终回复，跨模型保留这一状态。主动回合由意图有效期约束。阈值与工具名单留在源码，模型等待和重试预算归 [失败契约](../../../docs/PROTOCOL.md#模型失败与重试预算)。
 
-`turn_errors.py` 的 `message` 是用户文案，英文 `detail` 只供无头结果和诊断日志消费。格式错误另由编排入口构造。常规日志保留模型、响应 ID、状态、用量、错误类型和脱敏定位，原始请求/响应只走显式 LLM 调试。
+非子 Agent 的陪伴会话执行完整结构校验；其他有观看者的回合可流式交付，无头/无观看者回合缓冲正文。文本只按代码围栏外的 Markdown 分隔线分泡，跨 chunk 保留候选前缀。成功、异常及取消都关闭响应流，缓冲正文在释放连接后交付；实际正文交付才锁定供应商回退，恢复资格依链的 `has_next_attempt` 判断。
+
+调用用量只统计模型生成与响应消费，包含续轮、格式修复和回退；工具、委派及回合后任务不继承父回合统计。用户错误文案来自 `turn_errors.py`，英文 detail 仅用于无头结果及诊断；原始请求响应只走显式调试日志。
 
 ### 消息与媒体
 
-可信媒体引用与视频绑定由 [reply_media.py](../../features/conversation/reply_media.py) 管理，会话音视频配额和清理由 [chat_attachments.py](../../features/conversation/attachments.py) 管理。终端持久化合并最新媒体状态；只有符合条件的桌面陪伴回合在终端提交、完成事件送出后调度心情更新。
+[reply_media.py](../../features/conversation/reply_media.py) 管理可信媒体及视频绑定，[attachments.py](../../features/conversation/attachments.py) 管理附件额度和清理。终端持久化合并最新媒体状态，符合资格的用户陪伴回合在提交及完成事件之后才调度心情更新。
 
-### 语音资产
-
-[reply_audio.py](../../features/conversation/reply_audio.py) 按消息加锁，固定已保存的供应商、模型和音色，同消息并发合成并按气泡序提交。合成期间不持事务，写回重核原文、语音语义与消息存在性，合并最新媒体状态，避免迟到音频覆盖删除或视频更新。
-
-用户回合先保存回复再合成；主动回合先合成，再由意图终态事务保存与投递。取消保留已保存正文并清理未交接音频。`mutagen` 核查真实格式和时长，拒绝无法识别或无效产物。
+[reply_audio.py](../../features/conversation/reply_audio.py) 按消息加锁、固定保存的音色配置，事务外合成后核对原文、语音语义及消息存在性，按气泡序提交并合并最新媒体状态。用户回合先保存回复再合成，主动回合先合成再由意图终态事务保存与投递；取消清理未交接音频。真实格式和时长用媒体检查读取，不能只信扩展名。
 
 ## 验证入口
 
-命令和请求预览归 [Scripts](../../../scripts/README.md#提示词调试)。修改本模块重点核对上下文完整批次、工具续轮、禁用工具、格式恢复、取消写库、回退锁定与连接关闭；语音和媒体须检查实际交付，不能只验证解析成功。
+按 [提示词调试](../../../scripts/README.md#提示词调试) 核对实际请求，覆盖完整工具批次、权限、压缩/重试、格式恢复、取消写库、回退锁定和连接关闭；语音与媒体须检查实际交付，解析成功只证明结构可读。

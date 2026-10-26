@@ -1,20 +1,35 @@
 # 手机远程页面
 
-由 Backend 在 `/remote/` 同源托管的独立浏览器入口。账户授权、多端会话与工具准入语义见 [PROTOCOL](../docs/PROTOCOL.md#远程访问)，构建与部署见 [Scripts](../scripts/README.md#手机远程页面构建)。
+由 Backend 在 `/remote/` 同源托管的独立浏览器应用。身份与多端恢复归 [远程访问](../docs/PROTOCOL.md#远程访问)，产品交互归 [DESIGN](../docs/DESIGN.md)。本文维护浏览器侧状态、请求和资源生命周期。
 
-| 入口 | 内部职责 |
+## 任务入口
+
+| 改动 | 入口 |
 |---|---|
-| [api.ts](api.ts)、[App.tsx](App.tsx) | 身份、请求撤销与连接生命周期；退出或授权失效收敛全部资源 |
-| [Chat.tsx](Chat.tsx)、[TopicLink.tsx](TopicLink.tsx) | 会话列表、按预设新建与聊天；通过共享快照协调器缓冲事件，按会话水位合并，保留未确认提交标识并先查询回执；话题反馈按当前会话去重、每批最多 100 项读取并统一订阅，同一话题共用反馈与保存状态 |
-| [Feed.tsx](Feed.tsx) | 动态与日记分别读取和分页，共用渲染后校验当前页面、可见性与焦点的已读确认流程 |
-| [LifeSummary.tsx](LifeSummary.tsx) | 伙伴近况、事项和步骤的只读展示；刷新不推进生活判断，失败保留当前查询内容并允许重试 |
-| [Companion.tsx](Companion.tsx)、[Profile.tsx](Profile.tsx)、[Memory.tsx](Memory.tsx)、[memory-state.ts](memory-state.ts)、[Assets.tsx](Assets.tsx)、[Voice.tsx](Voice.tsx)、[Actions.tsx](Actions.tsx)、[Visuals.tsx](Visuals.tsx) | 伙伴常驻分类与各分类页、影像独立入口；资料与角色卡编辑、记忆卡片内维护、衣柜与环境素材、声音方案、动作语义定义、影像成品与制作工作项；创作、详情与列表分层，按原任务恢复制作 |
-| [ui.tsx](ui.tsx)、[save-result.ts](save-result.ts) | 页面任务、账户内草稿、前台轮询、图片选择与媒体资源生命周期；保存失败后的回读核对共用流程，各表单定义提交值比对与冲突展示；媒体加载失败只重试媒体加载 |
+| 登录、退出、连接和请求 | [App.tsx](App.tsx)、[api.ts](api.ts) |
+| 会话、提交与话题反馈 | [Chat.tsx](Chat.tsx)、[TopicLink.tsx](TopicLink.tsx) |
+| 动态、日记与已读 | [Feed.tsx](Feed.tsx) |
+| 生活近况、事项与阅读成果 | [LifeSummary.tsx](LifeSummary.tsx)，由 [Companion.tsx](Companion.tsx) 装配 |
+| 资料、记忆与声音 | [Profile.tsx](Profile.tsx)、[Memory.tsx](Memory.tsx)、[memory-state.ts](memory-state.ts)、[Voice.tsx](Voice.tsx) |
+| 素材、动作与影像 | [Assets.tsx](Assets.tsx)、[Actions.tsx](Actions.tsx)、[Visuals.tsx](Visuals.tsx) |
+| 草稿、轮询、保存核对与媒体 | [ui.tsx](ui.tsx)、[save-result.ts](save-result.ts) |
 
-与 Client 共用根 `shared/` 的生成契约、HTTP 请求和 WS 协议核心，不导入桌面 store、IPC 或窗口组件。根 `shared/` 同时是两端**中性文案与失败归类**的唯一落点：[ui-copy.ts](../shared/ui-copy.ts) 给出通用的中文措辞与失败说明，[error-classification.ts](../shared/error-classification.ts) 按结构化错误码与 HTTP 状态把失败归类，两端据此取同一套措辞，领域文案仍归各自应用。业务请求使用操作标识调用 `RemoteApi.invoke`，Cookie、CSRF、账户撤销和登录失效由该适配层处理；资源读取、保存及聊天提交、停止不受实时连接状态限制。`RemoteGateway` 仅提供事件、连接状态和会话快照协调，不暴露业务 RPC；重放成功时保留已有会话基线，失效时重读 HTTP 快照。异步回写须校验当前账户与页面代次；切页、隐藏与退出时停止录音并暂停音视频。`dist/` 由 Backend 部署，不随桌面安装包发布；检查与实机验收统一见 Scripts。
+## 请求与状态边界
 
-主导航为聊天、伙伴、动态、设置；伙伴默认进入资料，伙伴分类与桌面伙伴页保持同一组分类并始终可见，恢复当前账户上次分类。影像从伙伴页的独立入口进入，保留上次浏览的成品。日记属于动态的独立子页，两者分别校准已读状态。资料与角色卡直接展示、分别编辑，普通记忆使用服务端搜索与分页列表，点条目在卡片内展开维护，收起后草稿仍留在该条上；个人资料按已登记字段批量保存，其他资料以常驻表单分别编辑。所有文本修改显式保存或取消，后台刷新保留草稿与编辑起点，冲突展示最新内容并要求用户核对后继续。写入响应不明时先重读并核对提交值，确认一致才清理草稿；真实失败保留草稿与原版本。
+与 Client 共用根 `shared/` 的生成契约、HTTP、WS 核心及中性文案／错误归类，不导入 Electron 桥、桌面 store 或窗口组件。业务操作经 `RemoteApi.invoke`，适配层管理同源 Cookie、CSRF、撤销与登录失效；切换身份先废弃旧请求，迟到结果不得更新新账户。HTTP 操作不依赖 WS 当前是否在线。
 
-衣柜与环境按素材语义维护，卡片进入详情查看与维护，不提供穿上或启用入口；自主策略开关使用正向表达，语义统一为是否允许伙伴自主添置素材。制作默认进入 AI 描述，上传为次要入口，外部制作说明按需展开。影像的预览与重做不依赖桌面在线；正式呈现由伙伴自主决定，手机影像页只提供预览和重做。文本草稿、筛选、子页选择和阅读位置按账户与设备保存在当前浏览器会话，参考图片仅保留在本次登录内存；服务端任务仍是制作进度的事实来源。提交结果未知时须刷新原资产或列表并核对，再开始新制作，不自动重做。
+`RemoteGateway` 只协调事件、连接状态和会话快照。聊天先缓冲事件再应用基线，按水位合并；重放成功保留已有基线，失效才回源。未确认提交保留请求身份并先查询回执，不能借重连重复提交。话题反馈按会话去重和分批读取，同一话题共用反馈与保存状态。
 
-开发入口为 [package.json](package.json) 与 [vite.config.ts](vite.config.ts)：前端监听本机 `5175`，`/api`（含 WS）代理到本机 Backend `10620`。请求 ID 与复制说明入口为 [browser.ts](browser.ts)，样式在 [style.css](style.css)；共享协议变更须同时核对 Client 与 Remote 消费方。
+生活组件读取同账户的权威快照，刷新不推进判断或制作；同一查询失败保留可读内容，选中事项与详情按 ID 对应。动态和日记独立分页及标记已读，确认前复核页面、可见性和焦点。生活事实见 [生活契约](../docs/PROTOCOL.md#生活状态与生活事件)。
+
+## 草稿、制作与媒体
+
+文本草稿、筛选、子页及阅读位置按账户与设备保存在浏览器会话，参考图片仅留在本次登录内存。后台刷新不覆盖草稿或编辑起点；写入结果不明时重读并比对，确认提交值已生效才清理草稿，真实失败保留修改与原版本。记忆搜索、分页和展开编辑由 `memory-state.ts` 管理，收起条目不丢草稿。
+
+制作进度以服务端任务为准，离页后从原任务恢复，未知提交先核对资产或任务再决定后续操作。影像库只预览和维护成品，手机不提交正式播放回执。图片加载失败重取媒体，不重做作品。切页、隐藏、退出及身份失效停止录音并暂停音视频，释放对象 URL 和订阅。
+
+## 开发与验证
+
+[package.json](package.json)、[vite.config.ts](vite.config.ts) 定义开发与构建；本机开发端口为 `5175`，`/api`（含 WS）代理到 Backend `10620`，`dist/` 由 Backend 部署。请求诊断与复制说明归 [browser.ts](browser.ts)，样式归 [style.css](style.css)。
+
+命令见 [手机远程页面构建](../scripts/README.md#手机远程页面构建)。协议变更同时核对桌面消费者；会话恢复、未知提交、保存冲突和账户切换分别验证。扫码、麦克风、移动浏览器后台恢复需要 iOS Safari 与 Android Chrome 实机证据。

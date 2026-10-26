@@ -1,125 +1,84 @@
 # 数据库字段语义字典
 
-本页帮助从业务概念定位持久字段、关系约束及其所有者，覆盖当前 63 张应用表。精确列名、PostgreSQL 类型、空值、默认值、枚举、索引和约束以各行链接的模型及 [完整 0001 基线](../backend/alembic/versions/0001_baseline.py)为准；不另存一份 DDL。实体关系、设计理由、删除语义和测量依据见 [数据库设计](DATABASE.md)。
+本页用于从业务含义定位字段所有者，说明容易混用的字段组。列名、类型、空值、默认值、枚举、索引和外键以链接的 ORM 及 [0001 基线](../backend/alembic/versions/0001_baseline.py)为准；完整注册见 [bootstrap.models](../backend/bootstrap/models.py)。关系与删除理由见 [DATABASE](DATABASE.md)，不在此复制 DDL 或逐表说明通用字段。
 
 ## 公共字段与关系入口
 
-| 需要确认的含义 | 权威定义 |
+| 需要判断的含义 | 定义与边界 |
 |---|---|
-| 实体 ID、可移植身份 `source_key`、创建和更新时间 | [ModelBase / TimestampMixin](../backend/infrastructure/models.py)；`source_key` 用于备份匹配，不能替代请求幂等键 |
-| API 资源 ID 与不透明令牌的区别 | [ID 契约](PROTOCOL.md#id-语义)、[ResourceId](../backend/infrastructure/api_ids.py) |
-| 同账户联合外键、任务详情的 `owner_id`、一对一用户扩展 | 各模型声明及 [归属约束装配](../backend/infrastructure/schema.py)；完整模型集合由 [bootstrap.models](../backend/bootstrap/models.py)登记 |
-| 通用任务状态、取消、修订与检查点 | [JobRecord](../backend/infrastructure/job_models.py)；业务详情主键复用任务 ID，专有结果由所属模块采纳 |
-| 固定资源引用、多资源角色与顺序、删除行为 | 各领域资产外键／关联表及 [删除与恢复](DATABASE.md#删除与恢复) |
-| 配置与冻结文档的 JSONB 结构 | 所属模块的 schema / contracts；系统设置的 JSON 文本编码单独由 [system_settings.py](../backend/features/configuration/system_settings.py)定义 |
-| 导出字段、引用重映射、派生字段排除 | [备份装配](../backend/bootstrap/backup.py)登记的各领域 `backup.py`；格式和覆盖边界见 [备份契约](PROTOCOL.md#备份校验与覆盖恢复) |
-
-下表只摘录影响理解的字段组，不重复公共继承字段。表名直接链接到定义；关系中的账户隔离同时受公共约束装配保护。
+| 实体主键、备份身份与时间 | [ModelBase / TimestampMixin](../backend/infrastructure/models.py)：`id` 定位当前库实体，`source_key` 在账户内匹配导入记录，创建/更新时间不承担请求身份；API 编码见 [ID 契约](PROTOCOL.md#id-语义) |
+| 归属与配对 | [schema.py](../backend/infrastructure/schema.py)展开账户联合外键；业务仍检查预设。任务详情的 `owner_id` 与一对一用户扩展不能按普通资源 ID 重映射 |
+| 任务执行与业务结果 | [JobRecord](../backend/infrastructure/job_models.py)保存控制状态、取消、修订与检查点；详情复用父任务主键，专有结果由业务采纳 |
+| 文件与展示路径 | 领域资产外键/关联表保护活引用，路径和 JSON 快照供展示及恢复，不能替代资产关系；删除见 [DATABASE](DATABASE.md#删除与恢复) |
+| JSON 结构与导出 | 可变输入和冻结文档由所属 schema/contracts 校验；各领域 `backup.py` 经[备份装配](../backend/bootstrap/backup.py)登记，决定导出、重映射和排除派生值 |
 
 ## 账户、配置与设备身份
 
-| 表 / 定义 | 字段语义与主要约束 |
+| 字段组与模型入口 | 语义 |
 |---|---|
-| [users](../backend/features/accounts/models.py) | 激活身份和账户开关；与登录记录、设备授权分别管理 |
-| [login_records](../backend/features/accounts/models.py) | 桌面登录 token 身份、有效性和登录／退出时间；撤销登录不等于删除账户 |
-| [admin_sessions](../backend/features/accounts/models.py) | 管理员会话及撤销状态，不复用产品账户的登录关系 |
-| [remote_pairings](../backend/features/accounts/remote/models.py) | 一次性配对授权摘要、期限与兑换状态 |
-| [remote_sessions](../backend/features/accounts/remote/models.py) | 设备身份、凭据摘要与撤销状态；独立于桌面登录 |
-| [user_settings](../backend/features/configuration/settings/models.py) | 按账户和配置键保存结构化值；批量读写入口在同目录 `values.py` |
-| [system_settings](../backend/features/configuration/settings/models.py) | 系统运营参数的键与逐值 JSON 文本；水合、校验与热更新见 [配置与迁移](../backend/README.md#配置与迁移) |
-| [user_model_configs](../backend/features/configuration/models.py) | 以 `user_id` 为主键的模型配置；引用和能力校验归配置领域 |
-| [user_social_accounts](../backend/features/configuration/models.py) | 按账户与平台唯一保存凭证、连接状态和修订；扫码会话另有登录修订，凭证不进入普通配置同步 |
-| [personas](../backend/features/companion/models.py) | 以 `user_id` 为主键的伙伴定义与创作政策；当前生活、呈现状态各有独立权威 |
-| [custom_voices](../backend/features/media/voice_models.py) | 设计／克隆方案版本、当前槽位及试听／参考资产；被消息引用的版本继续保留 |
-| [update_versions](../backend/features/updates/models.py) | 全局更新包版本与发布资料，不属于某个产品账户 |
+| 账户、桌面登录与管理员会话：[accounts/models.py](../backend/features/accounts/models.py) | 账户开关、登录有效性和管理员身份各有撤销范围；注销登录不删除账户 |
+| 手机配对与设备授权：[remote/models.py](../backend/features/accounts/remote/models.py) | 一次性授权摘要、兑换期限与设备撤销分别保存，独立于桌面登录，不进入用户备份 |
+| 用户/系统设置：[settings/models.py](../backend/features/configuration/settings/models.py) | 用户值为结构化设置；`system_settings` 的每项值是 JSON 文本，由 [system_settings.py](../backend/features/configuration/system_settings.py)校验水合，不能直接按 JSONB 对待 |
+| 模型配置与资讯连接：[configuration/models.py](../backend/features/configuration/models.py) | 模型配置按用户一对一；资讯连接按账户/平台唯一，凭证修订和扫码登录修订各自隔离迟到结果，均不属于普通设置同步 |
+| 人格与政策：[companion/models.py](../backend/features/companion/models.py) | `personas` 定义伙伴及自主政策，当前活动和实际显示各有独立状态 |
+| 声音与分发：[voice_models.py](../backend/features/media/voice_models.py)、[updates/models.py](../backend/features/updates/models.py) | 声音当前槽位指向不可变方案版本，消息继续引用旧版本；更新版本是全局分发资料，不归某个产品账户 |
 
 ## 会话与话题
 
-| 表 / 定义 | 字段语义与主要约束 |
+| 字段组与模型入口 | 语义 |
 |---|---|
-| [conversations](../backend/features/conversation/models.py) | `parent_id` 是依附子会话，`forked_from_id` 是可失去的分叉来源；预设决定记忆域。统计列由 [消息触发器](../backend/features/conversation/statistics.py)派生，不进入备份 |
-| [messages](../backend/features/conversation/models.py) | 正文、内容类型、工具调用／结果及交付快照分工；摘要水位指向原始消息边界 |
-| [prompt_submissions](../backend/features/conversation/submission_models.py) | 账户内请求标识、内容指纹、受理状态及结果／替换回复外键；重放复用原受理结果 |
-| [submission_messages](../backend/features/conversation/submission_models.py) | 请求与输入消息的有序关联；整批输入和关联一次提交 |
-| [message_assets](../backend/features/conversation/models.py) | 消息实际引用的正式文件，与展示正文中的路径快照分别维护 |
-| [message_voice_refs](../backend/features/conversation/models.py) | 消息使用的本地声音版本；供应商外部声音令牌不冒充本地实体 |
-| [companion_topic_batches](../backend/features/topics/models.py) | 按账户、预设和日期记录采集批次及实际完成情况 |
-| [companion_topics](../backend/features/topics/models.py) | 原始来源、内容与所属批次；来源身份在账户及预设内去重 |
-| [companion_topic_usages](../backend/features/topics/models.py) | 话题实际分享与消息的关系，受理或选材不算已分享 |
-| [companion_topic_feedback](../backend/features/topics/models.py) | 已分享来源的显式反馈；不写成聊天消息或自动转成用户事实 |
+| 会话、消息和媒体引用：[conversation/models.py](../backend/features/conversation/models.py) | `parent_id` 表示依附子会话，`forked_from_id` 表示可失去的分叉来源；预设固定记忆域。消息原文与交付快照须一致，文件和本地声音另有关系表；统计由[消息触发器](../backend/features/conversation/statistics.py)派生，不备份 |
+| 受理账本：[submission_models.py](../backend/features/conversation/submission_models.py) | 请求标识和内容指纹决定重放资格，结果/替换回复是实体关系；批量输入经有序关联与请求一次提交 |
+| 话题资料、分享和反馈：[topics/models.py](../backend/features/topics/models.py) | 批次保存日期与完成情况，来源保存原文依据，usage 才表示随消息实际分享；反馈不自动成为聊天消息或用户事实 |
 
 ## 任务与资产
 
-| 表 / 定义 | 字段语义与主要约束 |
+| 字段组与模型入口 | 语义 |
 |---|---|
-| [jobs](../backend/infrastructure/job_models.py) | 持久执行控制行；任务种类选择业务详情，结果采纳和恢复条件仍由业务所有者决定 |
-| [job_requests](../backend/features/jobs/models.py) | 请求身份及指纹；多个请求可以关联同一制作，清理检查点不能破坏幂等身份 |
-| [job_assets](../backend/features/jobs/models.py) | 按角色保留任务输入、候选和产物，释放关系后才具备文件回收资格 |
-| [provider_lanes](../backend/features/media/video_queue/models.py) | 供应商凭据分组的名额与冷却，不等同于某个业务任务 |
-| [provider_attempts](../backend/features/media/video_queue/models.py) | 远端提交、句柄、结果与未知事实；通过任务和队列外键关联，业务删除不代表远端结束 |
-| [assets](../backend/features/assets/models.py) | 账户内路径、内容哈希、媒体属性及回收待办；活引用限制删除 |
-| [ws_events](../backend/runtime/events/models.py) | 同事务 outbox 的载荷、认领及投递状态；数据库通知只负责唤醒 |
+| 任务请求和临时引用：[jobs/models.py](../backend/features/jobs/models.py) | 请求指纹独立于制作身份，多个请求可复用同一工作项；检查点清理不删除幂等身份 |
+| 远端名额与尝试：[video_queue/models.py](../backend/features/media/video_queue/models.py) | lane 按供应商凭据分组保存名额和冷却，attempt 保存提交、句柄、结果和未知事实；本地任务删除不能结束远端占用 |
+| 文件库存：[assets/models.py](../backend/features/assets/models.py) | 账户路径、内容哈希、媒体属性和回收待办；最后活引用释放后才可回收 |
+| 异步通知：[events/models.py](../backend/runtime/events/models.py) | outbox 载荷、认领和投递状态与业务事务协作；数据库通知只唤醒，不承担恢复身份 |
 
 ## 身份与制作素材
 
-| 表 / 定义 | 字段语义与主要约束 |
+| 字段组与模型入口 | 语义 |
 |---|---|
-| [avatar_assets](../backend/features/appearance/models.py) | 确认形象、自动特征、人工覆盖及统一修订；每账户至多一个活动身份 |
-| [character_analysis_jobs](../backend/features/appearance/models.py) | 身份分析的专有输入和结果；关联目标形象，执行控制继承 `jobs` |
-| [companion_fullbody_candidates](../backend/features/appearance/models.py) | 尚未采纳的全身结果及其来源，采纳必须复核目标身份与修订 |
-| [companion_outfits](../backend/features/appearance/models.py) | 已采纳造型与来源描述；不承担角色身份或生成执行状态 |
-| [appearance_assets](../backend/features/appearance/models.py) | 身份、造型、候选或分析任务的多文件引用；每行只归属其中一种拥有者 |
-| [companion_scenes](../backend/features/scenes/models.py) | 当前环境素材、上传源及首次／替换任务指针；可用素材不随新制作失败而失效 |
-| [scene_jobs](../backend/features/scenes/models.py) | 一次环境制作的专有输入和采纳目标；共享控制状态属于 `jobs` |
-| [action_definitions](../backend/features/action_library/models.py) | 动作含义、适用条件、播放方式及评审依据；名称用于检索，不是独立身份或可播放证明 |
-
-自主造型的持久任务见 [OutfitCreationJob](../backend/features/appearance/models.py)，请求及执行控制复用共享任务，采纳结果引用衣柜素材。
+| 身份、特征与用户覆盖：[appearance/models.py](../backend/features/appearance/models.py) | 确认形象维护统一修订；自动提取值和人工覆盖分离。候选与分析任务独立于当前身份，失败不撤销已发布资料 |
+| 衣柜与造型任务：同一[模型文件](../backend/features/appearance/models.py) | 衣柜保存已采纳造型及来源；`outfit_creation_jobs` 保存自主制作详情并继承共享任务。多文件关系只归属身份、造型、候选或分析任务之一 |
+| 环境与制作：[scenes/models.py](../backend/features/scenes/models.py) | 素材保存上传源、展示图和目标/源/实际尺寸，初始和替换任务独立；没有“当前启用环境”字段，新制作失败保留可用素材 |
+| 动作定义：[action_library/models.py](../backend/features/action_library/models.py) | 保存动作含义、适用条件、播放方式和冻结评审依据；名称供检索，定义不是可播成品 |
 
 ## 影像、播放与媒体制作
 
-| 表 / 定义 | 字段语义与主要约束 |
+| 字段组与模型入口 | 语义 |
 |---|---|
-| [visual_items](../backend/features/visuals/models.py) | 稳定成品身份及当前版本指针；成功重做切换版本，不替换资源身份 |
-| [visual_versions](../backend/features/visuals/models.py) | 按成品和版本号唯一的不可变产物；保存冻结组合、实际输入图版本与媒体属性 |
-| [visual_version_assets](../backend/features/visuals/models.py) | 具体版本使用的文件角色与顺序，冻结内容和文件生命周期共同保留 |
-| [visual_jobs](../backend/features/visuals/models.py) | 新建／重做的冻结输入、目标和结果版本；预期版本用于并发采纳守卫 |
-| [visual_presentations](../backend/features/visuals/models.py) | 每账户当前／持续版本、待播指令和呈现代次；实际呈现不由生活状态字段推断 |
-| [visual_playbacks](../backend/features/visuals/models.py) | 指令和回执对应的实际版本；结束记录的保留期见 [必要历史](DATABASE.md#必要历史) |
-| [video_gen_jobs](../backend/features/media/models.py) | 公共视频制作、来源消息与回复绑定；执行状态和供应商尝试分别保存 |
+| 成品与版本：[visuals/models.py](../backend/features/visuals/models.py) | 稳定成品 ID 与不可变版本分离；版本保存冻结组合、实际输入图和文件关系，成功重做才切换当前指针 |
+| 制作与呈现：同一[模型文件](../backend/features/visuals/models.py) | 工作项的目标/预期版本控制采纳；呈现保存当前/持续版本、静态素材目标与已显示快照、待播指令和代次；播放记录保存具体版本的指令与回执 |
+| 公共视频：[media/models.py](../backend/features/media/models.py) | 来源消息、回复绑定和视频制作详情；通用控制状态归 jobs，远端状态归 provider attempts |
 
-成品与版本的成对外键还会核对版本所属成品，不能仅因同账户就互换引用；循环指针在事务提交时须满足完整关系。
+成品/版本成对外键还校验版本属于该成品；循环指针可分阶段写入，提交时必须完整。显示事实不得从生活活动、待播指令或文件存在推断。
 
 ## 动态与日记
 
-| 表 / 定义 | 字段语义与主要约束 |
+| 字段组与模型入口 | 语义 |
 |---|---|
-| [companion_entries](../backend/features/entries/models.py) | 动态／日记共享正文、发布时间和阅读状态；日记按账户和业务日期唯一 |
-| [entry_links](../backend/features/entries/models.py) | 日记引用动态的方向与顺序，不从正文文本推断关系 |
-| [entry_assets](../backend/features/entries/models.py) | 内容附件的角色和顺序，文件归属由资产关系校验 |
-| [entry_comments](../backend/features/entries/models.py) | 评论、回复对象及生成状态；回复限定同账户同内容，每条用户评论至多一条伙伴回复 |
-| [post_publications](../backend/features/posts/publication_models.py) | 发布预留、计划、媒体任务与发布结果；`outcome` 与共享执行状态分别表达业务事实和执行进度 |
+| 内容、评论与附件：[entries/models.py](../backend/features/entries/models.py) | 动态/日记共享正文和阅读状态，日记按账户/业务日期唯一；来源动态用有方向和顺序的关联保存，评论回复限定同账户同内容 |
+| 发布工作：[publication_models.py](../backend/features/posts/publication_models.py) | 计划、媒体任务和结果归发布详情；`outcome` 表示业务事实，继承的执行状态表示进度，二者不能互换 |
 
 ## 生活、夜间与调度
 
-| 表 / 定义 | 字段语义与主要约束 |
+| 字段组与模型入口 | 语义 |
 |---|---|
-| [life_states](../backend/features/life/models.py) | 当前活动及事实性质、开始时间、执行步骤、聚焦事项与修订；是生活写入的串行锁入口，呈现评估水位不证明已经显示 |
-| [life_pursuits](../backend/features/life/models.py) | 持续事项、进展、状态变更来源与理由、改方向前的事项及完成结果；完成须满足 [生活证据契约](PROTOCOL.md#生活状态与生活事件) |
-| [life_steps](../backend/features/life/models.py) | 类型化动作、请求身份、执行条件、检查点及本地日额度归属；结果经内容、影像、素材或动作外键关联，阅读正文范围与笔记长期保留 |
-| [life_action_admissions](../backend/features/life/models.py) | 按请求保存额度归属和提交事实；覆盖恢复按请求合并并保留已提交事实，不依赖可被覆盖的事项历史计数 |
-| [life_events](../backend/features/life/models.py) | 记录内容及其性质、主体和来源；事件键用于幂等，来源或结果删除不抹掉事实内容 |
-| [pursuit_evidence](../backend/features/life/models.py) | 事项完成所引用的事实事件，证据不嵌入不可核对的 JSON 列表 |
-| [nightly_activity_logs](../backend/workflows/nightly/models.py) | 账户本地日期的阶段账本、预算及完成情况 |
-| [nightly_activity_actions](../backend/workflows/nightly/models.py) | 日志内动作身份、真实任务及结果；执行恢复不以计划冒充完成 |
-| [cron_jobs](../backend/features/automation/models.py) | 计划、暂停、下次执行时间及任务会话；调度交接规则见 [Cron 契约](PROTOCOL.md#cron-双轨) |
-| [companion_intents](../backend/features/companion/intent_models.py) | 有界主动回合的条件、租约和终态；`source_kind` 区分来源，`cron_job_id` 明确关联 Cron，`source_key` 仍是可移植身份 |
+| 状态、事项、步骤与事件：[life/models.py](../backend/features/life/models.py) | 生活状态行串行化写入；事项保存目标/进展和调整来源，步骤保存可执行动作及永久阅读成果，事件保留事实性质、主体和结果；完成证据经关联表连接 |
+| 请求额度与提交：同一[模型文件](../backend/features/life/models.py) | `life_action_admissions` 独立保存额度归属和已提交事实，覆盖恢复按请求合并，不能从可覆盖的事项历史重新计数 |
+| 夜间账本：[nightly/models.py](../backend/workflows/nightly/models.py) | 按账户/本地日期组织阶段、预算和动作身份，关联实际任务与结果；账本计划不证明执行完成 |
+| 自动化与等待：[automation/models.py](../backend/features/automation/models.py)、[intent_models.py](../backend/features/companion/intent_models.py) | Cron 保存计划和任务会话，陪伴意图保存等待条件、租约和终态；`source_kind` 与 `cron_job_id` 表示触发来源，`source_key` 仍用于可移植身份 |
+
+事实、额度、来源权限与恢复规则见 [生活契约](PROTOCOL.md#生活状态与生活事件)和[调度契约](PROTOCOL.md#调度)。
 
 ## 记忆与证据
 
-| 表 / 定义 | 字段语义与主要约束 |
-|---|---|
-| [memories](../backend/features/memory/models.py) | 当前内容、显式分类／槽位和来源；`context` 是展示话题，不承担业务类型判定 |
-| [memory_evidence](../backend/features/memory/models.py) | 当前判断引用的原始消息与摘录；失去消息后不能凭引用缺失产生新事实 |
-| [memory_revisions](../backend/features/memory/models.py) | 有限的内容修订快照；明确遗忘须同时清除，保留范围见 [必要历史](DATABASE.md#必要历史) |
-| [memory_fingerprints](../backend/features/memory/models.py) | 来源指纹及抑制状态，可在正文和原记忆删除后继续防止重学 |
-| [memory_embeddings](../backend/features/memory/models.py) | 按内容版本、模型标识和实际维度保存可重建向量；检索只比较同作用域、同空间的有效内容 |
+[记忆模型](../backend/features/memory/models.py)分别保存当前内容、原始证据、修订、遗忘指纹和向量：分类及槽位有显式字段，`context` 仅是展示话题；证据消息缺失不能产生新事实。指纹可失去原记忆指针，继续抑制同一来源重学；向量按内容版本、模型和实际维度保存，只比较同作用域同空间的有效内容。
+
+保留期与删除关系见 [必要历史](DATABASE.md#必要历史)，人工编辑、审阅与遗忘的行为见 [记忆模块](../backend/features/memory/README.md)。

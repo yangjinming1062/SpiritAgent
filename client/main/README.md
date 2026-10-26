@@ -1,187 +1,137 @@
 # Client 主进程
 
-主进程通过 `entry.ts` 装配桌面能力，通过 `preload.ts` 暴露受控桥；普通与背景 preload 均按 `shared/ipc/bridge.ts` 校验实现。本文维护内部生命周期、准入和原生承载；共享缓存归 Client README，跨端契约归 PROTOCOL。
+[entry.ts](entry.ts) 是唯一组合根，显式装配账户、窗口、Runner、缓存与平台宿主；[preload.ts](preload.ts) 和 [preload-background.ts](preload-background.ts) 暴露不同权限的桥。业务契约归 [PROTOCOL](../../docs/PROTOCOL.md)，共享缓存归 [Client](../README.md#资产与历史缓存)，本文维护主进程内部准入和资源生命周期。
 
 ## 包边界
 
-| 包或入口 | 职责 |
+| 包 | 职责 |
 |---|---|
-| `entry.ts` | 唯一组合根，显式装配，不展开业务逻辑 |
-| `preload.ts` | 沙盒 preload，暴露 `window.spiritagent` |
-| `backend` | 多账户凭据、会话、HTTP 与账户 WS 网关 |
-| `runner` | 进程、本地 RPC 及 Runner 更新 |
-| `lifecycle` | 窗口、托盘、退出与桌面更新 |
-| `ipc` | 注册能力通道，装配 Runner 宿主及资产、历史、语音缓存 |
-| `security` | sender、路径与能力准入 |
-| `shared` | 叶子层，经组合根注入端口，不导入 backend／runner 实现 |
+| `backend` | 凭据、HTTP、账户 WS 与会话恢复 |
+| `runner` | 本地进程、RPC 桥和 Runner 更新 |
+| `lifecycle` | 窗口、托盘、退出、桌面宿主与应用更新 |
+| `ipc` | 注册受控操作，持有缓存与本机能力服务 |
+| `security` | sender、文件路径和接口策略校验 |
+| `shared` | 主进程叶子类型与组件，通过注入端口协作，不导入 backend／runner 实现 |
 
-主进程产物为 ESM `entry.js`，沙盒 preload 为 CJS `preload.cjs`；混入 ESM import 会使 preload 桥失效。`main/shared` 与跨进程契约包 `client/shared` 分层独立。
+`main/shared` 与跨进程契约 `client/shared` 分开。主入口输出 ESM `entry.js`，沙盒 preload 输出 CJS；preload 混入 ESM import 会使整座桥失效。新增模块只导出装配函数，不能在导入时创建资源。
 
 ## 启动与退出
 
-`entry.ts` 按顺序调用各模块入口。ready 前依次为：[单实例锁](lifecycle/single-instance.ts)、[Chromium 开关](lifecycle/platform.ts)、确定 Home 并 `setPath('userData')`（须早于日志器、配置镜像与会话创建）、[随包技能同步](lifecycle/bundled-skills.ts)、[应用名与 AppUserModelID](lifecycle/menu.ts)；新增模块只导出函数，不在导入时产生副作用。
+启动先取得[单实例锁](lifecycle/single-instance.ts)、设置 [Chromium 策略](lifecycle/platform.ts)，再确定 Home 并设置 `userData`，随后创建日志、配置和会话。`SPIRITAGENT_DESKTOP_USER_DATA_DIR` 覆盖时 Home 为其下的 `spiritagent-home`，具体解析见 [paths.ts](security/paths.ts)。凭据读取须等 `app.whenReady()`，避免提前缓存 safeStorage 解密失败。
 
-- `SPIRITAGENT_DESKTOP_USER_DATA_DIR` 覆盖下取 `<override>/spiritagent-home` 为 Home（[paths.ts](security/paths.ts)）；配置、日志与缓存不另找目录。
-- 随包技能同步紧接日志器同步执行，早于会话恢复与 Runner 自动启动（含 200 ms 定时入口），使 Runner 与技能索引读到新文件。仅打包运行且桌面版本与 Home 下 `.bundled-skills-version` 不同时，把 resources 中的 `skills` 复制到 `$SPIRITAGENT_HOME/skills`：同名覆盖、不删其他内容，存在 `.no-bundled-skills` 时跳过；全部复制成功才写版本标记，失败只记日志、下次启动重试。
-- 默认单实例；`SPIRITAGENT_DESKTOP_DISABLE_SINGLE_INSTANCE_LOCK=1` 只用于并行验证，第二实例事件在转发器就绪前折叠保存，之后兑现一次。
-- 远程显示可禁用 GPU 并关闭精灵透明。
-- Chromium 后台节流全局关闭，渲染功耗由引擎管理。
-- 关窗不退出；[app-quit.ts](lifecycle/app-quit.ts) 在退出时发起配置 flush、`flushSync` 日志并有界等待 Runner 和收听记录写入，超时仍可能残留进程。重启安装更新在 `before-quit-for-update` 时置退出标志，再走同一退出链。
+[随包技能同步](lifecycle/bundled-skills.ts) 位于日志器初始化之后、会话恢复及 Runner 自动启动之前。仅打包版本变化时覆盖同名技能，保留其他内容；`.no-bundled-skills` 跳过同步，全部成功才更新版本标记，失败下次启动再试。默认单实例，验证开关 `SPIRITAGENT_DESKTOP_DISABLE_SINGLE_INSTANCE_LOCK=1` 仅用于隔离测试；转发器就绪前的第二实例事件折叠后兑现一次。
+
+关窗与退出分别处理。[app-quit.ts](lifecycle/app-quit.ts) 负责配置、日志、Runner 与收听记录收尾，有界等待不保证残留进程已结束；更新重启提前设置退出标志并复用此链。后台节流全局关闭，renderer 自行管理功耗；远程显示的 GPU／透明回退由 `platform.ts` 决定。
 
 ## 渲染面准入
 
 ### 凭据与请求
 
-凭据存储与换号语义见 [PROTOCOL](../../docs/PROTOCOL.md#凭据落盘)，多账户存储在 [session.ts](backend/session.ts)。凭据读取须在 `app.whenReady()` 后触发，避免 safeStorage 尚未就绪时缓存解密失败。托盘账户操作留在主进程，preload 不暴露持久凭据读取。`api()` 只接受登记的操作标识和参数，类型与 [主进程准入](security/api-allowlist.ts) 均由生成契约的 `ipc` 策略约束。multipart 上传通过专用媒体 IPC 传递字节或已授权路径，由主进程构建 `FormData`，不跨 Electron 传递该对象。`api()`、资产读取与本站登录失效通知集中在 [connection.ts](ipc/connection.ts)，WS 票据仅由主进程账户网关申请与消费。
+[session.ts](backend/session.ts) 保管多账户凭据，preload 不暴露持久凭据读取，托盘账户操作留在主进程。[connection.ts](ipc/connection.ts) 统一接收操作标识和参数，[api-allowlist.ts](security/api-allowlist.ts) 按生成契约的 IPC 策略校验；WS 票据仅由账户网关申请。multipart 经专用媒体通道传字节或已授权路径，由主进程构建 `FormData`。存储和错误语义见 [凭据落盘](../../docs/PROTOCOL.md#凭据落盘)及[错误信封](../../docs/PROTOCOL.md#错误信封)。
 
-macOS 实机验证须从已登录的图形会话启动客户端，SSH 安全会话可能无法交互访问钥匙串。连接局域网后端时，macOS 15 及以上还需用户允许应用的“本地网络”权限；用途说明由 [打包配置](../package.json) 的 `NSLocalNetworkUsageDescription` 提供。Terminal／SSH 的命令行网络请求自动放行，不能用其连通结果代替图形客户端验证；应用身份与签名要求见 [打包入口](../../scripts/README.md#client-开发与打包脚本)，平台依据见 [Apple TN3179](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy)。
+macOS 钥匙串验证须从已登录图形会话启动，SSH 安全会话可能不可交互访问。macOS 15 及以上的局域网访问还需应用“本地网络”权限；用途声明在 [package.json](../package.json)。Terminal／SSH 连通不能代替图形客户端验收，平台依据见 [Apple TN3179](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy)。
 
 ### 文件与媒体
 
-- 文件读取仅接受选择器或拖拽登记的路径，渲染层不能自行授予白名单；敏感路径另行阻断。读取统一经 [readUserSelectedFile](security/hardening.ts)，新增读文件通道不绕过它。
-- 白名单仅进程内且有容量限制，重启须重新选择，历史附件路径不自动恢复权限。
-- `chat:set-pending-feed` 信箱不校验白名单，取用方仍须走受控读取。
+文件读取统一经 [hardening.ts](security/hardening.ts) 的 `readUserSelectedFile`：只接受选择器或拖拽登记的路径，并另挡敏感路径。白名单仅在当前进程有效，重启后历史附件不自动取得许可。附件信箱 `chat:set-pending-feed` 只传递意图，消费者仍须走受控读取；不能由 renderer 自行补白名单。
 
 ## 账户网关与窗口订阅
 
-[gateway.ts](backend/gateway.ts) 持有账户唯一 WS、工具派发、取消、结果待确认队列与串行工具清单同步。网络连接与已受理调用不依赖窗口存活；刷新同一登录的凭据保留连接和在途调用，换号使旧连接与迟到结果失效。共享 [GatewayConnection](../../shared/gateway.ts) 负责票据重取、退避重连、心跳、连接重放与会话快照缓冲。
+[backend/gateway.ts](backend/gateway.ts) 持有账户唯一 WS、工具派发、取消及待确认结果；共享 [GatewayConnection](../../shared/gateway.ts) 管重连、心跳、重放和快照缓冲。窗口释放不关闭连接或已受理调用。刷新同一登录的凭据保留在途工作，换号废弃旧连接与迟到结果。
 
-业务窗口通过 [connection.ts](ipc/connection.ts) 提交稳定操作标识与参数，主进程核对策略、登录身份后使用共享 HTTP 核心；同一会话的在途快照合并为一个完整基线。[gateway.ts](ipc/gateway.ts) 只提供连接状态和受控桌面情境上报，设备 RPC 不暴露给窗口；`tool.call`、`tool.cancel` 直接派发 Runner。IPC 带鉴权会话 ID，窗口先订阅再读状态，旧身份事件不能写入新视图。启动失败保留可恢复原因，连通后清除；窗口重载恢复启动失败与非 `headless` 工具工作态。
+窗口先订阅再读取状态，IPC 携鉴权会话 ID；[ipc/gateway.ts](ipc/gateway.ts) 只开放连接状态与受控情境上报，不开放设备 RPC。`tool.call` / `tool.cancel` 直接派发 Runner。启动失败保留原因供重载后恢复，非 headless 工具工作态同样可恢复；连通后清除旧失败。同会话快照读取合并为完整基线。
 
-工具完成结果保留至 Backend 确认，连接恢复或回执超时只补交结果。进程恢复后按未决 `call_id` 查询 Runner 调用日志；仍在执行时仅在服务端继续等待的范围内查询，未知结果不重新执行。取消可按当前 RPC 请求或跨本地连接的 `call_id` 定位，换号释放所属活动与重试。
-
-[连接缓存](backend/ensure-backend.ts)只保存后端地址与就绪结果，凭据按请求读取；reset 使在途解析失效，票据签发前后核对登录身份和实际凭据。IPC 结构化错误的透传与还原遵循 [错误信封](../../docs/PROTOCOL.md#错误信封)。
+工具结果保留至后端确认，重连只补交结果。未决调用按 `call_id` 查询 Runner 日志，不能通过再次执行取得旧结果；取消、未知结果与允许继续等待的范围归 [调用日志契约](../../docs/PROTOCOL.md#调用日志与未知结果)。[ensure-backend.ts](backend/ensure-backend.ts) 只缓存地址和就绪结果，凭据逐请求读取；reset 和票据签发前后均复核身份。
 
 ## 窗口与几何
 
-[surfaces.ts](lifecycle/surfaces.ts) 串行管理唯一主窗口。打开主窗口隐藏精灵宿主，关闭与 Alt+F4 隐藏主窗口并恢复精灵；最小化不恢复精灵。账户身份变化收起主窗口并恢复精灵，目标账户视图独立恢复。主窗口直接管理完整内容矩形，内嵌生活区不扩大原生窗口边界；显示器变更校正还原位置，移动时隐藏精灵跟随显示器。
+[surfaces.ts](lifecycle/surfaces.ts) 串行管理唯一主窗口、锁屏及显隐快照；[surface-companion.ts](lifecycle/surface-companion.ts) 管创建前加载的本机偏好。打开、隐藏、最小化和模式交接的产品行为归 [窗口与会话](../../docs/DESIGN.md#窗口与会话)。
 
-主窗口快照仅在实际状态变化时增加版本并广播；重复几何与显隐事件不重复发布。`surface:open` 校验统一导航目标，现存窗口经导航事件更新页面，不重载 renderer；完成或失败仍回灌当前快照。新窗口通过 `surface:get-state` 取得当前版本。
+- 只有实际几何或显隐变化推进快照版本；已有窗口通过导航事件打开目标，不重载 renderer。新窗口读当前快照，完成和失败都回灌实际状态。
+- Windows 透明主窗口自行保存内容区还原矩形并按工作区展开，不依赖可能失真的原生 `isMaximized()`；未手动改变时复用原矩形，避免高 DPI 取整漂移。macOS 使用原生最大化。
+- 内嵌生活区不扩大原生窗口边界。主进程合并 sender、账户、偏好、窗口显隐、锁屏与 renderer 上报的舞台布局；renderer 还须即时撤销本窗隐藏资格，资源真正显示后才回执。
+- 精灵显隐由 [tray.ts](lifecycle/tray.ts) 的关闭拦截器统一广播。背景节流已关闭，不能用页面可见性推断原生精灵是否隐藏。未认证唤起须更新激活视图，不能只 raise 窗口。
+- [sprite-position.ts](shared/sprite-position.ts) 保存静止位置及屏幕原点；[ipc/sprite.ts](ipc/sprite.ts) 的位置写入和跨屏仅接受窗口模式精灵 sender。默认比例跨窗广播，本机偏好原子保存失败保留原值。
 
-Windows 透明主窗口通过工作区矩形展开，主进程保存内容区还原矩形并通过现有最大化查询返回该状态；不依赖透明窗可能失真的原生 `isMaximized()`。未手动改变几何时复用原还原矩形，避免高 DPI 下读取与设置的取整误差累积改变尺寸。再次操作还原，手动移动或缩放结束展开状态；显示器变化重新约束当前矩形。macOS 沿用原生最大化。
-
-主窗口按 [surface-companion.ts](lifecycle/surface-companion.ts) 的初始尺寸打开并可自由缩放，不强制画幅；呈现语义见 [窗口与会话](../../docs/DESIGN.md#窗口与会话)。
-
-[surfaces.ts](lifecycle/surfaces.ts) 另负责锁屏跟踪。播放认领由后端影像接口裁决，客户端仅由当前可见舞台提交，规则见[播放契约](../../docs/PROTOCOL.md#动作素材与影像播放)。
-
-[伙伴偏好](lifecycle/surface-companion.ts)在创建窗口前读取，独立保存在本机，不经云同步；原子保存失败向调用方报告，内存继续保留原值。生活区的偏好与实际可见状态、桌面精灵窗的实际显隐 `spriteVisible`（窗口存在、未隐藏且未最小化）都经 [IPC 快照](../shared/ipc/contracts.ts)传递，渲染层不得用迟到快照覆盖较新版本。内嵌舞台由主窗口经专用 IPC 上报实际布局可见性，主进程核对当前 sender 与鉴权会话，再与偏好、窗口显隐和锁屏状态合并广播；renderer 同时即时关闭本窗隐藏舞台资格，资源实际显示后才允许回执。精灵窗每次创建都经 [tray.ts](lifecycle/tray.ts) 的 `installCloseInterceptor` 在显示、隐藏、最小化与还原时发布快照，托盘、快捷键与右键隐藏无需各自发布；精灵窗关闭了后台节流，页面可见性 API 不反映隐藏。激活卡片限命中区域，未认证唤起须更新渲染状态，不只 raise 窗口。
-
-[sprite-position.ts](shared/sprite-position.ts) 管精灵窗静止位置与所属屏幕原点的落盘和读盘（userData 下的 `companion-position.json`）。[sprite.ts](ipc/sprite.ts) 注册位置读写、拖拽跨屏（`moveToCursorDisplay`）及默认比例广播；位置写入与跨屏只在窗口模式接受精灵宿主 sender，桌面模式没有独立精灵舞台。
-
-[快捷键](ipc/shortcuts.ts)返回注册冲突与失败。Windows 关窗隐藏到托盘，macOS 保留 Dock；多屏、透明命中见 [Client](../README.md#窗口与主题)，用户行为见 [DESIGN](../../docs/DESIGN.md#窗口与会话)。
+快捷键冲突由 [shortcuts.ts](ipc/shortcuts.ts) 返回调用方；主题与透明命中共享规则见 [Client](../README.md#窗口与主题)。
 
 ## 桌面承载与恢复
 
-[desktop-presentation.ts](lifecycle/desktop-presentation.ts) 管呈现模式、交互屏、舞台资格与串行恢复；`desktop-windows.ts` 拥有窗口与就绪等待，`desktop-health.ts` 拥有显示器／电源监听和模式计时器，`desktop-background-runtime.ts` 拥有媒体字节、请求代次及回执。[IPC 适配](ipc/desktop-presentation.ts) 先校验 sender、账户与载荷，再调用窄操作接口。`stop()` 只停止当前桌面模式，允许更新取消后再次启用；应用退出使用幂等 `dispose()`，立即关闭操作准入、取消视图交接并恢复系统，持续消费退出期上报，所有窗口关闭后的 `will-quit` 再注销呈现和视图状态 IPC。
+[desktop-presentation.ts](lifecycle/desktop-presentation.ts) 持有唯一模式状态与串行切换；`desktop-windows.ts` 持有窗口与就绪等待，`desktop-health.ts` 持有显示器／电源监听，`desktop-background-runtime.ts` 持有媒体字节、请求代次和回执。[desktop-host.ts](lifecycle/desktop-host.ts) 装配统一宿主端口；原生事务分别归 [Windows helper](../desktop-windows/README.md) 与 [macOS 模块](../desktop-macos/README.md)。
 
-显示器逻辑坐标用于窗口布局。Windows 桌面影像目标尺寸经 `desktop-display-resolutions.ts` 调用原生宿主的只读 `display-bounds` 查询，按显示器 ID、几何和查询代次缓存；启动及显示器变更后发布真实像素，查询不可用时返回空值，禁止从已取整的 DIP 反推尺寸。
+切换先核验 sender、账户与载荷，再经 [ui-state.ts](ipc/ui-state.ts) 捕获来源视图并等待目标恢复。快照按账户存于进程内，不包含持久文件许可；录音、转写和上传共同阻止切换。组件缺失或准备失败在释放来源前返回实际失败，页面加载与就绪等待共享预算。
 
-交互界面使用完整 preload，账户、配置、更新与启动器仅授权交互界面；交互屏背景使用 [preload-background.ts](preload-background.ts)，仅接收缓存媒体与播放状态并回报播放生命周期。其他屏幕不创建背景窗口，保留原生系统桌面。隐藏精灵宿主仍可通过受控直调读取本机场景与活动信息；模型工具由主进程派发。背景媒体由交互界面提交已认证资源引用，主进程通过账户资产缓存读取原始字节；静态组合分别传递环境与透明造型，由背景窗口本地合成。视频、图片及占位回执均校验已派发请求、账户和呈现代次；锁屏、全屏及减少动态效果时暂停。
+交互桌面使用完整 preload，背景仅接收已认证的媒体字节和播放状态。静态环境与透明造型分别传入背景窗口合成，所有回执复核已派发请求、账户与呈现代次。显示器逻辑坐标只管布局；Windows 目标像素经 `desktop-display-resolutions.ts` 的只读原生查询取得，不从取整 DIP 反推。桌面窗口固定缩放，退出恢复窗口模式缩放。
 
-Windows 启动时由 [platform.ts](lifecycle/platform.ts) 禁用 DirectComposition 视频叠加层，让视频与模糊底层参与页面合成。本策略不关闭硬件解码和 GPU 合成，远程显示仍按既有策略关闭 GPU。该启动策略修改后须重启客户端生效。
+Windows 的 [explorer-desktop-host.ts](lifecycle/explorer-desktop-host.ts) 等界面就绪后再交 helper 接管；主进程在准入、排队和回执时隔离旧会话。renderer 上报托盘槽位及滚动视口，主进程转物理坐标并保留固有尺寸，不能把裁剪后位置反馈为尺寸。样式确认后才发布就绪并用 `showInactive()` 校准 Electron 可见性；原生层级、托盘、AppBar 与 journal 由 helper 管理。`platform.ts` 关闭 DirectComposition 视频叠加层以参与页面模糊合成，保持硬件解码；修改须重启。
 
-呈现切换 IPC 允许精灵宿主、主窗口和交互桌面；托盘复用同一串行入口。录音、转写和附件上传状态由 [ui-state.ts](ipc/ui-state.ts) 合并，切换入口共同消费阻止原因。该桥按账户在进程内持有页面、会话、主对话草稿与阅读位置，核对鉴权会话和合法 sender；主动切换等待来源捕获与目标恢复，失败保留来源界面。快照不持久化文件访问许可，主窗口与桌面通过受控导航交接。桌面组件缺失时在关闭旧窗口前拒绝启用，广播实际窗口模式及失败原因。
+macOS 的 [desktop-macos-host.ts](lifecycle/desktop-macos-host.ts) 传全局 points，工作区变化只改布局；AX 不可用时仍可呈现，运行窗口投影独立报不可用。进入原生代码前落活动标记，正常退出清除，硬崩溃使下次启动停留窗口模式。失焦交互窗的鼠标位置由 `desktop-windows.ts` 采样转换为本窗 DIP，恢复焦点丢弃迟到采样；不合成点击、不请求焦点。
 
-[desktop-host.ts](lifecycle/desktop-host.ts) 按平台装配统一的 [宿主端口](shared/desktop-host.ts)，主进程仍持有唯一模式状态。Windows 的 [explorer-desktop-host.ts](lifecycle/explorer-desktop-host.ts)通过有界 JSON 协议调用 [Rust helper](../desktop-windows/README.md)。界面与交互屏背景先在限时内报告界面就绪，再复核账户与窗口存活并交给 helper 接管；任一阶段失败均回到恢复流程。原生事务、窗口身份校验与 journal 归 helper。
+真实点击和显式导航才请求焦点；广播不抢前台，队列执行时重核账户、舞台和锁屏。Windows 焦点请求超时终止 host 并恢复；macOS 已提交 AX 操作不可撤回，保留未知结果。
 
-macOS 的 [desktop-macos-host.ts](lifecycle/desktop-macos-host.ts) 使用 [进程内原生模块](../desktop-macos/README.md)，按稳定显示器几何传入全局左上原点 points，并将系统工作区转换为交互屏本地 DIP；仅工作区变化时更新布局，不重建表面。原生轮询产生前台、可见舞台、全屏和当前 Space 状态，未授予 AX 时仍可呈现桌面，运行窗口快照单独标记不可用。权限在进入、焦点恢复及轮询中刷新。`stop()` 先取消后续原生动作且不等待查询队列，迟到回执核验宿主代次。进入原生代码前写入轻量活动标记，正常退出清除，硬崩溃残留使下次启动停留窗口模式；不复用 Windows 的系统恢复 journal、guardian 或恢复快捷键。
+退出顺序是停止宿主、恢复系统、销毁窗口。`stop()` 可供更新取消后重新启用，`dispose()` 幂等关闭准入并取消交接，持续接收退出期上报，`will-quit` 最后注销 IPC。换号、鉴权失效、拔交互屏、renderer 失败及休眠唤醒均收敛到窗口模式；迟到准备不能重新接管。活动屏与首选屏分开，缺屏回退不改首选，只有活动屏几何变化才重挂载。
 
-桌面窗口固定页面缩放，使悬浮底栏的 DIP 高度与工作区一致；退出时恢复窗口模式保存的缩放。Windows 底部 AppBar 预留请求与 renderer 共用 [desktop-layout.ts](../shared/desktop-layout.ts)，`contentInset` 仅用于内部界面留白；预留数值与计数规则见[呈现契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。helper 上报实际物理工作区与托盘尺寸、可见性，主进程校验并换算为当前会话的 DIP 投影；内部窗口按工作区布局，界面只接收托盘固有尺寸，不把滚动后的原生窗口位置反馈为新的槽位。
-
-renderer 测量 Dock 中产品图标后的完整托盘槽位与右侧滚动视口，通过 `setTrayLayout` 上报；主进程在准入、排队执行和原生回执期间隔离失效账户、窗口与代次，再交 helper 做原生投影。挂载及应用主题变化时传入解析后的明暗主题，只有原生托盘透明样式确认成功后才发布就绪状态。字段、几何失效与恢复规则见[呈现契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。挂载后用 `showInactive()` 同步 Electron 可见状态；原生层级、任务栏平移与裁剪、透明样式、几何复验和工作区恢复由 [helper](../desktop-windows/README.md#原生系统托盘)负责，Dock 玻璃绘制保持完整。
-
-真实主指针释放请求输入焦点；显式页面与会话导航还调用 `focus()`、`moveTop()` 置前，全屏时跳过激活。主进程与 helper 在各自串行队列执行时核对窗口、账户、舞台代次和锁屏。前台广播不抢焦点，渲染层手势不能代替权限校验。Windows 焦点请求超时终止 host 并恢复，防止迟到请求继续改动焦点；macOS 原生操作按实际 AX 超时与取消代次阻断后续步骤，已提交系统调用的结果未知时如实报告；视图资格与状态同步见[呈现契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
-
-macOS 普通层窗口失焦时，Chromium 会过滤转发的 `mousemove`。[desktop-windows.ts](lifecycle/desktop-windows.ts) 仅为可见且失焦的交互窗采样系统光标，向本窗发送相对内容区的 DIP 点；renderer 复用区域命中与手势捕获探针，恢复焦点后忽略迟到采样。坐标补偿不合成点击、不请求焦点，也不依赖 AX；轮询随该窗口销毁，Windows 保持原鼠标转发路径。
-
-账户失效、呈现切换、目标显示器变化、渲染器失败与退出都先停止宿主，再销毁桌面窗口；Windows 停止阶段负责恢复系统。首次选屏与缺屏回退遵循[呈现契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)；活动显示器身份独立于首选屏和窗口当前位置，拔屏立即退出并保存窗口模式，其他屏幕增减仅更新列表。目标屏几何或 DPI 改变才在当前活动屏重新挂载，不因临时回退或首选屏重接而切到其他屏。准备期间的换号、退出、拔屏或 renderer 失败立即使当前接管失效；界面就绪与页面加载共享限时预算。休眠或唤醒时恢复窗口模式并保留桌面偏好，须由用户重新选择桌面模式，避免接管 guardian 已恢复的系统窗口。
-
-Windows 启动时先处理待恢复记录；异常标记使已由 guardian 恢复的会话也停留窗口模式。主进程检测到的失败另存独立标记，成功手动重试只清该标记，不覆盖 guardian 原因。恢复失败保留记录和错误，不阻断窗口模式启动。原生恢复信号与限制见 [helper](../desktop-windows/README.md#恢复)。
-
-恢复已保存的桌面偏好仅加载已有媒体；`prepareDesktopMedia` 是本次会话的制作许可，默认关闭，用户显式选择桌面后开启，退出或换号清除，切屏重挂载保留。渲染层据此区分启动水合与用户启用，启动不提交付费素材制作。
-
-真实平台门禁见 [Windows 桌面验收](../../scripts/README.md#windows-桌面验收)与 [macOS 桌面验收](../../scripts/README.md#macos-桌面验收)，挂载探测入口见 [helper](../desktop-windows/README.md#原生验收)。
+Windows 启动先处理待恢复记录；guardian 的异常原因与主进程失败标记分开保存，手动重试不能覆盖 guardian 原因。恢复失败保留 journal 与诊断但允许窗口模式启动。恢复界面只读取已有呈现，不提交制作；完整切换和回执语义见 [呈现契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
 
 ## Dock 与应用目录
 
-[desktop-dock.ts](ipc/desktop-dock.ts) 合并固定配置、运行快照与图标投影；[desktop-app-catalog.ts](ipc/desktop-app-catalog.ts) 装配目录服务；Windows 目录和系统查询分别归 [windows-app-catalog.ts](ipc/windows-app-catalog.ts)、[windows-installed-apps.ts](ipc/windows-installed-apps.ts)，macOS 目录归 [macos-app-catalog.ts](ipc/macos-app-catalog.ts)，可信 `.app` 目标归 [macos-application-target.ts](ipc/macos-application-target.ts)。原生窗口采集归各平台宿主，渲染层只接收不透明条目与窗口 ID。
+[desktop-dock.ts](ipc/desktop-dock.ts) 合并固定配置、运行快照与图标；[desktop-app-catalog.ts](ipc/desktop-app-catalog.ts) 装配平台目录。renderer 只取得不透明条目／窗口 ID，激活、关闭和启动语义归 [启动器契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
 
-- Windows 普通应用以规范化 exe 路径归并，快捷方式解析目标；同名 exe 的父子安装目录关联启动器与窗口进程，无关目录保持独立。固定去重、目录已添加标记和运行显示复用此规则，打包应用以 AUMID 归并。
-- macOS 应用身份使用解析符号链接后的 `.app` 绝对路径，保留文件系统大小写；保存、拖入、修复、目录与运行窗口使用同一身份。所有执行入口复核有效应用包及可执行文件，目录按系统、共享和用户应用来源有界扫描。图标按可见项分批读取，重扫废弃句柄；未授权时仅允许固定与目录目标提交普通启动，其他运行查询错误仍保留最近快照并拒绝依赖该快照的操作。
-- 原生快照保留所有屏幕窗口及交互屏归属，Dock 只投影本屏窗口；固定项与目录入口激活共用本屏优先、最近异屏窗口回退的规则，显式窗口选择仍限本屏。启动统一交给平台宿主，定位监听与桌面会话同生命周期；目录启动不改固定配置。
-- Windows 固定时优先保留目录快捷方式及参数，无目录的普通程序使用已验证 exe；打包应用保存 `shell:AppsFolder\AUMID`，激活前在完整系统目录核验。`desktop-dock.json` 只保存固定项，运行状态不落盘。
-- 添加、修复和启动均复核目标；修复保留 ID 和顺序，取消不写配置。投影或启动失败保留条目，写盘失败保留原配置。运行查询失败保留最近快照，并报告不可用状态。
-- `revision` 覆盖投影变化，`pinnedRevision` 只随固定配置变化；运行和图标刷新不重取选择面板目录。面板内刷新固定标记可携当前扫描版本，版本仍有效时复用句柄重新投影，首次打开沿用目录缓存期限，手动重扫始终废弃旧句柄。桌面结束或目录重扫使在途元数据失效。
-- Windows 目录合并开始菜单、桌面快捷方式、App Paths 与 AppsFolder，按 exe 或 AUMID 去重、快捷方式优先；排除非现存 exe、网页快捷方式、`.msc`、虚拟和隐藏入口。各来源独立限时并报告失败；扫描保留预算，下发全部扫描结果，已保存应用使用完整目录核验。
-- 目录随机句柄仅本次扫描有效，重扫废弃句柄与图标缓存。Windows 固定、运行与目录图标共用 [windows-application-icon.ts](ipc/windows-application-icon.ts)：打包应用优先用清单图标，快捷方式保留指定图标及资源索引；exe / DLL 图标经限时、分批的 Windows 原生提取，兼容全 PNG 图标资源，失败再用系统文件图标。目录与产品账户无关，不上云。
-- Windows 打包应用的安装状态使用独立的 AppsFolder 查询缓存，目录扫描共享该查询结果；启动校验及固定项投影不替换目录句柄，避免缓存到期后使打开中的面板失效。查询失败不复用过期结果冒充校验成功。
-- 程序任务按右键菜单懒加载 Windows `CustomDestinations` 的 `Task` 分类；helper 会合并仅因 `--user-data-dir` 不同而留下的同一任务历史副本。渲染层只接收标题、图标和不透明任务 ID，主进程在 helper 重新校验后启动原始参数。解析失败静默回到现有窗口和固定菜单，任务 ID 不落盘。
+| 范围 | 实现约束 |
+|---|---|
+| Windows 身份 | [windows-app-catalog.ts](ipc/windows-app-catalog.ts)、[windows-installed-apps.ts](ipc/windows-installed-apps.ts) 合并开始菜单、桌面快捷方式、App Paths 和 AppsFolder；普通程序按规范 exe，打包程序按 AUMID 去重，同名 exe 的父子安装目录可关联启动器，其余目录分开 |
+| macOS 身份 | [macos-app-catalog.ts](ipc/macos-app-catalog.ts)、[macos-application-target.ts](ipc/macos-application-target.ts) 使用解析符号链接后且保留大小写的 `.app` 路径，所有入口复核 bundle 和可执行文件 |
+| 固定配置 | `desktop-dock.json` 只存固定项，Windows 优先保留快捷方式及参数，打包应用存 AppsFolder 入口；添加、修复和启动重核目标，修复保留 ID／顺序，写盘失败保留原值 |
+| 运行投影 | 原生快照保留各屏归属，Dock 只投影交互屏；运行查询失败保留最近快照并报告不可用，不能用过期数据完成授权 |
+| 扫描与图标 | 句柄限当前扫描版本，图标按可见项分批；固定标记更新复用同版目录，手动重扫才更新句柄，旧回执不能覆盖新扫描 |
+| Windows 图标及安装校验 | [windows-application-icon.ts](ipc/windows-application-icon.ts) 共用提取链，支持全 PNG 图标资源；AppsFolder 安装查询独立缓存，失败不拿过期结果冒充成功，也不替换仍在使用的目录句柄 |
+| Jump List | 按菜单懒读 `CustomDestinations` 的 Task；helper 重新核验不透明任务 ID 后启动原参数，解析失败保留普通菜单，任务 ID 不落盘 |
 
-激活、关闭和启动的授权与结果边界统一归 [本机启动器契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
+目录扫描各来源独立限时，过滤无效、网页、虚拟及隐藏入口；目录和固定项属于本机，不上云。启动与定位监听归桌面会话，目录启动不修改固定配置。
 
 ## 配置镜像
 
-[runner-config.ts](ipc/runner-config.ts) 的整份配置与路径修改只接受主窗口或交互桌面；其他入口使用窄通道。`prefs.ts` 只允许 `companion.*` 点键，主题、技能与工具集走 `mutate`，云端水合走 `applyCloudMirror`，账户隔离清理走 `clearSyncedMirror`。
+[runner-config.ts](ipc/runner-config.ts) 的整份配置和路径操作仅接受主窗口／交互桌面；偏好走窄通道。`prefs.ts` 仅接受 `companion.*` 点键，主题、技能和工具集用 `mutate`，云水合和账户隔离分别用 `applyCloudMirror`、`clearSyncedMirror`。
 
-托盘与设置页的语言修改共用 [client-language.ts](shared/lib/client-language.ts) 校验、保存和广播偏好，语言仅供桌面消费，不推送 Runner。
-
-[runner-config-store.ts](shared/lib/runner-config-store.ts) 串行落盘与推送；`patch` 拒绝原型链路径和非 JSON 值。普通修改失败回滚内存，云端水合与账户隔离清理即使落盘失败仍保留新内存值。云同步以 `flushQueued` 补跑在途编辑、`authEpoch` 隔离旧账户并抑制水合回环。白名单、所有权与冲突语义归 [配置契约](../../docs/PROTOCOL.md#配置所有权与云同步)。
+[runner-config-store.ts](shared/lib/runner-config-store.ts) 串行落盘，拒绝原型链路径及非 JSON 值；普通失败回滚内存，云水合和隔离清理即使写盘失败仍保留新内存值。[config-sync.ts](shared/lib/config-sync.ts) 用 `flushQueued` 补跑在途编辑、`authEpoch` 阻断旧账户及水合回环。语言修改共用 [client-language.ts](shared/lib/client-language.ts)，不推给 Runner。所有权与冲突规则归 [配置契约](../../docs/PROTOCOL.md#配置所有权与云同步)。
 
 ## Runner 生命周期
 
-[ipc/runner.ts](ipc/runner.ts) 持有端点、桥与自动启停，token 经环境变量传递。[bridge.ts](runner/bridge.ts) 用同一队列完成握手、配置推送与工具清单读取；连接探活用 WS ping/pong。可执行就绪与工具撤销统一遵循 [握手契约](../../docs/PROTOCOL.md#握手与工具同步)。
+[ipc/runner.ts](ipc/runner.ts) 拥有端点与自动启停；[bridge.ts](runner/bridge.ts) 串行握手、配置推送及清单读取，token 仅经环境传递。可执行资格的跨端定义归 [握手契约](../../docs/PROTOCOL.md#握手与工具同步)。
 
-| 路径 | 桥内处理 |
+| 状态 | 本地处理 |
 |---|---|
-| 首次或重新握手 | 强制 full config，成功读取清单才就绪；最多三次尝试，配置 RPC 5 秒、清单 RPC 10 秒，启动等待 60 秒 |
-| 运行中保存配置 | 比对 Runner 最近成功应用的快照；忽略仅桌面消费的 `ui`、`shortcuts`、`companion`、`language`、`sync`，未知节仍参与 |
-| 推送成功、清单刷新失败 | 保留原清单和就绪状态，留下 `toolsRefreshPending`，下次保存继续读清单 |
-| 握手耗尽或运行期配置推送失败 | 撤销新执行资格，保留连接供保存配置、`runner.ready` 或 `autoStart` 原位重试 |
-| WS／进程启动失败、初次等待超时 | 收尾端点、连接和进程；断连废弃旧清单，重连未报告 ready 时可重新启动 |
-| 停止与重启 | 等待在途启动及回滚完成，操作代次阻断旧启动清理新实例 |
+| 初次／重连 | 强制 full config，清单读取成功才就绪；重试和等待有界 |
+| 保存配置 | 比对最近成功快照，忽略仅桌面消费的节，未知节仍参与 |
+| 推送成功、清单失败 | 保留原清单和就绪态，登记待刷新供后续保存续做 |
+| 握手耗尽或配置推送失败 | 撤销新执行资格，保留连接以便原位重试 |
+| 进程／连接启动失败或初次等待超时 | 收尾本次端点、连接与进程；断连废弃旧清单 |
+| 停止／重启 | 等在途启动及回滚完成，操作代次阻止旧清理结束新实例 |
 
-派发入口透传 `call_id` 并分类结果；取消优先使用当前 RPC `req_id`，恢复后按 `call_id` 定位，窗口等直调不带 `call_id`。`tools.sync` 由主进程账户网关串行发送，Runner 状态与清单刷新会撤销或更新云端能力。取消、日志恢复和结果未知的定义归 [调用契约](../../docs/PROTOCOL.md#调用日志与未知结果)。
+账户网关串行发送 `tools.sync`；业务派发透传 `call_id`，当前连接取消优先用 RPC `req_id`，恢复后按 `call_id` 定位，窗口直调不伪造业务调用身份。[session-runtime.ts](backend/session-runtime.ts) 的登录恢复和应用就绪后的延迟启动共用幂等入口。
 
-[session-runtime.ts](backend/session-runtime.ts)负责懒创建及登录恢复回调；首次 getSession 等待凭据恢复。恢复结果由 [auth.ts](ipc/auth.ts) 广播器直接广播，仍是当前会话才自动启动 Runner；应用就绪后另有 200 ms 定时入口，须与恢复路径共同保持幂等。
-
-[更新器](runner/updater.ts)优先用 Home 下的 uv，再回落 PATH，在原 venv 安装包含入口的单 wheel；不承诺原子切换或自动回滚，损坏环境由 Installer 修复。源码与安装版均以 `python -m spirit_agent_runner` 启动，开发环境须 editable 安装。待装资产由 [auto-updater.ts](lifecycle/auto-updater.ts) 在创建精灵窗前安装，暂存保留 wheel 原名，安装前复核摘要，安装后运行包内 `--check` 并核对 `--version`。构建期 [check_runner_package.py](../../scripts/check_runner_package.py) 在仓库外隔离安装 wheel，验签顺序见 [更新契约](../../docs/PROTOCOL.md#自更新签名)。
+[runner/updater.ts](runner/updater.ts) 在原 venv 安装单 wheel，不承诺原子切换或自动回滚，损坏环境交 Installer 修复。暂存保留 wheel 原名，安装前核摘要，安装后执行包内 `--check` 并核版本；待装资产在创建精灵前处理。源码和安装版共用模块启动，开发环境须 editable 安装；构建与验签见 [Scripts](../../scripts/README.md#构建安装器)及[更新契约](../../docs/PROTOCOL.md#自更新签名)。
 
 ## 桌面更新
 
-[ipc/update.ts](ipc/update.ts)持有更新状态、失败阶段与检查、下载、安装通道；[auto-updater.ts](lifecycle/auto-updater.ts)管理更新源与 Runner 预取。流程契约见 [自更新签名](../../docs/PROTOCOL.md#自更新签名)。
+[ipc/update.ts](ipc/update.ts) 持状态与失败阶段，[auto-updater.ts](lifecycle/auto-updater.ts) 管更新源和 Runner 预取。每次检查／下载重新核后端地址，预取绑定发现版本时的源；electron-updater 的无来源错误按最近发起阶段归属，新增入口必须设置阶段。
 
-- electron-updater 的 error 事件不带来源，阶段按最近发起的检查、下载或安装归属；新增触发入口须同步设置阶段。
-- 更新源在每次检查和下载前按保存的后端地址核对，不锁定首个地址；Runner 预取使用发现该版本时的更新源。
-- 安装包下载完成先广播 `preparing`，Runner 预取校验通过才广播 `downloaded`；入口只接受主窗口或交互桌面 sender。
-- 安装入口先等待桌面恢复，再调用 `quitAndInstall`；Windows updater 会先启动安装器再发退出事件，不能仅靠退出钩子保证恢复顺序。
-- 更新状态广播给全部窗口，不假定主窗口存在；实际消费方由渲染层 `update-bridge` 挂载位置决定。
+安装包下载后先广播 `preparing`，Runner 预取校验完成才广播 `downloaded`。安装只接受主窗口／交互桌面，先等待桌面恢复再调用 `quitAndInstall`；Windows 会先启动安装器再发退出事件，不能仅依赖退出钩子。状态向所有窗口广播，不假定主窗口存在。
 
 ## 网络与缓存
 
-Electron 网络经 `net.fetch`、`net.WebSocket` 保持系统代理与证书语义。
+Electron 使用 `net.fetch`、`net.WebSocket` 保持系统代理和证书语义。请求预算由[共享 HTTP 核心](../../shared/api.ts)及操作契约决定，超时不代表后端任务停止；仅本站登录失效信封触发退出，供应商错误保留来源。
 
-字节缓存键与落盘范围见 [Client](../README.md#资产与历史缓存)。账户隔离及取消由缓存各自的所有者实施。
-
-资产 IPC 与桌面背景复用同一资产读取器，缓存返回字节和 MIME；仅 `apiAsset` 在返回时编码 data URL，`apiAssetBuffer` 直接返回字节。
-
-图片复制与保存共用 [image-operations.ts](shared/lib/image-operations.ts) 的字节处理，资源读取和 URL 准入由各入口负责。
-
-收听记录由 [voice-playback.ts](ipc/voice-playback.ts) 校验鉴权会话与载荷，[voice-playback-store.ts](ipc/voice-playback-store.ts) 串行原子写盘并单向合并已听状态；跨窗口广播仅携带当前账户的记录，清理代次阻断旧写入。记录独立于历史快照，缓存生命周期见 [Client](../README.md#资产与历史缓存)；两者的账户代次与按会话串行写入由 [account-queue.ts](ipc/account-queue.ts) 共用。
-移除账户先等待旧下载与写入再删目录，同账户新请求等待清理；下载超时覆盖响应体读取。
-
-HTTP 等待由操作契约与 [共享请求核心](../../shared/api.ts) 管理，模型等待不设耗时中断，非模型操作和媒体字节传输保留明确预算。超时不证明后端任务已停；只有本站登录失效信封触发退出，供应商错误保留来源与业务码。
+资产 IPC 和桌面背景共用字节读取器，`apiAsset` 返回 data URL，`apiAssetBuffer` 返回字节；图片复制和保存共用 [image-operations.ts](shared/lib/image-operations.ts)，URL 与文件准入仍由各入口负责。缓存键、持久范围、收听记录和账户清理顺序统一见 [Client](../README.md#资产与历史缓存)。
 
 ### 语音与附件
 
-- STT / TTS 与附件上传经 [媒体入口](ipc/media.ts)复用 [HTTP 入口](backend/http.ts)调用云端；语音使用有界队列、并发和速率控制。TTS 内存与在途合并、磁盘命中不入队（即时返回），仅云端调用与落盘走队列，缓存命中不耗云端额度。
-- 图片附件按[文件入口](ipc/files.ts)的尺寸与字节上限降采样。
+[ipc/media.ts](ipc/media.ts) 经 HTTP 入口调用 STT / TTS 和上传；语音队列限制并发与速率，磁盘命中直接返回、不入云调用队列，内存及在途合并仍核账户。[ipc/files.ts](ipc/files.ts) 按尺寸与字节预算缩放图片附件，不扩大文件许可。
 
 ## 构建产物
 
-tsup 构建 main / preload，共享 IPC 通过 alias 解析；开发监听只覆盖 main 与 shared。Vite 的主窗口入口为 `main.html`，由 `renderer-paths.ts` 与产物检查共同消费。修改导出或路径须核对实际文件名与 `package.json` 的 main。
-
-开发 CSP 允许 Vite 所需能力，生产保持严格策略，不能为修复开发白屏放宽生产 CSP。mac entitlements 开 JIT、关库校验，见 [security](security/)。
+tsup 构建 main / preload，共享 IPC 经 alias 解析；开发监听 main 与 shared。主窗口 `main.html` 由 `renderer-paths.ts` 和产物检查共同引用，改入口须核对实际文件名及 `package.json` 的 main。开发 CSP 与生产策略分开，不为开发白屏放宽生产；mac entitlements 见 [security](security/)。
 
 ## 验证入口
 
-命令见 [Scripts](../../scripts/README.md#按改动选择验证)。覆盖错误 sender、未授权路径、换号、连接 reset 后迟到结果、退出超时和更新失败；preload 与入口变更另查实际构建产物。
+按 [Scripts](../../scripts/README.md#按改动选择验证) 检查，并覆盖错误 sender、未授权路径、换号、reset 后迟到结果、退出超时及更新失败。preload 改动检查构建产物；原生层级、系统恢复与焦点分别执行 [Windows](../../scripts/README.md#windows-桌面验收)和 [macOS](../../scripts/README.md#macos-桌面验收) 实机验收。

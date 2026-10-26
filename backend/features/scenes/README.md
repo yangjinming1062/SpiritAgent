@@ -1,24 +1,27 @@
 # 场景
 
-拥有生活空间环境素材的描述、制作任务与恢复。固定 16:9 画幅与原位换图归 [PROTOCOL](../../../docs/PROTOCOL.md#场景任务与原位换图) 和 PIPELINE。
+负责环境素材、制作任务与原位换图。画幅、输入及保留旧图的跨端约束见 [场景契约](../../../docs/PROTOCOL.md#场景任务与原位换图)，生成参考见 [PIPELINE](../../../docs/PIPELINE.md#场景创建与描述)。
 
 ## 场景改动链
 
-| 环节 | 入口 | 联动 |
-|---|---|---|
-| 业务 | [service.py](service.py)、[http_use_cases.py](http_use_cases.py) | 创建、上传、分析、重生成、取消与恢复 |
-| 模型装配 | [prompt_assembly.py](prompt_assembly.py)、[媒体检查](../media/scene_review.py) | 环境参考、尺寸与重复伙伴检查 |
-| 数据 | [models.py](models.py)、[schemas.py](schemas.py) | 制作状态与只读快照 |
-| REST | [companion_scenes.py](../../entrypoints/http/routes/companion_scenes.py) | 鉴权、输入和响应转换 |
-| 页面 | [scene-page.tsx](../../../client/renderer/app/features/scene/scene-page.tsx)、[scene-detail-view.tsx](../../../client/renderer/app/features/scene/scene-detail-view.tsx) | 保存描述、重做、取消与旧图呈现 |
-| 缓存与背景 | [scene-store.ts](../../../client/renderer/modules/scene/scene-store.ts)、[scene-backdrop.tsx](../../../client/renderer/app/features/scene/scene-backdrop.tsx) | 账户与请求代次守卫；窗口背景读当前影像冻结素材 |
+| 修改任务 | 入口与消费方 |
+|---|---|
+| 创建、上传、描述分析、重做与取消 | [service.py](service.py)、[http_use_cases.py](http_use_cases.py) |
+| 生成输入与图片检查 | [prompt_assembly.py](prompt_assembly.py)、[scene_review.py](../media/scene_review.py) |
+| REST 与页面 | [companion_scenes.py](../../entrypoints/http/routes/companion_scenes.py)、[场景页](../../../client/renderer/app/features/scene/scene-page.tsx)、[详情](../../../client/renderer/app/features/scene/scene-detail-view.tsx) |
+| 只读快照与缓存 | [queries.py](queries.py)、[scene-store.ts](../../../client/renderer/modules/scene/scene-store.ts) |
+| 启停、备份与资产引用 | [lifecycle.py](lifecycle.py)、[backup.py](backup.py)、[asset_references.py](asset_references.py) |
 
-`companion_scenes` 保存当前采纳结果与可用性摘要，初次制作和重做分别关联 `scene_jobs`，执行状态与检查点归共享 `jobs`。读取按需连接任务并返回快照，不另存重复执行状态。已采纳图像与上传源直接引用 `assets`，制作依赖由 `job_assets` 保持。
+## 状态与并发
 
-场景使用独立账户场景锁。创建、描述分析与重生成是独立操作；上传源和旧可用图片在新制作失败时继续保留。供应商等待在事务外，写回重核任务；过期结果可以保留为就绪素材。
+`companion_scenes` 保存已采纳素材及可用性，初次制作与替换分别关联 `scene_jobs`；执行控制和检查点归共享任务。上传源、当前图像和制作依赖显式登记资产引用。列表按 ID 游标读取摘要，总数按需查询；状态快照包含就绪素材及最新在途任务，不携带供应商检查点。
 
-维护期间已提交结果继续查询并保存，后续付费步骤暂停；未知结果不重新提交。模块的 [lifecycle.py](lifecycle.py)、[backup.py](backup.py) 和 [asset_references.py](asset_references.py) 提供恢复、备份与引用贡献。跨模块读取返回快照，不暴露场景 ORM。
+账户场景锁串行受理，供应商等待在事务外。创建、分析和重生成各有恢复入口，结果提交核对任务身份；新制作失败保留上传源与旧可用图。生活步骤在受理前再次校验，并与实际任务绑定，终态结算沿对应业务结果。
 
-验证归 [Scripts](../../../scripts/README.md)；同时核对创建/重做状态、上传源保留、取消迟到结果、维护和重启。
+环境库存更新不直接改变伙伴当前画面；生活呈现与成品使用冻结素材，消费规则见 [影像契约](../../../docs/PROTOCOL.md#影像成品与模式隔离)。跨模块只返回快照，不暴露 ORM。
 
-场景列表使用 ID 游标，默认只读取一页及下一页标志，总数按需查询。状态快照通过一次精简政策读取与一次场景/任务摘要查询组成，保持全部就绪素材和最新在途任务；公开快照不包含供应商检查点。
+## 恢复与验证
+
+维护期间收妥已提交结果，暂停后续付费阶段；未知提交保留原状态供核对，启动恢复不重新提交。取消后的迟到结果、已采纳图片与未采纳文件分别按任务和资产引用处理，不能通过清空页面状态宣告完成取消。
+
+按 [Scripts](../../../scripts/README.md) 核对创建/替换、分析重试、上传源保留、取消迟到结果及重启；画幅和重复伙伴检查须查看真实图片。

@@ -1,88 +1,66 @@
 # Client
 
-桌面应用的工程入口。进程职责、状态权威和平台支持归 [ARCHITECTURE](../docs/ARCHITECTURE.md)，本文维护代码导航、跨窗口装配及本地缓存；内部约束分别见主进程和渲染层 README。
+桌面应用由主进程、渲染层和平台宿主组成。本文维护跨进程入口与共享缓存；产品行为见 [DESIGN](../docs/DESIGN.md)，状态权威和平台支持见 [ARCHITECTURE](../docs/ARCHITECTURE.md)。
 
 ## 任务入口
 
-| 要修改的功能 | 实现起点与联动 |
+| 改动 | 实现入口 |
 |---|---|
-| 登录、换号与会话过期 | [session.ts](main/backend/session.ts)、[session-runtime.ts](main/backend/session-runtime.ts)、[auth.ts](main/ipc/auth.ts) → [account-lifecycle.ts](renderer/app/workflows/account-lifecycle.ts)、[auth store](renderer/shared/store/auth.ts) |
-| 网关、Runner 派发与断连 | [账户网关](main/backend/gateway.ts)、[网关 IPC](main/ipc/gateway.ts)、[Runner 派发](main/ipc/runner.ts)；渲染层见 [gateway-runtime.ts](renderer/app/runtime/gateway-runtime.ts) |
-| 历史、语音与资产缓存 | [session-history.ts](main/ipc/session-history.ts)、[asset-disk-cache.ts](main/ipc/asset-disk-cache.ts)、[voice-playback.ts](main/ipc/voice-playback.ts) → [conversation](renderer/modules/conversation/)、[conversation-speech.ts](renderer/app/workflows/conversation-speech.ts) |
-| 衣柜静态造型与穿着 | [衣柜页](renderer/app/features/appearance/appearance-page.tsx)、[造型列表](renderer/app/features/appearance/outfit-section.tsx) → [衣柜状态](renderer/modules/character/wardrobe/wardrobe-store.ts)；后端沿 [外观](../backend/features/appearance/README.md) 核对 |
-| 人设、记忆与素材 | [persona-page.tsx](renderer/app/features/companion/persona-page.tsx)、[memory-section.tsx](renderer/app/features/companion/memory-section.tsx) |
-| 伙伴声音、音色设计与克隆 | [voice-manager.tsx](renderer/app/features/companion/voice-manager.tsx) 供伙伴页与首次引导共用；录音和上传见 [use-voice-sample.ts](renderer/app/features/companion/use-voice-sample.ts)，跨层约束见 [音色设计与克隆](../docs/PROTOCOL.md#音色设计与克隆) |
-| 场景与背景 | [scene-store.ts](renderer/modules/scene/scene-store.ts)、[scene-backdrop.tsx](renderer/app/features/scene/scene-backdrop.tsx)；后端沿 [场景改动链](../backend/features/scenes/README.md#场景改动链) 核对 |
-| 窗口、拖拽、主题与交互 | [主进程窗口](main/README.md#窗口与几何)、[渲染层呈现](renderer/README.md#角色呈现契约) |
-| 生活近况与持续事项 | [生活模块](renderer/modules/life/)、[独立生活区与页面](renderer/app/features/life/)；窗口外壳装配生活区，聊天组件保持纯对话 |
-| 主窗口、导航与统一设置 | [main-root.tsx](renderer/app/windows/main/main-root.tsx)、[伙伴入口](renderer/app/features/companion/companion-page.tsx)、[动态](renderer/app/features/posts/posts-page.tsx)、[日记](renderer/app/features/diary/diary-page.tsx)、[app-settings.tsx](renderer/app/features/settings/app-settings.tsx)；导航归 `app/navigation`，共享分区与页签定义归 `shared/ipc/desktop-presentation.ts`，跨模式视图快照归 `main/ipc/ui-state.ts` |
-| 伙伴显示、比例与主动偏好 | [companion-page.tsx](renderer/app/features/settings/companion-page.tsx)、[interaction-page.tsx](renderer/app/features/settings/interaction-page.tsx) → [spatial.ts](renderer/modules/character/spatial.ts)、[activity.ts](renderer/modules/character/activity.ts) |
-| 账户资讯来源与扫码登录 | [social-accounts-section.tsx](renderer/app/features/settings/social-accounts-section.tsx)；平台名称与登录方式使用共享生成契约，凭证草稿只在组件内存保存 |
-| 桌面模式、影像与 Dock | [desktop-presentation.ts](main/lifecycle/desktop-presentation.ts)、[desktop-dock.ts](main/ipc/desktop-dock.ts)、[影像模块](renderer/modules/visuals/)、[desktop renderer](renderer/app/windows/desktop/)、[Windows 宿主](desktop-windows/README.md)、[macOS 模块](desktop-macos/README.md) |
-| 设置同步与 Runner 更新 | [runner-config.ts](main/ipc/runner-config.ts)、[config-sync.ts](main/shared/lib/config-sync.ts)、[updater.ts](main/runner/updater.ts) |
-| 桌面应用更新 | [update.ts](main/ipc/update.ts)、[auto-updater.ts](main/lifecycle/auto-updater.ts) → [update-bridge.ts](renderer/shared/lib/update-bridge.ts)、[about-page.tsx](renderer/app/features/settings/about-page.tsx) |
+| 登录、换号、网关和本机派发 | [主进程](main/README.md#账户网关与窗口订阅)、[账户编排](renderer/app/workflows/account-lifecycle.ts) |
+| 主窗口、桌面、Dock 与异常恢复 | [窗口与几何](main/README.md#窗口与几何)、[桌面承载](main/README.md#桌面承载与恢复)、[Windows](desktop-windows/README.md)、[macOS](desktop-macos/README.md) |
+| 对话、语音、历史与媒体 | [会话与媒体](renderer/README.md#会话与媒体)、[历史同步](#历史同步) |
+| 生活近况、事项与成果 | [生活读取与浏览](renderer/README.md#生活读取与浏览)、[生活页面](renderer/app/features/life/) |
+| 伙伴资料、衣柜、环境、动作与影像 | [渲染层入口](renderer/README.md#分层与目录)；后端生产方按 [AGENTS](../AGENTS.md) 定位 |
+| 设置、主题、声音与手机授权 | [settings](renderer/app/features/settings/)、[声音管理](renderer/app/features/companion/voice-manager.tsx)、[远程网页](#远程网页) |
+| Runner、配置及桌面更新 | [Runner 生命周期](main/README.md#runner-生命周期)、[配置镜像](main/README.md#配置镜像)、[桌面更新](main/README.md#桌面更新) |
 
 ## 进程与代码边界
 
-| 代码 | 内部职责 |
-|---|---|
-| [main](main/README.md) | 组合根、preload、身份、窗口、Runner、配置与磁盘资源 |
-| [renderer](renderer/README.md) | 精灵宿主、唯一主窗口与交互桌面各自运行；主窗口与桌面共用页面，桌面内部面板共用 renderer 和会话 runtime；桌面背景通过受限桥消费主进程缓存媒体 |
-| [desktop-windows](desktop-windows/README.md) | Windows Explorer 挂载、运行窗口观察、工作区与异常恢复 |
-| [desktop-macos](desktop-macos/README.md) | macOS 窗口层级、辅助功能与应用信息 |
-| `shared/ipc` | 跨进程通道、载荷与 `DesktopBridge`，main、preload 与 renderer 共用 |
-| `shared/runtime.ts`、`shared/speech-text.ts` | 两个进程共用的运行时原语与朗读文本清理 |
-| `scripts` | 开发、构建与打包钩子；操作归 [Scripts](../scripts/README.md#client-开发与打包脚本) |
+[main](main/README.md) 持有凭据、连接、窗口、Runner 与磁盘资源；[renderer](renderer/README.md) 持有会话投影、页面草稿和呈现。主窗口与交互桌面共用页面，背景窗口只消费受限媒体桥。平台宿主通过主进程统一端口接入，不拥有业务状态。
 
-主进程不导入依赖窗口环境的 `renderer/shared`。main 与 preload 由 tsup 构建，renderer 由 Vite 构建；产物与 preload 限制见 [主进程包边界](main/README.md#包边界)。
+`shared/ipc` 是 main、preload 与 renderer 共用的契约；`main/shared` 是主进程内部叶子层，两者不混用。主进程不导入依赖窗口环境的 `renderer/shared`。main / preload 由 tsup 构建，renderer 由 Vite 构建，产物边界见[主进程包边界](main/README.md#包边界)。
 
 ## 连接与设备就绪
 
-主进程持有唯一聊天 WS 并派发本机调用，窗口通过类型化 IPC 请求与订阅；生命周期与账户隔离见 [账户网关](main/README.md#账户网关与窗口订阅)。Runner 的启动和配置见[主进程桥](main/README.md#runner-生命周期)，准入及调用恢复见[本机工具契约](../docs/PROTOCOL.md#本机工具)。
+主进程持有账户唯一聊天 WS，窗口通过类型化 IPC 请求和订阅；关窗不释放连接或已受理调用。账户网关、恢复和工具同步由[主进程](main/README.md#账户网关与窗口订阅)统一处理，跨端身份与执行语义见 [本机工具](../docs/PROTOCOL.md#本机工具)。
 
 ## 窗口与主题
 
-主窗口几何、开关、附件信箱、模式交接快照和播放认领由主进程维护。各窗内存独立，导航、按会话草稿与阅读位置通过账户快照接续，角色默认比例与表面状态经 IPC 同步；不能仅更新来源窗口 store。物理窗口与桌面面板的呈现规则归 [窗口与会话](../docs/DESIGN.md#窗口与会话)，交接与资格归 [呈现契约](../docs/PROTOCOL.md#桌面呈现与本机启动器)。
+各窗口内存独立。页面、会话草稿与阅读位置通过主进程账户快照交接，位置、比例与实际显隐通过 IPC 同步，不能只修改来源窗口 store。交接与舞台资格归 [呈现契约](../docs/PROTOCOL.md#桌面呈现与本机启动器)，本地实现归[窗口生命周期](main/README.md#窗口与几何)。
 
-- 主题在 `loadURL` 前从配置镜像写入入口参数，renderer 加载时优先消费并移除；无镜像时读取 localStorage，再回落 `day-clear`，非法值同样归一。云端水合负责收敛。
-- 原生窗口和首帧 body 都保持透明，圆角与阴影由 CSS 绘制；鼠标穿透按窗口登记精灵与弹层区域。
-- 精灵窗使用 `floating` 层置顶，覆盖当前显示器工作区；跨屏统一换算原点，恢复先选屏再定位，拔屏回到可用显示器。
+主题在 `loadURL` 前由配置镜像写入入口参数，renderer 首帧读取后移除；缺省依次回落 localStorage 和 `day-clear`，云端水合随后收敛。原生窗口与首帧 body 保持透明，圆角和阴影由 CSS 绘制。精灵浮在工作区，跨屏计算使用所属屏幕原点；透明穿透由各窗口登记的命中区域决定。
 
 ## 资产与历史缓存
 
-账户缓存保留与移除、迟到结果边界归 [资产访问与缓存](../docs/PROTOCOL.md#资产访问与缓存)，以下只说明本地实现。
+缓存是账户副本，保留与移除规则归 [资产访问与缓存](../docs/PROTOCOL.md#资产访问与缓存)。以下规则同时约束主进程读写和渲染层投影。
 
 ### 资产字节与目录
 
-- [asset-disk-cache.ts](main/ipc/asset-disk-cache.ts) 按 `accountId` 分目录；`preferCache` 请求和 `/api/companion/asset/` 下的资源可落盘，其余直连。缓存键取剥除签名参数、排序剩余 query 后的 URL 摘要。
-- `preferCache` 命中无需等待后端；普通缓存请求用 ETag 复验，网络、正文或写盘失败可保留旧副本，鉴权失败仍上报。`cacheOnly` 只读本地，未命中返回 `null`。
-- 同账户、同资源的并发下载合并。有效字节不按数量或容量自动淘汰；损坏文件可重新获取，空间不足报告写入失败。
-- 资产下载独立使用 60 秒总期限；缓存下载的请求或正文传输中断最多重试一次，共享原期限；取消、超时和 HTTP 失败不重试，完整正文读取成功后才落盘。
-- 衣柜缓存列表并预取立绘，启动先使用可用图片缓存再校准；图片解析与 alpha 命中守卫账户清理代次，失败可单独重试。
-- 历史语音只在播放时下载，后续及重启后优先本地读取；`speak` 合成只合并内存与在途请求，`speakScripted` 按账户和内容落盘。合成缓存按产品账户隔离，在途合并还绑定鉴权会话；读取、出网与返回均复核当前账户，换号后的结果不返回新账户。
+[asset-disk-cache.ts](main/ipc/asset-disk-cache.ts) 按账户隔离目录，以剥除签名参数后的 URL 摘要作键；`preferCache` 及账户资产接口可落盘，其余直连。同账户同资源下载合并，完整正文读取后才落盘。有效文件不按容量或数量淘汰；损坏可重取，空间不足报告失败。
 
-收听状态与断点由 [voice-playback-store.ts](main/ipc/voice-playback-store.ts) 独立保存于 `cache/voice-playback`，不随历史快照失效清除。主进程串行合并、写盘并广播版本快照；每秒保存进度，中断和结束立即保存，退出有界等待。消息删除只清理服务端已确认删除的记录，历史截断不作为删除依据。
+`preferCache` 命中直接返回，普通读取用 ETag 复验，`cacheOnly` 未命中返回空值。网络、正文或写盘失败可保留旧副本，鉴权失败仍上报。下载预算覆盖响应体；传输中断最多重试一次并共享原期限，取消、超时和 HTTP 失败不自动重试。删除账户缓存须先等待旧下载和写入，新请求等待清理完成。
+
+衣柜预取立绘，先展示可用缓存再校准；图片解码与 alpha 命中守卫账户代次。历史语音按需下载；普通合成只合并内存与在途请求，预制语音按账户和内容落盘。在途合成还绑定鉴权会话，换号不交付旧结果。
+
+[voice-playback-store.ts](main/ipc/voice-playback-store.ts) 独立保存收听状态与断点，串行写入并广播版本；历史快照失效不清收听记录，历史截断也不表示消息已删除。定期及中断、结束时保存，退出有界等待。
 
 ### 历史同步
 
-[session-history-cache.ts](renderer/modules/conversation/session-history-cache.ts) 先显示通过字段校验的账户与会话快照，再通过主进程取得完整基线；同会话的并发读取合并。连接恢复由主进程的实时游标处理，重放成功且视图已有基线时不重拉历史。磁盘快照不保存实时回合，快照水位不能用作连接重放游标。
+[session-history-cache.ts](renderer/modules/conversation/session-history-cache.ts) 先显示通过字段校验的账户／会话快照，再经主进程取得完整基线；同会话并发读取合并。磁盘快照不保存实时回合，其水位不能代替主进程的连接重放游标。重放成功且已有基线时不重拉历史。
 
-| 变化 | 本地处理 |
+| 变化 | 缓存与投影处理 |
 |---|---|
-| 已有消息音频或媒体终态变化 | 保留界面，废弃磁盘快照并强制全量；与在途读取交错时重读，超出预算报告失败 |
-| 事件无法重放 | 取得当前完整基线 |
-| 编辑、撤回或带 hydrate 的历史变化 | 覆盖快照，包含清空和手动压缩 |
-| 自动压缩 | 只插入摘要卡 |
-| 删除会话 | 删除对应快照 |
+| 已有消息的音频／媒体终态变化 | 保留界面，废弃磁盘快照并强制全量；与读取交错时有界重读 |
+| 事件不可重放 | 取得完整基线 |
+| 编辑、撤回、清空或带 hydrate 的历史变化 | 替换快照；自动压缩仅插入摘要卡 |
+| 删除会话 | 删除所属快照 |
 
-媒体终态可能先于完成帧：先暂存，再与完成帧或历史合并；重复完成事件的空音频不能覆盖已就绪音频。
+媒体终态可先于完成帧，须暂存后合并；重复完成事件的空音频不能覆盖已就绪音频。
 
 ## 契约与验证
 
-`shared/ipc` 是通道与字段真源，`IPC` 使用扁平 camelCase 键以约束叶子通道。[bridge.ts](shared/ipc/bridge.ts) 定义普通、背景和文件桥，preload 实现通过 `satisfies` 校验，renderer 全局声明直接引用；业务代码经 [desktop.ts](renderer/shared/platform/desktop.ts) 的窄能力接口消费。改动同步主进程与实际消费方，并覆盖换号、断连和迟到结果。命令与真实平台验收归 [Scripts](../scripts/README.md#按改动选择验证)。
+[bridge.ts](shared/ipc/bridge.ts) 定义普通、背景和文件桥，preload 用 `satisfies` 校验实现；renderer 只经 [desktop.ts](renderer/shared/platform/desktop.ts) 的窄接口消费。修改通道须同步主进程与实际消费者，覆盖换号、断连、迟到回包及资源释放。检查和平台验收归 [Scripts](../scripts/README.md#按改动选择验证)。
 
 ## 远程网页
 
-桌面 [remote-page.tsx](renderer/app/features/remote/remote-page.tsx) 提供扫码与授权设备管理；窗口和导航标识统一为 `remote`。二维码轮询及设备查询按组件生命周期和账户代次守卫，查询失败显示实际状态，不用旧结果覆盖当前账户。
-
-手机应用归独立 [Remote](../remote/README.md)，共享代码的依赖边界见 [ARCHITECTURE](../docs/ARCHITECTURE.md#依赖方向)，授权与恢复规则见 [远程访问](../docs/PROTOCOL.md#远程访问)。
+[remote-page.tsx](renderer/app/features/remote/remote-page.tsx) 负责桌面扫码与设备授权管理，轮询和查询守卫组件及账户代次。手机应用由独立 [Remote](../remote/README.md) 构建，不随桌面安装包发布；授权与恢复见 [远程访问](../docs/PROTOCOL.md#远程访问)。

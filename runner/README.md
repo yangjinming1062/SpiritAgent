@@ -1,116 +1,109 @@
 # Runner
 
-本机工具执行的工程入口。模块职责与信任边界归 [ARCHITECTURE](../docs/ARCHITECTURE.md)，传输、工具同步与调用恢复归 [本机工具契约](../docs/PROTOCOL.md#本机工具)；本文维护工具实现、执行环境与资源生命周期。
+Runner 在用户设备执行本机工具，不持有后端账户凭据。跨端准入、能力同步和未知结果定义归 [本机工具契约](../docs/PROTOCOL.md#本机工具)，本文维护工具装配、执行环境及资源所有权。
 
 ## 任务入口
 
-| 改动 | 起点与联动 |
+| 改动 | 入口 |
 |---|---|
-| 新增、禁用或探测工具 | 所属 `features/` 能力的 `get_tool_definitions`、[工具目录与执行器](spirit_agent_runner/runtime/tools.py)、[工具定义契约](spirit_agent_runner/contracts/tooling.py)；工具集 id 跨端同步 |
-| RPC、配置、调用恢复与取消 | [纯契约](spirit_agent_runner/contracts/rpc.py)、[传输边界](spirit_agent_runner/transport/rpc.py)、[运行时](spirit_agent_runner/runtime/application.py)、[调用管理](spirit_agent_runner/runtime/calls.py)、[调用日志](spirit_agent_runner/runtime/journal.py) → [Client bridge](../client/main/runner/bridge.ts) |
-| 本地／SSH、后台进程与代码 | [执行管理器](spirit_agent_runner/features/execution/manager.py)、[环境适配器](spirit_agent_runner/features/execution/environments/)、[代码执行](spirit_agent_runner/features/execution/code/)、[进程工具](spirit_agent_runner/features/execution/process/) |
-| 文件与补丁 | [文件工具](spirit_agent_runner/features/files/file_tools.py)、[文件管理器](spirit_agent_runner/features/files/manager.py)、[访问与补丁组件](spirit_agent_runner/features/files/)、[路径准入](spirit_agent_runner/infrastructure/file_safety.py) |
-| 浏览器 | [能力装配](spirit_agent_runner/features/browser/__init__.py)、[会话管理器](spirit_agent_runner/features/browser/session.py)、[CDP 主管](spirit_agent_runner/features/browser/supervisor.py)、[Camofox](spirit_agent_runner/features/browser/camofox.py) |
-| 桌面操作、系统活动与图像 | [桌面管理器](spirit_agent_runner/features/desktop/manager.py)、[桌面工具](spirit_agent_runner/features/desktop/)、[图像工具](spirit_agent_runner/features/media/vision.py)、[共享图像处理](spirit_agent_runner/infrastructure/images.py) → [Client 坐标桥](../client/main/ipc/sprite.ts) |
-| 学习技能 | [技能能力](spirit_agent_runner/features/skills/)、[学习域契约](spirit_agent_runner/contracts/scope.py) |
-| 入口、资源装配与打包 | [模块入口](spirit_agent_runner/__main__.py)、[bootstrap](spirit_agent_runner/bootstrap.py)、[pyproject.toml](pyproject.toml) → [构建链](../scripts/README.md#构建安装器) |
+| 新工具、禁用或可用性 | 各 `features/` 的工具定义、[目录与执行器](spirit_agent_runner/runtime/tools.py)、[ToolDefinition](spirit_agent_runner/contracts/tooling.py) |
+| RPC、配置和调用恢复 | [contracts/rpc.py](spirit_agent_runner/contracts/rpc.py)、[transport/rpc.py](spirit_agent_runner/transport/rpc.py)、[runtime/application.py](spirit_agent_runner/runtime/application.py)、[calls.py](spirit_agent_runner/runtime/calls.py)、[journal.py](spirit_agent_runner/runtime/journal.py) |
+| 本地／SSH 与代码执行 | [execution/manager.py](spirit_agent_runner/features/execution/manager.py)、[environments](spirit_agent_runner/features/execution/environments/)、[code](spirit_agent_runner/features/execution/code/)、[process](spirit_agent_runner/features/execution/process/) |
+| 文件与补丁 | [files](spirit_agent_runner/features/files/)、[file_safety.py](spirit_agent_runner/infrastructure/file_safety.py) |
+| 浏览器 | [能力装配](spirit_agent_runner/features/browser/__init__.py)、[session.py](spirit_agent_runner/features/browser/session.py)、[supervisor.py](spirit_agent_runner/features/browser/supervisor.py)、[camofox.py](spirit_agent_runner/features/browser/camofox.py) |
+| 桌面、系统与图像 | [desktop](spirit_agent_runner/features/desktop/)、[vision.py](spirit_agent_runner/features/media/vision.py)、[images.py](spirit_agent_runner/infrastructure/images.py) |
+| 技能 | [skills](spirit_agent_runner/features/skills/)、[scope.py](spirit_agent_runner/contracts/scope.py) |
+| 启停与交付 | [__main__.py](spirit_agent_runner/__main__.py)、[bootstrap.py](spirit_agent_runner/bootstrap.py)、[pyproject.toml](pyproject.toml) |
 
 ## 装配、调用与资源
 
-`bootstrap` 是唯一组合根。`transport` 只对接运行时公开接口；`runtime` 持有配置、工具目录、可用性缓存和在途调用，通过 `ToolDefinition` 调用能力，不导入具体工具。`features` 负责各能力规则与资源，`contracts` 提供调用上下文、工具定义和共享结果，`infrastructure` 负责跨能力的网络、路径、图像与文本处理。层间方向由 [架构门禁](../scripts/check_runner_architecture.py) 检查。
+`bootstrap` 是唯一组合根。transport 只调用 runtime 公共接口；runtime 持配置、工具目录与在途调用，经 `ToolDefinition` 执行，不导入具体能力。features 拥有工具规则和资源，contracts 提供上下文与数据契约，infrastructure 提供跨能力原语。依赖方向由 [架构门禁](../scripts/check_runner_architecture.py) 检查。
 
-各能力显式提供 `ToolDefinition`，就近维护说明、schema、可用性探测和处理函数；依赖配置的说明在 `tools.list` 时按该次快照生成。执行器按定义中的 `is_async` 选择异步调用或工作线程。
+工具说明、schema、探测及处理函数由能力就近定义；依赖配置的说明在列举时基于同一快照生成。`ConfigStore` 更新替换配置并推进代次，调用取得独立快照，`ToolContext` 固定 task、call、学习域及取消信号；`ContextVar` 传递作用域，工作线程保留该上下文。普通 RPC 和代码子调用共用执行器，后者另受白名单、参数与预算约束，不能绕过禁用工具。
 
-- `ConfigStore` 每次更新替换配置并推进代次；调用取得独立快照，`ToolContext` 固定 task、call、学习域与取消信号。`ContextVar` 只传递当前作用域，工作线程保留对应上下文，不持有资源注册表。
-- 普通 RPC 与代码子调用共用 `ToolExecutor`，统一工具禁用和配置作用域；代码子调用另有白名单、参数限制和预算。结果只在 RPC 边界进行 JSON 编解码，字符串结果保持字符串。
-- 工具清单与配置更新串行装配，阻塞探测在线程执行。可用性按探测函数与配置代次缓存，失败 30 秒、成功 60 秒；更新使缓存失效，旧探测不得回填新代次。
-- 执行管理器拥有环境租约、后台进程和空闲回收；浏览器管理器拥有会话、启动句柄和 CDP 主管；桌面管理器拥有懒启动后端；文件管理器拥有操作缓存与读写版本，技能管理器串行写入。文件通过执行能力的公开租约 API 取得环境，代码执行通过注入接口调用工具。
-- 服务显式启动线程与任务。退出时先停止传输和在途调用、收尾日志，再关闭浏览器、桌面、执行环境和文件状态；同步工作线程取消后仍等待实际执行结束才释放租约。`atexit` 只在组合根登记退出兜底。
+| 资源 | 所有者与释放 |
+|---|---|
+| 执行环境、后台进程 | ExecutionManager，终端和文件经公开租约 API 访问；同步线程取消后等实际执行结束才释放租约 |
+| 浏览器 | BrowserManager 持会话、启动句柄和 CDP 主管，调用持有期间不空闲回收 |
+| 桌面 | DesktopManager 懒启动后端，退出等当前动作收尾，关闭后不重建 |
+| 文件／技能 | FileManager 持操作缓存和读写版本，SkillManager 串行写入 |
 
-`system_awareness` 单独控制活动、焦点、锁屏、空闲、窗口和屏幕坐标等工具。麦克风能力探测只枚举设备，macOS 截图只检查 `screencapture`，不证明系统授权；周期通知与 Client 当前消费限制归 [能力与进程代次](../docs/PROTOCOL.md#能力与进程代次)。图片结果直接交付主回合；图像理解和浏览器截图超限缩图，`computer_use` 超限省略图片并提示缩小范围。
+资源显式启动，退出先关闭传输与在途调用、收尾日志，再依次关闭能力；`atexit` 仅在组合根兜底。配置更新和工具清单串行装配，阻塞探测在线程运行，按探测函数与配置代次缓存；旧结果不得回填新代次。JSON 编解码只发生在 RPC 边界，字符串结果保持字符串。
+
+`system_awareness` 独立控制活动和系统状态工具；设备可探测不等于系统已授权。图像理解／浏览器截图超限可缩图，computer-use 超限省略图片并提示缩小范围，不能把被省略内容当作模型已看到。
 
 ## 开发与交付
 
-发行包 `spirit-agent` 从 `runner/spirit_agent_runner/` 构建为单个 wheel。在仓库根运行 `uv sync --project runner --frozen` 安装源码 editable 包，再启动 Client 开发入口；显式开发 Python 与仓库配置优先于 Home 下的安装环境。在 `runner/` 中检查：
+源码与安装版共用 `spirit_agent_runner` 模块和单 wheel。仓库根执行 `uv sync --project runner --frozen` 安装 editable 包，再运行 Client；显式开发 Python 与仓库配置优先于 Home 安装环境。在 `runner/` 检查：
 
 ```bash
 uv run --frozen python -I -m spirit_agent_runner --version
 uv run --frozen python -I -m spirit_agent_runner --check
 ```
 
-统一启动入口为 `python -I -X utf8 -m spirit_agent_runner --desktop-endpoint <path>`，token 仅经 `SPIRITAGENT_DESKTOP_TOKEN` 传递。启动与健康检查使用 Python isolated mode，防止当前目录或 `PYTHONPATH` 中的同名包遮蔽安装包；editable 安装直接定位源码。`--version` 输出发行版本；`--check` 校验依赖与静态工具定义，返回版本和工具数量，不启动运行时资源。正常启动仅支持 Windows、macOS；Windows 使用 Job Object 管理进程树。依赖和平台 marker 见 [pyproject.toml](pyproject.toml)。
-
-Installer 和 Client 使用包内健康入口；隔离安装门禁、签名及更新步骤归 [Scripts](../scripts/README.md#构建安装器) 与 [更新契约](../docs/PROTOCOL.md#自更新签名)。
+启动使用 `python -I -X utf8 -m spirit_agent_runner --desktop-endpoint <path>`，token 仅从 `SPIRITAGENT_DESKTOP_TOKEN` 读取。isolated mode 防止 cwd／PYTHONPATH 同名包遮蔽安装包，editable 安装负责源码定位。`--check` 校验依赖及静态工具定义，不启动运行时资源；正常运行限 Windows／macOS，Windows 用 Job Object 管进程树。wheel 隔离安装、版本和更新验证归 [Scripts](../scripts/README.md#构建安装器)。
 
 ## 执行环境
 
 ### 网络与路径
 
-HTTP 统一使用 `httpx[socks]`。[url_safety.py](spirit_agent_runner/infrastructure/url_safety.py) 的图像下载在预检、实际建连及每跳重定向检查地址，连接已核验 IP 并保留 Host、TLS SNI 与证书校验，DNS 解析移出事件循环。
+HTTP 共用 `httpx[socks]`。[url_safety.py](spirit_agent_runner/infrastructure/url_safety.py) 的图像下载在预检、建连和每跳重定向校验地址，以已核 IP 建连并保留 Host、TLS SNI 与证书校验，DNS 移出事件循环。
 
-浏览器只预检工具传入的 URL，CDP `browser_navigate` 另复核落点；新标签、下载、Camofox、页内跳转、脚本和原始 CDP 命令不提供相同复核。`browser.allow_private_urls` 只影响浏览器，隐藏的 `security.allow_private_urls` 也影响图像下载，云元数据地址始终阻断。`security.website_blocklist` 支持域名和共享规则文件，但规则加载失败会记录诊断并放行，不能作为强隔离边界。
-
-文件读写禁区分别由 `file_safety.py` 和 `file_tools.py` 校验。Windows 真实路径经句柄规范化，处理短名、链接、联接点和未创建后缀，比较忽略大小写；备用数据流按基础路径判定，保护目录自身的数据流写入同样拒绝。
+浏览器只预检传入 URL，CDP 导航另查落点；新标签、下载、Camofox、页内脚本和原始 CDP 没有相同复核。`browser.allow_private_urls` 只管浏览器，`security.allow_private_urls` 还影响图像下载，云元数据始终阻断。网站黑名单加载失败会诊断并放行，不能当作强隔离。文件禁区由 `file_safety.py` 与文件工具分别核对；Windows 句柄规范化覆盖短名、链接、联接点及未建后缀，大小写不敏感，备用数据流按基础路径校验。
 
 ### 终端与子进程
 
-终端说明随 `terminal.env_type` 生成：本地按 Windows Git Bash 或 macOS BSD 环境约束并拦截不适用的 Linux 管理命令；SSH 描述远端，不套本机拦截。
+说明按 `terminal.env_type` 生成：本机分别适配 Windows Git Bash／macOS BSD 并阻挡不适用的 Linux 管理命令，SSH 不套本机规则。ExecutionManager 按 task 复用环境，参数和配置变化决定租约处理：
 
-[执行管理器](spirit_agent_runner/features/execution/manager.py) 按 task 持有执行环境，终端和文件工具通过 `use_environment` 取得租约；创建参数包含类型、cwd、超时与 SSH 目标。配置变化处理如下：
-
-| 当前环境状态 | 调用处理 |
+| 变化 | 处理 |
 |---|---|
-| 参数一致 | 复用 |
-| 无租约、前台命令和活跃后台进程 | 停止环境，按新配置重建 |
-| 仍在使用，仅 cwd／超时变化 | 沿用到空闲 |
-| 仍在使用，执行类型或 SSH 目标／凭据变化 | 拒绝调用，等待结束；停止后台进程须由实际任务授权 |
+| 参数不变 | 复用 |
+| 无租约且无前台命令、活跃后台进程 | 按新配置重建 |
+| 使用中仅 cwd／超时变化 | 沿用至空闲 |
+| 使用中执行类型或 SSH 目标／凭据变化 | 拒绝新调用，等待结束；不自行终止任务 |
 
-后台进程记录所属环境，列出、轮询和终止不依赖取得新环境。stdin 写入和关闭按 session 串行，非阻塞 I/O 与等锁共用 5 秒预算并检查取消；`bytes_written` 为实际 UTF-8 字节数。SSH 后台进程不支持 stdin，终止无法确认时保留 session 并报告错误。
+后台进程保留原环境归属，列出、轮询和终止不要求创建新环境。stdin 按 session 串行，非阻塞 I/O 与等锁共享预算并检查取消，写入量用实际 UTF-8 字节；SSH 后台不支持 stdin，终止未确认保留 session。
 
-SSH 密码通过临时 askpass 和 `SSH_ASKPASS_REQUIRE=force` 传递，密钥优先；需要 OpenSSH ≥ 8.4（Windows ≥ 8.9），代码不检测版本，版本不足可能认证失败或超时。askpass 随环境清理。文件上传以暂存副本 hash 和上传前源版本建基线，本机并发修改下轮补传；远端未变时不覆盖本机晚改，双方均变时仍按远端覆盖处理。
+SSH 密钥优先，密码通过临时 askpass 和 `SSH_ASKPASS_REQUIRE=force` 传递，随环境清理。需 OpenSSH ≥ 8.4（Windows ≥ 8.9），代码不探测版本。文件上传以暂存 hash 和源版本作基线，本机晚改下轮补传；远端未变不覆盖本机晚改，双方均变仍按远端覆盖处理。
 
 ### 代码执行
 
-[execute_code](spirit_agent_runner/features/execution/code/code_execution_tool.py) 每次启动独立 Python 子进程，经一次性 token 调用父进程工具；本机使用 UDS（Windows 回环 TCP）首帧鉴权，SSH 使用逐请求鉴权的文件 RPC。导入帮助函数不解锁禁用工具，`retry` 只重试异常，不判断副作用是否安全。
+[execute_code](spirit_agent_runner/features/execution/code/code_execution_tool.py) 每次启动独立 Python 进程，经一次性 token 调用父进程工具；本机用 UDS（Windows 回环 TCP）首帧鉴权，SSH 用逐请求鉴权的文件 RPC。导入帮助函数不解锁工具，`retry` 只判异常，不判断副作用能否安全重试。
 
-本机默认 `code_execution.mode=project`，采用终端当前 cwd；解释器依次选择可用的用户指定或托管 Python、激活的虚拟环境、Runner Python。`strict` 使用暂存目录和 Runner Python。模式控制解释器、目录与环境传递，不构成强沙箱；SSH 在远端执行。脚本输出有头尾裁切和工具调用预算，参数定义以源码为准。
+本机 `project` 模式采用终端 cwd，解释器依次选可用的指定／托管 Python、激活 venv、Runner Python；`strict` 用暂存目录和 Runner Python。两种模式控制解释器、目录和环境传递，均非强沙箱；SSH 在远端执行。输出裁切和工具预算以代码定义为准。
 
 ### 浏览器与桌面生命周期
 
-浏览器后端优先级为 `browser.cdp_url` → `browser.camofox.url` → 本机 Chromium。CDP 会话按 task 串行启停，工具持有期间不作空闲回收，结束重新计时；失联主管仍有其他调用持有时拒绝重建，清理核对实例身份，启动失败释放本次资源。
+后端依次选择 CDP URL、Camofox URL、本机 Chromium。CDP 会话按 task 串行启停，持有期间不回收；失联主管仍有调用持有时拒绝重建，清理复核实例身份。Windows 启动恢复只接管本次创建、exe 和独立 profile 均匹配的主进程，profile 占用以独占打开判断，不能凭残留 lockfile 判定。
 
-Camofox 仅同步其实际支持的导航、快照、点击、输入、滚动、按键、图片和视觉工具；标签页、下载、Cookie、存储、仿真、原生弹窗、CDP 与批处理工具在该后端不会提供给模型。
+Camofox 只暴露其支持的导航、快照、输入与视觉操作；标签、下载、Cookie、存储、仿真、原生弹窗、CDP 及批处理不提供。后端切换须重新核对实际清单，不能只改说明。
 
-Windows Chromium 启动器重启时只接管本次创建且 exe、独立 profile 匹配的实际主进程；profile 锁以独占打开判断，不以残留 `lockfile` 判断占用。
-
-- 切换标签或当前页导航后重取元素 ref，后台标签导航不改变当前页；关闭最后一页后导航创建新页。
-- 输入先核对可编辑目标，空字符串清空内容，失败不向其他焦点补发。JS 弹窗由 `browser_dialog` 应答；打开弹窗的动作已经执行，不应重复该动作。
-- 下载按触发时间匹配，等待开始与完成共用预算；取消或超时后仍可能完成，后续调用不领取旧下载。
-- Windows 键盘输入要求所选窗口在前台，同进程其他窗口不满足；非 ASCII 粘贴后尽力恢复剪贴板，失败也走恢复路径。桌面后端退出前等待当前动作收尾，关闭后不再创建。
-- 系统窗口快照使用 DWM 可见边界并排除最小化、隐藏和 cloaked 窗口，结果按前到后排列并可能带有当前 Runner 实例标识。`system.get_idle_seconds` 与 `system.snapshot` 是单次即时探测，未知值沿各自工具契约返回（空闲为 `-1`、焦点为空对象、锁屏和全屏为 `false`），调用方不得无界轮询。`system.open_application` 返回 `opened: true` 只表示启动请求已接受，不保证应用已就绪或获得焦点；`system.click_at` 发送真实全局输入，失败后指针仍可能已移动，重试前需重新核对状态。桌面工具的后台支持依平台和动作，全局输入可能影响前台。
+- 切页或当前页导航使元素 ref 失效，后台页导航不改变当前页；最后一页关闭后导航创建新页。
+- 输入先核可编辑目标，空字符串清空，失败不向其他焦点补发；JS 弹窗由专门工具应答，不重做已打开弹窗的动作。
+- 下载按触发时间关联，开始与完成共用预算；取消／超时后可能继续完成，后续调用不领取旧下载。
+- Windows 键盘要求所选窗口真实前台，同进程其他窗口不算；非 ASCII 粘贴尽力恢复剪贴板，失败也清理。全局输入可能影响前台，点击失败后指针可能已移动，重试前重读状态。
+- 系统快照使用 DWM 边界，排除隐藏、最小化和 cloaked 窗口，按前到后排列。探测是单次读取，未知值按工具契约返回；启动成功只表示请求已接受，不证明应用就绪或聚焦。
 
 ### 文件结果与补丁
 
-SSH 内容搜索按命令退出状态区分未命中、分页截断与执行失败；失败时返回错误并保留命令输出作为诊断，不将已有的部分匹配当作成功结果。诊断与匹配内容共用脱敏配置。
+SSH 搜索按退出状态区分无匹配、分页截断与失败，部分匹配不能掩盖命令失败，诊断和结果共用脱敏。`security.redact_secrets` 默认开启但仅模式识别，可关闭且不保证穷尽；磁盘原文不变。整文件覆盖含被掩码改写的原行时 `write_file` 拒绝，局部修改用 patch。
 
-`security.redact_secrets` 默认开启；文件读取、搜索及部分工具结果通过模式识别掩码疑似凭据，磁盘原文保持不变，可关闭且不保证识别所有秘密。整文件覆盖若包含原文被掩码改写的行，`write_file` 拒绝写入，避免用占位符替换真实凭据；局部修改走 `patch`。
-
-非 exact 补丁命中按 old_string 将 new_string 缩进重锚到文件，保留相对嵌套；写入前拒绝序列化转义漂移。模糊匹配不能绕过路径准入。
+非 exact 补丁按实际 old_string 重锚 new_string 缩进并保留相对嵌套；写前拒绝序列化转义漂移，模糊匹配不绕过路径准入。
 
 ## 调用日志与取消
 
-[journal.py](spirit_agent_runner/runtime/journal.py) 持有原子认领、参数指纹、持有者与终态。取消发生在认领线程未结束时，先等待认领再记未知结果；完成与取消写入串行，无认领凭据不能补写终态。保存结果重放不再次执行或裁切。保留期、日志不可写和结果未知的恢复边界统一归 [调用日志契约](../docs/PROTOCOL.md#调用日志与未知结果)。
+[journal.py](spirit_agent_runner/runtime/journal.py) 保存原子认领、参数指纹、持有者与终态。认领线程未结束时取消，须先等认领再记未知；完成和取消串行写，无认领凭据不能补写终态。重放已存结果不执行也不再裁切。
 
-`calls.cancel` 以发起连接的 RPC `req_id` 或业务 `call_id` 定位在途调用，两者不能同时提供。后者用于 Client 重连后的取消，查询结果仍通过 `calls.get`，不调用执行入口取得旧结果。
+`calls.cancel` 按发起连接的 `req_id` 或跨连接 `call_id` 定位，两者互斥；旧结果用 `calls.get` 查询。保留期、日志不可写及未知恢复归 [调用日志契约](../docs/PROTOCOL.md#调用日志与未知结果)。
 
 ## 按预设学习技能
 
-`ToolContext` 固定学习域并通过 `ContextVar` 传递，结束后恢复；允许预设在 [学习域契约](spirit_agent_runner/contracts/scope.py) 登记，后端预设目录新增或改名须与该契约一致，由[跨端生成器](../scripts/generate_protocol.py)校验后才生成契约。目录与隔离契约归 [学习作用域](../docs/PROTOCOL.md#预设记忆与学习作用域)，读取依次合并本域、静态技能和 `skills.external_dirs`。
+调用固定学习域，结束恢复上下文；[scope.py](spirit_agent_runner/contracts/scope.py) 的允许预设须与后端目录一致，由 [generate_protocol.py](../scripts/generate_protocol.py) 核对。目录与隔离归 [学习作用域](../docs/PROTOCOL.md#预设记忆与学习作用域)。
 
-读取与管理共用候选定位：首个有匹配的根优先，同根裸名歧义拒绝猜选，可用 `category/skill-name` 定位；创建仍用单段名称，frontmatter description 必须是字符串。
+读取合并本域、静态技能和外部根。读取与管理共用候选定位：首个命中根优先，同根裸名歧义须指定 `category/skill-name`；创建只用单段名称，description 必须字符串。修改共享技能先复制到本域，失败撤回本次副本，删除只影响本域；写入串行且防符号链接跨域。
 
-修改共享技能前复制到当前域，复制或修改失败撤回本次新副本，删除只影响本域；管理操作串行，路径和符号链接不得跨域。写入仅检查名称、frontmatter、路径与大小，写入及 `skill_view` 不扫描内容威胁。技能平台过滤与学习域独立生效，不扩大授权。
+校验仅覆盖名称、frontmatter、路径和大小，写入与 `skill_view` 不做内容威胁扫描。平台过滤和学习域隔离各自生效，技能内容不能扩大工具授权。
 
 ## 契约与验证
 
-依赖方向、导入环与模块资源归属由静态门禁检查；包内健康检查只验证可加载性与静态定义。静态与 wheel 检查归 [Scripts](../scripts/README.md#按改动选择验证)。OS API、文件路径、终端、进程树和桌面效果在对应宿主验证，SSH 单独验证；调用修改覆盖取消、日志重放、资源退出与作用域隔离。
+静态门禁检查导入方向、循环和资源归属；包内健康检查只证明可加载和定义有效。命令见 [Scripts](../scripts/README.md#按改动选择验证)，修改调用须覆盖取消、日志重放、资源退出和作用域隔离。OS API、路径、进程树和桌面效果按宿主实测，SSH 单独验证。

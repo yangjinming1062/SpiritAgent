@@ -1,227 +1,186 @@
 # 数据库设计与关系图
 
-本文维护实体边界、设计理由、关键删除语义和查询测量。字段含义与权威源码入口见 [字段语义字典](DATABASE_FIELDS.md)，完整结构以 [ORM 注册](../backend/bootstrap/models.py)和 [0001 基线](../backend/alembic/versions/0001_baseline.py)为准。产品行为归 [DESIGN](DESIGN.md)，跨端与恢复契约归 [PROTOCOL](PROTOCOL.md)。
+本文解释实体拆分、关系约束、删除与查询设计。字段定位见 [DATABASE_FIELDS](DATABASE_FIELDS.md)，完整结构以 [ORM 注册](../backend/bootstrap/models.py)和 [0001 基线](../backend/alembic/versions/0001_baseline.py)为准。跨模块行为和备份格式由 [PROTOCOL](PROTOCOL.md)定义。
 
-数据库使用 PostgreSQL、`vector` 与 `pg_trgm`，当前有 **63 张应用表**，不含 Alembic 版本表。设计面向单账户单伙伴和小范围使用；后端单实例边界见 [ARCHITECTURE](ARCHITECTURE.md#部署与运行时边界)。
+数据库使用 PostgreSQL、`vector` 和 `pg_trgm`；部署版本与单实例条件见 [Backend](../backend/README.md#docker-compose-部署)及[运行时边界](ARCHITECTURE.md#部署与运行时边界)。下图只保留解释所有权、循环或恢复所需的关系，箭头由引用方向指向目标，省略重复用户外键和普通文件关联；不是第二份完整 schema。
 
 ## 共同约束
 
-- 实体 ID、可移植身份、任务详情和一对一用户扩展有不同用途，统一入口见 [公共字段字典](DATABASE_FIELDS.md#公共字段与关系入口)；API 编码遵循 [ID 语义](PROTOCOL.md#id-语义)。
-- 活关系使用外键或关联表；冗余账户字段通过联合外键校验。预设隔离仍在业务读写边界核对。归属约束由 [schema.py](../backend/infrastructure/schema.py)统一装配。
-- 归属、状态和常用筛选字段使用明确列，变化较多的参数和冻结文档使用经过业务校验的 JSONB。时间戳带时区，业务日期按用户时区计算。
-- 一个业务用例使用短事务，同步提交状态、关系、资产引用及 outbox；供应商等待在事务外。普通写入锁相关领域，账户维护负责整体隔离。模块所有权和共享任务例外归 [Backend](../backend/README.md#模块依赖边界)。
-
-图中箭头由引用表指向被引用表，标签为关联字段；跨图同名节点代表同一张表，省略重复的用户外键。任务详情的主键同时引用 `jobs`。
+- 活关系用外键或关联表；冗余账户字段经 [schema.py](../backend/infrastructure/schema.py)展开联合外键，预设仍由业务读写校验。稳定命名供 Alembic 比对。
+- 归属、状态与筛选条件使用明确列，可变输入和冻结文档使用业务校验的 JSONB。实体主键、`source_key` 和请求幂等键各有用途，见[公共字段](DATABASE_FIELDS.md#公共字段与关系入口)。
+- 一个用例在短事务内提交状态、关系、资产引用及 outbox；模型和供应商等待在事务外。领域锁管理普通并发，账户维护隔离整体删除和恢复。
 
 ## 账户、配置与分发
 
 ```mermaid
 flowchart LR
-    login_records -->|user_id| users
-    remote_pairings -->|user_id| users
-    remote_sessions -->|user_id| users
-    user_settings -->|user_id| users
-    custom_voices -->|user_id| users
-    user_model_configs -->|user_id PK| users
-    user_social_accounts -->|user_id| users
-    personas -->|user_id PK| users
-    custom_voices -->|preview_asset_id / reference_asset_id| assets
-    subgraph global_tables[全局记录]
-        system_settings
-        admin_sessions
-        update_versions
-    end
+    login_records --> users
+    remote_pairings --> users
+    remote_sessions --> users
+    user_settings --> users
+    user_model_configs --> users
+    user_social_accounts --> users
+    personas --> users
+    custom_voices --> assets
 ```
 
-登录、设备授权和管理员身份有不同的撤销范围，因此分别建模。用户配置按键保存结构化值，模型配置与资讯来源凭证独立，后两者不进入普通设置同步。资讯来源按账户与平台唯一，凭证修订保护采集与迟到结果，独立登录修订允许扫码期间继续使用原凭证；系统运营参数的编码与水合见[配置字段字典](DATABASE_FIELDS.md#账户配置与设备身份)。伙伴定义只管理人格和政策，生活与实际呈现各有独立状态。
+桌面登录、手机授权和管理员会话有不同撤销范围。用户普通设置、模型配置、资讯来源凭证分开，避免普通同步暴露机密；扫码登录修订与在用凭证修订各自隔离迟到结果。人格只管理定义和政策，生活及实际呈现另有权威状态。系统参数、管理员会话和更新版本是全局记录，不借产品账户归属授权。
 
 ## 会话、消息与话题
 
 ```mermaid
 flowchart LR
-    conversations -->|parent_id / forked_from_id| conversations
-    messages -->|conversation_id| conversations
-    prompt_submissions -->|conversation_id| conversations
-    prompt_submissions -->|replace_reply_message_id / result_message_id| messages
-    submission_messages -->|submission_id| prompt_submissions
-    submission_messages -->|message_id| messages
-    message_assets -->|message_id| messages
-    message_assets -->|asset_id| assets
-    message_voice_refs -->|message_id| messages
-    message_voice_refs -->|voice_id| custom_voices
-    companion_topics -->|batch_id| companion_topic_batches
-    companion_topic_usages -->|topic_id| companion_topics
-    companion_topic_usages -->|message_id| messages
-    companion_topic_feedback -->|topic_id| companion_topics
+    conversations -->|parent / fork| conversations
+    messages --> conversations
+    prompt_submissions --> conversations
+    prompt_submissions -->|result / replacement| messages
+    submission_messages --> prompt_submissions
+    submission_messages --> messages
+    companion_topics --> companion_topic_batches
+    companion_topic_usages --> companion_topics
+    companion_topic_usages --> messages
+    companion_topic_feedback --> companion_topics
 ```
 
-会话保存归属和上下文边界，消息保存原文及交付快照，请求账本保存受理身份和结果关系；批量输入与关联一次提交，连接中断不要求重新执行。依附子会话随父删除，分叉只保留可失去的来源指针。
+会话拥有上下文边界，消息拥有原文与交付快照，受理账本拥有请求身份和结果关系；整批输入与关联一起提交，断线后可查询原请求。依附子会话随父删除，独立分叉只失去来源指针。
 
-文件和本地声音版本通过关联表保护，回收不扫描消息 JSON 推断引用。会话统计由 [语句级触发器](../backend/features/conversation/statistics.py)按批增减；预设或父会话改变时重算，计数更新不改变活动时间。统计不进备份，恢复消息即可重建。话题批次、来源、实际分享和反馈独立保存；选材不等于分享，外部内容不等于用户事实。
+消息文件和本地声音版本用关系表保护，回收不扫描正文 JSON 猜引用。会话统计由[语句级触发器](../backend/features/conversation/statistics.py)批量维护，预设或父会话改变时重算；计数更新不改变活动时间，恢复从消息重建。话题资料、实际分享和显式反馈独立，选材不代表分享。
 
 ## 任务、供应商尝试与资产
 
 ```mermaid
 flowchart LR
-    job_requests -->|job_id| jobs
-    job_assets -->|job_id| jobs
-    job_assets -->|asset_id| assets
-    provider_attempts -->|job_id| jobs
-    provider_attempts -->|lane_id| provider_lanes
-    character_analysis_jobs -->|id PK/FK| jobs
-    scene_jobs -->|id PK/FK| jobs
-    visual_jobs -->|id PK/FK| jobs
-    video_gen_jobs -->|id PK/FK| jobs
-    post_publications -->|id PK/FK| jobs
-    video_gen_jobs -->|conversation_id| conversations
-    video_gen_jobs -->|source_message_id / reply_message_id| messages
-    ws_events
+    job_requests --> jobs
+    job_assets --> jobs
+    job_assets --> assets
+    provider_attempts --> jobs
+    provider_attempts --> provider_lanes
+    character_analysis_jobs --> jobs
+    outfit_creation_jobs --> jobs
+    scene_jobs --> jobs
+    visual_jobs --> jobs
+    video_gen_jobs --> jobs
+    post_publications --> jobs
 ```
 
-共享任务保存通用执行控制，业务详情保存专有输入、目标和结果。执行与采纳分离，允许调整阶段和供应商参数而不为每个流程复制任务状态；具体恢复条件仍由业务所有者决定。请求身份与制作身份分开，使多个请求能复用在途工作，又不阻止新请求再次制作同一组合。
+任务详情复用 `jobs` 主键。共享父表只管理执行控制，业务详情管理输入、目标和采纳；请求身份与制作身份分离，允许多个请求复用在途工作，也允许后续新请求制作相同组合。任务种类须匹配唯一详情。
 
-供应商尝试与本地任务分别保存：本地取消或删除不能证明远端已经结束，未知提交必须保留核对依据。资产集中登记文件属性与回收状态，固定引用用外键，多文件用领域关联表；展示路径和冻结快照不能替代活引用。采纳与回收共用资产行锁，尚未交接的文件另受写入租约保护；具体锁顺序和失败重试见 [资产模块](../backend/features/assets/README.md)。
+供应商尝试独立保存远端占用和未知事实，本地取消或删除不能证明其结束。资产库存保存文件属性与回收待办，领域外键和多文件关联保护引用；路径快照不代替活关系。采纳与回收共用资产行锁，落盘到引用提交之间由写入租约保护，锁顺序与补偿见 [资产模块](../backend/features/assets/README.md)。
 
 ## 身份、衣柜、环境与动作
 
 ```mermaid
 flowchart LR
-    avatar_assets -->|portrait_asset_id / fullbody_asset_id| assets
-    avatar_assets -->|analysis_job_id| character_analysis_jobs
-    character_analysis_jobs -->|avatar_id| avatar_assets
-    companion_fullbody_candidates -->|avatar_id| avatar_assets
-    companion_fullbody_candidates -->|asset_id / base_asset_id| assets
-    companion_outfits -->|asset_id| assets
-    appearance_assets -->|avatar_id| avatar_assets
-    appearance_assets -->|outfit_id| companion_outfits
-    appearance_assets -->|candidate_id| companion_fullbody_candidates
-    appearance_assets -->|analysis_job_id| character_analysis_jobs
-    appearance_assets -->|asset_id| assets
-    companion_scenes -->|media_asset_id / upload_asset_id| assets
-    companion_scenes -->|initial_job_id / replacement_job_id| scene_jobs
-    scene_jobs -->|scene_id| companion_scenes
-    action_definitions
+    avatar_assets -->|analysis| character_analysis_jobs
+    character_analysis_jobs -->|target| avatar_assets
+    companion_fullbody_candidates --> avatar_assets
+    outfit_creation_jobs --> companion_outfits
+    appearance_assets -->|one owner| avatar_assets
+    appearance_assets -->|one owner| companion_outfits
+    companion_scenes -->|initial / replacement| scene_jobs
+    scene_jobs -->|target| companion_scenes
 ```
 
-确认形象合并自动特征、人工覆盖及统一修订，避免头像与角色资料各自变化。分析任务和待采纳候选独立，分析失败不撤销已发布身份。衣柜、环境和动作各自是可复用实体，不按组合复制定义；当前素材与制作过程分开，新制作失败继续使用已采纳结果。
+确认身份统一管理自动特征、人工覆盖和修订，候选/分析失败不撤销已发布身份。衣柜、环境和动作是可复用定义，各自与制作过程分离；新制作失败保留当前素材。环境保存上传源和展示图，不保存“启用环境”；实际显示由呈现领域记录。
 
 ## 影像与不可变版本
 
 ```mermaid
 flowchart LR
-    visual_items -->|current_version_id| visual_versions
-    visual_versions -->|visual_id| visual_items
-    visual_versions -->|input_image_id| visual_items
-    visual_versions -->|input_image_version_id| visual_versions
-    visual_items -->|outfit_id| companion_outfits
-    visual_items -->|scene_id| companion_scenes
-    visual_items -->|action_id| action_definitions
-    visual_versions -->|outfit_id| companion_outfits
-    visual_versions -->|scene_id| companion_scenes
-    visual_versions -->|action_id| action_definitions
-    visual_version_assets -->|version_id| visual_versions
-    visual_version_assets -->|asset_id| assets
-    visual_jobs -->|target_visual_id / result_visual_id / result_image_id| visual_items
-    visual_jobs -->|result_version_id / result_image_version_id| visual_versions
-    visual_presentations -->|current_visual_id / loop_visual_id| visual_items
-    visual_presentations -->|current_version_id / loop_version_id| visual_versions
-    visual_playbacks -->|visual_id| visual_items
-    visual_playbacks -->|version_id| visual_versions
+    visual_items -->|current| visual_versions
+    visual_versions -->|owner| visual_items
+    visual_versions -->|input image version| visual_versions
+    visual_jobs -->|target / result| visual_items
+    visual_jobs -->|result version| visual_versions
+    visual_presentations -->|current / loop| visual_versions
+    visual_playbacks --> visual_versions
+    visual_version_assets --> visual_versions
+    visual_version_assets --> assets
 ```
 
-稳定成品身份与不可变产物分开，重做成功后才原子切换当前版本。呈现、播放、输入图和制作结果均引用实际版本，源素材改变或删除不会改写已发生的画面事实。
+稳定成品与不可变版本分开，成功重做才切当前指针。呈现、播放、输入图及制作结果引用实际版本，源素材修改或删除不改写已发生画面；静态呈现另保存待显示/已显示快照及受保护素材引用。
 
-成品／版本联合外键还校验版本所属成品，不能只凭同账户互换引用；循环指针允许分阶段写入，提交时必须完整。图片内容去重和请求幂等分开处理。历史版本是否可回收取决于当前、呈现、播放及任务引用，不能只看版本年龄。
+成品/版本成对外键校验版本所属成品，不能仅凭同账户交换引用；循环指针允许分阶段写入，提交时须完整。图片内容去重与请求幂等分别处理，旧版本按活引用回收，不按年龄直接删除。
 
 ## 动态、日记与评论
 
 ```mermaid
 flowchart LR
-    entry_links -->|source_id / target_id| companion_entries
-    entry_comments -->|post_id| companion_entries
-    entry_comments -->|reply_to_comment_id| entry_comments
-    entry_assets -->|entry_id| companion_entries
-    entry_assets -->|asset_id| assets
-    post_publications -->|post_id| companion_entries
-    post_publications -->|video_job_id| video_gen_jobs
+    entry_links -->|source / target| companion_entries
+    entry_comments --> companion_entries
+    entry_comments -->|reply target| entry_comments
+    entry_assets --> companion_entries
+    entry_assets --> assets
+    post_publications --> companion_entries
+    post_publications --> video_gen_jobs
 ```
 
-动态与日记共享正文、发布时间、阅读状态和附件，因此合并为内容实体；创作与发布政策仍分别归 posts、journal。日记日期唯一性、来源动态和评论回复用明确约束表达。内容列表只读评论数量，评论独立分页；日记记忆索引从已发布正文重建，不成为第二份内容权威。
+动态和日记共享正文、阅读状态与附件，因此使用内容实体；创作与发布政策仍由 posts/journal 拥有。日记日期唯一性、来源动态与评论回复通过关系校验。列表只读取评论数量，正文独立分页；日记记忆索引可从正文重建。
 
 ## 生活、夜间与调度
 
 ```mermaid
 flowchart LR
-    life_states -->|active_pursuit_id| life_pursuits
-    life_states -->|activity_step_id| life_steps
-    life_pursuits -->|previous_pursuit_id| life_pursuits
-    life_steps -->|pursuit_id| life_pursuits
-    life_steps -->|job_id / result_job_id| jobs
-    life_steps -->|result_entry_id| companion_entries
-    life_steps -->|result_visual_id| visual_items
-    life_steps -->|result_visual_version_id| visual_versions
-    life_events -->|pursuit_id| life_pursuits
-    life_events -->|step_id| life_steps
-    life_events -->|result_job_id| jobs
-    life_events -->|result_entry_id| companion_entries
-    life_events -->|result_visual_id| visual_items
-    life_events -->|result_visual_version_id| visual_versions
-    pursuit_evidence -->|pursuit_id| life_pursuits
-    pursuit_evidence -->|event_id| life_events
-    nightly_activity_actions -->|log_id| nightly_activity_logs
-    nightly_activity_actions -->|job_id| jobs
-    cron_jobs -->|conversation_id| conversations
-    companion_intents -->|cron_job_id| cron_jobs
+    life_states -->|focus| life_pursuits
+    life_states -->|activity| life_steps
+    life_pursuits -->|previous| life_pursuits
+    life_steps --> life_pursuits
+    life_events --> life_steps
+    pursuit_evidence --> life_pursuits
+    pursuit_evidence --> life_events
+    nightly_activity_actions --> nightly_activity_logs
+    nightly_activity_actions --> jobs
+    cron_jobs --> conversations
+    companion_intents --> cron_jobs
 ```
 
-当前生活、持续事项、执行步骤和事实事件分别保存，结果和完成证据通过实体关系关联。永久阅读成果独立于临时检查点；请求额度和提交事实独立于可覆盖的生活历史，避免旧备份抹掉已消费额度或触发重投。删除任务或成品只解除结果指针，不抹掉已发生事实。
+当前生活、持续事项、执行步骤和事实事件分开；结果外键及完成证据连接实际成果。阅读成果长期保留，不放入临时检查点。`life_action_admissions` 独立保存请求额度和提交事实，防止覆盖恢复重置额度或重投；删除结果指针不抹掉已发生事实。
 
-夜间日志按本地业务日期组织，动作关联实际任务以支持恢复核对。Cron 与陪伴意图分别管理计划调度和有界主动回合；短期在线信号不是长期生活事实。行为边界见 [生活契约](PROTOCOL.md#生活状态与生活事件)和[调度契约](PROTOCOL.md#调度)。
+夜间账本按本地业务日保存阶段与实际动作。Cron 管计划，陪伴意图管有界等待和回合，在线信号不成为长期事实。行为和恢复分别见 [生活](PROTOCOL.md#生活状态与生活事件)及[调度](PROTOCOL.md#调度)。
 
 ## 记忆、证据与向量
 
 ```mermaid
 flowchart LR
-    memories -->|source_conversation_id| conversations
-    memories -->|source_event_id| life_events
-    memory_evidence -->|memory_id| memories
-    memory_evidence -->|message_id| messages
-    memory_revisions -->|memory_id| memories
-    memory_fingerprints -->|memory_id| memories
-    memory_embeddings -->|memory_id| memories
+    memories --> conversations
+    memories --> life_events
+    memory_evidence --> memories
+    memory_evidence --> messages
+    memory_revisions --> memories
+    memory_fingerprints --> memories
+    memory_embeddings --> memories
 ```
 
-当前内容、原始证据、修订、遗忘指纹和向量分开，管理列表只读摘要，详情按需加载。分类、槽位和来源显式存储，展示话题不承担业务类型判定。
+当前内容、原始证据、修订、遗忘指纹和向量独立，列表只读摘要，详情按需加载。分类/槽位是业务字段，展示话题不承担类型判定。遗忘清除内容和摘录，抑制指纹继续阻止从同一证据重学。
 
-向量是可重建索引，查询先限定账户／预设、模型、实际维度和内容版本，再作精确排序；当前规模采用作用域内精确检索，不维护近似索引。正文与补向量分别提交，补齐失败不撤销正文。遗忘清除内容和摘录，保留抑制指纹以阻止从相同证据重学；证据与维护规则见 [记忆模块](../backend/features/memory/README.md)。
+向量可重建：先限定账户、预设、模型、实际维度和内容版本，再精确排序；当前规模不维护近似索引。正文与补向量分别提交，索引失败不撤销正文，语义依据见 [记忆模块](../backend/features/memory/README.md)。
 
 ## 必要历史
 
-| 对象 | 保留边界与原因 | 实现入口 |
+| 对象 | 保留理由与边界 | 权威入口 |
 |---|---|---|
-| 已知终态任务 | 完整检查点及临时引用默认保留七天，详细诊断保留九十天；请求身份、终态和必要结果继续维持幂等。未知提交及未完成清理不按期限压缩 | [jobs](../backend/features/jobs/service.py)与各业务清理入口 |
-| 影像版本与播放 | 当前或仍被使用的版本持续保留；已结束播放记录七天后释放版本占用，再回收无引用版本 | [visuals](../backend/features/visuals/service.py) |
-| 记忆修订 | 保留最近二十次；明确遗忘清除正文、摘录与修订 | [memory](../backend/features/memory/models.py)、[records](../backend/features/memory/records.py) |
-| 遗忘指纹 | 可失去原记忆指针，仍保留防止旧证据重学所需的抑制身份 | [memory_store](../backend/features/memory/memory_store.py) |
+| 终态任务 | 明确终态且清理完成后，检查点/临时引用七天、诊断九十天；保留请求身份、终态与必要结果以维持幂等，未知和未清理工作不按期限压缩 | [jobs/service.py](../backend/features/jobs/service.py) |
+| 影像版本与播放 | 当前或仍引用的版本持续保护；已结束播放七天后释放占用，再回收无引用版本 | [visuals/asset_references.py](../backend/features/visuals/asset_references.py) |
+| 记忆修订与指纹 | 修订保留最近二十次；明确遗忘清除正文、摘录和修订，指纹可失去原记录仍保留抑制作用 | [records.py](../backend/features/memory/records.py)、[memory_store.py](../backend/features/memory/memory_store.py) |
 
 ## 删除与恢复
 
-| 关系 | 删除语义 |
+| 关系 | 删除后必须保持 |
 |---|---|
-| 账户内记录 | 账户维护先收敛任务并处理文件，再清除所属记录 |
-| 会话 → 消息、内容 → 评论／附件／引用 | 依附数据级联删除；保留的评论回复须先解除被删目标 |
-| 原素材 → 冻结版本、事项／步骤 → 事实 | 来源或结果指针置空，冻结内容和已发生事实保留 |
-| 资产、声音版本 → 活跃引用 | 引用存在时限制删除；解除引用与文件回收按事务边界分阶段执行 |
-| 任务 → 供应商尝试 | 可解除本地任务及账户关联，远端占用和未知结果继续独立核对 |
-| 记忆 → 证据／修订／向量 | 依附数据随记忆清理；遗忘指纹可以继续保留 |
+| 账户 → 所属数据 | 先进入维护态并收敛任务/文件；不可把远端未知当作未执行 |
+| 会话 → 消息；内容 → 评论/附件/引用 | 依附数据级联，保留的评论回复先解除被删目标 |
+| 源素材 → 冻结版本；事项/步骤 → 事实 | 可解除来源和结果指针，冻结内容及事实保留 |
+| 资产、声音版本 → 活引用 | 有引用时限制删除，关系释放与文件回收分阶段执行 |
+| 任务 → 远端尝试 | 可解除本地关系，远端占用独立核对 |
+| 记忆 → 依附索引 | 证据、修订和向量随正文清理，遗忘指纹可继续保留 |
 
-恢复的物理关系按依赖排序：任务详情复用父任务的新主键，循环关系先写可空指针再统一连接。复合外键只对引用目标主键的分量重映射身份，其余分量继续校验归属或配对。任务种类必须匹配唯一业务详情；合法的最小终态身份用于维持幂等，不代表仍有可执行详情。
+导入按依赖排序写入：任务详情复用父任务新主键，循环关系先写可空指针再连接；复合外键仅重映射目标主键分量，归属和配对仍须校验。最小终态任务用于请求幂等，不代表仍有可执行详情。
 
-空库建立见 [配置与迁移](../backend/README.md#配置与迁移)；备份选择、覆盖、文件校验及未知结果处理以 [备份契约](PROTOCOL.md#备份校验与覆盖恢复)为准。
+空库操作见 [配置与迁移](../backend/README.md#配置与迁移)，备份选择、文件校验、覆盖范围和未知结果统一见 [备份契约](PROTOCOL.md#备份校验与覆盖恢复)。
 
 ## 查询设计与验证记录
 
-列表使用稳定游标和明确投影，关联按批读取，精确总数按需查询。索引围绕消息顺序、用户消息预览、内容时间线、任务恢复、生活事件及记忆作用域设置；联合查询不能把所有子对象装进无界结果。
+列表采用稳定游标和明确投影，关联批量读取，精确总数按需查询。索引服务消息顺序、用户预览、内容时间线、任务恢复、生活事件和记忆作用域；不把全部子对象装入无界联合结果。
 
 以下是 **2026-10-25 隔离本机 PostgreSQL** 的测量，SQL 次数包含业务校验与 outbox，排除事务控制、鉴权和外部等待；延迟不含网络、供应商与客户端呈现，不是线上 SLA。未测量的格以“—”表示。
 

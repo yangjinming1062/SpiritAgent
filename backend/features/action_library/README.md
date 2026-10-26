@@ -1,18 +1,17 @@
 # 动作素材
 
-拥有动作语义定义与评审状态。全局语义归 [动作素材与影像播放](../../../docs/PROTOCOL.md#动作素材与影像播放)，定义、评审及恢复规格归 [PIPELINE](../../../docs/PIPELINE.md#动作素材定义与评审)。
+负责独立的动作语义定义与评审，不拥有可播放影像。播放语义见 [动作契约](../../../docs/PROTOCOL.md#动作素材与影像播放)，评审输入与产物要求见 [PIPELINE](../../../docs/PIPELINE.md#动作素材定义与评审)。
 
 ## 入口与边界
 
-| 入口 | 职责 |
-|---|---|
-| [models.py](models.py)、[schemas.py](schemas.py)、[views.py](views.py) | 稳定定义、状态、冻结评审依据与对外投影 |
-| [service.py](service.py)、[review.py](review.py)、[prompts.py](prompts.py) | 受理去重、编辑与独立语义评审执行 |
-| [queries.py](queries.py)、[use_cases.py](use_cases.py) | 只读查询与请求错误转换 |
-| [backup.py](backup.py)、[asset_references.py](asset_references.py) | 定义备份与冻结评审参考的资产引用 |
+[service.py](service.py) 管理受理去重、编辑和评审结算；[review.py](review.py) 调用模型，[prompts.py](prompts.py) 定义任务。[queries.py](queries.py) 与 [views.py](views.py) 返回查询投影，[use_cases.py](use_cases.py) 转换请求错误。
+
+定义保存冻结的身份与评审资料，供本次评审和后续制作核对；字段以 [models.py](models.py)、[schemas.py](schemas.py) 为准。列表按 ID 游标读取摘要，筛选在服务端执行，总数按需查询，不为列表加载完整参考资料。
 
 ## 评审与恢复
 
-账户内动作锁收敛同名且内容相同的提交，复用已有定义。模型提交前持久记录评审中；恢复由 `lifecycle.py` 登记，冻结评审资料的备份和资产引用分别由表中贡献者维护。
+账户动作锁合并同名且内容相同的提交；评审任务按账户串行、同动作单飞。模型调用前核对定义修订并持久化评审中状态，每次调用再次检查执行资格，供应商等待不持事务。
 
-列表按 ID 游标分页，总数按需读取；摘要查询不加载冻结评审资料。桌面、远程和模型检索共用服务端筛选及分页标志。
+评审结论在同一事务更新动作、关联生活步骤和事件。通过才能产生成功步骤；拒绝或暂缓保留原因并结算失败。已进入评审中的异常、取消和重启中断转为暂缓，等待显式重试，不自动重复付费。
+
+[lifecycle.py](lifecycle.py) 登记恢复与收敛，[backup.py](backup.py) 和 [asset_references.py](asset_references.py) 维护冻结资料及文件引用。修改时按 [Scripts](../../../scripts/README.md) 核对重复受理、并发编辑、缺失参考、模型错误、取消和重启，并用真实输入检查语义评审质量。

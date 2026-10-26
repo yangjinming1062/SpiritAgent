@@ -1,174 +1,143 @@
 # Client 渲染层
 
-交互与呈现的工程入口。产品体验归 DESIGN，跨端语义归 PROTOCOL，磁盘缓存归 Client README；本文维护装配、状态所有者和异步资源约束。
+渲染层负责页面状态、会话投影、媒体播放与交互。产品体验归 [DESIGN](../../docs/DESIGN.md)，跨端交付归 [PROTOCOL](../../docs/PROTOCOL.md)，磁盘缓存归 [Client](../README.md#资产与历史缓存)。本文维护代码分层、状态所有者及异步资源约束。
 
 ## 分层与目录
 
 | 层 | 边界 |
 |---|---|
-| `app` | 窗口外壳、按业务组织的 features、导航与跨域编排；runtime／workflows 不反向导入 windows，窗口间不互相导入 |
-| `modules` | 不依赖 app；conversation 可消费 media 展示原语，其余协作由 app 装配 |
-| `shared` | 无业务依赖 |
-| `@ipc` | 跨进程契约，renderer 不重复定义 |
+| `app` | 窗口外壳、页面、导航与跨域编排；runtime／workflows 不反向导入 windows，窗口实现不互相导入 |
+| `modules` | 各业务状态与能力，不依赖 app；conversation 可使用 media 展示原语，其余跨域协作由 app 装配 |
+| `shared` | 无业务依赖的组件、端口与平台适配 |
+| `@ipc` | 跨进程真源，renderer 不复制类型 |
 
-跨模块只经公共入口，app 另可用 `character/rendering` 呈现入口；模块内部用相对路径，character 渲染域经本模块公共入口访问角色能力。[架构规则](../scripts/architecture-rules.mjs) 经 ESLint 解析实际路径，覆盖别名与相对导入、当前和新增模块／窗口、运行时值依赖环；纯类型引用不作为运行时环。只有 [platform/desktop.ts](shared/platform/desktop.ts) 读取 preload 全局桥，其他代码按用途消费窄能力接口；后端数据与资产仍经主进程请求，直连例外逐处说明 URL 来源。
+跨模块走公共入口，app 另可使用 `character/rendering`；模块内用相对路径。只有 [desktop.ts](shared/platform/desktop.ts) 访问 preload 全局桥，其他代码消费窄接口；后端请求与资产经主进程，直连例外须注明 URL 来源。[架构门禁](../scripts/architecture-rules.mjs) 解析真实路径、窗口边界和运行时依赖环，纯类型引用不算运行时环。
 
-| 改动 | 入口 |
+| 修改任务 | 入口 |
 |---|---|
-| 宿主与独立窗口 | [sprite-entry.tsx](sprite-entry.tsx)、[bootstrap/sprite.tsx](app/bootstrap/sprite.tsx)、[bootstrap/surface.tsx](app/bootstrap/surface.tsx) |
-| 桌面模式与影像播放 | [bootstrap/surface.tsx](app/bootstrap/surface.tsx)、[windows/desktop](app/windows/desktop/)、[visuals](modules/visuals/) |
-| 网关与账户 | [gateway-runtime.ts](app/runtime/gateway-runtime.ts)、[gateway-host-runtime.ts](app/runtime/gateway-host-runtime.ts)、[gateway-event-router.ts](app/runtime/gateway-event-router.ts)、[account-lifecycle.ts](app/workflows/account-lifecycle.ts) |
-| 引导、激活与启动失败 | [onboarding](app/onboarding/) |
-| 角色、动作、拖拽与空间 | [modules/character](modules/character/)、[sprite-stage.tsx](app/components/sprite-stage.tsx) |
-| 衣柜静态造型素材 | [衣柜页](app/features/appearance/appearance-page.tsx)、[造型详情](app/features/appearance/outfit-detail.tsx)、[衣柜状态](modules/character/wardrobe/wardrobe-store.ts)、[窗口造型来源](modules/character/wardrobe/stage-source.ts) |
-| 公共对话、设置与状态交接 | [conversation-page.tsx](app/features/conversation/conversation-page.tsx)、[app-settings.tsx](app/features/settings/app-settings.tsx)、[app-ui-state.ts](app/workflows/app-ui-state.ts) |
-| 对话与音频联动 | [modules/conversation](modules/conversation/)、[modules/speech](modules/speech/)、[conversation-speech.ts](app/workflows/conversation-speech.ts) |
-| 动态、日记与记忆页 | [modules/posts](modules/posts/)、[modules/diary](modules/diary/)、[memory-section.tsx](app/features/companion/memory-section.tsx) |
-| 环境素材、动作与影像页 | [scene-store.ts](modules/scene/scene-store.ts)、[动作页](app/features/actions/actions-page.tsx)、[影像页](app/features/visuals/visuals-page.tsx)、[影像状态](modules/visuals/) |
-| 生活区、事项与生活记录 | [生活模块](modules/life/)、[生活页面](app/features/life/) |
-| 文案与主题 | [strings/dictionaries](shared/strings/dictionaries/)、[shared/panel](shared/panel/)；`en` 按 `zh` 类型校验，界面外壳与显示件文案取自字典，引导问答、人格预设与模块兜底失败文案仍是硬编码中文 |
-| 通用显示件 | [shared/panel](shared/panel/)、[shared/components](shared/components/)；业务页提供文案与回调，显示、确认与焦点约束由共享件统一 |
-| 跨端文案与错误归类 | 根 [shared](../../shared/)（`ui-copy.ts`、`error-classification.ts`）；两端的中性措辞与失败归类只在此定义，客户端与手机端共用 |
+| 窗口装配与账户恢复 | [sprite.tsx](app/bootstrap/sprite.tsx)、[surface.tsx](app/bootstrap/surface.tsx)、[account-lifecycle.ts](app/workflows/account-lifecycle.ts) |
+| 网关事件 | [gateway-runtime.ts](app/runtime/gateway-runtime.ts)、[gateway-event-router.ts](app/runtime/gateway-event-router.ts)、[handlers](app/runtime/handlers/) |
+| 引导、激活与恢复 | [onboarding](app/onboarding/) |
+| 精灵、手势与空间 | [character](modules/character/)、[sprite-stage.tsx](app/components/sprite-stage.tsx) |
+| 生活浏览 | [life](modules/life/)、[生活页面](app/features/life/) |
+| 对话、语音与执行过程 | [conversation](modules/conversation/)、[speech](modules/speech/)、[conversation-speech.ts](app/workflows/conversation-speech.ts) |
+| 资料、声音与记忆 | [companion](app/features/companion/) |
+| 衣柜、环境、动作与影像 | [appearance](app/features/appearance/)、[scene](modules/scene/)、[actions](app/features/actions/)、[visuals](modules/visuals/)、[影像页](app/features/visuals/visuals-page.tsx) |
+| 动态、日记与设置 | [posts](modules/posts/)、[diary](modules/diary/)、[settings](app/features/settings/) |
+| 通用 UI 与文案 | [panel](shared/panel/)、[components](shared/components/)、[字典](shared/strings/dictionaries/)；跨端中性文案与错误分类归根 [shared](../../shared/) |
 
 ## 装配与状态归属
 
-`app/windows` 管精灵、主窗口与桌面外壳，`app/features` 按场景、外观、动态、日记、对话、执行轨迹及设置组织可复用页面；统一导航归 `app/navigation`。主窗口与桌面共用 [surface.tsx](app/bootstrap/surface.tsx) 的账户、网关与 Provider 装配，并经 [app-content-page.tsx](app/components/app-content-page.tsx) 分派非聊天业务页；窗口内部实现不作为其他窗口的依赖。
+窗口通过 `app/bootstrap` 装配账户、网关和 Provider，共用 `app/features`、`app/navigation` 与 [app-content-page.tsx](app/components/app-content-page.tsx)。[bind-presentation.ts](app/bootstrap/bind-presentation.ts) 在首次渲染前注入窄端口，未绑定端口调用立即失败；不能借 barrel 导入副作用装配资源。
 
-[bind-presentation.ts](app/bootstrap/bind-presentation.ts) 在渲染前绑定 [presentation-ports.ts](shared/presentation-ports.ts) 的窄端口，角色、语音和窗口能力显式注入，不依赖 barrel 副作用。新增端口用 `createPort`，未装配调用即抛错；订阅与注入随所有者释放。
-
-| 状态 | 所有者与消费方式 |
+| 状态 | 所有者 |
 |---|---|
-| 音频播放 | speech，conversation 持投影；app 工作流连接二者 |
-| 表现优先级、偏好与空间 | character 统一裁决，窗口不重建状态机 |
-| 会话数据与流式回合 | conversation runtime；视图只持导航、输入与展示资格 |
-| 窗口开关、附件信箱与播放认领 | 主进程，来源窗口不能只写本地 store |
-| 跨模式页面、会话、草稿与阅读位置 | 主进程账户快照；`app-ui-state.ts` 捕获与恢复，渲染层确认交接完成后才释放来源资格 |
+| 会话历史、流式回合、待发批次 | conversation runtime；`chat-store.ts` 管选择、注册与引用回收 |
+| 音频队列与合成 | speech；conversation 持投影，app 工作流连接两者 |
+| 表现优先级、偏好与空间 | character；窗口不另造状态机 |
+| 开窗、附件信箱、显示资格 | 主进程；来源窗口不能只写本地 store |
+| 跨模式页面、草稿、筛选与阅读位置 | 主进程账户快照；[app-ui-state.ts](app/workflows/app-ui-state.ts) 捕获、恢复并确认交接 |
 
-[conversation-activity.ts](app/workflows/conversation-activity.ts) 汇总各会话与主进程工具活动，声音和瞬态优先级仍由 character 裁决。
+[conversation-activity.ts](app/workflows/conversation-activity.ts) 汇总会话与本机工具活动，声音和瞬态仍由 character 裁决。订阅、注入和计时器随所属运行态释放。
 
 ## 事件与异步生命周期
 
-制作页通过 `shared/panel` 的 `CreationWorkspace` 将页头和操作区放在正文滚动容器之外，`CreationFeedback` 在相关按钮或预览旁呈现普通文字与图标，不显示横幅或预留顶部状态区域。按钮已表达当前阶段时，调用处省略反馈标题，相应操作区通过 `aria-live` 播报阶段变化；反馈保留补充说明、耗时提醒与恢复操作，无内容时不占位。`CreationActionBar` 只维护操作区样式、不自行吸附。业务模块投影真实阶段与恢复能力，公共组件不发请求、不推测进度。结果未知时先核对服务端状态，结束本地等待提醒不等于取消原任务。
+`app/runtime` 先订阅再读快照，网关按账户与 `session_id` 把事件路由给保留的 runtime。业务请求经 [resource-request.ts](shared/lib/resource-request.ts) 传稳定操作标识，窗口卸载不关闭主进程网络。
 
-共享显示件只呈现调用方判定的状态与文案，不发业务请求、不读业务 store、不推测进度。折叠与确认的焦点约束由 `use-dialog-focus` 与 `ConfirmDialog` 统一承担。
+- store／工作流用 [captureAuthScope](shared/lib/authed-api.ts) 守卫鉴权会话及清理代次，组件用 [use-async-guard](shared/hooks/use-async-guard.ts) 守卫挂载和请求代次。旧回包不得写入新账户、新查询或新草稿。
+- [storage.ts](shared/lib/storage.ts) 登记账户键和恢复回调，换号清内存并重挂载；重置期不回写索引，命名空间就绪后才应用云广播。`runner-status.ts` 的快照不能覆盖较新事件，握手超时须进入可恢复错误态。
+- 用户提交保留稳定请求身份，响应不明先查回执，停止绑定具体回合。挂载先应用快照再按水位合并事件；缺少流基线不应用增量。媒体终态和历史失效见 [历史同步](../README.md#历史同步)。
+- 未读确认取所属视图的可见性。动态、日记各自消费服务端镜像；[proactive-delivery.ts](app/workflows/proactive-delivery.ts) 仅对合格舞台发气泡或声音，不可见消息仍进入未读，工作会话不跳入轻语。
+- 错误分类经根 `error-classification.ts`，显示经 `ipc-error.ts`；业务正文错误用 `notifyError`。与状态相关的错误行内显示，动作失败用 toast，同一失败不重复呈现。
 
-声音管理与引导复用同一制作组件。[voice-creation-store.ts](app/features/companion/voice-creation-store.ts) 按账户会话保存设计、克隆请求与输入和候选，页面失活或卸载不取消制作；录音、样本上传、播放与页面确认回调继续遵守活动资格。换号和账户清理使原任务回调失效，显式取消仍等待原任务的服务端回执。声音页介绍与当前声音摘要在正文中滚动，分类与主操作保留于有界制作区，进度放在主操作旁。`DirectoryShell` 在矮窄面板改用可横向滚动的单行分类，并保持所选分类可见，为最小桌面面板保留制作空间。
+引导 flow 只装配导航及未提交表单，`onboarding-draft.ts` 串行保存并按服务端 `next_field` 恢复，本地编辑优先。读取失败暂停重试，不能当作新引导覆盖。头像和声音各自持有异步制作状态。
 
-`app/runtime` 管理账户与窗口的 IPC 订阅，React Hook 绑定启停。各窗口先订阅再读连接状态，通过类型化 HTTP 操作恢复会话；主进程合并同会话的并发快照，视图释放不关闭网络。业务请求经 [resource-request.ts](shared/lib/resource-request.ts) 提交稳定操作标识，账户与请求代次使旧实例和迟到结果失效。网络连接与设备派发归[主进程网关](../main/README.md#账户网关与窗口订阅)。
-
-网关路由先核对认证状态，再按 `session_id` 交给该账户保留的 runtime；角色、工具展示和投递由 [handlers](app/runtime/handlers/) 处理，场景、动态、日记进入所属 module。
-
-- store／工作流用 [captureAuthScope](shared/lib/authed-api.ts) 核对鉴权会话与清理代次，组件用 [use-async-guard](shared/hooks/use-async-guard.ts) 核对挂载与代次；失败记录经 `apiSucceeded`，错误文案经 `ipc-error.ts`。
-- 失败文案与失败归类只经 [ipc-error.ts](shared/lib/ipc-error.ts) 的 `failureText` 与根 [error-classification.ts](../../shared/error-classification.ts)；带后端正文的失败用 [notifications.ts](shared/store/notifications.ts) 的 `notifyError` 上报。与状态绑定的失败走行内 `ErrorBanner`，动作型失败走 toast，两者不重复呈现。
-- [storage.ts](shared/lib/storage.ts) 登记账户持久键、清理及恢复回调。换号释放内存并按 `accountId` 重挂载，重置期间不回写索引；所属账户命名空间切换完成后才应用云偏好广播。全局缓存保留和移除语义归 PROTOCOL。
-- [runner-status.ts](shared/store/runner-status.ts) 先订阅后读快照，同清理代次共用在途读取，迟到快照不能覆盖新事件或新账户。网关握手超时落到 `error`，不能停留 `connecting`。
-- 引导 flow 只装配导航与未提交表单，问题和恢复路由为纯定义；`onboarding-draft.ts` 持串行保存与读取守卫，头像和音色流程各自管理异步结果。引导通过 REST 逐字段增量保存，按服务端 `next_field` 续答，本地非空编辑优先。草稿读取失败暂停待重试，不能当作新引导覆盖。
-- 用户提交携稳定 `request_id`，响应不明时先查询回执；停止绑定具体回合。其他设备的保存通知按消息 ID 插入，不绑定本地待确认草稿。挂载期间主进程缓冲会话事件，先发布内部 `session.snapshot`，再按水位交付后续帧；缺少当前流基线时不应用增量投影，账户通知独立消费。已提交消息按 ID 合并，入列与提醒分开；未读只在所属视图可见时清除。动态、日记菜单消费服务端未读镜像，主窗口与桌面补查，页面确认快照，迟到请求仍受账户和挂载守卫。
-- [proactive-delivery.ts](app/workflows/proactive-delivery.ts) 的气泡与声音复用舞台可见性；不可见时消息仍进入未读，恢复后由待读气泡承接。工作会话跳转不进入轻语。
+制作组件只展示业务方提供的阶段和恢复动作，不发请求、不推测进度。`CreationWorkspace` 分离正文与操作区，`CreationFeedback` 避免重复按钮阶段，`CreationActionBar` 不自行吸附；确认与焦点由 `use-dialog-focus` 和 `ConfirmDialog` 管理。未知结果的本地等待结束不代表服务端取消。
 
 ## 主窗口与桌面装配
 
-主窗口与桌面共用 [features](app/features/) 和导航，各入口选中位置、生活页筛选／事项／阅读位置及影像制作草稿随主进程账户快照交接。独立生活区由窗口外壳装配，聊天组件不读取生活数据；桌面生活与聊天分别使用内部窗口。对话页切页时保留实例并关闭活动资格；动态媒体查看器在离开来源页签后释放。衣柜与背景的文字、选中项保存于账户缓存；引导头像、衣柜与背景的参考图片字节由 [creation-draft-image.ts](shared/lib/creation-draft-image.ts) 按账户保存，随明确移除账户清理，不作为服务端成品。衣柜与背景订阅参考图的跨窗口通知。背景表面仅消费主进程缓存媒体及播放控制。窗口规则归 [DESIGN](../../docs/DESIGN.md#桌面模式)，轻语规则归 [窗口与会话](../../docs/DESIGN.md#窗口与会话)，交接与资格归 [桌面呈现](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。`ConversationViewProvider` 持视图，[chat-store.ts](modules/conversation/chat-store.ts) 管理会话 runtime。
+主窗口外壳装配独立生活区，聊天组件不读取生活数据；桌面生活和聊天分别使用内部窗口。共用页面的筛选、草稿及阅读位置参与账户快照，来源视图在目标确认恢复后才释放资格。桌面内部窗口集合仅在本次会话有效，不跨启动恢复。
 
-[panel-activity](shared/context/panel-activity.tsx) 向子组件和 Portal 传播活动资格，子面板不能解除父级禁用；媒体查看器归打开它的视图，失活时隐藏并暂停。视图切换保留各自草稿与附件，录音资格失效后旧麦克风或转写结果不能因重新激活恢复。布局、位置和防抖保存守卫账户清理代次。
+[panel-activity](shared/context/panel-activity.tsx) 把活动资格传入子面板和 Portal，子级不能解除父级禁用。切页保留对话实例及草稿，但关闭录音和新播放资格；旧麦克风或转写回包不能因重新激活而复活。查看器归发起视图，离开来源页释放。参考图片由 [creation-draft-image.ts](shared/lib/creation-draft-image.ts) 按账户保存并跨窗通知，不等同服务端成品。
 
-[activity.ts](modules/character/activity.ts) 按账户与承载代次向主进程同步锁屏状态，失败允许同值重试；桌面暂停同时核对系统锁屏状态。工具派发归主进程，桌面表面停用精灵空间行为。
+[desktop-visual-wallpaper.ts](app/windows/desktop/desktop-visual-wallpaper.ts) 消费呈现状态、认领和回执；静态回执共用 `visuals-store.ts` 的目标检查，按请求、呈现代次和状态修订去重。回执冲突不当作图片失败，服务端退避期间不重复上报。缓存与预加载使用成品 ID、版本及去签名不可变路径，不用签名 URL 作持久键。播放语义归 [呈现契约](../../docs/PROTOCOL.md#影像成品与模式隔离)。
 
-[desktop-visual-wallpaper.ts](app/windows/desktop/desktop-visual-wallpaper.ts) 消费影像呈现状态与播放指令，负责播放认领与回执；桌面播放完整影像，图片即持续画面，视频按动作 `clip_kind` 循环或短时播放后返回保留的持续画面。`queued` 只表示受理，实际回执才更新呈现事实，回执区分完整图片、完整视频与窗口静态投影。两种模式的静态回执共用 `visuals-store.ts` 的有效目标检查与冲突处理，按请求、呈现代次和状态修订去重；回执失败不转报为图片失败，服务端退避期间不重复尝试。播放缓存与预加载按稳定 ID、成品版本与剥除签名后的不可变路径识别，签名 URL 不作持久键。影像、制作与播放账本语义见[影像呈现契约](../../docs/PROTOCOL.md#影像成品与模式隔离)。
+[背景播放器](app/windows/desktop/desktop-background-entry.tsx) 双缓冲等实际首帧，切换先预加载；短动作只能回到仍有效的持续画面。预览、播放和过渡共用 [desktop-media-geometry.ts](../shared/desktop-media-geometry.ts)，媒体失败保留当前画面并释放临时 URL；主进程同时核对账户与选中路径。
 
-[影像页](app/features/visuals/visuals-page.tsx) 按库、制作区与详情拆分，动作页独立维护动作语义定义与评审状态。重做期间保留当前成品，源素材删除后仍使用冻结来源；库内预览不产生播放回执。筛选、选中项与滚动位置经 UI 快照交接，迟到结果受账户与请求代次守卫，制作完成不抢选或重新打开已离开的页面。
+桌面根组件持窗口状态，Dock 菜单共用互斥态和面板代次。旧启动回执不能关闭新面板，失焦卸载也不丢失败反馈；固定标记刷新复用当前目录版本，手动重扫才换句柄。图标按可见条目分批读取。下拉框留在面板 DOM 内，避免原生弹窗导致失焦收起。
 
-衣柜与环境素材的库页共用 [asset-library-header.tsx](app/components/asset-library-header.tsx) 的设置卡片、搜索与创建工具栏，以及 [asset-library-card.tsx](app/components/asset-library-card.tsx) 的紧凑卡片和按可用宽度排列的网格。各页面提供状态与操作，公共组件不发业务请求。衣柜在页面所有者内按名称和描述即时筛选本地列表，进入详情或创建页再返回保留筛选；环境沿用服务端搜索与分页，搜索需提交。卡片预览按素材类型选档位展示：竖版立绘 4/5，宽幅素材 16/9，均不裁切原图。
-
-[背景播放器](app/windows/desktop/desktop-background-entry.tsx) 双缓冲等待实际呈现的首帧；共同基准且允许自然衔接的短动作在循环接点切入，其余画面及上传视频的循环接点使用淡化。短动作返回仍有效的保留循环，影像或素材替换后不能返回旧画面。管理预览、视频和过渡帧共用 [画幅布局](../shared/desktop-media-geometry.ts)，按实际媒体与视口确定裁切或居中内容区域，完整显示时让出模糊底层；库页缩略图完整展示原图。播放规则归 [PIPELINE](../../docs/PIPELINE.md#组合影像制作)。媒体加载失败保留当前画面，按主进程暂停状态控制播放并回收媒体 URL。切换前先预加载持续画面，成功后才请求切换；主进程媒体桥同时守卫账户和选中路径。
-
-桌面根组件持有窗口与会话状态，悬浮底栏组合外部应用 Dock、屏幕居中的伙伴头像和固定产品导航；底栏五个导航入口与包含聊天的内部窗口类型分开定义，聊天由头像打开，头像上方的待读气泡读取会话待读消息并经同一入口打开对话。桌面布局不跨启动保留任何状态，内部窗口集合仅在本次会话有效，进入桌面不恢复上次打开的窗口。桌面彩色 SVG 集中于 [assets/desktop](../assets/desktop/)，通过 Vite `BASE_URL` 加载；窗口模式导航使用 Tabler 图标。右下角控制入口独立展开状态与桌面操作。主进程与 renderer 共用 [desktop-layout.ts](../shared/desktop-layout.ts) 的尺寸，左右区域等宽并按内容限宽，溢出区域各自滚动。底板装饰与向上展开的弹层分离，避免 backdrop-filter、变换或滚动容器裁切菜单；头像光环与未读声波使用独立装饰层，仅动画缩放和透明度，不参与命中或改变布局，声波不消费录音或音频分析状态。交互区域只覆盖实际底栏、头像、待读气泡、按钮、弹层及连接间隙，透明空白继续穿透。
-
-桌面主题在自身作用域提供实底表面，包括共享弹层的主题覆盖；内部窗口保留 `contain: layout`，使固定定位的表单弹层受所属窗口约束。具体视觉与未读行为见 [桌面模式](../../docs/DESIGN.md#桌面模式)。
-
-账户菜单、应用面板、条目菜单与控制面板共用互斥开启态，打开时停用面板活动与角色右键菜单。Dock 持有启动请求及面板代次，失焦卸载面板不丢失失败反馈，旧回执不能收起新面板；主动关闭与失焦关闭分别处理焦点归还。图标按可见条目分批取回，回执按扫描版本校验，固定标记刷新失败不废弃同代图标；固定配置变化时携当前目录版本重新投影固定标记，避免缓存到期重扫打断键盘焦点，手动重扫才主动更新目录句柄。桌面控制面板用 `PanelSelect` 将下拉框留在弹层 DOM 与命中区，避免原生弹窗触发失焦收起。
+几何使用主进程共享的 `desktop-layout.ts`。底板装饰与向上弹层分开，内部窗口保留 `contain: layout`；光环和声波只变透明度／缩放，不消费录音音量、不扩大命中。命中区仅含实际控件、弹层与连接间隙，空白穿透。桌面 SVG 经 Vite `BASE_URL` 加载。外观和窗口交互见 [桌面模式](../../docs/DESIGN.md#桌面模式)。
 
 ### 生活读取与浏览
 
-[生活模块](modules/life/) 持有后端权威快照的只读副本。生活区和生活页共用状态与聚焦事项的合并读取，列表、详情与事件共用请求守卫；切换查询清空旧内容，同一查询刷新失败保留内容并允许重试。详情展示步骤、等待原因和成果，阅读笔记保留来源与范围；事项调整通过聊天处理。事件、连接恢复和实际可见性变化触发刷新；可见的生活窗不要求置前，浏览不推进生活判断或制作。生活记录累计展开更早事件，在已展开范围内按主体、类型和结果合并，跨接口分页的同一成果只显示一次。生活筛选、事项、记录展开范围和阅读位置参与账户 UI 快照；导入和事项定位应用到实际滚动位置，后台刷新不打断阅读。资料页不另持近况副本。
+[生活模块](modules/life/) 持只读副本，生活区和生活页共用状态／聚焦事项的合并读取；列表、详情与事件守卫查询代次。新查询清旧内容，同查询刷新失败保留内容。事件、连接恢复及实际可见性触发刷新，可见生活窗不要求置前，读取不推进判断或制作。
+
+生活记录按已展开范围合并主体、类型和结果，跨页重复成果只展示一次。筛选、事项、展开范围与实际滚动位置参与模式交接；后台刷新不打断阅读，资料页不另持近况副本。事项调整经聊天，步骤、等待原因及阅读范围来自后端，事实边界见 [生活契约](../../docs/PROTOCOL.md#生活状态与生活事件)。
 
 ## 角色呈现契约
 
 ### 状态与动作
 
-[companion-store.ts](modules/character/companion-store.ts) 管表现优先级，瞬态恢复、声音与程序反馈仍由原状态机管理。精灵窗和内嵌生活区使用服务端实际呈现的冻结造型；来源可以是影像的静态投影或独立的静态素材快照，实际显隐由主进程快照、本窗可见性和舞台相交区域共同裁决，收起或滚动出视口的生活画面不参与呈现。影像播放由独立桌面播放器与回执链管理。
+[companion-store.ts](modules/character/companion-store.ts) 统一表现优先级、声音和程序反馈。精灵与生活区消费服务端冻结的影像静态投影或独立静态素材，资格由主进程快照、本窗显隐和舞台相交区域共同决定；收起或滚出视口不能报已呈现。完整影像由桌面播放器管理。
 
 ### 打扰与自主行为
 
-档位、活动和偏好由 character 管理；仅宿主拥有完整活动信号并推送生效档位，其他窗口经 storage 同步偏好和临时安静。活动覆盖只将游戏／全屏沉浸映射到静止，IDE／阅读专注不压档。
-
-[activity.ts](modules/character/activity.ts) 快照单飞，停止使旧结果失效，成功上报才消费变化；只报粗粒度信号，不传应用名或标题。主动行为与影像决策由 Backend 结合生活状态处理，renderer 只消费事件、呈现结果和实际回执。政策与体验归 [主动陪伴](../../docs/DESIGN.md#主动陪伴)。
+仅精灵宿主持完整活动信号并上报生效档位，其他窗口同步偏好和临时安静。[activity.ts](modules/character/activity.ts) 单飞读取，停止使旧结果失效，成功上报才消费变化；只传粗粒度状态，不上传应用名或标题。游戏／全屏可压为静止，IDE／阅读专注不压档。自主判断归 Backend，renderer 不用本地计时器另造生活；已有静态目标恢复与主动重选的区别见 [呈现契约](../../docs/PROTOCOL.md#影像成品与模式隔离)。
 
 ### 直接交互与命中
 
-[sprite-stage.tsx](app/components/sprite-stage.tsx) 持手势和捕获；[gesture.ts](modules/character/sprite/gesture.ts) 将整体形变交给容器，情绪放大只作用形象层。光晕、形变和透明留白不扩大像素命中。
+[sprite-stage.tsx](app/components/sprite-stage.tsx) 持手势和捕获，[gesture.ts](modules/character/sprite/gesture.ts) 将整体形变交容器、情绪缩放交形象层。绘制和命中共用最终 alpha，留白与装饰不扩大范围。
 
-- mousemove 时先捕获，异步遮罩更新后静止指针也重判；相同捕获状态复用在途或成功 IPC，失败可重试，穿透释放防抖。
-- 按下后持有指针和窗口捕获，取消、失焦、隐藏及卸载统一释放，取消不触发点击或拖拽反馈；单击等待双击判定。
-- 命中按捕获 ID 分组：精灵窗 0，主窗口和交互桌面经 `CaptureWindowIdContext` 使用 1，Portal 随所属窗口；主窗口不能挂载 ID 0 的捕获循环。
-- 菜单只登记自身区域，关闭事件不穿透成手势。拖拽等反应池经 `speakScripted`，不直连语音引擎。
+按下后持有指针及窗口捕获，取消、失焦、隐藏或卸载统一释放，取消不触发反馈；单击等待双击判定。mousemove 先捕获，异步遮罩就绪后重判静止指针，相同状态复用在途 IPC，失败可重试，穿透释放防抖。精灵捕获 ID 为 0，主窗口／交互桌面及其 Portal 经 `CaptureWindowIdContext` 使用 1，不能混挂捕获循环。菜单仅登记自身区域，关闭不穿透成手势；预制反馈经 `speakScripted`。
 
 ### 偏好与形象水合
 
-水合只恢复偏好，不把设备生效值回写。角色卡 store 管已保存资料，页面持草稿；事件、聚焦和分析轮询不覆盖局部编辑。外观预览绑定不可变路径，新图未就绪不确认，超时保留草稿身份。
-
-全身参考复用在途读取并守卫换号、头像和卸载；历史索引按账户持久化，缩略图经磁盘缓存。服务端会替换清理草稿，水合须用 `preferCache` 预取。衣柜的替换政策由后端校验，renderer 只呈现与提交。
+水合恢复偏好，不将设备生效值回写。角色卡 store 管已保存资料，页面持编辑起点及草稿，事件与轮询不覆盖编辑。外观候选按不可变路径校验，新图未就绪不确认；全身参考共享在途读取并守卫账户、头像及卸载，草稿清理前按 `preferCache` 预取所需素材。
 
 ### 空间行为
 
-[spatial.ts](modules/character/spatial.ts) 装配位置、比例和舞台生命周期；`spatial/geometry.ts` 计算几何，`motion.ts` 持移动与缩放 RAF。默认比例经主进程跨窗同步并平滑生效。
-
-窗口位置只由用户拖拽和直接交互反馈改变，不依赖动作或探身素材；隐藏、最小化或锁屏时暂停交互并在恢复后重新约束。伙伴的生活和影像决策不直接驱动窗口移动。
+[spatial.ts](modules/character/spatial.ts) 装配位置、比例与舞台，`spatial/geometry.ts` 计算几何，`motion.ts` 管 RAF。默认比例经主进程跨窗同步。窗口位置由用户拖拽及直接交互改变，生活和影像判断不驱动窗口移动；隐藏、最小化或锁屏停止交互，恢复后重新约束几何。
 
 ## 会话与媒体
 
 ### 会话与草稿
 
-每个会话 runtime 显式装配唯一状态、消息流、提交队列与历史恢复控制器，纯消息规则、历史投影与合并独立于界面。`chat-store.ts` 只管会话选择、runtime 注册与引用回收；视图、执行轨迹和参数页直接持有所属 runtime，不通过全局当前会话投影转发异步操作。
+每个会话 runtime 显式装配状态、消息流、提交队列和历史控制器；视图、执行轨迹及参数页直接持所属 runtime，不经全局“当前会话”转发异步结果。挂载先水合预设、权限和设置，再投影历史。本地快照代次用于去重，事件水位仅判断覆盖关系，两者不能混用。
 
-会话历史、待发批次与流式数据归 runtime，视图持输入草稿；挂载先水合所属 runtime 的预设、权限与设置，再投影历史。主进程为每次合并读取分配本地快照代次，广播与 HTTP 返回共用代次，视图只应用一次；事件水位只判断帧是否被覆盖。首次水合保留在途回合，历史修改使旧回包失效。快照与重连处理归 [Client 历史同步](../README.md#历史同步)，连接重放游标由主进程持有。
+附件绑定加入时的会话，视频上传完成才允许发送；编辑与普通草稿分开，编辑不解析 Slash。撤回附件为单槽，多图只回填首张，其余提示仅发起窗口可见。主对话草稿按会话隔离，轻语另有作用域。
 
-- 附件绑定加入时的会话，视频上传完成才允许发送，失效回包不回填。编辑与普通草稿分开，编辑文本不解析 Slash，成功消费修订事件；撤回附件为单槽，多图只回填第一张，其余提示只在发起窗口显示。
-- [preset-labels.ts](modules/conversation/preset-labels.ts) 以字典翻译系统预设；后端目录为中文，中文字典须同步，未知项回落目录值。目录查询在同网关、同清理代次共享在途和成功缓存。
-- 只读及历史操作权限消费 `info.kind` 与 `info.is_automation`；主陪伴会话由 `GET /api/sessions/main` 确定，[conversation-state.ts](modules/conversation/conversation-state.ts) 持有并持久化固定入口与主动消息的目标 ID，列表和投递事件校准同一值。持久 ID 不代表当前窗口已水合。
-- 会话参数呈现后端生效值，只接受当前会话最新保存结果；斜杠目录仅服务自动补全与确认，实际派发由后端判定。
-- 公共对话页按所属 runtime 水合的 `info.system_preset_id` 选择陪伴或专业呈现，用户拆泡使用同一归属，不依赖主会话 ID 或列表是否加载；任务会话只读，轻语固定使用主陪伴会话且不装参数面板。主对话草稿按会话隔离，与轻语使用独立作用域；导航、草稿和阅读位置接入模式交接快照。
+预设名由 [preset-labels.ts](modules/conversation/preset-labels.ts) 翻译，目录查询按网关与清理代次共享缓存；只读与历史权限取后端 `info.kind`、`info.is_automation`。主陪伴 ID 由主会话接口校准并由 `conversation-state.ts` 持久化，保存 ID 不代表视图已水合。对话外观按所属 runtime 的预设选择，不能靠列表或主会话 ID 猜测。参数只采纳当前会话最新响应，Slash 目录只服务补全，执行由后端判定。
 
 ### 语音播放
 
-speech 持唯一播放队列与台词合成，点播和自动连播共用队列；[conversation-speech.ts](app/workflows/conversation-speech.ts) 把稳定消息 ID、气泡索引和会话映射到收听记录，临时组件 ID、签名 URL 不作持久键。乐观进度与主进程版本快照合并，不回退已听状态或当前断点。
+speech 持唯一合成与播放队列，自动和点播共用。[conversation-speech.ts](app/workflows/conversation-speech.ts) 用稳定消息 ID、气泡索引及会话映射收听记录，临时组件 ID 和签名 URL 不持久化。乐观进度与主进程版本合并，不回退已听状态或断点。
 
-新语音入队与点播要求视图具备活动资格；已开始的下载、播放与已入队的连播只要求所属会话仍有可见视图，失焦或展开菜单不打断。视图登记变化合并到同一轮结束后检查，避免主对话与轻语交接时误判隐藏。挂载、真实可见、锁屏和录音使播放资格失效时，旧下载与播放回包作废，显示聊天不重新启动队列。结果区分完成、中断和失败，声音抢占不标记不可用。AudioContext 预热后保持 running，避免 suspend／resume 与 MediaElementSource 重路由叠加丢首帧。
-
-保存语音与重试归 [语音契约](../../docs/PROTOCOL.md#语音保存与重试)。预制反应和音色试听用 `speakScripted`；朗读清理不修改聊天原文。限额与字节缓存由主进程统一执行。
+新入队要求活动资格，已开始播放及连播只要求所属会话仍有可见视图；失焦或菜单不打断。视图登记变动在同轮末合并，防止窗口交接误判隐藏；锁屏、录音或真正隐藏使旧下载和播放回包失效，重新打开不自动重启队列。结果区分完成、中断和失败，抢占不等于不可用。AudioContext 预热后保持 running，避免 suspend／resume 与重路由叠加丢首帧。预制反馈和试听使用 `speakScripted`，保存与重试归 [语音契约](../../docs/PROTOCOL.md#语音保存与重试)。
 
 ### 媒体查看
 
-查看器按窗口挂载，经端口打开；图片复用共用灯箱，主窗口的浮层与命中限内容面板。`MEDIA:` 在实时和历史投影移除，跨 chunk 保留待解析前缀，结构化字段才是展示来源。图片卡和查看器共用同 URL 的在途与成功解析，失败可重试；临时 URL 按 MIME 创建，卸载回收。
+查看器按窗口挂载，经端口打开，图片共用灯箱并限制在所属内容面板。正文投影移除 `MEDIA:`，跨 chunk 保留待解析前缀，结构化字段才是展示来源。图片卡和查看器共享同 URL 的解析，失败可重试；对象 URL 按 MIME 建立并随所有者释放。
 
 ## 记忆与场景
 
-伙伴分类使用容器宽度切换侧栏与可换行顶部按钮，详情返回所属功能列表。资料、角色卡和记忆采用显式保存；[companion-editor-state](app/features/companion/companion-editor-state.ts) 按账户持有编辑起点和草稿，并参与主进程视图交接，后台刷新不覆盖草稿。记忆页按预设保留搜索、分页、选中项与其他未保存草稿，服务端返回筛选总数；个人资料按整批字段保存。日记 store 只管日记，记忆编辑页面不归该 store。
+[companion-editor-state.ts](app/features/companion/companion-editor-state.ts) 按账户保存资料／角色卡编辑起点与草稿并参与交接。记忆页按预设保存搜索、分页、选中和其他未保存条目，个人资料按批保存；日记 store 不管理记忆编辑。
 
-[scene-store.ts](modules/scene/scene-store.ts) 分别持当前环境、创建任务、重生成与分页库，按后端版本、请求及账户代次判活。详情写请求按场景保留在途与未知结果状态，离页不释放提交锁；未知结果须刷新核对或明确结束本地等待，账户清理使旧回执失效。详情按 ID 单读，进入详情时先更新任务状态和恢复入口，再异步加载图片，旧读取不得覆盖最新结果；仍在处理时由轮询同步全局状态，等待较久后降低轮询频率，状态读取本身不重试分析或生图。读取失败保留当前页面状态并提供重试入口。新图预加载成功才替换背景，失败保留旧图但更新任务和政策。不可变图片共享在途与成功解析，图片失败单独重取并校验资产；新场景按固定画幅交付，生成与上传不读取显示器尺寸。任务与激活定义归 [场景契约](../../docs/PROTOCOL.md#场景任务与原位换图)。
+[scene-store.ts](modules/scene/scene-store.ts) 分别持环境、任务和分页库。详情写入锁随任务而非页面存活，未知结果先回源核对，迟到读取不能覆盖新任务。详情先刷新恢复状态再加载图片，长等待降低轮询频率，查询不重试分析或生图。新图预载成功才换背景，失败保留旧图但更新任务和政策；环境固定画幅，不读取显示器尺寸。恢复与发布边界见 [场景契约](../../docs/PROTOCOL.md#场景任务与原位换图)。
+
+素材库共用 `asset-library-header.tsx` 与 `asset-library-card.tsx`，公共件只接数据和回调。衣柜本地筛选，环境服务端提交搜索，两者不能共用隐含的查询状态。
 
 ## 静态造型呈现
 
-衣柜列表与详情只管理静态全身图与描述。列表水合和事件刷新不开始制作，页面状态与各草稿输入按账户保存。[设计会话](modules/character/wardrobe/design-session.ts)按草稿持有制作、确认和结果未知状态，离页后继续收敛原任务，完成后不改变其他草稿的选中项或输入；成功刷新后按不可变图片路径核对结果并回收已入柜、过期或删除的空闲会话。新设计取得 ID 时消费其参考图，预览迟到不清理后续设计；换号清理内存并作废旧回写。正式画面使用服务端冻结组合；桌面静态素材由 `static-poster.ts` 在受限背景窗口本地合成，造型完整适配环境画幅，合成结果不保存为影像资产。窗口投影等待造型与环境就绪，桌面图片和占位在实际显示后回执；跨模式回执约束见 [呈现契约](../../docs/PROTOCOL.md#影像成品与模式隔离)。
+[design-session.ts](modules/character/wardrobe/design-session.ts) 按草稿持有制作、确认和未知状态，离页仍收敛原任务；完成不抢选其他草稿，按不可变路径核对结果后回收空闲会话。参考图在取得新设计 ID 时消费，迟到预览不能清理后续输入。
 
-[OutfitStage](modules/character/rendering/outfit-stage.tsx) 为精灵窗与内嵌生活区共用的静态造型层，解码并读取 alpha 后才切换可见图；尚无可用图片时由同一组件给出准备中、无造型或加载失败的蛋形兜底与重试入口。当前图片加载失败时保留旧画面并提供重试；账户变化立即隔离旧画面与迟到回写。
-
-绘制、主体边界、气泡上部锚点和点击穿透从同一图片 alpha 推导。内嵌生活区按主体轮廓适配可用空间，精灵舞台按原比例完整显示；形变和留白不扩大像素命中。
+正式画面来自服务端冻结目标。[OutfitStage](modules/character/rendering/outfit-stage.tsx) 解码并读取 alpha 后才换图，精灵和生活区共用主体边界、气泡锚点及命中；失败保留旧图，换号立即隔离旧画面。桌面 `static-poster.ts` 在受限背景窗口合成环境与造型，不产生新影像资产。窗口等素材就绪、桌面等实际显示后才回执，不能把库内预览计为正式播放。
 
 ## 主题与玻璃效果
 
-控件消费 panel 和语义 token，首帧主题遵守 Client 规则，弹层命中随拖动更新。减透明由 OS、设备、用户偏好和帧预算共同决定，仅用户偏好上云；监视器随表面释放，后台时间不计性能判断。生活区展示冻结环境原图；正文使用可读底色，圆角外保持透明。
+控件使用 panel 与语义 token，首帧主题遵守 [Client](../README.md#窗口与主题)。减透明由系统、设备、偏好与帧预算共同决定，仅用户偏好上云；监视器随表面释放，后台时间不参与性能判断。弹层命中随拖动更新，透明装饰不能侵占内容可读区域。
+
+中英文显示件由字典校验；引导问答、人格预设和部分模块错误仍有中文硬编码，不能仅以 `en` 类型检查宣称全量本地化。
 
 ## 验证入口
 
-命令归 [Scripts](../../scripts/README.md#按改动选择验证)。重点覆盖换窗、换号、卸载、迟到回写、声音资格、播放抢占、静止指针命中与 GPU 回退；原生几何、透明和焦点效果须在对应平台验证，绘制与命中共用最终坐标。
+按 [Scripts](../../scripts/README.md#按改动选择验证) 运行检查。重点覆盖换窗、换号、卸载、迟到回写、声音资格、静止指针命中和 GPU 回退；几何、透明、焦点及真实媒体播放必须在相应平台验收。

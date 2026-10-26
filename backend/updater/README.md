@@ -1,32 +1,26 @@
 # 服务更新器
 
-管理后台「服务更新」页的执行体：独立容器，负责检查更新、拉取代码、构建镜像、重启并核对运行版本。更新范围固定为 `backend`。
+独立容器执行管理后台发起的服务更新，范围固定为 `backend`；不承担业务请求。一次性接入和日常操作见 [Backend](../README.md#服务更新)，本页维护执行器边界。
 
 ## 关键入口
 
-| 位置 | 职责 |
+| 修改任务 | 入口 |
 |---|---|
-| `__main__.py` | 容器入口 |
-| `config.py` | 启动配置；除 `REPO_DIR` 外全部是容器内固定挂载点 |
-| `server.py` | HTTP 服务：容器回环 + 共享 Unix socket |
-| `engine.py` | 任务编排与预检汇总（预检 → 获取 → fast-forward → 构建 → 重启 → 核对） |
-| `gitops.py` | 仓库只读探测与 fast-forward 推进 |
-| `compose.py` | Docker/Compose 探测与后端运行状态读取 |
-| `state.py` | 任务状态与增量日志持久化 |
-| `runner.py` | 子进程执行：超时、逐行日志、进程收尾 |
-| `redact.py` | 日志脱敏 |
+| 启动、挂载与连接 | [__main__.py](__main__.py)、[config.py](config.py)、[server.py](server.py) |
+| 预检、执行和运行版本核对 | [engine.py](engine.py)、[compose.py](compose.py) |
+| 仓库探测与 fast-forward | [gitops.py](gitops.py) |
+| 子进程、状态、日志与脱敏 | [runner.py](runner.py)、[state.py](state.py)、[redact.py](redact.py) |
 
-## 约束
+## 部署与执行边界
 
-- 仓库必须按宿主机绝对路径挂载（容器内同路径），否则 compose 相对目录挂载与命名卷会指向别处。
-- compose 在仓库 `backend/` 目录执行：项目名、配置文件列表（含覆盖文件）与环境变量继承该目录的 `.env`，不在此重复配置。
-- 部署密钥与 `known_hosts` 从仓库 `deploy/` 目录只读使用；私钥与令牌不进入状态文件与日志。
-- 推进代码只走 fast-forward：允许 Git 能安全保留的本地修改，不自动暂存、清理分支或覆盖本地文件；目标提交必须仍是 upstream 最新，否则要求重新检查。获取或推进失败保留 Git 诊断并停止构建、重启，同版本重试也须通过 Git 检查。
-- 容器以 root 执行 git 与 compose：仓库由非 root 用户部署时，推进后新写入的文件属主为 root，宿主机上再手工操作需相应权限。
-- 任务状态与日志写在专用持久卷，保留最近 10 次、单次 5 MiB 上限；重启后把遗留任务标为中断，运行状态由 `/status` 重新读取。
-- 后端经共享 Unix socket 调用本服务；本服务不直接暴露网络端口，也不参与业务请求处理。
-- `contracts.py` 与 [管理端契约](../features/updates/service_schemas.py) 同步维护；Backend 校验整份响应，非法任务或预检项返回 502，不能静默丢弃后显示空状态。
+仓库按宿主机绝对路径同路径挂载，Compose 在其 `backend/` 下运行，项目名、覆盖文件和环境变量沿该目录的 `.env` 解析，防止操作另一组容器或卷。部署密钥和 `known_hosts` 从 `deploy/` 只读挂载，凭据不写入日志或状态。
 
-## 验证
+代码只以 fast-forward 推进，目标必须仍是检查时所选 upstream 最新提交。Git 决定本地修改能否安全保留；分叉、覆盖风险或获取失败即停止，不自动暂存或清理。同版本部署重试仍执行 Git 检查。容器以 root 操作仓库，新写文件可能需要宿主机相应权限处理。
 
-Git 行为可用临时本地仓库验证（正常更新、无新提交、可保留的本地修改、修改冲突、未跟踪文件覆盖、获取失败、分叉、目标提交变化、同版本重试）；compose 行为用隔离 Compose 项目验证目录与项目身份、后端更新、构建失败、健康失败与重启后的状态恢复。首次上线需 SSH 完成一次性接入，步骤见 [Backend README](../README.md#服务更新)。
+后端通过共享 Unix socket 调用，容器回环入口仅用于内部排障，不映射宿主机端口。响应契约 [contracts.py](contracts.py) 与 [service_schemas.py](../features/updates/service_schemas.py) 同步；Backend 校验完整响应，非法任务或预检项返回错误，不能过滤后呈现为空状态。
+
+## 中断与验证
+
+任务和有界日志存于专用卷，保留与阶段超时由 `config.py` 定义。重启将遗留任务标为中断，运行状态重新查询；子进程在超时、取消及异常时收尾。代码已拉取不等于部署成功，须核对健康状态与运行镜像提交标识；失败不自动回退镜像或数据库。
+
+Git 用临时仓库覆盖正常更新、保留/冲突修改、未跟踪覆盖、获取失败、分叉、远端变化和同版本重试；Compose 用隔离项目验证目录身份、构建/健康失败与中断恢复。检查命令归 [Scripts](../../scripts/README.md)。
