@@ -598,7 +598,6 @@ export const dict = {
       hint: '连接你的平台账号后，伙伴会在夜间寻找你们感兴趣的新内容，并在合适的时候分享。清除连接只停止后续检索，已经取得的资讯仍可分享。',
       loadFailed: '资讯来源加载失败，请重试。',
       retry: '重新加载',
-      unavailable: '此来源暂不可用，请联系管理员。',
       states: { unconfigured: '未配置', configured: '已配置', login_required: '需要重新登录' },
       cookieLabel: '登录 Cookie',
       cookieHint: '支持 Cookie 请求头或浏览器导出的 Cookie JSON，需包含 auth_token 和 ct0。凭证仅用于读取资讯。',

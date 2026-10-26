@@ -11,7 +11,6 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue
 class SocialAccountView(BaseModel):
     platform: SocialPlatform
     auth_kind: SocialAuthKind
-    available: bool
     configured: bool
     state: Literal["unconfigured", "configured", "login_required"]
     login: SocialLoginStatus | None = None

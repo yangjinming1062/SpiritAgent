@@ -357,7 +357,6 @@ function SocialAccountCard({
             {t.states[account.state]}
           </Pill>
         </div>
-        {!account.available ? <p className={HINT_TEXT}>{t.unavailable}</p> : null}
         {account.auth_kind === 'cookie' ? (
           <form
             onSubmit={event => {
@@ -372,7 +371,7 @@ function SocialAccountCard({
               autoCapitalize="none"
               autoComplete="off"
               className={cn(INPUT_CLASS, 'min-h-24 resize-y font-mono')}
-              disabled={!account.available || Boolean(busy)}
+              disabled={Boolean(busy)}
               id={`${id}-credentials`}
               maxLength={30000}
               onChange={event => setCredentials(event.currentTarget.value)}
@@ -386,7 +385,7 @@ function SocialAccountCard({
               busy={busy === 'save'}
               busyLabel={t.saving}
               className={cn(BTN_PRIMARY, 'mt-3')}
-              disabled={!account.available || Boolean(busy) || !credentials.trim()}
+              disabled={Boolean(busy) || !credentials.trim()}
               type="submit"
             >
               {t.save}
@@ -430,7 +429,7 @@ function SocialAccountCard({
                   <input
                     autoComplete="one-time-code"
                     className={cn(INPUT_CLASS, 'max-w-40')}
-                    disabled={Boolean(busy) || !account.available}
+                    disabled={Boolean(busy)}
                     id={`${id}-code`}
                     inputMode="numeric"
                     maxLength={6}
@@ -445,7 +444,7 @@ function SocialAccountCard({
                     busy={busy === 'verify'}
                     busyLabel={t.submittingCode}
                     className={BTN_PRIMARY}
-                    disabled={Boolean(busy) || !account.available || !/^[0-9]{6}$/.test(code)}
+                    disabled={Boolean(busy) || !/^[0-9]{6}$/.test(code)}
                     type="submit"
                   >
                     {t.submitCode}
@@ -463,7 +462,7 @@ function SocialAccountCard({
                 busy={busy === 'login'}
                 busyLabel={t.refreshing}
                 className={BTN_PRIMARY}
-                disabled={Boolean(busy) || !account.available}
+                disabled={Boolean(busy)}
                 onClick={() => void startLogin()}
               >
                 {login ? t.refreshQr : t.login}
@@ -473,7 +472,7 @@ function SocialAccountCard({
                   <BusyButton
                     busy={busy === 'check'}
                     className={BTN_SUBTLE}
-                    disabled={Boolean(busy) || !account.available}
+                    disabled={Boolean(busy)}
                     onClick={() => void checkLogin()}
                   >
                     {t.check}

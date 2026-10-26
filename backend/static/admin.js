@@ -1873,13 +1873,8 @@ const SETTINGS_SECTIONS = [
         ],
     },
     {
-        title: '社交资讯来源', hint: '维护采集服务与夜间检索预算；平台账号由用户在客户端连接',
+        title: '社交资讯来源', hint: '维护夜间检索预算；平台账号由用户在客户端连接',
         blocks: [
-            ['sub', '小红书采集服务'],
-            ['grid', [
-                text('xhs_mcp_base_url', '小红书自托管服务地址', 'http://xiaohongshu-mcp:18060'),
-                secret('xhs_mcp_auth_token', '小红书服务鉴权令牌', '填写采集服务已配置的访问令牌；留空保留已保存值。'),
-            ], true],
             ['sub', '每日检索预算'],
             ['grid', [
                 num('topic_search_requests_per_night', '每账户每夜搜索 HTTP 上限 (含接口准备)', 1, { min: 0, max: 60 }),

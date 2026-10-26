@@ -50,7 +50,6 @@ services:
       - .env
     environment:
       <<: *postgres_credentials
-      XHS_MCP_BASE_URL: ${XHS_MCP_BASE_URL:-http://xiaohongshu-mcp:18060}
       # 更新器共享 socket 目录；updater 未运行时为空目录，页面按未接入处理。
       SERVICE_UPDATER_SOCKET_DIR: /run/updater
     extra_hosts:
@@ -69,7 +68,7 @@ services:
       timeout: 3s
       retries: 5
 
-  # 小红书采集服务只承载隔离浏览器，平台凭证由 Backend 按账户保存。
+  # 小红书采集服务仅供容器网络内访问，平台凭证由 Backend 按账户保存。
   xiaohongshu-mcp:
     build:
       context: ./infrastructure/web/xiaohongshu_service
@@ -79,11 +78,8 @@ services:
     platform: linux/amd64
     restart: unless-stopped
     environment:
-      AUTH_TOKEN: ${XHS_MCP_AUTH_TOKEN:-}
       XHS_PROXY: ${XHS_PROXY:-}
       XHS_MAX_BROWSERS: ${XHS_MAX_BROWSERS:-4}
-    ports:
-      - "127.0.0.1:18060:18060"
     shm_size: "1gb"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://127.0.0.1:18060/health"]

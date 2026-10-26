@@ -154,13 +154,13 @@ Debian 官方源下载慢时，在 `backend/.env` 设置 `BACKEND_BUILD_DEBIAN_M
 
 用户在客户端「设置 → 陪伴」的资讯来源区域配置个人登录。X 支持 Cookie 请求头或浏览器导出的 JSON，须包含 `auth_token`、`ct0`，保存时只保留这两个字段；后端使用固定版本 `twscrape` 的请求定义和解析器进行有界读取。保存只表示结构有效，平台拒绝登录时提示重新配置。小红书采用扫码和按需短信验证。账户隔离、清除与分享行为统一见 [主动信息与来源分享](../docs/PROTOCOL.md#主动信息与来源分享)。
 
-小红书采集服务随默认 Compose 一起启动，在固定官方 `v2.5.5` 源码上构建账户隔离与登录验证扩展，复用官方镜像的 Linux amd64 浏览器；补丁、内部接口及资源上限见 [采集服务](infrastructure/web/xiaohongshu_service/README.md)。Backend 默认连接 `http://xiaohongshu-mcp:18060`，`.env` 的非空 `XHS_MCP_BASE_URL` 可覆盖该地址，管理页保存的服务配置优先。服务仅暴露宿主机回环端口，健康检查不要求平台登录，Backend 不等待其健康状态启动。
+小红书采集服务随默认 Compose 一起启动，在固定官方 `v2.5.5` 源码上构建账户隔离与登录验证扩展，复用官方镜像的 Linux amd64 浏览器；补丁、内部接口及资源上限见 [采集服务](infrastructure/web/xiaohongshu_service/README.md)。Backend 固定通过容器网络连接 `http://xiaohongshu-mcp:18060`，无需配置服务地址或访问令牌，采集服务不映射宿主机端口。健康检查不要求平台登录，Backend 不等待其健康状态启动。
 
-管理后台「系统参数 → 社交资讯来源」仅维护服务地址、内部访问令牌和夜间预算。在 `.env` 配置非空 `XHS_MCP_AUTH_TOKEN`，Backend 与服务使用相同令牌；管理页保存的令牌只用于 Backend 访问服务。`XHS_MAX_BROWSERS` 限制全服务浏览器并发，默认四个，扫码会话也占用名额。部署或升级时在 `backend` 目录执行 `docker compose up -d --build backend xiaohongshu-mcp`。`/health` 成功只表示服务可用，不证明任何账户已登录。
+管理后台「系统参数 → 社交资讯来源」仅维护夜间预算。`XHS_MAX_BROWSERS` 限制全服务浏览器并发，默认四个，扫码会话也占用名额。部署或升级时在 `backend` 目录执行 `docker compose up -d --build backend xiaohongshu-mcp`。`/health` 成功只表示服务可用，不证明任何账户已登录。
 
 平台 Cookie 只持久化在账户数据库，采集服务每次接收所属账户凭证并创建隔离浏览器，不再使用全局登录文件或登录数据卷。扫码成功后由后台任务保存凭证；关闭设置页面不取消登录，服务重启丢失的扫码会话需重新开始。登录接口与二维码不缓存，公开响应不回传 Cookie。浏览器出站代理可通过 `XHS_PROXY` 配置，Backend 访问服务的短名称须包含在 `NO_PROXY`。采集只读取来源内容，搜索的一天内筛选仍由实际发布时间再次校验。
 
-新增平台时，在 [平台定义](infrastructure/web/social_platforms.py)登记公开标识、名称、登录方式和原文规则，在 [适配器注册](infrastructure/web/social_sources.py)登记凭证类型、可用性及采集／登录工厂，再生成共享契约。账户存储、登录结果提交、夜间预算与分享流程共用既有实现；新的登录交互类型才需要补充客户端表单。
+新增平台时，在 [平台定义](infrastructure/web/social_platforms.py)登记公开标识、名称、登录方式和原文规则，在 [适配器注册](infrastructure/web/social_sources.py)登记凭证类型及采集／登录工厂，再生成共享契约。账户存储、登录结果提交、夜间预算与分享流程共用既有实现；新的登录交互类型才需要补充客户端表单。
 
 ### 服务更新
 

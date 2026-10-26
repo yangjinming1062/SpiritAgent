@@ -9,7 +9,6 @@ from datetime import datetime, timedelta
 from io import BytesIO
 from struct import error as StructError
 from typing import Any, Literal
-from urllib.parse import urlsplit
 
 import httpx
 from PIL import Image, UnidentifiedImageError
@@ -22,6 +21,7 @@ from .social_content import RequestGuard, SocialSourceError, failure_reason
 from .social_credentials import XiaohongshuCredentials
 from .social_login import LoginState, SocialLoginQrCode, SocialLoginResult, SocialLoginVerification
 
+_BASE_URL = "http://xiaohongshu-mcp:18060"
 _MAX_RESPONSE_BYTES = 1500000
 _MAX_QR_BYTES = 512000
 _TIMEOUT_SECONDS = 60
@@ -95,28 +95,6 @@ def _qr_png(value: Any) -> str:
 
 
 class XiaohongshuServiceClient:
-    def __init__(self, *, base_url: str, auth_token: str = "") -> None:
-        self._base_url = base_url.strip().rstrip("/")
-        parsed = urlsplit(self._base_url)
-        if (
-            parsed.scheme not in {"http", "https"}
-            or not parsed.hostname
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.port == 0
-            or parsed.path not in {"", "/"}
-            or parsed.query
-            or parsed.fragment
-            or "?" in self._base_url
-            or "#" in self._base_url
-            or "\\" in self._base_url
-            or any(character.isspace() for character in self._base_url)
-        ):
-            raise ValueError("Xiaohongshu requires an operator-configured service origin")
-        self._auth_token = auth_token.strip()
-        if not self._auth_token or any(ord(character) < 33 or ord(character) > 126 for character in self._auth_token):
-            raise ValueError("Invalid configured source authentication token")
-
     async def _request(
         self,
         path: str,
@@ -124,28 +102,17 @@ class XiaohongshuServiceClient:
         payload: dict[str, Any],
         before_request: RequestGuard | None = None,
     ) -> dict[str, Any]:
-        if path not in {
-            "/api/v1/accounts/login/qrcode",
-            "/api/v1/accounts/login/session",
-            "/api/v1/accounts/login/verification",
-            "/api/v1/accounts/login/cancel",
-            "/api/v1/accounts/feeds/search",
-            "/api/v1/accounts/feeds/detail",
-        }:
-            raise ValueError("Unsupported Xiaohongshu service operation")
-        headers = {"Authorization": f"Bearer {self._auth_token}"}
         if before_request is not None:
             await before_request()
         try:
             async with asyncio.timeout(_TIMEOUT_SECONDS):
                 async with trusted_service_async_client(
-                    self._base_url,
+                    _BASE_URL,
                     timeout=httpx.Timeout(30, connect=10, pool=10),
                 ) as client:
                     async with client.stream(
                         "POST",
-                        self._base_url + path,
-                        headers=headers,
+                        _BASE_URL + path,
                         json=payload,
                     ) as response:
                         status_code = response.status_code
@@ -180,7 +147,7 @@ class XiaohongshuServiceClient:
             reason = (
                 "login_required"
                 if isinstance(raw, dict) and raw.get("code") == "PLATFORM_LOGIN_REQUIRED"
-                else "service_auth_error"
+                else "source_failed"
                 if status_code in {401, 403}
                 else "verification_unavailable"
                 if status_code == 404

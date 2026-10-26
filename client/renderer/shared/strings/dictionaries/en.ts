@@ -624,7 +624,6 @@ export const dict: Dictionary = {
       hint: 'Connect your platform accounts so your companion can find shared interests overnight and share when it fits. Clearing a connection stops future searches; content already collected may still be shared.',
       loadFailed: "Couldn't load content sources. Try again.",
       retry: 'Reload',
-      unavailable: 'This source is unavailable. Contact your administrator.',
       states: { unconfigured: 'Not configured', configured: 'Configured', login_required: 'Sign in again' },
       cookieLabel: 'Login Cookie',
       cookieHint:

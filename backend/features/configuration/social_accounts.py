@@ -16,7 +16,6 @@ from infrastructure.web.social_platforms import SOCIAL_PLATFORMS, get_social_pla
 from infrastructure.web.social_sources import (
     create_social_login_client,
     parse_social_credentials,
-    source_available,
     validate_social_credentials,
 )
 from runtime.lifecycle import RuntimeParticipant
@@ -64,7 +63,6 @@ def _view(platform: str, row: UserSocialAccount | None) -> SocialAccountView:
         {
             "platform": platform,
             "auth_kind": get_social_platform(platform).auth_kind,
-            "available": source_available(platform),
             "configured": row is not None and bool(row.credentials),
             "state": row.state if row else "unconfigured",
             "login": _login_status(row) if row else None,
@@ -104,12 +102,12 @@ async def load_social_credentials(db: AsyncSession, user_id: int) -> dict[str, S
     return {
         row.platform: SocialCredentialSnapshot(row.revision, deepcopy(row.credentials))
         for row in rows
-        if row.credentials and source_available(row.platform)
+        if row.credentials
     }
 
 
 async def credential_is_current(db: AsyncSession, user_id: int, platform: str, revision: str) -> bool:
-    return source_available(platform) and bool(
+    return bool(
         await db.scalar(
             select(UserSocialAccount.id).where(
                 UserSocialAccount.user_id == user_id,
@@ -159,7 +157,7 @@ async def _cancel_remote(platform: str, pending: tuple[str, str] | None) -> None
         await create_social_login_client(platform).cancel_login(*pending)
     except (SocialSourceError, ValueError) as exc:
         # 本地修订已撤销，服务端会话仍有固定到期时间；失败不能恢复旧凭证。
-        reason = exc.reason if isinstance(exc, SocialSourceError) else "unconfigured"
+        reason = exc.reason if isinstance(exc, SocialSourceError) else "invalid_request"
         logger.warning("social login cleanup failed", extra={"platform": platform, "reason": reason})
 
 
@@ -224,8 +222,6 @@ def _request_failure(error: SocialSourceError) -> RequestError:
 
 async def start_social_login(db: AsyncSession, user_id: int, platform: str) -> SocialLoginQrCode:
     _require_platform(platform, login=True)
-    if not source_available(platform):
-        raise RequestError(503, "资讯来源暂不可用，请联系管理员。")
     row = await _locked_row(db, user_id, platform)
     previous = _pending_login(row)
     _reset_login(row)
@@ -237,8 +233,6 @@ async def start_social_login(db: AsyncSession, user_id: int, platform: str) -> S
     await _cancel_remote(platform, previous)
     try:
         result = await create_social_login_client(platform).qrcode(owner)
-    except ValueError:
-        raise RequestError(503, "资讯来源暂不可用，请稍后重试。") from None
     except SocialSourceError as exc:
         raise _request_failure(exc) from None
     row = await _locked_row(db, user_id, platform)
@@ -280,10 +274,7 @@ async def _refresh_login(db: AsyncSession, row: UserSocialAccount, *, code: str 
     session_id = saved.session_id
     if saved.state in _TERMINAL_LOGIN_STATES:
         return saved
-    try:
-        client = create_social_login_client(platform)
-    except ValueError:
-        raise RequestError(503, "资讯来源暂不可用，请稍后重试。") from None
+    client = create_social_login_client(platform)
     try:
         result = (
             await client.submit_verification(owner, SocialLoginVerification(session_id=session_id, code=code))

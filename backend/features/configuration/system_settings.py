@@ -38,7 +38,6 @@ SENSITIVE_KEYS: frozenset[str] = frozenset(
     {
         "brave_search_api_key",
         "tavily_api_key",
-        "xhs_mcp_auth_token",
     },
 )
 

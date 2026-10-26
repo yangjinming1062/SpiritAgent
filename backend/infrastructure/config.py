@@ -1,7 +1,6 @@
 import tomllib
 from pathlib import Path
 from typing import Any, Literal, Self
-from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import (
@@ -141,8 +140,6 @@ class Settings(BaseSettings):
     tavily_api_key: str = Field(default="", validation_alias="TAVILY_API_KEY")
     tavily_base_url: str = Field(default="", validation_alias="TAVILY_BASE_URL")
 
-    xhs_mcp_base_url: str = Field(default="", validation_alias="XHS_MCP_BASE_URL")
-    xhs_mcp_auth_token: str = Field(default="", max_length=4096, validation_alias="XHS_MCP_AUTH_TOKEN")
     # 服务更新器共享 socket 目录；目录为空或没有 socket 时按未启用处理。
     service_updater_socket_dir: str = Field(default="", validation_alias="SERVICE_UPDATER_SOCKET_DIR")
     topic_search_requests_per_night: int = Field(
@@ -303,38 +300,6 @@ class Settings(BaseSettings):
         if not p.is_absolute():
             return str((BACKEND_DIR / p).resolve())
         return str(p.resolve())
-
-    @field_validator("xhs_mcp_base_url", mode="after")
-    @classmethod
-    def _validate_xhs_mcp_base_url(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            return ""
-        parsed = urlsplit(value)
-        if (
-            parsed.scheme not in ("http", "https")
-            or not parsed.hostname
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.port == 0
-            or parsed.path not in ("", "/")
-            or parsed.query
-            or parsed.fragment
-            or "?" in value
-            or "#" in value
-            or "\\" in value
-            or any(character.isspace() for character in value)
-        ):
-            raise ValueError("小红书服务地址必须是无凭据、查询参数和路径的 HTTP 或 HTTPS 服务根地址")
-        return value.rstrip("/")
-
-    @field_validator("xhs_mcp_auth_token", mode="after")
-    @classmethod
-    def _validate_xhs_mcp_auth_token(cls, value: str) -> str:
-        token = value.strip()
-        if value and not token or any(ord(character) < 33 or ord(character) > 126 for character in token):
-            raise ValueError("小红书服务令牌必须由无空格的可见 ASCII 字符组成")
-        return token
 
 
 SETTINGS = Settings()

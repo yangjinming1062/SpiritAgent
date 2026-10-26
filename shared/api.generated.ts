@@ -304,7 +304,7 @@ export interface ApiSchemas {
   "SessionUndoRequest": { "source_message_id": string; "confirmed"?: boolean }
   "SessionUndoResult": { "session_id": string; "deleted_count": number; "anchor": ApiSchemas["UndoAnchor"]; "messages": Array<ApiSchemas["SessionMessageView"]> }
   "SocialAccountList": { "accounts": Array<ApiSchemas["SocialAccountView"]> }
-  "SocialAccountView": { "platform": "x" | "xiaohongshu"; "auth_kind": "cookie" | "qr"; "available": boolean; "configured": boolean; "state": "unconfigured" | "configured" | "login_required"; "login": (ApiSchemas["SocialLoginStatus"] | null) }
+  "SocialAccountView": { "platform": "x" | "xiaohongshu"; "auth_kind": "cookie" | "qr"; "configured": boolean; "state": "unconfigured" | "configured" | "login_required"; "login": (ApiSchemas["SocialLoginStatus"] | null) }
   "SocialCredentialsRequest": { "credentials": string }
   "SocialLoginQrCode": { "image": string; "expires_at": string; "session_id": string }
   "SocialLoginStatus": { "session_id": string; "state": "awaiting_scan" | "sms_required" | "verifying" | "verification_required" | "logged_in" | "expired"; "expires_at": string; "verification_error": ("invalid_code" | null) }

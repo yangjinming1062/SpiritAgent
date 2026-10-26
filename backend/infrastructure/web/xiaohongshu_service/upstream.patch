@@ -1,17 +1,15 @@
 --- a/routes.go
 +++ b/routes.go
-@@ -4 +4,2 @@
+@@ -4 +3,0 @@
 -	"net/http"
-+    "net/http"
-+    "strings"
-@@ -6,2 +7 @@
+@@ -6,2 +5 @@
 -	"github.com/gin-gonic/gin"
 -	"github.com/modelcontextprotocol/go-sdk/mcp"
 +    "github.com/gin-gonic/gin"
-@@ -10 +10 @@
+@@ -10 +8 @@
 -// setupRoutes 设置路由配置
 +// Only Backend-facing, account-scoped reads and login operations are exposed.
-@@ -12,59 +12,22 @@
+@@ -12,59 +10,17 @@
 -	// 设置 Gin 模式
 -	gin.SetMode(gin.ReleaseMode)
 -
@@ -79,13 +77,8 @@
 +    api := router.Group("/api/v1/accounts")
 +    api.Use(func(c *gin.Context) {
 +        c.Header("Cache-Control", "no-store")
-+        if strings.TrimSpace(appServer.authToken) == "" {
-+            respondError(c, http.StatusServiceUnavailable, "SERVICE_AUTH_REQUIRED", "采集服务尚未配置访问令牌", nil)
-+            c.Abort()
-+            return
-+        }
 +        c.Next()
-+    }, authMiddleware(appServer.authToken))
++    })
 +    api.POST("/login/qrcode", appServer.accountLoginQrcodeHandler)
 +    api.POST("/login/session", appServer.accountLoginSessionHandler)
 +    api.POST("/login/verification", appServer.accountLoginVerificationHandler)
@@ -166,7 +159,60 @@
 +    _ = b.browser.Context(ctx).Close()
 +}
 +
+--- a/main.go
++++ b/main.go
+@@ -5 +4,0 @@
+-	"os"
+@@ -20 +18,0 @@
+-		token    string
+@@ -24 +21,0 @@
+-	flag.StringVar(&token, "token", "", "鉴权 Token，留空则读取 AUTH_TOKEN")
+@@ -26,3 +22,0 @@
+-	if token == "" {
+-		token = os.Getenv("AUTH_TOKEN")
+-	}
+@@ -50 +44 @@
+-	appServer := NewAppServer(xiaohongshuService, token)
++	appServer := NewAppServer(xiaohongshuService)
+--- a/middleware.go
++++ b/middleware.go
+@@ -4 +3,0 @@
+-	"crypto/subtle"
+@@ -6 +4,0 @@
+-	"strings"
+@@ -11,24 +8,0 @@
+-
+-// authMiddleware 静态 Bearer Token 鉴权中间件，Token 为空时关闭鉴权。
+-func authMiddleware(token string) gin.HandlerFunc {
+-	expectedToken := []byte(token)
+-
+-	return func(c *gin.Context) {
+-		if token == "" {
+-			c.Next()
+-			return
+-		}
+-
+-		scheme, credentials, found := strings.Cut(c.GetHeader("Authorization"), " ")
+-		credentials = strings.TrimLeft(credentials, " ")
+-		if !found || !strings.EqualFold(scheme, "Bearer") ||
+-			subtle.ConstantTimeCompare([]byte(credentials), expectedToken) != 1 {
+-			c.Header("WWW-Authenticate", "Bearer")
+-			respondError(c, http.StatusUnauthorized, "UNAUTHORIZED", "未授权", nil)
+-			c.Abort()
+-			return
+-		}
+-
+-		c.Next()
+-	}
+-}
 --- a/app_server.go
 +++ b/app_server.go
-@@ -61,0 +62 @@
+@@ -22 +21,0 @@
+-	authToken          string
+@@ -26 +25 @@
+-func NewAppServer(xiaohongshuService *XiaohongshuService, authToken string) *AppServer {
++func NewAppServer(xiaohongshuService *XiaohongshuService) *AppServer {
+@@ -29 +27,0 @@
+-		authToken:          authToken,
+@@ -61,0 +60 @@
 +	stopAccountBrowsers()

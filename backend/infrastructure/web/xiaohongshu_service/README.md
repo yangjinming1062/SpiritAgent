@@ -6,7 +6,7 @@
 
 Go 模块签名校验保持启用。`backend/.env` 的 `XHS_BUILD_GOPROXY`、`XHS_BUILD_GOSUMDB` 可覆盖构建源，留空使用 Dockerfile 默认值；直接构建使用 `GOPROXY`、`GOSUMDB` 参数。逗号分隔的代理源只在 HTTP 404/410 时切换，网络超时仍失败；`XHS_PROXY` 只控制运行时浏览器出站代理。
 
-Backend 和采集服务须配置同一非空 `XHS_MCP_AUTH_TOKEN`，服务映射为 `AUTH_TOKEN`；未配置时账户接口返回服务不可用。仅 `/health` 无需鉴权，原全局 REST 和 MCP 入口不再注册。所有账户接口设置 `Cache-Control: no-store`，请求正文和平台原始错误不写日志。
+采集服务不设置访问令牌，默认 Compose 不映射宿主机端口，Backend 仅通过容器网络调用。原全局 REST 和 MCP 入口不再注册。所有账户接口设置 `Cache-Control: no-store`，请求正文和平台原始错误不写日志。
 
 `XHS_MAX_BROWSERS` 限制所有扫码和读取浏览器的总并发，默认四个、范围 1–64；等待扫码也占用名额，满额立即返回 `503`，不排队。每个浏览器由独立 launcher 临时目录承载，在成功、失败、取消和超时后关闭进程并删除 profile。读取仅使用本次请求传入的 Cookie，不读取全局文件或共享浏览器登录状态；服务无需凭证数据卷。
 
