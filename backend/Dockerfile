@@ -10,16 +10,14 @@ RUN pnpm build
 
 FROM python:3.13-slim
 
-# 构建提交标识：更新器据此核对运行镜像是否来自目标提交。
-ARG GIT_COMMIT=unknown
-LABEL org.opencontainers.image.revision=${GIT_COMMIT}
-
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-RUN apt-get update \
+ARG DEBIAN_MIRROR=http://deb.debian.org
+RUN sed -i "s|http://deb.debian.org|${DEBIAN_MIRROR%/}|g" /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && ffmpeg -version \
     && ffprobe -version \
@@ -33,6 +31,10 @@ RUN uv sync --frozen
 
 COPY backend/ .
 COPY --from=remote-build /build/remote/dist/ ./static/remote/
+
+# 版本参数只在构建末尾声明，避免提交号变化使系统和 Python 依赖层缓存失效。
+ARG GIT_COMMIT=unknown
+LABEL org.opencontainers.image.revision=${GIT_COMMIT}
 
 EXPOSE 10620
 
