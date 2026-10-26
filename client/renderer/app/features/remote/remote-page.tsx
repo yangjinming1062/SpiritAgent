@@ -12,9 +12,8 @@ import {
   BTN_PRIMARY,
   BTN_SUBTLE,
   ConfirmDialog,
-  EmptyState,
   ListRow,
-  SettingsContent,
+  Placeholder,
   SettingsSubsection,
   Spinner
 } from '@/shared/panel'
@@ -269,7 +268,7 @@ export function RemotePage(): React.JSX.Element {
   const formatTime = (value: string): string => new Date(value).toLocaleString()
 
   return (
-    <SettingsContent>
+    <div className="text-strong">
       <div className="mb-7 flex items-center gap-3">
         <IconDeviceMobile className="size-7 text-accent" />
         <div>
@@ -344,7 +343,7 @@ export function RemotePage(): React.JSX.Element {
           {loading ? (
             <Spinner />
           ) : devices.length === 0 ? (
-            <EmptyState title={t.empty} />
+            <Placeholder>{t.empty}</Placeholder>
           ) : (
             devices.map(device => (
               <ListRow
@@ -385,6 +384,6 @@ export function RemotePage(): React.JSX.Element {
         title={revokeTarget === 'all' ? t.revokeAllTitle : t.revokeTitle}
         variant="destructive"
       />
-    </SettingsContent>
+    </div>
   )
 }

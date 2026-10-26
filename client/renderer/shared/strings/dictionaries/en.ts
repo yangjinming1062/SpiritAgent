@@ -882,8 +882,6 @@ export const dict: Dictionary = {
       shortcutsTitle: 'Keyboard shortcuts',
       companionSizeTitle: 'Companion size and position',
       windowModeTitle: 'Window and desktop mode',
-      abilitiesTitle: 'What your companion can do',
-      abilitiesHint: 'Choose the skills and tools available on this computer.',
       advancedHint: 'The recommended defaults work for everyday use. Adjust these options only when you need to.',
       conversationTitle: 'Conversation parameters',
       conversationHint: 'Reasoning, randomness, and long conversations.',

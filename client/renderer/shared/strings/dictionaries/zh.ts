@@ -833,8 +833,6 @@ export const dict = {
       shortcutsTitle: '快捷键',
       companionSizeTitle: '伙伴大小与位置',
       windowModeTitle: '窗口与桌面模式',
-      abilitiesTitle: '伙伴能帮你做什么',
-      abilitiesHint: '按用途选择这台电脑上可以使用的技能和工具。',
       advancedHint: '日常使用保持默认值即可，需要时再调整以下选项。',
       conversationTitle: '对话参数',
       conversationHint: '思考深度、表达随机性和长对话处理。',

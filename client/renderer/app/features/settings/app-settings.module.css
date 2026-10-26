@@ -64,11 +64,10 @@
   max-width: 880px;
   width: 100%;
 }
-.content[data-section='devices'] section {
-  height: auto;
-  min-height: 0;
-  overflow: visible;
-  padding: 0;
+.devicesTabs {
+  border-bottom: 1px solid var(--ui-line-hairline);
+  flex-shrink: 0;
+  padding: 20px clamp(24px, 4vw, 56px) 16px;
 }
 .mobileDirectory {
   align-items: center;
@@ -91,5 +90,8 @@
   }
   .scroller {
     padding: 24px 20px 40px;
+  }
+  .devicesTabs {
+    padding: 16px 20px;
   }
 }

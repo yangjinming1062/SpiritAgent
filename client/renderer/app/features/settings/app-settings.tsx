@@ -1,18 +1,31 @@
 import { useStore } from '@nanostores/react'
+import { IconDeviceMobile } from '@tabler/icons-react'
 import type React from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { RemotePage } from '@/app/features/remote/remote-page'
 import {
   $appNavigationTarget,
   $settingsSection,
+  applyAppNavigation,
   setSettingsSection,
   SETTINGS_SECTIONS
 } from '@/app/navigation/app-navigation'
+import { PanelActivityProvider } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { triggerHaptic } from '@/shared/lib/haptics'
-import { Brain, Globe, type IconComponent, Info, Monitor, SlidersHorizontal, Volume2 } from '@/shared/lib/icons'
-import { Disclosure, PanelSelect, SettingCard, SettingRow, SettingsSectionIntro } from '@/shared/panel'
+import {
+  Brain,
+  Command,
+  Globe,
+  type IconComponent,
+  Info,
+  Monitor,
+  SlidersHorizontal,
+  Sparkles,
+  Volume2
+} from '@/shared/lib/icons'
+import { CapsuleTabs, Disclosure, PanelSelect, SettingCard, SettingRow, SettingsSectionIntro } from '@/shared/panel'
 import { runnerApi } from '@/shared/platform/desktop'
 import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
@@ -27,7 +40,8 @@ import { PresentationPage } from './presentation-page'
 import { ShortcutsPage } from './shortcuts-page'
 import { InferencePage } from './station/inference-page'
 import { RunnerPage } from './station/runner-page'
-import { SkillsToolsTabs } from './station/skills-tools-tabs'
+import { SkillsPage } from './station/skills-page'
+import { ToolsetsPage } from './station/toolsets-page'
 import { ThemePage } from './theme-page'
 
 const ICONS: Record<SettingsSection, IconComponent> = {
@@ -94,15 +108,25 @@ function ApplicationSettings(): React.JSX.Element {
 export function AppSettings(): React.JSX.Element {
   const section = useStore($settingsSection)
   const target = useStore($appNavigationTarget)
-  const [abilitiesOpen, setAbilitiesOpen] = useState(false)
+  const scrollerRef = useRef<HTMLDivElement>(null)
+  const devicesTab = target.settingsTab ?? 'remote'
   const strings = useStrings()
   const labels = strings.settings.application.sections
 
   useEffect(() => {
-    if (target.page === 'settings' && target.section === 'devices' && target.settingsTab) {
-      setAbilitiesOpen(true)
+    scrollerRef.current?.scrollTo(0, 0)
+  }, [devicesTab])
+
+  const selectDevicesTab = (next: 'remote' | 'skills' | 'toolsets'): void => {
+    if (next !== devicesTab) {
+      triggerHaptic()
+      void applyAppNavigation({
+        page: 'settings',
+        section: 'devices',
+        settingsTab: next === 'remote' ? undefined : next
+      })
     }
-  }, [target])
+  }
 
   const select = (next: SettingsSection): void => {
     triggerHaptic('open')
@@ -132,17 +156,15 @@ export function AppSettings(): React.JSX.Element {
 
       case 'devices':
         return (
-          <div className="space-y-5">
-            <RemotePage />
-            <Disclosure
-              hint={strings.settings.application.abilitiesHint}
-              onOpenChange={setAbilitiesOpen}
-              open={abilitiesOpen}
-              title={strings.settings.application.abilitiesTitle}
-            >
-              <SkillsToolsTabs />
-            </Disclosure>
-          </div>
+          <>
+            <div hidden={devicesTab !== 'remote'}>
+              <PanelActivityProvider active={devicesTab === 'remote'}>
+                <RemotePage />
+              </PanelActivityProvider>
+            </div>
+            {devicesTab === 'skills' && <SkillsPage />}
+            {devicesTab === 'toolsets' && <ToolsetsPage />}
+          </>
         )
 
       case 'application':
@@ -200,7 +222,23 @@ export function AppSettings(): React.JSX.Element {
             widthClass="w-full"
           />
         </div>
-        <div className={styles.scroller} key={section}>
+        {section === 'devices' && (
+          <div className={styles.devicesTabs}>
+            <div className={styles.content}>
+              <CapsuleTabs
+                ariaLabel={labels.devices}
+                onChange={selectDevicesTab}
+                options={[
+                  { value: 'remote', label: strings.settings.remote.heading, icon: IconDeviceMobile },
+                  { value: 'skills', label: strings.skills.tabSkills, icon: Sparkles },
+                  { value: 'toolsets', label: strings.skills.tabToolsets, icon: Command }
+                ]}
+                value={devicesTab}
+              />
+            </div>
+          </div>
+        )}
+        <div className={styles.scroller} key={section} ref={scrollerRef}>
           <div className={styles.content} data-section={section}>
             {content()}
           </div>
