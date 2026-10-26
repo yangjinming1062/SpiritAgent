@@ -1,13 +1,13 @@
 export {
   $actions,
-  $actionsError,
-  $actionsLoading,
-  $actionsNextCursor,
+  actionGroups,
   createAction,
   deleteAction,
   loadMoreActions,
+  refreshActionGroups,
   refreshActions,
   resetActionsForAccount,
+  retryActionReview,
   updateAction
 } from './actions-store'
 export type { VisualReceiptBody, VisualsListQuery } from './api'
@@ -16,6 +16,7 @@ export type {
   ActionClipKind,
   ActionDefinition,
   ActionDefinitionRequest,
+  ActionLibraryGroup,
   ActionListResponse,
   ActionReviewStatus,
   ActionUpdateRequest,

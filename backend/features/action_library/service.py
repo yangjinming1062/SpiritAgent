@@ -4,12 +4,13 @@
 """
 
 from datetime import datetime
+from typing import Any, Literal
 
 from infrastructure.config import SETTINGS
 from infrastructure.domain_locks import lock_domain
 from infrastructure.text import ensure_utc
 from runtime.events.emit import emit_ws_event
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.life.schemas import LifeStepRequest
@@ -21,6 +22,7 @@ from features.life.use_cases import (
 )
 
 from .models import ActionDefinition
+from .presets import ACTION_PRESETS
 from .schemas import ActionAssetDesign, ActionAssetSource, ActionAssetStatus, ActionAssetView
 from .views import definition_view, normalize_action_name
 
@@ -50,6 +52,7 @@ async def create_action(
     existing = await db.scalars(
         select(ActionDefinition).where(
             ActionDefinition.user_id == user_id,
+            ActionDefinition.source != "preset",
             ActionDefinition.normalized_name == normalize_action_name(design.name),
         ),
     )
@@ -90,33 +93,76 @@ async def create_action(
     return definition_view(row)
 
 
-async def ensure_initial_action(db: AsyncSession, user_id: int, *, review_source_json: dict) -> ActionAssetView:
-    existing = await db.scalar(
-        select(ActionDefinition)
-        .where(
-            ActionDefinition.user_id == user_id,
-            ActionDefinition.status == "approved",
+async def ensure_builtin_actions(db: AsyncSession, user_id: int) -> None:
+    """按稳定键补齐通用定义；不读取个人身份，也不启动评审或媒体制作。"""
+    await lock_domain(db, user_id, "actions")
+    keys = set(await db.scalars(select(ActionDefinition.preset_key).where(ActionDefinition.user_id == user_id)))
+    for preset in ACTION_PRESETS:
+        if preset.key in keys:
+            continue
+        db.add(
+            ActionDefinition(
+                user_id=user_id,
+                preset_key=preset.key,
+                source="preset",
+                status="approved",
+                name=preset.name,
+                normalized_name=normalize_action_name(preset.name),
+                motion_description=preset.motion_description,
+                use_when_json=preset.use_when,
+                avoid_when_json=preset.avoid_when,
+                allowed_triggers_json=preset.triggers,
+                clip_kind=preset.clip_kind,
+                duration_seconds=preset.duration_seconds,
+                reason="",
+                review_reason="",
+                review_source_json={},
+            )
         )
-        .order_by(ActionDefinition.id)
-        .limit(1),
-    )
-    if existing is not None:
-        return definition_view(existing)
-    design = ActionAssetDesign(
-        name="安静相伴",
-        motion_description="结合角色身体结构，在环境中保持有稳定支撑的舒适姿态，安静相伴，保留自然的局部微小呼吸。",
-        clip_kind="loop",
-        duration_seconds=4,
-        allowed_triggers=["chat", "manual", "periodic", "user_return"],
-        use_when=["安静陪伴"],
-    )
-    view = await create_action(db, user_id, design, source="preset", review_source_json=review_source_json)
-    row = await db.get(ActionDefinition, view.id)
-    if row is None:
-        raise ValueError("初始动作素材创建失败")
-    row.status = "approved"
     await db.flush()
-    return definition_view(row)
+
+
+async def _locked_action(db: AsyncSession, user_id: int, action_id: int) -> ActionDefinition | None:
+    await lock_domain(db, user_id, "actions")
+    return await db.scalar(
+        select(ActionDefinition)
+        .where(ActionDefinition.user_id == user_id, ActionDefinition.id == action_id)
+        .execution_options(populate_existing=True),
+    )
+
+
+def require_action_editable(current: ActionAssetView, expected_updated_at: datetime) -> None:
+    if current.source == "preset":
+        raise ValueError("内置动作不可修改或删除，可复制后创作")
+    if ensure_utc(current.updated_at) != ensure_utc(expected_updated_at):
+        raise ValueError("动作已更新，请保留修改并刷新核对后重试")
+    if current.status in {"pending", "reviewing"}:
+        raise ValueError("动作正在等待评审或评审中，请等待结果")
+
+
+def prepare_action_update(
+    current: ActionAssetView,
+    design: ActionAssetDesign,
+    expected_updated_at: datetime,
+) -> ActionAssetDesign | None:
+    """装配前判断是否需要身份参考，写入时在锁内重核同一规则。"""
+    require_action_editable(current, expected_updated_at)
+    fields = set(ActionAssetDesign.model_fields)
+    previous = current.model_dump(include=fields)
+    submitted = design.model_dump(include=design.model_fields_set & fields)
+    updated = ActionAssetDesign.model_validate(previous | submitted)
+    updated.allowed_triggers = updated.triggers
+    return updated if previous != updated.model_dump() else None
+
+
+def require_review_retry(current: ActionAssetView, expected_updated_at: datetime) -> None:
+    require_action_editable(current, expected_updated_at)
+    if current.status not in {"failed", "deferred"}:
+        raise ValueError("只有评审失败或待补充资料的动作可以重试；未通过请修改后提交")
+
+
+def _reset_review(row: ActionDefinition, source: dict[str, Any]) -> None:
+    row.status, row.review_reason, row.review_source_json = "pending", "", source
 
 
 async def update_action(
@@ -130,14 +176,14 @@ async def update_action(
 ) -> ActionAssetView | None:
     """编辑动作语义；内容变化后回到待评审，不追溯已生成影像。"""
 
-    await lock_domain(db, user_id, "actions")
-    row = await db.scalar(
-        select(ActionDefinition).where(ActionDefinition.user_id == user_id, ActionDefinition.id == action_id),
-    )
+    row = await _locked_action(db, user_id, action_id)
     if row is None:
         return None
-    if ensure_utc(row.updated_at) != ensure_utc(expected_updated_at):
-        raise ValueError("动作素材已更新，请保留修改并刷新核对后重试")
+    current = definition_view(row)
+    updated = prepare_action_update(current, design, expected_updated_at)
+    if updated is None:
+        return current
+    design = updated
     row.name = design.name
     row.normalized_name = normalize_action_name(design.name)
     row.motion_description = design.motion_description
@@ -147,34 +193,64 @@ async def update_action(
     row.clip_kind = design.clip_kind
     row.duration_seconds = design.duration_seconds
     row.reason = design.reason
-    row.status = "pending"
-    row.review_reason = ""
-    row.review_source_json = review_source_json
+    _reset_review(row, review_source_json)
     await db.flush()
     emit_ws_event(db, user_id=user_id, event_type="companion.action.updated", payload={})
     return definition_view(row)
 
 
 async def delete_action(db: AsyncSession, user_id: int, action_id: int) -> bool:
-    await lock_domain(db, user_id, "actions")
-    result = await db.execute(
-        delete(ActionDefinition).where(ActionDefinition.user_id == user_id, ActionDefinition.id == action_id),
-    )
-    if not result.rowcount:
+    row = await _locked_action(db, user_id, action_id)
+    if row is None:
         return False
+    if row.source == "preset":
+        raise ValueError("内置动作不可删除")
+    await update_business_steps_in_session(
+        db,
+        user_id,
+        kind="action.design",
+        business_ref={"action_id": action_id},
+        state="failed",
+        error="动作已删除",
+    )
+    await db.delete(row)
+    await db.flush()
     emit_ws_event(db, user_id=user_id, event_type="companion.action.updated", payload={})
     return True
 
 
-async def begin_review(db: AsyncSession, user_id: int, action_id: int, *, expected_updated_at: datetime) -> bool:
-    row = await db.scalar(
-        select(ActionDefinition).where(ActionDefinition.user_id == user_id, ActionDefinition.id == action_id),
-    )
+async def retry_review(
+    db: AsyncSession,
+    user_id: int,
+    action_id: int,
+    *,
+    expected_updated_at: datetime,
+    review_source_json: dict[str, Any],
+) -> ActionAssetView | None:
+    row = await _locked_action(db, user_id, action_id)
+    if row is None:
+        return None
+    require_review_retry(definition_view(row), expected_updated_at)
+    _reset_review(row, review_source_json)
+    await db.flush()
+    emit_ws_event(db, user_id=user_id, event_type="companion.action.updated", payload={})
+    return definition_view(row)
+
+
+async def begin_review(
+    db: AsyncSession,
+    user_id: int,
+    action_id: int,
+    *,
+    expected_updated_at: datetime,
+) -> tuple[ActionAssetView, dict[str, Any]] | None:
+    row = await _locked_action(db, user_id, action_id)
     if row is None or row.status != "pending" or ensure_utc(row.updated_at) != ensure_utc(expected_updated_at):
-        return False
+        return None
     row.status = "reviewing"
     await db.flush()
-    return True
+    emit_ws_event(db, user_id=user_id, event_type="companion.action.updated", payload={})
+    return definition_view(row), row.review_source_json
 
 
 async def record_review(
@@ -182,23 +258,19 @@ async def record_review(
     user_id: int,
     action_id: int,
     *,
-    decision: str,
+    status: Literal["approved", "deferred", "rejected", "failed"],
     reason: str,
+    expected_updated_at: datetime,
 ) -> ActionAssetStatus | None:
-    """落库评审结论；approve/reject 为终态，defer 等待显式重试。"""
+    """只有本次修订可结算；排队期间取消也能保存技术失败。"""
 
-    await lock_domain(db, user_id, "actions")
-    row = await db.scalar(
-        select(ActionDefinition).where(ActionDefinition.user_id == user_id, ActionDefinition.id == action_id),
-    )
+    row = await _locked_action(db, user_id, action_id)
     if row is None:
         return None
-    mapping: dict[str, ActionAssetStatus] = {"approve": "approved", "defer": "deferred", "reject": "rejected"}
-    if row.status != "reviewing":
+    if ensure_utc(row.updated_at) != ensure_utc(expected_updated_at) or row.status not in (
+        {"pending", "reviewing"} if status == "failed" else {"reviewing"}
+    ):
         return row.status
-    status = mapping.get(decision)
-    if status is None:
-        raise ValueError(f"未知的动作评审结论：{decision}")
     row.status = status
     row.review_reason = reason
     await db.flush()
@@ -208,7 +280,7 @@ async def record_review(
 
 
 async def settle_action_steps(db: AsyncSession, row: ActionDefinition) -> None:
-    if row.status not in {"approved", "rejected", "deferred"}:
+    if row.status not in {"approved", "rejected", "deferred", "failed"}:
         return
     await update_business_steps_in_session(
         db,
@@ -222,17 +294,18 @@ async def settle_action_steps(db: AsyncSession, row: ActionDefinition) -> None:
 
 
 async def recover_interrupted_reviews(db: AsyncSession, user_id: int | None = None) -> int:
-    """中断的评审转为需手动处理的暂缓，不自动重新付费。"""
+    """启动和账户恢复时终结遗留任务，不自动重新付费。"""
 
-    statement = select(ActionDefinition).where(ActionDefinition.status == "reviewing")
+    statement = select(ActionDefinition).where(ActionDefinition.status.in_(("pending", "reviewing")))
     if user_id is not None:
         statement = statement.where(ActionDefinition.user_id == user_id)
     result = await db.execute(statement)
     count = 0
     for row in result.scalars():
-        row.status = "deferred"
+        row.status = "failed"
         row.review_reason = "评审中断，请手动重试"
         await settle_action_steps(db, row)
+        emit_ws_event(db, user_id=row.user_id, event_type="companion.action.updated", payload={})
         count += 1
     if count:
         await db.flush()

@@ -21,6 +21,7 @@ from infrastructure.ai.llm_retry import call_with_retry
 from infrastructure.ai.models import ModelModality
 from infrastructure.ai.providers.base import ChatProvider, ProviderError
 from infrastructure.ai.responses import build_responses_kwargs
+from infrastructure.ai.structured_contracts import LlmSchemaContractError, validate_preserved_choices
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.token_budget import request_output_budget
 from infrastructure.ai.user_config import UserLlmConfig, load_user_llm_config
@@ -282,13 +283,7 @@ async def call_llm_json[T](
     attempts = diagnostics if diagnostics is not None else []
     known_fields = _schema_fields(schema)
     discriminator_choices = _schema_discriminator_choices(schema)
-    explicit_choices: dict[str, list[Any]] = {}
-    for name in preserve_choices:
-        field = schema.get("properties", {}).get(name, {})
-        values = [False, True] if field.get("type") == "boolean" else field.get("enum")
-        if not isinstance(values, list) or not values:
-            raise ValueError(f"Preserved choice {name!r} must be a root enum or boolean field")
-        explicit_choices[name] = values
+    explicit_choices = validate_preserved_choices(schema, preserve_choices, schema_name=schema_name)
     if any(not isinstance(uri, str) or not uri for uri in reference_images):
         raise ValueError("Visual structured output requires readable reference images")
     preserved_fields: dict[str, Any] = {}
@@ -524,6 +519,8 @@ async def vision_chat_json[T: BaseModel](
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> T:
     """视觉结构输出沿用一次格式校正与供应商回退，校正不重新判断图片。"""
+    schema = response_model.model_json_schema()
+    validate_preserved_choices(schema, preserve_choices, schema_name=schema_name)
     config = await _load_vision_config(user_id, task, reference_images)
     diagnostics: list[LlmAttemptDiagnostic] = []
     try:
@@ -531,7 +528,7 @@ async def vision_chat_json[T: BaseModel](
             config,
             system_prompt,
             user_payload,
-            schema=response_model.model_json_schema(),
+            schema=schema,
             schema_name=schema_name,
             parse_output=response_model.model_validate,
             repair_prompt="",
@@ -540,7 +537,7 @@ async def vision_chat_json[T: BaseModel](
             before_call=before_submit,
             diagnostics=diagnostics,
         )
-    except LlmCallBlockedError:
+    except (LlmCallBlockedError, LlmSchemaContractError):
         raise
     except Exception as exc:
         logger.warning(

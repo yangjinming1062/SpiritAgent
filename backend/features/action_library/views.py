@@ -22,6 +22,7 @@ def definition_view(row: ActionDefinition) -> ActionAssetView:
         duration_seconds=row.duration_seconds,
         reason=row.reason,
         source=row.source,  # type: ignore[arg-type]
+        preset_key=row.preset_key,
         status=row.status,  # type: ignore[arg-type]
         review_reason=row.review_reason,
         created_at=row.created_at,

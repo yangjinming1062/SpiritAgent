@@ -176,6 +176,7 @@ export type PlaybackStatus = ApiSchemas['RpcVisualPlaybackEvent']['status']
 export type PlaybackReceiptKind = NonNullable<ApiSchemas['RpcVisualPlaybackEvent']['receipt_kind']>
 export type ActionClipKind = NonNullable<ApiSchemas['ActionAssetDesign']['clip_kind']>
 export type ActionReviewStatus = ApiSchemas['ActionAssetView']['status']
+export type ActionLibraryGroup = NonNullable<ApiOperations['companion_actions.list_actions']['query']['group']>
 export type VisualItem = ApiSchemas['VisualItemView']
 export type VisualJob = ApiSchemas['VisualJobView']
 export type VisualDetail = ApiSchemas['VisualDetailView']

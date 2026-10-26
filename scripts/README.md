@@ -100,6 +100,14 @@ uv run --no-project --python 3.13 python scripts/check_services_architecture.py
 
 ## 提示词调试
 
+模型决策契约的只读门禁：
+
+```bash
+uv run --project backend --locked python scripts/check_llm_contracts.py
+```
+
+[检查器](check_llm_contracts.py)从显式声明 `preserve_choices` 的调用点读取实际输出 Schema，复用运行时校验，并核对公共视觉包装的参数传递；目录无效、无有效检查项或相关入口无法解析时均报错。它同时检查可识别的固定候选正则模式，不连接数据库或供应商，提交门禁包含此项。动态候选集合、格式修复、回退中的决策保持和真实模型效果仍按受影响链路另验，临时验证程序不提交。
+
 ```bash
 uv run --project backend python scripts/debug_prompt.py
 uv run --project backend python scripts/debug_prompt.py -m "你好" --persona-name "星奈" --json

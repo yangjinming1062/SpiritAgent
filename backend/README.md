@@ -51,7 +51,7 @@ ORM 留在数据所有者内部。跨域读取返回 DTO/冻结快照，写入�
 
 [system_settings.py](features/configuration/system_settings.py) 串行合并并校验整批运营参数，数据库提交成功后才更新运行时及相关资源；启动水合覆盖文件中的动态值，非法持久值中止启动，启动专用键不能在管理页修改。用户点键配置统一经 [settings/values.py](features/configuration/settings/values.py) 读写，存储编码归 [字段字典](../docs/DATABASE_FIELDS.md#账户配置与设备身份)。
 
-[0001 基线](alembic/versions/0001_baseline.py) 面向空库，启动执行 `alembic upgrade head`，不自动清库或转换历史结构。模型与基线同时维护类型、约束、索引和触发器，不能只依赖 autogenerate；降级只用于隔离空库验收，备份接受范围见 [恢复契约](../docs/PROTOCOL.md#备份校验与覆盖恢复)。
+[0001 基线](alembic/versions/0001_baseline.py) 是空库起点，后续[增量迁移](alembic/versions)升级已有数据，启动执行 `alembic upgrade head`，不自动清库。模型与迁移保持类型、约束、索引和触发器一致，不能只依赖 autogenerate；降级只用于隔离库验收，备份接受范围见 [恢复契约](../docs/PROTOCOL.md#备份校验与覆盖恢复)。
 
 ### 装配与启停
 

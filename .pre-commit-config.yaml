@@ -44,6 +44,12 @@ repos:
         language: system
         files: ^(runner/|scripts/check_runner_architecture\.py$)
         pass_filenames: false
+      - id: check-llm-contracts
+        name: check model decision schemas and finite choices
+        entry: uv run --project backend --locked python scripts/check_llm_contracts.py
+        language: system
+        files: ^(backend/|runner/|scripts/check_llm_contracts\.py$)
+        pass_filenames: false
       - id: check-forbidden-comments
         name: check forbidden issue tags in code comments
         entry: '(?i)#\s*.*(P[0-9]+-[0-9]+|M-[0-9]+)'

@@ -8,7 +8,7 @@ import { onJournalEvent } from '@/modules/diary'
 import { handleLifeUpdated } from '@/modules/life'
 import { onPostEvent } from '@/modules/posts'
 import { onSceneEvent } from '@/modules/scene'
-import { handleVisualEvent } from '@/modules/visuals'
+import { handleVisualEvent, refreshActionGroups } from '@/modules/visuals'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { $auth } from '@/shared/store/auth'
 import { $gateway } from '@/shared/store/gateway'
@@ -70,6 +70,11 @@ export function handleGatewayEvent(event: GatewayEvent): void {
   const ctx: EventRouteContext = { isPresentationHost: $gateway.get()?.isPresentationHost ?? false }
 
   switch (event.type) {
+    case 'companion.action.updated':
+      void refreshActionGroups()
+
+      break
+
     case 'companion.topic_feedback.updated':
       onTopicFeedbackUpdated(event.payload)
 

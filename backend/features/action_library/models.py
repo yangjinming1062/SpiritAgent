@@ -7,13 +7,14 @@
 from typing import Any
 
 from infrastructure.models import ModelBase, TimestampMixin
-from sqlalchemy import ForeignKey, Integer, String, Text, text
+from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 
 class ActionDefinition(ModelBase, TimestampMixin):
     __tablename__ = "action_definitions"
+    __table_args__ = (UniqueConstraint("user_id", "preset_key", name="uq_action_definitions_preset"),)
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     # 名称只用于展示和检索，不承担跨来源唯一身份；内容不同但名称相同的动作各自独立。
@@ -33,6 +34,7 @@ class ActionDefinition(ModelBase, TimestampMixin):
     duration_seconds: Mapped[int] = mapped_column(Integer)
     reason: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     source: Mapped[str] = mapped_column(String(24))
+    preset_key: Mapped[str | None] = mapped_column(String(24), nullable=True)
     status: Mapped[str] = mapped_column(String(24), default="pending", server_default=text("'pending'"), index=True)
     review_reason: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     # 冻结的评审依据：角色身体能力与动作含义；具体环境与道具在组合制作时判断。

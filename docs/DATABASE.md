@@ -1,6 +1,6 @@
 # 数据库设计与关系图
 
-本文解释实体拆分、关系约束、删除与查询设计。字段定位见 [DATABASE_FIELDS](DATABASE_FIELDS.md)，完整结构以 [ORM 注册](../backend/bootstrap/models.py)和 [0001 基线](../backend/alembic/versions/0001_baseline.py)为准。跨模块行为和备份格式由 [PROTOCOL](PROTOCOL.md)定义。
+本文解释实体拆分、关系约束、删除与查询设计。字段定位见 [DATABASE_FIELDS](DATABASE_FIELDS.md)，完整结构以 [ORM 注册](../backend/bootstrap/models.py)和[迁移序列](../backend/alembic/versions)为准。跨模块行为和备份格式由 [PROTOCOL](PROTOCOL.md)定义。
 
 数据库使用 PostgreSQL、`vector` 和 `pg_trgm`；部署版本与单实例条件见 [Backend](../backend/README.md#docker-compose-部署)及[运行时边界](ARCHITECTURE.md#部署与运行时边界)。下图只保留解释所有权、循环或恢复所需的关系，箭头由引用方向指向目标，省略重复用户外键和普通文件关联；不是第二份完整 schema。
 
@@ -82,6 +82,8 @@ flowchart LR
 ```
 
 确认身份统一管理自动特征、人工覆盖和修订，候选/分析失败不撤销已发布身份。衣柜、环境和动作是可复用定义，各自与制作过程分离；新制作失败保留当前素材。环境保存上传源和展示图，不保存“启用环境”；实际显示由呈现领域记录。
+
+动作的可用性由评审状态决定，不另存入库布尔值。通用内置定义通过账户内唯一 `preset_key` 补齐，自创动作该值为空；名称不承担唯一身份。内置动作 ID 在升级中保持稳定，备份按内置键合并，避免创建重复定义或改绑影像引用。
 
 ## 影像与不可变版本
 

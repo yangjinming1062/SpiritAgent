@@ -3,11 +3,12 @@
 export interface ApiSchemas {
   "AIConfigPublic": { "providers": Array<ApiSchemas["ProviderCardPublic"]>; "capabilities": ApiSchemas["CapabilityChains"]; "tasks": { [key: string]: ApiSchemas["TaskConfig"] } }
   "AIConfigUpdate": { "providers": Array<ApiSchemas["ProviderCardUpdate"]>; "capabilities": ApiSchemas["CapabilityChainsInput"]; "tasks"?: { [key: string]: ApiSchemas["TaskConfigInput"] } }
-  "ActionAssetDesign": { "name": string; "motion_description": string; "use_when"?: Array<string>; "avoid_when"?: Array<string>; "allowed_triggers"?: Array<string>; "clip_kind"?: "once" | "loop"; "duration_seconds"?: number; "reason"?: string }
-  "ActionAssetUpdate": { "name": string; "motion_description": string; "use_when"?: Array<string>; "avoid_when"?: Array<string>; "allowed_triggers"?: Array<string>; "clip_kind"?: "once" | "loop"; "duration_seconds"?: number; "reason"?: string; "expected_updated_at": string }
-  "ActionAssetView": { "id": string; "name": string; "motion_description": string; "use_when": Array<string>; "avoid_when": Array<string>; "allowed_triggers": Array<string>; "clip_kind": "once" | "loop"; "duration_seconds": number; "reason": string; "source": "user_requested" | "autonomous" | "preset"; "status": "pending" | "reviewing" | "approved" | "deferred" | "rejected"; "review_reason": string; "created_at": string; "updated_at": string }
+  "ActionAssetDesign": { "name": string; "motion_description": string; "use_when"?: Array<string>; "avoid_when"?: Array<string>; "allowed_triggers"?: Array<"chat" | "manual" | "periodic" | "user_return">; "clip_kind"?: "once" | "loop"; "duration_seconds"?: number; "reason"?: string }
+  "ActionAssetUpdate": { "name": string; "motion_description": string; "use_when"?: Array<string>; "avoid_when"?: Array<string>; "allowed_triggers"?: Array<"chat" | "manual" | "periodic" | "user_return">; "clip_kind"?: "once" | "loop"; "duration_seconds"?: number; "reason"?: string; "expected_updated_at": string }
+  "ActionAssetView": { "id": string; "name": string; "motion_description": string; "use_when": Array<string>; "avoid_when": Array<string>; "allowed_triggers": Array<"chat" | "manual" | "periodic" | "user_return">; "clip_kind": "once" | "loop"; "duration_seconds": number; "reason": string; "source": "user_requested" | "autonomous" | "preset"; "preset_key": (string | null); "status": "pending" | "reviewing" | "approved" | "deferred" | "rejected" | "failed"; "review_reason": string; "created_at": string; "updated_at": string }
   "ActionListResponse": { "actions": Array<ApiSchemas["ActionAssetView"]>; "total": (number | null); "has_more": boolean; "next_cursor": (string | null); "limit": number }
   "ActionMaterialRef": { "action_id": (string | null); "name": string; "motion_description": string; "clip_kind": "once" | "loop"; "duration_seconds": number; "use_when": Array<string>; "avoid_when": Array<string>; "allowed_triggers": Array<string>; "revision": (string | null) }
+  "ActionReviewRequest": { "expected_updated_at": string }
   "ActivateRequest": { "code": string; "client_version"?: string; "client_context"?: (ApiSchemas["ChatRequestClientContext"] | null) }
   "ActiveTurnView": { "request_id": string; "origin_kind": string; "message_ids": Array<string>; "assistant_message_id": (string | null); "messages": Array<ApiSchemas["SessionMessageView"]>; "text": string; "reasoning": string; "bubbles": Array<ApiSchemas["ReplyBubbleView"]>; "tools": Array<ApiSchemas["ToolSnapshot"]>; "running": boolean; "replace_reply_message_id": (string | null) }
   "ActualPresentationSnapshot": { "visual_id": (string | null); "media_kind": ("image" | "video" | null); "visual_version": (number | null); "visual_description": string; "visual_path": (string | null); "outfit_path": (string | null); "outfit_hash": (string | null); "outfit_description": string; "scene_path": (string | null); "scene_hash": (string | null); "scene_description": string; "identity_path": (string | null); "identity_hash": (string | null); "identity_reference_role": "portrait" | "fullbody"; "ready": boolean }
@@ -433,11 +434,12 @@ export interface ApiOperations {
   "companion.post_retry_outfit_description": { path: { "outfit_id": string }; query: Record<string, never>; body: undefined; input: { path: { "outfit_id": string }; query?: never; body?: never }; response: ApiSchemas["OutfitResponse"] }
   "companion.delete_outfit_route": { path: { "outfit_id": string }; query: Record<string, never>; body: undefined; input: { path: { "outfit_id": string }; query?: never; body?: never }; response: ApiSchemas["CompanionOperationResponse"] }
   "companion.serve_companion_asset": { path: { "user_id": string; "asset_path": string }; query: { "expires"?: (number | null); "sig"?: (string | null) }; body: undefined; input: { path: { "user_id": string; "asset_path": string }; query?: { "expires"?: (number | null); "sig"?: (string | null) }; body?: never }; response: Uint8Array }
-  "companion_actions.list_actions": { path: Record<string, never>; query: { "query"?: (string | null); "clip_kind"?: ("once" | "loop" | null); "status"?: (string | null); "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body: undefined; input: { path?: never; query?: { "query"?: (string | null); "clip_kind"?: ("once" | "loop" | null); "status"?: (string | null); "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body?: never }; response: ApiSchemas["ActionListResponse"] }
+  "companion_actions.list_actions": { path: Record<string, never>; query: { "query"?: (string | null); "clip_kind"?: ("once" | "loop" | null); "status"?: ("pending" | "reviewing" | "approved" | "deferred" | "rejected" | "failed" | null); "group"?: "in_library" | "not_in_library"; "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body: undefined; input: { path?: never; query?: { "query"?: (string | null); "clip_kind"?: ("once" | "loop" | null); "status"?: ("pending" | "reviewing" | "approved" | "deferred" | "rejected" | "failed" | null); "group"?: "in_library" | "not_in_library"; "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body?: never }; response: ApiSchemas["ActionListResponse"] }
   "companion_actions.create_action": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["ActionAssetDesign"]; input: { path?: never; query?: never; body: ApiSchemas["ActionAssetDesign"] }; response: ApiSchemas["ActionAssetView"] }
   "companion_actions.get_action": { path: { "action_id": string }; query: Record<string, never>; body: undefined; input: { path: { "action_id": string }; query?: never; body?: never }; response: ApiSchemas["ActionAssetView"] }
   "companion_actions.update_action": { path: { "action_id": string }; query: Record<string, never>; body: ApiSchemas["ActionAssetUpdate"]; input: { path: { "action_id": string }; query?: never; body: ApiSchemas["ActionAssetUpdate"] }; response: ApiSchemas["ActionAssetView"] }
   "companion_actions.delete_action": { path: { "action_id": string }; query: Record<string, never>; body: undefined; input: { path: { "action_id": string }; query?: never; body?: never }; response: undefined }
+  "companion_actions.retry_review": { path: { "action_id": string }; query: Record<string, never>; body: ApiSchemas["ActionReviewRequest"]; input: { path: { "action_id": string }; query?: never; body: ApiSchemas["ActionReviewRequest"] }; response: ApiSchemas["ActionAssetView"] }
   "companion_visuals.list_visuals": { path: Record<string, never>; query: { "query"?: (string | null); "media_kind"?: ("image" | "video" | null); "outfit_id"?: (string | null); "scene_id"?: (string | null); "action_id"?: (string | null); "source"?: (string | null); "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body: undefined; input: { path?: never; query?: { "query"?: (string | null); "media_kind"?: ("image" | "video" | null); "outfit_id"?: (string | null); "scene_id"?: (string | null); "action_id"?: (string | null); "source"?: (string | null); "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body?: never }; response: ApiSchemas["VisualListResponse"] }
   "companion_visuals.list_visual_jobs": { path: Record<string, never>; query: { "state"?: ("queued" | "running" | "paused" | "succeeded" | "failed" | "cancelled" | "unknown" | null); "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body: undefined; input: { path?: never; query?: { "state"?: ("queued" | "running" | "paused" | "succeeded" | "failed" | "cancelled" | "unknown" | null); "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body?: never }; response: ApiSchemas["VisualJobListResponse"] }
   "companion_visuals.get_presentation": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["VisualPresentationResponse"] }
@@ -1266,6 +1268,18 @@ export const API_OPERATIONS = {
     "method": "DELETE",
     "encoding": "json",
     "response": "empty",
+    "identities": [
+      "desktop",
+      "remote"
+    ],
+    "wait_for_model": false,
+    "ipc": true
+  },
+  "companion_actions.retry_review": {
+    "path": "/api/companion/actions/{action_id}/review",
+    "method": "POST",
+    "encoding": "json",
+    "response": "json",
     "identities": [
       "desktop",
       "remote"

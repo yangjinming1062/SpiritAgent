@@ -1,3 +1,4 @@
+import type { ActionReviewStatus } from '../../../../../shared/protocol'
 import { uiCopy } from '../../../../../shared/ui-copy'
 
 export const dict = {
@@ -1693,13 +1694,21 @@ export const dict = {
   },
 
   actions: {
+    inLibrary: '已入库',
+    notInLibrary: '未入库',
+    emptyUnlisted: '没有未入库的动作。',
+    builtin: '内置',
+    custom: '自创',
+    copy: '复制后创作',
+    retry: '重试评审',
+    retryFailed: '重试评审失败',
     loadMore: '加载更多动作',
     title: '动作',
-    intro: '维护动作的语义定义：名称、动作内容、适用条件、类型与时长。影像制作会按这里的定义执行。',
+    intro: '已入库动作可用于制作影像；未入库动作可查看评审进度、修改或重试。',
     searchAria: '搜索动作',
     searchPlaceholder: '搜索名称或描述',
     loading: '加载动作中…',
-    empty: '还没有动作定义，先新建一个吧。',
+    empty: '还没有已入库动作，自创动作通过评审后会出现在这里。',
     emptySearch: '没有找到匹配的动作。',
     create: '新建动作',
     edit: '编辑动作',
@@ -1709,7 +1718,7 @@ export const dict = {
     motionLabel: '动作内容',
     useWhenLabel: '适用条件',
     avoidWhenLabel: '避免条件',
-    conditionsHint: '每行一条；留空表示不限。',
+    conditionsHint: '每行一条，每项最多 8 条、每条最多 120 字；留空表示不限。',
     clipLabel: '动作类型',
     clipOnce: '短动作',
     clipLoop: '持续动作',
@@ -1725,9 +1734,10 @@ export const dict = {
       pending: '待评审',
       reviewing: '评审中',
       approved: '已通过',
-      deferred: '暂缓',
-      rejected: '未通过'
-    } as Record<string, string>
+      deferred: '待补充资料',
+      rejected: '未通过',
+      failed: '评审失败'
+    } satisfies Record<ActionReviewStatus, string>
   },
 
   visuals: {

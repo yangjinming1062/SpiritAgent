@@ -16,6 +16,7 @@ from features.action_library.schemas import (
     ActionAssetUpdate,
     ActionAssetView,
     ActionClipKind,
+    ActionReviewRequest,
     ActionReviewSource,
 )
 from features.appearance.character_card import (
@@ -178,15 +179,22 @@ async def design_action_reference(
         )
         await db.commit()
     if view.status == "pending":
-        schedule_action_review(user_id, view.id)
+        schedule_action_review(user_id, view.id, view.updated_at)
     messages = {
-        "pending": "已登记，语义评审进行中",
+        "pending": "已登记，等待评审",
         "reviewing": "相同动作正在评审",
         "approved": "复用已通过的相同动作",
-        "deferred": "相同动作评审暂缓，可稍后重试",
+        "deferred": "相同动作待补充资料，请根据评审说明补充后重试",
         "rejected": "相同动作已被拒绝，调整定义后重新提交",
+        "failed": "相同动作评审未完成，请在未入库动作中重试评审",
     }
-    return {"action_id": view.id, "name": view.name, "status": view.status, "message": messages[view.status]}
+    return {
+        "action_id": view.id,
+        "name": view.name,
+        "status": view.status,
+        "message": messages[view.status],
+        "review_reason": view.review_reason,
+    }
 
 
 async def load_action_review_source(db: AsyncSession, user_id: int) -> ActionReviewSource:
@@ -211,6 +219,9 @@ async def load_action_review_source(db: AsyncSession, user_id: int) -> ActionRev
 
 async def update_action_reference(user_id: int, action_id: int, body: ActionAssetUpdate) -> ActionAssetView | None:
     async with SESSION_LOCAL() as db:
+        current = await action_queries.action_detail(db, user_id, action_id)
+        if current is None or action_service.prepare_action_update(current, body, body.expected_updated_at) is None:
+            return current
         source = await load_action_review_source(db, user_id)
         view = await action_service.update_action(
             db,
@@ -221,8 +232,28 @@ async def update_action_reference(user_id: int, action_id: int, body: ActionAsse
             review_source_json=source.model_dump(mode="json"),
         )
         await db.commit()
+    if view is not None and view.status == "pending":
+        schedule_action_review(user_id, action_id, view.updated_at)
+    return view
+
+
+async def retry_action_reference(user_id: int, action_id: int, body: ActionReviewRequest) -> ActionAssetView | None:
+    async with SESSION_LOCAL() as db:
+        current = await action_queries.action_detail(db, user_id, action_id)
+        if current is None:
+            return None
+        action_service.require_review_retry(current, body.expected_updated_at)
+        source = await load_action_review_source(db, user_id)
+        view = await action_service.retry_review(
+            db,
+            user_id,
+            action_id,
+            expected_updated_at=body.expected_updated_at,
+            review_source_json=source.model_dump(mode="json"),
+        )
+        await db.commit()
     if view is not None:
-        schedule_action_review(user_id, action_id)
+        schedule_action_review(user_id, action_id, view.updated_at)
     return view
 
 

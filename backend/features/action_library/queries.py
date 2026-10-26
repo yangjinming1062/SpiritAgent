@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
 from .models import ActionDefinition
-from .schemas import ActionAssetView, ActionListResponse
+from .schemas import ActionAssetStatus, ActionAssetView, ActionLibraryGroup, ActionListResponse
 from .views import definition_view, normalize_action_name
 
 
@@ -28,7 +28,9 @@ def _filters(user_id: int, query: str | None, clip_kind: str | None, status: str
 
 async def action_detail(db: AsyncSession, user_id: int, action_id: int) -> ActionAssetView | None:
     row = await db.scalar(
-        select(ActionDefinition).where(ActionDefinition.user_id == user_id, ActionDefinition.id == action_id),
+        select(ActionDefinition)
+        .options(defer(ActionDefinition.review_source_json, raiseload=True))
+        .where(ActionDefinition.user_id == user_id, ActionDefinition.id == action_id),
     )
     return definition_view(row) if row else None
 
@@ -39,7 +41,8 @@ async def list_actions(
     *,
     query: str | None = None,
     clip_kind: str | None = None,
-    status: str | None = None,
+    status: ActionAssetStatus | None = None,
+    group: ActionLibraryGroup = "in_library",
     cursor: int | None = None,
     include_total: bool = False,
     limit: int = 20,
@@ -47,6 +50,9 @@ async def list_actions(
     """按名称或动作内容分页检索；名称只用于检索，不作身份判别。"""
 
     conditions = _filters(user_id, query, clip_kind, status)
+    conditions.append(
+        ActionDefinition.status == "approved" if group == "in_library" else ActionDefinition.status != "approved"
+    )
     total = (
         (await db.scalar(select(func.count()).select_from(ActionDefinition).where(*conditions)) or 0)
         if include_total

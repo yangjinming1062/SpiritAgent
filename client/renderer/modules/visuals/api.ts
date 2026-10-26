@@ -5,6 +5,7 @@ import type { ApiSchemas } from '../../../../shared/api.generated'
 import type {
   ActionDefinition,
   ActionDefinitionRequest,
+  ActionLibraryGroup,
   ActionListResponse,
   ActionUpdateRequest,
   PlaybackReceiptKind,
@@ -65,12 +66,18 @@ export const visualsApi = {
 }
 
 export const actionsApi = {
-  list: (query: { query?: string; cursor?: string; limit?: number } = {}): Promise<ActionListResponse> =>
-    requestResource('companion_actions.list_actions', { query }),
+  list: (
+    query: { query?: string; cursor?: string; limit?: number; group?: ActionLibraryGroup } = {}
+  ): Promise<ActionListResponse> => requestResource('companion_actions.list_actions', { query }),
   create: (body: ActionDefinitionRequest): Promise<ActionDefinition> =>
     requestResource('companion_actions.create_action', { body }),
   update: (actionId: string, body: ActionUpdateRequest): Promise<ActionDefinition> =>
     requestResource('companion_actions.update_action', { path: { action_id: actionId }, body }),
+  review: (actionId: string, expectedUpdatedAt: string): Promise<ActionDefinition> =>
+    requestResource('companion_actions.retry_review', {
+      path: { action_id: actionId },
+      body: { expected_updated_at: expectedUpdatedAt }
+    }),
   remove: (actionId: string): Promise<void> =>
     requestResource('companion_actions.delete_action', { path: { action_id: actionId } })
 }

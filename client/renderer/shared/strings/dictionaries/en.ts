@@ -1779,14 +1779,22 @@ export const dict: Dictionary = {
   },
 
   actions: {
+    inLibrary: 'In library',
+    notInLibrary: 'Not in library',
+    emptyUnlisted: 'No actions awaiting inclusion.',
+    builtin: 'Built-in',
+    custom: 'Custom',
+    copy: 'Create a copy',
+    retry: 'Retry review',
+    retryFailed: 'Could not retry the review',
     loadMore: 'Load more actions',
     title: 'Actions',
     intro:
-      'Maintain action semantics: name, motion, applicable conditions, type and duration. Visual creation follows these definitions.',
+      'Actions in your library can be used to create visuals. Check reviews, edit or retry actions not yet included.',
     searchAria: 'Search actions',
     searchPlaceholder: 'Search names or descriptions',
     loading: 'Loading actions…',
-    empty: 'No action definitions yet. Create the first one.',
+    empty: 'No actions in the library yet. Custom actions appear here after approval.',
     emptySearch: 'No actions match this search.',
     create: 'New action',
     edit: 'Edit action',
@@ -1796,7 +1804,7 @@ export const dict: Dictionary = {
     motionLabel: 'Motion',
     useWhenLabel: 'Use when',
     avoidWhenLabel: 'Avoid when',
-    conditionsHint: 'One condition per line. Leave empty for no limit.',
+    conditionsHint: 'One condition per line, up to 8 per field and 120 characters each. Leave empty for no limit.',
     clipLabel: 'Action type',
     clipOnce: 'Short action',
     clipLoop: 'Looping action',
@@ -1812,9 +1820,10 @@ export const dict: Dictionary = {
       pending: 'Pending review',
       reviewing: 'Under review',
       approved: 'Approved',
-      deferred: 'Deferred',
-      rejected: 'Rejected'
-    } as Record<string, string>
+      deferred: 'Needs information',
+      rejected: 'Not approved',
+      failed: 'Review failed'
+    }
   },
 
   visuals: {

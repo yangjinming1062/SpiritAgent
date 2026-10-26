@@ -5,12 +5,20 @@ from typing import Annotated, Literal
 from fastapi import Path, Query
 from features.action_library import queries as _action_queries
 from features.action_library import use_cases as _actions
-from features.action_library.schemas import ActionAssetDesign, ActionAssetUpdate, ActionAssetView, ActionListResponse
+from features.action_library.schemas import (
+    ActionAssetDesign,
+    ActionAssetStatus,
+    ActionAssetUpdate,
+    ActionAssetView,
+    ActionLibraryGroup,
+    ActionListResponse,
+    ActionReviewRequest,
+)
 from infrastructure.api_ids import ResourceId
 from infrastructure.constants import POSTGRES_INT8_MAX
 from infrastructure.database import DbSession
 from infrastructure.request_errors import RequestError
-from workflows.visuals_companion import design_action_reference, update_action_reference
+from workflows.visuals_companion import design_action_reference, retry_action_reference, update_action_reference
 
 from entrypoints.http.auth import CurrentUser
 from entrypoints.http.routing import get_router
@@ -24,7 +32,8 @@ async def list_actions(
     db: DbSession,
     query: Annotated[str | None, Query(max_length=200)] = None,
     clip_kind: Annotated[Literal["once", "loop"] | None, Query()] = None,
-    status: Annotated[str | None, Query(max_length=24)] = None,
+    status: ActionAssetStatus | None = None,
+    group: ActionLibraryGroup = "in_library",
     cursor: Annotated[ResourceId | None, Query()] = None,
     include_total: bool = False,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
@@ -35,6 +44,7 @@ async def list_actions(
         query=query,
         clip_kind=clip_kind,
         status=status,
+        group=group,
         cursor=cursor,
         include_total=include_total,
         limit=limit,
@@ -86,3 +96,18 @@ async def delete_action(
     action_id: Annotated[ResourceId, Path(gt=0, le=POSTGRES_INT8_MAX)], user: CurrentUser, db: DbSession
 ) -> None:
     await _actions.delete_action(user_id=user.id, db=db, action_id=action_id)
+
+
+@router.post("/{action_id}/review", response_model=ActionAssetView, status_code=202)
+async def retry_review(
+    action_id: Annotated[ResourceId, Path(gt=0, le=POSTGRES_INT8_MAX)],
+    user: CurrentUser,
+    body: ActionReviewRequest,
+) -> ActionAssetView:
+    try:
+        result = await retry_action_reference(user.id, action_id, body)
+    except ValueError as exc:
+        raise RequestError(status_code=409, message=str(exc)) from exc
+    if result is None:
+        raise RequestError(status_code=404, message="未找到动作")
+    return result

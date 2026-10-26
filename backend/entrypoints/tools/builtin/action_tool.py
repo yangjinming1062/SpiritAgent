@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 from features.action_library import queries as action_queries
-from features.action_library.schemas import ABSOLUTE_MAX_DURATION_SECONDS
+from features.action_library.schemas import ActionAssetDesign, ActionAssetView, ActionClipKind, ActionTrigger
 from infrastructure.api_ids import ResourceId
 from infrastructure.database import SESSION_LOCAL
 from runtime.tools.registry import ToolsRegistry
@@ -12,15 +12,38 @@ from workflows.companion_action_prompts import ACTION_DESIGN_MOTION_DESCRIPTION
 from workflows.visuals_companion import design_action_reference
 
 ACTION_SEARCH_TOOL_DESCRIPTION = (
-    "检索已登记的动作。返回名称、动作内容、适用条件、持续或短动作类型与时长；"
-    "登记不代表图片或视频已经制作，制作另用 visual_* 工具。"
+    "检索已经入库、可以用于制作的动作。返回名称、动作内容、适用条件、持续或短动作类型与时长；"
+    "入库不代表已有图片或视频，制作使用 visual_generate，查询已有成品使用 visual_search。"
 )
-ACTION_INSPECT_TOOL_DESCRIPTION = "查看一个动作的完整定义与评审状态。"
+ACTION_INSPECT_TOOL_DESCRIPTION = (
+    "查看一个动作的定义、评审状态及原因。approved 表示可用于制作，pending/reviewing 表示等待或正在评审；"
+    "deferred 表示待补充资料，rejected 表示内容未通过，failed 表示技术失败、尚未取得评审结论。"
+)
 ACTION_DESIGN_TOOL_DESCRIPTION = (
     "登记一个新动作（名称、动作内容、适用条件、持续或短动作类型与时长）。登记只保存定义并进入评审，"
     "不开始生成图片或视频；评审依据是角色身体能力与动作含义，具体环境与道具在每次生成时判断。"
-    "已登记过相近动作时优先复用，不重复登记。"
+    "已有合适的入库动作时优先复用；提交后用返回的 action_id 调用 action_inspect 查看结果，通过后才能用于制作。"
+    "不要用重复登记代替评审重试。"
 )
+
+
+def _action_payload(action: ActionAssetView) -> dict[str, Any]:
+    return action.model_dump(
+        mode="json",
+        include={
+            "id",
+            "name",
+            "motion_description",
+            "use_when",
+            "avoid_when",
+            "allowed_triggers",
+            "clip_kind",
+            "duration_seconds",
+            "reason",
+            "status",
+            "review_reason",
+        },
+    )
 
 
 async def action_search_tool(
@@ -40,7 +63,7 @@ async def action_search_tool(
         )
     return json.dumps(
         {
-            "actions": [item.model_dump(mode="json") for item in result.actions],
+            "actions": [_action_payload(item) for item in result.actions],
             "has_more": result.has_more,
             "next_cursor": str(result.next_cursor) if result.next_cursor is not None else None,
         },
@@ -57,7 +80,7 @@ async def action_inspect_tool(
         item = await action_queries.action_detail(db, user_id, action_id)
     if item is None:
         return json.dumps({"error": "未找到该动作"}, ensure_ascii=False)
-    return json.dumps(item.model_dump(mode="json"), ensure_ascii=False)
+    return json.dumps(_action_payload(item), ensure_ascii=False)
 
 
 async def action_design_tool(
@@ -66,10 +89,10 @@ async def action_design_tool(
     user_id: ResourceId,
     use_when: list[str] | None = None,
     avoid_when: list[str] | None = None,
-    allowed_triggers: list[str] | None = None,
+    allowed_triggers: list[ActionTrigger] | None = None,
     reason: str = "",
     duration_seconds: int = 4,
-    clip_kind: str = "once",
+    clip_kind: ActionClipKind = "once",
     **_: Any,
 ) -> str:
     result = await design_action_reference(
@@ -87,105 +110,70 @@ async def action_design_tool(
 
 
 def register(registry: ToolsRegistry) -> None:
+    design_schema = ActionAssetDesign.model_json_schema()
+    design_schema.pop("title", None)
+    design_descriptions = {
+        "name": "用户可见的简短动作名称，使用当前对话的语言。",
+        "motion_description": ACTION_DESIGN_MOTION_DESCRIPTION,
+        "use_when": "适用条件列表，如「用户主动请求拥抱」。",
+        "avoid_when": "应避免使用的条件。",
+        "allowed_triggers": (
+            "允许发起动作的情境：chat 为对话回应，manual 为用户点播，periodic 为自主日常活动，"
+            "user_return 为用户回来；省略或空列表使用 chat 与 manual。"
+        ),
+        "reason": "为何需要新动作；已有合适的入库动作时先复用。",
+        "duration_seconds": "预计时长（整秒），按一次可见表达与必要停留填写。",
+        "clip_kind": (
+            "loop 持续保持状态或自然连续的运动，首尾姿态、接触及道具位置和可见状态均须相接；"
+            "不能自然闭合的过程使用 once，完成一次表达并自然收束。"
+        ),
+    }
+    for name, description in design_descriptions.items():
+        design_schema["properties"][name]["description"] = description
     definitions = [
         (
             "action_search",
             action_search_tool,
             {
-                "cursor": {
-                    "type": "string",
-                    "pattern": "^[1-9][0-9]*$",
-                    "description": "继续读取时使用上次返回的 next_cursor；首次查询省略。",
+                "type": "object",
+                "properties": {
+                    "cursor": {
+                        "type": "string",
+                        "pattern": "^[1-9][0-9]*$",
+                        "description": "继续读取时使用上次返回的 next_cursor；首次查询省略。",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "按名称或动作内容匹配完整关键词；留空不筛选。返回数量仍受 limit 限制。",
+                    },
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
                 },
-                "query": {
-                    "type": "string",
-                    "description": "完整关键词文本匹配；留空不筛选。返回数量仍受 limit 限制。",
-                },
-                "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
+                "required": [],
+                "additionalProperties": False,
             },
-            [],
         ),
         (
             "action_inspect",
             action_inspect_tool,
             {
-                "action_id": {
-                    "type": "string",
-                    "pattern": "^[1-9][0-9]*$",
-                    "description": "动作标识，来自 action_search 或 action_design。",
+                "type": "object",
+                "properties": {
+                    "action_id": {
+                        "type": "string",
+                        "pattern": "^[1-9][0-9]*$",
+                        "description": "动作标识，来自 action_search 或 action_design。",
+                    },
                 },
+                "required": ["action_id"],
+                "additionalProperties": False,
             },
-            ["action_id"],
         ),
-        (
-            "action_design",
-            action_design_tool,
-            {
-                "name": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 64,
-                    "description": "用户可见的简短动作名称，使用当前对话的语言。",
-                },
-                "motion_description": {
-                    "type": "string",
-                    "minLength": 10,
-                    "maxLength": 600,
-                    "description": ACTION_DESIGN_MOTION_DESCRIPTION,
-                },
-                "use_when": {
-                    "type": "array",
-                    "maxItems": 8,
-                    "items": {"type": "string", "maxLength": 120},
-                    "description": "适用条件列表，如「用户主动请求拥抱」。",
-                },
-                "avoid_when": {
-                    "type": "array",
-                    "maxItems": 8,
-                    "items": {"type": "string", "maxLength": 120},
-                    "description": "应避免使用的条件。",
-                },
-                "allowed_triggers": {
-                    "type": "array",
-                    "maxItems": 8,
-                    "items": {"type": "string", "enum": ["chat", "manual", "periodic", "user_return"]},
-                    "description": "允许发起本动作的情境类别：chat、manual、periodic、user_return；默认 chat 与 manual。",
-                },
-                "reason": {"type": "string", "maxLength": 400, "description": "为何需要新动作；已有近义动作时先复用。"},
-                "duration_seconds": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": int(ABSOLUTE_MAX_DURATION_SECONDS),
-                    "default": 4,
-                    "description": "预计时长（整秒），按一次可见表达与必要停留填写 1–15，默认 4 秒。",
-                },
-                "clip_kind": {
-                    "type": "string",
-                    "enum": ["loop", "once"],
-                    "default": "once",
-                    "description": "loop 持续保持状态或自然连续的运动，首尾姿态、接触及道具位置和可见状态均须相接；"
-                    "不能自然闭合的过程使用 once，完成一次表达并自然收束。",
-                },
-            },
-            ["name", "motion_description"],
-        ),
+        ("action_design", action_design_tool, design_schema),
     ]
     descriptions = {
         "action_search": ACTION_SEARCH_TOOL_DESCRIPTION,
         "action_design": ACTION_DESIGN_TOOL_DESCRIPTION,
         "action_inspect": ACTION_INSPECT_TOOL_DESCRIPTION,
     }
-    for name, handler, properties, required in definitions:
-        registry.register(
-            {
-                "name": name,
-                "description": descriptions[name],
-                "parameters": {
-                    "type": "object",
-                    "properties": properties,
-                    "required": required,
-                    "additionalProperties": False,
-                },
-            },
-            handler,
-        )
+    for name, handler, parameters in definitions:
+        registry.register({"name": name, "description": descriptions[name], "parameters": parameters}, handler)

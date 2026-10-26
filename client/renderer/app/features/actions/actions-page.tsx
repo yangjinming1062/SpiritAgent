@@ -3,24 +3,25 @@ import type React from 'react'
 import { useEffect, useState } from 'react'
 
 import {
-  $actions,
-  $actionsError,
-  $actionsLoading,
-  $actionsNextCursor,
   type ActionClipKind,
   type ActionDefinition,
+  actionGroups,
+  type ActionLibraryGroup,
   createAction,
   deleteAction,
   loadMoreActions,
   refreshActions,
+  retryActionReview,
   updateAction
 } from '@/modules/visuals'
+import { captureAuthScope } from '@/shared/lib/authed-api'
 import {
   Badge,
   BTN_DANGER,
   BTN_GHOST,
   BTN_PRIMARY,
   BTN_SUBTLE,
+  CapsuleTabs,
   confirmAction,
   EmptyState,
   ErrorBanner,
@@ -37,6 +38,8 @@ import { $auth } from '@/shared/store/auth'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
+import { isActionDesignValid, parseActionConditions } from '../../../../../shared/actions'
+
 interface ActionDraft {
   name: string
   motion_description: string
@@ -44,6 +47,8 @@ interface ActionDraft {
   avoid_when: string
   clip_kind: ActionClipKind
   duration_seconds: number
+  allowed_triggers?: ActionDefinition['allowed_triggers']
+  reason?: string
 }
 
 function emptyDraft(): ActionDraft {
@@ -57,25 +62,28 @@ function draftOf(action: ActionDefinition): ActionDraft {
     use_when: action.use_when.join('\n'),
     avoid_when: action.avoid_when.join('\n'),
     clip_kind: action.clip_kind,
-    duration_seconds: action.duration_seconds
+    duration_seconds: action.duration_seconds,
+    allowed_triggers: action.allowed_triggers,
+    reason: action.reason
   }
 }
 
-function lines(value: string): string[] {
-  return value
-    .split('\n')
-    .map(item => item.trim())
-    .filter(Boolean)
+export function ActionsPage(): React.JSX.Element {
+  const auth = useStore($auth)
+
+  return <ActionsPageContent key={auth.kind === 'authenticated' ? auth.snapshot.sessionId : auth.kind} />
 }
 
-export function ActionsPage(): React.JSX.Element {
+function ActionsPageContent(): React.JSX.Element {
   const dict = useStrings()
   const t = dict.actions
   const auth = useStore($auth)
-  const actions = useStore($actions)
-  const loading = useStore($actionsLoading)
-  const error = useStore($actionsError)
-  const nextCursor = useStore($actionsNextCursor)
+  const [group, setGroup] = useState<ActionLibraryGroup>('in_library')
+  const actions = useStore(actionGroups[group].rows)
+  const loading = useStore(actionGroups[group].loading)
+  const loaded = useStore(actionGroups[group].loaded)
+  const error = useStore(actionGroups[group].error)
+  const nextCursor = useStore(actionGroups[group].nextCursor)
   const [query, setQuery] = useState('')
 
   const [editing, setEditing] = useState<
@@ -89,27 +97,52 @@ export function ActionsPage(): React.JSX.Element {
       return
     }
 
-    const timer = setTimeout(() => void refreshActions(query), 200)
+    const timer = setTimeout(() => void refreshActions(query, false, group), 200)
 
     return () => clearTimeout(timer)
-  }, [auth.kind, query])
+  }, [auth, group, query])
+
+  useEffect(() => {
+    if (!actions.some(action => action.status === 'pending' || action.status === 'reviewing')) {
+      return
+    }
+
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void refreshActions(query, false, group)
+      }
+    }, 5000)
+
+    return () => clearInterval(timer)
+  }, [actions, group, query])
 
   const visible = actions
 
+  const validDraft =
+    editing &&
+    isActionDesignValid({
+      ...editing.draft,
+      use_when: parseActionConditions(editing.draft.use_when),
+      avoid_when: parseActionConditions(editing.draft.avoid_when)
+    })
+
   const save = (): void => {
-    if (!editing) {
+    if (!editing || busy || !validDraft) {
       return
     }
 
     const draft = editing.draft
+    const scope = captureAuthScope()
 
     const body = {
       name: draft.name.trim(),
       motion_description: draft.motion_description.trim(),
-      use_when: lines(draft.use_when),
-      avoid_when: lines(draft.avoid_when),
+      use_when: parseActionConditions(draft.use_when),
+      avoid_when: parseActionConditions(draft.avoid_when),
       clip_kind: draft.clip_kind,
-      duration_seconds: draft.duration_seconds
+      duration_seconds: draft.duration_seconds,
+      allowed_triggers: draft.allowed_triggers,
+      reason: draft.reason
     }
 
     setBusy(true)
@@ -119,43 +152,89 @@ export function ActionsPage(): React.JSX.Element {
         ? createAction(body)
         : updateAction(editing.id, { ...body, expected_updated_at: editing.expectedUpdatedAt })
     )
-      .then(() => setEditing(null))
-      .catch(error_ => notifyError(error_, t.saveFailed))
-      .finally(() => setBusy(false))
+      .then(action => {
+        if (!scope?.()) {
+          return
+        }
+
+        setEditing(null)
+        setGroup(action.status === 'approved' ? 'in_library' : 'not_in_library')
+        setQuery('')
+      })
+      .catch(error_ => {
+        if (scope?.()) {
+          notifyError(error_, t.saveFailed)
+        }
+      })
+      .finally(() => {
+        if (scope?.()) {
+          setBusy(false)
+        }
+      })
   }
 
   const remove = (action: ActionDefinition): void => {
+    const scope = captureAuthScope()
     void confirmAction({
       title: t.deleteTitle,
       description: action.name,
       confirmLabel: t.deleteLabel,
       variant: 'destructive'
     }).then(confirmed => {
-      if (!confirmed) {
+      if (!confirmed || !scope?.()) {
         return
       }
 
       setBusy(true)
 
       void deleteAction(action.id)
-        .catch(error_ => notifyError(error_, t.deleteFailed))
-        .finally(() => setBusy(false))
+        .then(() => {
+          if (scope()) {
+            setEditing(current => (current?.id === action.id ? null : current))
+          }
+        })
+        .catch(error_ => {
+          if (scope()) {
+            notifyError(error_, t.deleteFailed)
+          }
+        })
+        .finally(() => {
+          if (scope()) {
+            setBusy(false)
+          }
+        })
     })
   }
 
   return (
     <SettingsContent>
       <SettingsSectionIntro hint={t.intro} title={t.title} />
+      <div className="mb-3">
+        <CapsuleTabs
+          ariaLabel={t.title}
+          onChange={setGroup}
+          options={[
+            { value: 'in_library', label: t.inLibrary },
+            { value: 'not_in_library', label: t.notInLibrary }
+          ]}
+          value={group}
+        />
+      </div>
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <SearchField ariaLabel={t.searchAria} onChange={setQuery} placeholder={t.searchPlaceholder} value={query} />
-        <button className={BTN_PRIMARY} onClick={() => setEditing({ id: null, draft: emptyDraft() })} type="button">
+        <button
+          className={BTN_PRIMARY}
+          disabled={busy}
+          onClick={() => setEditing({ id: null, draft: emptyDraft() })}
+          type="button"
+        >
           {t.create}
         </button>
       </div>
       {error && <ErrorBanner message={t.loadFailed} />}
       {editing && (
         <SettingCard className="mb-3">
-          <div className="flex flex-col gap-3 p-4">
+          <fieldset className="flex flex-col gap-3 p-4" disabled={busy}>
             <h3 className="text-sm font-medium">{editing.id === null ? t.create : t.edit}</h3>
             <label className="block">
               <span className={FIELD_LABEL}>{t.nameLabel}</span>
@@ -236,25 +315,23 @@ export function ActionsPage(): React.JSX.Element {
               </label>
             </div>
             <div className="flex gap-2">
-              <button
-                className={BTN_PRIMARY}
-                disabled={busy || !editing.draft.name.trim()}
-                onClick={save}
-                type="button"
-              >
+              <button className={BTN_PRIMARY} disabled={busy || !validDraft} onClick={save} type="button">
                 {t.save}
               </button>
               <button className={BTN_GHOST} disabled={busy} onClick={() => setEditing(null)} type="button">
                 {t.cancel}
               </button>
             </div>
-          </div>
+          </fieldset>
         </SettingCard>
       )}
-      {loading && actions.length === 0 ? (
+      {!loaded || (loading && actions.length === 0) ? (
         <LoadingBlock label={t.loading} />
       ) : visible.length === 0 ? (
-        <EmptyState description={query ? t.emptySearch : t.empty} title={t.title} />
+        <EmptyState
+          description={query ? t.emptySearch : group === 'in_library' ? t.empty : t.emptyUnlisted}
+          title={t.title}
+        />
       ) : (
         <SettingCard divided={false}>
           {visible.map(action => (
@@ -263,7 +340,8 @@ export function ActionsPage(): React.JSX.Element {
                 <span className="text-sm font-medium text-strong">{action.name}</span>
                 <Badge>{action.clip_kind === 'loop' ? t.clipLoop : t.clipOnce}</Badge>
                 <Badge>{`${action.duration_seconds}${t.durationSuffix}`}</Badge>
-                <Badge>{t.statusLabels[action.status] ?? action.status}</Badge>
+                <Badge>{action.source === 'preset' ? t.builtin : t.custom}</Badge>
+                {group === 'not_in_library' && <Badge>{t.statusLabels[action.status]}</Badge>}
               </div>
               <p className="whitespace-pre-wrap text-xs text-muted">{action.motion_description}</p>
               {(action.use_when.length > 0 || action.avoid_when.length > 0) && (
@@ -276,7 +354,7 @@ export function ActionsPage(): React.JSX.Element {
                     .join('；')}
                 </p>
               )}
-              {action.review_reason && (
+              {group === 'not_in_library' && action.review_reason && (
                 <p className="text-[11px] text-warning-fg">
                   {t.reviewReasonLabel}：{action.review_reason}
                 </p>
@@ -284,24 +362,59 @@ export function ActionsPage(): React.JSX.Element {
               <div className="flex gap-2">
                 <button
                   className={BTN_SUBTLE}
-                  disabled={busy}
+                  disabled={busy || action.status === 'pending' || action.status === 'reviewing'}
                   onClick={() =>
-                    setEditing({ id: action.id, draft: draftOf(action), expectedUpdatedAt: action.updated_at })
+                    setEditing(
+                      action.source === 'preset'
+                        ? { id: null, draft: draftOf(action) }
+                        : { id: action.id, draft: draftOf(action), expectedUpdatedAt: action.updated_at }
+                    )
                   }
                   type="button"
                 >
-                  {t.edit}
+                  {action.source === 'preset' ? t.copy : t.edit}
                 </button>
-                <button className={BTN_DANGER} disabled={busy} onClick={() => remove(action)} type="button">
-                  {t.deleteLabel}
-                </button>
+                {(action.status === 'failed' || action.status === 'deferred') && (
+                  <button
+                    className={BTN_SUBTLE}
+                    disabled={busy || editing?.id === action.id}
+                    onClick={() => {
+                      const scope = captureAuthScope()
+                      setBusy(true)
+                      void retryActionReview(action)
+                        .catch(error_ => {
+                          if (scope?.()) {
+                            notifyError(error_, t.retryFailed)
+                          }
+                        })
+                        .finally(() => {
+                          if (scope?.()) {
+                            setBusy(false)
+                          }
+                        })
+                    }}
+                    type="button"
+                  >
+                    {t.retry}
+                  </button>
+                )}
+                {action.source !== 'preset' && (
+                  <button className={BTN_DANGER} disabled={busy} onClick={() => remove(action)} type="button">
+                    {t.deleteLabel}
+                  </button>
+                )}
               </div>
             </div>
           ))}
         </SettingCard>
       )}
       {nextCursor ? (
-        <button className={BTN_SUBTLE} disabled={loading || busy} onClick={() => void loadMoreActions()} type="button">
+        <button
+          className={BTN_SUBTLE}
+          disabled={loading || busy}
+          onClick={() => void loadMoreActions(group)}
+          type="button"
+        >
           {t.loadMore}
         </button>
       ) : null}

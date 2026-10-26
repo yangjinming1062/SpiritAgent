@@ -213,7 +213,7 @@ async def _reconcile(user_id: int, step: LifeStepView) -> None:
             action = await action_detail(db, user_id, int(step.business_ref["action_id"]))
         if action is None:
             await finish_step(user_id, step.id, state="failed", error="原动作已删除")
-        elif action.status in {"approved", "rejected", "deferred"}:
+        elif action.status in {"approved", "rejected", "deferred", "failed"}:
             await finish_step(
                 user_id,
                 step.id,

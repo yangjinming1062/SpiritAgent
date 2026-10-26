@@ -1,6 +1,6 @@
 # 数据库字段语义字典
 
-本页用于从业务含义定位字段所有者，说明容易混用的字段组。列名、类型、空值、默认值、枚举、索引和外键以链接的 ORM 及 [0001 基线](../backend/alembic/versions/0001_baseline.py)为准；完整注册见 [bootstrap.models](../backend/bootstrap/models.py)。关系与删除理由见 [DATABASE](DATABASE.md)，不在此复制 DDL 或逐表说明通用字段。
+本页用于从业务含义定位字段所有者，说明容易混用的字段组。列名、类型、空值、默认值、枚举、索引和外键以链接的 ORM 及[迁移序列](../backend/alembic/versions)为准；完整注册见 [bootstrap.models](../backend/bootstrap/models.py)。关系与删除理由见 [DATABASE](DATABASE.md)，不在此复制 DDL 或逐表说明通用字段。
 
 ## 公共字段与关系入口
 
@@ -47,7 +47,7 @@
 | 身份、特征与用户覆盖：[appearance/models.py](../backend/features/appearance/models.py) | 确认形象维护统一修订；自动提取值和人工覆盖分离。候选与分析任务独立于当前身份，失败不撤销已发布资料 |
 | 衣柜与造型任务：同一[模型文件](../backend/features/appearance/models.py) | 衣柜保存已采纳造型及来源；`outfit_creation_jobs` 保存自主制作详情并继承共享任务。多文件关系只归属身份、造型、候选或分析任务之一 |
 | 环境与制作：[scenes/models.py](../backend/features/scenes/models.py) | 素材保存上传源、展示图和目标/源/实际尺寸，初始和替换任务独立；没有“当前启用环境”字段，新制作失败保留可用素材 |
-| 动作定义：[action_library/models.py](../backend/features/action_library/models.py) | 保存动作含义、适用条件、播放方式和冻结评审依据；名称供检索，定义不是可播成品 |
+| 动作定义：[action_library/models.py](../backend/features/action_library/models.py) | 保存动作含义、适用条件和播放方式；自创动作另冻结评审依据，定义不是可播成品 |
 
 ## 影像、播放与媒体制作
 
