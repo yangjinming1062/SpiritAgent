@@ -685,7 +685,11 @@ async def confirm_outfit(
             ):
                 raise OutfitStateError("外观已发生变化，请刷新后重试")
             card = await get_character_card(db, user_id, lock=True)
-            if card is None or card.status != "ready" or card.revision != source.character_card_revision:
+            if (
+                card is None
+                or card.analysis_job.state != "succeeded"
+                or card.revision != source.character_card_revision
+            ):
                 raise OutfitStateError("角色卡已更新，请重新生成外观后再确认")
             avatar = await get_active_avatar(db, user_id)
             if avatar is None or avatar.seed_fullbody_url != source.identity_reference_path:

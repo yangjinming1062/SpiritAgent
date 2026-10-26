@@ -5,10 +5,12 @@ import json
 from collections.abc import Awaitable, Callable
 
 from infrastructure.ai.error_classifier import LLMRuntimeError, is_content_policy_error_message
-from infrastructure.ai.prompt_engineer import chat, vision_chat
+from infrastructure.ai.models import ModelModality
+from infrastructure.ai.prompt_engineer import LlmJsonValidationError, call_llm_json, chat
 from infrastructure.ai.providers._size_aspect import SIZE_TO_ASPECT
 from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
 from infrastructure.ai.tasks import AiTaskKey
+from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.assets.asset_store import (
     build_data_uri,
     normalize_asset_reference,
@@ -55,6 +57,7 @@ from features.appearance.prompt_assembly import (
 from features.appearance.prompts import (
     CHARACTER_CARD_BODY_EXTRACTION,
     CHARACTER_CARD_EXTRACTION,
+    CHARACTER_CARD_EXTRACTION_REPAIR,
     CHARACTER_CARD_PORTRAIT_EXTRACTION,
     EDIT_PRESERVE_AVATAR,
     EDIT_PRESERVE_FULLBODY,
@@ -200,18 +203,31 @@ async def extract_card_features[F: BaseModel](
     schema["required"] = list(model.model_fields)
     source = "portrait" if model is PortraitFeatures else "body"
     scope = CHARACTER_CARD_PORTRAIT_EXTRACTION if source == "portrait" else CHARACTER_CARD_BODY_EXTRACTION
-    raw = await vision_chat(
+
+    def parse_output(payload: object) -> F:
+        if not isinstance(payload, dict):
+            raise LlmJsonValidationError("invalid_character_extraction")
+        missing = model.model_fields.keys() - payload.keys()
+        if missing:
+            raise LlmJsonValidationError("incomplete_character_extraction", fields=tuple(sorted(missing)))
+        return model.model_validate(payload)
+
+    config = await load_user_llm_config(
         user_id,
-        scope + "\n\n" + CHARACTER_CARD_EXTRACTION,
-        json.dumps({"source": source, "schema": schema}, ensure_ascii=False),
-        reference_images=(uri,),
-        before_submit=before_submit,
-        task=AiTaskKey.appearance,
+        AiTaskKey.appearance,
+        required_modalities=frozenset({ModelModality.text, ModelModality.image}),
     )
-    payload = parse_llm_json(raw)
-    if not isinstance(payload, dict) or set(payload) != set(model.model_fields):
-        raise ValueError("incomplete character extraction")
-    return model.model_validate(payload)
+    return await call_llm_json(
+        config,
+        scope + "\n\n" + CHARACTER_CARD_EXTRACTION,
+        {"source": source},
+        schema=schema,
+        schema_name=f"character_card_{source}",
+        parse_output=parse_output,
+        repair_prompt=CHARACTER_CARD_EXTRACTION_REPAIR,
+        reference_images=(uri,),
+        before_call=before_submit,
+    )
 
 
 async def latest_fullbody_candidate(user_id: int, avatar_id: int) -> FullbodyCandidateResponse | None:

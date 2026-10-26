@@ -228,3 +228,5 @@ CHARACTER_CARD_EXTRACTION = (
     "保留 schema 的全部字段，不能确认的字段填空字符串，允许多个字段或全部字段为空。"
     "只输出一个 JSON 对象，不要解释或 Markdown。"
 )
+
+CHARACTER_CARD_EXTRACTION_REPAIR = "\n\n缺失字段填写空字符串，保留原结果中有效的特征文字，不增加新的外形判断。"
