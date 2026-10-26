@@ -53,9 +53,8 @@ services:
       SERVICE_UPDATER_SOCKET_DIR: /run/updater
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    # 仅绑定本机回环：明文 HTTP 不暴露公网，公网 TLS 由 caddy（--profile public）终止。
     ports:
-      - "127.0.0.1:10620:10620"
+      - "10620:10620"
     volumes:
       - ./config.toml:/app/config.toml:ro
       - ./updates:/app/updates
@@ -67,24 +66,6 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
-
-  # 公网 HTTPS 入口（--profile public）：需先按 Caddyfile.example 准备 Caddyfile。
-  caddy:
-    image: caddy:2
-    container_name: spiritagent-caddy
-    restart: unless-stopped
-    profiles:
-      - public
-    depends_on:
-      backend:
-        condition: service_healthy
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
 
   # 小红书采集服务只承载隔离浏览器，平台凭证由 Backend 按账户保存。
   xiaohongshu-mcp:
@@ -110,7 +91,5 @@ services:
 
 volumes:
   postgres_data:
-  caddy_data:
-  caddy_config:
   updater_state:
   updater_socket:

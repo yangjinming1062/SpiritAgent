@@ -174,14 +174,15 @@ Compose 和后端共用 `.env` 的 PostgreSQL 凭据，后端默认连接 `postg
 
 镜像内写入的提交标识区分「代码已拉取」与「更新成功」，页面分别显示仓库版本与运行版本。拉取或构建失败时旧服务继续运行；代码已推进但部署未成功时可重试同一版本。启动失败保留诊断并停止，不自动回退镜像或数据库。更新范围只有 `backend`；小红书采集服务、更新器自身与部署拓扑变化仍需手工升级。
 
-### HTTPS 与公网访问
+### 端口与对外访问
 
-1. 域名解析到服务器，放行 80/443。
-2. 复制 [Caddyfile.example](Caddyfile.example) 为 `Caddyfile` 并填写域名。
-3. 配置 `public_base_url = "https://<域名>"`，用于激活码地址、手机扫码入口及供应商读取视频附件。
-4. 执行 `docker compose --profile public up -d`，以 `https://<域名>` 激活，管理端位于 `/admin/`。
+Compose 将后端 `10620` 端口发布到宿主机所有网卡，HTTP 与 WebSocket 共用该端口。放行服务器防火墙或安全组的 TCP `10620` 后，桌面客户端使用 `http://<服务器地址>:10620` 激活，管理端位于 `http://<服务器地址>:10620/admin/`；本机使用 `http://127.0.0.1:10620`。
 
-Caddy 自动签发续期证书并代理 HTTP 与 WS；Backend 的明文 10620 仅绑定宿主回环。本机测试可直接使用 `http://127.0.0.1:10620`。
+在管理后台配置 `public_base_url = "http://<服务器地址>:10620"`，用于预填激活码地址、手机扫码入口及供应商读取视频附件；该地址须能被实际访问方连通。
+
+使用反向代理时须透传 WebSocket 升级和请求 Origin；扫码、Cookie 与录音的协议约束见 [远程访问](../docs/PROTOCOL.md#远程访问)。
+
+已有部署在 `backend` 目录执行 `docker compose up -d --remove-orphans`，使端口映射生效并移除旧代理容器；数据卷保留。
 
 全身与造型素材制作需在数据卷放置 `models/<matting_model>.onnx`，默认 ISNet 文件名及解析见 [matting.py](infrastructure/video_processing/matting.py)，镜像不自动下载。新付费步骤前校验模型；已有源素材保留供恢复。全身和造型素材上传可本地抠图，处理入口是 [image.py](infrastructure/video_processing/image.py)。
 

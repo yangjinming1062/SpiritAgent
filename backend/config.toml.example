@@ -15,7 +15,7 @@
 [runtime]
 # FastAPI / OpenAPI 文档标题
 app_name = "SpiritAgent Backend"
-# 对外基础地址（如 https://your.domain）：预填激活码 baseUrl、视频附件走公网绝对 URL；
+# 对外基础地址（如 http://your.domain:10620）：预填激活码 baseUrl、视频附件走公网绝对 URL；
 # 留空为本地模式（视频内联发送，单文件 50MB 上限）
 public_base_url = ""
 

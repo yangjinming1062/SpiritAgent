@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import secrets
+from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 from fastapi import HTTPException, Request
@@ -12,9 +13,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.remote.models import RemotePairing, RemoteSession
 
-REMOTE_COOKIE = "__Host-spirit_remote"
 PAIRING_TTL_SECONDS = 5 * 60
 REMOTE_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteCookie:
+    name: str
+    secure: bool
+
+
+def remote_session_cookie() -> RemoteCookie:
+    # 以对外地址为准，避免 HTTPS 代理的内部 HTTP 连接降级 Cookie。
+    secure = SETTINGS.public_base_url.strip().lower().startswith("https://")
+    return RemoteCookie("__Host-spirit_remote" if secure else "spirit_remote", secure)
 
 
 def hash_remote_token(token: str) -> str:
@@ -35,9 +47,9 @@ def remote_public_base_url() -> str:
         parsed = urlsplit(value)
         port = parsed.port
     except ValueError as exc:
-        raise HTTPException(status_code=503, detail="公网 HTTPS 地址格式无效。") from exc
+        raise HTTPException(status_code=503, detail="手机访问地址格式无效。") from exc
     if (
-        parsed.scheme != "https"
+        parsed.scheme not in {"http", "https"}
         or not parsed.hostname
         or parsed.username
         or parsed.password
@@ -45,14 +57,15 @@ def remote_public_base_url() -> str:
         or parsed.fragment
         or parsed.path
     ):
-        raise HTTPException(status_code=503, detail="请先配置可供手机访问的公网 HTTPS 地址（PUBLIC_BASE_URL）。")
+        raise HTTPException(status_code=503, detail="请先配置可供手机访问的 HTTP 或 HTTPS 地址（PUBLIC_BASE_URL）。")
     if parsed.hostname in {"localhost", "127.0.0.1", "::1"}:
-        raise HTTPException(status_code=503, detail="远程连接需要手机可访问的公网 HTTPS 地址。")
+        raise HTTPException(status_code=503, detail="远程连接需要手机可访问的地址，不能使用本机回环地址。")
     try:
         hostname = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname.encode("idna").decode("ascii")
     except UnicodeError as exc:
-        raise HTTPException(status_code=503, detail="公网 HTTPS 地址格式无效。") from exc
-    return f"https://{hostname}" + (f":{port}" if port not in {None, 443} else "")
+        raise HTTPException(status_code=503, detail="手机访问地址格式无效。") from exc
+    default_port = 443 if parsed.scheme == "https" else 80
+    return f"{parsed.scheme}://{hostname}" + (f":{port}" if port not in {None, default_port} else "")
 
 
 def require_remote_origin(request: Request) -> None:

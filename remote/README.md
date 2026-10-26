@@ -17,4 +17,4 @@
 
 衣柜与环境按素材语义维护，卡片进入详情查看与维护，不提供穿上或启用入口；自主策略开关使用正向表达，语义统一为是否允许伙伴自主添置素材。制作默认进入 AI 描述，上传为次要入口，外部制作说明按需展开。影像的预览与重做不依赖桌面在线；正式呈现由伙伴自主决定，手机影像页只提供预览和重做。文本草稿、筛选、子页选择和阅读位置按账户与设备保存在当前浏览器会话，参考图片仅保留在本次登录内存；服务端任务仍是制作进度的事实来源。提交结果未知时须刷新原资产或列表并核对，再开始新制作，不自动重做。
 
-开发入口为 [package.json](package.json) 与 [vite.config.ts](vite.config.ts)：前端监听本机 `5175`，`/api`（含 WS）代理到本机 Backend `10620`。设备授权仍要求同源 HTTPS、Secure Cookie 和 Origin 校验，开发 HTTP 代理不能代替完整扫码验收。样式在 [style.css](style.css)，共享协议变更须同时核对 Client 与 Remote 消费方。
+开发入口为 [package.json](package.json) 与 [vite.config.ts](vite.config.ts)：前端监听本机 `5175`，`/api`（含 WS）代理到本机 Backend `10620`。请求 ID 与复制说明入口为 [browser.ts](browser.ts)，样式在 [style.css](style.css)；共享协议变更须同时核对 Client 与 Remote 消费方。

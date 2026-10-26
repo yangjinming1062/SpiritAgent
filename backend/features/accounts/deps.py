@@ -16,9 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from features.accounts.models import AdminSession, LoginRecord, User
 from features.accounts.remote.models import RemoteSession
 from features.accounts.remote.security import (
-    REMOTE_COOKIE,
     hash_remote_token,
     remote_csrf_token,
+    remote_session_cookie,
     require_remote_origin,
 )
 from features.accounts.security import BEARER_SCHEME, decode_bearer_token
@@ -107,7 +107,7 @@ async def get_optional_current_session(
     credentials: HTTPAuthorizationCredentials | None = Depends(BEARER_SCHEME),
     db: AsyncSession = Depends(get_db),
 ) -> tuple[AccountIdentity, LoginIdentity | RemoteDeviceIdentity] | None:
-    if credentials is None and not request.cookies.get(REMOTE_COOKIE):
+    if credentials is None and not request.cookies.get(remote_session_cookie().name):
         return None
     try:
         return await authenticate_request_session(
@@ -175,7 +175,7 @@ async def authenticate_remote_session(
         (operation := find_http_operation(request.url.path, request.method)) is None or not operation.permits("remote")
     ):
         raise HTTPException(status_code=403, detail="手机授权不能访问此功能。")
-    token = request.cookies.get(REMOTE_COOKIE)
+    token = request.cookies.get(remote_session_cookie().name)
     if not token or len(token) > 128:
         raise HTTPException(status_code=401, detail="请重新扫码连接。")
     row = (

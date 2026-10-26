@@ -7,8 +7,8 @@ from features.accounts.remote.schemas import (
     RemoteSessionResponse,
 )
 from features.accounts.remote.security import (
-    REMOTE_COOKIE,
     REMOTE_SESSION_TTL_SECONDS,
+    remote_session_cookie,
     require_remote_origin,
 )
 from infrastructure.api_ids import ResourceId
@@ -56,14 +56,15 @@ async def exchange_pairing(
     payload: ExchangeRequest, request: Request, response: Response, db: DbSession
 ) -> RemoteSessionResponse:
     require_remote_origin(request)
-    exchange = await remote_use_cases.exchange_pairing(payload, db, request.cookies.get(REMOTE_COOKIE))
+    cookie = remote_session_cookie()
+    exchange = await remote_use_cases.exchange_pairing(payload, db, request.cookies.get(cookie.name))
     if exchange.previous_device is not None:
         await terminate_remote_sessions(*exchange.previous_device)
     response.set_cookie(
-        REMOTE_COOKIE,
+        cookie.name,
         exchange.token,
         max_age=REMOTE_SESSION_TTL_SECONDS,
-        secure=True,
+        secure=cookie.secure,
         httponly=True,
         samesite="strict",
         path="/",
@@ -74,7 +75,9 @@ async def exchange_pairing(
 @router.get("/session", response_model=RemoteSessionResponse, openapi_extra=operation_policy(identities=("remote",)))
 async def current_remote_session(request: Request, session: CurrentRemoteSession) -> RemoteSessionResponse:
     user, device = session
-    return remote_use_cases.session_response(user.id, user.username, device, request.cookies[REMOTE_COOKIE])
+    return remote_use_cases.session_response(
+        user.id, user.username, device, request.cookies[remote_session_cookie().name]
+    )
 
 
 @router.delete("/session", response_model=MessageResponse, openapi_extra=operation_policy(identities=("remote",)))
@@ -82,7 +85,8 @@ async def logout_remote_session(response: Response, session: CurrentRemoteSessio
     user, device = session
     await remote_use_cases.logout_remote_session(user.id, device.id, db)
     await terminate_remote_sessions(user.id, device.id)
-    response.delete_cookie(REMOTE_COOKIE, secure=True, httponly=True, samesite="strict", path="/")
+    cookie = remote_session_cookie()
+    response.delete_cookie(cookie.name, secure=cookie.secure, httponly=True, samesite="strict", path="/")
     return MessageResponse(message="已退出登录。")
 
 

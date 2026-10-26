@@ -125,9 +125,9 @@ macOS `afterSign` 调用 [notarize.cjs](../client/scripts/notarize.cjs)，electr
 
 ## 手机远程页面构建
 
-`pnpm --dir remote build` 编译独立浏览器入口，产物位于 `remote/dist/`。Backend 在 `/remote/` 同源提供页面；开发可运行 `pnpm --dir remote dev`，但 Secure Cookie 和手机录音仍要求 HTTPS 同源环境。
+`pnpm --dir remote build` 编译独立浏览器入口，产物位于 `remote/dist/`。Backend 在 `/remote/` 同源提供页面；开发入口为 `pnpm --dir remote dev`。
 
-[Backend Dockerfile](../backend/Dockerfile) 使用 Remote 独立锁定的 Node.js / pnpm 依赖构建手机网页和管理端共享 HTTP 产物，再复制到 Python 镜像的 `static/remote/`；构建上下文为仓库根。[.dockerignore](../.dockerignore) 只允许必要的 Remote 与共享协议构建源进入上下文，排除桌面产物、运行数据和凭据。部署时配置公网 HTTPS 地址，反向代理须保留 WS 升级及请求 Origin；固定文件名的管理端 HTTP 脚本禁止长期缓存。
+[Backend Dockerfile](../backend/Dockerfile) 使用 Remote 独立锁定的 Node.js / pnpm 依赖构建手机网页和管理端共享 HTTP 产物，再复制到 Python 镜像的 `static/remote/`；构建上下文为仓库根。[.dockerignore](../.dockerignore) 只允许必要的 Remote 与共享协议构建源进入上下文，排除桌面产物、运行数据和凭据。固定文件名的管理端 HTTP 脚本禁止长期缓存。
 
 ## 构建安装器
 

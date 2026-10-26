@@ -7,6 +7,7 @@ import type { VoiceSelectionResponse } from '@protocol'
 import type { ApiSchemas } from '../shared/api.generated'
 
 import type { RemoteApi } from './api'
+import { newRequestId } from './browser'
 import { Empty, FileInput, Media, Notice, PageHeader, useAlive, usePageState, useTask } from './ui'
 
 type VoiceCatalog = ApiSchemas['VoicesListResponse']
@@ -78,7 +79,7 @@ export function Voice({ api, refresh }: { api: RemoteApi; refresh: number }): Re
 
   const operationTask = (task: (operationId: string) => Promise<void>) =>
     run(async () => {
-      const operationId = crypto.randomUUID()
+      const operationId = newRequestId()
       setActiveOperation(operationId)
       try {
         await task(operationId)

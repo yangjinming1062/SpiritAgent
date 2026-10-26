@@ -10,6 +10,7 @@ import { createTurnCancellation, type TurnReference } from '../shared/turn-cance
 
 import type { GatewayEvent, RemoteApi, RemoteGateway } from './api'
 import { ApiError, errorText, readImage } from './api'
+import { newRequestId } from './browser'
 import { activeReplyIsPersisted, advanceTurn, commandHistory, mergeMessages } from './chat-state'
 import { TopicFeedbackProvider, TopicLink } from './TopicLink'
 import type {
@@ -167,6 +168,12 @@ export function Chat({
   const [retryMessage, setRetryMessage] = useState<string | null>(null)
   const [recording, setRecording] = useState(false)
   const [transcribing, setTranscribing] = useState(false)
+  const recordingUnavailable =
+    location.protocol !== 'https:'
+      ? '录音需要 HTTPS 连接'
+      : !window.isSecureContext || !navigator.mediaDevices?.getUserMedia || !window.MediaRecorder
+        ? '当前浏览器不支持录音'
+        : ''
   const selectedRef = useRef(selected)
   selectedRef.current = selected
   const navigation = useRef(0)
@@ -638,7 +645,7 @@ export function Chat({
 
     const awaitingReceipt = pending.current !== null
     const request = pending.current ?? {
-      id: crypto.randomUUID(),
+      id: newRequestId(),
       text: replace ? '' : draft.trim(),
       attachments: replace ? [] : attachments,
       retry,
@@ -715,6 +722,11 @@ export function Chat({
     if (recording && recorder.current) {
       recorder.current.stop()
 
+      return
+    }
+
+    if (recordingUnavailable) {
+      setFailure(recordingUnavailable)
       return
     }
 
@@ -1151,8 +1163,9 @@ export function Chat({
             <button
               aria-label={recording ? '完成录音' : '录制语音'}
               className={`icon-button ${recording ? 'recording' : ''}`}
-              disabled={transcribing || !navigator.mediaDevices?.getUserMedia || !window.MediaRecorder}
+              disabled={transcribing || Boolean(recordingUnavailable)}
               onClick={() => run(recordVoice)}
+              title={recordingUnavailable || undefined}
               type="button"
             >
               {recording ? <IconSquare size={18} /> : <IconMicrophone />}
@@ -1172,6 +1185,7 @@ export function Chat({
               <IconSend size={20} />
             </button>
           </div>
+          {recordingUnavailable ? <span className="muted">{recordingUnavailable}</span> : null}
           <FileInput
             multiple
             onFiles={files => {

@@ -8,6 +8,7 @@ import { uiCopy } from '../shared/ui-copy'
 
 import type { RemoteApi } from './api'
 import { ApiError, readImage } from './api'
+import { copyText } from './browser'
 import type { Outfit, Scene } from './types'
 import {
   AssetResultRecovery,
@@ -305,14 +306,7 @@ function AssetCreator({
           {prompt ? (
             <>
               <p className="prompt-copy">{prompt}</p>
-              <button
-                onClick={() =>
-                  run(async () => {
-                    await navigator.clipboard.writeText(prompt)
-                  })
-                }
-                type="button"
-              >
+              <button onClick={() => run(() => copyText(prompt))} type="button">
                 复制说明
               </button>
             </>
@@ -684,14 +678,7 @@ function SceneDetail({
         <details className="optional-details" open>
           <summary>制作参考</summary>
           <p className="prompt-copy">{scene.prompt}</p>
-          <button
-            onClick={() =>
-              run(async () => {
-                await navigator.clipboard.writeText(scene.prompt)
-              })
-            }
-            type="button"
-          >
+          <button onClick={() => run(() => copyText(scene.prompt))} type="button">
             复制制作说明
           </button>
         </details>
