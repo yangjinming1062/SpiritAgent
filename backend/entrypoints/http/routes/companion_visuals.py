@@ -6,7 +6,9 @@ from fastapi import Path, Query
 from features.visuals import queries as _visual_queries
 from features.visuals import use_cases as _visuals
 from features.visuals.schemas import (
-    StaticReceipt,
+    ActionMediaListResponse,
+    StageReceipt,
+    VisualAssetKind,
     VisualClaimRequest,
     VisualClaimResponse,
     VisualDetailView,
@@ -38,6 +40,7 @@ async def list_visuals(
     user: CurrentUser,
     query: Annotated[str | None, Query(max_length=200)] = None,
     media_kind: Annotated[Literal["image", "video"] | None, Query()] = None,
+    asset_kind: Annotated[VisualAssetKind | None, Query()] = None,
     outfit_id: Annotated[ResourceId | None, Query(gt=0, le=POSTGRES_INT8_MAX)] = None,
     scene_id: Annotated[ResourceId | None, Query(gt=0, le=POSTGRES_INT8_MAX)] = None,
     action_id: Annotated[ResourceId | None, Query(gt=0, le=POSTGRES_INT8_MAX)] = None,
@@ -50,6 +53,7 @@ async def list_visuals(
         user_id=user.id,
         query=query,
         media_kind=media_kind,
+        asset_kind=asset_kind,
         outfit_id=outfit_id,
         scene_id=scene_id,
         action_id=action_id,
@@ -77,6 +81,20 @@ async def list_visual_jobs(
     )
 
 
+@router.get("/by-action/{action_id}", response_model=ActionMediaListResponse)
+async def list_action_media(
+    action_id: Annotated[ResourceId, Path(gt=0, le=POSTGRES_INT8_MAX)],
+    user: CurrentUser,
+    cursor: Annotated[ResourceId | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 30,
+) -> ActionMediaListResponse:
+    """动作详情的媒体实现清单：该动作已制作的可播成品。"""
+
+    return await _visual_queries.action_media_implementations(
+        user_id=user.id, action_id=action_id, cursor=cursor, limit=limit
+    )
+
+
 @router.get("/presentation", response_model=VisualPresentationResponse)
 async def get_presentation(user: CurrentUser) -> VisualPresentationResponse:
     return await _visuals.presentation_state(user_id=user.id)
@@ -87,7 +105,7 @@ async def get_presentation(user: CurrentUser) -> VisualPresentationResponse:
     response_model=VisualReceiptResponse,
     openapi_extra=operation_policy(identities=("desktop",)),
 )
-async def static_receipt(user: CurrentUser, body: StaticReceipt) -> VisualReceiptResponse:
+async def static_receipt(user: CurrentUser, body: StageReceipt) -> VisualReceiptResponse:
     await record_static_receipt(user.id, body)
     return VisualReceiptResponse(ok=True)
 

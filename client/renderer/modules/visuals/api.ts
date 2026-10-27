@@ -42,7 +42,7 @@ export interface VisualReceiptBody {
 }
 
 export const visualsApi = {
-  receiptStatic: (body: ApiSchemas['StaticReceipt']): Promise<{ ok: boolean }> =>
+  receiptStatic: (body: ApiSchemas['StageReceipt']): Promise<{ ok: boolean }> =>
     requestResource('companion_visuals.static_receipt', { body }),
   list: (query: VisualsListQuery): Promise<VisualListResponse> =>
     requestResource('companion_visuals.list_visuals', { query }),

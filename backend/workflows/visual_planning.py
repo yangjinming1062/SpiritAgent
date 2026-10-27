@@ -6,13 +6,18 @@ from features.media.voice_queries import resolve_custom_voice
 from features.media.voices import read_current_voice
 from features.memory.memory_retrieval import retrieve_hybrid_memories
 from features.visuals.ports import VisualPlanningContext
-from features.visuals.schemas import ComboSnapshot
+from features.visuals.schemas import ActorClipSource, CinematicSource
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.text import format_local_iso, utc_now
 from runtime.memory_scope import MemoryScope
 
 
-async def visual_planning_context(user_id: int, snapshot: ComboSnapshot) -> VisualPlanningContext:
+def _memory_query(snapshot: ActorClipSource | CinematicSource) -> str:
+    action = snapshot.action
+    return " ".join((action.name, action.motion_description, snapshot.requirements))
+
+
+async def visual_planning_context(user_id: int, snapshot: ActorClipSource | CinematicSource) -> VisualPlanningContext:
     async with SESSION_LOCAL() as db:
         life_context = await read_life_context_in_session(db, user_id)
         voice_id = await read_current_voice(db, user_id)
@@ -20,7 +25,7 @@ async def visual_planning_context(user_id: int, snapshot: ComboSnapshot) -> Visu
         memories = await retrieve_hybrid_memories(
             db,
             MemoryScope(user_id, "companion"),
-            " ".join((snapshot.action.name, snapshot.action.motion_description, snapshot.requirements)),
+            _memory_query(snapshot),
             limit=6,
         )
         now = format_local_iso(utc_now(), await resolve_user_timezone(db, user_id)) or ""

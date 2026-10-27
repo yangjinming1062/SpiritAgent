@@ -20,13 +20,14 @@ from .client_assets import client_play_command
 from .models import VisualItem, VisualJob, VisualPlayback, VisualPresentation, VisualVersion
 from .schemas import (
     ActionClipKind,
-    ComboSnapshot,
     PlaybackSource,
     PlaybackStatus,
     PresentedVisual,
+    StageComposition,
     VisualJobProgress,
     VisualMediaKind,
     VisualPlayCommand,
+    VisualSnapshot,
     parse_job_progress,
 )
 
@@ -51,24 +52,35 @@ def visual_progress(job: VisualJob) -> VisualJobProgress | None:
     return parse_job_progress(job.checkpoint)
 
 
-def visual_snapshot(row: VisualItem | VisualJob | PresentedVisual) -> ComboSnapshot:
-    return ComboSnapshot.model_validate(row.snapshot_json)
+def visual_snapshot(row: VisualItem | VisualJob | PresentedVisual) -> VisualSnapshot:
+    return VisualSnapshot.model_validate(row.snapshot_json)
 
 
-def visual_clip_kind(snapshot: ComboSnapshot) -> ActionClipKind:
-    return snapshot.action.clip_kind
+def visual_clip_kind(
+    item: VisualItem | PresentedVisual, snapshot: VisualSnapshot | None = None
+) -> ActionClipKind | None:
+    """播放方式来自冻结输入的动作引用；scene 资产没有动作，图片恒为持续画面。"""
+
+    source = (snapshot or visual_snapshot(item)).source
+    if item.media_kind == "image":
+        return None
+    if source.kind == "scene":
+        return "loop"
+    return source.action.clip_kind
 
 
-def visual_plays_as_loop(item: VisualItem | PresentedVisual, snapshot: ComboSnapshot | None = None) -> bool:
-    """图片是持续画面，视频按动作的播放方式决定是否持续循环。"""
+def visual_plays_as_loop(item: VisualItem | PresentedVisual, snapshot: VisualSnapshot | None = None) -> bool:
+    """图片和环境媒体是持续画面；主体/完整影像视频按动作播放方式决定循环。"""
 
     if item.media_kind == "image":
         return True
-    return visual_clip_kind(snapshot or visual_snapshot(item)) == "loop"
+    return visual_clip_kind(item, snapshot or visual_snapshot(item)) != "once"
 
 
-def visual_is_short_action(item: VisualItem | PresentedVisual, snapshot: ComboSnapshot | None = None) -> bool:
-    return item.media_kind == "video" and visual_clip_kind(snapshot or visual_snapshot(item)) == "once"
+def visual_is_short_action(item: VisualItem | PresentedVisual, snapshot: VisualSnapshot | None = None) -> bool:
+    if item.media_kind != "video":
+        return False
+    return visual_clip_kind(item, snapshot or visual_snapshot(item)) == "once"
 
 
 def visual_playable(item: VisualItem | PresentedVisual) -> bool:
@@ -89,11 +101,16 @@ def presented_item(
     return frozen
 
 
+def stage_composition(state: VisualPresentation) -> StageComposition | None:
+    return StageComposition.model_validate(state.composition_json) if state.composition_json else None
+
+
 def version_view(item: VisualItem, version: VisualVersion) -> PresentedVisual:
     return PresentedVisual(
         id=item.id,
         user_id=item.user_id,
         media_kind=item.media_kind,
+        asset_kind=item.asset_kind,
         title=item.title,
         status=item.status,
         media_path=version.media_path,
@@ -235,7 +252,7 @@ async def dispatch_play_command(
     *,
     source: PlaybackSource,
     version_id: int | None = None,
-    snapshot: ComboSnapshot | None = None,
+    snapshot: VisualSnapshot | None = None,
 ) -> tuple[VisualPlayback, VisualPlayCommand]:
     """登记待执行指令；实际呈现指针只在已认领的开播回执中推进。"""
 
@@ -261,8 +278,11 @@ async def dispatch_play_command(
         and item.input_image_hash is not None
         and previous.input_image_hash == item.input_image_hash
     )
+    clip_kind = visual_clip_kind(item, snapshot)
+    composition = stage_composition(state)
     command = VisualPlayCommand(
         play_id=play_id,
+        asset_kind=item.asset_kind,
         visual_id=item.id,
         visual_version=item.version,
         media_kind=media_kind,
@@ -270,14 +290,15 @@ async def dispatch_play_command(
         poster_path=item.poster_path,
         input_image_hash=item.input_image_hash,
         transition="natural" if natural else "fade",
-        clip_kind=visual_clip_kind(snapshot),
-        loop=visual_plays_as_loop(item, snapshot),
+        clip_kind=clip_kind,
+        loop=media_kind == "image" or clip_kind != "once",
         presentation_epoch=presentation.revision,
         state_revision=revision,
         source=source,
         expires_at=expires_at,
-        outfit=snapshot.outfit,
-        scene=snapshot.scene,
+        composition=composition,
+        outfit=_frozen_outfit(snapshot),
+        scene=_frozen_scene(snapshot),
     )
     pending = command.model_dump(mode="json")
     changed = (
@@ -338,6 +359,16 @@ async def dispatch_play_command(
         payload=client_play_command(command).model_dump(mode="json"),
     )
     return play, command
+
+
+def _frozen_outfit(snapshot: VisualSnapshot):
+    source = snapshot.source
+    return source.outfit if source.kind in ("actor", "cinematic") else None
+
+
+def _frozen_scene(snapshot: VisualSnapshot):
+    source = snapshot.source
+    return source.scene if source.kind in ("scene", "cinematic") else None
 
 
 def emit_playback_receipt(

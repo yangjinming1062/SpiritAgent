@@ -14,7 +14,14 @@ from features.life.use_cases import current_presentation_revision, presentation_
 
 from .models import VisualPlayback, VisualPresentation
 from .repository import emit_playback_receipt, require_presentation_row, touch_presentation
-from .schemas import StaticPresentation, StaticReceipt, VisualPlayCommand
+from .schemas import StageIntent, StagePresentation, StageReceipt, VisualPlayCommand
+
+
+async def record_stage_intent(db: AsyncSession, user_id: int, intent: StageIntent) -> None:
+    """生活侧投影写入舞台意图；呈现系统只读取，不反写生活事实。"""
+
+    state = await require_presentation_row(db, user_id, lock=True)
+    state.intent_json = intent.model_dump(mode="json")
 
 
 async def _cancel_pending_command(db: AsyncSession, state: VisualPresentation) -> None:
@@ -34,7 +41,7 @@ async def _cancel_pending_command(db: AsyncSession, state: VisualPresentation) -
     state.pending_command_json = None
 
 
-async def present_static(user_id: int, snapshot: StaticPresentation, *, expected_state_revision: int) -> bool:
+async def present_static(user_id: int, snapshot: StagePresentation, *, expected_state_revision: int) -> bool:
     async with SESSION_LOCAL() as db:
         state = await require_presentation_row(db, user_id, lock=True)
         presence = get_presentation_snapshot(user_id)
@@ -78,7 +85,7 @@ async def keep_presentation(
             state.pending_static_json = None
             await touch_presentation(db, user_id)
         if state.current_static_json:
-            snapshot = StaticPresentation.model_validate(state.current_static_json)
+            snapshot = StagePresentation.model_validate(state.current_static_json)
             state.current_static_json = snapshot.model_copy(update={"life_revision": life_revision}).model_dump(
                 mode="json"
             )
@@ -93,7 +100,7 @@ async def restore_static_presentation(
     raw = state.pending_static_json or state.current_static_json
     if raw is None:
         return False
-    snapshot = StaticPresentation.model_validate(raw)
+    snapshot = StagePresentation.model_validate(raw)
     life_revision = await current_presentation_revision(db, user_id)
     if (
         state.pending_static_json is not None
@@ -128,14 +135,14 @@ def _stale_receipt(reason: str) -> RequestError:
     )
 
 
-async def record_static_receipt(user_id: int, body: StaticReceipt) -> None:
+async def record_static_receipt(user_id: int, body: StageReceipt) -> None:
     async with SESSION_LOCAL() as db:
         state = await require_presentation_row(db, user_id, lock=True)
         raw = state.pending_static_json or state.current_static_json
         presence = get_presentation_snapshot(user_id)
         if not raw:
             raise _stale_receipt("target_replaced")
-        snapshot = StaticPresentation.model_validate(raw)
+        snapshot = StagePresentation.model_validate(raw)
         # 已记账的同一回执仅确认幂等，不受后续生活或在线变化影响，也不恢复旧呈现。
         if (
             state.pending_static_json is None

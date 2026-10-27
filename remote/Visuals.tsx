@@ -153,28 +153,49 @@ function VisualDetailPanel({
       {visual.description ? <p>{visual.description}</p> : null}
       <section className="card">
         <h3>来源素材</h3>
-        <dl>
-          <div>
-            <dt>衣柜</dt>
-            <dd>{visual.snapshot.outfit.name || '未命名素材'}</dd>
-          </div>
-          <div>
-            <dt>环境</dt>
-            <dd>{visual.snapshot.scene.name || '未命名素材'}</dd>
-          </div>
-          <div>
-            <dt>动作</dt>
-            <dd>
-              {visual.snapshot.action.name}
-              {visual.snapshot.action.clip_kind === 'loop' ? '（持续动作）' : '（短动作）'}
-              {` · ${visual.snapshot.action.duration_seconds} 秒`}
-            </dd>
-          </div>
-        </dl>
-        {visual.snapshot.action.use_when.length ? (
-          <p className="muted">适用情境：{visual.snapshot.action.use_when.join('、')}</p>
-        ) : null}
-        {visual.snapshot.requirements ? <p className="prompt-copy">{visual.snapshot.requirements}</p> : null}
+        {(() => {
+          const source = visual.snapshot.source
+
+          if (source.kind === 'scene') {
+            return (
+              <dl>
+                <div>
+                  <dt>环境</dt>
+                  <dd>{source.scene.title || '未命名素材'}</dd>
+                </div>
+              </dl>
+            )
+          }
+
+          return (
+            <>
+              <dl>
+                <div>
+                  <dt>衣柜</dt>
+                  <dd>{source.outfit.name || '未命名素材'}</dd>
+                </div>
+                {source.kind === 'cinematic' && (
+                  <div>
+                    <dt>环境</dt>
+                    <dd>{source.scene.title || '未命名素材'}</dd>
+                  </div>
+                )}
+                <div>
+                  <dt>动作</dt>
+                  <dd>
+                    {source.action.name}
+                    {source.action.clip_kind === 'loop' ? '（持续动作）' : '（短动作）'}
+                    {` · ${source.action.duration_seconds} 秒`}
+                  </dd>
+                </div>
+              </dl>
+              {source.action.use_when.length ? (
+                <p className="muted">适用情境：{source.action.use_when.join('、')}</p>
+              ) : null}
+              {source.requirements ? <p className="prompt-copy">{source.requirements}</p> : null}
+            </>
+          )
+        })()}
       </section>
       {jobs.length ? (
         <section className="card">

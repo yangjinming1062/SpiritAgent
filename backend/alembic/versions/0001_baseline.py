@@ -1358,11 +1358,12 @@ def upgrade() -> None:
         sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("source_key", sa.String(length=36), nullable=False),
         sa.Column("media_kind", sa.String(length=8), nullable=False),
+        sa.Column("asset_kind", sa.String(length=16), server_default="'cinematic'", nullable=False),
         sa.Column("title", sa.String(length=160), server_default="", nullable=False),
         sa.Column("status", sa.String(length=24), server_default="ready", nullable=False),
         sa.Column("description", sa.Text(), server_default="", nullable=False),
         sa.Column("content_hash", sa.String(length=64), nullable=False),
-        sa.Column("clip_kind", sa.String(length=8), server_default="loop", nullable=False),
+        sa.Column("clip_kind", sa.String(length=8), server_default="loop", nullable=True),
         sa.Column("allowed_triggers", postgresql.JSONB(astext_type=sa.Text()), server_default="[]", nullable=False),
         sa.Column("outfit_id", sa.BigInteger(), nullable=True),
         sa.Column("scene_id", sa.BigInteger(), nullable=True),
@@ -1374,11 +1375,13 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name=op.f("visual_items_pkey")),
         sa.UniqueConstraint("user_id", "id", name="uq_visual_items_user_id"),
         sa.UniqueConstraint("user_id", "source_key", name="uq_visual_items_user_source"),
+        sa.CheckConstraint("asset_kind <> 'actor' OR media_kind = 'video'", name="ck_visual_items_actor_video"),
     )
     op.create_table(
         "visual_jobs",
         sa.Column("id", sa.BigInteger(), nullable=False),
         sa.Column("owner_id", sa.BigInteger(), nullable=False),
+        sa.Column("asset_kind", sa.String(length=16), server_default=sa.text("'cinematic'"), nullable=False),
         sa.Column("outfit_id", sa.BigInteger(), nullable=True),
         sa.Column("scene_id", sa.BigInteger(), nullable=True),
         sa.Column("action_id", sa.BigInteger(), nullable=True),
@@ -1431,6 +1434,8 @@ def upgrade() -> None:
         "visual_presentations",
         sa.Column("pending_static_json", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
         sa.Column("current_static_json", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
+        sa.Column("composition_json", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
+        sa.Column("intent_json", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
         sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("current_version_id", sa.BigInteger(), nullable=True),
         sa.Column("loop_version_id", sa.BigInteger(), nullable=True),
@@ -1484,6 +1489,7 @@ def upgrade() -> None:
         sa.Column("duration_ms", sa.Integer(), nullable=True),
         sa.Column("outfit_description", sa.Text(), server_default="", nullable=False),
         sa.Column("snapshot_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column("body_json", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
         sa.Column("input_image_id", sa.BigInteger(), nullable=True),
         sa.Column("input_image_version_id", sa.BigInteger(), nullable=True),
         sa.Column("input_image_path", sa.Text(), nullable=True),
@@ -3047,7 +3053,12 @@ def upgrade() -> None:
     op.create_index(op.f("ix_video_gen_jobs_reply_message_id"), "video_gen_jobs", ["reply_message_id"], unique=False)
     op.create_index(op.f("ix_video_gen_jobs_source_message_id"), "video_gen_jobs", ["source_message_id"], unique=False)
     op.create_index(op.f("ix_visual_items_action_id"), "visual_items", ["action_id"], unique=False)
-    op.create_index("ix_visual_items_catalog", "visual_items", ["user_id", "status", "media_kind", "id"], unique=False)
+    op.create_index(
+        "ix_visual_items_catalog",
+        "visual_items",
+        ["user_id", "status", "media_kind", "asset_kind", "id"],
+        unique=False,
+    )
     op.create_index(op.f("ix_visual_items_outfit_id"), "visual_items", ["outfit_id"], unique=False)
     op.create_index(op.f("ix_visual_items_scene_id"), "visual_items", ["scene_id"], unique=False)
     op.create_index(op.f("ix_visual_items_user_id"), "visual_items", ["user_id"], unique=False)

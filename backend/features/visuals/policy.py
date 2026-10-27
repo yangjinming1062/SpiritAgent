@@ -10,7 +10,7 @@ from features.companion.proactive_runtime import get_presentation_snapshot, get_
 
 from .models import VisualItem, VisualPlayback, VisualPresentation
 from .repository import visual_is_short_action, visual_plays_as_loop
-from .schemas import ComboSnapshot, PresentedVisual
+from .schemas import PresentedVisual, VisualSnapshot
 
 LOOP_HOLD_SECONDS = 10 * 60
 ONCE_REPEAT_SECONDS = 30 * 60
@@ -28,7 +28,7 @@ async def visual_autonomous_block_reason(
     presentation: VisualPresentation,
     item: VisualItem | PresentedVisual,
     *,
-    snapshot: ComboSnapshot | None = None,
+    snapshot: VisualSnapshot | None = None,
     excluded_play_id: str | None = None,
 ) -> str | None:
     if not presentation.autonomous_enabled:
@@ -41,7 +41,7 @@ async def visual_autonomous_block_reason(
         current = PresentedVisual.model_validate(presentation.current_snapshot_json)
         if current.version == item.version:
             return "already_current"
-    snapshot = snapshot if snapshot is not None else ComboSnapshot.model_validate(item.snapshot_json)
+    snapshot = snapshot if snapshot is not None else VisualSnapshot.model_validate(item.snapshot_json)
     now = utc_now()
     plays = [
         play
@@ -55,7 +55,7 @@ async def visual_autonomous_block_reason(
     ]
     for play in plays:
         target = PresentedVisual.model_validate(play.snapshot_json) if play.snapshot_json else None
-        if target is None or not visual_is_short_action(target, ComboSnapshot.model_validate(target.snapshot_json)):
+        if target is None or not visual_is_short_action(target, VisualSnapshot.model_validate(target.snapshot_json)):
             continue
         pending = (
             play.status in {"queued", "claimed"}

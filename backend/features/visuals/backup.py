@@ -16,14 +16,14 @@ from features.media.contracts import RemovedVideoTask
 
 from .models import VisualItem, VisualJob, VisualPlayback, VisualPresentation, VisualVersion, VisualVersionAsset
 from .repository import version_view, visual_progress
-from .schemas import ComboSnapshot, StaticPresentation, parse_job_progress
+from .schemas import StagePresentation, VisualSnapshot, parse_job_progress
 
 
 def _prepare_presentation(raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
     payload["pending_command_json"] = None
     payload["pending_static_json"] = None
     if payload["current_static_json"]:
-        payload["current_static_json"] = StaticPresentation.model_validate(payload["current_static_json"]).model_dump(
+        payload["current_static_json"] = StagePresentation.model_validate(payload["current_static_json"]).model_dump(
             mode="json"
         )
     payload["current_snapshot_json"] = None
@@ -40,7 +40,7 @@ def _prepare_playback(raw: dict[str, Any], payload: dict[str, Any], context: Bac
 
 
 def _prepare_version(raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
-    snapshot = ComboSnapshot.model_validate(payload["snapshot_json"])
+    snapshot = VisualSnapshot.model_validate(payload["snapshot_json"])
     payload["snapshot_json"] = snapshot.model_dump(mode="json")
 
 
@@ -52,24 +52,24 @@ def _mapped(context: BackupContext, table: str, value: int | str | None) -> int 
 def _remap_snapshot(value: dict, context: BackupContext) -> dict:
     if not value:
         return {}
-    snapshot = ComboSnapshot.model_validate(context.rewriter.rewrite(deepcopy(value)))
-    result = snapshot.model_copy(
-        update={
-            "identity": snapshot.identity.model_copy(
-                update={"avatar_id": _mapped(context, "avatar_assets", snapshot.identity.avatar_id)}
-            ),
-            "outfit": snapshot.outfit.model_copy(
-                update={"material_id": _mapped(context, "companion_outfits", snapshot.outfit.material_id)}
-            ),
-            "scene": snapshot.scene.model_copy(
-                update={"material_id": _mapped(context, "companion_scenes", snapshot.scene.material_id)}
-            ),
-            "action": snapshot.action.model_copy(
-                update={"action_id": _mapped(context, "action_definitions", snapshot.action.action_id)}
-            ),
-        }
-    )
-    return result.model_dump(mode="json")
+    snapshot = VisualSnapshot.model_validate(context.rewriter.rewrite(deepcopy(value)))
+    source = snapshot.source
+    update: dict[str, Any] = {}
+    if source.kind in ("actor", "cinematic"):
+        update["identity"] = source.identity.model_copy(
+            update={"avatar_id": _mapped(context, "avatar_assets", source.identity.avatar_id)}
+        )
+        update["outfit"] = source.outfit.model_copy(
+            update={"material_id": _mapped(context, "companion_outfits", source.outfit.material_id)}
+        )
+        update["action"] = source.action.model_copy(
+            update={"action_id": _mapped(context, "action_definitions", source.action.action_id)}
+        )
+    if source.kind in ("scene", "cinematic"):
+        update["scene"] = source.scene.model_copy(
+            update={"scene_id": _mapped(context, "companion_scenes", source.scene.scene_id)}
+        )
+    return snapshot.model_copy(update={"source": source.model_copy(update=update)}).model_dump(mode="json")
 
 
 async def _rewrite_snapshots(
@@ -147,7 +147,7 @@ async def _restore_presentation_snapshots(
     states = list(await db.scalars(select(VisualPresentation).where(VisualPresentation.user_id == context.user_id)))
     for state in states:
         if state.current_static_json:
-            static = StaticPresentation.model_validate(context.rewriter.rewrite(deepcopy(state.current_static_json)))
+            static = StagePresentation.model_validate(context.rewriter.rewrite(deepcopy(state.current_static_json)))
             state.current_static_json = static.model_copy(
                 update={
                     "outfit": static.outfit.model_copy(
@@ -156,7 +156,7 @@ async def _restore_presentation_snapshots(
                     if static.outfit
                     else None,
                     "scene": static.scene.model_copy(
-                        update={"material_id": _mapped(context, "companion_scenes", static.scene.material_id)}
+                        update={"scene_id": _mapped(context, "companion_scenes", static.scene.scene_id)}
                     )
                     if static.scene
                     else None,

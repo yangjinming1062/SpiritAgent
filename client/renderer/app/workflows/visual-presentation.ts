@@ -123,6 +123,11 @@ async function settlePendingPlay(response: VisualsPresentation): Promise<void> {
       throw new Error('Presentation changed after claim')
     }
 
+    // 窗口静态投影需要冻结的造型与环境素材；缺少时说明该指令不适合窗口投影。
+    if (!pending.outfit || !pending.scene) {
+      throw new Error('Pending play lacks frozen static sources')
+    }
+
     for (const path of [pending.outfit.path, pending.scene.path]) {
       const url = await backendApi().apiAsset({ url: path, preferCache: true })
 
@@ -139,20 +144,21 @@ async function settlePendingPlay(response: VisualsPresentation): Promise<void> {
       throw new Error('Presentation changed before display')
     }
 
+    const { outfit, scene } = pending
     applySources({
       ...response.actual,
       visual_id: pending.visual_id,
       visual_version: pending.visual_version,
       visual_description: '',
-      outfit_path: pending.outfit.path,
-      outfit_hash: pending.outfit.content_hash,
-      outfit_description: pending.outfit.description,
-      scene_path: pending.scene.path,
-      scene_hash: pending.scene.content_hash,
-      scene_description: pending.scene.description,
+      outfit_path: outfit.path,
+      outfit_hash: outfit.content_hash,
+      outfit_description: outfit.description,
+      scene_path: scene.path,
+      scene_hash: scene.content_hash,
+      scene_description: scene.description,
       ready: true
     })
-    await waitForStage(pending.outfit.path, pending.scene.path, current)
+    await waitForStage(outfit.path, scene.path, current)
     await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
 
     if (!current()) {

@@ -10,10 +10,17 @@ from features.appearance.queries import avatar_snapshot, ready_outfit_snapshots
 from features.companion.disturbance import get_disturbance_tier
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
 from features.configuration.settings.values import get_user_setting
+from features.life.schemas import LifeStateView
 from features.life.use_cases import mark_presentation_evaluated, pending_presentation_users, read_state
 from features.scenes.snapshots import list_scene_snapshots
 from features.visuals.queries import actual_presentation_snapshot, presentation_state, visual_play_catalog
-from features.visuals.schemas import ActualPresentationSnapshot, ComboMaterialRef, StaticPresentation
+from features.visuals.schemas import (
+    ActualPresentationSnapshot,
+    ComboMaterialRef,
+    SceneMediaRef,
+    StageIntent,
+    StagePresentation,
+)
 from features.visuals.static_presentation import keep_presentation, present_static
 from infrastructure.ai.prompt_engineer import call_llm_json
 from infrastructure.ai.tasks import AiTaskKey
@@ -54,8 +61,8 @@ def _hash(path: str) -> str:
 
 async def _static_snapshot(
     user_id: int, epoch: int, revision: int, actual: ActualPresentationSnapshot
-) -> StaticPresentation:
-    unavailable = StaticPresentation(
+) -> StagePresentation:
+    unavailable = StagePresentation(
         request_id=uuid4().hex,
         presentation_epoch=epoch,
         state_revision=0,
@@ -70,7 +77,7 @@ async def _static_snapshot(
         and actual.scene_hash
         and actual.identity_hash
     ):
-        return StaticPresentation(
+        return StagePresentation(
             request_id=uuid4().hex,
             presentation_epoch=epoch,
             state_revision=0,
@@ -78,7 +85,7 @@ async def _static_snapshot(
             outfit=ComboMaterialRef(
                 path=actual.outfit_path, content_hash=actual.outfit_hash, description=actual.outfit_description
             ),
-            scene=ComboMaterialRef(
+            scene=SceneMediaRef(
                 path=actual.scene_path, content_hash=actual.scene_hash, description=actual.scene_description
             ),
             identity_path=actual.identity_path,
@@ -100,7 +107,7 @@ async def _static_snapshot(
     outfit_hash, scene_hash, identity_hash = await asyncio.gather(
         *(asyncio.to_thread(_hash, path) for path in (outfit.fullbody_url, scene.media_path, avatar.seed_fullbody_url))
     )
-    return StaticPresentation(
+    return StagePresentation(
         request_id=uuid4().hex,
         presentation_epoch=epoch,
         state_revision=0,
@@ -112,9 +119,9 @@ async def _static_snapshot(
             content_hash=outfit_hash,
             description=outfit.description or "",
         ),
-        scene=ComboMaterialRef(
-            material_id=scene.id,
-            name=scene.title,
+        scene=SceneMediaRef(
+            scene_id=scene.id,
+            title=scene.title,
             path=scene.media_path,
             content_hash=scene_hash,
             description=scene.description,
@@ -214,7 +221,27 @@ async def _evaluate_life_presentation(user_id: int, *, force: bool = False) -> N
                 snapshot = await _static_snapshot(user_id, presence.revision, life.presentation_revision, actual)
                 if not await present_static(user_id, snapshot, expected_state_revision=projection.state_revision):
                     return
+            await record_stage_intent(user_id, life)
             await mark_presentation_evaluated(user_id, life.presentation_revision)
+
+
+async def record_stage_intent(user_id: int, life: LifeStateView) -> None:
+    """把有意义的生活变化投影为舞台意图；呈现系统只读取，不改生活事实。"""
+
+    from features.visuals.static_presentation import record_stage_intent as persist_intent
+
+    scene_title = life.current_scene.get("title", "") if isinstance(life.current_scene, dict) else ""
+    intent = StageIntent(
+        activity=life.current_activity or "",
+        scene_title=scene_title,
+        mood=life.mood or "",
+        activity_kind=life.activity_kind or "",
+        visual_tags=[],
+        life_revision=life.presentation_revision,
+    )
+    async with SESSION_LOCAL() as db:
+        await persist_intent(db, user_id, intent)
+        await db.commit()
 
 
 async def life_presentation_requested(user_id: int, _payload: dict) -> None:

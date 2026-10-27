@@ -47,21 +47,25 @@ from .repository import (
     visual_item,
     visual_job_row,
     visual_playable,
+    visual_plays_as_loop,
     visual_progress,
     visual_snapshot,
 )
 from .schemas import (
-    ComboSnapshot,
+    ActorClipRef,
     PlaybackReceiptKind,
     PlaybackSource,
     PlaybackStatus,
     PresentedVisual,
+    StageComposition,
+    VisualCreationPlan,
     VisualJobProgress,
     VisualJobView,
     VisualMediaKind,
     VisualPlayCommand,
     VisualPresentationView,
-    combo_snapshot_hash,
+    VisualSnapshot,
+    visual_snapshot_hash,
 )
 from .static_presentation import restore_static_presentation
 
@@ -76,8 +80,43 @@ def _lock(user_id: int) -> asyncio.Lock:
     return _LOCKS.setdefault(user_id, asyncio.Lock())
 
 
-def _action_description(snapshot: ComboSnapshot) -> str:
-    return f"{snapshot.action.name}：{snapshot.action.motion_description}"
+def _action_description(snapshot: VisualSnapshot) -> str:
+    source = snapshot.source
+    if source.kind == "scene":
+        return source.scene.title or "环境媒体"
+    return f"{source.action.name}：{source.action.motion_description}"
+
+
+def _with_feedback(snapshot: VisualSnapshot, feedback: str, video_feedback: str) -> VisualSnapshot:
+    """要求写回冻结输入对应变体的 feedback 字段。"""
+
+    source = snapshot.source
+    return snapshot.model_copy(
+        update={
+            "source": source.model_copy(update={"feedback": feedback, "video_feedback": video_feedback}),
+        },
+    )
+
+
+def _source_ids(snapshot: VisualSnapshot) -> dict[str, int | None]:
+    source = snapshot.source
+    return {
+        "outfit_id": source.outfit.material_id if source.kind in ("actor", "cinematic") else None,
+        "scene_id": source.scene.scene_id if source.kind in ("scene", "cinematic") else None,
+        "action_id": source.action.action_id if source.kind in ("actor", "cinematic") else None,
+    }
+
+
+def _progress_duration(snapshot: VisualSnapshot) -> int:
+    """环境媒体没有动作时长；沿视频供应商的最短可用档（当前统一 5 秒）。"""
+
+    source = snapshot.source
+    return source.action.duration_seconds if source.kind != "scene" else 5
+
+
+def _progress_plan(snapshot: VisualSnapshot) -> VisualCreationPlan | None:
+    source = snapshot.source
+    return source.plan if source.kind in ("actor", "cinematic") else None
 
 
 def _customization_priority(feedback: str | None, video_feedback: str | None) -> Literal["general", "video"]:
@@ -92,10 +131,40 @@ def _source_image(item: VisualItem) -> str | None:
     return item.input_image_path if item.media_kind == "video" else item.media_path
 
 
+def _refresh_stage_composition(state: VisualPresentation, item: PresentedVisual) -> None:
+    """开播回执推进基础组合：actor 进入主体层、scene 进入环境层、cinematic 整片接管。
+
+    环境媒体替换环境层时保留主体层；主体媒体替换主体层时保留环境层；完整影像
+    同时清空分层引用，短动作结束后回退到 loop 指针恢复分层画面。
+    """
+
+    current = StageComposition.model_validate(state.composition_json) if state.composition_json else None
+    if item.asset_kind == "cinematic":
+        state.composition_json = StageComposition(
+            mode="cinematic",
+            cinematic=ActorClipRef(visual_id=item.id, version=item.version),
+        ).model_dump(mode="json")
+        return
+    layered = current if current is not None and current.mode == "layered" else None
+    actor = layered.actor if layered else None
+    scene_visual_id = layered.scene_visual_id if layered else None
+    scene_version = layered.scene_version if layered else None
+    if item.asset_kind == "actor":
+        actor = ActorClipRef(visual_id=item.id, version=item.version)
+    else:
+        scene_visual_id, scene_version = item.id, item.version
+    state.composition_json = StageComposition(
+        mode="layered",
+        scene_visual_id=scene_visual_id,
+        scene_version=scene_version,
+        actor=actor,
+    ).model_dump(mode="json")
+
+
 async def create_visual_job(
     user_id: int,
     *,
-    combo: ComboSnapshot,
+    snapshot: VisualSnapshot,
     target_kind: VisualMediaKind,
     source: Literal["user_requested", "autonomous"],
     feedback: str = "",
@@ -107,10 +176,11 @@ async def create_visual_job(
 
     if target_kind not in ("image", "video"):
         raise VisualStateError("不支持的影像类型")
+    if snapshot.source.kind == "scene":
+        raise VisualStateError("环境媒体由环境素材库制作，请在影像库中选择主体或完整场景影像")
     if life_step is not None and life_step.idempotency_key != request_id:
         raise VisualStateError("生活步骤与制作请求的身份必须一致")
-    combo = combo.model_copy(update={"feedback": feedback, "video_feedback": video_feedback})
-    combo_hash = combo_snapshot_hash(combo)
+    combo_hash = visual_snapshot_hash(_with_feedback(snapshot, feedback, video_feedback))
     async with _lock(user_id), SESSION_LOCAL() as db:
         state = await require_presentation_row(db, user_id, lock=True)
         if source == "autonomous" and not state.autonomous_enabled:
@@ -135,7 +205,7 @@ async def create_visual_job(
             ),
         )
         for existing in pending:
-            if combo_snapshot_hash(visual_snapshot(existing)) == combo_hash:
+            if visual_snapshot_hash(visual_snapshot(existing)) == combo_hash:
                 if request_id:
                     await bind_job_request(db, user_id, existing.id, request_id, combo_hash)
                 await bind_creation_step(db, user_id, existing, life_step)
@@ -143,24 +213,23 @@ async def create_visual_job(
                 return job_view(existing)
         progress = VisualJobProgress(
             generation_id=uuid4().hex,
-            target_width=combo.target_width,
-            target_height=combo.target_height,
+            target_width=snapshot.target_width,
+            target_height=snapshot.target_height,
             source=source,
             customization_priority=_customization_priority(feedback, video_feedback),
             image_only=target_kind == "image",
-            aspect_ratio=visual_aspect_ratio(combo.target_width, combo.target_height),
-            duration_seconds=combo.action.duration_seconds,
-            action_description=_action_description(combo),
-            creation_plan=combo.plan,
+            aspect_ratio=visual_aspect_ratio(snapshot.target_width, snapshot.target_height),
+            duration_seconds=_progress_duration(snapshot),
+            action_description=_action_description(snapshot),
+            creation_plan=_progress_plan(snapshot),
         )
         job = VisualJob(
             user_id=user_id,
             purpose="create",
             target_kind=target_kind,
-            snapshot_json=combo.model_dump(mode="json"),
-            outfit_id=combo.outfit.material_id,
-            scene_id=combo.scene.material_id,
-            action_id=combo.action.action_id,
+            asset_kind=snapshot.kind,
+            snapshot_json=_with_feedback(snapshot, feedback, video_feedback).model_dump(mode="json"),
+            **_source_ids(snapshot),
             feedback=feedback,
             video_feedback=video_feedback,
             state="queued",
@@ -207,13 +276,13 @@ async def regenerate_visual(
         if not visual_playable(item):
             raise VisualStateError("影像文件缺失，无法重做")
         snapshot = visual_snapshot(item)
-        if snapshot.identity.avatar_id is None:
+        if snapshot.source.kind in ("actor", "cinematic") and snapshot.source.identity.avatar_id is None:
             raise VisualStateError("这份影像的角色资料已删除，请用当前角色重新制作")
         source_image = _source_image(item)
-        general = snapshot.feedback if feedback is None else feedback.strip()
-        video_requirements = snapshot.video_feedback if video_feedback is None else video_feedback.strip()
-        changed_general = general != snapshot.feedback
-        snapshot = snapshot.model_copy(update={"feedback": general, "video_feedback": video_requirements})
+        general = snapshot.source.feedback if feedback is None else feedback.strip()
+        video_requirements = snapshot.source.video_feedback if video_feedback is None else video_feedback.strip()
+        changed_general = general != snapshot.source.feedback
+        snapshot = _with_feedback(snapshot, general, video_requirements)
         pending = await db.scalar(
             select(VisualJob)
             .where(
@@ -235,9 +304,9 @@ async def regenerate_visual(
             customization_priority=_customization_priority(feedback, video_feedback),
             image_only=item.media_kind == "image",
             aspect_ratio=visual_aspect_ratio(snapshot.target_width, snapshot.target_height),
-            duration_seconds=snapshot.action.duration_seconds,
+            duration_seconds=_progress_duration(snapshot),
             action_description=_action_description(snapshot),
-            creation_plan=None if item.media_kind == "image" or changed_general else snapshot.plan,
+            creation_plan=None if item.media_kind == "image" or changed_general else _progress_plan(snapshot),
             previous_pose_path=source_image if item.media_kind == "video" and not reuse else None,
             pose_path=source_image if reuse else "",
             image_confirmed=reuse,
@@ -249,10 +318,9 @@ async def regenerate_visual(
             purpose="regenerate",
             target_kind=item.media_kind,
             expected_version=expected_version,
+            asset_kind=snapshot.kind,
             snapshot_json=snapshot.model_dump(mode="json"),
-            outfit_id=snapshot.outfit.material_id,
-            scene_id=snapshot.scene.material_id,
-            action_id=snapshot.action.action_id,
+            **_source_ids(snapshot),
             feedback=general,
             video_feedback=video_requirements,
             state="queued",
@@ -427,10 +495,11 @@ async def record_playback(
             state.current_static_json = state.pending_static_json = None
             state.current_version_id = play.version_id
             state.current_snapshot_json = frozen.model_dump(mode="json")
-            if item.media_kind == "image" or visual_snapshot(item).action.clip_kind == "loop":
+            if visual_plays_as_loop(item):
                 state.loop_visual_id = item.id
                 state.loop_snapshot_json = state.current_snapshot_json
                 state.loop_version_id = play.version_id
+                _refresh_stage_composition(state, item)
             clear_pending_command(state, play_id)
             await db.execute(
                 update(VisualPlayback)

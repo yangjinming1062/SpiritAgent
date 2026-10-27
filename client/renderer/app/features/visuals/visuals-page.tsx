@@ -475,16 +475,34 @@ function VisualDetailPanel({
         </div>
         <div>
           <h4 className="mb-1 text-xs font-medium text-strong">{t.sourceTitle}</h4>
-          <p className="text-[11px] text-muted">
-            {t.sourceOutfit}：{materialLabel(detail.outfit_id, detail.snapshot.outfit.name)}
-          </p>
-          <p className="text-[11px] text-muted">
-            {t.sourceScene}：{materialLabel(detail.scene_id, detail.snapshot.scene.name)}
-          </p>
-          <p className="text-[11px] text-muted">
-            {t.sourceAction}：{materialLabel(detail.action_id, detail.snapshot.action.name)}
-          </p>
-          <p className="whitespace-pre-wrap text-[11px] text-faint">{detail.snapshot.action.motion_description}</p>
+          {(() => {
+            const source = detail.snapshot.source
+
+            if (source.kind === 'scene') {
+              return (
+                <p className="text-[11px] text-muted">
+                  {t.sourceScene}：{materialLabel(detail.scene_id, source.scene.title || '环境媒体')}
+                </p>
+              )
+            }
+
+            return (
+              <>
+                <p className="text-[11px] text-muted">
+                  {t.sourceOutfit}：{materialLabel(detail.outfit_id, source.outfit.name)}
+                </p>
+                {source.kind === 'cinematic' && (
+                  <p className="text-[11px] text-muted">
+                    {t.sourceScene}：{materialLabel(detail.scene_id, source.scene.title)}
+                  </p>
+                )}
+                <p className="text-[11px] text-muted">
+                  {t.sourceAction}：{materialLabel(detail.action_id, source.action.name)}
+                </p>
+                <p className="whitespace-pre-wrap text-[11px] text-faint">{source.action.motion_description}</p>
+              </>
+            )
+          })()}
         </div>
         <div className="flex flex-col gap-2">
           <p className="text-[11px] text-faint">{t.redoHint}</p>

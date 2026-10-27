@@ -24,7 +24,7 @@ from .models import VisualJob
 from .ports import read_planning_context
 from .prompts import VISUAL_CREATION_PLAN, VISUAL_OPENING_REPAIR, visual_source_reference_prompt
 from .repository import VisualStateError
-from .schemas import ComboSnapshot, OpeningReview, VisualCreationPlan, VisualJobProgress
+from .schemas import CinematicSource, OpeningReview, VisualCreationPlan, VisualJobProgress
 
 
 class VisualCreationError(VisualStateError):
@@ -57,7 +57,7 @@ class _OpeningRepair(BaseModel):
 async def ensure_creation_plan(
     user_id: int,
     job: VisualJob,
-    snapshot: ComboSnapshot,
+    snapshot: CinematicSource,
     progress: VisualJobProgress,
     *,
     before_submit: Callable[[], Awaitable[None]],
@@ -69,8 +69,14 @@ async def ensure_creation_plan(
         paths = (opening,)
         reference_roles = "图 1 提供实际人物、造型和环境"
     else:
-        paths = (snapshot.primary_reference_path, snapshot.outfit.path, snapshot.scene.path)
-        reference_roles = visual_source_reference_prompt(snapshot.identity_reference_role, include_scene=True)
+        paths = (
+            snapshot.primary_reference_path,
+            snapshot.outfit.path,
+            *((snapshot.scene.path,) if snapshot.kind == "cinematic" else ()),
+        )
+        reference_roles = visual_source_reference_prompt(
+            snapshot.identity_reference_role, include_scene=snapshot.kind == "cinematic"
+        )
     images = tuple(await asyncio.gather(*(asyncio.to_thread(read_valid_image_data_uri, path) for path in paths)))
     if not all(images):
         raise VisualStateError("活动参考画面无法读取，请重新准备素材")
@@ -111,7 +117,7 @@ async def ensure_opening_repair(
     job: VisualJob,
     progress: VisualJobProgress,
     *,
-    snapshot: ComboSnapshot,
+    snapshot: CinematicSource,
     before_submit: Callable[[], Awaitable[None]],
 ) -> None:
     if not progress.repair_reason or progress.repair_description:
@@ -172,12 +178,12 @@ def opening_requirements_hash(job: VisualJob, progress: VisualJobProgress) -> st
     return hashlib.sha256(opening_requirements(job, progress).encode()).hexdigest()
 
 
-def opening_reference_hash(snapshot: ComboSnapshot) -> str:
+def opening_reference_hash(snapshot: CinematicSource) -> str:
     references = {
         "identity": snapshot.primary_reference_hash,
         "role": snapshot.identity_reference_role,
         "outfit": snapshot.outfit.content_hash,
-        "scene": snapshot.scene.content_hash,
+        "scene": snapshot.scene.content_hash if snapshot.kind == "cinematic" else None,
         "identity_text": render_character_identity(snapshot.identity),
     }
     return hashlib.sha256(json.dumps(references, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
@@ -202,7 +208,7 @@ async def review_existing_opening(
     job: VisualJob,
     progress: VisualJobProgress,
     *,
-    snapshot: ComboSnapshot,
+    snapshot: CinematicSource,
     before_submit: Callable[[], Awaitable[None]],
 ) -> OpeningReview:
     image_hash = await asyncio.to_thread(opening_image_hash, progress.pose_path)
@@ -247,7 +253,9 @@ async def review_existing_opening(
             read_visual_reference,
             snapshot.scene.path,
             snapshot.scene.content_hash,
-        ),
+        )
+        if snapshot.kind == "cinematic"
+        else None,
         task=AiTaskKey.visuals,
         before_submit=before_submit,
     )

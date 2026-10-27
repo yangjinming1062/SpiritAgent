@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .schemas import ComboSnapshot
+from .schemas import CinematicSource, VisualSnapshot
 
 
 class VisualPlanningContext(BaseModel):
@@ -17,7 +17,7 @@ class VisualPlanningContext(BaseModel):
     relevant_memories: list[dict[str, str]] = Field(default_factory=list)
 
 
-PlanningReader = Callable[[int, ComboSnapshot], Awaitable[VisualPlanningContext]]
+PlanningReader = Callable[[int, CinematicSource | VisualSnapshot], Awaitable[VisualPlanningContext]]
 ReadyHandler = Callable[[int], None]
 _planning_reader: PlanningReader | None = None
 _ready_handler: ReadyHandler | None = None
@@ -33,7 +33,7 @@ def configure_visual_hooks(
     _ready_handler = ready_handler
 
 
-async def read_planning_context(user_id: int, snapshot: ComboSnapshot) -> VisualPlanningContext:
+async def read_planning_context(user_id: int, snapshot: CinematicSource | VisualSnapshot) -> VisualPlanningContext:
     if _planning_reader is None:
         raise RuntimeError("影像策划的情境读取端口尚未装配")
     return await _planning_reader(user_id, snapshot)

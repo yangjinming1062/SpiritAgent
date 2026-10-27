@@ -1,4 +1,8 @@
-"""影像库的组合成品、制作工作项与呈现播放事实。"""
+"""影像库的资产成品、制作工作项与呈现播放事实。
+
+三类资产（actor 透明主体动画 / scene 环境媒体 / cinematic 完整场景影像）共用
+成品身份与不可变版本；差别在冻结输入判别联合与主体元数据列（仅 actor 有锚点）。
+"""
 
 from datetime import datetime
 from typing import Any
@@ -47,19 +51,27 @@ class VisualItem(ModelBase, TimestampMixin):
             unique=True,
             postgresql_where=text("media_kind = 'image'"),
         ),
-        Index("ix_visual_items_catalog", "user_id", "status", "media_kind", "id"),
+        Index("ix_visual_items_catalog", "user_id", "status", "media_kind", "asset_kind", "id"),
+        CheckConstraint(
+            "asset_kind <> 'actor' OR media_kind = 'video'",
+            name="ck_visual_items_actor_video",
+        ),
     )
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     source_key: Mapped[str] = mapped_column(String(36), default=lambda: uuid4().hex)
     media_kind: Mapped[str] = mapped_column(String(8))
+    # actor=透明主体动画；scene=环境媒体；cinematic=完整场景影像。
+    asset_kind: Mapped[str] = mapped_column(String(16), default="cinematic", server_default=text("'cinematic'"))
     title: Mapped[str] = mapped_column(String(160), default="", server_default="")
     status: Mapped[str] = mapped_column(String(24), default="ready", server_default="ready")
     description: Mapped[str] = mapped_column(Text, default="", server_default="")
     content_hash: Mapped[str] = mapped_column(String(64))
-    clip_kind: Mapped[str] = mapped_column(String(8), default="loop", server_default="loop")
+    # actor 继承动作定义的播放方式；scene/cinematic 图片恒为持续画面。
+    clip_kind: Mapped[str | None] = mapped_column(String(8), nullable=True)
     allowed_triggers: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default="[]")
     outfit_id: Mapped[int | None] = mapped_column(ForeignKey("companion_outfits.id", ondelete="SET NULL"), index=True)
+    # scene 与 cinematic 的环境来源；actor 不绑定环境。
     scene_id: Mapped[int | None] = mapped_column(ForeignKey("companion_scenes.id", ondelete="SET NULL"), index=True)
     action_id: Mapped[int | None] = mapped_column(ForeignKey("action_definitions.id", ondelete="SET NULL"), index=True)
     current_version_id: Mapped[int | None] = mapped_column(BigInteger)
@@ -177,6 +189,8 @@ class VisualVersion(ModelBase):
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     outfit_description: Mapped[str] = mapped_column(Text, default="", server_default="")
     snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    # actor 专属主体元数据：透明遮罩/首末帧/锚点与命中区域；发布时由应用层保证仅 actor 有值。
+    body_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
     input_image_id: Mapped[int | None] = mapped_column(
         ForeignKey("visual_items.id", ondelete="NO ACTION", deferrable=True, initially="DEFERRED")
     )
@@ -224,6 +238,8 @@ class VisualJob(JobRecord):
 
     id: Mapped[int] = mapped_column(BigInteger, ForeignKey("jobs.id", ondelete="CASCADE"), primary_key=True)
     owner_id: Mapped[int] = mapped_column(BigInteger)
+    # 本次制作的目标资产类型；snapshot_json.source.kind 必须一致。
+    asset_kind: Mapped[str] = mapped_column(String(16), default="cinematic", server_default=text("'cinematic'"))
     outfit_id: Mapped[int | None] = mapped_column(ForeignKey("companion_outfits.id", ondelete="SET NULL"))
     scene_id: Mapped[int | None] = mapped_column(ForeignKey("companion_scenes.id", ondelete="SET NULL"))
     action_id: Mapped[int | None] = mapped_column(ForeignKey("action_definitions.id", ondelete="SET NULL"))
@@ -237,7 +253,7 @@ class VisualJob(JobRecord):
     purpose: Mapped[str] = mapped_column(String(16), default="create", server_default=text("'create'"))
     target_kind: Mapped[str] = mapped_column(String(8), default="video", server_default=text("'video'"))
     expected_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    # 冻结输入：组合快照（身份、三份素材、计划、目标画幅与生成要求）。
+    # 冻结输入：判别联合快照（actor/scene/cinematic + 目标画幅）。
     snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
     feedback: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     video_feedback: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
@@ -259,7 +275,7 @@ class VisualJob(JobRecord):
 
 
 class VisualPresentation(ModelBase, TimestampMixin):
-    """每账户一份呈现状态：当前影像、持续影像与播放代次。"""
+    """每账户一份呈现状态：舞台组合、生活意图、当前影像与播放代次。"""
 
     __tablename__ = "visual_presentations"
     __table_args__ = (
@@ -287,6 +303,10 @@ class VisualPresentation(ModelBase, TimestampMixin):
     pending_static_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
     current_static_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    # 当前有效的基础画面组合（layered/cinematic），是呈现配置不是生活事实。
+    composition_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
+    # 生活情境投影：仅在有意义变化时由生活侧更新。
+    intent_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
     current_version_id: Mapped[int | None] = mapped_column(BigInteger)
     loop_version_id: Mapped[int | None] = mapped_column(BigInteger)
     current_visual_id: Mapped[int | None] = mapped_column(
@@ -304,7 +324,7 @@ class VisualPresentation(ModelBase, TimestampMixin):
     target_height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     presentation_epoch: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     state_revision: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
-    # 待执行播放指令；换号、模式切换和过期后重新校验。
+    # 待执行演出指令；换号、模式切换和过期后重新校验。
     pending_command_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
     current_snapshot_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
     loop_snapshot_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)

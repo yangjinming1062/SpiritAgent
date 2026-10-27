@@ -251,13 +251,13 @@ export async function sendVisualReceipt(playId: string, body: Omit<VisualReceipt
 }
 
 export function staticPresentationKey(
-  target: Pick<ApiSchemas['StaticReceipt'], 'request_id' | 'presentation_epoch' | 'state_revision'>
+  target: Pick<ApiSchemas['StageReceipt'], 'request_id' | 'presentation_epoch' | 'state_revision'>
 ): string {
   return `${target.request_id}:${target.presentation_epoch}:${target.state_revision}`
 }
 
 /** 旧回执被拒绝后由调用方回源；传输失败保留错误，不转报成图片加载失败。 */
-export async function sendStaticReceipt(body: ApiSchemas['StaticReceipt']): Promise<boolean> {
+export async function sendStaticReceipt(body: ApiSchemas['StageReceipt']): Promise<boolean> {
   const scope = captureAuthScope()
   const presentation = $visualsPresentation.get()
   const target = presentation?.static_presentation

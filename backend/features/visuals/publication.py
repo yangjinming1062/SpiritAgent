@@ -18,7 +18,7 @@ from features.jobs.service import CompletedJob, completion_cte
 
 from .models import VisualItem, VisualJob, VisualVersion, VisualVersionAsset
 from .repository import VisualStateError
-from .schemas import ComboSnapshot, PresentedVisual, VisualAsset
+from .schemas import PresentedVisual, VisualAsset, VisualSnapshot
 
 
 class PublishedVisual(PresentedVisual):
@@ -38,16 +38,21 @@ def _path(value: str | None) -> str | None:
     return normalize_asset_reference(value) if value else None
 
 
-def _roles(asset: VisualAsset, snapshot: ComboSnapshot) -> dict[str, str]:
+def _roles(asset: VisualAsset, snapshot: VisualSnapshot) -> dict[str, str]:
+    source = snapshot.source
     paths = {
         "media": asset.media_path,
         "poster": asset.poster_path,
         "input": asset.input_image_path,
-        "identity": snapshot.identity_path,
-        "portrait": snapshot.portrait_path,
-        "outfit": snapshot.outfit.path,
-        "scene": snapshot.scene.path,
     }
+    if source.kind in ("actor", "cinematic"):
+        paths |= {
+            "identity": source.identity_path,
+            "portrait": source.portrait_path,
+            "outfit": source.outfit.path,
+        }
+    if source.kind in ("scene", "cinematic"):
+        paths["scene"] = source.scene.path
     return {role: path for role, value in paths.items() if (path := _path(value)) is not None}
 
 
@@ -59,11 +64,32 @@ def _identity(table: Table) -> ColumnElement[int]:
     return func.nextval(func.pg_get_serial_sequence(table.name, "id")).cast(BigInteger)
 
 
+def _source_ids(job: VisualJob) -> dict[str, int | None]:
+    return {"outfit_id": job.outfit_id, "scene_id": job.scene_id, "action_id": job.action_id}
+
+
+def _summary(asset: VisualAsset, snapshot: VisualSnapshot) -> dict[str, Any]:
+    source = snapshot.source
+    if source.kind == "scene":
+        clip_kind = None
+        allowed_triggers: list[str] = []
+    else:
+        clip_kind = source.action.clip_kind
+        allowed_triggers = list(source.action.allowed_triggers)
+    return {
+        "status": "ready",
+        "description": asset.visual_description,
+        "asset_kind": snapshot.kind,
+        "clip_kind": clip_kind if asset.media_kind == "video" else None,
+        "allowed_triggers": allowed_triggers,
+    }
+
+
 def _publish_entity(
     prefix: str,
     job: VisualJob,
     asset: VisualAsset,
-    snapshot: ComboSnapshot,
+    snapshot: VisualSnapshot,
     references: dict[str, AssetReference],
     *,
     regenerate: bool = False,
@@ -77,14 +103,11 @@ def _publish_entity(
         (literal(job.target_visual_id, BigInteger) if regenerate else _identity(items)).label("item_id"),
         _identity(versions).label("version_id"),
     ).cte(f"{prefix}_ids")
-    source = {"outfit_id": job.outfit_id, "scene_id": job.scene_id, "action_id": job.action_id}
+    source = _source_ids(job)
     summary = {
         "current_version_id": allocation.c.version_id,
-        "status": "ready",
-        "description": asset.visual_description,
+        **_summary(asset, snapshot),
         "content_hash": media.content_hash,
-        "clip_kind": snapshot.action.clip_kind,
-        "allowed_triggers": list(snapshot.action.allowed_triggers),
         **source,
     }
     if regenerate:
@@ -96,6 +119,7 @@ def _publish_entity(
                 items.c.id == allocation.c.item_id,
                 items.c.user_id == job.user_id,
                 items.c.media_kind == asset.media_kind,
+                items.c.asset_kind == snapshot.kind,
                 items.c.current_version_id.in_(
                     select(versions.c.id).where(
                         versions.c.visual_id == job.target_visual_id,
@@ -127,11 +151,11 @@ def _publish_entity(
             )
     item = item_write.returning(*items.c).cte(f"{prefix}_item")
     input_path = _path(asset.input_image_path)
+    body = asset.body if snapshot.kind == "actor" and asset.media_kind == "video" else None
     payload = {
         "id": item.c.current_version_id,
         "visual_id": item.c.id,
         "user_id": job.user_id,
-        "source_key": uuid4().hex,
         "number": job.expected_version + 1 if regenerate else 1,
         "description": asset.visual_description,
         "content_hash": media.content_hash,
@@ -143,6 +167,7 @@ def _publish_entity(
         "duration_ms": asset.duration_ms,
         "outfit_description": asset.outfit_description,
         "snapshot_json": snapshot.model_dump(mode="json"),
+        "body_json": body.model_dump(mode="json") if body is not None else None,
         "input_image_id": input_item.c.id if input_item is not None else None,
         "input_image_version_id": input_version.c.id if input_version is not None else None,
         "input_image_path": input_path,
@@ -198,12 +223,14 @@ async def _publish(
     job: VisualJob,
     asset: VisualAsset,
     *,
-    snapshot: ComboSnapshot,
+    snapshot: VisualSnapshot,
     role: Literal["opening", "result"],
     checkpoint: dict | None = None,
 ) -> VisualPublication:
     if job.user_id != user_id:
         raise VisualStateError("制作任务不属于当前账户")
+    if snapshot.kind != job.asset_kind:
+        raise VisualStateError("冻结输入与制作目标类型不一致")
     roles = _roles(asset, snapshot)
     references = await ensure_asset_references_in_session(db, user_id, set(roles.values()))
     media = references[roles["media"]]
@@ -261,6 +288,7 @@ async def _publish(
             item.c.id,
             item.c.user_id,
             item.c.media_kind,
+            item.c.asset_kind,
             item.c.title,
             item.c.status,
             item.c.created_at,
@@ -325,7 +353,7 @@ async def publish_visual_result(
     job: VisualJob,
     asset: VisualAsset,
     *,
-    snapshot: ComboSnapshot,
+    snapshot: VisualSnapshot,
     checkpoint: dict,
 ) -> VisualPublication:
     return await _publish(db, user_id, job, asset, snapshot=snapshot, role="result", checkpoint=checkpoint)
@@ -337,7 +365,7 @@ async def publish_opening_result(
     job: VisualJob,
     asset: VisualAsset,
     *,
-    snapshot: ComboSnapshot,
+    snapshot: VisualSnapshot,
 ) -> PublishedVisual:
     if asset.media_kind != "image":
         raise VisualStateError("起始画面必须是图片")

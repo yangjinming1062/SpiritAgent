@@ -35,9 +35,13 @@ from features.visuals import service as visuals_service
 from features.visuals.queries import presentation_state
 from features.visuals.schemas import (
     ActionMaterialRef,
+    ActorClipSource,
+    CinematicSource,
     ComboMaterialRef,
-    ComboSnapshot,
+    SceneMediaRef,
+    VisualAssetKind,
     VisualMediaKind,
+    VisualSnapshot,
 )
 from infrastructure.assets.asset_store import compute_file_sha256, resolve_asset_reference
 from infrastructure.assets.write_protection import user_asset_lock
@@ -58,19 +62,25 @@ def _asset_hash(path: str) -> str:
     return compute_file_sha256(resolved[0])
 
 
-async def load_combo_snapshot(
+async def load_visual_snapshot(
     db: AsyncSession,
     user_id: int,
     *,
+    asset_kind: VisualAssetKind = "cinematic",
     outfit_id: int,
-    scene_id: int,
+    scene_id: int | None,
     action_id: int,
     requirements: str = "",
     target_width: int | None = None,
     target_height: int | None = None,
-) -> ComboSnapshot:
-    """冻结伙伴身份与衣柜、环境、动作三份素材的引用及描述。"""
+) -> VisualSnapshot:
+    """冻结一次制作的输入：actor 绑定身份、造型与动作；cinematic 另含环境。
 
+    actor 的 `scene_id` 被忽略——透明主体动画不绑定环境。
+    """
+
+    if asset_kind not in ("actor", "cinematic"):
+        raise ComboAssemblyError("影像库当前只受理主体动画与完整场景影像的制作")
     try:
         identity = await require_character_snapshot(db, user_id)
     except CharacterCardNotReadyError as exc:
@@ -80,33 +90,34 @@ async def load_combo_snapshot(
     if avatar is None or not avatar.seed_fullbody_url or not avatar.asset_url:
         raise ComboAssemblyError("伙伴的形象尚未准备好")
     outfit = await ready_outfit_snapshot(db, user_id, outfit_id)
-    scene = await scene_snapshot(db, user_id, scene_id)
     action = await action_queries.action_detail(db, user_id, action_id)
     if outfit is None or not outfit.fullbody_url:
         raise ComboAssemblyError("请选择已就绪的造型")
-    if scene is None or scene.status != "ready" or not scene.media_path:
-        raise ComboAssemblyError("请选择已就绪的环境图片")
     if action is None or action.status != "approved":
         raise ComboAssemblyError("请选择已经通过评审的动作")
-    identity_hash, portrait_hash, outfit_hash, scene_hash = await asyncio.gather(
-        asyncio.to_thread(_asset_hash, avatar.seed_fullbody_url),
-        asyncio.to_thread(_asset_hash, avatar.asset_url),
-        asyncio.to_thread(_asset_hash, outfit.fullbody_url),
-        asyncio.to_thread(_asset_hash, scene.media_path),
-    )
+    scene = await scene_snapshot(db, user_id, scene_id) if scene_id is not None else None
+    if asset_kind == "cinematic" and (scene is None or scene.status != "ready" or not scene.media_path):
+        raise ComboAssemblyError("请选择已就绪的环境图片")
+    hash_paths = [avatar.seed_fullbody_url, avatar.asset_url, outfit.fullbody_url]
+    if scene is not None:
+        hash_paths.append(scene.media_path)
+    hashes = await asyncio.gather(*(asyncio.to_thread(_asset_hash, path) for path in hash_paths))
+    identity_hash, portrait_hash, outfit_hash = hashes[0], hashes[1], hashes[2]
+    scene_hash = hashes[3] if scene is not None else None
     width, height = target_width, target_height
     if not width or not height:
         width, height = DEFAULT_TARGET
-    return ComboSnapshot(
-        identity=identity,
-        identity_path=avatar.seed_fullbody_url,
-        identity_hash=identity_hash,
-        portrait_path=avatar.asset_url,
-        portrait_hash=portrait_hash,
-        identity_reference_role=(
+    persona_definition = load_persona_definition(persona) if persona is not None else {}
+    shared = {
+        "identity": identity,
+        "identity_path": avatar.seed_fullbody_url,
+        "identity_hash": identity_hash,
+        "portrait_path": avatar.asset_url,
+        "portrait_hash": portrait_hash,
+        "identity_reference_role": (
             "portrait" if outfit_identity_matches(outfit.source_json, avatar.seed_fullbody_url) else "fullbody"
         ),
-        outfit=ComboMaterialRef(
+        "outfit": ComboMaterialRef(
             material_id=outfit.id,
             name=outfit.name,
             path=outfit.fullbody_url,
@@ -114,15 +125,7 @@ async def load_combo_snapshot(
             description=outfit.description or "",
             revision=outfit.updated_at,
         ),
-        scene=ComboMaterialRef(
-            material_id=scene.id,
-            name=scene.title,
-            path=scene.media_path,
-            content_hash=scene_hash,
-            description=scene.description,
-            revision=scene.updated_at,
-        ),
-        action=ActionMaterialRef(
+        "action": ActionMaterialRef(
             action_id=action.id,
             revision=action.updated_at,
             name=action.name,
@@ -133,12 +136,26 @@ async def load_combo_snapshot(
             avoid_when=action.avoid_when,
             allowed_triggers=action.allowed_triggers,
         ),
-        plan=None,
-        target_width=width,
-        target_height=height,
-        requirements=requirements,
-        persona=load_persona_definition(persona) if persona is not None else {},
-    )
+        "plan": None,
+        "requirements": requirements,
+        "persona": persona_definition,
+    }
+    if asset_kind == "actor":
+        source: ActorClipSource | CinematicSource = ActorClipSource(kind="actor", **shared)
+    else:
+        source = CinematicSource(
+            kind="cinematic",
+            scene=SceneMediaRef(
+                scene_id=scene.id,
+                title=scene.title,
+                path=scene.media_path,
+                content_hash=scene_hash or "",
+                description=scene.description,
+                revision=scene.updated_at,
+            ),
+            **shared,
+        )
+    return VisualSnapshot(source=source, target_width=width, target_height=height)
 
 
 async def design_action_reference(
@@ -262,24 +279,26 @@ async def generate_visual_reference(
     *,
     request_id: str,
     outfit_id: int,
-    scene_id: int,
+    scene_id: int | None,
     action_id: int,
+    asset_kind: VisualAssetKind = "cinematic",
     media_kind: VisualMediaKind = "image",
     requirements: str = "",
     feedback: str = "",
     video_feedback: str = "",
     life_step: LifeStepRequest | None = None,
 ) -> dict[str, Any]:
-    """冻结本次组合并提交制作工作项；空影像库也能开始第一次制作。"""
+    """冻结本次制作输入并提交工作项；空影像库也能开始第一次制作。"""
 
     async with user_asset_lock(user_id):
         state = await presentation_state(user_id)
         if not state.autonomous_enabled:
             raise ComboAssemblyError("伙伴自主制作已关闭")
         async with SESSION_LOCAL() as db:
-            combo = await load_combo_snapshot(
+            combo = await load_visual_snapshot(
                 db,
                 user_id,
+                asset_kind=asset_kind,
                 outfit_id=outfit_id,
                 scene_id=scene_id,
                 action_id=action_id,
@@ -294,15 +313,16 @@ async def generate_visual_reference(
             else "life:visual:" + hashlib.sha256(request_id.encode("utf-8")).hexdigest()
         )
         life_state = await read_state(user_id)
+        action_name = combo.source.action.name if combo.source.kind != "scene" else combo.source.scene.title
         request = life_step or LifeStepRequest(
             idempotency_key=request_key,
             kind="visual.generate",
-            description=f"制作伙伴影像：{combo.action.name}",
+            description=f"制作伙伴影像：{action_name}",
             pursuit_id=life_state.active_pursuit_id,
         )
         job = await visuals_service.create_visual_job(
             user_id,
-            combo=combo,
+            snapshot=combo,
             target_kind=media_kind,
             source="autonomous",
             feedback=feedback,

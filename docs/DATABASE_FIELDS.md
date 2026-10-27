@@ -53,8 +53,8 @@
 
 | 字段组与模型入口 | 语义 |
 |---|---|
-| 成品与版本：[visuals/models.py](../backend/features/visuals/models.py) | 稳定成品 ID 与不可变版本分离；版本保存冻结组合、实际输入图和文件关系，成功重做才切换当前指针 |
-| 制作与呈现：同一[模型文件](../backend/features/visuals/models.py) | 工作项的目标/预期版本控制采纳；呈现保存当前/持续版本、静态素材目标与已显示快照、待播指令和代次；播放记录保存具体版本的指令与回执 |
+| 成品与版本：[visuals/models.py](../backend/features/visuals/models.py) | 稳定成品 ID 与不可变版本分离；`asset_kind` 区分 actor/scene/cinematic 三类资产，版本保存判别联合冻结输入（`snapshot_json.source.kind`）、实际输入图、文件关系与 actor 主体元数据（`body_json`），成功重做才切换当前指针 |
+| 制作与呈现：同一[模型文件](../backend/features/visuals/models.py) | 工作项的目标/预期版本控制采纳；呈现保存当前/持续版本、舞台组合（`composition_json`）与生活意图（`intent_json`）、静态素材目标与已显示快照、待播指令和代次；播放记录保存具体版本的指令与回执 |
 | 公共视频：[media/models.py](../backend/features/media/models.py) | 来源消息、回复绑定和视频制作详情；通用控制状态归 jobs，远端状态归 provider attempts |
 
 成品/版本成对外键还校验版本属于该成品；循环指针可分阶段写入，提交时必须完整。显示事实不得从生活活动、待播指令或文件存在推断。

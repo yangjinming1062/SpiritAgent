@@ -113,10 +113,12 @@ from .repository import (
     visual_snapshot,
 )
 from .schemas import (
-    ComboSnapshot,
+    ActorClipSource,
+    CinematicSource,
     OpeningReview,
     VisualAsset,
     VisualJobProgress,
+    VisualSnapshot,
 )
 from .video_planning import (
     VisualVideoPlan,
@@ -297,7 +299,7 @@ def visual_progress_can_resume(progress: VisualJobProgress) -> bool:
 
 class JobInputs(NamedTuple):
     job: VisualJob
-    snapshot: ComboSnapshot
+    snapshot: VisualSnapshot
     progress: VisualJobProgress
 
 
@@ -314,7 +316,7 @@ async def _job_inputs(user_id: int, job_id: int, generation_id: str) -> JobInput
         if progress is None or progress.generation_id != generation_id or job.state not in {"queued", "running"}:
             raise LlmCallBlockedError("影像制作任务已经失效")
         snapshot = visual_snapshot(job)
-        if snapshot.identity.avatar_id is None:
+        if snapshot.source.kind in ("actor", "cinematic") and snapshot.source.identity.avatar_id is None:
             raise LlmCallBlockedError("制作引用的角色资料已删除")
         db.expunge(job)
         return JobInputs(job=job, snapshot=snapshot, progress=progress)
@@ -352,7 +354,7 @@ async def _save_progress(
         await db.commit()
 
 
-async def _references(snapshot: ComboSnapshot) -> tuple[str, str]:
+async def _references(snapshot: ActorClipSource | CinematicSource) -> tuple[str, str]:
     portrait = await asyncio.to_thread(
         read_visual_reference,
         snapshot.primary_reference_path,
@@ -362,7 +364,7 @@ async def _references(snapshot: ComboSnapshot) -> tuple[str, str]:
     return portrait, outfit
 
 
-def _alignment_source_hash(snapshot: ComboSnapshot) -> str:
+def _alignment_source_hash(snapshot: ActorClipSource | CinematicSource) -> str:
     source = {
         "identity_hash": snapshot.identity_hash,
         "identity": snapshot.identity.model_dump(mode="json", exclude={"avatar_id"}),
@@ -385,7 +387,7 @@ def _raise_image_review_failure(exc: ImageGenerationError, state: ImageChainStat
 async def _aligned_outfit_reference(
     user_id: int,
     job_id: int,
-    snapshot: ComboSnapshot,
+    snapshot: ActorClipSource | CinematicSource,
     progress: VisualJobProgress,
     directory: str,
     identity_uri: str,
@@ -576,7 +578,9 @@ async def resolve_visual_video_plan(
     )
 
 
-def _review_basis_stale(inputs: CharacterImageInput, progress: VisualJobProgress, snapshot: ComboSnapshot) -> bool:
+def _review_basis_stale(
+    inputs: CharacterImageInput, progress: VisualJobProgress, snapshot: ActorClipSource | CinematicSource
+) -> bool:
     """旧进度按编辑底图或派生造型图评分过；换冻结参考基准后，旧结论不能约束新检查。"""
     if inputs.image_edit:
         return (
@@ -594,7 +598,7 @@ def _review_basis_stale(inputs: CharacterImageInput, progress: VisualJobProgress
 async def _prepare_pose(
     user_id: int,
     job: VisualJob,
-    snapshot: ComboSnapshot,
+    snapshot: ActorClipSource | CinematicSource,
     progress: VisualJobProgress,
     directory: str,
 ) -> None:
@@ -606,7 +610,11 @@ async def _prepare_pose(
 
     previous = progress.previous_pose_path
     identity, identity_outfit = await _references(snapshot)
-    environment = await asyncio.to_thread(read_visual_reference, snapshot.scene.path, snapshot.scene.content_hash)
+    environment = (
+        await asyncio.to_thread(read_visual_reference, snapshot.scene.path, snapshot.scene.content_hash)
+        if snapshot.kind == "cinematic"
+        else None
+    )
     progress.frame_width, progress.frame_height = progress.target_width, progress.target_height
     progress.aspect_ratio = _delivery_aspect(progress)
     editing = bool(previous)
@@ -633,7 +641,9 @@ async def _prepare_pose(
                 identity_outfit,
             )
         prompt = VISUAL_POSE_IMAGE_TEMPLATE.format(
-            references=visual_source_reference_prompt(snapshot.identity_reference_role, include_scene=True),
+            references=visual_source_reference_prompt(
+                snapshot.identity_reference_role, include_scene=snapshot.kind == "cinematic"
+            ),
             pose=opening_requirements(job, progress),
             identity=render_character_identity(snapshot.identity),
             aspect_ratio=progress.aspect_ratio,
@@ -657,7 +667,7 @@ async def _prepare_pose(
             progress.opening_review = None
         state.inputs.identity_reference = snapshot.primary_reference_path
         state.inputs.identity_secondary_reference = snapshot.outfit.path
-        state.inputs.review_environment_reference_image = snapshot.scene.path
+        state.inputs.review_environment_reference_image = snapshot.scene.path if snapshot.kind == "cinematic" else None
         state.inputs.identity_reference_mode = reference_mode
         state.inputs.identity_text = render_character_identity(snapshot.identity)
 
@@ -753,7 +763,7 @@ async def _prepare_pose(
 async def _prepare_opening(
     user_id: int,
     job: VisualJob,
-    snapshot: ComboSnapshot,
+    snapshot: ActorClipSource | CinematicSource,
     progress: VisualJobProgress,
     directory: str,
 ) -> None:
@@ -806,7 +816,7 @@ async def _check_confirmed_geometry(progress: VisualJobProgress) -> None:
 async def _prepare_motion(
     user_id: int,
     job: VisualJob,
-    snapshot: ComboSnapshot,
+    snapshot: ActorClipSource | CinematicSource,
     progress: VisualJobProgress,
 ) -> None:
     if progress.motion_prompt:
@@ -961,7 +971,9 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
         try:
             review_payload: dict[str, object] = {
                 "video_feedback": job.video_feedback,
-                "kind": visual_snapshot(job).action.clip_kind,
+                "kind": visual_snapshot(job).source.action.clip_kind
+                if visual_snapshot(job).source.kind in ("actor", "cinematic")
+                else "loop",
                 "duration_seconds": progress.duration_seconds,
                 "frame_times_seconds": samples.times_seconds,
                 "reference_frame_count": len(references),
@@ -1032,8 +1044,11 @@ async def _describe_frame(user_id: int, job_id: int, progress: VisualJobProgress
         logger.warning("Visual frame description unavailable", extra={"job_id": job_id}, exc_info=True)
 
 
-def _publication_snapshot(snapshot: ComboSnapshot, progress: VisualJobProgress) -> ComboSnapshot:
-    return snapshot.model_copy(update={"plan": progress.creation_plan or snapshot.plan})
+def _publication_snapshot(snapshot: VisualSnapshot, progress: VisualJobProgress) -> VisualSnapshot:
+    if snapshot.source.kind == "scene" or progress.creation_plan is None:
+        return snapshot
+    source = snapshot.source.model_copy(update={"plan": progress.creation_plan})
+    return snapshot.model_copy(update={"source": source})
 
 
 async def _finish_job(
@@ -1179,7 +1194,10 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
             generation_id = initial.generation_id
         job_inputs = await _job_inputs(user_id, job_id, generation_id)
         job, snapshot, progress = job_inputs
-        clip_kind = snapshot.action.clip_kind
+        clip_kind = "loop" if snapshot.source.kind == "scene" else snapshot.source.action.clip_kind
+        if snapshot.source.kind == "scene":
+            # 环境媒体制作链（静态图/环境循环视频）归后续计划；当前受理端已拒绝该类型。
+            raise VisualStateError("环境媒体制作尚未开放，请通过环境素材库创建")
         progress.aspect_ratio = _delivery_aspect(progress)
         if visual_progress_has_unknown_submission(progress):
             progress.submission_unknown = True

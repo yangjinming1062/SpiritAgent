@@ -10,12 +10,21 @@ from sqlalchemy import func, or_, select
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
 
 from .models import VisualItem, VisualJob, VisualPresentation, VisualVersion
-from .repository import VisualNotFoundError, presented_item, visual_playable, visual_snapshot
+from .repository import (
+    VisualNotFoundError,
+    presented_item,
+    stage_composition,
+    visual_playable,
+    visual_snapshot,
+)
 from .schemas import (
+    ActionMediaEntry,
+    ActionMediaListResponse,
     ActualPresentationSnapshot,
-    ComboSnapshot,
     PresentedVisual,
-    StaticPresentation,
+    StageIntent,
+    StagePresentation,
+    VisualAssetKind,
     VisualDetailView,
     VisualItemView,
     VisualJobListResponse,
@@ -26,20 +35,32 @@ from .schemas import (
     VisualPlayCommand,
     VisualPlayOption,
     VisualPresentationView,
+    VisualSnapshot,
     parse_job_progress,
 )
+
+_ASSET_KINDS: tuple[str, ...] = ("actor", "scene", "cinematic")
 
 
 def _media_kind(value: str) -> VisualMediaKind:
     return "image" if value == "image" else "video"
 
 
-def item_view(item: VisualItem | PresentedVisual, snapshot: ComboSnapshot | None = None) -> VisualItemView:
+def _asset_kind(value: str) -> VisualAssetKind:
+    return value if value in _ASSET_KINDS else "cinematic"
+
+
+def item_view(item: VisualItem | PresentedVisual, snapshot: VisualSnapshot | None = None) -> VisualItemView:
     snapshot = snapshot or visual_snapshot(item)
+    source = snapshot.source
+    outfit = source.outfit if source.kind in ("actor", "cinematic") else None
+    scene = source.scene if source.kind in ("scene", "cinematic") else None
+    action = source.action if source.kind in ("actor", "cinematic") else None
     return VisualItemView(
         id=item.id,
         media_kind=_media_kind(item.media_kind),
-        clip_kind=snapshot.action.clip_kind,
+        asset_kind=_asset_kind(item.asset_kind),
+        clip_kind=item.clip_kind,
         title=item.title,
         status=item.status,
         media_url=client_asset_url(item.media_path),
@@ -50,11 +71,11 @@ def item_view(item: VisualItem | PresentedVisual, snapshot: ComboSnapshot | None
         version=item.version,
         description=item.description,
         outfit_id=item.outfit_id,
-        outfit_name=snapshot.outfit.name,
+        outfit_name=outfit.name if outfit else "",
         scene_id=item.scene_id,
-        scene_title=snapshot.scene.name,
+        scene_title=scene.title if scene else "",
         action_id=item.action_id,
-        action_name=snapshot.action.name,
+        action_name=action.name if action else None,
         input_image_id=item.input_image_id,
         input_image_hash=item.input_image_hash,
         created_at=item.created_at,
@@ -63,9 +84,12 @@ def item_view(item: VisualItem | PresentedVisual, snapshot: ComboSnapshot | None
 
 
 def _job_action_name(snapshot: dict) -> str:
-    action = snapshot.get("action") if isinstance(snapshot, dict) else None
-    name = action.get("name") if isinstance(action, dict) else None
-    return name if isinstance(name, str) else ""
+    source = snapshot.get("source") if isinstance(snapshot, dict) else None
+    if isinstance(source, dict) and source.get("kind") in ("actor", "cinematic"):
+        action = source.get("action")
+        name = action.get("name") if isinstance(action, dict) else None
+        return name if isinstance(name, str) else ""
+    return ""
 
 
 def job_view(job: VisualJob) -> VisualJobView:
@@ -74,6 +98,7 @@ def job_view(job: VisualJob) -> VisualJobView:
         id=job.id,
         purpose=job.purpose,
         target_kind=_media_kind(job.target_kind),
+        asset_kind=_asset_kind(job.asset_kind),
         action_name=_job_action_name(job.snapshot_json),
         target_visual_id=job.target_visual_id,
         expected_version=job.expected_version,
@@ -97,6 +122,7 @@ async def list_visuals(
     *,
     query: str | None = None,
     media_kind: VisualMediaKind | None = None,
+    asset_kind: VisualAssetKind | None = None,
     outfit_id: int | None = None,
     scene_id: int | None = None,
     action_id: int | None = None,
@@ -114,6 +140,8 @@ async def list_visuals(
             filters.append(or_(VisualItem.title.ilike(pattern), VisualItem.description.ilike(pattern)))
         if media_kind is not None:
             filters.append(VisualItem.media_kind == media_kind)
+        if asset_kind is not None:
+            filters.append(VisualItem.asset_kind == asset_kind)
         if outfit_id is not None:
             filters.append(VisualItem.outfit_id == outfit_id)
         if scene_id is not None:
@@ -125,9 +153,9 @@ async def list_visuals(
             snapshot = VisualVersion.snapshot_json
             filters.append(
                 or_(
-                    snapshot["outfit"]["name"].astext.ilike(pattern),
-                    snapshot["scene"]["name"].astext.ilike(pattern),
-                    snapshot["action"]["name"].astext.ilike(pattern),
+                    snapshot["source"]["outfit"]["name"].astext.ilike(pattern),
+                    snapshot["source"]["scene"]["title"].astext.ilike(pattern),
+                    snapshot["source"]["action"]["name"].astext.ilike(pattern),
                 ),
             )
         total = (
@@ -148,6 +176,7 @@ async def list_visuals(
         fields = (
             VisualItem.id,
             VisualItem.media_kind,
+            VisualItem.asset_kind,
             VisualItem.clip_kind,
             VisualItem.title,
             VisualItem.status,
@@ -165,9 +194,9 @@ async def list_visuals(
             VisualVersion.duration_ms,
             VisualVersion.input_image_id,
             VisualVersion.input_image_hash,
-            VisualVersion.snapshot_json["outfit"]["name"].astext.label("outfit_name"),
-            VisualVersion.snapshot_json["scene"]["name"].astext.label("scene_title"),
-            VisualVersion.snapshot_json["action"]["name"].astext.label("action_name"),
+            VisualVersion.snapshot_json["source"]["outfit"]["name"].astext.label("outfit_name"),
+            VisualVersion.snapshot_json["source"]["scene"]["title"].astext.label("scene_title"),
+            VisualVersion.snapshot_json["source"]["action"]["name"].astext.label("action_name"),
         )
         rows = list(
             (
@@ -254,7 +283,8 @@ async def list_jobs(
             VisualJob.id,
             VisualJob.purpose,
             VisualJob.target_kind,
-            func.coalesce(VisualJob.snapshot_json["action"]["name"].astext, "").label("action_name"),
+            VisualJob.asset_kind,
+            func.coalesce(VisualJob.snapshot_json["source"]["action"]["name"].astext, "").label("action_name"),
             VisualJob.target_visual_id,
             VisualJob.expected_version,
             VisualJob.state,
@@ -316,6 +346,8 @@ async def presentation_state(user_id: int) -> VisualPresentationView:
         loop = presented_item(row, loop=True)
         pending = _pending_command(row)
         return VisualPresentationView(
+            composition=stage_composition(row),
+            intent=StageIntent.model_validate(row.intent_json) if row.intent_json else None,
             current_visual=item_view(current) if current is not None and current.user_id == user_id else None,
             loop_visual=item_view(loop) if loop is not None and loop.user_id == user_id else None,
             autonomous_enabled=row.autonomous_enabled,
@@ -341,7 +373,7 @@ async def _presentation_snapshot(user_id: int, *, for_prompt: bool) -> ActualPre
     async with SESSION_LOCAL() as db:
         row = await db.scalar(select(VisualPresentation).where(VisualPresentation.user_id == user_id))
         if row and row.current_static_json:
-            static = StaticPresentation.model_validate(row.current_static_json)
+            static = StagePresentation.model_validate(row.current_static_json)
             if static.outfit is None or static.scene is None:
                 return ActualPresentationSnapshot()
             presence = get_presentation_snapshot(user_id)
@@ -373,30 +405,36 @@ async def _presentation_snapshot(user_id: int, *, for_prompt: bool) -> ActualPre
         visual_path = _existing(
             item.media_path if item.media_kind == "image" else item.input_image_path or item.poster_path,
         )
-        outfit_path = _existing(snapshot.outfit.path)
-        scene_path = _existing(snapshot.scene.path)
-        identity_path = _existing(snapshot.identity_path)
+        source = snapshot.source
+        outfit = source.outfit if source.kind in ("actor", "cinematic") else None
+        scene = source.scene if source.kind in ("scene", "cinematic") else None
+        outfit_path = _existing(outfit.path) if outfit else None
+        scene_path = _existing(scene.path) if scene else None
+        identity_path = _existing(source.identity_path) if source.kind in ("actor", "cinematic") else None
         if for_prompt:
-            outfit_description = item.outfit_description or snapshot.outfit.description
+            outfit_description = (item.outfit_description or outfit.description if outfit else "") or ""
         elif show_full_visual:
             outfit_description = item.outfit_description
         else:
-            outfit_description = snapshot.outfit.description
+            outfit_description = outfit.description if outfit else ""
         return ActualPresentationSnapshot(
             visual_id=item.id,
             media_kind=_media_kind(item.media_kind),
+            asset_kind=_asset_kind(item.asset_kind),
             visual_version=item.version,
             visual_description=item.description if show_full_visual else "",
             visual_path=visual_path if show_full_visual else None,
             outfit_path=outfit_path,
-            outfit_hash=snapshot.outfit.content_hash if outfit_path else None,
+            outfit_hash=outfit.content_hash if outfit and outfit_path else None,
             outfit_description=outfit_description,
             scene_path=scene_path,
-            scene_hash=snapshot.scene.content_hash if scene_path else None,
-            scene_description=snapshot.scene.description,
+            scene_hash=scene.content_hash if scene and scene_path else None,
+            scene_description=scene.description if scene else "",
             identity_path=identity_path,
-            identity_hash=snapshot.identity_hash if identity_path else None,
-            identity_reference_role=snapshot.identity_reference_role,
+            identity_hash=source.identity_hash if identity_path and source.kind in ("actor", "cinematic") else None,
+            identity_reference_role=source.identity_reference_role
+            if source.kind in ("actor", "cinematic")
+            else "portrait",
             ready=presence is not None and get_user_proactive_record(user_id).available and visual_playable(item),
         )
 
@@ -419,19 +457,20 @@ def _existing(reference: str | None) -> str | None:
 
 
 async def visual_play_catalog(user_id: int, trigger: str) -> list[VisualPlayOption]:
-    """按动作触发条件过滤可播影像；播放方式与条件来自组合快照的动作引用。"""
+    """按动作触发条件过滤可播影像；播放方式与条件来自冻结输入的动作引用。"""
 
     async with SESSION_LOCAL() as db:
         rows = await db.execute(
             select(
                 VisualItem.id,
                 VisualItem.media_kind,
+                VisualItem.asset_kind,
                 VisualItem.clip_kind,
                 VisualVersion.media_path,
                 VisualVersion.description,
                 VisualVersion.outfit_description,
-                VisualVersion.snapshot_json["scene"]["description"].astext.label("scene_description"),
-                VisualVersion.snapshot_json["action"].label("action"),
+                VisualVersion.snapshot_json["source"]["scene"]["description"].astext.label("scene_description"),
+                VisualVersion.snapshot_json["source"].label("source"),
             )
             .select_from(VisualItem)
             .join(VisualVersion, VisualVersion.id == VisualItem.current_version_id)
@@ -446,19 +485,70 @@ async def visual_play_catalog(user_id: int, trigger: str) -> list[VisualPlayOpti
         for row in rows:
             if resolve_asset_reference(row.media_path) is None:
                 continue
-            action = row.action
+            source = row.source
+            action = source.get("action") if source.get("kind") in ("actor", "cinematic") else None
+            action = action or {}
             options.append(
                 VisualPlayOption(
                     visual_id=row.id,
-                    name=action["name"],
+                    name=action.get("name", ""),
                     media_kind=row.media_kind,
+                    asset_kind=_asset_kind(row.asset_kind),
                     clip_kind=row.clip_kind,
-                    duration_seconds=action["duration_seconds"],
+                    duration_seconds=action.get("duration_seconds"),
                     description=row.description,
                     outfit_description=row.outfit_description,
                     scene_description=row.scene_description or "",
-                    use_when=action["use_when"],
-                    avoid_when=action["avoid_when"],
+                    use_when=action.get("use_when", []),
+                    avoid_when=action.get("avoid_when", []),
                 )
             )
         return options
+
+
+async def action_media_implementations(
+    user_id: int,
+    action_id: int,
+    *,
+    cursor: int | None = None,
+    limit: int = 30,
+) -> ActionMediaListResponse:
+    """动作详情的媒体实现清单：该动作已制作的可播成品投影。"""
+
+    async with SESSION_LOCAL() as db:
+        filters = [
+            VisualItem.user_id == user_id,
+            VisualItem.action_id == action_id,
+            VisualItem.status == "ready",
+        ]
+        if cursor is not None:
+            filters.append(VisualItem.id < cursor)
+        fields = (
+            VisualItem.id,
+            VisualItem.media_kind,
+            VisualItem.asset_kind,
+            VisualItem.clip_kind,
+            VisualItem.title,
+            VisualItem.outfit_id,
+            VisualItem.updated_at,
+            VisualVersion.number.label("version"),
+            VisualVersion.snapshot_json["source"]["outfit"]["name"].astext.label("outfit_name"),
+        )
+        rows = list(
+            (
+                await db.execute(
+                    select(*fields)
+                    .select_from(VisualItem)
+                    .join(VisualVersion, VisualVersion.id == VisualItem.current_version_id)
+                    .where(*filters)
+                    .order_by(VisualItem.id.desc())
+                    .limit(limit + 1)
+                )
+            ).mappings()
+        )
+        return ActionMediaListResponse(
+            media=[ActionMediaEntry.model_validate(dict(row)) for row in rows[:limit]],
+            has_more=len(rows) > limit,
+            next_cursor=str(rows[limit - 1]["id"]) if len(rows) > limit else None,
+            limit=limit,
+        )
