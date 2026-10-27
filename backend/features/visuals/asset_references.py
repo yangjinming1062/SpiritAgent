@@ -6,6 +6,7 @@ from infrastructure.assets.references import asset_paths
 from infrastructure.text import utc_now
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from features.assets.service import asset_paths_in_session
 from features.jobs.service import cleanup_job_assets, job_asset_paths
@@ -68,6 +69,7 @@ async def cleanup_obsolete_assets(db: AsyncSession, user_id: int) -> set[str]:
             VisualPlayback.updated_at < cutoff,
         )
     )
+    dependent_version = aliased(VisualVersion)
     unused = select(VisualVersion.id).where(
         VisualVersion.user_id == user_id,
         VisualVersion.created_at < cutoff,
@@ -81,6 +83,7 @@ async def cleanup_obsolete_assets(db: AsyncSession, user_id: int) -> set[str]:
         )
         .exists(),
         ~select(VisualPlayback.id).where(VisualPlayback.version_id == VisualVersion.id).exists(),
+        ~select(dependent_version.id).where(dependent_version.input_image_version_id == VisualVersion.id).exists(),
         ~select(VisualJob.id)
         .where(
             VisualJob.state.in_(("queued", "running", "paused", "unknown")),

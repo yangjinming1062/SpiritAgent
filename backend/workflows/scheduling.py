@@ -11,7 +11,13 @@ from typing import Any
 
 from features.accounts.queries import list_user_ids, lock_active_user_ids, user_is_active
 from features.automation.cron_jobs import STANDARD_CRON_KIND
-from features.automation.scheduling import DueJob, advance_due_jobs, delete_expired_jobs, due_jobs
+from features.automation.scheduling import (
+    DueJob,
+    advance_due_jobs,
+    delete_consumed_one_shots,
+    delete_expired_jobs,
+    due_jobs,
+)
 from features.companion.disturbance import get_disturbance_tier, is_still
 from features.companion.intents import (
     claim_companion_intent,
@@ -42,6 +48,7 @@ from infrastructure.ai.user_config import resolve_user_llm_config
 from infrastructure.config import SETTINGS
 from infrastructure.correlation import begin_local_scope
 from infrastructure.database import session_scope
+from infrastructure.domain_locks import lock_domain
 from infrastructure.logger import get_logger
 from infrastructure.text import resolve_language, resolve_prompt_text, utc_now
 from infrastructure.timezone import parse_timezone
@@ -161,6 +168,9 @@ async def _select_due_jobs() -> list[DueJob]:
 
 async def _bulk_cas_advance(due_jobs: list[DueJob], now: datetime) -> list[DueJob]:
     async with session_scope() as db:
+        # 与编辑共用调度锁，再锁账户；旧快照不能在编辑撤销意图后重新交接。
+        for user_id in sorted({job.user_id for job in due_jobs}):
+            await lock_domain(db, user_id, "automation")
         active_users = await lock_active_user_ids(db, {job.user_id for job in due_jobs})
         fired = await advance_due_jobs(db, due_jobs, now, active_users)
         for job in sorted(fired, key=lambda row: (row.user_id, row.id)):
@@ -173,6 +183,7 @@ async def _bulk_cas_advance(due_jobs: list[DueJob], now: datetime) -> list[DueJo
                     cron_job_id=job.id,
                     expires_at=job.expires_at,
                 )
+        await delete_consumed_one_shots(db, fired)
         await db.commit()
     return fired
 

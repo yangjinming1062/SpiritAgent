@@ -744,12 +744,15 @@ async def _execute_life_action(run: _ActionRun, args: dict[str, Any]) -> ActionE
         if action_row is None:
             return ActionExecutionResult(status="failed", reason="nightly action no longer exists")
         capability = action_row.capability
+    expected_capability = "visual.generate" if capability == "visual.create" else capability
     if original is not None:
         if original.action is None:
             return ActionExecutionResult(status="failed", reason="saved action has no executable input")
         action = original.action
+        if action.capability != expected_capability:
+            return ActionExecutionResult(status="failed", reason="saved action capability does not match the plan")
     else:
-        payload = {"capability": "visual.generate" if capability == "visual.create" else capability, **args}
+        payload = {**args, "capability": expected_capability}
         if capability == "visual.create":
             materials = run.context.visual_materials
             if materials is None:
@@ -769,7 +772,7 @@ async def _execute_life_action(run: _ActionRun, args: dict[str, Any]) -> ActionE
                 or args.get("notes")
                 or args.get("reason")
                 or capability
-            ),
+            )[:1000],
             action=action,
         ),
         request_id=request_id,

@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, bindparam, delete, or_, select, text, tuple_
+from sqlalchemy import DateTime, bindparam, delete, or_, select, text, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .cron_jobs import compute_next_run_at
@@ -112,14 +112,15 @@ async def advance_due_jobs(
         res = await db.execute(stmt, params)
         won.update(r[0] for r in res.all())
     if one_shots:
-        # 触发后删除一次性 job，通过 next_run_at 谓词防止并发双重触发
+        # 先认领，待意图引用落库后再删除；否则新意图会引用已删除的源任务。
         stmt = (
-            delete(CronJob)
+            update(CronJob)
             .where(
                 tuple_(CronJob.id, CronJob.next_run_at).in_(
                     bindparam("match", expanding=True),
                 ),
             )
+            .values(next_run_at=None)
             .returning(CronJob.id)
         )
         res = await db.execute(
@@ -128,6 +129,12 @@ async def advance_due_jobs(
         )
         won.update(r[0] for r in res.all())
     return [job for job in due_jobs if job.id in won and (job.one_shot or next_runs[job.id] is not None)]
+
+
+async def delete_consumed_one_shots(db: AsyncSession, jobs: list[DueJob]) -> None:
+    ids = [job.id for job in jobs if job.one_shot]
+    if ids:
+        await db.execute(delete(CronJob).where(CronJob.id.in_(ids), CronJob.next_run_at.is_(None)))
 
 
 async def delete_expired_jobs(db: AsyncSession, job_ids: set[int], now: datetime) -> None:

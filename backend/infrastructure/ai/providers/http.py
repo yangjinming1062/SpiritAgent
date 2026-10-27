@@ -279,7 +279,7 @@ _pinned_generation: ContextVar[_ClientGeneration | None] = ContextVar(
     "llm_http_generation",
     default=None,
 )
-_clients: dict[tuple[str, str], _RotatingAsyncClient] = {}
+_clients: dict[tuple[str, tuple[tuple[str, str], ...]], _RotatingAsyncClient] = {}
 _clients_openai: dict[tuple[str, str], AsyncOpenAI] = {}
 _retirement_tasks: set[asyncio.Task[None]] = set()
 _shutdown_task: asyncio.Task[None] | None = None
@@ -517,19 +517,19 @@ def get_http(
     *,
     auth_header: dict[str, str] | None = None,
 ) -> httpx.AsyncClient:
-    """按 (base_url, api_key) 缓存 httpx 客户端；auth_header 可覆盖默认 Authorization。"""
-    key = (base_url.rstrip("/"), api_key)
+    """按 URL 和实际鉴权头缓存客户端；不同协议的凭据不能复用。"""
+    headers = (
+        {"Authorization": f"Bearer {api_key}"}
+        if auth_header is None
+        else {name: value.format(api_key=api_key) for name, value in auth_header.items()}
+    )
+    key = (base_url.rstrip("/"), tuple(sorted((name.lower(), value) for name, value in headers.items())))
     with _cache_lock:
         if _closing:
             raise RuntimeError("LLM HTTP clients are closing")
         client = _clients.get(key)
         if client is not None:
             return client
-        headers = (
-            {"Authorization": f"Bearer {api_key}"}
-            if auth_header is None
-            else {name: value.format(api_key=api_key) for name, value in auth_header.items()}
-        )
         client = _RotatingAsyncClient(
             base_url=key[0],
             timeout=ai_http_timeout(),

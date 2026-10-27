@@ -1,6 +1,8 @@
 import re
 from collections.abc import Callable
 
+from pydantic import JsonValue
+
 from infrastructure.constants import (
     REDACT_PHONE_DIGIT_THRESHOLD,
     SECRET_MASK_HEAD_CHARS,
@@ -78,6 +80,7 @@ _PREFIX_PATTERNS = [
 _SECRET_ENV_NAMES = r"(?:API_?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH)"
 _ENV_ASSIGN_RE = re.compile(rf"([A-Z0-9_]{{0,50}}{_SECRET_ENV_NAMES}[A-Z0-9_]{{0,50}})\s*=\s*(['\"]?)(\S+)\2")
 _JSON_KEY_NAMES = r"(?:api_?[Kk]ey|token|secret|password|access_token|refresh_token|auth_token|bearer|secret_value|raw_secret|secret_input|key_material|connection_string|dsn)"
+_JSON_KEY_RE = re.compile(_JSON_KEY_NAMES, re.IGNORECASE)
 _JSON_FIELD_RE = re.compile(rf'("{_JSON_KEY_NAMES}")\s*:\s*"([^"]+)"', re.IGNORECASE)
 _AUTH_HEADER_RE = re.compile(r"(Authorization:\s*Bearer\s+)(\S+)", re.IGNORECASE)
 _TELEGRAM_RE = re.compile(r"(bot)?(\d{8,}):([-A-Za-z0-9_]{30,})")
@@ -169,7 +172,7 @@ def _apply_gated_rules(text: str, rules: list[tuple[str, re.Pattern, Callable[[r
 _GATED_RULES_DEFAULT: list[tuple[str, re.Pattern, Callable[[re.Match], str]]] = [
     ("=", _ENV_ASSIGN_RE, _sub_env),
     ('"', _JSON_FIELD_RE, _sub_json),
-    ("uthorization", _AUTH_HEADER_RE, _sub_auth),
+    (":", _AUTH_HEADER_RE, _sub_auth),
     (":", _TELEGRAM_RE, _sub_telegram),
     ("PRIVATE KEY-----", _PRIVATE_KEY_RE, _sub_private_key),
     ("://", _DB_CONNSTR_RE, _sub_db_connstr),
@@ -213,3 +216,19 @@ def redact_sensitive_text(text: str | None) -> str | None:
         text = _redact_form_body(text)
 
     return text
+
+
+def redact_sensitive_data(value: JsonValue) -> JsonValue:
+    """按值脱敏 JSON，保留字段、数值和结构，避免文本正则吞掉序列化分隔符。"""
+    if isinstance(value, str):
+        return redact_sensitive_text(value)
+    if isinstance(value, list):
+        return [redact_sensitive_data(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _mask_secret(item)
+            if isinstance(item, str) and _JSON_KEY_RE.fullmatch(key)
+            else redact_sensitive_data(item)
+            for key, item in value.items()
+        }
+    return value

@@ -38,6 +38,7 @@ def upgrade() -> None:
         sa.Column("duration_seconds", sa.Integer(), nullable=False),
         sa.Column("reason", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("source", sa.String(length=24), nullable=False),
+        sa.Column("preset_key", sa.String(length=24), nullable=True),
         sa.Column("status", sa.String(length=24), server_default=sa.text("'pending'"), nullable=False),
         sa.Column("review_reason", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("review_source_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
@@ -50,6 +51,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name=op.f("action_definitions_pkey")),
         sa.UniqueConstraint("user_id", "id", name="uq_action_definitions_owner_id"),
         sa.UniqueConstraint("user_id", "source_key", name="uq_action_definitions_source"),
+        sa.UniqueConstraint("user_id", "preset_key", name="uq_action_definitions_preset"),
     )
     op.create_table(
         "admin_sessions",

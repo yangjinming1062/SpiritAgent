@@ -203,16 +203,21 @@ class ImageChainState(MediaChainState):
         else:
             super().finish(slots)
 
-    def stored_paths(self) -> set[str]:
-        """已落盘的候选、未登记完成的转存与冻结输入路径，供所有者清理。"""
-        fields = _REFERENCE_FIELDS.get(type(self.inputs), ()) if self.inputs is not None else ()
-        frozen = [getattr(self.inputs, attr) for attr, _label in fields]
+    def generated_paths(self) -> set[str]:
+        """本次制作拥有的候选、转存与处理产物，不包含调用方的参考素材。"""
         return {
             self.pending_path or "",
             *(candidate.path for candidate in self.candidates),
             *(path for candidate in self.candidates for path in candidate.artifacts),
-            *(path for path in frozen if path and parse_companion_asset_path(path) is not None),
         } - {""}
+
+    def stored_paths(self) -> set[str]:
+        """已落盘产物及冻结输入依赖，供业务所有者保护与回收。"""
+        fields = _REFERENCE_FIELDS.get(type(self.inputs), ()) if self.inputs is not None else ()
+        frozen = [getattr(self.inputs, attr) for attr, _label in fields]
+        return self.generated_paths() | {
+            path for path in frozen if path and parse_companion_asset_path(path) is not None
+        }
 
 
 ImageProgressWriter = Callable[[ImageChainState], Awaitable[None]]
@@ -401,14 +406,7 @@ async def _complete_images(
     retained = set(selected) | {
         path for candidate in state.candidates if candidate.path in selected for path in candidate.artifacts
     }
-    if writer is not None:
-        # 持久任务的后续画面检查与修复仍使用冻结参考，由业务所有者最终回收。
-        retained |= {
-            path
-            for attr, _label in _REFERENCE_FIELDS[type(state.inputs)]
-            if (path := getattr(state.inputs, attr)) and parse_companion_asset_path(path) is not None
-        }
-    obsolete = state.stored_paths() - retained
+    obsolete = state.generated_paths() - retained
     state.finish(state.inputs.n)
     await _save_progress(state, writer)
     for path in obsolete:
@@ -955,6 +953,6 @@ async def _run_image_chain(
     except BaseException:
         # 持久任务的候选由任务所有者保管；同步调用没有恢复者，必须回收。
         if save_progress is None:
-            for path in state.stored_paths():
+            for path in state.generated_paths():
                 await asyncio.to_thread(asset_store.unlink_companion_asset, path)
         raise

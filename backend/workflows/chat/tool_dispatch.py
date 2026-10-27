@@ -1,4 +1,5 @@
 import asyncio
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -8,7 +9,7 @@ from features.scenes.turn_state import SceneTurnState
 from infrastructure.ai.user_config import UserLlmConfig
 from infrastructure.async_io import cancel_and_wait
 from infrastructure.logger import get_logger
-from infrastructure.redact import redact_sensitive_text
+from infrastructure.redact import redact_sensitive_data, redact_sensitive_text
 from infrastructure.text import safe_json_loads, tool_error
 from runtime.delegation import DelegateAction
 from runtime.desktop.connection import MANAGER
@@ -137,14 +138,16 @@ def available_media_tool_schemas(schemas: list[dict], state: MediaTurnState) -> 
 
 
 def _redact_tool_payload(result_str: str) -> str | list:
-    """对结果脱敏；解包 ``_multimodal`` 包裹后对每个 text 段逐段脱敏。"""
-    if result_str.lstrip().startswith("{"):
+    """保留 JSON 结构及多模态媒体内容，只对文本结果脱敏。"""
+    if result_str.lstrip().startswith(("{", "[")):
         parsed = safe_json_loads(result_str)
         if is_multimodal_tool_result(parsed):
             for p in parsed["content"]:
                 if isinstance(p, dict) and p.get("type") == "input_text" and "text" in p:
                     p["text"] = redact_sensitive_text(p["text"])
             return parsed["content"]
+        if isinstance(parsed, dict | list):
+            return json.dumps(redact_sensitive_data(parsed), ensure_ascii=False)
     return redact_sensitive_text(result_str)
 
 

@@ -394,6 +394,7 @@ async def record_playback(
         raise VisualStateError("不支持的播放回执状态")
     terminal: PlaybackStatus = "failed" if status == "interrupted" else status
     async with _lock(user_id), SESSION_LOCAL() as db:
+        state = await require_presentation_row(db, user_id, lock=True)
         play = await playback_row(db, user_id, play_id)
         if not client_id or play.client_id != client_id:
             raise VisualStateError("这个播放由其他设备处理")
@@ -402,7 +403,6 @@ async def record_playback(
         if status == "started":
             if play.status == "started":
                 return
-            state = await require_presentation_row(db, user_id)
             presentation = get_presentation_snapshot(user_id)
             item = await presented_version(db, user_id, play.version_id)
             if (
@@ -455,7 +455,6 @@ async def record_playback(
         play.status = terminal
         play.receipt_kind = receipt_kind or play.receipt_kind
         play.error = error
-        state = await require_presentation_row(db, user_id)
         clear_pending_command(state, play_id)
         if await _settle_short_play(db, state, play):
             await touch_presentation(db, user_id)
