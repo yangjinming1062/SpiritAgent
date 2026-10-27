@@ -10,6 +10,7 @@ from PIL import Image, ImageFilter
 from infrastructure.config import SETTINGS
 from infrastructure.video_processing.ffmpeg import (
     VideoProcessError,
+    VideoToolUnavailableError,
 )
 
 _IMAGE_MATTING_MAX_PIXELS = 1_000_000
@@ -18,7 +19,7 @@ _IMAGE_MATTING_MAX_PIXELS = 1_000_000
 def require_matting_model() -> Path:
     path = Path(SETTINGS.data_dir) / "models" / f"{SETTINGS.matting_model}.onnx"
     if not path.is_file():
-        raise VideoProcessError("抠像模型未就绪，请配置后再生成图片或动作", internal=f"missing {path}")
+        raise VideoToolUnavailableError("抠像模型未就绪，请配置后再生成图片或动作", internal=f"missing {path}")
     return path
 
 

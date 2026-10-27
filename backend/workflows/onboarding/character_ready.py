@@ -1,4 +1,4 @@
-"""角色资料完整发布后，派生首次场景。"""
+"""角色资料完整发布后，派生首次场景并请求基础动态准备。"""
 
 from features.action_library.service import ensure_builtin_actions
 from features.scenes.service import schedule_initial_scene

@@ -1,4 +1,4 @@
-import { atom } from 'nanostores'
+import { atom, computed } from 'nanostores'
 
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { isClientErrorIpc } from '@/shared/lib/ipc-error'
@@ -11,6 +11,8 @@ import { isRecord } from '@client-shared/is-record'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
 import { isResourceId } from '../../../../../shared/resource-id'
+
+import { $stageOutfit } from './stage-source'
 
 type OutfitStatus = ApiSchemas['OutfitResponse']['status']
 
@@ -52,13 +54,18 @@ function isOutfitResponse(value: unknown): value is OutfitResponse {
     (value.description_error === null || typeof value.description_error === 'string') &&
     typeof value.fullbody_url === 'string' &&
     typeof value.status === 'string' &&
-    ['draft', 'ready', 'expired'].includes(value.status) &&
-    typeof value.active === 'boolean'
+    ['draft', 'ready', 'expired'].includes(value.status)
   )
 }
 
 export const $outfits = atom<WardrobeOutfit[]>([])
 export const $outfitPolicy = atom<OutfitPolicy>(snapshot.get().policy)
+export const $presentedOutfit = computed(
+  [$outfits, $stageOutfit],
+  (outfits, presented) =>
+    outfits.find(outfit => outfit.status === 'ready' && outfit.fullbodyPath === presented?.path.split('?', 1)[0]) ??
+    null
+)
 export const $wardrobeStatus = atom<'idle' | 'loading' | 'loaded' | 'error'>('idle')
 let revision = 0
 let policyRevision = 0

@@ -8,7 +8,7 @@ import { uiCopy } from '../shared/ui-copy'
 
 import type { RemoteApi } from './api'
 import { ApiError, readImage } from './api'
-import { copyText } from './browser'
+import { copyText, newRequestId } from './browser'
 import type { Outfit, Scene } from './types'
 import {
   AssetResultRecovery,
@@ -555,6 +555,8 @@ function SceneDetail({
   const alive = useAlive()
   const [title, setTitle] = usePageState(`scene.${scene.id}.title`, scene.title)
   const [description, setDescription] = usePageState(`scene.${scene.id}.description`, scene.description)
+  const [motionNotice, setMotionNotice] = useState<string | null>(null)
+  const [motionRequest, setMotionRequest] = usePageState(`scene.${scene.id}.motionRequest`, newRequestId())
   const { check, clearSubmission, reconciled, submit, submitted } = useAssetSubmission(`scene.${scene.id}`, onUpdate)
   const previous = useRef({ title: scene.title, description: scene.description })
   const picker = useRef<HTMLInputElement>(null)
@@ -645,6 +647,28 @@ function SceneDetail({
           取消
         </button>
       </details>
+      {scene.status === 'ready' && scene.url ? (
+        <>
+          <button
+            disabled={busy || submitted}
+            onClick={() =>
+              run(async () => {
+                await api.invoke('companion_visuals.create_scene_media', {
+                  body: { scene_id: scene.id, request_id: motionRequest }
+                })
+                if (alive()) {
+                  setMotionRequest(newRequestId())
+                  setMotionNotice('已开始制作动态环境，可在影像页查看进度。')
+                }
+              })
+            }
+            type="button"
+          >
+            制作动态环境
+          </button>
+          {motionNotice ? <p className="muted">{motionNotice}</p> : null}
+        </>
+      ) : null}
       {scene.error || scene.regeneration?.error ? <Notice>{scene.error || scene.regeneration?.error}</Notice> : null}
       {scene.can_retry_generation || (scene.regeneration?.status === 'failed' && !canRetryAnalysis) ? (
         <button disabled={busy || submitted} onClick={regenerate} type="button">

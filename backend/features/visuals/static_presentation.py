@@ -13,7 +13,8 @@ from features.companion.proactive_runtime import get_presentation_snapshot, get_
 from features.life.use_cases import current_presentation_revision, presentation_revision_matches
 
 from .models import VisualPlayback, VisualPresentation
-from .repository import emit_playback_receipt, require_presentation_row, touch_presentation
+from .ports import request_base_motion_preparation
+from .repository import emit_playback_receipt, presentation_outfit, require_presentation_row, touch_presentation
 from .schemas import StageIntent, StagePresentation, StageReceipt, VisualPlayCommand
 
 
@@ -136,6 +137,7 @@ def _stale_receipt(reason: str) -> RequestError:
 
 
 async def record_static_receipt(user_id: int, body: StageReceipt) -> None:
+    outfit_changed = False
     async with SESSION_LOCAL() as db:
         state = await require_presentation_row(db, user_id, lock=True)
         raw = state.pending_static_json or state.current_static_json
@@ -186,6 +188,7 @@ async def record_static_receipt(user_id: int, body: StageReceipt) -> None:
                 }
             ).model_dump(mode="json")
         else:
+            outfit_changed = snapshot.outfit is not None and presentation_outfit(state) != snapshot.outfit
             state.current_static_json = snapshot.model_copy(
                 update={
                     "receipt_kind": body.receipt_kind,
@@ -202,3 +205,5 @@ async def record_static_receipt(user_id: int, body: StageReceipt) -> None:
                 .values(status="failed", error="已由静态素材呈现接替", updated_at=utc_now())
             )
         await db.commit()
+    if outfit_changed:
+        request_base_motion_preparation(user_id)

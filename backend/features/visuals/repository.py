@@ -20,10 +20,12 @@ from .client_assets import client_play_command
 from .models import VisualItem, VisualJob, VisualPlayback, VisualPresentation, VisualVersion
 from .schemas import (
     ActionClipKind,
+    ComboMaterialRef,
     PlaybackSource,
     PlaybackStatus,
     PresentedVisual,
     StageComposition,
+    StagePresentation,
     VisualJobProgress,
     VisualMediaKind,
     VisualPlayCommand,
@@ -54,6 +56,14 @@ def visual_progress(job: VisualJob) -> VisualJobProgress | None:
 
 def visual_snapshot(row: VisualItem | VisualJob | PresentedVisual) -> VisualSnapshot:
     return VisualSnapshot.model_validate(row.snapshot_json)
+
+
+def presentation_outfit(state: VisualPresentation) -> ComboMaterialRef | None:
+    if state.current_static_json:
+        return StagePresentation.model_validate(state.current_static_json).outfit
+    item = presented_item(state)
+    source = visual_snapshot(item).source if item is not None else None
+    return source.outfit if source is not None and source.kind in ("actor", "cinematic") else None
 
 
 def visual_clip_kind(

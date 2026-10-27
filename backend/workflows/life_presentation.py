@@ -22,6 +22,7 @@ from features.visuals.schemas import (
     StagePresentation,
 )
 from features.visuals.static_presentation import keep_presentation, present_static
+from features.visuals.static_presentation import record_stage_intent as persist_intent
 from infrastructure.ai.prompt_engineer import call_llm_json
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import load_user_llm_config
@@ -227,8 +228,6 @@ async def _evaluate_life_presentation(user_id: int, *, force: bool = False) -> N
 
 async def record_stage_intent(user_id: int, life: LifeStateView) -> None:
     """把有意义的生活变化投影为舞台意图；呈现系统只读取，不改生活事实。"""
-
-    from features.visuals.static_presentation import record_stage_intent as persist_intent
 
     scene_title = life.current_scene.get("title", "") if isinstance(life.current_scene, dict) else ""
     intent = StageIntent(

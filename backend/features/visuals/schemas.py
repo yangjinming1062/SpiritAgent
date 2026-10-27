@@ -20,6 +20,7 @@ VISUAL_MAX_EDGE = 65536
 
 VisualMediaKind = Literal["image", "video"]
 VisualAssetKind = Literal["actor", "scene", "cinematic"]
+VisualCreationSource = Literal["user_requested", "autonomous", "base_preparation"]
 ActionClipKind = Literal["once", "loop"]
 VisualJobState = Literal["queued", "running", "paused", "succeeded", "failed", "cancelled", "unknown"]
 PlaybackStatus = Literal["queued", "claimed", "started", "finished", "failed", "expired"]
@@ -247,7 +248,7 @@ class VisualJobProgress(BaseModel):
     generation_id: str
     target_width: int = Field(gt=0, le=VISUAL_MAX_EDGE, strict=True)
     target_height: int = Field(gt=0, le=VISUAL_MAX_EDGE, strict=True)
-    source: Literal["user_requested", "autonomous"]
+    source: VisualCreationSource
     # 通用要求与视频要求分别保存；最近一次修改的一方在冲突维度上优先。
     customization_priority: Literal["general", "video"] = "general"
     image_only: bool = False
@@ -535,6 +536,31 @@ class VisualRegenerateRequest(BaseModel):
     expected_version: int = Field(ge=1, strict=True)
     feedback: str | None = Field(default=None, max_length=2000)
     video_feedback: str | None = Field(default=None, max_length=2000)
+
+
+class ActorClipRequest(BaseModel):
+    """制作透明主体动画：造型与动作即可，不绑定环境。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(min_length=1, max_length=128)
+    outfit_id: ResourceId = Field(gt=0)
+    action_id: ResourceId = Field(gt=0)
+    requirements: str = Field(default="", max_length=2000)
+    feedback: str = Field(default="", max_length=2000)
+    video_feedback: str = Field(default="", max_length=2000)
+
+
+class SceneMediaRequest(BaseModel):
+    """制作环境循环视频：单张已就绪的环境素材。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(min_length=1, max_length=128)
+    scene_id: ResourceId = Field(gt=0)
+    requirements: str = Field(default="", max_length=2000)
+    feedback: str = Field(default="", max_length=2000)
+    video_feedback: str = Field(default="", max_length=2000)
 
 
 class ActualPresentationSnapshot(BaseModel):

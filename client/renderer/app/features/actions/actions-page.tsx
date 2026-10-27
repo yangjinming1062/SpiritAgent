@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useState } from 'react'
 
+import { $presentedOutfit, hydrateWardrobe } from '@/modules/character'
 import {
   type ActionClipKind,
   type ActionDefinition,
@@ -13,8 +14,10 @@ import {
   refreshActionGroups,
   refreshActions,
   retryActionReview,
-  updateAction
+  updateAction,
+  visualsApi
 } from '@/modules/visuals'
+import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import {
   Badge,
@@ -36,7 +39,7 @@ import {
   SettingsSectionIntro
 } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
-import { notifyError } from '@/shared/store/notifications'
+import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
 import { isActionDesignValid, parseActionConditions } from '../../../../../shared/actions'
@@ -120,8 +123,48 @@ function ActionsPageContent(): React.JSX.Element {
   >(null)
 
   const [busy, setBusy] = useState(false)
+  const [clipBusyId, setClipBusyId] = useState<string | null>(null)
+  const defaultOutfit = useStore($presentedOutfit)
+  const begin = useAsyncGuard()
 
   const editingId = editing?.id
+
+  useEffect(() => {
+    if (auth.kind === 'authenticated') {
+      void hydrateWardrobe()
+    }
+  }, [auth])
+
+  const makeClip = (action: ActionDefinition): void => {
+    if (!defaultOutfit || busy || clipBusyId) {
+      return
+    }
+
+    const scope = captureAuthScope()
+    const live = begin()
+
+    setClipBusyId(action.id)
+    void visualsApi
+      .createActorClip({
+        outfit_id: defaultOutfit.id,
+        action_id: action.id
+      })
+      .then(() => {
+        if (scope?.() && live()) {
+          notify({ message: t.makeClipDone })
+        }
+      })
+      .catch(error_ => {
+        if (scope?.() && live()) {
+          notifyError(error_, t.makeClipFailed)
+        }
+      })
+      .finally(() => {
+        if (scope?.() && live()) {
+          setClipBusyId(null)
+        }
+      })
+  }
 
   const latestEditingAction =
     editingId === null || editingId === undefined
@@ -422,6 +465,16 @@ function ActionsPageContent(): React.JSX.Element {
                 </p>
               )}
               <div className="flex gap-2">
+                {group === 'in_library' && defaultOutfit && action.status === 'approved' && (
+                  <button
+                    className={BTN_SUBTLE}
+                    disabled={busy || clipBusyId !== null}
+                    onClick={() => makeClip(action)}
+                    type="button"
+                  >
+                    {clipBusyId === action.id ? t.makeClipBusy : t.makeClip}
+                  </button>
+                )}
                 <button
                   className={BTN_SUBTLE}
                   disabled={busy || action.status === 'pending' || action.status === 'reviewing'}

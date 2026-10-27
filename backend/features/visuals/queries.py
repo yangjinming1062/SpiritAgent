@@ -8,10 +8,12 @@ from infrastructure.text import ensure_utc, utc_now
 from sqlalchemy import func, or_, select
 
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
+from features.jobs.service import requested_job_id
 
 from .models import VisualItem, VisualJob, VisualPresentation, VisualVersion
 from .repository import (
     VisualNotFoundError,
+    presentation_outfit,
     presented_item,
     stage_composition,
     visual_playable,
@@ -20,7 +22,9 @@ from .repository import (
 from .schemas import (
     ActionMediaEntry,
     ActionMediaListResponse,
+    ActorClipSource,
     ActualPresentationSnapshot,
+    ComboMaterialRef,
     PresentedVisual,
     StageIntent,
     StagePresentation,
@@ -40,6 +44,80 @@ from .schemas import (
 )
 
 _ASSET_KINDS: tuple[str, ...] = ("actor", "scene", "cinematic")
+
+
+async def creation_request(user_id: int, request_id: str) -> tuple[VisualJobView, VisualSnapshot] | None:
+    async with SESSION_LOCAL() as db:
+        job_id = await requested_job_id(db, user_id, request_id)
+        job = (
+            await db.scalar(select(VisualJob).where(VisualJob.id == job_id, VisualJob.user_id == user_id))
+            if job_id is not None
+            else None
+        )
+        return (job_view(job), visual_snapshot(job)) if job is not None else None
+
+
+async def current_outfit_reference(user_id: int) -> ComboMaterialRef | None:
+    """只读已经采用的造型；待播目标与衣柜排序不能代替实际采用。"""
+
+    async with SESSION_LOCAL() as db:
+        row = await db.scalar(select(VisualPresentation).where(VisualPresentation.user_id == user_id))
+        if row is None:
+            return None
+        outfit = presentation_outfit(row)
+        if outfit is not None or row.current_static_json:
+            return outfit
+        composition = stage_composition(row)
+        if composition is None or composition.mode != "layered" or composition.actor is None:
+            return None
+        version = await db.scalar(
+            select(VisualVersion).where(
+                VisualVersion.user_id == user_id,
+                VisualVersion.visual_id == composition.actor.visual_id,
+                VisualVersion.number == composition.actor.version,
+            )
+        )
+        source = VisualSnapshot.model_validate(version.snapshot_json).source if version is not None else None
+        return source.outfit if isinstance(source, ActorClipSource) else None
+
+
+async def reusable_actor_clip(user_id: int, source: ActorClipSource) -> bool:
+    """基础准备只复用身份、造型、动作版本相符且文件完整的透明成品。"""
+
+    async with SESSION_LOCAL() as db:
+        rows = await db.execute(
+            select(VisualVersion.media_path, VisualVersion.snapshot_json, VisualVersion.body_json)
+            .join(VisualItem, VisualItem.current_version_id == VisualVersion.id)
+            .where(
+                VisualItem.user_id == user_id,
+                VisualItem.asset_kind == "actor",
+                VisualItem.media_kind == "video",
+                VisualItem.status == "ready",
+                VisualItem.outfit_id == source.outfit.material_id,
+                VisualItem.action_id == source.action.action_id,
+            ),
+        )
+        for path, snapshot_json, body in rows:
+            frozen = VisualSnapshot.model_validate(snapshot_json).source
+            if not isinstance(frozen, ActorClipSource) or not body:
+                continue
+            if (
+                frozen.identity_hash == source.identity_hash
+                and frozen.portrait_hash == source.portrait_hash
+                and frozen.outfit.content_hash == source.outfit.content_hash
+                and frozen.action == source.action
+                and all(
+                    _existing(value)
+                    for value in (
+                        path,
+                        body.get("mask_path"),
+                        body.get("first_frame_path"),
+                        body.get("last_frame_path"),
+                    )
+                )
+            ):
+                return True
+    return False
 
 
 def _media_kind(value: str) -> VisualMediaKind:

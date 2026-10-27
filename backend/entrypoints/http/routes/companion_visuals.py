@@ -5,8 +5,11 @@ from typing import Annotated, Literal
 from fastapi import Path, Query
 from features.visuals import queries as _visual_queries
 from features.visuals import use_cases as _visuals
+from features.visuals.repository import VisualError
 from features.visuals.schemas import (
     ActionMediaListResponse,
+    ActorClipRequest,
+    SceneMediaRequest,
     StageReceipt,
     VisualAssetKind,
     VisualClaimRequest,
@@ -28,6 +31,8 @@ from features.visuals.static_presentation import record_static_receipt
 from infrastructure.api_ids import ResourceId
 from infrastructure.constants import POSTGRES_INT8_MAX
 from infrastructure.http_contracts import operation_policy
+from infrastructure.request_errors import RequestError
+from workflows.visuals_companion import generate_actor_clip_reference, generate_scene_media_reference
 
 from entrypoints.http.auth import CurrentUser
 from entrypoints.http.routing import get_router
@@ -122,6 +127,41 @@ async def put_presentation(user: CurrentUser, body: VisualPreferencesRequest) ->
 )
 async def restore_presentation(user: CurrentUser) -> VisualPlayCommand | None:
     return await _visuals.restore_presentation(user_id=user.id)
+
+
+@router.post("/actor-clips", response_model=VisualJobView, status_code=202)
+async def create_actor_clip(user: CurrentUser, body: ActorClipRequest) -> VisualJobView:
+    """制作透明主体动画：身份 + 造型 + 动作，不绑定环境。"""
+
+    try:
+        return await generate_actor_clip_reference(
+            user.id,
+            request_id=f"manual:{body.request_id}",
+            outfit_id=body.outfit_id,
+            action_id=body.action_id,
+            requirements=body.requirements,
+            feedback=body.feedback,
+            video_feedback=body.video_feedback,
+        )
+    except (ValueError, VisualError) as exc:
+        raise RequestError(status_code=409, message=str(exc)) from exc
+
+
+@router.post("/scene-media", response_model=VisualJobView, status_code=202)
+async def create_scene_media(user: CurrentUser, body: SceneMediaRequest) -> VisualJobView:
+    """制作环境媒体：单张环境素材派生环境循环视频。"""
+
+    try:
+        return await generate_scene_media_reference(
+            user.id,
+            request_id=f"manual:{body.request_id}",
+            scene_id=body.scene_id,
+            requirements=body.requirements,
+            feedback=body.feedback,
+            video_feedback=body.video_feedback,
+        )
+    except (ValueError, VisualError) as exc:
+        raise RequestError(status_code=409, message=str(exc)) from exc
 
 
 @router.get("/{visual_id}", response_model=VisualDetailView)

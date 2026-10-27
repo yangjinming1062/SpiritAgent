@@ -25,6 +25,6 @@
 
 自主造型受理时经 `outfit_jobs.py` 保存请求和生活步骤，`outfit_progress.py` 维护图片链检查点与资产保护；成品采纳和关联步骤结算共用事务。命名与描述按账户/造型单飞，以实际图片为依据，写回重核路径；失败保留已有名称、描述和诊断。
 
-角色卡就绪后由 [initial_appearance.py](../../workflows/onboarding/initial_appearance.py) 协调初始场景，不顺带创建动作或视频。重启与账户维护复用原任务及进度，收妥已提交结果后暂停后续付费阶段；未知提交不重新生成。读取素材不触发补齐制作。
+角色卡就绪后由 [character_ready.py](../../workflows/onboarding/character_ready.py) 登记内置动作、请求初始场景及有限基础动态准备；重启由 [initial_appearance.py](../../workflows/onboarding/initial_appearance.py) 核对未完成准备。基础动态的触发、预算和恢复归 [影像库](../visuals/README.md#成品与任务)。造型入柜不等于采用，也不补齐动作视频。重启与账户维护复用原任务及进度，收妥已提交结果后暂停后续付费阶段；未知提交不重新生成。读取素材不触发补齐制作。
 
 验证按 [Scripts](../../../scripts/README.md) 执行，覆盖身份替换、候选采纳、并发修订、描述单飞和维护恢复；真实透明度、供应商输入与客户端呈现分别验收。

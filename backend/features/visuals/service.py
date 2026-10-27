@@ -29,6 +29,7 @@ from .geometry import visual_aspect_ratio
 from .life import bind_creation_step, restart_visual_steps, settle_visual_steps
 from .models import VisualItem, VisualJob, VisualPlayback, VisualPresentation
 from .policy import visual_autonomous_block_reason
+from .ports import request_base_motion_preparation
 from .queries import job_view, presentation_state
 from .repository import (
     VisualStateError,
@@ -38,6 +39,7 @@ from .repository import (
     emit_playback_receipt,
     notify_visuals_updated,
     playback_row,
+    presentation_outfit,
     presentation_row,
     presented_item,
     presented_version,
@@ -59,6 +61,7 @@ from .schemas import (
     PresentedVisual,
     StageComposition,
     VisualCreationPlan,
+    VisualCreationSource,
     VisualJobProgress,
     VisualJobView,
     VisualMediaKind,
@@ -166,7 +169,7 @@ async def create_visual_job(
     *,
     snapshot: VisualSnapshot,
     target_kind: VisualMediaKind,
-    source: Literal["user_requested", "autonomous"],
+    source: VisualCreationSource,
     feedback: str = "",
     video_feedback: str = "",
     request_id: str | None = None,
@@ -176,8 +179,11 @@ async def create_visual_job(
 
     if target_kind not in ("image", "video"):
         raise VisualStateError("不支持的影像类型")
-    if snapshot.source.kind == "scene":
-        raise VisualStateError("环境媒体由环境素材库制作，请在影像库中选择主体或完整场景影像")
+    if snapshot.source.kind == "scene" and target_kind != "video":
+        # 环境静态图就是已就绪素材本身，无需再走制作链。
+        raise VisualStateError("环境已有静态图片，只有动态环境需要制作")
+    if snapshot.source.kind == "actor" and target_kind != "video":
+        raise VisualStateError("透明主体动画须制作视频")
     if life_step is not None and life_step.idempotency_key != request_id:
         raise VisualStateError("生活步骤与制作请求的身份必须一致")
     combo_hash = visual_snapshot_hash(_with_feedback(snapshot, feedback, video_feedback))
@@ -278,6 +284,8 @@ async def regenerate_visual(
         snapshot = visual_snapshot(item)
         if snapshot.source.kind in ("actor", "cinematic") and snapshot.source.identity.avatar_id is None:
             raise VisualStateError("这份影像的角色资料已删除，请用当前角色重新制作")
+        if snapshot.source.kind == "scene" and item.media_kind == "image":
+            raise VisualStateError("环境静态图片是环境素材本身，请在环境库中重做")
         source_image = _source_image(item)
         general = snapshot.source.feedback if feedback is None else feedback.strip()
         video_requirements = snapshot.source.video_feedback if video_feedback is None else video_feedback.strip()
@@ -491,6 +499,8 @@ async def record_playback(
             frozen = PresentedVisual.model_validate(play.snapshot_json).model_copy(
                 update={"receipt_kind": receipt_kind},
             )
+            source = visual_snapshot(frozen).source
+            outfit_changed = source.kind in ("actor", "cinematic") and source.outfit != presentation_outfit(state)
             state.current_visual_id = item.id
             state.current_static_json = state.pending_static_json = None
             state.current_version_id = play.version_id
@@ -516,6 +526,8 @@ async def record_playback(
             emit_playback_receipt(db, user_id, play_id, "started", receipt_kind)
             await touch_presentation(db, user_id)
             await db.commit()
+            if outfit_changed:
+                request_base_motion_preparation(user_id)
             return
         if status == "finished" and play.status != "started":
             raise VisualStateError("影像尚未实际呈现，不能记录完成")

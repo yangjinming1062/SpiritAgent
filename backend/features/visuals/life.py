@@ -20,6 +20,9 @@ async def bind_creation_step(
     if request is None:
         return
     progress = visual_progress(job)
+    if progress is not None and progress.source == "base_preparation":
+        progress.source = "autonomous"
+        job.checkpoint = progress.model_dump(mode="json")
     await bind_step_in_session(
         db,
         user_id,
@@ -41,6 +44,9 @@ async def settle_visual_steps(
     additional_events: Sequence[LifeEventInput] = (),
 ) -> None:
     if job.state not in {"succeeded", "failed", "cancelled", "unknown"}:
+        return
+    progress = visual_progress(job)
+    if progress is not None and progress.source == "base_preparation":
         return
     completed = job.state == "succeeded"
     await update_business_steps_in_session(

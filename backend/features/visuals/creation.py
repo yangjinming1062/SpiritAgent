@@ -24,7 +24,7 @@ from .models import VisualJob
 from .ports import read_planning_context
 from .prompts import VISUAL_CREATION_PLAN, VISUAL_OPENING_REPAIR, visual_source_reference_prompt
 from .repository import VisualStateError
-from .schemas import CinematicSource, OpeningReview, VisualCreationPlan, VisualJobProgress
+from .schemas import ActorClipSource, CinematicSource, OpeningReview, VisualCreationPlan, VisualJobProgress
 
 
 class VisualCreationError(VisualStateError):
@@ -57,7 +57,7 @@ class _OpeningRepair(BaseModel):
 async def ensure_creation_plan(
     user_id: int,
     job: VisualJob,
-    snapshot: CinematicSource,
+    snapshot: ActorClipSource | CinematicSource,
     progress: VisualJobProgress,
     *,
     before_submit: Callable[[], Awaitable[None]],
@@ -86,8 +86,11 @@ async def ensure_creation_plan(
         {
             "reference_mode": "opening" if opening else "sources",
             "reference_roles": reference_roles,
+            "asset_kind": snapshot.kind,
             "personality": snapshot.persona.get("personality", ""),
-            "companion_context": (await read_planning_context(user_id, snapshot)).model_dump(),
+            "companion_context": {}
+            if progress.source == "base_preparation"
+            else (await read_planning_context(user_id, snapshot)).model_dump(),
             "action": progress.action_description,
             "requirements": snapshot.requirements,
             "feedback": job.feedback,
@@ -117,7 +120,7 @@ async def ensure_opening_repair(
     job: VisualJob,
     progress: VisualJobProgress,
     *,
-    snapshot: CinematicSource,
+    snapshot: ActorClipSource | CinematicSource,
     before_submit: Callable[[], Awaitable[None]],
 ) -> None:
     if not progress.repair_reason or progress.repair_description:
@@ -178,7 +181,7 @@ def opening_requirements_hash(job: VisualJob, progress: VisualJobProgress) -> st
     return hashlib.sha256(opening_requirements(job, progress).encode()).hexdigest()
 
 
-def opening_reference_hash(snapshot: CinematicSource) -> str:
+def opening_reference_hash(snapshot: ActorClipSource | CinematicSource) -> str:
     references = {
         "identity": snapshot.primary_reference_hash,
         "role": snapshot.identity_reference_role,
@@ -208,7 +211,7 @@ async def review_existing_opening(
     job: VisualJob,
     progress: VisualJobProgress,
     *,
-    snapshot: CinematicSource,
+    snapshot: ActorClipSource | CinematicSource,
     before_submit: Callable[[], Awaitable[None]],
 ) -> OpeningReview:
     image_hash = await asyncio.to_thread(opening_image_hash, progress.pose_path)

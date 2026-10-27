@@ -45,6 +45,12 @@ def _roles(asset: VisualAsset, snapshot: VisualSnapshot) -> dict[str, str]:
         "poster": asset.poster_path,
         "input": asset.input_image_path,
     }
+    if asset.body is not None:
+        paths |= {
+            "mask": asset.body.mask_path,
+            "first_frame": asset.body.first_frame_path,
+            "last_frame": asset.body.last_frame_path,
+        }
     if source.kind in ("actor", "cinematic"):
         paths |= {
             "identity": source.identity_path,
@@ -231,13 +237,21 @@ async def _publish(
         raise VisualStateError("制作任务不属于当前账户")
     if snapshot.kind != job.asset_kind:
         raise VisualStateError("冻结输入与制作目标类型不一致")
+    if snapshot.kind == "actor" and (
+        asset.media_kind != "video"
+        or asset.body is None
+        or not asset.body.mask_path
+        or not asset.body.first_frame_path
+        or not asset.body.last_frame_path
+    ):
+        raise VisualStateError("主体动画必须包含透明视频、逐帧遮罩和首末帧")
     roles = _roles(asset, snapshot)
     references = await ensure_asset_references_in_session(db, user_id, set(roles.values()))
     media = references[roles["media"]]
     if asset.media_kind == "image" and (media.width != asset.width or media.height != asset.height):
         raise VisualStateError("成品尺寸与实际图片不一致，本次结果未采纳")
     image_item = image_version = image_links = None
-    if asset.media_kind == "video":
+    if asset.media_kind == "video" and snapshot.kind != "actor":
         input_path = roles.get("input")
         if input_path is None:
             raise VisualStateError("视频缺少已确认的起始画面")

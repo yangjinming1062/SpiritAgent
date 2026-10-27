@@ -77,6 +77,7 @@ from workflows.life_presentation import life_presentation_requested
 from workflows.onboarding.character_ready import complete_character_initialization
 from workflows.visual_decisions import initialize_visuals, schedule_visual_selection
 from workflows.visual_planning import visual_planning_context
+from workflows.visual_preparation import schedule_base_motion_preparation
 
 from bootstrap.assets import register_asset_contributions
 
@@ -168,6 +169,7 @@ def wire_domain_hooks() -> None:
     configure_visual_hooks(
         planning_reader=visual_planning_context,
         ready_handler=schedule_visual_selection,
+        preparation_handler=schedule_base_motion_preparation,
     )
     set_appearance_readiness_reader(appearance_readiness)
 

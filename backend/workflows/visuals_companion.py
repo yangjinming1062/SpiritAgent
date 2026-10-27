@@ -32,14 +32,16 @@ from features.life.schemas import LifeStepRequest
 from features.life.use_cases import read_state
 from features.scenes.queries import scene_snapshot
 from features.visuals import service as visuals_service
-from features.visuals.queries import presentation_state
+from features.visuals.queries import creation_request, presentation_state
 from features.visuals.schemas import (
     ActionMaterialRef,
     ActorClipSource,
     CinematicSource,
     ComboMaterialRef,
     SceneMediaRef,
+    SceneMediaSource,
     VisualAssetKind,
+    VisualJobView,
     VisualMediaKind,
     VisualSnapshot,
 )
@@ -336,6 +338,121 @@ async def generate_visual_reference(
             "target_kind": job.target_kind,
             "message": "制作已受理",
         }
+
+
+async def generate_actor_clip_reference(
+    user_id: int,
+    *,
+    request_id: str,
+    outfit_id: int,
+    action_id: int,
+    requirements: str = "",
+    feedback: str = "",
+    video_feedback: str = "",
+    target_width: int | None = None,
+    target_height: int | None = None,
+) -> VisualJobView:
+    """用户制作透明主体动画；请求重放沿原任务，不重新读取可变素材。"""
+
+    async with user_asset_lock(user_id):
+        request_key = "manual:visual:" + hashlib.sha256(request_id.encode("utf-8")).hexdigest()
+        existing = await creation_request(user_id, request_key)
+        if existing is not None:
+            job, saved = existing
+            source = saved.source
+            if (
+                source.kind != "actor"
+                or source.outfit.material_id != outfit_id
+                or source.action.action_id != action_id
+                or (source.requirements, source.feedback, source.video_feedback)
+                != (requirements, feedback, video_feedback)
+            ):
+                raise ComboAssemblyError("这个请求已用于另一次制作，请核对原任务")
+            return job
+        async with SESSION_LOCAL() as db:
+            combo = await load_visual_snapshot(
+                db,
+                user_id,
+                asset_kind="actor",
+                outfit_id=outfit_id,
+                scene_id=None,
+                action_id=action_id,
+                requirements=requirements,
+                target_width=target_width or 1024,
+                target_height=target_height or 1024,
+            )
+            await db.commit()
+        return await visuals_service.create_visual_job(
+            user_id,
+            snapshot=combo,
+            target_kind="video",
+            source="user_requested",
+            feedback=feedback,
+            video_feedback=video_feedback,
+            request_id=request_key,
+        )
+
+
+async def generate_scene_media_reference(
+    user_id: int,
+    *,
+    request_id: str,
+    scene_id: int,
+    requirements: str = "",
+    feedback: str = "",
+    video_feedback: str = "",
+    target_width: int | None = None,
+    target_height: int | None = None,
+) -> VisualJobView:
+    """冻结环境媒体的输入并提交：单张环境素材制作环境循环视频。"""
+
+    async with user_asset_lock(user_id):
+        request_key = "manual:visual:" + hashlib.sha256(request_id.encode("utf-8")).hexdigest()
+        existing = await creation_request(user_id, request_key)
+        if existing is not None:
+            job, saved = existing
+            source = saved.source
+            if (
+                source.kind != "scene"
+                or source.scene.scene_id != scene_id
+                or (source.requirements, source.feedback, source.video_feedback)
+                != (requirements, feedback, video_feedback)
+            ):
+                raise ComboAssemblyError("这个请求已用于另一次制作，请核对原任务")
+            return job
+        state = await presentation_state(user_id)
+        async with SESSION_LOCAL() as db:
+            scene = await scene_snapshot(db, user_id, scene_id)
+            if scene is None or scene.status != "ready" or not scene.media_path:
+                raise ComboAssemblyError("请选择已就绪的环境图片")
+            scene_hash = await asyncio.to_thread(_asset_hash, scene.media_path)
+            combo = VisualSnapshot(
+                source=SceneMediaSource(
+                    scene=SceneMediaRef(
+                        scene_id=scene.id,
+                        title=scene.title,
+                        path=scene.media_path,
+                        content_hash=scene_hash,
+                        description=scene.description,
+                        revision=scene.updated_at,
+                    ),
+                    requirements=requirements,
+                    feedback=feedback,
+                    video_feedback=video_feedback,
+                ),
+                target_width=target_width or state.target_width or DEFAULT_TARGET[0],
+                target_height=target_height or state.target_height or DEFAULT_TARGET[1],
+            )
+            await db.commit()
+        return await visuals_service.create_visual_job(
+            user_id,
+            snapshot=combo,
+            target_kind="video",
+            source="user_requested",
+            feedback=feedback,
+            video_feedback=video_feedback,
+            request_id=request_key,
+        )
 
 
 async def play_visual_reference(

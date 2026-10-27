@@ -20,6 +20,11 @@ from workflows.onboarding.initial_appearance import resume_initial_appearance
 from workflows.scheduling import drain as drain_scheduling
 from workflows.scheduling import invalidate_user_scheduler_state
 from workflows.visual_decisions import drain_visual_decisions
+from workflows.visual_preparation import (
+    resume_base_motion_preparation,
+    start_base_motion_preparation,
+    stop_base_motion_preparation,
+)
 
 
 def configure_runtime_lifecycle() -> None:
@@ -31,6 +36,12 @@ def configure_runtime_lifecycle() -> None:
             *action_participants(),
             *visuals_participants(),
             RuntimeParticipant("visuals.decisions", drain=drain_visual_decisions),
+            RuntimeParticipant(
+                "visuals.preparation",
+                prepare=start_base_motion_preparation,
+                resume_user=resume_base_motion_preparation,
+                stop_producer=stop_base_motion_preparation,
+            ),
             *appearance_participants(),
             *scene_participants(),
             RuntimeParticipant("onboarding.initial_assets", recover=resume_initial_appearance),

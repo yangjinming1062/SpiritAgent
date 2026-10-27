@@ -62,6 +62,20 @@ async def ready_outfit_snapshot(db: AsyncSession, user_id: int, outfit_id: int) 
     return OutfitSnapshot.model_validate(row) if row is not None else None
 
 
+async def initial_outfit_snapshot(db: AsyncSession, user_id: int) -> OutfitSnapshot | None:
+    row = await db.scalar(
+        select(CompanionOutfit)
+        .where(
+            CompanionOutfit.user_id == user_id,
+            CompanionOutfit.status == "ready",
+            CompanionOutfit.is_initial.is_(True),
+        )
+        .order_by(CompanionOutfit.id)
+        .limit(1),
+    )
+    return OutfitSnapshot.model_validate(row) if row is not None else None
+
+
 async def ready_outfit_snapshots(db: AsyncSession, user_id: int, *, limit: int = 50) -> list[OutfitSnapshot]:
     rows = await db.scalars(
         select(CompanionOutfit)

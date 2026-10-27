@@ -121,6 +121,7 @@ export type { StageOutfitSource } from './wardrobe/stage-source'
 export {
   $outfitPolicy,
   $outfits,
+  $presentedOutfit,
   $wardrobeStatus,
   deleteOutfit,
   hydrateWardrobe,

@@ -35,6 +35,17 @@ async def action_detail(db: AsyncSession, user_id: int, action_id: int) -> Actio
     return definition_view(row) if row else None
 
 
+async def action_by_preset_key(db: AsyncSession, user_id: int, preset_key: str) -> ActionAssetView | None:
+    """按内置动作稳定键取定义；供基础动态准备等固定流程使用。"""
+
+    row = await db.scalar(
+        select(ActionDefinition)
+        .options(defer(ActionDefinition.review_source_json, raiseload=True))
+        .where(ActionDefinition.user_id == user_id, ActionDefinition.preset_key == preset_key),
+    )
+    return definition_view(row) if row else None
+
+
 async def list_actions(
     db: AsyncSession,
     user_id: int,

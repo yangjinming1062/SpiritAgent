@@ -14,6 +14,7 @@ export interface ApiSchemas {
   "ActivateRequest": { "code": string; "client_version"?: string; "client_context"?: (ApiSchemas["ChatRequestClientContext"] | null) }
   "ActiveTurnView": { "request_id": string; "origin_kind": string; "message_ids": Array<string>; "assistant_message_id": (string | null); "messages": Array<ApiSchemas["SessionMessageView"]>; "text": string; "reasoning": string; "bubbles": Array<ApiSchemas["ReplyBubbleView"]>; "tools": Array<ApiSchemas["ToolSnapshot"]>; "running": boolean; "replace_reply_message_id": (string | null) }
   "ActorClipRef": { "visual_id": string; "version": number }
+  "ActorClipRequest": { "request_id": string; "outfit_id": string; "action_id": string; "requirements"?: string; "feedback"?: string; "video_feedback"?: string }
   "ActorClipSource": { "kind": "actor"; "identity": ApiSchemas["CharacterCardSnapshot"]; "identity_path": string; "identity_hash": string; "portrait_path": string; "portrait_hash": string; "identity_reference_role": "portrait" | "fullbody"; "outfit": ApiSchemas["ComboMaterialRef"]; "action": ApiSchemas["ActionMaterialRef"]; "plan": (ApiSchemas["VisualCreationPlan"] | null); "requirements": string; "feedback": string; "video_feedback": string; "persona": { [key: string]: string } }
   "ActualPresentationSnapshot": { "visual_id": (string | null); "media_kind": ("image" | "video" | null); "asset_kind": ("actor" | "scene" | "cinematic" | null); "visual_version": (number | null); "visual_description": string; "visual_path": (string | null); "outfit_path": (string | null); "outfit_hash": (string | null); "outfit_description": string; "scene_path": (string | null); "scene_hash": (string | null); "scene_description": string; "identity_path": (string | null); "identity_hash": (string | null); "identity_reference_role": "portrait" | "fullbody"; "ready": boolean }
   "AdminLoginRequest": { "username": string; "password": string }
@@ -276,6 +277,7 @@ export interface ApiSchemas {
   "SceneImportRequest": { "image": string; "content_type"?: (string | null); "source": "import"; "scene_id"?: (string | null) }
   "SceneListResponse": { "scenes": Array<ApiSchemas["SceneResponse"]>; "total": (number | null); "has_more": boolean; "next_cursor": (string | null); "limit": number }
   "SceneMediaRef": { "scene_id": (string | null); "title": string; "path": string; "content_hash": string; "description": string; "revision": (string | null) }
+  "SceneMediaRequest": { "request_id": string; "scene_id": string; "requirements"?: string; "feedback"?: string; "video_feedback"?: string }
   "SceneMediaSource": { "kind": "scene"; "scene": ApiSchemas["SceneMediaRef"]; "requirements": string; "feedback": string; "video_feedback": string; "persona": { [key: string]: string } }
   "SceneOrigin": "onboarding" | "llm" | "nightly" | "user_request"
   "ScenePolicy": "locked" | "llm_may_replace"
@@ -459,6 +461,8 @@ export interface ApiOperations {
   "companion_visuals.put_presentation": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["VisualPreferencesRequest"]; input: { path?: never; query?: never; body: ApiSchemas["VisualPreferencesRequest"] }; response: ApiSchemas["VisualPresentationResponse"] }
   "companion_visuals.static_receipt": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["StageReceipt"]; input: { path?: never; query?: never; body: ApiSchemas["StageReceipt"] }; response: ApiSchemas["VisualReceiptResponse"] }
   "companion_visuals.restore_presentation": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: (ApiSchemas["VisualPlayCommand"] | null) }
+  "companion_visuals.create_actor_clip": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["ActorClipRequest"]; input: { path?: never; query?: never; body: ApiSchemas["ActorClipRequest"] }; response: ApiSchemas["VisualJobView"] }
+  "companion_visuals.create_scene_media": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["SceneMediaRequest"]; input: { path?: never; query?: never; body: ApiSchemas["SceneMediaRequest"] }; response: ApiSchemas["VisualJobView"] }
   "companion_visuals.get_visual": { path: { "visual_id": string }; query: Record<string, never>; body: undefined; input: { path: { "visual_id": string }; query?: never; body?: never }; response: ApiSchemas["VisualDetailView"] }
   "companion_visuals.regenerate_visual": { path: { "visual_id": string }; query: Record<string, never>; body: ApiSchemas["VisualRegenerateRequest"]; input: { path: { "visual_id": string }; query?: never; body: ApiSchemas["VisualRegenerateRequest"] }; response: ApiSchemas["VisualJobView"] }
   "companion_visuals.command_visual_job": { path: { "job_id": string }; query: Record<string, never>; body: ApiSchemas["VisualJobCommandRequest"]; input: { path: { "job_id": string }; query?: never; body: ApiSchemas["VisualJobCommandRequest"] }; response: ApiSchemas["VisualJobView"] }
@@ -1378,6 +1382,30 @@ export const API_OPERATIONS = {
     "response": "json",
     "identities": [
       "desktop"
+    ],
+    "wait_for_model": false,
+    "ipc": true
+  },
+  "companion_visuals.create_actor_clip": {
+    "path": "/api/companion/visuals/actor-clips",
+    "method": "POST",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "desktop",
+      "remote"
+    ],
+    "wait_for_model": false,
+    "ipc": true
+  },
+  "companion_visuals.create_scene_media": {
+    "path": "/api/companion/visuals/scene-media",
+    "method": "POST",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "desktop",
+      "remote"
     ],
     "wait_for_model": false,
     "ipc": true

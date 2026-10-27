@@ -10,6 +10,7 @@ import {
   type SceneMutationIssue,
   updateSceneMutationIssue
 } from '@/modules/scene'
+import { visualsApi } from '@/modules/visuals'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { ArrowLeft, Pencil, RefreshCw, Sparkles, ZoomIn } from '@/shared/lib/icons'
@@ -95,8 +96,45 @@ export function SceneDetailView({
 
   const [failedImage, setFailedImage] = useState<string | null>(null)
   const [previewAttempt, setPreviewAttempt] = useState(0)
+  const [motionBusy, setMotionBusy] = useState(false)
+  const [motionError, setMotionError] = useState<string | null>(null)
+  const [motionNotice, setMotionNotice] = useState<string | null>(null)
   const begin = useAsyncGuard()
-  const actionBusy = actionKind !== null
+  const actionBusy = actionKind !== null || motionBusy
+  const canMakeMotion = Boolean(detail?.status === 'ready' && detail.assetUrl && detail.id)
+
+  const makeMotion = (): void => {
+    if (!detail || actionBusy || !canMakeMotion) {
+      return
+    }
+
+    const scope = captureAuthScope()
+    const live = begin()
+
+    setMotionBusy(true)
+    setActionError(null)
+    setMotionError(null)
+    setMotionNotice(null)
+    void visualsApi
+      .createSceneMedia({ scene_id: detail.id })
+      .then(() => {
+        if (scope?.() && live()) {
+          setActionError(null)
+          setMotionNotice(t.makeMotionDone)
+        }
+      })
+      .catch(error => {
+        if (scope?.() && live()) {
+          setMotionError(failureText(error, t.makeMotionFailed))
+        }
+      })
+      .finally(() => {
+        if (scope?.() && live()) {
+          setMotionBusy(false)
+        }
+      })
+  }
+
   const refreshing = actionKind === 'refresh'
   const regenerating = detail?.regeneration?.status === 'pending'
   const generating = detail?.status === 'pending' || regenerating
@@ -242,6 +280,7 @@ export function SceneDetailView({
 
   const showFeedback = Boolean(
     actionError ||
+    motionError ||
     loadError ||
     uncertain ||
     actionBusy ||
@@ -271,40 +310,46 @@ export function SceneDetailView({
 
   const feedbackStatus: { state: CreationFeedbackState; title?: string } = actionError
     ? { state: 'error', title: tToasts.sceneRegenerateFailed }
-    : loadError
-      ? { state: 'unknown', title: tToasts.sceneStatusRefreshFailed }
-      : actionKind
-        ? {
-            state: 'working',
-            title: {
-              refresh:
-                uncertain || detail.imageLoadFailed || (detail.url && failedImage === detail.url)
-                  ? undefined
-                  : strings.common.loading,
-              save: strings.common.saving,
-              cancel: t.cancelTask,
-              generate: t.imageRegenerate,
-              analyze: t.analyzing,
-              upload: strings.common.processing
-            }[actionKind]
-          }
-        : uncertain
-          ? {
-              state: uncertain.pending ? 'working' : 'unknown',
-              title: uncertain.pending ? strings.common.processing : strings.creation.unknown
-            }
-          : detail.regeneration?.status === 'failed'
-            ? { state: 'error', title: t.imageRegenerationFailed }
-            : generating
-              ? { state: detail.stage === 'waiting_upload' ? 'waiting' : 'working', title: generationTitle }
-              : {
-                  state:
-                    detail.regeneration?.status === 'cancelled' || detail.status === 'cancelled'
-                      ? 'cancelled'
-                      : 'error',
-                  title:
-                    detail.regeneration?.status === 'cancelled' ? strings.creation.cancelled : t.statuses[detail.status]
+    : motionError
+      ? { state: 'error', title: t.makeMotionFailed }
+      : motionBusy
+        ? { state: 'working', title: t.makeMotionBusy }
+        : loadError
+          ? { state: 'unknown', title: tToasts.sceneStatusRefreshFailed }
+          : actionKind
+            ? {
+                state: 'working',
+                title: {
+                  refresh:
+                    uncertain || detail.imageLoadFailed || (detail.url && failedImage === detail.url)
+                      ? undefined
+                      : strings.common.loading,
+                  save: strings.common.saving,
+                  cancel: t.cancelTask,
+                  generate: t.imageRegenerate,
+                  analyze: t.analyzing,
+                  upload: strings.common.processing
+                }[actionKind]
+              }
+            : uncertain
+              ? {
+                  state: uncertain.pending ? 'working' : 'unknown',
+                  title: uncertain.pending ? strings.common.processing : strings.creation.unknown
                 }
+              : detail.regeneration?.status === 'failed'
+                ? { state: 'error', title: t.imageRegenerationFailed }
+                : generating
+                  ? { state: detail.stage === 'waiting_upload' ? 'waiting' : 'working', title: generationTitle }
+                  : {
+                      state:
+                        detail.regeneration?.status === 'cancelled' || detail.status === 'cancelled'
+                          ? 'cancelled'
+                          : 'error',
+                      title:
+                        detail.regeneration?.status === 'cancelled'
+                          ? strings.creation.cancelled
+                          : t.statuses[detail.status]
+                    }
 
   const feedback = showFeedback && (
     <CreationFeedback
@@ -337,6 +382,7 @@ export function SceneDetailView({
       }
       description={
         actionError ||
+        motionError ||
         loadError ||
         uncertaintyDescription ||
         (actionBusy
@@ -426,6 +472,12 @@ export function SceneDetailView({
             ) : null}
           </>
         ) : null}
+        {canMakeMotion ? (
+          <button className={BTN_SUBTLE} disabled={actionBusy || Boolean(uncertain)} onClick={makeMotion} type="button">
+            {motionBusy ? t.makeMotionBusy : t.makeMotion}
+          </button>
+        ) : null}
+        {motionNotice && !motionError ? <p className="text-[11px] text-faint">{motionNotice}</p> : null}
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           {draft ? (
             <>

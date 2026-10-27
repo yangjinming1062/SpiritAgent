@@ -1,4 +1,6 @@
+import { captureAuthScope } from '@/shared/lib/authed-api'
 import { requestResource } from '@/shared/lib/resource-request'
+import { definePersistedAtom } from '@/shared/lib/storage'
 
 import type { ApiSchemas } from '../../../../shared/api.generated'
 
@@ -20,6 +22,33 @@ import type {
   VisualRegenerateRequest,
   VisualsPresentation
 } from './types'
+
+const creationRequests = definePersistedAtom<{ ids: Record<string, string> }>({
+  key: 'da.visuals.creationRequests',
+  fallback: { ids: {} },
+  isPersistable: (value): value is { ids: Record<string, string> } =>
+    typeof value === 'object' &&
+    value !== null &&
+    'ids' in value &&
+    typeof value.ids === 'object' &&
+    value.ids !== null &&
+    Object.values(value.ids).every(id => typeof id === 'string')
+})
+
+async function submitCreation<T>(key: string, submit: (requestId: string) => Promise<T>): Promise<T> {
+  const scope = captureAuthScope()
+  const requestId = creationRequests.get().ids[key] ?? crypto.randomUUID()
+  creationRequests.set({ ids: { ...creationRequests.get().ids, [key]: requestId } })
+  const result = await submit(requestId)
+
+  if (scope?.()) {
+    const pending = { ...creationRequests.get().ids }
+    delete pending[key]
+    creationRequests.set({ ids: pending })
+  }
+
+  return result
+}
 
 export interface VisualsListQuery {
   query?: string
@@ -48,6 +77,16 @@ export const visualsApi = {
     requestResource('companion_visuals.list_visuals', { query }),
   detail: (visualId: string): Promise<VisualDetail> =>
     requestResource('companion_visuals.get_visual', { path: { visual_id: visualId } }),
+  /** 制作透明主体动画：身份 + 造型 + 动作，不绑定环境；桌面与手机共用同一契约。 */
+  createActorClip: (body: Omit<ApiSchemas['ActorClipRequest'], 'request_id'>): Promise<VisualJob> =>
+    submitCreation(JSON.stringify(['actor', body]), request_id =>
+      requestResource('companion_visuals.create_actor_clip', { body: { ...body, request_id } })
+    ),
+  /** 制作环境循环视频：单张已就绪的环境素材。 */
+  createSceneMedia: (body: Omit<ApiSchemas['SceneMediaRequest'], 'request_id'>): Promise<VisualJob> =>
+    submitCreation(JSON.stringify(['scene', body]), request_id =>
+      requestResource('companion_visuals.create_scene_media', { body: { ...body, request_id } })
+    ),
   regenerate: (visualId: string, body: VisualRegenerateRequest): Promise<VisualJob> =>
     requestResource('companion_visuals.regenerate_visual', { path: { visual_id: visualId }, body }),
   jobs: (): Promise<VisualJobListResponse> => requestResource('companion_visuals.list_visual_jobs'),
