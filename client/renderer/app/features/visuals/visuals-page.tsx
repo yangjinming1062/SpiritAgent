@@ -132,6 +132,14 @@ export function VisualsPage(): React.JSX.Element {
   const sourceSummary = (item: VisualItem): string =>
     [item.outfit_name, item.scene_title, item.action_name].filter(Boolean).join(' · ')
 
+  const jobLabel = (job: VisualJob): string => {
+    if (!job.action_name) {
+      return job.target_kind === 'video' ? t.jobVideo : t.jobImage
+    }
+
+    return `${job.action_name} · ${job.target_kind === 'video' ? t.mediaKindVideo : t.mediaKindImage}`
+  }
+
   const run = (operation: () => Promise<void>, failure: string): void => {
     setBusy(true)
 
@@ -160,7 +168,7 @@ export function VisualsPage(): React.JSX.Element {
     if (command === 'cancel') {
       void confirmAction({
         title: t.cancelTitle,
-        description: job.purpose,
+        description: jobLabel(job),
         confirmLabel: t.jobCancel,
         variant: 'destructive'
       }).then(confirmed => {
@@ -232,7 +240,7 @@ export function VisualsPage(): React.JSX.Element {
               <SettingRow
                 description={`${t.jobState[job.state] ?? job.state}${job.error ? ` · ${job.error}` : ''}`}
                 key={job.id}
-                label={job.purpose}
+                label={jobLabel(job)}
               >
                 <div className="flex gap-2">
                   {visualJobCommands(job.state).map(command => (

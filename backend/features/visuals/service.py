@@ -573,7 +573,7 @@ async def retry_job(user_id: int, job_id: int) -> VisualJobView:
         if progress is None:
             raise VisualStateError("制作草稿已失效")
         if progress.failure_reason == "activity_unsupported":
-            return job_view(job)
+            raise VisualStateError("这个活动当前无法制作，请调整要求后重新发起制作")
         new_image = job.state == "failed" and (
             progress.failure_reason in {"image_unsuitable", "review_invalid"}
             or bool(progress.image_only and visual_image_chain_exhausted(progress))

@@ -1852,6 +1852,8 @@ export const dict: Dictionary = {
     loadFailed: "Couldn't load visuals",
     detailLoadFailed: "Couldn't load the visual details",
     jobsTitle: 'Creations in progress and failed',
+    jobImage: 'Image creation',
+    jobVideo: 'Video creation',
     jobState: {
       queued: 'Queued',
       running: 'Creating',

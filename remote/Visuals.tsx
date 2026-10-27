@@ -56,6 +56,14 @@ function sourceSummary(item: Pick<VisualItem, 'action_name' | 'outfit_name' | 's
     .join(' · ')
 }
 
+function visualJobLabel(job: VisualJob, visualTitle?: string): string {
+  if (visualTitle) {
+    return visualTitle
+  }
+  const mediaKind = job.target_kind === 'video' ? '视频' : '图片'
+  return job.action_name ? `${job.action_name} · ${mediaKind}` : `影像${mediaKind}`
+}
+
 function VisualJobRow({
   api,
   job,
@@ -72,7 +80,7 @@ function VisualJobRow({
   return (
     <li className="recovery-item">
       <div>
-        <strong>{visualTitle || (job.target_kind === 'video' ? '影像视频' : '影像图片')}</strong>
+        <strong>{visualJobLabel(job, visualTitle)}</strong>
         <span aria-live="polite" className="pill">
           {JOB_STATE_TEXT[job.state]}
         </span>

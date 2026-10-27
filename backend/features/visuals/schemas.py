@@ -222,6 +222,8 @@ class VisualJobView(BaseModel):
     id: ResourceId
     purpose: str
     target_kind: VisualMediaKind
+    # 冻结组合里的动作名称，供库内标识这一次制作。
+    action_name: str = ""
     target_visual_id: ResourceId | None = None
     expected_version: int | None = None
     state: VisualJobState

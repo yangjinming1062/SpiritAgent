@@ -1765,6 +1765,8 @@ export const dict = {
     loadFailed: '影像加载失败',
     detailLoadFailed: '影像详情加载失败',
     jobsTitle: '进行中与失败的制作',
+    jobImage: '图片制作',
+    jobVideo: '视频制作',
     jobState: {
       queued: '排队中',
       running: '制作中',

@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import io
 import os
+import re
 import secrets
 import shutil
 import time
@@ -379,11 +380,15 @@ async def save_image_chain_asset_async(
     )
 
 
+# 冻结输入标签由调用方按参考字段定义，这里只约束可落盘的字形，避免新增参考字段时重复维护词表。
+_IMAGE_CHAIN_INPUT_LABEL = re.compile(r"[a-z][a-z0-9_]{0,15}")
+
+
 def image_chain_input_asset_path(user_id: int, generation_id: str, label: str, ext: str, *, directory: str) -> str:
-    """冻结输入图的独立落盘位；label 取 ref/ref2/identity，不与候选 a{attempt}_s{slot} 撞名。"""
+    """冻结输入图的独立落盘位；不与候选 a{attempt}_s{slot} 撞名。"""
     if (
         user_id <= 0
-        or label not in {"ref", "ref2", "identity"}
+        or not _IMAGE_CHAIN_INPUT_LABEL.fullmatch(label)
         or ext not in {"png", "jpg", "webp", "gif"}
         or not _is_generation_id(generation_id)
     ):

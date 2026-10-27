@@ -62,12 +62,19 @@ def item_view(item: VisualItem | PresentedVisual, snapshot: ComboSnapshot | None
     )
 
 
+def _job_action_name(snapshot: dict) -> str:
+    action = snapshot.get("action") if isinstance(snapshot, dict) else None
+    name = action.get("name") if isinstance(action, dict) else None
+    return name if isinstance(name, str) else ""
+
+
 def job_view(job: VisualJob) -> VisualJobView:
     progress = parse_job_progress(job.checkpoint)
     return VisualJobView(
         id=job.id,
         purpose=job.purpose,
         target_kind=_media_kind(job.target_kind),
+        action_name=_job_action_name(job.snapshot_json),
         target_visual_id=job.target_visual_id,
         expected_version=job.expected_version,
         state=job.state,  # type: ignore[arg-type]
@@ -247,6 +254,7 @@ async def list_jobs(
             VisualJob.id,
             VisualJob.purpose,
             VisualJob.target_kind,
+            func.coalesce(VisualJob.snapshot_json["action"]["name"].astext, "").label("action_name"),
             VisualJob.target_visual_id,
             VisualJob.expected_version,
             VisualJob.state,
