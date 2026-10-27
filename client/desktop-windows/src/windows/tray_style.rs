@@ -462,7 +462,7 @@ impl TrayStyle {
                 return Err("系统托盘透明样式未能启用，请重启 Windows 资源管理器后重试（0x8000ffff）。".into());
             }
             if error == 0x8007_0102 {
-                return Err("系统托盘透明样式未能启用，Windows 资源管理器未释放上一次的托盘样式订阅，请重启 Windows 资源管理器后重试（0x80070102）。".into());
+                return Err("系统托盘透明样式初始化超时，Windows 资源管理器可能仍在处理上一次托盘样式订阅，请稍后重试；若持续失败请重启 Windows 资源管理器（0x80070102）。".into());
             }
             return Err(format!(
                 "系统托盘透明样式未能启用（0x{:08x}）。",

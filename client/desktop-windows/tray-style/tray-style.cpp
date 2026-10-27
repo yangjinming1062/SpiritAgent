@@ -41,6 +41,8 @@ using Inspectable = wf::IInspectable;
 constexpr CLSID tap_class = {0x7be27828, 0x72b0, 0x4eed, {0xa5, 0xc7, 0x96, 0x31, 0x69, 0xb6, 0xcc, 0x15}};
 constexpr wchar_t mapping_prefix[] = L"Local\\SpiritAgentTrayStyle-";
 constexpr wchar_t attach_message[] = L"SpiritAgent.TrayStyle.Attach.v1";
+constexpr HRESULT wait_timeout = HRESULT_FROM_WIN32(ERROR_TIMEOUT);
+constexpr ULONGLONG subscription_retry_ms = 3000;
 HMODULE module_handle = nullptr;
 std::mutex session_mutex;
 std::mutex bootstrap_mutex;
@@ -770,7 +772,18 @@ struct Watcher : winrt::implements<Watcher, IVisualTreeServiceCallback2, winrt::
         }
         subscription.store(Subscription::stopping);
         // A failed Advise may already have installed the callback before replay failed.
-        auto released = service ? service->UnadviseVisualTreeChange(this) : S_OK;
+        HRESULT released = S_OK;
+        if (service) {
+            auto deadline = GetTickCount64() + subscription_retry_ms;
+            do {
+                released = service->UnadviseVisualTreeChange(this);
+                if (released != wait_timeout || GetTickCount64() >= deadline) break;
+                // Explorer can still be dispatching the last mutation when the
+                // owner has already released its lease. Give that callback a
+                // bounded chance to drain before declaring the connection stuck.
+                Sleep(50);
+            } while (true);
+        }
         bool foreign_callback = released == E_UNEXPECTED && FAILED(failure) && mutations.load() == before;
         bool release_failed = FAILED(released) && !foreign_callback;
         if (release_failed) observed->publish(-1, released);
@@ -1055,7 +1068,11 @@ extern "C" __declspec(dllexport) HRESULT WINAPI SpiritAgentAttach(DWORD explorer
         auto target = std::make_shared<Session>(mapping_name, explorer_pid);
         auto deadline = GetTickCount64() + 3500;
         auto init_result = initialize(explorer_pid, mapping_name, 1000);
-        auto result = init_result;
+        // A diagnostics endpoint can take longer than the first bounded probe
+        // while Explorer is constructing its XAML tree. Keep the hook-based
+        // attach path alive for that case instead of returning a timeout before
+        // the delayed watcher has a chance to publish readiness.
+        auto result = init_result == wait_timeout ? S_OK : init_result;
         auto wait_started = GetTickCount64();
         while (SUCCEEDED(result) && GetTickCount64() - wait_started < 250) {
             auto status = InterlockedCompareExchange(&target->state->status, 0, 0);
