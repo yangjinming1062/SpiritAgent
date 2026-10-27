@@ -40,6 +40,8 @@ export async function refreshActions(
 
   const state = actionGroups[group]
   const search = query ?? state.query
+  const sameQuery = search === state.query
+  const previousCursor = state.nextCursor.get()
 
   if (append && (state.loading.get() || search !== state.query)) {
     return
@@ -51,7 +53,12 @@ export async function refreshActions(
     return
   }
 
-  if (search !== state.query) {
+  if (!append) {
+    // 刷新建立新快照，动作在分组间移动后不能继续使用旧分页游标。
+    state.nextCursor.set(null)
+  }
+
+  if (!sameQuery) {
     state.rows.set([])
     state.nextCursor.set(null)
     state.loaded.set(false)
@@ -77,6 +84,10 @@ export async function refreshActions(
     state.error.set(null)
   } catch (error) {
     if (scope() && currentEpoch === epoch && revision === state.revision) {
+      if (!append && sameQuery) {
+        state.nextCursor.set(previousCursor)
+      }
+
       state.error.set(String(error))
     }
   } finally {

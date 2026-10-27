@@ -10,6 +10,7 @@ import {
   createAction,
   deleteAction,
   loadMoreActions,
+  refreshActionGroups,
   refreshActions,
   retryActionReview,
   updateAction
@@ -68,6 +69,32 @@ function draftOf(action: ActionDefinition): ActionDraft {
   }
 }
 
+function draftBody(draft: ActionDraft) {
+  return {
+    name: draft.name.trim(),
+    motion_description: draft.motion_description.trim(),
+    use_when: parseActionConditions(draft.use_when),
+    avoid_when: parseActionConditions(draft.avoid_when),
+    clip_kind: draft.clip_kind,
+    duration_seconds: draft.duration_seconds,
+    allowed_triggers: draft.allowed_triggers,
+    reason: draft.reason
+  }
+}
+
+function actionBody(action: ActionDefinition) {
+  return {
+    name: action.name,
+    motion_description: action.motion_description,
+    use_when: action.use_when,
+    avoid_when: action.avoid_when,
+    clip_kind: action.clip_kind,
+    duration_seconds: action.duration_seconds,
+    allowed_triggers: action.allowed_triggers,
+    reason: action.reason
+  }
+}
+
 export function ActionsPage(): React.JSX.Element {
   const auth = useStore($auth)
 
@@ -80,6 +107,8 @@ function ActionsPageContent(): React.JSX.Element {
   const auth = useStore($auth)
   const [group, setGroup] = useState<ActionLibraryGroup>('in_library')
   const actions = useStore(actionGroups[group].rows)
+  const inLibraryActions = useStore(actionGroups.in_library.rows)
+  const notInLibraryActions = useStore(actionGroups.not_in_library.rows)
   const loading = useStore(actionGroups[group].loading)
   const loaded = useStore(actionGroups[group].loaded)
   const error = useStore(actionGroups[group].error)
@@ -92,6 +121,45 @@ function ActionsPageContent(): React.JSX.Element {
 
   const [busy, setBusy] = useState(false)
 
+  const editingId = editing?.id
+
+  const latestEditingAction =
+    editingId === null || editingId === undefined
+      ? undefined
+      : [...inLibraryActions, ...notInLibraryActions].find(action => action.id === editingId)
+
+  const editingLocked = Boolean(
+    editingId !== null &&
+    editingId !== undefined &&
+    (latestEditingAction?.status === 'pending' || latestEditingAction?.status === 'reviewing')
+  )
+
+  useEffect(() => {
+    if (editingId === null || editingId === undefined) {
+      return
+    }
+
+    const latest = [...inLibraryActions, ...notInLibraryActions].find(action => action.id === editingId)
+
+    if (!latest) {
+      return
+    }
+
+    setEditing(current => {
+      if (
+        !current ||
+        current.id !== editingId ||
+        current.expectedUpdatedAt === latest.updated_at ||
+        JSON.stringify(draftBody(current.draft)) !== JSON.stringify(actionBody(latest))
+      ) {
+        return current
+      }
+
+      // 脏草稿保留原修订；草稿未改时推进到最新修订，避免后台评审更新后无法继续保存。
+      return { ...current, expectedUpdatedAt: latest.updated_at }
+    })
+  }, [editingId, inLibraryActions, notInLibraryActions])
+
   useEffect(() => {
     if (auth.kind !== 'authenticated') {
       return
@@ -102,48 +170,36 @@ function ActionsPageContent(): React.JSX.Element {
     return () => clearTimeout(timer)
   }, [auth, group, query])
 
+  const hasPendingReview = [...inLibraryActions, ...notInLibraryActions].some(
+    action => action.status === 'pending' || action.status === 'reviewing'
+  )
+
   useEffect(() => {
-    if (!actions.some(action => action.status === 'pending' || action.status === 'reviewing')) {
+    if (!hasPendingReview) {
       return
     }
 
     const timer = setInterval(() => {
       if (document.visibilityState === 'visible') {
-        void refreshActions(query, false, group)
+        void refreshActionGroups()
       }
     }, 5000)
 
     return () => clearInterval(timer)
-  }, [actions, group, query])
+  }, [hasPendingReview])
 
   const visible = actions
 
-  const validDraft =
-    editing &&
-    isActionDesignValid({
-      ...editing.draft,
-      use_when: parseActionConditions(editing.draft.use_when),
-      avoid_when: parseActionConditions(editing.draft.avoid_when)
-    })
+  const validDraft = editing && isActionDesignValid(draftBody(editing.draft))
 
   const save = (): void => {
-    if (!editing || busy || !validDraft) {
+    if (!editing || busy || editingLocked || !validDraft) {
       return
     }
 
     const draft = editing.draft
     const scope = captureAuthScope()
-
-    const body = {
-      name: draft.name.trim(),
-      motion_description: draft.motion_description.trim(),
-      use_when: parseActionConditions(draft.use_when),
-      avoid_when: parseActionConditions(draft.avoid_when),
-      clip_kind: draft.clip_kind,
-      duration_seconds: draft.duration_seconds,
-      allowed_triggers: draft.allowed_triggers,
-      reason: draft.reason
-    }
+    const body = draftBody(draft)
 
     setBusy(true)
 
@@ -234,8 +290,9 @@ function ActionsPageContent(): React.JSX.Element {
       {error && <ErrorBanner message={t.loadFailed} />}
       {editing && (
         <SettingCard className="mb-3">
-          <fieldset className="flex flex-col gap-3 p-4" disabled={busy}>
+          <fieldset className="flex flex-col gap-3 p-4" disabled={busy || editingLocked}>
             <h3 className="text-sm font-medium">{editing.id === null ? t.create : t.edit}</h3>
+            {editingLocked ? <p className="text-[11px] text-warning-fg">{t.editingLocked}</p> : null}
             <label className="block">
               <span className={FIELD_LABEL}>{t.nameLabel}</span>
               <input
@@ -314,15 +371,20 @@ function ActionsPageContent(): React.JSX.Element {
                 />
               </label>
             </div>
-            <div className="flex gap-2">
-              <button className={BTN_PRIMARY} disabled={busy || !validDraft} onClick={save} type="button">
-                {t.save}
-              </button>
-              <button className={BTN_GHOST} disabled={busy} onClick={() => setEditing(null)} type="button">
-                {t.cancel}
-              </button>
-            </div>
           </fieldset>
+          <div className="flex gap-2 px-4 pb-4">
+            <button
+              className={BTN_PRIMARY}
+              disabled={busy || editingLocked || !validDraft}
+              onClick={save}
+              type="button"
+            >
+              {t.save}
+            </button>
+            <button className={BTN_GHOST} disabled={busy} onClick={() => setEditing(null)} type="button">
+              {t.cancel}
+            </button>
+          </div>
         </SettingCard>
       )}
       {!loaded || (loading && actions.length === 0) ? (

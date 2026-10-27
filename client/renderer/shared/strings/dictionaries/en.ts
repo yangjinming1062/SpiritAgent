@@ -1798,6 +1798,7 @@ export const dict: Dictionary = {
     emptySearch: 'No actions match this search.',
     create: 'New action',
     edit: 'Edit action',
+    editingLocked: 'This action is under review and cannot be edited yet.',
     deleteLabel: 'Delete',
     deleteTitle: 'Delete this action?',
     nameLabel: 'Name',

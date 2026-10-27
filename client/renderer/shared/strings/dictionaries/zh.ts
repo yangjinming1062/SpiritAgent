@@ -1712,6 +1712,7 @@ export const dict = {
     emptySearch: '没有找到匹配的动作。',
     create: '新建动作',
     edit: '编辑动作',
+    editingLocked: '动作正在评审，暂时不能修改。',
     deleteLabel: '删除',
     deleteTitle: '删除这个动作？',
     nameLabel: '名称',

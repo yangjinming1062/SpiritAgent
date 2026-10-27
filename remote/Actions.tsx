@@ -332,32 +332,50 @@ export function Actions({ api, refresh }: { api: RemoteApi; refresh: number }): 
   const [query, setQuery] = usePageState('actions.query', '')
   const [loaded, setLoaded] = useState(false)
   const revision = useRef(0)
+  const editingRef = useRef<ActionDefinition | null>(null)
   const [editing, setEditing] = useState<ActionDefinition | null>(null)
   const [detailError, setDetailError] = useState('')
   usePageScroll(`actions.${creating ? 'create' : (selected ?? `list.${group}.${query}`)}`, loaded)
 
+  useEffect(() => {
+    editingRef.current = editing
+  }, [editing])
+
   const load = useCallback(
     async (append = false) => {
       const version = ++revision.current
-      const list = await api.invoke('companion_actions.list_actions', {
-        query: {
-          query: query.trim() || undefined,
-          group,
-          cursor: append ? (nextCursor.current[group] ?? undefined) : undefined,
-          limit: 50
-        }
-      })
+      const sameQuery = query === cache.current[group].query
+      const previousCursor = nextCursor.current[group]
+      if (!append) {
+        // 刷新期间先停用旧游标；同一查询失败时恢复它。
+        nextCursor.current[group] = null
+      }
+      try {
+        const list = await api.invoke('companion_actions.list_actions', {
+          query: {
+            query: query.trim() || undefined,
+            group,
+            cursor: append ? (nextCursor.current[group] ?? undefined) : undefined,
+            limit: 50
+          }
+        })
 
-      if (alive() && revision.current === version) {
-        const previous = cache.current[group].rows
-        const updated = append
-          ? [...previous, ...list.actions.filter(row => !previous.some(old => old.id === row.id))]
-          : list.actions
-        cache.current[group] = { rows: updated, query }
-        setRows(updated)
-        setHasMore(list.has_more)
-        nextCursor.current[group] = list.next_cursor
-        setLoaded(true)
+        if (alive() && revision.current === version) {
+          const previous = cache.current[group].rows
+          const updated = append
+            ? [...previous, ...list.actions.filter(row => !previous.some(old => old.id === row.id))]
+            : list.actions
+          cache.current[group] = { rows: updated, query }
+          setRows(updated)
+          setHasMore(list.has_more)
+          nextCursor.current[group] = list.next_cursor
+          setLoaded(true)
+        }
+      } catch (error) {
+        if (alive() && revision.current === version && !append && sameQuery) {
+          nextCursor.current[group] = previousCursor
+        }
+        throw error
       }
     },
     [alive, api, group, query]
@@ -382,7 +400,13 @@ export function Actions({ api, refresh }: { api: RemoteApi; refresh: number }): 
       return
     }
     setDetailError('')
-    if (editing?.id === selected && editing.status !== 'pending' && editing.status !== 'reviewing') {
+    const listed = rows.find(row => row.id === selected)
+    const currentEditing = editingRef.current
+    if (
+      currentEditing?.id === selected &&
+      listed?.updated_at === currentEditing.updated_at &&
+      listed.status === currentEditing.status
+    ) {
       return
     }
     let current = true
@@ -402,7 +426,7 @@ export function Actions({ api, refresh }: { api: RemoteApi; refresh: number }): 
     return () => {
       current = false
     }
-  }, [alive, api, editing?.id, editing?.status, selected, setSelected, refresh, rows])
+  }, [alive, api, selected, setSelected, refresh, rows])
 
   return (
     <>
