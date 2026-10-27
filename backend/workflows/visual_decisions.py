@@ -1,6 +1,7 @@
 """伙伴在既有触发点选择影像或按需组合；成品回调只选播，不连续制作。"""
 
 import asyncio
+from datetime import timedelta
 from typing import Any, Literal
 
 from features.action_library.queries import list_actions
@@ -16,6 +17,7 @@ from features.visuals.queries import (
     list_visuals,
     presentation_state,
     prompt_presentation_snapshot,
+    recent_autonomous_failure_action_ids,
     visual_play_catalog,
 )
 from infrastructure.ai.prompt_engineer import call_llm_json
@@ -24,7 +26,7 @@ from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.api_ids import ResourceId
 from infrastructure.correlation import new_request_id
 from infrastructure.database import SESSION_LOCAL
-from infrastructure.text import resolve_prompt_text
+from infrastructure.text import resolve_prompt_text, utc_now
 from pydantic import BaseModel, ConfigDict, Field
 from runtime.task_supervisor import TASK_SUPERVISOR
 
@@ -64,6 +66,7 @@ For create, copy outfit_id, scene_id and action_id from the id fields in outfits
 
 _TASKS: dict[int, asyncio.Task[None]] = {}
 _INITIAL_LOCKS: dict[int, asyncio.Lock] = {}
+_VISUAL_FAILURE_BACKOFF = timedelta(minutes=15)
 
 
 async def evaluate_visuals(user_id: int, *, trigger: str, allow_create: bool) -> dict[str, object]:
@@ -82,10 +85,16 @@ async def evaluate_visuals(user_id: int, *, trigger: str, allow_create: bool) ->
     options = await visual_play_catalog(user_id, "user_return" if trigger == "user_return" else "periodic")
     jobs = await list_jobs(user_id)
     working = [job for job in jobs.jobs if job.state in {"queued", "running", "paused", "unknown"}]
+    failed_action_ids = (
+        await recent_autonomous_failure_action_ids(user_id, since=utc_now() - _VISUAL_FAILURE_BACKOFF)
+        if allow_create
+        else set()
+    )
     async with SESSION_LOCAL() as db:
         outfits = await ready_outfit_snapshots(db, user_id)
         scenes = (await list_scene_snapshots(db, user_id, ready_only=True, limit=50)).scenes
         actions = (await list_actions(db, user_id, status="approved", limit=50)).actions
+        actions = [action for action in actions if action.id not in failed_action_ids]
         recent = await load_recent_context_window(db, user_id)
     can_create = allow_create and not working and bool(outfits and scenes and actions)
     if not options and not can_create:

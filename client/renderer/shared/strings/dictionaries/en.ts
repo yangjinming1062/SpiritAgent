@@ -1867,6 +1867,7 @@ export const dict: Dictionary = {
     jobResume: 'Resume',
     jobRetry: 'Retry',
     jobCancel: 'Cancel',
+    jobCancelConfirm: 'Confirm cancellation',
     jobCommandFailed: "Couldn't run the creation command",
     cancelTitle: 'Cancel this creation?',
     currentMark: 'Currently shown',

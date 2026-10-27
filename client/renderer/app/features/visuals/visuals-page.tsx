@@ -169,7 +169,7 @@ export function VisualsPage(): React.JSX.Element {
       void confirmAction({
         title: t.cancelTitle,
         description: jobLabel(job),
-        confirmLabel: t.jobCancel,
+        confirmLabel: t.jobCancelConfirm,
         variant: 'destructive'
       }).then(confirmed => {
         if (confirmed) {

@@ -1,6 +1,6 @@
 """影像库的只读查询与对外视图装配；签名 URL 只在响应出口生成。"""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from infrastructure.assets.asset_store import client_asset_url, resolve_asset_reference
 from infrastructure.database import SESSION_LOCAL
@@ -288,6 +288,23 @@ async def list_jobs(
             next_cursor=str(rows[limit - 1]["id"]) if len(rows) > limit else None,
             limit=limit,
         )
+
+
+async def recent_autonomous_failure_action_ids(user_id: int, *, since: datetime) -> set[int]:
+    """返回退避期内自主制作失败过的动作，避免决策反复提交同一动作。"""
+
+    async with SESSION_LOCAL() as db:
+        rows = await db.scalars(
+            select(VisualJob.action_id).where(
+                VisualJob.user_id == user_id,
+                VisualJob.purpose == "create",
+                VisualJob.state == "failed",
+                VisualJob.finished_at >= since,
+                VisualJob.action_id.is_not(None),
+                VisualJob.checkpoint["source"].astext == "autonomous",
+            )
+        )
+        return {action_id for action_id in rows if action_id is not None}
 
 
 async def presentation_state(user_id: int) -> VisualPresentationView:

@@ -1780,6 +1780,7 @@ export const dict = {
     jobResume: '继续',
     jobRetry: '重试',
     jobCancel: '取消',
+    jobCancelConfirm: '确认取消',
     jobCommandFailed: '制作操作失败',
     cancelTitle: '取消这个制作？',
     currentMark: '当前呈现',
