@@ -244,6 +244,7 @@ _POLICY_DIAGNOSTIC_MESSAGES = tuple(
         r"(?:Your|The) (?:request|prompt) (?:was flagged by our safety system|violates our usage policies)\."
         r"(?:\s*Please (?:modify your (?:input|prompt) and (?:retry|try again)|try again with a different prompt)\.)?",
         r"Responses cannot be generated due to safety filters\.",
+        r"The request was rejected because it was considered high risk\.?",
         r"Request blocked due to safety violations(?: \(harmful content\))?\."
         r"(?:\s*Please modify your input and retry\.)?",
         r"The prompt contains sensitive words that violate Google's Generative AI Prohibited Use Policy\.",

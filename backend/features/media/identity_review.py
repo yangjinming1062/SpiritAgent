@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from typing import Literal
 
-from infrastructure.ai.error_classifier import LlmCallBlockedError
+from infrastructure.ai.error_classifier import FailoverReason, LlmCallBlockedError, classify_api_error
 from infrastructure.ai.llm_client import MissingLlmConfigError
 from infrastructure.ai.models import ModelModality
 from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, LlmJsonValidationError, call_llm_json, vision_chat
@@ -36,6 +36,7 @@ class ImageGoalReview(BaseModel):
 
     verdict: Literal["pass", "review", "fail"]
     reason: str = Field(min_length=1, max_length=400)
+    quality_verdict: Literal["pass", "review", "fail"] | None = None
 
 
 class _CharacterImageReview(BaseModel):
@@ -45,14 +46,17 @@ class _CharacterImageReview(BaseModel):
     identity_reason: str = Field(min_length=1, max_length=400)
     goal_verdict: Literal["pass", "review", "fail"]
     goal_reason: str = Field(min_length=1, max_length=400)
+    quality_verdict: Literal["pass", "review", "fail"]
+    quality_reason: str = Field(min_length=1, max_length=400)
 
 
 class ImageGoalReviewFailure(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    status: Literal["unavailable", "invalid"]
+    status: Literal["unavailable", "invalid", "blocked"]
     score: int | None = Field(default=None, strict=True, ge=0, le=100)
     verdict: Literal["pass", "review", "fail"] | None = None
+    quality_verdict: Literal["pass", "review", "fail"] | None = None
 
 
 @dataclass(frozen=True)
@@ -84,10 +88,11 @@ async def review_character_image_goal(
     environment_uri: str | None = None,
     identity_text: str = "",
     prepared_action_frame: bool = False,
+    previous_failure: ImageGoalReviewFailure | None = None,
     task: AiTaskKey,
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> CharacterImageReviewResult:
-    """同次审阅保留独立身份分与目标结论；第一张生成参考同时承担身份基准。"""
+    """按冻结身份检查候选；续审只补缺失内容，保留已有分数与结论。"""
     images = (
         reference_uri,
         *((secondary_uri,) if secondary_uri else ()),
@@ -112,11 +117,12 @@ async def review_character_image_goal(
         reference_roles += f"图 {len(images) - 1} 提供环境与光线，只核对环境，不参与角色身份评分。"
     diagnostics: list[LlmAttemptDiagnostic] = []
     original_seen = False
-    original_score: int | None = None
-    original_goal: str | None = None
+    original_score = previous_failure.score if previous_failure else None
+    original_goal = previous_failure.verdict if previous_failure else None
+    original_quality = previous_failure.quality_verdict if previous_failure else None
 
     def parse_output(value: object) -> _CharacterImageReview:
-        nonlocal original_seen, original_score, original_goal
+        nonlocal original_seen, original_score, original_goal, original_quality
         if not original_seen:
             original_seen = True
             # 无法解析的原文没有可保留的视觉决定，格式编辑不能补作判断。
@@ -125,16 +131,23 @@ async def review_character_image_goal(
                 dict,
             ):
                 score = value.get("score")
-                if type(score) is int and 0 <= score <= 100:
+                if type(score) is int and 0 <= score <= 100 and original_score is None:
                     original_score = score
                 goal = value.get("goal_verdict")
-                if isinstance(goal, str) and goal in ("pass", "review", "fail"):
+                if isinstance(goal, str) and goal in ("pass", "review", "fail") and original_goal is None:
                     original_goal = goal
-        if original_score is None or original_goal is None:
-            raise LlmJsonValidationError("missing_visual_decision", fields=("score", "goal_verdict"))
+                quality = value.get("quality_verdict")
+                if isinstance(quality, str) and quality in ("pass", "review", "fail") and original_quality is None:
+                    original_quality = quality
+        if original_score is None or original_goal is None or original_quality is None:
+            raise LlmJsonValidationError("missing_visual_decision", fields=("score", "goal_verdict", "quality_verdict"))
         result = _CharacterImageReview.model_validate(value)
-        if result.score != original_score or result.goal_verdict != original_goal:
-            raise LlmJsonValidationError("visual_decision_changed", fields=("score", "goal_verdict"))
+        if (
+            result.score != original_score
+            or result.goal_verdict != original_goal
+            or result.quality_verdict != original_quality
+        ):
+            raise LlmJsonValidationError("visual_decision_changed", fields=("score", "goal_verdict", "quality_verdict"))
         return result
 
     try:
@@ -156,13 +169,18 @@ async def review_character_image_goal(
                 "identity": identity_text,
                 "generation_prompt": generation_prompt,
                 "image_geometry": geometry,
+                "saved_decisions": {
+                    "score": original_score,
+                    "goal_verdict": original_goal,
+                    "quality_verdict": original_quality,
+                },
             },
             schema=_CharacterImageReview.model_json_schema(),
             schema_name="character_image_goal_review",
             parse_output=parse_output,
             repair_prompt=CHARACTER_IMAGE_GOAL_REVIEW_REPAIR,
             reference_images=images,
-            preserve_choices=("goal_verdict",),
+            preserve_choices=("goal_verdict", "quality_verdict"),
             before_call=before_submit,
             diagnostics=diagnostics,
         )
@@ -174,24 +192,34 @@ async def review_character_image_goal(
                 "identity_reason": result.identity_reason[:200],
                 "goal_verdict": result.goal_verdict,
                 "goal_reason": result.goal_reason[:200],
+                "quality_verdict": result.quality_verdict,
+                "quality_reason": result.quality_reason[:200],
             },
         )
-        return CharacterImageReviewResult(
-            result.score,
+        checks = (
             ImageGoalReview(verdict=result.goal_verdict, reason=result.goal_reason),
+            ImageGoalReview(verdict=result.quality_verdict, reason=result.quality_reason),
         )
+        goal = max(checks, key=lambda check: {"pass": 0, "review": 1, "fail": 2}[check.verdict])
+        goal.quality_verdict = result.quality_verdict
+        return CharacterImageReviewResult(result.score, goal)
     except LlmCallBlockedError:
         raise
-    except Exception:
+    except Exception as exc:
         logger.warning("character image goal review unavailable", extra={"user_id": user_id}, exc_info=True)
         response_seen = original_seen or any(item.response_status is not None for item in diagnostics)
         return CharacterImageReviewResult(
             original_score,
             None,
             ImageGoalReviewFailure(
-                status="invalid" if response_seen else "unavailable",
+                status="blocked"
+                if classify_api_error(exc).reason == FailoverReason.content_policy_blocked
+                else "invalid"
+                if response_seen
+                else "unavailable",
                 score=original_score,
                 verdict=original_goal,
+                quality_verdict=original_quality,
             ),
         )
 

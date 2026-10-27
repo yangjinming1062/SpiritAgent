@@ -59,7 +59,7 @@ from features.media.character_images import (
     ImageChainState,
     generate_character_images,
 )
-from features.media.identity_review import score_character_frames_with_references
+from features.media.identity_review import ImageGoalReviewFailure, score_character_frames_with_references
 from features.media.image_generation import ImageGenerationError, ImageReviewUnavailableError
 from features.media.video_queue.contracts import VideoQueueInfo, VideoQueueOwner, VideoQueueStoppedError
 from features.media.video_queue.service import (
@@ -75,11 +75,13 @@ from .creation import (
     begin_opening_repair,
     ensure_creation_plan,
     ensure_opening_repair,
+    identity_score_passed,
     opening_image_hash,
     opening_passed,
-    opening_repair_reference,
+    opening_reference_hash,
     opening_requirements,
     opening_requirements_hash,
+    read_visual_reference,
     review_existing_opening,
 )
 from .geometry import probe_visual_image, visual_aspect_matches, visual_aspect_ratio
@@ -253,6 +255,7 @@ def visual_progress_can_resume(progress: VisualJobProgress) -> bool:
         "material_rejected",
         "queue_stopped",
         "quality_failed",
+        "review_blocked",
     }:
         return False
     if visual_progress_has_video_work(progress):
@@ -350,10 +353,12 @@ async def _save_progress(
 
 
 async def _references(snapshot: ComboSnapshot) -> tuple[str, str]:
-    portrait = await asyncio.to_thread(read_valid_image_data_uri, snapshot.primary_reference_path)
-    outfit = await asyncio.to_thread(read_valid_image_data_uri, snapshot.outfit.path)
-    if not portrait or not outfit:
-        raise VisualStateError("组合的参考图片无法读取")
+    portrait = await asyncio.to_thread(
+        read_visual_reference,
+        snapshot.primary_reference_path,
+        snapshot.primary_reference_hash,
+    )
+    outfit = await asyncio.to_thread(read_visual_reference, snapshot.outfit.path, snapshot.outfit.content_hash)
     return portrait, outfit
 
 
@@ -366,6 +371,15 @@ def _alignment_source_hash(snapshot: ComboSnapshot) -> str:
         "identity_reference_role": snapshot.identity_reference_role,
     }
     return hashlib.sha256(json.dumps(source, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def _raise_image_review_failure(exc: ImageGenerationError, state: ImageChainState) -> None:
+    if isinstance(exc, ImageReviewUnavailableError):
+        raise VisualCreationError(str(exc), "review_unavailable") from exc
+    if state.stop_reason == "goal_review_blocked":
+        raise VisualCreationError(str(exc), "review_blocked") from exc
+    if state.stop_reason == "goal_review_invalid":
+        raise VisualCreationError(str(exc), "review_invalid") from exc
 
 
 async def _aligned_outfit_reference(
@@ -406,19 +420,28 @@ async def _aligned_outfit_reference(
         await _require_active_job(user_id, job_id, progress.generation_id)
 
     await save_alignment(state)
-    path = await align_character_reference(
-        user_id,
-        outfit_uri,
-        snapshot.identity,
-        snapshot.outfit.description,
-        task=AiTaskKey.visuals,
-        identity_reference=identity_uri,
-        storage_directory=directory,
-        state=state,
-        save_progress=save_alignment,
-        before_submit=before_submit,
-        selection=progress.image_selection,
-    )
+    try:
+        path = await align_character_reference(
+            user_id,
+            outfit_uri,
+            snapshot.identity,
+            snapshot.outfit.description,
+            task=AiTaskKey.visuals,
+            identity_reference=identity_uri,
+            storage_directory=directory,
+            state=state,
+            save_progress=save_alignment,
+            before_submit=before_submit,
+            selection=progress.image_selection,
+        )
+    except ImageGenerationError as exc:
+        _raise_image_review_failure(exc, state)
+        if state.phase == "complete" and state.stop_reason == "exhausted":
+            raise VisualCreationError(
+                "本次角色参考未通过检查，可以重试准备角色参考",
+                "reference_unsuitable",
+            ) from exc
+        raise
     progress.aligned_outfit_path = path
     resolved = resolve_asset_reference(path)
     progress.aligned_outfit_hash = (
@@ -553,6 +576,21 @@ async def resolve_visual_video_plan(
     )
 
 
+def _review_basis_stale(inputs: CharacterImageInput, progress: VisualJobProgress, snapshot: ComboSnapshot) -> bool:
+    """旧进度按编辑底图或派生造型图评分过；换冻结参考基准后，旧结论不能约束新检查。"""
+    if inputs.image_edit:
+        return (
+            inputs.identity_reference == inputs.reference_image
+            or inputs.identity_secondary_reference is None
+            or not (inputs.review_environment_reference_image or inputs.environment_reference_image)
+        )
+    return (
+        snapshot.identity_reference_role == "fullbody"
+        and progress.aligned_outfit_path is not None
+        and inputs.identity_secondary_reference is None
+    )
+
+
 async def _prepare_pose(
     user_id: int,
     job: VisualJob,
@@ -567,6 +605,8 @@ async def _prepare_pose(
         await _require_active_job(user_id, job.id, progress.generation_id)
 
     previous = progress.previous_pose_path
+    identity, identity_outfit = await _references(snapshot)
+    environment = await asyncio.to_thread(read_visual_reference, snapshot.scene.path, snapshot.scene.content_hash)
     progress.frame_width, progress.frame_height = progress.target_width, progress.target_height
     progress.aspect_ratio = _delivery_aspect(progress)
     editing = bool(previous)
@@ -581,7 +621,7 @@ async def _prepare_pose(
             aspect_ratio=progress.aspect_ratio,
         )
     else:
-        portrait, outfit = await _references(snapshot)
+        portrait, outfit = identity, identity_outfit
         if snapshot.identity_reference_role == "fullbody" and not progress.image_chain_json:
             outfit = await _aligned_outfit_reference(
                 user_id,
@@ -589,14 +629,12 @@ async def _prepare_pose(
                 snapshot,
                 progress,
                 directory,
-                portrait,
-                outfit,
+                identity,
+                identity_outfit,
             )
         prompt = VISUAL_POSE_IMAGE_TEMPLATE.format(
             references=visual_source_reference_prompt(snapshot.identity_reference_role, include_scene=True),
             pose=opening_requirements(job, progress),
-            environment=snapshot.scene.description,
-            outfit=snapshot.outfit.description,
             identity=render_character_identity(snapshot.identity),
             aspect_ratio=progress.aspect_ratio,
         )
@@ -605,6 +643,23 @@ async def _prepare_pose(
         if progress.image_chain_json
         else ImageChainState()
     )
+    reference_mode = snapshot.identity_reference_mode
+    if isinstance(state.inputs, CharacterImageInput):
+        if _review_basis_stale(state.inputs, progress, snapshot):
+            state.goal_reviews.clear()
+            state.goal_review_failures = {
+                candidate.path: ImageGoalReviewFailure(status="invalid") for candidate in state.candidates
+            }
+            for candidate in state.candidates:
+                candidate.score, candidate.evaluated = None, False
+            if state.candidates and not state.pending_urls and not visual_progress_has_unknown_submission(progress):
+                state.phase, state.stop_reason = "evaluating", "goal_review_invalid"
+            progress.opening_review = None
+        state.inputs.identity_reference = snapshot.primary_reference_path
+        state.inputs.identity_secondary_reference = snapshot.outfit.path
+        state.inputs.review_environment_reference_image = snapshot.scene.path
+        state.inputs.identity_reference_mode = reference_mode
+        state.inputs.identity_text = render_character_identity(snapshot.identity)
 
     async def save_image(value: ImageChainState) -> None:
         progress.image_chain_json = value.model_dump_json()
@@ -617,14 +672,12 @@ async def _prepare_pose(
             storage_directory=directory,
             reference_image=portrait,
             secondary_reference_image=outfit,
-            environment_reference_image=await asyncio.to_thread(read_valid_image_data_uri, snapshot.scene.path)
-            if not editing
-            else None,
-            identity_reference=portrait,
-            identity_reference_mode=(
-                "primary" if editing or snapshot.identity_reference_role == "fullbody" else "portrait_and_outfit"
-            ),
-            identity_text="" if editing else render_character_identity(snapshot.identity),
+            environment_reference_image=environment if not editing else None,
+            review_environment_reference_image=environment,
+            identity_reference=identity,
+            identity_secondary_reference=identity_outfit,
+            identity_reference_mode=reference_mode,
+            identity_text=render_character_identity(snapshot.identity),
             image_edit=editing,
             goal_review="required",
             size=f"{progress.target_width}x{progress.target_height}",
@@ -642,10 +695,7 @@ async def _prepare_pose(
     except ImageGenerationError as exc:
         if exc.result_unknown:
             raise
-        if isinstance(exc, ImageReviewUnavailableError):
-            raise VisualCreationError(str(exc), "review_unavailable") from exc
-        if state.stop_reason == "goal_review_invalid":
-            raise VisualCreationError(str(exc), "review_invalid") from exc
+        _raise_image_review_failure(exc, state)
         reviewed = [candidate for candidate in state.candidates if candidate.evaluated and candidate.score is not None]
         if not reviewed:
             raise
@@ -659,7 +709,7 @@ async def _prepare_pose(
             job,
             progress,
             reason=goal.reason if goal else "候选画面未通过身份或活动要求检查",
-            reference_path=opening_repair_reference(progress, state, identity_safe.path if identity_safe else None),
+            reference_path=identity_safe.path if identity_safe else None,
         )
         await _save_progress(user_id, job.id, progress, stage="repairing", repair_count=job.repair_count)
         await _prepare_opening(user_id, job, snapshot, progress, directory)
@@ -691,8 +741,10 @@ async def _prepare_pose(
         progress.opening_review = OpeningReview(
             image_hash=await asyncio.to_thread(opening_image_hash, progress.pose_path),
             requirements_hash=opening_requirements_hash(job, progress),
+            reference_hash=opening_reference_hash(snapshot),
             score=candidate.score,
             verdict=goal.verdict,
+            quality_verdict=goal.quality_verdict,
             reason=goal.reason,
         )
     await _save_progress(user_id, job.id, progress, stage="image")
@@ -722,6 +774,8 @@ async def _prepare_opening(
     await _save_progress(user_id, job.id, progress, stage="checking")
     if opening_passed(review):
         return
+    if review.status == "blocked":
+        raise VisualCreationError("图片检查未通过服务审核，请调整制作要求或参考形象后重试", "review_blocked")
     if review.status != "complete":
         raise VisualCreationError(
             "画面检查暂未完成，可以稍后继续" if review.status == "unavailable" else "画面检查未完成，可以重新准备画面",
@@ -731,11 +785,7 @@ async def _prepare_opening(
         job,
         progress,
         reason=review.reason,
-        reference_path=opening_repair_reference(
-            progress,
-            ImageChainState.model_validate_json(progress.image_chain_json) if progress.image_chain_json else None,
-            progress.pose_path if review.score is not None and review.score >= MEDIA_IDENTITY_ACCEPT_SCORE else None,
-        ),
+        reference_path=progress.pose_path if identity_score_passed(review) else None,
     )
     await _save_progress(user_id, job.id, progress, stage="repairing", repair_count=job.repair_count)
     await _prepare_opening(user_id, job, snapshot, progress, directory)

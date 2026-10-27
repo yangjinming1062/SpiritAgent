@@ -76,6 +76,14 @@ class ComboSnapshot(BaseModel):
     def primary_reference_path(self) -> str:
         return self.identity_path if self.identity_reference_role == "fullbody" else self.portrait_path
 
+    @property
+    def primary_reference_hash(self) -> str:
+        return self.identity_hash if self.identity_reference_role == "fullbody" else self.portrait_hash
+
+    @property
+    def identity_reference_mode(self) -> Literal["primary", "portrait_and_outfit"]:
+        return "primary" if self.identity_reference_role == "fullbody" else "portrait_and_outfit"
+
 
 class VisualCreationPlan(BaseModel):
     """具体活动计划：活动、起始画面、必要道具与运动要求。"""
@@ -89,15 +97,17 @@ class VisualCreationPlan(BaseModel):
 
 
 class OpeningReview(BaseModel):
-    """起始画面的检查结论，绑定具体图片与要求哈希。"""
+    """起始画面的检查结论，绑定图片、参考与要求摘要。"""
 
     model_config = ConfigDict(extra="forbid")
 
     image_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     requirements_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-    status: Literal["complete", "unavailable", "invalid"] = "complete"
+    reference_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    status: Literal["complete", "unavailable", "invalid", "blocked"] = "complete"
     score: int | None = Field(default=None, ge=0, le=100, strict=True)
     verdict: Literal["pass", "review", "fail"] | None = None
+    quality_verdict: Literal["pass", "review", "fail"] | None = None
     reason: str = ""
 
 

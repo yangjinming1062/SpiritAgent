@@ -16,7 +16,7 @@ from features.jobs.service import bind_job_assets, bind_job_request, requested_j
 from features.life.schemas import LifeStepRequest
 from features.life.use_cases import presentation_revision_matches, require_step_submission
 
-from .creation import begin_opening_repair
+from .creation import begin_opening_repair, identity_score_passed
 from .generation import (
     cancel_visual_job,
     pause_visual_job,
@@ -237,8 +237,8 @@ async def regenerate_visual(
             aspect_ratio=visual_aspect_ratio(snapshot.target_width, snapshot.target_height),
             duration_seconds=snapshot.action.duration_seconds,
             action_description=_action_description(snapshot),
-            creation_plan=None if changed_general else snapshot.plan,
-            previous_pose_path=None if reuse or source_image is None else source_image,
+            creation_plan=None if item.media_kind == "image" or changed_general else snapshot.plan,
+            previous_pose_path=source_image if item.media_kind == "video" and not reuse else None,
             pose_path=source_image if reuse else "",
             image_confirmed=reuse,
             regenerate_image=False,
@@ -512,6 +512,8 @@ async def resume_job(user_id: int, job_id: int) -> VisualJobView:
             raise VisualStateError("这个工作项已结束，请按需重新发起制作")
         if progress is None:
             raise VisualStateError("制作草稿已失效")
+        if progress.failure_reason == "review_blocked":
+            raise VisualStateError("图片检查未通过服务审核，请调整制作要求或参考形象后重新制作")
         if visual_progress_has_unknown_submission(progress):
             raise VisualStateError("供应商提交结果尚未确认，请先核对结果或放弃本次制作")
         if progress.failure_reason == "quality_failed":
@@ -575,11 +577,17 @@ async def retry_job(user_id: int, job_id: int) -> VisualJobView:
         if progress.failure_reason == "activity_unsupported":
             raise VisualStateError("这个活动当前无法制作，请调整要求后重新发起制作")
         new_image = job.state == "failed" and (
-            progress.failure_reason in {"image_unsuitable", "review_invalid"}
+            progress.failure_reason in {"image_unsuitable", "reference_unsuitable"}
             or bool(progress.image_only and visual_image_chain_exhausted(progress))
         )
         if new_image:
-            reference = progress.pose_path or progress.previous_pose_path
+            if progress.failure_reason == "reference_unsuitable":
+                progress.reference_alignment_chain_json = None
+                progress.reference_alignment_source_hash = None
+                progress.aligned_outfit_path = None
+                progress.aligned_outfit_hash = None
+            review = progress.opening_review
+            reference = progress.pose_path if identity_score_passed(review) else None
             begin_opening_repair(
                 job,
                 progress,

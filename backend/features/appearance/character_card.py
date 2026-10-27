@@ -127,8 +127,11 @@ async def character_snapshot_is_current(db: AsyncSession, user_id: int, snapshot
 def render_character_identity(snapshot: CharacterCardSnapshot | None) -> str:
     if snapshot is None:
         return ""
+    features = {key: value for key, value in snapshot.overrides.model_dump(exclude_none=True).items() if value}
+    if not features:
+        return ""
     return CHARACTER_IDENTITY_TEMPLATE.format(
-        features=json.dumps(snapshot.features.model_dump(), ensure_ascii=False),
+        features=json.dumps(features, ensure_ascii=False),
     )
 
 

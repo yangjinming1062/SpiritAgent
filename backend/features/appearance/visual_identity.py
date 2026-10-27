@@ -75,7 +75,9 @@ async def load_self_visual_context(
         if avatar is None:
             raise AvatarSourceUnreadableError("角色形象缺失")
         seed_path = avatar.seed_fullbody_url
-        role: CharacterReferenceRole = "fullbody" if presentation.visual_path else presentation.identity_reference_role
+        role: CharacterReferenceRole = (
+            "fullbody" if override or presentation.visual_path else presentation.identity_reference_role
+        )
         identity_path = seed_path if role == "fullbody" else avatar.asset_url
         outfit_path, outfit_description = "", ""
         if not override:
@@ -108,7 +110,11 @@ def build_self_image_prompt(plan: SelfVisualPlan, prompt: str, *, has_outfit_ref
     parts = [
         SELF_IMAGE_REFERENCE_TEMPLATE.format(
             reference="图 1 全身身份图" if fullbody else "图 1 头像" if has_outfit_reference else "头像参考图",
-            reference_roles=CHARACTER_APPEARANCE_FULLBODY_REFERENCES if fullbody else SELF_IMAGE_PORTRAIT_REFERENCES,
+            reference_roles=(
+                CHARACTER_APPEARANCE_FULLBODY_REFERENCES if has_outfit_reference else SELF_VIDEO_FULLBODY_REFERENCE
+            )
+            if fullbody
+            else SELF_IMAGE_PORTRAIT_REFERENCES,
             outfit=SELF_IMAGE_OUTFIT_DESCRIPTION.format(outfit=outfit)
             if outfit and not has_outfit_reference
             else ("" if has_outfit_reference else SELF_IMAGE_CURRENT_OUTFIT),

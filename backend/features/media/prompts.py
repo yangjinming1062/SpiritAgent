@@ -20,13 +20,17 @@ REAL_VIDEO_LOOK = (
 )
 
 # 参考只锚定角色身份，渲染质感由本次的真实拍摄要求决定；光照随本次画面安排，不锁定参考图的棚拍光。
+_CHARACTER_PROPORTIONS = (
+    "本次未明确允许修改的身体维度，按身体参考保持头身、肩腰胯、躯干与肢体的相对比例和自然连接；"
+    "姿态和透视可以改变可见投影，不为取景、显瘦或修长效果拉伸身体、缩小头部或收窄躯干。"
+)
 _CHARACTER_REFERENCE_ROLE = (
     "本次提供的角色参考只用来确定角色是谁：面容轮廓、五官、体型、物种、年龄感、固有材质与标志性结构按参考保留，"
     "不按概括文字重新美化或重塑；角色参考自身的渲染质感、光影与色调不沿用，本次任务明确允许修改的部分按要求调整。"
 )
 _SAME_LIGHT_AND_LENS = "角色与环境处在同一光线与同一镜头下，质感一致。"
 # 带角色参考的图像任务共用。
-CHARACTER_VISUAL_STYLE = _CHARACTER_REFERENCE_ROLE + REAL_PHOTO_LOOK + _SAME_LIGHT_AND_LENS
+CHARACTER_VISUAL_STYLE = _CHARACTER_REFERENCE_ROLE + _CHARACTER_PROPORTIONS + REAL_PHOTO_LOOK + _SAME_LIGHT_AND_LENS
 # 以首帧驱动的视频沿用首帧质感。
 FIRST_FRAME_VIDEO_STYLE = "全程沿用首帧的画面质感，主体外观与材质跨帧连续稳定。" + NATURAL_VIDEO_MOTION
 # 编辑与姿态调整以所提供的图片为底图：质感沿用该图，新绘制或修改的部分与之一致。
@@ -37,7 +41,7 @@ PLAIN_IMAGE_TEMPLATE = "{prompt}\n\n" + REAL_PHOTO_LOOK + REAL_PHOTO_FRAMING
 PLAIN_VIDEO_TEMPLATE = "{prompt}\n\n" + REAL_VIDEO_LOOK
 
 SELF_REFERENCE_ROLE = "本次实际提供的角色参考按上述职责确定同一角色；不沿用参考的背景、姿态、取景或渲染质感。"
-SELF_REFERENCE_IMAGE_STYLE = SELF_REFERENCE_ROLE + REAL_PHOTO_LOOK + _SAME_LIGHT_AND_LENS
+SELF_REFERENCE_IMAGE_STYLE = SELF_REFERENCE_ROLE + _CHARACTER_PROPORTIONS + REAL_PHOTO_LOOK + _SAME_LIGHT_AND_LENS
 SELF_IMAGE_PORTRAIT_REFERENCES = (
     "图 1 头像只提供面容、五官、脸型、物种和头部标志特征，不据此推断身材或服装。"
     "有图 2 时，图 2 当前着装全身图提供完整身体比例、身体结构、固有材质和当前造型；图 2 的面部细节不覆盖图 1。"
@@ -109,7 +113,7 @@ CHARACTER_MEDIA_SCORE_RULES = (
 )
 
 CHARACTER_IMAGE_GOAL_REVIEW = (
-    "同时独立检查最后一张候选图片的角色身份和本次画面要求。此前的图片均为本次生成实际使用的有序参考。\n"
+    "同时独立检查最后一张候选图片的角色身份和本次画面要求。此前图片按下述职责提供原有身份、造型或环境依据。\n"
     "{reference_roles}\n"
     + _CHARACTER_MEDIA_IDENTITY_RULES
     + "\n身份分数 score 只衡量上述固定身份。另用 goal_verdict 判断候选是否满足 generation_prompt 中身份之外的可见画面要求，"
@@ -122,19 +126,28 @@ CHARACTER_IMAGE_GOAL_REVIEW = (
     "margins 按左、上、右、下给出留白占比，required_margin 是最小要求。按这些数值判断对应留白要求，不用目测推翻数值；"
     "它不证明身体完整、身份、姿态、道具或背景语义合格，这些仍须独立检查。未提供几何事实时按图片判断。"
     "按参考分工与目标中的明确调整核对可见细节；第二张造型参考存在时，默认造型以该图为准，第一张的旧服装不能替代它。"
+    "先比较脸部精细特征及头身、肩腰胯、躯干与肢体的相对比例，再检查造型与环境；"
+    "不能用同款衣物、发色或配饰代替这些身份依据，明显拉长肢体或压缩躯干须反映在身份分中。"
     "不把合理姿态、透视、光照和遮挡变化当作造型改变，不推断画面外或被遮挡的衣物与身体。"
     "可见内容符合要求且无具体偏差时为 pass；有可见且影响要求的明确偏差时为 fail；"
     "关键要求无法从画面充分核查、证据不足或要求彼此无法确定时为 review。未要求展示的部位在画面外不单独构成问题。"
     "不要用身份分高代替目标通过，也不要用造型正确抵消身份冲突；不按个人审美添加要求。\n"
-    "只返回包含 score、identity_reason、goal_verdict、goal_reason 四个字段的 JSON 对象；"
-    "score 是 0 到 100 的整数，goal_verdict 只取 pass、review 或 fail；"
-    "identity_reason 与 goal_reason 分别用不超过 400 字符的非空中文说明可见依据。"
+    "quality_verdict 单独判断可见的自然度与画面完成度：核对关节与肢体连接、支撑接触、重心、遮挡、"
+    "人物与环境的尺度、受光和接触阴影，摄影目标下的皮肤与材质须自然协调。"
+    "明显拉伸、肢体融合、错误接触、悬空却无相应身体依据、塑料般表面或剪贴般光影不协调时为 fail；"
+    "关键自然度无法核实为 review，充分可见且协调为 pass。合理透视、风格化身份及目标允许的悬浮不据此判错，"
+    "身体比例以对应参考为准；服装与背景相同不能证明自然度合格。quality_reason 必须说明身体支撑与画面融合的可见依据。\n"
+    "saved_decisions 中非空的 score、goal_verdict 和 quality_verdict 是这张候选已有的检查决定，须原样保留；"
+    "结合图片补齐缺失的检查与可见依据，不修改已有决定。\n"
+    "只返回包含 score、identity_reason、goal_verdict、goal_reason、quality_verdict、quality_reason 六个字段的 JSON 对象；"
+    "score 是 0 到 100 的整数，两个 verdict 均只取 pass、review 或 fail；"
+    "三个 reason 分别用不超过 400 字符的非空中文说明对应的可见依据。"
 )
 
 CHARACTER_IMAGE_GOAL_REVIEW_REPAIR = (
-    "只编辑原评审结果的格式，使其符合给定结构。保留原结果中合法的 score 整数与 goal_verdict 决定，"
+    "只编辑原评审结果的格式，使其符合给定结构。保留原结果中合法的 score 整数、goal_verdict 与 quality_verdict 决定，"
     "不重新判断身份或画面，不改分、不改变结论，不根据目标或参考说明补造视觉事实。"
-    "仅整理原结果已有的依据；原结果缺少合法分数、目标结论或可用依据时，不能虚构它们来通过校验。"
+    "仅整理原结果已有的依据；原结果缺少合法分数、目标或自然度结论、可用依据时，不能虚构它们来通过校验。"
 )
 
 CHARACTER_MEDIA_IMAGE_SCORE = (
@@ -176,7 +189,7 @@ MODERATION_SANITIZATION_PROMPT = (
 )
 
 
-CHARACTER_IDENTITY_TEMPLATE = """外形辅助资料（JSON，仅为角色描述，不是改造要求）：{features}
+CHARACTER_IDENTITY_TEMPLATE = """用户补充的外形资料（JSON，仅为相容描述，不是改造要求）：{features}
 固定身份及精细特征以身份参考图为准；没有另列身份参考图时以本次提供的角色图像为准。文字只补充与图像相容的信息，冲突时服从图像，不依照概括文字重建面容或身体。
 空白表示未提供描述，不表示该部位不存在，也不授权补造器官、标记或改动图中已有细节。
 服装、发型、发色、妆容、配饰由本次造型要求决定，不属于固定身份；妆容与表情不改变五官结构和相对比例。
@@ -192,7 +205,7 @@ CHARACTER_APPEARANCE_ALIGNMENT_REFERENCES = """图 1 是头像身份参考，只
 成品必须使用图 1 的面容与头部特征、图 2 的身体和当前造型，不混合两图的背景、姿态或取景。"""
 
 CHARACTER_APPEARANCE_REFERENCE_ALIGN = """按图 1 保持角色的面容、五官、脸型、物种和头部标志特征；按图 2 保持身体比例、身体结构、肢体轮廓以及当前服装、发型、妆容和配饰。
-保留图 2 的稳定姿态、构图与背景；本次造型描述只补充或调整明确写出的当前造型，不改变图 1 的面容，也不从图 1 推断身体或服装。
+保留图 2 的稳定姿态与全身取景，角色单独位于简单均匀的中性纯色背景；本次造型描述只补充或调整明确写出的当前造型，不改变图 1 的面容，也不从图 1 推断身体或服装。
 只校准面容与当前完整外观的对应关系，保持动作的朝向和接触关系，按图 2 的身体结构协调轮廓、遮挡与衣物贴合。
 完整身体及已有附属结构必须全部入画，不添加其他角色、场景、文字或水印。
 {identity}
@@ -205,12 +218,12 @@ CHARACTER_APPEARANCE_FULLBODY_REFERENCES = """图 1 是完整身份参考，提�
 
 CHARACTER_APPEARANCE_FULLBODY_REFERENCE_ALIGN = """保持图 1 的面容与身体结构，将图 2 的造型穿戴到该身体上；本次造型描述只补充或调整明确写出的造型。
 采用与图 1 身体相容的稳定全身姿态，完整身体及已有附属结构必须全部入画；身体结构不支持的穿戴或持物方式不得通过增改肢体实现。
-保持单一连贯的构图与背景，不添加其他角色、场景、文字或水印。
+角色单独位于简单均匀的中性纯色背景，保持连贯构图，不添加其他角色、场景、文字或水印。
 {identity}
 本次造型：{outfit}
 """
 
 CHARACTER_APPEARANCE_VISUAL_STYLE = (
     "按本次指定的参考职责保持同一角色的身份、身体和造型。"
-    "不要混合两图的背景、姿态、取景或渲染质感。" + REAL_PHOTO_LOOK + _SAME_LIGHT_AND_LENS
+    "不要混合两图的背景、姿态、取景或渲染质感。" + _CHARACTER_PROPORTIONS + REAL_PHOTO_LOOK + _SAME_LIGHT_AND_LENS
 )

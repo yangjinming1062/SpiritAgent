@@ -60,6 +60,13 @@ from features.media.scene_review import review_scene_image
 
 logger = get_logger(__name__)
 
+# 评审失败状态到链停机原因的映射；键须与 ImageGoalReviewFailure.status 一致。
+_GOAL_FAILURE_STOP_REASONS = {
+    "unavailable": "goal_review_unavailable",
+    "invalid": "goal_review_invalid",
+    "blocked": "goal_review_blocked",
+}
+
 # 2% 容差覆盖 local 1792x1024 与 16:9 的差异，并拒绝 5:3。
 _SIZE_ASPECT_TOLERANCE = 0.02
 
@@ -77,6 +84,8 @@ class CharacterImageInput(BaseModel):
     environment_reference_image: str | None = None
     image_edit: bool = False
     identity_reference: str
+    identity_secondary_reference: str | None = None
+    review_environment_reference_image: str | None = None
     identity_reference_mode: Literal["primary", "portrait_and_outfit"] = "portrait_and_outfit"
     goal_review: Literal["none", "required"] = "none"
     identity_text: str = ""
@@ -108,6 +117,8 @@ _REFERENCE_FIELDS: dict[type, tuple[tuple[str, str], ...]] = {
         ("secondary_reference_image", "ref2"),
         ("environment_reference_image", "environment"),
         ("identity_reference", "identity"),
+        ("identity_secondary_reference", "identity2"),
+        ("review_environment_reference_image", "review_environment"),
     ),
 }
 
@@ -126,27 +137,34 @@ class ImageChainState(MediaChainState):
     def _goal_enabled(self) -> bool:
         return isinstance(self.inputs, CharacterImageInput) and self.inputs.goal_review == "required"
 
+    def _needs_goal_review(self, candidate: MediaCandidate) -> bool:
+        """续审只补缺失决定：尚无结论、仅有失败记录，或旧结论缺自然度判定的候选仍需检查。"""
+        goal = self.goal_reviews.get(candidate.path)
+        if goal is not None:
+            return goal.verdict == "pass" and goal.quality_verdict is None
+        return candidate.evaluated or candidate.path in self.goal_review_failures
+
     def can_retry_goal_review(self) -> bool:
         return (
             self._goal_enabled()
-            and self.phase == "evaluating"
-            and self.stop_reason == "goal_review_unavailable"
-            and any(
-                not candidate.evaluated
-                and (failure := self.goal_review_failures.get(candidate.path)) is not None
-                and failure.status == "unavailable"
-                and failure.score is None
-                and failure.verdict is None
-                and candidate.score is None
-                for candidate in self.candidates
-            )
+            and self.phase in {"evaluating", "complete"}
+            and any(self._needs_goal_review(candidate) for candidate in self.candidates)
+            and self.stop_reason
+            in {
+                "accepted",
+                "exhausted",
+                "goal_review_unavailable",
+                "goal_review_invalid",
+                "score_unavailable",
+                "",
+            }
         )
 
     def _passes_review(self, candidate: MediaCandidate | None) -> bool:
         if candidate is None or candidate.score is None or candidate.score < MEDIA_IDENTITY_ACCEPT_SCORE:
             return False
         goal = self.goal_reviews.get(candidate.path)
-        return goal is not None and goal.verdict == "pass"
+        return goal is not None and goal.verdict == "pass" and goal.quality_verdict == "pass"
 
     def selected_origin(self, slot: int = 0) -> GenerationOrigin | None:
         candidate = self.best(slot)
@@ -382,17 +400,20 @@ async def _complete_images(
         )
         raise ImageReviewUnavailableError(message)
     if not selected:
-        if (
+        blocked = state.stop_reason == "goal_review_blocked"
+        if blocked or (
             isinstance(state.inputs, CharacterImageInput)
             and state.inputs.goal_review == "required"
             and state.candidates
         ):
             state.finish(state.inputs.n)
             await _save_progress(state, writer)
-            if state.stop_reason == "goal_review_invalid":
-                raise ImageGenerationError("图片检查结果不完整，已取得的视觉决定已保留，不能重新判定")
             if state.stop_reason != "result_unknown":
-                raise ImageGenerationError("图片未通过身份与画面要求检查，本次结果未交付")
+                raise ImageGenerationError(
+                    "图片检查未通过服务审核，请调整制作要求或参考形象后重试"
+                    if blocked
+                    else "图片未通过身份与画面要求检查，本次结果未交付"
+                )
         if state.stop_reason == "result_unknown":
             raise ImageGenerationError(
                 "图片生成结果未知，请核对供应商任务后再决定是否重做",
@@ -435,6 +456,8 @@ async def generate_character_images(
     environment_reference_image: str | None = None,
     image_edit: bool = False,
     identity_text: str = "",
+    identity_secondary_reference: str | None = None,
+    review_environment_reference_image: str | None = None,
     identity_reference_mode: Literal["primary", "portrait_and_outfit"] = "portrait_and_outfit",
     goal_review: Literal["none", "required"] = "none",
     state: ImageChainState | None = None,
@@ -467,8 +490,8 @@ async def generate_character_images(
         if image_edit and (secondary_reference_image or environment_reference_image):
             raise ImageGenerationError("图像编辑不支持附加参考图，请改用重新生成")
         if goal_review == "required":
-            if not reference_image or not identity_reference or reference_image != identity_reference:
-                raise ImageGenerationError("画面要求检查须使用非空的第一张生成参考作为身份基准")
+            if not reference_image or not identity_reference:
+                raise ImageGenerationError("画面要求检查需要生成参考及冻结身份参考")
             try:
                 await require_image_goal_review_config(user_id, task)
             except MissingLlmConfigError as exc:
@@ -483,6 +506,8 @@ async def generate_character_images(
             environment_reference_image=environment_reference_image,
             image_edit=image_edit,
             identity_reference=identity_reference,
+            identity_secondary_reference=identity_secondary_reference,
+            review_environment_reference_image=review_environment_reference_image,
             identity_reference_mode=identity_reference_mode,
             goal_review=goal_review,
             identity_text=identity_text,
@@ -579,8 +604,6 @@ async def generate_character_images(
         raise ImageGenerationError("图片任务类型与角色生成不符")
     if state.inputs.identity_reference_mode != identity_reference_mode:
         raise ImageGenerationError("图片任务的身份参考职责已变化")
-    if state.inputs.goal_review != "none" and state.inputs.reference_image != state.inputs.identity_reference:
-        raise ImageGenerationError("画面要求检查须使用第一张生成参考作为身份基准")
     return await _run_image_chain(
         state,
         user_id=user_id,
@@ -690,6 +713,22 @@ async def _run_image_chain(
     if review_only:
         state.phase = "evaluating"
         state.stop_reason = ""
+        for candidate in state.candidates:
+            goal = state.goal_reviews.get(candidate.path)
+            if goal is not None and goal.verdict == "pass" and goal.quality_verdict is None:
+                state.goal_review_failures[candidate.path] = ImageGoalReviewFailure(
+                    status="invalid",
+                    score=candidate.score,
+                    verdict=goal.verdict,
+                )
+                state.goal_reviews.pop(candidate.path)
+            elif goal is None and candidate.evaluated and candidate.path not in state.goal_review_failures:
+                state.goal_review_failures[candidate.path] = ImageGoalReviewFailure(
+                    status="invalid",
+                    score=candidate.score,
+                )
+            if candidate.path in state.goal_review_failures and candidate.path not in state.goal_reviews:
+                candidate.evaluated = False
     if state.phase == "submitting":
         state.stop_reason = "result_unknown"
         await _save_progress(state, save_progress)
@@ -722,8 +761,18 @@ async def _run_image_chain(
         await _materialize(inputs.secondary_reference_image) if isinstance(inputs, CharacterImageInput) else None
     )
     identity_uri = await _materialize(inputs.identity_reference) if isinstance(inputs, CharacterImageInput) else None
+    identity_secondary_uri = (
+        await _materialize(inputs.identity_secondary_reference or inputs.secondary_reference_image)
+        if isinstance(inputs, CharacterImageInput)
+        else None
+    )
     environment_uri = (
         await _materialize(inputs.environment_reference_image) if isinstance(inputs, CharacterImageInput) else None
+    )
+    review_environment_uri = (
+        await _materialize(inputs.review_environment_reference_image or inputs.environment_reference_image)
+        if isinstance(inputs, CharacterImageInput)
+        else None
     )
     try:
         while True:
@@ -832,14 +881,15 @@ async def _run_image_chain(
                         elif inputs.goal_review == "required":
                             review = await review_character_image_goal(
                                 user_id,
-                                reference_uri or "",
+                                identity_uri or "",
                                 uri,
-                                secondary_uri=secondary_uri,
-                                environment_uri=environment_uri,
+                                secondary_uri=identity_secondary_uri,
+                                environment_uri=review_environment_uri,
                                 generation_prompt=inputs.prompt,
                                 identity_reference_mode=inputs.identity_reference_mode,
                                 identity_text=inputs.identity_text,
                                 prepared_action_frame=inputs.prepare_action_frame,
+                                previous_failure=state.goal_review_failures.get(candidate.path),
                                 task=task,
                                 before_submit=before_submit,
                             )
@@ -851,12 +901,7 @@ async def _run_image_chain(
                                 failure = review.failure or ImageGoalReviewFailure(status="invalid", score=score)
                                 state.goal_review_failures[candidate.path] = failure
                                 candidate.score = score
-                                if failure.status == "unavailable":
-                                    state.stop_reason = "goal_review_unavailable"
-                                    await _save_progress(state, save_progress)
-                                    return await _complete_images(state, save_progress)
-                                candidate.evaluated = True
-                                state.stop_reason = "goal_review_invalid"
+                                state.stop_reason = _GOAL_FAILURE_STOP_REASONS[failure.status]
                                 await _save_progress(state, save_progress)
                                 return await _complete_images(state, save_progress)
                         elif secondary_uri and inputs.identity_reference_mode == "portrait_and_outfit":
