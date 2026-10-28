@@ -2,6 +2,10 @@ import { atom } from 'nanostores'
 
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 
+import type { ApiSchemas } from '../../../../shared/api.generated'
+
+type StageLayout = ApiSchemas['StageCompositionLayout']
+
 /** app 将统一舞台计划投影到此端口；character 不依赖成品库。 */
 export interface WindowActorMedia {
   key: string
@@ -11,6 +15,7 @@ export interface WindowActorMedia {
   height: number
   loop: boolean
   baseKey: string | null
+  layout: StageLayout
   body: {
     footAnchor: [number, number] | null
     headAnchor: [number, number] | null

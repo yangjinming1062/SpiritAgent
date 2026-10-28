@@ -1,6 +1,7 @@
 """影像库的只读查询与对外视图装配；签名 URL 只在响应出口生成。"""
 
 from datetime import datetime, timedelta
+from typing import Protocol
 
 from infrastructure.assets.asset_store import client_asset_url, resolve_asset_reference
 from infrastructure.database import SESSION_LOCAL
@@ -13,6 +14,7 @@ from features.companion.proactive_runtime import get_presentation_snapshot, get_
 from features.jobs.service import requested_job_id
 
 from .client_assets import client_body
+from .geometry import visual_aspect_matches
 from .models import VisualItem, VisualJob, VisualPresentation, VisualVersion
 from .repository import (
     VisualNotFoundError,
@@ -55,6 +57,82 @@ from .schemas import (
 )
 
 _ASSET_KINDS: tuple[str, ...] = ("actor", "scene", "cinematic")
+
+
+def _source_matches_stage(
+    source: dict,
+    *,
+    outfit: ComboMaterialRef | None,
+    identity_hash: str | None,
+) -> bool:
+    """只让当前身份/造型的伙伴成品进入舞台清单；环境成品不绑定伙伴。"""
+
+    if source.get("kind") == "scene":
+        return True
+    return bool(
+        outfit is not None
+        and identity_hash
+        and source.get("identity_hash") == identity_hash
+        and (source.get("outfit") or {}).get("content_hash") == outfit.content_hash
+    )
+
+
+def _actor_body_ready(body: dict | None) -> bool:
+    if not body:
+        return False
+    return all(_existing(body.get(field)) is not None for field in ("mask_path", "first_frame_path", "last_frame_path"))
+
+
+def _fits_target_area(
+    width: int,
+    height: int,
+    *,
+    asset_kind: str,
+    target_width: int | None,
+    target_height: int | None,
+) -> bool:
+    """过滤明显不适合目标画幅的完整场景；透明主体与环境成品不按此收窄。"""
+
+    if asset_kind != "cinematic" or not target_width or not target_height:
+        return True
+    return visual_aspect_matches(width, height, target_width, target_height)
+
+
+class StageCatalogRow(Protocol):
+    """两个舞台目录查询共用的行形状；只声明准入过滤读取的字段。"""
+
+    asset_kind: str
+    clip_kind: str | None
+    width: int | None
+    height: int | None
+    body_json: dict | None
+
+    @property
+    def source(self) -> dict | None: ...
+
+
+def _stage_ready(
+    row: StageCatalogRow,
+    *,
+    outfit: ComboMaterialRef | None,
+    identity_hash: str | None,
+    target_width: int | None = None,
+    target_height: int | None = None,
+) -> bool:
+    """舞台目录共同准入：身份造型一致、画幅可用；actor 另要求合成数据齐全。"""
+
+    source = row.source or {}
+    if not _source_matches_stage(source, outfit=outfit, identity_hash=identity_hash):
+        return False
+    if not _fits_target_area(
+        row.width, row.height, asset_kind=row.asset_kind, target_width=target_width, target_height=target_height
+    ):
+        return False
+    if row.asset_kind == "actor":
+        body = row.body_json or {}
+        if not _actor_body_ready(body) or (row.clip_kind != "once" and not body.get("continuity_key")):
+            return False
+    return True
 
 
 async def creation_request(user_id: int, request_id: str) -> tuple[VisualJobView, VisualSnapshot] | None:
@@ -577,6 +655,14 @@ async def ambient_catalog(db: AsyncSession, state: VisualPresentation, *, limit:
         if _existing(row.media_path) is None:
             continue
         source = row.source or {}
+        if not _stage_ready(
+            row,
+            outfit=outfit,
+            identity_hash=identity_hash,
+            target_width=state.target_width,
+            target_height=state.target_height,
+        ):
+            continue
         action = source.get("action") if source.get("kind") in ("actor", "cinematic") else None
         action = action or {}
         entries.append(
@@ -808,6 +894,8 @@ async def visual_play_catalog(user_id: int, trigger: str) -> list[VisualPlayOpti
     """按动作触发条件过滤可播影像；播放方式与条件来自冻结输入的动作引用。"""
 
     async with SESSION_LOCAL() as db:
+        state = await db.scalar(select(VisualPresentation).where(VisualPresentation.user_id == user_id))
+        outfit, identity_hash = frozen_stage_reference(state) if state is not None else (None, None)
         rows = await db.execute(
             select(
                 VisualItem.id,
@@ -815,6 +903,9 @@ async def visual_play_catalog(user_id: int, trigger: str) -> list[VisualPlayOpti
                 VisualItem.asset_kind,
                 VisualItem.clip_kind,
                 VisualVersion.media_path,
+                VisualVersion.width,
+                VisualVersion.height,
+                VisualVersion.body_json,
                 VisualVersion.description,
                 VisualVersion.outfit_description,
                 VisualVersion.snapshot_json["source"]["scene"]["description"].astext.label("scene_description"),
@@ -832,6 +923,14 @@ async def visual_play_catalog(user_id: int, trigger: str) -> list[VisualPlayOpti
         options = []
         for row in rows:
             if resolve_asset_reference(row.media_path) is None:
+                continue
+            if not _stage_ready(
+                row,
+                outfit=outfit,
+                identity_hash=identity_hash,
+                target_width=state.target_width if state is not None else None,
+                target_height=state.target_height if state is not None else None,
+            ):
                 continue
             source = row.source
             action = source.get("action") if source.get("kind") in ("actor", "cinematic") else None

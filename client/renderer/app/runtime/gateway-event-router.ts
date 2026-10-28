@@ -8,7 +8,12 @@ import { onJournalEvent } from '@/modules/diary'
 import { handleLifeUpdated } from '@/modules/life'
 import { onPostEvent } from '@/modules/posts'
 import { onSceneEvent } from '@/modules/scene'
-import { enqueueInteraction, enqueueInteractionForward, handleVisualEvent, refreshActionGroups } from '@/modules/visuals'
+import {
+  enqueueInteraction,
+  enqueueInteractionForward,
+  handleVisualEvent,
+  refreshActionGroups
+} from '@/modules/visuals'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { $auth } from '@/shared/store/auth'
 import { $gateway } from '@/shared/store/gateway'

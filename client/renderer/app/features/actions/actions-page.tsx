@@ -8,6 +8,7 @@ import {
   type ActionDefinition,
   actionGroups,
   type ActionLibraryGroup,
+  type ActionMediaEntry,
   createAction,
   deleteAction,
   loadMoreActions,
@@ -98,6 +99,49 @@ function actionBody(action: ActionDefinition) {
   }
 }
 
+function ActionMediaPanel({
+  entries,
+  error,
+  loading,
+  t,
+  visualsLabels
+}: {
+  entries: ActionMediaEntry[]
+  error: boolean
+  loading: boolean
+  t: ReturnType<typeof useStrings>['actions']
+  visualsLabels: ReturnType<typeof useStrings>['visuals']
+}): React.JSX.Element {
+  if (loading) {
+    return <LoadingBlock label={t.mediaLoading} />
+  }
+
+  if (error) {
+    return <p className="text-[11px] text-danger-fg">{t.mediaLoadFailed}</p>
+  }
+
+  if (entries.length === 0) {
+    return <p className="text-[11px] text-faint">{t.mediaEmpty}</p>
+  }
+
+  return (
+    <div className="rounded-lg border border-line-hairline bg-fill-faint p-2">
+      <p className="mb-1 text-[11px] font-medium text-muted">{t.mediaTitle}</p>
+      <div className="flex flex-col gap-1">
+        {entries.map(entry => (
+          <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted" key={entry.visual_id}>
+            <span>{visualsLabels.assetKindLabels[entry.asset_kind]}</span>
+            <Badge>{entry.media_kind === 'video' ? visualsLabels.mediaKindVideo : visualsLabels.mediaKindImage}</Badge>
+            <Badge>{entry.clip_kind === 'loop' ? t.clipLoop : t.clipOnce}</Badge>
+            <span>{entry.outfit_name || t.mediaOutfitUnknown}</span>
+            <span>v{entry.version}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function ActionsPage(): React.JSX.Element {
   const auth = useStore($auth)
 
@@ -124,6 +168,14 @@ function ActionsPageContent(): React.JSX.Element {
 
   const [busy, setBusy] = useState(false)
   const [clipBusyId, setClipBusyId] = useState<string | null>(null)
+
+  const [mediaPanel, setMediaPanel] = useState<{
+    expandedId: string | null
+    loadingId: string | null
+    errorId: string | null
+    rows: Record<string, ActionMediaEntry[]>
+  }>({ expandedId: null, loadingId: null, errorId: null, rows: {} })
+
   const defaultOutfit = useStore($presentedOutfit)
   const begin = useAsyncGuard()
 
@@ -162,6 +214,43 @@ function ActionsPageContent(): React.JSX.Element {
       .finally(() => {
         if (scope?.() && live()) {
           setClipBusyId(null)
+        }
+      })
+  }
+
+  const toggleMedia = (action: ActionDefinition): void => {
+    if (mediaPanel.expandedId === action.id) {
+      setMediaPanel(current => ({ ...current, expandedId: null }))
+
+      return
+    }
+
+    if (mediaPanel.rows[action.id]) {
+      setMediaPanel(current => ({ ...current, expandedId: action.id }))
+
+      return
+    }
+
+    const scope = captureAuthScope()
+    setMediaPanel(current => ({ ...current, expandedId: action.id, loadingId: action.id, errorId: null }))
+    void visualsApi
+      .listActionMedia(action.id)
+      .then(response => {
+        if (scope?.()) {
+          setMediaPanel(current => ({
+            ...current,
+            rows: { ...current.rows, [action.id]: response.media },
+            loadingId: current.loadingId === action.id ? null : current.loadingId
+          }))
+        }
+      })
+      .catch(() => {
+        if (scope?.()) {
+          setMediaPanel(current => ({
+            ...current,
+            errorId: action.id,
+            loadingId: current.loadingId === action.id ? null : current.loadingId
+          }))
         }
       })
   }
@@ -477,6 +566,18 @@ function ActionsPageContent(): React.JSX.Element {
                 )}
                 <button
                   className={BTN_SUBTLE}
+                  disabled={busy || mediaPanel.loadingId !== null}
+                  onClick={() => toggleMedia(action)}
+                  type="button"
+                >
+                  {mediaPanel.loadingId === action.id
+                    ? t.mediaLoading
+                    : mediaPanel.expandedId === action.id
+                      ? t.mediaHide
+                      : t.mediaShow}
+                </button>
+                <button
+                  className={BTN_SUBTLE}
                   disabled={busy || action.status === 'pending' || action.status === 'reviewing'}
                   onClick={() =>
                     setEditing(
@@ -519,6 +620,15 @@ function ActionsPageContent(): React.JSX.Element {
                   </button>
                 )}
               </div>
+              {mediaPanel.expandedId === action.id && (
+                <ActionMediaPanel
+                  entries={mediaPanel.rows[action.id] ?? []}
+                  error={mediaPanel.errorId === action.id}
+                  loading={mediaPanel.loadingId === action.id}
+                  t={t}
+                  visualsLabels={dict.visuals}
+                />
+              )}
             </div>
           ))}
         </SettingCard>

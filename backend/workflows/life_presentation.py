@@ -13,6 +13,7 @@ from features.appearance.character_card import CharacterCardNotReadyError, requi
 from features.appearance.queries import avatar_snapshot, initial_outfit_snapshot
 from features.companion.motion import get_motion_level
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
+from features.life.queries import active_pursuit_title
 from features.life.schemas import LifeStateView
 from features.life.use_cases import mark_presentation_evaluated, pending_presentation_users, read_state
 from features.scenes.snapshots import list_scene_snapshots
@@ -199,15 +200,16 @@ async def record_stage_intent(user_id: int, life: LifeStateView) -> None:
     """把有意义的生活变化投影为舞台意图；呈现系统只读取，不改生活事实。"""
 
     scene_title = life.current_scene.get("title", "") if isinstance(life.current_scene, dict) else ""
-    intent = StageIntent(
-        activity=life.current_activity or "",
-        scene_title=scene_title,
-        mood=life.mood or "",
-        activity_kind=life.activity_kind or "",
-        visual_tags=_KIND_TAGS.get(life.activity_kind or "", []),
-        life_revision=life.presentation_revision,
-    )
     async with SESSION_LOCAL() as db:
+        intent = StageIntent(
+            activity=life.current_activity or "",
+            scene_title=scene_title,
+            mood=life.mood or "",
+            focus=await active_pursuit_title(db, user_id, life.active_pursuit_id),
+            activity_kind=life.activity_kind or "",
+            visual_tags=_KIND_TAGS.get(life.activity_kind or "", []),
+            life_revision=life.presentation_revision,
+        )
         await persist_intent(db, user_id, intent)
         await db.commit()
 

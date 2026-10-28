@@ -9,6 +9,7 @@ import type {
   ActionDefinitionRequest,
   ActionLibraryGroup,
   ActionListResponse,
+  ActionMediaListResponse,
   ActionUpdateRequest,
   PlaybackReceiptKind,
   VisualDetail,
@@ -77,6 +78,8 @@ export const visualsApi = {
     requestResource('companion_visuals.list_visuals', { query }),
   detail: (visualId: string): Promise<VisualDetail> =>
     requestResource('companion_visuals.get_visual', { path: { visual_id: visualId } }),
+  listActionMedia: (actionId: string): Promise<ActionMediaListResponse> =>
+    requestResource('companion_visuals.list_action_media', { path: { action_id: actionId }, query: { limit: 30 } }),
   /** 制作透明主体动画：身份 + 造型 + 动作，不绑定环境；桌面与手机共用同一契约。 */
   createActorClip: (body: Omit<ApiSchemas['ActorClipRequest'], 'request_id'>): Promise<VisualJob> =>
     submitCreation(JSON.stringify(['actor', body]), request_id =>

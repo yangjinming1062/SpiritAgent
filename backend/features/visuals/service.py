@@ -62,6 +62,7 @@ from .schemas import (
     PlaybackStatus,
     PresentedVisual,
     StageComposition,
+    StageCompositionLayout,
     StagePresentation,
     VisualCreationPlan,
     VisualCreationSource,
@@ -163,6 +164,13 @@ def _refresh_stage_composition(state: VisualPresentation, item: PresentedVisual)
         if source.kind in ("actor", "cinematic")
         else (static.identity_hash if static else current.identity_hash if current else None)
     )
+    layout = (
+        current.layout
+        if current is not None
+        else StageCompositionLayout(layer_order=["cinematic", "effects"])
+        if item.asset_kind == "cinematic"
+        else StageCompositionLayout()
+    )
     if item.asset_kind == "cinematic":
         state.composition_json = StageComposition(
             mode="cinematic",
@@ -171,6 +179,7 @@ def _refresh_stage_composition(state: VisualPresentation, item: PresentedVisual)
             scene_material=scene,
             identity_path=identity_path,
             identity_hash=identity_hash,
+            layout=layout,
         ).model_dump(mode="json")
         return
     layered = current if current is not None and current.mode == "layered" else None
@@ -190,6 +199,7 @@ def _refresh_stage_composition(state: VisualPresentation, item: PresentedVisual)
         scene_material=scene,
         identity_path=identity_path,
         identity_hash=identity_hash,
+        layout=layout,
     ).model_dump(mode="json")
 
 

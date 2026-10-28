@@ -68,7 +68,7 @@ function startSignalListener(): void {
         enqueueInteraction(signal.kind)
       }
     } catch {
-      // 非宿主写入的旧格式或损坏值忽略。
+      // 非宿主写入的未知格式或损坏值忽略。
     }
   }
 
@@ -107,14 +107,38 @@ function stageReady(): boolean {
 function pickAmbient(catalog: CatalogEntry[]): CatalogEntry | null {
   const loops = loopEntries(catalog)
 
-  if (loops.length <= 1) {
-    return loops[0] ?? null
+  const intent = presentation?.intent
+
+  const context = intent
+    ? [intent.activity, intent.scene_title, intent.mood, intent.focus, intent.activity_kind, ...intent.visual_tags]
+        .join(' ')
+        .toLocaleLowerCase()
+    : ''
+
+  const matches = (condition: string): boolean => {
+    const tokens = intentKeywords(condition.toLocaleLowerCase())
+
+    return tokens.length > 0 && tokens.some(token => context.includes(token))
+  }
+
+  const compatible = intent ? loops.filter(entry => !entry.avoid_when.some(matches)) : loops
+  const candidatesPool = compatible.length > 0 ? compatible : loops
+
+  if (candidatesPool.length <= 1) {
+    return candidatesPool[0] ?? null
   }
 
   const current = $ambientLoopChoice.get()
-  const candidates = loops.filter(entry => entry.visual_id !== current?.visualId)
+  const candidates = candidatesPool.filter(entry => entry.visual_id !== current?.visualId)
   const subtle = motionSubtle()
-  const weights = candidates.map(entry => (subtle && entry.preset_key !== 'idle' ? 0.5 : 1))
+
+  const weights = candidates.map(entry => {
+    const levelWeight = subtle && entry.preset_key !== 'idle' ? 0.5 : 1
+    const contextWeight = intent && entry.use_when.some(matches) ? 2 : 1
+
+    return levelWeight * contextWeight
+  })
+
   const total = weights.reduce((sum, weight) => sum + weight, 0)
   let cursor = Math.random() * total
 
@@ -195,7 +219,6 @@ function evaluateIntent(): void {
     return
   }
 
-  performedIntentRevision = intent.life_revision
   const catalog = presentation?.ambient_catalog ?? []
   const keywords = intentKeywords(intent.activity.trim())
   const sceneTitle = intent.scene_title.trim()
@@ -209,7 +232,8 @@ function evaluateIntent(): void {
 
     // 活动关键词与画面/动作描述的重叠度；场景标题单独计一分。
     const overlap = Math.max(overlapScore(entry.description, keywords), overlapScore(entry.action_name, keywords))
-    const score = overlap >= 2 ? 2 : sceneTitle && entry.description.includes(sceneTitle) ? 1 : 0
+    const sceneMatch = sceneTitle && entry.description.includes(sceneTitle) ? 1 : 0
+    const score = Math.min(2, overlap + sceneMatch)
 
     if (score > bestScore) {
       best = entry
@@ -219,6 +243,7 @@ function evaluateIntent(): void {
 
   // 至少两个关键词命中（或关键词命中加场景一致）才切持续画面；否则保留当前画面，不把无关视频当成生活。
   if (best && bestScore >= 2) {
+    performedIntentRevision = intent.life_revision
     perform(best.visual_id)
   }
 }
@@ -233,12 +258,16 @@ function scheduleAmbient(): void {
     return
   }
 
+  const current = resolveAmbientLoop(presentation)
+  const duration = current?.duration_ms ?? AMBIENT_INTERVAL_MS
+  // 轮换间隔与当前循环时长联动（一个循环的 1–3 倍，下限 90s），避免长视频播一半就被切换。
+  const interval = Math.max(AMBIENT_INTERVAL_MS, Math.min(3 * AMBIENT_INTERVAL_MS, duration))
   ambientTimer = setTimeout(
     () => {
       ambientTimer = null
       rotateAmbient()
     },
-    AMBIENT_INTERVAL_MS + Math.random() * AMBIENT_JITTER_MS
+    interval + Math.random() * AMBIENT_JITTER_MS
   )
 }
 

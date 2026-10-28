@@ -128,19 +128,27 @@ export function CharacterStage({
     const height = video.videoHeight
     const bounds = value.body?.bodyBounds ?? [0, 0, width, height]
     const [left, top, right, bottom] = bounds
+    const [safeLeft, safeTop, safeRight, safeBottom] = value.layout.safe_area
+    const safeWidth = size.width * Math.max(0, safeRight - safeLeft)
+    const safeHeight = size.height * Math.max(0, safeBottom - safeTop)
+    const [positionX, positionY] = value.layout.actor_position
 
     const scale = contentAlign
       ? Math.min(size.width / Math.max(1, right - left), size.height / Math.max(1, bottom - top))
-      : Math.min(size.width / width, size.height / height)
+      : value.layout.fit === 'cover'
+        ? Math.max(safeWidth / width, safeHeight / height)
+        : Math.min(safeWidth / width, safeHeight / height)
 
     const offsetX =
       contentAlign === 'left'
         ? -left * scale
         : contentAlign === 'right'
           ? size.width - right * scale
-          : (size.width - width * scale) / 2
+          : size.width * safeLeft + safeWidth * positionX - width * scale * positionX
 
-    const offsetY = contentAlign ? size.height - bottom * scale : (size.height - height * scale) / 2
+    const offsetY = contentAlign
+      ? size.height - bottom * scale
+      : size.height * safeTop + safeHeight * positionY - height * scale * positionY
 
     for (const element of [first.current, second.current]) {
       if (element) {

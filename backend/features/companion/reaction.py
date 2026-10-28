@@ -6,13 +6,12 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, ValidationError
-
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import resolve_prompt_text, utc_now
+from pydantic import BaseModel, ConfigDict, ValidationError
 from runtime.events.emit import emit_ws_event
 
 from features.companion.prompt_runtime import load_companion_prompt_context, run_prompt_json

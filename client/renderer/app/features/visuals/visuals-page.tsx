@@ -64,6 +64,13 @@ function formatDuration(durationMs: number | null | undefined, seconds: (value: 
   return durationMs && durationMs > 0 ? seconds(Math.round(durationMs / 1000)) : null
 }
 
+function assetKindLabel(
+  assetKind: VisualItem['asset_kind'],
+  labels: ReturnType<typeof useStrings>['visuals']['assetKindLabels']
+): string {
+  return labels[assetKind]
+}
+
 /** 影像页：浏览与预览组合成品、查看与操作制作工作项、重做；库内预览不产生播放回执。 */
 export function VisualsPage(): React.JSX.Element {
   const dict = useStrings()
@@ -399,6 +406,7 @@ function VisualCard({
       <div className="flex flex-wrap items-center gap-1">
         <span className="truncate text-xs font-medium text-strong">{item.title}</span>
         <Badge>{item.media_kind === 'video' ? t.mediaKindVideo : t.mediaKindImage}</Badge>
+        <Badge>{assetKindLabel(item.asset_kind, t.assetKindLabels)}</Badge>
         {current && <Badge tone="accent">{t.currentMark}</Badge>}
       </div>
       {sourceSummary && <p className="truncate text-[11px] text-faint">{sourceSummary}</p>}
@@ -436,6 +444,7 @@ function VisualDetailPanel({
         <div className="flex flex-wrap items-center gap-2">
           <h3 className="text-sm font-medium text-strong">{detail.title}</h3>
           <Badge>{detail.media_kind === 'video' ? t.mediaKindVideo : t.mediaKindImage}</Badge>
+          <Badge>{assetKindLabel(detail.asset_kind, t.assetKindLabels)}</Badge>
           {current && <Badge tone="accent">{t.currentMark}</Badge>}
         </div>
         <div className="overflow-hidden rounded-xl bg-fill-faint">

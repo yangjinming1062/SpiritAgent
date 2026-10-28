@@ -1,3 +1,5 @@
+import type { VisualAssetKind } from '../../../../../shared/protocol'
+
 import type { Dictionary } from './zh'
 
 export const dict: Dictionary = {
@@ -1834,6 +1836,13 @@ export const dict: Dictionary = {
     makeClipBusy: 'Submitting…',
     makeClipDone: 'Animated clip creation started. Track it in the visuals page.',
     makeClipFailed: 'Could not start animated clip creation',
+    mediaShow: 'View created media',
+    mediaHide: 'Hide created media',
+    mediaLoading: 'Loading media…',
+    mediaLoadFailed: "Couldn't load created media",
+    mediaEmpty: 'No media implementation exists for this action yet.',
+    mediaTitle: 'Created media implementations',
+    mediaOutfitUnknown: 'Outfit unavailable',
     statusLabels: {
       pending: 'Pending review',
       reviewing: 'Under review',
@@ -1846,14 +1855,18 @@ export const dict: Dictionary = {
 
   visuals: {
     title: 'Visuals',
-    intro:
-      'Image and video results composed from wardrobe, environment and action materials, together with their creation status.',
+    intro: 'Playable transparent character, environment and full scene media, together with their creation status.',
     searchAria: 'Search visuals',
     searchPlaceholder: 'Search names or descriptions',
     mediaKindLabel: 'Media type',
     mediaKindAll: 'All',
     mediaKindImage: 'Images',
     mediaKindVideo: 'Videos',
+    assetKindLabels: {
+      actor: 'Transparent character',
+      scene: 'Environment',
+      cinematic: 'Full scene'
+    } as Record<VisualAssetKind, string>,
     sourceLabel: 'Source material',
     sourcePlaceholder: 'Filter by wardrobe, environment or action name',
     sourceOutfit: 'Wardrobe',
@@ -1862,7 +1875,8 @@ export const dict: Dictionary = {
     materialReady: (outfits: number, scenes: number, actions: number) =>
       `Materials ready: wardrobe ${outfits} · environments ${scenes} · actions ${actions}`,
     emptyTitle: 'No visuals yet',
-    emptyHint: 'Once wardrobe, environment and action materials are ready, ask your companion to compose one.',
+    emptyHint:
+      'Once the needed identity, wardrobe, environment or action material is ready, ask your companion to create the visual.',
     emptySearch: 'No visuals match this search.',
     contactCompanion: 'Ask the companion to create one',
     loading: 'Loading visuals…',

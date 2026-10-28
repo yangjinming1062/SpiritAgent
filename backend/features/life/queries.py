@@ -42,6 +42,22 @@ def state_view(row: LifeState) -> LifeStateView:
     )
 
 
+async def active_pursuit_title(db: AsyncSession, user_id: int, pursuit_id: int | None) -> str:
+    """读取当前生活事项标题，供跨域呈现投影使用；不存在时保持空值。"""
+
+    if pursuit_id is None:
+        return ""
+    return (
+        await db.scalar(
+            select(LifePursuit.title).where(
+                LifePursuit.user_id == user_id,
+                LifePursuit.id == pursuit_id,
+            )
+        )
+        or ""
+    )
+
+
 def empty_state_view(user_id: int) -> LifeStateView:
     """返回尚未落库账户的初始生活状态。"""
 

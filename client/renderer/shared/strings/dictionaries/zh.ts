@@ -1,4 +1,4 @@
-import type { ActionReviewStatus } from '../../../../../shared/protocol'
+import type { ActionReviewStatus, VisualAssetKind } from '../../../../../shared/protocol'
 import { uiCopy } from '../../../../../shared/ui-copy'
 
 export const dict = {
@@ -1747,6 +1747,13 @@ export const dict = {
     makeClipBusy: '制作受理中…',
     makeClipDone: '已开始制作动作视频，可在影像页查看进度。',
     makeClipFailed: '制作动作视频失败',
+    mediaShow: '查看已制作成品',
+    mediaHide: '收起已制作成品',
+    mediaLoading: '加载成品中…',
+    mediaLoadFailed: '成品列表加载失败',
+    mediaEmpty: '还没有这个动作的成品实现。',
+    mediaTitle: '已制作的媒体实现',
+    mediaOutfitUnknown: '未记录造型',
     statusLabels: {
       pending: '待评审',
       reviewing: '评审中',
@@ -1759,13 +1766,18 @@ export const dict = {
 
   visuals: {
     title: '影像',
-    intro: '衣柜、环境与动作组合制作的图片或视频成品，以及它们的制作状态。',
+    intro: '可播放的透明主体、环境媒体与完整场景成品，以及它们的制作状态。',
     searchAria: '搜索影像',
     searchPlaceholder: '搜索名称或描述',
     mediaKindLabel: '媒体类型',
     mediaKindAll: '全部',
     mediaKindImage: '图片',
     mediaKindVideo: '视频',
+    assetKindLabels: {
+      actor: '透明主体',
+      scene: '环境媒体',
+      cinematic: '完整场景'
+    } as Record<VisualAssetKind, string>,
     sourceLabel: '来源素材',
     sourcePlaceholder: '按衣柜、环境或动作名称筛选',
     sourceOutfit: '衣柜',
@@ -1774,7 +1786,7 @@ export const dict = {
     materialReady: (outfits: number, scenes: number, actions: number) =>
       `已备素材：衣柜 ${outfits} · 环境 ${scenes} · 动作 ${actions}`,
     emptyTitle: '还没有影像成品',
-    emptyHint: '衣柜、环境与动作素材齐全后，可以请伙伴组合制作。',
+    emptyHint: '准备好身份、造型、环境或动作素材后，可以请伙伴制作对应的视觉成品。',
     emptySearch: '没有找到匹配的影像。',
     contactCompanion: '联系伙伴制作',
     loading: '加载影像中…',

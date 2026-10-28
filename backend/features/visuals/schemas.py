@@ -407,6 +407,34 @@ class ActorClipRef(BaseModel):
     version: int = Field(ge=1)
 
 
+StageLayerName = Literal["scene", "actor", "cinematic", "effects"]
+StageFit = Literal["contain", "cover"]
+
+
+class StageCompositionLayout(BaseModel):
+    """舞台组合的呈现几何；不包含生活事实。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    layer_order: list[StageLayerName] = Field(
+        default_factory=lambda: ["scene", "actor", "effects"], min_length=1, max_length=4
+    )
+    fit: StageFit = "contain"
+    actor_position: tuple[float, float] = (0.5, 1.0)
+    safe_area: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0)
+
+    @model_validator(mode="after")
+    def valid_geometry(self) -> "StageCompositionLayout":
+        if len(set(self.layer_order)) != len(self.layer_order):
+            raise ValueError("舞台图层顺序不能重复")
+        if not all(0 <= value <= 1 for value in self.actor_position):
+            raise ValueError("主体位置必须在安全区域比例范围内")
+        left, top, right, bottom = self.safe_area
+        if not (0 <= left < right <= 1 and 0 <= top < bottom <= 1):
+            raise ValueError("安全区域必须是有效的归一化矩形")
+        return self
+
+
 class StageComposition(BaseModel):
     """当前有效的基础画面：分层组合或完整影像，二选一。
 
@@ -425,6 +453,7 @@ class StageComposition(BaseModel):
     scene_material: SceneMediaRef | None = None
     identity_path: str | None = None
     identity_hash: str | None = None
+    layout: StageCompositionLayout
     # 各层媒体投影；由查询按引用版本填充，桌面与窗口共用同一份数据。
     media: StageCompositionMedia | None = None
 

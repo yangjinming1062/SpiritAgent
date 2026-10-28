@@ -21,13 +21,22 @@ export {
   resolveAmbientLoop
 } from './director'
 export { $ambientLoopChoice } from './director'
-export { $stagePlan, deriveStagePlan, type StageActorPlan, type StagePlan, type StageScenePlan } from './stage-plan'
+export {
+  $stagePlan,
+  deriveStagePlan,
+  type StageActorPlan,
+  type StageLayout,
+  type StagePlan,
+  type StageScenePlan
+} from './stage-plan'
 export type {
   ActionClipKind,
   ActionDefinition,
   ActionDefinitionRequest,
   ActionLibraryGroup,
   ActionListResponse,
+  ActionMediaEntry,
+  ActionMediaListResponse,
   ActionReviewStatus,
   ActionUpdateRequest,
   PlaybackReceiptKind,

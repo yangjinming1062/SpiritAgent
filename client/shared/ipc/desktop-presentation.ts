@@ -52,6 +52,23 @@ export interface DesktopMediaReference {
   url: string
 }
 
+export type DesktopStageLayer = 'scene' | 'actor' | 'cinematic' | 'effects'
+
+export interface DesktopStageLayout {
+  fit: 'contain' | 'cover'
+  actorPosition: [number, number]
+  safeArea: [number, number, number, number]
+  layerOrder: DesktopStageLayer[]
+}
+
+/** 服务器未下发 layout 时的兜底；与后端 StageCompositionLayout 默认值一致。 */
+export const DEFAULT_STAGE_LAYOUT: DesktopStageLayout = {
+  fit: 'contain',
+  actorPosition: [0.5, 1],
+  safeArea: [0, 0, 1, 1],
+  layerOrder: ['scene', 'actor', 'effects']
+}
+
 export interface DesktopMediaBytes {
   bytes: Uint8Array
   mime: string
@@ -65,6 +82,7 @@ export interface DesktopBackgroundRequest {
   /** 分层主体；video 此时仅用于独立环境，完整影像不叠加主体。 */
   actor: DesktopMediaReference | null
   actorBaseKey: string | null
+  layout: DesktopStageLayout
   playId: string | null
   playTarget: 'background' | 'actor'
   /** 成品身份：稳定 ID + 成品版本 + 呈现代次，签名 URL 不参与识别。 */

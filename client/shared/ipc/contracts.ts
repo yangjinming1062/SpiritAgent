@@ -26,6 +26,7 @@ import type {
 export {
   APP_PAGES,
   COMPANION_SECTIONS,
+  DEFAULT_STAGE_LAYOUT,
   normalizeAppNavigation,
   SETTINGS_SECTIONS,
   SETTINGS_TABS
@@ -40,6 +41,8 @@ export type {
   DesktopBackgroundRequest,
   DesktopMediaBytes,
   DesktopMediaReference,
+  DesktopStageLayer,
+  DesktopStageLayout,
   DesktopTrayLayout,
   DockCatalog,
   DockCatalogItem,

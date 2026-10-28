@@ -324,6 +324,14 @@ export function useDesktopVisualWallpaper(): void {
       ? claimed
       : null
 
+  // 同一成品的新播放请求应重新尝试完整场景。失败标记只针对上一次
+  // 播放，不能让后续手动或导演重试永久继承分层降级。
+  useEffect(() => {
+    if (activeCommand?.asset_kind === 'cinematic') {
+      setFailedCinematic(null)
+    }
+  }, [activeCommand?.asset_kind, activeCommand?.play_id])
+
   useEffect(() => {
     if (claimed && (!active || !authSessionId || !activeCommand)) {
       recordReceipt(claimed.play_id, 'failed', 'Playback interrupted')
@@ -417,6 +425,12 @@ export function useDesktopVisualWallpaper(): void {
         (!layered && cinematicKey ? `render:cinematic:${cinematicKey}` : null),
       playTarget: activeCommand?.asset_kind === 'actor' ? 'actor' : 'background',
       actorBaseKey: stagePlan.actor ? `${stagePlan.actor.visualId}:${stagePlan.actor.version}` : null,
+      layout: {
+        layerOrder: stagePlan.layout.layer_order,
+        fit: stagePlan.layout.fit,
+        actorPosition: stagePlan.layout.actor_position,
+        safeArea: stagePlan.layout.safe_area
+      },
       visualId: backgroundId,
       visualVersion: backgroundVersion,
       actorVisualId: layered ? (layerActor?.visualId ?? null) : null,

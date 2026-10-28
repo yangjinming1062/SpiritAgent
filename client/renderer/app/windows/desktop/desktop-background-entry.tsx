@@ -7,7 +7,13 @@ import { ambientPhaseFilter } from '@/shared/lib/day-phase'
 import { createStageVideoLayer } from '@/shared/lib/stage-video-layer'
 import { backgroundMedia } from '@/shared/platform/desktop'
 import { desktopMediaLayout } from '@client-shared/desktop-media-geometry'
-import type { DesktopBackground, DesktopBackgroundPlayback } from '@ipc/contracts'
+import { DEFAULT_STAGE_LAYOUT } from '@ipc/contracts'
+import type {
+  DesktopBackground,
+  DesktopBackgroundPlayback,
+  DesktopStageLayer,
+  DesktopStageLayout
+} from '@ipc/contracts'
 
 import { prepareStaticPoster } from './static-poster'
 
@@ -104,6 +110,21 @@ function DesktopWallpaper() {
     let waitingImage: DesktopBackground | null = null
     let actorElement: HTMLVideoElement | null = null
 
+    let actorLayout: DesktopStageLayout = DEFAULT_STAGE_LAYOUT
+
+    const layerZ = (layer: DesktopStageLayer): string => {
+      const index = actorLayout.layerOrder.indexOf(layer)
+
+      return String(index >= 0 ? index + 1 : actorLayout.layerOrder.length + 1)
+    }
+
+    const applyLayerOrder = (): void => {
+      actorContainer.style.zIndex = layerZ('actor')
+      actorStill.style.zIndex = layerZ('actor')
+      still.style.zIndex = layerZ('scene')
+      transition.style.zIndex = layerZ('effects')
+    }
+
     const layoutActor = (): void => {
       const element = actorElement
 
@@ -111,14 +132,20 @@ function DesktopWallpaper() {
         return
       }
 
-      const scale = Math.min(
-        (window.innerHeight * 0.9) / element.videoHeight,
-        (window.innerWidth * 0.5) / element.videoWidth
-      )
+      const [safeLeft, safeTop, safeRight, safeBottom] = actorLayout.safeArea
+      const areaWidth = window.innerWidth * (safeRight - safeLeft)
+      const areaHeight = window.innerHeight * (safeBottom - safeTop)
+
+      const scale =
+        actorLayout.fit === 'cover'
+          ? Math.max(areaWidth / element.videoWidth, areaHeight / element.videoHeight)
+          : Math.min(areaWidth / element.videoWidth, areaHeight / element.videoHeight)
+
+      const [positionX, positionY] = actorLayout.actorPosition
 
       Object.assign(element.style, {
-        left: `${(window.innerWidth - element.videoWidth * scale) / 2}px`,
-        top: `${window.innerHeight - element.videoHeight * scale}px`,
+        left: `${window.innerWidth * safeLeft + areaWidth * positionX - element.videoWidth * scale * positionX}px`,
+        top: `${window.innerHeight * safeTop + areaHeight * positionY - element.videoHeight * scale * positionY}px`,
         width: `${element.videoWidth * scale}px`,
         height: `${element.videoHeight * scale}px`
       })
@@ -190,6 +217,8 @@ function DesktopWallpaper() {
 
       actorPosterUrl = null
       actorPosterKey = null
+      actorLayout = DEFAULT_STAGE_LAYOUT
+      applyLayerOrder()
       actorStill.removeAttribute('src')
       allowActor(false)
     }
@@ -204,6 +233,8 @@ function DesktopWallpaper() {
       }
 
       const mediaKey = `${media.actorVisualId}:${media.actorVisualVersion}`
+      actorLayout = media.layout
+      applyLayerOrder()
       const key = `${mediaKey}${media.playTarget === 'actor' && media.playId ? `:${media.playId}` : ''}`
       const actorBytes = media.actor
       actorLayer.set(
@@ -396,8 +427,28 @@ function DesktopWallpaper() {
       slot.terminal = false
     }
 
-    const updateMediaLayout = (element: HTMLImageElement | HTMLVideoElement, width: number, height: number): void => {
-      const layout = desktopMediaLayout(width, height, window.innerWidth, window.innerHeight)
+    const updateMediaLayout = (
+      element: HTMLImageElement | HTMLVideoElement,
+      width: number,
+      height: number,
+      stageLayout: DesktopStageLayout
+    ): void => {
+      const [safeLeft, safeTop, safeRight, safeBottom] = stageLayout.safeArea
+      const areaWidth = window.innerWidth * (safeRight - safeLeft)
+      const areaHeight = window.innerHeight * (safeBottom - safeTop)
+
+      const computed = desktopMediaLayout(width, height, areaWidth, areaHeight)
+      const areaLeft = window.innerWidth * safeLeft
+      const areaTop = window.innerHeight * safeTop
+
+      const layout =
+        stageLayout.fit === 'cover'
+          ? { objectFit: 'cover' as const, left: areaLeft, top: areaTop, width: areaWidth, height: areaHeight }
+          : {
+              ...computed,
+              left: computed.left + areaLeft,
+              top: computed.top + areaTop
+            }
 
       // 完整显示时媒体元素仅占实际内容区域，周围由模糊底层填充。
       Object.assign(element.style, {
@@ -409,7 +460,8 @@ function DesktopWallpaper() {
       })
     }
 
-    const updatePosterLayout = (): void => updateMediaLayout(still, still.naturalWidth, still.naturalHeight)
+    const updatePosterLayout = (): void =>
+      updateMediaLayout(still, still.naturalWidth, still.naturalHeight, staticMedia?.layout ?? actorLayout)
 
     const showPoster = (url: string | null): void => {
       if (url) {
@@ -428,7 +480,12 @@ function DesktopWallpaper() {
     }
 
     const updateVideoLayout = (slot: VideoSlot): void =>
-      updateMediaLayout(slot.element, slot.element.videoWidth, slot.element.videoHeight)
+      updateMediaLayout(
+        slot.element,
+        slot.element.videoWidth,
+        slot.element.videoHeight,
+        slot.media?.layout ?? actorLayout
+      )
 
     const updateAllMediaLayouts = (): void => {
       slots.forEach(updateVideoLayout)
@@ -532,7 +589,7 @@ function DesktopWallpaper() {
       active = index
       allowActor(Boolean(slot.media?.actor))
       slot.element.style.opacity = '1'
-      slot.element.style.zIndex = '1'
+      slot.element.style.zIndex = layerZ(slot.media?.actor ? 'scene' : 'cinematic')
       still.style.opacity = '0'
       showPoster(slot.posterUrl)
 
@@ -851,6 +908,8 @@ function DesktopWallpaper() {
       }
 
       revision = media.revision
+      actorLayout = media.layout
+      applyLayerOrder()
       const nextImageGeneration = ++imageGeneration
       paused = media.paused || media.reduceMotion
       phaseMotionEnabled.current = !media.reduceMotion
@@ -880,6 +939,7 @@ function DesktopWallpaper() {
             paused,
             reduceMotion: media.reduceMotion
           }
+          slot.element.style.zIndex = layerZ(slot.media.actor ? 'scene' : 'cinematic')
           updateVideoLayout(slot)
         }
       }

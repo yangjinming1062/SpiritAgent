@@ -4,6 +4,7 @@ import type { ApiSchemas } from '../../../../shared/api.generated'
 
 type LayerMedia = ApiSchemas['StageLayerMedia']
 type ActorBody = ApiSchemas['ActorClipBody']
+export type StageLayout = ApiSchemas['StageCompositionLayout']
 
 /** 窗口/桌面共用的主体层计划：透明视频成品 + 主体元数据。 */
 export interface StageActorPlan {
@@ -34,9 +35,24 @@ export interface StagePlan {
   actor: StageActorPlan | null
   scene: StageScenePlan | null
   cinematic: LayerMedia | null
+  layout: StageLayout
 }
 
-const EMPTY_PLAN: StagePlan = { mode: 'empty', actor: null, scene: null, cinematic: null }
+const DEFAULT_LAYOUT: StageLayout = {
+  layer_order: ['scene', 'actor', 'effects'],
+  fit: 'contain',
+  actor_position: [0.5, 1],
+  safe_area: [0, 0, 1, 1]
+}
+
+const EMPTY_PLAN: StagePlan = { mode: 'empty', actor: null, scene: null, cinematic: null, layout: DEFAULT_LAYOUT }
+
+function stageLayout(
+  presentation: ApiSchemas['VisualPresentationResponse'] | null,
+  play: ApiSchemas['VisualPlayCommand'] | null
+): StageLayout {
+  return play?.composition?.layout ?? presentation?.composition?.layout ?? DEFAULT_LAYOUT
+}
 
 function actorFromLayer(layer: LayerMedia | null | undefined): StageActorPlan | null {
   if (!layer || layer.asset_kind !== 'actor' || layer.media_kind !== 'video') {
@@ -83,6 +99,7 @@ export function deriveStagePlan(
 
   const baseMedia = presentation?.composition?.media
   const ambient = ambientActor(presentation, directedAmbient)
+  const layout = stageLayout(presentation, play)
 
   if (play?.asset_kind === 'cinematic') {
     return {
@@ -102,7 +119,8 @@ export function deriveStagePlan(
         duration_ms: null,
         body: null,
         description: ''
-      }
+      },
+      layout
     }
   }
 
@@ -119,7 +137,8 @@ export function deriveStagePlan(
         height: 0,
         isVideo: play.media_kind === 'video'
       },
-      cinematic: null
+      cinematic: null,
+      layout
     }
   }
 
@@ -138,7 +157,7 @@ export function deriveStagePlan(
     const scene = baseMedia?.scene ?? null
     const sceneLayer = sceneFromLayer(scene)
 
-    return { mode: 'layered', actor, scene: sceneLayer, cinematic: null }
+    return { mode: 'layered', actor, scene: sceneLayer, cinematic: null, layout }
   }
 
   if (!presentation) {
@@ -149,22 +168,22 @@ export function deriveStagePlan(
 
   // 动态素材可用时，旧静态目标只作为回退；重新开启动态无需等待下一次生活变化。
   if (presentation.static_presentation && !ambient) {
-    return { mode: 'static', actor: ambient, scene: null, cinematic: null }
+    return { mode: 'static', actor: ambient, scene: null, cinematic: null, layout }
   }
 
   if (media?.mode === 'cinematic' && media.cinematic) {
-    return { mode: 'cinematic', actor: ambient, scene: null, cinematic: media.cinematic }
+    return { mode: 'cinematic', actor: ambient, scene: null, cinematic: media.cinematic, layout }
   }
 
   if (media?.mode === 'layered') {
     const actor = actorFromLayer(media.actor) ?? ambient
 
     if (actor || media.scene) {
-      return { mode: 'layered', actor, scene: sceneFromLayer(media.scene), cinematic: null }
+      return { mode: 'layered', actor, scene: sceneFromLayer(media.scene), cinematic: null, layout }
     }
   }
 
-  return ambient ? { mode: 'layered', actor: ambient, scene: null, cinematic: null } : EMPTY_PLAN
+  return ambient ? { mode: 'layered', actor: ambient, scene: null, cinematic: null, layout } : EMPTY_PLAN
 }
 
 /** 解析后的统一舞台计划；窗口与桌面消费者共享同一份。 */

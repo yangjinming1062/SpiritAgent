@@ -11,7 +11,7 @@ import { ApiError } from '../../../../shared/errors'
 
 import type { VisualReceiptBody, VisualsListQuery } from './api'
 import { visualsApi } from './api'
-import { feedDirectorPresentation, resolveAmbientLoop } from './director'
+import { $ambientLoopChoice, feedDirectorPresentation, resolveAmbientLoop } from './director'
 import { $stagePlan, deriveStagePlan } from './stage-plan'
 import type {
   VisualDetail,
@@ -221,6 +221,7 @@ function refreshStagePlan(): void {
 }
 
 $visualsPresentation.listen(refreshStagePlan)
+$ambientLoopChoice.listen(refreshStagePlan)
 
 export async function regenerateVisual(
   visualId: string,

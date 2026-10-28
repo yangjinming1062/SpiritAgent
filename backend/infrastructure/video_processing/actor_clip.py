@@ -57,13 +57,41 @@ def _verify_alpha(video: Path, width: int, height: int) -> None:
     probe = probe_video(video)
     if not probe.has_alpha:
         raise VideoProcessError("透明主体视频缺少透明通道")
+    # 透明辅助层可能只在部分帧损坏；只解码首帧无法证明整段主体都能合成。
+    # 以小画幅解码完整时间轴，避免把整段 RGBA 原始帧一次性读入内存。
+    verify_width = min(width, 64)
+    verify_height = min(height, 64)
     raw = ffmpeg_stdout(
-        [*alpha_input_args(probe), "-i", str(video), "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "-"],
+        [
+            *alpha_input_args(probe),
+            "-i",
+            str(video),
+            "-map",
+            "0:v:0",
+            "-an",
+            "-vf",
+            f"scale={verify_width}:{verify_height},format=rgba",
+            "-fps_mode",
+            "passthrough",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgba",
+            "-",
+        ],
         failure_message="透明主体视频解码失败",
     )
-    if len(raw) != width * height * 4:
-        raise VideoProcessError("透明主体视频画幅与记录不一致")
-    _validate_alpha(np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 4)[..., 3])
+    frame_size = verify_width * verify_height * 4
+    if len(raw) == 0 or len(raw) % frame_size:
+        raise VideoProcessError("透明主体视频时间轴无法完整解码")
+    if len(raw) < frame_size * 2:
+        raise VideoProcessError("透明主体视频帧数不足")
+    for index in range(len(raw) // frame_size):
+        alpha = np.frombuffer(raw, dtype=np.uint8, count=frame_size, offset=index * frame_size)
+        try:
+            _validate_alpha(alpha.reshape(verify_height, verify_width, 4)[..., 3])
+        except VideoProcessError:
+            raise VideoProcessError(f"透明主体视频第 {index + 1} 帧主体或透明背景不完整，请重新生成") from None
 
 
 def prepare_actor_clip(

@@ -1,8 +1,9 @@
 """动态表现设置：控制客户端视觉活动强度，与主动联系档位相互独立。"""
 
-from features.configuration.settings.values import get_user_setting
 from infrastructure.database import session_scope
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from features.configuration.settings.values import get_user_setting
 
 # 云同步点键（PROTOCOL「配置所有权与云同步」）：off 仅静态画面，subtle 只保留安静循环，
 # standard 启用完整常驻动态与互动演出。安静陪伴档位不改变本设置，临时安静也不停止静音待机。

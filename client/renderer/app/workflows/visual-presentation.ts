@@ -556,6 +556,7 @@ function assembleWindowMedia(): void {
     height: actor.height,
     loop: actor.loop,
     baseKey,
+    layout: plan.layout,
     body: actor.body
       ? {
           footAnchor: actor.body.foot_anchor ?? null,

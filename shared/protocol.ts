@@ -170,6 +170,7 @@ export type MemoryListRequest = ApiOperations['resource_catalog.get_memories']['
  * 影像与动作的共享类型：字段以 backend 对外 DTO 的生成契约为准，仅覆盖手机消费面。
  */
 export type VisualMediaKind = ApiSchemas['VisualItemView']['media_kind']
+export type VisualAssetKind = ApiSchemas['VisualItemView']['asset_kind']
 export type VisualJobState = ApiSchemas['VisualJobView']['state']
 export type VisualJobCommand = ApiSchemas['VisualJobCommandRequest']['command']
 export type PlaybackStatus = ApiSchemas['RpcVisualPlaybackEvent']['status']
@@ -187,6 +188,8 @@ export type VisualListResponse = ApiSchemas['VisualListResponse']
 export type VisualJobListResponse = ApiSchemas['VisualJobListResponse']
 export type ActionDefinition = ApiSchemas['ActionAssetView']
 export type ActionDefinitionRequest = ApiSchemas['ActionAssetDesign']
+export type ActionMediaEntry = ApiSchemas['ActionMediaEntry']
+export type ActionMediaListResponse = ApiSchemas['ActionMediaListResponse']
 export type ActionUpdateRequest = ApiSchemas['ActionAssetUpdate']
 export type ActionListResponse = ApiSchemas['ActionListResponse']
 
