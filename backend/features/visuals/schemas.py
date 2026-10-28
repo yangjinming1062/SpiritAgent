@@ -485,6 +485,19 @@ class StageReceipt(BaseModel):
     error: str | None = Field(default=None, max_length=2000)
 
 
+class AmbientCatalogEntry(StageLayerMedia):
+    """导演可选的常驻/反应媒体目录项；动作语义来自冻结输入，供本地选择。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action_id: ResourceId | None = None
+    action_name: str = ""
+    clip_kind: ActionClipKind | None = None
+    preset_key: str | None = None
+    use_when: list[str] = Field(default_factory=list, max_length=8)
+    avoid_when: list[str] = Field(default_factory=list, max_length=8)
+
+
 class VisualPresentationView(BaseModel):
     """呈现状态与偏好：舞台意图、有效组合、待执行指令和自主开关。"""
 
@@ -492,6 +505,7 @@ class VisualPresentationView(BaseModel):
 
     composition: StageComposition | None = None
     ambient_actor: StageLayerMedia | None = None
+    ambient_catalog: list[AmbientCatalogEntry] = Field(default_factory=list)
     intent: StageIntent | None = None
     current_visual: VisualItemView | None = None
     loop_visual: VisualItemView | None = None

@@ -28,15 +28,12 @@ _STOPPING = False
 def _request_id(snapshot: VisualSnapshot, source: ActorClipSource) -> str:
     # 名称、描述分析与更新时间变化不重置同一素材的准备预算。
     basis = {
-        "identity": source.identity.model_dump(mode="json"),
         "identity_hash": source.identity_hash,
         "portrait_hash": source.portrait_hash,
         "identity_reference_role": source.identity_reference_role,
-        "outfit_id": source.outfit.material_id,
         "outfit_hash": source.outfit.content_hash,
-        "action": source.action.model_dump(mode="json", exclude={"name", "revision"}),
+        "action": source.action.model_dump(mode="json", exclude={"name", "revision", "action_id"}),
         "target": (snapshot.target_width, snapshot.target_height),
-        "requirements": source.requirements,
     }
     return "base-motion:" + hashlib.sha256(json.dumps(basis, sort_keys=True).encode()).hexdigest()
 

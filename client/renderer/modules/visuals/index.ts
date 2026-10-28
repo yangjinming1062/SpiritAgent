@@ -12,6 +12,15 @@ export {
 } from './actions-store'
 export type { VisualReceiptBody, VisualsListQuery } from './api'
 export { visualsApi } from './api'
+export {
+  bindPresentationDirector,
+  enqueueInteraction,
+  enqueueInteractionForward,
+  feedDirectorPresentation,
+  type InteractionKind,
+  resolveAmbientLoop
+} from './director'
+export { $ambientLoopChoice } from './director'
 export { $stagePlan, deriveStagePlan, type StageActorPlan, type StagePlan, type StageScenePlan } from './stage-plan'
 export type {
   ActionClipKind,

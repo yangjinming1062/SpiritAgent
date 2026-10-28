@@ -46,6 +46,19 @@ async def action_by_preset_key(db: AsyncSession, user_id: int, preset_key: str) 
     return definition_view(row) if row else None
 
 
+async def action_preset_keys(db: AsyncSession, user_id: int, action_ids: list[int]) -> dict[int, str]:
+    """批量取动作的内置稳定键；跨业务只读投影，不加载定义正文。"""
+
+    if not action_ids:
+        return {}
+    rows = await db.execute(
+        select(ActionDefinition.id, ActionDefinition.preset_key).where(
+            ActionDefinition.user_id == user_id, ActionDefinition.id.in_(action_ids)
+        )
+    )
+    return {action_id: preset_key for action_id, preset_key in rows.all() if preset_key is not None}
+
+
 async def list_actions(
     db: AsyncSession,
     user_id: int,

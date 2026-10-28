@@ -121,6 +121,17 @@ async def put_presentation(user: CurrentUser, body: VisualPreferencesRequest) ->
 
 
 @router.post(
+    "/{visual_id}/play",
+    response_model=VisualPlayCommand,
+    openapi_extra=operation_policy(identities=("desktop",)),
+)
+async def play_visual(visual_id: ResourceId, user: CurrentUser) -> VisualPlayCommand:
+    """客户端导演请求播放已有成品；受理即派发待播指令，实际呈现以回执为准。"""
+
+    return await _visuals.play_visual(user_id=user.id, visual_id=visual_id)
+
+
+@router.post(
     "/presentation/restore",
     response_model=VisualPlayCommand | None,
     openapi_extra=operation_policy(identities=("desktop",)),

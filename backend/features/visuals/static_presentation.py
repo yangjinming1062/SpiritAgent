@@ -14,7 +14,13 @@ from features.life.use_cases import current_presentation_revision, presentation_
 
 from .models import VisualPlayback, VisualPresentation
 from .ports import request_base_motion_preparation
-from .repository import emit_playback_receipt, presentation_outfit, require_presentation_row, touch_presentation
+from .repository import (
+    emit_playback_receipt,
+    notify_visuals_updated,
+    presentation_outfit,
+    require_presentation_row,
+    touch_presentation,
+)
 from .schemas import StageIntent, StagePresentation, StageReceipt, VisualPlayCommand
 
 
@@ -22,7 +28,10 @@ async def record_stage_intent(db: AsyncSession, user_id: int, intent: StageInten
     """生活侧投影写入舞台意图；呈现系统只读取，不反写生活事实。"""
 
     state = await require_presentation_row(db, user_id, lock=True)
-    state.intent_json = intent.model_dump(mode="json")
+    payload = intent.model_dump(mode="json")
+    if state.intent_json != payload:
+        state.intent_json = payload
+        await notify_visuals_updated(db, user_id)
 
 
 async def _cancel_pending_command(db: AsyncSession, state: VisualPresentation) -> None:
@@ -49,7 +58,6 @@ async def present_static(user_id: int, snapshot: StagePresentation, *, expected_
         if (
             presence is None
             or state.state_revision != expected_state_revision
-            or not state.autonomous_enabled
             or not get_user_proactive_record(user_id).available
             or presence.revision != snapshot.presentation_epoch
             or not await presentation_revision_matches(db, user_id, snapshot.life_revision)
@@ -61,36 +69,6 @@ async def present_static(user_id: int, snapshot: StagePresentation, *, expected_
         state.pending_static_json = snapshot.model_copy(update={"state_revision": state.state_revision}).model_dump(
             mode="json"
         )
-        await db.commit()
-        return True
-
-
-async def keep_presentation(
-    user_id: int, *, expected_state_revision: int, presentation_epoch: int, life_revision: int
-) -> bool:
-    async with SESSION_LOCAL() as db:
-        state = await require_presentation_row(db, user_id, lock=True)
-        presence = get_presentation_snapshot(user_id)
-        if (
-            presence is None
-            or presence.revision != presentation_epoch
-            or state.presentation_epoch != presentation_epoch
-            or state.state_revision != expected_state_revision
-            or not state.autonomous_enabled
-            or not get_user_proactive_record(user_id).available
-            or not await presentation_revision_matches(db, user_id, life_revision)
-        ):
-            return False
-        if state.pending_command_json or state.pending_static_json:
-            await _cancel_pending_command(db, state)
-            state.pending_static_json = None
-            state.composition_json = None
-            await touch_presentation(db, user_id)
-        if state.current_static_json:
-            snapshot = StagePresentation.model_validate(state.current_static_json)
-            state.current_static_json = snapshot.model_copy(update={"life_revision": life_revision}).model_dump(
-                mode="json"
-            )
         await db.commit()
         return True
 

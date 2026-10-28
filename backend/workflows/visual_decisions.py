@@ -69,7 +69,8 @@ _VISUAL_FAILURE_BACKOFF = timedelta(minutes=15)
 
 
 async def evaluate_visuals(user_id: int, *, trigger: str, allow_create: bool) -> dict[str, object]:
-    state = await presentation_state(user_id)
+    # 只读自主开关与画幅，跳过导演目录装配（可播清单另由 visual_play_catalog 提供）。
+    state = await presentation_state(user_id, with_catalog=False)
     if not state.autonomous_enabled:
         return {"expressed": False, "action_id": None, "reason": "disabled"}
     presence = get_presentation_snapshot(user_id)

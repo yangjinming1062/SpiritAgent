@@ -5,6 +5,7 @@ from dataclasses import asdict
 from typing import Any
 
 from features.companion.mood import update_mood_from_companion_turn
+from features.companion.reaction import emit_companion_reaction
 from features.conversation.audio_input import ensure_audio_transcripts
 from features.conversation.history import build_session_messages, client_media_entries
 from features.conversation.replies import LinkBubble, MediaBubble
@@ -29,6 +30,7 @@ from infrastructure.logger import get_logger
 from infrastructure.text import resolve_language
 from runtime.background import TaskBag
 from runtime.memory_scope import MemoryScope
+from runtime.presets import COMPANION_PRESET_ID
 from runtime.tools.registry import REGISTRY
 
 from workflows.chat.background_review import run_background_memory_review
@@ -288,11 +290,21 @@ async def _persist_assistant_no_tool_turn(
         },
     )
 
-    # 心情随已落库的陪伴回复更新；主动回合不落库。
-    if persist and reply_bubbles is not None:
+    # 心情随已落库的陪伴回复更新；主动回合不落库。同一批输入顺带推断一次身体反应。
+    is_companion_turn = (
+        conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None and not conv.is_automation
+    )
+    if persist and reply_bubbles is not None and is_companion_turn:
         _spawn_post_turn_task(
             user_id,
             update_mood_from_companion_turn(user_id, user_text, reply_bubbles),
+            track_task,
+            session_id=str(conv.id),
+            transcripts=audio_transcripts,
+        )
+        _spawn_post_turn_task(
+            user_id,
+            emit_companion_reaction(user_id, user_text, reply_bubbles),
             track_task,
             session_id=str(conv.id),
             transcripts=audio_transcripts,

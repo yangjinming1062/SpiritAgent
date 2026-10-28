@@ -23,6 +23,7 @@ export interface ApiSchemas {
   "AiTaskDefinition": { "id": ApiSchemas["AiTaskKey"]; "group": string; "label": string; "services": Array<string>; "service_usage": { [key: string]: Array<string> } }
   "AiTaskKey": "companion_chat" | "work_chat" | "scheduled_task" | "proactive" | "memory_review" | "memory_embedding" | "nightly" | "posts" | "appearance" | "outfit" | "scene" | "visuals" | "speech_input" | "companion_voice" | "speech_preview" | "voice_design" | "voice_clone"
   "AiTaskKeyInput": "companion_chat" | "work_chat" | "scheduled_task" | "proactive" | "memory_review" | "memory_embedding" | "nightly" | "posts" | "appearance" | "outfit" | "scene" | "visuals" | "speech_input" | "companion_voice" | "speech_preview" | "voice_design" | "voice_clone"
+  "AmbientCatalogEntry": { "visual_id": string; "version": number; "media_kind": "image" | "video"; "asset_kind": "actor" | "scene" | "cinematic"; "clip_kind": ("once" | "loop" | null); "media_url": string; "poster_url": (string | null); "width": number; "height": number; "duration_ms": (number | null); "description": string; "body": (ApiSchemas["ActorClipBody"] | null); "action_id": (string | null); "action_name": string; "preset_key": (string | null); "use_when": Array<string>; "avoid_when": Array<string> }
   "ApiError": { "code": string; "message": string; "details": ApiSchemas["JsonValue"]; "request_id": string }
   "ApiErrorResponse": { "error": ApiSchemas["ApiError"] }
   "AvatarAssetResponse": { "id": string; "asset_url": string; "seed_fullbody_url": string; "is_fullbody_confirmed": boolean; "prompt": string; "status": "succeeded" }
@@ -175,6 +176,7 @@ export interface ApiSchemas {
   "RpcCommandDispatchResult": { "command": string; "result": ApiSchemas["RpcCommandResult"] }
   "RpcCommandResult": { "status": "ok" | "error"; "message": string; "payload": (ApiSchemas["RpcSessionClearResult"] | ApiSchemas["RpcSessionCompressionResult"] | ApiSchemas["RpcRememberCommandResult"] | null); "hydrate": boolean }
   "RpcCompanionMessageEvent": { "session_id": string; "message_id": string; "bubbles": Array<ApiSchemas["RpcReplyBubbleView"]> }
+  "RpcCompanionReactionEvent": { "reaction": string; "occurred_at": string }
   "RpcCompanionSessionMessageView": { "id": string; "role": "assistant"; "content": (string | null); "subtype": string; "reasoning": (string | null); "timestamp": number; "can_replace_reply": boolean; "media": Array<ApiSchemas["RpcClientMediaEntry"]>; "tool_calls": ApiSchemas["RpcJsonValue"]; "tool_call_id": (string | null); "tool_name": string; "content_type": "companion_reply"; "bubbles": Array<ApiSchemas["RpcReplyBubbleView"]> }
   "RpcCompanionSignalResult": { "queued": boolean }
   "RpcCompressionEvent": { "request_id": (string | null); "origin_kind": (string | null); "replace_reply_message_id": (string | null); "session_id": (string | null); "subtype": string; "text": string; "message_id": (string | null) }
@@ -375,7 +377,7 @@ export interface ApiSchemas {
   "VisualListResponse": { "visuals": Array<ApiSchemas["VisualItemView"]>; "total": (number | null); "has_more": boolean; "next_cursor": (string | null); "limit": number }
   "VisualPlayCommand": { "play_id": string; "status": "queued"; "asset_kind": "actor" | "scene" | "cinematic"; "visual_id": string; "visual_version": number; "media_kind": "image" | "video"; "media_path": string; "poster_path": (string | null); "input_image_hash": (string | null); "clip_kind": ("once" | "loop" | null); "loop": boolean; "transition": "natural" | "fade"; "presentation_epoch": number; "state_revision": number; "source": "manual" | "autonomous" | "restore" | "remote"; "expires_at": string; "composition": (ApiSchemas["StageComposition"] | null); "outfit": (ApiSchemas["ComboMaterialRef"] | null); "scene": (ApiSchemas["SceneMediaRef"] | null); "body": (ApiSchemas["ActorClipBody"] | null) }
   "VisualPreferencesRequest": { "autonomous_enabled"?: (boolean | null); "target_width"?: (number | null); "target_height"?: (number | null) }
-  "VisualPresentationResponse": { "composition": (ApiSchemas["StageComposition"] | null); "ambient_actor": (ApiSchemas["StageLayerMedia"] | null); "intent": (ApiSchemas["StageIntent"] | null); "current_visual": (ApiSchemas["VisualItemView"] | null); "loop_visual": (ApiSchemas["VisualItemView"] | null); "autonomous_enabled": boolean; "target_width": (number | null); "target_height": (number | null); "presentation_epoch": number; "state_revision": number; "pending_play": (ApiSchemas["VisualPlayCommand"] | null); "static_presentation": (ApiSchemas["StagePresentation"] | null); "actual": ApiSchemas["ActualPresentationSnapshot"] }
+  "VisualPresentationResponse": { "composition": (ApiSchemas["StageComposition"] | null); "ambient_actor": (ApiSchemas["StageLayerMedia"] | null); "ambient_catalog": Array<ApiSchemas["AmbientCatalogEntry"]>; "intent": (ApiSchemas["StageIntent"] | null); "current_visual": (ApiSchemas["VisualItemView"] | null); "loop_visual": (ApiSchemas["VisualItemView"] | null); "autonomous_enabled": boolean; "target_width": (number | null); "target_height": (number | null); "presentation_epoch": number; "state_revision": number; "pending_play": (ApiSchemas["VisualPlayCommand"] | null); "static_presentation": (ApiSchemas["StagePresentation"] | null); "actual": ApiSchemas["ActualPresentationSnapshot"] }
   "VisualReceiptRequest": { "status": "started" | "finished" | "failed" | "interrupted"; "client_id": string; "receipt_kind"?: ("image" | "video" | "window_static" | null); "error"?: (string | null) }
   "VisualReceiptResponse": { "ok": boolean }
   "VisualRegenerateRequest": { "expected_version": number; "feedback"?: (string | null); "video_feedback"?: (string | null) }
@@ -466,6 +468,7 @@ export interface ApiOperations {
   "companion_visuals.get_presentation": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["VisualPresentationResponse"] }
   "companion_visuals.put_presentation": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["VisualPreferencesRequest"]; input: { path?: never; query?: never; body: ApiSchemas["VisualPreferencesRequest"] }; response: ApiSchemas["VisualPresentationResponse"] }
   "companion_visuals.static_receipt": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["StageReceipt"]; input: { path?: never; query?: never; body: ApiSchemas["StageReceipt"] }; response: ApiSchemas["VisualReceiptResponse"] }
+  "companion_visuals.play_visual": { path: { "visual_id": string }; query: Record<string, never>; body: undefined; input: { path: { "visual_id": string }; query?: never; body?: never }; response: ApiSchemas["VisualPlayCommand"] }
   "companion_visuals.restore_presentation": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: (ApiSchemas["VisualPlayCommand"] | null) }
   "companion_visuals.create_actor_clip": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["ActorClipRequest"]; input: { path?: never; query?: never; body: ApiSchemas["ActorClipRequest"] }; response: ApiSchemas["VisualJobView"] }
   "companion_visuals.create_scene_media": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["SceneMediaRequest"]; input: { path?: never; query?: never; body: ApiSchemas["SceneMediaRequest"] }; response: ApiSchemas["VisualJobView"] }
@@ -610,6 +613,7 @@ export interface GatewayEventPayloads {
   "companion.post.comment.deleted": ApiSchemas["RpcPostCommentDeletedEvent"]
   "companion.post.created": ApiSchemas["RpcPostResponse"]
   "companion.posts.read": ApiSchemas["RpcEmptyResult"]
+  "companion.reaction": ApiSchemas["RpcCompanionReactionEvent"]
   "companion.scene.updated": ApiSchemas["RpcSceneChangedEvent"]
   "companion.topic_feedback.updated": ApiSchemas["RpcTopicFeedbackSnapshot"]
   "companion.visual.initial_requested": ApiSchemas["RpcEmptyResult"]
@@ -1372,6 +1376,17 @@ export const API_OPERATIONS = {
   },
   "companion_visuals.static_receipt": {
     "path": "/api/companion/visuals/presentation/static-receipt",
+    "method": "POST",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "desktop"
+    ],
+    "wait_for_model": false,
+    "ipc": true
+  },
+  "companion_visuals.play_visual": {
+    "path": "/api/companion/visuals/{visual_id}/play",
     "method": "POST",
     "encoding": "json",
     "response": "json",
@@ -2870,6 +2885,12 @@ export const EVENT_POLICIES = {
     "audience": "all",
     "snapshot": false,
     "recovery": "resource",
+    "baseline": false
+  },
+  "companion.reaction": {
+    "audience": "desktop",
+    "snapshot": false,
+    "recovery": "transient",
     "baseline": false
   },
   "companion.scene.updated": {

@@ -293,7 +293,7 @@ async def generate_visual_reference(
     """冻结本次制作输入并提交工作项；空影像库也能开始第一次制作。"""
 
     async with user_asset_lock(user_id):
-        state = await presentation_state(user_id)
+        state = await presentation_state(user_id, with_catalog=False)
         if not state.autonomous_enabled:
             raise ComboAssemblyError("伙伴自主制作已关闭")
         async with SESSION_LOCAL() as db:
@@ -420,7 +420,7 @@ async def generate_scene_media_reference(
             ):
                 raise ComboAssemblyError("这个请求已用于另一次制作，请核对原任务")
             return job
-        state = await presentation_state(user_id)
+        state = await presentation_state(user_id, with_catalog=False)
         async with SESSION_LOCAL() as db:
             scene = await scene_snapshot(db, user_id, scene_id)
             if scene is None or scene.status != "ready" or not scene.media_path:

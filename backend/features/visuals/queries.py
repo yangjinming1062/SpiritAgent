@@ -8,7 +8,7 @@ from infrastructure.text import ensure_utc, utc_now
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.action_library.queries import action_by_preset_key
+from features.action_library.queries import action_by_preset_key, action_preset_keys
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
 from features.jobs.service import requested_job_id
 
@@ -31,6 +31,7 @@ from .schemas import (
     ActorClipBody,
     ActorClipSource,
     ActualPresentationSnapshot,
+    AmbientCatalogEntry,
     ComboMaterialRef,
     PresentedVisual,
     StageComposition,
@@ -436,7 +437,9 @@ async def recent_autonomous_failure_action_ids(user_id: int, *, since: datetime)
         return {action_id for action_id in rows if action_id is not None}
 
 
-async def presentation_state(user_id: int) -> VisualPresentationView:
+async def presentation_state(user_id: int, *, with_catalog: bool = True) -> VisualPresentationView:
+    """呈现状态装配；内部决策路径不需要目录时跳过（目录含逐行文件核对）。"""
+
     async with SESSION_LOCAL() as db:
         row = await db.scalar(select(VisualPresentation).where(VisualPresentation.user_id == user_id))
         if row is None:
@@ -448,6 +451,7 @@ async def presentation_state(user_id: int) -> VisualPresentationView:
         return VisualPresentationView(
             composition=await composition_with_media(db, user_id, composition),
             ambient_actor=await _ambient_actor(db, row),
+            ambient_catalog=await ambient_catalog(db, row) if with_catalog else [],
             intent=StageIntent.model_validate(row.intent_json) if row.intent_json else None,
             current_visual=item_view(current) if current is not None and current.user_id == user_id else None,
             loop_visual=item_view(loop) if loop is not None and loop.user_id == user_id else None,
@@ -501,28 +505,108 @@ async def _layer_media(
     )
 
 
-async def _ambient_actor(db: AsyncSession, state: VisualPresentation) -> StageLayerMedia | None:
-    """只为冻结的当前造型投影已有待机成品；不制作、不消费演出指令。"""
+def frozen_stage_reference(state: VisualPresentation) -> tuple[ComboMaterialRef | None, str | None]:
+    """当前有效舞台冻结的造型与身份参照；静态目标与组合取其一。"""
 
     static_raw = state.pending_static_json or state.current_static_json
     static = StagePresentation.model_validate(static_raw) if static_raw else None
-    outfit = static.outfit if static else presentation_outfit(state)
+    if static is not None and static.outfit is not None and static.identity_hash is not None:
+        return static.outfit, static.identity_hash
+    outfit = presentation_outfit(state)
     current = presented_item(state)
     source = visual_snapshot(current).source if current else None
     composition = stage_composition(state)
-    identity_hash = (
-        static.identity_hash
-        if static
-        else (
-            composition.identity_hash
-            if current is not None and visual_is_short_action(current) and composition is not None
-            else source.identity_hash
-            if source is not None and source.kind in ("actor", "cinematic")
-            else composition.identity_hash
-            if composition
-            else None
-        )
+    if current is not None and visual_is_short_action(current) and composition is not None:
+        return outfit, composition.identity_hash
+    if source is not None and source.kind in ("actor", "cinematic"):
+        return (source.outfit if outfit is None else outfit), source.identity_hash
+    return outfit, composition.identity_hash if composition else None
+
+
+async def ambient_catalog(db: AsyncSession, state: VisualPresentation, *, limit: int = 24) -> list[AmbientCatalogEntry]:
+    """导演本地选择用的可播媒体目录：当前身份与造型可用的 actor 成品及完整场景影像。
+
+    只读已就绪成品；动作语义来自冻结输入，内置动作稳定键经 action_id 关联定义表
+    （冻结输入不含该键）。不制作、不建立播放账本。
+    """
+
+    outfit, identity_hash = frozen_stage_reference(state)
+    if outfit is None or identity_hash is None:
+        return []
+    rows = list(
+        (
+            await db.execute(
+                select(
+                    VisualItem.id,
+                    VisualItem.asset_kind,
+                    VisualItem.clip_kind,
+                    VisualItem.outfit_id,
+                    VisualItem.action_id,
+                    VisualVersion.number,
+                    VisualVersion.media_path,
+                    VisualVersion.poster_path,
+                    VisualVersion.width,
+                    VisualVersion.height,
+                    VisualVersion.duration_ms,
+                    VisualVersion.description,
+                    VisualVersion.body_json,
+                    VisualVersion.snapshot_json["source"].label("source"),
+                )
+                .select_from(VisualItem)
+                .join(VisualVersion, VisualVersion.id == VisualItem.current_version_id)
+                .where(
+                    VisualItem.user_id == state.user_id,
+                    VisualItem.status == "ready",
+                    VisualItem.media_kind == "video",
+                    VisualItem.asset_kind.in_(("actor", "cinematic")),
+                    VisualVersion.snapshot_json["source"]["identity_hash"].astext == identity_hash,
+                    VisualVersion.snapshot_json["source"]["outfit"]["content_hash"].astext == outfit.content_hash,
+                )
+                .order_by(VisualItem.id.desc())
+                .limit(limit * 2),
+            )
+        ).all()
     )
+    preset_keys = await action_preset_keys(
+        db, state.user_id, [row.action_id for row in rows if row.action_id is not None]
+    )
+    entries: list[AmbientCatalogEntry] = []
+    for row in rows:
+        if len(entries) >= limit:
+            break
+        if _existing(row.media_path) is None:
+            continue
+        source = row.source or {}
+        action = source.get("action") if source.get("kind") in ("actor", "cinematic") else None
+        action = action or {}
+        entries.append(
+            AmbientCatalogEntry(
+                visual_id=row.id,
+                version=row.number,
+                media_kind="video",
+                asset_kind=_asset_kind(row.asset_kind),
+                clip_kind=row.clip_kind or "loop",
+                media_url=client_asset_url(row.media_path),
+                poster_url=client_asset_url(row.poster_path) if row.poster_path else None,
+                width=row.width,
+                height=row.height,
+                duration_ms=row.duration_ms,
+                description=row.description,
+                body=ActorClipBody.model_validate(row.body_json) if row.body_json else None,
+                action_id=row.action_id,
+                action_name=action.get("name", ""),
+                preset_key=preset_keys.get(row.action_id) if row.action_id is not None else None,
+                use_when=action.get("use_when", []),
+                avoid_when=action.get("avoid_when", []),
+            )
+        )
+    return entries
+
+
+async def _ambient_actor(db: AsyncSession, state: VisualPresentation) -> StageLayerMedia | None:
+    """只为冻结的当前造型投影已有待机成品；不制作、不消费演出指令。"""
+
+    outfit, identity_hash = frozen_stage_reference(state)
     if outfit is None or identity_hash is None:
         return None
     idle = await action_by_preset_key(db, state.user_id, "idle")

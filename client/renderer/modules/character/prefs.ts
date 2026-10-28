@@ -20,6 +20,29 @@ import { setDisturbanceTier, syncDisturbanceFromStorage } from './companion-stor
 // 回应偏好同步到后端供模型选择消息类型，不控制客户端合成或播放。
 export type ResponsePreference = 'text' | 'voice'
 
+// 动态表现强度：与打扰档位独立，off 只显示静态画面，subtle 仅保留安静循环。
+export type MotionLevel = 'off' | 'subtle' | 'standard'
+
+const MOTION_LEVEL_STORAGE_KEY = 'da.companion.motionLevel'
+const MOTION_LEVELS: readonly MotionLevel[] = ['off', 'subtle', 'standard']
+
+const motionLevelPersisted = definePersistedEnum<MotionLevel>({
+  allowed: MOTION_LEVELS,
+  fallback: 'standard',
+  key: MOTION_LEVEL_STORAGE_KEY
+})
+
+export const $motionLevel = motionLevelPersisted.$atom
+
+export function setMotionLevel(level: MotionLevel): void {
+  motionLevelPersisted.set(level)
+  reportCloud('companion.motion_level', level)
+}
+
+export function reloadMotionLevel(): void {
+  motionLevelPersisted.reload()
+}
+
 const COMPANION_VOICE_ID_STORAGE_KEY = registerCompanionStorageKey('da.companion.voiceId')
 const RESPONSE_PREFERENCE_STORAGE_KEY = 'da.companion.responsePreference'
 const AUTOPLAY_VOICE_STORAGE_KEY = 'da.companion.autoplayVoice'
@@ -121,6 +144,10 @@ export function initCompanionPrefsSync(): () => void {
       responsePreferencePersisted.reload()
     }
 
+    if (event.key === accountStorageKey(MOTION_LEVEL_STORAGE_KEY) || event.key === null) {
+      reloadMotionLevel()
+    }
+
     if (event.key === accountStorageKey(POSTS_ENABLED_STORAGE_KEY) || event.key === null) {
       postsEnabledPref.reload()
     }
@@ -174,6 +201,13 @@ export function initCompanionPrefsSync(): () => void {
 
     if (tier === 'still' || tier === 'normal' || tier === 'autonomous') {
       setDisturbanceTier(tier)
+    }
+
+    // 动态表现强度与档位独立同步。
+    const motion = companion.motion_level
+
+    if (motion === 'off' || motion === 'subtle' || motion === 'standard') {
+      motionLevelPersisted.set(motion)
     }
   }
 

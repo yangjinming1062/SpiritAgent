@@ -64,14 +64,17 @@ export {
 export {
   $autoplayVoice,
   $companionVoiceId,
+  $motionLevel,
   $postsEnabled,
   $responsePreference,
   applyServerCompanionVoiceId,
   autoplayVoicePref,
   initCompanionPrefsSync,
+  type MotionLevel,
   postsEnabledPref,
   type ResponsePreference,
   setCompanionVoiceId,
+  setMotionLevel,
   setResponsePreference
 } from './prefs'
 export { handleDragEndInteraction } from './reactions/reaction-audio'

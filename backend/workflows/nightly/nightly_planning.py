@@ -456,7 +456,8 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
         recent_posts = await post_summaries(db, user_id, limit=20)
         action_view = await build_action_view(user_id)
         action_snapshot = {"ready_actions": [item.model_dump() for item in action_view.items]}
-        presentation_state_row = await presentation_state(user_id)
+        # 只读自主开关，跳过导演目录装配。
+        presentation_state_row = await presentation_state(user_id, with_catalog=False)
         action_design_enabled = bool(
             SETTINGS.action_autocreate_enabled
             and presentation_state_row is not None

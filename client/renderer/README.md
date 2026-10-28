@@ -132,6 +132,8 @@ speech 持唯一合成与播放队列，自动和点播共用。[conversation-sp
 
 窗口主体画面优先播放透明主体视频：[stage-plan.ts](modules/visuals/stage-plan.ts) 解析有效组合与当前造型可复用的待机成品；只有认领成功的临时指令覆盖基础主体，结束后恢复仍有效的循环。[visual-presentation.ts](app/workflows/visual-presentation.ts) 经 [window-media.ts](modules/character/window-media.ts) 装配窄端口，character 不依赖影像库。[CharacterStage](modules/character/rendering/character-stage.tsx) 与桌面主体层共用 [stage-video-layer.ts](shared/lib/stage-video-layer.ts)：新首帧就绪前保留旧画面，失败恢复有效循环或静态造型，一次性动作按独立指令身份消费。命中读取当前帧 alpha，几何与头部、脚底锚点按实际画幅适配；环境与主体独立换图，完整影像不叠加第二份伙伴。
 
+客户端表现导演（[director.ts](modules/visuals/director.ts)）由唯一舞台宿主装配（窗口为精灵窗、桌面为桌面窗）：常驻循环在服务端 `ambient_catalog` 内本地轮换（时长 + 冷却 + 概率权重，轻量档偏向待机），不建播放账本；互动反应与生活意图相符的持续画面切换经播放端点走完整指令管线（认领与回执沿既有通道）。导演不依赖其他业务模块——登录与动态表现偏好由装配方注入。互动入口：精灵单击入队 `look`，`companion.reaction` 事件（聊天后模型推断的身体反应）按内置动作键入队；队列有界、冷却独立。动态表现偏好（`companion.motion_level`）与打扰档位独立（[prefs.ts](modules/character/prefs.ts)），off 仅静态、subtle 保留安静循环；环境层按本地时段加轻量色调（[day-phase.ts](shared/lib/day-phase.ts)），不创建生活经历。
+
 视频下载和磁盘缓存由主进程按账户共享；[stage-video-cache.ts](shared/lib/stage-video-cache.ts) 合并本窗口对象地址，每个可见舞台自行解码，引用释放与换号使迟到加载失效。窗口与桌面只在实际播放后回执，首帧预载或取得地址不算开播；短动作结束才完成，普通待机循环不逐圈记账。桌面按指令目标由一个图层回执，主体失败仍可显示冻结造型。锁屏、隐藏、减少动态和全屏时保留静帧并暂停解码推进。
 
 边缘栖息在有效拖拽结束后贴边；取消不触发吸附。轻量移动由客户端执行，受档位、减少动态、全屏、可见性与交互状态约束，不创建生活经历。

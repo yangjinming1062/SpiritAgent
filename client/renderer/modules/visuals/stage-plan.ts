@@ -74,14 +74,15 @@ function sceneFromLayer(layer: LayerMedia | null | undefined): StageScenePlan | 
 /** 静态投影（无媒体）与空呈现都归入 static/empty；窗口据此退回冻结造型。 */
 export function deriveStagePlan(
   presentation: ApiSchemas['VisualPresentationResponse'] | null,
-  play: ApiSchemas['VisualPlayCommand'] | null
+  play: ApiSchemas['VisualPlayCommand'] | null,
+  directedAmbient: CatalogEntry | null = null
 ): StagePlan {
   if (!presentation && !play) {
     return EMPTY_PLAN
   }
 
   const baseMedia = presentation?.composition?.media
-  const ambient = actorFromLayer(presentation?.ambient_actor)
+  const ambient = ambientActor(presentation, directedAmbient)
 
   if (play?.asset_kind === 'cinematic') {
     return {
@@ -146,7 +147,8 @@ export function deriveStagePlan(
 
   const media = presentation.composition?.media ?? null
 
-  if (presentation.static_presentation) {
+  // 动态素材可用时，旧静态目标只作为回退；重新开启动态无需等待下一次生活变化。
+  if (presentation.static_presentation && !ambient) {
     return { mode: 'static', actor: ambient, scene: null, cinematic: null }
   }
 
@@ -167,3 +169,33 @@ export function deriveStagePlan(
 
 /** 解析后的统一舞台计划；窗口与桌面消费者共享同一份。 */
 export const $stagePlan = atom<StagePlan>(EMPTY_PLAN)
+
+type CatalogEntry = NonNullable<ApiSchemas['VisualPresentationResponse']['ambient_catalog']>[number]
+
+function actorFromCatalog(entry: CatalogEntry | null | undefined): StageActorPlan | null {
+  if (!entry || entry.asset_kind !== 'actor' || entry.media_kind !== 'video') {
+    return null
+  }
+
+  return {
+    visualId: entry.visual_id,
+    version: entry.version,
+    url: entry.media_url,
+    posterUrl: entry.poster_url ?? null,
+    width: entry.width,
+    height: entry.height,
+    loop: entry.clip_kind !== 'once',
+    body: entry.body ?? null
+  }
+}
+
+/**
+ * 导演选择的常驻循环优先于服务端 ambient 投影：同为已冻结身份/造型下的只读轮换，
+ * 不建立播放账本；目录缺项（如换装后旧选择失效）自动回落 ambient。
+ */
+function ambientActor(
+  presentation: ApiSchemas['VisualPresentationResponse'] | null,
+  directed: CatalogEntry | null
+): StageActorPlan | null {
+  return actorFromCatalog(directed) ?? actorFromLayer(presentation?.ambient_actor)
+}

@@ -4,7 +4,14 @@ from infrastructure.assets.asset_store import client_asset_url
 from infrastructure.request_errors import RequestError
 
 from . import queries, service
-from .client_assets import client_composition, client_layer_media, client_material, client_play_command, client_scene
+from .client_assets import (
+    client_catalog_entry,
+    client_composition,
+    client_layer_media,
+    client_material,
+    client_play_command,
+    client_scene,
+)
 from .repository import VisualError, VisualNotFoundError, VisualStateError
 from .schemas import (
     VisualClaimRequest,
@@ -30,6 +37,9 @@ def _http_error(exc: VisualError) -> RequestError:
 async def _presentation_response(user_id: int, presentation: VisualPresentationView) -> VisualPresentationResponse:
     actual = await queries.actual_presentation_snapshot(user_id)
     presentation = presentation.model_copy(update={"ambient_actor": client_layer_media(presentation.ambient_actor)})
+    presentation = presentation.model_copy(
+        update={"ambient_catalog": [client_catalog_entry(entry) for entry in presentation.ambient_catalog]}
+    )
     if presentation.pending_play is not None:
         presentation = presentation.model_copy(update={"pending_play": client_play_command(presentation.pending_play)})
     if presentation.composition is not None:
@@ -126,6 +136,14 @@ async def restore_presentation(user_id: int) -> VisualPlayCommand | None:
         return client_play_command(command) if command is not None else None
     except VisualError as exc:
         raise _http_error(exc) from exc
+
+
+async def play_visual(user_id: int, visual_id: int) -> VisualPlayCommand:
+    try:
+        command = await service.play_visual(user_id, visual_id, source="remote")
+    except VisualError as exc:
+        raise _http_error(exc) from exc
+    return client_play_command(command)
 
 
 async def update_preferences(user_id: int, body: VisualPreferencesRequest) -> VisualPresentationResponse:

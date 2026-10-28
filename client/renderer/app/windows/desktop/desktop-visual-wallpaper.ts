@@ -1,21 +1,25 @@
 import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { $motionLevel } from '@/modules/character'
 import {
   $stagePlan,
   $visualPlayback,
   $visualsJobs,
   $visualsPresentation,
+  bindPresentationDirector,
   claimVisualPlay,
   deriveStagePlan,
   type PlaybackStatus,
   refreshVisualPresentation,
   refreshVisuals,
+  resolveAmbientLoop,
   sendStaticReceipt,
   sendVisualReceipt,
   staticPresentationKey,
   type VisualMediaKind,
-  type VisualPlayCommand
+  type VisualPlayCommand,
+  visualsApi
 } from '@/modules/visuals'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
@@ -43,6 +47,7 @@ type ReceiptStatus = 'started' | 'finished' | 'failed'
 
 export function useDesktopVisualWallpaper(): void {
   const auth = useStore($auth)
+  const motionLevel = useStore($motionLevel)
   const presentation = useStore($presentation)
   const locked = useStore($surfaceScreenLocked)
   const theme = useStore($theme)
@@ -148,6 +153,26 @@ export function useDesktopVisualWallpaper(): void {
     void refreshVisualPresentation()
   }, [authSessionId])
 
+  // 桌面宿主装配导演：常驻轮换本地完成，互动/意图演出走指令管线（回执沿本文件既有通道）。
+  useEffect(() => {
+    if (!active || !authSessionId) {
+      return
+    }
+
+    return bindPresentationDirector(
+      async visualId => {
+        await visualsApi.playVisual(visualId)
+        await refreshVisualPresentation()
+      },
+      () => $visualsPresentation.get(),
+      {
+        isEligible: () => $auth.get().kind === 'authenticated' && $motionLevel.get() !== 'off',
+        isSubtle: () => $motionLevel.get() === 'subtle',
+        onChanged: notify => $motionLevel.listen(notify)
+      }
+    )
+  }, [active, authSessionId])
+
   const preparationInProgress = jobs.some(job => job.state === 'running' || job.state === 'queued')
 
   useEffect(() => {
@@ -165,7 +190,7 @@ export function useDesktopVisualWallpaper(): void {
 
   // 播放认领：仅桌面承载认领待播指令；`queued` 只表示受理，实际回执才更新呈现事实。
   useEffect(() => {
-    if (!active || !authSessionId || !pendingPlay) {
+    if (!active || !authSessionId || !pendingPlay || motionLevel === 'off') {
       return
     }
 
@@ -212,7 +237,7 @@ export function useDesktopVisualWallpaper(): void {
     return () => {
       disposed = true
     }
-  }, [active, authSessionId, pendingPlay, clientId, recordReceipt])
+  }, [active, authSessionId, pendingPlay, clientId, motionLevel, recordReceipt])
 
   useEffect(() => {
     const scope = captureAuthScope()
@@ -290,6 +315,7 @@ export function useDesktopVisualWallpaper(): void {
 
   const activeCommand =
     claimed &&
+    motionLevel !== 'off' &&
     Date.parse(claimed.expires_at) > Date.now() &&
     claimed.presentation_epoch >= (projection?.presentation_epoch ?? 0) &&
     (claimed.state_revision >= (projection?.state_revision ?? 0) ||
@@ -305,7 +331,7 @@ export function useDesktopVisualWallpaper(): void {
   }, [active, authSessionId, claimed, activeCommand, recordReceipt])
 
   const stagePlan = useStore($stagePlan)
-  const selectedPlan = deriveStagePlan(projection, activeCommand)
+  const selectedPlan = deriveStagePlan(projection, activeCommand, resolveAmbientLoop(projection))
   const layerActor = selectedPlan.actor
   const layerScene = selectedPlan.scene
   const full = activeCommand?.asset_kind === 'cinematic' ? activeCommand : null
@@ -319,14 +345,21 @@ export function useDesktopVisualWallpaper(): void {
 
   const layered = !cinematicKey || cinematicKey === failedCinematic
   const sceneCommand = activeCommand?.asset_kind === 'scene' ? activeCommand : null
+  const motionEnabled = motionLevel !== 'off'
 
-  const videoUrl = !layered
-    ? assetPath(
-        full?.media_kind === 'video' ? full.media_path : cinematic?.media_kind === 'video' ? cinematic.media_url : null
-      )
-    : assetPath(
-        sceneCommand?.media_kind === 'video' ? sceneCommand.media_path : layerScene?.isVideo ? layerScene.url : null
-      )
+  const videoUrl = !motionEnabled
+    ? null
+    : !layered
+      ? assetPath(
+          full?.media_kind === 'video'
+            ? full.media_path
+            : cinematic?.media_kind === 'video'
+              ? cinematic.media_url
+              : null
+        )
+      : assetPath(
+          sceneCommand?.media_kind === 'video' ? sceneCommand.media_path : layerScene?.isVideo ? layerScene.url : null
+        )
 
   const posterUrl = !layered
     ? firstNonBlank(
@@ -341,7 +374,7 @@ export function useDesktopVisualWallpaper(): void {
         assetPath(projection?.actual.scene_path)
       )
 
-  const actorUrl = layered ? assetPath(layerActor?.url) : null
+  const actorUrl = motionEnabled && layered ? assetPath(layerActor?.url) : null
 
   const outfitUrl = layered
     ? firstNonBlank(
@@ -405,8 +438,8 @@ export function useDesktopVisualWallpaper(): void {
       geometryMode: 'target',
       inputImageHash: layered ? null : (activeCommand?.input_image_hash ?? baseline?.input_image_hash ?? null),
       theme,
-      reduceMotion,
-      paused,
+      reduceMotion: reduceMotion || !motionEnabled,
+      paused: paused || !motionEnabled,
       clear: !videoUrl && !posterUrl && !actorUrl
     }
 
@@ -458,6 +491,8 @@ export function useDesktopVisualWallpaper(): void {
     layerScene?.version,
     staticTarget,
     theme,
+    motionEnabled,
+    motionLevel,
     reduceMotion,
     paused,
     recordReceipt

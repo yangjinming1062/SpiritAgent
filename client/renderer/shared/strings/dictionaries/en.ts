@@ -617,7 +617,16 @@ export const dict: Dictionary = {
       smartHint: 'Let your companion record its life independently of the companionship intensity.',
       postsEnabled: 'Post creation',
       postsEnabledDesc:
-        'Let your companion create text, image, video or audio posts at any time, including while offline. All types share the posting limit.'
+        'Let your companion create text, image, video or audio posts at any time, including while offline. All types share the posting limit.',
+      motionHeading: 'Motion',
+      motionHint:
+        'Controls how much the visual figure moves, independent of proactive contact; temporary quiet does not stop the muted idle loop.',
+      motionAriaLabel: 'Motion level',
+      motions: {
+        off: { label: 'No motion', hint: 'Show a static picture only' },
+        subtle: { label: 'Subtle motion', hint: 'Mostly a quiet idle loop with fewer random actions' },
+        standard: { label: 'Standard motion', hint: 'Full ambient motion and interaction performances' }
+      }
     },
     socialAccounts: {
       title: 'Content sources',

@@ -23,6 +23,7 @@ import {
 import { CharacterStage } from '@/modules/character/rendering'
 import { MediaViewerOverlay } from '@/modules/media'
 import { checkVoiceValidity, warmAudioContext } from '@/modules/speech'
+import { enqueueInteraction } from '@/modules/visuals'
 import { NotificationStack } from '@/shared'
 import { useMainProcessListener } from '@/shared/hooks/use-main-process-listener'
 import { useWindowMouseCapture } from '@/shared/lib/interactive-regions'
@@ -168,6 +169,10 @@ export function SpriteWindow(): React.JSX.Element {
           openContextMenu({ x: e.clientX, y: e.clientY })
         }}
         onDoubleTap={toggleWhisper}
+        onTap={() => {
+          // 单击伙伴：即时注意用户的互动演出；导演按可用素材与冷却决定是否播放。
+          enqueueInteraction('look')
+        }}
       >
         {showCompanion && <CharacterStage />}
       </SpriteStage>

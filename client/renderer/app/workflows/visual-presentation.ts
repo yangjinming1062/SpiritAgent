@@ -3,6 +3,7 @@ import { atom } from 'nanostores'
 import { useEffect } from 'react'
 
 import {
+  $motionLevel,
   $stageOutfitPresented,
   $windowActorMedia,
   $windowActorPlayback,
@@ -12,13 +13,16 @@ import {
 } from '@/modules/character'
 import {
   $visualsPresentation,
+  bindPresentationDirector,
   claimVisualPlay,
   refreshVisualPresentation,
+  resolveAmbientLoop,
   sendStaticReceipt,
   sendVisualReceipt,
   staticPresentationKey,
   type VisualActualSnapshot,
   type VisualPlayCommand,
+  visualsApi,
   type VisualsPresentation
 } from '@/modules/visuals'
 import { $stagePlan, deriveStagePlan } from '@/modules/visuals'
@@ -27,6 +31,7 @@ import { log } from '@/shared/lib/log'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { backendApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
+import { $gateway } from '@/shared/store/gateway'
 import { $presentation } from '@/shared/store/presentation'
 import { $surfaceRole } from '@/shared/store/surfaces'
 
@@ -37,11 +42,26 @@ const clientId = crypto.randomUUID()
 const settledPlays = new Set<string>()
 let windowCommand: VisualPlayCommand | null = null
 let stopProjection: (() => void) | null = null
+let stopDirector: (() => void) | null = null
 let projectingPlay: string | null = null
+let projectionConsumers = 0
 
 function applySources(actual: VisualActualSnapshot | null): void {
   $windowVisualProjection.set(actual)
   setStageOutfitSource(actual?.outfit_path ? { path: actual.outfit_path, name: actual.outfit_description } : null)
+}
+
+function releaseVisualProjection(): void {
+  stopProjection?.()
+  stopProjection = null
+  stopDirector?.()
+  stopDirector = null
+  projectingPlay = null
+  windowCommand = null
+  $windowStaticProjection.set(false)
+  $windowActorMedia.set(null)
+  $windowScenePresented.set(null)
+  applySources(null)
 }
 
 function waitForStage(path: string, scenePath: string, current: () => boolean): Promise<void> {
@@ -159,6 +179,7 @@ async function settlePendingPlay(response: VisualsPresentation): Promise<void> {
     settledPlays.has(pending.play_id) ||
     projectingPlay ||
     Date.parse(pending.expires_at) <= Date.now() ||
+    $motionLevel.get() === 'off' ||
     (pending.asset_kind === 'actor' &&
       (window.matchMedia('(prefers-reduced-motion: reduce)').matches || $presentation.get().fullscreen))
   ) {
@@ -311,6 +332,42 @@ function ensureVisualProjection(): void {
     return
   }
 
+  // 演出的点播走完整指令管线：受理→认领→窗口回执→组合推进；导演只决定“播什么”。
+  // 只有精灵窗（presentation host）绑定导演：useVisualProjection 也被主窗生活区调用，
+  // 主窗的互动请求经 storage 信号转发到这里，避免双宿主并发点播。
+  // 资格：已登录、未关闭动态表现且处于窗口模式（桌面模式由桌面宿主的导演负责）。
+  if ($gateway.get()?.isPresentationHost) {
+    stopDirector = bindPresentationDirector(
+      async visualId => {
+        await visualsApi.playVisual(visualId)
+        await refreshVisualPresentation()
+      },
+      () => $visualsPresentation.get(),
+      {
+        isEligible: () =>
+          $auth.get().kind === 'authenticated' &&
+          $motionLevel.get() !== 'off' &&
+          $presentation.get().effectiveMode === 'window',
+        isSubtle: () => $motionLevel.get() === 'subtle',
+        onChanged: notify => {
+          const onChanged = (): void => {
+            notify()
+            assembleWindowMedia()
+            apply($visualsPresentation.get())
+          }
+
+          const stopMotion = $motionLevel.listen(onChanged)
+          const stopMode = $presentation.listen(onChanged)
+
+          return () => {
+            stopMotion()
+            stopMode()
+          }
+        }
+      }
+    )
+  }
+
   const apply = (response: VisualsPresentation | null, synced = false): void => {
     if (!scope()) {
       return
@@ -450,18 +507,33 @@ async function settleStaticProjection(response: VisualsPresentation): Promise<vo
 export function useVisualProjection(): void {
   const auth = useStore($auth)
   const presentation = useStore($presentation)
+  const authSessionId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
+  const active = authSessionId !== null && presentation.effectiveMode === 'window'
   useEffect(() => {
-    if (auth.kind === 'authenticated' && presentation.effectiveMode === 'window') {
-      ensureVisualProjection()
-      assembleWindowMedia()
+    if (!active) {
+      return
     }
-  }, [auth, presentation.effectiveMode])
+
+    projectionConsumers += 1
+    ensureVisualProjection()
+    assembleWindowMedia()
+
+    return () => {
+      projectionConsumers = Math.max(0, projectionConsumers - 1)
+
+      if (projectionConsumers === 0) {
+        releaseVisualProjection()
+      }
+    }
+  }, [active, authSessionId])
 }
 
-/** 只把认领成功的指令交给主体层；其他窗口只能播放有效基础组合。 */
+/** 只把认领成功的指令交给主体层；其他窗口只能播放有效基础组合（含导演的本地常驻选择）。 */
 function assembleWindowMedia(): void {
   const auth = $auth.get()
-  const actor = deriveStagePlan($visualsPresentation.get(), windowCommand).actor
+  const presentation = $visualsPresentation.get()
+  const plan = deriveStagePlan(presentation, windowCommand, resolveAmbientLoop(presentation))
+  const actor = $motionLevel.get() === 'off' || plan.mode === 'static' ? null : plan.actor
   const base = $stagePlan.get().actor
 
   if (
@@ -496,13 +568,6 @@ function assembleWindowMedia(): void {
 }
 
 registerStorageClearHandler(() => {
-  stopProjection?.()
-  stopProjection = null
-  projectingPlay = null
+  releaseVisualProjection()
   settledPlays.clear()
-  windowCommand = null
-  $windowStaticProjection.set(false)
-  $windowActorMedia.set(null)
-  $windowScenePresented.set(null)
-  applySources(null)
 })

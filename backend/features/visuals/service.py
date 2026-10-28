@@ -30,6 +30,7 @@ from .life import bind_creation_step, restart_visual_steps, settle_visual_steps
 from .models import VisualItem, VisualJob, VisualPlayback, VisualPresentation, VisualVersion
 from .policy import visual_autonomous_block_reason
 from .ports import request_base_motion_preparation
+from .queries import frozen_stage_reference as _frozen_stage_reference
 from .queries import job_view, presentation_state
 from .repository import (
     VisualStateError,
@@ -396,9 +397,26 @@ async def play_visual(
             blocked = await visual_autonomous_block_reason(db, state, item, snapshot=snapshot)
             if blocked is not None:
                 raise VisualStateError(f"当前不适合自主播放：{blocked}")
+        if source == "remote":
+            await _require_stage_media_match(state, snapshot)
         _play, command = await dispatch_play_command(db, user_id, item, source=source, snapshot=snapshot)
         await db.commit()
         return command
+
+
+async def _require_stage_media_match(state: VisualPresentation, snapshot: VisualSnapshot) -> None:
+    """客户端导演点播只允许当前舞台身份与造型的媒体，避免旧造型画面混入当前呈现。"""
+
+    source = snapshot.source
+    if source.kind == "scene":
+        return
+    outfit, identity_hash = _frozen_stage_reference(state)
+    if outfit is None or identity_hash is None:
+        raise VisualStateError("当前舞台尚未准备好，请稍后再试")
+    if source.identity_hash != identity_hash:
+        raise VisualStateError("这份影像与伙伴当前形象不符，请重新制作")
+    if source.outfit.content_hash != outfit.content_hash:
+        raise VisualStateError("这份影像与当前穿着的造型不符，请先换装或重新制作")
 
 
 async def claim_playback(user_id: int, play_id: str, *, client_id: str) -> bool:

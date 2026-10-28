@@ -592,7 +592,15 @@ export const dict = {
       smartHeading: '伙伴的日常',
       smartHint: '伙伴可以自己记录生活，与陪伴档位独立设置。',
       postsEnabled: '动态创作',
-      postsEnabledDesc: '允许伙伴全天自主创作并发布文字、图片、视频或语音动态，离线时也可发布；所有类型共用发布限额'
+      postsEnabledDesc: '允许伙伴全天自主创作并发布文字、图片、视频或语音动态，离线时也可发布；所有类型共用发布限额',
+      motionHeading: '动态表现',
+      motionHint: '控制伙伴形象的画面活动强度，与主动联系互不影响；临时安静不会停止静音的待机动画。',
+      motionAriaLabel: '动态表现档位',
+      motions: {
+        off: { label: '关闭动态', hint: '仅显示静态画面，不播放动画' },
+        subtle: { label: '轻量动态', hint: '主要保留安静的待机循环，减少随机动作' },
+        standard: { label: '标准动态', hint: '完整的常驻动态与互动演出' }
+      }
     },
     socialAccounts: {
       title: '资讯来源',

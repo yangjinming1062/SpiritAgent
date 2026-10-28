@@ -17,6 +17,7 @@ import {
   useIsReadOnlySession
 } from '@/modules/conversation'
 import { MediaViewerOverlay } from '@/modules/media'
+import { enqueueInteraction } from '@/modules/visuals'
 import { PanelActivityProvider } from '@/shared/context/panel-activity'
 import { useEscapeKey } from '@/shared/hooks/use-escape-key'
 import { createFocusCycleHandler } from '@/shared/lib/focus-cycle'
@@ -68,6 +69,7 @@ export function ConversationPage({
   const cycleFocus = createFocusCycleHandler('button, input, [tabindex="0"]')
   const sidebarToggle = useRef<HTMLButtonElement>(null)
   const railToggle = useRef<HTMLButtonElement>(null)
+  const companionVisible = useRef(false)
   const sidebarId = useId()
   const railId = useId()
   const strings = useStrings()
@@ -125,6 +127,16 @@ export function ConversationPage({
   })
 
   const companion = sessionPresetId === 'companion'
+
+  useEffect(() => {
+    const next = active && visible && foreground && companion
+
+    if (next && !companionVisible.current) {
+      enqueueInteraction('look')
+    }
+
+    companionVisible.current = next
+  }, [active, visible, foreground, companion])
 
   return (
     <PanelActivityProvider active={active && visible && foreground}>

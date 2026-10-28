@@ -1,8 +1,9 @@
 import '../../../styles.css'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 
+import { ambientPhaseFilter } from '@/shared/lib/day-phase'
 import { createStageVideoLayer } from '@/shared/lib/stage-video-layer'
 import { backgroundMedia } from '@/shared/platform/desktop'
 import { desktopMediaLayout } from '@client-shared/desktop-media-geometry'
@@ -36,6 +37,7 @@ function DesktopWallpaper() {
   const actorSecond = useRef<HTMLVideoElement>(null)
   const actorPoster = useRef<HTMLImageElement>(null)
   const actorRoot = useRef<HTMLDivElement>(null)
+  const phaseMotionEnabled = useRef(true)
 
   useEffect(() => {
     const bridge = backgroundMedia()
@@ -851,6 +853,8 @@ function DesktopWallpaper() {
       revision = media.revision
       const nextImageGeneration = ++imageGeneration
       paused = media.paused || media.reduceMotion
+      phaseMotionEnabled.current = !media.reduceMotion
+      setPhaseFilter(ambientPhaseFilter(phaseMotionEnabled.current))
       document.documentElement.dataset.theme = media.theme
       document.documentElement.dataset.palette = media.theme.startsWith('night') ? 'night' : 'day'
 
@@ -1131,6 +1135,15 @@ function DesktopWallpaper() {
     opacity: 0
   } as const
 
+  // 时段氛围色调只作用于环境（背景/poster），主体层保持素材原色；每小时复查。
+  const [phaseFilter, setPhaseFilter] = useState(() => ambientPhaseFilter(true))
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setPhaseFilter(ambientPhaseFilter(phaseMotionEnabled.current)), 60 * 60_000)
+
+    return () => window.clearInterval(timer)
+  }, [])
+
   return (
     <div
       aria-hidden="true"
@@ -1143,10 +1156,14 @@ function DesktopWallpaper() {
           inset: -32,
           backgroundPosition: 'center',
           backgroundSize: 'cover',
-          filter: 'blur(24px) brightness(.6)'
+          filter: phaseFilter === 'none' ? 'blur(24px) brightness(.6)' : `blur(24px) brightness(.6) ${phaseFilter}`
         }}
       />
-      <img alt="" ref={poster} style={{ ...videoStyle, zIndex: 1 }} />
+      <img
+        alt=""
+        ref={poster}
+        style={{ ...videoStyle, zIndex: 1, ...(phaseFilter !== 'none' ? { filter: phaseFilter } : {}) }}
+      />
       <video muted playsInline preload="auto" ref={first} style={videoStyle} />
       <video muted playsInline preload="auto" ref={second} style={videoStyle} />
       <div ref={actorRoot} style={{ position: 'absolute', inset: 0, zIndex: 2, opacity: 0 }}>

@@ -68,7 +68,8 @@ async def execution_context(user_id: int) -> dict[str, Any]:
         topics = await load_prompt_topics(db, MemoryScope(user_id, "companion"), utc_now())
         persona = await persona_snapshot(db, user_id)
         disabled = disabled_backend_tool_names(await load_user_settings(db, user_id))
-    visuals = await presentation_state(user_id)
+    # 只读自主开关，跳过导演目录装配。
+    visuals = await presentation_state(user_id, with_catalog=False)
     return {
         "capabilities": {
             "visual.generate": visuals.autonomous_enabled and bool(outfits and scenes and actions),
@@ -126,7 +127,10 @@ async def _block_reason(user_id: int, step: LifeStepView) -> tuple[str, str] | N
         return "permission_required", "自主添置环境已关闭"
     if step.kind == "action.design" and not SETTINGS.action_autocreate_enabled:
         return "permission_required", "自主设计动作已关闭"
-    if step.kind == "visual.generate" and not (await presentation_state(user_id)).autonomous_enabled:
+    if (
+        step.kind == "visual.generate"
+        and not (await presentation_state(user_id, with_catalog=False)).autonomous_enabled
+    ):
         return "permission_required", "自主影像制作已关闭"
     if isinstance(step.action, ReadingAction):
         if (step.action.query and "web_search" in disabled) or (

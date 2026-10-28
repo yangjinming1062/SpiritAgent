@@ -3,13 +3,16 @@ import type React from 'react'
 import { useEffect, useMemo, useState } from 'react'
 
 import {
+  $motionLevel,
   $postsEnabled,
   $responsePreference,
   $userPreferredTier,
   type DisturbanceTier,
+  type MotionLevel,
   postsEnabledPref,
   type ResponsePreference,
   selectDisturbanceTier,
+  setMotionLevel,
   setResponsePreference
 } from '@/modules/character'
 import { triggerHaptic } from '@/shared/lib/haptics'
@@ -32,6 +35,8 @@ import { useStrings } from '@/shared/strings'
 
 const DISTURBANCE_TIERS: readonly DisturbanceTier[] = ['still', 'normal', 'autonomous']
 
+const MOTION_LEVELS: readonly MotionLevel[] = ['off', 'subtle', 'standard']
+
 const RECORDING_OPTIONS = [15, 30, 60, 120, 300] as const
 const DEFAULT_RECORDING_SECONDS = 60
 
@@ -40,6 +45,7 @@ export function InteractionPage({ part = 'companionship' }: { part?: 'companions
   const t = dict.settings.interaction
 
   const tier = useStore($userPreferredTier)
+  const motionLevel = useStore($motionLevel)
   const responsePreference = useStore($responsePreference)
   const postsEnabled = useStore($postsEnabled)
 
@@ -165,6 +171,38 @@ export function InteractionPage({ part = 'companionship' }: { part?: 'companions
                         {t.tiers[id].label}
                       </div>
                       <div className="mt-0.5 text-[11px] leading-relaxed text-muted">{t.tiers[id].hint}</div>
+                    </div>
+                    {isSelected ? <Check className="size-4 shrink-0 text-accent" /> : null}
+                  </button>
+                )
+              })}
+            </SettingCard>
+          </section>
+
+          <section>
+            <p className={cn(SECTION_TITLE, 'mb-1')}>{t.motionHeading}</p>
+            <p className={cn(HINT_TEXT, 'mb-2')}>{t.motionHint}</p>
+            <SettingCard ariaLabel={t.motionAriaLabel} role="radiogroup">
+              {MOTION_LEVELS.map(id => {
+                const isSelected = motionLevel === id
+
+                return (
+                  <button
+                    aria-checked={isSelected}
+                    className={cn(
+                      'flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-fill-hover',
+                      isSelected && 'bg-accent-soft/35'
+                    )}
+                    key={id}
+                    onClick={() => setMotionLevel(id)}
+                    role="radio"
+                    type="button"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className={cn('text-[13px] font-medium', isSelected ? 'text-strong' : 'text-body')}>
+                        {t.motions[id].label}
+                      </div>
+                      <div className="mt-0.5 text-[11px] leading-relaxed text-muted">{t.motions[id].hint}</div>
                     </div>
                     {isSelected ? <Check className="size-4 shrink-0 text-accent" /> : null}
                   </button>

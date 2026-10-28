@@ -4,6 +4,7 @@ from infrastructure.assets.asset_store import client_asset_url
 
 from .schemas import (
     ActorClipBody,
+    AmbientCatalogEntry,
     ComboMaterialRef,
     SceneMediaRef,
     StageComposition,
@@ -45,6 +46,16 @@ def client_layer_media(layer: StageLayerMedia | None) -> StageLayerMedia | None:
             "media_url": client_asset_url(layer.media_url),
             "poster_url": client_asset_url(layer.poster_url) if layer.poster_url else None,
             "body": client_body(layer.body),
+        }
+    )
+
+
+def client_catalog_entry(entry: AmbientCatalogEntry) -> AmbientCatalogEntry:
+    return entry.model_copy(
+        update={
+            "media_url": client_asset_url(entry.media_url),
+            "poster_url": client_asset_url(entry.poster_url) if entry.poster_url else None,
+            "body": client_body(entry.body),
         }
     )
 

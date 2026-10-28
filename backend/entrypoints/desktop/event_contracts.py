@@ -181,6 +181,11 @@ class MoodEvent(BaseModel):
     mood: str
 
 
+class CompanionReactionEvent(BaseModel):
+    reaction: str
+    occurred_at: str
+
+
 class VoiceUpdatedEvent(BaseModel):
     voice_id: str
     version: int
@@ -290,6 +295,7 @@ EVENT_CONTRACTS: dict[str, EventContract] = {
     "memory.changed": EventContract(MemoryChangedEvent, "all", "resource"),
     "companion.message": EventContract(CompanionMessageEvent, "all", "transient"),
     "companion.mood": EventContract(MoodEvent, "all", "transient"),
+    "companion.reaction": EventContract(CompanionReactionEvent, "desktop", "transient"),
     "companion.voice.updated": EventContract(VoiceUpdatedEvent, "desktop", "resource"),
     "companion.scene.updated": EventContract(SceneChangedEvent, "all", "resource"),
     "companion.outfit.updated": EventContract(OutfitChangedEvent, "all", "resource"),

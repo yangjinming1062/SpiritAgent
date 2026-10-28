@@ -11,6 +11,7 @@ import { ApiError } from '../../../../shared/errors'
 
 import type { VisualReceiptBody, VisualsListQuery } from './api'
 import { visualsApi } from './api'
+import { feedDirectorPresentation, resolveAmbientLoop } from './director'
 import { $stagePlan, deriveStagePlan } from './stage-plan'
 import type {
   VisualDetail,
@@ -212,9 +213,11 @@ function publishPresentation(response: VisualsPresentation): void {
 }
 
 // 呈现与待播指令任一变化都重新解析统一舞台计划；窗口与桌面消费同一份。
+// 导演只在舞台宿主装配后接收刷新；常驻循环的本地选择参与主体层解析。
 function refreshStagePlan(): void {
   const presentation = $visualsPresentation.get()
-  $stagePlan.set(deriveStagePlan(presentation, null))
+  feedDirectorPresentation(presentation)
+  $stagePlan.set(deriveStagePlan(presentation, null, resolveAmbientLoop(presentation)))
 }
 
 $visualsPresentation.listen(refreshStagePlan)
@@ -417,7 +420,8 @@ export function resetVisualsForAccount(): void {
   $visualsPresentation.set(null)
   $visualsPresentationError.set(null)
   $visualPlayback.set(null)
-  $stagePlan.set(deriveStagePlan(null, null))
+  feedDirectorPresentation(null)
+  $stagePlan.set(deriveStagePlan(null, null, null))
 }
 
 registerStorageClearHandler(resetVisualsForAccount)

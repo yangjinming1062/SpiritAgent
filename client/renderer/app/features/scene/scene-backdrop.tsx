@@ -8,9 +8,10 @@ import {
   $windowVisualProjection,
   useVisualProjection
 } from '@/app/workflows/visual-presentation'
-import { isCharacterMediaVisible, observeCharacterStageVisibility } from '@/modules/character'
+import { $motionLevel, isCharacterMediaVisible, observeCharacterStageVisibility } from '@/modules/character'
 import { $stagePlan, type StageScenePlan } from '@/modules/visuals'
 import { captureAuthScope } from '@/shared/lib/authed-api'
+import { ambientPhaseFilter } from '@/shared/lib/day-phase'
 import { log } from '@/shared/lib/log'
 import { acquireStageVideo } from '@/shared/lib/stage-video-cache'
 import { createStageVideoLayer } from '@/shared/lib/stage-video-layer'
@@ -28,8 +29,9 @@ export function SceneBackdrop(): React.JSX.Element {
   const projection = useStore($windowVisualProjection)
   const staticProjection = useStore($windowStaticProjection)
   const auth = useStore($auth)
+  const motionLevel = useStore($motionLevel)
   const owner = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
-  const scene = staticProjection ? null : plan.scene
+  const scene = staticProjection || motionLevel === 'off' ? null : plan.scene
   const path = (scene?.isVideo ? scene.posterUrl : scene?.url) ?? projection?.scene_path ?? null
   const [image, setImage] = useState<{ owner: string; path: string; url: string } | null>(null)
   const [video, setVideo] = useState<StageScenePlan | null>(null)
@@ -41,6 +43,16 @@ export function SceneBackdrop(): React.JSX.Element {
   const layer = useRef<ReturnType<typeof createStageVideoLayer<StageScenePlan>> | null>(null)
   const strings = useStrings()
   const shown = image?.owner === owner ? image : null
+  // 时段氛围只作用于环境层；每小时复查一次，跨档时平滑过渡。
+  const [phaseFilter, setPhaseFilter] = useState(() => ambientPhaseFilter(motionLevel !== 'off'))
+
+  useEffect(() => {
+    setPhaseFilter(ambientPhaseFilter(motionLevel !== 'off'))
+
+    const timer = window.setInterval(() => setPhaseFilter(ambientPhaseFilter(motionLevel !== 'off')), 60 * 60_000)
+
+    return () => window.clearInterval(timer)
+  }, [motionLevel])
 
   useEffect(() => {
     if (!first.current || !second.current) {
@@ -58,7 +70,9 @@ export function SceneBackdrop(): React.JSX.Element {
     const query = window.matchMedia('(prefers-reduced-motion: reduce)')
 
     const sync = (): void =>
-      player.setPaused(!isCharacterMediaVisible() || query.matches || $presentation.get().fullscreen)
+      player.setPaused(
+        !isCharacterMediaVisible() || query.matches || $presentation.get().fullscreen || $motionLevel.get() === 'off'
+      )
 
     const stop = observeCharacterStageVisibility(sync)
     query.addEventListener('change', sync)
@@ -157,7 +171,7 @@ export function SceneBackdrop(): React.JSX.Element {
   }
 
   return (
-    <div className={styles.root}>
+    <div className={styles.root} style={{ filter: phaseFilter }}>
       {shown && (
         <img
           alt=""

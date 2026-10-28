@@ -8,10 +8,11 @@ import { onJournalEvent } from '@/modules/diary'
 import { handleLifeUpdated } from '@/modules/life'
 import { onPostEvent } from '@/modules/posts'
 import { onSceneEvent } from '@/modules/scene'
-import { handleVisualEvent, refreshActionGroups } from '@/modules/visuals'
+import { enqueueInteraction, enqueueInteractionForward, handleVisualEvent, refreshActionGroups } from '@/modules/visuals'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { $auth } from '@/shared/store/auth'
 import { $gateway } from '@/shared/store/gateway'
+import { $surfaceRole } from '@/shared/store/surfaces'
 
 import { $devMode, pushDevLog } from './dev-log'
 import { handleCharacterEvent } from './handlers/character-events'
@@ -221,6 +222,22 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       handleVisualEvent(event.type, event.payload)
 
       break
+    case 'companion.reaction': {
+      // 模型推断的身体反应只作为演出建议；导演按可用素材与冷却决定是否演出。
+      // 事件到达所有桌面端窗口：宿主窗口直接入队，非宿主窗口经 storage 信号转发给宿主，
+      // 两路互斥避免同一事件被消费两次。
+      const reaction = event.payload.reaction
+
+      if (reaction === 'look' || reaction === 'smile' || reaction === 'stretch') {
+        if (ctx.isPresentationHost || $surfaceRole.get() === 'desktop') {
+          enqueueInteraction(reaction)
+        } else {
+          enqueueInteractionForward(reaction)
+        }
+      }
+
+      break
+    }
 
     case 'companion.visual.play':
       handleVisualEvent(event.type, event.payload)
