@@ -3,9 +3,8 @@ import type React from 'react'
 import { useEffect, useState } from 'react'
 
 import { $presentedOutfit, hydrateWardrobe } from '@/modules/character'
+import type { ActionClipKind, ActionDefinition } from '@/modules/visuals'
 import {
-  type ActionClipKind,
-  type ActionDefinition,
   actionGroups,
   type ActionLibraryGroup,
   type ActionMediaEntry,
@@ -43,7 +42,14 @@ import { $auth } from '@/shared/store/auth'
 import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
-import { isActionDesignValid, parseActionConditions } from '../../../../../shared/actions'
+import {
+  ACTION_MOTION_INTENSITIES,
+  ACTION_PERFORMANCE_ROLES,
+  ACTION_SEMANTIC_TAGS,
+  type ActionSemanticTag,
+  isActionDesignValid,
+  parseActionConditions
+} from '../../../../../shared/actions'
 
 interface ActionDraft {
   name: string
@@ -52,12 +58,27 @@ interface ActionDraft {
   avoid_when: string
   clip_kind: ActionClipKind
   duration_seconds: number
+  semantic_tags: ActionSemanticTag[]
+  performance_role: ActionDefinition['performance_role'] | null
+  motion_intensity: ActionDefinition['motion_intensity']
+  interruptible: boolean
   allowed_triggers?: ActionDefinition['allowed_triggers']
   reason?: string
 }
 
 function emptyDraft(): ActionDraft {
-  return { name: '', motion_description: '', use_when: '', avoid_when: '', clip_kind: 'once', duration_seconds: 4 }
+  return {
+    name: '',
+    motion_description: '',
+    use_when: '',
+    avoid_when: '',
+    clip_kind: 'once',
+    duration_seconds: 4,
+    semantic_tags: [],
+    performance_role: null,
+    motion_intensity: 'normal',
+    interruptible: true
+  }
 }
 
 function draftOf(action: ActionDefinition): ActionDraft {
@@ -68,6 +89,10 @@ function draftOf(action: ActionDefinition): ActionDraft {
     avoid_when: action.avoid_when.join('\n'),
     clip_kind: action.clip_kind,
     duration_seconds: action.duration_seconds,
+    semantic_tags: [...action.semantic_tags],
+    performance_role: action.performance_role,
+    motion_intensity: action.motion_intensity,
+    interruptible: action.interruptible,
     allowed_triggers: action.allowed_triggers,
     reason: action.reason
   }
@@ -81,6 +106,10 @@ function draftBody(draft: ActionDraft) {
     avoid_when: parseActionConditions(draft.avoid_when),
     clip_kind: draft.clip_kind,
     duration_seconds: draft.duration_seconds,
+    semantic_tags: draft.semantic_tags,
+    performance_role: draft.performance_role ?? (draft.clip_kind === 'loop' ? 'sustained' : 'reaction'),
+    motion_intensity: draft.motion_intensity,
+    interruptible: draft.interruptible,
     allowed_triggers: draft.allowed_triggers,
     reason: draft.reason
   }
@@ -94,6 +123,10 @@ function actionBody(action: ActionDefinition) {
     avoid_when: action.avoid_when,
     clip_kind: action.clip_kind,
     duration_seconds: action.duration_seconds,
+    semantic_tags: action.semantic_tags,
+    performance_role: action.performance_role,
+    motion_intensity: action.motion_intensity,
+    interruptible: action.interruptible,
     allowed_triggers: action.allowed_triggers,
     reason: action.reason
   }
@@ -476,7 +509,7 @@ function ActionsPageContent(): React.JSX.Element {
                   onChange={value =>
                     setEditing({
                       ...editing,
-                      draft: { ...editing.draft, clip_kind: value === 'loop' ? 'loop' : 'once' }
+                      draft: { ...editing.draft, clip_kind: value, performance_role: null }
                     })
                   }
                   options={[
@@ -503,6 +536,95 @@ function ActionsPageContent(): React.JSX.Element {
                 />
               </label>
             </div>
+            <div>
+              <span className={FIELD_LABEL}>{t.semanticTagsLabel}</span>
+              <div className="flex flex-wrap gap-1.5">
+                {ACTION_SEMANTIC_TAGS.map(tag => {
+                  const active = editing.draft.semantic_tags.includes(tag)
+
+                  return (
+                    <button
+                      aria-pressed={active}
+                      className={active ? BTN_PRIMARY : BTN_GHOST}
+                      key={tag}
+                      onClick={event => {
+                        event.preventDefault()
+                        setEditing({
+                          ...editing,
+                          draft: {
+                            ...editing.draft,
+                            semantic_tags: active
+                              ? editing.draft.semantic_tags.filter(item => item !== tag)
+                              : editing.draft.semantic_tags.length >= 8
+                                ? editing.draft.semantic_tags
+                                : [...editing.draft.semantic_tags, tag]
+                          }
+                        })
+                      }}
+                      type="button"
+                    >
+                      {t.semanticTagLabels[tag]}
+                    </button>
+                  )
+                })}
+              </div>
+              <p className="mt-1 text-[11px] text-faint">{t.semanticTagsHint}</p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <span className={FIELD_LABEL}>{t.performanceRoleLabel}</span>
+                <PanelSelect<ActionDefinition['performance_role'] | ''>
+                  ariaLabel={t.performanceRoleLabel}
+                  onChange={value =>
+                    setEditing({
+                      ...editing,
+                      draft: {
+                        ...editing.draft,
+                        performance_role: value || null
+                      }
+                    })
+                  }
+                  options={[
+                    { value: '', label: '—' },
+                    ...ACTION_PERFORMANCE_ROLES.filter(
+                      role => (role === 'reaction') === (editing.draft.clip_kind === 'once')
+                    ).map(role => ({ value: role, label: t.performanceRoles[role] }))
+                  ]}
+                  value={editing.draft.performance_role ?? ''}
+                />
+              </div>
+              <div>
+                <span className={FIELD_LABEL}>{t.motionIntensityLabel}</span>
+                <PanelSelect<ActionDefinition['motion_intensity']>
+                  ariaLabel={t.motionIntensityLabel}
+                  onChange={value =>
+                    setEditing({
+                      ...editing,
+                      draft: {
+                        ...editing.draft,
+                        motion_intensity: value
+                      }
+                    })
+                  }
+                  options={ACTION_MOTION_INTENSITIES.map(level => ({
+                    value: level,
+                    label: t.motionIntensities[level]
+                  }))}
+                  value={editing.draft.motion_intensity}
+                />
+                <p className="mt-1 text-[11px] text-faint">{t.motionIntensityHint}</p>
+              </div>
+            </div>
+            <label className="flex items-center gap-2 text-xs text-muted">
+              <input
+                checked={editing.draft.interruptible}
+                onChange={event =>
+                  setEditing({ ...editing, draft: { ...editing.draft, interruptible: event.currentTarget.checked } })
+                }
+                type="checkbox"
+              />
+              {t.interruptibleLabel}
+            </label>
           </fieldset>
           <div className="flex gap-2 px-4 pb-4">
             <button
@@ -534,9 +656,13 @@ function ActionsPageContent(): React.JSX.Element {
                 <span className="text-sm font-medium text-strong">{action.name}</span>
                 <Badge>{action.clip_kind === 'loop' ? t.clipLoop : t.clipOnce}</Badge>
                 <Badge>{`${action.duration_seconds}${t.durationSuffix}`}</Badge>
+                <Badge>{t.motionIntensities[action.motion_intensity]}</Badge>
                 <Badge>{action.source === 'preset' ? t.builtin : t.custom}</Badge>
                 {group === 'not_in_library' && <Badge>{t.statusLabels[action.status]}</Badge>}
               </div>
+              {action.semantic_tags.length > 0 && (
+                <p className="text-[11px] text-faint">{`${t.semanticTagsLabel}：${action.semantic_tags.map(tag => t.semanticTagLabels[tag]).join('、')}`}</p>
+              )}
               <p className="whitespace-pre-wrap text-xs text-muted">{action.motion_description}</p>
               {(action.use_when.length > 0 || action.avoid_when.length > 0) && (
                 <p className="text-[11px] text-faint">

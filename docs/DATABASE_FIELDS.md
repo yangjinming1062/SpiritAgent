@@ -53,8 +53,8 @@
 
 | 字段组与模型入口 | 语义 |
 |---|---|
-| 成品与版本：[visuals/models.py](../backend/features/visuals/models.py) | 稳定成品 ID 与不可变版本分离；`asset_kind` 区分 actor/scene/cinematic 三类资产，版本保存判别联合冻结输入（`snapshot_json.source.kind`）、实际输入图、文件关系与 actor 主体元数据（`body_json`），成功重做才切换当前指针 |
-| 制作与呈现：同一[模型文件](../backend/features/visuals/models.py) | 工作项的目标/预期版本控制采纳；呈现保存当前/持续版本、舞台组合（`composition_json`）与生活意图（`intent_json`）、静态素材目标与已显示快照、待播指令和代次；播放记录保存具体版本的指令与回执 |
+| 成品与版本：[visuals/models.py](../backend/features/visuals/models.py) | 稳定成品 ID 与不可变版本分离；`asset_kind` 区分 actor/scene/cinematic 三类资产，版本保存判别联合冻结输入（`snapshot_json.source.kind`）、视频实际表现与适用条件（`source.media_semantics`）、实际输入图、文件关系与 actor 主体元数据（`body_json`），成功重做才切换当前指针 |
+| 制作与呈现：同一[模型文件](../backend/features/visuals/models.py) | 工作项的目标/预期版本控制采纳；呈现保存当前/持续版本、舞台组合（`composition_json`）与生活意图（`intent_json`，含结构化活动类别与建议视觉标签）、静态素材目标与已显示快照、待播指令和代次；播放记录保存具体版本的指令与回执；动作定义（[action_library/models.py](../backend/features/action_library/models.py)）另存语义标签、表现角色、动作强度与可中断属性，随冻结输入进入影像快照 |
 | 公共视频：[media/models.py](../backend/features/media/models.py) | 来源消息、回复绑定和视频制作详情；通用控制状态归 jobs，远端状态归 provider attempts |
 
 成品/版本成对外键还校验版本属于该成品；循环指针可分阶段写入，提交时必须完整。显示事实不得从生活活动、待播指令或文件存在推断。
@@ -70,7 +70,7 @@
 
 | 字段组与模型入口 | 语义 |
 |---|---|
-| 状态、事项、步骤与事件：[life/models.py](../backend/features/life/models.py) | 生活状态行串行化写入；事项保存目标/进展和调整来源，步骤保存可执行动作及永久阅读成果，事件保留事实性质、主体和结果；完成证据经关联表连接 |
+| 状态、事项、步骤与事件：[life/models.py](../backend/features/life/models.py) | 生活状态行串行化写入，`activity_type` 与 `scene_tags_json` 保存当前活动类别及有依据的环境、物品条件供视觉投影；事项保存目标/进展和调整来源，步骤保存可执行动作及永久阅读成果，事件保留事实性质、主体和结果；完成证据经关联表连接 |
 | 请求额度与提交：同一[模型文件](../backend/features/life/models.py) | `life_action_admissions` 独立保存额度归属和已提交事实，覆盖恢复按请求合并，不能从可覆盖的事项历史重新计数 |
 | 夜间账本：[nightly/models.py](../backend/workflows/nightly/models.py) | 按账户/本地日期组织阶段、预算和动作身份，关联实际任务与结果；账本计划不证明执行完成 |
 | 自动化与等待：[automation/models.py](../backend/features/automation/models.py)、[intent_models.py](../backend/features/companion/intent_models.py) | Cron 保存计划和任务会话，陪伴意图保存等待条件、租约和终态；`source_kind` 与 `cron_job_id` 表示触发来源，`source_key` 仍用于可移植身份 |

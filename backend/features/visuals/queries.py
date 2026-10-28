@@ -682,6 +682,12 @@ async def ambient_catalog(db: AsyncSession, state: VisualPresentation, *, limit:
                 action_id=row.action_id,
                 action_name=action.get("name", ""),
                 preset_key=preset_keys.get(row.action_id) if row.action_id is not None else None,
+                semantic_tags=action.get("semantic_tags", []),
+                performance_role=action["performance_role"],
+                motion_intensity=action.get("motion_intensity", "normal"),
+                interruptible=action.get("interruptible", True),
+                media_semantics=source.get("media_semantics"),
+                allowed_triggers=action.get("allowed_triggers", []),
                 use_when=action.get("use_when", []),
                 avoid_when=action.get("avoid_when", []),
             )
@@ -946,6 +952,10 @@ async def visual_play_catalog(user_id: int, trigger: str) -> list[VisualPlayOpti
                     description=row.description,
                     outfit_description=row.outfit_description,
                     scene_description=row.scene_description or "",
+                    semantic_tags=action.get("semantic_tags", []),
+                    performance_role=action.get("performance_role", "idle"),
+                    motion_intensity=action.get("motion_intensity", "normal"),
+                    media_semantics=source.get("media_semantics"),
                     use_when=action.get("use_when", []),
                     avoid_when=action.get("avoid_when", []),
                 )

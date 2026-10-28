@@ -1163,6 +1163,18 @@ dd {
   border: 1px solid var(--line);
   border-radius: 10px;
 }
+
+.asset-detail fieldset .tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+.asset-detail fieldset .tag-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 .asset-detail fieldset legend {
   font-size: 13px;
   color: #4f6e5e;

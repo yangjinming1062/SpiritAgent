@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.configuration.settings.values import get_user_setting
 
-# 云同步点键（PROTOCOL「配置所有权与云同步」）：off 仅静态画面，subtle 只保留安静循环，
+# 云同步点键（PROTOCOL「配置所有权与云同步」）：off 仅静态画面，subtle 自动选择仅限轻微动作，允许用户明确触发适当反应，
 # standard 启用完整常驻动态与互动演出。安静陪伴档位不改变本设置，临时安静也不停止静音待机。
 ALLOWED_LEVELS = frozenset({"off", "subtle", "standard"})
 DEFAULT_LEVEL = "standard"

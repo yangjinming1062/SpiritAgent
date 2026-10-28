@@ -123,6 +123,7 @@ from .schemas import (
     ActorClipBody,
     ActorClipSource,
     CinematicSource,
+    MediaSemantics,
     OpeningReview,
     SceneMediaSource,
     VisualAsset,
@@ -192,6 +193,7 @@ class VisualVideoReview(BaseModel):
     verdict: Literal["pass", "review"]
     reason: str = Field(max_length=500)
     head_anchor: VisualHeadAnchor | None = None
+    media_semantics: MediaSemantics | None = None
 
 
 class VisualMotionError(VisualCreationError):
@@ -1059,6 +1061,9 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
     candidate = progress.candidate
     if candidate is None:
         raise VisualStateError("制作的视频缺失")
+    source = visual_snapshot(job).source
+    if source.kind == "scene":
+        raise VisualStateError("环境视频须使用环境检查")
     await _require_active_job(user_id, job.id, progress.generation_id)
     resolved = resolve_asset_reference(candidate.media_path)
     reference = await asyncio.to_thread(read_valid_image_data_uri, progress.pose_path)
@@ -1090,9 +1095,7 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
             review_payload: dict[str, object] = {
                 "isolated_subject": job.asset_kind == "actor",
                 "video_feedback": job.video_feedback,
-                "kind": visual_snapshot(job).source.action.clip_kind
-                if visual_snapshot(job).source.kind in ("actor", "cinematic")
-                else "loop",
+                "kind": source.action.clip_kind,
                 "duration_seconds": progress.duration_seconds,
                 "frame_times_seconds": samples.times_seconds,
                 "reference_frame_count": len(references),
@@ -1102,6 +1105,10 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
                 "motion_prompt": progress.motion_prompt,
                 "feedback": job.feedback,
                 "customization_priority": progress.customization_priority,
+                "action_conditions": {
+                    "use_when": source.action.use_when,
+                    "avoid_when": source.action.avoid_when,
+                },
             }
             review = await vision_chat_json(
                 user_id,
@@ -1114,7 +1121,10 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
                 before_submit=before_submit,
                 task=AiTaskKey.visuals,
             )
+            if review.verdict == "pass" and review.media_semantics is None:
+                raise ValueError("视频检查缺少实际表现与适用条件")
             progress.review_verdict, progress.review_reason = review.verdict, review.reason
+            candidate.media_semantics = review.media_semantics
             if candidate.body is not None and review.head_anchor is not None:
                 candidate.body.head_anchor = (
                     round(review.head_anchor.x * (candidate.width - 1)),
@@ -1169,9 +1179,14 @@ async def _describe_frame(user_id: int, job_id: int, progress: VisualJobProgress
 
 
 def _publication_snapshot(snapshot: VisualSnapshot, progress: VisualJobProgress) -> VisualSnapshot:
-    if snapshot.source.kind == "scene" or progress.creation_plan is None:
+    if snapshot.source.kind == "scene":
         return snapshot
-    source = snapshot.source.model_copy(update={"plan": progress.creation_plan})
+    source = snapshot.source.model_copy(
+        update={
+            "plan": progress.creation_plan,
+            "media_semantics": progress.candidate.media_semantics if progress.candidate else None,
+        }
+    )
     return snapshot.model_copy(update={"source": source})
 
 

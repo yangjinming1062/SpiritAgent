@@ -1737,6 +1737,38 @@ export const dict = {
     clipLoop: '持续动作',
     durationLabel: '时长',
     durationSuffix: ' 秒',
+    semanticTagsLabel: '语义标签',
+    semanticTagLabels: {
+      idle: '安静相伴',
+      attention: '注意用户',
+      interaction: '互动回应',
+      reading: '阅读',
+      working: '专注做事',
+      creating: '创作',
+      thinking: '思考',
+      resting: '休息',
+      organizing: '整理',
+      socializing: '社交',
+      stretching: '舒展',
+      grooming: '整理仪容',
+      drinking: '饮水',
+      dancing: '舞蹈'
+    },
+    interruptibleLabel: '允许互动或新活动中断动作',
+    semanticTagsHint: '描述动作本身含义，供伙伴按生活情境挑选动作；最多 8 个。',
+    performanceRoleLabel: '表现角色',
+    performanceRoles: {
+      idle: '常驻待机',
+      sustained: '持续状态',
+      reaction: '即时反应'
+    },
+    motionIntensityLabel: '动作强度',
+    motionIntensities: {
+      subtle: '轻微',
+      normal: '日常',
+      expressive: '明显'
+    },
+    motionIntensityHint: '轻量动态下伙伴只自动选择轻微动作；用户主动触发的反应不受限。',
     reviewReasonLabel: '评审说明',
     save: '保存',
     cancel: '取消',

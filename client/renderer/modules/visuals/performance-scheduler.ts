@@ -314,9 +314,8 @@ export function createPerformanceScheduler(ports: PerformancePorts, changed: (st
     }
 
     if (
-      !enabled ||
+      !valid(task) ||
       blocked ||
-      task.expiresAt <= Date.now() ||
       (active &&
         (task.priority < active.task.priority || (task.priority === active.task.priority && source !== 'manual')))
     ) {
@@ -361,8 +360,7 @@ export function createPerformanceScheduler(ports: PerformancePorts, changed: (st
         active &&
         (!eligible ||
           blocked ||
-          (active.task.performanceId !== active.task.playId &&
-            active.task.source !== 'manual' &&
+          (active.task.source !== 'manual' &&
             (state !== 'playing' || active.task.interruptible) &&
             !ports.valid(active.task)))
       ) {

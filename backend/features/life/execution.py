@@ -18,7 +18,7 @@ from .actions import CREATION_CAPABILITIES, LIFE_ACTION, NextAction, ReadingResu
 from .models import LifeActionAdmission, LifePursuit, LifeStep
 from .queries import step_view
 from .schemas import LifeEventInput, LifeStepView
-from .service import LifeInputError, create_step, get_or_create_state, record_event
+from .service import LifeInputError, clear_activity_step, create_step, get_or_create_state, record_event
 from .settlement import settle_business_steps
 
 _RETRY_DELAY = timedelta(minutes=15)
@@ -163,7 +163,7 @@ async def defer_step(
                 return
             row.state = "planned"
             if state.activity_step_id == row.id:
-                state.activity_step_id, state.activity_kind = None, "intent"
+                clear_activity_step(db, state)
         if row.state != "planned":
             return
         row.disposition, row.wait_reason = disposition, reason
@@ -236,8 +236,12 @@ async def claim_step(user_id: int, step_id: int, timezone: ZoneInfo) -> LifeStep
         row.budget_date = admission.budget_date
         row.state, row.started_at, row.disposition, row.wait_reason = "running", row.started_at or now, "executing", ""
         row.attempts += 1
-        if state.current_activity != row.description:
-            state.current_activity = row.description
+        activity_type = "reading" if row.kind == "content.read" else "creating"
+        if (state.current_activity, state.activity_kind, state.activity_type) != (
+            row.description,
+            "execution",
+            activity_type,
+        ):
             state.presentation_revision += 1
             emit_ws_event(
                 db,
@@ -245,6 +249,8 @@ async def claim_step(user_id: int, step_id: int, timezone: ZoneInfo) -> LifeStep
                 event_type="companion.life.presentation_requested",
                 payload={"revision": state.presentation_revision},
             )
+        state.current_activity = row.description
+        state.activity_type = activity_type
         state.activity_kind, state.activity_step_id, state.activity_started_at = "execution", row.id, now
         state.revision += 1
         await record_event(
@@ -312,7 +318,7 @@ async def reconcile_submission(user_id: int, step_id: int) -> LifeStepView | Non
             ):
                 row.state, row.disposition, row.wait_reason = "planned", "waiting", "上次执行尚未提交，继续原请求"
                 if state.activity_step_id == row.id:
-                    state.activity_step_id, state.activity_kind = None, "intent"
+                    clear_activity_step(db, state)
             if db.is_modified(row):
                 state.revision += 1
                 emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"step_id": row.id})

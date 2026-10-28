@@ -6,6 +6,8 @@ from typing import Annotated, Literal
 from infrastructure.api_ids import ResourceId
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, TypeAdapter
 
+from features.action_library.schemas import ActionAssetDesign
+
 
 class ActionInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -30,7 +32,7 @@ class OutfitAction(ActionInput):
     description: str = Field(min_length=1, max_length=4000, description="要添置的服装与造型要求，保留伙伴身份")
 
 
-class DesignAction(ActionInput):
+class DesignAction(ActionAssetDesign, ActionInput):
     capability: Literal["action.design"]
     name: str = Field(min_length=1, max_length=64, description="动作的简短名称")
     motion_description: str = Field(

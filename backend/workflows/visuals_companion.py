@@ -30,6 +30,7 @@ from features.companion.proactive_runtime import get_user_proactive_record
 from features.companion.visual_state import persona_snapshot
 from features.life.schemas import LifeStepRequest
 from features.life.use_cases import read_state
+from features.media.visual_semantics import ActionMotionIntensity, ActionPerformanceRole, SemanticTag
 from features.scenes.queries import scene_snapshot
 from features.visuals import service as visuals_service
 from features.visuals.queries import creation_request, presentation_state
@@ -134,6 +135,10 @@ async def load_visual_snapshot(
             motion_description=action.motion_description,
             clip_kind=action.clip_kind,
             duration_seconds=action.duration_seconds,
+            semantic_tags=action.semantic_tags,
+            performance_role=action.performance_role,
+            motion_intensity=action.motion_intensity,
+            interruptible=action.interruptible,
             use_when=action.use_when,
             avoid_when=action.avoid_when,
             allowed_triggers=action.allowed_triggers,
@@ -168,6 +173,10 @@ async def design_action_reference(
     use_when: list[str] | None = None,
     avoid_when: list[str] | None = None,
     allowed_triggers: list[str] | None = None,
+    semantic_tags: list[SemanticTag] | None = None,
+    performance_role: ActionPerformanceRole | None = None,
+    motion_intensity: ActionMotionIntensity = "normal",
+    interruptible: bool = True,
     reason: str = "",
     duration_seconds: int = 4,
     clip_kind: ActionClipKind = "once",
@@ -184,6 +193,10 @@ async def design_action_reference(
         allowed_triggers=allowed_triggers or [],
         clip_kind=clip_kind,
         duration_seconds=duration_seconds,
+        semantic_tags=semantic_tags or [],
+        performance_role=performance_role,
+        motion_intensity=motion_intensity,
+        interruptible=interruptible,
         reason=reason,
     )
     async with SESSION_LOCAL() as db:

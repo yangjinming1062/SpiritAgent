@@ -1,6 +1,6 @@
 """生活情境投影：把有意义的生活变化投影为舞台意图，并兜底可显示的画面。
 
-计划 4 语义：后端只产出 Stage Intent 与持久目标（组合或静态），不逐次决定播放；
+后端只产出 Stage Intent 与持久目标（组合或静态），不逐次决定播放；
 本地常驻轮换与互动演出由客户端导演消费呈现目录完成。视觉选择不再依赖主动档位，
 分别检查自主行为权限（仅自主播放/制作）与动态表现设置（motion off 时回落静态目标）。
 """
@@ -36,12 +36,17 @@ _LOCKS: dict[int, asyncio.Lock] = {}
 _RETRY_AT: dict[int, datetime] = {}
 logger = get_logger(__name__)
 
-# 意图标签映射：活动性质到建议视觉标签，供客户端导演参考；语义由生活侧维护。
-_KIND_TAGS: dict[str, list[str]] = {
-    "intent": ["thinking"],
-    "virtual_activity": ["activity"],
-    "execution": ["activity"],
-    "result": ["activity"],
+# 意图标签映射：结构化活动类别到建议视觉标签，确定性映射，客户端不再解读生活文本。
+# intent 性质（仅计划）不驱动活动演出；resting 显式休息，其余按活动语义展开。
+_TYPE_TAGS: dict[str, list[str]] = {
+    "idle": ["idle"],
+    "reading": ["reading", "working"],
+    "working": ["working"],
+    "creating": ["creating", "working"],
+    "thinking": ["thinking"],
+    "resting": ["resting"],
+    "organizing": ["organizing", "working"],
+    "socializing": ["socializing", "interaction"],
 }
 
 
@@ -200,6 +205,8 @@ async def record_stage_intent(user_id: int, life: LifeStateView) -> None:
     """把有意义的生活变化投影为舞台意图；呈现系统只读取，不改生活事实。"""
 
     scene_title = life.current_scene.get("title", "") if isinstance(life.current_scene, dict) else ""
+    # 计划性意图不能驱动“正在做”的演出；事实性质保留在 activity_kind 供消费方判断。
+    activity_type = life.activity_type if life.activity_kind != "intent" else "idle"
     async with SESSION_LOCAL() as db:
         intent = StageIntent(
             activity=life.current_activity or "",
@@ -207,7 +214,9 @@ async def record_stage_intent(user_id: int, life: LifeStateView) -> None:
             mood=life.mood or "",
             focus=await active_pursuit_title(db, user_id, life.active_pursuit_id),
             activity_kind=life.activity_kind or "",
-            visual_tags=_KIND_TAGS.get(life.activity_kind or "", []),
+            activity_type=activity_type,
+            scene_tags=life.scene_tags,
+            visual_tags=_TYPE_TAGS.get(activity_type, []),
             life_revision=life.presentation_revision,
         )
         await persist_intent(db, user_id, intent)

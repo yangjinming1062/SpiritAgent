@@ -2,6 +2,8 @@ import { atom } from 'nanostores'
 
 import type { ApiSchemas } from '../../../../shared/api.generated'
 
+import { automaticLoops, contextAllowed, motionAllowed } from './selection'
+
 type LayerMedia = ApiSchemas['StageLayerMedia']
 type ActorBody = ApiSchemas['ActorClipBody']
 export type StageLayout = ApiSchemas['StageCompositionLayout']
@@ -54,23 +56,6 @@ function stageLayout(
   return presentation?.composition?.layout ?? play?.composition?.layout ?? DEFAULT_LAYOUT
 }
 
-function actorFromLayer(layer: LayerMedia | null | undefined): StageActorPlan | null {
-  if (!layer || layer.asset_kind !== 'actor' || layer.media_kind !== 'video' || layer.clip_kind === 'once') {
-    return null
-  }
-
-  return {
-    visualId: layer.visual_id,
-    version: layer.version,
-    url: layer.media_url,
-    posterUrl: layer.poster_url ?? null,
-    width: layer.width,
-    height: layer.height,
-    loop: true,
-    body: layer.body ?? null
-  }
-}
-
 function sceneFromLayer(layer: LayerMedia | null | undefined): StageScenePlan | null {
   if (!layer || layer.asset_kind !== 'scene') {
     return null
@@ -91,14 +76,15 @@ function sceneFromLayer(layer: LayerMedia | null | undefined): StageScenePlan | 
 export function deriveStagePlan(
   presentation: ApiSchemas['VisualPresentationResponse'] | null,
   play: ApiSchemas['VisualPlayCommand'] | null,
-  directedAmbient: CatalogEntry | null = null
+  directedAmbient: CatalogEntry | null = null,
+  subtle = false
 ): StagePlan {
   if (!presentation && !play) {
     return EMPTY_PLAN
   }
 
   const baseMedia = presentation?.composition?.media
-  const ambient = ambientActor(presentation, directedAmbient)
+  const ambient = ambientActor(presentation, directedAmbient, subtle)
   const layout = stageLayout(presentation, play)
 
   if (play?.asset_kind === 'cinematic') {
@@ -127,7 +113,7 @@ export function deriveStagePlan(
   if (play?.asset_kind === 'scene') {
     return {
       mode: 'layered',
-      actor: actorFromLayer(baseMedia?.actor) ?? ambient,
+      actor: ambient,
       scene: {
         visualId: play.visual_id,
         version: play.visual_version,
@@ -171,12 +157,23 @@ export function deriveStagePlan(
     return { mode: ambient ? 'layered' : 'static', actor: ambient, scene: null, cinematic: null, layout }
   }
 
-  if (media?.mode === 'cinematic' && media.cinematic && media.cinematic.clip_kind !== 'once') {
+  const cinematicEntry = presentation.ambient_catalog.find(
+    entry => entry.visual_id === media?.cinematic?.visual_id && entry.version === media?.cinematic?.version
+  )
+
+  if (
+    media?.mode === 'cinematic' &&
+    media.cinematic &&
+    media.cinematic.clip_kind !== 'once' &&
+    cinematicEntry &&
+    motionAllowed(cinematicEntry, subtle) &&
+    contextAllowed(cinematicEntry, presentation.intent)
+  ) {
     return { mode: 'cinematic', actor: ambient, scene: null, cinematic: media.cinematic, layout }
   }
 
   if (media?.mode === 'layered') {
-    const actor = actorFromLayer(media.actor) ?? ambient
+    const actor = ambient
 
     if (actor || media.scene) {
       return { mode: 'layered', actor, scene: sceneFromLayer(media.scene), cinematic: null, layout }
@@ -214,7 +211,29 @@ function actorFromCatalog(entry: CatalogEntry | null | undefined): StageActorPla
  */
 function ambientActor(
   presentation: ApiSchemas['VisualPresentationResponse'] | null,
-  directed: CatalogEntry | null
+  directed: CatalogEntry | null,
+  subtle: boolean
 ): StageActorPlan | null {
-  return actorFromCatalog(directed) ?? actorFromLayer(presentation?.ambient_actor)
+  if (!presentation) {
+    return null
+  }
+
+  const candidates = automaticLoops(presentation, subtle)
+
+  const selected = candidates.find(
+    entry => entry.visual_id === directed?.visual_id && entry.version === directed.version
+  )
+
+  const base = candidates.find(
+    entry =>
+      entry.visual_id === presentation.composition?.media?.actor?.visual_id &&
+      entry.version === presentation.composition?.media?.actor?.version
+  )
+
+  const idle = candidates.find(
+    entry =>
+      entry.visual_id === presentation.ambient_actor?.visual_id && entry.version === presentation.ambient_actor.version
+  )
+
+  return actorFromCatalog(selected ?? base ?? idle ?? candidates[0])
 }

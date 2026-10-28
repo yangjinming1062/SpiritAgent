@@ -16,10 +16,12 @@ from features.media.contracts import RemovedVideoTask
 
 from .models import VisualItem, VisualJob, VisualPlayback, VisualPresentation, VisualVersion, VisualVersionAsset
 from .repository import version_view, visual_progress
-from .schemas import ActorClipRef, StageComposition, StagePresentation, VisualSnapshot, parse_job_progress
+from .schemas import ActorClipRef, StageComposition, StageIntent, StagePresentation, VisualSnapshot, parse_job_progress
 
 
 def _prepare_presentation(raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
+    if payload["intent_json"]:
+        payload["intent_json"] = StageIntent.model_validate(payload["intent_json"]).model_dump(mode="json")
     payload["pending_command_json"] = None
     payload["pending_static_json"] = None
     if payload["current_static_json"]:

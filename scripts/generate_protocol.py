@@ -192,6 +192,26 @@ def assert_presets_match_runner() -> None:
         )
 
 
+def assert_action_semantic_tags_shared() -> None:
+    """动作语义标签词表在后端契约与 shared/actions.ts 必须一致。
+
+    词表分处两端（后端登记校验与前端表单/导演），任一侧独改会让另一端把合法标签当未知值
+    或把新增标签静默丢弃；生成阶段失败让漏同步停在发布前。
+    """
+    import re
+
+    from features.media.visual_semantics import ACTION_SEMANTIC_TAGS
+
+    source = (ROOT / "shared" / "actions.ts").read_text(encoding="utf-8")
+    match = re.search(r"ACTION_SEMANTIC_TAGS = \[(.*?)\] as const", source, re.DOTALL)
+    shared_tags = set(re.findall(r"'([^']+)'", match.group(1))) if match else set()
+    if shared_tags != set(ACTION_SEMANTIC_TAGS):
+        raise SystemExit(
+            "动作语义标签词表与 shared/actions.ts 不一致："
+            f"backend={sorted(ACTION_SEMANTIC_TAGS)} shared={sorted(shared_tags)}",
+        )
+
+
 def generate() -> str:
     from bootstrap.app import app
     from entrypoints.desktop.contracts import RPC_CONTRACTS
@@ -201,6 +221,7 @@ def generate() -> str:
     from spirit_agent_runner.contracts.rpc import RUNNER_CONTRACTS, RUNNER_EVENTS
 
     assert_presets_match_runner()
+    assert_action_semantic_tags_shared()
     document = app.openapi()
     schemas = copy.deepcopy(document.get("components", {}).get("schemas", {}))
     add_model(schemas, ApiErrorResponse)

@@ -44,6 +44,10 @@ class LifeState(ModelBase, TimestampMixin):
             name="revisions_nonnegative",
         ),
         CheckConstraint("activity_kind IN ('intent', 'virtual_activity', 'execution', 'result')", name="activity_kind"),
+        CheckConstraint(
+            "activity_type IN ('idle','reading','working','creating','thinking','resting','organizing','socializing')",
+            name="activity_type",
+        ),
     )
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
@@ -51,6 +55,8 @@ class LifeState(ModelBase, TimestampMixin):
     activity_kind: Mapped[str] = mapped_column(
         String(24), default="virtual_activity", server_default="virtual_activity"
     )
+    activity_type: Mapped[str] = mapped_column(String(16), default="idle", server_default="idle")
+    scene_tags_json: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default="[]")
     activity_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     activity_step_id: Mapped[int | None] = mapped_column(ForeignKey("life_steps.id", ondelete="SET NULL"))
     presentation_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")

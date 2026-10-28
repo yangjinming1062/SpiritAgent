@@ -5,10 +5,12 @@ from typing import Any
 
 from infrastructure.backup import BackupContext, BackupTable
 from infrastructure.text import utc_now
+from pydantic import TypeAdapter
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.jobs.service import requested_job_id
+from features.media.visual_semantics import SceneTags
 
 from .actions import CREATION_CAPABILITIES, LIFE_ACTION, ReadingResult
 from .models import LifeActionAdmission, LifeEvent, LifePursuit, LifeState, LifeStep, PursuitEvidence
@@ -110,6 +112,7 @@ def _prepare_step(raw: dict[str, Any], payload: dict[str, Any], context: BackupC
 
 
 def _prepare_state(raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
+    payload["scene_tags_json"] = TypeAdapter(SceneTags).validate_python(payload["scene_tags_json"])
     payload["presentation_evaluated_revision"] = 0
     payload["presentation_revision"] += 1
     payload["next_review_at"] = utc_now()

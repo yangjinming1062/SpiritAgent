@@ -8,6 +8,7 @@ from infrastructure.api_ids import parse_resource_id
 from infrastructure.domain_locks import transaction_owner, transaction_owns
 from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
+from runtime.events.emit import emit_ws_event
 from sqlalchemy import inspect, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
@@ -29,6 +30,7 @@ from .queries import result_reference
 from .schemas import (
     EVIDENCE_EVENT_KINDS,
     UNRESOLVED_STEP_STATES,
+    FactType,
     LifeDecisionRequest,
     LifeEventInput,
 )
@@ -159,24 +161,57 @@ def apply_decision(row: LifeState, decision: LifeDecisionRequest) -> None:
     if row.revision != decision.expected_revision:
         raise LifeStateConflictError("生活状态已在其他流程更新，请重新读取后重试")
     if decision.operation != "keep":
-        if (decision.current_activity is not None and decision.current_activity != row.current_activity) or (
-            decision.activity_kind is not None and decision.activity_kind != row.activity_kind
-        ):
+        activity_changed = (
+            decision.current_activity is not None and decision.current_activity != row.current_activity
+        ) or (decision.activity_kind is not None and decision.activity_kind != row.activity_kind)
+        presentation_changed = activity_changed
+        if activity_changed:
             row.activity_started_at = utc_now()
             row.activity_step_id = None
             row.activity_kind = decision.activity_kind or "virtual_activity"
-            row.presentation_revision += 1
+            # 新活动未给出类别时不继承旧活动语义。
+            row.activity_type = decision.activity_type or "idle"
+        if decision.activity_type is not None and decision.activity_type != row.activity_type:
+            row.activity_type = decision.activity_type
+            presentation_changed = True
         if decision.current_activity is not None:
             row.current_activity = decision.current_activity
-        if decision.current_scene is not None and decision.current_scene != deepcopy(row.current_scene_json or {}):
+        scene_changed = decision.current_scene is not None and decision.current_scene != deepcopy(
+            row.current_scene_json or {}
+        )
+        if scene_changed:
             row.current_scene_json = deepcopy(decision.current_scene)
+            if decision.scene_tags is None:
+                row.scene_tags_json = []
+            presentation_changed = True
+        if decision.scene_tags is not None and decision.scene_tags != row.scene_tags_json:
+            row.scene_tags_json = list(decision.scene_tags)
+            scene_changed = True
+            presentation_changed = True
+        if scene_changed:
             row.scene_revision += 1
-            row.presentation_revision += 1
-        if decision.mood is not None:
+        if decision.mood is not None and decision.mood != row.mood:
             row.mood = decision.mood
+            presentation_changed = True
+        if presentation_changed:
+            row.presentation_revision += 1
     if decision.next_review_at is not None:
         row.next_review_at = decision.next_review_at
     row.revision += 1
+
+
+def clear_activity_step(db: AsyncSession, state: LifeState, *, kind: FactType = "intent") -> None:
+    """执行结束或退回等待后作废原活动表现，不把已结束的活动继续投影为正在进行。"""
+    state.activity_step_id = None
+    state.activity_kind = kind
+    state.activity_type = "idle"
+    state.presentation_revision += 1
+    emit_ws_event(
+        db,
+        user_id=state.user_id,
+        event_type="companion.life.presentation_requested",
+        payload={"revision": state.presentation_revision},
+    )
 
 
 async def set_mood(db: AsyncSession, user_id: int, mood: str) -> None:

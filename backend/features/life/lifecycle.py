@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import LifeActionAdmission, LifePursuit, LifeStep
 from .schemas import LifeDecisionRequest, LifeEventInput
-from .service import LifeInputError, _latest_active_pursuit_id, get_or_create_state, record_events
+from .service import LifeInputError, _latest_active_pursuit_id, clear_activity_step, get_or_create_state, record_events
 
 
 async def transition_pursuit(db: AsyncSession, user_id: int, decision: LifeDecisionRequest) -> LifePursuit:
@@ -78,7 +78,7 @@ async def transition_pursuit(db: AsyncSession, user_id: int, decision: LifeDecis
             if step.state == "running" and submitted:
                 continue
             if state.activity_step_id == step.id:
-                state.activity_step_id, state.activity_kind = None, "intent"
+                clear_activity_step(db, state)
             if target == "paused":
                 step.state, step.disposition, step.wait_reason = "planned", "waiting", decision.status_reason
                 continue

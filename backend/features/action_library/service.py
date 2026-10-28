@@ -64,6 +64,10 @@ async def create_action(
             and item.use_when_json == design.use_when
             and item.avoid_when_json == design.avoid_when
             and item.allowed_triggers_json == design.triggers
+            and item.semantic_tags_json == design.semantic_tags
+            and item.performance_role == design.performance_role
+            and item.motion_intensity == design.motion_intensity
+            and item.interruptible == design.interruptible
         ):
             if life_step is not None:
                 await bind_step_in_session(db, user_id, life_step, business_ref={"action_id": item.id})
@@ -79,6 +83,10 @@ async def create_action(
         allowed_triggers_json=list(design.triggers),
         clip_kind=design.clip_kind,
         duration_seconds=design.duration_seconds,
+        semantic_tags_json=list(design.semantic_tags),
+        performance_role=design.performance_role,
+        motion_intensity=design.motion_intensity,
+        interruptible=design.interruptible,
         reason=design.reason,
         source=source,
         status="pending",
@@ -114,6 +122,10 @@ async def ensure_builtin_actions(db: AsyncSession, user_id: int) -> None:
                 allowed_triggers_json=preset.triggers,
                 clip_kind=preset.clip_kind,
                 duration_seconds=preset.duration_seconds,
+                semantic_tags_json=list(preset.semantic_tags),
+                performance_role=preset.performance_role,
+                motion_intensity=preset.motion_intensity,
+                interruptible=preset.interruptible,
                 reason="",
                 review_reason="",
                 review_source_json={},
@@ -150,6 +162,12 @@ def prepare_action_update(
     fields = set(ActionAssetDesign.model_fields)
     previous = current.model_dump(include=fields)
     submitted = design.model_dump(include=design.model_fields_set & fields)
+    if (
+        "clip_kind" in submitted
+        and submitted["clip_kind"] != previous["clip_kind"]
+        and "performance_role" not in submitted
+    ):
+        submitted["performance_role"] = None
     updated = ActionAssetDesign.model_validate(previous | submitted)
     updated.allowed_triggers = updated.triggers
     return updated if previous != updated.model_dump() else None
@@ -192,6 +210,10 @@ async def update_action(
     row.allowed_triggers_json = list(design.triggers)
     row.clip_kind = design.clip_kind
     row.duration_seconds = design.duration_seconds
+    row.semantic_tags_json = list(design.semantic_tags)
+    row.performance_role = design.performance_role
+    row.motion_intensity = design.motion_intensity
+    row.interruptible = design.interruptible
     row.reason = design.reason
     _reset_review(row, review_source_json)
     await db.flush()

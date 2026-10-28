@@ -130,6 +130,10 @@ async def evaluate_visuals(user_id: int, *, trigger: str, allow_create: bool) ->
                         "motion_description",
                         "clip_kind",
                         "duration_seconds",
+                        "semantic_tags",
+                        "performance_role",
+                        "motion_intensity",
+                        "interruptible",
                         "use_when",
                         "avoid_when",
                     }

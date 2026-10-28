@@ -13,8 +13,16 @@ from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
 from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from features.life.schemas import FactType
 from features.media.identity_contracts import CharacterCardSnapshot, CharacterReferenceRole
 from features.media.video_queue.contracts import VideoQueueInfo
+from features.media.visual_semantics import (
+    ActionMotionIntensity,
+    ActionPerformanceRole,
+    ActivityType,
+    SceneTags,
+    SemanticTags,
+)
 
 VISUAL_MAX_EDGE = 65536
 
@@ -65,6 +73,10 @@ class ActionMaterialRef(BaseModel):
     motion_description: str = Field(min_length=1)
     clip_kind: ActionClipKind
     duration_seconds: int = Field(ge=1, le=60, strict=True)
+    semantic_tags: SemanticTags = Field(default_factory=list)
+    performance_role: ActionPerformanceRole
+    motion_intensity: ActionMotionIntensity = "normal"
+    interruptible: bool = True
     use_when: list[str] = Field(default_factory=list, max_length=8)
     avoid_when: list[str] = Field(default_factory=list, max_length=8)
     allowed_triggers: list[str] = Field(default_factory=list, max_length=8)
@@ -82,6 +94,25 @@ class VisualCreationPlan(BaseModel):
     motion_requirements: str = Field(min_length=1, max_length=1800)
 
 
+class MediaSemantics(BaseModel):
+    """从视频采样确认的实际表现与适用条件，不继承动作的全部通用用途。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    activity_type: ActivityType
+    semantic_tags: SemanticTags = Field(default_factory=list)
+    motion_intensity: ActionMotionIntensity
+    auto_selectable: bool = Field(
+        description="实际表现与适用条件是否足以支持按当前活动和环境自动选择；未表达的必要条件仍待确认时为 false"
+    )
+    scene_tags: SceneTags = Field(
+        default_factory=list,
+        description="播放该片段需要符合的环境和物品条件；自带的随身物品不要求外部提供，无法确认时不补写",
+    )
+    avoid_activity_types: list[ActivityType] = Field(default_factory=list, max_length=8)
+    avoid_scene_tags: SceneTags = Field(default_factory=list)
+
+
 class ActorClipSource(BaseModel):
     """透明主体动画的冻结输入：身份、造型与动作；不固定背景。"""
 
@@ -96,6 +127,7 @@ class ActorClipSource(BaseModel):
     identity_reference_role: CharacterReferenceRole = "portrait"
     outfit: ComboMaterialRef
     action: ActionMaterialRef
+    media_semantics: MediaSemantics | None = None
     plan: VisualCreationPlan | None = None
     requirements: str = ""
     feedback: str = ""
@@ -143,6 +175,7 @@ class CinematicSource(BaseModel):
     outfit: ComboMaterialRef
     scene: SceneMediaRef
     action: ActionMaterialRef
+    media_semantics: MediaSemantics | None = None
     plan: VisualCreationPlan | None = None
     requirements: str = ""
     feedback: str = ""
@@ -233,6 +266,7 @@ class VisualAsset(BaseModel):
     visual_description: str = Field(default="", max_length=1500)
     outfit_description: str = Field(default="", max_length=1200)
     creation_plan: VisualCreationPlan | None = None
+    media_semantics: MediaSemantics | None = None
     body: ActorClipBody | None = None
     feedback: str = ""
     video_feedback: str = ""
@@ -480,9 +514,11 @@ class StageIntent(BaseModel):
     scene_title: str = ""
     mood: str = ""
     focus: str = ""
-    activity_kind: str = ""
-    visual_tags: list[str] = Field(default_factory=list, max_length=12)
-    life_revision: int = 0
+    activity_kind: FactType = "virtual_activity"
+    activity_type: ActivityType = "idle"
+    scene_tags: SceneTags = Field(default_factory=list)
+    visual_tags: SemanticTags = Field(default_factory=list)
+    life_revision: int = Field(default=0, ge=0)
 
 
 class StagePresentation(BaseModel):
@@ -523,6 +559,12 @@ class AmbientCatalogEntry(StageLayerMedia):
     action_name: str = ""
     clip_kind: ActionClipKind | None = None
     preset_key: str | None = None
+    semantic_tags: SemanticTags = Field(default_factory=list)
+    performance_role: ActionPerformanceRole
+    motion_intensity: ActionMotionIntensity = "normal"
+    interruptible: bool = True
+    media_semantics: MediaSemantics | None = None
+    allowed_triggers: list[str] = Field(default_factory=list, max_length=8)
     use_when: list[str] = Field(default_factory=list, max_length=8)
     avoid_when: list[str] = Field(default_factory=list, max_length=8)
 
@@ -702,6 +744,10 @@ class VisualPlayOption(BaseModel):
     description: str
     outfit_description: str
     scene_description: str
+    semantic_tags: SemanticTags = Field(default_factory=list)
+    performance_role: ActionPerformanceRole
+    motion_intensity: ActionMotionIntensity = "normal"
+    media_semantics: MediaSemantics | None = None
     use_when: list[str] = Field(default_factory=list)
     avoid_when: list[str] = Field(default_factory=list)
 

@@ -20,6 +20,10 @@ def definition_view(row: ActionDefinition) -> ActionAssetView:
         allowed_triggers=row.allowed_triggers_json,
         clip_kind=row.clip_kind,  # type: ignore[arg-type]
         duration_seconds=row.duration_seconds,
+        semantic_tags=row.semantic_tags_json,
+        performance_role=row.performance_role,  # type: ignore[arg-type]
+        motion_intensity=row.motion_intensity,  # type: ignore[arg-type]
+        interruptible=row.interruptible,
         reason=row.reason,
         source=row.source,  # type: ignore[arg-type]
         preset_key=row.preset_key,

@@ -133,7 +133,18 @@ async def _review_action(user_id: int, current: ActionAssetView, source: ActionR
     payload = {
         "output_language": language,
         "design": current.model_dump(
-            include={"name", "motion_description", "use_when", "avoid_when", "clip_kind", "duration_seconds"}
+            include={
+                "name",
+                "motion_description",
+                "use_when",
+                "avoid_when",
+                "clip_kind",
+                "duration_seconds",
+                "semantic_tags",
+                "performance_role",
+                "motion_intensity",
+                "interruptible",
+            }
         ),
         "reason": current.reason,
         "identity": source.identity.features.model_dump(),

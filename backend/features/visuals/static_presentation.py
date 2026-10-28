@@ -28,6 +28,10 @@ async def record_stage_intent(db: AsyncSession, user_id: int, intent: StageInten
     """生活侧投影写入舞台意图；呈现系统只读取，不反写生活事实。"""
 
     state = await require_presentation_row(db, user_id, lock=True)
+    if not await presentation_revision_matches(db, user_id, intent.life_revision):
+        return
+    if state.intent_json and state.intent_json["life_revision"] > intent.life_revision:
+        return
     payload = intent.model_dump(mode="json")
     if state.intent_json != payload:
         state.intent_json = payload

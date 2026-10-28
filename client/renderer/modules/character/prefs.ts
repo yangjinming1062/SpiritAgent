@@ -20,7 +20,7 @@ import { setDisturbanceTier, syncDisturbanceFromStorage } from './companion-stor
 // 回应偏好同步到后端供模型选择消息类型，不控制客户端合成或播放。
 export type ResponsePreference = 'text' | 'voice'
 
-// 动态表现强度：与打扰档位独立，off 只显示静态画面，subtle 仅保留安静循环。
+// 动态表现强度与打扰档位独立；subtle 限制自动选择的强度，用户明确触发的反应仍可播放。
 export type MotionLevel = 'off' | 'subtle' | 'standard'
 
 const MOTION_LEVEL_STORAGE_KEY = 'da.companion.motionLevel'

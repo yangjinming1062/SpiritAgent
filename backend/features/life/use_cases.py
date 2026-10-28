@@ -163,7 +163,11 @@ async def commit_decision_in_session(
     previous = state_view(row)
     apply_decision(row, decision)
     await db.flush()
-    activity_changed = previous.current_activity != row.current_activity or previous.activity_kind != row.activity_kind
+    activity_changed = (
+        previous.current_activity != row.current_activity
+        or previous.activity_kind != row.activity_kind
+        or previous.activity_type != row.activity_type
+    )
     scene_changed = previous.scene_revision != row.scene_revision
     mood_changed = previous.mood != row.mood
     if activity_changed or scene_changed or mood_changed:
@@ -177,6 +181,8 @@ async def commit_decision_in_session(
                 fact_type=row.activity_kind,
                 fact={
                     "current_activity": row.current_activity,
+                    "activity_type": row.activity_type,
+                    "scene_tags": list(row.scene_tags_json),
                     "current_scene": deepcopy(row.current_scene_json or {}),
                     "scene_revision": row.scene_revision,
                     "mood": row.mood,

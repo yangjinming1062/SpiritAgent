@@ -355,7 +355,14 @@ export function useDesktopVisualWallpaper(): void {
   }, [active, authSessionId, claimed, activeCommand, recordReceipt])
 
   const stagePlan = useStore($stagePlan)
-  const selectedPlan = deriveStagePlan(projection, activeCommand, resolveAmbientLoop(projection))
+
+  const selectedPlan = deriveStagePlan(
+    projection,
+    activeCommand,
+    resolveAmbientLoop(projection),
+    motionLevel === 'subtle'
+  )
+
   const layerActor = selectedPlan.actor
   const layerScene = selectedPlan.scene
   const full = activeCommand?.asset_kind === 'cinematic' ? activeCommand : null

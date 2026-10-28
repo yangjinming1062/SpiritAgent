@@ -14,7 +14,14 @@ from sqlalchemy.sql.selectable import CTE
 from .models import LifeActionAdmission, LifeEvent, LifePursuit, LifeStep
 from .queries import result_reference
 from .schemas import TERMINAL_STEP_STATES, LifeEventInput
-from .service import LifeInputError, LifeStateConflictError, _record_event_batch, get_or_create_state, result_values
+from .service import (
+    LifeInputError,
+    LifeStateConflictError,
+    _record_event_batch,
+    clear_activity_step,
+    get_or_create_state,
+    result_values,
+)
 
 
 def _changes_cte(
@@ -206,8 +213,7 @@ async def settle_business_steps(
     if step_changes:
         life_state.next_review_at = now
         if life_state.activity_step_id in step_changes:
-            life_state.activity_step_id = None
-            life_state.activity_kind = "result" if state == "completed" else "intent"
+            clear_activity_step(db, life_state, kind="result" if state == "completed" else "intent")
     await _record_event_batch(db, user_id, events, life_state, state_changes=len(step_changes), changes=changes)
     for objects, updates in ((step_objects, step_changes), (pursuit_objects, pursuit_changes)):
         for identifier, change in updates.items():

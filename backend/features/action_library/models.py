@@ -7,14 +7,18 @@
 from typing import Any
 
 from infrastructure.models import ModelBase, TimestampMixin
-from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 
 class ActionDefinition(ModelBase, TimestampMixin):
     __tablename__ = "action_definitions"
-    __table_args__ = (UniqueConstraint("user_id", "preset_key", name="uq_action_definitions_preset"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "preset_key", name="uq_action_definitions_preset"),
+        CheckConstraint("performance_role IN ('idle', 'sustained', 'reaction')", name="action_performance_role"),
+        CheckConstraint("motion_intensity IN ('subtle', 'normal', 'expressive')", name="action_motion_intensity"),
+    )
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     # 名称只用于展示和检索，不承担跨来源唯一身份；内容不同但名称相同的动作各自独立。
@@ -32,6 +36,11 @@ class ActionDefinition(ModelBase, TimestampMixin):
     # 播放方式：loop 持续循环，once 为短动作、结束后返回持续画面。
     clip_kind: Mapped[str] = mapped_column(String(8))
     duration_seconds: Mapped[int] = mapped_column(Integer)
+    # 结构化语义：调度用标签与表现属性，客户端按词表匹配而不是解读描述文本。
+    semantic_tags_json: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default=text("'[]'"))
+    performance_role: Mapped[str] = mapped_column(String(12), default="reaction", server_default=text("'reaction'"))
+    motion_intensity: Mapped[str] = mapped_column(String(12), default="normal", server_default=text("'normal'"))
+    interruptible: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     reason: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     source: Mapped[str] = mapped_column(String(24))
     preset_key: Mapped[str | None] = mapped_column(String(24), nullable=True)

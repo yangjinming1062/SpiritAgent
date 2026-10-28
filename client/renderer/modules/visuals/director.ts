@@ -18,6 +18,7 @@ import {
   requestPerformance,
   syncPerformance
 } from './performance-scheduler'
+import { automaticLoops, contextAllowed, lifeMatchScore, motionAllowed } from './selection'
 import type { VisualsPresentation } from './types'
 
 type CatalogEntry = VisualsPresentation['ambient_catalog'][number]
@@ -29,8 +30,10 @@ export const $ambientLoopChoice = atom<{ visualId: string; version: number } | n
 
 const AMBIENT_INTERVAL_MS = 90_000
 const AMBIENT_JITTER_MS = 45_000
+const SUBTLE_AMBIENT_FACTOR = 2
 const INTERACTION_COOLDOWN_MS: Record<InteractionKind, number> = { look: 20_000, smile: 45_000, stretch: 5 * 60_000 }
 const INTERACTION_TTL_MS = 8_000
+const LIFE_LIFETIME_MS = 30_000
 
 let presentation: VisualsPresentation | null = null
 let ambientTimer: ReturnType<typeof setTimeout> | null = null
@@ -75,12 +78,8 @@ function consumeSignal(value: unknown): void {
   performInteraction(value.kind, value.eventId, value.at)
 }
 
-function loopEntries(catalog: CatalogEntry[]): CatalogEntry[] {
-  return catalog.filter(entry => entry.asset_kind === 'actor' && entry.clip_kind !== 'once')
-}
-
-function syncAmbientChoice(catalog: CatalogEntry[]): void {
-  const loops = loopEntries(catalog)
+function syncAmbientChoice(): void {
+  const loops = presentation ? automaticLoops(presentation, motionSubtle()) : []
   const choice = $ambientLoopChoice.get()
 
   if (loops.length === 0) {
@@ -96,28 +95,13 @@ function syncAmbientChoice(catalog: CatalogEntry[]): void {
 }
 
 function onceEntries(catalog: CatalogEntry[]): CatalogEntry[] {
-  return catalog.filter(entry => entry.asset_kind === 'actor' && entry.clip_kind === 'once')
+  return catalog.filter(
+    entry => entry.asset_kind === 'actor' && entry.clip_kind === 'once' && entry.performance_role === 'reaction'
+  )
 }
 
-function pickAmbient(catalog: CatalogEntry[]): CatalogEntry | null {
-  const loops = loopEntries(catalog)
-
-  const intent = presentation?.intent
-
-  const context = intent
-    ? [intent.activity, intent.scene_title, intent.mood, intent.focus, intent.activity_kind, ...intent.visual_tags]
-        .join(' ')
-        .toLocaleLowerCase()
-    : ''
-
-  const matches = (condition: string): boolean => {
-    const tokens = intentKeywords(condition.toLocaleLowerCase())
-
-    return tokens.length > 0 && tokens.some(token => context.includes(token))
-  }
-
-  const compatible = intent ? loops.filter(entry => !entry.avoid_when.some(matches)) : loops
-  const candidatesPool = compatible.length > 0 ? compatible : loops
+function pickAmbient(): CatalogEntry | null {
+  const candidatesPool = presentation ? automaticLoops(presentation, motionSubtle()) : []
 
   if (candidatesPool.length <= 1) {
     return candidatesPool[0] ?? null
@@ -125,31 +109,14 @@ function pickAmbient(catalog: CatalogEntry[]): CatalogEntry | null {
 
   const current = $ambientLoopChoice.get()
   const candidates = candidatesPool.filter(entry => entry.visual_id !== current?.visualId)
-  const subtle = motionSubtle()
 
-  const weights = candidates.map(entry => {
-    const levelWeight = subtle && entry.preset_key !== 'idle' ? 0.5 : 1
-    const contextWeight = intent && entry.use_when.some(matches) ? 2 : 1
-
-    return levelWeight * contextWeight
-  })
-
-  const total = weights.reduce((sum, weight) => sum + weight, 0)
-  let cursor = Math.random() * total
-
-  for (let index = 0; index < candidates.length; index += 1) {
-    cursor -= weights[index]
-
-    if (cursor <= 0) {
-      return candidates[index]
-    }
-  }
-
-  return candidates[candidates.length - 1] ?? null
+  return candidates[Math.floor(Math.random() * candidates.length)] ?? null
 }
 
 function pickReaction(catalog: CatalogEntry[], kind: InteractionKind): CatalogEntry | null {
-  const matches = onceEntries(catalog).filter(entry => entry.preset_key === kind)
+  const matches = onceEntries(catalog).filter(
+    entry => entry.preset_key === kind && contextAllowed(entry, presentation?.intent ?? null)
+  )
 
   if (matches.length > 0) {
     return matches[Math.floor(Math.random() * matches.length)]
@@ -174,7 +141,7 @@ function performInteraction(kind: InteractionKind, eventId: string, at: number):
     source: 'interaction',
     visualId: entry.visual_id,
     visualVersion: entry.version,
-    interruptible: false,
+    interruptible: entry.interruptible,
     intentRevision: null,
     createdAt: at,
     expiresAt: at + INTERACTION_TTL_MS,
@@ -184,69 +151,57 @@ function performInteraction(kind: InteractionKind, eventId: string, at: number):
   })
 }
 
-/** 分词重叠评分：活动常是完整句子，与画面描述按关键词重叠计分而非整句包含。 */
-function overlapScore(text: string, keywords: string[]): number {
-  if (!text || keywords.length === 0) {
-    return 0
-  }
-
-  return keywords.reduce((score, word) => (word && text.includes(word) ? score + 1 : score), 0)
-}
-
-function intentKeywords(activity: string): string[] {
-  return activity
-    .split(/[\s，。、；：？！,.;:?!'"“”‘’（）()[\]【】《》]+/)
-    .map(word => word.trim())
-    .filter(word => word.length >= 2)
-    .slice(0, 12)
-}
-
+/**
+ * 生活演出：按结构化语义筛选持续媒体，而不是文本重叠打分。
+ * 只有活动类别或语义标签实际匹配的资源才成为候选；没有匹配时保持当前画面。
+ */
 function evaluateIntent(): void {
   const intent = presentation?.intent
 
-  if (!intent || intent.life_revision === attemptedIntentRevision || intent.activity_kind === 'intent') {
+  if (
+    !intent ||
+    intent.life_revision === attemptedIntentRevision ||
+    intent.activity_kind === 'intent' ||
+    intent.activity_type === 'idle' ||
+    $presentation.get().effectiveMode !== 'desktop'
+  ) {
     return
   }
 
   const catalog = presentation?.ambient_catalog ?? []
-  const keywords = intentKeywords(intent.activity.trim())
-  const sceneTitle = intent.scene_title.trim()
-  let best: CatalogEntry | null = null
-  let bestScore = 0
 
-  for (const entry of catalog) {
-    if (entry.asset_kind !== 'cinematic') {
-      continue
-    }
+  const candidates = catalog.filter(
+    entry =>
+      entry.asset_kind === 'cinematic' &&
+      entry.clip_kind === 'loop' &&
+      entry.performance_role === 'sustained' &&
+      entry.allowed_triggers.includes('periodic') &&
+      motionAllowed(entry, motionSubtle()) &&
+      lifeMatchScore(entry, intent) > 0
+  )
 
-    // 活动关键词与画面/动作描述的重叠度；场景标题单独计一分。
-    const overlap = Math.max(overlapScore(entry.description, keywords), overlapScore(entry.action_name, keywords))
-    const sceneMatch = sceneTitle && entry.description.includes(sceneTitle) ? 1 : 0
-    const score = Math.min(2, overlap + sceneMatch)
-
-    if (score > bestScore) {
-      best = entry
-      bestScore = score
-    }
+  if (candidates.length === 0) {
+    return
   }
 
-  // 至少两个关键词命中（或关键词命中加场景一致）才切持续画面；否则保留当前画面，不把无关视频当成生活。
-  if (best && bestScore >= 2) {
-    if (
-      requestPerformance({
-        performanceId: `life:${intent.life_revision}:${best.visual_id}:${best.version}`,
-        source: 'life',
-        visualId: best.visual_id,
-        visualVersion: best.version,
-        interruptible: true,
-        intentRevision: intent.life_revision,
-        createdAt: Date.now(),
-        expiresAt: Date.now() + 30_000,
-        durationMs: best.duration_ms
-      })
-    ) {
-      attemptedIntentRevision = intent.life_revision
-    }
+  const bestScore = Math.max(...candidates.map(entry => lifeMatchScore(entry, intent)))
+  const pool = candidates.filter(entry => lifeMatchScore(entry, intent) === bestScore)
+  const best = pool[Math.floor(Math.random() * pool.length)]
+
+  if (
+    requestPerformance({
+      performanceId: `life:${intent.life_revision}:${best.visual_id}:${best.version}`,
+      source: 'life',
+      visualId: best.visual_id,
+      visualVersion: best.version,
+      interruptible: best.interruptible,
+      intentRevision: intent.life_revision,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + LIFE_LIFETIME_MS,
+      durationMs: best.duration_ms
+    })
+  ) {
+    attemptedIntentRevision = intent.life_revision
   }
 }
 
@@ -262,7 +217,7 @@ function scheduleAmbient(): void {
     !presentation ||
     mechanicallyBlocked() ||
     $performance.get().state !== 'idle' ||
-    loopEntries(presentation.ambient_catalog).length === 0
+    automaticLoops(presentation, motionSubtle()).length === 0
   ) {
     return
   }
@@ -270,7 +225,9 @@ function scheduleAmbient(): void {
   const current = resolveAmbientLoop(presentation)
   const duration = current?.duration_ms ?? AMBIENT_INTERVAL_MS
   // 轮换间隔与当前循环时长联动（一个循环的 1–3 倍，下限 90s），避免长视频播一半就被切换。
-  const interval = Math.max(AMBIENT_INTERVAL_MS, Math.min(3 * AMBIENT_INTERVAL_MS, duration))
+  const subtleFactor = motionSubtle() ? SUBTLE_AMBIENT_FACTOR : 1
+  const interval = Math.max(AMBIENT_INTERVAL_MS, Math.min(3 * AMBIENT_INTERVAL_MS, duration)) * subtleFactor
+
   ambientTimer = setTimeout(
     () => {
       ambientTimer = null
@@ -285,7 +242,7 @@ function rotateAmbient(): void {
     return
   }
 
-  const pick = pickAmbient(presentation.ambient_catalog)
+  const pick = pickAmbient()
 
   if (pick) {
     $ambientLoopChoice.set({ visualId: pick.visual_id, version: pick.version })
@@ -365,7 +322,12 @@ export function bindPresentationDirector(
         presentation &&
         (request.intentRevision === null || request.intentRevision === presentation.intent?.life_revision) &&
         presentation.ambient_catalog.some(
-          entry => entry.visual_id === request.visualId && entry.version === request.visualVersion
+          entry =>
+            entry.visual_id === request.visualId &&
+            entry.version === request.visualVersion &&
+            contextAllowed(entry, presentation?.intent ?? null) &&
+            (request.source === 'interaction' || motionAllowed(entry, motionSubtle())) &&
+            (request.source !== 'life' || lifeMatchScore(entry, presentation?.intent ?? null) > 0)
         )
       )
   })
@@ -380,7 +342,7 @@ export function bindPresentationDirector(
         receivePerformanceCommand(presentation.pending_play, presentation.pending_play.play_id === initialPendingId)
       }
 
-      syncAmbientChoice(presentation?.ambient_catalog ?? [])
+      syncAmbientChoice()
       evaluateIntent()
     } else {
       $ambientLoopChoice.set(null)
@@ -466,7 +428,7 @@ export function feedDirectorPresentation(next: VisualsPresentation | null): void
       attemptedIntentRevision = next.intent?.life_revision ?? -1
     }
 
-    syncAmbientChoice(next.ambient_catalog)
+    syncAmbientChoice()
     evaluateIntent()
   }
 
@@ -482,7 +444,9 @@ export function resolveAmbientLoop(next: VisualsPresentation | null): CatalogEnt
   }
 
   return (
-    next.ambient_catalog.find(entry => entry.visual_id === choice.visualId && entry.version === choice.version) ?? null
+    automaticLoops(next, motionSubtle()).find(
+      entry => entry.visual_id === choice.visualId && entry.version === choice.version
+    ) ?? null
   )
 }
 

@@ -257,6 +257,14 @@ function publishPresentation(response: VisualsPresentation): void {
     return
   }
 
+  if (
+    previous &&
+    response.presentation_epoch === previous.presentation_epoch &&
+    (response.intent?.life_revision ?? -1) < (previous.intent?.life_revision ?? -1)
+  ) {
+    response = { ...response, intent: previous.intent }
+  }
+
   $visualsPresentation.set(response)
   $visualsPresentationError.set(null)
 

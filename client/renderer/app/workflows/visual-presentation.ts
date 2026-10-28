@@ -553,7 +553,13 @@ export function useVisualProjection(): void {
 function assembleWindowMedia(): void {
   const auth = $auth.get()
   const presentation = $visualsPresentation.get()
-  const plan = deriveStagePlan(presentation, windowCommand, resolveAmbientLoop(presentation))
+
+  const plan = deriveStagePlan(
+    presentation,
+    windowCommand,
+    resolveAmbientLoop(presentation),
+    $motionLevel.get() === 'subtle'
+  )
 
   const actor =
     $motionLevel.get() === 'off' ||

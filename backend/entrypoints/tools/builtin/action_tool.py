@@ -5,6 +5,7 @@ from typing import Any
 
 from features.action_library import queries as action_queries
 from features.action_library.schemas import ActionAssetDesign, ActionAssetView, ActionClipKind, ActionTrigger
+from features.media.visual_semantics import ActionMotionIntensity, ActionPerformanceRole, SemanticTag
 from infrastructure.api_ids import ResourceId
 from infrastructure.database import SESSION_LOCAL
 from runtime.tools.registry import ToolsRegistry
@@ -20,8 +21,8 @@ ACTION_INSPECT_TOOL_DESCRIPTION = (
     "deferred 表示待补充资料，rejected 表示内容未通过，failed 表示技术失败、尚未取得评审结论。"
 )
 ACTION_DESIGN_TOOL_DESCRIPTION = (
-    "登记一个新动作（名称、动作内容、适用条件、持续或短动作类型与时长）。登记只保存定义并进入评审，"
-    "不开始生成图片或视频；评审依据是角色身体能力与动作含义，具体环境与道具在每次生成时判断。"
+    "登记一个新动作（名称、动作内容、结构化语义标签、表现角色、动作强度、适用条件、持续或短动作类型与时长）。"
+    "登记只保存定义并进入评审，不开始生成图片或视频；评审依据是角色身体能力与动作含义，具体环境与道具在每次生成时判断。"
     "已有合适的入库动作时优先复用；提交后用返回的 action_id 调用 action_inspect 查看结果，通过后才能用于制作。"
     "不要用重复登记代替评审重试。"
 )
@@ -39,6 +40,10 @@ def _action_payload(action: ActionAssetView) -> dict[str, Any]:
             "allowed_triggers",
             "clip_kind",
             "duration_seconds",
+            "semantic_tags",
+            "performance_role",
+            "motion_intensity",
+            "interruptible",
             "reason",
             "status",
             "review_reason",
@@ -90,6 +95,10 @@ async def action_design_tool(
     use_when: list[str] | None = None,
     avoid_when: list[str] | None = None,
     allowed_triggers: list[ActionTrigger] | None = None,
+    semantic_tags: list[SemanticTag] | None = None,
+    performance_role: ActionPerformanceRole | None = None,
+    motion_intensity: ActionMotionIntensity = "normal",
+    interruptible: bool = True,
     reason: str = "",
     duration_seconds: int = 4,
     clip_kind: ActionClipKind = "once",
@@ -102,6 +111,10 @@ async def action_design_tool(
         use_when=use_when,
         avoid_when=avoid_when,
         allowed_triggers=allowed_triggers,
+        semantic_tags=semantic_tags,
+        performance_role=performance_role,
+        motion_intensity=motion_intensity,
+        interruptible=interruptible,
         reason=reason,
         duration_seconds=duration_seconds,
         clip_kind=clip_kind,
@@ -127,6 +140,21 @@ def register(registry: ToolsRegistry) -> None:
             "loop 持续保持状态或自然连续的运动，首尾姿态、接触及道具位置和可见状态均须相接；"
             "不能自然闭合的过程使用 once，完成一次表达并自然收束。"
         ),
+        "semantic_tags": (
+            "动作的结构化语义标签，只能从这些值选择：idle 安静相伴、attention 注意用户、interaction 互动回应、"
+            "reading 阅读、working 专注做事、creating 创作、thinking 思考、resting 休息、organizing 整理、"
+            "socializing 社交、stretching 舒展、grooming 仪容整理、drinking 饮水、dancing 舞蹈。"
+            "描述动作本身而非使用场景；场景归 use_when。"
+        ),
+        "performance_role": (
+            "表现角色：idle 常驻待机、sustained 可持续的专注状态、reaction 一次性行为反应；"
+            "省略时 loop 视为 sustained，once 视为 reaction。"
+        ),
+        "motion_intensity": (
+            "动作幅度强度：subtle 轻微到几乎不可见、normal 日常幅度、expressive 明显大幅度；"
+            "轻量动态档只自动选择 subtle 动作，用户明确触发的反应可使用其他强度。"
+        ),
+        "interruptible": "是否允许已开始的动作被更高优先级互动或新的生活情境中断；结束后恢复当前有效的基础画面。",
     }
     for name, description in design_descriptions.items():
         design_schema["properties"][name]["description"] = description

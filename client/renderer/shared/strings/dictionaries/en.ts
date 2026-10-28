@@ -1826,6 +1826,39 @@ export const dict: Dictionary = {
     clipLoop: 'Looping action',
     durationLabel: 'Duration',
     durationSuffix: ' s',
+    semanticTagsLabel: 'Semantic tags',
+    semanticTagLabels: {
+      idle: 'Quiet company',
+      attention: 'Attention',
+      interaction: 'Interaction',
+      reading: 'Reading',
+      working: 'Focus',
+      creating: 'Creating',
+      thinking: 'Thinking',
+      resting: 'Resting',
+      organizing: 'Organizing',
+      socializing: 'Socializing',
+      stretching: 'Stretching',
+      grooming: 'Grooming',
+      drinking: 'Drinking',
+      dancing: 'Dancing'
+    },
+    interruptibleLabel: 'Allow interactions or new activities to interrupt',
+    semanticTagsHint: 'What the motion itself means; used to match it to life contexts. Up to 8.',
+    performanceRoleLabel: 'Performance role',
+    performanceRoles: {
+      idle: 'Ambient idle',
+      sustained: 'Sustained state',
+      reaction: 'Immediate reaction'
+    },
+    motionIntensityLabel: 'Motion intensity',
+    motionIntensities: {
+      subtle: 'Subtle',
+      normal: 'Everyday',
+      expressive: 'Expressive'
+    },
+    motionIntensityHint:
+      'Under subtle motion the companion only auto-picks subtle actions; reactions you trigger are unrestricted.',
     reviewReasonLabel: 'Review note',
     save: 'Save',
     cancel: 'Cancel',

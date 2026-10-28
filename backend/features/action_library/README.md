@@ -6,7 +6,7 @@
 
 [service.py](service.py) 管理受理去重、编辑和评审结算；[review.py](review.py) 调用模型，[prompts.py](prompts.py) 定义任务。[queries.py](queries.py) 与 [views.py](views.py) 返回查询投影，[use_cases.py](use_cases.py) 转换请求错误。
 
-[presets.py](presets.py) 维护通用内置定义，持久字段与请求视图以 [models.py](models.py)、[schemas.py](schemas.py) 为准。列表按 ID 游标读取摘要，总数按需查询，不为列表加载完整冻结参考。
+[presets.py](presets.py) 维护通用内置定义，持久字段与请求视图以 [models.py](models.py)、[schemas.py](schemas.py) 为准。语义词表归 [visual_semantics.py](../media/visual_semantics.py)，`performance_role` 缺省按播放方式派生，短动作只使用 reaction，循环使用 idle 或 sustained；`motion_intensity` 供动态档过滤，`interruptible` 约束演出中断，结束后统一恢复最新有效基础画面。列表按 ID 游标读取摘要，总数按需查询，不为列表加载完整冻结参考。
 
 ## 评审与恢复
 

@@ -40,7 +40,7 @@
 
 ## 呈现与文件
 
-呈现读取指定的冻结版本，素材修改或重做不能追改已显示的事实。呈现行保存舞台组合 `composition_json`（layered 引用环境层与主体层 / cinematic 整片引用，互斥）与生活意图 `intent_json`（生活侧只写投影，呈现系统只读取）；两者是呈现配置，不构成第二份生活事实。开播回执按成品类型推进组合：actor/scene 各自替换所在图层，cinematic 整片接管。呈现响应在 `composition.media` 附各层可播媒体投影（含 actor 版本的 `body` 锚点与命中元数据），播放指令对 actor 成品同样携带 `body`；`ambient_actor` 从已有待机成品中匹配冻结身份和造型，`ambient_catalog` 另投影当前身份与造型可用的主体动画与完整场景影像（含冻结动作语义），供客户端导演本地选择常驻轮换，两者不制作新素材、不建立逐圈播放账本；窗口模式播放透明主体视频按 `video` 回执并推进组合，静态投影仍按 `window_static`。客户端导演点播（`POST /{visual_id}/play`，desktop 身份）走同一指令管线，受理时核对目标媒体与舞台冻结身份、造型一致。
+呈现读取指定的冻结版本，素材修改或重做不能追改已显示的事实。呈现行保存舞台组合 `composition_json`（layered 引用环境层与主体层 / cinematic 整片引用，互斥）与生活意图 `intent_json`（生活侧只写投影，含结构化活动类别，呈现系统只读取）；两者是呈现配置，不构成第二份生活事实。开播回执按成品类型推进组合：actor/scene 各自替换所在图层，cinematic 整片接管。呈现响应在 `composition.media` 附各层可播媒体投影（含 actor 版本的 `body` 锚点与命中元数据），播放指令对 actor 成品同样携带 `body`；`ambient_actor` 从已有待机成品中匹配冻结身份和造型，`ambient_catalog` 另投影当前身份与造型可用的主体动画与完整场景影像（含冻结动作属性、实际媒体语义及适用条件），供客户端导演按活动类别结构化匹配并本地选择常驻轮换，两者不制作新素材、不建立逐圈播放账本；窗口模式播放透明主体视频按 `video` 回执并推进组合，静态投影仍按 `window_static`。客户端导演点播（`POST /{visual_id}/play`，desktop 身份）走同一指令管线，受理时核对目标媒体与舞台冻结身份、造型一致。
 
 生活情境投影与静态兜底归 [life_presentation](../../workflows/life_presentation.py)：动态表现关闭或无可播媒体时生活变化只落到静态目标，自主播放与制作的档位闸门不变。
 

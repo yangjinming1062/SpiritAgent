@@ -29,6 +29,8 @@ def state_view(row: LifeState) -> LifeStateView:
         user_id=row.user_id,
         current_activity=row.current_activity,
         activity_kind=row.activity_kind,
+        activity_type=row.activity_type,
+        scene_tags=row.scene_tags_json,
         activity_started_at=row.activity_started_at,
         activity_step_id=row.activity_step_id,
         presentation_revision=row.presentation_revision,
@@ -64,6 +66,7 @@ def empty_state_view(user_id: int) -> LifeStateView:
     return LifeStateView(
         user_id=user_id,
         current_activity="",
+        activity_type="idle",
         current_scene={},
         mood=None,
         active_pursuit_id=None,

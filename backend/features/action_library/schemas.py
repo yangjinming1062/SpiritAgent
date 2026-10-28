@@ -4,9 +4,10 @@ from datetime import datetime
 from typing import Annotated, Literal
 
 from infrastructure.api_ids import ResourceId
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from features.media.identity_contracts import CharacterCardSnapshot
+from features.media.visual_semantics import ActionMotionIntensity, ActionPerformanceRole, SemanticTags
 
 ABSOLUTE_MAX_DURATION_SECONDS = 15
 
@@ -30,7 +31,23 @@ class ActionAssetDesign(BaseModel):
     allowed_triggers: list[ActionTrigger] = Field(default_factory=list, max_length=8)
     clip_kind: ActionClipKind = "once"
     duration_seconds: int = Field(default=4, ge=1, le=ABSOLUTE_MAX_DURATION_SECONDS, strict=True)
+    semantic_tags: SemanticTags = Field(default_factory=list)
+    # 表现角色默认按播放方式派生：loop 是可持续状态，once 是一次反应；显式提交优先。
+    performance_role: ActionPerformanceRole | None = None
+    motion_intensity: ActionMotionIntensity = "normal"
+    interruptible: bool = True
     reason: str = Field(default="", max_length=400)
+
+    @model_validator(mode="after")
+    def derive_performance_role(self) -> "ActionAssetDesign":
+        if self.performance_role is None:
+            explicit = "performance_role" in self.model_fields_set
+            self.performance_role = "sustained" if self.clip_kind == "loop" else "reaction"
+            if not explicit:
+                self.model_fields_set.discard("performance_role")
+        if (self.performance_role == "reaction") != (self.clip_kind == "once"):
+            raise ValueError("短动作须使用反应角色，循环动作须使用待机或持续角色")
+        return self
 
     @property
     def triggers(self) -> list[ActionTrigger]:
@@ -50,6 +67,10 @@ class ActionAssetView(BaseModel):
     allowed_triggers: list[ActionTrigger] = Field(default_factory=list)
     clip_kind: ActionClipKind
     duration_seconds: int
+    semantic_tags: SemanticTags = Field(default_factory=list)
+    performance_role: ActionPerformanceRole
+    motion_intensity: ActionMotionIntensity
+    interruptible: bool
     reason: str = ""
     source: ActionAssetSource
     preset_key: str | None = None

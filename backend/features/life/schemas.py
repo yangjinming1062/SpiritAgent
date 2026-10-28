@@ -6,6 +6,8 @@ from typing import Any, Literal
 from infrastructure.api_ids import ResourceId
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_serializer
 
+from features.media.visual_semantics import ActivityType, SceneTags
+
 from .actions import LifeAction, NextAction, ReadingResultView
 from .prompts import life_content_payload
 
@@ -80,6 +82,8 @@ class LifeStateView(BaseModel):
     user_id: ResourceId
     current_activity: str
     activity_kind: FactType = "virtual_activity"
+    activity_type: ActivityType = "idle"
+    scene_tags: SceneTags = Field(default_factory=list)
     activity_started_at: datetime | None = None
     activity_step_id: ResourceId | None = None
     presentation_revision: int = 0
@@ -213,6 +217,17 @@ class LifeDecisionFields(BaseModel):
     ] = "keep"
     activity_kind: Literal["intent", "virtual_activity"] | None = Field(
         default=None, description="意向或虚拟生活情景；真实执行及成果由实际任务记录"
+    )
+    activity_type: ActivityType | None = Field(
+        default=None,
+        description=(
+            "当前活动的结构化类别（idle/reading/working/creating/thinking/resting/organizing/socializing）；"
+            "描述伙伴现在实际进行的活动的性质，计划中的活动不能据此标记为正在进行"
+        ),
+    )
+    scene_tags: SceneTags | None = Field(
+        default=None,
+        description="当前环境与可用物品的标签：indoor 室内、outdoor 室外、desk 桌面、seat 座位、bed 床、open_space 开阔空间、book 书、computer 电脑、cup 杯子、tools 工具。仅填写有依据的当前条件；变化时提供完整列表，未知或不再具备时用空列表，不变时省略。",
     )
     next_action: NextAction | None = Field(
         default=None, description="登记一个实际可执行的下一步；无须行动时省略，不代表已执行"

@@ -4,7 +4,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { ActionClipKind, ActionDefinition, ActionLibraryGroup, ActionReviewStatus } from '@protocol'
 
-import { isActionDesignValid, parseActionConditions } from '../shared/actions'
+import {
+  ACTION_MOTION_INTENSITIES,
+  ACTION_PERFORMANCE_ROLES,
+  ACTION_SEMANTIC_TAGS,
+  type ActionSemanticTag,
+  isActionDesignValid,
+  parseActionConditions
+} from '../shared/actions'
 
 import { errorText, type RemoteApi } from './api'
 import { saveWithReadback } from './save-result'
@@ -35,6 +42,25 @@ const CLIP_KIND_TEXT: Record<ActionClipKind, string> = {
   once: '短动作'
 }
 
+const ROLE_TEXT = { idle: '常驻待机', sustained: '持续状态', reaction: '即时反应' } as const
+const INTENSITY_TEXT = { subtle: '轻微', normal: '日常', expressive: '明显' } as const
+const TAG_TEXT: Record<ActionSemanticTag, string> = {
+  idle: '安静相伴',
+  attention: '注意用户',
+  interaction: '互动回应',
+  reading: '阅读',
+  working: '专注做事',
+  creating: '创作',
+  thinking: '思考',
+  resting: '休息',
+  organizing: '整理',
+  socializing: '社交',
+  stretching: '舒展',
+  grooming: '整理仪容',
+  drinking: '饮水',
+  dancing: '舞蹈'
+}
+
 interface ActionDraft {
   avoidWhen: string
   clipKind: ActionClipKind
@@ -42,6 +68,12 @@ interface ActionDraft {
   motion: string
   name: string
   useWhen: string
+  semanticTags: ActionSemanticTag[]
+  performanceRole: ActionDefinition['performance_role'] | null
+  motionIntensity: ActionDefinition['motion_intensity']
+  interruptible: boolean
+  allowedTriggers: ActionDefinition['allowed_triggers']
+  reason: string
   expectedUpdatedAt?: string
 }
 
@@ -53,6 +85,12 @@ function toDraft(action: ActionDefinition | null): ActionDraft {
     motion: action?.motion_description ?? '',
     name: action?.name ?? '',
     useWhen: (action?.use_when ?? []).join('\n'),
+    semanticTags: [...(action?.semantic_tags ?? [])],
+    performanceRole: action?.performance_role ?? null,
+    motionIntensity: action?.motion_intensity ?? 'normal',
+    interruptible: action?.interruptible ?? true,
+    allowedTriggers: action?.allowed_triggers ?? ['chat', 'manual'],
+    reason: action?.reason ?? '',
     expectedUpdatedAt: action?.updated_at
   }
 }
@@ -64,7 +102,13 @@ function actionBody(draft: ActionDraft) {
     duration_seconds: draft.duration,
     motion_description: draft.motion.trim(),
     name: draft.name.trim(),
-    use_when: parseActionConditions(draft.useWhen)
+    use_when: parseActionConditions(draft.useWhen),
+    semantic_tags: draft.semanticTags,
+    performance_role: draft.performanceRole ?? (draft.clipKind === 'loop' ? 'sustained' : 'reaction'),
+    motion_intensity: draft.motionIntensity,
+    interruptible: draft.interruptible,
+    allowed_triggers: draft.allowedTriggers,
+    reason: draft.reason
   }
 }
 
@@ -159,7 +203,7 @@ function ActionEditor({
               <input
                 checked={draft.clipKind === kind}
                 name="action-clip-kind"
-                onChange={() => patch({ clipKind: kind })}
+                onChange={() => patch({ clipKind: kind, performanceRole: null })}
                 type="radio"
               />
               {CLIP_KIND_TEXT[kind]}
@@ -176,6 +220,78 @@ function ActionEditor({
             type="number"
             value={draft.duration}
           />
+        </label>
+        <fieldset>
+          <legend>语义标签（描述动作本身含义，最多 8 个）</legend>
+          <div className="tag-row">
+            {ACTION_SEMANTIC_TAGS.map(tag => {
+              const active = draft.semanticTags.includes(tag)
+
+              return (
+                <label key={tag}>
+                  <input
+                    checked={active}
+                    onChange={() =>
+                      patch({
+                        semanticTags: active
+                          ? draft.semanticTags.filter(item => item !== tag)
+                          : draft.semanticTags.length >= 8
+                            ? draft.semanticTags
+                            : [...draft.semanticTags, tag]
+                      })
+                    }
+                    type="checkbox"
+                  />
+                  {TAG_TEXT[tag]}
+                </label>
+              )
+            })}
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>表现角色（省略按播放类型判断）</legend>
+          <label>
+            <input
+              checked={draft.performanceRole === null}
+              name="action-role"
+              onChange={() => patch({ performanceRole: null })}
+              type="radio"
+            />
+            自动
+          </label>
+          {ACTION_PERFORMANCE_ROLES.filter(role => (role === 'reaction') === (draft.clipKind === 'once')).map(role => (
+            <label key={role}>
+              <input
+                checked={draft.performanceRole === role}
+                name="action-role"
+                onChange={() => patch({ performanceRole: role })}
+                type="radio"
+              />
+              {ROLE_TEXT[role]}
+            </label>
+          ))}
+        </fieldset>
+        <fieldset>
+          <legend>动作强度（轻量动态下只自动选择轻微动作）</legend>
+          {ACTION_MOTION_INTENSITIES.map(level => (
+            <label key={level}>
+              <input
+                checked={draft.motionIntensity === level}
+                name="action-intensity"
+                onChange={() => patch({ motionIntensity: level })}
+                type="radio"
+              />
+              {INTENSITY_TEXT[level]}
+            </label>
+          ))}
+        </fieldset>
+        <label>
+          <input
+            checked={draft.interruptible}
+            onChange={event => patch({ interruptible: event.target.checked })}
+            type="checkbox"
+          />
+          允许互动或新活动中断动作
         </label>
       </fieldset>
       {error ? <Notice>{error}</Notice> : null}
@@ -205,7 +321,7 @@ function ActionEditor({
                   })
                 } else {
                   saved = await api.invoke('companion_actions.create_action', {
-                    body: { ...body, allowed_triggers: copySource?.allowed_triggers, reason: copySource?.reason }
+                    body
                   })
                 }
 

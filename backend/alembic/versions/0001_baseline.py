@@ -36,6 +36,15 @@ def upgrade() -> None:
         ),
         sa.Column("clip_kind", sa.String(length=8), nullable=False),
         sa.Column("duration_seconds", sa.Integer(), nullable=False),
+        sa.Column(
+            "semantic_tags_json",
+            postgresql.JSONB(astext_type=sa.Text()),
+            server_default=sa.text("'[]'"),
+            nullable=False,
+        ),
+        sa.Column("performance_role", sa.String(length=12), server_default=sa.text("'reaction'"), nullable=False),
+        sa.Column("motion_intensity", sa.String(length=12), server_default=sa.text("'normal'"), nullable=False),
+        sa.Column("interruptible", sa.Boolean(), server_default=sa.text("true"), nullable=False),
         sa.Column("reason", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("source", sa.String(length=24), nullable=False),
         sa.Column("preset_key", sa.String(length=24), nullable=True),
@@ -52,6 +61,14 @@ def upgrade() -> None:
         sa.UniqueConstraint("user_id", "id", name="uq_action_definitions_owner_id"),
         sa.UniqueConstraint("user_id", "source_key", name="uq_action_definitions_source"),
         sa.UniqueConstraint("user_id", "preset_key", name="uq_action_definitions_preset"),
+        sa.CheckConstraint(
+            "performance_role IN ('idle', 'sustained', 'reaction')",
+            name=op.f("ck_action_definitions_action_performance_role"),
+        ),
+        sa.CheckConstraint(
+            "motion_intensity IN ('subtle', 'normal', 'expressive')",
+            name=op.f("ck_action_definitions_action_motion_intensity"),
+        ),
     )
     op.create_table(
         "admin_sessions",
@@ -703,6 +720,8 @@ def upgrade() -> None:
         sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("current_activity", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("activity_kind", sa.String(length=24), server_default="virtual_activity", nullable=False),
+        sa.Column("activity_type", sa.String(length=16), server_default="idle", nullable=False),
+        sa.Column("scene_tags_json", postgresql.JSONB(astext_type=sa.Text()), server_default="[]", nullable=False),
         sa.Column("activity_started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("activity_step_id", sa.BigInteger(), nullable=True),
         sa.Column("presentation_revision", sa.Integer(), server_default="0", nullable=False),
@@ -726,6 +745,10 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "activity_kind IN ('intent', 'virtual_activity', 'execution', 'result')",
             name=op.f("ck_life_states_activity_kind"),
+        ),
+        sa.CheckConstraint(
+            "activity_type IN ('idle','reading','working','creating','thinking','resting','organizing','socializing')",
+            name=op.f("ck_life_states_activity_type"),
         ),
         sa.CheckConstraint(
             "revision >= 0 AND scene_revision >= 0 AND presentation_revision >= 0 AND presentation_evaluated_revision >= 0",
