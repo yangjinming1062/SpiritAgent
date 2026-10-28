@@ -12,9 +12,14 @@ import {
 
 import { $screenLocked } from './activity'
 
+/** 身体媒体的可见性独立于轻语和主动投递资格。 */
+export function isCharacterMediaVisible(): boolean {
+  return !$screenLocked.get() && isCompanionStageVisible()
+}
+
 /** 完整入口按生活舞台的实际可见性判断；精灵旁轻语可见时暂停主动投递。 */
 export function isCharacterStageVisible(): boolean {
-  return !$screenLocked.get() && isCompanionStageVisible() && ($surfaceRole.get() !== 'sprite' || !$chatVisible.get())
+  return isCharacterMediaVisible() && ($surfaceRole.get() !== 'sprite' || !$chatVisible.get())
 }
 
 export function observeCharacterStageVisibility(listener: (visible: boolean) => void): () => void {

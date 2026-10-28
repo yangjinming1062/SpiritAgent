@@ -9,6 +9,7 @@ import {
   $spatialPos,
   $spatialScale,
   $spriteContentRect,
+  $spriteFootAnchor,
   cancelMovement,
   emitVfx,
   endDragAt,
@@ -100,6 +101,7 @@ export function SpriteStage({
   const scale = useStore($spatialScale)
   const expressionBoost = useStore($expressionBoost)
   const content = useStore($spriteContentRect)
+  const foot = useStore($spriteFootAnchor)
   const stageHitTest = useMediaPixelHitTest(windowId)
 
   const pendingPosRef = useRef<{ x: number; y: number } | null>(null)
@@ -500,7 +502,7 @@ export function SpriteStage({
   const spriteW = getBaseSpriteWidth()
   const spriteH = getBaseSpriteHeight()
   // 形变与情绪放大以内容脚底中点为原点，透明留白不参与。
-  const bodyOrigin = `${((content?.left ?? 0) + (content?.right ?? 1)) * 50}% ${(content?.bottom ?? 1) * 100}%`
+  const bodyOrigin = `${(foot?.x ?? ((content?.left ?? 0) + (content?.right ?? 1)) / 2) * 100}% ${(foot?.y ?? content?.bottom ?? 1) * 100}%`
 
   return (
     <div className="fixed inset-0" data-sprite-stage style={{ pointerEvents: 'none' }}>

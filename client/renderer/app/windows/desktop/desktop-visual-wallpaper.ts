@@ -2,10 +2,12 @@ import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
+  $stagePlan,
   $visualPlayback,
   $visualsJobs,
   $visualsPresentation,
   claimVisualPlay,
+  deriveStagePlan,
   type PlaybackStatus,
   refreshVisualPresentation,
   refreshVisuals,
@@ -51,6 +53,7 @@ export function useDesktopVisualWallpaper(): void {
   const authSessionId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
   const [clientId] = useState(() => crypto.randomUUID())
   const [claimed, setClaimed] = useState<VisualPlayCommand | null>(null)
+  const [failedCinematic, setFailedCinematic] = useState<string | null>(null)
   const [reduceMotion, setReduceMotion] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches)
   const claimedPlays = useRef(new Map<string, Set<PlaybackStatus>>())
   const claimedKinds = useRef(new Map<string, VisualMediaKind>())
@@ -94,6 +97,10 @@ export function useDesktopVisualWallpaper(): void {
       })
       .catch(failure => log.warn('desktop-visual', 'Playback receipt failed', failure))
       .finally(() => {
+        if (scope()) {
+          void refreshVisualPresentation()
+        }
+
         if (receiptQueues.current.get(playId) === request) {
           receiptQueues.current.delete(playId)
         }
@@ -121,6 +128,7 @@ export function useDesktopVisualWallpaper(): void {
     receiptQueues.current.clear()
     staticReceipts.current.clear()
     setClaimed(null)
+    setFailedCinematic(null)
   }, [authSessionId])
 
   useEffect(() => {
@@ -214,6 +222,18 @@ export function useDesktopVisualWallpaper(): void {
         return
       }
 
+      if (receipt.playId.startsWith('render:cinematic:')) {
+        if (receipt.status === 'failed') {
+          setFailedCinematic(receipt.playId.slice('render:cinematic:'.length))
+        }
+
+        return
+      }
+
+      if (receipt.status === 'failed' && claimed?.play_id === receipt.playId && claimed.asset_kind === 'cinematic') {
+        setFailedCinematic(`${claimed.visual_id}:${claimed.visual_version}`)
+      }
+
       if (staticTarget?.request_id === receipt.playId) {
         const currentPresentation = $presentation.get()
         const key = staticPresentationKey(staticTarget)
@@ -266,7 +286,7 @@ export function useDesktopVisualWallpaper(): void {
         recordReceipt(receipt.playId, status, receipt.error)
       }
     })
-  }, [authSessionId, recordReceipt, staticTarget])
+  }, [authSessionId, recordReceipt, staticTarget, claimed])
 
   const activeCommand =
     claimed &&
@@ -284,23 +304,61 @@ export function useDesktopVisualWallpaper(): void {
     }
   }, [active, authSessionId, claimed, activeCommand, recordReceipt])
 
-  const selectedMediaKind = activeCommand?.media_kind ?? baseline?.media_kind
+  const stagePlan = useStore($stagePlan)
+  const selectedPlan = deriveStagePlan(projection, activeCommand)
+  const layerActor = selectedPlan.actor
+  const layerScene = selectedPlan.scene
+  const full = activeCommand?.asset_kind === 'cinematic' ? activeCommand : null
+  const cinematic = selectedPlan.cinematic
 
-  const videoUrl =
-    !staticTarget && selectedMediaKind === 'video'
-      ? firstNonBlank(assetPath(activeCommand?.media_path), assetPath(baseline?.media_url))
+  const cinematicKey = full
+    ? `${full.visual_id}:${full.visual_version}`
+    : cinematic
+      ? `${cinematic.visual_id}:${cinematic.version}`
       : null
 
-  const posterUrl = staticTarget
-    ? assetPath(staticTarget.scene?.path)
-    : firstNonBlank(
-        assetPath(activeCommand?.media_kind === 'image' ? activeCommand.media_path : null),
-        assetPath(activeCommand?.poster_path),
-        assetPath(baseline?.poster_url),
-        assetPath(baseline?.media_kind === 'image' ? baseline?.media_url : null)
+  const layered = !cinematicKey || cinematicKey === failedCinematic
+  const sceneCommand = activeCommand?.asset_kind === 'scene' ? activeCommand : null
+
+  const videoUrl = !layered
+    ? assetPath(
+        full?.media_kind === 'video' ? full.media_path : cinematic?.media_kind === 'video' ? cinematic.media_url : null
+      )
+    : assetPath(
+        sceneCommand?.media_kind === 'video' ? sceneCommand.media_path : layerScene?.isVideo ? layerScene.url : null
       )
 
-  const outfitUrl = staticTarget ? assetPath(staticTarget.outfit?.path) : null
+  const posterUrl = !layered
+    ? firstNonBlank(
+        assetPath(full?.media_kind === 'image' ? full.media_path : full?.poster_path),
+        assetPath(cinematic?.media_kind === 'image' ? cinematic.media_url : cinematic?.poster_url)
+      )
+    : firstNonBlank(
+        assetPath(sceneCommand?.media_kind === 'image' ? sceneCommand.media_path : sceneCommand?.poster_path),
+        assetPath(layerScene?.isVideo ? layerScene.posterUrl : layerScene?.url),
+        assetPath(staticTarget?.scene?.path),
+        assetPath(projection?.composition?.scene_material?.path),
+        assetPath(projection?.actual.scene_path)
+      )
+
+  const actorUrl = layered ? assetPath(layerActor?.url) : null
+
+  const outfitUrl = layered
+    ? firstNonBlank(
+        assetPath(activeCommand?.outfit?.path),
+        assetPath(staticTarget?.outfit?.path),
+        assetPath(projection?.composition?.outfit_material?.path),
+        assetPath(projection?.actual.outfit_path)
+      )
+    : null
+
+  const backgroundId = layered
+    ? (sceneCommand?.visual_id ?? layerScene?.visualId ?? null)
+    : (full?.visual_id ?? cinematic?.visual_id ?? null)
+
+  const backgroundVersion = layered
+    ? (sceneCommand?.visual_version ?? layerScene?.version ?? null)
+    : (full?.visual_version ?? cinematic?.version ?? null)
 
   useEffect(() => {
     if (!active || !authSessionId) {
@@ -319,22 +377,37 @@ export function useDesktopVisualWallpaper(): void {
       video: videoUrl ? { url: videoUrl } : null,
       poster: posterUrl ? { url: posterUrl } : null,
       outfit: outfitUrl ? { url: outfitUrl } : null,
-      playId: staticTarget?.request_id ?? activeCommand?.play_id ?? null,
-      visualId: staticTarget ? null : (activeCommand?.visual_id ?? baseline?.id ?? null),
-      visualVersion: staticTarget ? null : (activeCommand?.visual_version ?? baseline?.version ?? null),
+      actor: actorUrl ? { url: actorUrl } : null,
+      playId:
+        activeCommand?.play_id ??
+        staticTarget?.request_id ??
+        (!layered && cinematicKey ? `render:cinematic:${cinematicKey}` : null),
+      playTarget: activeCommand?.asset_kind === 'actor' ? 'actor' : 'background',
+      actorBaseKey: stagePlan.actor ? `${stagePlan.actor.visualId}:${stagePlan.actor.version}` : null,
+      visualId: backgroundId,
+      visualVersion: backgroundVersion,
+      actorVisualId: layered ? (layerActor?.visualId ?? null) : null,
+      actorVisualVersion: layered ? (layerActor?.version ?? null) : null,
       presentationEpoch: staticTarget?.presentation_epoch ?? projection?.presentation_epoch ?? 0,
       expiresAt: staticTarget ? null : (activeCommand?.expires_at ?? null),
-      kind: !staticTarget && activeCommand ? (activeCommand.loop ? 'loop' : 'once') : 'loop',
+      kind: activeCommand && activeCommand.asset_kind !== 'actor' ? (activeCommand.loop ? 'loop' : 'once') : 'loop',
+      actorKind:
+        activeCommand?.asset_kind === 'actor'
+          ? activeCommand.loop
+            ? 'loop'
+            : 'once'
+          : layerActor?.loop === false
+            ? 'once'
+            : 'loop',
       // 短动作结束后返回保留的持续画面；独立播放不关联基准。
-      continuity:
-        !staticTarget && (activeCommand?.input_image_hash ?? baseline?.input_image_hash) ? 'base' : 'independent',
+      continuity: !layered && (activeCommand?.input_image_hash ?? baseline?.input_image_hash) ? 'base' : 'independent',
       transition: staticTarget ? 'fade' : (activeCommand?.transition ?? 'natural'),
       geometryMode: 'target',
-      inputImageHash: staticTarget ? null : (activeCommand?.input_image_hash ?? baseline?.input_image_hash ?? null),
+      inputImageHash: layered ? null : (activeCommand?.input_image_hash ?? baseline?.input_image_hash ?? null),
       theme,
       reduceMotion,
       paused,
-      clear: !videoUrl && !posterUrl
+      clear: !videoUrl && !posterUrl && !actorUrl
     }
 
     const key = JSON.stringify(request)
@@ -367,13 +440,22 @@ export function useDesktopVisualWallpaper(): void {
     active,
     authSessionId,
     activeCommand,
-    baseline?.id,
-    baseline?.version,
     baseline?.input_image_hash,
     projection?.presentation_epoch,
+    stagePlan,
+    cinematicKey,
+    backgroundId,
+    backgroundVersion,
     videoUrl,
     posterUrl,
     outfitUrl,
+    actorUrl,
+    layered,
+    layerActor?.visualId,
+    layerActor?.version,
+    layerActor?.loop,
+    layerScene?.visualId,
+    layerScene?.version,
     staticTarget,
     theme,
     reduceMotion,

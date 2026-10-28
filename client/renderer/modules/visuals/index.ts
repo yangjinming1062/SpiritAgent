@@ -12,6 +12,7 @@ export {
 } from './actions-store'
 export type { VisualReceiptBody, VisualsListQuery } from './api'
 export { visualsApi } from './api'
+export { $stagePlan, deriveStagePlan, type StageActorPlan, type StagePlan, type StageScenePlan } from './stage-plan'
 export type {
   ActionClipKind,
   ActionDefinition,

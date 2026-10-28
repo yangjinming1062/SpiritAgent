@@ -35,18 +35,30 @@ function mediaReference(raw: unknown): DesktopMediaReference | null {
 export function parseDesktopBackgroundRequest(raw: unknown): DesktopBackgroundRequest {
   const value = raw as Partial<DesktopBackgroundRequest> | null
   const validId = (id: unknown): boolean => id === null || isResourceId(id)
+  const validVersion = (v: unknown): boolean => v === null || (Number.isSafeInteger(v) && Number(v) > 0)
 
   if (
     !value ||
     typeof value.authSessionId !== 'string' ||
     (value.playId !== null && (typeof value.playId !== 'string' || !value.playId || value.playId.length > 128)) ||
     !validId(value.visualId) ||
-    (value.visualVersion !== null && (!Number.isSafeInteger(value.visualVersion) || Number(value.visualVersion) < 0)) ||
+    !validVersion(value.visualVersion) ||
+    !validId(value.actorVisualId) ||
+    !validVersion(value.actorVisualVersion) ||
+    (value.visualId === null) !== (value.visualVersion === null) ||
+    (value.actorVisualId === null) !== (value.actorVisualVersion === null) ||
+    (value.playTarget === 'actor' && (value.actor === null || value.actorVisualId === null)) ||
     !Number.isSafeInteger(value.presentationEpoch) ||
     Number(value.presentationEpoch) < 0 ||
     (value.expiresAt !== null &&
       (typeof value.expiresAt !== 'string' || !Number.isFinite(Date.parse(value.expiresAt)))) ||
     (value.kind !== 'loop' && value.kind !== 'once') ||
+    (value.actorKind !== 'loop' && value.actorKind !== 'once') ||
+    (value.playTarget !== 'background' && value.playTarget !== 'actor') ||
+    !(
+      value.actorBaseKey === null ||
+      (typeof value.actorBaseKey === 'string' && /^\d+:\d+$/.test(value.actorBaseKey))
+    ) ||
     (value.continuity !== 'base' && value.continuity !== 'independent') ||
     (value.transition !== 'natural' && value.transition !== 'fade') ||
     (value.geometryMode !== 'target' && value.geometryMode !== 'keep') ||
@@ -68,12 +80,18 @@ export function parseDesktopBackgroundRequest(raw: unknown): DesktopBackgroundRe
     video: mediaReference(value.video),
     poster: mediaReference(value.poster),
     outfit: mediaReference(value.outfit),
+    actor: mediaReference(value.actor),
+    actorBaseKey: value.actorBaseKey,
+    playTarget: value.playTarget,
     playId: value.playId,
     visualId: value.visualId as string | null,
     visualVersion: value.visualVersion as number | null,
+    actorVisualId: value.actorVisualId as string | null,
+    actorVisualVersion: value.actorVisualVersion as number | null,
     presentationEpoch: value.presentationEpoch!,
     expiresAt: value.expiresAt,
     kind: value.kind,
+    actorKind: value.actorKind,
     continuity: value.continuity,
     transition: value.transition,
     geometryMode: value.geometryMode,
@@ -92,12 +110,18 @@ export function emptyDesktopBackground(accountEpoch: number, revision: number, t
     video: null,
     poster: null,
     outfit: null,
+    actor: null,
+    actorBaseKey: null,
+    playTarget: 'background',
     playId: null,
     visualId: null,
     visualVersion: null,
+    actorVisualId: null,
+    actorVisualVersion: null,
     presentationEpoch: 0,
     expiresAt: null,
     kind: 'loop',
+    actorKind: 'loop',
     continuity: 'independent',
     transition: 'fade',
     geometryMode: 'target',

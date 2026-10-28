@@ -11,6 +11,7 @@ import { ApiError } from '../../../../shared/errors'
 
 import type { VisualReceiptBody, VisualsListQuery } from './api'
 import { visualsApi } from './api'
+import { $stagePlan, deriveStagePlan } from './stage-plan'
 import type {
   VisualDetail,
   VisualItem,
@@ -210,6 +211,14 @@ function publishPresentation(response: VisualsPresentation): void {
   }
 }
 
+// 呈现与待播指令任一变化都重新解析统一舞台计划；窗口与桌面消费同一份。
+function refreshStagePlan(): void {
+  const presentation = $visualsPresentation.get()
+  $stagePlan.set(deriveStagePlan(presentation, null))
+}
+
+$visualsPresentation.listen(refreshStagePlan)
+
 export async function regenerateVisual(
   visualId: string,
   body: Parameters<typeof visualsApi.regenerate>[1]
@@ -408,6 +417,7 @@ export function resetVisualsForAccount(): void {
   $visualsPresentation.set(null)
   $visualsPresentationError.set(null)
   $visualPlayback.set(null)
+  $stagePlan.set(deriveStagePlan(null, null))
 }
 
 registerStorageClearHandler(resetVisualsForAccount)

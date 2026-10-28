@@ -4,7 +4,7 @@ from datetime import timedelta
 
 from infrastructure.assets.references import asset_paths
 from infrastructure.text import utc_now
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, or_, select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -12,18 +12,21 @@ from features.assets.service import asset_paths_in_session
 from features.jobs.service import cleanup_job_assets, job_asset_paths
 
 from .models import VisualItem, VisualJob, VisualPlayback, VisualPresentation, VisualVersion, VisualVersionAsset
+from .schemas import StageComposition
 
 
 async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
     ids = list(await db.scalars(select(VisualVersionAsset.asset_id).where(VisualVersionAsset.user_id == user_id)))
     paths = set((await asset_paths_in_session(db, user_id, ids)).values())
     paths |= await job_asset_paths(db, user_id)
-    for pending, current in await db.execute(
-        select(VisualPresentation.pending_static_json, VisualPresentation.current_static_json).where(
-            VisualPresentation.user_id == user_id
-        )
+    for pending, current, composition in await db.execute(
+        select(
+            VisualPresentation.pending_static_json,
+            VisualPresentation.current_static_json,
+            VisualPresentation.composition_json,
+        ).where(VisualPresentation.user_id == user_id)
     ):
-        paths |= asset_paths([pending, current], user_id)
+        paths |= asset_paths([pending, current, composition], user_id)
     # 尚未交接的供应商候选仍由工作项保护；发布后依赖由版本关联表持有。
     for row in await db.scalars(
         select(VisualJob).where(
@@ -70,6 +73,18 @@ async def cleanup_obsolete_assets(db: AsyncSession, user_id: int) -> set[str]:
         )
     )
     dependent_version = aliased(VisualVersion)
+    protected: set[tuple[int, int]] = set()
+    for raw in await db.scalars(
+        select(VisualPresentation.composition_json).where(VisualPresentation.user_id == user_id)
+    ):
+        if not raw:
+            continue
+        composition = StageComposition.model_validate(raw)
+        for ref in (composition.actor, composition.cinematic):
+            if ref:
+                protected.add((ref.visual_id, ref.version))
+        if composition.scene_visual_id is not None and composition.scene_version is not None:
+            protected.add((composition.scene_visual_id, composition.scene_version))
     unused = select(VisualVersion.id).where(
         VisualVersion.user_id == user_id,
         VisualVersion.created_at < cutoff,
@@ -91,6 +106,8 @@ async def cleanup_obsolete_assets(db: AsyncSession, user_id: int) -> set[str]:
         )
         .exists(),
     )
+    if protected:
+        unused = unused.where(tuple_(VisualVersion.visual_id, VisualVersion.number).not_in(protected))
     versions = list(await db.scalars(unused))
     if not versions:
         return released

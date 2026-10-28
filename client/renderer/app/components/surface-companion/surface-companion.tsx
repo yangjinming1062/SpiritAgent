@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import { SceneBackdrop } from '@/app/features/scene/scene-backdrop'
 import { $companionLifecycle, ensureCompanionHydrated } from '@/modules/character'
-import { OutfitStage } from '@/modules/character/rendering'
+import { CharacterStage } from '@/modules/character/rendering'
 import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
 import { $mainStageVisible, reportCompanionVisibility } from '@/shared/store/surfaces'
@@ -73,7 +73,7 @@ export function SurfaceCompanion({ visible }: { visible: boolean }): React.JSX.E
     <div className={styles.stage} ref={root}>
       <SceneBackdrop />
       <div className={styles.figure}>
-        <OutfitStage contentAlign="left" eggSize="min(150px, 60%)" windowId={1} />
+        <CharacterStage contentAlign="left" eggSize="min(150px, 60%)" windowId={1} />
       </div>
     </div>
   ) : null

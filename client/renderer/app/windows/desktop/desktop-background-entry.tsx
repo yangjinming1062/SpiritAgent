@@ -3,6 +3,7 @@ import '../../../styles.css'
 import { useEffect, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 
+import { createStageVideoLayer } from '@/shared/lib/stage-video-layer'
 import { backgroundMedia } from '@/shared/platform/desktop'
 import { desktopMediaLayout } from '@client-shared/desktop-media-geometry'
 import type { DesktopBackground, DesktopBackgroundPlayback } from '@ipc/contracts'
@@ -31,6 +32,10 @@ function DesktopWallpaper() {
   const backdrop = useRef<HTMLDivElement>(null)
   const poster = useRef<HTMLImageElement>(null)
   const transitionFrame = useRef<HTMLCanvasElement>(null)
+  const actorFirst = useRef<HTMLVideoElement>(null)
+  const actorSecond = useRef<HTMLVideoElement>(null)
+  const actorPoster = useRef<HTMLImageElement>(null)
+  const actorRoot = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const bridge = backgroundMedia()
@@ -40,7 +45,18 @@ function DesktopWallpaper() {
     const still = poster.current
     const transition = transitionFrame.current
 
-    if (!bridge || !firstVideo || !secondVideo || !fill || !still || !transition) {
+    if (
+      !bridge ||
+      !firstVideo ||
+      !secondVideo ||
+      !fill ||
+      !still ||
+      !transition ||
+      !actorFirst.current ||
+      !actorSecond.current ||
+      !actorPoster.current ||
+      !actorRoot.current
+    ) {
       throw new Error('Desktop background bridge is unavailable')
     }
 
@@ -76,11 +92,181 @@ function DesktopWallpaper() {
     let fadeFrame: number | null = null
     const settled = new Set<string>()
 
+    const actorStill = actorPoster.current
+    const actorContainer = actorRoot.current
+    let actorVisible = false
+    let actorAllowed = false
+    let actorPosterUrl: string | null = null
+    let actorPosterKey: string | null = null
+    let actorPosterGeneration = 0
+    let waitingImage: DesktopBackground | null = null
+    let actorElement: HTMLVideoElement | null = null
+
+    const layoutActor = (): void => {
+      const element = actorElement
+
+      if (!element || !element.videoWidth || !element.videoHeight) {
+        return
+      }
+
+      const scale = Math.min(
+        (window.innerHeight * 0.9) / element.videoHeight,
+        (window.innerWidth * 0.5) / element.videoWidth
+      )
+
+      Object.assign(element.style, {
+        left: `${(window.innerWidth - element.videoWidth * scale) / 2}px`,
+        top: `${window.innerHeight - element.videoHeight * scale}px`,
+        width: `${element.videoWidth * scale}px`,
+        height: `${element.videoHeight * scale}px`
+      })
+    }
+
+    const acknowledgeActor = (
+      media: DesktopBackground,
+      status: DesktopBackgroundPlayback['status'],
+      error?: string
+    ): void => {
+      if (disposed || media.playTarget !== 'actor' || !media.playId || settled.has(media.playId)) {
+        return
+      }
+
+      if (status === 'completed' || status === 'failed' || status === 'interrupted') {
+        settled.add(media.playId)
+      }
+
+      void bridge
+        .acknowledge({
+          accountEpoch: media.accountEpoch,
+          revision: media.revision,
+          playId: media.playId,
+          status,
+          ...(error ? { error: error.slice(0, 2000) } : {})
+        })
+        .catch(failure => console.warn('Actor acknowledgment failed', failure))
+    }
+
+    const actorLayer = createStageVideoLayer<DesktopBackground>([actorFirst.current, actorSecond.current], {
+      presented: (_source, element) => {
+        actorVisible = element !== null
+        actorStill.style.opacity = actorVisible ? '0' : '1'
+        actorElement = element
+        layoutActor()
+
+        if (waitingImage && actorVisible) {
+          const media = waitingImage
+          waitingImage = null
+          acknowledgeImage(media, 'started')
+        }
+      },
+      started: source => acknowledgeActor(source.value, 'started'),
+      ended: source => acknowledgeActor(source.value, 'completed'),
+      failed: (source, error) => acknowledgeActor(source.value, 'failed', error),
+      interrupted: source => acknowledgeActor(source.value, 'interrupted')
+    })
+
+    const allowActor = (value: boolean): void => {
+      actorAllowed = value
+      actorContainer.style.opacity = value ? '1' : '0'
+      actorLayer.setPaused(paused || !value)
+    }
+
+    const resetActor = (): void => {
+      // 等待主体层首帧的背景回执不能静默丢弃：主体被清时按失败结算，避免账本悬挂到过期兜底。
+      if (waitingImage) {
+        const pending = waitingImage
+        waitingImage = null
+        acknowledgeImage(pending, 'failed', 'Actor layer removed before display')
+      }
+
+      actorLayer.set(null)
+      actorPosterGeneration += 1
+
+      if (actorPosterUrl) {
+        URL.revokeObjectURL(actorPosterUrl)
+      }
+
+      actorPosterUrl = null
+      actorPosterKey = null
+      actorStill.removeAttribute('src')
+      allowActor(false)
+    }
+
+    const receiveActor = (media: DesktopBackground): void => {
+      actorLayer.setPaused(paused || !actorAllowed)
+
+      if (!media.actor) {
+        resetActor()
+
+        return
+      }
+
+      const mediaKey = `${media.actorVisualId}:${media.actorVisualVersion}`
+      const key = `${mediaKey}${media.playTarget === 'actor' && media.playId ? `:${media.playId}` : ''}`
+      const actorBytes = media.actor
+      actorLayer.set(
+        {
+          key,
+          mediaKey,
+          loop: media.actorKind === 'loop',
+          value: media,
+          load: async () => {
+            const url = URL.createObjectURL(new Blob([new Uint8Array(actorBytes.bytes)], { type: actorBytes.mime }))
+
+            return { url, release: () => URL.revokeObjectURL(url) }
+          }
+        },
+        media.actorBaseKey
+      )
+      const outfit = media.outfit
+
+      if (outfit && actorPosterKey !== mediaKey) {
+        actorPosterKey = mediaKey
+        const generation = ++actorPosterGeneration
+        const url = URL.createObjectURL(new Blob([new Uint8Array(outfit.bytes)], { type: outfit.mime }))
+        const image = new Image()
+        image.src = url
+        void image
+          .decode()
+          .then(() => {
+            if (disposed || generation !== actorPosterGeneration) {
+              URL.revokeObjectURL(url)
+
+              return
+            }
+
+            if (actorPosterUrl) {
+              URL.revokeObjectURL(actorPosterUrl)
+            }
+
+            actorPosterUrl = url
+            actorStill.src = url
+            actorStill.style.opacity = actorVisible ? '0' : '1'
+
+            if (waitingImage) {
+              const pendingImage = waitingImage
+              waitingImage = null
+              acknowledgeImage(pendingImage, 'started')
+            }
+          })
+          .catch(error => {
+            URL.revokeObjectURL(url)
+            console.warn('Actor fallback failed', error)
+          })
+      }
+    }
+
     const acknowledgeImage = (
       media: DesktopBackground,
       status: DesktopBackgroundPlayback['status'],
       error?: string
     ): void => {
+      if (status === 'started' && media.actor && !actorVisible && !actorPosterUrl) {
+        waitingImage = media
+
+        return
+      }
+
       if (!media.playId || disposed || settled.has(media.playId)) {
         return
       }
@@ -245,6 +431,7 @@ function DesktopWallpaper() {
     const updateAllMediaLayouts = (): void => {
       slots.forEach(updateVideoLayout)
       updatePosterLayout()
+      layoutActor()
     }
 
     const start = (slot: VideoSlot): void => {
@@ -341,15 +528,16 @@ function DesktopWallpaper() {
       }
 
       active = index
+      allowActor(Boolean(slot.media?.actor))
       slot.element.style.opacity = '1'
-      slot.element.style.zIndex = '2'
+      slot.element.style.zIndex = '1'
       still.style.opacity = '0'
       showPoster(slot.posterUrl)
 
       for (let i = 0; i < slots.length; i += 1) {
         if (i !== index) {
           slots[i].element.style.opacity = '0'
-          slots[i].element.style.zIndex = '1'
+          slots[i].element.style.zIndex = '0'
           slots[i].element.pause()
         }
       }
@@ -558,7 +746,7 @@ function DesktopWallpaper() {
       const resized = (): void => updateVideoLayout(slot)
 
       const ended = (): void => {
-        if (active !== index) {
+        if (active !== index || !slot.element.ended) {
           return
         }
 
@@ -576,7 +764,7 @@ function DesktopWallpaper() {
       }
 
       const failed = (): void => {
-        if (slot.media && !slot.terminal) {
+        if (slot.media && !slot.terminal && slot.element.error) {
           acknowledge(slot, 'failed', slot.element.error?.message || 'Video could not be decoded')
 
           if (active === index) {
@@ -610,6 +798,7 @@ function DesktopWallpaper() {
         staticMedia = null
       }
 
+      resetActor()
       returningLoop = null
       returningFrom = null
       notifyReturnFrame = false
@@ -646,7 +835,10 @@ function DesktopWallpaper() {
       showPoster(null)
     }
 
-    const receive = (media: DesktopBackground): void => {
+    const receive = (request: DesktopBackground): void => {
+      const media: DesktopBackground =
+        request.playTarget === 'actor' ? { ...request, playId: null, kind: 'loop', expiresAt: null } : request
+
       if (media.accountEpoch < accountEpoch || (media.accountEpoch === accountEpoch && media.revision < revision)) {
         return
       }
@@ -671,6 +863,9 @@ function DesktopWallpaper() {
 
         return
       }
+
+      // 主体层与背景层独立接收：环境层换图不打断主体，主体缺失只清自身。
+      receiveActor(request)
 
       for (const slot of slots) {
         if (slot.media?.playId === media.playId && (media.playId !== null || slot.media.revision === media.revision)) {
@@ -756,6 +951,17 @@ function DesktopWallpaper() {
 
       if (!media.video) {
         if (!media.poster) {
+          if (media.actor) {
+            for (const slot of slots) {
+              reset(slot)
+            }
+
+            active = retainedLoop = pending = null
+            still.style.opacity = '0'
+            setFill(null)
+            allowActor(true)
+          }
+
           return
         }
 
@@ -768,7 +974,7 @@ function DesktopWallpaper() {
         }
 
         let preparedPoster: string | null = null
-        void prepareStaticPoster(media.poster, media.outfit)
+        void prepareStaticPoster(media.poster, media.actor ? null : media.outfit)
           .then(nextPoster => {
             preparedPoster = nextPoster
 
@@ -803,6 +1009,7 @@ function DesktopWallpaper() {
             const previousPoster = fallbackPoster
             fallbackPoster = nextPoster
             staticMedia = media
+            allowActor(Boolean(media.actor))
             showPoster(nextPoster)
             fadeTransition()
             requestAnimationFrame(() => {
@@ -907,6 +1114,7 @@ function DesktopWallpaper() {
       off()
       clear()
       disposed = true
+      actorLayer.dispose()
       listeners.forEach(remove => remove())
       window.removeEventListener('resize', updateAllMediaLayouts)
       still.removeEventListener('load', updatePosterLayout)
@@ -941,6 +1149,15 @@ function DesktopWallpaper() {
       <img alt="" ref={poster} style={{ ...videoStyle, zIndex: 1 }} />
       <video muted playsInline preload="auto" ref={first} style={videoStyle} />
       <video muted playsInline preload="auto" ref={second} style={videoStyle} />
+      <div ref={actorRoot} style={{ position: 'absolute', inset: 0, zIndex: 2, opacity: 0 }}>
+        <img
+          alt=""
+          ref={actorPoster}
+          style={{ ...videoStyle, height: '90%', width: '50%', left: '25%', top: '10%', objectPosition: 'bottom' }}
+        />
+        <video muted playsInline preload="auto" ref={actorFirst} style={videoStyle} />
+        <video muted playsInline preload="auto" ref={actorSecond} style={videoStyle} />
+      </div>
       <canvas ref={transitionFrame} style={{ ...videoStyle, zIndex: 3, pointerEvents: 'none' }} />
     </div>
   )

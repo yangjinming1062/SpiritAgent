@@ -109,31 +109,44 @@ export function createDesktopBackgroundRuntime(options: DesktopBackgroundOptions
     const unchanged =
       loadedBackground &&
       request.playId === loadedBackground.playId &&
+      request.playTarget === loadedBackground.playTarget &&
+      request.actorBaseKey === loadedBackground.actorBaseKey &&
       request.presentationEpoch === loadedBackground.presentationEpoch &&
       request.visualId === loadedBackground.visualId &&
       request.visualVersion === loadedBackground.visualVersion &&
+      request.actorVisualId === loadedBackground.actorVisualId &&
+      request.actorVisualVersion === loadedBackground.actorVisualVersion &&
+      request.actorKind === loadedBackground.actorKind &&
+      request.kind === loadedBackground.kind &&
       request.continuity === loadedBackground.continuity &&
       request.transition === loadedBackground.transition &&
       request.geometryMode === loadedBackground.geometryMode &&
       request.inputImageHash === loadedBackground.inputImageHash &&
       sameMedia(request.video, loadedBackground.video) &&
       sameMedia(request.outfit, loadedBackground.outfit) &&
-      sameMedia(request.poster, loadedBackground.poster)
+      sameMedia(request.poster, loadedBackground.poster) &&
+      sameMedia(request.actor, loadedBackground.actor)
 
     let video = currentBackground.video
     let poster = currentBackground.poster
     let outfit = currentBackground.outfit
+    let actor = currentBackground.actor
 
     if (!unchanged) {
       try {
-        ;[video, poster, outfit] = await Promise.all([
+        ;[video, poster, outfit, actor] = await Promise.all([
           request.video ? options.loadMedia(sender, request.video) : null,
           request.poster ? options.loadMedia(sender, request.poster) : null,
-          request.outfit ? options.loadMedia(sender, request.outfit) : null
+          request.outfit ? options.loadMedia(sender, request.outfit) : null,
+          request.actor ? options.loadMedia(sender, request.actor) : null
         ])
 
         if (video && !/^video\/(?:mp4|quicktime)(?:;|$)/i.test(video.mime)) {
           throw new Error('桌面视频格式不可用。')
+        }
+
+        if (actor && !/^video\/webm(?:;|$)/i.test(actor.mime)) {
+          throw new Error('桌面主体动画格式不可用。')
         }
 
         if (poster && !/^image\/(?:png|jpeg|webp|gif)(?:;|$)/i.test(poster.mime)) {
@@ -173,19 +186,28 @@ export function createDesktopBackgroundRuntime(options: DesktopBackgroundOptions
 
     requestedBackground = request
 
-    const { authSessionId: _authSessionId, video: _video, poster: _poster, outfit: _outfit, ...settings } = request
+    const {
+      authSessionId: _authSessionId,
+      video: _video,
+      poster: _poster,
+      outfit: _outfit,
+      actor: _actor,
+      ...settings
+    } = request
+
     currentBackground = {
       ...settings,
       accountEpoch,
       revision: unchanged ? currentBackground.revision : ++backgroundRevision,
       video,
       poster,
-      outfit
+      outfit,
+      actor
     }
     currentBackground.paused = backgroundPaused()
     loadedBackground = request
 
-    if (request.playId && (video || poster)) {
+    if (request.playId && (video || poster || actor)) {
       dispatchedPlays.set(request.playId, { accountEpoch, revision: currentBackground.revision })
     }
 

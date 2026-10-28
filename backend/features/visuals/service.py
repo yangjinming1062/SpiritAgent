@@ -27,7 +27,7 @@ from .generation import (
 )
 from .geometry import visual_aspect_ratio
 from .life import bind_creation_step, restart_visual_steps, settle_visual_steps
-from .models import VisualItem, VisualJob, VisualPlayback, VisualPresentation
+from .models import VisualItem, VisualJob, VisualPlayback, VisualPresentation, VisualVersion
 from .policy import visual_autonomous_block_reason
 from .ports import request_base_motion_preparation
 from .queries import job_view, presentation_state
@@ -44,6 +44,7 @@ from .repository import (
     presented_item,
     presented_version,
     require_presentation_row,
+    stage_composition,
     touch_presentation,
     visual_is_short_action,
     visual_item,
@@ -60,6 +61,7 @@ from .schemas import (
     PlaybackStatus,
     PresentedVisual,
     StageComposition,
+    StagePresentation,
     VisualCreationPlan,
     VisualCreationSource,
     VisualJobProgress,
@@ -142,10 +144,32 @@ def _refresh_stage_composition(state: VisualPresentation, item: PresentedVisual)
     """
 
     current = StageComposition.model_validate(state.composition_json) if state.composition_json else None
+    static = StagePresentation.model_validate(state.current_static_json) if state.current_static_json else None
+    source = visual_snapshot(item).source
+    outfit = source.outfit if source.kind in ("actor", "cinematic") else presentation_outfit(state)
+    scene = (
+        source.scene
+        if source.kind in ("scene", "cinematic")
+        else (static.scene if static else current.scene_material if current else None)
+    )
+    identity_path = (
+        source.identity_path
+        if source.kind in ("actor", "cinematic")
+        else (static.identity_path if static else current.identity_path if current else None)
+    )
+    identity_hash = (
+        source.identity_hash
+        if source.kind in ("actor", "cinematic")
+        else (static.identity_hash if static else current.identity_hash if current else None)
+    )
     if item.asset_kind == "cinematic":
         state.composition_json = StageComposition(
             mode="cinematic",
             cinematic=ActorClipRef(visual_id=item.id, version=item.version),
+            outfit_material=outfit,
+            scene_material=scene,
+            identity_path=identity_path,
+            identity_hash=identity_hash,
         ).model_dump(mode="json")
         return
     layered = current if current is not None and current.mode == "layered" else None
@@ -161,6 +185,10 @@ def _refresh_stage_composition(state: VisualPresentation, item: PresentedVisual)
         scene_visual_id=scene_visual_id,
         scene_version=scene_version,
         actor=actor,
+        outfit_material=outfit,
+        scene_material=scene,
+        identity_path=identity_path,
+        identity_hash=identity_hash,
     ).model_dump(mode="json")
 
 
@@ -436,17 +464,26 @@ async def restore_presentation(user_id: int) -> VisualPlayCommand | None:
         version_id = (
             state.current_version_id if presence.mode == "window" else state.loop_version_id or state.current_version_id
         )
+        composition = stage_composition(state)
+        if presence.mode == "window" and composition is not None and composition.actor is not None:
+            version_id = await db.scalar(
+                select(VisualVersion.id).where(
+                    VisualVersion.user_id == user_id,
+                    VisualVersion.visual_id == composition.actor.visual_id,
+                    VisualVersion.number == composition.actor.version,
+                )
+            )
         if version_id is None:
             return None
         item = await presented_version(db, user_id, version_id)
         if item is None:
             return None
-        if presence.mode == "desktop" and visual_is_short_action(item):
-            if item.input_image_version_id is None:
+        if visual_is_short_action(item):
+            version_id = state.loop_version_id or item.input_image_version_id
+            if version_id is None:
                 return None
-            version_id = item.input_image_version_id
             item = await presented_version(db, user_id, version_id)
-            if item is None:
+            if item is None or visual_is_short_action(item):
                 return None
         if not visual_playable(item):
             raise VisualStateError("恢复的影像文件缺失")
@@ -493,23 +530,35 @@ async def record_playback(
                 or not play.snapshot_json
             ):
                 raise VisualStateError("播放指令已失效，不能记录为已呈现")
-            expected_kind = "window_static" if presentation.mode == "window" else item.media_kind
-            if receipt_kind != expected_kind:
+            # 窗口模式有两种合格回执：透明主体视频按真实媒体种类记账，静态投影按 window_static。
+            expected_kinds = (
+                ({"window_static", "video"} if item.asset_kind == "actor" else {"window_static"})
+                if presentation.mode == "window"
+                else {item.media_kind}
+            )
+            if receipt_kind not in expected_kinds:
                 raise VisualStateError("播放回执与当前呈现方式不一致")
             frozen = PresentedVisual.model_validate(play.snapshot_json).model_copy(
-                update={"receipt_kind": receipt_kind},
+                update={"receipt_kind": receipt_kind, "presentation_epoch": play.presentation_epoch},
             )
             source = visual_snapshot(frozen).source
-            outfit_changed = source.kind in ("actor", "cinematic") and source.outfit != presentation_outfit(state)
+            outfit_changed = (
+                visual_plays_as_loop(item)
+                and source.kind in ("actor", "cinematic")
+                and source.outfit != presentation_outfit(state)
+            )
+            if visual_plays_as_loop(item):
+                _refresh_stage_composition(state, item)
             state.current_visual_id = item.id
-            state.current_static_json = state.pending_static_json = None
+            if visual_plays_as_loop(item):
+                state.current_static_json = None
+            state.pending_static_json = None
             state.current_version_id = play.version_id
             state.current_snapshot_json = frozen.model_dump(mode="json")
             if visual_plays_as_loop(item):
                 state.loop_visual_id = item.id
                 state.loop_snapshot_json = state.current_snapshot_json
                 state.loop_version_id = play.version_id
-                _refresh_stage_composition(state, item)
             clear_pending_command(state, play_id)
             await db.execute(
                 update(VisualPlayback)

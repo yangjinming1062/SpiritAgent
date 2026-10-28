@@ -4,7 +4,7 @@ from infrastructure.assets.asset_store import client_asset_url
 from infrastructure.request_errors import RequestError
 
 from . import queries, service
-from .client_assets import client_material, client_play_command
+from .client_assets import client_composition, client_layer_media, client_material, client_play_command, client_scene
 from .repository import VisualError, VisualNotFoundError, VisualStateError
 from .schemas import (
     VisualClaimRequest,
@@ -29,8 +29,11 @@ def _http_error(exc: VisualError) -> RequestError:
 
 async def _presentation_response(user_id: int, presentation: VisualPresentationView) -> VisualPresentationResponse:
     actual = await queries.actual_presentation_snapshot(user_id)
+    presentation = presentation.model_copy(update={"ambient_actor": client_layer_media(presentation.ambient_actor)})
     if presentation.pending_play is not None:
         presentation = presentation.model_copy(update={"pending_play": client_play_command(presentation.pending_play)})
+    if presentation.composition is not None:
+        presentation = presentation.model_copy(update={"composition": client_composition(presentation.composition)})
     if presentation.static_presentation is not None:
         static = presentation.static_presentation
         presentation = presentation.model_copy(
@@ -38,7 +41,7 @@ async def _presentation_response(user_id: int, presentation: VisualPresentationV
                 "static_presentation": static.model_copy(
                     update={
                         "outfit": client_material(static.outfit) if static.outfit else None,
-                        "scene": client_material(static.scene) if static.scene else None,
+                        "scene": client_scene(static.scene),
                         "identity_path": client_asset_url(static.identity_path) if static.identity_path else None,
                     }
                 )

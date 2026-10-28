@@ -15,4 +15,4 @@ export interface SpriteRect {
   bottom: number
 }
 
-export type Locomotion = 'still' | 'fly' | 'drag'
+export type Locomotion = 'still' | 'fly' | 'stroll' | 'drag'

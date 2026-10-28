@@ -81,3 +81,28 @@ export function computeOverlayAnchorBesideSprite(opts: {
 
   return { left, top, side }
 }
+
+/** 边缘栖息吸附距离：松手时距屏幕左右边小于该值即吸附贴边。 */
+export const EDGE_PERCH_DISTANCE = 48
+
+/** 距屏幕左右边缘足够近时吸附贴边栖息；否则保持原位。 */
+export function perchToEdge(
+  position: Position,
+  viewport: ViewportSize,
+  content: SpriteRect,
+  scale: number
+): Position | null {
+  const box = spriteContentBox(viewport, content, scale)
+  const leftGap = position.x + box.left
+  const rightGap = viewport.width - (position.x + box.right)
+
+  if (leftGap <= EDGE_PERCH_DISTANCE && leftGap <= rightGap) {
+    return { x: -box.left, y: position.y }
+  }
+
+  if (rightGap <= EDGE_PERCH_DISTANCE) {
+    return { x: viewport.width - box.right, y: position.y }
+  }
+
+  return null
+}

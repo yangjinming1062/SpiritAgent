@@ -20,6 +20,7 @@ from .client_assets import client_play_command
 from .models import VisualItem, VisualJob, VisualPlayback, VisualPresentation, VisualVersion
 from .schemas import (
     ActionClipKind,
+    ActorClipBody,
     ComboMaterialRef,
     PlaybackSource,
     PlaybackStatus,
@@ -63,7 +64,12 @@ def presentation_outfit(state: VisualPresentation) -> ComboMaterialRef | None:
         return StagePresentation.model_validate(state.current_static_json).outfit
     item = presented_item(state)
     source = visual_snapshot(item).source if item is not None else None
-    return source.outfit if source is not None and source.kind in ("actor", "cinematic") else None
+    composition = stage_composition(state)
+    if item is not None and visual_is_short_action(item) and composition is not None:
+        return composition.outfit_material
+    if source is not None and source.kind in ("actor", "cinematic"):
+        return source.outfit
+    return composition.outfit_material if composition else None
 
 
 def visual_clip_kind(
@@ -142,6 +148,7 @@ def version_view(item: VisualItem, version: VisualVersion) -> PresentedVisual:
         input_image_hash=version.input_image_hash,
         created_at=version.created_at,
         updated_at=version.created_at,
+        body_json=version.body_json,
     )
 
 
@@ -309,6 +316,7 @@ async def dispatch_play_command(
         composition=composition,
         outfit=_frozen_outfit(snapshot),
         scene=_frozen_scene(snapshot),
+        body=_clip_body(item),
     )
     pending = command.model_dump(mode="json")
     changed = (
@@ -379,6 +387,11 @@ def _frozen_outfit(snapshot: VisualSnapshot):
 def _frozen_scene(snapshot: VisualSnapshot):
     source = snapshot.source
     return source.scene if source.kind in ("scene", "cinematic") else None
+
+
+def _clip_body(item: VisualItem | PresentedVisual) -> ActorClipBody | None:
+    body_json = item.body_json
+    return ActorClipBody.model_validate(body_json) if body_json else None
 
 
 def emit_playback_receipt(

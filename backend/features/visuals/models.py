@@ -129,6 +129,10 @@ class VisualItem(ModelBase, TimestampMixin):
         return self.current_version.snapshot_json
 
     @property
+    def body_json(self) -> dict[str, Any] | None:
+        return self.current_version.body_json if self.current_version is not None else None
+
+    @property
     def input_image_id(self) -> int | None:
         if self.current_version is None:
             raise ValueError("影像尚未发布版本")

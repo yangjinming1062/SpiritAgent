@@ -85,6 +85,7 @@ export {
   $spatialScale,
   $spriteCanvasRect,
   $spriteContentRect,
+  $spriteFootAnchor,
   $spriteHeadRect,
   $viewport,
   baseSpriteSize,
@@ -106,10 +107,9 @@ export { $contextMenuPos, closeContextMenu, openContextMenu } from './sprite/con
 export { FootGlow, triggerFootGlowPulse } from './sprite/foot-glow'
 export { playSpriteGesture } from './sprite/gesture'
 export { useSpriteBodyGesture } from './sprite/gesture-layer'
-export { isCharacterStageVisible, observeCharacterStageVisibility } from './stage-visibility'
+export { isCharacterMediaVisible, isCharacterStageVisible, observeCharacterStageVisibility } from './stage-visibility'
 export { clearVfx, emitVfx, SpriteVfxOverlay } from './vfx'
 export { useOutfitDesignSession } from './wardrobe/design-session'
-
 export {
   $stageOutfit,
   $stageOutfitPresented,
@@ -117,6 +117,7 @@ export {
   retryStageOutfit,
   setStageOutfitSource
 } from './wardrobe/stage-source'
+
 export type { StageOutfitSource } from './wardrobe/stage-source'
 export {
   $outfitPolicy,
@@ -128,4 +129,5 @@ export {
   retryOutfitDescription,
   setOutfitPolicy
 } from './wardrobe/wardrobe-store'
+export { $windowActorMedia, $windowActorPlayback, type WindowActorMedia } from './window-media'
 export type { CharacterOverrides } from '@protocol'

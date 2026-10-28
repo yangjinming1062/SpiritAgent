@@ -84,6 +84,7 @@ async def keep_presentation(
         if state.pending_command_json or state.pending_static_json:
             await _cancel_pending_command(db, state)
             state.pending_static_json = None
+            state.composition_json = None
             await touch_presentation(db, user_id)
         if state.current_static_json:
             snapshot = StagePresentation.model_validate(state.current_static_json)

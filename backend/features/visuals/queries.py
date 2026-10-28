@@ -6,27 +6,37 @@ from infrastructure.assets.asset_store import client_asset_url, resolve_asset_re
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.text import ensure_utc, utc_now
 from sqlalchemy import func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.action_library.queries import action_by_preset_key
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
 from features.jobs.service import requested_job_id
 
+from .client_assets import client_body
 from .models import VisualItem, VisualJob, VisualPresentation, VisualVersion
 from .repository import (
     VisualNotFoundError,
     presentation_outfit,
     presented_item,
     stage_composition,
+    version_view,
+    visual_clip_kind,
+    visual_is_short_action,
     visual_playable,
     visual_snapshot,
 )
 from .schemas import (
     ActionMediaEntry,
     ActionMediaListResponse,
+    ActorClipBody,
     ActorClipSource,
     ActualPresentationSnapshot,
     ComboMaterialRef,
     PresentedVisual,
+    StageComposition,
+    StageCompositionMedia,
     StageIntent,
+    StageLayerMedia,
     StagePresentation,
     VisualAssetKind,
     VisualDetailView,
@@ -128,6 +138,16 @@ def _asset_kind(value: str) -> VisualAssetKind:
     return value if value in _ASSET_KINDS else "cinematic"
 
 
+def version_body(item: VisualItem | PresentedVisual) -> ActorClipBody | None:
+    """actor 版本的主体元数据；路径转为客户端地址，与 media_url 同口径。"""
+
+    body_json = item.body_json
+    if not body_json:
+        return None
+    body = ActorClipBody.model_validate(body_json)
+    return client_body(body)
+
+
 def item_view(item: VisualItem | PresentedVisual, snapshot: VisualSnapshot | None = None) -> VisualItemView:
     snapshot = snapshot or visual_snapshot(item)
     source = snapshot.source
@@ -138,7 +158,7 @@ def item_view(item: VisualItem | PresentedVisual, snapshot: VisualSnapshot | Non
         id=item.id,
         media_kind=_media_kind(item.media_kind),
         asset_kind=_asset_kind(item.asset_kind),
-        clip_kind=item.clip_kind,
+        clip_kind=visual_clip_kind(item, snapshot),
         title=item.title,
         status=item.status,
         media_url=client_asset_url(item.media_path),
@@ -158,6 +178,7 @@ def item_view(item: VisualItem | PresentedVisual, snapshot: VisualSnapshot | Non
         input_image_hash=item.input_image_hash,
         created_at=item.created_at,
         updated_at=item.updated_at,
+        body=version_body(item),
     )
 
 
@@ -423,8 +444,10 @@ async def presentation_state(user_id: int) -> VisualPresentationView:
         current = presented_item(row)
         loop = presented_item(row, loop=True)
         pending = _pending_command(row)
+        composition = stage_composition(row)
         return VisualPresentationView(
-            composition=stage_composition(row),
+            composition=await composition_with_media(db, user_id, composition),
+            ambient_actor=await _ambient_actor(db, row),
             intent=StageIntent.model_validate(row.intent_json) if row.intent_json else None,
             current_visual=item_view(current) if current is not None and current.user_id == user_id else None,
             loop_visual=item_view(loop) if loop is not None and loop.user_id == user_id else None,
@@ -436,6 +459,127 @@ async def presentation_state(user_id: int) -> VisualPresentationView:
             pending_play=pending,
             static_presentation=row.pending_static_json or row.current_static_json,
         )
+
+
+async def _layer_media(
+    db: AsyncSession, user_id: int, visual_id: int | None, version: int | None
+) -> StageLayerMedia | None:
+    """按组合引用的版本装配该层可播媒体；引用缺失或文件不完整时返回 None。"""
+
+    if visual_id is None or version is None:
+        return None
+    row = (
+        await db.execute(
+            select(VisualItem, VisualVersion)
+            .join(VisualVersion, VisualVersion.visual_id == VisualItem.id)
+            .where(
+                VisualItem.id == visual_id,
+                VisualItem.user_id == user_id,
+                VisualVersion.number == version,
+            )
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    item, version_row = row
+    # 存在性按引用版本自身的文件核对；组合可能引用非当前版本。
+    if _existing(version_row.media_path) is None:
+        return None
+    return StageLayerMedia(
+        visual_id=item.id,
+        version=version_row.number,
+        media_kind=_media_kind(item.media_kind),
+        asset_kind=_asset_kind(item.asset_kind),
+        clip_kind=visual_clip_kind(version_view(item, version_row)),
+        media_url=client_asset_url(version_row.media_path),
+        poster_url=client_asset_url(version_row.poster_path) if version_row.poster_path else None,
+        width=version_row.width,
+        height=version_row.height,
+        duration_ms=version_row.duration_ms,
+        description=version_row.description,
+        body=ActorClipBody.model_validate(version_row.body_json) if version_row.body_json else None,
+    )
+
+
+async def _ambient_actor(db: AsyncSession, state: VisualPresentation) -> StageLayerMedia | None:
+    """只为冻结的当前造型投影已有待机成品；不制作、不消费演出指令。"""
+
+    static_raw = state.pending_static_json or state.current_static_json
+    static = StagePresentation.model_validate(static_raw) if static_raw else None
+    outfit = static.outfit if static else presentation_outfit(state)
+    current = presented_item(state)
+    source = visual_snapshot(current).source if current else None
+    composition = stage_composition(state)
+    identity_hash = (
+        static.identity_hash
+        if static
+        else (
+            composition.identity_hash
+            if current is not None and visual_is_short_action(current) and composition is not None
+            else source.identity_hash
+            if source is not None and source.kind in ("actor", "cinematic")
+            else composition.identity_hash
+            if composition
+            else None
+        )
+    )
+    if outfit is None or identity_hash is None:
+        return None
+    idle = await action_by_preset_key(db, state.user_id, "idle")
+    if idle is None:
+        return None
+    versions = await db.scalars(
+        select(VisualVersion)
+        .join(VisualItem, VisualItem.current_version_id == VisualVersion.id)
+        .where(
+            VisualItem.user_id == state.user_id,
+            VisualItem.asset_kind == "actor",
+            VisualItem.status == "ready",
+            VisualItem.action_id == idle.id,
+            VisualItem.clip_kind == "loop",
+            VisualVersion.snapshot_json["source"]["identity_hash"].astext == identity_hash,
+            VisualVersion.snapshot_json["source"]["outfit"]["content_hash"].astext == outfit.content_hash,
+        )
+        .order_by(VisualVersion.id.desc())
+    )
+    for version in versions:
+        frozen = VisualSnapshot.model_validate(version.snapshot_json).source
+        if (
+            isinstance(frozen, ActorClipSource)
+            and frozen.identity_hash == identity_hash
+            and frozen.outfit.content_hash == outfit.content_hash
+            and frozen.action.clip_kind == "loop"
+            and version.body_json
+            and _existing(version.media_path)
+        ):
+            return await _layer_media(db, state.user_id, version.visual_id, version.number)
+    return None
+
+
+async def composition_with_media(
+    db: AsyncSession, user_id: int, composition: StageComposition | None
+) -> StageComposition | None:
+    """组合引用保持纯 ID；媒体投影放在 media 字段供客户端直接消费。"""
+
+    if composition is None:
+        return None
+    media = None
+    if composition.mode == "layered":
+        media = StageCompositionMedia(
+            mode="layered",
+            scene=await _layer_media(db, user_id, composition.scene_visual_id, composition.scene_version),
+            actor=await _layer_media(db, user_id, composition.actor.visual_id, composition.actor.version)
+            if composition.actor
+            else None,
+        )
+    else:
+        media = StageCompositionMedia(
+            mode="cinematic",
+            cinematic=await _layer_media(db, user_id, composition.cinematic.visual_id, composition.cinematic.version)
+            if composition.cinematic
+            else None,
+        )
+    return composition.model_copy(update={"media": media})
 
 
 def _pending_command(row: VisualPresentation) -> VisualPlayCommand | None:
@@ -450,7 +594,8 @@ def _pending_command(row: VisualPresentation) -> VisualPlayCommand | None:
 async def _presentation_snapshot(user_id: int, *, for_prompt: bool) -> ActualPresentationSnapshot:
     async with SESSION_LOCAL() as db:
         row = await db.scalar(select(VisualPresentation).where(VisualPresentation.user_id == user_id))
-        if row and row.current_static_json:
+        item = presented_item(row) if row else None
+        if row and row.current_static_json and item is None:
             static = StagePresentation.model_validate(row.current_static_json)
             if static.outfit is None or static.scene is None:
                 return ActualPresentationSnapshot()
@@ -474,27 +619,54 @@ async def _presentation_snapshot(user_id: int, *, for_prompt: bool) -> ActualPre
                 and scene_path is not None
                 and get_user_proactive_record(user_id).available,
             )
-        item = presented_item(row) if row else None
         if item is None or item.user_id != user_id:
             return ActualPresentationSnapshot()
         snapshot = visual_snapshot(item)
         presence = get_presentation_snapshot(user_id)
-        show_full_visual = for_prompt or (presence is not None and presence.mode == "desktop")
+        show_full_visual = (
+            for_prompt
+            or (presence is not None and presence.mode == "desktop")
+            or (item.asset_kind == "actor" and item.receipt_kind == "video")
+        )
         visual_path = _existing(
             item.media_path if item.media_kind == "image" else item.input_image_path or item.poster_path,
         )
         source = snapshot.source
-        outfit = source.outfit if source.kind in ("actor", "cinematic") else None
-        scene = source.scene if source.kind in ("scene", "cinematic") else None
+        composition = stage_composition(row) if row else None
+        outfit = (
+            source.outfit
+            if source.kind in ("actor", "cinematic")
+            else composition.outfit_material
+            if composition
+            else None
+        )
+        scene = (
+            source.scene
+            if source.kind in ("scene", "cinematic")
+            else composition.scene_material
+            if composition
+            else None
+        )
         outfit_path = _existing(outfit.path) if outfit else None
         scene_path = _existing(scene.path) if scene else None
-        identity_path = _existing(source.identity_path) if source.kind in ("actor", "cinematic") else None
-        if for_prompt:
-            outfit_description = (item.outfit_description or outfit.description if outfit else "") or ""
-        elif show_full_visual:
-            outfit_description = item.outfit_description
-        else:
-            outfit_description = outfit.description if outfit else ""
+        identity_path = _existing(
+            source.identity_path
+            if source.kind in ("actor", "cinematic")
+            else composition.identity_path
+            if composition
+            else None
+        )
+        outfit_description = (item.outfit_description if show_full_visual else "") or (
+            outfit.description if outfit else ""
+        )
+        expected_receipt = (
+            "window_static"
+            if presence is not None and presence.mode == "window" and item.asset_kind != "actor"
+            else item.media_kind
+        )
+        valid_receipt = item.receipt_kind == expected_receipt or (
+            presence is not None and presence.mode == "window" and item.receipt_kind == "window_static"
+        )
         return ActualPresentationSnapshot(
             visual_id=item.id,
             media_kind=_media_kind(item.media_kind),
@@ -509,11 +681,25 @@ async def _presentation_snapshot(user_id: int, *, for_prompt: bool) -> ActualPre
             scene_hash=scene.content_hash if scene and scene_path else None,
             scene_description=scene.description if scene else "",
             identity_path=identity_path,
-            identity_hash=source.identity_hash if identity_path and source.kind in ("actor", "cinematic") else None,
+            identity_hash=(
+                source.identity_hash
+                if source.kind in ("actor", "cinematic")
+                else composition.identity_hash
+                if composition
+                else None
+            )
+            if identity_path
+            else None,
             identity_reference_role=source.identity_reference_role
             if source.kind in ("actor", "cinematic")
             else "portrait",
-            ready=presence is not None and get_user_proactive_record(user_id).available and visual_playable(item),
+            ready=presence is not None
+            and row is not None
+            and row.presentation_epoch == presence.revision
+            and item.presentation_epoch == presence.revision
+            and valid_receipt
+            and get_user_proactive_record(user_id).available
+            and visual_playable(item),
         )
 
 

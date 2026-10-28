@@ -84,10 +84,12 @@ function readPortrait(image: HTMLImageElement, url: string, owner: string): Port
 
 /** 精灵窗与内嵌生活区共用静态立绘；新图解码和 alpha 读取完成后才替换可见图，无图时给出真实兜底状态。 */
 export function OutfitStage({
+  active = true,
   contentAlign,
   eggSize,
   windowId = 0
 }: {
+  active?: boolean
   contentAlign?: 'left' | 'right'
   eggSize?: string
   windowId?: number
@@ -219,6 +221,10 @@ export function OutfitStage({
   }
 
   useLayoutEffect(() => {
+    if (!active) {
+      return
+    }
+
     if (!shown) {
       $mediaHitTest.set(null)
 
@@ -285,7 +291,7 @@ export function OutfitStage({
         $spriteHeadRect.set(null)
       }
     }
-  }, [shown, contentAlign, size, windowId])
+  }, [shown, contentAlign, size, windowId, active])
 
   const reload = (): void => {
     setRetry(value => value + 1)

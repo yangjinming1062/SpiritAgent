@@ -3,6 +3,7 @@ import { clamp } from '@runtime'
 import type { Locomotion, Position } from './types'
 
 const FLY_SPEED = 400
+const STROLL_SPEED = 90
 const SCALE_TRANSITION_MS = 300
 
 interface MotionPorts {
@@ -73,7 +74,7 @@ export function createSpatialMotion(ports: MotionPorts) {
     }
   }
 
-  function moveTo(target: Position): void {
+  function moveTo(target: Position, opts: { stroll?: boolean } = {}): void {
     cancelMovement()
 
     const current = ports.getPosition()
@@ -83,11 +84,13 @@ export function createSpatialMotion(ports: MotionPorts) {
       return
     }
 
+    const speed = opts.stroll ? STROLL_SPEED : FLY_SPEED
+
     moveStart = { ...current }
     moveTarget = target
     moveStartTime = performance.now()
-    moveDuration = Math.max((dist / FLY_SPEED) * 1000, 200)
-    ports.setLocomotion('fly')
+    moveDuration = Math.max((dist / speed) * 1000, opts.stroll ? 600 : 200)
+    ports.setLocomotion(opts.stroll ? 'stroll' : 'fly')
     rafId = requestAnimationFrame(tick)
   }
 

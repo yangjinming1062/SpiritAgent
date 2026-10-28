@@ -10,7 +10,13 @@ import { clamp } from '@runtime'
 
 import { $screenLocked } from './activity'
 import { $effectiveTier, $spriteState, holdInteracting, setSpriteState } from './companion-store'
-import { baseSpriteSize, clampPositionToViewport, computeHomePosition, spriteContentBox } from './spatial/geometry'
+import {
+  baseSpriteSize,
+  clampPositionToViewport,
+  computeHomePosition,
+  perchToEdge,
+  spriteContentBox
+} from './spatial/geometry'
 import { createSpatialMotion } from './spatial/motion'
 import type { Locomotion, SpriteRect, ViewportSize } from './spatial/types'
 import { clearSpriteGesture, playSpriteGesture } from './sprite/gesture'
@@ -35,6 +41,7 @@ const MAX_SCALE = SPRITE_SCALE_LIMITS.max
 // 舞台内归一化内容范围；未上报时按整盒处理。初始 home 会读取它，须先声明。
 export const $spriteContentRect = atom<SpriteRect | null>(null)
 export const $spriteHeadRect = atom<SpriteRect | null>(null)
+export const $spriteFootAnchor = atom<{ x: number; y: number } | null>(null)
 
 export const $defaultScale = atom<number>(readDefaultScale())
 export const $spatialPos = atom<{ x: number; y: number }>(getHomePosition())
@@ -163,8 +170,11 @@ export function updateDragPosition(pos: { x: number; y: number }): void {
 
 export function endDragAt(pos: { x: number; y: number }, cancelled = false): void {
   const safe = clampPosToViewport(pos)
-  $spatialPos.set(safe)
-  $homePosition.set(safe)
+  // 边缘栖息：贴近左右边缘时吸附贴边；取消拖拽不改变栖息决定。
+  const perched = cancelled ? null : perchToEdge(safe, getViewport(), contentBounds(), $spatialScale.get())
+  const settled = perched ?? safe
+  $spatialPos.set(settled)
+  $homePosition.set(settled)
   $spatialLocomotion.set('still')
 
   if (!cancelled) {
@@ -173,7 +183,7 @@ export function endDragAt(pos: { x: number; y: number }, cancelled = false): voi
 
   setSpriteState('interacting', { durationMs: cancelled ? 0 : 500 })
   setScaleTarget($defaultScale.get())
-  void shellApi().sprite.setPosition(safe)
+  void shellApi().sprite.setPosition(settled)
 }
 
 export function resetToHomePosition(): void {
@@ -190,6 +200,7 @@ export function resetToHomePosition(): void {
 
 export function initSpatial(): () => void {
   let disposed = false
+  const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)')
   const offs: Array<() => void> = [shellApi().sprite.onDefaultScaleChanged(syncDefaultScale)]
   offs.push(
     registerStorageClearHandler(() => {
@@ -198,6 +209,60 @@ export function initSpatial(): () => void {
       clearSpriteGesture()
     })
   )
+
+  // 轻量漫步：本地随机的短距离移动，不经 Life Engine；静止档与拖拽/飞行期间不触发。
+  let strollTimer: ReturnType<typeof setTimeout> | null = null
+
+  const scheduleStroll = (): void => {
+    if (strollTimer !== null) {
+      clearTimeout(strollTimer)
+    }
+
+    // 3–8 分钟一次的偶尔挪动；命中概率再打折扣，保持"安静陪伴"的默认体感。
+    strollTimer = setTimeout(
+      () => {
+        strollTimer = null
+
+        if (
+          disposed ||
+          $effectiveTier.get() === 'still' ||
+          $screenLocked.get() ||
+          motionPreference.matches ||
+          $presentation.get().fullscreen ||
+          $spriteState.get() !== 'idle' ||
+          $surfaceOpen.get() ||
+          !isSpriteStageShown() ||
+          motion.isMoving() ||
+          $spatialLocomotion.get() !== 'still' ||
+          document.visibilityState !== 'visible'
+        ) {
+          scheduleStroll()
+
+          return
+        }
+
+        if (Math.random() > 0.5) {
+          scheduleStroll()
+
+          return
+        }
+
+        const drift = 40 + Math.random() * 80
+
+        const target = clampPosToViewport({
+          x: $homePosition.get().x + (Math.random() < 0.5 ? -drift : drift),
+          y: $homePosition.get().y + (Math.random() - 0.5) * drift * 0.5
+        })
+
+        // 漫步是临时漂移：不落盘静止位置，重启仍回到用户安放的家。
+        moveTo(target, { stroll: true })
+        scheduleStroll()
+      },
+      (3 + Math.random() * 5) * 60_000
+    )
+  }
+
+  scheduleStroll()
   let restoreStop: (() => void) | null = null
   let restoreTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -256,7 +321,14 @@ export function initSpatial(): () => void {
   }
 
   const reevaluate = (): void => {
-    if ($screenLocked.get() || !isSpriteStageShown()) {
+    if (
+      $screenLocked.get() ||
+      !isSpriteStageShown() ||
+      $presentation.get().fullscreen ||
+      motionPreference.matches ||
+      document.visibilityState === 'hidden' ||
+      ($spatialLocomotion.get() === 'stroll' && $effectiveTier.get() === 'still')
+    ) {
       pauseStage()
     }
   }
@@ -267,6 +339,9 @@ export function initSpatial(): () => void {
     $surfaceSpriteVisible.listen(reevaluate),
     $screenLocked.listen(reevaluate)
   )
+  offs.push($effectiveTier.listen(reevaluate))
+  motionPreference.addEventListener('change', reevaluate)
+  document.addEventListener('visibilitychange', reevaluate)
 
   const clampCurrent = (): void => {
     if ($spatialLocomotion.get() !== 'drag' && !motion.isMoving()) {
@@ -302,9 +377,17 @@ export function initSpatial(): () => void {
 
   return () => {
     disposed = true
+
+    if (strollTimer !== null) {
+      clearTimeout(strollTimer)
+      strollTimer = null
+    }
+
     stopRestore()
     offs.forEach(off => off())
     window.removeEventListener('resize', resize)
+    motionPreference.removeEventListener('change', reevaluate)
+    document.removeEventListener('visibilitychange', reevaluate)
     cancelMovement()
     motion.dispose()
   }

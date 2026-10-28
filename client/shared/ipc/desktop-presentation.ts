@@ -62,13 +62,22 @@ export interface DesktopBackgroundRequest {
   video: DesktopMediaReference | null
   poster: DesktopMediaReference | null
   outfit: DesktopMediaReference | null
+  /** 分层主体；video 此时仅用于独立环境，完整影像不叠加主体。 */
+  actor: DesktopMediaReference | null
+  actorBaseKey: string | null
   playId: string | null
+  playTarget: 'background' | 'actor'
   /** 成品身份：稳定 ID + 成品版本 + 呈现代次，签名 URL 不参与识别。 */
   visualId: string | null
   visualVersion: number | null
+  /** 主体层成品身份；仅分层模式有值。 */
+  actorVisualId: string | null
+  actorVisualVersion: number | null
   presentationEpoch: number
   expiresAt: string | null
   kind: 'loop' | 'once'
+  /** 主体层的播放方式；短动作为 once，常驻为 loop。 */
+  actorKind: 'loop' | 'once'
   continuity: 'base' | 'independent'
   transition: 'natural' | 'fade'
   geometryMode: 'target' | 'keep'
@@ -81,13 +90,14 @@ export interface DesktopBackgroundRequest {
 
 export interface DesktopBackground extends Omit<
   DesktopBackgroundRequest,
-  'authSessionId' | 'video' | 'poster' | 'outfit'
+  'authSessionId' | 'video' | 'poster' | 'outfit' | 'actor'
 > {
   accountEpoch: number
   revision: number
   video: DesktopMediaBytes | null
   poster: DesktopMediaBytes | null
   outfit: DesktopMediaBytes | null
+  actor: DesktopMediaBytes | null
 }
 
 export interface DesktopBackgroundPlayback {

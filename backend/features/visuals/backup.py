@@ -16,7 +16,7 @@ from features.media.contracts import RemovedVideoTask
 
 from .models import VisualItem, VisualJob, VisualPlayback, VisualPresentation, VisualVersion, VisualVersionAsset
 from .repository import version_view, visual_progress
-from .schemas import StagePresentation, VisualSnapshot, parse_job_progress
+from .schemas import ActorClipRef, StageComposition, StagePresentation, VisualSnapshot, parse_job_progress
 
 
 def _prepare_presentation(raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
@@ -47,6 +47,13 @@ def _prepare_version(raw: dict[str, Any], payload: dict[str, Any], context: Back
 def _mapped(context: BackupContext, table: str, value: int | str | None) -> int | None:
     mapped = context.id_map.get(table, {}).get(str(value)) if value is not None else None
     return int(mapped) if mapped is not None else None
+
+
+def _remap_clip_ref(context: BackupContext, ref: ActorClipRef | None) -> ActorClipRef | None:
+    if ref is None:
+        return None
+    visual_id = _mapped(context, "visual_items", ref.visual_id)
+    return ref.model_copy(update={"visual_id": visual_id}) if visual_id is not None else None
 
 
 def _remap_snapshot(value: dict, context: BackupContext) -> dict:
@@ -146,6 +153,40 @@ async def _restore_presentation_snapshots(
 ) -> None:
     states = list(await db.scalars(select(VisualPresentation).where(VisualPresentation.user_id == context.user_id)))
     for state in states:
+        if state.composition_json:
+            composition = StageComposition.model_validate(context.rewriter.rewrite(deepcopy(state.composition_json)))
+            actor = _remap_clip_ref(context, composition.actor)
+            cinematic = _remap_clip_ref(context, composition.cinematic)
+            scene_id = _mapped(context, "visual_items", composition.scene_visual_id)
+            state.composition_json = (
+                composition.model_copy(
+                    update={
+                        "actor": actor,
+                        "cinematic": cinematic,
+                        "scene_visual_id": scene_id,
+                        "scene_version": composition.scene_version if scene_id is not None else None,
+                        "outfit_material": composition.outfit_material.model_copy(
+                            update={
+                                "material_id": _mapped(
+                                    context, "companion_outfits", composition.outfit_material.material_id
+                                )
+                            }
+                        )
+                        if composition.outfit_material
+                        else None,
+                        "scene_material": composition.scene_material.model_copy(
+                            update={
+                                "scene_id": _mapped(context, "companion_scenes", composition.scene_material.scene_id)
+                            }
+                        )
+                        if composition.scene_material
+                        else None,
+                        "media": None,
+                    }
+                ).model_dump(mode="json")
+                if composition.mode == "layered" or cinematic is not None
+                else None
+            )
         if state.current_static_json:
             static = StagePresentation.model_validate(context.rewriter.rewrite(deepcopy(state.current_static_json)))
             state.current_static_json = static.model_copy(

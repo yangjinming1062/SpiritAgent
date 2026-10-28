@@ -20,7 +20,7 @@ import {
   setCompanionVoiceId,
   startActivityMonitor
 } from '@/modules/character'
-import { OutfitStage } from '@/modules/character/rendering'
+import { CharacterStage } from '@/modules/character/rendering'
 import { MediaViewerOverlay } from '@/modules/media'
 import { checkVoiceValidity, warmAudioContext } from '@/modules/speech'
 import { NotificationStack } from '@/shared'
@@ -169,7 +169,7 @@ export function SpriteWindow(): React.JSX.Element {
         }}
         onDoubleTap={toggleWhisper}
       >
-        {showCompanion && <OutfitStage />}
+        {showCompanion && <CharacterStage />}
       </SpriteStage>
       <SpriteContextMenu
         onOpenActivation={() => setActivationOpen(true)}

@@ -201,7 +201,7 @@ class ActorClipBody(BaseModel):
     """透明主体动画的主体元数据：遮罩、首末帧、锚点、命中区域与接续关系。
 
     坐标均以媒体原始像素为单位；mask 为逐帧或关键帧遮罩文件引用，不允许用
-    单张静态遮罩冒充所有帧（计划 2 的制作链负责生成真实时变轮廓）。
+    单张静态遮罩代替整段轮廓。
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -329,6 +329,38 @@ class VisualItemView(BaseModel):
     input_image_hash: str | None = None
     created_at: datetime
     updated_at: datetime
+    # actor 主体元数据投影；路径已在响应出口转为客户端地址。
+    body: ActorClipBody | None = None
+
+
+class StageLayerMedia(BaseModel):
+    """舞台某一层的可播媒体投影；客户端据此合成分层画面。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    visual_id: ResourceId
+    version: int
+    media_kind: VisualMediaKind
+    asset_kind: VisualAssetKind
+    clip_kind: ActionClipKind | None = None
+    media_url: str
+    poster_url: str | None = None
+    width: int
+    height: int
+    duration_ms: int | None = None
+    description: str = ""
+    body: ActorClipBody | None = None
+
+
+class StageCompositionMedia(BaseModel):
+    """有效舞台组合的媒体投影：分层引用环境层与主体层，完整影像只引用整片。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: StageMode
+    scene: StageLayerMedia | None = None
+    actor: StageLayerMedia | None = None
+    cinematic: StageLayerMedia | None = None
 
 
 class VisualJobView(BaseModel):
@@ -389,6 +421,12 @@ class StageComposition(BaseModel):
     scene_version: int | None = Field(default=None, ge=1)
     actor: ActorClipRef | None = None
     cinematic: ActorClipRef | None = None
+    outfit_material: ComboMaterialRef | None = None
+    scene_material: SceneMediaRef | None = None
+    identity_path: str | None = None
+    identity_hash: str | None = None
+    # 各层媒体投影；由查询按引用版本填充，桌面与窗口共用同一份数据。
+    media: StageCompositionMedia | None = None
 
     @model_validator(mode="after")
     def valid_mode(self) -> "StageComposition":
@@ -397,6 +435,10 @@ class StageComposition(BaseModel):
                 raise ValueError("分层模式不能引用完整影像")
         elif self.cinematic is None:
             raise ValueError("完整影像模式必须引用具体成品")
+        elif self.actor is not None or self.scene_visual_id is not None or self.scene_version is not None:
+            raise ValueError("完整影像模式不能叠加主体或环境引用")
+        if (self.scene_visual_id is None) != (self.scene_version is None):
+            raise ValueError("环境引用必须同时指定身份与版本")
         return self
 
 
@@ -449,6 +491,7 @@ class VisualPresentationView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     composition: StageComposition | None = None
+    ambient_actor: StageLayerMedia | None = None
     intent: StageIntent | None = None
     current_visual: VisualItemView | None = None
     loop_visual: VisualItemView | None = None
@@ -489,6 +532,8 @@ class VisualPlayCommand(BaseModel):
     composition: StageComposition | None = None
     outfit: ComboMaterialRef | None = None
     scene: SceneMediaRef | None = None
+    # actor 主体元数据（锚点/命中区域）；路径已在响应出口转换。
+    body: ActorClipBody | None = None
 
 
 VisualPresentationView.model_rebuild()
@@ -524,8 +569,11 @@ class PresentedVisual(BaseModel):
     input_image_hash: str | None
     created_at: datetime
     updated_at: datetime
+    # actor 版本冻结的主体元数据；随版本保存，播放指令据此携带锚点。
+    body_json: dict | None = None
     play_id: str | None = None
     receipt_kind: PlaybackReceiptKind | None = None
+    presentation_epoch: int | None = None
 
 
 class VisualRegenerateRequest(BaseModel):
