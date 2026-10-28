@@ -3,14 +3,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { $motionLevel } from '@/modules/character'
 import {
+  $performance,
   $stagePlan,
-  $visualPlayback,
   $visualsJobs,
   $visualsPresentation,
   bindPresentationDirector,
   claimVisualPlay,
   deriveStagePlan,
-  type PlaybackStatus,
   refreshVisualPresentation,
   refreshVisuals,
   resolveAmbientLoop,
@@ -18,8 +17,8 @@ import {
   sendVisualReceipt,
   staticPresentationKey,
   type VisualMediaKind,
-  type VisualPlayCommand,
-  visualsApi
+  visualPerformancePorts,
+  type VisualPlayCommand
 } from '@/modules/visuals'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
@@ -30,7 +29,7 @@ import { $surfaceScreenLocked } from '@/shared/store/surfaces'
 import { $theme } from '@/shared/store/theme'
 import type { DesktopBackgroundRequest } from '@ipc/contracts'
 
-function hasTerminalReceipt(statuses: ReadonlySet<PlaybackStatus> | undefined): boolean {
+function hasTerminalReceipt(statuses: ReadonlySet<ReceiptStatus> | undefined): boolean {
   return statuses !== undefined && [...statuses].some(status => status !== 'started')
 }
 
@@ -43,7 +42,7 @@ function assetPath(url: string | null | undefined): string | null {
   return url ? url.split('?')[0] : null
 }
 
-type ReceiptStatus = 'started' | 'finished' | 'failed'
+type ReceiptStatus = 'started' | 'finished' | 'failed' | 'interrupted'
 
 export function useDesktopVisualWallpaper(): void {
   const auth = useStore($auth)
@@ -53,14 +52,14 @@ export function useDesktopVisualWallpaper(): void {
   const theme = useStore($theme)
   const projection = useStore($visualsPresentation)
   const jobs = useStore($visualsJobs)
-  const requested = useStore($visualPlayback)
+  const performance = useStore($performance)
   const active = presentation.effectiveMode === 'desktop' && presentation.status === 'active'
   const authSessionId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
   const [clientId] = useState(() => crypto.randomUUID())
   const [claimed, setClaimed] = useState<VisualPlayCommand | null>(null)
   const [failedCinematic, setFailedCinematic] = useState<string | null>(null)
   const [reduceMotion, setReduceMotion] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches)
-  const claimedPlays = useRef(new Map<string, Set<PlaybackStatus>>())
+  const claimedPlays = useRef(new Map<string, Set<ReceiptStatus>>())
   const claimedKinds = useRef(new Map<string, VisualMediaKind>())
   const receiptQueues = useRef(new Map<string, Promise<void>>())
   const publishedKey = useRef('')
@@ -69,7 +68,7 @@ export function useDesktopVisualWallpaper(): void {
   // 持续画面优先于当前影像；图片即持续画面，视频按 clip_kind 循环或短时播放。
   const baseline = projection?.loop_visual ?? projection?.current_visual ?? null
 
-  const pendingPlay = requested ?? projection?.pending_play ?? null
+  const pendingPlay = performance.command
   const staticTarget = pendingPlay ? null : projection?.static_presentation
   const staticReceipts = useRef(new Set<string>())
 
@@ -159,19 +158,32 @@ export function useDesktopVisualWallpaper(): void {
       return
     }
 
-    return bindPresentationDirector(
-      async visualId => {
-        await visualsApi.playVisual(visualId)
-        await refreshVisualPresentation()
-      },
-      () => $visualsPresentation.get(),
-      {
-        isEligible: () => $auth.get().kind === 'authenticated' && $motionLevel.get() !== 'off',
-        isSubtle: () => $motionLevel.get() === 'subtle',
-        onChanged: notify => $motionLevel.listen(notify)
+    const stageEpoch = $presentation.get().stageEpoch
+
+    return bindPresentationDirector(visualPerformancePorts(), () => $visualsPresentation.get(), {
+      isEligible: () =>
+        $auth.get().kind === 'authenticated' &&
+        $motionLevel.get() !== 'off' &&
+        $presentation.get().effectiveMode === 'desktop' &&
+        $presentation.get().status === 'active' &&
+        $presentation.get().stageEpoch === stageEpoch &&
+        !$presentation.get().fullscreen &&
+        !$surfaceScreenLocked.get() &&
+        !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      isSubtle: () => $motionLevel.get() === 'subtle',
+      isMechanical: () => false,
+      onChanged: notify => {
+        const stops = [$motionLevel.listen(notify), $presentation.listen(notify), $surfaceScreenLocked.listen(notify)]
+        const query = window.matchMedia('(prefers-reduced-motion: reduce)')
+        query.addEventListener('change', notify)
+
+        return () => {
+          stops.forEach(stop => stop())
+          query.removeEventListener('change', notify)
+        }
       }
-    )
-  }, [active, authSessionId])
+    })
+  }, [active, authSessionId, presentation.stageEpoch])
 
   const preparationInProgress = jobs.some(job => job.state === 'running' || job.state === 'queued')
 
@@ -210,9 +222,9 @@ export function useDesktopVisualWallpaper(): void {
         if (disposed || !scope?.()) {
           if (scope?.()) {
             await sendVisualReceipt(pendingPlay.play_id, {
-              status: 'failed',
+              status: 'interrupted',
               receipt_kind: pendingPlay.media_kind,
-              error: 'interrupted'
+              error: 'Presentation host changed'
             })
           }
 
@@ -305,7 +317,9 @@ export function useDesktopVisualWallpaper(): void {
             ? 'started'
             : receipt.status === 'completed'
               ? 'finished'
-              : 'failed'
+              : receipt.status === 'interrupted'
+                ? 'interrupted'
+                : 'failed'
 
       if (status) {
         recordReceipt(receipt.playId, status, receipt.error)
@@ -316,7 +330,9 @@ export function useDesktopVisualWallpaper(): void {
   const activeCommand =
     claimed &&
     motionLevel !== 'off' &&
-    Date.parse(claimed.expires_at) > Date.now() &&
+    !paused &&
+    performance.command?.play_id === claimed.play_id &&
+    (performance.state === 'playing' || Date.parse(claimed.expires_at) > Date.now()) &&
     claimed.presentation_epoch >= (projection?.presentation_epoch ?? 0) &&
     (claimed.state_revision >= (projection?.state_revision ?? 0) ||
       (claimed.visual_id === projection?.current_visual?.id &&
@@ -334,7 +350,7 @@ export function useDesktopVisualWallpaper(): void {
 
   useEffect(() => {
     if (claimed && (!active || !authSessionId || !activeCommand)) {
-      recordReceipt(claimed.play_id, 'failed', 'Playback interrupted')
+      recordReceipt(claimed.play_id, 'interrupted', 'Playback interrupted')
     }
   }, [active, authSessionId, claimed, activeCommand, recordReceipt])
 
@@ -438,14 +454,8 @@ export function useDesktopVisualWallpaper(): void {
       presentationEpoch: staticTarget?.presentation_epoch ?? projection?.presentation_epoch ?? 0,
       expiresAt: staticTarget ? null : (activeCommand?.expires_at ?? null),
       kind: activeCommand && activeCommand.asset_kind !== 'actor' ? (activeCommand.loop ? 'loop' : 'once') : 'loop',
-      actorKind:
-        activeCommand?.asset_kind === 'actor'
-          ? activeCommand.loop
-            ? 'loop'
-            : 'once'
-          : layerActor?.loop === false
-            ? 'once'
-            : 'loop',
+      // 基础主体层只含循环成品（stage-plan 已滤除 once），仅指令主体可有一次动作。
+      actorKind: activeCommand?.asset_kind === 'actor' ? (activeCommand.loop ? 'loop' : 'once') : 'loop',
       // 短动作结束后返回保留的持续画面；独立播放不关联基准。
       continuity: !layered && (activeCommand?.input_image_hash ?? baseline?.input_image_hash) ? 'base' : 'independent',
       transition: staticTarget ? 'fade' : (activeCommand?.transition ?? 'natural'),
@@ -530,9 +540,9 @@ export function useDesktopVisualWallpaper(): void {
             .then(async () => {
               if (scope()) {
                 await sendVisualReceipt(playId, {
-                  status: 'failed',
+                  status: 'interrupted',
                   receipt_kind: kinds.get(playId) ?? 'image',
-                  error: 'interrupted'
+                  error: 'Presentation host released'
                 })
               }
             })

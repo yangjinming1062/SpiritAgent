@@ -108,7 +108,7 @@ export {
 } from './spatial'
 export { $contextMenuPos, closeContextMenu, openContextMenu } from './sprite/context-menu-store'
 export { FootGlow, triggerFootGlowPulse } from './sprite/foot-glow'
-export { playSpriteGesture } from './sprite/gesture'
+export { $spritePointerHeld, playSpriteGesture } from './sprite/gesture'
 export { useSpriteBodyGesture } from './sprite/gesture-layer'
 export { isCharacterMediaVisible, isCharacterStageVisible, observeCharacterStageVisibility } from './stage-visibility'
 export { clearVfx, emitVfx, SpriteVfxOverlay } from './vfx'

@@ -49,7 +49,11 @@ export function CharacterStage({
       return
     }
 
-    const report = (value: WindowActorMedia, status: 'started' | 'finished' | 'failed', error?: string): void => {
+    const report = (
+      value: WindowActorMedia,
+      status: 'started' | 'finished' | 'failed' | 'interrupted',
+      error?: string
+    ): void => {
       if ($windowActorMedia.get()?.key === value.key && $windowActorMedia.get()?.owner === value.owner) {
         $windowActorPlayback.set({ key: value.key, status, error })
       }
@@ -59,6 +63,7 @@ export function CharacterStage({
       presented: (source, video) => setDisplayed(source && video ? { media: source.value, video } : null),
       started: source => report(source.value, 'started'),
       ended: source => report(source.value, 'finished'),
+      interrupted: source => report(source.value, 'interrupted'),
       failed: (source, error) => {
         log.warn('character-stage', 'Actor playback failed', error)
         report(source.value, 'failed', error)
@@ -81,11 +86,7 @@ export function CharacterStage({
       player.dispose()
       layer.current = null
     }
-  }, [windowId])
-
-  useLayoutEffect(() => {
-    layer.current?.set(null)
-  }, [owner])
+  }, [windowId, owner])
 
   useLayoutEffect(() => {
     const wanted = media?.owner === owner ? media : null

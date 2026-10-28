@@ -12,6 +12,14 @@ import { ApiError } from '../../../../shared/errors'
 import type { VisualReceiptBody, VisualsListQuery } from './api'
 import { visualsApi } from './api'
 import { $ambientLoopChoice, feedDirectorPresentation, resolveAmbientLoop } from './director'
+import {
+  $performance,
+  interruptPerformance,
+  type PerformancePorts,
+  performanceSettled,
+  performanceStarted,
+  receivePerformanceCommand
+} from './performance-scheduler'
 import { $stagePlan, deriveStagePlan } from './stage-plan'
 import type {
   VisualDetail,
@@ -37,11 +45,63 @@ export const $visualsPresentationError = atom<string | null>(null)
 export const $visualPlayback = atom<VisualPlayCommand | null>(null)
 
 let epoch = 0
+let presentationRequest = 0
 let refreshQuery: VisualsListQuery = {}
 let refreshQueued = false
 let refreshRequest: Promise<void> | null = null
 let detailRequest: { id: string; request: Promise<VisualDetail> } | null = null
 const playClients = new Map<string, string>()
+const receiptQueues = new Map<string, Promise<void>>()
+const receiptKinds = new Map<string, VisualReceiptBody['receipt_kind']>()
+
+/** 每次绑定捕获账户作用域，旧宿主的迟到回包不能操作新账户。 */
+export function visualPerformancePorts(): Omit<PerformancePorts, 'valid'> {
+  const scope = captureAuthScope()
+
+  return {
+    dispatch: async request => {
+      if (!scope?.()) {
+        throw new Error('Performance account changed')
+      }
+
+      const command = await visualsApi.playVisual(request.visualId)
+
+      if (scope()) {
+        await refreshVisualPresentation()
+      }
+
+      return command
+    },
+    cancel: async (command, reason) => {
+      if (!scope?.()) {
+        return
+      }
+
+      const clientId = playClients.get(command.play_id) ?? crypto.randomUUID()
+
+      if (!playClients.has(command.play_id)) {
+        const result = await visualsApi.claimPlay(command.play_id, { client_id: clientId })
+
+        if (!scope() || !result.claimed) {
+          return
+        }
+
+        playClients.set(command.play_id, clientId)
+      }
+
+      await sendVisualReceipt(command.play_id, {
+        status: 'interrupted',
+        receipt_kind: receiptKinds.get(command.play_id) ?? command.media_kind,
+        error: reason
+      })
+    },
+    restore: async () => {
+      if (scope?.()) {
+        await refreshVisualPresentation()
+      }
+    }
+  }
+}
 
 /**
  * 成品库与制作区一起刷新。并发调用合并为排队中的一次读取（后到的筛选生效），
@@ -164,17 +224,18 @@ export async function refreshVisualPresentation(): Promise<void> {
   }
 
   const currentEpoch = epoch
+  const request = ++presentationRequest
 
   try {
     const response = await visualsApi.presentation()
 
-    if (!scope?.() || epoch !== currentEpoch) {
+    if (!scope?.() || epoch !== currentEpoch || request !== presentationRequest) {
       return
     }
 
     publishPresentation(response)
   } catch (error) {
-    if (scope?.() && epoch === currentEpoch) {
+    if (scope?.() && epoch === currentEpoch && request === presentationRequest) {
       $visualsPresentationError.set(String(error))
     }
   }
@@ -213,7 +274,8 @@ function publishPresentation(response: VisualsPresentation): void {
 }
 
 // 呈现与待播指令任一变化都重新解析统一舞台计划；窗口与桌面消费同一份。
-// 导演只在舞台宿主装配后接收刷新；常驻循环的本地选择参与主体层解析。
+// 导演只在舞台宿主装配后接收刷新；常驻循环的本地选择参与主体层解析，
+// 且轮换是导演自身的输出，不回灌导演（避免重入选择循环）。
 function refreshStagePlan(): void {
   const presentation = $visualsPresentation.get()
   feedDirectorPresentation(presentation)
@@ -221,7 +283,10 @@ function refreshStagePlan(): void {
 }
 
 $visualsPresentation.listen(refreshStagePlan)
-$ambientLoopChoice.listen(refreshStagePlan)
+$ambientLoopChoice.listen(() => {
+  const presentation = $visualsPresentation.get()
+  $stagePlan.set(deriveStagePlan(presentation, null, resolveAmbientLoop(presentation)))
+})
 
 export async function regenerateVisual(
   visualId: string,
@@ -240,27 +305,88 @@ export async function commandVisualJob(jobId: string, command: VisualJobCommand)
 
 /** 播放认领：同一 play_id 只由一个可见舞台认领，认领后才允许上报回执。 */
 export async function claimVisualPlay(playId: string, clientId: string): Promise<boolean> {
-  const result = await visualsApi.claimPlay(playId, { client_id: clientId })
+  const scope = captureAuthScope()
 
-  if (result.claimed) {
-    playClients.set(playId, clientId)
+  try {
+    const result = await visualsApi.claimPlay(playId, { client_id: clientId })
+
+    if (!scope?.()) {
+      return false
+    }
+
+    if (result.claimed) {
+      playClients.set(playId, clientId)
+    } else {
+      performanceSettled(playId)
+    }
+
+    return result.claimed
+  } catch (error) {
+    if (scope?.()) {
+      performanceSettled(playId)
+    }
+
+    throw error
   }
-
-  return result.claimed
 }
 
 export async function sendVisualReceipt(playId: string, body: Omit<VisualReceiptBody, 'client_id'>): Promise<void> {
-  const clientId = playClients.get(playId)
+  const scope = captureAuthScope()
+  const command = $performance.get().command
 
-  if (!clientId) {
-    return
+  if (scope?.() && body.status === 'started') {
+    receiptKinds.set(playId, body.receipt_kind)
+    performanceStarted(playId)
   }
 
-  await visualsApi.receiptPlay(playId, { ...body, client_id: clientId })
+  const previous = receiptQueues.get(playId) ?? Promise.resolve()
 
-  if (body.status !== 'started') {
-    playClients.delete(playId)
-  }
+  const request = previous
+    .catch(() => undefined)
+    .then(async () => {
+      const clientId = playClients.get(playId)
+
+      if (!scope?.() || !clientId) {
+        return
+      }
+
+      let terminal = body.status !== 'started'
+
+      try {
+        await visualsApi.receiptPlay(playId, { ...body, client_id: clientId })
+
+        // 循环和图片只结算本次切换，之后由基础舞台继续播放，不逐圈建账。
+        if (body.status === 'started' && command?.play_id === playId && command.loop && scope()) {
+          await visualsApi.receiptPlay(playId, {
+            status: 'finished',
+            receipt_kind: body.receipt_kind,
+            client_id: clientId
+          })
+          terminal = true
+        }
+      } catch (error) {
+        if (scope() && body.status === 'started') {
+          interruptPerformance(playId, 'Playback acknowledgment failed')
+        }
+
+        throw error
+      } finally {
+        if (scope() && terminal) {
+          playClients.delete(playId)
+          receiptKinds.delete(playId)
+          performanceSettled(playId, body.status === 'failed')
+        }
+      }
+    })
+    .finally(() => {
+      if (receiptQueues.get(playId) === request) {
+        receiptQueues.delete(playId)
+      }
+    })
+
+  receiptQueues.set(playId, request)
+
+  return request
 }
 
 export function staticPresentationKey(
@@ -338,6 +464,7 @@ function publishPlayCommand(command: VisualPlayCommand): void {
   }
 
   $visualPlayback.set(command)
+  receivePerformanceCommand(command)
 }
 
 /**
@@ -398,6 +525,11 @@ export function handleVisualEvent(
         $visualPlayback.set(null)
       }
 
+      if (state && ['finished', 'failed', 'expired'].includes(state.status)) {
+        performanceSettled(state.play_id)
+        void refreshVisualPresentation()
+      }
+
       return true
     }
   }
@@ -410,6 +542,8 @@ export function resetVisualsForAccount(): void {
   refreshRequest = null
   detailRequest = null
   playClients.clear()
+  receiptQueues.clear()
+  receiptKinds.clear()
   $visualsItems.set([])
   $visualsJobs.set([])
   $visualsTotal.set(null)

@@ -4,6 +4,8 @@ import { useEffect } from 'react'
 
 import {
   $motionLevel,
+  $spatialLocomotion,
+  $spritePointerHeld,
   $stageOutfitPresented,
   $windowActorMedia,
   $windowActorPlayback,
@@ -12,6 +14,7 @@ import {
   setStageOutfitSource
 } from '@/modules/character'
 import {
+  $performance,
   $visualsPresentation,
   bindPresentationDirector,
   claimVisualPlay,
@@ -21,8 +24,8 @@ import {
   sendVisualReceipt,
   staticPresentationKey,
   type VisualActualSnapshot,
+  visualPerformancePorts,
   type VisualPlayCommand,
-  visualsApi,
   type VisualsPresentation
 } from '@/modules/visuals'
 import { $stagePlan, deriveStagePlan } from '@/modules/visuals'
@@ -101,7 +104,9 @@ function waitForStage(path: string, scenePath: string, current: () => boolean): 
       observeCharacterStageVisibility(check),
       $auth.listen(check),
       $presentation.listen(check),
-      $visualsPresentation.listen(check)
+      $visualsPresentation.listen(check),
+      $performance.listen(check),
+      $motionLevel.listen(check)
     ]
 
     stop = () => stops.forEach(dispose => dispose())
@@ -125,7 +130,7 @@ function waitForActorVideo(
         stop()
         reject(new Error('Actor video playback timed out'))
       },
-      status === 'started' ? 15000 : 75000
+      status === 'started' ? 15000 : 330000
     )
 
     const wanted = `${pending.visual_id}:${pending.visual_version}:${pending.play_id}`
@@ -139,13 +144,13 @@ function waitForActorVideo(
       const matched = state?.key === wanted ? state : null
       const ready = matched?.status === status || (status === 'started' && matched?.status === 'finished')
 
-      if (!current() || ready || matched?.status === 'failed') {
+      if (!current() || ready || matched?.status === 'failed' || matched?.status === 'interrupted') {
         stop()
         window.clearTimeout(timeout)
 
         if (!current()) {
           reject(new Error('Presentation changed before display'))
-        } else if (matched?.status === 'failed') {
+        } else if (matched?.status === 'failed' || matched?.status === 'interrupted') {
           reject(new Error(matched.error || 'Actor video failed'))
         } else {
           resolve()
@@ -158,7 +163,9 @@ function waitForActorVideo(
       observeCharacterStageVisibility(check),
       $auth.listen(check),
       $presentation.listen(check),
-      $visualsPresentation.listen(check)
+      $visualsPresentation.listen(check),
+      $performance.listen(check),
+      $motionLevel.listen(check)
     ]
 
     stop = () => stops.forEach(dispose => dispose())
@@ -168,12 +175,13 @@ function waitForActorVideo(
 }
 
 async function settlePendingPlay(response: VisualsPresentation): Promise<void> {
-  const pending = response.pending_play
+  const pending = $performance.get().command
   const scope = captureAuthScope()
 
   if (
     !scope ||
     !pending ||
+    !$gateway.get()?.isPresentationHost ||
     $presentation.get().effectiveMode !== 'window' ||
     !isCharacterMediaVisible() ||
     settledPlays.has(pending.play_id) ||
@@ -192,17 +200,14 @@ async function settlePendingPlay(response: VisualsPresentation): Promise<void> {
   let started = false
 
   const current = (): boolean => {
-    const latest = $visualsPresentation.get()
-
     return (
       scope() &&
+      $performance.get().command?.play_id === pending.play_id &&
+      $motionLevel.get() !== 'off' &&
       $presentation.get().effectiveMode === 'window' &&
+      !$presentation.get().fullscreen &&
       isCharacterMediaVisible() &&
-      (started
-        ? latest?.current_visual?.id === pending.visual_id &&
-          latest.current_visual.version === pending.visual_version &&
-          (!latest.pending_play || latest.pending_play.play_id === pending.play_id)
-        : Date.parse(pending.expires_at) > Date.now() && latest?.pending_play?.play_id === pending.play_id)
+      (started || Date.parse(pending.expires_at) > Date.now())
     )
   }
 
@@ -234,9 +239,8 @@ async function settlePendingPlay(response: VisualsPresentation): Promise<void> {
 
       if (!pending.loop) {
         await waitForActorVideo(pending, current, 'finished')
+        await sendVisualReceipt(pending.play_id, { status: 'finished', receipt_kind: 'video' })
       }
-
-      await sendVisualReceipt(pending.play_id, { status: 'finished', receipt_kind: 'video' })
 
       return
     }
@@ -292,14 +296,18 @@ async function settlePendingPlay(response: VisualsPresentation): Promise<void> {
   } catch (error) {
     if (scope() && claimed) {
       await sendVisualReceipt(pending.play_id, {
-        status: 'failed',
+        status:
+          !current() ||
+          ($windowActorPlayback.get()?.key === `${pending.visual_id}:${pending.visual_version}:${pending.play_id}` &&
+            $windowActorPlayback.get()?.status === 'interrupted')
+            ? 'interrupted'
+            : 'failed',
         receipt_kind: pending.asset_kind === 'actor' ? 'video' : 'window_static',
         error: String(error)
       }).catch(failure => log.warn('visual-presentation', 'Receipt failed', failure))
     }
 
     log.warn('visual-presentation', 'Window presentation failed', error)
-    settledPlays.delete(pending.play_id)
   } finally {
     if (windowCommand?.play_id === pending.play_id) {
       windowCommand = null
@@ -332,42 +340,6 @@ function ensureVisualProjection(): void {
     return
   }
 
-  // 演出的点播走完整指令管线：受理→认领→窗口回执→组合推进；导演只决定“播什么”。
-  // 只有精灵窗（presentation host）绑定导演：useVisualProjection 也被主窗生活区调用，
-  // 主窗的互动请求经 storage 信号转发到这里，避免双宿主并发点播。
-  // 资格：已登录、未关闭动态表现且处于窗口模式（桌面模式由桌面宿主的导演负责）。
-  if ($gateway.get()?.isPresentationHost) {
-    stopDirector = bindPresentationDirector(
-      async visualId => {
-        await visualsApi.playVisual(visualId)
-        await refreshVisualPresentation()
-      },
-      () => $visualsPresentation.get(),
-      {
-        isEligible: () =>
-          $auth.get().kind === 'authenticated' &&
-          $motionLevel.get() !== 'off' &&
-          $presentation.get().effectiveMode === 'window',
-        isSubtle: () => $motionLevel.get() === 'subtle',
-        onChanged: notify => {
-          const onChanged = (): void => {
-            notify()
-            assembleWindowMedia()
-            apply($visualsPresentation.get())
-          }
-
-          const stopMotion = $motionLevel.listen(onChanged)
-          const stopMode = $presentation.listen(onChanged)
-
-          return () => {
-            stopMotion()
-            stopMode()
-          }
-        }
-      }
-    )
-  }
-
   const apply = (response: VisualsPresentation | null, synced = false): void => {
     if (!scope()) {
       return
@@ -384,7 +356,7 @@ function ensureVisualProjection(): void {
     }
 
     if (response) {
-      if (response.static_presentation && !response.pending_play) {
+      if (response.static_presentation && !$performance.get().command) {
         void settleStaticProjection(response)
       } else {
         void settlePendingPlay(response)
@@ -392,8 +364,53 @@ function ensureVisualProjection(): void {
     }
   }
 
+  if ($gateway.get()?.isPresentationHost) {
+    const stageEpoch = $presentation.get().stageEpoch
+    stopDirector = bindPresentationDirector(visualPerformancePorts(), () => $visualsPresentation.get(), {
+      isEligible: () =>
+        $auth.get().kind === 'authenticated' &&
+        $motionLevel.get() !== 'off' &&
+        $presentation.get().effectiveMode === 'window' &&
+        $presentation.get().stageEpoch === stageEpoch &&
+        !$presentation.get().fullscreen &&
+        isCharacterMediaVisible() &&
+        !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      isSubtle: () => $motionLevel.get() === 'subtle',
+      isMechanical: () => $spatialLocomotion.get() !== 'still' || $spritePointerHeld.get(),
+      onChanged: notify => {
+        const stops = [
+          $motionLevel.listen(notify),
+          $presentation.listen(notify),
+          $spatialLocomotion.listen(notify),
+          $spritePointerHeld.listen(notify),
+          observeCharacterStageVisibility(notify)
+        ]
+
+        const query = window.matchMedia('(prefers-reduced-motion: reduce)')
+        query.addEventListener('change', notify)
+
+        return () => {
+          stops.forEach(stop => stop())
+          query.removeEventListener('change', notify)
+        }
+      }
+    })
+  }
+
   const stopState = $visualsPresentation.listen(response => apply(response, true))
   const stopPlan = $stagePlan.listen(assembleWindowMedia)
+
+  const stopPerformance = $performance.listen(() => {
+    if (windowCommand && $performance.get().command?.play_id !== windowCommand.play_id) {
+      windowCommand = null
+    }
+
+    apply($visualsPresentation.get())
+  })
+
+  const stopMotion = $motionLevel.listen(() => apply($visualsPresentation.get()))
+  const stopMovement = $spatialLocomotion.listen(assembleWindowMedia)
+  const stopPointer = $spritePointerHeld.listen(assembleWindowMedia)
   const stopVisibility = observeCharacterStageVisibility(() => apply($visualsPresentation.get()))
   const motion = window.matchMedia('(prefers-reduced-motion: reduce)')
   const motionChanged = (): void => apply($visualsPresentation.get())
@@ -402,6 +419,10 @@ function ensureVisualProjection(): void {
   stopProjection = () => {
     stopState()
     stopPlan()
+    stopPerformance()
+    stopMotion()
+    stopMovement()
+    stopPointer()
     stopVisibility()
     motion.removeEventListener('change', motionChanged)
   }
@@ -525,7 +546,7 @@ export function useVisualProjection(): void {
         releaseVisualProjection()
       }
     }
-  }, [active, authSessionId])
+  }, [active, authSessionId, presentation.stageEpoch])
 }
 
 /** 只把认领成功的指令交给主体层；其他窗口只能播放有效基础组合（含导演的本地常驻选择）。 */
@@ -533,7 +554,15 @@ function assembleWindowMedia(): void {
   const auth = $auth.get()
   const presentation = $visualsPresentation.get()
   const plan = deriveStagePlan(presentation, windowCommand, resolveAmbientLoop(presentation))
-  const actor = $motionLevel.get() === 'off' || plan.mode === 'static' ? null : plan.actor
+
+  const actor =
+    $motionLevel.get() === 'off' ||
+    plan.mode === 'static' ||
+    $spatialLocomotion.get() !== 'still' ||
+    $spritePointerHeld.get()
+      ? null
+      : plan.actor
+
   const base = $stagePlan.get().actor
 
   if (

@@ -51,11 +51,11 @@ function stageLayout(
   presentation: ApiSchemas['VisualPresentationResponse'] | null,
   play: ApiSchemas['VisualPlayCommand'] | null
 ): StageLayout {
-  return play?.composition?.layout ?? presentation?.composition?.layout ?? DEFAULT_LAYOUT
+  return presentation?.composition?.layout ?? play?.composition?.layout ?? DEFAULT_LAYOUT
 }
 
 function actorFromLayer(layer: LayerMedia | null | undefined): StageActorPlan | null {
-  if (!layer || layer.asset_kind !== 'actor' || layer.media_kind !== 'video') {
+  if (!layer || layer.asset_kind !== 'actor' || layer.media_kind !== 'video' || layer.clip_kind === 'once') {
     return null
   }
 
@@ -66,7 +66,7 @@ function actorFromLayer(layer: LayerMedia | null | undefined): StageActorPlan | 
     posterUrl: layer.poster_url ?? null,
     width: layer.width,
     height: layer.height,
-    loop: layer.clip_kind !== 'once',
+    loop: true,
     body: layer.body ?? null
   }
 }
@@ -154,7 +154,7 @@ export function deriveStagePlan(
       body: play.body ?? null
     }
 
-    const scene = baseMedia?.scene ?? null
+    const scene = presentation?.static_presentation ? null : (baseMedia?.scene ?? null)
     const sceneLayer = sceneFromLayer(scene)
 
     return { mode: 'layered', actor, scene: sceneLayer, cinematic: null, layout }
@@ -167,11 +167,11 @@ export function deriveStagePlan(
   const media = presentation.composition?.media ?? null
 
   // 动态素材可用时，旧静态目标只作为回退；重新开启动态无需等待下一次生活变化。
-  if (presentation.static_presentation && !ambient) {
-    return { mode: 'static', actor: ambient, scene: null, cinematic: null, layout }
+  if (presentation.static_presentation) {
+    return { mode: ambient ? 'layered' : 'static', actor: ambient, scene: null, cinematic: null, layout }
   }
 
-  if (media?.mode === 'cinematic' && media.cinematic) {
+  if (media?.mode === 'cinematic' && media.cinematic && media.cinematic.clip_kind !== 'once') {
     return { mode: 'cinematic', actor: ambient, scene: null, cinematic: media.cinematic, layout }
   }
 
@@ -192,7 +192,7 @@ export const $stagePlan = atom<StagePlan>(EMPTY_PLAN)
 type CatalogEntry = NonNullable<ApiSchemas['VisualPresentationResponse']['ambient_catalog']>[number]
 
 function actorFromCatalog(entry: CatalogEntry | null | undefined): StageActorPlan | null {
-  if (!entry || entry.asset_kind !== 'actor' || entry.media_kind !== 'video') {
+  if (!entry || entry.asset_kind !== 'actor' || entry.media_kind !== 'video' || entry.clip_kind === 'once') {
     return null
   }
 
@@ -203,7 +203,7 @@ function actorFromCatalog(entry: CatalogEntry | null | undefined): StageActorPla
     posterUrl: entry.poster_url ?? null,
     width: entry.width,
     height: entry.height,
-    loop: entry.clip_kind !== 'once',
+    loop: true,
     body: entry.body ?? null
   }
 }

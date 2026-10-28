@@ -10,6 +10,7 @@ import {
   $spatialScale,
   $spriteContentRect,
   $spriteFootAnchor,
+  $spritePointerHeld,
   cancelMovement,
   emitVfx,
   endDragAt,
@@ -130,6 +131,7 @@ export function SpriteStage({
   const finishGesture = useCallback((cancelled: boolean) => {
     const drag = dragRef.current
     dragRef.current = null
+    $spritePointerHeld.set(false)
 
     if (longPressTimerRef.current !== null) {
       clearTimeout(longPressTimerRef.current)
@@ -350,6 +352,7 @@ export function SpriteStage({
       releaseCapture,
       longPressed: false
     }
+    $spritePointerHeld.set(true)
     cancelMovement()
 
     // 启动独立 long-press 计时器：与 drag 完全解耦，drag 触发后会清掉。

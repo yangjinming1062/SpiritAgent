@@ -100,7 +100,7 @@ export const visualsApi = {
     requestResource('companion_visuals.restore_presentation'),
   updatePresentation: (body: VisualPresentationUpdate): Promise<VisualsPresentation> =>
     requestResource('companion_visuals.put_presentation', { body }),
-  /** 播放认领与回执仅桌面承载使用；同一 play_id 只由一个可见舞台认领。 */
+  /** 播放认领与回执仅当前舞台宿主使用；同一 play_id 只由一个可见舞台认领。 */
   claimPlay: (playId: string, body: { client_id: string }): Promise<{ claimed: boolean }> =>
     requestResource('companion_visuals.claim_play', { path: { play_id: playId }, body }),
   receiptPlay: (playId: string, body: VisualReceiptBody): Promise<{ ok: boolean }> =>

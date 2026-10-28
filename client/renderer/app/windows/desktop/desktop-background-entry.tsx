@@ -502,7 +502,6 @@ function DesktopWallpaper() {
 
       if (!slot.started && slot.media?.expiresAt && Date.parse(slot.media.expiresAt) <= Date.now()) {
         acknowledge(slot, 'failed', 'Playback request expired before playback started')
-        restoreLoop()
 
         return
       }
@@ -512,7 +511,6 @@ function DesktopWallpaper() {
       void slot.element.play().catch(error => {
         if (!paused && slot.generation === generation && slot.ready && !slot.terminal) {
           acknowledge(slot, 'failed', String(error))
-          restoreLoop()
         }
       })
     }
@@ -817,8 +815,8 @@ function DesktopWallpaper() {
           slot.element.currentTime = 0
           start(slot)
         } else if (slot.media?.kind === 'once') {
+          // 终态交给宿主重读最新基础舞台，不能直接恢复演出开始时保留的旧循环。
           acknowledge(slot, 'completed')
-          restoreLoop()
         }
       }
 
@@ -826,9 +824,7 @@ function DesktopWallpaper() {
         if (slot.media && !slot.terminal && slot.element.error) {
           acknowledge(slot, 'failed', slot.element.error?.message || 'Video could not be decoded')
 
-          if (active === index) {
-            restoreLoop()
-          } else {
+          if (active !== index) {
             reset(slot)
           }
         }

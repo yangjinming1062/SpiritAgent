@@ -49,6 +49,7 @@ export function createStageVideoLayer<T>(elements: HTMLVideoElement[], events: L
   let paused = true
   let disposed = false
   const settled = new Set<string>()
+  const failedMedia = new Set<string>()
 
   function settle(key: string): void {
     settled.add(key)
@@ -196,6 +197,7 @@ export function createStageVideoLayer<T>(elements: HTMLVideoElement[], events: L
 
     const source = slot.source
     settle(source.key)
+    failedMedia.add(source.mediaKey ?? source.key)
     slot.terminal = true
     restore(slot)
     events.failed(source, error)
@@ -283,7 +285,6 @@ export function createStageVideoLayer<T>(elements: HTMLVideoElement[], events: L
       fallbackKey = baseKey
 
       if (!source) {
-        settled.clear()
         active = null
 
         for (const slot of slots) {
@@ -298,7 +299,10 @@ export function createStageVideoLayer<T>(elements: HTMLVideoElement[], events: L
         return
       }
 
-      if (settled.has(source.key)) {
+      // 已终态的任务不重装；无独立任务身份的基础媒体按版本抑制解码失败后的自动重试。
+      const mediaKey = source.mediaKey ?? source.key
+
+      if (settled.has(source.key) || (mediaKey === source.key && failedMedia.has(mediaKey))) {
         return
       }
 
@@ -334,6 +338,10 @@ export function createStageVideoLayer<T>(elements: HTMLVideoElement[], events: L
 
       if (!slot) {
         throw new Error('Stage video layer requires two buffers')
+      }
+
+      if (slot.source && !slot.terminal) {
+        events.interrupted?.(slot.source)
       }
 
       reset(slot)
@@ -372,6 +380,13 @@ export function createStageVideoLayer<T>(elements: HTMLVideoElement[], events: L
       disposed = true
       active = null
       removers.forEach(remove => remove())
+
+      for (const slot of slots) {
+        if (slot.source && !slot.terminal) {
+          events.interrupted?.(slot.source)
+        }
+      }
+
       slots.forEach(reset)
     }
   }

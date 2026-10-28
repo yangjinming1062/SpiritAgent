@@ -27,7 +27,7 @@ export interface WindowActorMedia {
 export const $windowActorMedia = atom<WindowActorMedia | null>(null)
 export const $windowActorPlayback = atom<{
   key: string
-  status: 'started' | 'finished' | 'failed'
+  status: 'started' | 'finished' | 'failed' | 'interrupted'
   error?: string
 } | null>(null)
 

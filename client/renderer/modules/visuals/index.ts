@@ -21,6 +21,7 @@ export {
   resolveAmbientLoop
 } from './director'
 export { $ambientLoopChoice } from './director'
+export { $performance } from './performance-scheduler'
 export {
   $stagePlan,
   deriveStagePlan,
@@ -78,5 +79,6 @@ export {
   sendStaticReceipt,
   sendVisualReceipt,
   setVisualPreferences,
-  staticPresentationKey
+  staticPresentationKey,
+  visualPerformancePorts
 } from './visuals-store'

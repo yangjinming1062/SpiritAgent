@@ -15,6 +15,8 @@ export const SPRITE_GESTURE_MS: Record<SpriteGesture['kind'], number> = {
 }
 
 export const $spriteGesture = atom<SpriteGesture | null>(null)
+/** 指针捕获期间由舞台手势入口维护，视频演出据此让位于直接操控。 */
+export const $spritePointerHeld = atom(false)
 
 let gestureSeq = 0
 
@@ -30,4 +32,7 @@ export function clearSpriteGesture(): void {
   $spriteGesture.set(null)
 }
 
-registerStorageClearHandler(() => clearSpriteGesture())
+registerStorageClearHandler(() => {
+  clearSpriteGesture()
+  $spritePointerHeld.set(false)
+})

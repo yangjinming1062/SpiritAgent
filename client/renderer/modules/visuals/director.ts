@@ -1,27 +1,28 @@
 import { atom } from 'nanostores'
 
-import { log } from '@/shared/lib/log'
 import {
   accountStorageKey,
   persistString,
   registerCompanionStorageKey,
   registerStorageClearHandler
 } from '@/shared/lib/storage'
+import { $auth } from '@/shared/store/auth'
+import { $presentation } from '@/shared/store/presentation'
+import { isRecord } from '@client-shared/is-record'
 
+import {
+  $performance,
+  bindPerformanceScheduler,
+  type PerformancePorts,
+  receivePerformanceCommand,
+  requestPerformance,
+  syncPerformance
+} from './performance-scheduler'
 import type { VisualsPresentation } from './types'
 
 type CatalogEntry = VisualsPresentation['ambient_catalog'][number]
 
 export type InteractionKind = 'look' | 'smile' | 'stretch'
-
-/**
- * Presentation Director（客户端实时演出导演）：
- * - 常驻轮换：只读呈现目录，本地选择下一个待机/轻量循环，不建立播放账本；
- * - 互动演出与意图驱动的持续画面变更：经播放端点走后端指令 + 认领 + 回执的既有管线；
- * - 优先级：互动 > 意图 > 常驻；由持续时间、冷却与概率权重控制，不按固定秒强制切换。
- * 同一时刻只有一个舞台宿主绑定导演（窗口模式为精灵窗，桌面模式为桌面窗）；
- * 非宿主窗口的互动请求经 storage 信号转发给宿主消费，避免多窗口并发点播。
- */
 
 /** 当前常驻循环选择（本地、只读目录内轮换）；null 表示沿用服务端 ambient/composition 投影。 */
 export const $ambientLoopChoice = atom<{ visualId: string; version: number } | null>(null)
@@ -29,51 +30,49 @@ export const $ambientLoopChoice = atom<{ visualId: string; version: number } | n
 const AMBIENT_INTERVAL_MS = 90_000
 const AMBIENT_JITTER_MS = 45_000
 const INTERACTION_COOLDOWN_MS: Record<InteractionKind, number> = { look: 20_000, smile: 45_000, stretch: 5 * 60_000 }
-const INTERACTION_QUEUE_LIMIT = 2
+const INTERACTION_TTL_MS = 8_000
 
 let presentation: VisualsPresentation | null = null
 let ambientTimer: ReturnType<typeof setTimeout> | null = null
-let performedIntentRevision = -1
-const reactionQueue: InteractionKind[] = []
-const cooldownUntil = new Map<InteractionKind, number>()
-let performRequest: ((visualId: string) => Promise<void>) | null = null
+let attemptedIntentRevision = -1
+let directorBound = false
+let mechanicallyBlocked: () => boolean = () => false
+let stopBinding: (() => void) | null = null
 // 装配方注入的舞台资格判断（登录态 + 动态表现偏好）；模块自身不依赖 character。
 let stageEligible: () => boolean = () => false
 let motionSubtle: () => boolean = () => false
 
-// 非宿主窗口的互动信号经 storage 转发给宿主窗口（storage 事件跨同源窗口可见）。
-// 每次写入都带新时间戳，避免同值写入不触发事件；登出清理时一并清零。
+// 信号只消费实时 storage 事件，账户、舞台代次与事件身份共同隔离迟到和重复投递。
 const INTERACTION_SIGNAL_KEY = registerCompanionStorageKey('da.visuals.interactionSignal')
-let hostBound = false
-let stopSignalListener: (() => void) | null = null
+const seenSignals = new Set<string>()
 
-function signalKey(): string {
-  return accountStorageKey(INTERACTION_SIGNAL_KEY) ?? INTERACTION_SIGNAL_KEY
-}
+function consumeSignal(value: unknown): void {
+  const auth = $auth.get()
 
-function startSignalListener(): void {
-  if (stopSignalListener !== null) {
+  if (
+    !isRecord(value) ||
+    auth.kind !== 'authenticated' ||
+    value.accountId !== auth.snapshot.accountId ||
+    value.stageEpoch !== $presentation.get().stageEpoch ||
+    typeof value.eventId !== 'string' ||
+    typeof value.at !== 'number' ||
+    !Number.isFinite(value.at) ||
+    value.at > Date.now() + 5_000 ||
+    Date.now() - value.at > INTERACTION_TTL_MS ||
+    seenSignals.has(value.eventId) ||
+    (value.kind !== 'look' && value.kind !== 'smile' && value.kind !== 'stretch')
+  ) {
     return
   }
 
-  const onStorage = (event: StorageEvent): void => {
-    if (event.key !== signalKey() || !event.newValue || !hostBound) {
-      return
-    }
+  seenSignals.add(value.eventId)
+  const oldest = seenSignals.values().next().value
 
-    try {
-      const signal = JSON.parse(event.newValue) as { kind?: unknown }
-
-      if (signal.kind === 'look' || signal.kind === 'smile' || signal.kind === 'stretch') {
-        enqueueInteraction(signal.kind)
-      }
-    } catch {
-      // 非宿主写入的未知格式或损坏值忽略。
-    }
+  if (seenSignals.size > 128 && oldest) {
+    seenSignals.delete(oldest)
   }
 
-  window.addEventListener('storage', onStorage)
-  stopSignalListener = () => window.removeEventListener('storage', onStorage)
+  performInteraction(value.kind, value.eventId, value.at)
 }
 
 function loopEntries(catalog: CatalogEntry[]): CatalogEntry[] {
@@ -98,10 +97,6 @@ function syncAmbientChoice(catalog: CatalogEntry[]): void {
 
 function onceEntries(catalog: CatalogEntry[]): CatalogEntry[] {
   return catalog.filter(entry => entry.asset_kind === 'actor' && entry.clip_kind === 'once')
-}
-
-function stageReady(): boolean {
-  return stageEligible()
 }
 
 function pickAmbient(catalog: CatalogEntry[]): CatalogEntry | null {
@@ -163,36 +158,30 @@ function pickReaction(catalog: CatalogEntry[], kind: InteractionKind): CatalogEn
   return null
 }
 
-/** 互动演出走后端指令管线：认领、回执与组合推进由既有机制完成。 */
-function perform(visualId: string): void {
-  const request = performRequest
-
-  if (!request) {
+function performInteraction(kind: InteractionKind, eventId: string, at: number): void {
+  if (!stageEligible() || mechanicallyBlocked() || !presentation) {
     return
   }
 
-  request(visualId).catch(error => log.warn('director', 'Performance dispatch failed', error))
-}
+  const entry = pickReaction(presentation.ambient_catalog, kind)
 
-function drainReactions(now: number): void {
-  while (reactionQueue.length > 0) {
-    const kind = reactionQueue.shift()!
-
-    if ((cooldownUntil.get(kind) ?? 0) > now) {
-      continue
-    }
-
-    const entry = presentation ? pickReaction(presentation.ambient_catalog, kind) : null
-
-    if (!entry) {
-      continue
-    }
-
-    cooldownUntil.set(kind, now + INTERACTION_COOLDOWN_MS[kind])
-    perform(entry.visual_id)
-
-    break
+  if (!entry) {
+    return
   }
+
+  requestPerformance({
+    performanceId: eventId,
+    source: 'interaction',
+    visualId: entry.visual_id,
+    visualVersion: entry.version,
+    interruptible: false,
+    intentRevision: null,
+    createdAt: at,
+    expiresAt: at + INTERACTION_TTL_MS,
+    durationMs: entry.duration_ms,
+    cooldownKey: kind,
+    cooldownMs: INTERACTION_COOLDOWN_MS[kind]
+  })
 }
 
 /** 分词重叠评分：活动常是完整句子，与画面描述按关键词重叠计分而非整句包含。 */
@@ -215,7 +204,7 @@ function intentKeywords(activity: string): string[] {
 function evaluateIntent(): void {
   const intent = presentation?.intent
 
-  if (!intent || intent.life_revision === performedIntentRevision) {
+  if (!intent || intent.life_revision === attemptedIntentRevision || intent.activity_kind === 'intent') {
     return
   }
 
@@ -243,8 +232,21 @@ function evaluateIntent(): void {
 
   // 至少两个关键词命中（或关键词命中加场景一致）才切持续画面；否则保留当前画面，不把无关视频当成生活。
   if (best && bestScore >= 2) {
-    performedIntentRevision = intent.life_revision
-    perform(best.visual_id)
+    if (
+      requestPerformance({
+        performanceId: `life:${intent.life_revision}:${best.visual_id}:${best.version}`,
+        source: 'life',
+        visualId: best.visual_id,
+        visualVersion: best.version,
+        interruptible: true,
+        intentRevision: intent.life_revision,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 30_000,
+        durationMs: best.duration_ms
+      })
+    ) {
+      attemptedIntentRevision = intent.life_revision
+    }
   }
 }
 
@@ -254,7 +256,14 @@ function scheduleAmbient(): void {
     ambientTimer = null
   }
 
-  if (!stageReady() || !performRequest || !presentation || loopEntries(presentation.ambient_catalog).length === 0) {
+  if (
+    !stageEligible() ||
+    !directorBound ||
+    !presentation ||
+    mechanicallyBlocked() ||
+    $performance.get().state !== 'idle' ||
+    loopEntries(presentation.ambient_catalog).length === 0
+  ) {
     return
   }
 
@@ -272,7 +281,7 @@ function scheduleAmbient(): void {
 }
 
 function rotateAmbient(): void {
-  if (!stageReady() || !presentation) {
+  if (!stageEligible() || !presentation || mechanicallyBlocked() || $performance.get().state !== 'idle') {
     return
   }
 
@@ -285,110 +294,183 @@ function rotateAmbient(): void {
   scheduleAmbient()
 }
 
-/** 互动事件入口：精灵单击、聊天反应等；宿主窗口直接入队，非宿主窗口转发给宿主。 */
-export function enqueueInteraction(kind: InteractionKind): void {
-  if (!hostBound) {
-    enqueueInteractionForward(kind)
+/** 单击、进入对话和聊天反应共用入口；网关反应用其事件身份跨窗口去重。 */
+export function enqueueInteraction(
+  kind: InteractionKind,
+  eventId: string = crypto.randomUUID(),
+  at = Date.now()
+): void {
+  if (!directorBound) {
+    enqueueInteractionForward(kind, eventId, at)
 
     return
   }
 
-  if (!stageReady()) {
+  const auth = $auth.get()
+
+  if (auth.kind !== 'authenticated') {
     return
   }
 
-  if (reactionQueue.length >= INTERACTION_QUEUE_LIMIT) {
-    return
-  }
-
-  reactionQueue.push(kind)
-  drainReactions(Date.now())
+  consumeSignal({ kind, eventId, at, accountId: auth.snapshot.accountId, stageEpoch: $presentation.get().stageEpoch })
 }
 
-/** 非宿主窗口的互动信号转发；宿主窗口的 storage 监听消费后入队。 */
-export function enqueueInteractionForward(kind: InteractionKind): void {
-  persistString(INTERACTION_SIGNAL_KEY, JSON.stringify({ kind, at: Date.now() }))
+export function enqueueInteractionForward(
+  kind: InteractionKind,
+  eventId: string = crypto.randomUUID(),
+  at = Date.now()
+): void {
+  const auth = $auth.get()
+
+  if (auth.kind !== 'authenticated') {
+    return
+  }
+
+  persistString(
+    INTERACTION_SIGNAL_KEY,
+    JSON.stringify({
+      kind,
+      eventId,
+      at,
+      accountId: auth.snapshot.accountId,
+      stageEpoch: $presentation.get().stageEpoch
+    })
+  )
 }
 
-/** 舞台宿主装配导演；资格与偏好判断由装配方注入，导演自身不依赖其他业务模块。 */
+/** 业务模块只选媒体，资格、机械交互与播放管线由宿主装配。 */
 export function bindPresentationDirector(
-  onPerform: (visualId: string) => Promise<void>,
+  ports: Omit<PerformancePorts, 'valid'>,
   presentationFeed: () => VisualsPresentation | null,
-  eligibility: { isEligible: () => boolean; isSubtle: () => boolean; onChanged: (notify: () => void) => () => void }
+  eligibility: {
+    isEligible: () => boolean
+    isSubtle: () => boolean
+    isMechanical: () => boolean
+    onChanged: (notify: () => void) => () => void
+  }
 ): () => void {
-  performRequest = onPerform
+  stopBinding?.()
+  presentation = presentationFeed()
+  attemptedIntentRevision = presentation?.intent?.life_revision ?? -1
   stageEligible = eligibility.isEligible
   motionSubtle = eligibility.isSubtle
-  hostBound = true
-  startSignalListener()
+  mechanicallyBlocked = eligibility.isMechanical
+  directorBound = true
+
+  const stopScheduler = bindPerformanceScheduler({
+    ...ports,
+    valid: request =>
+      request.source === 'manual' ||
+      Boolean(
+        presentation &&
+        (request.intentRevision === null || request.intentRevision === presentation.intent?.life_revision) &&
+        presentation.ambient_catalog.some(
+          entry => entry.visual_id === request.visualId && entry.version === request.visualVersion
+        )
+      )
+  })
+
+  const initialPendingId = presentation?.pending_play?.play_id
 
   const refresh = (): void => {
-    if (!stageReady()) {
-      if (ambientTimer !== null) {
-        clearTimeout(ambientTimer)
-        ambientTimer = null
+    syncPerformance(stageEligible(), mechanicallyBlocked())
+
+    if (stageEligible()) {
+      if (presentation?.pending_play) {
+        receivePerformanceCommand(presentation.pending_play, presentation.pending_play.play_id === initialPendingId)
       }
 
+      syncAmbientChoice(presentation?.ambient_catalog ?? [])
+      evaluateIntent()
+    } else {
       $ambientLoopChoice.set(null)
+    }
 
+    scheduleAmbient()
+  }
+
+  const onStorage = (event: StorageEvent): void => {
+    if (event.key !== accountStorageKey(INTERACTION_SIGNAL_KEY) || !event.newValue) {
       return
     }
 
-    drainReactions(Date.now())
-    evaluateIntent()
-    scheduleAmbient()
+    let value: unknown
+
+    try {
+      value = JSON.parse(event.newValue)
+    } catch {
+      return
+    }
+
+    consumeSignal(value)
   }
 
-  const stopEligibility = eligibility.onChanged(() => {
-    refresh()
-    rotateAmbient()
-  })
-
-  presentation = presentationFeed()
-  syncAmbientChoice(presentation?.ambient_catalog ?? [])
+  window.addEventListener('storage', onStorage)
+  const stopEligibility = eligibility.onChanged(refresh)
+  const stopPerformance = $performance.listen(() => scheduleAmbient())
   refresh()
+  let stopped = false
 
-  return () => {
+  const stop = (): void => {
+    if (stopped) {
+      return
+    }
+
+    stopped = true
     stopEligibility()
+    stopPerformance()
+    window.removeEventListener('storage', onStorage)
+    directorBound = false
+    stopScheduler()
 
     if (ambientTimer !== null) {
       clearTimeout(ambientTimer)
-      ambientTimer = null
     }
 
-    performRequest = null
+    ambientTimer = null
+    attemptedIntentRevision = -1
     presentation = null
-    reactionQueue.length = 0
-    hostBound = false
+    seenSignals.clear()
     $ambientLoopChoice.set(null)
+
+    if (stopBinding === stop) {
+      stopBinding = null
+    }
   }
+
+  stopBinding = stop
+
+  return stop
 }
 
-/** 由 visuals-store 在呈现刷新时驱动；导演不自行拉取。 */
+/** 呈现变化使旧生活任务失效；回执刷新不会再次提交同一修订。 */
 export function feedDirectorPresentation(next: VisualsPresentation | null): void {
+  const hydrated = presentation !== null
   presentation = next
 
-  if (!next) {
-    if (ambientTimer !== null) {
-      clearTimeout(ambientTimer)
-      ambientTimer = null
-    }
-
-    performedIntentRevision = -1
-    reactionQueue.length = 0
-    cooldownUntil.clear()
-    $ambientLoopChoice.set(null)
-
+  if (!directorBound) {
     return
   }
 
-  syncAmbientChoice(next.ambient_catalog)
+  syncPerformance(stageEligible() && next !== null, mechanicallyBlocked())
 
-  if (stageReady() && performRequest) {
-    drainReactions(Date.now())
-    evaluateIntent()
-    scheduleAmbient()
+  if (next?.pending_play) {
+    receivePerformanceCommand(next.pending_play, !hydrated)
   }
+
+  if (!next) {
+    attemptedIntentRevision = -1
+    $ambientLoopChoice.set(null)
+  } else if (stageEligible()) {
+    if (!hydrated) {
+      attemptedIntentRevision = next.intent?.life_revision ?? -1
+    }
+
+    syncAmbientChoice(next.ambient_catalog)
+    evaluateIntent()
+  }
+
+  scheduleAmbient()
 }
 
 /** 常驻循环的当前本地选择解析为目录条目；无选择或目录缺项时返回 null（沿用服务端投影）。 */
@@ -405,20 +487,8 @@ export function resolveAmbientLoop(next: VisualsPresentation | null): CatalogEnt
 }
 
 registerStorageClearHandler(() => {
-  if (ambientTimer !== null) {
-    clearTimeout(ambientTimer)
-    ambientTimer = null
-  }
-
-  stopSignalListener?.()
-  stopSignalListener = null
-  reactionQueue.length = 0
-  cooldownUntil.clear()
-  performedIntentRevision = -1
-  presentation = null
-  performRequest = null
-  hostBound = false
+  stopBinding?.()
   stageEligible = () => false
   motionSubtle = () => false
-  $ambientLoopChoice.set(null)
+  mechanicallyBlocked = () => false
 })
