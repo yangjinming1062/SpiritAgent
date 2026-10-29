@@ -1808,7 +1808,6 @@ export const dict: Dictionary = {
     emptyUnlisted: 'No actions awaiting inclusion.',
     builtin: 'Built-in',
     custom: 'Custom',
-    copy: 'Create a copy',
     retry: 'Retry review',
     retryFailed: 'Could not retry the review',
     loadMore: 'Load more actions',

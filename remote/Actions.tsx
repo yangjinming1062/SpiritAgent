@@ -116,8 +116,6 @@ function ActionEditor({
   action,
   api,
   onChanged,
-  copySource,
-  onCopy,
   onReload,
   onClose
 }: {
@@ -125,21 +123,16 @@ function ActionEditor({
   api: RemoteApi
   onChanged: (saved?: ActionDefinition) => Promise<void>
   onClose: () => void
-  copySource: ActionDefinition | null
-  onCopy: (source: ActionDefinition) => void
   onReload: (source: ActionDefinition) => void
 }): ReactElement {
   const { run, busy, error } = useTask()
   const alive = useAlive()
-  const [draft, setDraft] = usePageState<ActionDraft>(
-    `action.${action?.id ?? (copySource ? `copy-${copySource.id}` : 'new')}.draft`,
-    toDraft(action ?? copySource)
-  )
+  const [draft, setDraft] = usePageState<ActionDraft>(`action.${action?.id ?? 'new'}.draft`, toDraft(action))
   const patch = (values: Partial<ActionDraft>) => setDraft(previous => ({ ...previous, ...values }))
   const body = actionBody(draft)
   const valid = isActionDesignValid(body)
   const readonly = action?.source === 'preset' || action?.status === 'pending' || action?.status === 'reviewing'
-  const changed = JSON.stringify(body) !== JSON.stringify(actionBody(toDraft(action ?? copySource)))
+  const changed = JSON.stringify(body) !== JSON.stringify(actionBody(toDraft(action)))
 
   useEffect(() => {
     if (action && !changed && draft.expectedUpdatedAt !== action.updated_at) {
@@ -326,7 +319,6 @@ function ActionEditor({
                 }
 
                 if (alive()) {
-                  setDraft(toDraft(action ? saved : copySource))
                   onClose()
                   await onChanged(saved)
                 }
@@ -337,11 +329,6 @@ function ActionEditor({
             {uiSaveLabel(action)}
           </button>
         </div>
-      )}
-      {action?.source === 'preset' && (
-        <button className="primary" onClick={() => onCopy(action)} type="button">
-          复制后创作
-        </button>
       )}
       {action && (action.status === 'failed' || action.status === 'deferred') && (
         <button
@@ -442,7 +429,6 @@ export function Actions({ api, refresh }: { api: RemoteApi; refresh: number }): 
     not_in_library: { rows: [], query: '' }
   })
   const [group, setGroup] = usePageState<ActionLibraryGroup>('actions.group', 'in_library')
-  const [copySource, setCopySource] = usePageState<ActionDefinition | null>('actions.copySource', null)
   const [selected, setSelected] = usePageState<string | null>('actions.selected', null)
   const [creating, setCreating] = usePageState('actions.creating', false)
   const [query, setQuery] = usePageState('actions.query', '')
@@ -550,8 +536,7 @@ export function Actions({ api, refresh }: { api: RemoteApi; refresh: number }): 
         <ActionEditor
           action={editing}
           api={api}
-          copySource={copySource}
-          key={editing?.id ?? (copySource ? `copy-${copySource.id}` : 'new')}
+          key={editing?.id ?? 'new'}
           onChanged={async saved => {
             const target = saved ? (saved.status === 'approved' ? 'in_library' : 'not_in_library') : group
             if (target === group) {
@@ -569,12 +554,6 @@ export function Actions({ api, refresh }: { api: RemoteApi; refresh: number }): 
             setSelected(null)
             setEditing(null)
             focusAfterRender(creating ? '[data-create-asset="action"]' : `[data-card-key="action-${selected}"]`)
-          }}
-          onCopy={source => {
-            setCopySource(source)
-            setCreating(true)
-            setSelected(null)
-            setEditing(null)
           }}
           onReload={setEditing}
         />
@@ -630,7 +609,6 @@ export function Actions({ api, refresh }: { api: RemoteApi; refresh: number }): 
               data-create-asset="action"
               onClick={() => {
                 setCreating(true)
-                setCopySource(null)
                 setSelected(null)
                 setEditing(null)
               }}

@@ -727,20 +727,18 @@ function ActionsPageContent(): React.JSX.Element {
                       ? t.mediaHide
                       : t.mediaShow}
                 </button>
-                <button
-                  className={BTN_SUBTLE}
-                  disabled={busy || action.status === 'pending' || action.status === 'reviewing'}
-                  onClick={() =>
-                    setEditing(
-                      action.source === 'preset'
-                        ? { id: null, draft: draftOf(action) }
-                        : { id: action.id, draft: draftOf(action), expectedUpdatedAt: action.updated_at }
-                    )
-                  }
-                  type="button"
-                >
-                  {action.source === 'preset' ? t.copy : t.edit}
-                </button>
+                {action.source !== 'preset' && (
+                  <button
+                    className={BTN_SUBTLE}
+                    disabled={busy || action.status === 'pending' || action.status === 'reviewing'}
+                    onClick={() =>
+                      setEditing({ id: action.id, draft: draftOf(action), expectedUpdatedAt: action.updated_at })
+                    }
+                    type="button"
+                  >
+                    {t.edit}
+                  </button>
+                )}
                 {(action.status === 'failed' || action.status === 'deferred') && (
                   <button
                     className={BTN_SUBTLE}

@@ -145,7 +145,7 @@ async def _locked_action(db: AsyncSession, user_id: int, action_id: int) -> Acti
 
 def require_action_editable(current: ActionAssetView, expected_updated_at: datetime) -> None:
     if current.source == "preset":
-        raise ValueError("内置动作不可修改或删除，可复制后创作")
+        raise ValueError("内置动作不可修改或删除")
     if ensure_utc(current.updated_at) != ensure_utc(expected_updated_at):
         raise ValueError("动作已更新，请保留修改并刷新核对后重试")
     if current.status in {"pending", "reviewing"}:

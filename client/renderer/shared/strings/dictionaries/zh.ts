@@ -1720,7 +1720,6 @@ export const dict = {
     emptyUnlisted: '没有未入库的动作。',
     builtin: '内置',
     custom: '自创',
-    copy: '复制后创作',
     retry: '重试评审',
     retryFailed: '重试评审失败',
     loadMore: '加载更多动作',
