@@ -12,6 +12,7 @@ import {
   baseSpriteSize,
   retryStageOutfit
 } from '@/modules/character'
+import { RENDERER_TIMINGS } from '@/shared/constants'
 import { probeInteractiveRegions, useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
@@ -165,7 +166,7 @@ export function OutfitStage({
         current = false
         setDecodeFailed(true)
       }
-    }, 15000)
+    }, RENDERER_TIMINGS.stageMediaTimeoutMs)
 
     image.src = url
     void image

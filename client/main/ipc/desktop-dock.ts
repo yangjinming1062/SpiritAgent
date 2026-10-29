@@ -7,6 +7,7 @@ import log from 'electron-log/main'
 
 import { type DockCatalog, type DockEntry, type DockState, type DockTask, IPC } from '@ipc/contracts'
 
+import { CLIENT_LIMITS } from '../../shared/constants'
 import type {
   ApplicationEligibility,
   RunningApplicationsState,
@@ -604,8 +605,8 @@ export function registerDesktopDock(options: {
   }
 
   async function add(selections: DockSelection[]): Promise<DockState> {
-    if (selections.length > 100) {
-      throw new Error('一次最多添加 100 个程序。')
+    if (selections.length > CLIENT_LIMITS.maxDockSelections) {
+      throw new Error(`一次最多添加 ${CLIENT_LIMITS.maxDockSelections} 个程序。`)
     }
 
     const next = [...entries]

@@ -3,6 +3,7 @@ import '../../../styles.css'
 import { useEffect, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 
+import { RENDERER_TIMINGS } from '@/shared/constants'
 import { $dayPhase, ambientPhaseFilter } from '@/shared/lib/day-phase'
 import { createStageVideoLayer } from '@/shared/lib/stage-video-layer'
 import { backgroundMedia } from '@/shared/platform/desktop'
@@ -1179,7 +1180,7 @@ function DesktopWallpaper() {
           acknowledge(slot, 'failed', 'Video first frame timed out')
           reset(slot)
         }
-      }, 30000)
+      }, RENDERER_TIMINGS.desktopBackgroundMediaTimeoutMs)
       slot.element.load()
       waitForFrame(slot, () => onLoaded(next))
 

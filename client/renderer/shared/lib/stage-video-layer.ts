@@ -1,3 +1,5 @@
+import { RENDERER_TIMINGS } from '../constants'
+
 import type { StageVideoLease } from './stage-video-cache'
 
 export interface StageVideoSource<T> {
@@ -368,7 +370,7 @@ export function createStageVideoLayer<T>(elements: HTMLVideoElement[], events: L
       reset(slot)
       slot.source = source
       const generation = slot.generation
-      slot.timeout = setTimeout(() => fail(slot, 'Video first frame timed out'), 15000)
+      slot.timeout = setTimeout(() => fail(slot, 'Video first frame timed out'), RENDERER_TIMINGS.stageMediaTimeoutMs)
       void source
         .load()
         .then(lease => {

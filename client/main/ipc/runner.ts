@@ -4,6 +4,7 @@ import { type DesktopRunnerState, IPC, type RunnerCallOutcome, type RunnerCallRe
 import { errorMessage } from '@runtime'
 
 import { isJsonValue } from '../../../shared/gateway'
+import { CLIENT_LIMITS } from '../../shared/constants'
 import type { RunnerBridge, RunnerBridgeEvent, RunnerBridgeOptions, RunnerBridgeStatus } from '../runner/bridge'
 import type { CreateRunnerProcessOptions, RunnerProcess } from '../runner/process'
 import type { CreateRunnerWsServerOptions, RunnerWsServer } from '../runner/rpc-ws'
@@ -95,7 +96,7 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
       }
 
       const generation = configGeneration
-      await server.call('config.replace', { config }, { timeoutMs: 5000 })
+      await server.call('config.replace', { config }, { timeoutMs: CLIENT_LIMITS.runnerConfigTimeoutMs })
 
       if (generation === configGeneration) {
         appliedConfig = nextConfig

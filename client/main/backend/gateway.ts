@@ -21,6 +21,7 @@ import {
 } from '../../../shared/gateway'
 import { isResourceId } from '../../../shared/resource-id'
 import type { RunnerResponse, RunnerTools } from '../../../shared/runner'
+import { CLIENT_LIMITS } from '../../shared/constants'
 import type { BackendConnection } from '../shared/backend-port'
 
 interface GatewayOptions {
@@ -126,7 +127,7 @@ export function createDesktopGateway(options: GatewayOptions) {
         receipts.delete(callId)
         completed.add(callId)
 
-        if (completed.size > 500) {
+        if (completed.size > CLIENT_LIMITS.maxCompletedGatewayCalls) {
           completed.delete(completed.values().next().value!)
         }
       }
@@ -140,7 +141,7 @@ export function createDesktopGateway(options: GatewayOptions) {
             setTimeout(() => {
               receiptTimers.delete(callId)
               void deliver(callId, epoch)
-            }, 5000)
+            }, CLIENT_LIMITS.gatewayRetryDelayMs)
           )
         }
       }
@@ -189,7 +190,7 @@ export function createDesktopGateway(options: GatewayOptions) {
         const timer = setTimeout(() => {
           recoveryTimers.delete(callId)
           void recoverCall(callId, epoch)
-        }, 5000)
+        }, CLIENT_LIMITS.gatewayRetryDelayMs)
 
         recoveryTimers.set(callId, timer)
 
@@ -218,7 +219,7 @@ export function createDesktopGateway(options: GatewayOptions) {
             setTimeout(() => {
               recoveryTimers.delete(callId)
               void recoverCall(callId, epoch)
-            }, 5000)
+            }, CLIENT_LIMITS.gatewayRetryDelayMs)
           )
         }
       }

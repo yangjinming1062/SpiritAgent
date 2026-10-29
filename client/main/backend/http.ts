@@ -3,6 +3,7 @@ import type { Net } from 'electron'
 import { errorMessage, sleep } from '@runtime'
 
 import { type ApiArguments, type ApiOperationKey, type ApiResponse } from '../../../shared/api'
+import { CLIENT_LIMITS } from '../../shared/constants'
 
 import { createBackendClient } from './client'
 
@@ -28,7 +29,7 @@ export function createBackendHttp(fetchImpl: typeof globalThis.fetch) {
       {
         body: streamId ? { stream_id: streamId } : undefined
       },
-      { timeoutMs: 5000 }
+      { timeoutMs: CLIENT_LIMITS.backendRequestTimeoutMs }
     )
 
     if (!response.ticket) {
@@ -39,17 +40,23 @@ export function createBackendHttp(fetchImpl: typeof globalThis.fetch) {
   }
 
   async function waitForSpiritAgent(baseUrl: string, token?: string): Promise<void> {
-    const deadline = Date.now() + 45_000
+    const deadline = Date.now() + CLIENT_LIMITS.backendReadyTimeoutMs
     let lastError: unknown = null
 
     while (Date.now() < deadline) {
       try {
-        await invoke(baseUrl, token, 'system.health', {}, { timeoutMs: Math.min(5000, deadline - Date.now()) })
+        await invoke(
+          baseUrl,
+          token,
+          'system.health',
+          {},
+          { timeoutMs: Math.min(CLIENT_LIMITS.backendRequestTimeoutMs, deadline - Date.now()) }
+        )
 
         return
       } catch (error) {
         lastError = error
-        await sleep(Math.min(500, Math.max(0, deadline - Date.now())))
+        await sleep(Math.min(CLIENT_LIMITS.backendReadyRetryDelayMs, Math.max(0, deadline - Date.now())))
       }
     }
 

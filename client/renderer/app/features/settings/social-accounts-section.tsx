@@ -1,6 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 
+import { RENDERER_TIMINGS } from '@/shared/constants'
 import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { failureText, ipcErrorStatus } from '@/shared/lib/ipc-error'
@@ -214,11 +215,11 @@ function SocialAccountCard({
       }
 
       if (!stopped && isLive()) {
-        timer = window.setTimeout(() => void poll(), 2000)
+        timer = window.setTimeout(() => void poll(), RENDERER_TIMINGS.accountPollDelayMs)
       }
     }
 
-    timer = window.setTimeout(() => void poll(), 2000)
+    timer = window.setTimeout(() => void poll(), RENDERER_TIMINGS.accountPollDelayMs)
 
     return () => {
       stopped = true

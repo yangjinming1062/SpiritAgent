@@ -1,5 +1,6 @@
 import { atom, computed } from 'nanostores'
 
+import { RENDERER_LIMITS } from '@/shared/constants'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
@@ -209,7 +210,9 @@ export async function fetchArchived(append = false): Promise<void> {
   $archivedLoading.set(true)
 
   try {
-    const res = await requestResource('sessions.list_sessions', { query: { archived: 'only', limit: 100, cursor } })
+    const res = await requestResource('sessions.list_sessions', {
+      query: { archived: 'only', limit: RENDERER_LIMITS.sessionPageSize, cursor }
+    })
 
     if (isCurrent()) {
       const incomingIds = new Set(res.sessions.map(session => session.id))

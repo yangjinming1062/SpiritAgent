@@ -11,6 +11,7 @@ import {
   updateSceneMutationIssue
 } from '@/modules/scene'
 import { visualsApi } from '@/modules/visuals'
+import { RENDERER_LIMITS } from '@/shared/constants'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import type { DayPhase } from '@/shared/lib/day-phase'
@@ -674,7 +675,7 @@ export function SceneDetailView({
                 <textarea
                   className={INPUT_CLASS}
                   disabled={actionBusy || !canChangeInfo}
-                  maxLength={2000}
+                  maxLength={RENDERER_LIMITS.sceneDescriptionMaxChars}
                   onChange={event => onChangeDraft({ description: event.target.value })}
                   rows={7}
                   value={draft.description}

@@ -8,6 +8,7 @@ import {
 } from '@/modules/character'
 import { cancelVoiceBar, stopSpeaking } from '@/modules/speech'
 import { refreshVisuals } from '@/modules/visuals'
+import { RENDERER_TIMINGS } from '@/shared/constants'
 import { fetchSlashCommandMeta } from '@/shared/lib/slash-commands'
 import type { DesktopGatewayState } from '@ipc/contracts'
 
@@ -57,7 +58,9 @@ export function startPresentationGateway(authSessionId: string): () => void {
           setSpriteState('disconnected')
           emitVfx('sleep_zzz', { nx: 0.5, ny: 0.05 })
         },
-        document.visibilityState === 'visible' ? 3000 : 30000
+        document.visibilityState === 'visible'
+          ? RENDERER_TIMINGS.desktopDisconnectedGraceVisibleMs
+          : RENDERER_TIMINGS.desktopDisconnectedGraceHiddenMs
       )
     }
   })

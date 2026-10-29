@@ -1,5 +1,12 @@
 import { powerMonitor, screen } from 'electron'
 
+import { CLIENT_LIMITS } from '../../shared/constants'
+
+const DISPLAY_METRICS = new Set(['bounds', 'rotation', 'scaleFactor'])
+
+const RELEVANT_DISPLAY_METRICS =
+  process.platform === 'darwin' ? new Set([...DISPLAY_METRICS, 'workArea']) : DISPLAY_METRICS
+
 interface DesktopHealthOptions {
   onDisplaysChanged: () => void
   onLock: () => void
@@ -17,11 +24,7 @@ export function createDesktopHealth(options: DesktopHealthOptions) {
   let displayTimer: ReturnType<typeof setTimeout> | undefined
 
   const onMetrics = (_event: Electron.Event, _display: Electron.Display, metrics: string[]): void => {
-    if (
-      metrics.some(metric =>
-        ['bounds', 'scaleFactor', 'rotation', ...(process.platform === 'darwin' ? ['workArea'] : [])].includes(metric)
-      )
-    ) {
+    if (metrics.some(metric => RELEVANT_DISPLAY_METRICS.has(metric))) {
       options.onDisplaysChanged()
     }
   }
@@ -49,12 +52,12 @@ export function createDesktopHealth(options: DesktopHealthOptions) {
     clearInterval(healthTimer)
     heartbeat()
     healthTimer = setInterval(() => {
-      if (Date.now() - lastHeartbeat > 10000) {
+      if (Date.now() - lastHeartbeat > CLIENT_LIMITS.desktopHeartbeatTimeoutMs) {
         clearInterval(healthTimer)
         healthTimer = undefined
         options.onHeartbeatLost()
       }
-    }, 2000)
+    }, CLIENT_LIMITS.desktopHeartbeatCheckMs)
   }
 
   function deferDisplayChange(refresh: () => void): void {
@@ -62,7 +65,7 @@ export function createDesktopHealth(options: DesktopHealthOptions) {
     displayTimer = setTimeout(() => {
       displayTimer = undefined
       refresh()
-    }, 100)
+    }, CLIENT_LIMITS.desktopDisplayChangeDebounceMs)
   }
 
   function stopMode(): void {

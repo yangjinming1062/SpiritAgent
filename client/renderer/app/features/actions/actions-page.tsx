@@ -18,6 +18,7 @@ import {
   updateAction,
   visualsApi
 } from '@/modules/visuals'
+import { RENDERER_TIMINGS } from '@/shared/constants'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import {
@@ -354,7 +355,7 @@ function ActionsPageContent(): React.JSX.Element {
       return
     }
 
-    const timer = setTimeout(() => void refreshActions(query, false, group), 200)
+    const timer = setTimeout(() => void refreshActions(query, false, group), RENDERER_TIMINGS.actionSearchDebounceMs)
 
     return () => clearTimeout(timer)
   }, [auth, group, query])
@@ -372,7 +373,7 @@ function ActionsPageContent(): React.JSX.Element {
       if (document.visibilityState === 'visible') {
         void refreshActionGroups()
       }
-    }, 5000)
+    }, RENDERER_TIMINGS.actionReviewPollMs)
 
     return () => clearInterval(timer)
   }, [hasPendingReview])

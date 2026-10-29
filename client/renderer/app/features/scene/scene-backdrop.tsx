@@ -10,6 +10,7 @@ import {
 } from '@/app/workflows/visual-presentation'
 import { $motionLevel, isCharacterMediaVisible, observeCharacterStageVisibility } from '@/modules/character'
 import { $stagePlan, type StageScenePlan } from '@/modules/visuals'
+import { RENDERER_TIMINGS } from '@/shared/constants'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { $dayPhase, ambientPhaseFilter } from '@/shared/lib/day-phase'
 import { log } from '@/shared/lib/log'
@@ -110,7 +111,7 @@ export function SceneBackdrop(): React.JSX.Element {
     const candidate = new Image()
     const request = backendApi().apiAsset({ url: path, preferCache: true })
     void new Promise<string>((resolve, reject) => {
-      timeout = setTimeout(() => reject(new Error('Scene image timed out')), 15000)
+      timeout = setTimeout(() => reject(new Error('Scene image timed out')), RENDERER_TIMINGS.sceneImageTimeoutMs)
       void request
         .then(async url => {
           if (!url) {

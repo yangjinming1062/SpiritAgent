@@ -29,6 +29,7 @@ import {
   type VisualsPresentation
 } from '@/modules/visuals'
 import { $stagePlan, deriveStagePlan } from '@/modules/visuals'
+import { RENDERER_TIMINGS } from '@/shared/constants'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
@@ -75,7 +76,7 @@ function waitForStage(path: string, scenePath: string, current: () => boolean): 
     const timeout = window.setTimeout(() => {
       stop()
       reject(new Error('Static outfit did not reach the visible stage'))
-    }, 15000)
+    }, RENDERER_TIMINGS.visualStageWaitTimeoutMs)
 
     const check = (): void => {
       if (!subscribed) {
@@ -130,7 +131,7 @@ function waitForActorVideo(
         stop()
         reject(new Error('Actor video playback timed out'))
       },
-      status === 'started' ? 15000 : 330000
+      status === 'started' ? RENDERER_TIMINGS.visualActorStartTimeoutMs : RENDERER_TIMINGS.visualActorFinishTimeoutMs
     )
 
     const wanted = `${pending.visual_id}:${pending.visual_version}:${pending.play_id}`

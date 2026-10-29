@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 
 import { usePresentationModeSwitch } from '@/app/components/presentation-mode-switch'
 import { $userPreferredTier, selectDisturbanceTier } from '@/modules/character'
+import { RENDERER_TIMINGS } from '@/shared/constants'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { Monitor, SlidersHorizontal, Video, Wifi, WifiOff, X } from '@/shared/lib/icons'
@@ -68,7 +69,7 @@ export function DesktopControls({
   useInteractiveRegion('desktop-control-gap', gapRef)
 
   useEffect(() => {
-    const timer = window.setInterval(() => setClock(new Date()), 30000)
+    const timer = window.setInterval(() => setClock(new Date()), RENDERER_TIMINGS.desktopClockRefreshMs)
 
     return () => window.clearInterval(timer)
   }, [])
