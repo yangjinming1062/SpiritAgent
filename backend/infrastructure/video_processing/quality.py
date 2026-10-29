@@ -3,6 +3,7 @@
 import numpy as np
 from PIL import Image
 
+from infrastructure.logger import get_logger
 from infrastructure.video_processing.ffmpeg import (
     ActionMaterialRejectedError,
 )
@@ -11,10 +12,11 @@ from infrastructure.video_processing.ffmpeg import (
 _MIN_SUBJECT_COVERAGE = 0.025
 _MAX_SUBJECT_COVERAGE = 0.85
 _MAX_BORDER_COVERAGE = 0.04
+logger = get_logger(__name__)
 
 
-def validate_transparent_image(image: Image.Image) -> None:
-    """真实透明角色图：可见前景、足量透明背景及干净边缘。"""
+def validate_transparent_image(image: Image.Image, *, require_clean_edges: bool = True) -> None:
+    """验证真实透明与可见前景；人工确认的全身图允许保留贴边内容。"""
     alpha_channel = image.getchannel("A")
     alpha_min, alpha_max = alpha_channel.getextrema()
     if alpha_min > 8 or alpha_max < 128:
@@ -29,4 +31,7 @@ def validate_transparent_image(image: Image.Image) -> None:
     if not _MIN_SUBJECT_COVERAGE <= coverage <= _MAX_SUBJECT_COVERAGE:
         raise ActionMaterialRejectedError("图片缺少可见角色或背景未去干净")
     if float((border > 0.5).mean()) > _MAX_BORDER_COVERAGE:
-        raise ActionMaterialRejectedError("图片边缘仍有不透明内容，可能是角色贴边或背景残留")
+        reason = "图片边缘仍有不透明内容，可能是角色贴边或背景残留"
+        if require_clean_edges:
+            raise ActionMaterialRejectedError(reason)
+        logger.warning("transparent image quality warning", extra={"reason": reason})

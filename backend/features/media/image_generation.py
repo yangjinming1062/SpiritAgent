@@ -322,6 +322,16 @@ async def generate_images(
         raise ImageGenerationError("生成图片无法保存，请稍后重试", internal=str(exc)) from exc
     logger.info(
         "Generated images",
-        extra={"image_count": len(urls), "prompt_chars": len(prompt), "provider": active_provider, "user_id": user_id},
+        extra={
+            "image_count": len(urls),
+            "prompt_chars": len(prompt),
+            "provider": active_provider,
+            "model": origin.model,
+            "reference_count": sum(
+                bool(ref) for ref in (reference_image, secondary_reference_image, environment_reference_image)
+            ),
+            "image_edit": image_edit,
+            "user_id": user_id,
+        },
     )
     return GeneratedImages(urls=urls, origin=origin)

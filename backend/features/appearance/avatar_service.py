@@ -368,7 +368,7 @@ async def accept_fullbody_candidate(user_id: int, avatar_id: int, candidate_id: 
         if image is None:
             raise AvatarSourceUnreadableError("全身候选图已无法读取，请重新生成")
         try:
-            await asyncio.to_thread(validate_transparent_portrait, image[0])
+            await asyncio.to_thread(validate_transparent_portrait, image[0], require_clean_edges=False)
         except VideoProcessError as exc:
             raise AvatarGenerationError(str(exc), internal=exc.internal or str(exc)) from exc
         async with SESSION_LOCAL() as db:
@@ -486,14 +486,14 @@ async def persist_portrait_or_draft(data: bytes, user_id: int, content_type: str
         raise
 
 
-def validate_transparent_portrait(data: bytes) -> None:
+def validate_transparent_portrait(data: bytes, *, require_clean_edges: bool = True) -> None:
     """验收已准备的透明 PNG，不修改图片。"""
     try:
         with Image.open(io.BytesIO(data)) as image:
             if image.format != "PNG" or getattr(image, "is_animated", False):
                 raise ActionMaterialRejectedError("全身图片须为静态透明 PNG，请重新生成或上传")
             image.load()
-            validate_transparent_image(image.convert("RGBA"))
+            validate_transparent_image(image.convert("RGBA"), require_clean_edges=require_clean_edges)
     except (OSError, ValueError) as exc:
         raise ActionMaterialRejectedError("全身图片无法读取，请重新生成或上传", internal=str(exc)) from exc
 
@@ -538,7 +538,7 @@ async def _generate_portrait(
         raise AvatarGenerationError("生成结果下载失败，请稍后重试", internal=str(exc)) from exc
     if prefer_transparent_background:
         try:
-            data = await asyncio.to_thread(prepare_transparent_image, data)
+            data = await asyncio.to_thread(prepare_transparent_image, data, require_clean_edges=False)
         except VideoProcessError as exc:
             raise AvatarGenerationError(str(exc), internal=exc.internal or str(exc)) from exc
         content_type = "image/png"
@@ -1205,7 +1205,7 @@ async def prepare_initial_fullbody(user_id: int, *, extraction_id: str) -> bool:
     if seed is None:
         raise AvatarSourceUnreadableError("全身形象原图缺失，请重新上传")
     try:
-        prepared = await run_blocking(prepare_transparent_image, seed[0])
+        prepared = await run_blocking(prepare_transparent_image, seed[0], require_clean_edges=False)
     except VideoProcessError as exc:
         raise AvatarGenerationError(str(exc), internal=exc.internal or str(exc)) from exc
     changed = prepared != seed[0]
@@ -1328,7 +1328,7 @@ async def adopt_fullbody_seed(
             url = await persist_portrait_or_draft(data, user_id, content_type, persist=asset.is_fullbody_confirmed)
             return await _install_fullbody_seed(user_id, avatar_id=avatar_id, url=url, prompt=None)
         try:
-            data = await asyncio.to_thread(prepare_transparent_image, data)
+            data = await asyncio.to_thread(prepare_transparent_image, data, require_clean_edges=False)
         except VideoProcessError as exc:
             raise AvatarGenerationError(str(exc), internal=exc.internal or str(exc)) from exc
         url = await persist_portrait_or_draft(data, user_id, "image/png", persist=asset.is_fullbody_confirmed)

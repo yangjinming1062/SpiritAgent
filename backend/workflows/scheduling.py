@@ -25,6 +25,7 @@ from features.companion.intents import (
     has_pending_companion_intent,
     queue_companion_intent,
 )
+from features.companion.persona_service import onboarded_user_ids
 from features.companion.proactive_runtime import (
     can_start_companion_turn,
     get_personality_tags,
@@ -348,13 +349,15 @@ async def _maybe_run_life_scan() -> None:
     async with session_scope() as db:
         active_users = await list_user_ids(db, active_only=True)
         completed = await complete_user_ids(db, active_users)
-        users = await due_review_user_ids(db, completed, now)
+        onboarded = await onboarded_user_ids(db, completed)
+        users = await due_review_user_ids(db, onboarded, now)
         executors = await execution_user_ids(db, now)
         presentation_users = await pending_presentation_users(db)
     for user_id in sorted(users):
         if is_user_in_maintenance(user_id):
             continue
         _spawn_scope_task("life_state", MemoryScope(user_id, COMPANION_PRESET_ID), partial(consider_life, user_id))
+    # 已提交步骤仍需核对；未受理步骤由执行入口复核引导状态。
     for user_id in sorted(executors & set(completed)):
         if not is_user_in_maintenance(user_id):
             _spawn_scope_task(

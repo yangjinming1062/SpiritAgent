@@ -6,9 +6,10 @@ from typing import Any
 
 from features.accounts.queries import nightly_account, user_is_active
 from features.action_library.queries import action_detail, list_actions
+from features.appearance.character_card import CARD_NOT_ANALYZED, load_character_snapshot
 from features.appearance.outfit_jobs import create_outfit_job, run_outfit_job
 from features.appearance.queries import ready_outfit_snapshots
-from features.companion.queries import complete_user_ids
+from features.companion.persona_service import onboarded_user_ids
 from features.companion.visual_state import persona_snapshot
 from features.configuration.settings.values import get_user_setting, load_user_settings
 from features.life.actions import (
@@ -67,15 +68,16 @@ async def execution_context(user_id: int) -> dict[str, Any]:
         actions = (await list_actions(db, user_id, status="approved", limit=50)).actions
         topics = await load_prompt_topics(db, MemoryScope(user_id, "companion"), utc_now())
         persona = await persona_snapshot(db, user_id)
+        character_ready = await load_character_snapshot(db, user_id) is not None
         disabled = disabled_backend_tool_names(await load_user_settings(db, user_id))
     # 只读自主开关，跳过导演目录装配。
     visuals = await presentation_state(user_id, with_catalog=False)
     return {
         "capabilities": {
-            "visual.generate": visuals.autonomous_enabled and bool(outfits and scenes and actions),
+            "visual.generate": character_ready and visuals.autonomous_enabled and bool(outfits and scenes and actions),
             "scene.create": persona is not None and persona.scene_policy != "locked" and "scene_create" not in disabled,
-            "outfit.create": persona is not None and persona.outfit_policy != "locked",
-            "action.design": SETTINGS.action_autocreate_enabled,
+            "outfit.create": character_ready and persona is not None and persona.outfit_policy != "locked",
+            "action.design": character_ready and SETTINGS.action_autocreate_enabled,
             "content.read": "web_extract" not in disabled,
         },
         "outfits": [{"id": str(item.id), "name": item.name, "description": item.description} for item in outfits],
@@ -111,8 +113,13 @@ async def submit_life_action(
 
 async def _block_reason(user_id: int, step: LifeStepView) -> tuple[str, str] | None:
     async with SESSION_LOCAL() as db:
-        if not await user_is_active(db, user_id) or user_id not in await complete_user_ids(db, (user_id,)):
-            return "unavailable", "账户或伙伴资料尚未就绪"
+        if not await user_is_active(db, user_id) or user_id not in await onboarded_user_ids(db, (user_id,)):
+            return "unavailable", "账户未激活或伙伴引导尚未完成"
+        if (
+            step.kind in {"outfit.create", "visual.generate", "action.design"}
+            and await load_character_snapshot(db, user_id) is None
+        ):
+            return "unavailable", CARD_NOT_ANALYZED
         persona = await persona_snapshot(db, user_id)
         disabled = disabled_backend_tool_names(await load_user_settings(db, user_id))
         if step.source == "nightly":

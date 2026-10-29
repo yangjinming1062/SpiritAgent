@@ -14,7 +14,7 @@ _MAX_IMAGE_PIXELS = 3840 * 2160
 logger = get_logger(__name__)
 
 
-def prepare_transparent_image(data: bytes) -> bytes:
+def prepare_transparent_image(data: bytes, *, require_clean_edges: bool = True) -> bytes:
     """保留有效原生 alpha，其余按语义抠图；原尺寸、位置与构图保存为透明 PNG。"""
     if not data or len(data) > REMOTE_ASSET_DOWNLOAD_MAX_BYTES:
         raise ActionMaterialRejectedError("图片文件为空或超过处理上限")
@@ -31,7 +31,7 @@ def prepare_transparent_image(data: bytes) -> bytes:
         raise ActionMaterialRejectedError("图片缺少可见角色")
     method = "native_alpha"
     try:
-        validate_transparent_image(image)
+        validate_transparent_image(image, require_clean_edges=require_clean_edges)
     except ActionMaterialRejectedError:
         model = require_matting_model()
         try:
@@ -40,7 +40,7 @@ def prepare_transparent_image(data: bytes) -> bytes:
             raise
         except Exception as exc:
             raise VideoProcessError("图片背景处理失败，请稍后重试", internal=str(exc)) from exc
-        validate_transparent_image(image)
+        validate_transparent_image(image, require_clean_edges=require_clean_edges)
         method = "isnet"
     output = BytesIO()
     try:

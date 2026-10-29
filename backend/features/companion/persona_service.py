@@ -1,11 +1,11 @@
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from typing import Any
 
 from infrastructure.constants import DEFAULT_LANGUAGE
 from infrastructure.text import resolve_language, resolve_prompt_text
 from runtime.events.emit import emit_ws_event
 from runtime.memory_scope import MemoryScope
-from sqlalchemy import func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.companion.appearance_ports import read_appearance_readiness
@@ -221,6 +221,16 @@ async def _next_onboarding_step(db: AsyncSession, user_id: int, persona: Persona
     if not draft.get("voice") and draft.get("voice_setup_skipped") != "true":
         return "voice"
     return None
+
+
+async def onboarded_user_ids(db: AsyncSession, user_ids: Collection[int]) -> set[int]:
+    """只读筛选已完成必需引导的账户，与引导恢复使用同一完成条件。"""
+    personas = await db.scalars(select(Persona).where(Persona.user_id.in_(user_ids), Persona.is_complete.is_(True)))
+    return {
+        persona.user_id
+        for persona in personas
+        if await _next_onboarding_step(db, persona.user_id, persona, load_persona_definition(persona)) is None
+    }
 
 
 async def get_onboarding_state(db: AsyncSession, user_id: int) -> OnboardingStateResponse:

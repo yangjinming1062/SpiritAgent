@@ -4,8 +4,8 @@ import asyncio
 from datetime import timedelta
 
 from features.accounts.queries import lock_active_user_ids, user_is_active
+from features.companion.persona_service import onboarded_user_ids
 from features.companion.prompt_runtime import load_companion_prompt_context
-from features.companion.queries import complete_user_ids
 from features.life.prompts import LIFE_FACT_GUIDANCE
 from features.life.queries import due_review_user_ids, pursuit_evidence
 from features.life.schemas import LifeDecisionFields, LifeDecisionRequest, LifeStateView
@@ -56,10 +56,10 @@ async def adjust_life(user_id: int, decision: LifeDecisionRequest) -> LifeStateV
         if not acquired:
             raise LifeInputError("账户正在维护")
         async with SESSION_LOCAL() as db:
-            if user_id not in await lock_active_user_ids(db, (user_id,)) or user_id not in await complete_user_ids(
+            if user_id not in await lock_active_user_ids(db, (user_id,)) or user_id not in await onboarded_user_ids(
                 db, (user_id,)
             ):
-                raise LifeInputError("账户或伙伴资料尚未就绪")
+                raise LifeInputError("账户未激活或伙伴引导尚未完成")
             result = await commit_decision_in_session(db, user_id, decision)
             await db.commit()
             return result
@@ -80,7 +80,7 @@ async def consider_life(user_id: int, *, force: bool = False) -> dict[str, objec
 
 async def _consider_life(user_id: int, *, force: bool) -> dict[str, object]:
     async with SESSION_LOCAL() as db:
-        if not await user_is_active(db, user_id) or user_id not in await complete_user_ids(db, (user_id,)):
+        if not await user_is_active(db, user_id) or user_id not in await onboarded_user_ids(db, (user_id,)):
             return {"status": "not_ready"}
         if not force and user_id not in await due_review_user_ids(db, (user_id,), utc_now()):
             return {"status": "waiting"}
@@ -129,7 +129,7 @@ async def _consider_life(user_id: int, *, force: bool) -> dict[str, object]:
         if (
             is_user_in_maintenance(user_id)
             or user_id not in await lock_active_user_ids(db, (user_id,))
-            or user_id not in await complete_user_ids(db, (user_id,))
+            or user_id not in await onboarded_user_ids(db, (user_id,))
         ):
             return {"status": "not_ready"}
         try:
