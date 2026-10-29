@@ -12,6 +12,8 @@ from runtime.tools.registry import ToolsRegistry
 from workflows.companion_action_prompts import ACTION_DESIGN_MOTION_DESCRIPTION
 from workflows.visuals_companion import design_action_reference
 
+_MAX_SEARCH_RESULTS = 20
+
 ACTION_SEARCH_TOOL_DESCRIPTION = (
     "检索已经入库、可以用于制作的动作。返回名称、动作内容、适用条件、持续或短动作类型与时长；"
     "入库不代表已有图片或视频，制作使用 visual_generate，查询已有成品使用 visual_search。"
@@ -63,7 +65,7 @@ async def action_search_tool(
             db,
             user_id,
             query=query,
-            limit=max(1, min(limit, 20)),
+            limit=max(1, min(limit, _MAX_SEARCH_RESULTS)),
             cursor=cursor,
         )
     return json.dumps(
@@ -76,11 +78,7 @@ async def action_search_tool(
     )
 
 
-async def action_inspect_tool(
-    user_id: ResourceId,
-    action_id: ResourceId,
-    **_: Any,
-) -> str:
+async def action_inspect_tool(user_id: ResourceId, action_id: ResourceId, **_: Any) -> str:
     async with SESSION_LOCAL() as db:
         item = await action_queries.action_detail(db, user_id, action_id)
     if item is None:
@@ -174,7 +172,7 @@ def register(registry: ToolsRegistry) -> None:
                         "type": "string",
                         "description": "按名称或动作内容匹配完整关键词；留空不筛选。返回数量仍受 limit 限制。",
                     },
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": _MAX_SEARCH_RESULTS, "default": 10},
                 },
                 "required": [],
                 "additionalProperties": False,

@@ -145,11 +145,7 @@ async def read_events(
         )
 
 
-async def commit_decision_in_session(
-    db: AsyncSession,
-    user_id: int,
-    decision: LifeDecisionRequest,
-) -> LifeStateView:
+async def commit_decision_in_session(db: AsyncSession, user_id: int, decision: LifeDecisionRequest) -> LifeStateView:
     row = await get_or_create_state(db, user_id, lock=True)
     request_payload = decision.model_dump(mode="json", exclude={"expected_revision", "request_id", "next_review_at"})
     if decision.request_id:
@@ -252,11 +248,7 @@ async def commit_decision_in_session(
     return state_view(row)
 
 
-async def accept_event_in_session(
-    db: AsyncSession,
-    user_id: int,
-    event: LifeEventInput,
-) -> LifeEventView:
+async def accept_event_in_session(db: AsyncSession, user_id: int, event: LifeEventInput) -> LifeEventView:
     """在调用方事务内接纳事件；只返回公开 DTO。"""
     view = event_view(await record_event(db, user_id, event))
     emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"event_key": view.event_key})

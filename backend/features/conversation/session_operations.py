@@ -95,9 +95,7 @@ async def _settle_fork_cleanup(db: AsyncSession, conv_id: int) -> None:
         raise asyncio.CancelledError
 
 
-async def history_snapshot(
-    conversation_id: int,
-) -> tuple[list[dict[str, Any]], bool, str | None, int]:
+async def history_snapshot(conversation_id: int) -> tuple[list[dict[str, Any]], bool, str | None, int]:
     async with SESSION_LOCAL() as db:
         messages, truncated, next_cursor = await _fetch_truncated_history(conversation_id, db)
         return messages, truncated, next_cursor, await count_conversation_bubbles(db, conversation_id)

@@ -74,11 +74,7 @@ def chat_operations(actor: BusinessActor) -> ChatOperations:
         conv = await _require_owned_conv(user_id, params["session_id"])
         return _mount_runtime(conv)
 
-    async def _mounted_history(
-        conv: ConversationSnapshot,
-        *,
-        stream_id: str | None = None,
-    ) -> dict[str, Any]:
+    async def _mounted_history(conv: ConversationSnapshot, *, stream_id: str | None = None) -> dict[str, Any]:
         """在发布锁内先固定事件水位，再读取历史与在途状态。"""
         runtime = _mount_runtime(conv)
         async with runtime.snapshot_lock:

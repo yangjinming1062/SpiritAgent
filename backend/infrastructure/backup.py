@@ -328,12 +328,7 @@ class BackupTable:
         await db.flush()
         return new_map, len(pending)
 
-    async def has_rows(
-        self,
-        db: AsyncSession,
-        user_id: int,
-        reference_column: str,
-    ) -> bool:
+    async def has_rows(self, db: AsyncSession, user_id: int, reference_column: str) -> bool:
         query = self._query(user_id).with_only_columns(self.identity_column, maintain_column_froms=True)
         query = query.where(self._model.__table__.c[reference_column].is_not(None))
         return await db.scalar(query.limit(1)) is not None

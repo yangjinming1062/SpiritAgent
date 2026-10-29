@@ -76,15 +76,7 @@ class TaskLog:
 
 
 class TaskRecord:
-    def __init__(
-        self,
-        *,
-        task_id: str,
-        request_id: str,
-        kind: TaskKind,
-        target_commit: str,
-        log: TaskLog,
-    ) -> None:
+    def __init__(self, *, task_id: str, request_id: str, kind: TaskKind, target_commit: str, log: TaskLog) -> None:
         self.task_id = task_id
         self.request_id = request_id
         self.kind = kind

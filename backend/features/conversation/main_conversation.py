@@ -32,12 +32,7 @@ async def get_main_conversation(db: AsyncSession, user_id: int) -> Conversation 
     ).scalar_one_or_none()
 
 
-async def get_or_create_main_conversation(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    commit: bool = True,
-) -> Conversation:
+async def get_or_create_main_conversation(db: AsyncSession, user_id: int, *, commit: bool = True) -> Conversation:
     """获取或创建陪伴主会话；唯一索引与保存点处理竞态，commit=False 由调用方提交。"""
     conv = await get_main_conversation(db, user_id)
     if conv is not None:

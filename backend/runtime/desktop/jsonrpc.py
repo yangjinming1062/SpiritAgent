@@ -22,8 +22,6 @@ from runtime.desktop.buffer import BufferedFrame, ReplayBuffer
 logger = get_logger(__name__)
 
 OUTBOX_QUEUE_MAX = 1024
-
-
 _EVENT_SERIALIZER: Callable[[str, Any], dict[str, JsonValue]] | None = None
 
 
@@ -33,13 +31,7 @@ def configure_event_serializer(serializer: Callable[[str, Any], dict[str, JsonVa
 
 
 class JsonRpcError(Exception):
-    def __init__(
-        self,
-        code: int,
-        message: str,
-        *,
-        details: JsonValue = None,
-    ) -> None:
+    def __init__(self, code: int, message: str, *, details: JsonValue = None) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
@@ -347,14 +339,7 @@ class JsonRpcDispatcher:
         async with self._send_lock:
             await self._send({"jsonrpc": JSON_RPC_VERSION, "id": msg_id, "result": result})
 
-    async def _reply_error(
-        self,
-        msg_id: Any,
-        code: int,
-        message: str,
-        *,
-        details: JsonValue = None,
-    ) -> None:
+    async def _reply_error(self, msg_id: Any, code: int, message: str, *, details: JsonValue = None) -> None:
         public = api_error(
             400 if code != JSONRPC_INTERNAL_ERROR else 500,
             message,

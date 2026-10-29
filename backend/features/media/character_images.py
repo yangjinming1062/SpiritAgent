@@ -381,10 +381,7 @@ async def _save_progress(state: ImageChainState, writer: ImageProgressWriter | N
         await writer(state)
 
 
-async def _complete_images(
-    state: ImageChainState,
-    writer: ImageProgressWriter | None,
-) -> list[str]:
+async def _complete_images(state: ImageChainState, writer: ImageProgressWriter | None) -> list[str]:
     if state.inputs is None:
         raise ImageGenerationError("图片任务缺少生成输入")
     selected = [candidate.path for slot in range(state.inputs.n) if (candidate := state.best(slot)) is not None]

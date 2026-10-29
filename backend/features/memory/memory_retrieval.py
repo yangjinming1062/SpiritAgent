@@ -120,13 +120,7 @@ async def _dense_search(
     )
 
 
-async def _sparse_search(
-    db: AsyncSession,
-    scope: MemoryScope,
-    keywords: list[str],
-    *,
-    limit: int,
-) -> list[Memory]:
+async def _sparse_search(db: AsyncSession, scope: MemoryScope, keywords: list[str], *, limit: int) -> list[Memory]:
     """稀疏关键词检索：跨 content/context 的 ILIKE OR 拉取候选（受益于 ``ix_memories_content_trgm`` / ``ix_memories_context_trgm`` GIN trigram 索引），在数据库端按关键词命中分与 updated_at 排序后截断。"""
     if not keywords:
         return []

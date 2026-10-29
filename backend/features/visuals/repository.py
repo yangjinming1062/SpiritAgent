@@ -103,11 +103,7 @@ def visual_playable(item: VisualItem | PresentedVisual) -> bool:
     return resolve_asset_reference(item.media_path) is not None
 
 
-def presented_item(
-    state: VisualPresentation,
-    *,
-    loop: bool = False,
-) -> PresentedVisual | None:
+def presented_item(state: VisualPresentation, *, loop: bool = False) -> PresentedVisual | None:
     saved = state.loop_snapshot_json if loop else state.current_snapshot_json
     if not saved:
         return None

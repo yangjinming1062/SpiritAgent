@@ -15,6 +15,7 @@ from features.accounts.remote.models import RemotePairing, RemoteSession
 
 PAIRING_TTL_SECONDS = 5 * 60
 REMOTE_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
+REMOTE_TOKEN_BYTES = 32
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,7 +35,7 @@ def hash_remote_token(token: str) -> str:
 
 
 def new_remote_token() -> str:
-    return secrets.token_urlsafe(32)
+    return secrets.token_urlsafe(REMOTE_TOKEN_BYTES)
 
 
 def remote_csrf_token(token: str) -> str:

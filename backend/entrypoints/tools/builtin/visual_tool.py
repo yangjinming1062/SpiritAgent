@@ -11,13 +11,15 @@ from infrastructure.database import SESSION_LOCAL
 from runtime.tools.registry import ToolsRegistry
 from workflows.visuals_companion import generate_visual_reference, play_visual_reference
 
+_MAX_RESULTS = 20
+
 VISUAL_SEARCH_TOOL_DESCRIPTION = (
     "检索已生成的图片或视频，按名称或画面描述筛选。返回 visual_id、媒体类型、画面说明及所用穿着、环境和活动信息；"
     "尚未完成的制作进度通过 visual_inspect 查询。"
 )
 VISUAL_INSPECT_TOOL_DESCRIPTION = (
     "查看已生成图片或视频的详情，或查询制作进度。传 visual_id 返回画面内容、所用穿着、环境与活动、尺寸、时长及相关制作记录；"
-    "不传 visual_id 时返回最近 20 次制作，可用 job_id 从中选择一次。"
+    f"不传 visual_id 时返回最近 {_MAX_RESULTS} 次制作，可用 job_id 从中选择一次。"
 )
 VISUAL_GENERATE_TOOL_DESCRIPTION = (
     "提交一次制作：指定一套造型、一个环境和一段动作，由你决定具体组合并生成图片或视频。"
@@ -39,7 +41,7 @@ async def visual_search_tool(
 ) -> str:
     if media_kind not in (None, "image", "video"):
         return json.dumps({"error": "媒体类型须为 image 或 video"}, ensure_ascii=False)
-    result = await list_visuals(user_id, query=query, media_kind=media_kind, limit=max(1, min(limit, 20)))
+    result = await list_visuals(user_id, query=query, media_kind=media_kind, limit=max(1, min(limit, _MAX_RESULTS)))
     return result.model_dump_json()
 
 
@@ -69,7 +71,7 @@ async def visual_inspect_tool(
         except VisualNotFoundError as exc:
             return json.dumps({"error": str(exc)}, ensure_ascii=False)
         return detail.model_dump_json()
-    result = await list_jobs(user_id, limit=20)
+    result = await list_jobs(user_id, limit=_MAX_RESULTS)
     matched = [job.model_dump(mode="json") for job in result.jobs if job_id is None or job.id == job_id]
     if job_id is not None and not matched:
         return json.dumps({"error": "未找到这次制作"}, ensure_ascii=False)
@@ -143,7 +145,7 @@ def register(registry: ToolsRegistry) -> None:
                     "enum": ["image", "video"],
                     "description": "只看图片或视频；省略返回全部。",
                 },
-                "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
+                "limit": {"type": "integer", "minimum": 1, "maximum": _MAX_RESULTS, "default": 10},
             },
             [],
         ),
@@ -159,7 +161,7 @@ def register(registry: ToolsRegistry) -> None:
                 "job_id": {
                     "type": "string",
                     "pattern": "^[1-9][0-9]*$",
-                    "description": "某次制作的 id；不传 visual_id 时从最近 20 次制作中选择它。",
+                    "description": f"某次制作的 id；不传 visual_id 时从最近 {_MAX_RESULTS} 次制作中选择它。",
                 },
             },
             [],

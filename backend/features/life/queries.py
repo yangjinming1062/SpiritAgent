@@ -191,11 +191,7 @@ async def due_review_user_ids(db: AsyncSession, user_ids: Collection[int], now: 
     return set(user_ids) - waiting
 
 
-async def pursuit_evidence(
-    db: AsyncSession,
-    user_id: int,
-    pursuit_ids: Collection[int],
-) -> LifePursuitEvidence:
+async def pursuit_evidence(db: AsyncSession, user_id: int, pursuit_ids: Collection[int]) -> LifePursuitEvidence:
     """按事项补充未解决步骤与可引用的结果依据。"""
     if not pursuit_ids:
         return LifePursuitEvidence()

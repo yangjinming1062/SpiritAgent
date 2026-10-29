@@ -198,10 +198,7 @@ def build_provider[P: BaseProvider](config: ProviderConfig, provider_type: type[
     return provider
 
 
-async def resolve_embedding_provider(
-    db: AsyncSession,
-    user_id: int,
-) -> EmbeddingProvider | None:
+async def resolve_embedding_provider(db: AsyncSession, user_id: int) -> EmbeddingProvider | None:
     """记忆向量任务的 embedding 供应商；未配置或解析失败时返回 None，降级为关键词召回。"""
     try:
         chain = await resolve_provider_chain(db, user_id, ServiceType.embedding, task=AiTaskKey.memory_embedding)

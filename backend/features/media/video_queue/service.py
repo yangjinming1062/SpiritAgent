@@ -297,11 +297,7 @@ async def pause_video_attempt(request_id: str) -> None:
         await db.commit()
 
 
-async def cancel_owner_video_attempts(
-    kind: VideoQueueKind,
-    job_id: int,
-    generation_id: str | None = None,
-) -> None:
+async def cancel_owner_video_attempts(kind: VideoQueueKind, job_id: int, generation_id: str | None = None) -> None:
     async with SESSION_LOCAL() as db:
         query = select(ProviderAttempt.token).where(
             ProviderAttempt.owner_kind == kind,

@@ -35,6 +35,7 @@ _BLOCKED_CLOUD_META = frozenset(
         ipaddress.ip_address("fd00:ec2::254"),  # AWS IPv6
     },
 )
+_MAX_REDIRECTS = 5
 
 
 def _ip_in_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
@@ -386,9 +387,6 @@ def trusted_service_async_client(base_url: str, **kwargs: Any) -> httpx.AsyncCli
     origin = (parsed.scheme, parsed.host, parsed.port or (443 if parsed.scheme == "https" else 80))
     transport = _ProxyRoutingAsyncTransport(trust_env=kwargs.get("trust_env", True), trusted_origin=origin)
     return httpx.AsyncClient(base_url=base_url, transport=transport, follow_redirects=False, **kwargs)
-
-
-_MAX_REDIRECTS = 5
 
 
 def ai_http_timeout() -> httpx.Timeout:

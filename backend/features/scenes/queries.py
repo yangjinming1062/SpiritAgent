@@ -215,17 +215,12 @@ def response_for_scene(row: CompanionScene | SceneSnapshot) -> SceneResponse:
 
 def scene_environment(state: SceneState) -> dict[str, Any]:
     """纯素材列表：policy 与素材状态，不表示当前所在环境。"""
-    materials = list(
-        {
-            row.id: row
-            for row in [*state.ready, *(row for row in (state.pending, state.regenerating) if row is not None)]
-        }.values()
-    )
+    materials = {row.id: row for row in (*state.ready, state.pending, state.regenerating) if row is not None}
     return {
         "policy": state.policy.value,
         "materials": [
             {"id": row.id, "title": row.title, "description": row.description, "status": row.status}
-            for row in materials
+            for row in materials.values()
         ],
         "generation_pending": state.pending is not None or state.regenerating is not None,
     }

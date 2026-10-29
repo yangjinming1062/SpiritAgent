@@ -48,6 +48,10 @@ from workflows.chat.types import TrackTask
 
 logger = get_logger(__name__)
 
+# track_task=None 路径的兜底：模块级强引用集合，防止 CPython GC 在 await 期间销毁进行中的 task。
+_BG = TaskBag("chat.persistence")
+_PERSISTENCE_WRITE_TIMEOUT_SECONDS = 30.0
+
 
 def _turn_data(result: _LLMTurnResult) -> AssistantTurnData:
     return AssistantTurnData(
@@ -60,11 +64,6 @@ def _turn_data(result: _LLMTurnResult) -> AssistantTurnData:
         result.reply,
         result.generation_origin,
     )
-
-
-# track_task=None 路径的兜底：模块级强引用集合，防止 CPython GC 在 await 期间销毁进行中的 task。
-_BG = TaskBag("chat.persistence")
-_PERSISTENCE_WRITE_TIMEOUT_SECONDS = 30.0
 
 
 def _start_persistence_write(coro: Coroutine[Any, Any, None], name: str) -> asyncio.Task[None]:

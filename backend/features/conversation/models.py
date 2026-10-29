@@ -104,12 +104,7 @@ class Conversation(ModelBase, TimestampMixin):
     messages: Mapped[list["Message"]] = relationship(back_populates="conversation", passive_deletes=True)
 
     @classmethod
-    async def by_session_id(
-        cls,
-        db: AsyncSession,
-        session_id: str,
-        user_id: int,
-    ) -> "Conversation | None":
+    async def by_session_id(cls, db: AsyncSession, session_id: str, user_id: int) -> "Conversation | None":
         """session_id 为 Conversation.id 的 str 形式；非法、缺失或不属于该 user_id 时返 None。"""
         conv_id = parse_session_id(session_id)
         if conv_id is None:

@@ -53,12 +53,7 @@ async def turn_conversation(db: AsyncSession, session_id: str, user_id: int) -> 
     return conversation_snapshot(row) if row is not None else None
 
 
-async def ensure_main_conversation(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    commit: bool = True,
-) -> ConversationSnapshot:
+async def ensure_main_conversation(db: AsyncSession, user_id: int, *, commit: bool = True) -> ConversationSnapshot:
     row = await get_or_create_main_conversation(db, user_id, commit=commit)
     return conversation_snapshot(row)
 

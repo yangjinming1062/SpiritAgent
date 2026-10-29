@@ -427,10 +427,11 @@ class LocalImageGenProvider(ImageGenProvider):
         if not 1 <= count <= 4:
             raise ProviderError("local image_gen accepts between 1 and 4 images per request", status_code=400)
 
-        image_names: list[str] = []
-        for ref in (req.reference_image, req.secondary_reference_image, req.environment_reference_image):
-            if ref:
-                image_names.append(await self._upload_image(ref))
+        image_names = [
+            await self._upload_image(ref)
+            for ref in (req.reference_image, req.secondary_reference_image, req.environment_reference_image)
+            if ref
+        ]
         width, height = _resolve_wh(req)
 
         assets: list[ImageAsset] = []

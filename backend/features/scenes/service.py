@@ -261,11 +261,7 @@ async def schedule_scene_generation(
     return row
 
 
-async def schedule_scene_prompt(
-    user_id: int,
-    *,
-    notes: str | None = None,
-) -> CompanionScene:
+async def schedule_scene_prompt(user_id: int, *, notes: str | None = None) -> CompanionScene:
     return await _new_scene(
         user_id,
         origin=SceneOrigin.USER_REQUEST.value,

@@ -673,11 +673,7 @@ async def post_outfit_regenerate(
     response_model=OutfitResponse,
     openapi_extra=operation_policy(identities=("desktop", "remote"), wait_for_model=True),
 )
-async def post_outfit_confirm(
-    outfit_id: ResourceId,
-    user: CurrentUser,
-    db: DbSession,
-) -> OutfitResponse:
+async def post_outfit_confirm(outfit_id: ResourceId, user: CurrentUser, db: DbSession) -> OutfitResponse:
     """确认入柜，将静态造型发布为持久参考图。"""
     try:
         outfit = await confirm_outfit_view(db, user.id, outfit_id)
@@ -704,11 +700,7 @@ async def post_retry_outfit_description(outfit_id: ResourceId, user: CurrentUser
     response_model=CompanionOperationResponse,
     openapi_extra=operation_policy(identities=("desktop", "remote")),
 )
-async def delete_outfit_route(
-    outfit_id: ResourceId,
-    user: CurrentUser,
-    db: DbSession,
-) -> CompanionOperationResponse:
+async def delete_outfit_route(outfit_id: ResourceId, user: CurrentUser, db: DbSession) -> CompanionOperationResponse:
     try:
         await delete_outfit(db, user.id, outfit_id)
     except OutfitError as exc:

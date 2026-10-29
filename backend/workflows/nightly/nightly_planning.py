@@ -352,13 +352,7 @@ def _policy_block(capability: str, policies: PlanningPolicies) -> str | None:
     return None
 
 
-async def _provider_available(
-    db: AsyncSession,
-    user_id: int,
-    service_type: str,
-    *,
-    task: AiTaskKey,
-) -> bool:
+async def _provider_available(db: AsyncSession, user_id: int, service_type: str, *, task: AiTaskKey) -> bool:
     try:
         return bool(await resolve_provider_chain(db, user_id, service_type, task=task))
     except Exception:
@@ -370,13 +364,7 @@ async def _provider_available(
         return False
 
 
-async def _image_provider_available(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    task: AiTaskKey,
-    has_reference: bool,
-) -> bool:
+async def _image_provider_available(db: AsyncSession, user_id: int, *, task: AiTaskKey, has_reference: bool) -> bool:
     try:
         chain = await resolve_image_gen_chain(db, user_id, task=task, has_reference=has_reference)
         return bool(chain.providers)
@@ -389,9 +377,7 @@ async def _image_provider_available(
         return False
 
 
-def _capability_availability(
-    context: PlanningContext,
-) -> tuple[list[NightlyCapability], list[BlockedCapability]]:
+def _capability_availability(context: PlanningContext) -> tuple[list[NightlyCapability], list[BlockedCapability]]:
     providers = context.providers
     persona_ready = bool(context.persona.complete)
     # 政策拦截由 _policy_block 统一判断；这里只列素材与供应商条件，原因文案覆盖两类拦截。
@@ -645,11 +631,7 @@ async def _load_action_rows(log_id: int) -> list[NightlyActivityAction]:
     return rows
 
 
-async def _set_action_state(
-    action_id: int,
-    status: str,
-    result: dict[str, Any] | None = None,
-) -> None:
+async def _set_action_state(action_id: int, status: str, result: dict[str, Any] | None = None) -> None:
     async with SESSION_LOCAL() as db:
         row = await db.get(NightlyActivityAction, action_id)
         if row is None:

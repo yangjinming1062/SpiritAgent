@@ -96,6 +96,8 @@ _LIFE_SCAN_INTERVAL_SECONDS: int = 60
 
 _IGNORED_OUTREACH_MIN_IGNORED_SECONDS = 3600  # 用户持续不理伙伴 1 小时后才有资格触发
 _IGNORED_OUTREACH_MIN_SPACING_SECONDS = 3600  # 两次触发之间的最小间距——沉默结束意图后的再触发安全网
+# 每个 tick 最多推进 200 个到期 job；按当前时间计算下一次，停摆期间不逐次回追。
+_MAX_DUE_PER_TICK = 200
 
 
 def invalidate_user_scheduler_state(user_id: int) -> None:
@@ -104,10 +106,6 @@ def invalidate_user_scheduler_state(user_id: int) -> None:
         for scope in list(state):
             if scope.user_id == user_id:
                 state.pop(scope, None)
-
-
-# 每个 tick 最多推进 200 个到期 job；按当前时间计算下一次，停摆期间不逐次回追。
-_MAX_DUE_PER_TICK = 200
 
 
 async def drain() -> None:

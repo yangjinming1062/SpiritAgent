@@ -20,7 +20,9 @@ router = get_router(prefix="/api/companion/topics", tag="companion", remote=True
 async def read_feedback(
     user: CurrentUser,
     db: DbSession,
-    topic_ids: list[Annotated[ResourceId, Field(gt=0, le=POSTGRES_INT8_MAX)]] = Query(default=[], max_length=100),
+    topic_ids: list[Annotated[ResourceId, Field(gt=0, le=POSTGRES_INT8_MAX)]] = Query(
+        default_factory=list, max_length=100
+    ),
 ) -> list[TopicFeedbackSnapshot]:
     return await topics.read_feedback(db, user.id, topic_ids)
 

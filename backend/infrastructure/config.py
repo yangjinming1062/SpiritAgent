@@ -14,6 +14,9 @@ from infrastructure.ai.config import AIConfig
 from infrastructure.constants import ATTACHMENT_VIDEO_MAX_BYTES
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
+# 示例文件随仓库公开：这些项仍为空或示例值时等于公开密钥，web 进程拒绝启动。
+_EXAMPLE_CONFIG_PATH = BACKEND_DIR / "config.toml.example"
+_SECRET_SETTING_KEYS = ("jwt_secret_key", "companion_asset_signing_key", "admin_password")
 
 
 def _parse_toml_dict(content: dict) -> dict[str, Any]:
@@ -28,11 +31,6 @@ def _parse_toml_dict(content: dict) -> dict[str, Any]:
             flat[section.upper()] = values
 
     return flat
-
-
-_EXAMPLE_CONFIG_PATH = BACKEND_DIR / "config.toml.example"
-# 示例文件随仓库公开：这些项仍为空或示例值时等于公开密钥，web 进程拒绝启动。
-_SECRET_SETTING_KEYS = ("jwt_secret_key", "companion_asset_signing_key", "admin_password")
 
 
 def _load_toml_file(path: Path) -> dict[str, Any]:

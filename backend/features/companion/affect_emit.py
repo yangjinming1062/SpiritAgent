@@ -5,10 +5,7 @@ from features.conversation.proactive_messages import append_companion_message
 from features.conversation.replies import CompanionReply, CompanionReplyInput, TextBubble
 
 
-async def emit_companion_message(
-    user_id: int,
-    text: str,
-) -> bool:
+async def emit_companion_message(user_id: int, text: str) -> bool:
     """保存并投递非空主动消息；静止档门控由调用方负责。"""
     clean_text = text.strip()
     if not clean_text:

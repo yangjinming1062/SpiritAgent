@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from runtime.client_context import ChatRequestClientContext
 
 TICKET_TTL_SECONDS = 60
+TICKET_BYTES = 32
+TICKET_LENGTH = (TICKET_BYTES * 8 + 5) // 6
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,14 +42,14 @@ def issue_gateway_ticket(identity: GatewayIdentity) -> GatewayTicketResponse:
     now = time.monotonic()
     for key in [key for key, (_, expiry) in _tickets.items() if expiry <= now]:
         del _tickets[key]
-    ticket = secrets.token_urlsafe(32)
+    ticket = secrets.token_urlsafe(TICKET_BYTES)
     key = hashlib.sha256(ticket.encode()).hexdigest()
     _tickets[key] = (identity, now + TICKET_TTL_SECONDS)
     return GatewayTicketResponse(ticket=ticket, expires_in=TICKET_TTL_SECONDS)
 
 
 def consume_gateway_ticket(ticket: str) -> GatewayIdentity | None:
-    if len(ticket) != 43 or not ticket.isascii():
+    if len(ticket) != TICKET_LENGTH or not ticket.isascii():
         return None
     key = hashlib.sha256(ticket.encode()).hexdigest()
     pending = _tickets.pop(key, None)

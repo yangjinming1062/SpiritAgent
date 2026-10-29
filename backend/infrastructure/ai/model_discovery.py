@@ -168,9 +168,9 @@ async def _openrouter(refresh: bool) -> tuple[list[ModelMetadata], str]:
             items = body.get("data")
             if not isinstance(items, list):
                 raise ValueError("OpenRouter 模型目录响应格式无效")
-            for raw in items:
-                if isinstance(raw, dict) and (value := _metadata(raw, "OpenRouter")) is not None:
-                    values.append(value)
+            values.extend(
+                value for raw in items if isinstance(raw, dict) and (value := _metadata(raw, "OpenRouter")) is not None
+            )
             if not _record(body.get("links")).get("next"):
                 break
             if not items:

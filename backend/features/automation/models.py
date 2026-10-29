@@ -8,14 +8,17 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 if TYPE_CHECKING:
     from features.accounts.models import User
 
+CRON_NAME_MAX_LENGTH = 128
+CRON_SCHEDULE_MAX_LENGTH = 128
+
 
 class CronJob(ModelBase):
     __tablename__ = "cron_jobs"
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     system_preset_id: Mapped[str] = mapped_column(String(32))
-    name: Mapped[str] = mapped_column(String(128), index=True)
-    schedule: Mapped[str] = mapped_column(String(128))
+    name: Mapped[str] = mapped_column(String(CRON_NAME_MAX_LENGTH), index=True)
+    schedule: Mapped[str] = mapped_column(String(CRON_SCHEDULE_MAX_LENGTH))
     prompt: Mapped[str] = mapped_column(Text)
     kind: Mapped[str] = mapped_column(String(16), default="standard", server_default=text("'standard'"))
     conversation_id: Mapped[int | None] = mapped_column(

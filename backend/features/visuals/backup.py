@@ -305,11 +305,7 @@ async def playback_versions(db: AsyncSession, user_id: int) -> tuple[int, int] |
     return tuple(row) if row is not None else None
 
 
-async def advance_playback_versions(
-    db: AsyncSession,
-    user_id: int,
-    previous: tuple[int, int] | None,
-) -> None:
+async def advance_playback_versions(db: AsyncSession, user_id: int, previous: tuple[int, int] | None) -> None:
     """恢复或换号后推进呈现版本，旧待播指令不再被认领。"""
 
     state = await db.scalar(select(VisualPresentation).where(VisualPresentation.user_id == user_id))

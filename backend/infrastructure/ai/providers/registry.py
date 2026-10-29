@@ -16,11 +16,7 @@ from infrastructure.ai.providers.base import (
 _REGISTRY: dict[tuple[ServiceType, str], type[BaseProvider]] = {}
 
 
-def register(
-    service_type: ServiceType,
-    provider_name: str,
-    cls: type[BaseProvider],
-) -> None:
+def register(service_type: ServiceType, provider_name: str, cls: type[BaseProvider]) -> None:
     _REGISTRY[(service_type, provider_name)] = cls
 
 
@@ -33,10 +29,7 @@ def resolve(service_type: ServiceType, provider_name: str) -> type[BaseProvider]
         ) from e
 
 
-def try_resolve(
-    service_type: ServiceType,
-    provider_name: str,
-) -> type[BaseProvider] | None:
+def try_resolve(service_type: ServiceType, provider_name: str) -> type[BaseProvider] | None:
     return _REGISTRY.get((service_type, provider_name))
 
 

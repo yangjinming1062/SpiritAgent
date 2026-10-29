@@ -12,7 +12,7 @@ from runtime.memory_scope import MemoryScope, validate_memory_scope
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.automation.models import CronJob
+from features.automation.models import CRON_NAME_MAX_LENGTH, CRON_SCHEDULE_MAX_LENGTH, CronJob
 from features.conversation.automation_queries import create_task_conversation, owned_task_conversation_id
 
 logger = get_logger(__name__)
@@ -20,10 +20,6 @@ logger = get_logger(__name__)
 SPECIAL_CRON_KIND = "special"
 STANDARD_CRON_KIND = "standard"
 _CRON_KINDS = frozenset({SPECIAL_CRON_KIND, STANDARD_CRON_KIND})
-# 与 CronJob.name / schedule 的列宽一致；超长值会在提交时以数据库错误失败。
-_MAX_NAME_LENGTH = 128
-_MAX_SCHEDULE_LENGTH = 128
-
 _JOB_IMMUTABLE_FIELDS = frozenset({"id", "user_id", "conversation_id", "system_preset_id"})
 _SCHEDULE_KEYS = ("schedule", "is_paused")
 _INTENT_INVALIDATING_FIELDS = ("prompt", "schedule", "kind", "expires_at", "is_paused")
@@ -53,7 +49,7 @@ def _validate_kind(kind: str, scope: MemoryScope) -> str:
 
 def _validate_job_text(name: str | None, schedule: str | None, prompt: str | None = None) -> None:
     """name / schedule 的入口校验：超出列宽或含 NUL（PostgreSQL 文本不接受）时抛 ValueError，消息可直接回给模型。"""
-    for field, value, limit in (("name", name, _MAX_NAME_LENGTH), ("schedule", schedule, _MAX_SCHEDULE_LENGTH)):
+    for field, value, limit in (("name", name, CRON_NAME_MAX_LENGTH), ("schedule", schedule, CRON_SCHEDULE_MAX_LENGTH)):
         if value is None:
             continue
         if len(value) > limit:
@@ -169,11 +165,7 @@ async def list_jobs(scope: MemoryScope, include_paused: bool = False) -> list[di
         return [j.to_dict() for j in jobs]
 
 
-async def update_job(
-    scope: MemoryScope,
-    job_id: int,
-    updates: dict[str, Any],
-) -> dict[str, Any] | None:
+async def update_job(scope: MemoryScope, job_id: int, updates: dict[str, Any]) -> dict[str, Any] | None:
     if "kind" in updates:
         updates["kind"] = _validate_kind(updates["kind"], scope)
     _validate_job_text(updates.get("name"), updates.get("schedule"), updates.get("prompt"))

@@ -94,13 +94,7 @@ class LlmJsonValidationError(ValueError):
         super().__init__(code)
 
 
-async def chat(
-    user_id: int | None,
-    system_prompt: str,
-    user_payload: str,
-    *,
-    task: AiTaskKey,
-) -> str:
+async def chat(user_id: int | None, system_prompt: str, user_payload: str, *, task: AiTaskKey) -> str:
     """在独立短会话中解析任务链，模型调用期间不占数据库连接；空内容视为错误。"""
     config = await load_user_llm_config(user_id, task)
     return (await call_llm_once(config, system_prompt, user_payload)).strip()
@@ -119,10 +113,7 @@ def _response_failure_detail(response: Response) -> str:
     return ", ".join(parts)
 
 
-async def _call_text_response(
-    provider: ChatProvider,
-    request: dict[str, Any],
-) -> str:
+async def _call_text_response(provider: ChatProvider, request: dict[str, Any]) -> str:
     try:
         response = await call_with_retry(provider.raw_client(), config=provider.config, **request)
     except TimeoutError as exc:

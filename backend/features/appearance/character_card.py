@@ -88,10 +88,7 @@ def card_snapshot(card: AvatarAsset) -> CharacterCardSnapshot:
     )
 
 
-async def load_character_snapshot(
-    db: AsyncSession,
-    user_id: int,
-) -> CharacterCardSnapshot | None:
+async def load_character_snapshot(db: AsyncSession, user_id: int) -> CharacterCardSnapshot | None:
     card = await get_character_card(db, user_id)
     if card is None or card.revision == 0:
         return None

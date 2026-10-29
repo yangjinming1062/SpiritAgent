@@ -61,12 +61,7 @@ def _sign_token(payload: dict) -> tuple[str, int]:
     return token, int(expires_delta.total_seconds())
 
 
-def create_access_token(
-    *,
-    user_id: int,
-    username: str,
-    client_context: dict | None = None,
-) -> tuple[str, int, str]:
+def create_access_token(*, user_id: int, username: str, client_context: dict | None = None) -> tuple[str, int, str]:
     token_jti = uuid4().hex
     payload = {"sub": str(user_id), "username": username, "jti": token_jti}
     if client_context:

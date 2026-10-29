@@ -42,6 +42,8 @@ _MEDIA_MAGIC: tuple[tuple[bytes, str], ...] = (
     (b"fLaC", "flac"),
     (b"\x1a\x45\xdf\xa3", "webm"),
 )
+# 冻结输入标签由调用方按参考字段定义，这里只约束可落盘的字形，避免新增参考字段时重复维护词表。
+_IMAGE_CHAIN_INPUT_LABEL = re.compile(r"[a-z][a-z0-9_]{0,15}")
 
 
 def build_data_uri(data: bytes, content_type: str | None = None) -> str:
@@ -378,10 +380,6 @@ async def save_image_chain_asset_async(
         user_id,
         image_chain_asset_path(user_id, generation_id, attempt, slot, ext, directory=directory),
     )
-
-
-# 冻结输入标签由调用方按参考字段定义，这里只约束可落盘的字形，避免新增参考字段时重复维护词表。
-_IMAGE_CHAIN_INPUT_LABEL = re.compile(r"[a-z][a-z0-9_]{0,15}")
 
 
 def image_chain_input_asset_path(user_id: int, generation_id: str, label: str, ext: str, *, directory: str) -> str:

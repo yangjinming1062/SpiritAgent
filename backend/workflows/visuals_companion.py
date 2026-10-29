@@ -19,10 +19,7 @@ from features.action_library.schemas import (
     ActionReviewRequest,
     ActionReviewSource,
 )
-from features.appearance.character_card import (
-    CharacterCardNotReadyError,
-    require_character_snapshot,
-)
+from features.appearance.character_card import CharacterCardNotReadyError, require_character_snapshot
 from features.appearance.queries import avatar_snapshot, outfit_identity_matches, ready_outfit_snapshot
 from features.companion.disturbance import get_disturbance_tier
 from features.companion.persona_service import load_persona_definition

@@ -7,11 +7,7 @@ from features.conversation.main_conversation import SPECIAL_KIND, STANDARD_KIND
 from features.conversation.models import Conversation, Message
 
 
-async def _find_editable_conversation(
-    db: AsyncSession,
-    user_id: int,
-    session_id: str,
-) -> Conversation | None:
+async def _find_editable_conversation(db: AsyncSession, user_id: int, session_id: str) -> Conversation | None:
     conv = await Conversation.by_session_id(db, session_id, user_id=user_id)
 
     if conv is None or conv.is_automation or conv.kind not in (STANDARD_KIND, SPECIAL_KIND):

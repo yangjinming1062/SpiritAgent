@@ -61,11 +61,7 @@ def validate_ai_config(config: AIConfig, system: AIConfig | None = None) -> None
                         raise ValueError(f"模型 {card.model_name} 不支持声音克隆")
 
 
-def prepare_ai_config(
-    update: AIConfigUpdate,
-    previous: AIConfig | None,
-    system: AIConfig | None = None,
-) -> AIConfig:
+def prepare_ai_config(update: AIConfigUpdate, previous: AIConfig | None, system: AIConfig | None = None) -> AIConfig:
     """按稳定 ID 保留密钥，整批校验后返回候选配置；错误不回显配置值。"""
     saved = {card.id: card for card in previous.providers} if previous is not None else {}
     providers = []

@@ -121,11 +121,7 @@ def _apply_wait(row: CompanionIntent, request: CompanionWaitRequest, now: dateti
     row.last_error = None
 
 
-async def set_companion_wait(
-    user_id: int,
-    request: CompanionWaitRequest,
-    intent_id: int | None = None,
-) -> int:
+async def set_companion_wait(user_id: int, request: CompanionWaitRequest, intent_id: int | None = None) -> int:
     plan = _TURN_PLAN.get()
     if plan is not None:
         if plan.user_id != user_id or intent_id not in (None, plan.intent_id):

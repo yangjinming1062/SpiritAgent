@@ -11,6 +11,7 @@ from features.accounts.locking import lock_account
 from features.accounts.models import User
 from features.accounts.remote.models import RemotePairing, RemoteSession
 from features.accounts.remote.schemas import (
+    REMOTE_TOKEN_MAX_LENGTH,
     DeviceListResponse,
     DeviceResponse,
     ExchangeRequest,
@@ -127,7 +128,7 @@ async def exchange_pairing(payload: ExchangeRequest, db: AsyncSession, old_token
     )
     db.add(device)
     old_device = None
-    if old_token and len(old_token) <= 128:
+    if old_token and len(old_token) <= REMOTE_TOKEN_MAX_LENGTH:
         old_device = await db.scalar(
             select(RemoteSession).where(RemoteSession.token_hash == hash_remote_token(old_token)),
         )

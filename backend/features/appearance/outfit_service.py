@@ -560,12 +560,7 @@ async def create_outfit_draft(
 
 
 async def regenerate_outfit_draft(
-    db: AsyncSession,
-    user_id: int,
-    outfit_id: int,
-    *,
-    feedback: str | None,
-    mode: ImageReviseMode,
+    db: AsyncSession, user_id: int, outfit_id: int, *, feedback: str | None, mode: ImageReviseMode
 ) -> CompanionOutfit:
     """微调或重新生成外观；成功后回到草稿，等待用户确认。"""
     outfit = await _require_outfit_draft(db, user_id, outfit_id)
@@ -640,11 +635,7 @@ async def regenerate_outfit_draft(
     return outfit
 
 
-async def confirm_outfit(
-    db: AsyncSession,
-    user_id: int,
-    outfit_id: int,
-) -> CompanionOutfit:
+async def confirm_outfit(db: AsyncSession, user_id: int, outfit_id: int) -> CompanionOutfit:
     """验收已保存的透明草稿并入柜，保留生成时的来源。"""
     async with get_avatar_job_lock(user_id):
         outfit = await _get_outfit(db, user_id, outfit_id)
@@ -730,11 +721,7 @@ async def prepare_outfit_prompt(
 
 
 async def prepare_outfit_regenerate_prompt(
-    db: AsyncSession,
-    user_id: int,
-    outfit_id: int,
-    *,
-    feedback: str | None,
+    db: AsyncSession, user_id: int, outfit_id: int, *, feedback: str | None
 ) -> str:
     """根据已有草稿设计与反馈生成外部制作提示词。"""
     outfit = await _require_outfit_draft(db, user_id, outfit_id)
@@ -757,11 +744,7 @@ async def prepare_outfit_regenerate_prompt(
 
 
 async def adopt_outfit_draft_image(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    description: str | None,
-    data: bytes,
+    db: AsyncSession, user_id: int, *, description: str | None, data: bytes
 ) -> CompanionOutfit:
     """透明化自备全身图并创建草稿，确认后转正。"""
     avatar, _, identity, _ = await _outfit_generation_context(db, user_id)
@@ -800,11 +783,7 @@ async def adopt_outfit_draft_image(
 
 
 async def adopt_outfit_regenerate_image(
-    db: AsyncSession,
-    user_id: int,
-    outfit_id: int,
-    *,
-    data: bytes,
+    db: AsyncSession, user_id: int, outfit_id: int, *, data: bytes
 ) -> CompanionOutfit:
     """透明化自备全身图后替换草稿，成功同事务发送更新事件。"""
     outfit = await _require_outfit_draft(db, user_id, outfit_id)

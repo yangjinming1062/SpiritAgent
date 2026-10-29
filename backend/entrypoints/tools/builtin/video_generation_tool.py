@@ -35,7 +35,9 @@ from runtime.tools.registry import ToolsRegistry
 
 logger = get_logger(__name__)
 
-_DURATIONS = range(4, 16)
+_MIN_DURATION_SECONDS = 4
+_MAX_DURATION_SECONDS = 15
+_DURATIONS = range(_MIN_DURATION_SECONDS, _MAX_DURATION_SECONDS + 1)
 _RESOLUTIONS = frozenset({"512P", "768P", "1080P", "2K"})
 _ASPECT_RATIOS = ("16:9", "9:16", "1:1", "4:3", "3:4", "21:9")
 _SUBMIT_UNKNOWN_ERROR = "视频提交结果未核实，请勿重复提交"
@@ -160,7 +162,7 @@ async def video_generation_tool(
     **_: object,
 ) -> str:
     if not isinstance(prompt, str) or not prompt.strip() or type(duration) is not int or duration not in _DURATIONS:
-        return tool_error("请提供非空视频描述和 4 至 15 秒的时长")
+        return tool_error(f"请提供非空视频描述和 {_MIN_DURATION_SECONDS} 至 {_MAX_DURATION_SECONDS} 秒的时长")
     if resolution not in _RESOLUTIONS:
         return tool_error("视频分辨率无效")
     if aspect_ratio and aspect_ratio not in _ASPECT_RATIOS:
@@ -299,8 +301,8 @@ VIDEO_GENERATION_SCHEMA = {
             },
             "duration": {
                 "type": "integer",
-                "minimum": 4,
-                "maximum": 15,
+                "minimum": _MIN_DURATION_SECONDS,
+                "maximum": _MAX_DURATION_SECONDS,
                 "description": VIDEO_GENERATION_PARAM_DESCS["duration"],
             },
             "resolution": {

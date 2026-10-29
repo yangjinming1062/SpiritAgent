@@ -196,11 +196,7 @@ class _ClientGeneration:
 
 
 class _GenerationStream(httpx.AsyncByteStream):
-    def __init__(
-        self,
-        stream: httpx.AsyncByteStream,
-        release: Callable[[], None],
-    ) -> None:
+    def __init__(self, stream: httpx.AsyncByteStream, release: Callable[[], None]) -> None:
         self._stream = stream
         self._release = release
         self._closed = False
@@ -316,9 +312,7 @@ def _openai_transport(settings: _ClientSettings) -> httpx.AsyncBaseTransport:
     )
 
 
-def _acquire_generation(
-    generation: _ClientGeneration | None = None,
-) -> _ClientGeneration:
+def _acquire_generation(generation: _ClientGeneration | None = None) -> _ClientGeneration:
     with _cache_lock:
         if generation is None:
             if _closing:
@@ -333,9 +327,7 @@ def _release_generation(generation: _ClientGeneration) -> None:
         generation.release()
 
 
-def _delegate_for(
-    frontend: _RotatingAsyncClient,
-) -> tuple[_ClientGeneration, httpx.AsyncClient]:
+def _delegate_for(frontend: _RotatingAsyncClient) -> tuple[_ClientGeneration, httpx.AsyncClient]:
     generation = _acquire_generation(_pinned_generation.get())
     try:
         with _cache_lock:
@@ -466,12 +458,7 @@ async def aclose_all() -> None:
 class _RetryAwareAsyncOpenAI(AsyncOpenAI):
     """在 SDK 默认 _should_retry 之外拦截 500/502 中的请求校验错误（畸形请求每次重试都失败），其余决策完全继承父类。"""
 
-    def _should_retry(
-        self,
-        response: httpx.Response,
-        *args: Any,
-        **kwargs: Any,
-    ) -> bool:  # type: ignore[override]
+    def _should_retry(self, response: httpx.Response, *args: Any, **kwargs: Any) -> bool:  # type: ignore[override]
         if response.status_code in (500, 502):
             # 流式请求在读取响应体之前就询问是否重试，此时无法检查正文，按 SDK 默认规则决定
             try:
@@ -511,12 +498,7 @@ class _RetryAwareAsyncOpenAI(AsyncOpenAI):
             _release_generation(generation)
 
 
-def get_http(
-    base_url: str,
-    api_key: str,
-    *,
-    auth_header: dict[str, str] | None = None,
-) -> httpx.AsyncClient:
+def get_http(base_url: str, api_key: str, *, auth_header: dict[str, str] | None = None) -> httpx.AsyncClient:
     """按 URL 和实际鉴权头缓存客户端；不同协议的凭据不能复用。"""
     headers = (
         {"Authorization": f"Bearer {api_key}"}

@@ -118,10 +118,7 @@ def _target_dimensions(aspect_ratio: str) -> tuple[int, int]:
     return width, height
 
 
-def _fit_filter(
-    first_frame: bytes,
-    aspect_ratio: str | None,
-) -> tuple[str, tuple[int, int], bool]:
+def _fit_filter(first_frame: bytes, aspect_ratio: str | None) -> tuple[str, tuple[int, int], bool]:
     with Image.open(BytesIO(first_frame)) as frame:
         width, height = frame.size
     if width * height > 3840 * 2160:
@@ -164,12 +161,7 @@ def _desktop_result(dst: Path, expected_size: tuple[int, int], *, fitted: bool) 
     )
 
 
-def prepare_desktop_video(
-    src: Path,
-    dst: Path,
-    *,
-    aspect_ratio: str | None = None,
-) -> DesktopVideoResult:
+def prepare_desktop_video(src: Path, dst: Path, *, aspect_ratio: str | None = None) -> DesktopVideoResult:
     probe = probe_video(src)
     if probe.width * probe.height > 3840 * 2160 or probe.fps > 120:
         raise VideoProcessError("桌面视频分辨率或帧率超出处理上限")

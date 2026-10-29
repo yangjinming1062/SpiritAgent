@@ -49,11 +49,7 @@ async def build_user_profile_extras(db: AsyncSession, scope: MemoryScope, *, lan
     return "\n".join(lines)
 
 
-async def record_user_profile(
-    db: AsyncSession,
-    scope: MemoryScope,
-    profile: dict[str, str],
-) -> None:
+async def record_user_profile(db: AsyncSession, scope: MemoryScope, profile: dict[str, str]) -> None:
     """保存引导回答；空值跳过，明确遗忘由记忆维护入口处理。"""
     writes = [
         MemorySlotWrite(

@@ -78,11 +78,7 @@ class AIConfig(BaseModel):
             system.find_provider(provider_id) if system is not None else None
         )
 
-    def find_model(
-        self,
-        model_id: UUID,
-        system: Self | None = None,
-    ) -> tuple[str, CapabilityCard, Self] | None:
+    def find_model(self, model_id: UUID, system: Self | None = None) -> tuple[str, CapabilityCard, Self] | None:
         return next(((service, card, self) for service, card in self.models() if card.id == model_id), None) or (
             system.find_model(model_id) if system is not None else None
         )

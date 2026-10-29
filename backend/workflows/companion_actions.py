@@ -61,11 +61,7 @@ class ActionViewSnapshot:
         return "\n".join(lines)
 
 
-async def build_action_view(
-    user_id: int,
-    *,
-    trigger: str = "chat",
-) -> ActionViewSnapshot:
+async def build_action_view(user_id: int, *, trigger: str = "chat") -> ActionViewSnapshot:
     """读取实际呈现快照与可播影像；空库也可用制作工具开始第一次组合。"""
 
     presentation_snapshot = await prompt_presentation_snapshot(user_id)

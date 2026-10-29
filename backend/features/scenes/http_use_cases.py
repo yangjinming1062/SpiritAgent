@@ -53,15 +53,10 @@ def _scene_http_error(exc: SceneError) -> RequestError:
 
 async def read_scene_state(user_id: int, db: AsyncSession) -> SceneStateResponse:
     state = await get_scene_state(db, user_id)
-    rows = list(
-        {
-            row.id: row
-            for row in [*state.ready, *(row for row in (state.pending, state.regenerating) if row is not None)]
-        }.values()
-    )
+    rows = {row.id: row for row in (*state.ready, state.pending, state.regenerating) if row is not None}
     return SceneStateResponse(
         policy=state.policy,
-        materials=[response_for_scene(row) for row in rows],
+        materials=[response_for_scene(row) for row in rows.values()],
         generation_pending=state.pending is not None or state.regenerating is not None,
     )
 

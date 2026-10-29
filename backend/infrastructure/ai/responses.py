@@ -129,13 +129,17 @@ def build_responses_kwargs(
     }
     if tools:
         request["tools"] = [tool_schema_for_responses(tool) for tool in tools]
-    for key, value in (
-        ("tool_choice", tool_choice),
-        ("temperature", temperature),
-        ("max_output_tokens", max_output_tokens),
-        ("reasoning", reasoning),
-        ("text", text),
-    ):
-        if value is not None:
-            request[key] = value
+    request.update(
+        {
+            key: value
+            for key, value in (
+                ("tool_choice", tool_choice),
+                ("temperature", temperature),
+                ("max_output_tokens", max_output_tokens),
+                ("reasoning", reasoning),
+                ("text", text),
+            )
+            if value is not None
+        }
+    )
     return request

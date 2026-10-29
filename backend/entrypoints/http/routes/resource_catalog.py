@@ -12,11 +12,7 @@ from features.memory.admin_contracts import (
 )
 from features.memory.contracts import MemoryConflictError, MemoryDetail, MemoryListItem
 from features.memory.memory_admin import update_memory, update_user_profile
-from features.memory.use_cases import (
-    forget_manual_memory,
-    get_memory_detail,
-    list_memory_view,
-)
+from features.memory.use_cases import forget_manual_memory, get_memory_detail, list_memory_view
 from infrastructure.api_ids import ResourceId
 from infrastructure.http_contracts import operation_policy
 from pydantic import BaseModel
@@ -112,11 +108,7 @@ async def patch_memory(user: CurrentUser, memory_id: ResourceId, body: MemoryUpd
 
 
 @router.delete("/memories/{memory_id}", response_model=MemoryDeleteResponse)
-async def delete_memory(
-    user: CurrentUser,
-    memory_id: ResourceId,
-    system_preset_id: str,
-) -> MemoryDeleteResponse:
+async def delete_memory(user: CurrentUser, memory_id: ResourceId, system_preset_id: str) -> MemoryDeleteResponse:
     scope = _scope(user.id, system_preset_id)
     if not await forget_manual_memory(scope, memory_id):
         raise HTTPException(status_code=404, detail="Memory not found")

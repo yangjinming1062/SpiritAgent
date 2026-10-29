@@ -75,11 +75,12 @@ class QwenImageGenProvider(ImageGenProvider):
         resp = await self._client.post("/services/aigc/multimodal-generation/generation", json=payload)
         body = raise_for_qwen_response(resp)
 
-        urls: list[str] = []
-        for choice in (body.get("output") or {}).get("choices") or []:
-            for item in (choice.get("message") or {}).get("content") or []:
-                if u := item.get("image"):
-                    urls.append(u)
+        urls = [
+            image
+            for choice in (body.get("output") or {}).get("choices") or []
+            for item in (choice.get("message") or {}).get("content") or []
+            if (image := item.get("image"))
+        ]
         if not urls:
             raise RuntimeError(f"qwen image_gen returned no images: {body}")
 

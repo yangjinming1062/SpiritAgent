@@ -101,11 +101,7 @@ async def record_diary_published(
     )
 
 
-async def record_nightly_actions(
-    user_id: int,
-    local_date: str,
-    actions: list[dict[str, object]],
-) -> None:
+async def record_nightly_actions(user_id: int, local_date: str, actions: list[dict[str, object]]) -> None:
     """把夜间真正完成的动作写入生活事实流。"""
 
     if not actions:

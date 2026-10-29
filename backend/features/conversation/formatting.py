@@ -210,11 +210,7 @@ def message_text(m: Message | MessageSnapshot) -> str:
     return raw
 
 
-def format_messages_compact(
-    msgs: list[Message],
-    *,
-    user_local_tz: str | None = None,
-) -> str:
+def format_messages_compact(msgs: list[Message], *, user_local_tz: str | None = None) -> str:
     """保留会话与消息来源、发言归属、时间和工具关联；正文换行不能伪装成另一条发言。"""
     records = []
     for msg in msgs:

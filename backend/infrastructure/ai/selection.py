@@ -60,10 +60,7 @@ def _provider_selection_index(
     )
 
 
-def has_provider_selection(
-    chain: Sequence[ProviderConfig],
-    selection: ProviderSelection | None,
-) -> bool:
+def has_provider_selection(chain: Sequence[ProviderConfig], selection: ProviderSelection | None) -> bool:
     return _provider_selection_index(chain, selection) is not None
 
 

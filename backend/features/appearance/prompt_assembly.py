@@ -49,11 +49,7 @@ def _persona_visual_payload(persona: PersonaSnapshot, feedback: str | None) -> d
 
 
 def build_avatar_reference_prompt(
-    *,
-    personality: str,
-    feedback: str | None = None,
-    has_presentation_reference: bool = False,
-    description: str = "",
+    *, personality: str, feedback: str | None = None, has_presentation_reference: bool = False, description: str = ""
 ) -> str:
     """装配身份参考头像提示词；明确外貌文字只覆盖其涉及的视觉维度。"""
     prompt = AVATAR_REFERENCE_TEMPLATE.format(
@@ -72,11 +68,7 @@ def build_avatar_reference_prompt(
 
 
 async def enhance_avatar_prompt(
-    user_id: int | None,
-    persona: PersonaSnapshot,
-    *,
-    feedback: str | None = None,
-    has_reference: bool = False,
+    user_id: int | None, persona: PersonaSnapshot, *, feedback: str | None = None, has_reference: bool = False
 ) -> str:
     """整理角色资料；无图时返回完整提示词，有图时返回供参考图装配器使用的画面建议。"""
     visual = _persona_visual_payload(persona, feedback)
@@ -180,11 +172,7 @@ async def build_outfit_prompt(
     return prompt
 
 
-async def describe_garment_image(
-    user_id: int | None,
-    image_uri: str,
-    requirement: str = "",
-) -> str:
+async def describe_garment_image(user_id: int | None, image_uri: str, requirement: str = "") -> str:
     """将服装参考图与文字要求整合为可迁移的着装设计稿。"""
     return await vision_chat(
         user_id,

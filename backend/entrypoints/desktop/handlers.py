@@ -102,10 +102,7 @@ async def drain() -> None:
         await terminate_remote_sessions(user_id)
 
 
-async def _terminate_user_gateway_locked(
-    user_id: ResourceId,
-    login_record_id: ResourceId | None = None,
-) -> None:
+async def _terminate_user_gateway_locked(user_id: ResourceId, login_record_id: ResourceId | None = None) -> None:
     session = _USER_SESSIONS.get(user_id)
     if session is None or (login_record_id is not None and session.login_record_id != login_record_id):
         release_unused_account_runtime(user_id)

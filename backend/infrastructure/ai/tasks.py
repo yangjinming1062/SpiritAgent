@@ -44,12 +44,7 @@ _CHAT_LLM_USAGE = (
 )
 
 
-def _task(
-    task: AiTaskKey,
-    group: str,
-    label: str,
-    service_usage: dict[str, tuple[str, ...]],
-) -> AiTaskDefinition:
+def _task(task: AiTaskKey, group: str, label: str, service_usage: dict[str, tuple[str, ...]]) -> AiTaskDefinition:
     return AiTaskDefinition(
         id=task,
         group=group,

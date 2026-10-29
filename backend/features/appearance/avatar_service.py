@@ -465,13 +465,7 @@ async def persist_portrait_bytes(user_id: int, data: bytes, content_type: str, *
     return await save_companion_asset_async(data, user_id=user_id, label="portrait", ext=ext, directory=directory)
 
 
-async def persist_portrait_or_draft(
-    data: bytes,
-    user_id: int,
-    content_type: str,
-    *,
-    persist: bool,
-) -> str:
+async def persist_portrait_or_draft(data: bytes, user_id: int, content_type: str, *, persist: bool) -> str:
     """按确认状态保存永久立绘或临时草稿，返回裸路径。"""
     if persist:
         return await persist_portrait_bytes(user_id, data, content_type)
@@ -1300,12 +1294,7 @@ async def prepare_initial_fullbody(user_id: int, *, extraction_id: str) -> bool:
     return True
 
 
-async def prepare_fullbody_prompt(
-    user_id: int,
-    *,
-    avatar_id: int,
-    feedback: str | None = None,
-) -> str:
+async def prepare_fullbody_prompt(user_id: int, *, avatar_id: int, feedback: str | None = None) -> str:
     """自备图与 AI 使用相同的视觉判断和全身模板。"""
     asset, persona, identity = await _load_fullbody_target(user_id, avatar_id)
     _, prompt = await _prepare_fullbody_reference(
@@ -1346,12 +1335,7 @@ async def adopt_fullbody_seed(
         return await _save_fullbody_candidate(user_id, avatar_id, url, identity, asset.seed_fullbody_url)
 
 
-async def adopt_avatar_seed(
-    user_id: int,
-    *,
-    data: bytes,
-    content_type: str,
-) -> AvatarAsset:
+async def adopt_avatar_seed(user_id: int, *, data: bytes, content_type: str) -> AvatarAsset:
     """直接使用用户上传的图片作为头像，跳过 AI 生成。"""
     async with get_avatar_job_lock(user_id):
         if not data:

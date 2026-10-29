@@ -58,14 +58,7 @@ BUBBLE_BREAK_MAX_SECONDS = 1.5
 
 
 class _IncompleteResponseError(RuntimeError):
-    def __init__(
-        self,
-        reason: str,
-        *,
-        text_emitted: bool,
-        final_reply: bool = False,
-        retryable: bool = True,
-    ) -> None:
+    def __init__(self, reason: str, *, text_emitted: bool, final_reply: bool = False, retryable: bool = True) -> None:
         self.retryable = retryable and not text_emitted and reason != "content_filter"
         self.final_reply = final_reply or reason == "empty_output"
         super().__init__(f"LLM response incomplete: {reason}")

@@ -8,11 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from features.configuration.settings.models import UserSetting
 
 
-async def load_user_settings(
-    db: AsyncSession,
-    user_id: int,
-    keys: Collection[str] | None = None,
-) -> dict[str, Any]:
+async def load_user_settings(db: AsyncSession, user_id: int, keys: Collection[str] | None = None) -> dict[str, Any]:
     stmt = select(UserSetting.setting_key, UserSetting.setting_value).where(UserSetting.user_id == user_id)
     if keys is not None:
         stmt = stmt.where(UserSetting.setting_key.in_(keys))

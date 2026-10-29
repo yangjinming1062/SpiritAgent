@@ -8,11 +8,7 @@ from runtime.tools.prompts import SEND_MESSAGE_DESC, SEND_MESSAGE_PARAM_DESCS
 from runtime.tools.registry import ToolsRegistry
 
 
-async def send_message_tool(
-    message: str,
-    user_id: ResourceId,
-    **_context: object,
-) -> str:
+async def send_message_tool(message: str, user_id: ResourceId, **_context: object) -> str:
     if not isinstance(message, str) or not message.strip():
         return tool_error("message must be a non-empty string")
     still = await is_still(user_id)

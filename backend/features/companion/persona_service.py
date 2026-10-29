@@ -184,11 +184,7 @@ async def confirm_portrait(db: AsyncSession, user_id: int) -> None:
     await db.commit()
 
 
-def build_system_prompt_extras(
-    persona: Persona | None,
-    *,
-    language: str = DEFAULT_LANGUAGE,
-) -> str:
+def build_system_prompt_extras(persona: Persona | None, *, language: str = DEFAULT_LANGUAGE) -> str:
     """从 persona.definition_json 按当前 session 语言实时渲染角色设定块。"""
     if persona is None or not persona.is_complete:
         return ""
@@ -242,10 +238,7 @@ async def get_onboarding_state(db: AsyncSession, user_id: int) -> OnboardingStat
 
 
 async def submit_onboarding_field(
-    db: AsyncSession,
-    user_id: int,
-    field: str,
-    value: str | None,
+    db: AsyncSession, user_id: int, field: str, value: str | None
 ) -> OnboardingStateResponse:
     """保存引导回答；人设定型后仅修改个人资料与声音选择。"""
     if field not in ONBOARDING_FIELDS:

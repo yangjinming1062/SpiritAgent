@@ -107,10 +107,7 @@ def resolve_inference_settings(settings: dict[str, Any]) -> InferenceSettings:
     )
 
 
-def merge_session_settings(
-    user_settings: dict[str, Any],
-    session_settings: dict[str, Any] | None,
-) -> dict[str, Any]:
+def merge_session_settings(user_settings: dict[str, Any], session_settings: dict[str, Any] | None) -> dict[str, Any]:
     """所有会话继承用户全局设置，最后合并当前会话的显式覆盖。"""
     merged = dict(user_settings)
     if session_settings:

@@ -189,7 +189,7 @@ async def load_review_context(
                     )
                 ).all(),
             )
-            memories = list({r.id: r for r in [*related, *memories]}.values())
+            memories = list({r.id: r for r in (*related, *memories)}.values())
     evidence_by_id = await load_evidence(db, [row.id for row in memories])
     records: list[MemoryRecord] = []
     record_chars = 0

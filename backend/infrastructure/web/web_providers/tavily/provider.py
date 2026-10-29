@@ -43,17 +43,22 @@ def _failed_document(url: str, error: str) -> WebDocument:
 def _normalize_tavily_documents(response: dict[str, Any], fallback_url: str = "") -> list[WebDocument]:
     """将 Tavily ``/extract`` 响应映射为标准文档；失败项（``failed_results``、``failed_urls``）转为带 ``error`` 字段的条目而非抛错。"""
     documents: list[WebDocument] = []
-    for result in response.get("results", []):
-        url = result.get("url", fallback_url)
-        raw = result.get("raw_content", "") or result.get("content", "")
-        documents.append(
-            WebDocument(url=url, title=result.get("title", ""), content=raw),
+    documents.extend(
+        WebDocument(
+            url=result.get("url", fallback_url),
+            title=result.get("title", ""),
+            content=result.get("raw_content", "") or result.get("content", ""),
         )
-    for fail in response.get("failed_results", []):
-        documents.append(_failed_document(fail.get("url", fallback_url), fail.get("error", "extraction failed")))
-    for fail_url in response.get("failed_urls", []):
-        url_str = fail_url if isinstance(fail_url, str) else str(fail_url)
-        documents.append(_failed_document(url_str, "extraction failed"))
+        for result in response.get("results", [])
+    )
+    documents.extend(
+        _failed_document(fail.get("url", fallback_url), fail.get("error", "extraction failed"))
+        for fail in response.get("failed_results", [])
+    )
+    documents.extend(
+        _failed_document(fail_url if isinstance(fail_url, str) else str(fail_url), "extraction failed")
+        for fail_url in response.get("failed_urls", [])
+    )
     return documents
 
 

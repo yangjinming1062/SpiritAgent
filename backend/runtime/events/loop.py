@@ -25,8 +25,12 @@ logger = get_logger(__name__)
 WS_EVENT_CLAIM_BATCH_SIZE = 100
 MAX_OUTBOX_RETRIES = 5  # 超过即转入 FAILED 死信状态
 STALE_LOCK_TIMEOUT_SECONDS = 60
+MAX_BACKOFF_SECONDS = 60
+FAILED_RETRY_DELAY = timedelta(days=365)
 _LISTEN_HEARTBEAT_SECONDS = 15.0
 _LISTEN_HEARTBEAT_TIMEOUT_SECONDS = 5.0
+_RECONNECT_DELAY_SECONDS = 5.0
+_WAKEUP_WAIT_TIMEOUT_SECONDS = 60.0
 WORKER_ID = f"worker-{secrets.token_hex(4)}"  # 进程唯一，用于原子锁追踪
 
 InternalEventHandler = Callable[[int, dict[str, Any]], Coroutine[Any, Any, None]]
@@ -92,7 +96,7 @@ async def drain_event_tasks() -> None:
 
 def compute_backoff(retry_count: int) -> timedelta:
     """指数退避叠加等比抖动（Equal Jitter），避免多副本同步唤醒重投导致尖峰。"""
-    base = min(60, 2**retry_count)
+    base = min(MAX_BACKOFF_SECONDS, 2**retry_count)
     half = base / 2
     return timedelta(seconds=random.uniform(half, base))
 
@@ -168,7 +172,7 @@ async def _mark_event_failure(event_id: int, current_retries: int, error: str) -
     new_retry_count = current_retries + 1
     if new_retry_count >= MAX_OUTBOX_RETRIES:
         new_status = "FAILED"
-        next_retry = now + timedelta(days=365)
+        next_retry = now + FAILED_RETRY_DELAY
     else:
         new_status = "PENDING"
         next_retry = now + compute_backoff(current_retries)
@@ -257,10 +261,12 @@ async def ws_event_loop(dsn: str) -> None:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.warning("WS event loop connection failed, reconnecting in 5s", exc_info=True)
+                logger.warning(
+                    "WS event loop connection failed, reconnecting in %ss", _RECONNECT_DELAY_SECONDS, exc_info=True
+                )
             else:
-                logger.warning("WS event loop LISTEN connection closed, reconnecting in 5s")
-            await asyncio.sleep(5)
+                logger.warning("WS event loop LISTEN connection closed, reconnecting in %ss", _RECONNECT_DELAY_SECONDS)
+            await asyncio.sleep(_RECONNECT_DELAY_SECONDS)
     finally:
         await cancel_and_wait((flusher_task,))
         with contextlib.suppress(Exception):
@@ -274,7 +280,7 @@ async def _process_events(seen: int) -> int:
             _WAKEUP_STATE.event.clear()
             if _WAKEUP_STATE.version <= seen:
                 with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(_WAKEUP_STATE.event.wait(), timeout=60.0)
+                    await asyncio.wait_for(_WAKEUP_STATE.event.wait(), timeout=_WAKEUP_WAIT_TIMEOUT_SECONDS)
 
         # 关键：在从 DB 认领事件前快照当前版本号
         current_version = _WAKEUP_STATE.version

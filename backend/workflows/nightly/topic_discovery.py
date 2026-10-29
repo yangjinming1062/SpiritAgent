@@ -129,11 +129,7 @@ def _require_batch_lifetime(expires_at: datetime) -> None:
         raise NightlyWindowClosedError("话题批次已过期")
 
 
-async def _before_batch_call(
-    scope: MemoryScope,
-    timezone: ZoneInfo,
-    expires_at: datetime,
-) -> None:
+async def _before_batch_call(scope: MemoryScope, timezone: ZoneInfo, expires_at: datetime) -> None:
     await _enabled(scope, timezone)
     _require_batch_lifetime(expires_at)
 

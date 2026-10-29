@@ -62,12 +62,7 @@ from .schemas import (
 _ASSET_KINDS: tuple[str, ...] = ("actor", "scene", "cinematic")
 
 
-def _source_matches_stage(
-    source: dict,
-    *,
-    outfit: ComboMaterialRef | None,
-    identity_hash: str | None,
-) -> bool:
+def _source_matches_stage(source: dict, *, outfit: ComboMaterialRef | None, identity_hash: str | None) -> bool:
     """只让当前身份/造型的伙伴成品进入舞台清单；环境成品不绑定伙伴。"""
 
     if source.get("kind") == "scene":

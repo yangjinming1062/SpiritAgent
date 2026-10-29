@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.models import AdminSession, LoginRecord, User
 from features.accounts.remote.models import RemoteSession
+from features.accounts.remote.schemas import REMOTE_TOKEN_MAX_LENGTH
 from features.accounts.remote.security import (
     hash_remote_token,
     remote_csrf_token,
@@ -176,7 +177,7 @@ async def authenticate_remote_session(
     ):
         raise HTTPException(status_code=403, detail="手机授权不能访问此功能。")
     token = request.cookies.get(remote_session_cookie().name)
-    if not token or len(token) > 128:
+    if not token or len(token) > REMOTE_TOKEN_MAX_LENGTH:
         raise HTTPException(status_code=401, detail="请重新扫码连接。")
     row = (
         await db.execute(
