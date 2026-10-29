@@ -137,6 +137,7 @@ export interface DesktopBridge {
     setEnabled: AsyncIpc<IpcInvokeContract['spiritagent:toolset:set-enabled']>
   }
   media: {
+    prepareOutput: AsyncIpc<IpcInvokeContract['spiritagent:media:prepare-output']>
     stt: AsyncIpc<IpcInvokeContract['spiritagent:media:stt']>
     uploadAudio: AsyncIpc<IpcInvokeContract['spiritagent:media:audio-upload']>
     uploadVoiceSample: AsyncIpc<IpcInvokeContract['spiritagent:media:voice-sample-upload']>

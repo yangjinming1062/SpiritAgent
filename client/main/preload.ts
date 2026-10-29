@@ -181,6 +181,7 @@ const desktopBridge = {
   log: (payload: InvokePayload<typeof IPC.invoke.logEmit>) => invoke(IPC.invoke.logEmit, payload),
   logout: (payload: DesktopLogoutPayload) => invoke(IPC.invoke.authLogout, payload),
   media: {
+    prepareOutput: () => invoke(IPC.invoke.mediaPrepareOutput),
     onboardingAudio: {
       read: (tag: string) => invoke(IPC.invoke.onboardingAudioRead, tag)
     },

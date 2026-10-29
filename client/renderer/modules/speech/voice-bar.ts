@@ -236,7 +236,7 @@ export function enqueueVoiceBars(messageIds: string[]): void {
     received.add(key)
 
     if (
-      isVoiceSurfaceActive(id) &&
+      isVoiceSurfaceVisible(id) &&
       proj.isAutoplay() &&
       !proj.getRecord(id)?.listened &&
       !queue.includes(id) &&

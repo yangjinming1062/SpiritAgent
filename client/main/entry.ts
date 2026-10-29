@@ -49,6 +49,7 @@ import { registerUpdateIpc } from './ipc/update'
 import { registerVoicePlaybackIpc } from './ipc/voice-playback'
 import { createVoicePlaybackStore } from './ipc/voice-playback-store'
 import { installAppQuit } from './lifecycle/app-quit'
+import { createAudioOutput } from './lifecycle/audio-output'
 import { createAutoUpdater } from './lifecycle/auto-updater'
 import { syncBundledSkills } from './lifecycle/bundled-skills'
 import { createDesktopLogger } from './lifecycle/desktop-log'
@@ -119,6 +120,7 @@ const desktopLogger = createDesktopLogger({
 })
 
 const { rememberLog } = desktopLogger
+const audioOutput = createAudioOutput(rememberLog)
 
 // 须先于会话恢复与 Runner 自动启动，使 Runner 与技能索引读到当前版本的随包技能。
 syncBundledSkills({
@@ -422,6 +424,7 @@ registerConnectionIpc({
 
 const mediaIpc = registerMediaIpc({
   spiritagentHome: SPIRITAGENT_HOME,
+  prepareAudioOutput: audioOutput.prepare,
   ensureBackend,
   invokeApi: backendHttp.invoke,
   getCurrentAuth: () => sessionRuntime.getCurrentAuth(),
@@ -596,6 +599,8 @@ void app.whenReady().then(async () => {
     return
   }
 
+  void audioOutput.prepare().catch(error => rememberLog(`[audio-output] Startup failed: ${String(error)}`))
+
   setTimeout(() => {
     if (!appQuit.isQuitting()) {
       authBroadcaster.autoStartBridgeIfSignedIn()
@@ -660,6 +665,7 @@ const appQuit = installAppQuit({
   flushConfig: () => configSync.flush(),
   flushLog: () => desktopLogger.flushSync(),
   flushPlayback: () => voicePlaybackStore.flush(),
+  stopAudioOutput: audioOutput.dispose,
   log: rememberLog,
   restoreDesktop: () => presentation?.dispose() ?? Promise.resolve(),
   stopRunner: () => runnerHost.getBridge()?.stop({ reason: 'app-quit' }) ?? Promise.resolve()

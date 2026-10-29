@@ -1,4 +1,5 @@
 import { log } from '@/shared/lib/log'
+import { mediaApi } from '@/shared/platform/desktop'
 
 export type AudioPlaybackResult = 'completed' | 'interrupted' | 'failed'
 
@@ -14,21 +15,6 @@ let current: HTMLAudioElement | null = null
 let currentDone: (() => void) | null = null
 let playGen = 0
 
-let audioCtx: AudioContext | null = null
-let playbackSource: MediaElementAudioSourceNode | null = null
-
-function disconnectPlaybackSource(): void {
-  if (playbackSource) {
-    try {
-      playbackSource.disconnect()
-    } catch {
-      /* ignore */
-    }
-
-    playbackSource = null
-  }
-}
-
 export function stopAudio(): void {
   playGen++
 
@@ -41,54 +27,6 @@ export function nextGen(): number {
 
 export function isLatestGen(gen: number): boolean {
   return gen === playGen
-}
-
-/** 预热 AudioContext 至 running 并保持不 suspend（否则切换语音条的 resume 与 MediaElementSource 重路由叠加会丢首帧）；挂起交由系统/浏览器处理。 */
-export function warmAudioContext(): void {
-  const ctx = ensureAudioContext()
-
-  if (ctx.state === 'suspended') {
-    void ctx.resume().catch(() => undefined)
-  }
-}
-
-function ensureAudioContext(): AudioContext {
-  audioCtx ??= new AudioContext()
-
-  return audioCtx
-}
-
-/** 先恢复并接好 Web Audio 输出链，再启动媒体时间轴；否则冷启动重路由期间时间轴仍会前进，实际出声时已跳过开头。 */
-async function connectPlaybackGraph(audio: HTMLAudioElement, gen: number): Promise<void> {
-  if (!isLatestGen(gen) || current !== audio) {
-    return
-  }
-
-  const ctx = ensureAudioContext()
-
-  if (ctx.state === 'suspended') {
-    await ctx.resume().catch(() => undefined)
-  }
-
-  if (!isLatestGen(gen) || current !== audio || ctx.state !== 'running') {
-    return
-  }
-
-  // 每个 audio 元素创建一个 MediaElementSource。跨多次切换复用会泄漏图节点，并触发 "HTMLMediaElement already connected" 的 DOMException。
-  try {
-    disconnectPlaybackSource()
-    playbackSource = ctx.createMediaElementSource(audio)
-    playbackSource.connect(ctx.destination)
-  } catch (err) {
-    // 接图失败不阻断播放，记录原因便于排查无声。
-    log.warn('audio-track', 'Playback graph connection failed:', err)
-
-    return
-  }
-
-  if (!isLatestGen(gen) || current !== audio) {
-    disconnectPlaybackSource()
-  }
 }
 
 export async function playDataUrl(dataUrl: string, options: AudioPlaybackOptions = {}): Promise<AudioPlaybackResult> {
@@ -144,7 +82,6 @@ export async function playDataUrl(dataUrl: string, options: AudioPlaybackOptions
       audio.removeAttribute('src')
       audio.load()
       current = null
-      disconnectPlaybackSource()
     }
 
     resolvePlayback(result)
@@ -183,7 +120,8 @@ export async function playDataUrl(dataUrl: string, options: AudioPlaybackOptions
   const alive = (): boolean => !fired && isLatestGen(gen) && current === audio
 
   const prepare = async (): Promise<void> => {
-    await Promise.race([metadata, playbackEnded])
+    // 输出由主进程在启动时准备并持续保持；各窗口只共享就绪结果，不重复播放预热片段。
+    await Promise.race([Promise.all([metadata, mediaApi().media.prepareOutput()]), playbackEnded])
 
     if (!alive()) {
       return
@@ -192,12 +130,6 @@ export async function playDataUrl(dataUrl: string, options: AudioPlaybackOptions
     // 失效断点从头恢复，避免直接 seek 到结尾被误判为已听。
     position = Number.isFinite(position) && position < audio.duration ? position : 0
     audio.currentTime = position
-    await connectPlaybackGraph(audio, gen)
-
-    if (!alive()) {
-      return
-    }
-
     await audio.play()
 
     if (alive()) {
@@ -207,7 +139,7 @@ export async function playDataUrl(dataUrl: string, options: AudioPlaybackOptions
     }
   }
 
-  // 中断须立即返回，即使浏览器尚在等待媒体元数据或 AudioContext.resume。
+  // 中断须立即返回，即使浏览器尚在等待媒体元数据或开始播放。
   void prepare().catch(error => {
     if (!fired) {
       log.warn('audio-track', 'Playback failed', error)

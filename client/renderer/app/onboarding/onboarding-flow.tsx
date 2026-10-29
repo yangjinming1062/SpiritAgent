@@ -7,7 +7,7 @@ import {
   setCompanionVoiceId,
   setResponsePreference
 } from '@/modules/character'
-import { stopSpeaking, warmAudioContext } from '@/modules/speech'
+import { stopSpeaking } from '@/modules/speech'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { saveCreationDraftImage } from '@/shared/lib/creation-draft-image'
 import { log } from '@/shared/lib/log'
@@ -67,7 +67,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
   useEffect(() => {
     draft.start()
-    warmAudioContext()
 
     return () => {
       draft.dispose()

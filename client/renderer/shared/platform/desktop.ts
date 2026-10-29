@@ -58,7 +58,7 @@ type PreferencesPort = Pick<
 >
 type SystemPort = Pick<DesktopBridge, 'log' | 'getVersion' | 'update'>
 type MediaPort = Pick<DesktopBridge, 'voicePlayback'> & {
-  media: Pick<DesktopBridge['media'], 'onboardingAudio'> & {
+  media: Pick<DesktopBridge['media'], 'onboardingAudio' | 'prepareOutput'> & {
     [K in 'stt' | 'tts' | 'uploadAudio' | 'uploadVoiceSample']: ApiValueCall<DesktopBridge['media'][K]>
   }
 }
@@ -100,6 +100,7 @@ export const preferencesApi = (): PreferencesPort => window.spiritagent
 export const systemApi = (): SystemPort => window.spiritagent
 export const mediaApi = (): MediaPort => ({
   media: {
+    prepareOutput: window.spiritagent.media.prepareOutput,
     onboardingAudio: window.spiritagent.media.onboardingAudio,
     stt: payload => apiValue(window.spiritagent.media.stt(payload)),
     tts: payload => apiValue(window.spiritagent.media.tts(payload)),

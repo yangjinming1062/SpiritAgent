@@ -312,6 +312,7 @@ function setCachedTts(key: string, value: { dataUrl: string; mimeType: string })
 
 interface MediaIpcDeps {
   spiritagentHome: string
+  prepareAudioOutput: () => Promise<void>
   ensureBackend: () => Promise<BackendConnection>
   getCurrentAuth: GetCurrentAuth
   getSelectedAccountId: () => string | null
@@ -322,6 +323,7 @@ interface MediaIpcDeps {
 
 export function registerMediaIpc({
   spiritagentHome,
+  prepareAudioOutput,
   ensureBackend,
   getCurrentAuth,
   getSelectedAccountId,
@@ -329,6 +331,7 @@ export function registerMediaIpc({
   ipcMain,
   log = () => {}
 }: MediaIpcDeps): { clearAccountCache: (accountId: string) => Promise<void> } {
+  ipcMain.handle(IPC.invoke.mediaPrepareOutput, () => prepareAudioOutput())
   const diskCache = createTtsDiskCache({ spiritagentHome })
   const sttLimiter = new SttLimiter()
   const ttsQueue = new BoundedTtsQueue()

@@ -13,6 +13,7 @@ interface AppQuitDeps {
   flushConfig: () => Promise<void>
   flushLog: () => void
   flushPlayback: () => Promise<void>
+  stopAudioOutput: () => void
   log: (chunk: string) => void
   /** 停止 Runner；没有 Runner 时立即完成。 */
   stopRunner: () => Promise<unknown>
@@ -56,6 +57,7 @@ export function installAppQuit(deps: AppQuitDeps): AppQuit {
 
     deps.destroyTray()
     deps.cleanupShortcuts()
+    deps.stopAudioOutput()
 
     // 尽力上云，进程可能先退出：未上传的编辑只在云端缺少该键时由下次水合补传，云端已有的键以云端值为准。
     void deps.flushConfig()

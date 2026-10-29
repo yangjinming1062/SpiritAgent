@@ -602,6 +602,7 @@ export interface IpcInvokeContract {
     | Promise<{ error?: string; ok: boolean; toolsets?: ToolsetItem[] }>
 
   // 媒体
+  'spiritagent:media:prepare-output': () => Promise<void>
   'spiritagent:media:stt': (payload: MediaSttPayload) => Promise<DesktopApiResult<{ text: string }>>
   'spiritagent:media:audio-upload': (payload: AudioUploadPayload) => Promise<DesktopApiResult<AudioUploadResult>>
   'spiritagent:media:voice-sample-upload': (
@@ -776,6 +777,7 @@ export const IPC = {
     skillSetEnabled: 'spiritagent:skill:set-enabled',
     toolsetsList: 'spiritagent:toolsets:list',
     toolsetSetEnabled: 'spiritagent:toolset:set-enabled',
+    mediaPrepareOutput: 'spiritagent:media:prepare-output',
     mediaStt: 'spiritagent:media:stt',
     mediaAudioUpload: 'spiritagent:media:audio-upload',
     mediaVoiceSampleUpload: 'spiritagent:media:voice-sample-upload',

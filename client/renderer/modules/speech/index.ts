@@ -1,4 +1,4 @@
-export { playDataUrl, warmAudioContext } from './audio-track'
+export { playDataUrl } from './audio-track'
 export { playPrepared, speak, speakScripted, stopSpeaking } from './tts'
 export {
   $voiceCatalogRevision,

@@ -22,7 +22,7 @@ import {
 } from '@/modules/character'
 import { CharacterStage } from '@/modules/character/rendering'
 import { MediaViewerOverlay } from '@/modules/media'
-import { checkVoiceValidity, warmAudioContext } from '@/modules/speech'
+import { checkVoiceValidity } from '@/modules/speech'
 import { enqueueInteraction } from '@/modules/visuals'
 import { NotificationStack } from '@/shared'
 import { useMainProcessListener } from '@/shared/hooks/use-main-process-listener'
@@ -57,9 +57,6 @@ export function SpriteWindow(): React.JSX.Element {
 
   useEffect(() => {
     const stopSpatial = initSpatial()
-
-    // 提前预热，避免首次播放时 resume 与 MediaElementSource 重路由叠加丢首帧。
-    warmAudioContext()
 
     void hydrateRunnerStatus()
 

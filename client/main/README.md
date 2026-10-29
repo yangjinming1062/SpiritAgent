@@ -25,6 +25,12 @@
 
 ## 渲染面准入
 
+### 声音输出
+
+[audio-output.ts](lifecycle/audio-output.ts) 在应用启动时创建唯一的隐藏音频窗口，完成一次预热后持续循环本地 PCM 静音，直到退出；关闭会话、隐藏窗口、切换模式与账户均不释放保活流。该窗口禁用脚本且没有 preload，使用独立内存分区，不持有账户凭据或云端资源。各渲染窗口经 `media.prepareOutput` 共享就绪 Promise，播放停止只释放对应台词，不关闭应用级输出。
+
+预热启动等待有界，载入失败、播放停止或音频窗口崩溃会清除就绪状态，后续播放可重新建立输出，错误照常报告；退出链释放窗口并拒绝尚未就绪的等待。实际声音和蓝牙设备恢复须实机验证，循环时间轴不等于听感验收。
+
 ### 凭据与请求
 
 [session.ts](backend/session.ts) 保管多账户凭据，preload 不暴露持久凭据读取，托盘账户操作留在主进程。[connection.ts](ipc/connection.ts) 统一接收操作标识和参数，[api-allowlist.ts](security/api-allowlist.ts) 按生成契约的 IPC 策略校验；WS 票据仅由账户网关申请。multipart 经专用媒体通道传字节或已授权路径，由主进程构建 `FormData`。存储和错误语义见 [凭据落盘](../../docs/PROTOCOL.md#凭据落盘)及[错误信封](../../docs/PROTOCOL.md#错误信封)。
