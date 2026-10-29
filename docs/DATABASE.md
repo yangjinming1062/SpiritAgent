@@ -164,7 +164,7 @@ flowchart LR
 | 对象 | 保留理由与边界 | 权威入口 |
 |---|---|---|
 | 终态任务 | 明确终态且清理完成后，检查点/临时引用七天、诊断九十天；保留请求身份、终态与必要结果以维持幂等，未知和未清理工作不按期限压缩 | [jobs/service.py](../backend/features/jobs/service.py) |
-| 影像版本与播放 | 当前或仍引用的版本持续保护；已结束播放七天后释放占用，再回收无引用版本 | [visuals/asset_references.py](../backend/features/visuals/asset_references.py) |
+| 影像版本与播放 | 当前、仍引用及每份冻结身份/造型/动作/画幅的最新合格自动演出版本持续保护；已结束播放七天后释放占用，再回收无引用且不承担自动回退的版本 | [visuals/asset_references.py](../backend/features/visuals/asset_references.py) |
 | 记忆修订与指纹 | 修订保留最近二十次；明确遗忘清除正文、摘录和修订，指纹可失去原记录仍保留抑制作用 | [records.py](../backend/features/memory/records.py)、[memory_store.py](../backend/features/memory/memory_store.py) |
 
 ## 删除与恢复

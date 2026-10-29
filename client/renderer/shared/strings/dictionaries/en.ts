@@ -1949,6 +1949,10 @@ export const dict: Dictionary = {
     jobCommandFailed: "Couldn't run the creation command",
     cancelTitle: 'Cancel this creation?',
     currentMark: 'Currently shown',
+    autoPlayOff: 'This version is not used automatically',
+    autoPlayHint:
+      'This version is finished and kept, but is currently unavailable for automatic rotation or life scenes. You can still inspect the result and its review in the visual library.',
+    autoPlayReview: 'Content review',
     backToList: 'Back to visuals',
     sourceTitle: 'Composed from',
     frozenDeleted: 'The material was deleted; the frozen source from creation is kept.',

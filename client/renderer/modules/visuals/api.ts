@@ -106,8 +106,8 @@ export const visualsApi = {
   receiptPlay: (playId: string, body: VisualReceiptBody): Promise<{ ok: boolean }> =>
     requestResource('companion_visuals.receipt_play', { path: { play_id: playId }, body }),
   /** 导演点播：走完整指令 + 认领 + 回执管线；仅舞台宿主使用。 */
-  playVisual: (visualId: string): Promise<VisualPlayCommand> =>
-    requestResource('companion_visuals.play_visual', { path: { visual_id: visualId } })
+  playVisual: (visualId: string, version: number): Promise<VisualPlayCommand> =>
+    requestResource('companion_visuals.play_visual', { path: { visual_id: visualId }, query: { version } })
 }
 
 export const actionsApi = {

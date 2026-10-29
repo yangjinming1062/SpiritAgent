@@ -17,6 +17,7 @@ from features.life.schemas import LifeStepRequest
 from features.life.use_cases import presentation_revision_matches, require_step_submission
 
 from .creation import begin_opening_repair, identity_score_passed
+from .eligibility import automatic_media_ready
 from .generation import (
     cancel_visual_job,
     pause_visual_job,
@@ -47,6 +48,8 @@ from .repository import (
     require_presentation_row,
     stage_composition,
     touch_presentation,
+    version_view,
+    visual_clip_kind,
     visual_is_short_action,
     visual_item,
     visual_job_row,
@@ -389,6 +392,7 @@ async def play_visual(
     visual_id: int,
     *,
     source: PlaybackSource,
+    version: int | None = None,
     expected_state_revision: int | None = None,
     expected_life_revision: int | None = None,
 ) -> VisualPlayCommand:
@@ -399,7 +403,19 @@ async def play_visual(
             and not await presentation_revision_matches(db, user_id, expected_life_revision)
         ):
             raise VisualPresentationConflictError("活动或呈现已变化，请重新判断")
-        item = await visual_item(db, user_id, visual_id)
+        item: VisualItem | PresentedVisual = await visual_item(db, user_id, visual_id)
+        version_id = item.current_version_id
+        if version is not None and version != item.version:
+            selected = await db.scalar(
+                select(VisualVersion).where(
+                    VisualVersion.visual_id == visual_id,
+                    VisualVersion.user_id == user_id,
+                    VisualVersion.number == version,
+                )
+            )
+            if selected is None:
+                raise VisualStateError("影像版本已不可用，请刷新后重试")
+            item, version_id = version_view(item, selected), selected.id
         if not visual_playable(item):
             raise VisualStateError("影像文件缺失，请重新制作")
         snapshot = visual_snapshot(item)
@@ -409,7 +425,20 @@ async def play_visual(
                 raise VisualStateError(f"当前不适合自主播放：{blocked}")
         if source == "remote":
             await _require_stage_media_match(state, snapshot)
-        _play, command = await dispatch_play_command(db, user_id, item, source=source, snapshot=snapshot)
+            media_source = snapshot.source
+            semantics = media_source.media_semantics if media_source.kind in ("actor", "cinematic") else None
+            if not automatic_media_ready(
+                media_kind=item.media_kind,
+                asset_kind=item.asset_kind,
+                media_path=item.media_path,
+                auto_selectable=semantics.auto_selectable if semantics is not None else None,
+                clip_kind=visual_clip_kind(item, snapshot),
+                body=item.body_json,
+            ):
+                raise VisualStateError("这个版本暂不支持自动演出，可以在影像库预览")
+        _play, command = await dispatch_play_command(
+            db, user_id, item, source=source, version_id=version_id, snapshot=snapshot
+        )
         await db.commit()
         return command
 

@@ -3,11 +3,17 @@
 import asyncio
 import hashlib
 import json
+from typing import Literal, NamedTuple
 
 from features.action_library.queries import action_by_preset_key
 from features.appearance.queries import initial_outfit_snapshot, ready_outfit_snapshot
 from features.visuals.generation import wait_visual_job
-from features.visuals.queries import creation_request, current_outfit_reference, reusable_actor_clip
+from features.visuals.queries import (
+    creation_request,
+    current_outfit_reference,
+    job_review_reason,
+    reusable_actor_clip,
+)
 from features.visuals.schemas import ActorClipSource, VisualSnapshot
 from features.visuals.service import create_visual_job
 from infrastructure.assets.write_protection import user_asset_lock
@@ -29,6 +35,13 @@ _RERUN: set[int] = set()
 _STOPPING = False
 
 
+class _Prepared(NamedTuple):
+    """单个动作在本造型下的准备结果；`state` 说明能否自动使用或需要重新排期。"""
+
+    target: tuple[str, str]
+    state: Literal["prepared", "manual_only", "switched"]
+
+
 def _request_id(snapshot: VisualSnapshot, source: ActorClipSource) -> str:
     # 名称、描述分析与更新时间变化不重置同一素材的准备预算。
     basis = {
@@ -42,8 +55,12 @@ def _request_id(snapshot: VisualSnapshot, source: ActorClipSource) -> str:
     return "base-motion:" + hashlib.sha256(json.dumps(basis, sort_keys=True).encode()).hexdigest()
 
 
-async def _prepare_action(user_id: int, key: str, target: tuple[str, str] | None) -> tuple[str, str] | None:
-    """准备单个内置动作；返回本造型应继续绑定的 (identity_hash, outfit_hash)。"""
+async def _prepare_action(user_id: int, key: str, target: tuple[str, str] | None) -> _Prepared | None:
+    """准备单个内置动作；返回本造型应继续绑定的身份、造型与准备结果。
+
+    返回 None 表示素材或任务当前不可用（失败、暂停、未知或资料变化），本轮到此
+    为止，交给原任务的恢复入口。
+    """
 
     async with user_asset_lock(user_id):
         current = await current_outfit_reference(user_id)
@@ -76,9 +93,9 @@ async def _prepare_action(user_id: int, key: str, target: tuple[str, str] | None
             return None
         selected = (source.identity_hash, source.outfit.content_hash)
         if target is not None and selected != target:
-            return selected
+            return _Prepared(selected, "switched")
         if await reusable_actor_clip(user_id, source):
-            return selected
+            return _Prepared(selected, "prepared")
         request_id = _request_id(snapshot, source)
         original = await creation_request(user_id, request_id)
         if original is not None:
@@ -91,7 +108,21 @@ async def _prepare_action(user_id: int, key: str, target: tuple[str, str] | None
                 source="base_preparation",
                 request_id=request_id,
             )
-    return selected if await wait_visual_job(user_id, job.id) == "succeeded" else None
+    if await wait_visual_job(user_id, job.id) != "succeeded":
+        return None
+    # 制作完成不等于可自动演出：成品照常保留在影像库，只有实际语义确认合格才计入准备。
+    if await reusable_actor_clip(user_id, source):
+        return _Prepared(selected, "prepared")
+    logger.info(
+        "Base motion kept but not automatically usable",
+        extra={
+            "user_id": user_id,
+            "preset": key,
+            "job_id": job.id,
+            "review_reason": await job_review_reason(user_id, job.id),
+        },
+    )
+    return _Prepared(selected, "manual_only")
 
 
 async def _prepare(user_id: int) -> None:
@@ -103,10 +134,16 @@ async def _prepare(user_id: int) -> None:
         result = await _prepare_action(user_id, key, target)
         if result is None:
             return
-        if target is not None and result != target:
+        if result.state == "switched":
             schedule_base_motion_preparation(user_id)
             return
-        target = result
+        target = result.target
+        if result.state == "prepared":
+            continue
+        # 已产出成品但不可自动使用：待机循环未达成核心目标时结束本轮；渐进动作继续
+        # 下一项，同一请求不会再次付费生成。
+        if key in _CORE_PRESETS:
+            return
 
 
 async def _run(user_id: int) -> None:

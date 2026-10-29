@@ -125,10 +125,12 @@ async def put_presentation(user: CurrentUser, body: VisualPreferencesRequest) ->
     response_model=VisualPlayCommand,
     openapi_extra=operation_policy(identities=("desktop",)),
 )
-async def play_visual(visual_id: ResourceId, user: CurrentUser) -> VisualPlayCommand:
+async def play_visual(
+    visual_id: ResourceId, user: CurrentUser, version: Annotated[int, Query(gt=0, le=2**31 - 1)]
+) -> VisualPlayCommand:
     """客户端导演请求播放已有成品；受理即派发待播指令，实际呈现以回执为准。"""
 
-    return await _visuals.play_visual(user_id=user.id, visual_id=visual_id)
+    return await _visuals.play_visual(user_id=user.id, visual_id=visual_id, version=version)
 
 
 @router.post(

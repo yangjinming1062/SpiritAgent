@@ -149,7 +149,14 @@ function VisualDetailPanel({
         {visual.media_kind === 'video' ? '视频' : '图片'}
         {durationText(visual.duration_ms) ? ` · ${durationText(visual.duration_ms)}` : ''}
         {currentVisualId === visual.id ? ' · 呈现中' : ''}
+        {visual.media_kind === 'video' && !visual.auto_playable ? ' · 此版本不参与自动演出' : ''}
       </p>
+      {visual.media_kind === 'video' && !visual.auto_playable ? (
+        <div className="muted">
+          <p>这个版本已完成并保留，目前不参与常驻轮换或生活演出。你仍可在影像库查看成品与检查记录。</p>
+          {visual.snapshot.review_reason ? <p>内容检查：{visual.snapshot.review_reason}</p> : null}
+        </div>
+      ) : null}
       {visual.description ? <p>{visual.description}</p> : null}
       <section className="card">
         <h3>来源素材</h3>
@@ -414,7 +421,9 @@ export function Visuals({
                 key={row.id}
                 meta={`${row.media_kind === 'video' ? '视频' : '图片'}${
                   durationText(row.duration_ms) ? ` · ${durationText(row.duration_ms)}` : ''
-                }${currentVisualId === row.id ? ' · 呈现中' : ''}`}
+                }${currentVisualId === row.id ? ' · 呈现中' : ''}${
+                  row.media_kind === 'video' && !row.auto_playable ? ' · 此版本不参与自动演出' : ''
+                }`}
                 onSelect={() => {
                   void run(async () => {
                     const detail = await api.invoke('companion_visuals.get_visual', {

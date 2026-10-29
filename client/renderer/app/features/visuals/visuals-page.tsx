@@ -412,6 +412,7 @@ function VisualCard({
         <Badge>{item.media_kind === 'video' ? t.mediaKindVideo : t.mediaKindImage}</Badge>
         <Badge>{assetKindLabel(item.asset_kind, t.assetKindLabels)}</Badge>
         {current && <Badge tone="accent">{t.currentMark}</Badge>}
+        {item.media_kind === 'video' && !item.auto_playable && <Badge>{t.autoPlayOff}</Badge>}
       </div>
       {sourceSummary && <p className="truncate text-[11px] text-faint">{sourceSummary}</p>}
     </button>
@@ -450,7 +451,18 @@ function VisualDetailPanel({
           <Badge>{detail.media_kind === 'video' ? t.mediaKindVideo : t.mediaKindImage}</Badge>
           <Badge>{assetKindLabel(detail.asset_kind, t.assetKindLabels)}</Badge>
           {current && <Badge tone="accent">{t.currentMark}</Badge>}
+          {detail.media_kind === 'video' && !detail.auto_playable && <Badge>{t.autoPlayOff}</Badge>}
         </div>
+        {detail.media_kind === 'video' && !detail.auto_playable && (
+          <div className="text-[11px] text-faint">
+            <p>{t.autoPlayHint}</p>
+            {detail.snapshot.review_reason && (
+              <p>
+                {t.autoPlayReview}：{detail.snapshot.review_reason}
+              </p>
+            )}
+          </div>
+        )}
         <div className="overflow-hidden rounded-xl bg-fill-faint">
           <MediaPreview type={detail.media_kind} url={detail.media_url}>
             {({ failed, onError, onRetry, src, status }) =>

@@ -138,9 +138,9 @@ async def restore_presentation(user_id: int) -> VisualPlayCommand | None:
         raise _http_error(exc) from exc
 
 
-async def play_visual(user_id: int, visual_id: int) -> VisualPlayCommand:
+async def play_visual(user_id: int, visual_id: int, version: int) -> VisualPlayCommand:
     try:
-        command = await service.play_visual(user_id, visual_id, source="remote")
+        command = await service.play_visual(user_id, visual_id, source="remote", version=version)
     except VisualError as exc:
         raise _http_error(exc) from exc
     return client_play_command(command)

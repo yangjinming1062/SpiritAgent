@@ -1,5 +1,6 @@
 """已发布版本和制作任务的显式资产依赖与保留期回收。"""
 
+import json
 from datetime import timedelta
 
 from infrastructure.assets.references import asset_paths
@@ -11,8 +12,9 @@ from sqlalchemy.orm import aliased
 from features.assets.service import asset_paths_in_session
 from features.jobs.service import cleanup_job_assets, job_asset_paths
 
+from .eligibility import automatic_media_ready
 from .models import VisualItem, VisualJob, VisualPlayback, VisualPresentation, VisualVersion, VisualVersionAsset
-from .schemas import StageComposition
+from .schemas import StageComposition, VisualSnapshot
 
 
 async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
@@ -40,6 +42,58 @@ async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
     ):
         paths |= asset_paths([row.snapshot_json, row.checkpoint, row.candidates_json], user_id)
     return paths
+
+
+async def _automatic_version_ids(db: AsyncSession, user_id: int) -> set[int]:
+    """每份冻结身份、造型、动作与画幅保留最新合格实现，供目录回退与准备复用。"""
+
+    rows = await db.stream(
+        select(VisualVersion, VisualItem.asset_kind)
+        .join(VisualItem, VisualItem.id == VisualVersion.visual_id)
+        .where(
+            VisualItem.user_id == user_id,
+            VisualItem.status == "ready",
+            VisualItem.media_kind == "video",
+            VisualItem.asset_kind.in_(("actor", "cinematic")),
+            VisualVersion.snapshot_json["source"]["media_semantics"]["auto_selectable"].as_boolean().is_(True),
+        )
+        .order_by(VisualVersion.id.desc()),
+        execution_options={"yield_per": 32},
+    )
+    protected: set[int] = set()
+    selected: set[str] = set()
+    try:
+        async for version, asset_kind in rows:
+            source = VisualSnapshot.model_validate(version.snapshot_json).source
+            if source.kind not in ("actor", "cinematic"):
+                continue
+            key = json.dumps(
+                [
+                    version.visual_id,
+                    source.identity_hash,
+                    source.portrait_hash,
+                    source.identity_reference_role,
+                    source.outfit.content_hash,
+                    source.action.media_basis(),
+                    version.width,
+                    version.height,
+                ],
+                sort_keys=True,
+            )
+            if key in selected or not automatic_media_ready(
+                media_kind="video",
+                asset_kind=asset_kind,
+                media_path=version.media_path,
+                auto_selectable=source.media_semantics.auto_selectable if source.media_semantics else None,
+                clip_kind=source.action.clip_kind,
+                body=version.body_json,
+            ):
+                continue
+            selected.add(key)
+            protected.add(version.id)
+    finally:
+        await rows.close()
+    return protected
 
 
 async def cleanup_obsolete_assets(db: AsyncSession, user_id: int) -> set[str]:
@@ -108,6 +162,9 @@ async def cleanup_obsolete_assets(db: AsyncSession, user_id: int) -> set[str]:
     )
     if protected:
         unused = unused.where(tuple_(VisualVersion.visual_id, VisualVersion.number).not_in(protected))
+    automatic = await _automatic_version_ids(db, user_id)
+    if automatic:
+        unused = unused.where(VisualVersion.id.not_in(automatic))
     versions = list(await db.scalars(unused))
     if not versions:
         return released

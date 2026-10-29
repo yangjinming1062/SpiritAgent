@@ -1182,14 +1182,14 @@ async def _describe_frame(user_id: int, job_id: int, progress: VisualJobProgress
 
 def _publication_snapshot(snapshot: VisualSnapshot, progress: VisualJobProgress) -> VisualSnapshot:
     if snapshot.source.kind == "scene":
-        return snapshot
+        return snapshot.model_copy(update={"review_reason": progress.review_reason})
     source = snapshot.source.model_copy(
         update={
             "plan": progress.creation_plan,
             "media_semantics": progress.candidate.media_semantics if progress.candidate else None,
         }
     )
-    return snapshot.model_copy(update={"source": source})
+    return snapshot.model_copy(update={"source": source, "review_reason": progress.review_reason})
 
 
 async def _finish_job(

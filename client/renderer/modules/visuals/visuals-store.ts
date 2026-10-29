@@ -65,7 +65,7 @@ export function visualPerformancePorts(): Omit<PerformancePorts, 'valid'> {
         throw new Error('Performance account changed')
       }
 
-      const command = await visualsApi.playVisual(request.visualId)
+      const command = await visualsApi.playVisual(request.visualId, request.visualVersion)
 
       if (scope()) {
         await refreshVisualPresentation()

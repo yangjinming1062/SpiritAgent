@@ -217,6 +217,7 @@ class VisualSnapshot(BaseModel):
     source: VisualSource
     target_width: int = Field(gt=0, le=VISUAL_MAX_EDGE, strict=True)
     target_height: int = Field(gt=0, le=VISUAL_MAX_EDGE, strict=True)
+    review_reason: str = Field(default="", description="已发布成品的实际检查依据；制作输入为空")
 
     @property
     def kind(self) -> VisualAssetKind:
@@ -373,6 +374,7 @@ class VisualItemView(BaseModel):
     updated_at: datetime
     # actor 主体元数据投影；路径已在响应出口转为客户端地址。
     body: ActorClipBody | None = None
+    auto_playable: bool = Field(default=False, description="成品能否参与自动演出；不判断当前舞台是否适用")
 
 
 class StageLayerMedia(BaseModel):
