@@ -431,6 +431,8 @@ async def _life_context_is_current(
     intent = state.intent_json
     return bool(
         isinstance(intent, dict)
+        and intent.get("activity_kind") != "intent"
+        and intent.get("activity_type") != "idle"
         and intent.get("life_revision") == life_revision
         and intent.get("activity_type") == life_activity_type
         and await presentation_revision_matches(db, user_id, life_revision)
@@ -487,6 +489,8 @@ async def play_visual(
             intent = StageIntent.model_validate(state.intent_json) if state.intent_json else None
             if intent is None or intent.life_revision != expected_life_revision:
                 raise VisualPresentationConflictError("活动或呈现已变化，请重新判断")
+            if intent.activity_kind == "intent" or intent.activity_type == "idle":
+                raise VisualPresentationConflictError("当前没有可呈现的进行中活动")
             if not await presentation_revision_matches(db, user_id, intent.life_revision):
                 raise VisualPresentationConflictError("活动或呈现已变化，请重新判断")
             intent_revision = intent.life_revision
@@ -504,6 +508,7 @@ async def play_visual(
                 raise VisualStateError(f"当前不适合自主播放：{blocked}")
         if source in ("manual", "autonomous", "life"):
             await _require_stage_media_match(state, snapshot)
+        if source in ("autonomous", "life"):
             media_source = snapshot.source
             semantics = media_source.media_semantics if media_source.kind in ("actor", "cinematic") else None
             if not automatic_media_ready(
@@ -598,8 +603,12 @@ async def restore_presentation(user_id: int) -> VisualPlayCommand | None:
             return None
         if state.pending_command_json:
             pending = VisualPlayCommand.model_validate(state.pending_command_json)
+            if presence.mode == "window" and pending.asset_kind == "cinematic":
+                await cancel_pending_command(db, state)
+                pending = None
             if (
-                pending.presentation_epoch == presence.revision
+                pending is not None
+                and pending.presentation_epoch == presence.revision
                 and pending.state_revision == state.state_revision
                 and ensure_utc(pending.expires_at) > utc_now()
             ):
@@ -641,6 +650,12 @@ async def restore_presentation(user_id: int) -> VisualPlayCommand | None:
             state.loop_visual_id = state.loop_version_id = None
             state.current_snapshot_json = state.loop_snapshot_json = None
             await touch_presentation(db, user_id)
+            await db.commit()
+            return None
+        # 完整场景只能由桌面宿主呈现。窗口模式沿用当前身份/造型可用的主体
+        # 循环（由客户端目录解析），不能把 cinematic 指令误交给静态投影。
+        if presence.mode == "window" and composition is not None and composition.mode == "cinematic":
+            await cancel_pending_command(db, state)
             await db.commit()
             return None
         version_id = (

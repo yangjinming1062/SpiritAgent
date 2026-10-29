@@ -236,8 +236,6 @@ export function createPerformanceScheduler(ports: PerformancePorts, changed: (st
       return false
     }
 
-    remember(task.performanceId, requested)
-
     if (
       task.cooldownKey &&
       ((cooldowns.get(task.cooldownKey) ?? 0) > Date.now() ||
@@ -261,6 +259,12 @@ export function createPerformanceScheduler(ports: PerformancePorts, changed: (st
     const capacity = QUEUE_LIMIT - (deferred && state !== 'dispatching' ? 1 : 0)
     const accepted = queue.indexOf(task) < capacity
     queue.splice(capacity)
+
+    // 只有真正进入队列的请求才记为已请求；被高优先级任务挤掉的生活选择
+    // 仍需在当前修订后续刷新时获得一次机会。
+    if (accepted) {
+      remember(task.performanceId, requested)
+    }
 
     if (accepted && active && task.priority > active.task.priority && active.task.interruptible) {
       void close(active, 'Preempted by a higher priority performance')

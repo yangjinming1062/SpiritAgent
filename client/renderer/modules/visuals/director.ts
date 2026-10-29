@@ -141,6 +141,29 @@ function pickReaction(catalog: CatalogEntry[], kind: InteractionKind): CatalogEn
   return null
 }
 
+/** 当前持续整片仍与生活意图相符时，恢复只沿用已有组合。 */
+function lifeCompositionMatchesIntent(intent: NonNullable<VisualsPresentation['intent']>): boolean {
+  const composition = presentation?.composition
+
+  if (composition?.selection_source !== 'life' || !composition.cinematic) {
+    return false
+  }
+
+  const entry = presentation?.ambient_catalog.find(
+    item => item.visual_id === composition.cinematic?.visual_id && item.version === composition.cinematic.version
+  )
+
+  return Boolean(
+    entry &&
+    entry.asset_kind === 'cinematic' &&
+    entry.clip_kind === 'loop' &&
+    entry.performance_role === 'sustained' &&
+    entry.allowed_triggers.includes('periodic') &&
+    motionAllowed(entry, motionSubtle()) &&
+    lifeMatchScore(entry, intent) > 0
+  )
+}
+
 function performInteraction(kind: InteractionKind, eventId: string, at: number): void {
   if (!stageEligible() || mechanicallyBlocked() || !presentation) {
     return
@@ -178,11 +201,14 @@ function evaluateIntent(): void {
 
   if (
     !intent ||
-    intent.life_revision === attemptedIntentRevision ||
     intent.activity_kind === 'intent' ||
     intent.activity_type === 'idle' ||
     $presentation.get().effectiveMode !== 'desktop'
   ) {
+    return
+  }
+
+  if (intent.life_revision === attemptedIntentRevision) {
     return
   }
 
@@ -209,8 +235,8 @@ function evaluateIntent(): void {
     return
   }
 
-  // 仍在播的生活整片与新意图同活动且仍匹配时沿用（不重复派发同一段影像）；
-  // 以调度器实际播放状态为准，播放曾被中断的组合不阻止重新选择。
+  // 仍在播或等待开播的生活整片与新意图同活动且仍匹配时沿用（不重复派发同一段影像）。
+  // 仅有冻结组合而没有实际播放状态时，恢复可能失败，不能把意图修订标记为已呈现。
   const composition = presentation?.composition
   const playing = $performance.get()
 
@@ -218,7 +244,7 @@ function evaluateIntent(): void {
     composition?.selection_source === 'life' &&
     composition.cinematic &&
     composition.life_activity_type === intent.activity_type &&
-    playing.state === 'playing' &&
+    (playing.state === 'dispatching' || playing.state === 'waiting' || playing.state === 'playing') &&
     playing.current?.source === 'life' &&
     candidates.some(
       entry => entry.visual_id === composition.cinematic?.visual_id && entry.version === composition.cinematic.version
@@ -354,7 +380,9 @@ export function bindPresentationDirector(
 ): () => void {
   stopBinding?.()
   presentation = presentationFeed()
-  attemptedIntentRevision = presentation?.intent?.life_revision ?? -1
+  // 绑定只建立新的导演运行周期；当前修订是否已经呈现要由组合和实际回执核对，
+  // 不能把首次读取到的修订直接记为已尝试。
+  attemptedIntentRevision = -1
   stageEligible = eligibility.isEligible
   motionSubtle = eligibility.isSubtle
   mechanicallyBlocked = eligibility.isMechanical
@@ -366,7 +394,14 @@ export function bindPresentationDirector(
       request.source === 'manual' ||
       Boolean(
         presentation &&
-        (request.intentRevision === null || request.intentRevision === presentation.intent?.life_revision) &&
+        (request.intentRevision === null ||
+          request.intentRevision === presentation.intent?.life_revision ||
+          (request.source === 'life' &&
+            presentation.composition?.selection_source === 'life' &&
+            presentation.composition.cinematic?.visual_id === request.visualId &&
+            presentation.composition.cinematic.version === request.visualVersion &&
+            presentation.intent !== null &&
+            lifeCompositionMatchesIntent(presentation.intent))) &&
         presentation.ambient_catalog.some(
           entry =>
             entry.visual_id === request.visualId &&
@@ -471,10 +506,6 @@ export function feedDirectorPresentation(next: VisualsPresentation | null): void
     attemptedIntentRevision = -1
     $ambientLoopChoice.set(null)
   } else if (stageEligible()) {
-    if (!hydrated) {
-      attemptedIntentRevision = next.intent?.life_revision ?? -1
-    }
-
     syncAmbientChoice()
     evaluateIntent()
   }
