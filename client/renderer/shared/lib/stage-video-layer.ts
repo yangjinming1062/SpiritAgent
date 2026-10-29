@@ -4,6 +4,7 @@ export interface StageVideoSource<T> {
   key: string
   mediaKey?: string
   loop: boolean
+  natural?: boolean
   value: T
   load: () => Promise<StageVideoLease>
 }
@@ -27,6 +28,7 @@ interface Slot<T> {
   generation: number
   timeout: ReturnType<typeof setTimeout> | null
   frame: number | null
+  mediaTime: number
 }
 
 /** 透明主体与环境共用的双缓冲层；新首帧就绪前保留旧画面，短动作仅回到仍有效的循环。 */
@@ -40,7 +42,8 @@ export function createStageVideoLayer<T>(elements: HTMLVideoElement[], events: L
     terminal: false,
     generation: 0,
     timeout: null,
-    frame: null
+    frame: null,
+    mediaTime: 0
   }))
 
   let active: Slot<T> | null = null
@@ -87,6 +90,7 @@ export function createStageVideoLayer<T>(elements: HTMLVideoElement[], events: L
     slot.ready = false
     slot.started = false
     slot.terminal = false
+    slot.mediaTime = 0
   }
 
   function watchFrame(slot: Slot<T>): void {
@@ -97,10 +101,20 @@ export function createStageVideoLayer<T>(elements: HTMLVideoElement[], events: L
     }
 
     const generation = slot.generation
-    slot.frame = slot.element.requestVideoFrameCallback(() => {
+    slot.frame = slot.element.requestVideoFrameCallback((_now, metadata) => {
       slot.frame = null
 
       if (disposed || slot.generation !== generation || active !== slot) {
+        return
+      }
+
+      const boundary = metadata.mediaTime < slot.mediaTime
+      slot.mediaTime = metadata.mediaTime
+      const waiting = slots.find(other => other.ready && other.source?.key === selected && other !== slot)
+
+      if (boundary && waiting && slot.source?.natural && waiting.source?.natural) {
+        show(waiting)
+
         return
       }
 
@@ -216,7 +230,14 @@ export function createStageVideoLayer<T>(elements: HTMLVideoElement[], events: L
 
     slot.timeout = null
 
-    if (slot.source.key === selected) {
+    presentReady(slot)
+  }
+
+  function presentReady(slot: Slot<T>): void {
+    if (
+      slot.source?.key === selected &&
+      !(active?.source?.natural && slot.source?.natural && !paused && active !== slot)
+    ) {
       show(slot)
     }
   }
@@ -328,7 +349,7 @@ export function createStageVideoLayer<T>(elements: HTMLVideoElement[], events: L
         existing.source = source
 
         if (existing.ready && !existing.terminal) {
-          show(existing)
+          presentReady(existing)
         }
 
         return

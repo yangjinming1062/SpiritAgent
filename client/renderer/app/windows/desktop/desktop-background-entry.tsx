@@ -1,9 +1,9 @@
 import '../../../styles.css'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 
-import { ambientPhaseFilter } from '@/shared/lib/day-phase'
+import { $dayPhase, ambientPhaseFilter } from '@/shared/lib/day-phase'
 import { createStageVideoLayer } from '@/shared/lib/stage-video-layer'
 import { backgroundMedia } from '@/shared/platform/desktop'
 import { desktopMediaLayout } from '@client-shared/desktop-media-geometry'
@@ -43,7 +43,6 @@ function DesktopWallpaper() {
   const actorSecond = useRef<HTMLVideoElement>(null)
   const actorPoster = useRef<HTMLImageElement>(null)
   const actorRoot = useRef<HTMLDivElement>(null)
-  const phaseMotionEnabled = useRef(true)
 
   useEffect(() => {
     const bridge = backgroundMedia()
@@ -226,29 +225,32 @@ function DesktopWallpaper() {
     const receiveActor = (media: DesktopBackground): void => {
       actorLayer.setPaused(paused || !actorAllowed)
 
-      if (!media.actor) {
+      if (!media.actor && !(media.backgroundKind === 'scene' && media.outfit)) {
         resetActor()
 
         return
       }
 
-      const mediaKey = `${media.actorVisualId}:${media.actorVisualVersion}`
+      const mediaKey = media.actor ? `${media.actorVisualId}:${media.actorVisualVersion}` : `static:${media.revision}`
       actorLayout = media.layout
       applyLayerOrder()
       const key = `${mediaKey}${media.playTarget === 'actor' && media.playId ? `:${media.playId}` : ''}`
       const actorBytes = media.actor
       actorLayer.set(
-        {
-          key,
-          mediaKey,
-          loop: media.actorKind === 'loop',
-          value: media,
-          load: async () => {
-            const url = URL.createObjectURL(new Blob([new Uint8Array(actorBytes.bytes)], { type: actorBytes.mime }))
+        actorBytes
+          ? {
+              key,
+              mediaKey,
+              loop: media.actorKind === 'loop',
+              natural: media.playTarget !== 'actor' || media.playId === null,
+              value: media,
+              load: async () => {
+                const url = URL.createObjectURL(new Blob([new Uint8Array(actorBytes.bytes)], { type: actorBytes.mime }))
 
-            return { url, release: () => URL.revokeObjectURL(url) }
-          }
-        },
+                return { url, release: () => URL.revokeObjectURL(url) }
+              }
+            }
+          : null,
         media.actorBaseKey
       )
       const outfit = media.outfit
@@ -294,7 +296,12 @@ function DesktopWallpaper() {
       status: DesktopBackgroundPlayback['status'],
       error?: string
     ): void => {
-      if (status === 'started' && media.actor && !actorVisible && !actorPosterUrl) {
+      if (
+        status === 'started' &&
+        (media.actor || (media.backgroundKind === 'scene' && media.outfit)) &&
+        !actorVisible &&
+        !actorPosterUrl
+      ) {
         waitingImage = media
 
         return
@@ -322,6 +329,19 @@ function DesktopWallpaper() {
     const setFill = (url: string | null): void => {
       fillPosterUrl = url
       fill.style.backgroundImage = url ? `url("${url}")` : FALLBACK_BACKGROUND
+    }
+
+    const filterFor = (media: DesktopBackground | null): string =>
+      ambientPhaseFilter(Boolean(media && !media.reduceMotion), media?.backgroundKind !== 'scene' || media.phaseMedia)
+
+    const syncPhaseFilter = (): void => {
+      for (const slot of slots) {
+        slot.element.style.filter = filterFor(slot.media)
+      }
+
+      const filter = filterFor(active === null ? staticMedia : slots[active].media)
+      fill.style.filter = `blur(24px) brightness(.6) ${filter === 'none' ? '' : filter}`
+      still.style.filter = filter
     }
 
     const acknowledge = (slot: VideoSlot, status: DesktopBackgroundPlayback['status'], error?: string): void => {
@@ -464,6 +484,8 @@ function DesktopWallpaper() {
       updateMediaLayout(still, still.naturalWidth, still.naturalHeight, staticMedia?.layout ?? actorLayout)
 
     const showPoster = (url: string | null): void => {
+      syncPhaseFilter()
+
       if (url) {
         setFill(url)
       } else if (!fillPosterUrl) {
@@ -547,6 +569,7 @@ function DesktopWallpaper() {
       const height = slot.element.videoHeight * scale
       context.clearRect(0, 0, transition.width, transition.height)
       context.drawImage(slot.element, (transition.width - width) / 2, (transition.height - height) / 2, width, height)
+      transition.style.filter = filterFor(slot.media)
       transition.style.transition = 'none'
       transition.style.opacity = '1'
     }
@@ -585,9 +608,9 @@ function DesktopWallpaper() {
       }
 
       active = index
-      allowActor(Boolean(slot.media?.actor))
+      allowActor(slot.media?.backgroundKind === 'scene' && Boolean(slot.media.actor || slot.media.outfit))
       slot.element.style.opacity = '1'
-      slot.element.style.zIndex = layerZ(slot.media?.actor ? 'scene' : 'cinematic')
+      slot.element.style.zIndex = layerZ(slot.media?.backgroundKind ?? 'scene')
       still.style.opacity = '0'
       showPoster(slot.posterUrl)
 
@@ -908,8 +931,6 @@ function DesktopWallpaper() {
       applyLayerOrder()
       const nextImageGeneration = ++imageGeneration
       paused = media.paused || media.reduceMotion
-      phaseMotionEnabled.current = !media.reduceMotion
-      setPhaseFilter(ambientPhaseFilter(phaseMotionEnabled.current))
       document.documentElement.dataset.theme = media.theme
       document.documentElement.dataset.palette = media.theme.startsWith('night') ? 'night' : 'day'
 
@@ -935,10 +956,14 @@ function DesktopWallpaper() {
             paused,
             reduceMotion: media.reduceMotion
           }
-          slot.element.style.zIndex = layerZ(slot.media.actor ? 'scene' : 'cinematic')
+          slot.media.backgroundKind = media.backgroundKind
+          slot.media.phaseMedia = media.phaseMedia
+          slot.element.style.zIndex = layerZ(slot.media.backgroundKind)
           updateVideoLayout(slot)
         }
       }
+
+      syncPhaseFilter()
 
       const existing = slots.findIndex(
         slot =>
@@ -1034,7 +1059,7 @@ function DesktopWallpaper() {
         }
 
         let preparedPoster: string | null = null
-        void prepareStaticPoster(media.poster, media.actor ? null : media.outfit)
+        void prepareStaticPoster(media.poster, media.backgroundKind === 'scene' ? null : media.outfit)
           .then(nextPoster => {
             preparedPoster = nextPoster
 
@@ -1069,7 +1094,7 @@ function DesktopWallpaper() {
             const previousPoster = fallbackPoster
             fallbackPoster = nextPoster
             staticMedia = media
-            allowActor(Boolean(media.actor))
+            allowActor(media.backgroundKind === 'scene' && Boolean(media.actor || media.outfit))
             showPoster(nextPoster)
             fadeTransition()
             requestAnimationFrame(() => {
@@ -1164,6 +1189,7 @@ function DesktopWallpaper() {
     }
 
     const off = bridge.onMedia(receive)
+    const offPhase = $dayPhase.listen(syncPhaseFilter)
 
     window.addEventListener('resize', updateAllMediaLayouts)
     still.addEventListener('load', updatePosterLayout)
@@ -1172,6 +1198,7 @@ function DesktopWallpaper() {
 
     return () => {
       off()
+      offPhase()
       clear()
       disposed = true
       actorLayer.dispose()
@@ -1191,15 +1218,6 @@ function DesktopWallpaper() {
     opacity: 0
   } as const
 
-  // 时段氛围色调只作用于环境（背景/poster），主体层保持素材原色；每小时复查。
-  const [phaseFilter, setPhaseFilter] = useState(() => ambientPhaseFilter(true))
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setPhaseFilter(ambientPhaseFilter(phaseMotionEnabled.current)), 60 * 60_000)
-
-    return () => window.clearInterval(timer)
-  }, [])
-
   return (
     <div
       aria-hidden="true"
@@ -1212,16 +1230,13 @@ function DesktopWallpaper() {
           inset: -32,
           backgroundPosition: 'center',
           backgroundSize: 'cover',
-          filter: phaseFilter === 'none' ? 'blur(24px) brightness(.6)' : `blur(24px) brightness(.6) ${phaseFilter}`
+          filter: 'blur(24px) brightness(.6)',
+          transition: 'filter 1s ease'
         }}
       />
-      <img
-        alt=""
-        ref={poster}
-        style={{ ...videoStyle, zIndex: 1, ...(phaseFilter !== 'none' ? { filter: phaseFilter } : {}) }}
-      />
-      <video muted playsInline preload="auto" ref={first} style={videoStyle} />
-      <video muted playsInline preload="auto" ref={second} style={videoStyle} />
+      <img alt="" ref={poster} style={{ ...videoStyle, zIndex: 1, transition: 'filter 1s ease' }} />
+      <video muted playsInline preload="auto" ref={first} style={{ ...videoStyle, transition: 'filter 1s ease' }} />
+      <video muted playsInline preload="auto" ref={second} style={{ ...videoStyle, transition: 'filter 1s ease' }} />
       <div ref={actorRoot} style={{ position: 'absolute', inset: 0, zIndex: 2, opacity: 0 }}>
         <img
           alt=""

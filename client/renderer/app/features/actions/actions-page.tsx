@@ -1,10 +1,11 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { $presentedOutfit, hydrateWardrobe } from '@/modules/character'
 import type { ActionClipKind, ActionDefinition } from '@/modules/visuals'
 import {
+  $visualsPresentation,
   actionGroups,
   type ActionLibraryGroup,
   type ActionMediaEntry,
@@ -165,12 +166,18 @@ function ActionMediaPanel({
           <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted" key={entry.visual_id}>
             <span>{visualsLabels.assetKindLabels[entry.asset_kind]}</span>
             <Badge>{entry.media_kind === 'video' ? visualsLabels.mediaKindVideo : visualsLabels.mediaKindImage}</Badge>
-            <Badge>{entry.clip_kind === 'loop' ? t.clipLoop : t.clipOnce}</Badge>
+            {entry.clip_kind && <Badge>{entry.clip_kind === 'loop' ? t.clipLoop : t.clipOnce}</Badge>}
+            {entry.stage_ready ? (
+              <Badge tone="accent">{t.mediaStageReady}</Badge>
+            ) : (
+              <span>{t.mediaStageUnavailable}</span>
+            )}
             <span>{entry.outfit_name || t.mediaOutfitUnknown}</span>
             <span>v{entry.version}</span>
           </div>
         ))}
       </div>
+      {!entries.some(entry => entry.stage_ready) && <p className="mt-1 text-[11px] text-faint">{t.mediaStageHint}</p>}
     </div>
   )
 }
@@ -210,6 +217,22 @@ function ActionsPageContent(): React.JSX.Element {
   }>({ expandedId: null, loadingId: null, errorId: null, rows: {} })
 
   const defaultOutfit = useStore($presentedOutfit)
+  const presentation = useStore($visualsPresentation)
+  const mediaGeneration = useRef(0)
+
+  const stageKey = JSON.stringify([
+    presentation?.static_presentation?.identity_hash ?? presentation?.composition?.identity_hash,
+    presentation?.static_presentation?.outfit?.content_hash ?? presentation?.composition?.outfit_material?.content_hash,
+    presentation?.target_width,
+    presentation?.target_height,
+    presentation?.ambient_catalog.map(entry => [entry.visual_id, entry.version])
+  ])
+
+  useEffect(() => {
+    mediaGeneration.current += 1
+    setMediaPanel({ expandedId: null, loadingId: null, errorId: null, rows: {} })
+  }, [stageKey])
+
   const begin = useAsyncGuard()
 
   const editingId = editing?.id
@@ -266,10 +289,11 @@ function ActionsPageContent(): React.JSX.Element {
 
     const scope = captureAuthScope()
     setMediaPanel(current => ({ ...current, expandedId: action.id, loadingId: action.id, errorId: null }))
+    const generation = mediaGeneration.current
     void visualsApi
       .listActionMedia(action.id)
       .then(response => {
-        if (scope?.()) {
+        if (scope?.() && generation === mediaGeneration.current) {
           setMediaPanel(current => ({
             ...current,
             rows: { ...current.rows, [action.id]: response.media },
@@ -278,7 +302,7 @@ function ActionsPageContent(): React.JSX.Element {
         }
       })
       .catch(() => {
-        if (scope?.()) {
+        if (scope?.() && generation === mediaGeneration.current) {
           setMediaPanel(current => ({
             ...current,
             errorId: action.id,

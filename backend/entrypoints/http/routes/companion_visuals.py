@@ -160,13 +160,14 @@ async def create_actor_clip(user: CurrentUser, body: ActorClipRequest) -> Visual
 
 @router.post("/scene-media", response_model=VisualJobView, status_code=202)
 async def create_scene_media(user: CurrentUser, body: SceneMediaRequest) -> VisualJobView:
-    """制作环境媒体：单张环境素材派生环境循环视频。"""
+    """制作环境媒体：单张环境素材派生环境循环视频，可指定适用时段。"""
 
     try:
         return await generate_scene_media_reference(
             user.id,
             request_id=f"manual:{body.request_id}",
             scene_id=body.scene_id,
+            day_phase=body.day_phase,
             requirements=body.requirements,
             feedback=body.feedback,
             video_feedback=body.video_feedback,

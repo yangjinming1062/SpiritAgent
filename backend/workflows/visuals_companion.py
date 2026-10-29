@@ -30,7 +30,7 @@ from features.companion.proactive_runtime import get_user_proactive_record
 from features.companion.visual_state import persona_snapshot
 from features.life.schemas import LifeStepRequest
 from features.life.use_cases import read_state
-from features.media.visual_semantics import ActionMotionIntensity, ActionPerformanceRole, SemanticTag
+from features.media.visual_semantics import ActionMotionIntensity, ActionPerformanceRole, DayPhase, SemanticTag
 from features.scenes.queries import scene_snapshot
 from features.visuals import service as visuals_service
 from features.visuals.queries import creation_request, presentation_state
@@ -411,6 +411,7 @@ async def generate_scene_media_reference(
     *,
     request_id: str,
     scene_id: int,
+    day_phase: DayPhase | None = None,
     requirements: str = "",
     feedback: str = "",
     video_feedback: str = "",
@@ -428,6 +429,7 @@ async def generate_scene_media_reference(
             if (
                 source.kind != "scene"
                 or source.scene.scene_id != scene_id
+                or source.day_phase != day_phase
                 or (source.requirements, source.feedback, source.video_feedback)
                 != (requirements, feedback, video_feedback)
             ):
@@ -449,6 +451,7 @@ async def generate_scene_media_reference(
                         description=scene.description,
                         revision=scene.updated_at,
                     ),
+                    day_phase=day_phase,
                     requirements=requirements,
                     feedback=feedback,
                     video_feedback=video_feedback,

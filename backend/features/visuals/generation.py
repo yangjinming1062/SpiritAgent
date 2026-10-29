@@ -61,6 +61,7 @@ from features.media.character_images import (
     CharacterImageInput,
     ImageChainState,
     generate_character_images,
+    generate_scene_images,
 )
 from features.media.identity_review import ImageGoalReviewFailure, score_character_frames_with_references
 from features.media.image_generation import ImageGenerationError, ImageReviewUnavailableError
@@ -95,6 +96,7 @@ from .ports import notify_visual_ready
 from .prompts import (
     ACTOR_POSE_IMAGE_TEMPLATE,
     SCENE_MOTION_DESIGN,
+    SCENE_PHASE_IMAGE_TEMPLATE,
     SCENE_VIDEO_MOTION_TEMPLATE,
     SCENE_VIDEO_REVIEW,
     VISUAL_MOTION_DESIGN,
@@ -1325,6 +1327,24 @@ def _visual_job_error(exc: Exception, progress: VisualJobProgress, *, stage: str
     return f"{phase}时发生异常，已保留当前进度，可点击“再试一次”继续。"
 
 
+_SCENE_PHASE_TEXT: dict[str, str] = {
+    "dawn": "黎明",
+    "day": "白天",
+    "dusk": "黄昏",
+    "night": "夜间",
+}
+
+
+def scene_motion_requirements(source: SceneMediaSource) -> str:
+    """环境视频的完整变化目标：用户要求加上冻结的适用时段光线。"""
+
+    phase = _SCENE_PHASE_TEXT.get(source.day_phase or "")
+    if phase is None:
+        return source.requirements
+    target = f"呈现同一环境在{phase}的自然光线（{source.day_phase}）"
+    return f"{target}；{source.requirements}" if source.requirements else target
+
+
 async def _prepare_scene_opening(
     user_id: int,
     job: VisualJob,
@@ -1340,6 +1360,45 @@ async def _prepare_scene_opening(
     data = await asyncio.to_thread(resolved[0].read_bytes)
     if hashlib.sha256(data).hexdigest() != source.scene.content_hash:
         raise VisualStateError("环境素材已变化，请重新选择环境")
+    if source.day_phase is not None:
+        state = ImageChainState.model_validate_json(progress.image_chain_json or "{}")
+        reference_data, reference_mime = await asyncio.to_thread(validate_image_bytes, data)
+
+        async def save_image(value: ImageChainState) -> None:
+            progress.image_chain_json = value.model_dump_json()
+            await _save_progress(user_id, job.id, progress, stage="image")
+
+        async def before_submit() -> None:
+            await _require_active_job(user_id, job.id, progress.generation_id)
+
+        paths = await generate_scene_images(
+            SCENE_PHASE_IMAGE_TEMPLATE.format(
+                context=json.dumps(
+                    {
+                        "requirements": scene_motion_requirements(source),
+                        "feedback": job.feedback,
+                        "video_feedback": job.video_feedback,
+                        "customization_priority": progress.customization_priority,
+                    },
+                    ensure_ascii=False,
+                )
+            ),
+            user_id=user_id,
+            storage_directory=directory,
+            target_width=progress.target_width,
+            target_height=progress.target_height,
+            reference_image=build_data_uri(reference_data, reference_mime),
+            state=state,
+            save_progress=save_image,
+            before_submit=before_submit,
+            selection=progress.image_selection,
+            task=AiTaskKey.visuals,
+        )
+        generated = resolve_asset_reference(paths[0])
+        if generated is None:
+            raise VisualStateError("时段环境画面无法读取")
+        data = await asyncio.to_thread(generated[0].read_bytes)
+        progress.image_origin = state.selected_origin()
     normalized, width, height = await asyncio.to_thread(_frame_bytes, data, _delivery_aspect(progress))
     progress.pose_path = await save_companion_asset_async(
         normalized,
@@ -1371,7 +1430,7 @@ async def _prepare_scene_motion(
         user_id,
         SCENE_MOTION_DESIGN,
         {
-            "requirements": source.requirements,
+            "requirements": scene_motion_requirements(source),
             "feedback": job.feedback,
             "video_feedback": job.video_feedback,
             "customization_priority": progress.customization_priority,
@@ -1403,6 +1462,12 @@ async def _evaluate_scene_candidate(user_id: int, job: VisualJob, progress: Visu
     if resolved is None or not reference:
         raise VisualStateError("视频或环境起始画面无法读取")
     if progress.review_verdict is None:
+        job_source = visual_snapshot(job).source
+        source_reference = None
+        if isinstance(job_source, SceneMediaSource) and job_source.day_phase is not None:
+            source_reference = await asyncio.to_thread(read_valid_image_data_uri, job_source.scene.path)
+            if not source_reference:
+                raise VisualStateError("原环境参考无法读取")
         samples = await asyncio.to_thread(sample_desktop_video_frames, resolved[0])
         uris = tuple(build_data_uri(frame, "image/webp") for frame in samples.frames)
         async with SESSION_LOCAL() as db:
@@ -1417,18 +1482,21 @@ async def _evaluate_scene_candidate(user_id: int, job: VisualJob, progress: Visu
                 SCENE_VIDEO_REVIEW,
                 {
                     "motion": progress.motion_prompt,
-                    "requirements": visual_snapshot(job).source.requirements,
+                    "requirements": scene_motion_requirements(job_source)
+                    if isinstance(job_source, SceneMediaSource)
+                    else job_source.requirements,
                     "feedback": job.feedback,
                     "video_feedback": job.video_feedback,
                     "customization_priority": progress.customization_priority,
                     "duration_seconds": progress.duration_seconds,
                     "frame_times_seconds": samples.times_seconds,
+                    "has_source_reference": source_reference is not None,
                     "output_language": language,
                 },
                 response_model=VisualVideoReview,
                 schema_name="scene_video_review",
                 preserve_choices=("verdict",),
-                reference_images=(reference, *uris),
+                reference_images=(reference, *((source_reference,) if source_reference else ()), *uris),
                 before_submit=before_submit,
                 task=AiTaskKey.visuals,
             )

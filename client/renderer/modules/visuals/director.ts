@@ -18,7 +18,7 @@ import {
   requestPerformance,
   syncPerformance
 } from './performance-scheduler'
-import { automaticLoops, contextAllowed, lifeMatchScore, motionAllowed } from './selection'
+import { automaticLoops, contextAllowed, leastRecentlyUsed, lifeMatchScore, motionAllowed } from './selection'
 import type { VisualsPresentation } from './types'
 
 type CatalogEntry = VisualsPresentation['ambient_catalog'][number]
@@ -48,6 +48,21 @@ let motionSubtle: () => boolean = () => false
 // 信号只消费实时 storage 事件，账户、舞台代次与事件身份共同隔离迟到和重复投递。
 const INTERACTION_SIGNAL_KEY = registerCompanionStorageKey('da.visuals.interactionSignal')
 const seenSignals = new Set<string>()
+// 常驻轮换的近期使用记录（本地、有限容量）；轮换优先选择久未出现的循环。
+const recentLoops = new Map<string, number>()
+
+function rememberLoop(entry: CatalogEntry, at = Date.now()): void {
+  const key = `${entry.visual_id}:${entry.version}`
+  recentLoops.set(key, at)
+
+  if (recentLoops.size > 64) {
+    const oldest = [...recentLoops.entries()].sort(([, a], [, b]) => a - b)[0]
+
+    if (oldest) {
+      recentLoops.delete(oldest[0])
+    }
+  }
+}
 
 function consumeSignal(value: unknown): void {
   const auth = $auth.get()
@@ -91,6 +106,7 @@ function syncAmbientChoice(): void {
   if (!choice || !loops.some(entry => entry.visual_id === choice.visualId && entry.version === choice.version)) {
     const idle = loops.find(entry => entry.preset_key === 'idle') ?? loops[0]
     $ambientLoopChoice.set({ visualId: idle.visual_id, version: idle.version })
+    rememberLoop(idle)
   }
 }
 
@@ -110,7 +126,7 @@ function pickAmbient(): CatalogEntry | null {
   const current = $ambientLoopChoice.get()
   const candidates = candidatesPool.filter(entry => entry.visual_id !== current?.visualId)
 
-  return candidates[Math.floor(Math.random() * candidates.length)] ?? null
+  return leastRecentlyUsed(candidates, recentLoops)
 }
 
 function pickReaction(catalog: CatalogEntry[], kind: InteractionKind): CatalogEntry | null {
@@ -245,6 +261,7 @@ function rotateAmbient(): void {
   const pick = pickAmbient()
 
   if (pick) {
+    rememberLoop(pick)
     $ambientLoopChoice.set({ visualId: pick.visual_id, version: pick.version })
   }
 
@@ -393,6 +410,7 @@ export function bindPresentationDirector(
     attemptedIntentRevision = -1
     presentation = null
     seenSignals.clear()
+    recentLoops.clear()
     $ambientLoopChoice.set(null)
 
     if (stopBinding === stop) {

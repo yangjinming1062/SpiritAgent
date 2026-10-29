@@ -20,6 +20,7 @@ from features.media.visual_semantics import (
     ActionMotionIntensity,
     ActionPerformanceRole,
     ActivityType,
+    DayPhase,
     SceneTags,
     SemanticTags,
 )
@@ -81,6 +82,11 @@ class ActionMaterialRef(BaseModel):
     avoid_when: list[str] = Field(default_factory=list, max_length=8)
     allowed_triggers: list[str] = Field(default_factory=list, max_length=8)
     revision: datetime | None = None
+
+    def media_basis(self) -> dict:
+        """影响媒体内容的动作版本；名称、数据库身份与描述分析时间不重置制作。"""
+
+        return self.model_dump(mode="json", exclude={"name", "revision", "action_id"})
 
 
 class VisualCreationPlan(BaseModel):
@@ -154,6 +160,8 @@ class SceneMediaSource(BaseModel):
 
     kind: Literal["scene"] = "scene"
     scene: SceneMediaRef
+    # 冻结的适用时段；随版本保存，重做或定义编辑不追改历史版本。
+    day_phase: DayPhase | None = None
     requirements: str = ""
     feedback: str = ""
     video_feedback: str = ""
@@ -384,6 +392,9 @@ class StageLayerMedia(BaseModel):
     duration_ms: int | None = None
     description: str = ""
     body: ActorClipBody | None = None
+    # 环境层适用时段；空表示不限时段。时间版本是视觉表现，不是生活事实。
+    day_phase: DayPhase | None = None
+    scene_content_hash: str | None = None
 
 
 class StageCompositionMedia(BaseModel):
@@ -408,6 +419,8 @@ class VisualJobView(BaseModel):
     asset_kind: VisualAssetKind
     # 冻结输入里的动作名称，供库内标识这一次制作。
     action_name: str = ""
+    # 基础动态准备的工作项；用于区分自动准备与用户/自主制作。
+    preparation: bool = False
     target_visual_id: ResourceId | None = None
     expected_version: int | None = None
     state: VisualJobState
@@ -577,6 +590,8 @@ class VisualPresentationView(BaseModel):
     composition: StageComposition | None = None
     ambient_actor: StageLayerMedia | None = None
     ambient_catalog: list[AmbientCatalogEntry] = Field(default_factory=list)
+    # 环境层目录与主体目录分开，避免完整场景成品挤占基础动作的可用数量。
+    ambient_scene: list[StageLayerMedia] = Field(default_factory=list)
     intent: StageIntent | None = None
     current_visual: VisualItemView | None = None
     loop_visual: VisualItemView | None = None
@@ -619,6 +634,7 @@ class VisualPlayCommand(BaseModel):
     scene: SceneMediaRef | None = None
     # actor 主体元数据（锚点/命中区域）；路径已在响应出口转换。
     body: ActorClipBody | None = None
+    day_phase: DayPhase | None = None
 
 
 VisualPresentationView.model_rebuild()
@@ -691,6 +707,8 @@ class SceneMediaRequest(BaseModel):
 
     request_id: str = Field(min_length=1, max_length=128)
     scene_id: ResourceId = Field(gt=0)
+    # 可选适用时段：为同一环境制作特定光线版本；空表示不限时段的普通版本。
+    day_phase: DayPhase | None = None
     requirements: str = Field(default="", max_length=2000)
     feedback: str = Field(default="", max_length=2000)
     video_feedback: str = Field(default="", max_length=2000)
@@ -832,6 +850,8 @@ class ActionMediaEntry(BaseModel):
     version: int
     outfit_id: ResourceId | None = None
     outfit_name: str = ""
+    # 与当前舞台冻结身份、造型一致且文件完整。
+    stage_ready: bool = False
     updated_at: datetime
 
 

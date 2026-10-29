@@ -64,3 +64,23 @@ export function automaticLoops(presentation: VisualsPresentation, subtle: boolea
 
   return loops.filter(entry => entry.performance_role === 'idle' && entry.media_semantics?.activity_type === 'idle')
 }
+
+/** 最近使用回避：轮换优先选择最久未出现的循环，避免在少数片段间抖动。 */
+export function leastRecentlyUsed(
+  candidates: readonly CatalogEntry[],
+  recent: ReadonlyMap<string, number>
+): CatalogEntry | null {
+  let best: CatalogEntry | null = null
+  let bestSeen = Number.POSITIVE_INFINITY
+
+  for (const entry of candidates) {
+    const seen = recent.get(`${entry.visual_id}:${entry.version}`) ?? 0
+
+    if (seen < bestSeen) {
+      best = entry
+      bestSeen = seen
+    }
+  }
+
+  return best
+}

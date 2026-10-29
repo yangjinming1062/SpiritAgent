@@ -37,6 +37,7 @@ async def review_scene_image(
     candidate_uri: str,
     *,
     before_submit: Callable[[], Awaitable[None]] | None = None,
+    task: AiTaskKey = AiTaskKey.scene,
 ) -> tuple[bool, str]:
     try:
         companion_uri = await _companion_reference_uri(user_id)
@@ -46,7 +47,7 @@ async def review_scene_image(
             json.dumps({"image_count": 2}, ensure_ascii=False),
             reference_images=(companion_uri, candidate_uri),
             before_submit=before_submit,
-            task=AiTaskKey.scene,
+            task=task,
         )
         payload = parse_llm_json(raw)
         if (

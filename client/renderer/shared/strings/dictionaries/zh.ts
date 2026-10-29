@@ -1500,6 +1500,15 @@ export const dict = {
       makeMotionBusy: '制作受理中…',
       makeMotionDone: '已开始制作动态环境，可在影像页查看进度。',
       makeMotionFailed: '制作动态环境失败',
+      makeMotionPhaseLabel: '适用时段',
+      makeMotionPhaseAny: '不限时段',
+      makeMotionPhaseDone: '已开始制作该时段的动态环境，可在影像页查看进度。',
+      dayPhases: {
+        dawn: '黎明',
+        day: '白天',
+        dusk: '黄昏',
+        night: '夜间'
+      },
       previous: '上一页',
       next: '下一页',
       untitled: '待命名环境',
@@ -1786,6 +1795,9 @@ export const dict = {
     mediaEmpty: '还没有这个动作的成品实现。',
     mediaTitle: '已制作的媒体实现',
     mediaOutfitUnknown: '未记录造型',
+    mediaStageReady: '当前造型可用',
+    mediaStageUnavailable: '当前不可用',
+    mediaStageHint: '这些成品暂无当前可播版本，可检查成品或为当前造型制作新版本。',
     statusLabels: {
       pending: '待评审',
       reviewing: '评审中',
@@ -1825,6 +1837,7 @@ export const dict = {
     loadFailed: '影像加载失败',
     detailLoadFailed: '影像详情加载失败',
     jobsTitle: '进行中与失败的制作',
+    preparationJob: '基础动态准备',
     jobImage: '图片制作',
     jobVideo: '视频制作',
     jobState: {

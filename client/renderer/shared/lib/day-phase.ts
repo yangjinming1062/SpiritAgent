@@ -1,4 +1,6 @@
-/** 本地时段的环境氛围色调：纯客户端演出，不创建生活经历、不推进生活系统。 */
+/** 本地时段的环境表现：纯客户端演出，不创建生活经历、不推进生活系统。 */
+
+import { atom, onMount } from 'nanostores'
 
 export type DayPhase = 'night' | 'dawn' | 'day' | 'dusk'
 
@@ -26,11 +28,35 @@ export function dayPhaseAt(hour: number): DayPhase {
   return 'night'
 }
 
-/** 环境层滤镜；用户关闭动态表现时返回 none。 */
-export function ambientPhaseFilter(motionEnabled: boolean): string {
-  if (!motionEnabled) {
+export function currentDayPhase(): DayPhase {
+  return dayPhaseAt(new Date().getHours())
+}
+
+export const $dayPhase = atom<DayPhase>(currentDayPhase())
+
+onMount($dayPhase, () => {
+  const sync = (): void => $dayPhase.set(currentDayPhase())
+  sync()
+  const timer = window.setInterval(sync, 60_000)
+  window.addEventListener('focus', sync)
+  document.addEventListener('visibilitychange', sync)
+
+  return () => {
+    window.clearInterval(timer)
+    window.removeEventListener('focus', sync)
+    document.removeEventListener('visibilitychange', sync)
+  }
+})
+
+/** 环境层滤镜；用户关闭动态表现时返回 none。有时段媒体可用时不叠加滤镜。 */
+export function ambientPhaseFilter(
+  motionEnabled: boolean,
+  phaseMediaAvailable = false,
+  phase: DayPhase = currentDayPhase()
+): string {
+  if (!motionEnabled || phaseMediaAvailable) {
     return 'none'
   }
 
-  return PHASE_FILTERS[dayPhaseAt(new Date().getHours())]
+  return PHASE_FILTERS[phase]
 }

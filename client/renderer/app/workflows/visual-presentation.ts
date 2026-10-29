@@ -558,7 +558,8 @@ function assembleWindowMedia(): void {
     presentation,
     windowCommand,
     resolveAmbientLoop(presentation),
-    $motionLevel.get() === 'subtle'
+    $motionLevel.get() === 'subtle',
+    $stagePlan.get().scene
   )
 
   const actor =

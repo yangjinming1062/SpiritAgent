@@ -317,6 +317,7 @@ async def dispatch_play_command(
         outfit=_frozen_outfit(snapshot),
         scene=_frozen_scene(snapshot),
         body=_clip_body(item),
+        day_phase=snapshot.source.day_phase if snapshot.source.kind == "scene" else None,
     )
     pending = command.model_dump(mode="json")
     changed = (

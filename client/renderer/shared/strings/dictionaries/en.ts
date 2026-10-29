@@ -1586,6 +1586,15 @@ export const dict: Dictionary = {
       makeMotionBusy: 'Submitting…',
       makeMotionDone: 'Animated environment creation started. Track it in the visuals page.',
       makeMotionFailed: 'Could not start animated environment creation',
+      makeMotionPhaseLabel: 'Time of day',
+      makeMotionPhaseAny: 'Any time',
+      makeMotionPhaseDone: 'Creation started for the selected time of day. Track it in the visuals page.',
+      dayPhases: {
+        dawn: 'Dawn',
+        day: 'Day',
+        dusk: 'Dusk',
+        night: 'Night'
+      },
       previous: 'Previous',
       next: 'Next',
       untitled: 'Untitled environment',
@@ -1876,6 +1885,10 @@ export const dict: Dictionary = {
     mediaEmpty: 'No media implementation exists for this action yet.',
     mediaTitle: 'Created media implementations',
     mediaOutfitUnknown: 'Outfit unavailable',
+    mediaStageReady: 'Ready for current outfit',
+    mediaStageUnavailable: 'Currently unavailable',
+    mediaStageHint:
+      'These items have no currently playable version. Check the media or create one for the current outfit.',
     statusLabels: {
       pending: 'Pending review',
       reviewing: 'Under review',
@@ -1916,6 +1929,7 @@ export const dict: Dictionary = {
     loadFailed: "Couldn't load visuals",
     detailLoadFailed: "Couldn't load the visual details",
     jobsTitle: 'Creations in progress and failed',
+    preparationJob: 'Base motion preparation',
     jobImage: 'Image creation',
     jobVideo: 'Video creation',
     jobState: {

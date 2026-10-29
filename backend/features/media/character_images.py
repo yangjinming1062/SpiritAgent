@@ -629,6 +629,7 @@ async def generate_scene_images(
     before_submit: Callable[[], Awaitable[None]] | None = None,
     max_image_bytes: int = REMOTE_ASSET_DOWNLOAD_MAX_BYTES,
     selection: ProviderSelection | None = None,
+    task: AiTaskKey = AiTaskKey.scene,
 ) -> list[str]:
     """返回通过伙伴重复出镜检查的原始用户资产；画布和每家尝试随任务冻结。"""
     state = state if state is not None else ImageChainState()
@@ -652,7 +653,7 @@ async def generate_scene_images(
             resolved = await resolve_image_gen_chain(
                 db,
                 user_id,
-                task=AiTaskKey.scene,
+                task=task,
                 has_reference=bool(reference_image),
                 prompt_chars=len(prompt),
                 environment_reference=True,
@@ -687,7 +688,7 @@ async def generate_scene_images(
     return await _run_image_chain(
         state,
         user_id=user_id,
-        task=AiTaskKey.scene,
+        task=task,
         configs=configs,
         save_progress=save_progress,
         store_attempts=store_attempts,
@@ -871,7 +872,9 @@ async def _run_image_chain(
                     data, mime = await image_asset_bytes(candidate.path)
                     uri = await asyncio.to_thread(build_data_uri, data, mime)
                     if isinstance(inputs, SceneImageInput):
-                        accepted, reason = await review_scene_image(user_id, uri, before_submit=before_submit)
+                        accepted, reason = await review_scene_image(
+                            user_id, uri, before_submit=before_submit, task=task
+                        )
                         candidate.accepted = accepted
                         candidate.evaluated = True
                         candidate.result_json = json.dumps({"accepted": accepted, "reason": reason}, ensure_ascii=False)

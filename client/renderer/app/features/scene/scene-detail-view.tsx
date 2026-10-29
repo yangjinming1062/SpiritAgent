@@ -13,6 +13,7 @@ import {
 import { visualsApi } from '@/modules/visuals'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
+import type { DayPhase } from '@/shared/lib/day-phase'
 import { ArrowLeft, Pencil, RefreshCw, Sparkles, ZoomIn } from '@/shared/lib/icons'
 import { failureText, isClientErrorIpc } from '@/shared/lib/ipc-error'
 import { cn } from '@/shared/lib/utils'
@@ -25,6 +26,7 @@ import {
   CreationWorkspace,
   Disclosure,
   INPUT_CLASS,
+  PanelSelect,
   SettingCard,
   Spinner
 } from '@/shared/panel'
@@ -99,11 +101,14 @@ export function SceneDetailView({
   const [motionBusy, setMotionBusy] = useState(false)
   const [motionError, setMotionError] = useState<string | null>(null)
   const [motionNotice, setMotionNotice] = useState<string | null>(null)
+  const [motionPhase, setMotionPhase] = useState<'' | DayPhase>('')
   const begin = useAsyncGuard()
   const actionBusy = actionKind !== null || motionBusy
   const canMakeMotion = Boolean(detail?.status === 'ready' && detail.assetUrl && detail.id)
 
   const makeMotion = (): void => {
+    const dayPhase = motionPhase
+
     if (!detail || actionBusy || !canMakeMotion) {
       return
     }
@@ -116,11 +121,11 @@ export function SceneDetailView({
     setMotionError(null)
     setMotionNotice(null)
     void visualsApi
-      .createSceneMedia({ scene_id: detail.id })
+      .createSceneMedia({ scene_id: detail.id, day_phase: dayPhase || null })
       .then(() => {
         if (scope?.() && live()) {
           setActionError(null)
-          setMotionNotice(t.makeMotionDone)
+          setMotionNotice(dayPhase ? t.makeMotionPhaseDone : t.makeMotionDone)
         }
       })
       .catch(error => {
@@ -473,9 +478,29 @@ export function SceneDetailView({
           </>
         ) : null}
         {canMakeMotion ? (
-          <button className={BTN_SUBTLE} disabled={actionBusy || Boolean(uncertain)} onClick={makeMotion} type="button">
-            {motionBusy ? t.makeMotionBusy : t.makeMotion}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              className={BTN_SUBTLE}
+              disabled={actionBusy || Boolean(uncertain)}
+              onClick={makeMotion}
+              type="button"
+            >
+              {motionBusy ? t.makeMotionBusy : t.makeMotion}
+            </button>
+            <PanelSelect
+              ariaLabel={t.makeMotionPhaseLabel}
+              disabled={actionBusy || Boolean(uncertain)}
+              onChange={setMotionPhase}
+              options={[
+                { value: '', label: t.makeMotionPhaseAny },
+                { value: 'dawn', label: t.dayPhases.dawn },
+                { value: 'day', label: t.dayPhases.day },
+                { value: 'dusk', label: t.dayPhases.dusk },
+                { value: 'night', label: t.dayPhases.night }
+              ]}
+              value={motionPhase}
+            />
+          </div>
         ) : null}
         {motionNotice && !motionError ? <p className="text-[11px] text-faint">{motionNotice}</p> : null}
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">

@@ -140,6 +140,10 @@ export function VisualsPage(): React.JSX.Element {
     [item.outfit_name, item.scene_title, item.action_name].filter(Boolean).join(' · ')
 
   const jobLabel = (job: VisualJob): string => {
+    if (job.preparation) {
+      return job.action_name ? `${t.preparationJob} · ${job.action_name}` : t.preparationJob
+    }
+
     if (!job.action_name) {
       return job.target_kind === 'video' ? t.jobVideo : t.jobImage
     }

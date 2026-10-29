@@ -360,7 +360,8 @@ export function useDesktopVisualWallpaper(): void {
     projection,
     activeCommand,
     resolveAmbientLoop(projection),
-    motionLevel === 'subtle'
+    motionLevel === 'subtle',
+    stagePlan.scene
   )
 
   const layerActor = selectedPlan.actor
@@ -424,6 +425,8 @@ export function useDesktopVisualWallpaper(): void {
     ? (sceneCommand?.visual_version ?? layerScene?.version ?? null)
     : (full?.visual_version ?? cinematic?.version ?? null)
 
+  const phaseMedia = layered && (layerScene?.phaseMatched ?? false)
+
   useEffect(() => {
     if (!active || !authSessionId) {
       return
@@ -471,6 +474,8 @@ export function useDesktopVisualWallpaper(): void {
       theme,
       reduceMotion: reduceMotion || !motionEnabled,
       paused: paused || !motionEnabled,
+      backgroundKind: layered ? 'scene' : 'cinematic',
+      phaseMedia,
       clear: !videoUrl && !posterUrl && !actorUrl
     }
 
@@ -518,8 +523,9 @@ export function useDesktopVisualWallpaper(): void {
     layerActor?.visualId,
     layerActor?.version,
     layerActor?.loop,
-    layerScene?.visualId,
-    layerScene?.version,
+    layerScene,
+    sceneCommand,
+    phaseMedia,
     staticTarget,
     theme,
     motionEnabled,

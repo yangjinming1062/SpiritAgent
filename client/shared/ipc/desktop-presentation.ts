@@ -103,6 +103,9 @@ export interface DesktopBackgroundRequest {
   theme: string
   reduceMotion: boolean
   paused: boolean
+  backgroundKind: 'scene' | 'cinematic'
+  /** 背景已是按本地时段挑选的媒体版本；true 时壁纸不再叠加时段色调滤镜。 */
+  phaseMedia: boolean
   clear: boolean
 }
 

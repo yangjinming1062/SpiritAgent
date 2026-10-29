@@ -1,6 +1,7 @@
-import { atom } from 'nanostores'
+import { atom, onMount } from 'nanostores'
 
 import { captureAuthScope } from '@/shared/lib/authed-api'
+import { $dayPhase } from '@/shared/lib/day-phase'
 import { ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
@@ -285,16 +286,18 @@ function publishPresentation(response: VisualsPresentation): void {
 // 导演只在舞台宿主装配后接收刷新；常驻循环的本地选择参与主体层解析，
 // 且轮换是导演自身的输出，不回灌导演（避免重入选择循环）。
 function refreshStagePlan(): void {
+  feedDirectorPresentation($visualsPresentation.get())
+  updateStagePlan()
+}
+
+function updateStagePlan(): void {
   const presentation = $visualsPresentation.get()
-  feedDirectorPresentation(presentation)
-  $stagePlan.set(deriveStagePlan(presentation, null, resolveAmbientLoop(presentation)))
+  $stagePlan.set(deriveStagePlan(presentation, null, resolveAmbientLoop(presentation), false, $stagePlan.get().scene))
 }
 
 $visualsPresentation.listen(refreshStagePlan)
-$ambientLoopChoice.listen(() => {
-  const presentation = $visualsPresentation.get()
-  $stagePlan.set(deriveStagePlan(presentation, null, resolveAmbientLoop(presentation)))
-})
+$ambientLoopChoice.listen(updateStagePlan)
+onMount($stagePlan, () => $dayPhase.listen(updateStagePlan))
 
 export async function regenerateVisual(
   visualId: string,

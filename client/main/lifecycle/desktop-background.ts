@@ -105,6 +105,8 @@ export function parseDesktopBackgroundRequest(raw: unknown): DesktopBackgroundRe
     typeof value.theme !== 'string' ||
     typeof value.reduceMotion !== 'boolean' ||
     typeof value.paused !== 'boolean' ||
+    (value.backgroundKind !== 'scene' && value.backgroundKind !== 'cinematic') ||
+    typeof value.phaseMedia !== 'boolean' ||
     typeof value.clear !== 'boolean'
   ) {
     throw new Error('无效桌面背景。')
@@ -135,6 +137,8 @@ export function parseDesktopBackgroundRequest(raw: unknown): DesktopBackgroundRe
     theme: normalizeUiTheme(value.theme),
     reduceMotion: value.reduceMotion,
     paused: value.paused,
+    backgroundKind: value.backgroundKind,
+    phaseMedia: value.phaseMedia,
     clear: value.clear
   }
 }
@@ -166,6 +170,8 @@ export function emptyDesktopBackground(accountEpoch: number, revision: number, t
     theme,
     reduceMotion: false,
     paused: true,
+    backgroundKind: 'scene',
+    phaseMedia: false,
     clear: true
   }
 }
