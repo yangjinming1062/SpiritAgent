@@ -577,6 +577,8 @@ async def _run_publication(task_id: int) -> None:
             status="result_unknown" if exc.result_unknown else "failed",
             error="图片制作结果未知，未重复提交" if exc.result_unknown else "图片制作失败",
         )
+    except NarrativeQualityError as exc:
+        await _save(task_id, status="failed", error=str(exc))
     except Exception:
         logger.exception("Post publication failed", extra={"publication_id": task_id})
         await _save(task_id, status="failed", error="动态制作失败，内容未发布")

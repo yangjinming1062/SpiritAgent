@@ -6,6 +6,7 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from features.accounts.queries import nightly_account
+from features.companion.narrative_quality import NarrativeQualityError
 from features.companion.planning_queries import PersonaPlanningSnapshot, planning_persona
 from features.configuration.settings.timezone import resolve_user_timezone
 from features.configuration.settings.values import get_user_setting
@@ -522,6 +523,8 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
             )
             stages.append({"stage": "journal nightly", "status": "ok" if journal_ok else "skipped"})
         except NightlyWindowClosedError as exc:
+            stages.append({"stage": "journal nightly", "status": "skipped", "reason": str(exc)})
+        except NarrativeQualityError as exc:
             stages.append({"stage": "journal nightly", "status": "skipped", "reason": str(exc)})
         except Exception as exc:
             logger.exception("nightly_activity: journal nightly failed", extra={"user_id": user_id})
