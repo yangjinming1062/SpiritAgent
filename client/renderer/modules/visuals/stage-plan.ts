@@ -4,7 +4,7 @@ import { currentDayPhase, type DayPhase } from '@/shared/lib/day-phase'
 
 import type { ApiSchemas } from '../../../../shared/api.generated'
 
-import { automaticLoops, contextAllowed, motionAllowed } from './selection'
+import { automaticLoops, contextAllowed, lifeMatchScore, motionAllowed } from './selection'
 
 type LayerMedia = ApiSchemas['StageLayerMedia']
 type ActorBody = ApiSchemas['ActorClipBody']
@@ -221,13 +221,21 @@ export function deriveStagePlan(
     entry => entry.visual_id === media?.cinematic?.visual_id && entry.version === media?.cinematic?.version
   )
 
+  // 持续整片按选择来源核对：life 沿用自动选择的同一套生活匹配（活动类别或语义
+  // 不符即退出回基础舞台，同活动的新修订继续沿用）；user 不受生活变化影响；
+  // base 维持上下文条件。目录缺项（如换造型）对所有来源都视为不可用。
+  const compositionSource = presentation.composition?.selection_source
+
   if (
     media?.mode === 'cinematic' &&
     media.cinematic &&
-    media.cinematic.clip_kind !== 'once' &&
     cinematicEntry &&
+    media.cinematic.clip_kind !== 'once' &&
     motionAllowed(cinematicEntry, subtle) &&
-    contextAllowed(cinematicEntry, presentation.intent)
+    (compositionSource === 'user' ||
+      (compositionSource === 'life'
+        ? lifeMatchScore(cinematicEntry, presentation.intent) > 0
+        : contextAllowed(cinematicEntry, presentation.intent)))
   ) {
     return { mode: 'cinematic', actor: ambient, scene: null, cinematic: media.cinematic, layout }
   }

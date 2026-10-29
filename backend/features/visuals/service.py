@@ -66,6 +66,7 @@ from .schemas import (
     PresentedVisual,
     StageComposition,
     StageCompositionLayout,
+    StageIntent,
     StagePresentation,
     VisualCreationPlan,
     VisualCreationSource,
@@ -77,7 +78,7 @@ from .schemas import (
     VisualSnapshot,
     visual_snapshot_hash,
 )
-from .static_presentation import restore_static_presentation
+from .static_presentation import cancel_pending_command, restore_static_presentation
 
 _LOCKS: dict[int, asyncio.Lock] = {}
 
@@ -141,30 +142,40 @@ def _source_image(item: VisualItem) -> str | None:
     return item.input_image_path if item.media_kind == "video" else item.media_path
 
 
-def _refresh_stage_composition(state: VisualPresentation, item: PresentedVisual) -> None:
+def _refresh_stage_composition(
+    state: VisualPresentation,
+    item: PresentedVisual,
+    *,
+    selection: str = "base",
+    life_revision: int | None = None,
+    life_activity_type: str | None = None,
+) -> None:
     """开播回执推进基础组合：actor 进入主体层、scene 进入环境层、cinematic 整片接管。
 
     环境媒体替换环境层时保留主体层；主体媒体替换主体层时保留环境层；完整影像
-    同时清空分层引用，短动作结束后回退到 loop 指针恢复分层画面。
+    同时清空分层引用，短动作结束后回退到 loop 指针恢复分层画面。持续画面的
+    选择来源随组合记录：生活驱动的整片记录当时生活修订与活动类别，用户/伙伴
+    点播记为 user，普通轮换与恢复回落 base；下一次生活意图变化据此重新核对。
     """
 
     current = StageComposition.model_validate(state.composition_json) if state.composition_json else None
     static = StagePresentation.model_validate(state.current_static_json) if state.current_static_json else None
-    source = visual_snapshot(item).source
-    outfit = source.outfit if source.kind in ("actor", "cinematic") else presentation_outfit(state)
+    snapshot = visual_snapshot(item)
+    src = snapshot.source
+    outfit = src.outfit if src.kind in ("actor", "cinematic") else presentation_outfit(state)
     scene = (
-        source.scene
-        if source.kind in ("scene", "cinematic")
+        src.scene
+        if src.kind in ("scene", "cinematic")
         else (static.scene if static else current.scene_material if current else None)
     )
     identity_path = (
-        source.identity_path
-        if source.kind in ("actor", "cinematic")
+        src.identity_path
+        if src.kind in ("actor", "cinematic")
         else (static.identity_path if static else current.identity_path if current else None)
     )
     identity_hash = (
-        source.identity_hash
-        if source.kind in ("actor", "cinematic")
+        src.identity_hash
+        if src.kind in ("actor", "cinematic")
         else (static.identity_hash if static else current.identity_hash if current else None)
     )
     layout = (
@@ -173,6 +184,19 @@ def _refresh_stage_composition(state: VisualPresentation, item: PresentedVisual)
         else StageCompositionLayout(layer_order=["cinematic", "effects"])
         if item.asset_kind == "cinematic"
         else StageCompositionLayout()
+    )
+    # 生活上下文只挂在生活驱动且持续播放的整片上；短动作与一次性播放不携带。
+    is_life_sustained = (
+        selection == "life"
+        and item.asset_kind == "cinematic"
+        and visual_plays_as_loop(item, snapshot)
+        and life_revision is not None
+        and life_activity_type is not None
+    )
+    context = (
+        {"selection_source": "life", "life_revision": life_revision, "life_activity_type": life_activity_type}
+        if is_life_sustained
+        else {"selection_source": "user" if selection == "user" else "base"}
     )
     if item.asset_kind == "cinematic":
         state.composition_json = StageComposition(
@@ -183,6 +207,7 @@ def _refresh_stage_composition(state: VisualPresentation, item: PresentedVisual)
             identity_path=identity_path,
             identity_hash=identity_hash,
             layout=layout,
+            **context,
         ).model_dump(mode="json")
         return
     layered = current if current is not None and current.mode == "layered" else None
@@ -203,6 +228,7 @@ def _refresh_stage_composition(state: VisualPresentation, item: PresentedVisual)
         identity_path=identity_path,
         identity_hash=identity_hash,
         layout=layout,
+        **{"selection_source": context["selection_source"]},
     ).model_dump(mode="json")
 
 
@@ -387,11 +413,44 @@ async def regenerate_visual(
     return view
 
 
+def _play_origin(source: PlaybackSource) -> str:
+    """网关入口的语义细分；与 PlaybackSource 一一对应。"""
+
+    return {"manual": "user", "autonomous": "user", "life": "life", "restore": "restore"}[source]
+
+
+async def _life_context_is_current(
+    db: AsyncSession,
+    user_id: int,
+    state: VisualPresentation,
+    life_revision: int | None,
+    life_activity_type: str | None,
+) -> bool:
+    """生活驱动画面只能在其冻结的意图仍是当前意图时恢复或开播。"""
+
+    intent = state.intent_json
+    return bool(
+        isinstance(intent, dict)
+        and intent.get("life_revision") == life_revision
+        and intent.get("activity_type") == life_activity_type
+        and await presentation_revision_matches(db, user_id, life_revision)
+    )
+
+
+async def _life_playback_is_current(
+    db: AsyncSession, user_id: int, state: VisualPresentation, play: VisualPlayback
+) -> bool:
+    if play.selection != "life":
+        return True
+    return await _life_context_is_current(db, user_id, state, play.life_revision, play.life_activity_type)
+
+
 async def play_visual(
     user_id: int,
     visual_id: int,
     *,
     source: PlaybackSource,
+    origin: Literal["user", "life"] | None = None,
     version: int | None = None,
     expected_state_revision: int | None = None,
     expected_life_revision: int | None = None,
@@ -419,11 +478,31 @@ async def play_visual(
         if not visual_playable(item):
             raise VisualStateError("影像文件缺失，请重新制作")
         snapshot = visual_snapshot(item)
+        # 生活导演点播必须由当前有效意图驱动：生活已推进时不受理旧意图的选择。
+        intent_revision: int | None = None
+        intent_activity: str | None = None
+        if source == "life":
+            if origin != "life":
+                raise VisualStateError("生活演出必须由舞台意图驱动")
+            intent = StageIntent.model_validate(state.intent_json) if state.intent_json else None
+            if intent is None or intent.life_revision != expected_life_revision:
+                raise VisualPresentationConflictError("活动或呈现已变化，请重新判断")
+            if not await presentation_revision_matches(db, user_id, intent.life_revision):
+                raise VisualPresentationConflictError("活动或呈现已变化，请重新判断")
+            intent_revision = intent.life_revision
+            intent_activity = intent.activity_type
+        selection = (
+            "life"
+            if source == "life"
+            else "user"
+            if source in ("manual", "autonomous") and origin == "user"
+            else "base"
+        )
         if source == "autonomous":
             blocked = await visual_autonomous_block_reason(db, state, item, snapshot=snapshot)
             if blocked is not None:
                 raise VisualStateError(f"当前不适合自主播放：{blocked}")
-        if source == "remote":
+        if source in ("manual", "autonomous", "life"):
             await _require_stage_media_match(state, snapshot)
             media_source = snapshot.source
             semantics = media_source.media_semantics if media_source.kind in ("actor", "cinematic") else None
@@ -437,7 +516,16 @@ async def play_visual(
             ):
                 raise VisualStateError("这个版本暂不支持自动演出，可以在影像库预览")
         _play, command = await dispatch_play_command(
-            db, user_id, item, source=source, version_id=version_id, snapshot=snapshot
+            db,
+            user_id,
+            item,
+            source=source,
+            origin=origin or _play_origin(source),
+            version_id=version_id,
+            snapshot=snapshot,
+            selection=selection,
+            life_revision=intent_revision,
+            life_activity_type=intent_activity,
         )
         await db.commit()
         return command
@@ -475,6 +563,7 @@ async def claim_playback(user_id: int, play_id: str, *, client_id: str) -> bool:
             or play.state_revision != state.state_revision
             or item is None
             or item.version != play.visual_version
+            or not await _life_playback_is_current(db, user_id, state, play)
         )
         blocked = None
         if not stale and item is not None and play.source == "autonomous":
@@ -514,14 +603,49 @@ async def restore_presentation(user_id: int) -> VisualPlayCommand | None:
                 and pending.state_revision == state.state_revision
                 and ensure_utc(pending.expires_at) > utc_now()
             ):
-                return pending
+                pending_is_life = pending.source == "life" or (
+                    pending.composition is not None and pending.composition.selection_source == "life"
+                )
+                pending_play = await db.scalar(
+                    select(VisualPlayback).where(
+                        VisualPlayback.user_id == user_id,
+                        VisualPlayback.play_id == pending.play_id,
+                    )
+                )
+                if not pending_is_life or (
+                    pending_play is not None
+                    and pending_play.status in {"queued", "claimed"}
+                    and await _life_playback_is_current(db, user_id, state, pending_play)
+                ):
+                    return pending
+                await cancel_pending_command(db, state)
         if await restore_static_presentation(db, user_id, state, presentation_epoch=presence.revision):
+            await db.commit()
+            return None
+        composition = stage_composition(state)
+        if (
+            composition is not None
+            and composition.selection_source == "life"
+            and not await _life_context_is_current(
+                db,
+                user_id,
+                state,
+                composition.life_revision,
+                composition.life_activity_type,
+            )
+        ):
+            # 已结束的生活整片不能作为恢复目标；清掉失效指针后由客户端按当前目录
+            # 解析普通基础舞台，避免重连再次派发同一段旧活动影像。
+            state.composition_json = None
+            state.current_visual_id = state.current_version_id = None
+            state.loop_visual_id = state.loop_version_id = None
+            state.current_snapshot_json = state.loop_snapshot_json = None
+            await touch_presentation(db, user_id)
             await db.commit()
             return None
         version_id = (
             state.current_version_id if presence.mode == "window" else state.loop_version_id or state.current_version_id
         )
-        composition = stage_composition(state)
         if presence.mode == "window" and composition is not None and composition.actor is not None:
             version_id = await db.scalar(
                 select(VisualVersion.id).where(
@@ -544,7 +668,32 @@ async def restore_presentation(user_id: int) -> VisualPlayCommand | None:
                 return None
         if not visual_playable(item):
             raise VisualStateError("恢复的影像文件缺失")
-        _play, command = await dispatch_play_command(db, user_id, item, source="restore", version_id=version_id)
+        # 恢复沿用组合既有选择来源与生活上下文：生活驱动的整片持续画面在恢复后
+        # 仍按生活演出核对，用户手选画面保持 user；恢复动作本身不重置来源。
+        restored_selection = "base"
+        restored_life_revision = None
+        restored_life_activity = None
+        if (
+            composition is not None
+            and item.asset_kind == "cinematic"
+            and composition.cinematic is not None
+            and composition.cinematic.visual_id == item.id
+            and composition.cinematic.version == item.version
+            and composition.selection_source in ("life", "user")
+        ):
+            restored_selection = composition.selection_source
+            restored_life_revision = composition.life_revision if composition.selection_source == "life" else None
+            restored_life_activity = composition.life_activity_type if composition.selection_source == "life" else None
+        _play, command = await dispatch_play_command(
+            db,
+            user_id,
+            item,
+            source="restore",
+            version_id=version_id,
+            selection=restored_selection,
+            life_revision=restored_life_revision,
+            life_activity_type=restored_life_activity,
+        )
         await db.commit()
         return command
 
@@ -585,6 +734,7 @@ async def record_playback(
                 or item is None
                 or item.version != play.visual_version
                 or not play.snapshot_json
+                or not await _life_playback_is_current(db, user_id, state, play)
             ):
                 raise VisualStateError("播放指令已失效，不能记录为已呈现")
             # 窗口模式有两种合格回执：透明主体视频按真实媒体种类记账，静态投影按 window_static。
@@ -598,14 +748,21 @@ async def record_playback(
             frozen = PresentedVisual.model_validate(play.snapshot_json).model_copy(
                 update={"receipt_kind": receipt_kind, "presentation_epoch": play.presentation_epoch},
             )
-            source = visual_snapshot(frozen).source
+            snapshot = visual_snapshot(frozen)
+            source = snapshot.source
             outfit_changed = (
                 visual_plays_as_loop(item)
                 and source.kind in ("actor", "cinematic")
                 and source.outfit != presentation_outfit(state)
             )
             if visual_plays_as_loop(item):
-                _refresh_stage_composition(state, item)
+                _refresh_stage_composition(
+                    state,
+                    item,
+                    selection=play.selection,
+                    life_revision=play.life_revision,
+                    life_activity_type=play.life_activity_type,
+                )
             state.current_visual_id = item.id
             if visual_plays_as_loop(item):
                 state.current_static_json = None

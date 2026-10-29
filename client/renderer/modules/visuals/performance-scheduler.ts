@@ -298,7 +298,18 @@ export function createPerformanceScheduler(ports: PerformancePorts, changed: (st
       return
     }
 
-    const source = command.source === 'autonomous' || command.source === 'restore' ? 'ambient' : 'manual'
+    // 账本来源 → 调度来源：manual=用户点播；life=生活导演（可与互动竞争、可中断）。
+    // 恢复沿组合来源继承 user/life；只有 base 恢复才回到 ambient 语义。
+    const restoredSelection = command.source === 'restore' ? command.composition?.selection_source : undefined
+
+    const source =
+      command.source === 'life' || restoredSelection === 'life'
+        ? 'life'
+        : command.source === 'manual' || restoredSelection === 'user'
+          ? 'manual'
+          : 'ambient'
+
+    const intentRevision = restoredSelection === 'life' ? (command.composition?.life_revision ?? null) : null
 
     const task: PerformanceTask = {
       performanceId: command.play_id,
@@ -307,7 +318,7 @@ export function createPerformanceScheduler(ports: PerformancePorts, changed: (st
       visualVersion: command.visual_version,
       priority: PRIORITY[source],
       interruptible: source !== 'manual',
-      intentRevision: null,
+      intentRevision,
       playId: command.play_id,
       createdAt: Date.now(),
       expiresAt: Date.parse(command.expires_at)

@@ -126,11 +126,22 @@ async def put_presentation(user: CurrentUser, body: VisualPreferencesRequest) ->
     openapi_extra=operation_policy(identities=("desktop",)),
 )
 async def play_visual(
-    visual_id: ResourceId, user: CurrentUser, version: Annotated[int, Query(gt=0, le=2**31 - 1)]
+    visual_id: ResourceId,
+    user: CurrentUser,
+    version: Annotated[int, Query(gt=0, le=2**31 - 1)],
+    origin: Annotated[Literal["user", "life"], Query()] = "user",
+    life_revision: Annotated[int | None, Query(ge=0)] = None,
 ) -> VisualPlayCommand:
-    """客户端导演请求播放已有成品；受理即派发待播指令，实际呈现以回执为准。"""
+    """客户端导演请求播放已有成品；受理即派发待播指令，实际呈现以回执为准。
 
-    return await _visuals.play_visual(user_id=user.id, visual_id=visual_id, version=version)
+    `origin` 区分选择来源：user=用户/伙伴点播，life=生活导演按当前舞台意图选择。
+    life 请求必须携带选择时的 `life_revision`，受理时核对意图仍有效；播放账本
+    与持续画面来源以 origin 为准。
+    """
+
+    return await _visuals.play_visual(
+        user_id=user.id, visual_id=visual_id, version=version, origin=origin, life_revision=life_revision
+    )
 
 
 @router.post(

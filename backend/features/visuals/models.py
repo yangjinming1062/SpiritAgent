@@ -360,6 +360,11 @@ class VisualPlayback(ModelBase, TimestampMixin):
     presentation_epoch: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     state_revision: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     source: Mapped[str] = mapped_column(String(24))
+    # 这次播放建立的持续画面选择来源（base/life/user）；恢复与回执据此继承组合来源。
+    selection: Mapped[str] = mapped_column(String(16), default="base", server_default=text("'base'"))
+    # 生活驱动播放在选择时的生活修订与活动类别；用于核对持续画面是否仍与当前生活相符。
+    life_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    life_activity_type: Mapped[str | None] = mapped_column(String(24), nullable=True)
     status: Mapped[str] = mapped_column(String(24), default="queued", server_default=text("'queued'"))
     client_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

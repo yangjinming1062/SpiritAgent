@@ -34,8 +34,11 @@ ActionClipKind = Literal["once", "loop"]
 VisualJobState = Literal["queued", "running", "paused", "succeeded", "failed", "cancelled", "unknown"]
 PlaybackStatus = Literal["queued", "claimed", "started", "finished", "failed", "expired"]
 PlaybackReceiptKind = Literal["image", "video", "window_static"]
-PlaybackSource = Literal["manual", "autonomous", "restore", "remote"]
+# manual=用户点播、autonomous=伙伴自主选择、life=生活导演按情境选择、restore=恢复既有呈现。
+PlaybackSource = Literal["manual", "autonomous", "life", "restore"]
 StageMode = Literal["layered", "cinematic"]
+# 持续画面的选择来源；决定生活意图变化时是否重新核对（见 StageComposition.selection_source）。
+SelectionSource = Literal["base", "life", "user"]
 
 
 class ComboMaterialRef(BaseModel):
@@ -503,6 +506,12 @@ class StageComposition(BaseModel):
     identity_path: str | None = None
     identity_hash: str | None = None
     layout: StageCompositionLayout
+    # 持续画面为什么被选择：base=普通基础舞台、life=生活导演、user=用户/伙伴点播。
+    # life 来源记录选择时的生活修订与活动类别；生活变化后据此重新核对该画面是否仍然适用，
+    # 不匹配时退出回基础舞台。user 来源不受普通生活更新影响，直到用户换选或素材失效。
+    selection_source: SelectionSource = "base"
+    life_revision: int | None = Field(default=None, ge=0)
+    life_activity_type: ActivityType | None = None
     # 各层媒体投影；由查询按引用版本填充，桌面与窗口共用同一份数据。
     media: StageCompositionMedia | None = None
 
@@ -517,6 +526,11 @@ class StageComposition(BaseModel):
             raise ValueError("完整影像模式不能叠加主体或环境引用")
         if (self.scene_visual_id is None) != (self.scene_version is None):
             raise ValueError("环境引用必须同时指定身份与版本")
+        # 生活上下文只对生活驱动的完整影像持续画面有意义；其余来源不携带。
+        if self.selection_source != "life" and (self.life_revision is not None or self.life_activity_type is not None):
+            raise ValueError("生活上下文只在生活驱动的组合上记录")
+        if self.selection_source == "life" and (self.life_revision is None or self.life_activity_type is None):
+            raise ValueError("生活驱动的组合必须记录选择时的生活上下文")
         return self
 
 
@@ -610,7 +624,9 @@ class VisualPlayCommand(BaseModel):
     """派发给客户端的演出指令；`queued` 只表示受理。
 
     分层模式携带组合引用与素材地址，客户端据此合成；完整影像模式只携带
-    成品本身。短动作结束返回组合里的基础层。
+    成品本身。短动作结束返回组合里的基础层。`source` 是这次播放的选择来源，
+    播放账本与持续画面来源都以它为准；`origin` 是网关入口要求的语义细分，
+    与 `source` 一一对应（manual/user、life/life、restore/restore）。
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -630,6 +646,7 @@ class VisualPlayCommand(BaseModel):
     presentation_epoch: int
     state_revision: int
     source: PlaybackSource
+    origin: Literal["user", "life", "restore"] = "user"
     expires_at: datetime
     composition: StageComposition | None = None
     outfit: ComboMaterialRef | None = None

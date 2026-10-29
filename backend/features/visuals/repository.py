@@ -268,8 +268,12 @@ async def dispatch_play_command(
     item: VisualItem | PresentedVisual,
     *,
     source: PlaybackSource,
+    origin: str | None = None,
     version_id: int | None = None,
     snapshot: VisualSnapshot | None = None,
+    selection: str = "base",
+    life_revision: int | None = None,
+    life_activity_type: str | None = None,
 ) -> tuple[VisualPlayback, VisualPlayCommand]:
     """登记待执行指令；实际呈现指针只在已认领的开播回执中推进。"""
 
@@ -312,6 +316,7 @@ async def dispatch_play_command(
         presentation_epoch=presentation.revision,
         state_revision=revision,
         source=source,
+        origin=origin or {"manual": "user", "autonomous": "user", "life": "life", "restore": "restore"}[source],
         expires_at=expires_at,
         composition=composition,
         outfit=_frozen_outfit(snapshot),
@@ -348,6 +353,9 @@ async def dispatch_play_command(
         "presentation_epoch": presentation.revision,
         "state_revision": revision,
         "source": source,
+        "selection": selection,
+        "life_revision": life_revision,
+        "life_activity_type": life_activity_type,
         "status": "queued",
         "expires_at": expires_at,
         "snapshot_json": frozen.model_dump(mode="json"),

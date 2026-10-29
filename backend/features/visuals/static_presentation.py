@@ -34,11 +34,17 @@ async def record_stage_intent(db: AsyncSession, user_id: int, intent: StageInten
         return
     payload = intent.model_dump(mode="json")
     if state.intent_json != payload:
+        if state.pending_command_json:
+            pending = VisualPlayCommand.model_validate(state.pending_command_json)
+            if pending.source == "life" or (
+                pending.composition is not None and pending.composition.selection_source == "life"
+            ):
+                await cancel_pending_command(db, state)
         state.intent_json = payload
         await notify_visuals_updated(db, user_id)
 
 
-async def _cancel_pending_command(db: AsyncSession, state: VisualPresentation) -> None:
+async def cancel_pending_command(db: AsyncSession, state: VisualPresentation) -> None:
     if not state.pending_command_json:
         return
     command = VisualPlayCommand.model_validate(state.pending_command_json)
@@ -69,7 +75,7 @@ async def present_static(user_id: int, snapshot: StagePresentation, *, expected_
             return False
         await touch_presentation(db, user_id)
         state.presentation_epoch = presence.revision
-        await _cancel_pending_command(db, state)
+        await cancel_pending_command(db, state)
         state.pending_static_json = snapshot.model_copy(update={"state_revision": state.state_revision}).model_dump(
             mode="json"
         )
@@ -94,7 +100,7 @@ async def restore_static_presentation(
         and snapshot.state_revision == state.state_revision
     ):
         return True
-    await _cancel_pending_command(db, state)
+    await cancel_pending_command(db, state)
     await touch_presentation(db, user_id)
     state.presentation_epoch = presentation_epoch
     state.pending_static_json = snapshot.model_copy(

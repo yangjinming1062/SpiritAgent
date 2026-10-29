@@ -105,9 +105,18 @@ export const visualsApi = {
     requestResource('companion_visuals.claim_play', { path: { play_id: playId }, body }),
   receiptPlay: (playId: string, body: VisualReceiptBody): Promise<{ ok: boolean }> =>
     requestResource('companion_visuals.receipt_play', { path: { play_id: playId }, body }),
-  /** 导演点播：走完整指令 + 认领 + 回执管线；仅舞台宿主使用。 */
-  playVisual: (visualId: string, version: number): Promise<VisualPlayCommand> =>
-    requestResource('companion_visuals.play_visual', { path: { visual_id: visualId }, query: { version } })
+  /** 导演点播：走完整指令 + 认领 + 回执管线；仅舞台宿主使用。origin 区分用户点播
+   * 与生活导演选择，life 请求携带选择时的生活修订供受理端核对意图仍有效。 */
+  playVisual: (
+    visualId: string,
+    version: number,
+    origin: 'user' | 'life' = 'user',
+    lifeRevision?: number
+  ): Promise<VisualPlayCommand> =>
+    requestResource('companion_visuals.play_visual', {
+      path: { visual_id: visualId },
+      query: { version, origin, ...(lifeRevision !== undefined ? { life_revision: lifeRevision } : {}) }
+    })
 }
 
 export const actionsApi = {

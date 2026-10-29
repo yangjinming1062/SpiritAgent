@@ -170,6 +170,8 @@ function performInteraction(kind: InteractionKind, eventId: string, at: number):
 /**
  * 生活演出：按结构化语义筛选持续媒体，而不是文本重叠打分。
  * 只有活动类别或语义标签实际匹配的资源才成为候选；没有匹配时保持当前画面。
+ * 已在持续播放的生活整片若仍与新意图匹配则沿用，不重复派发同一段影像；
+ * 用户手选的持续画面不受生活意图变化影响，由用户换选或素材失效取代。
  */
 function evaluateIntent(): void {
   const intent = presentation?.intent
@@ -181,6 +183,13 @@ function evaluateIntent(): void {
     intent.activity_type === 'idle' ||
     $presentation.get().effectiveMode !== 'desktop'
   ) {
+    return
+  }
+
+  // 用户/伙伴手选的持续画面（非生活驱动）不被普通生活更新打断。
+  if (presentation?.composition?.selection_source === 'user') {
+    attemptedIntentRevision = intent.life_revision
+
     return
   }
 
@@ -197,6 +206,26 @@ function evaluateIntent(): void {
   )
 
   if (candidates.length === 0) {
+    return
+  }
+
+  // 仍在播的生活整片与新意图同活动且仍匹配时沿用（不重复派发同一段影像）；
+  // 以调度器实际播放状态为准，播放曾被中断的组合不阻止重新选择。
+  const composition = presentation?.composition
+  const playing = $performance.get()
+
+  if (
+    composition?.selection_source === 'life' &&
+    composition.cinematic &&
+    composition.life_activity_type === intent.activity_type &&
+    playing.state === 'playing' &&
+    playing.current?.source === 'life' &&
+    candidates.some(
+      entry => entry.visual_id === composition.cinematic?.visual_id && entry.version === composition.cinematic.version
+    )
+  ) {
+    attemptedIntentRevision = intent.life_revision
+
     return
   }
 

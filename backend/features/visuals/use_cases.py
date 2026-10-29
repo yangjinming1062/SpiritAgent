@@ -1,5 +1,7 @@
 """影像库请求用例；只做参数收敛与错误转换，业务语义在 service 与 queries。"""
 
+from typing import Literal
+
 from infrastructure.assets.asset_store import client_asset_url
 from infrastructure.request_errors import RequestError
 
@@ -14,6 +16,7 @@ from .client_assets import (
 )
 from .repository import VisualError, VisualNotFoundError, VisualStateError
 from .schemas import (
+    PlaybackSource,
     VisualClaimRequest,
     VisualClaimResponse,
     VisualDetailView,
@@ -138,9 +141,23 @@ async def restore_presentation(user_id: int) -> VisualPlayCommand | None:
         raise _http_error(exc) from exc
 
 
-async def play_visual(user_id: int, visual_id: int, version: int) -> VisualPlayCommand:
+async def play_visual(
+    user_id: int,
+    visual_id: int,
+    version: int,
+    origin: Literal["user", "life"] = "user",
+    life_revision: int | None = None,
+) -> VisualPlayCommand:
+    source: PlaybackSource = "life" if origin == "life" else "manual"
     try:
-        command = await service.play_visual(user_id, visual_id, source="remote", version=version)
+        command = await service.play_visual(
+            user_id,
+            visual_id,
+            source=source,
+            origin=origin,
+            version=version,
+            expected_life_revision=life_revision if origin == "life" else None,
+        )
     except VisualError as exc:
         raise _http_error(exc) from exc
     return client_play_command(command)
