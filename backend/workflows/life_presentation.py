@@ -17,12 +17,13 @@ from features.life.queries import active_pursuit_title
 from features.life.schemas import LifeStateView
 from features.life.use_cases import mark_presentation_evaluated, pending_presentation_users, read_state
 from features.scenes.snapshots import list_scene_snapshots
-from features.visuals.queries import actual_presentation_snapshot, presentation_state
+from features.visuals.queries import presentation_state
 from features.visuals.schemas import (
     ComboMaterialRef,
     SceneMediaRef,
     StageIntent,
     StagePresentation,
+    VisualPresentationView,
 )
 from features.visuals.static_presentation import present_static
 from features.visuals.static_presentation import record_stage_intent as persist_intent
@@ -57,85 +58,65 @@ def _hash(path: str) -> str:
     return compute_file_sha256(resolved[0])
 
 
-def _unavailable_snapshot(epoch: int, revision: int) -> StagePresentation:
-    return StagePresentation(
+async def _fresh_static_snapshot(
+    user_id: int, epoch: int, revision: int, projection: VisualPresentationView
+) -> StagePresentation:
+    """保留有效的冻结素材，只从库存补齐缺失部分。"""
+
+    previous = projection.static_presentation
+    composition = projection.composition
+    target = StagePresentation(
         request_id=uuid4().hex,
         presentation_epoch=epoch,
         state_revision=0,
         life_revision=revision,
-        error="造型与环境尚未就绪",
+        outfit=previous.outfit if previous else composition.outfit_material if composition else None,
+        scene=previous.scene if previous else composition.scene_material if composition else None,
+        identity_path=previous.identity_path if previous else composition.identity_path if composition else None,
+        identity_hash=previous.identity_hash if previous else composition.identity_hash if composition else None,
     )
-
-
-async def _fresh_static_snapshot(user_id: int, epoch: int, revision: int) -> StagePresentation:
-    """从当前素材重新冻结静态目标；仅生活初次投影或素材缺失时使用。"""
-
-    actual = await actual_presentation_snapshot(user_id)
-    if (
-        actual.outfit_path
-        and actual.outfit_hash
-        and actual.scene_path
-        and actual.scene_hash
-        and actual.identity_path
-        and actual.identity_hash
-    ):
-        return StagePresentation(
-            request_id=uuid4().hex,
-            presentation_epoch=epoch,
-            state_revision=0,
-            life_revision=revision,
-            outfit=ComboMaterialRef(
-                path=actual.outfit_path,
-                content_hash=actual.outfit_hash,
-                description=actual.outfit_description,
-            ),
-            scene=SceneMediaRef(
-                path=actual.scene_path,
-                content_hash=actual.scene_hash,
-                description=actual.scene_description,
-            ),
-            identity_path=actual.identity_path,
-            identity_hash=actual.identity_hash,
-        )
+    if target.outfit is not None and resolve_asset_reference(target.outfit.path) is None:
+        target.outfit = None
+    if target.scene is not None and resolve_asset_reference(target.scene.path) is None:
+        target.scene = None
+    if resolve_asset_reference(target.identity_path) is None:
+        target.identity_path = target.identity_hash = None
 
     async with SESSION_LOCAL() as db:
-        outfit = await initial_outfit_snapshot(db, user_id)
-        scenes = (await list_scene_snapshots(db, user_id, ready_only=True, limit=1)).scenes
-        try:
-            identity = await require_character_snapshot(db, user_id)
-        except CharacterCardNotReadyError:
-            return _unavailable_snapshot(epoch, revision)
-        avatar = await avatar_snapshot(db, user_id, identity.avatar_id)
-    if outfit is None or not scenes or avatar is None or not avatar.seed_fullbody_url:
-        return _unavailable_snapshot(epoch, revision)
-    scene = scenes[0]
-    if not outfit.fullbody_url or not scene.media_path:
-        return _unavailable_snapshot(epoch, revision)
-    outfit_hash, scene_hash, identity_hash = await asyncio.gather(
-        *(asyncio.to_thread(_hash, path) for path in (outfit.fullbody_url, scene.media_path, avatar.seed_fullbody_url))
-    )
-    return StagePresentation(
-        request_id=uuid4().hex,
-        presentation_epoch=epoch,
-        state_revision=0,
-        life_revision=revision,
-        outfit=ComboMaterialRef(
-            material_id=outfit.id,
-            name=outfit.name,
-            path=outfit.fullbody_url,
-            content_hash=outfit_hash,
-            description=outfit.description or "",
-        ),
-        scene=SceneMediaRef(
-            scene_id=scene.id,
-            title=scene.title,
-            path=scene.media_path,
-            content_hash=scene_hash,
-            description=scene.description,
-        ),
-        identity_path=avatar.seed_fullbody_url,
-        identity_hash=identity_hash,
-    )
+        if target.outfit is None:
+            outfit = await initial_outfit_snapshot(db, user_id)
+            if outfit is not None and outfit.fullbody_url:
+                target.outfit = ComboMaterialRef(
+                    material_id=outfit.id,
+                    name=outfit.name,
+                    path=outfit.fullbody_url,
+                    content_hash=await asyncio.to_thread(_hash, outfit.fullbody_url),
+                    description=outfit.description or "",
+                )
+        if target.scene is None:
+            scenes = (await list_scene_snapshots(db, user_id, ready_only=True, limit=1)).scenes
+            if scenes and scenes[0].media_path:
+                scene = scenes[0]
+                target.scene = SceneMediaRef(
+                    scene_id=scene.id,
+                    title=scene.title,
+                    path=scene.media_path,
+                    content_hash=await asyncio.to_thread(_hash, scene.media_path),
+                    description=scene.description,
+                )
+        if not target.identity_path or not target.identity_hash:
+            try:
+                identity = await require_character_snapshot(db, user_id)
+            except CharacterCardNotReadyError:
+                avatar = None
+            else:
+                avatar = await avatar_snapshot(db, user_id, identity.avatar_id)
+            if avatar is not None and avatar.seed_fullbody_url:
+                target.identity_path = avatar.seed_fullbody_url
+                target.identity_hash = await asyncio.to_thread(_hash, avatar.seed_fullbody_url)
+    if target.outfit is None or target.scene is None or not target.identity_path or not target.identity_hash:
+        target.error = "造型与环境尚未就绪"
+    return target
 
 
 async def _evaluate_life_presentation(user_id: int, *, force: bool = False) -> None:
@@ -169,7 +150,7 @@ async def _evaluate_life_presentation(user_id: int, *, force: bool = False) -> N
                 or (await read_state(user_id)).presentation_revision != life.presentation_revision
             ):
                 return
-            # 动态表现关闭或没有可播媒体时，生活变化只落到静态目标；有媒体时保留组合由导演解释意图。
+            # 动态关闭、媒体缺失或环境被删除时，重新冻结静态目标；角色视频不能替代环境恢复。
             # 已有冻结素材直接沿用到新代次（换新请求身份），仅缺失时才重新冻结。
             composition_media = projection.composition.media if projection.composition is not None else None
             has_media = bool(projection.ambient_catalog) or bool(
@@ -180,7 +161,10 @@ async def _evaluate_life_presentation(user_id: int, *, force: bool = False) -> N
                     or composition_media.cinematic is not None
                 )
             )
-            if motion == "off" or not has_media:
+            has_scene = (
+                projection.static_presentation is not None and projection.static_presentation.scene is not None
+            ) or (projection.composition is not None and projection.composition.scene_material is not None)
+            if motion == "off" or not has_media or not has_scene:
                 previous = projection.static_presentation
                 if previous is not None and previous.outfit is not None and previous.scene is not None:
                     snapshot = previous.model_copy(
@@ -194,7 +178,9 @@ async def _evaluate_life_presentation(user_id: int, *, force: bool = False) -> N
                         }
                     )
                 else:
-                    snapshot = await _fresh_static_snapshot(user_id, presence.revision, life.presentation_revision)
+                    snapshot = await _fresh_static_snapshot(
+                        user_id, presence.revision, life.presentation_revision, projection
+                    )
                 if not await present_static(user_id, snapshot, expected_state_revision=projection.state_revision):
                     return
             await record_stage_intent(user_id, life)

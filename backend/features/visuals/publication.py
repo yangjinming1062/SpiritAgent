@@ -245,6 +245,27 @@ async def _publish(
         or not asset.body.last_frame_path
     ):
         raise VisualStateError("主体动画必须包含透明视频、逐帧遮罩和首末帧")
+    # 已发布的起始图沿用确认时的版本，图片重做不能改变视频的真实输入。
+    existing_image: VisualVersion | None = None
+    if (
+        role == "result"
+        and asset.media_kind == "video"
+        and snapshot.kind != "actor"
+        and job.result_image_id is not None
+        and job.result_image_version_id is not None
+    ):
+        existing_image = await db.scalar(
+            select(VisualVersion)
+            .join(VisualItem, VisualItem.id == VisualVersion.visual_id)
+            .where(
+                VisualItem.user_id == user_id,
+                VisualItem.id == job.result_image_id,
+                VisualVersion.id == job.result_image_version_id,
+                VisualVersion.media_path == _path(asset.input_image_path),
+                VisualItem.media_kind == "image",
+            )
+        )
+
     roles = _roles(asset, snapshot)
     references = await ensure_asset_references_in_session(db, user_id, set(roles.values()))
     media = references[roles["media"]]
@@ -258,15 +279,24 @@ async def _publish(
         image = references[input_path]
         if image.width is None or image.height is None:
             raise VisualStateError("起始画面的尺寸记录缺失")
-        opening = VisualAsset(
-            media_kind="image",
-            media_path=input_path,
-            width=image.width,
-            height=image.height,
-            visual_description=asset.visual_description,
-            outfit_description=asset.outfit_description,
-        )
-        image_item, image_version, image_links = _publish_entity("opening", job, opening, snapshot, references)
+        if existing_image is not None:
+            items, versions = VisualItem.__table__, VisualVersion.__table__
+            image_item = select(items.c.id).where(items.c.id == existing_image.visual_id).cte("opening_existing_item")
+            image_version = (
+                select(versions.c.id, versions.c.visual_id)
+                .where(versions.c.id == existing_image.id, versions.c.visual_id == existing_image.visual_id)
+                .cte("opening_existing_version")
+            )
+        else:
+            opening = VisualAsset(
+                media_kind="image",
+                media_path=input_path,
+                width=image.width,
+                height=image.height,
+                visual_description=asset.visual_description,
+                outfit_description=asset.outfit_description,
+            )
+            image_item, image_version, image_links = _publish_entity("opening", job, opening, snapshot, references)
     item, version, links = _publish_entity(
         "published",
         job,

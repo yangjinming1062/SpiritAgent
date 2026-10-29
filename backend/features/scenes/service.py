@@ -56,6 +56,7 @@ from features.scenes.queries import can_retry_scene_generation, get_pending_scen
 from features.scenes.query_contracts import SceneSnapshot
 from features.scenes.schemas import SceneDescriptionRequest, SceneImageDimensions, SceneImageSize
 from features.scenes.wallpaper import SCENE_IMAGE_SIZE, WallpaperAsset, prepare_scene_wallpaper, scene_source_extension
+from features.visuals.static_presentation import invalidate_scene_presentation
 
 logger = get_logger(__name__)
 _SCENE_LOCKS: dict[int, asyncio.Lock] = {}
@@ -150,7 +151,8 @@ async def _event(db: AsyncSession, user_id: int, event_type: str, scene_id: int 
                     result_ref={"job_id": job.id, "scene_id": scene.id} if job.state == "succeeded" else {},
                     error=job.error,
                 )
-        if scene is not None and scene.status == "ready":
+        # 只有首次引导场景需要通知视觉初始化；普通环境入库不应重新启动基础动态准备。
+        if scene is not None and scene.status == "ready" and scene.origin == SceneOrigin.ONBOARDING.value:
             emit_ws_event(db, user_id=user_id, event_type="companion.visual.initial_requested", payload={})
 
 
@@ -389,11 +391,16 @@ async def delete_scene(user_id: int, scene_id: int) -> None:
             raise SceneStateError("请先取消场景任务")
         if row.replacement_job is not None and row.replacement_job.availability == "pending":
             raise SceneStateError("请先取消图片重新生成任务")
+        if await invalidate_scene_presentation(db, user_id, scene_id, row.media_path):
+            emit_ws_event(
+                db, user_id=user_id, event_type="companion.life.presentation_requested", payload={"force": True}
+            )
         paths = {row.media_path, row.upload_source_path} - {""}
         if row.initial_job.checkpoint:
             paths |= ImageChainState.model_validate(row.initial_job.checkpoint).stored_paths()
         paths |= _regeneration_asset_paths(row)
         await db.delete(row)
+        await db.flush()
         await _event(db, persona.user_id, "companion.scene.updated", scene_id)
         await enqueue_asset_cleanup(db, user_id, paths)
         await db.commit()

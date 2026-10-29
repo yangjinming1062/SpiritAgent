@@ -18,10 +18,20 @@ from .repository import (
     emit_playback_receipt,
     notify_visuals_updated,
     presentation_outfit,
+    presentation_row,
+    presented_item,
     require_presentation_row,
+    stage_composition,
     touch_presentation,
+    visual_snapshot,
 )
-from .schemas import StageIntent, StagePresentation, StageReceipt, VisualPlayCommand
+from .schemas import (
+    SceneMediaRef,
+    StageIntent,
+    StagePresentation,
+    StageReceipt,
+    VisualPlayCommand,
+)
 
 
 async def record_stage_intent(db: AsyncSession, user_id: int, intent: StageIntent) -> None:
@@ -113,6 +123,95 @@ async def restore_static_presentation(
             "retry_at": snapshot.retry_at if snapshot.presentation_epoch == presentation_epoch else None,
         }
     ).model_dump(mode="json")
+    return True
+
+
+async def invalidate_scene_presentation(db: AsyncSession, user_id: int, scene_id: int, scene_path: str) -> bool:
+    """作废已删除环境的呈现引用，保留独立主体与影像库历史；返回是否需要恢复舞台。"""
+
+    state = await presentation_row(db, user_id, lock=True)
+    if state is None:
+        return False
+
+    def ref_matches(value: SceneMediaRef | None) -> bool:
+        # 从实际呈现重新冻结的引用可能不带素材 ID，此时按原文件核对。
+        return value is not None and (
+            value.scene_id == scene_id or (value.scene_id is None and value.path == scene_path)
+        )
+
+    changed = False
+    for pending in (False, True):
+        static_raw = state.pending_static_json if pending else state.current_static_json
+        static = StagePresentation.model_validate(static_raw) if static_raw is not None else None
+        if static is not None and ref_matches(static.scene):
+            target = static.model_copy(
+                update={
+                    "scene": None,
+                    "request_id": uuid4().hex,
+                    "state_revision": state.state_revision + 1,
+                    "receipt_kind": None,
+                    "error": "环境尚未就绪",
+                    "retry_at": None,
+                }
+            ).model_dump(mode="json")
+            if pending:
+                state.pending_static_json = target
+            else:
+                state.current_static_json = target
+            changed = True
+
+    composition = stage_composition(state)
+    if composition is not None and ref_matches(composition.scene_material):
+        state.composition_json = (
+            composition.model_copy(
+                update={"scene_visual_id": None, "scene_version": None, "scene_material": None, "media": None}
+            ).model_dump(mode="json")
+            if composition.mode == "layered"
+            else None
+        )
+        changed = True
+
+    affected_visual_ids: set[int] = set()
+    for loop in (False, True):
+        item = presented_item(state, loop=loop)
+        if item is None:
+            continue
+        source = visual_snapshot(item).source
+        if source.kind in ("scene", "cinematic") and ref_matches(source.scene):
+            affected_visual_ids.add(item.id)
+            if loop:
+                state.loop_visual_id = state.loop_version_id = None
+                state.loop_snapshot_json = None
+            else:
+                state.current_visual_id = state.current_version_id = None
+                state.current_snapshot_json = None
+            changed = True
+
+    if state.pending_command_json is not None:
+        command = VisualPlayCommand.model_validate(state.pending_command_json)
+        if ref_matches(command.scene) or (
+            command.composition is not None and ref_matches(command.composition.scene_material)
+        ):
+            changed = True
+
+    if not changed:
+        return False
+
+    await cancel_pending_command(db, state)
+    if affected_visual_ids:
+        interrupted = await db.execute(
+            update(VisualPlayback)
+            .where(
+                VisualPlayback.user_id == user_id,
+                VisualPlayback.visual_id.in_(affected_visual_ids),
+                VisualPlayback.status == "started",
+            )
+            .values(status="failed", error="环境已删除", updated_at=utc_now())
+            .returning(VisualPlayback.play_id, VisualPlayback.receipt_kind)
+        )
+        for play_id, receipt_kind in interrupted:
+            emit_playback_receipt(db, user_id, play_id, "failed", receipt_kind)
+    await touch_presentation(db, user_id)
     return True
 
 

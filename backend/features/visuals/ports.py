@@ -45,7 +45,6 @@ async def read_planning_context(user_id: int, snapshot: ActorClipSource | Cinema
 def notify_visual_ready(user_id: int) -> None:
     if _ready_handler is not None:
         _ready_handler(user_id)
-    request_base_motion_preparation(user_id)
 
 
 def request_base_motion_preparation(user_id: int) -> None:

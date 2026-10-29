@@ -92,7 +92,7 @@ from .geometry import probe_visual_image, visual_aspect_matches, visual_aspect_r
 from .life import settle_visual_steps
 from .models import VisualJob
 from .naming import schedule_visual_title
-from .ports import notify_visual_ready
+from .ports import notify_visual_ready, request_base_motion_preparation
 from .prompts import (
     ACTOR_POSE_IMAGE_TEMPLATE,
     SCENE_MOTION_DESIGN,
@@ -942,15 +942,6 @@ async def _process_candidate(
             ext="webp",
             directory=directory,
         )
-        image_path = progress.pose_path
-        if result.fitted:
-            image_path = await save_companion_asset_async(
-                result.first_frame,
-                user_id=user_id,
-                label="visual_pose",
-                ext="png",
-                directory=directory,
-            )
         progress.frame_width, progress.frame_height = result.width, result.height
         chain = MediaChainState.model_validate_json(progress.video_chain_json or "{}")
         video_origin = (
@@ -962,7 +953,7 @@ async def _process_candidate(
             media_kind="video",
             media_path=video or "",
             poster_path=poster,
-            input_image_path=image_path or "",
+            input_image_path=progress.pose_path,
             width=result.width,
             height=result.height,
             duration_ms=result.duration_ms,
@@ -1217,6 +1208,10 @@ async def _finish_job(
             raise VisualCreationError(progress.review_reason or "成品未通过检查，请重新生成", "quality_failed")
         snapshot = _publication_snapshot(visual_snapshot(job), progress)
         asset = progress.candidate
+        if asset.media_kind == "video" and snapshot.kind != "actor":
+            # 入库与恢复均绑定本次确认的输入图，处理后的首帧只属于视频派生物。
+            asset = asset.model_copy(update={"input_image_path": progress.pose_path})
+            progress.candidate = asset
         checkpoint = progress.model_dump(mode="json")
         publication = await publish_visual_result(db, user_id, job, asset, snapshot=snapshot, checkpoint=checkpoint)
         published = publication.visual
@@ -1279,6 +1274,8 @@ async def _finish_job(
         schedule_visual_title(user_id, published.id)
     if published is not None and allow_followup_work and job.purpose == "create":
         notify_visual_ready(user_id)
+        if published.asset_kind == "actor":
+            request_base_motion_preparation(user_id)
 
 
 async def _pause_visual_job(
