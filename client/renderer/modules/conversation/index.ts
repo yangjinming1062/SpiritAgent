@@ -1,5 +1,3 @@
-export { chatDisplayText } from './chat-display-text'
-
 export { ChatMediaCard } from './chat-media-card'
 export { ChatPanel } from './chat-panel'
 

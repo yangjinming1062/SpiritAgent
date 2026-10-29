@@ -36,7 +36,7 @@ _LOCKS: dict[int, asyncio.Lock] = {}
 _RETRY_AT: dict[int, datetime] = {}
 logger = get_logger(__name__)
 
-# 意图标签映射：结构化活动类别到建议视觉标签，确定性映射，客户端不再解读生活文本。
+# 结构化活动类别到建议视觉标签的确定性映射。
 # intent 性质（仅计划）不驱动活动演出；resting 显式休息，其余按活动语义展开。
 _TYPE_TAGS: dict[str, list[str]] = {
     "idle": ["idle"],

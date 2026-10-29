@@ -124,7 +124,7 @@ uv run --project backend python scripts/debug_prompt.py --db --user-id 1 --prese
 
 [Client scripts](../client/scripts/) 的安装、构建和打包门禁由 [package.json](../client/package.json)调用：根依赖校验、构建来源记录、全入口页面／资源检查，以及目标平台原生模块准备。`build` 与 `beforePack` 都验证产物，直接调用 builder 仍需先构建。
 
-macOS `afterPack` 检查架构，并由 [macos-app-identity.cjs](../client/scripts/macos-app-identity.cjs)给主执行文件派生应用专属 UUID，避免与其他 Electron 应用混淆本地网络授权（[Apple TN3178](https://developer.apple.com/documentation/technotes/tn3178-checking-for-and-resolving-build-uuid-problems)）。该步修复 ad-hoc 签名，不改变 Framework／helper；主执行文件不再匹配 Electron 官方 dSYM。整包本地验签可用 `CSC_IDENTITY_AUTO_DISCOVERY=false pnpm --dir client exec electron-builder --dir --mac --arm64 -c.mac.identity=-`。
+macOS `afterPack` 检查架构，并由 [macos-app-identity.cjs](../client/scripts/macos-app-identity.cjs)给主执行文件派生应用专属 UUID，避免与其他 Electron 应用混淆本地网络授权（[Apple TN3178](https://developer.apple.com/documentation/technotes/tn3178-checking-for-and-resolving-build-uuid-problems)）。该步修复 ad-hoc 签名，不改变 Framework／helper；主执行文件使用应用专属 UUID，Electron 官方 dSYM 不适用。整包本地验签可用 `CSC_IDENTITY_AUTO_DISCOVERY=false pnpm --dir client exec electron-builder --dir --mac --arm64 -c.mac.identity=-`。
 
 `afterSign` 调用 [notarize.cjs](../client/scripts/notarize.cjs)，关闭 builder 内建公证；支持 keychain profile、Apple ID 和 API key，未配置跳过、部分配置报错，超时与临时文件由脚本清理。正式签名和公证必须在 macOS 实机验证，不能由 ad-hoc 结果替代。
 

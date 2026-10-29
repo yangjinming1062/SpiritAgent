@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .models import ActionDefinition
 from .presets import PRESETS_BY_KEY
 from .schemas import ActionAssetDesign, ActionAssetSource, ActionAssetStatus, ActionReviewSource
-from .service import ensure_builtin_actions
 from .views import normalize_action_name
 
 _SOURCE = TypeAdapter(ActionAssetSource)
@@ -22,9 +21,7 @@ def _prepare(raw: dict[str, Any], payload: dict[str, Any], context: BackupContex
     source = _SOURCE.validate_python(payload.get("source"))
     status = _STATUS.validate_python(payload.get("status"))
     if source == "preset":
-        key = payload.get("preset_key") or next(
-            (p.key for p in PRESETS_BY_KEY.values() if p.name == payload.get("name")), None
-        )
+        key = payload["preset_key"]
         if key not in PRESETS_BY_KEY:
             raise ValueError("备份包含未知的内置动作")
         preset = PRESETS_BY_KEY[key]
@@ -78,12 +75,6 @@ async def _find_existing(
     )
 
 
-async def _after_rows(
-    db: AsyncSession, records: list[dict[str, Any]], mapping: dict[str, int | str], context: BackupContext
-) -> None:
-    await ensure_builtin_actions(db, context.user_id)
-
-
 def backup_tables() -> tuple[BackupTable, ...]:
     return (
         BackupTable(
@@ -94,6 +85,5 @@ def backup_tables() -> tuple[BackupTable, ...]:
             strict_references=False,
             prepare_payload=_prepare,
             find_existing=_find_existing,
-            after_rows=_after_rows,
         ),
     )

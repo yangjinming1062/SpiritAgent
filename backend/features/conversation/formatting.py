@@ -28,10 +28,9 @@ from features.conversation.replies import (
 )
 from features.conversation.snapshots import MessageSnapshot
 
-# 与 chat-runtime.ts 的分段和 JavaScript trim、chatDisplayText 保持一致。
+# 与 chat-runtime.ts 的分段和 JavaScript trim 保持一致。
 _BLANK_LINE_SPLIT = r"\r?\n(?:[ \t]*\r?\n)+"
 _DISPLAY_WHITESPACE = " \t\r\n\v\f\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
-_MEDIA_MARKER = rf"(?<![A-Za-z0-9_])MEDIA:[^{_DISPLAY_WHITESPACE}]*"
 
 
 def _is_json_array(content: ColumnElement[str | None] = Message.content) -> ColumnElement[bool]:
@@ -138,10 +137,7 @@ def visible_bubble_count(
     """已保存消息的聊天气泡数；查询须关联 Conversation，系统状态与工具记录不计。"""
     saved_bubbles = message.reply_json["bubbles"]
     reply_bubbles = func.jsonb_array_length(saved_bubbles)
-    assistant_text = func.btrim(
-        func.regexp_replace(_visible_message_text(message), _MEDIA_MARKER, "", "g"),
-        _DISPLAY_WHITESPACE,
-    )
+    assistant_text = func.btrim(_visible_message_text(message), _DISPLAY_WHITESPACE)
     has_media = case(
         (
             func.jsonb_typeof(message.media_json) == "array",

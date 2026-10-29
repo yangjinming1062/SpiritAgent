@@ -370,7 +370,7 @@ export function createChatHistoryController(
     const projection = projectHistory(messages)
 
     if (liveList.length > 0) {
-      // 活行与投影结果合并后只落库一次：中间态不再出现"活行短暂消失"。
+      // 活行与投影结果合并后只落库一次，保持展示连续。
       const next = mergeLiveHistoryRows(projection.items, liveList)
 
       commitHistory(

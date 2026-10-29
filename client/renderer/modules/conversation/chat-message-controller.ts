@@ -9,7 +9,6 @@ import type {
 
 import { isResourceId } from '../../../../shared/resource-id'
 
-import { chatDisplayText } from './chat-display-text'
 import type { ConversationState } from './chat-runtime-state'
 import type { ChatMessageBody, ChatMessageListItem } from './chat-runtime-types'
 import { nextChatMessageId } from './conversation-state'
@@ -263,7 +262,7 @@ export function createChatMessageController(state: ConversationState) {
       return {
         ...body,
         streamingText,
-        text: chatDisplayText(streamingText, true).trimStart()
+        text: streamingText.trimStart()
       }
     })
   }
@@ -298,7 +297,7 @@ export function createChatMessageController(state: ConversationState) {
     const { list, item, body } = last
 
     const rawStr = typeof text === 'string' ? text : (body.streamingText ?? body.text)
-    const finalStr = chatDisplayText(rawStr).trim()
+    const finalStr = rawStr.trim()
     const finalMedia = media ?? body.media
 
     const finalReasoning =
@@ -669,7 +668,7 @@ export function createChatMessageController(state: ConversationState) {
       const { body, item } = last
       $chatMessageBodies.setKey(item.id, {
         ...body,
-        text: chatDisplayText(body.streamingText ?? body.text).trim(),
+        text: (body.streamingText ?? body.text).trim(),
         streamingText: undefined,
         streaming: false,
         ...terminal

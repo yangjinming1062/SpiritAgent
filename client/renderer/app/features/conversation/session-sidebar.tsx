@@ -21,7 +21,6 @@ import {
   $systemPresetsFetched,
   $systemPresetsLoading,
   archiveSession,
-  chatDisplayText,
   CompanionAvatar,
   createNewSession,
   deleteSession,
@@ -582,7 +581,7 @@ function SessionRow({
         <span className="min-w-0 flex-1 truncate text-xs">
           {isCompanionSession(session)
             ? tSidebar.messageCount(msgCount)
-            : chatDisplayText(session.preview ?? '').replace(/\s+/g, ' ') || tSidebar.messageCount(msgCount)}
+            : (session.preview ?? '').replace(/\s+/g, ' ') || tSidebar.messageCount(msgCount)}
         </span>
         {unread && <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-accent" />}
       </div>

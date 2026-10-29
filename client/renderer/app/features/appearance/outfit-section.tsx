@@ -96,7 +96,7 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
       element.scrollTop = listScrollTop.current
     }
 
-    // 滚动位置按帧落盘：连续滚动不再每个事件写一次账户缓存。
+    // 按帧合并滚动位置写入。
     let frame = 0
 
     const writePosition = (): void => {

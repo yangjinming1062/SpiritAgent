@@ -77,13 +77,13 @@ class ActionMaterialRef(BaseModel):
     motion_description: str = Field(min_length=1)
     clip_kind: ActionClipKind
     duration_seconds: int = Field(ge=1, le=60, strict=True)
-    semantic_tags: SemanticTags = Field(default_factory=list)
+    semantic_tags: SemanticTags
     performance_role: ActionPerformanceRole
-    motion_intensity: ActionMotionIntensity = "normal"
-    interruptible: bool = True
-    use_when: list[str] = Field(default_factory=list, max_length=8)
-    avoid_when: list[str] = Field(default_factory=list, max_length=8)
-    allowed_triggers: list[str] = Field(default_factory=list, max_length=8)
+    motion_intensity: ActionMotionIntensity
+    interruptible: bool
+    use_when: list[str] = Field(max_length=8)
+    avoid_when: list[str] = Field(max_length=8)
+    allowed_triggers: list[str] = Field(max_length=8)
     revision: datetime | None = None
 
     def media_basis(self) -> dict:
@@ -509,7 +509,7 @@ class StageComposition(BaseModel):
     # 持续画面为什么被选择：base=普通基础舞台、life=生活导演、user=用户/伙伴点播。
     # life 来源记录选择时的生活修订与活动类别；生活变化后据此重新核对该画面是否仍然适用，
     # 不匹配时退出回基础舞台。user 来源不受普通生活更新影响，直到用户换选或素材失效。
-    selection_source: SelectionSource = "base"
+    selection_source: SelectionSource
     life_revision: int | None = Field(default=None, ge=0)
     life_activity_type: ActivityType | None = None
     # 各层媒体投影；由查询按引用版本填充，桌面与窗口共用同一份数据。
@@ -667,7 +667,7 @@ class PresentedVisual(BaseModel):
     id: ResourceId
     user_id: ResourceId
     media_kind: VisualMediaKind
-    asset_kind: VisualAssetKind = "cinematic"
+    asset_kind: VisualAssetKind
     title: str
     status: str
     media_path: str

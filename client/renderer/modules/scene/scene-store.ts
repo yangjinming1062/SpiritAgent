@@ -497,7 +497,6 @@ export async function hydrateScene(options: { skipLibraryRefresh?: boolean } = {
   }
 
   try {
-    // 环境素材不再有"当前环境"；呈现环境由当前影像的冻结素材决定。
     const pendingMaterial = state.materials.find(item => item.status === 'pending') ?? null
     const regeneratingMaterial = state.materials.find(item => item.regeneration?.status === 'pending') ?? null
     const pending = pendingMaterial ? await resolveScene(pendingMaterial) : null

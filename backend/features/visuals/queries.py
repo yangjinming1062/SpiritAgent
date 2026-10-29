@@ -29,6 +29,7 @@ from .repository import (
     visual_snapshot,
 )
 from .schemas import (
+    ActionMaterialRef,
     ActionMediaEntry,
     ActionMediaListResponse,
     ActorClipBody,
@@ -58,8 +59,6 @@ from .schemas import (
     VisualSource,
     parse_job_progress,
 )
-
-_ASSET_KINDS: tuple[str, ...] = ("actor", "scene", "cinematic")
 
 
 def _source_matches_stage(source: dict, *, outfit: ComboMaterialRef | None, identity_hash: str | None) -> bool:
@@ -182,7 +181,7 @@ async def current_outfit_reference(user_id: int) -> ComboMaterialRef | None:
 async def reusable_actor_clip(user_id: int, source: ActorClipSource) -> bool:
     """基础准备只复用身份、造型、动作版本相符且已确认可自动使用的透明成品。
 
-    任何已发布版本都算数：目录会回退到仍合格的旧版本，准备判断也要与之一致。
+    准备判断与目录使用相同资格，检查所有已发布版本。
     """
 
     async with SESSION_LOCAL() as db:
@@ -221,14 +220,6 @@ async def reusable_actor_clip(user_id: int, source: ActorClipSource) -> bool:
     return False
 
 
-def _media_kind(value: str) -> VisualMediaKind:
-    return "image" if value == "image" else "video"
-
-
-def _asset_kind(value: str) -> VisualAssetKind:
-    return value if value in _ASSET_KINDS else "cinematic"
-
-
 def version_body(item: VisualItem | PresentedVisual) -> ActorClipBody | None:
     """actor 版本的主体元数据；路径转为客户端地址，与 media_url 同口径。"""
 
@@ -247,8 +238,8 @@ def item_view(item: VisualItem | PresentedVisual, snapshot: VisualSnapshot | Non
     action = source.action if source.kind in ("actor", "cinematic") else None
     return VisualItemView(
         id=item.id,
-        media_kind=_media_kind(item.media_kind),
-        asset_kind=_asset_kind(item.asset_kind),
+        media_kind=item.media_kind,
+        asset_kind=item.asset_kind,
         clip_kind=visual_clip_kind(item, snapshot),
         title=item.title,
         status=item.status,
@@ -295,8 +286,8 @@ def job_view(job: VisualJob) -> VisualJobView:
     return VisualJobView(
         id=job.id,
         purpose=job.purpose,
-        target_kind=_media_kind(job.target_kind),
-        asset_kind=_asset_kind(job.asset_kind),
+        target_kind=job.target_kind,
+        asset_kind=job.asset_kind,
         action_name=_job_action_name(job.snapshot_json),
         preparation=progress is not None and progress.source == "base_preparation",
         target_visual_id=job.target_visual_id,
@@ -608,8 +599,8 @@ async def _layer_media(
     return StageLayerMedia(
         visual_id=item.id,
         version=version_row.number,
-        media_kind=_media_kind(item.media_kind),
-        asset_kind=_asset_kind(item.asset_kind),
+        media_kind=item.media_kind,
+        asset_kind=item.asset_kind,
         clip_kind=visual_clip_kind(version_view(item, version_row)),
         media_url=client_asset_url(version_row.media_path),
         poster_url=client_asset_url(version_row.poster_path) if version_row.poster_path else None,
@@ -718,13 +709,13 @@ async def ambient_catalog(db: AsyncSession, state: VisualPresentation, *, limit:
                     target_height=state.target_height,
                 ):
                     continue
-                action = source.get("action") or {}
+                action = ActionMaterialRef.model_validate(source["action"])
                 entries.append(
                     AmbientCatalogEntry(
                         visual_id=row.id,
                         version=row.number,
                         media_kind="video",
-                        asset_kind=_asset_kind(row.asset_kind),
+                        asset_kind=row.asset_kind,
                         clip_kind=row.clip_kind or "loop",
                         media_url=client_asset_url(row.media_path),
                         poster_url=client_asset_url(row.poster_path) if row.poster_path else None,
@@ -734,16 +725,16 @@ async def ambient_catalog(db: AsyncSession, state: VisualPresentation, *, limit:
                         description=row.description,
                         body=ActorClipBody.model_validate(row.body_json) if row.body_json else None,
                         action_id=row.action_id,
-                        action_name=action.get("name", ""),
+                        action_name=action.name,
                         preset_key=preset,
-                        semantic_tags=action.get("semantic_tags", []),
-                        performance_role=action["performance_role"],
-                        motion_intensity=action.get("motion_intensity", "normal"),
-                        interruptible=action.get("interruptible", True),
+                        semantic_tags=action.semantic_tags,
+                        performance_role=action.performance_role,
+                        motion_intensity=action.motion_intensity,
+                        interruptible=action.interruptible,
                         media_semantics=source.get("media_semantics"),
-                        allowed_triggers=action.get("allowed_triggers", []),
-                        use_when=action.get("use_when", []),
-                        avoid_when=action.get("avoid_when", []),
+                        allowed_triggers=action.allowed_triggers,
+                        use_when=action.use_when,
+                        avoid_when=action.avoid_when,
                     )
                 )
                 selected_items.add(row.id)
@@ -974,8 +965,8 @@ async def _presentation_snapshot(user_id: int, *, for_prompt: bool) -> ActualPre
         )
         return ActualPresentationSnapshot(
             visual_id=item.id,
-            media_kind=_media_kind(item.media_kind),
-            asset_kind=_asset_kind(item.asset_kind),
+            media_kind=item.media_kind,
+            asset_kind=item.asset_kind,
             visual_version=item.version,
             visual_description=item.description if show_full_visual else "",
             visual_path=visual_path if show_full_visual else None,
@@ -1063,25 +1054,26 @@ async def visual_play_catalog(user_id: int, trigger: str) -> list[VisualPlayOpti
             ):
                 continue
             source = row.source
-            action = source.get("action") if source.get("kind") in ("actor", "cinematic") else None
-            action = action or {}
+            action = (
+                ActionMaterialRef.model_validate(source["action"]) if source["kind"] in ("actor", "cinematic") else None
+            )
             options.append(
                 VisualPlayOption(
                     visual_id=row.id,
-                    name=action.get("name", ""),
+                    name=action.name if action is not None else "",
                     media_kind=row.media_kind,
-                    asset_kind=_asset_kind(row.asset_kind),
+                    asset_kind=row.asset_kind,
                     clip_kind=row.clip_kind,
-                    duration_seconds=action.get("duration_seconds"),
+                    duration_seconds=action.duration_seconds if action is not None else None,
                     description=row.description,
                     outfit_description=row.outfit_description,
                     scene_description=row.scene_description or "",
-                    semantic_tags=action.get("semantic_tags", []),
-                    performance_role=action.get("performance_role", "idle"),
-                    motion_intensity=action.get("motion_intensity", "normal"),
+                    semantic_tags=action.semantic_tags if action is not None else [],
+                    performance_role=action.performance_role if action is not None else "idle",
+                    motion_intensity=action.motion_intensity if action is not None else "normal",
                     media_semantics=source.get("media_semantics"),
-                    use_when=action.get("use_when", []),
-                    avoid_when=action.get("avoid_when", []),
+                    use_when=action.use_when if action is not None else [],
+                    avoid_when=action.avoid_when if action is not None else [],
                 )
             )
         return options

@@ -1,7 +1,6 @@
 export function speechText(text: string): string {
   const clean = text
     .replace(/<\/?[a-z][^>]*>/gi, ' ')
-    .replace(/\bMEDIA:\S+/g, ' ')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .replace(/https?:\/\/\S+/g, ' ')

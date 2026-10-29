@@ -4,7 +4,6 @@ import { reportInteractionStat, triggerFootGlowPulse } from '@/modules/character
 import {
   $chatDraftFromUndo,
   $companionSessionId,
-  chatDisplayText,
   type ConversationRuntime,
   invalidateSessionHistory,
   rememberFullHistory,
@@ -237,7 +236,7 @@ export function handleConversationEvent(
 
       const bubbles = payload.bubbles ?? undefined
       const media = payload.media ?? undefined
-      const text = chatDisplayText(payload.text ?? '')
+      const text = payload.text ?? ''
 
       const replyExists =
         payload.message_id !== null &&

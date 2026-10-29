@@ -21,7 +21,7 @@
 | 用户/系统设置：[settings/models.py](../backend/features/configuration/settings/models.py) | 用户值为结构化设置；`system_settings` 的每项值是 JSON 文本，由 [system_settings.py](../backend/features/configuration/system_settings.py)校验水合，不能直接按 JSONB 对待 |
 | 模型配置与资讯连接：[configuration/models.py](../backend/features/configuration/models.py) | 模型配置按用户一对一；资讯连接按账户/平台唯一，凭证修订和扫码登录修订各自隔离迟到结果，均不属于普通设置同步 |
 | 人格与政策：[companion/models.py](../backend/features/companion/models.py) | `personas` 定义伙伴及自主政策，当前活动和实际显示各有独立状态 |
-| 声音与分发：[voice_models.py](../backend/features/media/voice_models.py)、[updates/models.py](../backend/features/updates/models.py) | 声音当前槽位指向不可变方案版本，消息继续引用旧版本；更新版本是全局分发资料，不归某个产品账户 |
+| 声音与分发：[voice_models.py](../backend/features/media/voice_models.py)、[updates/models.py](../backend/features/updates/models.py) | 声音当前槽位指向不可变方案版本，消息引用制作时的版本；更新版本是全局分发资料，不归某个产品账户 |
 
 ## 会话与话题
 

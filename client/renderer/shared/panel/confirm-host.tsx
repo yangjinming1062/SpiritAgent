@@ -28,7 +28,7 @@ function settle(confirmed: boolean, expected = $pendingConfirm.get()): void {
 // 换号或登出时按取消收尾，不让旧账户的确认结果驱动后续操作。
 registerStorageClearHandler(() => settle(false))
 
-/** 命令式二次确认：取代 window.confirm 的原生弹窗，Promise 在用户做出选择后兑现。同窗口同时只展示一个请求，新请求先把未决请求按取消结掉。 */
+/** 命令式二次确认：Promise 在用户选择后兑现；同窗口只展示一个请求，新请求按取消结算未决请求。 */
 export function confirmAction(request: ConfirmRequest): Promise<boolean> {
   return new Promise(resolve => {
     settle(false)

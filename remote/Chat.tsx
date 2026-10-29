@@ -1278,7 +1278,7 @@ function Message({
           ))
         ) : (
           <>
-            {content ? <p>{content.replace(/(?:^|\n)MEDIA:\s*\S+/g, '')}</p> : null}
+            {content ? <p>{content}</p> : null}
             {parts.map((part: unknown, index) =>
               isRecord(part) && part.type === 'input_text' && typeof part.text === 'string' ? (
                 <p key={index}>{part.text}</p>

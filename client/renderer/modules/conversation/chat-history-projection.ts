@@ -2,7 +2,6 @@ import type { CompanionBubble, SessionMessage } from '@protocol'
 
 import { isResourceId } from '../../../../shared/resource-id'
 
-import { chatDisplayText } from './chat-display-text'
 import { extractMessageContent, splitUserText } from './chat-message-rules'
 import type { ChatMessageBody, ChatMessageListItem, ConversationHistorySync } from './chat-runtime-types'
 
@@ -51,8 +50,7 @@ export function projectSessionMessages(
 
     const companionBubbles = m.role === 'assistant' && m.content_type === 'companion_reply' ? m.bubbles : undefined
 
-    const { text, attachments } = extractMessageContent(m)
-    const textContent = m.role === 'assistant' ? chatDisplayText(text) : text
+    const { text: textContent, attachments } = extractMessageContent(m)
 
     const reasoningContent = typeof m.reasoning === 'string' ? m.reasoning : ''
 

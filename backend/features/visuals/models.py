@@ -62,7 +62,7 @@ class VisualItem(ModelBase, TimestampMixin):
     source_key: Mapped[str] = mapped_column(String(36), default=lambda: uuid4().hex)
     media_kind: Mapped[str] = mapped_column(String(8))
     # actor=透明主体动画；scene=环境媒体；cinematic=完整场景影像。
-    asset_kind: Mapped[str] = mapped_column(String(16), default="cinematic", server_default=text("'cinematic'"))
+    asset_kind: Mapped[str] = mapped_column(String(16))
     title: Mapped[str] = mapped_column(String(160), default="", server_default="")
     status: Mapped[str] = mapped_column(String(24), default="ready", server_default="ready")
     description: Mapped[str] = mapped_column(Text, default="", server_default="")
@@ -243,7 +243,7 @@ class VisualJob(JobRecord):
     id: Mapped[int] = mapped_column(BigInteger, ForeignKey("jobs.id", ondelete="CASCADE"), primary_key=True)
     owner_id: Mapped[int] = mapped_column(BigInteger)
     # 本次制作的目标资产类型；snapshot_json.source.kind 必须一致。
-    asset_kind: Mapped[str] = mapped_column(String(16), default="cinematic", server_default=text("'cinematic'"))
+    asset_kind: Mapped[str] = mapped_column(String(16))
     outfit_id: Mapped[int | None] = mapped_column(ForeignKey("companion_outfits.id", ondelete="SET NULL"))
     scene_id: Mapped[int | None] = mapped_column(ForeignKey("companion_scenes.id", ondelete="SET NULL"))
     action_id: Mapped[int | None] = mapped_column(ForeignKey("action_definitions.id", ondelete="SET NULL"))

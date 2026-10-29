@@ -1,4 +1,3 @@
-import { chatDisplayText } from '@/modules/conversation'
 import { getStrings } from '@/shared/strings'
 import type { ChatMediaItem, CompanionBubble } from '@protocol'
 
@@ -8,12 +7,11 @@ export function pendingReplyText(
   bubbles?: CompanionBubble[],
   media?: ChatMediaItem[]
 ): { preview: string; pending: string } {
-  const preview = chatDisplayText(
+  const preview =
     bubbles?.findLast(bubble => 'text' in bubble)?.text ??
-      bubbles?.findLast(bubble => bubble.type === 'link')?.title ??
-      text ??
-      ''
-  )
+    bubbles?.findLast(bubble => bubble.type === 'link')?.title ??
+    text ??
+    ''
 
   const hasMedia = media?.length || bubbles?.some(bubble => bubble.type === 'image' || bubble.type === 'video')
 

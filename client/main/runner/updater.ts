@@ -53,7 +53,7 @@ export interface MinimalRunnerBridge {
   stop: (options: { reason: string }) => Promise<RunnerStopResult>
 }
 
-// 其他入口已在启动、运行或收尾时 start 会拒绝；更新器不再拉起，避免把它记成安装失败。
+// 其他入口处于启动、运行或收尾时跳过拉起，避免把重复启动记成安装失败。
 function bridgeBusy(bridge: MinimalRunnerBridge): boolean {
   const phase = bridge.getStatus().phase
 
