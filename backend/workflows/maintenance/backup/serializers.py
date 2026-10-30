@@ -33,6 +33,7 @@ VISUALS_TABLES = frozenset(
         "visual_versions",
         "visual_version_assets",
         "visual_jobs",
+        "visual_import_jobs",
         "visual_presentations",
         "visual_playbacks",
     }

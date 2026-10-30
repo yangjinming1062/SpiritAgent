@@ -13,6 +13,7 @@ from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
 from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from features.action_library.schemas import ActionAssetDesign
 from features.life.schemas import FactType
 from features.media.identity_contracts import CharacterCardSnapshot, CharacterReferenceRole
 from features.media.video_queue.contracts import VideoQueueInfo
@@ -122,10 +123,26 @@ class MediaSemantics(BaseModel):
     avoid_scene_tags: SceneTags = Field(default_factory=list)
 
 
-class ActorClipSource(BaseModel):
-    """透明主体动画的冻结输入：身份、造型与动作；不固定背景。"""
+class VisualSourceMetadata(BaseModel):
+    """可选的原始文件与内容理解记录；不代表影像的业务类型。"""
 
     model_config = ConfigDict(extra="forbid")
+
+    original_filename: str | None = Field(default=None, min_length=1, max_length=255)
+    original_path: str | None = Field(default=None, min_length=1)
+    original_content_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    original_width: int | None = Field(default=None, gt=0)
+    original_height: int | None = Field(default=None, gt=0)
+    original_duration_ms: int | None = Field(default=None, gt=0)
+    analysis_job_id: ResourceId | None = None
+    analysis_revision: int | None = None
+    analysis_pending: bool = False
+    presentation_approved: bool = True
+    identity_reason: str = ""
+
+
+class ActorClipSource(VisualSourceMetadata):
+    """透明主体动画的冻结输入：身份、造型与动作；不固定背景。"""
 
     kind: Literal["actor"] = "actor"
     identity: CharacterCardSnapshot
@@ -156,10 +173,8 @@ class ActorClipSource(BaseModel):
         return "primary" if self.identity_reference_role == "fullbody" else "portrait_and_outfit"
 
 
-class SceneMediaSource(BaseModel):
+class SceneMediaSource(VisualSourceMetadata):
     """环境媒体的冻结输入：一张环境素材即可制作静态图或循环视频。"""
-
-    model_config = ConfigDict(extra="forbid")
 
     kind: Literal["scene"] = "scene"
     scene: SceneMediaRef
@@ -171,10 +186,8 @@ class SceneMediaSource(BaseModel):
     persona: dict[str, str] = Field(default_factory=dict)
 
 
-class CinematicSource(BaseModel):
+class CinematicSource(VisualSourceMetadata):
     """完整场景影像的冻结输入：身份、造型、环境与动作的整体组合。"""
-
-    model_config = ConfigDict(extra="forbid")
 
     kind: Literal["cinematic"] = "cinematic"
     identity: CharacterCardSnapshot
@@ -206,7 +219,149 @@ class CinematicSource(BaseModel):
         return "primary" if self.identity_reference_role == "fullbody" else "portrait_and_outfit"
 
 
-VisualSource = Annotated[ActorClipSource | SceneMediaSource | CinematicSource, Field(discriminator="kind")]
+class ImportObservation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: str = Field(min_length=1, max_length=32, pattern=r"^[a-z0-9_-]+$")
+    kind: Literal["outfit", "scene", "action"]
+    name: str = Field(min_length=1, max_length=64)
+    description: str = Field(min_length=1, max_length=1500)
+    features: list[str] = Field(default_factory=list, max_length=12)
+    frame_index: int = Field(ge=0, le=23)
+    crop: tuple[float, float, float, float] | None = None
+    extractable: bool
+    extraction_reason: str = Field(min_length=1, max_length=600)
+    action_design: ActionAssetDesign | None = None
+    start_seconds: float | None = Field(default=None, ge=0)
+    end_seconds: float | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def valid_region(self) -> "ImportObservation":
+        if self.crop is not None:
+            left, top, right, bottom = self.crop
+            if not (0 <= left < right <= 1 and 0 <= top < bottom <= 1):
+                raise ValueError("提取区域必须是有效的归一化矩形")
+        if self.end_seconds is not None and (self.start_seconds is None or self.end_seconds <= self.start_seconds):
+            raise ValueError("动作片段时间无效")
+        if self.kind != "action" and self.action_design is not None:
+            raise ValueError("只有动作识别可以提供动作定义")
+        return self
+
+
+class ImportUnderstanding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=160)
+    description: str = Field(min_length=1, max_length=1500)
+    asset_kind: VisualAssetKind
+    identity_match: Literal["same", "different", "uncertain", "absent"]
+    identity_reason: str = Field(min_length=1, max_length=600)
+    presentation_verdict: Literal["pass", "review", "fail"]
+    presentation_reason: str = Field(min_length=1, max_length=600)
+    clip_kind: ActionClipKind | None = None
+    media_semantics: MediaSemantics | None = None
+    observations: list[ImportObservation] = Field(default_factory=list, max_length=12)
+
+    @model_validator(mode="after")
+    def unique_keys(self) -> "ImportUnderstanding":
+        if len({entry.key for entry in self.observations}) != len(self.observations):
+            raise ValueError("识别条目标识不能重复")
+        return self
+
+
+class ImportMatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    material_id: ResourceId
+    name: str
+    decision: Literal["same", "different", "uncertain"]
+    confidence: Literal["high", "medium", "low"]
+    evidence: str = Field(min_length=1, max_length=600)
+
+
+class ImportComponent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    observation: ImportObservation
+    matches: list[ImportMatch] = Field(default_factory=list)
+    status: Literal["recognized", "ambiguous", "reused", "created", "reviewing", "failed", "skipped", "undone"] = (
+        "recognized"
+    )
+    material_id: ResourceId | None = None
+    created: bool = False
+    extraction_key: str = ""
+    reason: str = ""
+    preview_path: str | None = None
+
+
+class ImportAnalysisResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    understanding: ImportUnderstanding
+    components: list[ImportComponent] = Field(default_factory=list)
+
+
+class ImportAnalysisView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: ResourceId
+    state: VisualJobState
+    stage: str
+    revision: int
+    error: str | None = None
+    result: ImportAnalysisResult | None = None
+    updated_at: datetime
+
+
+class ImportSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: str = Field(min_length=1, max_length=32)
+    command: Literal["existing", "extract", "skip", "undo"]
+    material_id: ResourceId | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def require_existing(self) -> "ImportSelection":
+        if (self.command == "existing") != (self.material_id is not None):
+            raise ValueError("只有选择已有素材时提供素材 ID")
+        return self
+
+
+class ImportAnalysisRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: int | None = Field(default=None, ge=0)
+    command: Literal["retry", "cancel", "apply", "reanalyze"] = "retry"
+    selections: list[ImportSelection] = Field(default_factory=list, max_length=12)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class AnalyzingVisualSource(VisualSourceMetadata):
+    """影像尚在内容理解阶段的暂存来源；完成后恢复为普通影像来源。"""
+
+    kind: Literal["analysis"] = "analysis"
+    asset_kind: VisualAssetKind = "cinematic"
+    identity: CharacterCardSnapshot | None = None
+    identity_path: str | None = None
+    identity_hash: str | None = None
+    portrait_path: str | None = None
+    portrait_hash: str | None = None
+    identity_reference_role: CharacterReferenceRole = "fullbody"
+    outfit: ComboMaterialRef | None = None
+    scene: SceneMediaRef | None = None
+    action: ActionMaterialRef | None = None
+    media_semantics: MediaSemantics | None = None
+    clip_kind: ActionClipKind | None = None
+    original_filename: str = Field(min_length=1, max_length=255)
+    original_path: str = Field(min_length=1)
+    original_content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    presentation_approved: bool = False
+    analysis_pending: bool = True
+
+
+VisualSource = Annotated[
+    ActorClipSource | SceneMediaSource | CinematicSource | AnalyzingVisualSource, Field(discriminator="kind")
+]
 
 
 class VisualSnapshot(BaseModel):
@@ -224,7 +379,7 @@ class VisualSnapshot(BaseModel):
 
     @property
     def kind(self) -> VisualAssetKind:
-        return self.source.kind
+        return self.source.asset_kind if self.source.kind == "analysis" else self.source.kind
 
 
 class OpeningReview(BaseModel):
@@ -378,6 +533,8 @@ class VisualItemView(BaseModel):
     # actor 主体元数据投影；路径已在响应出口转为客户端地址。
     body: ActorClipBody | None = None
     auto_playable: bool = Field(default=False, description="成品能否参与自动演出；不判断当前舞台是否适用")
+    analysis_state: VisualJobState | None = None
+    original_url: str | None = None
 
 
 class StageLayerMedia(BaseModel):
@@ -448,6 +605,7 @@ class VisualDetailView(VisualItemView):
     snapshot: VisualSnapshot
     replaced_at_version: int | None = None
     jobs: list[VisualJobView] = Field(default_factory=list)
+    analysis: ImportAnalysisView | None = None
 
 
 class ActorClipRef(BaseModel):
@@ -704,6 +862,19 @@ class VisualRegenerateRequest(BaseModel):
     expected_version: int = Field(ge=1, strict=True)
     feedback: str | None = Field(default=None, max_length=2000)
     video_feedback: str | None = Field(default=None, max_length=2000)
+
+
+class CinematicRequest(BaseModel):
+    """用户选择现有素材制作完整图片或视频。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(min_length=1, max_length=128)
+    outfit_id: ResourceId = Field(gt=0)
+    scene_id: ResourceId = Field(gt=0)
+    action_id: ResourceId = Field(gt=0)
+    media_kind: VisualMediaKind = "image"
+    requirements: str = Field(default="", max_length=2000)
 
 
 class ActorClipRequest(BaseModel):

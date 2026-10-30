@@ -69,6 +69,8 @@ def presentation_outfit(state: VisualPresentation) -> ComboMaterialRef | None:
         return composition.outfit_material
     if source is not None and source.kind in ("actor", "cinematic"):
         return source.outfit
+    if source is not None and source.kind == "analysis" and source.outfit is not None:
+        return source.outfit
     return composition.outfit_material if composition else None
 
 
@@ -80,6 +82,8 @@ def visual_clip_kind(
     source = (snapshot or visual_snapshot(item)).source
     if item.media_kind == "image":
         return None
+    if source.kind == "analysis":
+        return source.clip_kind
     if source.kind == "scene":
         return "loop"
     return source.action.clip_kind
@@ -122,7 +126,7 @@ def version_view(item: VisualItem, version: VisualVersion) -> PresentedVisual:
         id=item.id,
         user_id=item.user_id,
         media_kind=item.media_kind,
-        asset_kind=item.asset_kind,
+        asset_kind=VisualSnapshot.model_validate(version.snapshot_json).kind,
         title=item.title,
         status=item.status,
         media_path=version.media_path,
@@ -386,12 +390,12 @@ async def dispatch_play_command(
 
 def _frozen_outfit(snapshot: VisualSnapshot):
     source = snapshot.source
-    return source.outfit if source.kind in ("actor", "cinematic") else None
+    return source.outfit if source.kind in ("actor", "cinematic", "analysis") else None
 
 
 def _frozen_scene(snapshot: VisualSnapshot):
     source = snapshot.source
-    return source.scene if source.kind in ("scene", "cinematic") else None
+    return source.scene if source.kind in ("scene", "cinematic", "analysis") else None
 
 
 def _clip_body(item: VisualItem | PresentedVisual) -> ActorClipBody | None:

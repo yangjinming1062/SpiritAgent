@@ -56,6 +56,8 @@ import { useStrings } from '@/shared/strings'
 
 import { visualJobCommands } from '../../../../../shared/visuals'
 
+import { VisualCreatePanel } from './visual-create-panel'
+import { VisualImportAnalysis } from './visual-import-analysis'
 import { $visualsUi, updateVisualsUi } from './visuals-state'
 
 const PAGE_SIZE = 12
@@ -203,6 +205,20 @@ export function VisualsPage(): React.JSX.Element {
   return (
     <SettingsContent>
       <SettingsSectionIntro hint={t.intro} title={t.title} />
+      {!ui.detailOpen && (
+        <VisualCreatePanel
+          onDone={async visualId => {
+            updateVisualsUi({
+              query: '',
+              source: '',
+              mediaKind: 'all',
+              page: 0,
+              ...(visualId ? { selectedId: visualId, detailOpen: true } : {})
+            })
+            await refreshVisuals({ limit: PAGE_SIZE, include_total: true })
+          }}
+        />
+      )}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <SearchField
           ariaLabel={t.searchAria}
@@ -411,6 +427,7 @@ function VisualCard({
         <span className="truncate text-xs font-medium text-strong">{item.title}</span>
         <Badge>{item.media_kind === 'video' ? t.mediaKindVideo : t.mediaKindImage}</Badge>
         <Badge>{assetKindLabel(item.asset_kind, t.assetKindLabels)}</Badge>
+        {item.analysis_state && <Badge>{t.analysis.states[item.analysis_state]}</Badge>}
         {current && <Badge tone="accent">{t.currentMark}</Badge>}
         {item.media_kind === 'video' && !item.auto_playable && <Badge>{t.autoPlayOff}</Badge>}
       </div>
@@ -434,133 +451,160 @@ function VisualDetailPanel({
 }): React.JSX.Element {
   const [feedback, setFeedback] = useState('')
   const [videoFeedback, setVideoFeedback] = useState('')
+  const [showOriginal, setShowOriginal] = useState(false)
   const dict = useStrings()
   const deleted = t.frozenDeleted
-  const size = `${detail.width} × ${detail.height}`
-  const duration = formatDuration(detail.duration_ms, t.seconds)
+  const original = showOriginal && detail.original_url ? detail.snapshot.source : null
+  const size = `${original?.original_width ?? detail.width} × ${original?.original_height ?? detail.height}`
+  const duration = formatDuration(original?.original_duration_ms ?? detail.duration_ms, t.seconds)
 
   // 素材被删除后 ID 置空，冻结来源的名称与描述继续可读。
   const materialLabel = (materialId: string | null, frozenName: string): string =>
     materialId === null ? `${frozenName}（${deleted}）` : frozenName
 
   return (
-    <SettingCard divided={false}>
-      <div className="flex flex-col gap-4 p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <h3 className="text-sm font-medium text-strong">{detail.title}</h3>
-          <Badge>{detail.media_kind === 'video' ? t.mediaKindVideo : t.mediaKindImage}</Badge>
-          <Badge>{assetKindLabel(detail.asset_kind, t.assetKindLabels)}</Badge>
-          {current && <Badge tone="accent">{t.currentMark}</Badge>}
-          {detail.media_kind === 'video' && !detail.auto_playable && <Badge>{t.autoPlayOff}</Badge>}
-        </div>
-        {detail.media_kind === 'video' && !detail.auto_playable && (
-          <div className="text-[11px] text-faint">
-            <p>{t.autoPlayHint}</p>
-            {detail.snapshot.review_reason && (
-              <p>
-                {t.autoPlayReview}：{detail.snapshot.review_reason}
-              </p>
+    <div className="flex flex-col gap-3">
+      <SettingCard divided={false}>
+        <div className="flex flex-col gap-4 p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-medium text-strong">{detail.title}</h3>
+            <Badge>{detail.media_kind === 'video' ? t.mediaKindVideo : t.mediaKindImage}</Badge>
+            <Badge>{assetKindLabel(detail.asset_kind, t.assetKindLabels)}</Badge>
+            {current && <Badge tone="accent">{t.currentMark}</Badge>}
+            {detail.media_kind === 'video' && !detail.auto_playable && <Badge>{t.autoPlayOff}</Badge>}
+          </div>
+          {detail.media_kind === 'video' && !detail.auto_playable && (
+            <div className="text-[11px] text-faint">
+              <p>{t.autoPlayHint}</p>
+              {detail.snapshot.review_reason && (
+                <p>
+                  {t.autoPlayReview}：{detail.snapshot.review_reason}
+                </p>
+              )}
+            </div>
+          )}
+          <div className="overflow-hidden rounded-xl bg-fill-faint">
+            <MediaPreview
+              type={detail.media_kind}
+              url={showOriginal && detail.original_url ? detail.original_url : detail.media_url}
+            >
+              {({ failed, onError, onRetry, src, status }) =>
+                failed ? (
+                  <ErrorBanner
+                    message={dict.creation.previewFailed}
+                    onRetry={onRetry}
+                    retryLabel={dict.creation.retryLoad}
+                  />
+                ) : status === 'loading' ? (
+                  <LoadingBlock label={t.loading} />
+                ) : detail.media_kind === 'video' ? (
+                  <video className="w-full" controls onError={onError} preload="metadata" src={src} />
+                ) : (
+                  <img alt={detail.title} className="w-full object-contain" onError={onError} src={src} />
+                )
+              }
+            </MediaPreview>
+          </div>
+          <p className="text-[11px] text-faint">{t.previewNote}</p>
+          {detail.original_url && detail.original_url !== detail.media_url && (
+            <button className={BTN_SUBTLE} onClick={() => setShowOriginal(value => !value)} type="button">
+              {showOriginal ? t.composer.processed : t.composer.original}
+            </button>
+          )}
+          {detail.description && <p className="whitespace-pre-wrap text-xs text-muted">{detail.description}</p>}
+          <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted">
+            <span>
+              {t.sizeLabel}：{size}
+            </span>
+            {duration && (
+              <span>
+                {t.durationLabel}：{duration}
+              </span>
+            )}
+            {detail.jobs.length > 0 && (
+              <span>
+                {t.statusLabel}：{detail.jobs.map(job => t.jobState[job.state] ?? job.state).join('、')}
+              </span>
             )}
           </div>
-        )}
-        <div className="overflow-hidden rounded-xl bg-fill-faint">
-          <MediaPreview type={detail.media_kind} url={detail.media_url}>
-            {({ failed, onError, onRetry, src, status }) =>
-              failed ? (
-                <ErrorBanner
-                  message={dict.creation.previewFailed}
-                  onRetry={onRetry}
-                  retryLabel={dict.creation.retryLoad}
-                />
-              ) : status === 'loading' ? (
-                <LoadingBlock label={t.loading} />
-              ) : detail.media_kind === 'video' ? (
-                <video className="w-full" controls onError={onError} preload="metadata" src={src} />
-              ) : (
-                <img alt={detail.title} className="w-full object-contain" onError={onError} src={src} />
-              )
-            }
-          </MediaPreview>
-        </div>
-        <p className="text-[11px] text-faint">{t.previewNote}</p>
-        <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted">
-          <span>
-            {t.sizeLabel}：{size}
-          </span>
-          {duration && (
-            <span>
-              {t.durationLabel}：{duration}
-            </span>
-          )}
-          {detail.jobs.length > 0 && (
-            <span>
-              {t.statusLabel}：{detail.jobs.map(job => t.jobState[job.state] ?? job.state).join('、')}
-            </span>
-          )}
-        </div>
-        <div>
-          <h4 className="mb-1 text-xs font-medium text-strong">{t.sourceTitle}</h4>
-          {(() => {
-            const source = detail.snapshot.source
-
-            if (source.kind === 'scene') {
-              return (
-                <p className="text-[11px] text-muted">
-                  {t.sourceScene}：{materialLabel(detail.scene_id, source.scene.title || '环境媒体')}
-                </p>
-              )
-            }
-
-            return (
-              <>
-                <p className="text-[11px] text-muted">
-                  {t.sourceOutfit}：{materialLabel(detail.outfit_id, source.outfit.name)}
-                </p>
-                {source.kind === 'cinematic' && (
-                  <p className="text-[11px] text-muted">
-                    {t.sourceScene}：{materialLabel(detail.scene_id, source.scene.title)}
-                  </p>
-                )}
-                <p className="text-[11px] text-muted">
-                  {t.sourceAction}：{materialLabel(detail.action_id, source.action.name)}
-                </p>
-                <p className="whitespace-pre-wrap text-[11px] text-faint">{source.action.motion_description}</p>
-              </>
-            )
-          })()}
-        </div>
-        <div className="flex flex-col gap-2">
-          <p className="text-[11px] text-faint">{t.redoHint}</p>
-          <label className="block">
-            <span className={FIELD_LABEL}>{t.feedbackLabel}</span>
-            <textarea
-              className={`${INPUT_CLASS} min-h-16`}
-              onChange={event => setFeedback(event.currentTarget.value)}
-              value={feedback}
-            />
-          </label>
-          {detail.media_kind === 'video' && (
-            <label className="block">
-              <span className={FIELD_LABEL}>{t.videoFeedbackLabel}</span>
-              <textarea
-                className={`${INPUT_CLASS} min-h-16`}
-                onChange={event => setVideoFeedback(event.currentTarget.value)}
-                value={videoFeedback}
-              />
-            </label>
-          )}
           <div>
-            <button
-              className={BTN_SUBTLE}
-              disabled={busy}
-              onClick={() => onRedo(feedback, videoFeedback)}
-              type="button"
-            >
-              {t.redoSubmit}
-            </button>
+            <h4 className="mb-1 text-xs font-medium text-strong">{t.sourceTitle}</h4>
+            {(() => {
+              const source = detail.snapshot.source
+
+              if (source.kind === 'analysis') {
+                return (
+                  <div className="text-xs text-muted">
+                    <p>
+                      {t.composer.original}：{source.original_filename}
+                    </p>
+                    <p>{t.composer.uploadHint}</p>
+                  </div>
+                )
+              }
+
+              if (source.kind === 'scene') {
+                return (
+                  <p className="text-[11px] text-muted">
+                    {t.sourceScene}：{materialLabel(detail.scene_id, source.scene.title || '环境媒体')}
+                  </p>
+                )
+              }
+
+              return (
+                <>
+                  <p className="text-[11px] text-muted">
+                    {t.sourceOutfit}：{materialLabel(detail.outfit_id, source.outfit.name)}
+                  </p>
+                  {source.kind === 'cinematic' && (
+                    <p className="text-[11px] text-muted">
+                      {t.sourceScene}：{materialLabel(detail.scene_id, source.scene.title)}
+                    </p>
+                  )}
+                  <p className="text-[11px] text-muted">
+                    {t.sourceAction}：{materialLabel(detail.action_id, source.action.name)}
+                  </p>
+                  <p className="whitespace-pre-wrap text-[11px] text-faint">{source.action.motion_description}</p>
+                </>
+              )
+            })()}
           </div>
+          {detail.snapshot.source.kind !== 'analysis' && (
+            <div className="flex flex-col gap-2">
+              <p className="text-[11px] text-faint">{t.redoHint}</p>
+              <label className="block">
+                <span className={FIELD_LABEL}>{t.feedbackLabel}</span>
+                <textarea
+                  className={`${INPUT_CLASS} min-h-16`}
+                  onChange={event => setFeedback(event.currentTarget.value)}
+                  value={feedback}
+                />
+              </label>
+              {detail.media_kind === 'video' && (
+                <label className="block">
+                  <span className={FIELD_LABEL}>{t.videoFeedbackLabel}</span>
+                  <textarea
+                    className={`${INPUT_CLASS} min-h-16`}
+                    onChange={event => setVideoFeedback(event.currentTarget.value)}
+                    value={videoFeedback}
+                  />
+                </label>
+              )}
+              <div>
+                <button
+                  className={BTN_SUBTLE}
+                  disabled={busy}
+                  onClick={() => onRedo(feedback, videoFeedback)}
+                  type="button"
+                >
+                  {t.redoSubmit}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
-      </div>
-    </SettingCard>
+      </SettingCard>
+      {detail.analysis && <VisualImportAnalysis visual={detail} />}
+    </div>
   )
 }

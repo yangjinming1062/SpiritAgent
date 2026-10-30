@@ -102,11 +102,14 @@ def prepare_actor_clip(
     mask_dst: Path,
     first_frame_dst: Path,
     last_frame_dst: Path,
+    preserve_alpha: bool = False,
 ) -> ActorClipMedia:
     """固定到 24 fps 后逐帧处理；帧落临时目录，避免整片 RGB/alpha 常驻内存。"""
 
-    model = require_matting_model()
     probe = probe_video(src)
+    if preserve_alpha and not probe.has_alpha:
+        raise VideoProcessError("上传主体视频缺少实际透明通道")
+    model = require_matting_model() if not preserve_alpha else None
     if probe.width * probe.height > 3840 * 2160 or probe.fps > 120 or probe.duration_seconds > 60:
         raise VideoProcessError("透明主体视频尺寸、帧率或时长超出处理上限")
     with Image.open(BytesIO(extract_desktop_first_frame(src))) as first:
@@ -122,6 +125,7 @@ def prepare_actor_clip(
         pattern = str(Path(temporary) / "%06d.png")
         run_ffmpeg(
             [
+                *(alpha_input_args(probe) if preserve_alpha else []),
                 "-i",
                 str(src),
                 "-map",
@@ -136,10 +140,10 @@ def prepare_actor_clip(
         frames = sorted(Path(temporary).glob("*.png"))
         if len(frames) < 2 or len(frames) > 60 * _FRAME_RATE:
             raise VideoProcessError("透明主体视频帧数超出处理范围")
-        matte = ForegroundMatte(model)
+        matte = ForegroundMatte(model) if model is not None else None
         for index, path in enumerate(frames):
             with Image.open(path) as frame:
-                rgba = matte.apply(frame.convert("RGB"))
+                rgba = matte.apply(frame.convert("RGB")) if matte is not None else frame.convert("RGBA")
             alpha = np.asarray(rgba.getchannel("A"))
             _validate_alpha(alpha)
             bounds = _bounds(alpha)

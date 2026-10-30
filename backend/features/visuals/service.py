@@ -162,20 +162,24 @@ def _refresh_stage_composition(
     static = StagePresentation.model_validate(state.current_static_json) if state.current_static_json else None
     snapshot = visual_snapshot(item)
     src = snapshot.source
-    outfit = src.outfit if src.kind in ("actor", "cinematic") else presentation_outfit(state)
+    outfit = (
+        src.outfit
+        if src.kind in ("actor", "cinematic") or (src.kind == "analysis" and src.asset_kind in ("actor", "cinematic"))
+        else presentation_outfit(state)
+    )
     scene = (
         src.scene
-        if src.kind in ("scene", "cinematic")
+        if src.kind in ("scene", "cinematic") or (src.kind == "analysis" and src.asset_kind in ("scene", "cinematic"))
         else (static.scene if static else current.scene_material if current else None)
     )
     identity_path = (
         src.identity_path
-        if src.kind in ("actor", "cinematic")
+        if src.kind in ("actor", "cinematic") or (src.kind == "analysis" and src.asset_kind in ("actor", "cinematic"))
         else (static.identity_path if static else current.identity_path if current else None)
     )
     identity_hash = (
         src.identity_hash
-        if src.kind in ("actor", "cinematic")
+        if src.kind in ("actor", "cinematic") or (src.kind == "analysis" and src.asset_kind in ("actor", "cinematic"))
         else (static.identity_hash if static else current.identity_hash if current else None)
     )
     layout = (
@@ -247,6 +251,8 @@ async def create_visual_job(
 
     if target_kind not in ("image", "video"):
         raise VisualStateError("不支持的影像类型")
+    if snapshot.source.analysis_pending:
+        raise VisualStateError("影像内容尚未整理完成，请先完成分析")
     if snapshot.source.kind == "scene" and target_kind != "video":
         # 环境静态图就是已就绪素材本身，无需再走制作链。
         raise VisualStateError("环境已有静态图片，只有动态环境需要制作")
@@ -350,6 +356,8 @@ async def regenerate_visual(
         if not visual_playable(item):
             raise VisualStateError("影像文件缺失，无法重做")
         snapshot = visual_snapshot(item)
+        if snapshot.source.analysis_pending:
+            raise VisualStateError("影像内容尚未整理完成，请先完成分析")
         if snapshot.source.kind in ("actor", "cinematic") and snapshot.source.identity.avatar_id is None:
             raise VisualStateError("这份影像的角色资料已删除，请用当前角色重新制作")
         if snapshot.source.kind == "scene" and item.media_kind == "image":
@@ -480,6 +488,8 @@ async def play_visual(
         if not visual_playable(item):
             raise VisualStateError("影像文件缺失，请重新制作")
         snapshot = visual_snapshot(item)
+        if not snapshot.source.presentation_approved:
+            raise VisualStateError("影像尚未通过呈现审核，可在影像库中预览")
         # 生活导演点播必须由当前有效意图驱动：生活已推进时不受理旧意图的选择。
         intent_revision: int | None = None
         intent_activity: str | None = None
@@ -510,7 +520,7 @@ async def play_visual(
             await _require_stage_media_match(state, snapshot)
         if source in ("autonomous", "life"):
             media_source = snapshot.source
-            semantics = media_source.media_semantics if media_source.kind in ("actor", "cinematic") else None
+            semantics = getattr(media_source, "media_semantics", None)
             if not automatic_media_ready(
                 media_kind=item.media_kind,
                 asset_kind=item.asset_kind,
@@ -518,6 +528,7 @@ async def play_visual(
                 auto_selectable=semantics.auto_selectable if semantics is not None else None,
                 clip_kind=visual_clip_kind(item, snapshot),
                 body=item.body_json,
+                presentation_approved=media_source.presentation_approved,
             ):
                 raise VisualStateError("这个版本暂不支持自动演出，可以在影像库预览")
         _play, command = await dispatch_play_command(
@@ -540,14 +551,14 @@ async def _require_stage_media_match(state: VisualPresentation, snapshot: Visual
     """客户端导演点播只允许当前舞台身份与造型的媒体，避免旧造型画面混入当前呈现。"""
 
     source = snapshot.source
-    if source.kind == "scene":
+    if source.kind == "scene" or (source.kind == "analysis" and source.asset_kind == "scene"):
         return
     outfit, identity_hash = _frozen_stage_reference(state)
     if outfit is None or identity_hash is None:
         raise VisualStateError("当前舞台尚未准备好，请稍后再试")
     if source.identity_hash != identity_hash:
         raise VisualStateError("这份影像与伙伴当前形象不符，请重新制作")
-    if source.outfit.content_hash != outfit.content_hash:
+    if source.outfit is None or source.outfit.content_hash != outfit.content_hash:
         raise VisualStateError("这份影像与当前穿着的造型不符，请先换装或重新制作")
 
 

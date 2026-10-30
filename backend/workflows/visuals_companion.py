@@ -5,7 +5,7 @@
 
 import asyncio
 import hashlib
-from typing import Any
+from typing import Any, Literal
 
 from features.action_library import queries as action_queries
 from features.action_library import service as action_service
@@ -60,6 +60,24 @@ def _asset_hash(path: str) -> str:
     if resolved is None:
         raise ComboAssemblyError("所选图片尚未准备好")
     return compute_file_sha256(resolved[0])
+
+
+def freeze_action_reference(action: ActionAssetView) -> ActionMaterialRef:
+    return ActionMaterialRef(
+        action_id=action.id,
+        revision=action.updated_at,
+        name=action.name,
+        motion_description=action.motion_description,
+        clip_kind=action.clip_kind,
+        duration_seconds=action.duration_seconds,
+        semantic_tags=action.semantic_tags,
+        performance_role=action.performance_role,
+        motion_intensity=action.motion_intensity,
+        interruptible=action.interruptible,
+        use_when=action.use_when,
+        avoid_when=action.avoid_when,
+        allowed_triggers=action.allowed_triggers,
+    )
 
 
 async def load_visual_snapshot(
@@ -125,21 +143,7 @@ async def load_visual_snapshot(
             description=outfit.description or "",
             revision=outfit.updated_at,
         ),
-        "action": ActionMaterialRef(
-            action_id=action.id,
-            revision=action.updated_at,
-            name=action.name,
-            motion_description=action.motion_description,
-            clip_kind=action.clip_kind,
-            duration_seconds=action.duration_seconds,
-            semantic_tags=action.semantic_tags,
-            performance_role=action.performance_role,
-            motion_intensity=action.motion_intensity,
-            interruptible=action.interruptible,
-            use_when=action.use_when,
-            avoid_when=action.avoid_when,
-            allowed_triggers=action.allowed_triggers,
-        ),
+        "action": freeze_action_reference(action),
         "plan": None,
         "requirements": requirements,
         "persona": persona_definition,
@@ -350,19 +354,22 @@ async def generate_visual_reference(
         }
 
 
-async def generate_actor_clip_reference(
+async def generate_character_visual_reference(
     user_id: int,
     *,
     request_id: str,
     outfit_id: int,
     action_id: int,
+    asset_kind: Literal["actor", "cinematic"] = "actor",
+    scene_id: int | None = None,
+    media_kind: VisualMediaKind = "video",
     requirements: str = "",
     feedback: str = "",
     video_feedback: str = "",
     target_width: int | None = None,
     target_height: int | None = None,
 ) -> VisualJobView:
-    """用户制作透明主体动画；请求重放沿原任务，不重新读取可变素材。"""
+    """用户组合制作；请求重放沿原任务，不重新读取可变素材。"""
 
     async with user_asset_lock(user_id):
         request_key = "manual:visual:" + hashlib.sha256(request_id.encode("utf-8")).hexdigest()
@@ -371,9 +378,11 @@ async def generate_actor_clip_reference(
             job, saved = existing
             source = saved.source
             if (
-                source.kind != "actor"
+                source.kind != asset_kind
+                or job.target_kind != media_kind
                 or source.outfit.material_id != outfit_id
                 or source.action.action_id != action_id
+                or (source.kind == "cinematic" and source.scene.scene_id != scene_id)
                 or (source.requirements, source.feedback, source.video_feedback)
                 != (requirements, feedback, video_feedback)
             ):
@@ -383,19 +392,19 @@ async def generate_actor_clip_reference(
             combo = await load_visual_snapshot(
                 db,
                 user_id,
-                asset_kind="actor",
+                asset_kind=asset_kind,
                 outfit_id=outfit_id,
-                scene_id=None,
+                scene_id=scene_id if asset_kind == "cinematic" else None,
                 action_id=action_id,
                 requirements=requirements,
-                target_width=target_width or 1024,
-                target_height=target_height or 1024,
+                target_width=target_width or (1024 if asset_kind == "actor" else DEFAULT_TARGET[0]),
+                target_height=target_height or (1024 if asset_kind == "actor" else DEFAULT_TARGET[1]),
             )
             await db.commit()
         return await visuals_service.create_visual_job(
             user_id,
             snapshot=combo,
-            target_kind="video",
+            target_kind=media_kind,
             source="user_requested",
             feedback=feedback,
             video_feedback=video_feedback,

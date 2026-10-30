@@ -13,7 +13,15 @@ from features.assets.service import asset_paths_in_session
 from features.jobs.service import cleanup_job_assets, job_asset_paths
 
 from .eligibility import automatic_media_ready
-from .models import VisualItem, VisualJob, VisualPlayback, VisualPresentation, VisualVersion, VisualVersionAsset
+from .models import (
+    VisualImportJob,
+    VisualItem,
+    VisualJob,
+    VisualPlayback,
+    VisualPresentation,
+    VisualVersion,
+    VisualVersionAsset,
+)
 from .schemas import StageComposition, VisualSnapshot
 
 
@@ -21,6 +29,10 @@ async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
     ids = list(await db.scalars(select(VisualVersionAsset.asset_id).where(VisualVersionAsset.user_id == user_id)))
     paths = set((await asset_paths_in_session(db, user_id, ids)).values())
     paths |= await job_asset_paths(db, user_id)
+    for analysis in await db.scalars(select(VisualImportJob).where(VisualImportJob.user_id == user_id)):
+        paths |= asset_paths(analysis.result_json, user_id)
+        if analysis.state not in {"succeeded", "cancelled"}:
+            paths |= asset_paths(analysis.context_json, user_id)
     for pending, current, composition in await db.execute(
         select(
             VisualPresentation.pending_static_json,
@@ -65,7 +77,7 @@ async def _automatic_version_ids(db: AsyncSession, user_id: int) -> set[int]:
     try:
         async for version, asset_kind in rows:
             source = VisualSnapshot.model_validate(version.snapshot_json).source
-            if source.kind not in ("actor", "cinematic"):
+            if source.kind not in ("actor", "cinematic", "analysis") or source.outfit is None or source.action is None:
                 continue
             key = json.dumps(
                 [
@@ -87,6 +99,7 @@ async def _automatic_version_ids(db: AsyncSession, user_id: int) -> set[int]:
                 auto_selectable=source.media_semantics.auto_selectable if source.media_semantics else None,
                 clip_kind=source.action.clip_kind,
                 body=version.body_json,
+                presentation_approved=source.presentation_approved,
             ):
                 continue
             selected.add(key)

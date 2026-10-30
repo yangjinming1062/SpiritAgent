@@ -9,6 +9,7 @@
 | 头像、全身与身份确认 | [avatar_service.py](avatar_service.py) |
 | 角色卡编辑、分析与恢复 | [character_card.py](character_card.py)、[character_extraction.py](character_extraction.py) |
 | 衣柜草稿、上传、确认与描述 | [outfit_service.py](outfit_service.py)、[outfit_jobs.py](outfit_jobs.py) |
+| 影像提取着装的受控采纳与撤销 | [import_materials.py](import_materials.py)；入库复核当前身份与真实透明图，采纳事务由调用方持有 |
 | 生成输入与出镜参考 | [prompt_assembly.py](prompt_assembly.py)、[visual_identity.py](visual_identity.py) |
 | 跨域读取与资产交接 | [queries.py](queries.py)、[views.py](views.py)、[asset_bindings.py](asset_bindings.py) |
 | 启停、备份与回收贡献 | [lifecycle.py](lifecycle.py)、[backup.py](backup.py)、[asset_references.py](asset_references.py) |

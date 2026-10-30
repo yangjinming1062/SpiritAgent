@@ -115,5 +115,5 @@ class ScenePolicyResponse(BaseModel):
 
 
 class SceneImportRequest(ImageAdoptRequest):
-    source: Literal["import"]
+    source: Literal["analysis"]
     scene_id: ResourceId | None = Field(default=None, gt=0)

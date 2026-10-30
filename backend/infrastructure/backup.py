@@ -45,6 +45,7 @@ BACKUP_TABLE_ORDER: list[str] = [
     "visual_versions",
     "visual_version_assets",
     "visual_jobs",
+    "visual_import_jobs",
     "visual_presentations",
     "visual_playbacks",
     "video_gen_jobs",

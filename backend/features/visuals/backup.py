@@ -14,7 +14,15 @@ from features.jobs.service import rewrite_job_checkpoints
 from features.media.chain import MediaChainState
 from features.media.contracts import RemovedVideoTask
 
-from .models import VisualItem, VisualJob, VisualPlayback, VisualPresentation, VisualVersion, VisualVersionAsset
+from .models import (
+    VisualImportJob,
+    VisualItem,
+    VisualJob,
+    VisualPlayback,
+    VisualPresentation,
+    VisualVersion,
+    VisualVersionAsset,
+)
 from .repository import version_view, visual_progress
 from .schemas import ActorClipRef, StageComposition, StageIntent, StagePresentation, VisualSnapshot, parse_job_progress
 
@@ -78,6 +86,25 @@ def _remap_snapshot(value: dict, context: BackupContext) -> dict:
         update["scene"] = source.scene.model_copy(
             update={"scene_id": _mapped(context, "companion_scenes", source.scene.scene_id)}
         )
+    if source.analysis_job_id is not None:
+        update["analysis_job_id"] = _mapped(context, "visual_import_jobs", source.analysis_job_id)
+    if source.kind == "analysis":
+        if source.identity is not None:
+            update["identity"] = source.identity.model_copy(
+                update={"avatar_id": _mapped(context, "avatar_assets", source.identity.avatar_id)}
+            )
+        if source.outfit is not None:
+            update["outfit"] = source.outfit.model_copy(
+                update={"material_id": _mapped(context, "companion_outfits", source.outfit.material_id)}
+            )
+        if source.scene is not None:
+            update["scene"] = source.scene.model_copy(
+                update={"scene_id": _mapped(context, "companion_scenes", source.scene.scene_id)}
+            )
+        if source.action is not None:
+            update["action"] = source.action.model_copy(
+                update={"action_id": _mapped(context, "action_definitions", source.action.action_id)}
+            )
     return snapshot.model_copy(update={"source": source.model_copy(update=update)}).model_dump(mode="json")
 
 
@@ -153,10 +180,15 @@ async def _restore_playbacks(db: AsyncSession, rows: dict[str, list[dict[str, An
 async def _restore_presentation_snapshots(
     db: AsyncSession, rows: dict[str, list[dict[str, Any]]], context: BackupContext
 ) -> None:
+    if not any(
+        ("visual_presentations", str(raw.get("id", raw.get("user_id")))) in context.rewriter.inserted_rows
+        for raw in rows.get("visual_presentations", [])
+    ):
+        return
     states = list(await db.scalars(select(VisualPresentation).where(VisualPresentation.user_id == context.user_id)))
     for state in states:
         if state.composition_json:
-            composition = StageComposition.model_validate(context.rewriter.rewrite(deepcopy(state.composition_json)))
+            composition = StageComposition.model_validate(deepcopy(state.composition_json))
             actor = _remap_clip_ref(context, composition.actor)
             cinematic = _remap_clip_ref(context, composition.cinematic)
             scene_id = _mapped(context, "visual_items", composition.scene_visual_id)
@@ -190,7 +222,7 @@ async def _restore_presentation_snapshots(
                 else None
             )
         if state.current_static_json:
-            static = StagePresentation.model_validate(context.rewriter.rewrite(deepcopy(state.current_static_json)))
+            static = StagePresentation.model_validate(deepcopy(state.current_static_json))
             state.current_static_json = static.model_copy(
                 update={
                     "outfit": static.outfit.model_copy(
@@ -253,6 +285,61 @@ async def _restore_jobs(db: AsyncSession, rows: dict[str, list[dict[str, Any]]],
     await rewrite_job_checkpoints(db, context.user_id, ids, _clear_remote_handles)
 
 
+async def _restore_imports(db: AsyncSession, rows: dict[str, list[dict[str, Any]]], context: BackupContext) -> None:
+    ids = [
+        context.id_map["visual_import_jobs"][str(raw["id"])]
+        for raw in rows.get("visual_import_jobs", [])
+        if ("visual_import_jobs", str(raw["id"])) in context.rewriter.inserted_rows
+    ]
+    kinds = {"outfit": "companion_outfits", "scene": "companion_scenes", "action": "action_definitions"}
+    originals = {
+        context.id_map["visual_import_jobs"][str(raw["id"])]: raw
+        for raw in rows.get("visual_import_jobs", [])
+        if ("visual_import_jobs", str(raw["id"])) in context.rewriter.inserted_rows
+    }
+
+    def remap_result(value: dict | None) -> dict | None:
+        if not value:
+            return value
+        for component in value.get("components", []):
+            table = kinds[component["observation"]["kind"]]
+            previous = component.get("material_id")
+            component["material_id"] = _mapped(context, table, previous)
+            component["matches"] = [
+                dict(match, material_id=mapped)
+                for match in component.get("matches", [])
+                if (mapped := _mapped(context, table, match.get("material_id"))) is not None
+            ]
+            if previous is not None and component["material_id"] is None:
+                component["status"], component["reason"] = "recognized", "关联素材已删除，保留识别结果"
+        return value
+
+    for row in await db.scalars(
+        select(VisualImportJob).where(VisualImportJob.id.in_(ids), VisualImportJob.user_id == context.user_id)
+    ):
+        frozen = context.rewriter.rewrite(deepcopy(originals[row.id]["context_json"]))
+        frozen["execution_key"] = ""
+        if frozen.get("identity"):
+            frozen["identity"]["avatar_id"] = _mapped(context, "avatar_assets", frozen["identity"].get("avatar_id"))
+        candidates = []
+        for candidate in frozen.get("candidates", []):
+            mapped = _mapped(context, kinds[candidate["kind"]], candidate["material_id"])
+            if mapped is None or (candidate.get("path") is not None and not candidate["path"]):
+                continue
+            candidate["material_id"] = mapped
+            for field, key in (("outfit", "material_id"), ("scene", "scene_id"), ("action", "action_id")):
+                if candidate.get(field):
+                    candidate[field][key] = mapped
+            candidates.append(candidate)
+        frozen["candidates"] = candidates
+        frozen["history"] = [remap_result(value) for value in frozen.get("history", [])]
+        row.context_json = frozen
+        row.result_json = remap_result(context.rewriter.rewrite(deepcopy(originals[row.id]["result_json"])))
+        row.selections_json = []
+        if row.state in {"queued", "running", "unknown", "paused"}:
+            row.state, row.stage, row.error = "paused", "interrupted", "备份恢复后请核对原分析结果并继续"
+
+
 def backup_tables() -> tuple[BackupTable, ...]:
     return (
         BackupTable("visual_items", VisualItem, unique_keys=("source_key",)),
@@ -265,6 +352,9 @@ def backup_tables() -> tuple[BackupTable, ...]:
         ),
         BackupTable("visual_version_assets", VisualVersionAsset, unique_keys=("version_id", "role", "asset_id")),
         BackupTable("visual_jobs", VisualJob, restore_context=_restore_jobs),
+        BackupTable(
+            "visual_import_jobs", VisualImportJob, unique_keys=("visual_id",), restore_context=_restore_imports
+        ),
         BackupTable(
             "visual_presentations",
             VisualPresentation,

@@ -2,13 +2,17 @@
 
 from typing import Annotated, Literal
 
-from fastapi import Path, Query
+from fastapi import Body, Path, Query
 from features.visuals import queries as _visual_queries
 from features.visuals import use_cases as _visuals
+from features.visuals.imports import import_visual
 from features.visuals.repository import VisualError
 from features.visuals.schemas import (
     ActionMediaListResponse,
     ActorClipRequest,
+    CinematicRequest,
+    ImportAnalysisRequest,
+    ImportAnalysisView,
     SceneMediaRequest,
     StageReceipt,
     VisualAssetKind,
@@ -32,7 +36,8 @@ from infrastructure.api_ids import ResourceId
 from infrastructure.constants import POSTGRES_INT8_MAX
 from infrastructure.http_contracts import operation_policy
 from infrastructure.request_errors import RequestError
-from workflows.visuals_companion import generate_actor_clip_reference, generate_scene_media_reference
+from workflows.visual_imports import control_import_analysis, queue_import_analysis
+from workflows.visuals_companion import generate_character_visual_reference, generate_scene_media_reference
 
 from entrypoints.http.auth import CurrentUser
 from entrypoints.http.routing import get_router
@@ -158,7 +163,7 @@ async def create_actor_clip(user: CurrentUser, body: ActorClipRequest) -> Visual
     """制作透明主体动画：身份 + 造型 + 动作，不绑定环境。"""
 
     try:
-        return await generate_actor_clip_reference(
+        return await generate_character_visual_reference(
             user.id,
             request_id=f"manual:{body.request_id}",
             outfit_id=body.outfit_id,
@@ -185,6 +190,56 @@ async def create_scene_media(user: CurrentUser, body: SceneMediaRequest) -> Visu
             feedback=body.feedback,
             video_feedback=body.video_feedback,
         )
+    except (ValueError, VisualError) as exc:
+        raise RequestError(status_code=409, message=str(exc)) from exc
+
+
+@router.post("/cinematics", response_model=VisualJobView, status_code=202)
+async def create_cinematic(user: CurrentUser, body: CinematicRequest) -> VisualJobView:
+    try:
+        return await generate_character_visual_reference(
+            user.id,
+            request_id=f"manual:{body.request_id}",
+            asset_kind="cinematic",
+            outfit_id=body.outfit_id,
+            scene_id=body.scene_id,
+            action_id=body.action_id,
+            media_kind=body.media_kind,
+            requirements=body.requirements,
+        )
+    except (ValueError, VisualError) as exc:
+        raise RequestError(status_code=409, message=str(exc)) from exc
+
+
+@router.post("/imports", response_model=VisualDetailView, openapi_extra=operation_policy(upload="video"))
+async def upload_visual(
+    user: CurrentUser,
+    data: Annotated[bytes, Body(media_type="application/octet-stream")],
+    filename: Annotated[str, Query(min_length=1, max_length=255)],
+    title: Annotated[str, Query(max_length=160)] = "",
+    description: Annotated[str, Query(max_length=1500)] = "",
+    asset_kind: Literal["actor", "scene", "cinematic"] = "cinematic",
+) -> VisualDetailView:
+    try:
+        name = filename.replace("\\", "/").rsplit("/", 1)[-1].strip() or "影像"
+        detail = await import_visual(
+            user.id,
+            data,
+            filename=name,
+            title=title.strip() or name[:160],
+            description=description.strip(),
+            asset_kind=asset_kind,
+        )
+        await queue_import_analysis(user.id, detail.id)
+        return await _visuals.visual_detail(user.id, detail.id)
+    except VisualError as exc:
+        raise RequestError(status_code=400, message=str(exc)) from exc
+
+
+@router.post("/{visual_id}/analysis", response_model=ImportAnalysisView, status_code=202)
+async def analyze_visual(visual_id: ResourceId, user: CurrentUser, body: ImportAnalysisRequest) -> ImportAnalysisView:
+    try:
+        return await control_import_analysis(user.id, visual_id, body)
     except (ValueError, VisualError) as exc:
         raise RequestError(status_code=409, message=str(exc)) from exc
 

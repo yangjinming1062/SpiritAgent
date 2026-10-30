@@ -6,6 +6,7 @@ import type {
   PersonaEditableField
 } from '../../../shared/protocol'
 import { isResourceId } from '../../../shared/resource-id'
+import { isVisualCreationDraft, type VisualCreationDraft } from '../../../shared/visuals'
 import { isRecord } from '../is-record'
 
 export interface LifeUiSnapshot {
@@ -163,6 +164,9 @@ export function isCompanionEditorUiSnapshot(value: unknown): value is CompanionE
 }
 
 export interface VisualsUiSnapshot {
+  creation?: VisualCreationDraft
+  analysisNotes?: Record<string, string>
+  analysisSelections?: Record<string, string>
   query: string
   mediaKind: 'all' | 'image' | 'video'
   source: string
@@ -185,7 +189,13 @@ export function isVisualsUiSnapshot(value: unknown): value is VisualsUiSnapshot 
     value.cursors.every(cursor => cursor === null || isResourceId(cursor)) &&
     value.page < value.cursors.length &&
     (value.selectedId === null || isResourceId(value.selectedId)) &&
-    typeof value.detailOpen === 'boolean'
+    typeof value.detailOpen === 'boolean' &&
+    (value.creation === undefined || isVisualCreationDraft(value.creation)) &&
+    (value.analysisNotes === undefined ||
+      (isRecord(value.analysisNotes) && Object.values(value.analysisNotes).every(note => typeof note === 'string'))) &&
+    (value.analysisSelections === undefined ||
+      (isRecord(value.analysisSelections) &&
+        Object.values(value.analysisSelections).every(selection => typeof selection === 'string')))
   )
 }
 

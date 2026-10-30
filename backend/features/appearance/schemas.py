@@ -144,7 +144,7 @@ class OutfitPromptRequest(BaseModel):
 class OutfitAdoptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    source: Literal["import"]
+    source: Literal["analysis"]
 
     description: str | None = Field(default=None, max_length=500)
     image: str = Field(min_length=1, max_length=8 * 1024 * 1024)
@@ -178,4 +178,4 @@ class OutfitPolicyResponse(BaseModel):
 
 
 class OutfitImageImportRequest(ImageAdoptRequest):
-    source: Literal["import"]
+    source: Literal["analysis"]

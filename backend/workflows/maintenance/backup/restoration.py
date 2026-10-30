@@ -1,4 +1,4 @@
-"""0001 结构的关系图恢复；预检和所选数据分别原子完成。"""
+"""当前关系图的备份恢复；预检和所选数据分别原子完成。"""
 
 import asyncio
 import threading
@@ -60,12 +60,16 @@ def load_backup_rows(
     row_counts: dict[str, int],
     *,
     selected_tables: frozenset[str] | None = None,
+    schema: str = "0002",
 ) -> BackupReadResult:
     wanted = set(TABLES) if selected_tables is None else set(selected_tables)
     failures = []
     rows: dict[str, list[dict[str, Any]]] = {}
-    if set(manifest_tables) != set(TABLES):
-        raise ValueError("Backup tables must match the complete 0001 schema")
+    if schema != "0002":
+        raise ValueError("Backup schema must be 0002")
+    expected = set(TABLES)
+    if set(manifest_tables) != expected:
+        raise ValueError(f"Backup tables must match the complete {schema} schema")
     for table in TABLES:
         if table not in wanted:
             continue
@@ -188,7 +192,7 @@ async def _preflight(
         )
         return ()
     except (KeyError, TypeError, ValueError, StatementError) as exc:
-        logger.warning("backup graph failed 0001 preflight", extra={"error_type": type(exc).__name__})
+        logger.warning("backup graph preflight failed", extra={"error_type": type(exc).__name__})
         if isinstance(exc, ValidationError):
             reason = "; ".join(
                 f"{'.'.join(map(str, item['loc']))}: {item['msg']}"

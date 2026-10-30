@@ -7,6 +7,7 @@
 | 修改任务 | 入口与消费方 |
 |---|---|
 | 创建、上传、描述分析、重做与取消 | [service.py](service.py)、[http_use_cases.py](http_use_cases.py) |
+| 原件中完整环境的受控入库 | [import_materials.py](import_materials.py)；只采纳已检查的真实像素，按导入来源键去重，不启动生图 |
 | 生成输入与图片检查 | [prompt_assembly.py](prompt_assembly.py)、[scene_review.py](../media/scene_review.py) |
 | REST 与页面 | [companion_scenes.py](../../entrypoints/http/routes/companion_scenes.py)、[场景页](../../../client/renderer/app/features/scene/scene-page.tsx)、[详情](../../../client/renderer/app/features/scene/scene-detail-view.tsx) |
 | 只读快照与缓存 | [queries.py](queries.py)、[scene-store.ts](../../../client/renderer/modules/scene/scene-store.ts) |

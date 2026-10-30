@@ -1226,7 +1226,7 @@ PRESENTATION_ENVIRONMENT_GUIDANCES: dict[str, str] = {
         "and do not substitute images or descriptions of other looks. An empty field means those details have not been "
         "identified; do not infer them from other looks, other environment pictures, persona appearance, names, intended "
         "actions or history. The picture does not establish that an action was displayed or completed, or the user's "
-        "real experiences or shared memories."
+        "real experiences or shared memories. Do not treat depicted activities as your lived experiences."
     ),
 }
 

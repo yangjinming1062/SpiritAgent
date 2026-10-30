@@ -341,11 +341,11 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
     const res = session.draft
       ? await requestResource('companion.post_outfit_regenerate', {
           path: { outfit_id: session.draft.id },
-          body: { source: 'import', image: image.base64, content_type: image.contentType }
+          body: { source: 'analysis', image: image.base64, content_type: image.contentType }
         })
       : await requestResource('companion.post_outfit', {
           body: {
-            source: 'import',
+            source: 'analysis',
             image: image.base64,
             content_type: image.contentType,
             description: text.trim() || undefined

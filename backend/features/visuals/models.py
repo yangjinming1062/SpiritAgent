@@ -278,6 +278,26 @@ class VisualJob(JobRecord):
     result_image_version_id: Mapped[int | None] = mapped_column(BigInteger)
 
 
+class VisualImportJob(JobRecord):
+    """原件分析与素材整理任务；结果独立于可清理的通用检查点长期保存。"""
+
+    __tablename__ = "visual_import_jobs"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "visual_id", name="uq_visual_import_jobs_visual"),
+        UniqueConstraint("owner_id", "original_hash", name="uq_visual_import_jobs_hash"),
+    )
+    __mapper_args__ = {"polymorphic_identity": "visual.import"}
+
+    id: Mapped[int] = mapped_column(BigInteger, ForeignKey("jobs.id", ondelete="CASCADE"), primary_key=True)
+    owner_id: Mapped[int] = mapped_column(BigInteger)
+    visual_id: Mapped[int] = mapped_column(ForeignKey("visual_items.id", ondelete="CASCADE"), index=True)
+    expected_version: Mapped[int] = mapped_column(Integer)
+    original_hash: Mapped[str] = mapped_column(String(64))
+    context_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
+    result_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    selections_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, server_default="[]")
+
+
 class VisualPresentation(ModelBase, TimestampMixin):
     """每账户一份呈现状态：舞台组合、生活意图、当前影像与播放代次。"""
 

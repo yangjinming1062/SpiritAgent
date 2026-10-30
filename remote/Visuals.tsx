@@ -24,6 +24,8 @@ import {
   useTask,
   useVisiblePolling
 } from './ui'
+import { VisualAnalysis } from './VisualAnalysis'
+import { VisualCreate } from './VisualCreate'
 
 const JOB_STATE_TEXT: Record<VisualJobState, string> = {
   queued: '排队中',
@@ -127,6 +129,7 @@ function VisualDetailPanel({
 }): ReactElement {
   const { run, busy, error } = useTask()
   const [feedback, setFeedback] = usePageState(`visual.${visual.id}.feedback`, '')
+  const [showOriginal, setShowOriginal] = useState(false)
   const { check, clearSubmission, reconciled, submit, submitted } = useAssetSubmission(`visual.${visual.id}`, onChanged)
   const jobs = visual.jobs
 
@@ -143,7 +146,7 @@ function VisualDetailPanel({
           void run(onChanged)
         }}
         type={visual.media_kind === 'video' ? 'video' : 'image'}
-        url={visual.media_url}
+        url={showOriginal && visual.original_url ? visual.original_url : visual.media_url}
       />
       <p className="muted">
         {visual.media_kind === 'video' ? '视频' : '图片'}
@@ -158,10 +161,25 @@ function VisualDetailPanel({
         </div>
       ) : null}
       {visual.description ? <p>{visual.description}</p> : null}
+      {visual.original_url && visual.original_url !== visual.media_url && (
+        <button onClick={() => setShowOriginal(value => !value)} type="button">
+          {showOriginal ? '查看可呈现版本' : '查看原始文件'}
+        </button>
+      )}
+      {visual.analysis && <VisualAnalysis api={api} onChanged={onChanged} visual={visual} />}
       <section className="card">
         <h3>来源素材</h3>
         {(() => {
           const source = visual.snapshot.source
+
+          if (source.kind === 'analysis') {
+            return (
+              <>
+                <p>原始文件：{source.original_filename}</p>
+                <p className="muted">原件完整保留，内容识别、素材关联与呈现资格见下方分析结果。</p>
+              </>
+            )
+          }
 
           if (source.kind === 'scene') {
             return (
@@ -214,40 +232,42 @@ function VisualDetailPanel({
           </ul>
         </section>
       ) : null}
-      <details className="optional-details">
-        <summary>重做</summary>
-        <p className="muted">按原来的素材组合重新制作，可以附上修改要求。不需要电脑在线。</p>
-        <textarea
-          aria-label="修改要求"
-          disabled={busy || submitted}
-          maxLength={2000}
-          onChange={event => setFeedback(event.target.value)}
-          placeholder="例如：背景换成傍晚的光线，动作保持不变"
-          rows={3}
-          value={feedback}
-        />
-        <div className="button-row">
-          <button
+      {visual.snapshot.source.kind !== 'analysis' && (
+        <details className="optional-details">
+          <summary>重做</summary>
+          <p className="muted">按原来的素材组合重新制作，可以附上修改要求。不需要电脑在线。</p>
+          <textarea
+            aria-label="修改要求"
             disabled={busy || submitted}
-            onClick={() =>
-              run(() =>
-                submit(async () => {
-                  await api.invoke('companion_visuals.regenerate_visual', {
-                    path: { visual_id: visual.id },
-                    body: { expected_version: visual.version, feedback: feedback.trim() || null }
+            maxLength={2000}
+            onChange={event => setFeedback(event.target.value)}
+            placeholder="例如：背景换成傍晚的光线，动作保持不变"
+            rows={3}
+            value={feedback}
+          />
+          <div className="button-row">
+            <button
+              disabled={busy || submitted}
+              onClick={() =>
+                run(() =>
+                  submit(async () => {
+                    await api.invoke('companion_visuals.regenerate_visual', {
+                      path: { visual_id: visual.id },
+                      body: { expected_version: visual.version, feedback: feedback.trim() || null }
+                    })
+                    setFeedback('')
+                    await onChanged()
+                    clearSubmission()
                   })
-                  setFeedback('')
-                  await onChanged()
-                  clearSubmission()
-                })
-              )
-            }
-            type="button"
-          >
-            提交重做
-          </button>
-        </div>
-      </details>
+                )
+              }
+              type="button"
+            >
+              提交重做
+            </button>
+          </div>
+        </details>
+      )}
       {error ? <Notice>{error}</Notice> : null}
       {submitted && !busy ? (
         <AssetResultRecovery onCheck={() => run(check)} onContinue={clearSubmission} reconciled={reconciled} />
@@ -327,7 +347,11 @@ export function Visuals({
     void runLatest(load)
   }, [load, refresh, runLatest])
 
-  const producing = jobs.some(job => job.state === 'queued' || job.state === 'running')
+  const producing =
+    jobs.some(job => job.state === 'queued' || job.state === 'running') ||
+    rows.some(row => row.analysis_state === 'queued' || row.analysis_state === 'running') ||
+    selected?.analysis?.state === 'queued' ||
+    selected?.analysis?.state === 'running'
   useVisiblePolling(producing, load, runLatest)
 
   return (
@@ -337,7 +361,22 @@ export function Visuals({
           <button className="back-link" onClick={onBack} type="button">
             ← 返回伙伴
           </button>
-          <PageHeader subtitle="预览和重做随时可用；实际呈现由伙伴自主决定" title="影像" />
+          <PageHeader subtitle="创建、上传与收藏你和伙伴的影像" title="影像" />
+          <VisualCreate
+            api={api}
+            onDone={async visualId => {
+              setQuery('')
+              setSource('')
+              setMediaKind('all')
+              if (visualId) {
+                const detail = await api.invoke('companion_visuals.get_visual', { path: { visual_id: visualId } })
+                if (alive()) {
+                  setSelected(detail)
+                }
+              }
+              await load()
+            }}
+          />
           <div className="library-toolbar">
             <input
               aria-label="按名称筛选影像"
@@ -440,7 +479,7 @@ export function Visuals({
             ))}
           </div>
           {loaded && rows.length === 0 && !busy ? (
-            <Empty title="还没有影像">影像由衣柜、环境和动作素材组合制作，成品会出现在这里。</Empty>
+            <Empty title="还没有影像">选择已有素材创建影像，或上传喜欢的图片与视频，成品会保存在这里。</Empty>
           ) : null}
           {hasMore ? (
             <button className="load-more" disabled={busy} onClick={() => void run(() => load(true))} type="button">

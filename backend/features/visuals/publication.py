@@ -8,7 +8,20 @@ from infrastructure.api_ids import ResourceId
 from infrastructure.assets.asset_store import normalize_asset_reference, resolve_asset_reference
 from infrastructure.text import utc_now
 from pydantic import ConfigDict
-from sqlalchemy import BigInteger, ColumnElement, String, Table, column, func, literal, select, true, update, values
+from sqlalchemy import (
+    BigInteger,
+    ColumnElement,
+    String,
+    Table,
+    column,
+    func,
+    literal,
+    select,
+    text,
+    true,
+    update,
+    values,
+)
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.selectable import CTE
@@ -32,6 +45,17 @@ class VisualPublication:
     image_id: int | None
     image_version_id: int | None
     completed: CompletedJob | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PublicationTarget:
+    user_id: int
+    outfit_id: int | None = None
+    scene_id: int | None = None
+    action_id: int | None = None
+    target_visual_id: int | None = None
+    expected_version: int | None = None
+    title: str = ""
 
 
 def _path(value: str | None) -> str | None:
@@ -59,6 +83,15 @@ def _roles(asset: VisualAsset, snapshot: VisualSnapshot) -> dict[str, str]:
         }
     if source.kind in ("scene", "cinematic"):
         paths["scene"] = source.scene.path
+    if source.kind == "analysis":
+        paths |= {
+            "identity": source.identity_path,
+            "portrait": source.portrait_path,
+            "outfit": source.outfit.path if source.outfit else None,
+            "scene": source.scene.path if source.scene else None,
+        }
+    if source.original_path:
+        paths["original"] = source.original_path
     return {role: path for role, value in paths.items() if (path := _path(value)) is not None}
 
 
@@ -70,18 +103,27 @@ def _identity(table: Table) -> ColumnElement[int]:
     return func.nextval(func.pg_get_serial_sequence(table.name, "id")).cast(BigInteger)
 
 
-def _source_ids(job: VisualJob) -> dict[str, int | None]:
+def _source_ids(job: VisualJob | PublicationTarget) -> dict[str, int | None]:
     return {"outfit_id": job.outfit_id, "scene_id": job.scene_id, "action_id": job.action_id}
 
 
 def _summary(asset: VisualAsset, snapshot: VisualSnapshot) -> dict[str, Any]:
     source = snapshot.source
-    if source.kind == "scene":
+    if source.kind == "analysis":
+        clip_kind = source.clip_kind
+        allowed_triggers = (
+            list(source.action.allowed_triggers) if source.action and source.presentation_approved else []
+        )
+        if source.presentation_approved and asset.media_kind == "image":
+            allowed_triggers = ["manual", "periodic"]
+    elif source.kind == "scene":
         clip_kind = None
         allowed_triggers: list[str] = []
     else:
-        clip_kind = source.action.clip_kind
-        allowed_triggers = list(source.action.allowed_triggers)
+        clip_kind = source.action.clip_kind if source.action else None
+        allowed_triggers = (
+            list(source.action.allowed_triggers) if source.action and source.presentation_approved else []
+        )
     return {
         "status": "ready",
         "description": asset.visual_description,
@@ -93,7 +135,7 @@ def _summary(asset: VisualAsset, snapshot: VisualSnapshot) -> dict[str, Any]:
 
 def _publish_entity(
     prefix: str,
-    job: VisualJob,
+    job: VisualJob | PublicationTarget,
     asset: VisualAsset,
     snapshot: VisualSnapshot,
     references: dict[str, AssetReference],
@@ -116,6 +158,8 @@ def _publish_entity(
         "content_hash": media.content_hash,
         **source,
     }
+    if isinstance(job, PublicationTarget):
+        summary["title"] = job.title
     if regenerate:
         if job.target_visual_id is None or job.expected_version is None:
             raise VisualStateError("重做任务缺少有效目标与版本")
@@ -125,7 +169,7 @@ def _publish_entity(
                 items.c.id == allocation.c.item_id,
                 items.c.user_id == job.user_id,
                 items.c.media_kind == asset.media_kind,
-                items.c.asset_kind == snapshot.kind,
+                *([] if isinstance(job, PublicationTarget) else [items.c.asset_kind == snapshot.kind]),
                 items.c.current_version_id.in_(
                     select(versions.c.id).where(
                         versions.c.visual_id == job.target_visual_id,
@@ -141,7 +185,7 @@ def _publish_entity(
             "user_id": job.user_id,
             "source_key": uuid4().hex,
             "media_kind": asset.media_kind,
-            "title": "",
+            "title": job.title if isinstance(job, PublicationTarget) else "",
             **summary,
         }
         item_write = insert(items).from_select(
@@ -152,7 +196,7 @@ def _publish_entity(
         if asset.media_kind == "image":
             item_write = item_write.on_conflict_do_update(
                 index_elements=[items.c.user_id, items.c.content_hash],
-                index_where=items.c.media_kind == "image",
+                index_where=text("media_kind = 'image'"),
                 set_={"content_hash": item_write.excluded.content_hash},
             )
     item = item_write.returning(*items.c).cte(f"{prefix}_item")
@@ -401,6 +445,61 @@ async def publish_visual_result(
     checkpoint: dict,
 ) -> VisualPublication:
     return await _publish(db, user_id, job, asset, snapshot=snapshot, role="result", checkpoint=checkpoint)
+
+
+async def publish_imported_visual(
+    db: AsyncSession,
+    user_id: int,
+    asset: VisualAsset,
+    snapshot: VisualSnapshot,
+    *,
+    title: str,
+) -> int:
+    """原件经确定性检查后直接发布；不制造生成任务或视频起始图成品。"""
+
+    if snapshot.source.original_path is None or snapshot.source.original_content_hash is None:
+        raise VisualStateError("上传发布缺少原件来源")
+    roles = _roles(asset, snapshot)
+    references = await ensure_asset_references_in_session(db, user_id, set(roles.values()))
+    if references[roles["media"]].content_hash != snapshot.source.original_content_hash:
+        raise VisualStateError("上传原件校验失败")
+    item, version, links = _publish_entity(
+        "imported", PublicationTarget(user_id=user_id, title=title), asset, snapshot, references
+    )
+    return (
+        await db.execute(select(item.c.id).join(version, version.c.visual_id == item.c.id).add_cte(links))
+    ).scalar_one()
+
+
+async def publish_import_revision(
+    db: AsyncSession,
+    user_id: int,
+    visual_id: int,
+    expected_version: int,
+    *,
+    asset: VisualAsset,
+    snapshot: VisualSnapshot,
+    title: str,
+) -> int:
+    if snapshot.source.original_path is None or snapshot.source.original_content_hash is None:
+        raise VisualStateError("分析结果缺少上传来源")
+    roles = _roles(asset, snapshot)
+    references = await ensure_asset_references_in_session(db, user_id, set(roles.values()))
+    source = snapshot.source
+    target = PublicationTarget(
+        user_id=user_id,
+        target_visual_id=visual_id,
+        expected_version=expected_version,
+        title=title,
+        outfit_id=source.outfit.material_id if getattr(source, "outfit", None) else None,
+        scene_id=source.scene.scene_id if getattr(source, "scene", None) else None,
+        action_id=source.action.action_id if getattr(source, "action", None) else None,
+    )
+    item, version, links = _publish_entity("analysis", target, asset, snapshot, references, regenerate=True)
+    result = await db.scalar(select(version.c.id).join(item, version.c.visual_id == item.c.id).add_cte(links))
+    if result is None:
+        raise VisualStateError("影像版本已更新，分析结果尚未替换旧版本")
+    return result
 
 
 async def publish_opening_result(

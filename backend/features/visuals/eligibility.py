@@ -24,9 +24,11 @@ def automatic_media_ready(
     auto_selectable: bool | None,
     clip_kind: str | None,
     body: dict | None,
+    presentation_approved: bool = True,
 ) -> bool:
     return bool(
-        media_kind == "video"
+        presentation_approved
+        and (media_kind == "video" or media_kind == "image")
         and (asset_kind == "scene" or (asset_kind in ("actor", "cinematic") and auto_selectable is True))
         and existing_asset(media_path)
         and (asset_kind != "actor" or actor_body_ready(body, clip_kind))

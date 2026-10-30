@@ -741,7 +741,7 @@ export async function adoptSceneImage(
 ): Promise<string | null> {
   const result = await mutate('companion_scenes.create_scene', {
     body: {
-      source: 'import',
+      source: 'analysis',
       scene_id: sceneId ? sceneId : undefined,
       image: image.base64,
       content_type: image.contentType

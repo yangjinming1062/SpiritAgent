@@ -503,12 +503,18 @@ export function handleVisualEvent(
 ): boolean {
   switch (name) {
     case 'companion.visual.updated':
-
-    case 'companion.visual.initial_requested':
+    case 'companion.visual.initial_requested': {
       void refreshVisuals()
       void refreshVisualPresentation()
+      const selected = $visualsDetail.get()
+
+      if (selected) {
+        void loadVisualDetail(selected.id).catch(error => log.warn('visuals', 'Analysis detail refresh failed', error))
+      }
 
       return true
+    }
+
     case 'companion.visual.play': {
       const command = payload as VisualPlayCommand | ApiSchemas['RpcVisualPlaybackEvent'] | null
 

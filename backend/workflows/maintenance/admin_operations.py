@@ -159,6 +159,7 @@ async def import_user_backup(
                 list(manifest["tables"]),
                 dict(manifest["row_counts"]),
                 selected_tables=selected_tables,
+                schema=manifest["schema"],
             )
         except ValueError as exc:
             raise RequestError(status_code=400, message="备份数据结构或任务关联无效，请核对备份内容。") from exc

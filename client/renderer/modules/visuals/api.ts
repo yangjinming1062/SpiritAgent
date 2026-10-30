@@ -72,6 +72,16 @@ export interface VisualReceiptBody {
 }
 
 export const visualsApi = {
+  analyze: (visualId: string, body: ApiSchemas['ImportAnalysisRequest']): Promise<ApiSchemas['ImportAnalysisView']> =>
+    requestResource('companion_visuals.analyze_visual', { path: { visual_id: visualId }, body }),
+  createCinematic: (body: Omit<ApiSchemas['CinematicRequest'], 'request_id'>): Promise<VisualJob> =>
+    submitCreation(JSON.stringify(['cinematic', body]), request_id =>
+      requestResource('companion_visuals.create_cinematic', { body: { ...body, request_id } })
+    ),
+  upload: (
+    data: Uint8Array,
+    query: { filename: string; title: string; description: string; asset_kind: 'actor' | 'scene' | 'cinematic' }
+  ): Promise<VisualDetail> => requestResource('companion_visuals.upload_visual', { body: data, query }),
   receiptStatic: (body: ApiSchemas['StageReceipt']): Promise<{ ok: boolean }> =>
     requestResource('companion_visuals.static_receipt', { body }),
   list: (query: VisualsListQuery): Promise<VisualListResponse> =>

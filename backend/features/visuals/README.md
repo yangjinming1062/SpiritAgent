@@ -20,6 +20,7 @@
 |---|---|
 | 制作受理、重做与工作项控制 | [service.py](service.py)、[policy.py](policy.py)、[use_cases.py](use_cases.py) |
 | 图片/视频制作与发布 | [generation.py](generation.py)、[publication.py](publication.py)、[video_queue.py](video_queue.py) |
+| 原件保存、分析、匹配与整理 | [imports.py](imports.py)、[import_jobs.py](import_jobs.py)、[import_reasoning.py](import_reasoning.py)、[import_prompts.py](import_prompts.py)；跨业务采纳归 [visual_imports.py](../../workflows/visual_imports.py) |
 | 生活请求与结果绑定 | [life.py](life.py) |
 | 库查询与实际呈现快照 | [queries.py](queries.py)、[repository.py](repository.py) |
 | 舞台组合、意图与静态回执 | [static_presentation.py](static_presentation.py) |
@@ -28,11 +29,13 @@
 
 ## 成品与任务
 
+用户组合制作经 `workflows/visuals_companion.py` 冻结已有素材，图片/视频共用现有工作项。原件分析期间使用 `source.kind=analysis` 暂存，完成后转为普通的 actor/scene/cinematic 来源；收藏资格与自动演出资格分开，上传和生成共用成品模型与规则。实际检查及同步发布、重试、原件保护语义归 [影像契约](../../../docs/PROTOCOL.md#影像成品与模式隔离)。分析结果由 `visual_import_jobs` 持久保存，原件和已分析版本共用既有成品与版本附件；分析发布归 `import_publication.py`。
+
 调用方装配三类资产的冻结输入，动作语义及呈现选择来源须按契约完整保存；读取和恢复共用结构校验。本模块不跨域读取素材 ORM。请求身份与冻结输入分别去重；手动制作由客户端保留请求身份，响应丢失后沿原请求核对，不能重新付费提交。环境静态图直接复用环境素材，受理端只制作环境循环视频，制作请求可带可选 `day_phase` 冻结适用时段：复用可恢复图片链先准备对应光线的起始图，再设计环境循环；复核同时读取原环境、起始图与视频抽样；它与角色视频共用队列、候选选择和恢复流程，按环境抽样复核，不做人物身份评分。
 
 `publication.py` 组合业务采纳与公共任务完成守卫，核对目标和预期版本后追加不可变版本、切换当前指针并登记资产；调用方在同一采纳事务经 `life.py` 结算关联步骤。完整场景和环境视频可先采纳起始图，主体动画只保留真实输入图的文件引用，不创建主体图片成品。重做失败、暂停或取消保留旧成品。
 
-主体视频按固定帧率逐帧抠像并用处理后的 RGBA 帧编码 WebM；遮罩时间与交付视频对应，首末帧、遮罩及锚点写入版本 `body_json`，并以版本附件保护文件。边界和底部支撑锚点来自真实 alpha，头部锚点随视频复核读取实际首帧，无法确认则留空。处理链见 [actor_clip.py](../../infrastructure/video_processing/actor_clip.py)。自动使用的文件、合成数据与语义资格统一由 [eligibility.py](eligibility.py) 校验；成品检查依据随冻结快照保存，任务检查点回收不清除该依据。
+生成主体视频按固定帧率逐帧抠像；原生透明的用户视频保留实际 alpha 并作逐帧检查，二者都用确认后的 RGBA 帧编码 WebM，原件另存；遮罩时间与交付视频对应，首末帧、遮罩及锚点写入版本 `body_json`，并以版本附件保护文件。边界和底部支撑锚点来自真实 alpha，头部锚点随视频复核读取实际首帧，无法确认则留空。处理链见 [actor_clip.py](../../infrastructure/video_processing/actor_clip.py)。自动使用的文件、合成数据与语义资格统一由 [eligibility.py](eligibility.py) 校验；成品检查依据随冻结快照保存，任务检查点回收不清除该依据。
 
 基础准备由 [visual_preparation.py](../../workflows/visual_preparation.py) 协调：只为已采用造型（首次无呈现时取初始造型）准备内置基础动作，先完成默认待机循环，成功后按固定顺序渐进补充互动反应与常用循环（准备集与顺序以该文件常量为准）；先复用身份、造型及动作版本相符且已确认可自动使用的成品。制作完成不等于可自动演出：成品照常保留在影像库，只有实际语义确认合格才计入该动作的准备；待机循环没有合格成品时结束本轮，渐进动作的不可自动使用只记录原因并继续后续动作。任一项失败、暂停或未知终止本轮并留给原任务恢复入口，同一请求不重复付费。工作项来源 `base_preparation` 与自主制作分开，不读取生活策划资料、不创建生活步骤或经历，共用现有有限修复与供应商预算。实际身份、造型图片与动作内容派生稳定请求身份，描述更新、重启及重复通知不重置额度；新造型仅入柜不触发准备，实际采用、首次就绪与维护恢复才请求准备。
 

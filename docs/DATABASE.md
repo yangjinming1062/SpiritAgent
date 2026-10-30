@@ -92,6 +92,8 @@ flowchart LR
     visual_items -->|current| visual_versions
     visual_versions -->|owner| visual_items
     visual_versions -->|input image version| visual_versions
+    visual_import_jobs -->|original / analyzed result| visual_items
+    visual_import_jobs --> jobs
     visual_jobs -->|target / result| visual_items
     visual_jobs -->|result version| visual_versions
     visual_presentations -->|current / loop| visual_versions
@@ -100,7 +102,7 @@ flowchart LR
     visual_version_assets --> assets
 ```
 
-三类可播放资产共用稳定成品与不可变版本，成功重做才切当前指针：`actor` 透明主体动画绑定身份、造型与动作、不绑定环境，版本另存主体元数据（`body_json`：遮罩/首末帧/锚点/命中区域）；`scene` 环境媒体独立于伙伴与动作；`cinematic` 完整场景影像冻结身份、造型、环境与动作的整体组合。差别由冻结输入的判别联合（`snapshot_json.source.kind`）与 `asset_kind` 列承载，不建三套表。
+三类可播放资产共用稳定成品与不可变版本，成功重做才切当前指针：`actor` 透明主体动画绑定身份、造型与动作、不绑定环境，版本另存主体元数据（`body_json`：遮罩/首末帧/锚点/命中区域）；`scene` 环境媒体独立于伙伴与动作；`cinematic` 完整场景影像冻结身份、造型、环境与动作的整体组合。差别由冻结输入的判别联合（`snapshot_json.source.kind`）与 `asset_kind` 列承载，不建三套表。原件路径、哈希和分析记录是任何成品都可带的附加信息；分析期间才使用 `source.kind=analysis`，完成后恢复为对应的普通来源，上传和生成共用同一成品模型及播放规则。`visual_import_jobs` 继承共享任务，长期保留内容理解、素材匹配、整理结果和用户选择；分析与关联采纳追加不可变版本，不改写已经呈现的版本。
 
 呈现、播放、输入图及制作结果引用实际版本，源素材修改或删除不改写已发生画面；静态呈现另保存待显示/已显示快照及受保护素材引用。呈现行的 `composition_json` 是当前有效基础画面的舞台组合（layered 分层引用环境层与主体层 / cinematic 整片引用），携带持续画面的选择来源与生活驱动组合的生活上下文；`intent_json` 是生活情境投影——两者都是呈现配置，不构成第二份生活事实。播放账本按指令记录来源、建立的持续画面选择来源及生活上下文，开播回执据此推进组合。
 

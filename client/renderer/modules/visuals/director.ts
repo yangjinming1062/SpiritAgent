@@ -156,7 +156,7 @@ function lifeCompositionMatchesIntent(intent: NonNullable<VisualsPresentation['i
   return Boolean(
     entry &&
     entry.asset_kind === 'cinematic' &&
-    entry.clip_kind === 'loop' &&
+    (entry.media_kind === 'image' || entry.clip_kind === 'loop') &&
     entry.performance_role === 'sustained' &&
     entry.allowed_triggers.includes('periodic') &&
     motionAllowed(entry, motionSubtle()) &&
@@ -224,7 +224,7 @@ function evaluateIntent(): void {
   const candidates = catalog.filter(
     entry =>
       entry.asset_kind === 'cinematic' &&
-      entry.clip_kind === 'loop' &&
+      (entry.media_kind === 'image' || entry.clip_kind === 'loop') &&
       entry.performance_role === 'sustained' &&
       entry.allowed_triggers.includes('periodic') &&
       motionAllowed(entry, motionSubtle()) &&

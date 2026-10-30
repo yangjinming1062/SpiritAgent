@@ -219,7 +219,7 @@ function AssetCreator({
                   if (!image) {
                     return
                   }
-                  const imported = { source: 'import' as const, image: image.base64, content_type: image.type }
+                  const imported = { source: 'analysis' as const, image: image.base64, content_type: image.type }
                   return scene
                     ? api.invoke('companion_scenes.create_scene', { body: imported })
                     : api.invoke('companion.post_outfit', {
@@ -756,7 +756,7 @@ function SceneDetail({
 
               if (alive()) {
                 await api.invoke('companion_scenes.create_scene', {
-                  body: { source: 'import', scene_id: scene.id, image: image.base64, content_type: image.type }
+                  body: { source: 'analysis', scene_id: scene.id, image: image.base64, content_type: image.type }
                 })
                 await onUpdate()
               }
@@ -1086,7 +1086,7 @@ function OutfitDetail({
               if (alive()) {
                 await api.invoke('companion.post_outfit_regenerate', {
                   path: { outfit_id: outfit.id },
-                  body: { source: 'import', image: image.base64, content_type: image.type }
+                  body: { source: 'analysis', image: image.base64, content_type: image.type }
                 })
                 await onUpdate()
               }
