@@ -54,6 +54,31 @@ class _OpeningRepair(BaseModel):
     opening_description: str = Field(min_length=1, max_length=1800)
 
 
+def _base_idle_plan(snapshot: ActorClipSource | CinematicSource, progress: VisualJobProgress) -> VisualCreationPlan | None:
+    """内置待机动作使用确定性的安静状态边界，姿态仍由角色自身决定。"""
+
+    if progress.source != "base_preparation" or snapshot.kind != "actor" or snapshot.action is None:
+        return None
+    if snapshot.action.performance_role != "idle":
+        return None
+    motion = snapshot.action.motion_description
+    personality = str(snapshot.persona.get("personality") or "").strip()
+    temperament = f"体现角色的性格气质（{personality}）" if personality else "体现角色自身的性格气质"
+    return VisualCreationPlan(
+        activity=motion,
+        opening_description=(
+            f"角色全身与所有附肢完整入画，位于干净均匀的纯色幕布前，{temperament}并自然选择一套安静、"
+            "可持续且符合身份、身体结构和当前造型的姿态；重心、支撑、接触关系和表情自然，视线与姿态"
+            "共同体现角色特征。"
+        ),
+        required_props=[],
+        motion_requirements=(
+            f"{motion} 保持该角色自然安静姿态的首尾连续，运动幅度按角色特征和动作定义安排，"
+            "只保留能从起始姿态自然延续的局部变化。"
+        ),
+    )
+
+
 async def ensure_creation_plan(
     user_id: int,
     job: VisualJob,
@@ -62,6 +87,11 @@ async def ensure_creation_plan(
     *,
     before_submit: Callable[[], Awaitable[None]],
 ) -> None:
+    base_plan = _base_idle_plan(snapshot, progress)
+    if base_plan is not None:
+        progress.creation_plan = base_plan
+        progress.motion_prompt = ""
+        return
     if progress.creation_plan is not None:
         return
     opening = progress.pose_path or progress.previous_pose_path
@@ -123,6 +153,10 @@ async def ensure_opening_repair(
     snapshot: ActorClipSource | CinematicSource,
     before_submit: Callable[[], Awaitable[None]],
 ) -> None:
+    if _base_idle_plan(snapshot, progress) is not None:
+        # 待机姿态由角色身份与性格决定；评审反馈不能把它收窄成统一的手脚位置。
+        progress.repair_description = ""
+        return
     if not progress.repair_reason or progress.repair_description:
         return
     reference_path = progress.previous_pose_path or snapshot.primary_reference_path
