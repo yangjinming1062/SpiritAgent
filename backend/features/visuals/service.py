@@ -993,6 +993,11 @@ async def delete_visual(user_id: int, visual_id: int) -> None:
         if import_job is not None:
             paths |= asset_paths(import_job.result_json, user_id)
             paths |= asset_paths(import_job.context_json, user_id)
+            # VisualImportJob 是 jobs 的 joined-table 子类；直接让 visual_id 的外键
+            # 级联只会删除详情行，父任务和 job_assets 仍会留下。显式删除子类实例
+            # 让 ORM 按 joined-table 生命周期一并删除共享任务父行。
+            await db.delete(import_job)
+            await db.flush()
         await db.delete(item)
         await db.flush()
         await enqueue_asset_cleanup(db, user_id, paths, expedite=True)

@@ -279,6 +279,17 @@ class ImportMatch(BaseModel):
     evidence: str = Field(min_length=1, max_length=600)
 
 
+class ImportCreatedMaterial(BaseModel):
+    """本次导入曾创建的素材；当前关联切换后仍保留来源轨迹。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["outfit", "scene", "action"]
+    material_id: ResourceId
+    extraction_key: str = ""
+    state: Literal["active", "released", "retained"] = "active"
+
+
 class ImportComponent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -290,6 +301,7 @@ class ImportComponent(BaseModel):
     material_id: ResourceId | None = None
     created: bool = False
     extraction_key: str = ""
+    created_materials: list[ImportCreatedMaterial] = Field(default_factory=list)
     reason: str = ""
     preview_path: str | None = None
 

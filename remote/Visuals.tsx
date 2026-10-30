@@ -48,6 +48,10 @@ const JOB_COMMAND_TEXT: Record<VisualJobCommand, string> = {
   retry: '重试'
 }
 
+function analysisPending(state: VisualJobState | null | undefined): boolean {
+  return state === 'queued' || state === 'running' || state === 'paused'
+}
+
 function sourceSummary(item: Pick<VisualItem, 'action_name' | 'outfit_name' | 'scene_title'>): string {
   return [
     item.outfit_name ? `衣柜：${item.outfit_name}` : '',
@@ -132,6 +136,7 @@ function VisualDetailPanel({
   const [showOriginal, setShowOriginal] = useState(false)
   const { check, clearSubmission, reconciled, submit, submitted } = useAssetSubmission(`visual.${visual.id}`, onChanged)
   const jobs = visual.jobs
+  const pendingAnalysis = analysisPending(visual.analysis?.state)
 
   return (
     <section className="asset-detail">
@@ -152,9 +157,9 @@ function VisualDetailPanel({
         {visual.media_kind === 'video' ? '视频' : '图片'}
         {durationText(visual.duration_ms) ? ` · ${durationText(visual.duration_ms)}` : ''}
         {currentVisualId === visual.id ? ' · 呈现中' : ''}
-        {visual.media_kind === 'video' && !visual.auto_playable ? ' · 此版本不参与自动演出' : ''}
+        {!pendingAnalysis && !visual.auto_playable ? ' · 此版本不参与自动演出' : ''}
       </p>
-      {visual.media_kind === 'video' && !visual.auto_playable ? (
+      {!pendingAnalysis && !visual.auto_playable ? (
         <div className="muted">
           <p>这个版本已完成并保留，目前不参与常驻轮换或生活演出。你仍可在影像库查看成品与检查记录。</p>
           {visual.snapshot.review_reason ? <p>内容检查：{visual.snapshot.review_reason}</p> : null}
@@ -479,7 +484,11 @@ export function Visuals({
                 meta={`${row.media_kind === 'video' ? '视频' : '图片'}${
                   durationText(row.duration_ms) ? ` · ${durationText(row.duration_ms)}` : ''
                 }${currentVisualId === row.id ? ' · 呈现中' : ''}${
-                  row.media_kind === 'video' && !row.auto_playable ? ' · 此版本不参与自动演出' : ''
+                  analysisPending(row.analysis_state)
+                    ? ' · 等待分析'
+                    : !row.auto_playable
+                      ? ' · 此版本不参与自动演出'
+                      : ''
                 }`}
                 onSelect={() => {
                   void run(async () => {

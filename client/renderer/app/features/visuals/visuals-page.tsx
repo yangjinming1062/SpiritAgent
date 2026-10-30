@@ -432,6 +432,8 @@ function VisualCard({
     url: item.poster_url || (item.media_kind === 'image' ? item.media_url : '')
   })
 
+  const analysisPending = ['queued', 'running', 'paused'].includes(item.analysis_state ?? '')
+
   return (
     <button
       className="flex flex-col gap-2 rounded-xl border border-line-hairline p-2 text-left transition hover:bg-fill-hover"
@@ -449,7 +451,7 @@ function VisualCard({
         <Badge>{assetKindLabel(item.asset_kind, t.assetKindLabels)}</Badge>
         {item.analysis_state && <Badge>{t.analysis.states[item.analysis_state]}</Badge>}
         {current && <Badge tone="accent">{t.currentMark}</Badge>}
-        {item.media_kind === 'video' && !item.auto_playable && <Badge>{t.autoPlayOff}</Badge>}
+        {!analysisPending && !item.auto_playable && <Badge>{t.autoPlayOff}</Badge>}
       </div>
       {sourceSummary && <p className="truncate text-[11px] text-faint">{sourceSummary}</p>}
     </button>
@@ -479,6 +481,7 @@ function VisualDetailPanel({
   const original = showOriginal && detail.original_url ? detail.snapshot.source : null
   const size = `${original?.original_width ?? detail.width} × ${original?.original_height ?? detail.height}`
   const duration = formatDuration(original?.original_duration_ms ?? detail.duration_ms, t.seconds)
+  const analysisPending = ['queued', 'running', 'paused'].includes(detail.analysis?.state ?? '')
 
   // 素材被删除后 ID 置空，冻结来源的名称与描述继续可读。
   const materialLabel = (materialId: string | null, frozenName: string): string =>
@@ -493,9 +496,9 @@ function VisualDetailPanel({
             <Badge>{detail.media_kind === 'video' ? t.mediaKindVideo : t.mediaKindImage}</Badge>
             <Badge>{assetKindLabel(detail.asset_kind, t.assetKindLabels)}</Badge>
             {current && <Badge tone="accent">{t.currentMark}</Badge>}
-            {detail.media_kind === 'video' && !detail.auto_playable && <Badge>{t.autoPlayOff}</Badge>}
+            {!analysisPending && !detail.auto_playable && <Badge>{t.autoPlayOff}</Badge>}
           </div>
-          {detail.media_kind === 'video' && !detail.auto_playable && (
+          {!analysisPending && !detail.auto_playable && (
             <div className="text-[11px] text-faint">
               <p>{t.autoPlayHint}</p>
               {detail.snapshot.review_reason && (
