@@ -68,8 +68,14 @@ def _source_matches_stage(source: dict, *, outfit: ComboMaterialRef | None, iden
 
     if not source.get("presentation_approved", True):
         return False
-    if source.get("kind") == "scene" or (source.get("kind") == "analysis" and source.get("asset_kind") == "scene"):
-        return True
+    if source.get("kind") == "scene":
+        return bool(source.get("scene"))
+    if (
+        source.get("kind") == "analysis"
+        and source.get("asset_kind") in {"scene", "cinematic"}
+        and not source.get("scene")
+    ):
+        return False
     return bool(
         outfit is not None
         and identity_hash
@@ -286,6 +292,7 @@ def item_view(item: VisualItem | PresentedVisual, snapshot: VisualSnapshot | Non
             clip_kind=visual_clip_kind(item, snapshot),
             body=item.body_json,
             presentation_approved=source.presentation_approved,
+            scene_reference=getattr(source, "scene", None) is not None,
         ),
     )
 
@@ -415,6 +422,7 @@ async def list_visuals(
             VisualVersion.body_json,
             VisualVersion.snapshot_json["source"]["presentation_approved"].as_boolean().label("presentation_approved"),
             VisualVersion.snapshot_json["source"]["original_path"].astext.label("original_path"),
+            VisualVersion.snapshot_json["source"]["scene"].astext.label("scene_reference"),
         )
         rows = list(
             (
@@ -447,6 +455,7 @@ async def list_visuals(
             values["poster_url"] = client_asset_url(poster) if poster else None
             original_path = values.pop("original_path")
             values["original_url"] = client_asset_url(original_path) if original_path else None
+            scene_reference = values.pop("scene_reference")
             values["auto_playable"] = automatic_media_ready(
                 media_kind=values["media_kind"],
                 asset_kind=values["asset_kind"],
@@ -455,6 +464,7 @@ async def list_visuals(
                 clip_kind=values["clip_kind"],
                 body=values.pop("body_json"),
                 presentation_approved=bool(values.pop("presentation_approved")),
+                scene_reference=bool(scene_reference and scene_reference != "null"),
             )
             views.append(VisualItemView.model_validate(values))
         return VisualListResponse(
@@ -736,7 +746,8 @@ async def ambient_catalog(db: AsyncSession, state: VisualPresentation, *, limit:
         .where(
             VisualItem.user_id == state.user_id,
             VisualItem.status == "ready",
-            or_(VisualItem.media_kind == "video", VisualVersion.snapshot_json["source"]["kind"].astext == "analysis"),
+            # 完整场景的静态图片同样是可持续画面；actor 仍只能以视频进入目录。
+            or_(VisualItem.media_kind == "video", VisualItem.asset_kind == "cinematic"),
             VisualVersion.snapshot_json["source"]["identity_hash"].astext == identity_hash,
             VisualVersion.snapshot_json["source"]["outfit"]["content_hash"].astext == outfit.content_hash,
         )
@@ -767,6 +778,7 @@ async def ambient_catalog(db: AsyncSession, state: VisualPresentation, *, limit:
                     clip_kind=row.clip_kind,
                     body=row.body_json,
                     presentation_approved=bool(source.get("presentation_approved")),
+                    scene_reference=bool(source.get("scene")),
                 ):
                     continue
                 if not _stage_ready(
@@ -896,12 +908,12 @@ async def ambient_scene_catalog(db: AsyncSession, user_id: int, scene: SceneMedi
             VisualItem.status == "ready",
             VisualItem.media_kind == "video",
             VisualItem.asset_kind == "scene",
-            VisualItem.clip_kind == "loop",
-            VisualVersion.snapshot_json["source"]["scene"]["content_hash"].astext == scene.content_hash,
             or_(
-                VisualVersion.snapshot_json["source"]["kind"].astext != "analysis",
-                VisualVersion.snapshot_json["source"]["presentation_approved"].as_boolean().is_(True),
+                VisualItem.clip_kind == "loop",
+                VisualVersion.snapshot_json["source"]["kind"].astext == "scene",
             ),
+            VisualVersion.snapshot_json["source"]["scene"]["content_hash"].astext == scene.content_hash,
+            func.coalesce(VisualVersion.snapshot_json["source"]["presentation_approved"].as_boolean(), True).is_(True),
         )
         .order_by(VisualVersion.id.desc()),
         execution_options={"yield_per": 32},

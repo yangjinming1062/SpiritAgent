@@ -166,6 +166,24 @@ function VisualDetailPanel({
           {showOriginal ? '查看可呈现版本' : '查看原始文件'}
         </button>
       )}
+      {visual.original_url ? (
+        <button
+          disabled={busy}
+          onClick={() => {
+            if (!window.confirm('删除这份用户上传的影像？')) {
+              return
+            }
+            void run(async () => {
+              await api.invoke('companion_visuals.delete_visual', { path: { visual_id: visual.id } })
+              await onChanged()
+              onClose()
+            })
+          }}
+          type="button"
+        >
+          删除这份影像
+        </button>
+      ) : null}
       {visual.analysis && <VisualAnalysis api={api} onChanged={onChanged} visual={visual} />}
       <section className="card">
         <h3>来源素材</h3>

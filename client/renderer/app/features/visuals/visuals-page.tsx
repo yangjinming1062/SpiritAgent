@@ -28,7 +28,8 @@ import {
   setVisualPreferences,
   type VisualDetail as VisualDetailData,
   type VisualItem,
-  type VisualJob
+  type VisualJob,
+  visualsApi
 } from '@/modules/visuals'
 import { log } from '@/shared/lib/log'
 import {
@@ -308,6 +309,25 @@ export function VisualsPage(): React.JSX.Element {
               busy={busy}
               current={currentVisualId === detail.id}
               detail={detail}
+              onDelete={() => {
+                void confirmAction({
+                  title: t.deleteTitle,
+                  description: detail.title,
+                  confirmLabel: t.delete,
+                  variant: 'destructive'
+                }).then(confirmed => {
+                  if (!confirmed) {
+                    return
+                  }
+
+                  run(async () => {
+                    await visualsApi.delete(detail.id)
+                    clearVisualDetail()
+                    updateVisualsUi({ detailOpen: false, selectedId: null, page: 0 })
+                    await refreshVisuals({ limit: PAGE_SIZE, include_total: true })
+                  }, t.deleteFailed)
+                })
+              }}
               onRedo={(feedback, videoFeedback) =>
                 run(
                   () =>
@@ -440,12 +460,14 @@ function VisualDetailPanel({
   detail,
   current,
   busy,
+  onDelete,
   onRedo,
   t
 }: {
   detail: VisualDetailData
   current: boolean
   busy: boolean
+  onDelete: () => void
   onRedo: (feedback: string, videoFeedback: string) => void
   t: ReturnType<typeof useStrings>['visuals']
 }): React.JSX.Element {
@@ -527,6 +549,11 @@ function VisualDetailPanel({
               </span>
             )}
           </div>
+          {detail.original_url && (
+            <button className={BTN_SUBTLE} disabled={busy} onClick={onDelete} type="button">
+              {t.delete}
+            </button>
+          )}
           <div>
             <h4 className="mb-1 text-xs font-medium text-strong">{t.sourceTitle}</h4>
             {(() => {

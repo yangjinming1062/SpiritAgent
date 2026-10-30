@@ -100,6 +100,7 @@ async def _automatic_version_ids(db: AsyncSession, user_id: int) -> set[int]:
                 clip_kind=source.action.clip_kind,
                 body=version.body_json,
                 presentation_approved=source.presentation_approved,
+                scene_reference=getattr(source, "scene", None) is not None,
             ):
                 continue
             selected.add(key)

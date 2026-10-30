@@ -29,7 +29,9 @@ class ImportMatchResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
     decision: Literal["reuse", "new", "uncertain"]
     selected_id: ResourceId | None = None
-    matches: list[ImportMatch] = Field(default_factory=list, max_length=8)
+    # 召回候选需要覆盖同一素材库中新近提取和相似内容，不能让固定的 8 项
+    # 上限把正确匹配排除在模型复核之外。
+    matches: list[ImportMatch] = Field(default_factory=list, max_length=24)
 
 
 class ImportQualityVerdict(BaseModel):

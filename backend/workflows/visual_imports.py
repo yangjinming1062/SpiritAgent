@@ -75,6 +75,7 @@ from .visuals_companion import freeze_action_reference, load_action_review_sourc
 logger = get_logger(__name__)
 _TASKS: dict[tuple[int, int], asyncio.Task[None]] = {}
 _LOCKS: dict[int, asyncio.Lock] = {}
+_IMPORT_CANDIDATE_LIMIT = 24
 
 
 def schedule_import_analysis(user_id: int, job_id: int) -> None:
@@ -248,11 +249,20 @@ async def _rank_candidates(work: ImportWork, observation: ImportObservation) -> 
     query = f"{observation.name} {observation.description} {' '.join(observation.features)}"
 
     def ranked() -> list[ImportCatalogCandidate]:
-        return sorted(
+        ordered = sorted(
             candidates,
             key=lambda entry: retrieval_score(f"{entry.name} {entry.description}", query, entry.path, target),
             reverse=True,
-        )[:8]
+        )
+        # 内容完全一致的环境/着装必须进入复核，即使文本和轻量视觉召回把它排到后面。
+        exact = [
+            entry
+            for entry in ordered
+            if (entry.outfit and entry.outfit.content_hash == work.snapshot.source.original_content_hash)
+            or (entry.scene and entry.scene.content_hash == work.snapshot.source.original_content_hash)
+        ]
+        selected = exact + [entry for entry in ordered if entry not in exact]
+        return selected[:_IMPORT_CANDIDATE_LIMIT]
 
     return await run_blocking(ranked)
 
@@ -347,6 +357,41 @@ async def _adopt_existing(work: ImportWork, component: ImportComponent, material
     await save_import_progress(work, "organize")
 
 
+async def _remember_candidate(work: ImportWork, component: ImportComponent) -> None:
+    if component.material_id is None:
+        return
+    selected = await _read_selected(work, component.observation.kind, component.material_id)
+    work.context.candidates = [
+        entry
+        for entry in work.context.candidates
+        if (entry.kind, entry.material_id) != (selected.kind, selected.material_id)
+    ] + [selected]
+    await save_import_progress(work, "organize")
+
+
+async def _recheck_existing_material(work: ImportWork, component: ImportComponent) -> bool:
+    """在真正提取前复核本任务中新出现的候选，避免过时的 new 结论造成重复入库。"""
+
+    if component.observation.kind not in {"outfit", "scene"}:
+        return False
+    candidates = await _rank_candidates(work, component.observation)
+    if not candidates:
+        return False
+    result = await match_import_material(work, component.observation, candidates)
+    component.matches = result.matches
+    await save_import_progress(work, "match")
+    if result.decision == "reuse" and result.selected_id is not None:
+        await _read_selected(work, component.observation.kind, result.selected_id)
+        _mark_reference(work, component, result.selected_id)
+        component.status = "reused"
+        component.reason = next(entry.evidence for entry in result.matches if entry.material_id == result.selected_id)
+        return True
+    if result.decision == "uncertain":
+        component.status, component.reason = "ambiguous", "存在近似素材，请选择已有素材或保留识别结果"
+        return True
+    return False
+
+
 async def _extract(work: ImportWork, component: ImportComponent) -> None:
     observation = component.observation
     if not observation.extractable:
@@ -354,8 +399,18 @@ async def _extract(work: ImportWork, component: ImportComponent) -> None:
         return
     if work.result is None:
         raise ValueError("内容分析结果缺失")
+    if observation.kind == "outfit" and (
+        work.result.understanding.identity_match != "same" or work.context.identity is None
+    ):
+        component.status, component.reason = "recognized", "伙伴身份尚未确认，不将这套着装加入衣柜"
+        return
+    if await _recheck_existing_material(work, component):
+        return
     component.extraction_key = component.extraction_key or str(
-        uuid5(NAMESPACE_URL, f"spirit-import:{work.snapshot.source.original_content_hash}:{observation.kind}:{observation.key}")
+        uuid5(
+            NAMESPACE_URL,
+            f"spirit-import:{work.snapshot.source.original_content_hash}:{observation.kind}:{observation.key}",
+        )
     )
     if observation.kind == "action":
         if (
@@ -413,11 +468,8 @@ async def _extract(work: ImportWork, component: ImportComponent) -> None:
             else "recognized"
         )
         component.reason = f"{evidence.reason}\n{current.review_reason}" if current else "动作已被删除"
-        return
-    if observation.kind == "outfit" and (
-        work.result.understanding.identity_match != "same" or work.context.identity is None
-    ):
-        component.status, component.reason = "recognized", "伙伴身份尚未确认，不将这套着装加入衣柜"
+        if component.status in {"created", "reused"}:
+            await _remember_candidate(work, component)
         return
     if component.preview_path and resolve_asset_reference(component.preview_path):
         data = await run_blocking(resolve_asset_reference(component.preview_path)[0].read_bytes)
@@ -468,6 +520,9 @@ async def _extract(work: ImportWork, component: ImportComponent) -> None:
         component.material_id, component.created, component.status = accepted.id, True, "created"
 
     await save_import_progress(work, "organize", adopt=adopt)
+    # 当前任务新建的素材立即回到候选集，后续条目可以复用它，避免同一上传
+    # 在多个片段中重复创建近似素材。
+    await _remember_candidate(work, component)
 
 
 async def _undo(work: ImportWork, component: ImportComponent) -> None:

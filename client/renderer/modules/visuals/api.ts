@@ -80,7 +80,7 @@ export const visualsApi = {
     ),
   upload: (
     data: Uint8Array,
-    query: { filename: string; title: string; description: string; asset_kind: 'actor' | 'scene' | 'cinematic' }
+    query: { filename: string; title: string; description: string; asset_kind?: 'actor' | 'scene' | 'cinematic' }
   ): Promise<VisualDetail> => requestResource('companion_visuals.upload_visual', { body: data, query }),
   receiptStatic: (body: ApiSchemas['StageReceipt']): Promise<{ ok: boolean }> =>
     requestResource('companion_visuals.static_receipt', { body }),
@@ -88,6 +88,8 @@ export const visualsApi = {
     requestResource('companion_visuals.list_visuals', { query }),
   detail: (visualId: string): Promise<VisualDetail> =>
     requestResource('companion_visuals.get_visual', { path: { visual_id: visualId } }),
+  delete: (visualId: string): Promise<void> =>
+    requestResource('companion_visuals.delete_visual', { path: { visual_id: visualId } }),
   listActionMedia: (actionId: string): Promise<ActionMediaListResponse> =>
     requestResource('companion_visuals.list_action_media', { path: { action_id: actionId }, query: { limit: 30 } }),
   /** 制作透明主体动画：身份 + 造型 + 动作，不绑定环境；桌面与手机共用同一契约。 */

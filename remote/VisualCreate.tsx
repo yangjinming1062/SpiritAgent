@@ -81,8 +81,7 @@ export function VisualCreate({
         query: {
           filename: file.name,
           title: draft.title,
-          description: draft.description,
-          asset_kind: draft.assetKind
+          description: draft.description
         }
       })
       if (alive()) {
@@ -174,23 +173,25 @@ export function VisualCreate({
               ? '保留原始文件，自动分析内容并优先关联已有素材。符合要求的新素材可整理入库；存在歧义时再由你确认。'
               : '选择已有素材制作，提交后可在制作工作项中查看进度。'}
           </p>
-          <label>
-            影像类型
-            <select
-              disabled={busy}
-              onChange={event => {
-                const assetKind = event.target.value
-                if (assetKind === 'actor' || assetKind === 'scene' || assetKind === 'cinematic') {
-                  patch({ assetKind })
-                }
-              }}
-              value={draft.assetKind}
-            >
-              <option value="cinematic">完整场景</option>
-              <option value="scene">环境影像</option>
-              <option value="actor">透明主体动画</option>
-            </select>
-          </label>
+          {!upload && (
+            <label>
+              影像类型
+              <select
+                disabled={busy}
+                onChange={event => {
+                  const assetKind = event.target.value
+                  if (assetKind === 'actor' || assetKind === 'scene' || assetKind === 'cinematic') {
+                    patch({ assetKind })
+                  }
+                }}
+                value={draft.assetKind}
+              >
+                <option value="cinematic">完整场景</option>
+                <option value="scene">环境影像</option>
+                <option value="actor">透明主体动画</option>
+              </select>
+            </label>
+          )}
           {upload ? (
             <>
               <label>

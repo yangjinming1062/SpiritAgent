@@ -98,8 +98,7 @@ export function VisualCreatePanel({ onDone }: { onDone: (visualId?: string) => P
         const result = await visualsApi.upload(data, {
           filename: file.name,
           title: draft.title,
-          description: draft.description,
-          asset_kind: draft.assetKind
+          description: draft.description
         })
 
         visualId = result.id
@@ -193,25 +192,27 @@ export function VisualCreatePanel({ onDone }: { onDone: (visualId?: string) => P
               </button>
             </div>
             <p className="text-xs text-muted">{upload ? c.uploadHint : c.createHint}</p>
-            <label>
-              <span className={FIELD_LABEL}>{c.kind}</span>
-              <select
-                className={INPUT_CLASS}
-                disabled={busy}
-                onChange={event => {
-                  const assetKind = event.target.value
+            {!upload && (
+              <label>
+                <span className={FIELD_LABEL}>{c.kind}</span>
+                <select
+                  className={INPUT_CLASS}
+                  disabled={busy}
+                  onChange={event => {
+                    const assetKind = event.target.value
 
-                  if (assetKind === 'actor' || assetKind === 'scene' || assetKind === 'cinematic') {
-                    patch({ assetKind })
-                  }
-                }}
-                value={draft.assetKind}
-              >
-                <option value="cinematic">{t.assetKindLabels.cinematic}</option>
-                <option value="scene">{t.assetKindLabels.scene}</option>
-                <option value="actor">{t.assetKindLabels.actor}</option>
-              </select>
-            </label>
+                    if (assetKind === 'actor' || assetKind === 'scene' || assetKind === 'cinematic') {
+                      patch({ assetKind })
+                    }
+                  }}
+                  value={draft.assetKind}
+                >
+                  <option value="cinematic">{t.assetKindLabels.cinematic}</option>
+                  <option value="scene">{t.assetKindLabels.scene}</option>
+                  <option value="actor">{t.assetKindLabels.actor}</option>
+                </select>
+              </label>
+            )}
             {upload ? (
               <>
                 <label>

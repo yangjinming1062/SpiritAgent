@@ -11,6 +11,7 @@ from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.assets.lifecycle import enqueue_asset_cleanup
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
 from features.jobs.service import bind_job_assets, bind_job_request, requested_job_id
 from features.life.schemas import LifeStepRequest
@@ -28,7 +29,7 @@ from .generation import (
 )
 from .geometry import visual_aspect_ratio
 from .life import bind_creation_step, restart_visual_steps, settle_visual_steps
-from .models import VisualItem, VisualJob, VisualPlayback, VisualPresentation, VisualVersion
+from .models import VisualImportJob, VisualItem, VisualJob, VisualPlayback, VisualPresentation, VisualVersion
 from .policy import visual_autonomous_block_reason
 from .ports import request_base_motion_preparation
 from .queries import frozen_stage_reference as _frozen_stage_reference
@@ -529,6 +530,7 @@ async def play_visual(
                 clip_kind=visual_clip_kind(item, snapshot),
                 body=item.body_json,
                 presentation_approved=media_source.presentation_approved,
+                scene_reference=getattr(media_source, "scene", None) is not None,
             ):
                 raise VisualStateError("这个版本暂不支持自动演出，可以在影像库预览")
         _play, command = await dispatch_play_command(
@@ -928,6 +930,74 @@ async def cancel_job(user_id: int, job_id: int) -> VisualJobView:
         await db.commit()
     cancel_visual_job(job_id)
     return view
+
+
+async def delete_visual(user_id: int, visual_id: int) -> None:
+    """删除未被呈现、播放或其它成品引用的用户上传影像。"""
+
+    async with _lock(user_id), SESSION_LOCAL() as db:
+        state = await require_presentation_row(db, user_id, lock=True)
+        item = await visual_item(db, user_id, visual_id, lock=True)
+        snapshot = visual_snapshot(item)
+        if not snapshot.source.original_path:
+            raise VisualStateError("只能删除用户上传的影像")
+        if state.current_visual_id == visual_id or state.loop_visual_id == visual_id:
+            raise VisualStateError("当前呈现正在使用这份影像，请先切换画面")
+        composition = stage_composition(state)
+        if composition is not None and (
+            composition.scene_visual_id == visual_id
+            or (composition.actor is not None and composition.actor.visual_id == visual_id)
+            or (composition.cinematic is not None and composition.cinematic.visual_id == visual_id)
+        ):
+            raise VisualStateError("当前舞台组合正在使用这份影像，请先切换画面")
+        if await db.scalar(
+            select(VisualPlayback.id)
+            .where(VisualPlayback.user_id == user_id, VisualPlayback.visual_id == visual_id)
+            .limit(1)
+        ):
+            raise VisualStateError("这份影像已有播放记录，不能删除")
+        if await db.scalar(
+            select(VisualVersion.id)
+            .where(VisualVersion.user_id == user_id, VisualVersion.input_image_id == visual_id)
+            .limit(1)
+        ):
+            raise VisualStateError("这份影像已被其它成品作为起始画面引用，不能删除")
+        if await db.scalar(
+            select(VisualJob.id)
+            .where(
+                VisualJob.user_id == user_id,
+                (VisualJob.target_visual_id == visual_id)
+                | (VisualJob.result_visual_id == visual_id)
+                | (VisualJob.result_image_id == visual_id),
+            )
+            .limit(1)
+        ):
+            raise VisualStateError("这份影像仍被制作记录引用，不能删除")
+        import_job = await db.scalar(
+            select(VisualImportJob)
+            .where(VisualImportJob.user_id == user_id, VisualImportJob.visual_id == visual_id)
+            .with_for_update()
+        )
+        if import_job is not None and import_job.state in {"queued", "running", "paused", "unknown"}:
+            raise VisualStateError("影像分析尚未结束，请先取消或等待完成")
+        versions = list(
+            await db.scalars(
+                select(VisualVersion).where(VisualVersion.user_id == user_id, VisualVersion.visual_id == visual_id)
+            )
+        )
+        paths = set()
+        for version in versions:
+            paths |= asset_paths(version.snapshot_json, user_id)
+            paths |= asset_paths(version.body_json, user_id)
+            paths |= {path for path in (version.media_path, version.poster_path, version.input_image_path) if path}
+        if import_job is not None:
+            paths |= asset_paths(import_job.result_json, user_id)
+            paths |= asset_paths(import_job.context_json, user_id)
+        await db.delete(item)
+        await db.flush()
+        await enqueue_asset_cleanup(db, user_id, paths, expedite=True)
+        await notify_visuals_updated(db, user_id)
+        await db.commit()
 
 
 async def retry_job(user_id: int, job_id: int) -> VisualJobView:

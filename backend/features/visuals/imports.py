@@ -3,7 +3,6 @@
 import hashlib
 import io
 import math
-from typing import Literal
 from uuid import uuid4
 
 from infrastructure.assets.asset_store import resolve_asset_reference, save_companion_asset, sniff_media_ext
@@ -18,12 +17,20 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from sqlalchemy import or_, select
 
 from features.assets.lifecycle import cleanup_asset_directories_after_task
+from features.jobs.service import bind_job_assets
 
-from .models import VisualImportJob, VisualItem
+from .models import VisualImportJob, VisualItem, VisualVersion
 from .publication import publish_imported_visual
 from .queries import visual_detail
 from .repository import VisualStateError, notify_visuals_updated, require_presentation_row
-from .schemas import VISUAL_MAX_EDGE, AnalyzingVisualSource, VisualAsset, VisualDetailView, VisualSnapshot
+from .schemas import (
+    VISUAL_MAX_EDGE,
+    AnalyzingVisualSource,
+    VisualAsset,
+    VisualAssetKind,
+    VisualDetailView,
+    VisualSnapshot,
+)
 
 
 def _image_size(data: bytes) -> tuple[int, int]:
@@ -49,7 +56,7 @@ async def import_visual(
     filename: str,
     title: str,
     description: str,
-    asset_kind: Literal["actor", "scene", "cinematic"],
+    asset_kind: VisualAssetKind | None = None,
 ) -> VisualDetailView:
     ext = sniff_media_ext(data)
     image = ext in {"png", "jpg", "webp", "gif"}
@@ -58,31 +65,43 @@ async def import_visual(
     limit = REMOTE_ASSET_DOWNLOAD_MAX_BYTES if image else SETTINGS.video_attachment_max_bytes
     if len(data) > limit:
         raise VisualStateError(f"影像超过 {limit // (1024 * 1024)} MB 上限")
+    # 上传阶段不应把最终素材类别交给用户决定。保留旧客户端的提示值作为
+    # 初始分析提示，但静态图片不能暂存为 actor（数据库明确要求 actor 必须是视频）。
+    initial_asset_kind: VisualAssetKind = "cinematic" if image and asset_kind == "actor" else asset_kind or "cinematic"
     digest = hashlib.sha256(data).hexdigest()
     directory = f"visuals/imports/{uuid4().hex}"
     try:
         async with user_asset_lock(user_id), SESSION_LOCAL() as db:
             # 与制作、恢复共用账户串行边界，数据库行锁覆盖并发上传。
             await require_presentation_row(db, user_id, lock=True)
-            existing = await db.scalar(
-                select(VisualItem.id).where(
-                    VisualItem.user_id == user_id,
-                    or_(
-                        VisualItem.content_hash == digest,
-                        VisualItem.id.in_(
-                            select(VisualImportJob.visual_id).where(
-                                VisualImportJob.owner_id == user_id, VisualImportJob.original_hash == digest
-                            )
+            existing = (
+                await db.execute(
+                    select(
+                        VisualItem.id,
+                        VisualVersion.snapshot_json["source"]["original_path"].astext.label("original_path"),
+                        VisualVersion.media_path,
+                    )
+                    .select_from(VisualItem)
+                    .outerjoin(VisualVersion, VisualVersion.id == VisualItem.current_version_id)
+                    .where(
+                        VisualItem.user_id == user_id,
+                        or_(
+                            VisualItem.content_hash == digest,
+                            VisualItem.id.in_(
+                                select(VisualImportJob.visual_id).where(
+                                    VisualImportJob.user_id == user_id, VisualImportJob.original_hash == digest
+                                )
+                            ),
                         ),
-                    ),
+                    )
                 )
-            )
+            ).first()
             await db.commit()
             if existing is not None:
-                detail = await visual_detail(user_id, existing)
-                if resolve_asset_reference(detail.media_url) is None:
+                visual_id, original_path, media_path = existing
+                if resolve_asset_reference(original_path or media_path) is None:
                     raise VisualStateError("同内容影像的原件已缺失，请先恢复原件")
-                return detail
+                return await visual_detail(user_id, visual_id)
             with asset_write_context():
                 path = await run_blocking(
                     save_companion_asset, data, user_id=user_id, label="original", ext=ext, directory=directory
@@ -107,7 +126,7 @@ async def import_visual(
                     )
                 snapshot = VisualSnapshot(
                     source=AnalyzingVisualSource(
-                        asset_kind=asset_kind,
+                        asset_kind=initial_asset_kind,
                         original_filename=filename,
                         original_path=path,
                         original_content_hash=digest,
@@ -129,20 +148,46 @@ async def import_visual(
                 )
                 await require_presentation_row(db, user_id, lock=True)
                 # 探测期间不持事务；提交前重查其他请求已经发布的相同内容。
-                existing = await db.scalar(
-                    select(VisualItem.id).where(
-                        VisualItem.user_id == user_id,
-                        or_(
-                            VisualItem.content_hash == digest,
-                            VisualItem.id.in_(
-                                select(VisualImportJob.visual_id).where(
-                                    VisualImportJob.owner_id == user_id, VisualImportJob.original_hash == digest
-                                )
+                existing = (
+                    await db.execute(
+                        select(
+                            VisualItem.id,
+                            VisualVersion.snapshot_json["source"]["original_path"].astext.label("original_path"),
+                            VisualVersion.media_path,
+                        )
+                        .select_from(VisualItem)
+                        .outerjoin(VisualVersion, VisualVersion.id == VisualItem.current_version_id)
+                        .where(
+                            VisualItem.user_id == user_id,
+                            or_(
+                                VisualItem.content_hash == digest,
+                                VisualItem.id.in_(
+                                    select(VisualImportJob.visual_id).where(
+                                        VisualImportJob.user_id == user_id, VisualImportJob.original_hash == digest
+                                    )
+                                ),
                             ),
-                        ),
+                        )
                     )
-                )
-                visual_id = existing or await publish_imported_visual(db, user_id, asset, snapshot, title=title)
+                ).first()
+                if existing is not None:
+                    visual_id, original_path, media_path = existing
+                    if resolve_asset_reference(original_path or media_path) is None:
+                        raise VisualStateError("同内容影像的原件已缺失，请先恢复原件")
+                else:
+                    visual_id = await publish_imported_visual(db, user_id, asset, snapshot, title=title)
+                    # 原件与分析任务在同一个事务登记，避免进程在两步之间退出后留下孤立影像。
+                    job = VisualImportJob(
+                        user_id=user_id,
+                        visual_id=visual_id,
+                        expected_version=1,
+                        original_hash=digest,
+                        state="queued",
+                        stage="analyze",
+                    )
+                    db.add(job)
+                    await db.flush()
+                    await bind_job_assets(db, user_id, job.id, {path}, "original")
                 await notify_visuals_updated(db, user_id)
                 await db.commit()
         return await visual_detail(user_id, visual_id)

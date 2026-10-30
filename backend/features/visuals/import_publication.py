@@ -30,7 +30,9 @@ async def complete_import_analysis(
         approved = False
         reason = "动图原件已保留；当前在影像库中预览，不参与舞台自动呈现。" + reason
     if understanding.asset_kind == "scene":
-        approved = approved and understanding.identity_match == "absent"
+        # 环境影像只有在冻结了可复用的环境素材后才能进入自动目录；
+        # 仅能描述环境但没有完整场景引用的原件仍可收藏和手动预览。
+        approved = approved and understanding.identity_match == "absent" and scene is not None
     else:
         approved = (
             approved
@@ -38,6 +40,8 @@ async def complete_import_analysis(
             and work.context.identity is not None
             and outfit is not None
         )
+        if understanding.asset_kind == "cinematic":
+            approved = approved and scene is not None
         approved = (
             approved and understanding.media_semantics is not None and understanding.media_semantics.auto_selectable
         )

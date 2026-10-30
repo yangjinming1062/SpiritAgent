@@ -117,7 +117,9 @@ def _summary(asset: VisualAsset, snapshot: VisualSnapshot) -> dict[str, Any]:
         if source.presentation_approved and asset.media_kind == "image":
             allowed_triggers = ["manual", "periodic"]
     elif source.kind == "scene":
-        clip_kind = None
+        # 环境视频只有通过真实媒体检查后才发布；明确保存 loop，供环境目录
+        # 与自动资格使用同一套媒体语义。环境图片仍是持续静态画面。
+        clip_kind = "loop" if asset.media_kind == "video" else None
         allowed_triggers: list[str] = []
     else:
         clip_kind = source.action.clip_kind if source.action else None

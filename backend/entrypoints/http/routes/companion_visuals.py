@@ -218,7 +218,7 @@ async def upload_visual(
     filename: Annotated[str, Query(min_length=1, max_length=255)],
     title: Annotated[str, Query(max_length=160)] = "",
     description: Annotated[str, Query(max_length=1500)] = "",
-    asset_kind: Literal["actor", "scene", "cinematic"] = "cinematic",
+    asset_kind: Literal["actor", "scene", "cinematic"] | None = None,
 ) -> VisualDetailView:
     try:
         name = filename.replace("\\", "/").rsplit("/", 1)[-1].strip() or "影像"
@@ -249,6 +249,14 @@ async def get_visual(
     visual_id: Annotated[ResourceId, Path(gt=0, le=POSTGRES_INT8_MAX)], user: CurrentUser
 ) -> VisualDetailView:
     return await _visuals.visual_detail(user_id=user.id, visual_id=visual_id)
+
+
+@router.delete("/{visual_id}", status_code=204)
+async def delete_visual(visual_id: Annotated[ResourceId, Path(gt=0, le=POSTGRES_INT8_MAX)], user: CurrentUser) -> None:
+    try:
+        await _visuals.delete_visual(user_id=user.id, visual_id=visual_id)
+    except VisualError as exc:
+        raise RequestError(status_code=409, message=str(exc)) from exc
 
 
 @router.post("/{visual_id}/regenerate", response_model=VisualJobView, status_code=202)

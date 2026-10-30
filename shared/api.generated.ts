@@ -487,9 +487,10 @@ export interface ApiOperations {
   "companion_visuals.create_actor_clip": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["ActorClipRequest"]; input: { path?: never; query?: never; body: ApiSchemas["ActorClipRequest"] }; response: ApiSchemas["VisualJobView"] }
   "companion_visuals.create_scene_media": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["SceneMediaRequest"]; input: { path?: never; query?: never; body: ApiSchemas["SceneMediaRequest"] }; response: ApiSchemas["VisualJobView"] }
   "companion_visuals.create_cinematic": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["CinematicRequest"]; input: { path?: never; query?: never; body: ApiSchemas["CinematicRequest"] }; response: ApiSchemas["VisualJobView"] }
-  "companion_visuals.upload_visual": { path: Record<string, never>; query: { "filename": string; "title"?: string; "description"?: string; "asset_kind"?: "actor" | "scene" | "cinematic" }; body: Uint8Array; input: { path?: never; query: { "filename": string; "title"?: string; "description"?: string; "asset_kind"?: "actor" | "scene" | "cinematic" }; body: Uint8Array }; response: ApiSchemas["VisualDetailView"] }
+  "companion_visuals.upload_visual": { path: Record<string, never>; query: { "filename": string; "title"?: string; "description"?: string; "asset_kind"?: ("actor" | "scene" | "cinematic" | null) }; body: Uint8Array; input: { path?: never; query: { "filename": string; "title"?: string; "description"?: string; "asset_kind"?: ("actor" | "scene" | "cinematic" | null) }; body: Uint8Array }; response: ApiSchemas["VisualDetailView"] }
   "companion_visuals.analyze_visual": { path: { "visual_id": string }; query: Record<string, never>; body: ApiSchemas["ImportAnalysisRequest"]; input: { path: { "visual_id": string }; query?: never; body: ApiSchemas["ImportAnalysisRequest"] }; response: ApiSchemas["ImportAnalysisView"] }
   "companion_visuals.get_visual": { path: { "visual_id": string }; query: Record<string, never>; body: undefined; input: { path: { "visual_id": string }; query?: never; body?: never }; response: ApiSchemas["VisualDetailView"] }
+  "companion_visuals.delete_visual": { path: { "visual_id": string }; query: Record<string, never>; body: undefined; input: { path: { "visual_id": string }; query?: never; body?: never }; response: undefined }
   "companion_visuals.regenerate_visual": { path: { "visual_id": string }; query: Record<string, never>; body: ApiSchemas["VisualRegenerateRequest"]; input: { path: { "visual_id": string }; query?: never; body: ApiSchemas["VisualRegenerateRequest"] }; response: ApiSchemas["VisualJobView"] }
   "companion_visuals.command_visual_job": { path: { "job_id": string }; query: Record<string, never>; body: ApiSchemas["VisualJobCommandRequest"]; input: { path: { "job_id": string }; query?: never; body: ApiSchemas["VisualJobCommandRequest"] }; response: ApiSchemas["VisualJobView"] }
   "companion_visuals.claim_play": { path: { "play_id": string }; query: Record<string, never>; body: ApiSchemas["VisualClaimRequest"]; input: { path: { "play_id": string }; query?: never; body: ApiSchemas["VisualClaimRequest"] }; response: ApiSchemas["VisualClaimResponse"] }
@@ -1489,6 +1490,18 @@ export const API_OPERATIONS = {
     "method": "GET",
     "encoding": "json",
     "response": "json",
+    "identities": [
+      "desktop",
+      "remote"
+    ],
+    "wait_for_model": false,
+    "ipc": true
+  },
+  "companion_visuals.delete_visual": {
+    "path": "/api/companion/visuals/{visual_id}",
+    "method": "DELETE",
+    "encoding": "json",
+    "response": "empty",
     "identities": [
       "desktop",
       "remote"
