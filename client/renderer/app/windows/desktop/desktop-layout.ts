@@ -33,37 +33,37 @@ export function fitRect(rect: DesktopRect, width: number, height: number): Deskt
 }
 
 export function useDesktopLayout() {
-  // 启动不恢复上次打开的窗口：窗口集合只在本次会话内有效，不跨启动落盘。
+  // 启动不恢复上次打开的窗口：唯一内置窗口只在本次会话内有效，不跨启动落盘。
   const [layout, setLayout] = useState<DesktopLayout>(() => ({ windows: [] }))
 
   const activate = useCallback((id: AppPage): void => {
     setLayout(current => {
-      const last = current.windows.at(-1)
+      const currentWindow = current.windows.at(-1)
 
-      if (last?.id === id && !last.minimized) {
-        return current
+      if (currentWindow?.id === id) {
+        const next = { ...currentWindow, minimized: false }
+
+        if (current.windows.length === 1 && !currentWindow.minimized) {
+          return current
+        }
+
+        return { ...current, windows: [next] }
       }
 
-      const existing = current.windows.find(item => item.id === id)
-
-      const next = existing
-        ? { ...existing, minimized: false }
-        : {
-            id,
-            bounds: {
-              x: 30 + current.windows.length * 18,
-              y: 24 + current.windows.length * 18,
-              width: id === 'chat' ? 1120 : 840,
-              height: 650
-            },
-            minimized: false,
-            maximized: false
-          }
-
-      return {
-        ...current,
-        windows: [...current.windows.filter(item => item.id !== id), next]
+      // 切页按关闭旧窗口处理，但沿用当前窗口的几何状态，避免页面切换时跳动。
+      const next = {
+        id,
+        bounds: currentWindow?.bounds ?? {
+          x: 30,
+          y: 24,
+          width: id === 'chat' ? 1120 : 840,
+          height: 650
+        },
+        minimized: false,
+        maximized: currentWindow?.maximized ?? false
       }
+
+      return { ...current, windows: [next] }
     })
   }, [])
 

@@ -160,7 +160,7 @@ export function DesktopRoot(): React.JSX.Element {
     .filter(Boolean)
     .join(' · ')
 
-  // 内部窗口的活动承载以用户最后激活的面板为准，最小化上层窗口不误激活下层对话。
+  // 内置窗口的活动承载以当前页面为准，最小化时不激活隐藏内容。
   const focused = focusedConversation
 
   const panelsEnabled = foreground && uiStateReady && auth.kind === 'authenticated' && overlay === null
