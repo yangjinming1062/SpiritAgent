@@ -178,6 +178,7 @@ async def complete_import_analysis(
                     "outfit_description": outfit.description if outfit else "",
                 }
             )
+        automatic_titles = {original.original_filename, original.original_filename[:160], ""}
         await publish_import_revision(
             db,
             work.user_id,
@@ -185,7 +186,7 @@ async def complete_import_analysis(
             work.expected_version,
             asset=asset,
             snapshot=snapshot,
-            title=understanding.title if item.title == work.snapshot.source.original_filename else item.title,
+            title=understanding.title if item.title in automatic_titles else item.title,
         )
         job.expected_version = work.expected_version + 1
         job.result_json = work.result.model_dump(mode="json")

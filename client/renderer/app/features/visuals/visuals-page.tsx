@@ -31,7 +31,9 @@ import {
   type VisualJob,
   visualsApi
 } from '@/modules/visuals'
+import { ImagePlus, MessageCircle, Sparkles } from '@/shared/lib/icons'
 import { log } from '@/shared/lib/log'
+import { cn } from '@/shared/lib/utils'
 import {
   Badge,
   BTN_GHOST,
@@ -55,7 +57,7 @@ import { $auth } from '@/shared/store/auth'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
-import { visualJobCommands } from '../../../../../shared/visuals'
+import { emptyVisualCreation, visualJobCommands } from '../../../../../shared/visuals'
 
 import { VisualCreatePanel } from './visual-create-panel'
 import { VisualImportAnalysis } from './visual-import-analysis'
@@ -203,12 +205,26 @@ export function VisualsPage(): React.JSX.Element {
     actions.length
   )
 
+  const hasFilters = Boolean(ui.query || ui.source || ui.mediaKind !== 'all')
+
+  const clearFilters = (): void => {
+    setDraftQuery('')
+    setDraftSource('')
+    updateVisualsUi({ query: '', source: '', mediaKind: 'all', page: 0 })
+  }
+
+  const openComposer = (mode: 'create' | 'upload'): void => {
+    updateVisualsUi({ creation: { ...(ui.creation ?? emptyVisualCreation), mode } })
+  }
+
   return (
     <SettingsContent>
       <SettingsSectionIntro hint={t.intro} title={t.title} />
       {!ui.detailOpen && (
         <VisualCreatePanel
           onDone={async visualId => {
+            setDraftQuery('')
+            setDraftSource('')
             updateVisualsUi({
               query: '',
               source: '',
@@ -220,42 +236,58 @@ export function VisualsPage(): React.JSX.Element {
           }}
         />
       )}
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <SearchField
-          ariaLabel={t.searchAria}
-          className="w-64"
-          onChange={setDraftQuery}
-          onKeyDown={event => {
-            if (event.key === 'Enter') {
-              submitFilters()
-            }
-          }}
-          placeholder={t.searchPlaceholder}
-          value={draftQuery}
-        />
-        <PanelSelect
-          ariaLabel={t.mediaKindLabel}
-          onChange={value => updateVisualsUi({ mediaKind: value, page: 0 })}
-          options={[
-            { value: 'all', label: t.mediaKindAll },
-            { value: 'image', label: t.mediaKindImage },
-            { value: 'video', label: t.mediaKindVideo }
-          ]}
-          value={ui.mediaKind}
-        />
-        <SearchField
-          ariaLabel={t.sourceLabel}
-          className="w-64"
-          onChange={setDraftSource}
-          onKeyDown={event => {
-            if (event.key === 'Enter') {
-              submitFilters()
-            }
-          }}
-          placeholder={t.sourcePlaceholder}
-          value={draftSource}
-        />
-      </div>
+      <SettingCard className="mb-3" divided={false}>
+        <div className="space-y-3 p-3">
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <h3 className="text-xs font-semibold text-strong">{t.libraryTitle}</h3>
+              <p className="mt-1 text-[11px] leading-relaxed text-muted">{t.libraryHint}</p>
+            </div>
+            {total !== null && <span className="text-[11px] text-faint">{t.total(total)}</span>}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <SearchField
+              ariaLabel={t.searchAria}
+              className="min-w-[200px] flex-1"
+              onChange={setDraftQuery}
+              onKeyDown={event => {
+                if (event.key === 'Enter') {
+                  submitFilters()
+                }
+              }}
+              placeholder={t.searchPlaceholder}
+              value={draftQuery}
+            />
+            <PanelSelect
+              ariaLabel={t.mediaKindLabel}
+              onChange={value => updateVisualsUi({ mediaKind: value, page: 0 })}
+              options={[
+                { value: 'all', label: t.mediaKindAll },
+                { value: 'image', label: t.mediaKindImage },
+                { value: 'video', label: t.mediaKindVideo }
+              ]}
+              value={ui.mediaKind}
+            />
+            <SearchField
+              ariaLabel={t.sourceLabel}
+              className="min-w-[200px] flex-1"
+              onChange={setDraftSource}
+              onKeyDown={event => {
+                if (event.key === 'Enter') {
+                  submitFilters()
+                }
+              }}
+              placeholder={t.sourcePlaceholder}
+              value={draftSource}
+            />
+            {hasFilters && (
+              <button className={BTN_GHOST} onClick={clearFilters} type="button">
+                {t.clearFilters}
+              </button>
+            )}
+          </div>
+        </div>
+      </SettingCard>
       {error && (
         <ErrorBanner message={t.loadFailed} onRetry={() => void refreshVisuals({})} retryLabel={dict.common.retry} />
       )}
@@ -263,7 +295,7 @@ export function VisualsPage(): React.JSX.Element {
       {activeJobs.length > 0 && (
         <section className="mb-3">
           <h3 className="mb-2 text-xs font-medium text-muted">{t.jobsTitle}</h3>
-          <SettingCard divided>
+          <SettingCard className="border border-accent-line bg-accent-soft/10" divided>
             {activeJobs.map(job => (
               <SettingRow
                 description={`${t.jobState[job.state] ?? job.state}${job.error ? ` · ${job.error}` : ''}`}
@@ -348,9 +380,20 @@ export function VisualsPage(): React.JSX.Element {
       ) : items.length === 0 ? (
         <EmptyState
           action={
-            <button className={BTN_PRIMARY} onClick={() => void openCompanion()} type="button">
-              {t.contactCompanion}
-            </button>
+            <div className="flex flex-wrap justify-center gap-2">
+              <button className={BTN_PRIMARY} onClick={() => openComposer('upload')} type="button">
+                <ImagePlus aria-hidden="true" className="size-3.5" />
+                {t.composer.upload}
+              </button>
+              <button className={BTN_SUBTLE} onClick={() => openComposer('create')} type="button">
+                <Sparkles aria-hidden="true" className="size-3.5" />
+                {t.composer.create}
+              </button>
+              <button className={BTN_SUBTLE} onClick={() => void openCompanion()} type="button">
+                <MessageCircle aria-hidden="true" className="size-3.5" />
+                {t.contactCompanion}
+              </button>
+            </div>
           }
           description={`${t.emptyHint}${readiness ? ` ${readiness}` : ''}`}
           title={ui.query || ui.source || ui.mediaKind !== 'all' ? t.emptySearch : t.emptyTitle}
@@ -358,7 +401,7 @@ export function VisualsPage(): React.JSX.Element {
       ) : (
         <>
           <SettingCard className="mb-3" divided={false}>
-            <div className="grid grid-cols-2 gap-3 p-3 sm:grid-cols-3 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 p-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {items.map(item => (
                 <VisualCard
                   current={currentVisualId === item.id}
@@ -436,21 +479,34 @@ function VisualCard({
 
   return (
     <button
-      className="flex flex-col gap-2 rounded-xl border border-line-hairline p-2 text-left transition hover:bg-fill-hover"
+      aria-label={item.title}
+      className={cn(
+        'group flex flex-col gap-2 rounded-2xl border p-2.5 text-left transition',
+        'focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2',
+        current
+          ? 'border-accent-line bg-accent-soft/15 shadow-sm'
+          : 'border-line-hairline bg-fill-faint/50 hover:border-line-strong hover:bg-fill-hover'
+      )}
       onClick={onSelect}
       type="button"
     >
-      <div className="aspect-video overflow-hidden rounded-lg bg-fill-faint">
+      <div className="relative aspect-video overflow-hidden rounded-xl bg-fill-trough">
         {cover.status === 'ready' ? (
-          <img alt={t.coverAlt(item.title)} className="h-full w-full object-contain" src={cover.src} />
+          <img
+            alt={t.coverAlt(item.title)}
+            className="h-full w-full object-contain transition duration-200 group-hover:scale-[1.02]"
+            src={cover.src}
+          />
         ) : null}
+        <div className="absolute left-2 top-2 flex flex-wrap gap-1">
+          <Badge>{item.media_kind === 'video' ? t.mediaKindVideo : t.mediaKindImage}</Badge>
+          {current && <Badge tone="accent">{t.currentMark}</Badge>}
+        </div>
       </div>
       <div className="flex flex-wrap items-center gap-1">
-        <span className="truncate text-xs font-medium text-strong">{item.title}</span>
-        <Badge>{item.media_kind === 'video' ? t.mediaKindVideo : t.mediaKindImage}</Badge>
+        <span className="min-w-0 flex-1 truncate text-xs font-semibold text-strong">{item.title}</span>
         <Badge>{assetKindLabel(item.asset_kind, t.assetKindLabels)}</Badge>
         {item.analysis_state && <Badge>{t.analysis.states[item.analysis_state]}</Badge>}
-        {current && <Badge tone="accent">{t.currentMark}</Badge>}
         {!analysisPending && !item.auto_playable && <Badge>{t.autoPlayOff}</Badge>}
       </div>
       {sourceSummary && <p className="truncate text-[11px] text-faint">{sourceSummary}</p>}
@@ -490,139 +546,158 @@ function VisualDetailPanel({
   return (
     <div className="flex flex-col gap-3">
       <SettingCard divided={false}>
-        <div className="flex flex-col gap-4 p-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-medium text-strong">{detail.title}</h3>
-            <Badge>{detail.media_kind === 'video' ? t.mediaKindVideo : t.mediaKindImage}</Badge>
-            <Badge>{assetKindLabel(detail.asset_kind, t.assetKindLabels)}</Badge>
-            {current && <Badge tone="accent">{t.currentMark}</Badge>}
-            {!analysisPending && !detail.auto_playable && <Badge>{t.autoPlayOff}</Badge>}
-          </div>
-          {!analysisPending && !detail.auto_playable && (
-            <div className="text-[11px] text-faint">
-              <p>{t.autoPlayHint}</p>
-              {detail.snapshot.review_reason && (
-                <p>
-                  {t.autoPlayReview}：{detail.snapshot.review_reason}
-                </p>
+        <div className="grid gap-5 p-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(260px,0.75fr)]">
+          <div className="min-w-0 space-y-3">
+            <div className="overflow-hidden rounded-2xl border border-line-hairline bg-fill-trough">
+              <MediaPreview
+                type={detail.media_kind}
+                url={showOriginal && detail.original_url ? detail.original_url : detail.media_url}
+              >
+                {({ failed, onError, onRetry, src, status }) =>
+                  failed ? (
+                    <ErrorBanner
+                      message={dict.creation.previewFailed}
+                      onRetry={onRetry}
+                      retryLabel={dict.creation.retryLoad}
+                    />
+                  ) : status === 'loading' ? (
+                    <LoadingBlock label={t.loading} />
+                  ) : detail.media_kind === 'video' ? (
+                    <video
+                      className="max-h-[min(62vh,620px)] w-full"
+                      controls
+                      onError={onError}
+                      preload="metadata"
+                      src={src}
+                    />
+                  ) : (
+                    <img
+                      alt={detail.title}
+                      className="max-h-[min(62vh,620px)] w-full object-contain"
+                      onError={onError}
+                      src={src}
+                    />
+                  )
+                }
+              </MediaPreview>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[11px] text-faint">{t.previewNote}</p>
+              {detail.original_url && detail.original_url !== detail.media_url && (
+                <button className={BTN_SUBTLE} onClick={() => setShowOriginal(value => !value)} type="button">
+                  {showOriginal ? t.composer.processed : t.composer.original}
+                </button>
               )}
             </div>
-          )}
-          <div className="overflow-hidden rounded-xl bg-fill-faint">
-            <MediaPreview
-              type={detail.media_kind}
-              url={showOriginal && detail.original_url ? detail.original_url : detail.media_url}
-            >
-              {({ failed, onError, onRetry, src, status }) =>
-                failed ? (
-                  <ErrorBanner
-                    message={dict.creation.previewFailed}
-                    onRetry={onRetry}
-                    retryLabel={dict.creation.retryLoad}
-                  />
-                ) : status === 'loading' ? (
-                  <LoadingBlock label={t.loading} />
-                ) : detail.media_kind === 'video' ? (
-                  <video className="w-full" controls onError={onError} preload="metadata" src={src} />
-                ) : (
-                  <img alt={detail.title} className="w-full object-contain" onError={onError} src={src} />
-                )
-              }
-            </MediaPreview>
           </div>
-          <p className="text-[11px] text-faint">{t.previewNote}</p>
-          {detail.original_url && detail.original_url !== detail.media_url && (
-            <button className={BTN_SUBTLE} onClick={() => setShowOriginal(value => !value)} type="button">
-              {showOriginal ? t.composer.processed : t.composer.original}
-            </button>
-          )}
-          {detail.description && <p className="whitespace-pre-wrap text-xs text-muted">{detail.description}</p>}
-          <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted">
-            <span>
-              {t.sizeLabel}：{size}
-            </span>
-            {duration && (
-              <span>
-                {t.durationLabel}：{duration}
-              </span>
-            )}
-            {detail.jobs.length > 0 && (
-              <span>
-                {t.statusLabel}：{detail.jobs.map(job => t.jobState[job.state] ?? job.state).join('、')}
-              </span>
-            )}
-          </div>
-          {detail.original_url && (
-            <button className={BTN_SUBTLE} disabled={busy} onClick={onDelete} type="button">
-              {t.delete}
-            </button>
-          )}
-          <div>
-            <h4 className="mb-1 text-xs font-medium text-strong">{t.sourceTitle}</h4>
-            {(() => {
-              const source = detail.snapshot.source
-
-              if (source.kind === 'analysis') {
-                return (
-                  <div className="text-xs text-muted">
-                    <p>
-                      {t.composer.original}：{source.original_filename}
-                    </p>
-                    <p>{t.composer.uploadHint}</p>
-                  </div>
-                )
-              }
-
-              if (source.kind === 'scene') {
-                return (
-                  <p className="text-[11px] text-muted">
-                    {t.sourceScene}：{materialLabel(detail.scene_id, source.scene.title || '环境媒体')}
+          <div className="min-w-0 space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="min-w-0 flex-1 text-sm font-semibold text-strong">{detail.title}</h3>
+              <Badge>{detail.media_kind === 'video' ? t.mediaKindVideo : t.mediaKindImage}</Badge>
+              <Badge>{assetKindLabel(detail.asset_kind, t.assetKindLabels)}</Badge>
+              {current && <Badge tone="accent">{t.currentMark}</Badge>}
+              {!analysisPending && !detail.auto_playable && <Badge>{t.autoPlayOff}</Badge>}
+            </div>
+            {!analysisPending && !detail.auto_playable && (
+              <div className="rounded-xl border border-line-hairline bg-fill-faint p-3 text-[11px] leading-relaxed text-faint">
+                <p>{t.autoPlayHint}</p>
+                {detail.snapshot.review_reason && (
+                  <p className="mt-1">
+                    {t.autoPlayReview}：{detail.snapshot.review_reason}
                   </p>
-                )
-              }
+                )}
+              </div>
+            )}
+            {detail.description && (
+              <p className="whitespace-pre-wrap text-xs leading-relaxed text-muted">{detail.description}</p>
+            )}
+            <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted">
+              <span>
+                {t.sizeLabel}：{size}
+              </span>
+              {duration && (
+                <span>
+                  {t.durationLabel}：{duration}
+                </span>
+              )}
+              {detail.jobs.length > 0 && (
+                <span>
+                  {t.statusLabel}：{detail.jobs.map(job => t.jobState[job.state] ?? job.state).join('、')}
+                </span>
+              )}
+            </div>
+            <div>
+              <h4 className="mb-1 text-xs font-medium text-strong">{t.sourceTitle}</h4>
+              {(() => {
+                const source = detail.snapshot.source
 
-              return (
-                <>
-                  <p className="text-[11px] text-muted">
-                    {t.sourceOutfit}：{materialLabel(detail.outfit_id, source.outfit.name)}
-                  </p>
-                  {source.kind === 'cinematic' && (
+                if (source.kind === 'analysis') {
+                  return (
+                    <div className="text-xs leading-relaxed text-muted">
+                      <p>
+                        {t.composer.original}：{source.original_filename}
+                      </p>
+                      <p>{t.composer.uploadHint}</p>
+                    </div>
+                  )
+                }
+
+                if (source.kind === 'scene') {
+                  return (
                     <p className="text-[11px] text-muted">
-                      {t.sourceScene}：{materialLabel(detail.scene_id, source.scene.title)}
+                      {t.sourceScene}：{materialLabel(detail.scene_id, source.scene.title || '环境媒体')}
                     </p>
-                  )}
-                  <p className="text-[11px] text-muted">
-                    {t.sourceAction}：{materialLabel(detail.action_id, source.action.name)}
-                  </p>
-                  <p className="whitespace-pre-wrap text-[11px] text-faint">{source.action.motion_description}</p>
-                </>
-              )
-            })()}
-          </div>
-          {detail.snapshot.source.kind !== 'analysis' && (
-            <div className="flex flex-col gap-2">
-              <p className="text-[11px] text-faint">{t.redoHint}</p>
-              <label className="block">
-                <span className={FIELD_LABEL}>{t.feedbackLabel}</span>
-                <textarea
-                  className={`${INPUT_CLASS} min-h-16`}
-                  onChange={event => setFeedback(event.currentTarget.value)}
-                  value={feedback}
-                />
-              </label>
-              {detail.media_kind === 'video' && (
+                  )
+                }
+
+                return (
+                  <>
+                    <p className="text-[11px] text-muted">
+                      {t.sourceOutfit}：{materialLabel(detail.outfit_id, source.outfit.name)}
+                    </p>
+                    {source.kind === 'cinematic' && (
+                      <p className="text-[11px] text-muted">
+                        {t.sourceScene}：{materialLabel(detail.scene_id, source.scene.title)}
+                      </p>
+                    )}
+                    <p className="text-[11px] text-muted">
+                      {t.sourceAction}：{materialLabel(detail.action_id, source.action.name)}
+                    </p>
+                    <p className="whitespace-pre-wrap text-[11px] text-faint">{source.action.motion_description}</p>
+                  </>
+                )
+              })()}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {detail.original_url && (
+                <button className={BTN_SUBTLE} disabled={busy} onClick={onDelete} type="button">
+                  {t.delete}
+                </button>
+              )}
+            </div>
+            {detail.snapshot.source.kind !== 'analysis' && (
+              <div className="space-y-2 border-t border-line-hairline pt-3">
+                <p className="text-[11px] text-faint">{t.redoHint}</p>
                 <label className="block">
-                  <span className={FIELD_LABEL}>{t.videoFeedbackLabel}</span>
+                  <span className={FIELD_LABEL}>{t.feedbackLabel}</span>
                   <textarea
                     className={`${INPUT_CLASS} min-h-16`}
-                    onChange={event => setVideoFeedback(event.currentTarget.value)}
-                    value={videoFeedback}
+                    onChange={event => setFeedback(event.currentTarget.value)}
+                    value={feedback}
                   />
                 </label>
-              )}
-              <div>
+                {detail.media_kind === 'video' && (
+                  <label className="block">
+                    <span className={FIELD_LABEL}>{t.videoFeedbackLabel}</span>
+                    <textarea
+                      className={`${INPUT_CLASS} min-h-16`}
+                      onChange={event => setVideoFeedback(event.currentTarget.value)}
+                      value={videoFeedback}
+                    />
+                  </label>
+                )}
                 <button
-                  className={BTN_SUBTLE}
+                  className={BTN_PRIMARY}
                   disabled={busy}
                   onClick={() => onRedo(feedback, videoFeedback)}
                   type="button"
@@ -630,8 +705,8 @@ function VisualDetailPanel({
                   {t.redoSubmit}
                 </button>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </SettingCard>
       {detail.analysis && <VisualImportAnalysis visual={detail} />}
