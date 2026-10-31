@@ -304,6 +304,9 @@ class ImportComponent(BaseModel):
     created_materials: list[ImportCreatedMaterial] = Field(default_factory=list)
     reason: str = ""
     preview_path: str | None = None
+    can_extract: bool = True
+    creation_method: Literal["pixels", "generated", "pose", "motion"] | None = None
+    candidate_verdict: Literal["pass", "review", "fail"] | None = None
 
 
 class ImportAnalysisResult(BaseModel):

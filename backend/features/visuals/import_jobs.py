@@ -5,12 +5,14 @@ from typing import Literal
 from uuid import uuid4
 
 from infrastructure.api_ids import ResourceId
+from infrastructure.assets.asset_store import resolve_asset_reference
 from infrastructure.database import SESSION_LOCAL
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.jobs.service import bind_job_assets
+from features.media.character_images import ImageChainState
 from features.media.identity_contracts import CharacterCardSnapshot
 
 from .models import VisualImportJob
@@ -73,6 +75,7 @@ class ImportContext(BaseModel):
     animated_image: bool = False
     timing_reliable: bool = True
     sample_duration_ms: int | None = None
+    image_chains: dict[str, ImageChainState] = Field(default_factory=dict)
 
 
 class ImportWork(BaseModel):
@@ -91,13 +94,19 @@ class ImportWork(BaseModel):
 
 
 def import_job_view(job: VisualImportJob) -> ImportAnalysisView:
+    result = ImportAnalysisResult.model_validate(job.result_json) if job.result_json else None
+    if result is not None:
+        for component in result.components:
+            component.can_extract = component.material_id is None or (
+                component.observation.kind == "action" and component.status == "failed"
+            )
     return ImportAnalysisView(
         id=job.id,
         state=job.state,
         stage=job.stage,
         revision=job.revision,
         error=job.error,
-        result=ImportAnalysisResult.model_validate(job.result_json) if job.result_json else None,
+        result=result,
         updated_at=job.updated_at,
     )
 
@@ -169,6 +178,13 @@ async def command_import_job(user_id: int, visual_id: int, body: ImportAnalysisR
                 job.selections_json = [entry.model_dump(mode="json") for entry in body.selections]
             elif body.command == "reanalyze":
                 previous = ImportContext.model_validate(job.context_json)
+                if any(
+                    chain.phase == "submitting" or chain.stop_reason == "result_unknown"
+                    for chain in previous.image_chains.values()
+                ):
+                    raise VisualStateError("图片生成结果尚待核对，请先继续原任务，避免重复提交")
+                if any(chain.phase in {"storing", "evaluating"} for chain in previous.image_chains.values()):
+                    raise VisualStateError("素材图片尚未处理完成，请先继续原任务")
                 history = previous.history
                 if job.result_json:
                     history.append(ImportAnalysisResult.model_validate(job.result_json))
@@ -270,6 +286,11 @@ async def save_import_progress(
         paths = {entry.path for entry in work.context.frames}
         paths |= {entry for entry in (work.context.identity_path, work.context.portrait_path) if entry}
         paths |= {entry.path for entry in work.context.candidates if entry.path}
+        for chain in work.context.image_chains.values():
+            chain_paths = chain.stored_paths()
+            if chain.pending_path and resolve_asset_reference(chain.pending_path) is None:
+                chain_paths.discard(chain.pending_path)
+            paths |= chain_paths
         if work.result:
             paths |= {entry.preview_path for entry in work.result.components if entry.preview_path}
         if work.context.actor_asset:

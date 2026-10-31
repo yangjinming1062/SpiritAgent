@@ -1,5 +1,6 @@
 """原件内容理解与材料复核的实际多模态请求。"""
 
+import io
 from typing import Literal
 
 from infrastructure.ai.models import ModelModality
@@ -9,8 +10,11 @@ from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.api_ids import ResourceId
 from infrastructure.assets.asset_store import build_data_uri, read_valid_image_data_uri
 from infrastructure.async_io import run_blocking
+from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 from runtime.paid_work import require_new_generation_call
+
+from features.action_library.schemas import ActionAssetDesign
 
 from .import_jobs import ImportCatalogCandidate, ImportWork, guard_import_work
 from .import_prompts import (
@@ -19,6 +23,8 @@ from .import_prompts import (
     IMPORT_IMAGE_ANALYSIS,
     IMPORT_JSON_REPAIR,
     IMPORT_MATERIAL_MATCH,
+    IMPORT_POSE_DESIGN,
+    IMPORT_POSE_REVIEW,
     IMPORT_PRESENTATION_REVIEW,
     IMPORT_VIDEO_ANALYSIS,
 )
@@ -195,9 +201,13 @@ async def match_import_material(
     )
 
 
-async def review_import_material(work: ImportWork, observation: ImportObservation, data: bytes) -> ImportQualityVerdict:
+async def review_import_material(
+    work: ImportWork, observation: ImportObservation, data: bytes, *, creation_method: Literal["pixels", "generated"]
+) -> ImportQualityVerdict:
     images, roles = await _reference_images(work)
-    images.append(build_data_uri(data, "image/png"))
+    with Image.open(io.BytesIO(data)) as candidate:
+        mime = Image.MIME.get(candidate.format or "", "image/png")
+    images.append(build_data_uri(data, mime))
     roles.append({"image": len(images), "role": "extracted_candidate"})
     config = await load_user_llm_config(
         work.user_id, AiTaskKey.visuals, required_modalities=frozenset({ModelModality.text, ModelModality.image})
@@ -209,6 +219,7 @@ async def review_import_material(work: ImportWork, observation: ImportObservatio
             "output_language": work.context.language,
             "references": roles,
             "observation": observation.model_dump(mode="json"),
+            "creation_method": creation_method,
         },
         schema=ImportQualityVerdict.model_json_schema(),
         schema_name="visual_import_extraction_review",
@@ -220,14 +231,54 @@ async def review_import_material(work: ImportWork, observation: ImportObservatio
     )
 
 
-async def review_import_action(work: ImportWork, observation: ImportObservation) -> ImportQualityVerdict:
+async def design_import_pose(work: ImportWork, observation: ImportObservation) -> ActionAssetDesign:
+    images, roles = await _reference_images(work)
+    config = await load_user_llm_config(
+        work.user_id, AiTaskKey.visuals, required_modalities=frozenset({ModelModality.text, ModelModality.image})
+    )
+
+    def parse(value: object) -> ActionAssetDesign:
+        if not isinstance(value, dict):
+            raise ValueError("姿态定义格式无效")
+        return ActionAssetDesign.model_validate(
+            {
+                **value,
+                "clip_kind": "loop",
+                "duration_seconds": 4,
+                "performance_role": "sustained",
+                "motion_intensity": "subtle",
+                "allowed_triggers": ["manual", "periodic"],
+            }
+        )
+
+    return await call_llm_json(
+        config,
+        IMPORT_POSE_DESIGN,
+        {
+            "output_language": work.context.language,
+            "references": roles,
+            "observation": observation.model_dump(mode="json"),
+            "user_corrections": work.context.correction_notes,
+        },
+        schema=ActionAssetDesign.model_json_schema(),
+        schema_name="visual_import_pose",
+        parse_output=parse,
+        repair_prompt=IMPORT_JSON_REPAIR,
+        reference_images=tuple(images),
+        before_call=lambda: _before_call(work),
+    )
+
+
+async def review_import_action(
+    work: ImportWork, observation: ImportObservation, *, pose: bool = False
+) -> ImportQualityVerdict:
     images, roles = await _reference_images(work)
     config = await load_user_llm_config(
         work.user_id, AiTaskKey.visuals, required_modalities=frozenset({ModelModality.text, ModelModality.image})
     )
     return await call_llm_json(
         config,
-        IMPORT_ACTION_EVIDENCE_REVIEW,
+        IMPORT_POSE_REVIEW if pose else IMPORT_ACTION_EVIDENCE_REVIEW,
         {
             "output_language": work.context.language,
             "references": roles,

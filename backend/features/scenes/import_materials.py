@@ -1,5 +1,6 @@
-"""将已检查的原件像素作为环境素材采纳，不补画遮挡或启动生图。"""
+"""将已检查的影像提取或补全结果采纳为环境素材。"""
 
+from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.assets.asset_store import resolve_asset_reference
 from infrastructure.domain_locks import lock_domain
 from infrastructure.text import utc_now
@@ -24,6 +25,9 @@ async def accept_imported_scene(
     path: str,
     name: str,
     description: str,
+    generated: bool = False,
+    reference_path: str = "",
+    generation_origin: GenerationOrigin | None = None,
 ) -> SceneSnapshot:
     await lock_domain(db, user_id, "scenes")
     existing = await db.scalar(
@@ -36,18 +40,26 @@ async def accept_imported_scene(
         raise ValueError("提取的环境图片缺失")
     with Image.open(resolved[0]) as image:
         size = {"width": image.width, "height": image.height}
+    source_size = size
+    if generated:
+        reference = resolve_asset_reference(reference_path)
+        if reference is None:
+            raise ValueError("生成环境所需的原始画面缺失")
+        with Image.open(reference[0]) as image:
+            source_size = {"width": image.width, "height": image.height}
     row = CompanionScene(
         user_id=user_id,
         source_key=source_key,
         status="ready",
         origin="user_request",
-        source="user_upload",
+        source="generated" if generated else "user_upload",
         title=name[:80],
         description=description,
         media_path=path,
-        upload_source_path=path,
-        target_size_json=size,
-        source_size_json=size,
+        upload_source_path=reference_path if generated else path,
+        generation_origin_json=generation_origin.model_dump(mode="json") if generation_origin else None,
+        target_size_json=source_size,
+        source_size_json=source_size,
         image_size_json=size,
         ready_at=utc_now(),
     )

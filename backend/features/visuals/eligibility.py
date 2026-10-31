@@ -3,6 +3,11 @@
 from infrastructure.assets.asset_store import resolve_asset_reference
 
 
+def frozen_approval(kind: str | None, value: bool | None) -> bool:
+    """旧制作快照默认通过；分析中的原件必须明确通过。"""
+    return value if value is not None else kind != "analysis"
+
+
 def existing_asset(reference: str | None) -> str | None:
     resolved = resolve_asset_reference(reference)
     return reference if resolved is not None and resolved[0].is_file() else None
@@ -26,11 +31,15 @@ def automatic_media_ready(
     body: dict | None,
     presentation_approved: bool = True,
     scene_reference: bool = True,
+    action_clip_kind: str | None = None,
 ) -> bool:
     return bool(
         presentation_approved
         and (media_kind == "video" or media_kind == "image")
+        and (media_kind != "video" or clip_kind in ("once", "loop"))
+        and (media_kind != "video" or asset_kind != "scene" or clip_kind == "loop")
         and (asset_kind not in ("scene", "cinematic") or scene_reference)
+        and (media_kind != "video" or asset_kind == "scene" or clip_kind == action_clip_kind)
         and (asset_kind == "scene" or (asset_kind in ("actor", "cinematic") and auto_selectable is True))
         and existing_asset(media_path)
         and (asset_kind != "actor" or actor_body_ready(body, clip_kind))

@@ -8,13 +8,19 @@ from infrastructure.database import SESSION_LOCAL
 from infrastructure.text import ensure_utc, utc_now
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from features.action_library.queries import action_by_preset_key, action_preset_keys
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
 from features.jobs.service import requested_job_id
 
 from .client_assets import client_body
-from .eligibility import actor_body_ready, automatic_media_ready, existing_asset
+from .eligibility import (
+    actor_body_ready,
+    automatic_media_ready,
+    existing_asset,
+    frozen_approval,
+)
 from .geometry import visual_aspect_matches
 from .import_jobs import import_job_view
 from .models import VisualImportJob, VisualItem, VisualJob, VisualPresentation, VisualVersion
@@ -64,10 +70,28 @@ from .schemas import (
 )
 
 
+def _frozen_asset_kind() -> ColumnElement[str]:
+    source = VisualVersion.snapshot_json["source"]
+    return case(
+        (source["kind"].astext == "analysis", func.coalesce(source["asset_kind"].astext, "cinematic")),
+        else_=source["kind"].astext,
+    )
+
+
+def _frozen_clip_kind() -> ColumnElement[str | None]:
+    source = VisualVersion.snapshot_json["source"]
+    return case(
+        (VisualItem.media_kind == "image", None),
+        (source["kind"].astext == "analysis", source["clip_kind"].astext),
+        (source["kind"].astext == "scene", "loop"),
+        else_=source["action"]["clip_kind"].astext,
+    )
+
+
 def _source_matches_stage(source: dict, *, outfit: ComboMaterialRef | None, identity_hash: str | None) -> bool:
     """只让当前身份/造型的伙伴成品进入舞台清单；环境成品不绑定伙伴。"""
 
-    if not source.get("presentation_approved", True):
+    if not frozen_approval(source.get("kind"), source.get("presentation_approved")):
         return False
     if source.get("kind") == "scene":
         return bool(source.get("scene"))
@@ -88,13 +112,7 @@ def _source_matches_stage(source: dict, *, outfit: ComboMaterialRef | None, iden
 def _frozen_auto_selectable(source: VisualSource) -> bool | None:
     """冻结输入里的自动可播结论；环境媒体与未知语义为 None。"""
 
-    if source.kind == "analysis":
-        return bool(
-            source.presentation_approved and (source.media_semantics is None or source.media_semantics.auto_selectable)
-        )
-    if source.kind not in ("actor", "cinematic"):
-        return None
-    semantics = source.media_semantics
+    semantics = getattr(source, "media_semantics", None)
     return semantics.auto_selectable if semantics is not None else None
 
 
@@ -234,9 +252,10 @@ async def reusable_actor_clip(user_id: int, source: ActorClipSource) -> bool:
                     asset_kind="actor",
                     media_path=path,
                     auto_selectable=_frozen_auto_selectable(frozen),
-                    clip_kind=frozen.action.clip_kind,
+                    clip_kind=frozen.clip_kind if frozen.kind == "analysis" else frozen.action.clip_kind,
                     body=body,
                     presentation_approved=frozen.presentation_approved,
+                    action_clip_kind=frozen.action.clip_kind,
                 )
             ):
                 return True
@@ -294,6 +313,7 @@ def item_view(item: VisualItem | PresentedVisual, snapshot: VisualSnapshot | Non
             body=item.body_json,
             presentation_approved=source.presentation_approved,
             scene_reference=getattr(source, "scene", None) is not None,
+            action_clip_kind=action.clip_kind if action else None,
         ),
     )
 
@@ -400,7 +420,7 @@ async def list_visuals(
             VisualItem.id,
             VisualItem.media_kind,
             VisualItem.asset_kind,
-            VisualItem.clip_kind,
+            _frozen_clip_kind().label("clip_kind"),
             VisualItem.title,
             VisualItem.status,
             VisualItem.description,
@@ -420,11 +440,15 @@ async def list_visuals(
             func.coalesce(VisualVersion.snapshot_json["source"]["outfit"]["name"].astext, "").label("outfit_name"),
             func.coalesce(VisualVersion.snapshot_json["source"]["scene"]["title"].astext, "").label("scene_title"),
             VisualVersion.snapshot_json["source"]["action"]["name"].astext.label("action_name"),
-            VisualVersion.snapshot_json["source"]["media_semantics"]["auto_selectable"].astext.label("auto_selectable"),
+            VisualVersion.snapshot_json["source"]["kind"].astext.label("source_kind"),
+            VisualVersion.snapshot_json["source"]["media_semantics"]["auto_selectable"]
+            .as_boolean()
+            .label("auto_selectable"),
             VisualVersion.body_json,
             VisualVersion.snapshot_json["source"]["presentation_approved"].as_boolean().label("presentation_approved"),
             VisualVersion.snapshot_json["source"]["original_path"].astext.label("original_path"),
             VisualVersion.snapshot_json["source"]["scene"].astext.label("scene_reference"),
+            VisualVersion.snapshot_json["source"]["action"]["clip_kind"].astext.label("action_clip_kind"),
         )
         rows = list(
             (
@@ -458,15 +482,19 @@ async def list_visuals(
             original_path = values.pop("original_path")
             values["original_url"] = client_asset_url(original_path) if original_path else None
             scene_reference = values.pop("scene_reference")
+            action_clip_kind = values.pop("action_clip_kind")
+            source_kind = values.pop("source_kind")
+            approved = frozen_approval(source_kind, values.pop("presentation_approved"))
             values["auto_playable"] = automatic_media_ready(
                 media_kind=values["media_kind"],
                 asset_kind=values["asset_kind"],
                 media_path=row["media_path"],
-                auto_selectable=values.pop("auto_selectable") == "true",
+                auto_selectable=values.pop("auto_selectable"),
                 clip_kind=values["clip_kind"],
                 body=values.pop("body_json"),
-                presentation_approved=bool(values.pop("presentation_approved")),
+                presentation_approved=approved,
                 scene_reference=bool(scene_reference and scene_reference != "null"),
+                action_clip_kind=action_clip_kind,
             )
             views.append(VisualItemView.model_validate(values))
         return VisualListResponse(
@@ -782,12 +810,14 @@ async def ambient_catalog(db: AsyncSession, state: VisualPresentation, *, limit:
             sorted(preset_keys, key=lambda action_id: (preset_keys[action_id] != "idle", action_id))
         )
     }
+    asset_kind = _frozen_asset_kind()
+    clip_kind = _frozen_clip_kind()
     query = (
         select(
             VisualItem.id,
-            VisualItem.asset_kind,
-            VisualItem.clip_kind,
-            VisualItem.action_id,
+            asset_kind.label("asset_kind"),
+            clip_kind.label("clip_kind"),
+            VisualVersion.action_id,
             VisualItem.media_kind,
             VisualVersion.number,
             VisualVersion.media_path,
@@ -804,95 +834,94 @@ async def ambient_catalog(db: AsyncSession, state: VisualPresentation, *, limit:
         .where(
             VisualItem.user_id == state.user_id,
             VisualItem.status == "ready",
+            asset_kind.in_(("actor", "cinematic")),
             # 完整场景的静态图片同样是可持续画面；actor 仍只能以视频进入目录。
-            or_(VisualItem.media_kind == "video", VisualItem.asset_kind == "cinematic"),
+            or_(VisualItem.media_kind == "video", asset_kind == "cinematic"),
             VisualVersion.snapshot_json["source"]["identity_hash"].astext == identity_hash,
             VisualVersion.snapshot_json["source"]["outfit"]["content_hash"].astext == outfit.content_hash,
         )
     )
-    entries: list[AmbientCatalogEntry] = []
-    for asset_kind, clip_kind in (("actor", "loop"), ("actor", "once"), ("cinematic", None)):
-        filters = [VisualItem.asset_kind == asset_kind]
-        if clip_kind is not None:
-            filters.append(VisualItem.clip_kind == clip_kind)
-        order = [VisualVersion.id.desc()]
-        if asset_kind == "actor" and preset_order:
-            order.insert(0, case(preset_order, value=VisualItem.action_id, else_=len(preset_order)))
-        rows = await db.stream(query.where(*filters).order_by(*order), execution_options={"yield_per": 32})
-        selected_presets: set[str] = set()
-        selected_items: set[int] = set()
-        count = 0
-        try:
-            async for row in rows:
-                preset = preset_keys.get(row.action_id)
-                if row.id in selected_items or (preset and asset_kind == "actor" and preset in selected_presets):
-                    continue
-                source = row.source or {}
-                if not automatic_media_ready(
+    buckets: dict[tuple[str, str | None], list[AmbientCatalogEntry]] = {
+        ("actor", "loop"): [],
+        ("actor", "once"): [],
+        ("cinematic", None): [],
+    }
+    selected_items: set[int] = set()
+    selected_presets: set[tuple[str, str | None, str]] = set()
+    rows = await db.stream(query.order_by(VisualVersion.id.desc()), execution_options={"yield_per": 32})
+    try:
+        async for row in rows:
+            bucket_key = (row.asset_kind, row.clip_kind if row.asset_kind == "actor" else None)
+            bucket = buckets.get(bucket_key)
+            preset = preset_keys.get(row.action_id)
+            if bucket is None or row.id in selected_items:
+                continue
+            source = row.source or {}
+            if not automatic_media_ready(
+                media_kind=row.media_kind,
+                asset_kind=row.asset_kind,
+                media_path=row.media_path,
+                auto_selectable=(source.get("media_semantics") or {}).get("auto_selectable"),
+                clip_kind=row.clip_kind,
+                body=row.body_json,
+                presentation_approved=frozen_approval(source.get("kind"), source.get("presentation_approved")),
+                scene_reference=bool(source.get("scene")),
+                action_clip_kind=(source.get("action") or {}).get("clip_kind"),
+            ):
+                continue
+            if not _stage_ready(
+                row,
+                outfit=outfit,
+                identity_hash=identity_hash,
+                target_width=state.target_width,
+                target_height=state.target_height,
+            ):
+                continue
+            action = ActionMaterialRef.model_validate(source["action"]) if source.get("action") else None
+            semantics = source.get("media_semantics") or {}
+            if action is None and (row.media_kind != "image" or not semantics):
+                continue
+            selected_items.add(row.id)
+            if preset and row.asset_kind == "actor" and (*bucket_key, preset) in selected_presets:
+                continue
+            bucket.append(
+                AmbientCatalogEntry(
+                    visual_id=row.id,
+                    version=row.number,
                     media_kind=row.media_kind,
                     asset_kind=row.asset_kind,
-                    media_path=row.media_path,
-                    auto_selectable=(source.get("media_semantics") or {}).get("auto_selectable"),
                     clip_kind=row.clip_kind,
-                    body=row.body_json,
-                    presentation_approved=bool(source.get("presentation_approved")),
-                    scene_reference=bool(source.get("scene")),
-                ):
-                    continue
-                if not _stage_ready(
-                    row,
-                    outfit=outfit,
-                    identity_hash=identity_hash,
-                    target_width=state.target_width,
-                    target_height=state.target_height,
-                ):
-                    continue
-                action = ActionMaterialRef.model_validate(source["action"]) if source.get("action") else None
-                semantics = source.get("media_semantics") or {}
-                if action is None and (row.media_kind != "image" or not semantics):
-                    continue
-                entries.append(
-                    AmbientCatalogEntry(
-                        visual_id=row.id,
-                        version=row.number,
-                        media_kind=row.media_kind,
-                        asset_kind=row.asset_kind,
-                        clip_kind=(row.clip_kind or "loop") if row.media_kind == "video" else None,
-                        media_url=client_asset_url(row.media_path),
-                        poster_url=client_asset_url(row.poster_path) if row.poster_path else None,
-                        width=row.width,
-                        height=row.height,
-                        duration_ms=row.duration_ms,
-                        description=row.description,
-                        body=ActorClipBody.model_validate(row.body_json) if row.body_json else None,
-                        action_id=row.action_id,
-                        action_name=action.name if action else "",
-                        preset_key=preset,
-                        semantic_tags=action.semantic_tags if action else semantics.get("semantic_tags", []),
-                        performance_role=action.performance_role
-                        if action and row.media_kind == "video"
-                        else "sustained",
-                        motion_intensity=action.motion_intensity
-                        if action
-                        else semantics.get("motion_intensity", "subtle"),
-                        interruptible=action.interruptible if action else True,
-                        media_semantics=source.get("media_semantics"),
-                        allowed_triggers=action.allowed_triggers
-                        if action and row.media_kind == "video"
-                        else ["manual", "periodic"],
-                        use_when=action.use_when if action else [],
-                        avoid_when=action.avoid_when if action else [],
-                    )
+                    media_url=client_asset_url(row.media_path),
+                    poster_url=client_asset_url(row.poster_path) if row.poster_path else None,
+                    width=row.width,
+                    height=row.height,
+                    duration_ms=row.duration_ms,
+                    description=row.description,
+                    body=ActorClipBody.model_validate(row.body_json) if row.body_json else None,
+                    action_id=row.action_id,
+                    action_name=action.name if action else "",
+                    preset_key=preset,
+                    semantic_tags=action.semantic_tags if action else semantics.get("semantic_tags", []),
+                    performance_role=action.performance_role if action and row.media_kind == "video" else "sustained",
+                    motion_intensity=action.motion_intensity if action else semantics.get("motion_intensity", "subtle"),
+                    interruptible=action.interruptible if action else True,
+                    media_semantics=source.get("media_semantics"),
+                    allowed_triggers=action.allowed_triggers
+                    if action and row.media_kind == "video"
+                    else ["manual", "periodic"],
+                    use_when=action.use_when if action else [],
+                    avoid_when=action.avoid_when if action else [],
                 )
-                selected_items.add(row.id)
-                if preset:
-                    selected_presets.add(preset)
-                count += 1
-                if count >= limit:
-                    break
-        finally:
-            await rows.close()
-    return entries
+            )
+            if preset:
+                selected_presets.add((*bucket_key, preset))
+            if row.asset_kind == "actor":
+                bucket.sort(key=lambda entry: preset_order.get(entry.action_id, len(preset_order)))
+            if len(bucket) > limit:
+                bucket.pop()
+    finally:
+        await rows.close()
+    return [entry for entries in buckets.values() for entry in entries]
 
 
 async def _ambient_actor(db: AsyncSession, state: VisualPresentation) -> StageLayerMedia | None:
@@ -909,10 +938,11 @@ async def _ambient_actor(db: AsyncSession, state: VisualPresentation) -> StageLa
         .join(VisualItem, VisualItem.id == VisualVersion.visual_id)
         .where(
             VisualItem.user_id == state.user_id,
-            VisualItem.asset_kind == "actor",
+            _frozen_asset_kind() == "actor",
             VisualItem.status == "ready",
-            VisualItem.action_id == idle.id,
-            VisualItem.clip_kind == "loop",
+            VisualItem.media_kind == "video",
+            VisualVersion.action_id == idle.id,
+            _frozen_clip_kind() == "loop",
             VisualVersion.snapshot_json["source"]["identity_hash"].astext == identity_hash,
             VisualVersion.snapshot_json["source"]["outfit"]["content_hash"].astext == outfit.content_hash,
         )
@@ -927,15 +957,16 @@ async def _ambient_actor(db: AsyncSession, state: VisualPresentation) -> StageLa
             and frozen.action is not None
             and frozen.identity_hash == identity_hash
             and frozen.outfit.content_hash == outfit.content_hash
-            and frozen.action.clip_kind == "loop"
+            and (frozen.clip_kind if frozen.kind == "analysis" else frozen.action.clip_kind) == "loop"
             and automatic_media_ready(
                 media_kind="video",
                 asset_kind="actor",
                 media_path=version.media_path,
                 auto_selectable=_frozen_auto_selectable(frozen),
-                clip_kind=frozen.action.clip_kind,
+                clip_kind="loop",
                 body=version.body_json,
                 presentation_approved=frozen.presentation_approved,
+                action_clip_kind=frozen.action.clip_kind,
             )
         ):
             return await _layer_media(db, state.user_id, version.visual_id, version.number)
@@ -966,12 +997,15 @@ async def ambient_scene_catalog(db: AsyncSession, user_id: int, scene: SceneMedi
             VisualItem.status == "ready",
             VisualItem.media_kind == "video",
             VisualItem.asset_kind == "scene",
-            or_(
-                VisualItem.clip_kind == "loop",
-                VisualVersion.snapshot_json["source"]["kind"].astext == "scene",
-            ),
+            _frozen_clip_kind() == "loop",
             VisualVersion.snapshot_json["source"]["scene"]["content_hash"].astext == scene.content_hash,
-            func.coalesce(VisualVersion.snapshot_json["source"]["presentation_approved"].as_boolean(), True).is_(True),
+            or_(
+                VisualVersion.snapshot_json["source"]["presentation_approved"].as_boolean().is_(True),
+                (
+                    VisualVersion.snapshot_json["source"]["presentation_approved"].as_boolean().is_(None)
+                    & (VisualVersion.snapshot_json["source"]["kind"].astext == "scene")
+                ),
+            ),
         )
         .order_by(VisualVersion.id.desc()),
         execution_options={"yield_per": 32},

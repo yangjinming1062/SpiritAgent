@@ -31,7 +31,9 @@ async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
     paths |= await job_asset_paths(db, user_id)
     for analysis in await db.scalars(select(VisualImportJob).where(VisualImportJob.user_id == user_id)):
         paths |= asset_paths(analysis.result_json, user_id)
-        if analysis.state not in {"succeeded", "cancelled"}:
+        if analysis.state != "succeeded" and (
+            analysis.state != "cancelled" or analysis.context_json.get("image_chains")
+        ):
             paths |= asset_paths(analysis.context_json, user_id)
     for pending, current, composition in await db.execute(
         select(
@@ -57,16 +59,14 @@ async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
 
 
 async def _automatic_version_ids(db: AsyncSession, user_id: int) -> set[int]:
-    """每份冻结身份、造型、动作与画幅保留最新合格实现，供目录回退与准备复用。"""
+    """每组冻结素材与画幅保留最新合格版本，供目录回退与准备复用。"""
 
     rows = await db.stream(
-        select(VisualVersion, VisualItem.asset_kind)
+        select(VisualVersion, VisualItem.media_kind)
         .join(VisualItem, VisualItem.id == VisualVersion.visual_id)
         .where(
             VisualItem.user_id == user_id,
             VisualItem.status == "ready",
-            VisualItem.media_kind == "video",
-            VisualItem.asset_kind.in_(("actor", "cinematic")),
             VisualVersion.snapshot_json["source"]["media_semantics"]["auto_selectable"].as_boolean().is_(True),
         )
         .order_by(VisualVersion.id.desc()),
@@ -75,10 +75,24 @@ async def _automatic_version_ids(db: AsyncSession, user_id: int) -> set[int]:
     protected: set[int] = set()
     selected: set[str] = set()
     try:
-        async for version, asset_kind in rows:
-            source = VisualSnapshot.model_validate(version.snapshot_json).source
-            if source.kind not in ("actor", "cinematic", "analysis") or source.outfit is None or source.action is None:
+        async for version, media_kind in rows:
+            snapshot = VisualSnapshot.model_validate(version.snapshot_json)
+            source = snapshot.source
+            if (
+                snapshot.kind not in ("actor", "cinematic")
+                or source.kind not in ("actor", "cinematic", "analysis")
+                or source.outfit is None
+                or (media_kind == "video" and source.action is None)
+            ):
                 continue
+            scene = getattr(source, "scene", None)
+            clip_kind = (
+                None
+                if media_kind == "image"
+                else source.clip_kind
+                if source.kind == "analysis"
+                else source.action.clip_kind
+            )
             key = json.dumps(
                 [
                     version.visual_id,
@@ -86,21 +100,24 @@ async def _automatic_version_ids(db: AsyncSession, user_id: int) -> set[int]:
                     source.portrait_hash,
                     source.identity_reference_role,
                     source.outfit.content_hash,
-                    source.action.media_basis(),
+                    source.action.media_basis() if source.action else None,
+                    scene.content_hash if scene else None,
+                    clip_kind,
                     version.width,
                     version.height,
                 ],
                 sort_keys=True,
             )
             if key in selected or not automatic_media_ready(
-                media_kind="video",
-                asset_kind=asset_kind,
+                media_kind=media_kind,
+                asset_kind=snapshot.kind,
                 media_path=version.media_path,
                 auto_selectable=source.media_semantics.auto_selectable if source.media_semantics else None,
-                clip_kind=source.action.clip_kind,
+                clip_kind=clip_kind,
                 body=version.body_json,
                 presentation_approved=source.presentation_approved,
-                scene_reference=getattr(source, "scene", None) is not None,
+                scene_reference=scene is not None,
+                action_clip_kind=source.action.clip_kind if source.action else None,
             ):
                 continue
             selected.add(key)

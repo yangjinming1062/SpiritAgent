@@ -1910,6 +1910,12 @@ export const dict: Dictionary = {
       review: 'Review evidence',
       descriptionLabel: 'Observed details',
       extractionLabel: 'Extraction basis',
+      methods: {
+        pixels: 'Extracted',
+        generated: 'Generated completion',
+        pose: 'Still pose',
+        motion: 'Video action'
+      } as Record<string, string>,
       evidenceTitle: 'Recognition details',
       failed: 'Media analysis operation failed',
       states: {
@@ -1941,6 +1947,7 @@ export const dict: Dictionary = {
         analyze: 'Understanding content',
         organize: 'Organizing materials',
         match: 'Checking similar materials',
+        generate_material: 'Generating material',
         extraction_review: 'Reviewing extraction',
         action_review: 'Reviewing action',
         presentation_review: 'Reviewing presentation',

@@ -29,6 +29,12 @@ const COMPONENT: Record<string, string> = {
 }
 const CONFIDENCE: Record<string, string> = { high: '高置信度', medium: '中等置信度', low: '低置信度' }
 const DECISION: Record<string, string> = { same: '一致', different: '不同', uncertain: '尚不确定' }
+const METHOD: Record<string, string> = {
+  pixels: '原图提取',
+  generated: '生成补全',
+  pose: '静态姿态',
+  motion: '视频动作'
+}
 
 export function VisualAnalysis({
   api,
@@ -89,7 +95,6 @@ export function VisualAnalysis({
       command: 'apply',
       selections: [{ key: component.observation.key, command: operation, material_id: materialId }]
     })
-  const source = visual.snapshot.source
   const reviewText = visual.snapshot.review_reason || job?.result?.understanding.presentation_reason || ''
   return (
     <section className="card">
@@ -97,12 +102,14 @@ export function VisualAnalysis({
         <h3>识别与素材整理</h3>
         {job && <span className="pill">{STATE[job.state]}</span>}
       </div>
-      <p className="muted">
+      <p aria-live="polite" className="muted" role="status">
         {active
-          ? '正在分析原始影像并核对素材，离开页面后任务仍会继续。'
+          ? job.stage === 'generate_material'
+            ? '正在生成补全素材，离开页面后任务仍会继续。'
+            : '正在分析原始影像并核对素材，离开页面后任务仍会继续。'
           : !job
             ? '原件已保存，可以分析内容并整理素材。'
-            : source.presentation_approved
+            : visual.auto_playable
               ? '已通过检查，可在合适情境中使用。'
               : '当前仅收藏，尚未满足自动呈现条件。'}
       </p>
@@ -163,12 +170,14 @@ export function VisualAnalysis({
                   <h4>{observation.name}</h4>
                   <span className="pill">{COMPONENT[component.status]}</span>
                 </div>
+                {component.creation_method && <p className="muted">{METHOD[component.creation_method]}</p>}
                 {component.preview_path && <Media type="image" url={component.preview_path} />}
+                {component.reason && <p className="muted">{component.reason}</p>}
                 <details className="optional-details">
                   <summary>查看识别依据</summary>
                   {observation.description ? <p>{observation.description}</p> : null}
-                  {component.reason || observation.extraction_reason ? (
-                    <p className="muted">{component.reason || observation.extraction_reason}</p>
+                  {observation.extraction_reason && observation.extraction_reason !== component.reason ? (
+                    <p className="muted">{observation.extraction_reason}</p>
                   ) : null}
                   {component.matches.length > 0 && (
                     <>
@@ -206,7 +215,7 @@ export function VisualAnalysis({
                       >
                         关联此素材
                       </button>
-                      {observation.extractable && component.material_id === null && (
+                      {component.can_extract && (
                         <button disabled={busy} onClick={() => choose(component, 'extract')} type="button">
                           提取并入库
                         </button>

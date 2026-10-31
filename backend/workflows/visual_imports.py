@@ -1,6 +1,7 @@
 """用户影像分析、分类型查重、受控提取和呈现复核的跨业务编排。"""
 
 import asyncio
+import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -10,12 +11,15 @@ from features.action_library.import_materials import action_is_imported, undo_im
 from features.action_library.queries import action_detail, list_actions
 from features.action_library.review import review_action
 from features.action_library.service import create_action, retry_review
-from features.appearance.character_card import load_character_snapshot
+from features.appearance.avatar_service import FULLBODY_SIZE
+from features.appearance.character_card import load_character_snapshot, render_character_identity
 from features.appearance.import_materials import accept_imported_outfit, undo_imported_outfit
 from features.appearance.queries import avatar_snapshot, ready_outfit_snapshot, ready_outfit_snapshots
 from features.assets.lifecycle import cleanup_asset_directories_after_task
 from features.configuration.settings.values import get_user_setting
 from features.life.material_references import material_has_references
+from features.media.character_images import ImageChainState, generate_character_images, generate_scene_images
+from features.media.image_generation import ImageGenerationError
 from features.scenes.import_materials import accept_imported_scene, undo_imported_scene
 from features.scenes.queries import scene_snapshot
 from features.scenes.snapshots import list_scene_snapshots
@@ -39,8 +43,10 @@ from features.visuals.import_media import (
     visual_vector,
     visual_vector_bytes,
 )
+from features.visuals.import_prompts import IMPORT_OUTFIT_GENERATION, IMPORT_SCENE_GENERATION
 from features.visuals.import_publication import complete_import_analysis
 from features.visuals.import_reasoning import (
+    design_import_pose,
     match_import_material,
     review_import_action,
     review_import_material,
@@ -59,6 +65,7 @@ from features.visuals.schemas import (
     ImportObservation,
     SceneMediaRef,
 )
+from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import (
     compute_file_sha256,
     resolve_asset_reference,
@@ -66,11 +73,13 @@ from infrastructure.assets.asset_store import (
 )
 from infrastructure.assets.write_protection import asset_write_context
 from infrastructure.async_io import run_blocking
-from infrastructure.database import SESSION_LOCAL
+from infrastructure.database import ENGINE, SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import resolve_language
 from infrastructure.video_processing.ffmpeg import VideoProcessError, probe_video
 from infrastructure.video_processing.image import prepare_transparent_image
+from infrastructure.video_processing.matting import require_matting_model
+from PIL import Image
 from runtime.lifecycle import RuntimeParticipant
 from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
 from runtime.task_supervisor import TASK_SUPERVISOR
@@ -141,8 +150,9 @@ async def _hash(reference: str) -> str:
 
 async def _load_context(work: ImportWork) -> None:
     context = work.context
-    if context.candidates or context.identity is not None:
+    if context.identity is not None:
         return
+    context.candidates = []
     async with SESSION_LOCAL() as db:
         context.language = resolve_language(await get_user_setting(db, work.user_id, "language"))
         identity = await load_character_snapshot(db, work.user_id)
@@ -352,13 +362,21 @@ async def _material_adoption_lock(work: ImportWork, kind: str) -> AsyncIterator[
         yield
         return
     lock_name = f"spiritagent:visual-import:{kind}:{work.user_id}"
-    async with SESSION_LOCAL() as db:
-        await db.execute(select(func.pg_advisory_lock(func.hashtextextended(lock_name, 0))))
+    async with ENGINE.connect() as raw_connection:
+        connection = await raw_connection.execution_options(isolation_level="AUTOCOMMIT")
+        try:
+            await connection.execute(select(func.pg_advisory_lock(func.hashtextextended(lock_name, 0))))
+        except BaseException:
+            await connection.invalidate()
+            raise
         try:
             yield
         finally:
-            await db.execute(select(func.pg_advisory_unlock(func.hashtextextended(lock_name, 0))))
-            await db.commit()
+            try:
+                await connection.execute(select(func.pg_advisory_unlock(func.hashtextextended(lock_name, 0))))
+            except BaseException:
+                await connection.invalidate()
+                raise
 
 
 async def _read_selected(work: ImportWork, kind: str, material_id: int) -> ImportCatalogCandidate:
@@ -675,7 +693,7 @@ async def _remember_candidate(work: ImportWork, component: ImportComponent) -> N
     await save_import_progress(work, "organize")
 
 
-async def _recheck_existing_material(work: ImportWork, component: ImportComponent) -> bool:
+async def _recheck_existing_material(work: ImportWork, component: ImportComponent, *, explicit: bool) -> bool:
     """在真正提取前复核本任务中新出现的候选，避免过时的 new 结论造成重复入库。"""
 
     if component.observation.kind not in {"outfit", "scene"}:
@@ -695,30 +713,91 @@ async def _recheck_existing_material(work: ImportWork, component: ImportComponen
         component.reason += note
         await save_import_progress(work, "organize", adopt=adopt)
         return True
-    if result.decision == "uncertain":
+    if result.decision == "uncertain" and not explicit:
         component.status, component.reason = "ambiguous", "存在近似素材，请选择已有素材或保留识别结果"
         return True
     return False
 
 
-async def _extract(work: ImportWork, component: ImportComponent) -> None:
-    async with _material_adoption_lock(work, component.observation.kind):
-        await _extract_locked(work, component)
-
-
-async def _extract_locked(work: ImportWork, component: ImportComponent) -> None:
+async def _generate_import_material(work: ImportWork, component: ImportComponent) -> str:
     observation = component.observation
-    if not observation.extractable:
-        component.status, component.reason = "recognized", observation.extraction_reason
-        return
+    frame = work.context.frames[observation.frame_index].path
+    state = work.context.image_chains.setdefault(observation.key, ImageChainState())
+    directory = state.storage_directory or f"visuals/analysis/{work.id}"
+    description = json.dumps(
+        {"name": observation.name, "description": observation.description, "features": observation.features},
+        ensure_ascii=False,
+    )
+
+    async def save_progress(progress: ImageChainState) -> None:
+        work.context.image_chains[observation.key] = progress
+        await save_import_progress(work, "generate_material")
+
+    async def before_submit() -> None:
+        require_new_generation_call(work.user_id)
+        await guard_import_work(work, paid=True)
+
+    if observation.kind == "scene":
+        resolved = resolve_asset_reference(frame)
+        if resolved is None:
+            raise ValueError("原始环境参考图缺失")
+
+        def size() -> tuple[int, int]:
+            with Image.open(resolved[0]) as image:
+                return image.size
+
+        width, height = await run_blocking(size)
+        paths = await generate_scene_images(
+            IMPORT_SCENE_GENERATION.format(observation=description),
+            user_id=work.user_id,
+            storage_directory=directory,
+            target_width=width,
+            target_height=height,
+            reference_image=frame,
+            state=state,
+            save_progress=save_progress,
+            before_submit=before_submit,
+        )
+    else:
+        if work.context.identity is None or not work.context.identity_path:
+            raise ValueError("伙伴身份尚未就绪，无法生成着装")
+        await run_blocking(require_matting_model)
+        paths = await generate_character_images(
+            IMPORT_OUTFIT_GENERATION.format(observation=description),
+            user_id=work.user_id,
+            task=AiTaskKey.outfit,
+            storage_directory=directory,
+            size=FULLBODY_SIZE,
+            reference_image=work.context.identity_path,
+            secondary_reference_image=frame,
+            identity_reference=work.context.identity_path,
+            identity_reference_mode="primary",
+            identity_text=render_character_identity(work.context.identity),
+            goal_review="required",
+            prefer_transparent_background=True,
+            state=state,
+            save_progress=save_progress,
+            before_submit=before_submit,
+        )
+    return paths[0]
+
+
+async def _extract(work: ImportWork, component: ImportComponent, *, explicit: bool = False) -> None:
+    async with _material_adoption_lock(work, component.observation.kind):
+        await _extract_locked(work, component, explicit=explicit)
+
+
+async def _extract_locked(work: ImportWork, component: ImportComponent, *, explicit: bool) -> None:
+    observation = component.observation
     if work.result is None:
         raise ValueError("内容分析结果缺失")
-    if observation.kind == "outfit" and (
-        work.result.understanding.identity_match != "same" or work.context.identity is None
-    ):
-        component.status, component.reason = "recognized", "伙伴身份尚未确认，不将这套着装加入衣柜"
+    if observation.kind == "outfit" and (work.context.identity is None or not work.context.identity_path):
+        component.status, component.reason = "recognized", "伙伴身份尚未就绪，无法创建着装"
         return
-    if await _recheck_existing_material(work, component):
+    if not explicit and not observation.extractable:
+        component.status, component.reason = "recognized", observation.extraction_reason
+        return
+    if await _recheck_existing_material(work, component, explicit=explicit):
         return
     previous = _current_owned_material(work, component)
     component.extraction_key = component.extraction_key or str(
@@ -728,19 +807,41 @@ async def _extract_locked(work: ImportWork, component: ImportComponent) -> None:
         )
     )
     if observation.kind == "action":
-        if (
-            (work.media_kind != "video" and not work.context.animated_image)
-            or not work.context.timing_reliable
-            or observation.action_design is None
-            or len(work.context.frames) < 2
-        ):
-            component.status, component.reason = "recognized", "图片或不足的时间信息不能建立连续动作"
-            return
-        evidence = await review_import_action(work, observation)
-        component.reason = evidence.reason
-        if evidence.decision != "pass":
-            component.status = "recognized"
-            return
+        motion = bool(
+            (work.media_kind == "video" or work.context.animated_image)
+            and work.context.timing_reliable
+            and observation.extractable
+            and observation.action_design is not None
+            and observation.start_seconds is not None
+            and observation.end_seconds is not None
+            and len(
+                {
+                    frame.seconds
+                    for frame in work.context.frames
+                    if observation.start_seconds <= frame.seconds <= observation.end_seconds
+                }
+            )
+            >= 2
+        )
+        if not motion and (component.creation_method != "pose" or component.candidate_verdict in {"review", "fail"}):
+            if not explicit:
+                component.status, component.reason = "recognized", "可按画面中的静态姿态创建动作"
+                return
+            observation.action_design = await design_import_pose(work, observation)
+            component.creation_method, component.candidate_verdict = "pose", None
+            await save_import_progress(work, "action_review")
+        elif motion:
+            component.creation_method = "motion"
+        if observation.action_design is None:
+            raise ValueError("动作定义缺失")
+        if component.candidate_verdict != "pass":
+            evidence = await review_import_action(work, observation, pose=component.creation_method == "pose")
+            component.reason, component.candidate_verdict = evidence.reason, evidence.decision
+            await save_import_progress(work, "action_review")
+            if evidence.decision != "pass":
+                component.status = "recognized"
+                return
+        evidence_reason = component.reason
         async with SESSION_LOCAL() as db:
             source = await load_action_review_source(db, work.user_id)
             await db.commit()
@@ -783,7 +884,9 @@ async def _extract_locked(work: ImportWork, component: ImportComponent) -> None:
             if current and current.status == "failed"
             else "recognized"
         )
-        component.reason = f"{evidence.reason}\n{current.review_reason}" if current else "动作已被删除"
+        component.reason = f"{evidence_reason}\n{current.review_reason}" if current else "动作已被删除"
+        if current and current.status in {"deferred", "rejected"}:
+            component.reason += "\n动作尚未入库，可在动作库中调整后重新评审。"
         if component.status in {"created", "reused"}:
             if previous is not None and previous.material_id != component.material_id:
                 adopt, note = await _change_reference(work, component, component.material_id, previous=previous)
@@ -793,30 +896,103 @@ async def _extract_locked(work: ImportWork, component: ImportComponent) -> None:
         elif previous is not None and component.material_id != previous.material_id:
             await _restore_previous_reference(work, component, previous)
         return
-    if component.preview_path and resolve_asset_reference(component.preview_path):
-        data = await run_blocking(resolve_asset_reference(component.preview_path)[0].read_bytes)
-    else:
-        frame = work.context.frames[observation.frame_index]
-        resolved = resolve_asset_reference(frame.path)
-        if resolved is None:
-            raise ValueError("提取所需的原始帧缺失")
-        data = await run_blocking(resolved[0].read_bytes)
-        data = await run_blocking(extract_region, data, observation.crop)
-        if observation.kind == "outfit":
-            data = await run_blocking(prepare_transparent_image, data)
-        component.preview_path = await save_companion_asset_async(
-            data,
-            user_id=work.user_id,
-            label=f"extracted_{observation.kind}",
-            ext="png",
-            directory=f"visuals/analysis/{work.id}",
+    frame = work.context.frames[observation.frame_index]
+    legacy_rejected = bool(
+        component.preview_path and component.creation_method is None and component.status == "recognized"
+    )
+    direct = bool(
+        observation.extractable
+        and not legacy_rejected
+        and component.creation_method != "generated"
+        and component.candidate_verdict not in {"review", "fail"}
+        and (observation.kind != "outfit" or work.result.understanding.identity_match == "same")
+    )
+    if direct:
+        resolved = resolve_asset_reference(component.preview_path) if component.preview_path else None
+        if resolved is not None:
+            data = await run_blocking(resolved[0].read_bytes)
+        else:
+            resolved = resolve_asset_reference(frame.path)
+            if resolved is None:
+                raise ValueError("提取所需的原始帧缺失")
+            data = await run_blocking(resolved[0].read_bytes)
+            data = await run_blocking(extract_region, data, observation.crop)
+            try:
+                if observation.kind == "outfit":
+                    data = await run_blocking(prepare_transparent_image, data)
+            except VideoProcessError:
+                if not explicit:
+                    raise
+                direct = False
+            if direct:
+                component.preview_path = await save_companion_asset_async(
+                    data,
+                    user_id=work.user_id,
+                    label=f"extracted_{observation.kind}",
+                    ext="png",
+                    directory=f"visuals/analysis/{work.id}",
+                )
+        if direct:
+            component.creation_method = "pixels"
+            await save_import_progress(work, "extraction_review")
+            if component.candidate_verdict != "pass":
+                verdict = await review_import_material(work, observation, data, creation_method="pixels")
+                component.reason, component.candidate_verdict = verdict.reason, verdict.decision
+                await save_import_progress(work, "extraction_review")
+                if verdict.decision != "pass":
+                    direct = False
+
+    if not direct:
+        if not explicit:
+            component.status = "recognized"
+            component.reason = component.reason or "可生成补全后再入库"
+            return
+        resolved = (
+            resolve_asset_reference(component.preview_path)
+            if component.preview_path and component.creation_method == "generated"
+            else None
         )
-        await save_import_progress(work, "extraction_review")
-    verdict = await review_import_material(work, observation, data)
-    component.reason = verdict.reason
-    if verdict.decision != "pass":
-        component.status = "recognized"
-        return
+        if resolved is None or component.candidate_verdict != "pass":
+            if component.creation_method != "generated":
+                component.preview_path = None
+            chain = work.context.image_chains.get(observation.key)
+            if (
+                component.status == "failed"
+                and chain is not None
+                and chain.phase in {"ready", "complete"}
+                and chain.stop_reason != "result_unknown"
+                and not chain.pending_urls
+                and not chain.can_retry_goal_review()
+                and (not chain.providers or (chain.phase == "complete" and chain.stop_reason == "exhausted"))
+            ):
+                work.context.image_chains.pop(observation.key)
+                component.preview_path = None
+            if component.creation_method == "generated" and component.candidate_verdict in {"review", "fail"}:
+                chain = work.context.image_chains.get(observation.key)
+                if chain is not None and chain.stop_reason != "result_unknown":
+                    work.context.image_chains.pop(observation.key)
+                    component.preview_path = None
+            component.creation_method, component.candidate_verdict = "generated", None
+            await save_import_progress(work, "generate_material")
+            component.preview_path = await _generate_import_material(work, component)
+            await save_import_progress(work, "extraction_review")
+            resolved = resolve_asset_reference(component.preview_path)
+            if resolved is None:
+                raise ValueError("生成的素材图片缺失")
+            data = await run_blocking(resolved[0].read_bytes)
+            verdict = await review_import_material(work, observation, data, creation_method="generated")
+            component.reason, component.candidate_verdict = verdict.reason, verdict.decision
+            await save_import_progress(work, "extraction_review")
+            if verdict.decision != "pass":
+                component.status = "recognized"
+                return
+
+    generated = component.creation_method == "generated"
+    description = observation.description
+    if generated:
+        description = f"{description}\n根据上传影像生成补全，遮挡部分为推测。{component.reason}"
+    image_chain = work.context.image_chains.get(observation.key) if generated else None
+    generation_origin = image_chain.selected_origin() if image_chain is not None else None
 
     async def adopt(db: AsyncSession) -> None:
         if observation.kind == "outfit":
@@ -826,9 +1002,11 @@ async def _extract_locked(work: ImportWork, component: ImportComponent) -> None:
                 source_key=component.extraction_key,
                 path=component.preview_path,
                 name=observation.name,
-                description=observation.description,
+                description=description,
                 identity=work.context.identity,
                 identity_path=work.context.identity_path,
+                reference_path=frame.path if generated else None,
+                generation_origin=generation_origin,
             )
         else:
             accepted = await accept_imported_scene(
@@ -837,7 +1015,10 @@ async def _extract_locked(work: ImportWork, component: ImportComponent) -> None:
                 source_key=component.extraction_key,
                 path=component.preview_path,
                 name=observation.name,
-                description=observation.description,
+                description=description,
+                generated=generated,
+                reference_path=frame.path if generated else "",
+                generation_origin=generation_origin,
             )
         component.material_id, component.created, component.status = accepted.id, True, "created"
         _remember_created_material(component)
@@ -892,6 +1073,15 @@ async def _undo(work: ImportWork, component: ImportComponent, *, status: str = "
 async def _organize_component(work: ImportWork, component: ImportComponent) -> None:
     choice = next((entry for entry in work.selections if entry.key == component.observation.key), None)
     if choice:
+        if (
+            component.status in {"created", "reused"}
+            and component.material_id is not None
+            and (
+                choice.command == "extract"
+                or (choice.command == "existing" and choice.material_id == component.material_id)
+            )
+        ):
+            return
         if choice.command == "undo":
             await _undo(work, component)
         elif choice.command == "skip":
@@ -902,9 +1092,7 @@ async def _organize_component(work: ImportWork, component: ImportComponent) -> N
         elif choice.command == "existing":
             await _adopt_existing(work, component, choice.material_id)
         else:
-            if any(match.decision == "same" and match.confidence == "high" for match in component.matches):
-                raise ValueError("已有高置信度匹配素材，请先核对关联，避免重复入库")
-            await _extract(work, component)
+            await _extract(work, component, explicit=True)
         return
     if component.status in {"reused", "created", "skipped", "undone", "ambiguous"}:
         return
@@ -996,7 +1184,7 @@ async def run_import_analysis(user_id: int, job_id: int) -> None:
                         component.status, component.reason = (
                             "failed",
                             str(exc)
-                            if isinstance(exc, VideoProcessError)
+                            if isinstance(exc, VideoProcessError | ImageGenerationError)
                             else "素材整理未完成，可保留原件并重试此条目",
                         )
                     async with _material_adoption_lock(work, component.observation.kind):
@@ -1021,7 +1209,14 @@ async def run_import_analysis(user_id: int, job_id: int) -> None:
         if work:
             await fail_import_work(work, "分析未完成，请检查影像分析模型、素材和服务后重试")
     finally:
-        cleanup_asset_directories_after_task(user_id, [f"visuals/analysis/{job_id}"])
+        directories = {f"visuals/analysis/{job_id}"}
+        if work is not None:
+            directories.update(
+                chain.storage_directory
+                for chain in work.context.image_chains.values()
+                if chain.storage_directory and chain.storage_directory.startswith("visuals/analysis/")
+            )
+        cleanup_asset_directories_after_task(user_id, sorted(directories))
 
 
 async def resume_import_analysis(user_id: int | None = None) -> None:

@@ -49,6 +49,7 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
 
   useEffect(() => {
     const live = begin()
+    let current = true
     void loadVisualMaterials({
       outfits: () => requestResource('companion.get_outfits'),
       scenes: cursor => requestResource('companion_scenes.scene_list_route', { query: { cursor, limit: 100 } }),
@@ -56,15 +57,19 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
         requestResource('companion_actions.list_actions', { query: { cursor, limit: 100, group: 'in_library' } })
     })
       .then(value => {
-        if (live()) {
+        if (current && live()) {
           setMaterials(value)
         }
       })
       .catch(failure => {
-        if (live()) {
+        if (current && live()) {
           setError(failureText(failure, a.failed))
         }
       })
+
+    return () => {
+      current = false
+    }
   }, [visual.id, active, begin, a.failed])
 
   const command = async (body: ApiSchemas['ImportAnalysisRequest']): Promise<void> => {
@@ -101,8 +106,6 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
     })
   }
 
-  const source = visual.snapshot.source
-
   const stage = job?.stage && job.stage !== 'complete' ? (a.stages[job.stage] ?? job.stage) : ''
   const summary = job ? [a.states[job.state] ?? job.state, stage].filter(Boolean).join(' · ') : a.idle
   const reviewText = visual.snapshot.review_reason || job?.result?.understanding.presentation_reason || ''
@@ -115,8 +118,8 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
       variant="panel"
     >
       <div className="space-y-4">
-        <p className={VISUAL_BODY}>
-          {active ? a.working : !job ? a.idle : source.presentation_approved ? a.approved : a.collection}
+        <p aria-live="polite" className={VISUAL_BODY} role="status">
+          {active ? a.working : !job ? a.idle : visual.auto_playable ? a.approved : a.collection}
         </p>
         {job?.error ? (
           <p className="text-[11px] leading-relaxed text-danger-fg" role="status">
@@ -203,6 +206,9 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
                     <h4 className={`min-w-0 flex-1 truncate ${VISUAL_FIELD}`}>{observation.name}</h4>
                     <Pill tone={COMPONENT_TONE[component.status] ?? 'muted'}>{a.components[component.status]}</Pill>
                   </div>
+                  {component.creation_method ? (
+                    <p className={VISUAL_META}>{a.methods[component.creation_method]}</p>
+                  ) : null}
                   {component.preview_path ? (
                     <MediaPreview type="image" url={component.preview_path}>
                       {({ src, status, onError }) =>
@@ -295,7 +301,7 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
                         >
                           {a.apply}
                         </button>
-                        {observation.extractable && component.material_id === null ? (
+                        {component.can_extract ? (
                           <button
                             className={chosen ? BTN_SUBTLE : BTN_PRIMARY}
                             disabled={busy}

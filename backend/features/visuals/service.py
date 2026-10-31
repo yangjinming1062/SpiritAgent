@@ -523,6 +523,7 @@ async def play_visual(
         if source in ("autonomous", "life"):
             media_source = snapshot.source
             semantics = getattr(media_source, "media_semantics", None)
+            action = getattr(media_source, "action", None)
             if not automatic_media_ready(
                 media_kind=item.media_kind,
                 asset_kind=item.asset_kind,
@@ -532,6 +533,7 @@ async def play_visual(
                 body=item.body_json,
                 presentation_approved=media_source.presentation_approved,
                 scene_reference=getattr(media_source, "scene", None) is not None,
+                action_clip_kind=action.clip_kind if action else None,
             ):
                 raise VisualStateError("这个版本暂不支持自动演出，可以在影像库预览")
         _play, command = await dispatch_play_command(

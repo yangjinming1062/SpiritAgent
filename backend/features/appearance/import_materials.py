@@ -2,6 +2,7 @@
 
 import asyncio
 
+from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.assets.asset_store import resolve_asset_reference
 from infrastructure.domain_locks import lock_domain
 from runtime.events.emit import emit_ws_event
@@ -27,6 +28,8 @@ async def accept_imported_outfit(
     description: str,
     identity: CharacterCardSnapshot,
     identity_path: str,
+    reference_path: str | None = None,
+    generation_origin: GenerationOrigin | None = None,
 ) -> OutfitSnapshot:
     await lock_domain(db, user_id, "appearance")
     existing = await db.scalar(
@@ -50,7 +53,11 @@ async def accept_imported_outfit(
         fullbody_url=path,
         status="ready",
         source_json=OutfitSource(
-            description=description, character_card_revision=identity.revision, identity_reference_path=identity_path
+            description=description,
+            character_card_revision=identity.revision,
+            identity_reference_path=identity_path,
+            reference_image_path=reference_path,
+            generation_origin=generation_origin,
         ).dump(),
     )
     db.add(row)

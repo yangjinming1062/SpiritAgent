@@ -49,7 +49,9 @@ async def complete_import_analysis(
         approved = (
             approved and understanding.media_semantics is not None and understanding.media_semantics.auto_selectable
         )
-        if understanding.asset_kind in {"cinematic", "actor"}:
+        if understanding.asset_kind == "scene":
+            approved = approved and understanding.clip_kind == "loop"
+        else:
             approved = approved and action is not None and understanding.clip_kind == action.clip_kind
     original = work.snapshot.source
     metadata = {
@@ -73,12 +75,12 @@ async def complete_import_analysis(
         "analysis_revision": None,
         "identity_reason": understanding.identity_reason,
         "media_semantics": understanding.media_semantics,
-        "clip_kind": understanding.clip_kind,
     }
+    identity_reference_role = getattr(original, "identity_reference_role", "fullbody")
     if understanding.asset_kind == "scene" and scene is not None:
         source = SceneMediaSource(
             scene=scene,
-            **{key: value for key, value in common.items() if key not in {"media_semantics", "clip_kind"}},
+            **{key: value for key, value in common.items() if key != "media_semantics"},
         )
     elif (
         understanding.asset_kind == "actor"
@@ -96,7 +98,7 @@ async def complete_import_analysis(
             identity_hash=work.context.identity_hash,
             portrait_path=work.context.portrait_path,
             portrait_hash=work.context.portrait_hash,
-            identity_reference_role=original.identity_reference_role,
+            identity_reference_role=identity_reference_role,
             outfit=outfit,
             action=action,
             **common,
@@ -118,7 +120,7 @@ async def complete_import_analysis(
             identity_hash=work.context.identity_hash,
             portrait_path=work.context.portrait_path,
             portrait_hash=work.context.portrait_hash,
-            identity_reference_role=original.identity_reference_role,
+            identity_reference_role=identity_reference_role,
             outfit=outfit,
             scene=scene,
             action=action,
@@ -134,7 +136,7 @@ async def complete_import_analysis(
             identity_hash=work.context.identity_hash,
             portrait_path=work.context.portrait_path,
             portrait_hash=work.context.portrait_hash,
-            identity_reference_role=original.identity_reference_role,
+            identity_reference_role=identity_reference_role,
             outfit=outfit,
             scene=scene,
             action=action,
@@ -190,8 +192,11 @@ async def complete_import_analysis(
         )
         job.expected_version = work.expected_version + 1
         job.result_json = work.result.model_dump(mode="json")
-        job.selections_json = []
         failed = any(entry.status == "failed" for entry in work.result.components)
+        failed_keys = {entry.observation.key for entry in work.result.components if entry.status == "failed"}
+        job.selections_json = [
+            selection.model_dump(mode="json") for selection in work.selections if selection.key in failed_keys
+        ]
         job.state, job.stage, job.error = (
             ("failed", "organize", "部分素材整理未完成，可重试；原件和已完成的结果已保存")
             if failed

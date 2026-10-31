@@ -1824,6 +1824,10 @@ export const dict = {
       review: '检查依据',
       descriptionLabel: '画面描述',
       extractionLabel: '提取依据',
+      methods: { pixels: '原图提取', generated: '生成补全', pose: '静态姿态', motion: '视频动作' } as Record<
+        string,
+        string
+      >,
       evidenceTitle: '查看识别依据',
       failed: '影像分析操作失败',
       states: {
@@ -1852,6 +1856,7 @@ export const dict = {
         analyze: '理解画面',
         organize: '整理素材',
         match: '核对近似素材',
+        generate_material: '生成补全素材',
         extraction_review: '检查提取素材',
         action_review: '评审动作',
         presentation_review: '检查呈现条件',

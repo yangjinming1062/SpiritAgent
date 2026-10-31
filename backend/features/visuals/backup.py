@@ -310,8 +310,14 @@ async def _restore_imports(db: AsyncSession, rows: dict[str, list[dict[str, Any]
                 for match in component.get("matches", [])
                 if (mapped := _mapped(context, table, match.get("material_id"))) is not None
             ]
+            component["created_materials"] = [
+                dict(created, material_id=mapped)
+                for created in component.get("created_materials", [])
+                if (mapped := _mapped(context, kinds[created["kind"]], created.get("material_id"))) is not None
+            ]
             if previous is not None and component["material_id"] is None:
                 component["status"], component["reason"] = "recognized", "关联素材已删除，保留识别结果"
+                component["created"], component["extraction_key"] = False, ""
         return value
 
     for row in await db.scalars(
@@ -335,7 +341,20 @@ async def _restore_imports(db: AsyncSession, rows: dict[str, list[dict[str, Any]
         frozen["history"] = [remap_result(value) for value in frozen.get("history", [])]
         row.context_json = frozen
         row.result_json = remap_result(context.rewriter.rewrite(deepcopy(originals[row.id]["result_json"])))
-        row.selections_json = []
+        original_result = originals[row.id]["result_json"] or {}
+        component_kinds = {
+            entry["observation"]["key"]: entry["observation"]["kind"] for entry in original_result.get("components", [])
+        }
+        selections = []
+        for selection in deepcopy(originals[row.id].get("selections_json") or []):
+            if selection.get("command") == "existing":
+                kind = component_kinds.get(selection.get("key"))
+                mapped = _mapped(context, kinds[kind], selection.get("material_id")) if kind else None
+                if mapped is None:
+                    continue
+                selection["material_id"] = mapped
+            selections.append(selection)
+        row.selections_json = selections
         if row.state in {"queued", "running", "unknown", "paused"}:
             row.state, row.stage, row.error = "paused", "interrupted", "备份恢复后请核对原分析结果并继续"
 
