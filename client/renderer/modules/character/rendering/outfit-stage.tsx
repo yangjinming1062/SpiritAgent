@@ -91,7 +91,7 @@ export function OutfitStage({
   windowId = 0
 }: {
   active?: boolean
-  contentAlign?: 'left' | 'right'
+  contentAlign?: 'left' | 'right' | 'center'
   eggSize?: string
   windowId?: number
 } = {}): React.JSX.Element {
@@ -216,7 +216,12 @@ export function OutfitStage({
       width: shown.width * scale,
       height: shown.height * scale,
       maxWidth: 'none',
-      left: contentAlign === 'left' ? -left * shown.width * scale : size.width - right * shown.width * scale,
+      left:
+        contentAlign === 'left'
+          ? -left * shown.width * scale
+          : contentAlign === 'right'
+            ? size.width - right * shown.width * scale
+            : (size.width - (right - left) * shown.width * scale) / 2 - left * shown.width * scale,
       top: size.height - bottom * shown.height * scale
     }
   }

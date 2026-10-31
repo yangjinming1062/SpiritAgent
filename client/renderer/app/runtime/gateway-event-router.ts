@@ -12,7 +12,8 @@ import {
   enqueueInteraction,
   enqueueInteractionForward,
   handleVisualEvent,
-  refreshActionGroups
+  refreshActionGroups,
+  refreshVisualPresentation
 } from '@/modules/visuals'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { $auth } from '@/shared/store/auth'
@@ -198,6 +199,8 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
     case 'companion.scene.updated':
       onSceneEvent()
+      // 环境就绪或删除会改变当前舞台引用的素材，读取一次最新呈现才能换掉旧背景。
+      void refreshVisualPresentation()
 
       break
 

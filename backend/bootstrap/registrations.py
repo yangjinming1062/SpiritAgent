@@ -32,6 +32,7 @@ from features.media.video_queue.ports import configure_video_queue_ports
 from features.media.video_queue.service import cancel_video_attempt
 from features.memory.diary_hooks import set_diary_delete_handler
 from features.posts.ports import set_post_published_handler
+from features.scenes.queries import scene_exists
 from features.visuals.ports import configure_visual_hooks
 from features.visuals.video_queue import inspect_visual_video_owner
 from infrastructure.ai.configuration_reader import set_configuration_reader
@@ -170,6 +171,8 @@ def wire_domain_hooks() -> None:
         planning_reader=visual_planning_context,
         ready_handler=schedule_visual_selection,
         preparation_handler=schedule_base_motion_preparation,
+        recovery_handler=schedule_visual_selection,
+        scene_exists=scene_exists,
     )
     set_appearance_readiness_reader(appearance_readiness)
 

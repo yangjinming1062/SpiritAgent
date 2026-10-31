@@ -29,6 +29,17 @@ async def get_scene(db: AsyncSession, user_id: int, scene_id: int) -> CompanionS
     )
 
 
+async def scene_exists(db: AsyncSession, user_id: int, scene_id: int) -> bool:
+    """判定环境素材是否仍在库中；呈现侧据此作废指向已删除环境的冻结引用。"""
+
+    return (
+        await db.scalar(
+            select(CompanionScene.id).where(CompanionScene.id == scene_id, CompanionScene.user_id == user_id)
+        )
+        is not None
+    )
+
+
 async def get_pending_scene_task(db: AsyncSession, user_id: int) -> CompanionScene | None:
     return await db.scalar(
         select(CompanionScene)

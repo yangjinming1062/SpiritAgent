@@ -29,7 +29,7 @@ export function CharacterStage({
   eggSize,
   windowId = 0
 }: {
-  contentAlign?: 'left' | 'right'
+  contentAlign?: 'left' | 'right' | 'center'
   eggSize?: string
   windowId?: number
 } = {}): React.JSX.Element {
@@ -146,7 +146,9 @@ export function CharacterStage({
         ? -left * scale
         : contentAlign === 'right'
           ? size.width - right * scale
-          : size.width * safeLeft + safeWidth * positionX - width * scale * positionX
+          : contentAlign === 'center'
+            ? (size.width - (right - left) * scale) / 2 - left * scale
+            : size.width * safeLeft + safeWidth * positionX - width * scale * positionX
 
     const offsetY = contentAlign
       ? size.height - bottom * scale

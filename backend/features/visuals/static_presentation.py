@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
 from features.life.use_cases import current_presentation_revision, presentation_revision_matches
 
+from .eligibility import existing_asset
 from .models import VisualPlayback, VisualPresentation
 from .ports import request_base_motion_preparation
 from .repository import (
@@ -101,6 +102,11 @@ async def restore_static_presentation(
     if raw is None:
         return False
     snapshot = StagePresentation.model_validate(raw)
+    # 素材已被删除的冻结目标不能复制成新的待认领目标，否则客户端会持续拿到失效路径。
+    if (snapshot.outfit is not None and existing_asset(snapshot.outfit.path) is None) or (
+        snapshot.scene is not None and existing_asset(snapshot.scene.path) is None
+    ):
+        return False
     life_revision = await current_presentation_revision(db, user_id)
     if (
         state.pending_static_json is not None

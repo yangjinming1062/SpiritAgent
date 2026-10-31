@@ -18,6 +18,7 @@ from .eligibility import actor_body_ready, automatic_media_ready, existing_asset
 from .geometry import visual_aspect_matches
 from .import_jobs import import_job_view
 from .models import VisualImportJob, VisualItem, VisualJob, VisualPresentation, VisualVersion
+from .ports import request_stage_recovery, scene_reference_exists
 from .repository import (
     VisualNotFoundError,
     presentation_outfit,
@@ -614,6 +615,47 @@ async def recent_autonomous_failure_action_ids(user_id: int, *, since: datetime)
         return {action_id for action_id in rows if action_id is not None}
 
 
+async def _scene_reference_usable(db: AsyncSession, user_id: int, scene: SceneMediaRef | None) -> bool:
+    """环境引用仍可用：文件存在且来源环境未被删除；冻结引用本身会阻止旧文件被回收。"""
+
+    if scene is None or existing_asset(scene.path) is None:
+        return False
+    return scene.scene_id is None or await scene_reference_exists(db, user_id, scene.scene_id)
+
+
+async def _existing_static(db: AsyncSession, user_id: int, raw: dict | None) -> tuple[StagePresentation | None, bool]:
+    """冻结目标按素材核对；返回目标与是否丢弃了已删除的环境或造型。"""
+
+    if raw is None:
+        return None, False
+    static = StagePresentation.model_validate(raw)
+    lost = False
+    if static.outfit is not None and existing_asset(static.outfit.path) is None:
+        static = static.model_copy(update={"outfit": None})
+        lost = True
+    if static.scene is not None and not await _scene_reference_usable(db, user_id, static.scene):
+        static = static.model_copy(update={"scene": None})
+        lost = True
+    return static, lost
+
+
+async def _existing_composition(
+    db: AsyncSession, user_id: int, composition: StageComposition | None
+) -> tuple[StageComposition | None, bool]:
+    """组合里的冻结素材同样按素材核对；失效环境引用整体清空，交给重新选择。"""
+
+    if composition is None:
+        return None, False
+    update: dict[str, object] = {}
+    if composition.outfit_material is not None and existing_asset(composition.outfit_material.path) is None:
+        update["outfit_material"] = None
+    if composition.scene_material is not None and not await _scene_reference_usable(
+        db, user_id, composition.scene_material
+    ):
+        update.update({"scene_visual_id": None, "scene_version": None, "scene_material": None})
+    return (composition.model_copy(update=update), True) if update else (composition, False)
+
+
 async def presentation_state(user_id: int, *, with_catalog: bool = True) -> VisualPresentationView:
     """呈现状态装配；内部决策路径不需要目录时跳过（目录含逐行文件核对）。"""
 
@@ -624,9 +666,23 @@ async def presentation_state(user_id: int, *, with_catalog: bool = True) -> Visu
         current = presented_item(row)
         loop = presented_item(row, loop=True)
         pending = _pending_command(row)
-        composition = stage_composition(row)
-        static_raw = row.pending_static_json or row.current_static_json
-        static = StagePresentation.model_validate(static_raw) if static_raw else None
+        static, lost_static = await _existing_static(db, user_id, row.pending_static_json or row.current_static_json)
+        composition, lost_composition = await _existing_composition(db, user_id, stage_composition(row))
+        presence = get_presentation_snapshot(user_id)
+        # 已按当前模式呈现过的目标缺少素材说明文件后来被删除；准备中的目标仍走原流程。
+        needs_recovery = (
+            lost_static
+            or lost_composition
+            or (
+                static is not None
+                and presence is not None
+                and static.receipt_kind == ("window_static" if presence.mode == "window" else "desktop_static")
+                and static.error is None
+                and (static.outfit is None or static.scene is None)
+            )
+        )
+        if needs_recovery:
+            request_stage_recovery(user_id)
         scene = static.scene if static else composition.scene_material if composition else None
         return VisualPresentationView(
             composition=await composition_with_media(db, user_id, composition),
@@ -642,7 +698,7 @@ async def presentation_state(user_id: int, *, with_catalog: bool = True) -> Visu
             presentation_epoch=row.presentation_epoch,
             state_revision=row.state_revision,
             pending_play=pending,
-            static_presentation=row.pending_static_json or row.current_static_json,
+            static_presentation=static,
         )
 
 
@@ -996,7 +1052,8 @@ async def _presentation_snapshot(user_id: int, *, for_prompt: bool) -> ActualPre
                 return ActualPresentationSnapshot()
             presence = get_presentation_snapshot(user_id)
             outfit_path = existing_asset(static.outfit.path)
-            scene_path = existing_asset(static.scene.path)
+            # 环境被删除时只清空背景，冻结造型继续显示，不能连主体一起退回未就绪状态。
+            scene_path = static.scene.path if await _scene_reference_usable(db, user_id, static.scene) else None
             return ActualPresentationSnapshot(
                 outfit_path=outfit_path,
                 outfit_hash=static.outfit.content_hash if outfit_path else None,
@@ -1037,7 +1094,7 @@ async def _presentation_snapshot(user_id: int, *, for_prompt: bool) -> ActualPre
         outfit = source.outfit if character_source else composition.outfit_material if composition else None
         scene = source.scene if environment_source else composition.scene_material if composition else None
         outfit_path = existing_asset(outfit.path) if outfit else None
-        scene_path = existing_asset(scene.path) if scene else None
+        scene_path = scene.path if await _scene_reference_usable(db, user_id, scene) else None
         identity_path = existing_asset(
             source.identity_path if character_source else composition.identity_path if composition else None
         )

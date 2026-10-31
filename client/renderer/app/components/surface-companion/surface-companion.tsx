@@ -73,7 +73,7 @@ export function SurfaceCompanion({ visible }: { visible: boolean }): React.JSX.E
     <div className={styles.stage} ref={root}>
       <SceneBackdrop />
       <div className={styles.figure}>
-        <CharacterStage contentAlign="left" eggSize="min(150px, 60%)" windowId={1} />
+        <CharacterStage contentAlign="center" eggSize="min(150px, 60%)" windowId={1} />
       </div>
     </div>
   ) : null

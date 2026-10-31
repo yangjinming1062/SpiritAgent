@@ -132,6 +132,8 @@ export function SceneBackdrop(): React.JSX.Element {
       .catch(error => {
         if (current && scope()) {
           setFailed(true)
+          // 同一地址失败可沿用已显示的旧帧；目标已换到别的环境时不能继续显示它，那张图可能已经不存在。
+          setImage(previous => (previous && previous.path === path ? previous : null))
           log.warn('scene-backdrop', 'Scene image failed', error)
         }
       })
