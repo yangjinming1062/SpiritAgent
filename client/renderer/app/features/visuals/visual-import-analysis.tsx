@@ -6,7 +6,7 @@ import { loadVisualDetail, refreshVisuals, type VisualDetail, visualsApi } from 
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { failureText } from '@/shared/lib/ipc-error'
 import { requestResource } from '@/shared/lib/resource-request'
-import { Badge, BTN_SUBTLE, FIELD_LABEL, INPUT_CLASS, SettingCard } from '@/shared/panel'
+import { Badge, BTN_SUBTLE, FIELD_LABEL, INPUT_CLASS, PanelSelect, SettingCard } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
@@ -226,21 +226,17 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
                     <div className="mt-2 flex flex-col gap-2">
                       <label>
                         <span className={FIELD_LABEL}>{a.existing}</span>
-                        <select
-                          className={INPUT_CLASS}
+                        <PanelSelect
+                          ariaLabel={a.existing}
                           disabled={busy}
-                          onChange={event =>
-                            updateVisualsUi({ analysisSelections: { ...selected, [key]: event.target.value } })
-                          }
+                          onChange={value => updateVisualsUi({ analysisSelections: { ...selected, [key]: value } })}
+                          options={[
+                            { value: '', label: a.select },
+                            ...options.map(option => ({ value: option.id, label: option.name }))
+                          ]}
                           value={chosen}
-                        >
-                          <option value="">{a.select}</option>
-                          {options.map(option => (
-                            <option key={option.id} value={option.id}>
-                              {option.name}
-                            </option>
-                          ))}
-                        </select>
+                          widthClass="w-full"
+                        />
                       </label>
                       <div className="flex flex-wrap gap-2">
                         <button

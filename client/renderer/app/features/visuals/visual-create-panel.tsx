@@ -8,7 +8,7 @@ import { CheckCircle2, FileImage, FolderOpen, ImagePlus, Sparkles, Video, X } fr
 import { failureText } from '@/shared/lib/ipc-error'
 import { requestResource } from '@/shared/lib/resource-request'
 import { cn } from '@/shared/lib/utils'
-import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, FIELD_LABEL, INPUT_CLASS, SettingCard } from '@/shared/panel'
+import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, FIELD_LABEL, INPUT_CLASS, PanelSelect, SettingCard } from '@/shared/panel'
 import { notify } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
@@ -239,19 +239,14 @@ export function VisualCreatePanel({ onDone }: { onDone: (visualId?: string) => P
   ): React.JSX.Element => (
     <label className="block">
       <span className={FIELD_LABEL}>{label}</span>
-      <select
-        className={INPUT_CLASS}
+      <PanelSelect
+        ariaLabel={label}
         disabled={busy}
-        onChange={event => patch({ [key]: event.target.value })}
+        onChange={value => patch({ [key]: value })}
+        options={[{ value: '', label: c.select }, ...options.map(option => ({ value: option.id, label: option.name }))]}
         value={draft[key]}
-      >
-        <option value="">{c.select}</option>
-        {options.map(option => (
-          <option key={option.id} value={option.id}>
-            {option.name}
-          </option>
-        ))}
-      </select>
+        widthClass="w-full"
+      />
     </label>
   )
 
@@ -335,22 +330,24 @@ export function VisualCreatePanel({ onDone }: { onDone: (visualId?: string) => P
             {!upload && (
               <label>
                 <span className={FIELD_LABEL}>{c.kind}</span>
-                <select
-                  className={INPUT_CLASS}
+                <PanelSelect
+                  ariaLabel={c.kind}
                   disabled={busy}
-                  onChange={event => {
-                    const assetKind = event.target.value
+                  onChange={value => {
+                    const assetKind = value
 
                     if (assetKind === 'actor' || assetKind === 'scene' || assetKind === 'cinematic') {
                       patch({ assetKind })
                     }
                   }}
+                  options={[
+                    { value: 'cinematic', label: t.assetKindLabels.cinematic },
+                    { value: 'scene', label: t.assetKindLabels.scene },
+                    { value: 'actor', label: t.assetKindLabels.actor }
+                  ]}
                   value={draft.assetKind}
-                >
-                  <option value="cinematic">{t.assetKindLabels.cinematic}</option>
-                  <option value="scene">{t.assetKindLabels.scene}</option>
-                  <option value="actor">{t.assetKindLabels.actor}</option>
-                </select>
+                  widthClass="w-full"
+                />
               </label>
             )}
 
@@ -482,15 +479,17 @@ export function VisualCreatePanel({ onDone }: { onDone: (visualId?: string) => P
                 {draft.assetKind === 'cinematic' && (
                   <label>
                     <span className={FIELD_LABEL}>{t.mediaKindLabel}</span>
-                    <select
-                      className={INPUT_CLASS}
+                    <PanelSelect
+                      ariaLabel={t.mediaKindLabel}
                       disabled={busy}
-                      onChange={event => patch({ mediaKind: event.target.value === 'video' ? 'video' : 'image' })}
+                      onChange={value => patch({ mediaKind: value === 'video' ? 'video' : 'image' })}
+                      options={[
+                        { value: 'image', label: c.image },
+                        { value: 'video', label: c.video }
+                      ]}
                       value={draft.mediaKind}
-                    >
-                      <option value="image">{c.image}</option>
-                      <option value="video">{c.video}</option>
-                    </select>
+                      widthClass="w-full"
+                    />
                   </label>
                 )}
                 <label>
