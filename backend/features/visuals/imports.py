@@ -27,7 +27,6 @@ from .schemas import (
     VISUAL_MAX_EDGE,
     AnalyzingVisualSource,
     VisualAsset,
-    VisualAssetKind,
     VisualDetailView,
     VisualSnapshot,
 )
@@ -56,7 +55,6 @@ async def import_visual(
     filename: str,
     title: str,
     description: str,
-    asset_kind: VisualAssetKind | None = None,
 ) -> VisualDetailView:
     ext = sniff_media_ext(data)
     image = ext in {"png", "jpg", "webp", "gif"}
@@ -65,9 +63,6 @@ async def import_visual(
     limit = REMOTE_ASSET_DOWNLOAD_MAX_BYTES if image else SETTINGS.video_attachment_max_bytes
     if len(data) > limit:
         raise VisualStateError(f"影像超过 {limit // (1024 * 1024)} MB 上限")
-    # 上传阶段不应把最终素材类别交给用户决定。保留旧客户端的提示值作为
-    # 初始分析提示，但静态图片不能暂存为 actor（数据库明确要求 actor 必须是视频）。
-    initial_asset_kind: VisualAssetKind = "cinematic" if image and asset_kind == "actor" else asset_kind or "cinematic"
     digest = hashlib.sha256(data).hexdigest()
     directory = f"visuals/imports/{uuid4().hex}"
     try:
@@ -126,7 +121,6 @@ async def import_visual(
                     )
                 snapshot = VisualSnapshot(
                     source=AnalyzingVisualSource(
-                        asset_kind=initial_asset_kind,
                         original_filename=filename,
                         original_path=path,
                         original_content_hash=digest,

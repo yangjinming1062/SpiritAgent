@@ -218,7 +218,6 @@ async def upload_visual(
     filename: Annotated[str, Query(min_length=1, max_length=255)],
     title: Annotated[str, Query(max_length=160)] = "",
     description: Annotated[str, Query(max_length=1500)] = "",
-    asset_kind: Literal["actor", "scene", "cinematic"] | None = None,
 ) -> VisualDetailView:
     try:
         name = filename.replace("\\", "/").rsplit("/", 1)[-1].strip() or "影像"
@@ -228,7 +227,6 @@ async def upload_visual(
             filename=name,
             title=title.strip() or name[:160],
             description=description.strip(),
-            asset_kind=asset_kind,
         )
         await queue_import_analysis(user.id, detail.id)
         return await _visuals.visual_detail(user.id, detail.id)

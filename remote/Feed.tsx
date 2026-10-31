@@ -157,7 +157,7 @@ function Posts({
   const loadRecovery = useCallback(
     async (nextCursor?: string) => {
       const result = await api.invoke('companion_posts.get_publication_recoveries', {
-        query: { state: 'recoverable', cursor: nextCursor }
+        query: { cursor: nextCursor }
       })
 
       if (alive()) {

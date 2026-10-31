@@ -1,7 +1,5 @@
 """独立动态、评论与回复重试。"""
 
-from typing import Literal
-
 from fastapi import Query
 from features.posts import use_cases as _posts
 from features.posts.schemas import (
@@ -46,7 +44,6 @@ async def read_posts(user: CurrentUser, db: DbSession, body: PostReadRequest) ->
 @router.get("/publications", response_model=PostPublicationRecoveryList)
 async def get_publication_recoveries(
     user: CurrentUser,
-    state: Literal["recoverable"] = Query(...),
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = None,
 ) -> PostPublicationRecoveryList:

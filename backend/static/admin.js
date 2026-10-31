@@ -1837,7 +1837,6 @@ const SETTINGS_SECTIONS = [
             ['sub', '互动节流与成本冷却'],
             ['grid', [
                 num('companion_idle_expression_min_interval_seconds', '空闲表达最小间隔 (秒)', 0.5),
-                num('companion_approach_cooldown_seconds', '主动搭话冷却 (秒)', 30),
                 num('companion_contact_quiet_seconds', '用户接触静默窗口 (秒)', 5),
                 num('desktop_disconnect_grace_seconds', '桌面断线宽限 (秒)', 5),
             ]],

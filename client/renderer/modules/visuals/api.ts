@@ -80,7 +80,7 @@ export const visualsApi = {
     ),
   upload: (
     data: Uint8Array,
-    query: { filename: string; title?: string; description?: string; asset_kind?: 'actor' | 'scene' | 'cinematic' }
+    query: { filename: string; title?: string; description?: string }
   ): Promise<VisualDetail> => requestResource('companion_visuals.upload_visual', { body: data, query }),
   receiptStatic: (body: ApiSchemas['StageReceipt']): Promise<{ ok: boolean }> =>
     requestResource('companion_visuals.static_receipt', { body }),

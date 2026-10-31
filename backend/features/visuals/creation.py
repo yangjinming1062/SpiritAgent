@@ -54,7 +54,9 @@ class _OpeningRepair(BaseModel):
     opening_description: str = Field(min_length=1, max_length=1800)
 
 
-def _base_idle_plan(snapshot: ActorClipSource | CinematicSource, progress: VisualJobProgress) -> VisualCreationPlan | None:
+def _base_idle_plan(
+    snapshot: ActorClipSource | CinematicSource, progress: VisualJobProgress
+) -> VisualCreationPlan | None:
     """内置待机动作使用确定性的安静状态边界，姿态仍由角色自身决定。"""
 
     if progress.source != "base_preparation" or snapshot.kind != "actor" or snapshot.action is None:

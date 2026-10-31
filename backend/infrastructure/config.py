@@ -172,11 +172,6 @@ class Settings(BaseSettings):
         gt=0,
         validation_alias="COMPANION_IDLE_EXPRESSION_MIN_INTERVAL_SECONDS",
     )
-    companion_approach_cooldown_seconds: float = Field(
-        default=1800.0,
-        gt=0,
-        validation_alias="COMPANION_APPROACH_COOLDOWN_SECONDS",
-    )
     companion_contact_quiet_seconds: float = Field(
         default=60.0,
         gt=0,
