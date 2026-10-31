@@ -1,5 +1,6 @@
 """聊天回合、委派和标题生成使用的会话数据入口。"""
 
+from infrastructure.api_ids import parse_resource_id
 from infrastructure.database import session_scope
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -80,7 +81,9 @@ async def conversation_topic_ids(db: AsyncSession, conv: ConversationSnapshot) -
             references != [],
         ),
     )
-    return tuple(sorted({topic_id for topic_ids in used_topics for topic_id in topic_ids}))
+    # reply_json 按 JSON/API 表示保存，ResourceId 会序列化为字符串；进入
+    # 数据库条件前恢复为整数，避免与 BIGINT 主键比较时发生类型冲突。
+    return tuple(sorted({parse_resource_id(topic_id) for topic_ids in used_topics for topic_id in topic_ids}))
 
 
 async def create_delegated_conversation(user_id: int, parent_id: int | None) -> str | None:
