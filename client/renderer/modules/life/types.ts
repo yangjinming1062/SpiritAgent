@@ -1,9 +1,9 @@
 import type { ApiSchemas } from '../../../../shared/api.generated'
 
-export type LifeState = ApiSchemas['LifeStateView']
-export type LifePursuit = ApiSchemas['LifePursuitView']
-export type LifePursuitDetail = ApiSchemas['LifePursuitDetail']
-export type LifeEvent = ApiSchemas['LifeEventView']
+export type LifeState = ApiSchemas['LifeStatePublicView']
+export type LifePursuit = ApiSchemas['LifePursuitPublicView']
+export type LifePursuitDetail = ApiSchemas['LifePursuitPublicDetail']
+export type LifeEvent = ApiSchemas['LifeEventPublicView']
 
 export interface LifeTimelineEntry {
   id: string

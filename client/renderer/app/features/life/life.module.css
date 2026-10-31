@@ -38,13 +38,6 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.mood {
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--ui-text-muted);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
 .focused {
   display: flex;
   flex-direction: column;

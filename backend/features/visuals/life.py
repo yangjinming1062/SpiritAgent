@@ -49,6 +49,7 @@ async def settle_visual_steps(
     if progress is not None and progress.source == "base_preparation":
         return
     completed = job.state == "succeeded"
+    failure_code = None if completed else (progress.failure_reason if progress is not None else None)
     await update_business_steps_in_session(
         db,
         user_id,
@@ -62,7 +63,8 @@ async def settle_visual_steps(
             **(result_ref or {}),
         },
         error=None if completed else job.error,
-        next_step="结合生活情境决定是否呈现" if completed else "确认是否重试影像制作",
+        failure_code=failure_code,
+        next_step="结合生活情境决定是否呈现" if completed else "继续接收原成品或核对结果",
         additional_events=additional_events,
     )
 

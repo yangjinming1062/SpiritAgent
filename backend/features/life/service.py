@@ -93,6 +93,7 @@ def _event_matches(row: LifeEvent, event: LifeEventInput) -> bool:
         and row.subject == event.subject
         and row.fact_type == event.fact_type
         and row.fact_json == event.fact
+        and row.narrative == event.narrative
         and row.pursuit_id == event.pursuit_id
         and row.step_id == event.step_id
         and result_reference(row)
@@ -203,6 +204,7 @@ def apply_decision(row: LifeState, decision: LifeDecisionRequest) -> None:
 def clear_activity_step(db: AsyncSession, state: LifeState, *, kind: FactType = "intent") -> None:
     """执行结束或退回等待后作废原活动表现，不把已结束的活动继续投影为正在进行。"""
     state.activity_step_id = None
+    state.narrative = None
     state.activity_kind = kind
     state.activity_type = "idle"
     state.presentation_revision += 1
@@ -228,6 +230,7 @@ async def ensure_pursuit(
     title: str,
     reason: str = "",
     desired_result: str = "",
+    narrative: str | None = None,
     idempotency_key: str | None = None,
 ) -> LifePursuit:
     state = await get_or_create_state(db, user_id, lock=True)
@@ -249,6 +252,7 @@ async def ensure_pursuit(
         title=title.strip(),
         reason=reason,
         desired_result=desired_result,
+        narrative=narrative,
         status_reason=reason,
         status_changed_at=utc_now(),
     )
@@ -361,6 +365,8 @@ async def advance_pursuit(db: AsyncSession, user_id: int, decision: LifeDecision
         pursuit.progress = decision.progress
     if decision.next_step is not None:
         pursuit.next_step = decision.next_step
+    if decision.narrative.pursuit is not None:
+        pursuit.narrative = decision.narrative.pursuit
     if completing:
         pursuit.status = "completed"
         pursuit.completed_at = utc_now()
@@ -400,6 +406,7 @@ async def advance_pursuit(db: AsyncSession, user_id: int, decision: LifeDecision
             fact_type="result" if evidence else "intent",
             pursuit_id=pursuit.id,
             fact={"title": pursuit.title, "progress": pursuit.progress, "next_step": pursuit.next_step},
+            narrative=decision.narrative.event or decision.narrative.pursuit,
             result_ref=deepcopy(pursuit.result_ref_json) if completing else {"evidence_count": len(evidence_ids)},
             is_meaningful=bool(evidence),
         ),
@@ -414,6 +421,7 @@ async def create_step(
     idempotency_key: str,
     kind: str,
     description: str,
+    narrative: str | None = None,
     pursuit_id: int | None = None,
 ) -> LifeStep:
     state = await get_or_create_state(db, user_id, lock=True)
@@ -442,6 +450,7 @@ async def create_step(
         idempotency_key=idempotency_key,
         kind=kind,
         description=description,
+        narrative=narrative,
     )
     try:
         async with db.begin_nested():
@@ -485,6 +494,7 @@ async def _record_event_batch(
                 "subject": item.subject,
                 "fact_type": item.fact_type,
                 "fact_json": deepcopy(item.fact),
+                "narrative": item.narrative,
                 "occurred_at": item.occurred_at or utc_now(),
                 "pursuit_id": item.pursuit_id,
                 "step_id": item.step_id,
@@ -578,6 +588,7 @@ async def start_step(
     row.started_at = row.started_at or utc_now()
     row.finished_at = None
     row.error = None
+    row.failure_code = None
     if was_failed:
         assign_result(row, {})
     if business_ref is not None:

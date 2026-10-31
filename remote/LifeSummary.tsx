@@ -7,20 +7,19 @@ import type { RemoteApi } from './api'
 
 const statuses = { active: '进行中', paused: '已暂停', completed: '已完成', abandoned: '已放下' }
 const states = {
-  planned: '等待执行',
-  running: '执行中',
+  planned: '准备中',
+  running: '正在继续',
   completed: '已完成',
-  failed: '执行失败',
+  failed: '暂时没能继续',
   cancelled: '已取消',
-  unknown: '结果待核对'
+  unknown: '还在等结果'
 }
-const facts = { intent: '打算', virtual_activity: '生活情景', execution: '实际执行', result: '已确认成果' }
 
 export function LifeSummary({ api, refresh }: { api: RemoteApi; refresh: number }): ReactElement {
-  const [life, setLife] = useState<ApiSchemas['LifeStateView'] | null>(null)
-  const [pursuits, setPursuits] = useState<ApiSchemas['LifePursuitView'][]>([])
+  const [life, setLife] = useState<ApiSchemas['LifeStatePublicView'] | null>(null)
+  const [pursuits, setPursuits] = useState<ApiSchemas['LifePursuitPublicView'][]>([])
   const [selected, setSelected] = useState<string | null>(null)
-  const [detail, setDetail] = useState<ApiSchemas['LifePursuitDetail'] | null>(null)
+  const [detail, setDetail] = useState<ApiSchemas['LifePursuitPublicDetail'] | null>(null)
   const [failed, setFailed] = useState(false)
   const [detailFailed, setDetailFailed] = useState(false)
   const [retry, setRetry] = useState(0)
@@ -70,14 +69,7 @@ export function LifeSummary({ api, refresh }: { api: RemoteApi; refresh: number 
   return (
     <section aria-label="伙伴近况" className="card companion-life-card">
       <strong>伙伴近况</strong>
-      <p>{life?.current_activity || '暂时还没有近况'}</p>
-      {life && (
-        <small>
-          {facts[life.activity_kind]}
-          {life.activity_started_at && <> · {new Date(life.activity_started_at).toLocaleString()}</>}
-        </small>
-      )}
-      {life?.mood && <small>{life.mood}</small>}
+      <p>{life?.narrative || '暂时还没有可分享的近况'}</p>
       {(failed || detailFailed) && (
         <div role="status">
           <p>暂时无法更新，已有内容仍可查看。</p>
@@ -99,30 +91,23 @@ export function LifeSummary({ api, refresh }: { api: RemoteApi; refresh: number 
                   }}
                   type="button"
                 >
-                  {statuses[item.status]} · {item.title}
+                  {statuses[item.status]} · {item.narrative || '这件事'}
                 </button>
               </li>
             ))}
           </ul>
           {detail?.id === selected && (
             <article>
-              <h3>{detail.title}</h3>
+              <h3>{detail.narrative || '这件事'}</h3>
               {detail.status_changed_at && (
                 <small>
                   {statuses[detail.status]} · {new Date(detail.status_changed_at).toLocaleString()}
                 </small>
               )}
-              <p>{detail.reason}</p>
-              <p>{detail.desired_result}</p>
-              <p>{detail.progress || '暂时没有已确认的进展'}</p>
-              {detail.status_reason && <p>{detail.status_reason}</p>}
-              {detail.status === 'active' && detail.next_step && <p>接下来打算：{detail.next_step}</p>}
               {detail.steps.map(step => (
                 <section key={step.id}>
-                  <strong>
-                    {states[step.state]} · {step.description}
-                  </strong>
-                  {(step.wait_reason || step.error) && <p>{step.wait_reason || step.error}</p>}
+                  <strong>{states[step.state]}</strong>
+                  {step.narrative && <p>{step.narrative}</p>}
                   {step.reading_result && (
                     <details>
                       <summary>阅读笔记</summary>

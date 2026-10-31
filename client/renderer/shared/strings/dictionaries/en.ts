@@ -7,7 +7,7 @@ export const dict: Dictionary = {
     title: 'Life',
     intro: 'What your companion is continuing, and what has changed recently.',
     now: 'Right now',
-    unavailable: 'No recent activity is available yet',
+    unavailable: 'No companion update is available yet',
     ongoing: 'Still on their mind',
     noPursuit: 'No ongoing pursuits at the moment',
     overviewAction: 'Explore life',
@@ -18,31 +18,19 @@ export const dict: Dictionary = {
     pursuitsTitle: 'Things that matter',
     eventsTitle: 'Recent changes',
     statuses: { all: 'All', active: 'Ongoing', paused: 'Paused', completed: 'Completed', abandoned: 'Set aside' },
-    factTypes: {
-      intent: 'Intention',
-      virtual_activity: 'Life scene',
-      execution: 'Execution',
-      result: 'Confirmed result'
-    },
     stepStates: {
-      planned: 'Waiting',
-      running: 'In progress',
+      planned: 'Getting ready',
+      running: 'Continuing',
       completed: 'Completed',
-      failed: 'Failed',
+      failed: 'Could not continue yet',
       cancelled: 'Cancelled',
-      unknown: 'Outcome unconfirmed'
+      unknown: 'Still waiting for an outcome'
     },
     stepsTitle: 'Actions',
-    changeReason: 'Reason for the change',
     readingNotes: 'Reading notes',
     sourceSummary: 'Summary',
     sourceExcerpt: 'Excerpt',
     sourceText: 'Text',
-    reason: 'How it began',
-    desiredResult: 'What they hope to achieve',
-    progress: 'Progress so far',
-    nextStep: 'Planned next',
-    noProgress: 'No confirmed progress yet',
     emptyPursuits: 'No pursuits have been recorded here yet.',
     emptyEvents: 'No life changes to display yet.',
     moreEvents: 'Earlier records',
@@ -69,9 +57,9 @@ export const dict: Dictionary = {
       paused: 'Paused a pursuit',
       resumed: 'Resumed a pursuit',
       abandoned: 'Set a pursuit aside',
-      step: 'Completed a step',
-      failed: 'Execution failed',
-      unknown: 'Outcome unconfirmed'
+      step: 'Completed an action',
+      failed: 'Could not continue yet',
+      unknown: 'Still waiting for an outcome'
     }
   },
   brand: {
@@ -2048,6 +2036,7 @@ export const dict: Dictionary = {
     } as Record<string, string>,
     jobPause: 'Pause',
     jobResume: 'Resume',
+    jobReceive: 'Receive original result',
     jobRetry: 'Retry',
     jobCancel: 'Cancel',
     jobCancelConfirm: 'Confirm cancellation',

@@ -68,6 +68,11 @@ class LifeResultView(BaseModel):
 
     def prompt_payload(self) -> dict[str, Any]:
         payload = self.model_dump(mode="json", exclude={"event_key", "idempotency_key", "business_ref", "action"})
+        # 技术诊断只留在任务与日志边界；生活判断模型只接收稳定的失败类别。
+        payload.pop("error", None)
+        payload.pop("wait_reason", None)
+        if failure_code := payload.pop("failure_code", None):
+            payload["failure"] = {"code": failure_code}
         result = payload.pop("result_ref", {})
         payload["has_result"] = bool(result)
         payload["result"] = life_content_payload(result)
@@ -76,11 +81,43 @@ class LifeResultView(BaseModel):
         return payload
 
 
+class LifeNarrativePatch(BaseModel):
+    """模型生成的伙伴叙事；与执行字段和诊断信息分开保存。"""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    state: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=2000,
+        description="生活区的第一人称近况，通常一两句；只说明此刻有依据的活动、打算或感受，不变时为空",
+    )
+    pursuit: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=2000,
+        description="事项卡片及详情的第一人称叙事：缘由、真实进展及下一步；调整事项时完整替换，通常两三句；redirect_pursuit 时描述新事项，旧事项以 event 收束",
+    )
+    action: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=1000,
+        description="准备采取的行动及其目的，第一人称计划，通常一两句；与 next_action 对应，不预写结果",
+    )
+    event: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=2000,
+        description="本次生活变化的第一人称记录，通常一两句；仅叙述本轮已决定的变化及已有依据的结果",
+    )
+
+
 class LifeStateView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     user_id: ResourceId
     current_activity: str
+    narrative: str | None = None
     activity_kind: FactType = "virtual_activity"
     activity_type: ActivityType = "idle"
     scene_tags: SceneTags = Field(default_factory=list)
@@ -101,6 +138,7 @@ class LifePursuitView(LifeResultView):
 
     id: ResourceId
     title: str
+    narrative: str | None = None
     reason: str
     desired_result: str
     progress: str
@@ -117,6 +155,35 @@ class LifePursuitView(LifeResultView):
     updated_at: datetime
 
 
+class LifeStatePublicView(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    user_id: ResourceId
+    narrative: str | None
+    activity_kind: FactType
+    activity_type: ActivityType
+    activity_started_at: datetime | None
+    active_pursuit_id: ResourceId | None
+    revision: int
+    updated_at: datetime
+
+
+class LifePursuitPublicView(LifeResultView):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: ResourceId
+    narrative: str | None
+    status: PursuitStatus
+    status_source: str
+    status_changed_at: datetime | None
+    resume_after: datetime | None
+    previous_pursuit_id: ResourceId | None
+    started_at: datetime
+    completed_at: datetime | None
+    result_ref: dict
+    updated_at: datetime
+
+
 class LifeStepView(LifeResultView):
     model_config = ConfigDict(from_attributes=True)
 
@@ -125,6 +192,7 @@ class LifeStepView(LifeResultView):
     idempotency_key: str
     kind: str
     description: str
+    narrative: str | None = None
     state: Literal["planned", "running", "completed", "failed", "cancelled", "unknown"]
     source: str = "life"
     action: LifeAction | None = None
@@ -135,6 +203,27 @@ class LifeStepView(LifeResultView):
     business_ref: dict
     result_ref: dict
     error: str | None
+    failure_code: str | None = None
+    started_at: datetime | None
+    finished_at: datetime | None
+
+
+class LifeStepPublicView(LifeResultView):
+    """用户生活接口的步骤投影；不包含执行描述、等待原因或诊断原文。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: ResourceId
+    pursuit_id: ResourceId | None
+    kind: str
+    narrative: str | None = None
+    state: Literal["planned", "running", "completed", "failed", "cancelled", "unknown"]
+    source: str = "life"
+    disposition: str = "ready"
+    not_before: datetime | None = None
+    reading_result: ReadingResultView | None = None
+    result_ref: dict
+    failure_code: str | None = None
     started_at: datetime | None
     finished_at: datetime | None
 
@@ -149,6 +238,26 @@ class LifeEventView(LifeResultView):
     subject: str
     fact_type: FactType = "execution"
     fact: dict
+    narrative: str | None = None
+    occurred_at: datetime
+    pursuit_id: ResourceId | None
+    step_id: ResourceId | None
+    result_ref: dict
+    is_meaningful: bool
+
+
+class LifeEventPublicView(LifeResultView):
+    """用户生活接口的事件投影；事实细节只进入内部模型上下文。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: ResourceId
+    event_key: str
+    kind: str
+    source: str
+    subject: str
+    fact_type: FactType = "execution"
+    narrative: str | None = None
     occurred_at: datetime
     pursuit_id: ResourceId | None
     step_id: ResourceId | None
@@ -192,8 +301,22 @@ class LifePursuitListResponse(BaseModel):
     next_cursor: str | None
 
 
+class LifePursuitPublicListResponse(BaseModel):
+    items: list[LifePursuitPublicView] = Field(default_factory=list)
+    total: int | None = None
+    has_more: bool
+    next_cursor: str | None
+
+
 class LifeEventListResponse(BaseModel):
     items: list[LifeEventView] = Field(default_factory=list)
+    total: int | None = None
+    has_more: bool
+    next_cursor: str | None
+
+
+class LifeEventPublicListResponse(BaseModel):
+    items: list[LifeEventPublicView] = Field(default_factory=list)
     total: int | None = None
     has_more: bool
     next_cursor: str | None
@@ -231,6 +354,13 @@ class LifeDecisionFields(BaseModel):
     )
     next_action: NextAction | None = Field(
         default=None, description="登记一个实际可执行的下一步；无须行动时省略，不代表已执行"
+    )
+    narrative: LifeNarrativePatch = Field(
+        default_factory=LifeNarrativePatch,
+        description=(
+            "面向用户的伙伴第一人称叙事补丁：state 描述当前状态，pursuit 描述持续事项，"
+            "action 描述下一步计划，event 描述本次值得记录的变化；只填写本次发生变化的部分。"
+        ),
     )
     status_reason: str = Field(default="", max_length=2000, description="暂停、恢复、放弃或改变方向的具体原因")
     resume_after: AwareDatetime | None = Field(
@@ -274,6 +404,7 @@ class LifeStepRequest(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=160)
     kind: str = Field(min_length=1, max_length=32)
     description: str
+    narrative: str | None = Field(default=None, max_length=1000)
     pursuit_id: ResourceId | None = Field(default=None, gt=0)
 
 
@@ -297,6 +428,7 @@ class LifeEventInput(BaseModel):
     subject: Literal["companion", "user", "system"] = "companion"
     fact_type: FactType = "execution"
     fact: dict = Field(default_factory=dict)
+    narrative: str | None = Field(default=None, max_length=2000)
     occurred_at: datetime | None = None
     pursuit_id: ResourceId | None = Field(default=None, gt=0)
     step_id: ResourceId | None = Field(default=None, gt=0)
@@ -306,3 +438,7 @@ class LifeEventInput(BaseModel):
 
 class LifePursuitDetail(LifePursuitView):
     steps: list[LifeStepView] = Field(default_factory=list)
+
+
+class LifePursuitPublicDetail(LifePursuitPublicView):
+    steps: list[LifeStepPublicView] = Field(default_factory=list)

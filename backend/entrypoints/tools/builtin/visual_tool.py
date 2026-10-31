@@ -85,6 +85,7 @@ async def visual_generate_tool(
     user_id: ResourceId,
     tool_call_id: str,
     parent_session_id: str,
+    narrative: str,
     media_kind: str = "image",
     requirements: str = "",
     feedback: str = "",
@@ -93,6 +94,7 @@ async def visual_generate_tool(
 ) -> str:
     result = await generate_visual_reference(
         user_id,
+        narrative=narrative,
         outfit_id=outfit_id,
         scene_id=scene_id,
         action_id=action_id,
@@ -177,6 +179,12 @@ def register(registry: ToolsRegistry) -> None:
                 },
                 "scene_id": {"type": "string", "pattern": "^[1-9][0-9]*$", "description": "环境图片的 scene_id。"},
                 "action_id": {"type": "string", "pattern": "^[1-9][0-9]*$", "description": "动作的 action_id。"},
+                "narrative": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "description": "伙伴在生活中对用户表达的第一人称创作计划和具体缘由，承接角色与当前交流，不预写成品完成。",
+                },
                 "media_kind": {
                     "type": "string",
                     "enum": ["image", "video"],
@@ -191,7 +199,7 @@ def register(registry: ToolsRegistry) -> None:
                 "feedback": {"type": "string", "maxLength": 2000, "description": "通用定制要求。"},
                 "video_feedback": {"type": "string", "maxLength": 2000, "description": "视频定制要求。"},
             },
-            ["outfit_id", "scene_id", "action_id"],
+            ["outfit_id", "scene_id", "action_id", "narrative"],
         ),
         (
             "visual_play",

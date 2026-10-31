@@ -604,6 +604,7 @@ class VisualJobView(BaseModel):
     repair_count: int = 0
     repair_limit: int = 1
     error: str | None = None
+    failure_reason: str | None = None
     result_visual_id: ResourceId | None = None
     result_image_id: ResourceId | None = None
     video_queue: VideoQueueInfo | None = None

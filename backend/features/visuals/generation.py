@@ -64,7 +64,7 @@ from features.media.character_images import (
     generate_scene_images,
 )
 from features.media.identity_review import ImageGoalReviewFailure, score_character_frames_with_references
-from features.media.image_generation import ImageGenerationError, ImageReviewUnavailableError
+from features.media.image_generation import ImageGenerationError, ImageResultDownloadError, ImageReviewUnavailableError
 from features.media.video_queue.contracts import VideoQueueInfo, VideoQueueOwner, VideoQueueStoppedError
 from features.media.video_queue.service import (
     acknowledge_video_attempt,
@@ -89,7 +89,7 @@ from .creation import (
     review_existing_opening,
 )
 from .geometry import probe_visual_image, visual_aspect_matches, visual_aspect_ratio
-from .life import settle_visual_steps
+from .life import restart_visual_steps, settle_visual_steps
 from .models import VisualJob
 from .naming import schedule_visual_title
 from .ports import notify_visual_ready, request_base_motion_preparation
@@ -272,6 +272,22 @@ def visual_progress_has_video_work(progress: VisualJobProgress) -> bool:
         or progress.candidate
         or _queued_video_request(progress),
     )
+
+
+def resume_known_result(progress: VisualJobProgress) -> None:
+    """恢复成品接收时封住后续生成，只消费已经提交的结果。"""
+    if progress.video_chain_json:
+        chain = MediaChainState.model_validate_json(progress.video_chain_json)
+        if chain.result_url:
+            chain.next_index = len(chain.providers)
+            progress.video_chain_json = chain.model_dump_json()
+    for field in ("image_chain_json", "reference_alignment_chain_json"):
+        if saved := getattr(progress, field):
+            image = ImageChainState.model_validate_json(saved)
+            if image.pending_urls:
+                image.resume_download()
+                setattr(progress, field, image.model_dump_json())
+    progress.failure_reason = ""
 
 
 def visual_progress_can_resume(progress: VisualJobProgress) -> bool:
@@ -466,6 +482,8 @@ async def _aligned_outfit_reference(
             before_submit=before_submit,
             selection=progress.image_selection,
         )
+    except ImageResultDownloadError:
+        raise
     except ImageGenerationError as exc:
         _raise_image_review_failure(exc, state)
         if state.phase == "complete" and state.stop_reason == "exhausted":
@@ -741,6 +759,8 @@ async def _prepare_pose(
             task=AiTaskKey.visuals,
             selection=progress.image_selection,
         )
+    except ImageResultDownloadError:
+        raise
     except ImageGenerationError as exc:
         if exc.result_unknown:
             raise
@@ -1708,7 +1728,14 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
                 await _save_progress(user_id, job_id, progress, stage="review")
                 continue
             if chain.result_url:
-                data = await download_media_result(chain.result_url, max_bytes=256 * 1024 * 1024)
+                try:
+                    data = await download_media_result(chain.result_url, max_bytes=256 * 1024 * 1024)
+                except Exception as exc:
+                    # 已知结果只恢复接收，保留检查点中的原下载地址。
+                    raise VisualCreationError(
+                        "视频已经完成，但成品暂时无法接收；可以继续接收原成品",
+                        "result_download_failed",
+                    ) from exc
                 progress.source_path = await save_video_job_asset_async(
                     data,
                     user_id=user_id,
@@ -1901,6 +1928,8 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
                 saved.failure_reason = (
                     exc.failure_reason
                     if isinstance(exc, VisualCreationError)
+                    else "result_download_failed"
+                    if isinstance(exc, ImageResultDownloadError)
                     else "queue_stopped"
                     if isinstance(exc, VideoQueueStoppedError)
                     else "result_unknown"
@@ -1912,7 +1941,11 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
                     else "failed"
                 )
                 row.checkpoint = saved.model_dump(mode="json")
-                row.state = "unknown" if saved.submission_unknown else "failed"
+                row.state = (
+                    "unknown"
+                    if saved.submission_unknown or saved.failure_reason == "result_download_failed"
+                    else "failed"
+                )
                 row.error = _visual_job_error(exc, saved, stage=row.stage)
                 await settle_visual_steps(db, user_id, row)
                 await notify_visuals_updated(db, user_id)
@@ -1986,13 +2019,38 @@ async def pause_visual_job(job_id: int) -> None:
 
 async def resume_visual_jobs(user_id: int | None = None) -> None:
     async with SESSION_LOCAL() as db:
-        query = select(VisualJob).where(VisualJob.state.in_(("queued", "running")))
+        query = select(VisualJob).where(VisualJob.state.in_(("queued", "running", "unknown")))
         if user_id is not None:
             query = query.where(VisualJob.user_id == user_id)
         rows = list(await db.scalars(query))
     for row in rows:
         progress = visual_progress(row)
         if progress is not None and progress.paused_by_user:
+            continue
+        if row.state == "unknown":
+            if (
+                progress is None
+                or progress.failure_reason != "result_download_failed"
+                or not visual_progress_has_video_work(progress)
+            ):
+                continue
+            async with SESSION_LOCAL() as db:
+                current = await visual_job_row(db, row.user_id, row.id, lock=True)
+                saved = visual_progress(current)
+                if (
+                    current.state != "unknown"
+                    or saved is None
+                    or saved.generation_id != progress.generation_id
+                    or saved.failure_reason != "result_download_failed"
+                ):
+                    continue
+                resume_known_result(saved)
+                current.checkpoint = saved.model_dump(mode="json")
+                current.state, current.stage, current.error = "running", "download", None
+                await restart_visual_steps(db, row.user_id, current)
+                await notify_visuals_updated(db, row.user_id)
+                await db.commit()
+            schedule_visual_job(row.user_id, row.id, allow_model_steps=False)
             continue
         safe_resume = (
             progress is not None

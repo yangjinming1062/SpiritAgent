@@ -44,6 +44,9 @@ async def transition_pursuit(db: AsyncSession, user_id: int, decision: LifeDecis
             raise LifeInputError("尚未到事项恢复时间")
     pursuit.status = target
     pursuit.status_reason = decision.status_reason.strip()
+    pursuit.narrative = (
+        decision.narrative.event if decision.operation == "redirect_pursuit" else decision.narrative.pursuit
+    )
     pursuit.status_source = decision.source
     pursuit.status_changed_at = utc_now()
     pursuit.resume_after = decision.resume_after if target == "paused" else None
@@ -104,6 +107,7 @@ async def transition_pursuit(db: AsyncSession, user_id: int, decision: LifeDecis
             fact_type="intent",
             pursuit_id=pursuit.id,
             fact={"title": pursuit.title, "reason": pursuit.status_reason, "source": decision.source},
+            narrative=decision.narrative.event or decision.narrative.pursuit,
         ),
     )
     await record_events(db, user_id, events)

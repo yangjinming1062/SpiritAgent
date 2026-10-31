@@ -179,7 +179,7 @@ async def list_outfits(db: AsyncSession, user_id: int) -> list[OutfitResponse]:
         .all()
     )
     for outfit in outfits:
-        if outfit.status == 'ready' and outfit.description_status == 'pending' and outfit.fullbody_url:
+        if outfit.status == "ready" and outfit.description_status == "pending" and outfit.fullbody_url:
             schedule_outfit_description(user_id, outfit.id)
     return [outfit_response(outfit) for outfit in outfits]
 
@@ -275,7 +275,7 @@ async def _generate_outfit_fullbody(
     except Exception as exc:
         # 供应商图片地址在图片链内下载，失败时没有候选；API 日志只记 internal，堆栈在此保留。
         logger.warning("outfit image generation failed", extra={"user_id": user_id}, exc_info=True)
-        raise AvatarGenerationError("生成结果下载失败，请稍后重试", internal=f"{type(exc).__name__}: {exc}") from exc
+        raise AvatarGenerationError("造型图片制作未完成，请稍后重试", internal=f"{type(exc).__name__}: {exc}") from exc
     try:
         data, _mime = await image_asset_bytes(paths[0])
         await asyncio.to_thread(validate_transparent_portrait, data)
@@ -462,13 +462,18 @@ async def create_outfit_draft(
         character_card_revision=identity.revision,
         identity_reference_path=avatar.seed_fullbody_url,
     )
-    prompt = await _prepare_new_outfit_prompt(
-        user_id,
-        context,
-        identity_uri,
-        source,
-        image=image,
-        content_type=content_type,
+    image_state = ImageChainState.model_validate(progress.get("image_chain", {})) if job_id is not None else None
+    prompt = (
+        image_state.inputs.prompt
+        if image_state is not None and image_state.inputs is not None
+        else await _prepare_new_outfit_prompt(
+            user_id,
+            context,
+            identity_uri,
+            source,
+            image=image,
+            content_type=content_type,
+        )
     )
 
     async def save_image(state: ImageChainState) -> None:
@@ -484,7 +489,7 @@ async def create_outfit_draft(
         identity_reference=identity_uri,
         identity=identity,
         outfit_id=outfit_id,
-        image_state=ImageChainState.model_validate(progress.get("image_chain", {})) if job_id is not None else None,
+        image_state=image_state,
         save_progress=save_image if job_id is not None else None,
     )
 

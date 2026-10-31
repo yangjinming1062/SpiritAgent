@@ -52,6 +52,7 @@ class LifeState(ModelBase, TimestampMixin):
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     current_activity: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
+    narrative: Mapped[str | None] = mapped_column(Text, nullable=True)
     activity_kind: Mapped[str] = mapped_column(
         String(24), default="virtual_activity", server_default="virtual_activity"
     )
@@ -84,6 +85,7 @@ class LifePursuit(ModelBase, TimestampMixin):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     idempotency_key: Mapped[str | None] = mapped_column(String(256), nullable=True)
     title: Mapped[str] = mapped_column(String(160), default="", server_default=text("''"))
+    narrative: Mapped[str | None] = mapped_column(Text, nullable=True)
     reason: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     desired_result: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     progress: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
@@ -150,6 +152,7 @@ class LifeStep(ModelBase, TimestampMixin):
     idempotency_key: Mapped[str] = mapped_column(String(160))
     kind: Mapped[str] = mapped_column(String(32))
     description: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
+    narrative: Mapped[str | None] = mapped_column(Text, nullable=True)
     state: Mapped[str] = mapped_column(String(16), default="planned", server_default=text("'planned'"), index=True)
     action_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
     checkpoint: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
@@ -177,6 +180,7 @@ class LifeStep(ModelBase, TimestampMixin):
     result_action_id: Mapped[int | None] = mapped_column(ForeignKey("action_definitions.id", ondelete="SET NULL"))
     result_ref_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -191,6 +195,7 @@ class LifeEvent(ModelBase, TimestampMixin):
     subject: Mapped[str] = mapped_column(String(24), default="companion", server_default=text("'companion'"))
     fact_type: Mapped[str] = mapped_column(String(24), default="execution", server_default="execution")
     fact_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
+    narrative: Mapped[str | None] = mapped_column(Text, nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), index=True)
     pursuit_id: Mapped[int | None] = mapped_column(
         ForeignKey("life_pursuits.id", ondelete="SET NULL"), nullable=True, index=True

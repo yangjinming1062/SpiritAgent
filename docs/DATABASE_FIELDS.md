@@ -70,7 +70,7 @@
 
 | 字段组与模型入口 | 语义 |
 |---|---|
-| 状态、事项、步骤与事件：[life/models.py](../backend/features/life/models.py) | 生活状态行串行化写入，`activity_type` 与 `scene_tags_json` 保存当前活动类别及有依据的环境、物品条件供视觉投影；事项保存目标/进展和调整来源，步骤保存可执行动作及永久阅读成果，事件保留事实性质、主体和结果；完成证据经关联表连接 |
+| 状态、事项、步骤与事件：[life/models.py](../backend/features/life/models.py) | 生活状态行串行化写入，`activity_type` 与 `scene_tags_json` 保存当前活动类别及有依据的环境、物品条件供视觉投影；状态、事项、步骤和事件分别保存模型生成的用户叙事，事项保存目标/进展和调整来源，步骤保存可执行动作、永久阅读成果及结构化 `failure_code`，原始错误留在任务边界；事件保留事实性质、主体、叙事和结果；完成证据经关联表连接。`0003_life_narrative_reset` 清理旧生活历史后启用这些字段。 |
 | 请求额度与提交：同一[模型文件](../backend/features/life/models.py) | `life_action_admissions` 独立保存额度归属和已提交事实，覆盖恢复按请求合并，不能从可覆盖的事项历史重新计数 |
 | 夜间账本：[nightly/models.py](../backend/workflows/nightly/models.py) | 按账户/本地日期组织阶段、预算和动作身份，关联实际任务与结果；账本计划不证明执行完成 |
 | 自动化与等待：[automation/models.py](../backend/features/automation/models.py)、[intent_models.py](../backend/features/companion/intent_models.py) | Cron 保存计划和任务会话，陪伴意图保存等待条件、租约和终态；`source_kind` 与 `cron_job_id` 表示触发来源，`source_key` 仍用于可移植身份 |

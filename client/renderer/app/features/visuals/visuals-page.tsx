@@ -303,7 +303,7 @@ export function VisualsPage(): React.JSX.Element {
                 label={jobLabel(job)}
               >
                 <div className="flex gap-2">
-                  {visualJobCommands(job.state).map(command => (
+                  {visualJobCommands(job.state, job.failure_reason).map(command => (
                     <button
                       className={BTN_SUBTLE}
                       disabled={busy}
@@ -311,7 +311,9 @@ export function VisualsPage(): React.JSX.Element {
                       onClick={() => jobCommand(job, command)}
                       type="button"
                     >
-                      {jobCommandLabels[command]}
+                      {command === 'resume' && job.failure_reason === 'result_download_failed'
+                        ? t.jobReceive
+                        : jobCommandLabels[command]}
                     </button>
                   ))}
                 </div>

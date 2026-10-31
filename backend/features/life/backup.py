@@ -107,7 +107,11 @@ def _prepare_step(raw: dict[str, Any], payload: dict[str, Any], context: BackupC
         )
     if payload["state"] in {"running", "unknown"}:
         payload.update(
-            state="unknown", disposition="unknown", wait_reason="恢复的执行结果须先核对原任务", finished_at=None
+            state="unknown",
+            disposition="unknown",
+            wait_reason="恢复的执行结果须先核对原任务",
+            finished_at=None,
+            narrative=None,
         )
 
 
@@ -142,6 +146,7 @@ async def _restore_life(db: AsyncSession, rows: dict[str, list[dict[str, Any]]],
                         "unknown",
                         "这个请求已经提交过，须核对原结果",
                     )
+                    row.failure_code = row.failure_code or "unknown_submission"
                     row.budget_date, row.started_at = admission.budget_date, admission.admitted_at
                     if row.job_id is None:
                         row.job_id = await requested_job_id(db, context.user_id, row.idempotency_key)

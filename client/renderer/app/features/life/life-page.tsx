@@ -195,23 +195,9 @@ export function LifePage({
           ) : detail?.id === ui.selectedId ? (
             <article className={styles.detail}>
               <span className={styles.eyebrow}>{t.statuses[detail.status]}</span>
-              <h2>{detail.title}</h2>
+              <h2>{t.ongoing}</h2>
+              {detail.narrative && <p>{detail.narrative}</p>}
               <time dateTime={detail.started_at}>{formatDate(detail.started_at)}</time>
-              {[
-                [t.reason, detail.reason],
-                [t.desiredResult, detail.desired_result],
-                [t.progress, detail.progress || t.noProgress],
-                [t.changeReason, detail.status_reason],
-                ...(detail.status === 'active' && detail.next_step ? [[t.nextStep, detail.next_step]] : [])
-              ].map(
-                ([label, text]) =>
-                  text && (
-                    <div className={styles.detailField} key={label}>
-                      <h3>{label}</h3>
-                      <p>{text}</p>
-                    </div>
-                  )
-              )}
               {detail.status_changed_at && (
                 <time dateTime={detail.status_changed_at}>
                   {t.statuses[detail.status]} · {formatDate(detail.status_changed_at)}
@@ -220,11 +206,8 @@ export function LifePage({
               <h3>{t.stepsTitle}</h3>
               {detail.steps.map(step => (
                 <div className={styles.detailField} key={step.id}>
-                  <strong>
-                    {t.stepStates[step.state]} · {step.description}
-                  </strong>
-                  {step.wait_reason && <p>{step.wait_reason}</p>}
-                  {step.error && step.error !== step.wait_reason && <p>{step.error}</p>}
+                  <strong>{t.stepStates[step.state]}</strong>
+                  {step.narrative && <p>{step.narrative}</p>}
                   {(
                     [
                       ['visual', step.result_ref.visual_id, t.openVisual],
@@ -300,8 +283,7 @@ export function LifePage({
                   type="button"
                 >
                   <span className={styles.eyebrow}>{t.statuses[pursuit.status]}</span>
-                  <strong>{pursuit.title}</strong>
-                  <p>{pursuit.progress || pursuit.reason}</p>
+                  <strong>{pursuit.narrative || t.ongoing}</strong>
                   <time dateTime={pursuit.updated_at}>{formatDate(pursuit.updated_at)}</time>
                 </button>
               ))}

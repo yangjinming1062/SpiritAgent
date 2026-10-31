@@ -39,7 +39,7 @@ from features.jobs.service import bind_job_request, requested_job_id
 from features.life.schemas import LifeStepRequest
 from features.life.use_cases import bind_step_in_session, require_step_submission, update_business_steps_in_session
 from features.media.character_images import ImageChainState, ImageProgressWriter, generate_scene_images
-from features.media.image_generation import ImageGenerationError, ImageReviewUnavailableError
+from features.media.image_generation import ImageGenerationError, ImageResultDownloadError, ImageReviewUnavailableError
 from features.media.provider_attempts import count_scene_submissions, record_scene_submission
 from features.scenes.asset_references import sync_scene_assets
 from features.scenes.models import (
@@ -142,6 +142,11 @@ async def _event(db: AsyncSession, user_id: int, event_type: str, scene_id: int 
             await sync_scene_assets(db, scene)
             job = scene.initial_job
             if job is not None and job.state in {"succeeded", "failed", "cancelled", "unknown"}:
+                receiving = (
+                    ImageChainState.model_validate(job.checkpoint)
+                    if job.state == "unknown" and job.checkpoint
+                    else None
+                )
                 await update_business_steps_in_session(
                     db,
                     user_id,
@@ -150,6 +155,7 @@ async def _event(db: AsyncSession, user_id: int, event_type: str, scene_id: int 
                     state="completed" if job.state == "succeeded" else job.state,
                     result_ref={"job_id": job.id, "scene_id": scene.id} if job.state == "succeeded" else {},
                     error=job.error,
+                    failure_code="result_download_failed" if receiving is not None and receiving.pending_urls else None,
                 )
         # 只有首次引导场景需要通知视觉初始化；普通环境入库不应重新启动基础动态准备。
         if scene is not None and scene.status == "ready" and scene.origin == SceneOrigin.ONBOARDING.value:
@@ -287,6 +293,9 @@ async def regenerate_scene(user_id: int, scene_id: int) -> CompanionScene:
             if state and (
                 state.pending_urls or state.best() or any(not candidate.evaluated for candidate in state.candidates)
             ):
+                if state.pending_urls:
+                    state.resume_download()
+                    row.initial_job.checkpoint = state.model_dump(mode="json")
                 row.initial_job.stage = state.phase
             else:
                 cleanup_paths = state.stored_paths() if state else set()
@@ -298,20 +307,32 @@ async def regenerate_scene(user_id: int, scene_id: int) -> CompanionScene:
         elif row.status == SceneStatus.READY.value and row.media_path:
             if not row.title.strip() or not row.description.strip():
                 raise SceneStateError("请先补全场景标题和描述")
-            cleanup_paths = _regeneration_asset_paths(row)
-            regeneration_task_id = str(uuid4())
-            regeneration = SceneRegenerationState(
-                task_id=regeneration_task_id,
-                prompt=build_scene_prompt(notes=row.description),
-                target_size=SCENE_IMAGE_SIZE,
-                selection=ProviderSelection(
-                    origin=GenerationOrigin.model_validate(row.generation_origin_json)
-                    if row.generation_origin_json
-                    else None,
-                    mode="next",
-                ),
+            saved = (
+                SceneRegenerationState.model_validate(row.replacement_job.checkpoint)
+                if row.replacement_job is not None and row.replacement_job.checkpoint
+                else None
             )
-            row.replacement_job = SceneJob(user_id=user_id, scene=row, purpose="replace", token=regeneration_task_id)
+            if saved is not None and saved.image_chain.pending_urls:
+                saved.image_chain.resume_download()
+                regeneration = saved
+                regeneration_task_id = saved.task_id
+            else:
+                cleanup_paths = _regeneration_asset_paths(row)
+                regeneration_task_id = str(uuid4())
+                regeneration = SceneRegenerationState(
+                    task_id=regeneration_task_id,
+                    prompt=build_scene_prompt(notes=row.description),
+                    target_size=SCENE_IMAGE_SIZE,
+                    selection=ProviderSelection(
+                        origin=GenerationOrigin.model_validate(row.generation_origin_json)
+                        if row.generation_origin_json
+                        else None,
+                        mode="next",
+                    ),
+                )
+                row.replacement_job = SceneJob(
+                    user_id=user_id, scene=row, purpose="replace", token=regeneration_task_id
+                )
             row.replacement_job.availability = "pending"
             row.replacement_job.stage = "prepare"
             row.replacement_job.error = None
@@ -726,6 +747,7 @@ async def _mark_regeneration_failed(
     error: str,
     *,
     review_failed: bool = False,
+    download_failed: bool = False,
 ) -> None:
     cleanup_paths: set[str] = set()
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
@@ -746,7 +768,9 @@ async def _mark_regeneration_failed(
         if current and current.image_chain.phase == "submitting":
             error = "生图提交结果未知，未自动重复付费请求；请核对供应商任务后再决定是否重新生成"
         unknown = current is not None and (
-            current.image_chain.phase == "submitting" or current.image_chain.stop_reason == "result_unknown"
+            download_failed
+            or current.image_chain.phase == "submitting"
+            or current.image_chain.stop_reason == "result_unknown"
         )
         if not retry_analysis and not unknown:
             cleanup_paths = current.image_chain.stored_paths() if current else set()
@@ -838,7 +862,9 @@ async def _run_pipeline(scene_id: int, user_id: int) -> None:
     await _analyze(user_id, scene_id)
 
 
-async def _mark_failed(user_id: int, scene_id: int, error: str, *, review_failed: bool = False) -> None:
+async def _mark_failed(
+    user_id: int, scene_id: int, error: str, *, review_failed: bool = False, download_failed: bool = False
+) -> None:
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
         row = await get_scene(db, user_id, scene_id)
         if row is None or row.initial_job is None or row.status != "pending":
@@ -847,7 +873,7 @@ async def _mark_failed(user_id: int, scene_id: int, error: str, *, review_failed
         row.initial_job.error = error
         if row.initial_job.checkpoint:
             progress = ImageChainState.model_validate(row.initial_job.checkpoint)
-            if progress.phase == "submitting" or progress.stop_reason == "result_unknown":
+            if download_failed or progress.phase == "submitting" or progress.stop_reason == "result_unknown":
                 row.initial_job.state = "unknown"
         if review_failed:
             row.initial_job.stage = "review_failed"
@@ -886,6 +912,7 @@ def _launch_task(scene_id: int, user_id: int, *, regeneration_task_id: str | Non
                     regeneration_task_id,
                     message,
                     review_failed=isinstance(exc, ImageReviewUnavailableError),
+                    download_failed=isinstance(exc, ImageResultDownloadError),
                 )
 
                 return
@@ -901,7 +928,13 @@ def _launch_task(scene_id: int, user_id: int, *, regeneration_task_id: str | Non
                 error = str(exc)
             else:
                 error = "场景准备失败，请查看任务状态后重试"
-            await _mark_failed(user_id, scene_id, error, review_failed=isinstance(exc, ImageReviewUnavailableError))
+            await _mark_failed(
+                user_id,
+                scene_id,
+                error,
+                review_failed=isinstance(exc, ImageReviewUnavailableError),
+                download_failed=isinstance(exc, ImageResultDownloadError),
+            )
 
     def completed(done: asyncio.Task[None]) -> None:
         queued: tuple[str | None] | None = None

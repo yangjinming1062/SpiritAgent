@@ -4,7 +4,13 @@ import hashlib
 import json
 from typing import Any, Literal
 
-from features.life.schemas import LIFE_REFERENCE_KEYS, LifeDecisionRequest, LifePursuitView, LifeStepView
+from features.life.schemas import (
+    LIFE_REFERENCE_KEYS,
+    LifeDecisionRequest,
+    LifeNarrativePatch,
+    LifePursuitView,
+    LifeStepView,
+)
 from features.life.use_cases import read_pursuit, read_pursuits, read_state
 from infrastructure.api_ids import ResourceId
 from infrastructure.text import tool_error, utc_now
@@ -37,6 +43,9 @@ class LifeAdjustment(BaseModel):
     pursuit_id: ResourceId = Field(gt=0)
     expected_revision: int = Field(ge=0, description="life_inspect 返回的 state.revision，避免覆盖更新后的生活状态")
     status_reason: str = Field(min_length=1, max_length=2000, description="调整的原因，不声称旧目标已经完成")
+    narrative: LifeNarrativePatch = Field(
+        description="本次调整的第一人称伙伴表达，提供 pursuit 和 event；角色语言承接当前交流，事实阶段以调整后的状态为准"
+    )
     user_instruction: str | None = Field(
         min_length=1,
         max_length=2000,

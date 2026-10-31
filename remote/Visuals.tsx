@@ -96,7 +96,7 @@ function VisualJobRow({
         {job.error ? <small>{job.error}</small> : null}
         {error ? <Notice error={error} /> : null}
       </div>
-      {visualJobCommands(job.state).map(command => (
+      {visualJobCommands(job.state, job.failure_reason).map(command => (
         <button
           disabled={busy}
           key={command}
@@ -111,7 +111,9 @@ function VisualJobRow({
           }
           type="button"
         >
-          {JOB_COMMAND_TEXT[command]}
+          {command === 'resume' && job.failure_reason === 'result_download_failed'
+            ? '继续接收原成品'
+            : JOB_COMMAND_TEXT[command]}
         </button>
       ))}
     </li>

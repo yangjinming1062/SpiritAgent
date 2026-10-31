@@ -22,6 +22,7 @@ from .eligibility import automatic_media_ready
 from .generation import (
     cancel_visual_job,
     pause_visual_job,
+    resume_known_result,
     schedule_visual_job,
     visual_image_chain_exhausted,
     visual_progress_has_unknown_submission,
@@ -877,13 +878,15 @@ async def resume_job(user_id: int, job_id: int) -> VisualJobView:
     async with _lock(user_id), SESSION_LOCAL() as db:
         job = await visual_job_row(db, user_id, job_id, lock=True)
         progress = visual_progress(job)
-        was_failed = job.state == "failed"
+        was_failed = job.state in {"failed", "unknown"}
         if job.state == "running":
             return job_view(job)
         if job.state in {"succeeded", "cancelled"}:
             raise VisualStateError("这个工作项已结束，请按需重新发起制作")
         if progress is None:
             raise VisualStateError("制作草稿已失效")
+        if job.state == "unknown" and progress.failure_reason != "result_download_failed":
+            raise VisualStateError("供应商提交结果尚未确认，请先核对结果或放弃本次制作")
         if progress.failure_reason == "review_blocked":
             raise VisualStateError("图片检查未通过服务审核，请调整制作要求或参考形象后重新制作")
         if visual_progress_has_unknown_submission(progress):
@@ -903,6 +906,8 @@ async def resume_job(user_id: int, job_id: int) -> VisualJobView:
             else:
                 raise
         progress.paused_by_user = False
+        if progress.failure_reason == "result_download_failed":
+            resume_known_result(progress)
         progress.failure_reason = ""
         job.checkpoint = progress.model_dump(mode="json")
         job.state, job.stage, job.error = "running", "prepare", None
@@ -1015,7 +1020,9 @@ async def retry_job(user_id: int, job_id: int) -> VisualJobView:
             pass  # 交给下面的继续流程
         elif job.state in {"succeeded", "cancelled"}:
             raise VisualStateError("这个工作项已结束，请按需重新发起制作")
-        elif job.state == "unknown" or (progress is not None and visual_progress_has_unknown_submission(progress)):
+        elif (job.state == "unknown" and (progress is None or progress.failure_reason != "result_download_failed")) or (
+            progress is not None and visual_progress_has_unknown_submission(progress)
+        ):
             raise VisualStateError("供应商提交结果尚未确认，请先核对结果或放弃本次制作")
         if progress is None:
             raise VisualStateError("制作草稿已失效")

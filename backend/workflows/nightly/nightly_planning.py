@@ -87,6 +87,7 @@ class DateContext(BaseModel):
 class OutreachScheduleArgs(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
+    narrative: str = Field(min_length=1, max_length=1000)
     name: str = Field(default="主动联系", max_length=100)
     # 规划给出用户本地时刻，时区换算由代码完成。
     local_time: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
@@ -320,6 +321,17 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
         exclusive_group="visual",
         paid=True,
     ),
+)
+_CAPABILITIES = tuple(
+    cap.model_copy(
+        update={
+            "arguments": {
+                **cap.arguments,
+                "narrative": "string（非空，最多 1000 字符）：伙伴面向用户的第一人称计划及缘由，按角色与当前事情自然表达，保留尚未完成的阶段。",
+            }
+        }
+    )
+    for cap in _CAPABILITIES
 )
 _CAPABILITY_BY_NAME = {cap.name: cap for cap in _CAPABILITIES}
 
@@ -664,11 +676,7 @@ def _near_term_cron(now: datetime) -> str:
     return f"{target.minute} {target.hour} {target.day} {target.month} *"
 
 
-async def _execute_outreach_schedule(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
-    try:
-        parsed_args = OutreachScheduleArgs.model_validate(args)
-    except ValidationError as exc:
-        return _invalid_arguments(exc)
+async def _execute_outreach_schedule(run: _ActionRun, parsed_args: OutreachScheduleArgs) -> ActionExecutionResult:
     execution_context = json.dumps(
         {
             "completed_nightly_action_facts": run.facts,
@@ -739,7 +747,8 @@ async def _execute_life_action(run: _ActionRun, args: dict[str, Any]) -> ActionE
         if action.capability != expected_capability:
             return ActionExecutionResult(status="failed", reason="saved action capability does not match the plan")
     else:
-        payload = {**args, "capability": expected_capability}
+        payload = {key: value for key, value in args.items() if key != "narrative"}
+        payload["capability"] = expected_capability
         if capability == "visual.create":
             materials = run.context.visual_materials
             if materials is None:
@@ -760,6 +769,7 @@ async def _execute_life_action(run: _ActionRun, args: dict[str, Any]) -> ActionE
                 or args.get("reason")
                 or capability
             )[:1000],
+            narrative=args.get("narrative"),
             action=action,
         ),
         request_id=request_id,
@@ -796,8 +806,16 @@ async def _execute_life_action(run: _ActionRun, args: dict[str, Any]) -> ActionE
 
 
 async def _execute_budgeted_outreach(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
+    try:
+        parsed_args = OutreachScheduleArgs.model_validate(args)
+    except ValidationError as exc:
+        return _invalid_arguments(exc)
     step = await reserve_external_action(
-        run.user_id, request_id=f"nightly:{run.row_id}", kind="outreach.schedule", description="安排后续联系"
+        run.user_id,
+        request_id=f"nightly:{run.row_id}",
+        kind="outreach.schedule",
+        description="安排后续联系",
+        narrative=parsed_args.narrative,
     )
     if step.state == "completed":
         return ActionExecutionResult(status="succeeded", cron_job_id=step.result_ref.get("cron_job_id"))
@@ -809,7 +827,7 @@ async def _execute_budgeted_outreach(run: _ActionRun, args: dict[str, Any]) -> A
         return ActionExecutionResult(status="blocked", reason="今日额度或执行条件不满足")
     try:
         await mark_step_submitted(run.user_id, step.id)
-        result = await _execute_outreach_schedule(run, args)
+        result = await _execute_outreach_schedule(run, parsed_args)
         await finish_step(
             run.user_id,
             step.id,

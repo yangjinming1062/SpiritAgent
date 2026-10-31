@@ -2,16 +2,6 @@ import { compareResourceIds, isResourceId } from '../../../../shared/resource-id
 
 import type { LifeEvent, LifeTimelineEntry } from './types'
 
-function textField(value: unknown, key: string): string {
-  if (!value || typeof value !== 'object' || !(key in value)) {
-    return ''
-  }
-
-  const field: unknown = Reflect.get(value, key)
-
-  return typeof field === 'string' ? field.trim() : ''
-}
-
 function numberField(value: unknown, key: string): number | null {
   if (!value || typeof value !== 'object' || !(key in value)) {
     return null
@@ -31,7 +21,7 @@ export function lifeTimeline(events: readonly LifeEvent[]): LifeTimelineEntry[] 
     }
 
     let kind: LifeTimelineEntry['kind']
-    let text: string
+    const text = event.narrative?.trim() ?? ''
     let priority = 0
 
     switch (event.kind) {
@@ -46,7 +36,6 @@ export function lifeTimeline(events: readonly LifeEvent[]): LifeTimelineEntry[] 
             : event.kind === 'life.pursuit.active'
               ? 'resumed'
               : 'abandoned'
-        text = [textField(event.fact, 'title'), textField(event.fact, 'reason')].filter(Boolean).join(' · ')
 
         break
 
@@ -56,51 +45,43 @@ export function lifeTimeline(events: readonly LifeEvent[]): LifeTimelineEntry[] 
 
       case 'life.step.unknown':
         kind = event.kind === 'life.step.completed' ? 'step' : event.kind === 'life.step.failed' ? 'failed' : 'unknown'
-        text = textField(event.fact, 'description')
 
         break
 
       case 'life.state.changed':
         kind = 'activity'
-        text = textField(event.fact, 'current_activity')
 
         break
 
       case 'life.pursuit.started':
         kind = 'started'
-        text = textField(event.fact, 'title')
 
         break
 
       case 'life.pursuit.progressed':
         kind = 'progressed'
-        text = textField(event.fact, 'progress') || textField(event.fact, 'title')
         priority = 2
 
         break
 
       case 'life.pursuit.completed':
         kind = 'completed'
-        text = textField(event.fact, 'progress') || textField(event.fact, 'title')
         priority = 3
 
         break
 
       case 'visual.ready':
         kind = 'visual'
-        text = ''
 
         break
 
       case 'post.published':
         kind = 'post'
-        text = ''
 
         break
 
       case 'diary.published':
         kind = 'diary'
-        text = textField(event.fact, 'title')
 
         break
 
@@ -108,14 +89,10 @@ export function lifeTimeline(events: readonly LifeEvent[]): LifeTimelineEntry[] 
         continue
     }
 
-    if (!text && ['activity', 'started', 'progressed', 'completed'].includes(kind)) {
-      continue
-    }
-
-    const visual = textField(event.result_ref, 'visual_id')
+    const visual = typeof event.result_ref.visual_id === 'string' ? event.result_ref.visual_id : ''
     const visualId = isResourceId(visual) ? visual : null
-    const postId = kind === 'post' ? textField(event.result_ref, 'entry_id') : ''
-    const diaryId = kind === 'diary' ? textField(event.result_ref, 'entry_id') : ''
+    const postId = kind === 'post' && typeof event.result_ref.entry_id === 'string' ? event.result_ref.entry_id : ''
+    const diaryId = kind === 'diary' && typeof event.result_ref.entry_id === 'string' ? event.result_ref.entry_id : ''
 
     const resultKey = visualId
       ? `visual:${visualId}:${numberField(event.result_ref, 'version') ?? ''}`

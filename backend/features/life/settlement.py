@@ -59,6 +59,7 @@ async def settle_business_steps(
     state: str,
     result_ref: dict | None = None,
     error: str | None = None,
+    failure_code: str | None = None,
     progress: str | None = None,
     next_step: str | None = None,
     additional_events: Sequence[LifeEventInput] = (),
@@ -115,7 +116,6 @@ async def settle_business_steps(
             if (pursuit is not None and pursuit.status != "active") or row.state in {
                 "completed",
                 "cancelled",
-                "unknown",
             }:
                 continue
             generation_id = business_ref.get("generation_id", row.generation_id)
@@ -123,20 +123,32 @@ async def settle_business_steps(
                 continue
             step_changes[row.id] = {
                 "state": "running",
+                "disposition": "executing",
+                "wait_reason": "",
                 "started_at": row.started_at or now,
                 "finished_at": None,
                 "error": None,
+                "failure_code": None,
                 "job_id": job_id,
                 "generation_id": generation_id,
                 **result_values({} if row.state == "failed" else result_reference(row)),
                 "updated_at": now,
             }
             continue
-        changed = row.state not in protected
+        requested_failure_code = failure_code or {
+            "failed": "execution_failed",
+            "unknown": "result_unknown",
+        }.get(state)
+        changed = row.state not in protected and (
+            row.state != state
+            or result_reference(row) != (result_ref or {})
+            or row.error != error
+            or row.failure_code != requested_failure_code
+        )
         final_state = state if changed else row.state
         finished_at = now if changed else row.finished_at
         final_result = deepcopy(result_ref or {}) if changed else result_reference(row)
-        final_error = error if changed else row.error
+        final_failure_code = requested_failure_code if changed else row.failure_code
         if changed:
             if state in {"completed", "unknown"}:
                 submitted_requests.add(row.idempotency_key)
@@ -146,17 +158,27 @@ async def settle_business_steps(
                 "wait_reason": error or "",
                 "finished_at": now,
                 "error": error,
+                "failure_code": final_failure_code,
+                "narrative": None,
                 **result_values(final_result),
                 "updated_at": now,
             }
-            if pursuit is not None and pursuit.status == "active" and state in {"completed", "failed", "cancelled"}:
+            if (
+                pursuit is not None
+                and pursuit.status == "active"
+                and state in {"completed", "failed", "cancelled", "unknown"}
+            ):
                 current = pursuit_changes.get(
-                    pursuit.id, {"progress": pursuit.progress, "next_step": pursuit.next_step, "updated_at": now}
+                    pursuit.id,
+                    {
+                        "progress": pursuit.progress,
+                        "next_step": pursuit.next_step,
+                        "narrative": None,
+                        "updated_at": now,
+                    },
                 )
                 if progress is not None:
                     current["progress"] = progress
-                elif state == "completed":
-                    current["progress"] = row.description
                 if next_step is not None:
                     current["next_step"] = next_step
                 elif state == "completed":
@@ -172,7 +194,7 @@ async def settle_business_steps(
                 fact_type="result" if final_state == "completed" else "execution",
                 step_id=row.id,
                 pursuit_id=row.pursuit_id,
-                fact={"description": row.description, "state": final_state, "error": final_error or ""},
+                fact={"description": row.description, "state": final_state, "failure_code": final_failure_code or ""},
                 result_ref=final_result,
             )
         )

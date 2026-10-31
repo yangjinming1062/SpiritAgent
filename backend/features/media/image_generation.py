@@ -61,6 +61,10 @@ class ImageReviewUnavailableError(ImageGenerationError):
     """已保存候选尚未完成画面核查；仅重试分析，不重新提交生图。"""
 
 
+class ImageResultDownloadError(ImageGenerationError):
+    """已取得供应商图片地址，继续原下载；不再提交生成。"""
+
+
 @dataclass(frozen=True)
 class ResolvedImageGenChain:
     """能力过滤后的调用链与过滤前来源选择的有效性。"""

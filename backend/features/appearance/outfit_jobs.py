@@ -3,15 +3,18 @@
 import asyncio
 import hashlib
 from dataclasses import dataclass
+from datetime import timedelta
 
 from infrastructure.assets.asset_store import compute_file_sha256, resolve_asset_reference
 from infrastructure.database import SESSION_LOCAL
+from infrastructure.text import ensure_utc, utc_now
 from sqlalchemy import select
 
 from features.jobs.service import bind_job_request, requested_job_id
 from features.life.schemas import LifeStepRequest
 from features.life.use_cases import bind_step_in_session, require_step_submission, update_business_steps_in_session
 from features.media.character_images import ImageChainState
+from features.media.image_generation import ImageResultDownloadError
 
 from .models import CompanionOutfit, OutfitCreationJob
 from .outfit_service import confirm_outfit, create_outfit_draft, get_outfit_policy
@@ -56,6 +59,16 @@ async def run_outfit_job(user_id: int, job_id: int) -> OutfitCreation:
             )
             if row is None:
                 raise ValueError("造型制作不存在")
+            if row.state == "unknown" and (row.checkpoint or {}).get("failure_code") == "result_download_failed":
+                if row.not_before is not None and ensure_utc(row.not_before) > utc_now():
+                    return OutfitCreation(row.id, row.state, row.result_outfit_id, row.error)
+                row.state, row.error, row.not_before = "running", None, None
+                image_chain = ImageChainState.model_validate(row.checkpoint["image_chain"])
+                image_chain.resume_download()
+                row.checkpoint = {**row.checkpoint, "image_chain": image_chain.model_dump(mode="json")}
+                await update_business_steps_in_session(
+                    db, user_id, kind="outfit.create", business_ref={"job_id": job_id}, state="running"
+                )
             if row.state == "unknown" and row.result_outfit_id is not None:
                 outfit = await db.scalar(
                     select(CompanionOutfit).where(
@@ -117,7 +130,10 @@ async def run_outfit_job(user_id: int, job_id: int) -> OutfitCreation:
                 row = await db.get(OutfitCreationJob, job_id)
                 if row is not None and row.state == "running":
                     chain = (row.checkpoint or {}).get("image_chain", {})
-                    unknown = (
+                    download_failed = isinstance(exc, ImageResultDownloadError) or isinstance(
+                        exc.__cause__, ImageResultDownloadError
+                    )
+                    unknown = download_failed or (
                         isinstance(exc, asyncio.CancelledError)
                         or chain.get("phase") == "submitting"
                         or chain.get("stop_reason") == "result_unknown"
@@ -126,6 +142,10 @@ async def run_outfit_job(user_id: int, job_id: int) -> OutfitCreation:
                         ("unknown" if unknown else "failed"),
                         "制作中断，须核对原结果" if unknown else str(exc),
                     )
+                    if download_failed:
+                        row.checkpoint = {**(row.checkpoint or {}), "failure_code": "result_download_failed"}
+                        row.not_before = utc_now() + timedelta(minutes=15)
+                        row.error = str(exc)
                     await update_business_steps_in_session(
                         db,
                         user_id,
@@ -133,6 +153,11 @@ async def run_outfit_job(user_id: int, job_id: int) -> OutfitCreation:
                         business_ref={"job_id": job_id},
                         state=row.state,
                         error=row.error,
+                        failure_code="result_download_failed"
+                        if download_failed
+                        else "result_unknown"
+                        if unknown
+                        else "execution_failed",
                     )
                     await db.commit()
             raise

@@ -52,6 +52,7 @@ from features.media.identity_review import (
 )
 from features.media.image_generation import (
     ImageGenerationError,
+    ImageResultDownloadError,
     ImageReviewUnavailableError,
     generate_images,
     resolve_image_gen_chain,
@@ -133,6 +134,11 @@ class ImageChainState(MediaChainState):
     size_rejected: int = 0
     goal_reviews: dict[str, ImageGoalReview] = Field(default_factory=dict)
     goal_review_failures: dict[str, ImageGoalReviewFailure] = Field(default_factory=dict)
+
+    def resume_download(self) -> None:
+        """仅接收已返回的图片并完成检查，不再生成候选。"""
+        self.next_index = len(self.providers)
+        self.remaining_slots = []
 
     def _goal_enabled(self) -> bool:
         return isinstance(self.inputs, CharacterImageInput) and self.inputs.goal_review == "required"
@@ -836,6 +842,11 @@ async def _run_image_chain(
                             if retryable_download and attempt + 1 < max(1, store_attempts):
                                 await asyncio.sleep(min(2.0, 0.25 * 2**attempt))
                                 continue
+                            if isinstance(exc, httpx.TransportError | httpx.HTTPStatusError):
+                                raise ImageResultDownloadError(
+                                    "图片已生成，但成品下载未完成；保留原结果等待继续接收",
+                                    internal=f"{type(exc).__name__}: {exc}",
+                                ) from exc
                             if state.candidates:
                                 state.stop_reason = "storage_failed"
                                 return await _complete_images(state, save_progress)

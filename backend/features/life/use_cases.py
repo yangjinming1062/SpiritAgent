@@ -28,11 +28,16 @@ from .schemas import (
     LifeDecisionRequest,
     LifeEventInput,
     LifeEventListResponse,
+    LifeEventPublicListResponse,
     LifeEventView,
     LifePursuitDetail,
     LifePursuitListResponse,
+    LifePursuitPublicDetail,
+    LifePursuitPublicListResponse,
     LifePursuitView,
+    LifeStatePublicView,
     LifeStateView,
+    LifeStepPublicView,
     LifeStepRequest,
     LifeStepView,
 )
@@ -59,10 +64,26 @@ async def read_state(user_id: int) -> LifeStateView:
     return empty_state_view(user_id)
 
 
+async def read_public_state(user_id: int) -> LifeStatePublicView:
+    return LifeStatePublicView.model_validate(await read_state(user_id))
+
+
+async def read_public_pursuits(
+    user_id: int, *, status: str | None, cursor: str | None, limit: int, include_total: bool = False
+) -> LifePursuitPublicListResponse:
+    response = await read_pursuits(user_id, status=status, cursor=cursor, limit=limit, include_total=include_total)
+    return LifePursuitPublicListResponse.model_validate(response, from_attributes=True)
+
+
 async def read_step(user_id: int, step_id: int) -> LifeStepView | None:
     async with SESSION_LOCAL() as db:
         row = await db.scalar(select(LifeStep).where(LifeStep.user_id == user_id, LifeStep.id == step_id))
         return step_view(row) if row else None
+
+
+async def read_public_step(user_id: int, step_id: int) -> LifeStepPublicView | None:
+    step = await read_step(user_id, step_id)
+    return LifeStepPublicView.model_validate(step) if step is not None else None
 
 
 async def step_for_request(db: AsyncSession, user_id: int, request_id: str) -> LifeStepView | None:
@@ -129,6 +150,11 @@ async def read_pursuit(user_id: int, pursuit_id: int) -> LifePursuitDetail | Non
         return LifePursuitDetail(**pursuit_view(row).model_dump(), steps=[step_view(step) for step in steps])
 
 
+async def read_public_pursuit(user_id: int, pursuit_id: int) -> LifePursuitPublicDetail | None:
+    detail = await read_pursuit(user_id, pursuit_id)
+    return LifePursuitPublicDetail.model_validate(detail) if detail is not None else None
+
+
 async def read_pursuits(
     user_id: int, *, status: str | None, cursor: str | None, limit: int, include_total: bool = False
 ) -> LifePursuitListResponse:
@@ -145,6 +171,15 @@ async def read_events(
         )
 
 
+async def read_public_events(
+    user_id: int, *, pursuit_id: int | None, cursor: str | None, limit: int, include_total: bool = False
+) -> LifeEventPublicListResponse:
+    response = await read_events(
+        user_id, pursuit_id=pursuit_id, cursor=cursor, limit=limit, include_total=include_total
+    )
+    return LifeEventPublicListResponse.model_validate(response, from_attributes=True)
+
+
 async def commit_decision_in_session(db: AsyncSession, user_id: int, decision: LifeDecisionRequest) -> LifeStateView:
     row = await get_or_create_state(db, user_id, lock=True)
     request_payload = decision.model_dump(mode="json", exclude={"expected_revision", "request_id", "next_review_at"})
@@ -157,7 +192,44 @@ async def commit_decision_in_session(db: AsyncSession, user_id: int, decision: L
                 raise ValueError("同一调整请求不能修改其内容")
             return state_view(row)
     previous = state_view(row)
+    state_text_changed = any(
+        value is not None and value != previous_value
+        for value, previous_value in (
+            (decision.current_activity, previous.current_activity),
+            (decision.activity_kind, previous.activity_kind),
+            (decision.activity_type, previous.activity_type),
+            (decision.current_scene, previous.current_scene),
+            (decision.scene_tags, previous.scene_tags),
+            (decision.mood, previous.mood),
+        )
+    )
+    if decision.operation == "keep":
+        if state_text_changed or decision.next_action is not None or any(decision.narrative.model_dump().values()):
+            raise LifeInputError("保持现状只能安排复查，不能夹带生活或叙事变更")
+    else:
+        if state_text_changed and not decision.narrative.state:
+            raise LifeInputError("改变生活状态必须提供伙伴叙事")
+        if (
+            decision.operation
+            in {
+                "start_pursuit",
+                "advance_pursuit",
+                "complete_pursuit",
+                "pause_pursuit",
+                "resume_pursuit",
+                "abandon_pursuit",
+                "redirect_pursuit",
+            }
+            and not decision.narrative.pursuit
+        ):
+            raise LifeInputError("调整持续事项必须提供伙伴叙事")
+        if decision.next_action is not None and not (decision.narrative.action or decision.next_action.narrative):
+            raise LifeInputError("登记生活步骤必须提供伙伴叙事")
+        if not decision.narrative.event:
+            raise LifeInputError("生活变更必须提供本次变化的伙伴叙事")
     apply_decision(row, decision)
+    if decision.narrative.state is not None:
+        row.narrative = decision.narrative.state
     await db.flush()
     activity_changed = (
         previous.current_activity != row.current_activity
@@ -171,7 +243,7 @@ async def commit_decision_in_session(db: AsyncSession, user_id: int, decision: L
             db,
             user_id,
             LifeEventInput(
-                event_key=f"life-state:{user_id}:revision:{row.revision}",
+                event_key=f"life-state:{row.source_key}:revision:{row.revision}",
                 kind="life.state.changed",
                 source="life_decision",
                 fact_type=row.activity_kind,
@@ -183,8 +255,22 @@ async def commit_decision_in_session(db: AsyncSession, user_id: int, decision: L
                     "scene_revision": row.scene_revision,
                     "mood": row.mood,
                 },
+                narrative=decision.narrative.event or decision.narrative.state,
                 result_ref={"revision": row.revision},
-                is_meaningful=activity_changed,
+            ),
+        )
+    elif decision.operation == "update" and decision.narrative.event:
+        await record_event(
+            db,
+            user_id,
+            LifeEventInput(
+                event_key=f"life-note:{row.source_key}:revision:{row.revision}",
+                kind="life.state.changed",
+                source="life_decision",
+                fact_type=row.activity_kind,
+                fact={"current_activity": row.current_activity, "mood": row.mood},
+                narrative=decision.narrative.event,
+                pursuit_id=row.active_pursuit_id,
             ),
         )
     previous_pursuit = None
@@ -199,12 +285,15 @@ async def commit_decision_in_session(db: AsyncSession, user_id: int, decision: L
             title=decision.pursuit_title,
             reason=decision.pursuit_reason,
             desired_result=decision.pursuit_result,
+            narrative=decision.narrative.pursuit,
             idempotency_key=f"life:{decision.expected_revision}:{decision.pursuit_title.strip()}",
         )
         row.active_pursuit_id = pursuit.id
         created = await get_pursuit(db, user_id, pursuit.id)
         if created is not None:
             created.next_step = decision.next_step or ""
+            if decision.narrative.pursuit is not None:
+                created.narrative = decision.narrative.pursuit
             created.status_source = decision.source
             if previous_pursuit is not None:
                 created.previous_pursuit_id = previous_pursuit.id
@@ -215,11 +304,20 @@ async def commit_decision_in_session(db: AsyncSession, user_id: int, decision: L
             raise ValueError("实际下一步须属于持续事项，请先开始事项")
         if decision.operation in {"complete_pursuit", "pause_pursuit", "abandon_pursuit"}:
             raise ValueError("结束或暂停事项时不能登记新步骤")
+        next_action = decision.next_action
+        if (
+            next_action.narrative is not None
+            and decision.narrative.action is not None
+            and next_action.narrative != decision.narrative.action
+        ):
+            raise LifeInputError("同一行动的伙伴叙事必须一致")
+        if decision.narrative.action is not None:
+            next_action = next_action.model_copy(update={"narrative": decision.narrative.action})
         await enqueue_action(
             db,
             user_id,
-            decision.next_action,
-            request_id=f"life:{user_id}:{decision.expected_revision}:action",
+            next_action,
+            request_id=f"life:{row.source_key}:{decision.expected_revision}:action",
             pursuit_id=row.active_pursuit_id,
         )
     if row.presentation_revision != previous.presentation_revision:
@@ -242,6 +340,7 @@ async def commit_decision_in_session(db: AsyncSession, user_id: int, decision: L
                 fact_type="intent",
                 is_meaningful=False,
                 fact={"operation": decision.operation, "request": request_payload},
+                narrative=decision.narrative.event,
             ),
         )
     emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"revision": row.revision})
@@ -262,10 +361,17 @@ async def begin_pursuit_in_session(
     title: str,
     reason: str = "",
     desired_result: str = "",
+    narrative: str | None = None,
     idempotency_key: str | None = None,
 ) -> LifePursuitView:
     row = await ensure_pursuit(
-        db, user_id, title=title, reason=reason, desired_result=desired_result, idempotency_key=idempotency_key
+        db,
+        user_id,
+        title=title,
+        reason=reason,
+        desired_result=desired_result,
+        narrative=narrative,
+        idempotency_key=idempotency_key,
     )
     await record_event(
         db,
@@ -277,6 +383,7 @@ async def begin_pursuit_in_session(
             fact_type="intent",
             pursuit_id=row.id,
             fact={"title": row.title, "reason": row.reason, "desired_result": row.desired_result},
+            narrative=narrative,
             result_ref={"pursuit_id": row.id},
         ),
     )
@@ -306,6 +413,7 @@ async def update_business_steps_in_session(
     state: str,
     result_ref: dict | None = None,
     error: str | None = None,
+    failure_code: str | None = None,
     progress: str | None = None,
     next_step: str | None = None,
     additional_events: Sequence[LifeEventInput] = (),
@@ -319,6 +427,7 @@ async def update_business_steps_in_session(
         state=state,
         result_ref=result_ref,
         error=error,
+        failure_code=failure_code,
         progress=progress,
         next_step=next_step,
         additional_events=additional_events,

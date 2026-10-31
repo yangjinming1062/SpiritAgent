@@ -28,6 +28,7 @@ def state_view(row: LifeState) -> LifeStateView:
     return LifeStateView(
         user_id=row.user_id,
         current_activity=row.current_activity,
+        narrative=row.narrative,
         activity_kind=row.activity_kind,
         activity_type=row.activity_type,
         scene_tags=row.scene_tags_json,
@@ -90,6 +91,7 @@ def pursuit_view(row: LifePursuit) -> LifePursuitView:
     return LifePursuitView(
         id=row.id,
         title=row.title,
+        narrative=row.narrative,
         reason=row.reason,
         desired_result=row.desired_result,
         progress=row.progress,
@@ -114,6 +116,7 @@ def step_view(row: LifeStep) -> LifeStepView:
         idempotency_key=row.idempotency_key,
         kind=row.kind,
         description=row.description,
+        narrative=row.narrative,
         state=row.state,
         source=row.source,
         action=row.action_json,
@@ -131,6 +134,7 @@ def step_view(row: LifeStep) -> LifeStepView:
         },
         result_ref=result_reference(row),
         error=row.error,
+        failure_code=row.failure_code,
         started_at=row.started_at,
         finished_at=row.finished_at,
     )
@@ -145,6 +149,7 @@ def event_view(row: LifeEvent) -> LifeEventView:
         subject=row.subject,
         fact_type=row.fact_type,
         fact=row.fact_json,
+        narrative=row.narrative,
         occurred_at=row.occurred_at,
         pursuit_id=row.pursuit_id,
         step_id=row.step_id,

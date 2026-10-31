@@ -87,7 +87,7 @@ export function visualCreationReady(draft: VisualCreationDraft): boolean {
 }
 
 /** 两端共用工作项的状态操作；具体失败原因仍由服务端校验。 */
-export function visualJobCommands(state: VisualJobState): VisualJobCommand[] {
+export function visualJobCommands(state: VisualJobState, failureReason?: string | null): VisualJobCommand[] {
   switch (state) {
     case 'queued':
     case 'running':
@@ -97,7 +97,7 @@ export function visualJobCommands(state: VisualJobState): VisualJobCommand[] {
     case 'failed':
       return ['retry', 'cancel']
     case 'unknown':
-      return ['cancel']
+      return failureReason === 'result_download_failed' ? ['resume', 'cancel'] : ['cancel']
     case 'succeeded':
     case 'cancelled':
       return []

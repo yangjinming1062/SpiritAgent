@@ -303,6 +303,7 @@ async def generate_visual_reference(
     feedback: str = "",
     video_feedback: str = "",
     life_step: LifeStepRequest | None = None,
+    narrative: str | None = None,
 ) -> dict[str, Any]:
     """冻结本次制作输入并提交工作项；空影像库也能开始第一次制作。"""
 
@@ -334,6 +335,7 @@ async def generate_visual_reference(
             idempotency_key=request_key,
             kind="visual.generate",
             description=f"制作伙伴影像：{action_name}",
+            narrative=narrative,
             pursuit_id=life_state.active_pursuit_id,
         )
         job = await visuals_service.create_visual_job(

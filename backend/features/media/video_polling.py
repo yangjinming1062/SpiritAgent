@@ -12,6 +12,9 @@ from infrastructure.redact import redact_sensitive_text
 
 logger = get_logger(__name__)
 
+# 成功但缺地址尚不可交付；有限续查后交回队列，保留原句柄。
+_SUCCESS_WITHOUT_URL_RECHECKS = 3
+
 
 async def poll_video_task(
     provider: VideoGenProvider,
@@ -22,6 +25,7 @@ async def poll_video_task(
     """临时查询失败沿原句柄退避；调用方检查不参与供应商错误重试。"""
     attempt = 0
     last_status: str | None = None
+    missing_url_attempts = 0
     log_extra = {"provider": provider.config.provider_name, "model": provider.config.model, "task_id": task_id}
     while True:
         if before_poll is not None:
@@ -44,9 +48,20 @@ async def poll_video_task(
                     "video task failed at provider",
                     extra={**log_extra, "error": redact_sensitive_text(status.error)},
                 )
-            if status.status in ("succeeded", "failed"):
+            if status.status == "succeeded" and not status.download_url:
+                missing_url_attempts += 1
+                if missing_url_attempts >= _SUCCESS_WITHOUT_URL_RECHECKS:
+                    raise RuntimeError("视频已完成但下载地址暂未提供，保留原任务等待继续核对")
+                logger.warning(
+                    "video task succeeded without download URL; rechecking same handle",
+                    extra={**log_extra, "attempt": missing_url_attempts},
+                )
+                current = "processing"
+            elif status.status in ("succeeded", "failed"):
                 return status
-            current = status.status
+            else:
+                missing_url_attempts = 0
+                current = status.status
         if last_status is not None and current != last_status:
             attempt = 0
         elif last_status is not None:

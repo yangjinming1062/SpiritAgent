@@ -181,7 +181,11 @@ async def _block_reason(user_id: int, step: LifeStepView) -> tuple[str, str] | N
 async def _execute(user_id: int, step: LifeStepView) -> None:
     action = step.action
     request = LifeStepRequest(
-        idempotency_key=step.idempotency_key, kind=step.kind, description=step.description, pursuit_id=step.pursuit_id
+        idempotency_key=step.idempotency_key,
+        kind=step.kind,
+        description=step.description,
+        narrative=step.narrative,
+        pursuit_id=step.pursuit_id,
     )
     if isinstance(action, VisualAction):
         await generate_visual_reference(

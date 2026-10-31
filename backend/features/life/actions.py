@@ -29,7 +29,11 @@ class SceneAction(ActionInput):
 
 class OutfitAction(ActionInput):
     capability: Literal["outfit.create"]
-    description: str = Field(min_length=1, max_length=4000, description="要添置的服装与造型要求，保留伙伴身份")
+    description: str = Field(
+        min_length=1,
+        max_length=4000,
+        description="生成并保存新着装图片的完整设计要求，保留伙伴身份；本能力必定制作图片，不用于单独获取文字建议或清单",
+    )
 
 
 class DesignAction(ActionAssetDesign, ActionInput):
@@ -102,8 +106,12 @@ class ReadingResultView(ActionInput):
 
 
 class NextAction(ActionInput):
-    description: str = Field(
-        min_length=1, max_length=1000, description="向用户说明这一步要做什么，表达为计划而非既成成果"
+    description: str = Field(min_length=1, max_length=1000, description="供执行器登记的动作描述，不代表已经执行")
+    narrative: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=1000,
+        description="伙伴面向用户的第一人称计划；不代表已经执行",
     )
     action: LifeAction
     not_before: AwareDatetime | None = Field(

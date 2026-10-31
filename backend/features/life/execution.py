@@ -34,12 +34,15 @@ async def enqueue_action(
     source: str = "life",
     expires_at: datetime | None = None,
 ) -> LifeStepView:
+    if not action.narrative or not action.narrative.strip():
+        raise LifeInputError("登记生活行动必须提供伙伴叙事")
     row = await create_step(
         db,
         user_id,
         idempotency_key=request_id,
         kind=action.action.capability,
         description=action.description,
+        narrative=action.narrative,
         pursuit_id=pursuit_id,
     )
     payload = action.action.model_dump(mode="json")
@@ -74,15 +77,21 @@ async def enqueue_action(
                 row.not_before
             ):
                 row.not_before = retry_at
-                row.disposition, row.wait_reason = "waiting", "上次执行失败，稍后再试"
+                row.disposition, row.wait_reason, row.failure_code = "waiting", "上次执行失败，稍后再试", "retry_wait"
         row.is_creation = row.kind in CREATION_CAPABILITIES
         await db.flush()
     return step_view(row)
 
 
-async def reserve_external_action(user_id: int, *, request_id: str, kind: str, description: str) -> LifeStepView:
+async def reserve_external_action(
+    user_id: int, *, request_id: str, kind: str, description: str, narrative: str
+) -> LifeStepView:
     async with SESSION_LOCAL() as db:
-        row = await create_step(db, user_id, idempotency_key=request_id, kind=kind, description=description)
+        if not narrative or not narrative.strip():
+            raise LifeInputError("登记生活行动必须提供伙伴叙事")
+        row = await create_step(
+            db, user_id, idempotency_key=request_id, kind=kind, description=description, narrative=narrative
+        )
         row.source = "nightly"
         await db.commit()
         await db.refresh(row)
@@ -166,6 +175,7 @@ async def defer_step(
                 clear_activity_step(db, state)
         if row.state != "planned":
             return
+        # 等待条件不是失败；failure_code 只保留真实失败类别，供公开投影与模型上下文使用。
         row.disposition, row.wait_reason = disposition, reason
         row.not_before = until or utc_now() + _RETRY_DELAY
         state.revision += 1
@@ -207,6 +217,7 @@ async def claim_step(user_id: int, step_id: int, timezone: ZoneInfo) -> LifeStep
             raise LifeInputError("同一请求的执行能力已经确定")
         if admission is not None and admission.submitted:
             row.state, row.disposition, row.wait_reason = "unknown", "unknown", "这个请求已经提交过，须核对原结果"
+            row.failure_code = "unknown_submission"
             row.budget_date, row.started_at = admission.budget_date, admission.admitted_at
             await db.commit()
             return None
@@ -221,7 +232,11 @@ async def claim_step(user_id: int, step_id: int, timezone: ZoneInfo) -> LifeStep
             if count >= SETTINGS.life_actions_per_day or (
                 row.is_creation and creations >= SETTINGS.life_creations_per_day
             ):
-                row.disposition, row.wait_reason = "waiting", "今日自主执行额度已用完"
+                row.disposition, row.wait_reason, row.failure_code = (
+                    "waiting",
+                    "今日自主执行额度已用完",
+                    "quota_exhausted",
+                )
                 row.not_before = datetime.combine(day + timedelta(days=1), time.min, timezone)
                 await db.commit()
                 return None
@@ -235,6 +250,7 @@ async def claim_step(user_id: int, step_id: int, timezone: ZoneInfo) -> LifeStep
             db.add(admission)
         row.budget_date = admission.budget_date
         row.state, row.started_at, row.disposition, row.wait_reason = "running", row.started_at or now, "executing", ""
+        row.failure_code = None
         row.attempts += 1
         activity_type = "reading" if row.kind == "content.read" else "creating"
         if (state.current_activity, state.activity_kind, state.activity_type) != (
@@ -250,6 +266,7 @@ async def claim_step(user_id: int, step_id: int, timezone: ZoneInfo) -> LifeStep
                 payload={"revision": state.presentation_revision},
             )
         state.current_activity = row.description
+        state.narrative = row.narrative
         state.activity_type = activity_type
         state.activity_kind, state.activity_step_id, state.activity_started_at = "execution", row.id, now
         state.revision += 1
@@ -264,6 +281,7 @@ async def claim_step(user_id: int, step_id: int, timezone: ZoneInfo) -> LifeStep
                 pursuit_id=row.pursuit_id,
                 step_id=row.id,
                 fact={"description": row.description, "capability": row.kind},
+                narrative=row.narrative,
             ),
         )
         emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"step_id": row.id})
@@ -309,6 +327,7 @@ async def reconcile_submission(user_id: int, step_id: int) -> LifeStepView | Non
                 or (row.state == "running" and row.job_id is None and row.business_action_id is None)
             ):
                 row.state, row.disposition, row.wait_reason = "unknown", "unknown", "这个请求已经提交过，须核对原结果"
+                row.failure_code = "unknown_submission"
                 row.budget_date, row.started_at = admission.budget_date, admission.admitted_at
             elif (
                 row.state in {"running", "unknown"}
@@ -317,6 +336,7 @@ async def reconcile_submission(user_id: int, step_id: int) -> LifeStepView | Non
                 and row.business_action_id is None
             ):
                 row.state, row.disposition, row.wait_reason = "planned", "waiting", "上次执行尚未提交，继续原请求"
+                row.failure_code = "submission_pending"
                 if state.activity_step_id == row.id:
                     clear_activity_step(db, state)
             if db.is_modified(row):
