@@ -6,19 +6,39 @@ import { loadVisualDetail, refreshVisuals, type VisualDetail, visualsApi } from 
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { failureText } from '@/shared/lib/ipc-error'
 import { requestResource } from '@/shared/lib/resource-request'
-import { Badge, BTN_SUBTLE, FIELD_LABEL, INPUT_CLASS, PanelSelect, SettingCard } from '@/shared/panel'
+import {
+  BTN_GHOST,
+  BTN_PRIMARY,
+  BTN_SUBTLE,
+  Disclosure,
+  ExpandableText,
+  FIELD_LABEL,
+  INPUT_CLASS,
+  PanelSelect,
+  Pill
+} from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
 import { loadVisualMaterials, type VisualMaterialOptions } from '../../../../../shared/visuals'
 
+import { isAdvancingState } from './visual-labels'
+import { VISUAL_BODY, VISUAL_FIELD, VISUAL_META } from './visual-text'
 import { $visualsUi, updateVisualsUi } from './visuals-state'
+
+const COMPONENT_TONE: Record<string, 'accent' | 'muted' | 'warning'> = {
+  reused: 'accent',
+  created: 'accent',
+  ambiguous: 'warning',
+  reviewing: 'warning',
+  failed: 'warning'
+}
 
 export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): React.JSX.Element {
   const t = useStrings().visuals
   const a = t.analysis
   const job = visual.analysis
-  const active = job?.state === 'queued' || job?.state === 'running'
+  const active = isAdvancingState(job?.state)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const ui = useStore($visualsUi)
@@ -46,26 +66,6 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
         }
       })
   }, [visual.id, active, begin, a.failed])
-
-  useEffect(() => {
-    if (!active) {
-      return
-    }
-
-    const live = begin()
-
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible' && live()) {
-        void loadVisualDetail(visual.id).catch(failure => {
-          if (live()) {
-            setError(failureText(failure, a.failed))
-          }
-        })
-      }
-    }, 2500)
-
-    return () => window.clearInterval(timer)
-  }, [active, visual.id, begin, a.failed])
 
   const command = async (body: ApiSchemas['ImportAnalysisRequest']): Promise<void> => {
     if (busy) {
@@ -103,82 +103,90 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
 
   const source = visual.snapshot.source
 
+  const stage = job?.stage && job.stage !== 'complete' ? (a.stages[job.stage] ?? job.stage) : ''
+  const summary = job ? [a.states[job.state] ?? job.state, stage].filter(Boolean).join(' · ') : a.idle
+  const reviewText = visual.snapshot.review_reason || job?.result?.understanding.presentation_reason || ''
+
   return (
-    <SettingCard divided={false}>
-      <section className="flex flex-col gap-3 p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <h3 className="text-sm font-medium text-strong">{a.title}</h3>
-          {job && <Badge>{a.states[job.state]}</Badge>}
-          {job && <span className="text-xs text-muted">{a.stages[job.stage] ?? job.stage}</span>}
-        </div>
-        <p className="text-xs text-muted">
+    <Disclosure
+      defaultOpen={active || job?.state === 'failed' || !job?.result}
+      hint={summary}
+      title={a.title}
+      variant="panel"
+    >
+      <div className="space-y-4">
+        <p className={VISUAL_BODY}>
           {active ? a.working : !job ? a.idle : source.presentation_approved ? a.approved : a.collection}
         </p>
-        {job?.error && (
-          <p className="text-xs text-red-500" role="status">
+        {job?.error ? (
+          <p className="text-[11px] leading-relaxed text-danger-fg" role="status">
             {job.error}
           </p>
-        )}
-        {!active && (
-          <label>
-            <span className={FIELD_LABEL}>{a.notes}</span>
-            <textarea
-              className={INPUT_CLASS}
-              disabled={busy}
-              maxLength={2000}
-              onChange={event =>
-                updateVisualsUi({ analysisNotes: { ...ui.analysisNotes, [visual.id]: event.target.value } })
-              }
-              value={notes}
-            />
-          </label>
-        )}
-        <div className="flex flex-wrap gap-2">
-          {active ? (
-            <button
-              className={BTN_SUBTLE}
-              disabled={busy}
-              onClick={() => void command({ command: 'cancel' })}
-              type="button"
-            >
-              {a.cancel}
-            </button>
-          ) : (
-            <>
-              {(!job || job.state !== 'succeeded') && (
-                <button
-                  className={BTN_SUBTLE}
-                  disabled={busy}
-                  onClick={() => void command({ command: 'retry' })}
-                  type="button"
-                >
-                  {job ? a.retry : a.start}
-                </button>
-              )}
-              {job?.result && (
-                <button
-                  className={BTN_SUBTLE}
-                  disabled={busy}
-                  onClick={() => void command({ command: 'reanalyze' })}
-                  type="button"
-                >
-                  {a.reanalyze}
-                </button>
-              )}
-            </>
+        ) : null}
+
+        <div className="space-y-2 rounded-xl border border-line-hairline bg-fill-faint/40 p-3">
+          {!active && (
+            <label className="block">
+              <span className={FIELD_LABEL}>{a.notes}</span>
+              <textarea
+                className={INPUT_CLASS}
+                disabled={busy}
+                maxLength={2000}
+                onChange={event =>
+                  updateVisualsUi({ analysisNotes: { ...ui.analysisNotes, [visual.id]: event.currentTarget.value } })
+                }
+                value={notes}
+              />
+            </label>
           )}
+          <div className="flex flex-wrap gap-2">
+            {active ? (
+              <button
+                className={BTN_SUBTLE}
+                disabled={busy}
+                onClick={() => void command({ command: 'cancel' })}
+                type="button"
+              >
+                {a.cancel}
+              </button>
+            ) : (
+              <>
+                {(!job || job.state !== 'succeeded') && (
+                  <button
+                    className={BTN_SUBTLE}
+                    disabled={busy}
+                    onClick={() => void command({ command: 'retry' })}
+                    type="button"
+                  >
+                    {job ? a.retry : a.start}
+                  </button>
+                )}
+                {job?.result ? (
+                  <button
+                    className={BTN_SUBTLE}
+                    disabled={busy}
+                    onClick={() => void command({ command: 'reanalyze' })}
+                    type="button"
+                  >
+                    {a.reanalyze}
+                  </button>
+                ) : null}
+              </>
+            )}
+          </div>
         </div>
-        {job?.result && (
-          <>
-            <p className="text-xs text-muted">
-              {a.identity}：{job.result.understanding.identity_reason}
-            </p>
-            <p className="text-xs text-muted">
-              {a.review}：{visual.snapshot.review_reason || job.result.understanding.presentation_reason}
-            </p>
+
+        {job?.result ? (
+          <div className="space-y-3 border-t border-line-hairline pt-4">
+            {job.result.understanding.identity_reason ? (
+              <LabeledLongText label={a.identity} text={job.result.understanding.identity_reason} />
+            ) : null}
+            {reviewText ? <LabeledLongText label={a.review} text={reviewText} /> : null}
             {job.result.components.map(component => {
               const observation = component.observation
               const key = `${visual.id}:${observation.key}`
+              const evidence = component.reason || observation.extraction_reason
+              const extraction = observation.extraction_reason
 
               const options =
                 observation.kind === 'outfit'
@@ -190,41 +198,81 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
               const chosen = selected[key] ?? ''
 
               return (
-                <article className="rounded-lg border border-edge p-3" key={observation.key}>
-                  <div className="mb-2 flex items-center gap-2">
-                    <h4 className="text-xs font-medium text-strong">{observation.name}</h4>
-                    <Badge>{a.components[component.status]}</Badge>
+                <article className="space-y-2 rounded-xl border border-line-hairline bg-fill-faint/50 p-3" key={key}>
+                  <div className="flex items-center gap-2">
+                    <h4 className={`min-w-0 flex-1 truncate ${VISUAL_FIELD}`}>{observation.name}</h4>
+                    <Pill tone={COMPONENT_TONE[component.status] ?? 'muted'}>{a.components[component.status]}</Pill>
                   </div>
-                  <p className="whitespace-pre-wrap text-xs text-muted">{observation.description}</p>
-                  <p className="mt-1 text-xs text-muted">{component.reason || observation.extraction_reason}</p>
-                  {component.preview_path && (
+                  {component.preview_path ? (
                     <MediaPreview type="image" url={component.preview_path}>
                       {({ src, status, onError }) =>
                         status === 'ready' ? (
                           <img
                             alt={observation.name}
-                            className="my-2 max-h-48 object-contain"
+                            className="max-h-40 rounded-lg object-contain"
                             onError={onError}
                             src={src}
                           />
                         ) : null
                       }
                     </MediaPreview>
-                  )}
-                  {component.matches.length > 0 && (
-                    <details className="my-2 text-xs text-muted">
-                      <summary>{a.candidate}</summary>
-                      {component.matches.map(match => (
-                        <p className="mt-1" key={match.material_id}>
-                          {match.name} · {a.decisions[match.decision]} · {a.confidence[match.confidence]}：
-                          {match.evidence}
-                        </p>
-                      ))}
-                    </details>
-                  )}
-                  {!active && (
-                    <div className="mt-2 flex flex-col gap-2">
-                      <label>
+                  ) : null}
+                  {evidence ? (
+                    <ExpandableText
+                      action="text"
+                      className={VISUAL_BODY}
+                      collapseLabel={t.collapse}
+                      expandLabel={t.expand}
+                      lines={2}
+                      text={evidence}
+                    />
+                  ) : null}
+                  <Disclosure chevron title={a.evidenceTitle} variant="inline">
+                    <div className="space-y-2 pt-1">
+                      {observation.description ? (
+                        <div>
+                          <p className={VISUAL_FIELD}>{a.descriptionLabel}</p>
+                          <ExpandableText
+                            action="text"
+                            className={`mt-1 ${VISUAL_BODY}`}
+                            collapseLabel={t.collapse}
+                            expandLabel={t.expand}
+                            lines={6}
+                            text={observation.description}
+                          />
+                        </div>
+                      ) : null}
+                      {extraction && extraction !== evidence ? (
+                        <div>
+                          <p className={VISUAL_FIELD}>{a.extractionLabel}</p>
+                          <p className={`mt-1 whitespace-pre-wrap ${VISUAL_BODY}`}>{extraction}</p>
+                        </div>
+                      ) : null}
+                      {component.matches.length > 0 ? (
+                        <div>
+                          <p className={VISUAL_FIELD}>
+                            {a.candidate} · {component.matches.length}
+                          </p>
+                          <ul className="mt-1 space-y-1.5">
+                            {component.matches.map(match => (
+                              <li className="rounded-lg bg-fill-faint/60 p-2" key={match.material_id}>
+                                <p className="text-[12px] text-strong">
+                                  {match.name}
+                                  <span className={`ml-1.5 ${VISUAL_META}`}>
+                                    {a.decisions[match.decision]} · {a.confidence[match.confidence]}
+                                  </span>
+                                </p>
+                                <p className={`mt-0.5 whitespace-pre-wrap ${VISUAL_BODY}`}>{match.evidence}</p>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                    </div>
+                  </Disclosure>
+                  {!active ? (
+                    <div className="space-y-2 border-t border-line-hairline pt-3">
+                      <label className="block">
                         <span className={FIELD_LABEL}>{a.existing}</span>
                         <PanelSelect
                           ariaLabel={a.existing}
@@ -240,35 +288,35 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
                       </label>
                       <div className="flex flex-wrap gap-2">
                         <button
-                          className={BTN_SUBTLE}
+                          className={chosen ? BTN_PRIMARY : BTN_SUBTLE}
                           disabled={busy || !chosen}
                           onClick={() => select(component, 'existing', chosen)}
                           type="button"
                         >
                           {a.apply}
                         </button>
-                        {observation.extractable && component.material_id === null && (
+                        {observation.extractable && component.material_id === null ? (
                           <button
-                            className={BTN_SUBTLE}
+                            className={chosen ? BTN_SUBTLE : BTN_PRIMARY}
                             disabled={busy}
                             onClick={() => select(component, 'extract')}
                             type="button"
                           >
                             {a.extract}
                           </button>
-                        )}
-                        {component.created && component.material_id !== null && (
+                        ) : null}
+                        {component.created && component.material_id !== null ? (
                           <button
-                            className={BTN_SUBTLE}
+                            className={BTN_GHOST}
                             disabled={busy}
                             onClick={() => select(component, 'undo')}
                             type="button"
                           >
                             {a.undo}
                           </button>
-                        )}
+                        ) : null}
                         <button
-                          className={BTN_SUBTLE}
+                          className={BTN_GHOST}
                           disabled={busy}
                           onClick={() => select(component, 'skip')}
                           type="button"
@@ -277,18 +325,38 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
                         </button>
                       </div>
                     </div>
-                  )}
+                  ) : null}
                 </article>
               )
             })}
-          </>
-        )}
-        {error && (
-          <p className="text-xs text-red-500" role="alert">
+          </div>
+        ) : null}
+
+        {error ? (
+          <p className="text-[11px] leading-relaxed text-danger-fg" role="alert">
             {error}
           </p>
-        )}
-      </section>
-    </SettingCard>
+        ) : null}
+      </div>
+    </Disclosure>
+  )
+}
+
+/** 分析结论的标签加短预览：标签做锚点，正文默认两行。 */
+function LabeledLongText({ label, text }: { label: string; text: string }): React.JSX.Element {
+  const t = useStrings().visuals
+
+  return (
+    <div>
+      <p className={VISUAL_FIELD}>{label}</p>
+      <ExpandableText
+        action="text"
+        className={`mt-1 ${VISUAL_BODY}`}
+        collapseLabel={t.collapse}
+        expandLabel={t.expand}
+        lines={2}
+        text={text}
+      />
+    </div>
   )
 }

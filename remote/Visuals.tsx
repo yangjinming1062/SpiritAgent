@@ -139,6 +139,12 @@ function VisualDetailPanel({
   const { check, clearSubmission, reconciled, submit, submitted } = useAssetSubmission(`visual.${visual.id}`, onChanged)
   const jobs = visual.jobs
   const pendingAnalysis = analysisPending(visual.analysis?.state)
+  const source = visual.snapshot.source
+  // 原始文件与可呈现版本的尺寸、时长不同，跟随当前查看的那一份。
+  const original = showOriginal && visual.original_url ? source : null
+  const shownWidth = original?.original_width ?? visual.width
+  const shownHeight = original?.original_height ?? visual.height
+  const shownDurationMs = original?.original_duration_ms ?? visual.duration_ms
 
   return (
     <section className="asset-detail">
@@ -156,47 +162,35 @@ function VisualDetailPanel({
         url={showOriginal && visual.original_url ? visual.original_url : visual.media_url}
       />
       <p className="muted">
-        {visual.media_kind === 'video' ? '视频' : '图片'}
-        {durationText(visual.duration_ms) ? ` · ${durationText(visual.duration_ms)}` : ''}
-        {currentVisualId === visual.id ? ' · 呈现中' : ''}
-        {!pendingAnalysis && !visual.auto_playable ? ' · 此版本不参与自动演出' : ''}
+        {visual.media_kind === 'video' ? '视频' : '图片'} · {shownWidth} × {shownHeight}
+        {durationText(shownDurationMs) ? ` · ${durationText(shownDurationMs)}` : ''} · 第 {visual.version} 版
+        {currentVisualId === visual.id ? ' · 当前呈现' : ''}
       </p>
-      {!pendingAnalysis && !visual.auto_playable ? (
-        <div className="muted">
-          <p>这个版本已完成并保留，目前不参与常驻轮换或生活演出。你仍可在影像库查看成品与检查记录。</p>
-          {visual.snapshot.review_reason ? <p>内容检查：{visual.snapshot.review_reason}</p> : null}
-        </div>
-      ) : null}
-      {visual.description ? <p>{visual.description}</p> : null}
       {visual.original_url && visual.original_url !== visual.media_url && (
         <button onClick={() => setShowOriginal(value => !value)} type="button">
           {showOriginal ? '查看可呈现版本' : '查看原始文件'}
         </button>
       )}
-      {visual.original_url ? (
-        <button
-          disabled={busy}
-          onClick={() => {
-            if (!window.confirm('删除这份用户上传的影像？')) {
-              return
-            }
-            void run(async () => {
-              await api.invoke('companion_visuals.delete_visual', { path: { visual_id: visual.id } })
-              await onChanged()
-              onClose()
-            })
-          }}
-          type="button"
-        >
-          删除这份影像
-        </button>
+      {visual.description ? (
+        <details className="optional-details">
+          <summary>描述</summary>
+          <p>{visual.description}</p>
+        </details>
       ) : null}
-      {visual.analysis && <VisualAnalysis api={api} onChanged={onChanged} visual={visual} />}
+      {!pendingAnalysis && !visual.auto_playable ? (
+        <div className="muted">
+          <p>这个版本已完成并保留，目前不参与常驻轮换或生活演出。你仍可在影像库查看成品与检查记录。</p>
+          {visual.snapshot.review_reason ? (
+            <details className="optional-details">
+              <summary>内容检查</summary>
+              <p>{visual.snapshot.review_reason}</p>
+            </details>
+          ) : null}
+        </div>
+      ) : null}
       <section className="card">
-        <h3>来源素材</h3>
+        <h3>影像来源</h3>
         {(() => {
-          const source = visual.snapshot.source
-
           if (source.kind === 'analysis') {
             return (
               <>
@@ -211,7 +205,7 @@ function VisualDetailPanel({
               <dl>
                 <div>
                   <dt>环境</dt>
-                  <dd>{source.scene.title || '未命名素材'}</dd>
+                  <dd>{source.scene.title || '未命名环境'}</dd>
                 </div>
               </dl>
             )
@@ -227,7 +221,7 @@ function VisualDetailPanel({
                 {source.kind === 'cinematic' && (
                   <div>
                     <dt>环境</dt>
-                    <dd>{source.scene.title || '未命名素材'}</dd>
+                    <dd>{source.scene.title || '未命名环境'}</dd>
                   </div>
                 )}
                 <div>
@@ -257,7 +251,7 @@ function VisualDetailPanel({
           </ul>
         </section>
       ) : null}
-      {visual.snapshot.source.kind !== 'analysis' && (
+      {source.kind !== 'analysis' && (
         <details className="optional-details">
           <summary>重做</summary>
           <p className="muted">按原来的素材组合重新制作，可以附上修改要求。不需要电脑在线。</p>
@@ -293,6 +287,25 @@ function VisualDetailPanel({
           </div>
         </details>
       )}
+      {visual.analysis && <VisualAnalysis api={api} onChanged={onChanged} visual={visual} />}
+      {visual.original_url ? (
+        <button
+          disabled={busy}
+          onClick={() => {
+            if (!window.confirm('删除这份用户上传的影像？')) {
+              return
+            }
+            void run(async () => {
+              await api.invoke('companion_visuals.delete_visual', { path: { visual_id: visual.id } })
+              await onChanged()
+              onClose()
+            })
+          }}
+          type="button"
+        >
+          删除这份影像
+        </button>
+      ) : null}
       {error ? <Notice>{error}</Notice> : null}
       {submitted && !busy ? (
         <AssetResultRecovery onCheck={() => run(check)} onContinue={clearSubmission} reconciled={reconciled} />
@@ -485,7 +498,7 @@ export function Visuals({
                 key={row.id}
                 meta={`${row.media_kind === 'video' ? '视频' : '图片'}${
                   durationText(row.duration_ms) ? ` · ${durationText(row.duration_ms)}` : ''
-                }${currentVisualId === row.id ? ' · 呈现中' : ''}${
+                }${currentVisualId === row.id ? ' · 当前呈现' : ''}${
                   analysisPending(row.analysis_state)
                     ? ' · 等待分析'
                     : !row.auto_playable

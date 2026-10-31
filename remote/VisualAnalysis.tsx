@@ -90,6 +90,7 @@ export function VisualAnalysis({
       selections: [{ key: component.observation.key, command: operation, material_id: materialId }]
     })
   const source = visual.snapshot.source
+  const reviewText = visual.snapshot.review_reason || job?.result?.understanding.presentation_reason || ''
   return (
     <section className="card">
       <div className="card-title">
@@ -134,10 +135,18 @@ export function VisualAnalysis({
       </div>
       {job?.result && (
         <>
-          <p>伙伴身份核对：{job.result.understanding.identity_reason}</p>
-          <p className="muted">
-            检查依据：{visual.snapshot.review_reason || job.result.understanding.presentation_reason}
-          </p>
+          {job.result.understanding.identity_reason ? (
+            <details className="optional-details">
+              <summary>伙伴身份核对</summary>
+              <p>{job.result.understanding.identity_reason}</p>
+            </details>
+          ) : null}
+          {reviewText ? (
+            <details className="optional-details">
+              <summary>检查依据</summary>
+              <p>{reviewText}</p>
+            </details>
+          ) : null}
           {job.result.components.map(component => {
             const observation = component.observation
             const key = `${visual.id}:${observation.key}`
@@ -154,21 +163,26 @@ export function VisualAnalysis({
                   <h4>{observation.name}</h4>
                   <span className="pill">{COMPONENT[component.status]}</span>
                 </div>
-                <p>{observation.description}</p>
-                <p className="muted">{component.reason || observation.extraction_reason}</p>
                 {component.preview_path && <Media type="image" url={component.preview_path} />}
-                {component.matches.length > 0 && (
-                  <details>
-                    <summary>近似素材与判断依据</summary>
-                    {component.matches.map(match => (
-                      <p key={match.material_id}>
-                        {match.name} · {DECISION[match.decision]} · {CONFIDENCE[match.confidence]}：{match.evidence}
-                      </p>
-                    ))}
-                  </details>
-                )}
+                <details className="optional-details">
+                  <summary>查看识别依据</summary>
+                  {observation.description ? <p>{observation.description}</p> : null}
+                  {component.reason || observation.extraction_reason ? (
+                    <p className="muted">{component.reason || observation.extraction_reason}</p>
+                  ) : null}
+                  {component.matches.length > 0 && (
+                    <>
+                      <p className="muted">近似素材 · {component.matches.length}</p>
+                      {component.matches.map(match => (
+                        <p className="muted" key={match.material_id}>
+                          {match.name} · {DECISION[match.decision]} · {CONFIDENCE[match.confidence]}：{match.evidence}
+                        </p>
+                      ))}
+                    </>
+                  )}
+                </details>
                 {!active && (
-                  <>
+                  <div className="card-divider">
                     <label>
                       选择已有素材
                       <select
@@ -206,7 +220,7 @@ export function VisualAnalysis({
                         暂不关联
                       </button>
                     </div>
-                  </>
+                  </div>
                 )}
               </article>
             )

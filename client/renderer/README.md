@@ -22,7 +22,7 @@
 | 生活浏览 | [life](modules/life/)、[生活页面](app/features/life/) |
 | 对话、语音与执行过程 | [conversation](modules/conversation/)、[speech](modules/speech/)、[conversation-speech.ts](app/workflows/conversation-speech.ts) |
 | 资料、声音与记忆 | [companion](app/features/companion/) |
-| 衣柜、环境、动作与影像 | [appearance](app/features/appearance/)、[scene](modules/scene/)、[actions](app/features/actions/)、[visuals](modules/visuals/)、[影像页](app/features/visuals/visuals-page.tsx) |
+| 衣柜、环境、动作与影像 | [appearance](app/features/appearance/)、[scene](modules/scene/)、[actions](app/features/actions/)、[visuals](modules/visuals/)、[影像页](app/features/visuals/) |
 | 动态、日记与设置 | [posts](modules/posts/)、[diary](modules/diary/)、[settings](app/features/settings/) |
 | 通用 UI 与文案 | [panel](shared/panel/)、[components](shared/components/)、[字典](shared/strings/dictionaries/)；跨端中性文案与错误分类归根 [shared](../../shared/) |
 

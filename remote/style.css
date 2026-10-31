@@ -324,6 +324,15 @@ a {
 .card-title + a {
   margin-top: 16px;
 }
+/* 分析结果里嵌套的组件卡：靠底色与父卡区分，操作区用分隔线独立成段。 */
+.card .card {
+  background: #fcfcfa;
+}
+.card-divider {
+  margin-top: 14px;
+  padding-top: 2px;
+  border-top: 1px solid var(--line);
+}
 .muted {
   color: #66766b;
   font-size: 14px;
