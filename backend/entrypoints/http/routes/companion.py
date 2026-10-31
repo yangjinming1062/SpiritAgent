@@ -31,7 +31,7 @@ from features.appearance.character_card_contracts import (
 )
 from features.appearance.character_extraction import schedule_character_extraction
 from features.appearance.outfit_service import (
-    OutfitDraftExpiredError,
+    OutfitDraftUnavailableError,
     OutfitError,
     OutfitNotFoundError,
     OutfitStateError,
@@ -534,8 +534,8 @@ def _outfit_request_error(exc: OutfitError | VisualReasoningError) -> RequestErr
         return RequestError(status_code=502, message=str(exc), code="generation_failed")
     if isinstance(exc, OutfitNotFoundError):
         return RequestError(status_code=404, message="找不到对应的外观", details={"reason": str(exc)})
-    if isinstance(exc, OutfitDraftExpiredError):
-        return RequestError(status_code=409, message=str(exc), code="draft_expired")
+    if isinstance(exc, OutfitDraftUnavailableError):
+        return RequestError(status_code=409, message=str(exc), code="draft_unavailable")
     if isinstance(exc, OutfitStateError):
         return RequestError(status_code=409, message=str(exc), code="invalid_state")
     return RequestError(status_code=400, message=str(exc), code="invalid_request")

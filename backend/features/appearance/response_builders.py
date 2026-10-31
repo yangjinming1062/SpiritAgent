@@ -18,7 +18,7 @@ def avatar_response(asset: AvatarAsset) -> AvatarAssetResponse:
 
 
 def outfit_response(outfit: CompanionOutfit) -> OutfitResponse:
-    """外观行转接口响应；立绘路径重签名（temp-media 草稿转 /api/media/files 形式）。"""
+    """外观行转接口响应；立绘路径在响应出口重签名。"""
     return OutfitResponse.model_validate(outfit, from_attributes=True).model_copy(
         update={"fullbody_url": re_sign_bare_path(outfit.fullbody_url) or ""},
     )

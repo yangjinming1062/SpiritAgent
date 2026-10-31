@@ -1375,6 +1375,7 @@ export const dict = {
       search: '搜索名称或描述',
       emptySearch: '没有找到匹配的着装。',
       noDescription: '暂无着装描述',
+      descriptionPending: '着装描述生成中…',
       openDetails: '查看着装详情',
       zoomOutfit: (name: string) => `查看${name}大图`,
       policyLabel: '允许伙伴自主添置造型素材',
@@ -1389,8 +1390,7 @@ export const dict = {
       descriptionRetryFailed: '外观描述补全失败，请重试',
       statusLabels: {
         draft: '草稿',
-        failed: '确认失败',
-        expired: '已过期'
+        failed: '确认失败'
       } as Record<string, string>,
       actions: {
         continueDesign: '继续设计',

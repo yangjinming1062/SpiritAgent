@@ -54,7 +54,7 @@ function isOutfitResponse(value: unknown): value is OutfitResponse {
     (value.description_error === null || typeof value.description_error === 'string') &&
     typeof value.fullbody_url === 'string' &&
     typeof value.status === 'string' &&
-    ['draft', 'ready', 'expired'].includes(value.status)
+    ['draft', 'ready'].includes(value.status)
   )
 }
 

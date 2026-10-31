@@ -1278,6 +1278,9 @@ async def prepare_initial_fullbody(user_id: int, *, extraction_id: str) -> bool:
                     )
                     .dump()
                 )
+                outfit.description = None
+                outfit.description_status = "pending"
+                outfit.description_error = None
                 await enqueue_asset_cleanup(db, user_id, [previous_outfit_path] if previous_outfit_path else [])
                 emit_ws_event(
                     db,

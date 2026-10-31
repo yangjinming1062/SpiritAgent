@@ -158,7 +158,7 @@ class OutfitResponse(BaseModel):
     name: str
     description: str | None = None
     fullbody_url: str = ""
-    # draft → ready | expired
+    # draft → ready
     status: str = "draft"
 
 

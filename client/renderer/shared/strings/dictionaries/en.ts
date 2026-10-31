@@ -1449,6 +1449,7 @@ export const dict: Dictionary = {
       search: 'Search names or descriptions',
       emptySearch: 'No outfits match this search.',
       noDescription: 'No outfit description yet',
+      descriptionPending: 'Generating outfit description…',
       openDetails: 'View outfit details',
       zoomOutfit: (name: string) => `View ${name} full size`,
       policyLabel: 'Let the companion add outfit materials on its own',
@@ -1463,8 +1464,7 @@ export const dict: Dictionary = {
       descriptionRetryFailed: 'Could not complete the outfit description. Try again.',
       statusLabels: {
         draft: 'Draft',
-        failed: 'Confirm failed',
-        expired: 'Expired'
+        failed: 'Confirm failed'
       } as Record<string, string>,
       actions: {
         continueDesign: 'Continue design',

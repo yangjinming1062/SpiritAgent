@@ -69,10 +69,10 @@ class CompanionOutfit(ModelBase, TimestampMixin):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     description_status: Mapped[str] = mapped_column(String(16), default="pending", server_default=text("'pending'"))
     description_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # 全身立绘裸路径（草稿期 temp-media/，确认后 companion-assets/{user_id}/），读取时重签名
+    # 全身立绘裸路径（草稿和确认后均为 companion-assets/{user_id}/），读取时重签名
     fullbody_url: Mapped[str] = mapped_column(String(2048), default="")
     asset_id: Mapped[int | None] = mapped_column(ForeignKey("assets.id", ondelete="RESTRICT"))
-    # draft → ready | expired
+    # draft → ready
     status: Mapped[str] = mapped_column(String(16), default="draft", server_default=text("'draft'"), index=True)
     # 生成来源与身份快照，结构见 OutfitSource
     source_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))

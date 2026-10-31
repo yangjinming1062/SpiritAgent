@@ -63,7 +63,13 @@ export function OutfitDetail({ outfitId, onBack }: { outfitId: string; onBack: (
                 {dict.companion.egg.failed} · {dict.common.retry}
               </button>
             )}
-            <p className="whitespace-pre-wrap text-xs text-muted">{outfit.description || t.noDescription}</p>
+            <p className="whitespace-pre-wrap text-xs text-muted">
+              {outfit.description ||
+                (outfit.status === 'ready' &&
+                (outfit.descriptionStatus === 'pending' || outfit.descriptionStatus === 'processing')
+                  ? t.descriptionPending
+                  : t.noDescription)}
+            </p>
             {outfit.descriptionError && <p className="text-xs text-danger-fg">{outfit.descriptionError}</p>}
             <div className="flex flex-wrap gap-2">
               {outfit.descriptionStatus === 'failed' && (

@@ -742,7 +742,13 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
 
                 return (
                   <AssetLibraryCard
-                    description={outfit.description || t.noDescription}
+                    description={
+                      outfit.description ||
+                      (outfit.status === 'ready' &&
+                      (outfit.descriptionStatus === 'pending' || outfit.descriptionStatus === 'processing')
+                        ? t.descriptionPending
+                        : t.noDescription)
+                    }
                     footer={
                       <>
                         <span className="min-w-0 flex-1 truncate text-[10px] text-faint">

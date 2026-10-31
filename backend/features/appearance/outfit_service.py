@@ -4,7 +4,6 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import timedelta
 
 from infrastructure.ai.prompt_engineer import chat
 from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
@@ -17,11 +16,10 @@ from infrastructure.assets.asset_store import (
 )
 from infrastructure.assets.references import asset_paths
 from infrastructure.async_io import cancel_and_wait
-from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.domain_locks import lock_domain
 from infrastructure.logger import get_logger
-from infrastructure.text import parse_llm_json, resolve_language, utc_now
+from infrastructure.text import parse_llm_json, resolve_language
 from infrastructure.video_processing.ffmpeg import VideoProcessError
 from infrastructure.video_processing.image import prepare_transparent_image
 from infrastructure.video_processing.matting import require_matting_model
@@ -40,7 +38,6 @@ from features.appearance.avatar_service import (
     get_active_avatar,
     get_avatar_job_lock,
     persist_portrait_bytes,
-    persist_portrait_or_draft,
     read_portrait_bytes,
     validate_transparent_portrait,
 )
@@ -76,8 +73,7 @@ from features.media.image_generation import ImageGenerationError
 
 logger = get_logger(__name__)
 
-# 草稿立绘存于 temp-media：按其存活时长预留余量，读取时先于文件过期把草稿置为过期。
-_DRAFT_TTL_MARGIN = timedelta(hours=1)
+# 草稿直接写入正式资产，避免可查看的生成结果因临时文件回收而丢失。
 _DESCRIBE_TASKS: dict[tuple[int, int], asyncio.Task[None]] = {}
 
 
@@ -100,8 +96,8 @@ class OutfitStateError(OutfitError):
     """状态守卫拒绝（非法状态转换 / 删除保护）。"""
 
 
-class OutfitDraftExpiredError(OutfitError):
-    """草稿立绘的 temp-media 文件已过期，需重新生成。"""
+class OutfitDraftUnavailableError(OutfitError):
+    """草稿立绘缺失或无法读取，需要重新生成。"""
 
 
 async def _require_outfit_matting(user_id: int) -> None:
@@ -169,44 +165,8 @@ async def _require_outfit_draft(db: AsyncSession, user_id: int, outfit_id: int) 
     return outfit
 
 
-def _draft_ttl() -> timedelta:
-    """临时文件存活时长可热更新，每次清扫时按当前设置计算。"""
-    ttl = timedelta(hours=SETTINGS.temp_file_ttl_hours)
-    return max(ttl - _DRAFT_TTL_MARGIN, ttl / 2)
-
-
-async def _sweep_stale(db: AsyncSession, user_id: int) -> None:
-    """读取时顺带清扫：过期草稿置 expired 并清理其参考图上传文件。条件更新只认领仍为草稿的行，并发清扫不会重复处理。"""
-    expired = (
-        (
-            await db.execute(
-                update(CompanionOutfit)
-                .where(
-                    CompanionOutfit.user_id == user_id,
-                    CompanionOutfit.status == "draft",
-                    CompanionOutfit.updated_at < utc_now() - _draft_ttl(),
-                )
-                .values(status="expired")
-                .returning(CompanionOutfit),
-            )
-        )
-        .scalars()
-        .all()
-    )
-    if not expired:
-        return
-    for outfit in expired:
-        source = OutfitSource.model_validate(outfit.source_json)
-        await enqueue_asset_cleanup(db, user_id, [source.reference_image_path or "", outfit.fullbody_url])
-        source.reference_image_path = ""
-        outfit.source_json = source.dump()
-    await commit_appearance(db, user_id)
-    await cleanup_user_assets(user_id)
-
-
 async def list_outfits(db: AsyncSession, user_id: int) -> list[OutfitResponse]:
-    """不取用户任务锁：生成可能长时间持锁，列表与过期清扫都不必等它。"""
-    await _sweep_stale(db, user_id)
+    """不取用户任务锁：生成可能长时间持锁，列表读取不必等它。"""
     outfits = (
         (
             await db.execute(
@@ -218,6 +178,9 @@ async def list_outfits(db: AsyncSession, user_id: int) -> list[OutfitResponse]:
         .scalars()
         .all()
     )
+    for outfit in outfits:
+        if outfit.status == 'ready' and outfit.description_status == 'pending' and outfit.fullbody_url:
+            schedule_outfit_description(user_id, outfit.id)
     return [outfit_response(outfit) for outfit in outfits]
 
 
@@ -316,7 +279,12 @@ async def _generate_outfit_fullbody(
     try:
         data, _mime = await image_asset_bytes(paths[0])
         await asyncio.to_thread(validate_transparent_portrait, data)
-        path = await persist_portrait_or_draft(data, user_id, "image/png", persist=False)
+        path = await persist_portrait_bytes(
+            user_id,
+            data,
+            "image/png",
+            directory=outfit_asset_directory(outfit_id),
+        )
         return path, origin
     except VideoProcessError as exc:
         raise AvatarGenerationError(str(exc), internal=exc.internal or str(exc)) from exc
@@ -433,7 +401,7 @@ async def _commit_outfit_draft_image(
 
 @asynccontextmanager
 async def _draft_swap(db: AsyncSession, user_id: int, *, new_url: str, original_url: str) -> AsyncIterator[None]:
-    """换草稿文件生命周期：失败回收新图；成功后回收旧 temp 草稿并触发资产清理。"""
+    """换草稿文件生命周期：失败回收新图；成功后回收旧图并触发资产清理。"""
     try:
         yield
     except BaseException:
@@ -585,7 +553,7 @@ async def regenerate_outfit_draft(
         # 编辑保持上一版图像的身份与造型；独立评分仍比较当前全身身份图。
         reference_uri = await asyncio.to_thread(read_asset_data_uri, original_url)
         if not reference_uri:
-            raise OutfitDraftExpiredError("上一版草稿已过期或无法读取，请改用重新生成")
+            raise OutfitDraftUnavailableError("上一版草稿图片无法读取，请改用重新生成")
         prompt = build_image_edit_prompt(
             effective_feedback,
             preserve=EDIT_PRESERVE_OUTFIT + "\n" + render_character_identity(identity),
@@ -649,7 +617,7 @@ async def confirm_outfit(db: AsyncSession, user_id: int, outfit_id: int) -> Comp
         await commit_appearance(db, user_id)
         draft = await asyncio.to_thread(read_portrait_bytes, original_url)
         if draft is None:
-            raise OutfitDraftExpiredError("外观草稿已过期，请重新生成")
+            raise OutfitDraftUnavailableError("外观草稿图片无法读取，请重新生成")
         try:
             await asyncio.to_thread(validate_transparent_portrait, draft[0])
         except VideoProcessError as exc:
@@ -751,7 +719,7 @@ async def adopt_outfit_draft_image(
     identity_path = avatar.seed_fullbody_url
     await commit_appearance(db, user_id)
     data = await _prepare_outfit_upload(user_id, data)
-    fullbody_url = await persist_portrait_or_draft(data, user_id, "image/png", persist=False)
+    fullbody_url = await persist_portrait_bytes(user_id, data, "image/png")
     try:
         async with get_avatar_job_lock(user_id):
             current_avatar = await get_active_avatar(db, user_id)
@@ -792,7 +760,7 @@ async def adopt_outfit_regenerate_image(
     identity_path = avatar.seed_fullbody_url
     await commit_appearance(db, user_id)
     data = await _prepare_outfit_upload(user_id, data)
-    fullbody_url = await persist_portrait_or_draft(data, user_id, "image/png", persist=False)
+    fullbody_url = await persist_portrait_bytes(user_id, data, "image/png")
     async with _draft_swap(db, user_id, new_url=fullbody_url, original_url=original_url), get_avatar_job_lock(user_id):
         outfit = await _get_outfit(db, user_id, outfit_id, lock=True)
         if outfit is None or outfit.status != "draft" or outfit.fullbody_url != original_url:
