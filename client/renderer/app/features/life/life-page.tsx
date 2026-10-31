@@ -3,6 +3,7 @@ import type React from 'react'
 import { useEffect, useLayoutEffect, useRef } from 'react'
 
 import { applyAppNavigation } from '@/app/navigation/app-navigation'
+import { useNavigationDetail } from '@/app/navigation/navigation-detail'
 import {
   $lifeDetail,
   $lifeDetailError,
@@ -26,12 +27,9 @@ import { $locale } from '@/shared/store/locale'
 import { useStrings } from '@/shared/strings'
 
 import { isResourceId } from '../../../../../shared/resource-id'
-import { updateAppearanceUi } from '../appearance/appearance-ui-state'
-import { updateSceneUi } from '../scene/scene-ui-state'
-import { updateVisualsUi } from '../visuals/visuals-state'
 
 import { LifeOverview } from './life-overview'
-import { $lifeUi, $lifeUiRestoreRevision, selectLifePursuit, updateLifeUi } from './life-state'
+import { $lifeUi, $lifeUiRestoreRevision, updateLifeUi } from './life-state'
 import styles from './life.module.css'
 import { useLife } from './use-life'
 
@@ -66,6 +64,19 @@ export function LifePage({
   const timeline = lifeTimeline(events)
   const formatter = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' })
 
+  // 事项详情随组件生命周期；导航指向生活页时才消费 pursuitId 直达，离开本页的导航不回退详情。
+  const [selectedId, setSelectedId] = useNavigationDetail<string | null>(
+    target => (target.page === 'life' ? (target.pursuitId ?? null) : undefined),
+    null
+  )
+
+  const selectPursuit = (id: string | null): void => {
+    setSelectedId(id)
+    pendingScroll.current = null
+    updateLifeUi({ eventPage: 0, scrollTop: 0 })
+    root.current?.scrollTo({ top: 0 })
+  }
+
   const formatDate = (value: string): string =>
     Number.isNaN(Date.parse(value)) ? '' : formatter.format(new Date(value))
 
@@ -74,22 +85,11 @@ export function LifePage({
       return
     }
 
-    if (kind === 'visual') {
-      updateVisualsUi({ selectedId: id, detailOpen: true })
-    }
-
-    if (kind === 'outfit') {
-      updateAppearanceUi({ selectedOutfitId: id })
-    }
-
-    if (kind === 'scene') {
-      updateSceneUi({ view: { kind: 'detail', sceneId: id } })
-    }
-
     void applyAppNavigation({
       page: 'companion',
       companionSection:
-        kind === 'visual' ? 'visuals' : kind === 'outfit' ? 'wardrobe' : kind === 'scene' ? 'environment' : 'actions'
+        kind === 'visual' ? 'visuals' : kind === 'outfit' ? 'wardrobe' : kind === 'scene' ? 'environment' : 'actions',
+      ...(kind === 'visual' ? { visualId: id } : kind === 'outfit' ? { outfitId: id } : { sceneId: id })
     })
   }
 
@@ -101,15 +101,15 @@ export function LifePage({
 
   useEffect(() => {
     if (visible) {
-      void loadLifeDetail(ui.selectedId)
+      void loadLifeDetail(selectedId)
     }
-  }, [visible, revision, ui.selectedId])
+  }, [visible, revision, selectedId])
 
   useEffect(() => {
     if (visible) {
-      void loadLifeEvents(ui.eventPage, ui.selectedId ?? undefined)
+      void loadLifeEvents(ui.eventPage, selectedId ?? undefined)
     }
-  }, [visible, revision, ui.eventPage, ui.selectedId])
+  }, [visible, revision, ui.eventPage, selectedId])
 
   useLayoutEffect(() => {
     pendingScroll.current = $lifeUi.get().scrollTop
@@ -178,21 +178,21 @@ export function LifePage({
         <p>{t.intro}</p>
       </header>
       {standalone && <LifeOverview showLifeLink={false} visible={visible} />}
-      {ui.selectedId !== null ? (
+      {selectedId !== null ? (
         <section className={styles.section}>
-          <button className={BTN_GHOST} onClick={() => selectLifePursuit(null)} type="button">
+          <button className={BTN_GHOST} onClick={() => selectPursuit(null)} type="button">
             {t.back}
           </button>
           {detailError && (
             <ErrorBanner
               message={t.failed}
-              onRetry={() => void loadLifeDetail(ui.selectedId)}
+              onRetry={() => void loadLifeDetail(selectedId)}
               retryLabel={strings.common.retry}
             />
           )}
           {detailLoading && !detail ? (
             <LoadingBlock label={t.loading} />
-          ) : detail?.id === ui.selectedId ? (
+          ) : detail?.id === selectedId ? (
             <article className={styles.detail}>
               <span className={styles.eyebrow}>{t.statuses[detail.status]}</span>
               <h2>{t.ongoing}</h2>
@@ -279,7 +279,7 @@ export function LifePage({
                 <button
                   className={styles.pursuit}
                   key={pursuit.id}
-                  onClick={() => selectLifePursuit(pursuit.id)}
+                  onClick={() => selectPursuit(pursuit.id)}
                   type="button"
                 >
                   <span className={styles.eyebrow}>{t.statuses[pursuit.status]}</span>
@@ -305,7 +305,7 @@ export function LifePage({
         {eventsError && (
           <ErrorBanner
             message={t.failed}
-            onRetry={() => void loadLifeEvents(ui.eventPage, ui.selectedId ?? undefined)}
+            onRetry={() => void loadLifeEvents(ui.eventPage, selectedId ?? undefined)}
             retryLabel={strings.common.retry}
           />
         )}
@@ -320,20 +320,13 @@ export function LifePage({
                   <span className={styles.eyebrow}>{t.eventLabels[entry.kind]}</span>
                   {entry.text && <p>{entry.text}</p>}
                   <div className={styles.actions}>
-                    {entry.pursuitId && entry.pursuitId !== ui.selectedId && (
-                      <button className={BTN_GHOST} onClick={() => selectLifePursuit(entry.pursuitId)} type="button">
+                    {entry.pursuitId && entry.pursuitId !== selectedId && (
+                      <button className={BTN_GHOST} onClick={() => selectPursuit(entry.pursuitId)} type="button">
                         {t.details}
                       </button>
                     )}
                     {entry.visualId && (
-                      <button
-                        className={BTN_GHOST}
-                        onClick={() => {
-                          updateVisualsUi({ selectedId: entry.visualId, detailOpen: true })
-                          void applyAppNavigation({ page: 'companion', companionSection: 'visuals' })
-                        }}
-                        type="button"
-                      >
+                      <button className={BTN_GHOST} onClick={() => openResult('visual', entry.visualId)} type="button">
                         {t.openVisual}
                       </button>
                     )}

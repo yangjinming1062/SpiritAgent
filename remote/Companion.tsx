@@ -1,5 +1,6 @@
 import { IconDeviceTv } from '@tabler/icons-react'
 import type { ReactElement } from 'react'
+import { useState } from 'react'
 
 import { Actions } from './Actions'
 import type { RemoteApi } from './api'
@@ -15,7 +16,8 @@ type Section = 'action' | 'memory' | 'outfit' | 'profile' | 'scene' | 'voice'
 
 export function Companion({ api, refresh }: { api: RemoteApi; refresh: number }): ReactElement {
   const [savedSection, setSection] = usePageState<Section>('companion.section', 'profile')
-  const [visuals, setVisuals] = usePageState('companion.visuals', false)
+  // 影像子页随组件生命周期，切 tab 即回分类页。
+  const [visuals, setVisuals] = useState(false)
   const items = [
     { id: 'profile', title: '资料' },
     { id: 'voice', title: '声音' },

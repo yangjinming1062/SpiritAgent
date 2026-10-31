@@ -1,6 +1,5 @@
 import { atom, computed } from 'nanostores'
 
-import { selectLifePursuit } from '@/app/features/life/life-state'
 import { setChatSession, switchSession } from '@/modules/conversation'
 import { log } from '@/shared/lib/log'
 import { definePersistedAtom, registerCompanionStorageKey, registerStorageClearHandler } from '@/shared/lib/storage'
@@ -41,8 +40,15 @@ const navigation = definePersistedAtom<AppNavigationTarget>({
   }
 })
 
-/** 瞬时导航字段：会话与消息定位不落盘。 */
-const transientNavigation = atom<{ messageKey?: string; sessionId?: string }>({})
+/** 瞬时导航字段：会话、消息定位与详情直达不落盘。 */
+const transientNavigation = atom<{
+  messageKey?: string
+  sessionId?: string
+  pursuitId?: string
+  outfitId?: string
+  sceneId?: string
+  visualId?: string
+}>({})
 
 export const $appPage = computed(navigation.$atom, value => value.page ?? 'chat')
 export const $settingsSection = computed(navigation.$atom, value => value.section ?? 'companionship')
@@ -83,7 +89,10 @@ export function readAppNavigationHash(): AppNavigationTarget | null {
     settingsTab: params.get('subtab'),
     sessionId: params.get('sessionId'),
     messageKey: params.get('messageKey'),
-    pursuitId: params.has('pursuitId') ? (params.get('pursuitId') ?? undefined) : undefined
+    pursuitId: params.get('pursuitId') ?? undefined,
+    outfitId: params.get('outfitId') ?? undefined,
+    sceneId: params.get('sceneId') ?? undefined,
+    visualId: params.get('visualId') ?? undefined
   })
 }
 
@@ -104,6 +113,18 @@ function writeHash(target: AppNavigationTarget): void {
 
   if (target.page === 'life' && target.pursuitId) {
     query.set('pursuitId', String(target.pursuitId))
+  }
+
+  if (target.page === 'companion' && target.companionSection === 'wardrobe' && target.outfitId) {
+    query.set('outfitId', target.outfitId)
+  }
+
+  if (target.page === 'companion' && target.companionSection === 'environment' && target.sceneId) {
+    query.set('sceneId', target.sceneId)
+  }
+
+  if (target.page === 'companion' && target.companionSection === 'visuals' && target.visualId) {
+    query.set('visualId', target.visualId)
   }
 
   const detail =
@@ -135,11 +156,14 @@ export async function applyAppNavigation(target: AppNavigationTarget, updateHash
     setChatSession(next.sessionId)
   }
 
-  if (next.page === 'life' && next.pursuitId) {
-    selectLifePursuit(next.pursuitId)
-  }
-
-  transientNavigation.set({ messageKey: next.messageKey, sessionId: next.sessionId })
+  transientNavigation.set({
+    messageKey: next.messageKey,
+    sessionId: next.sessionId,
+    pursuitId: next.pursuitId,
+    outfitId: next.outfitId,
+    sceneId: next.sceneId,
+    visualId: next.visualId
+  })
   $appNavigationRevision.set($appNavigationRevision.get() + 1)
 
   if (updateHash) {
@@ -147,7 +171,10 @@ export async function applyAppNavigation(target: AppNavigationTarget, updateHash
       ...getAppNavigation(),
       sessionId: next.sessionId,
       messageKey: next.messageKey,
-      pursuitId: next.pursuitId
+      pursuitId: next.pursuitId,
+      outfitId: next.outfitId,
+      sceneId: next.sceneId,
+      visualId: next.visualId
     })
   }
 

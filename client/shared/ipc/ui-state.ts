@@ -14,7 +14,6 @@ export interface LifeUiSnapshot {
   pursuitPage: number
   pursuitCursors: (string | null)[]
   eventPage: number
-  selectedId: string | null
   scrollTop: number
 }
 
@@ -34,7 +33,6 @@ export function isLifeUiSnapshot(value: unknown): value is LifeUiSnapshot {
     value.pursuitPage < value.pursuitCursors.length &&
     value.pursuitCursors[0] === null &&
     value.pursuitCursors.every(cursor => cursor === null || typeof cursor === 'string') &&
-    (value.selectedId === null || isResourceId(value.selectedId)) &&
     typeof value.scrollTop === 'number' &&
     Number.isFinite(value.scrollTop) &&
     value.scrollTop >= 0
@@ -52,8 +50,6 @@ export interface CompanionMemoryBrowser {
   query: string
   page: number
   cursors: (string | null)[]
-  selectedId: string | null
-  editorOpen: boolean
   scrollTop: number
 }
 
@@ -150,8 +146,6 @@ export function isCompanionEditorUiSnapshot(value: unknown): value is CompanionE
         browser.cursors.length > browser.page &&
         browser.cursors[0] === null &&
         browser.cursors.every(cursor => cursor === null || typeof cursor === 'string') &&
-        (browser.selectedId === null || isResourceId(browser.selectedId)) &&
-        typeof browser.editorOpen === 'boolean' &&
         typeof browser.scrollTop === 'number' &&
         Number.isFinite(browser.scrollTop) &&
         browser.scrollTop >= 0
@@ -172,8 +166,6 @@ export interface VisualsUiSnapshot {
   source: string
   page: number
   cursors: (string | null)[]
-  selectedId: string | null
-  detailOpen: boolean
 }
 
 export function isVisualsUiSnapshot(value: unknown): value is VisualsUiSnapshot {
@@ -188,8 +180,6 @@ export function isVisualsUiSnapshot(value: unknown): value is VisualsUiSnapshot 
     Array.isArray(value.cursors) &&
     value.cursors.every(cursor => cursor === null || isResourceId(cursor)) &&
     value.page < value.cursors.length &&
-    (value.selectedId === null || isResourceId(value.selectedId)) &&
-    typeof value.detailOpen === 'boolean' &&
     (value.creation === undefined || isVisualCreationDraft(value.creation)) &&
     (value.analysisNotes === undefined ||
       (isRecord(value.analysisNotes) && Object.values(value.analysisNotes).every(note => typeof note === 'string'))) &&

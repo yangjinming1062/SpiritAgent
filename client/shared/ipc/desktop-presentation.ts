@@ -240,6 +240,9 @@ export interface AppNavigationTarget {
   sessionId?: string
   messageKey?: string
   pursuitId?: string
+  outfitId?: string
+  sceneId?: string
+  visualId?: string
 }
 
 export function normalizeAppNavigation(raw: unknown): AppNavigationTarget {
@@ -265,7 +268,10 @@ export function normalizeAppNavigation(raw: unknown): AppNavigationTarget {
     settingsTab,
     sessionId: typeof value.sessionId === 'string' ? value.sessionId : undefined,
     messageKey: typeof value.messageKey === 'string' ? value.messageKey : undefined,
-    pursuitId: isResourceId(value.pursuitId) ? value.pursuitId : undefined
+    pursuitId: isResourceId(value.pursuitId) ? value.pursuitId : undefined,
+    outfitId: isResourceId(value.outfitId) ? value.outfitId : undefined,
+    sceneId: isResourceId(value.sceneId) ? value.sceneId : undefined,
+    visualId: isResourceId(value.visualId) ? value.visualId : undefined
   }
 }
 

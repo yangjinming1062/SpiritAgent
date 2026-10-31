@@ -1,23 +1,27 @@
-import { defineAccountUiAtom } from '@/shared/lib/storage'
+import { atom } from 'nanostores'
+
+import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { isLifeUiSnapshot, type LifeUiSnapshot } from '@ipc/contracts'
 
-const state = defineAccountUiAtom<LifeUiSnapshot>({
-  key: 'da.life.ui',
-  fallback: { status: 'active', pursuitPage: 0, pursuitCursors: [null], eventPage: 0, selectedId: null, scrollTop: 0 },
-  isPersistable: isLifeUiSnapshot
-})
-
-export const $lifeUi = state.$atom
-export const $lifeUiRestoreRevision = state.$importRevision
-export const updateLifeUi = state.set
-
-export function selectLifePursuit(selectedId: string | null): void {
-  state.set({ selectedId, eventPage: 0, scrollTop: 0 })
-  $lifeUiRestoreRevision.set($lifeUiRestoreRevision.get() + 1)
+const FALLBACK: LifeUiSnapshot = {
+  status: 'active',
+  pursuitPage: 0,
+  pursuitCursors: [null],
+  eventPage: 0,
+  scrollTop: 0
 }
 
+// 生活页筛选与阅读进度是会话级状态：跨切页保留、换号清空，不落盘。
+const state = atom<LifeUiSnapshot>(FALLBACK)
+
+/** 快照导入修订号：模式交接后生活页重新锚定滚动位置用。 */
+export const $lifeUiRestoreRevision = atom(0)
+
+export const $lifeUi = state
+export const updateLifeUi = (patch: Partial<LifeUiSnapshot>): void => state.set({ ...state.get(), ...patch })
+
 export function exportLifeUiSnapshot(): LifeUiSnapshot {
-  return structuredClone($lifeUi.get())
+  return structuredClone(state.get())
 }
 
 export function importLifeUiSnapshot(snapshot: LifeUiSnapshot): void {
@@ -26,3 +30,7 @@ export function importLifeUiSnapshot(snapshot: LifeUiSnapshot): void {
     $lifeUiRestoreRevision.set($lifeUiRestoreRevision.get() + 1)
   }
 }
+
+registerStorageClearHandler(() => {
+  state.set(FALLBACK)
+})

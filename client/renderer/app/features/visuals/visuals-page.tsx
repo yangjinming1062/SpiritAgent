@@ -3,6 +3,7 @@ import type React from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import { applyAppNavigation } from '@/app/navigation/app-navigation'
+import { useNavigationDetail } from '@/app/navigation/navigation-detail'
 import { $outfits, hydrateWardrobe } from '@/modules/character'
 import { ensureCompanionSession } from '@/modules/conversation'
 import { useResolvedMediaSrc } from '@/modules/media'
@@ -91,8 +92,15 @@ export function VisualsPage(): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
   const listScrollTop = useRef(0)
 
+  // 详情随组件生命周期；导航指向影像分区时才消费 visualId 直达，离开的导航不回退详情。
+  const [selectedId, setSelectedId] = useNavigationDetail<string | null>(
+    target =>
+      target.page === 'companion' && target.companionSection === 'visuals' ? (target.visualId ?? null) : undefined,
+    null
+  )
+
   const authenticated = auth.kind === 'authenticated'
-  const detailVisible = ui.detailOpen && ui.selectedId !== null
+  const detailVisible = selectedId !== null
 
   useEffect(() => {
     if (!authenticated) {
@@ -125,10 +133,10 @@ export function VisualsPage(): React.JSX.Element {
   }, [authenticated])
 
   useEffect(() => {
-    if (ui.detailOpen && ui.selectedId !== null) {
-      void loadVisualDetail(ui.selectedId).catch(error_ => log.warn('visuals', 'Detail load failed', error_))
+    if (detailVisible && selectedId !== null) {
+      void loadVisualDetail(selectedId).catch(error_ => log.warn('visuals', 'Detail load failed', error_))
     }
-  }, [ui.detailOpen, ui.selectedId])
+  }, [detailVisible, selectedId])
 
   // 详情是独立页：打开时回到顶部，返回列表时恢复离开前的滚动位置。
   useLayoutEffect(() => {
@@ -139,9 +147,9 @@ export function VisualsPage(): React.JSX.Element {
     }
 
     element.scrollTop = detailVisible ? 0 : listScrollTop.current
-  }, [detailVisible, ui.selectedId])
+  }, [detailVisible, selectedId])
 
-  const detail = detailState?.id === ui.selectedId ? detailState.detail : null
+  const detail = detailState?.id === selectedId ? detailState.detail : null
   const currentVisualId = projection?.current_visual?.id ?? null
   const activeJobs = jobs.filter(job => !['succeeded', 'cancelled'].includes(job.state))
 
@@ -178,17 +186,17 @@ export function VisualsPage(): React.JSX.Element {
 
   const openDetail = (visualId: string): void => {
     rememberListScroll()
-    updateVisualsUi({ selectedId: visualId, detailOpen: true })
+    setSelectedId(visualId)
   }
 
   const closeDetail = (): void => {
     clearVisualDetail()
-    updateVisualsUi({ detailOpen: false })
+    setSelectedId(null)
   }
 
   const reloadDetail = async (): Promise<void> => {
-    if (ui.selectedId !== null) {
-      await loadVisualDetail(ui.selectedId).catch(error_ => log.warn('visuals', 'Detail reload failed', error_))
+    if (selectedId !== null) {
+      await loadVisualDetail(selectedId).catch(error_ => log.warn('visuals', 'Detail reload failed', error_))
     }
   }
 
@@ -250,7 +258,8 @@ export function VisualsPage(): React.JSX.Element {
         await visualsApi.delete(detail.id)
         clearVisualDetail()
         // 列表随后由筛选与页码变化重新拉取，不在这里再发一次不同筛选的读取。
-        updateVisualsUi({ detailOpen: false, selectedId: null, page: 0 })
+        setSelectedId(null)
+        updateVisualsUi({ page: 0 })
       }, t.deleteFailed)
     })
   }
@@ -278,10 +287,10 @@ export function VisualsPage(): React.JSX.Element {
       {detailVisible ? (
         <VisualDetailView
           busy={busy}
-          current={currentVisualId === ui.selectedId}
+          current={currentVisualId === selectedId}
           detail={detail}
           detailError={detailError}
-          key={ui.selectedId}
+          key={selectedId}
           onBack={closeDetail}
           onCommand={jobCommand}
           onDelete={deleteDetail}
@@ -300,9 +309,13 @@ export function VisualsPage(): React.JSX.Element {
                 query: '',
                 source: '',
                 mediaKind: 'all',
-                page: 0,
-                ...(visualId ? { selectedId: visualId, detailOpen: true } : {})
+                page: 0
               })
+
+              if (visualId) {
+                setSelectedId(visualId)
+              }
+
               await refreshVisuals({ limit: PAGE_SIZE, include_total: true })
             }}
           />

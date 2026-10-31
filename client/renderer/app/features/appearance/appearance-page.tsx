@@ -3,20 +3,26 @@ import type React from 'react'
 import { useEffect, useState } from 'react'
 
 import { useAssetLibrarySearch } from '@/app/components/asset-library-header'
+import { useNavigationDetail } from '@/app/navigation/navigation-detail'
 import { $outfits, hydrateAvatarSeeds, hydrateWardrobe } from '@/modules/character'
 import { $auth } from '@/shared/store/auth'
 
-import { $appearanceUi, updateAppearanceUi } from './appearance-ui-state'
 import { OutfitDetail } from './outfit-detail'
 import { OutfitSection } from './outfit-section'
 
 export function AppearancePage(): React.JSX.Element {
   const authKind = useStore($auth).kind
   const outfits = useStore($outfits)
-  const { selectedOutfitId } = useStore($appearanceUi)
+
+  // 着装详情随组件生命周期；导航指向衣柜分区时才消费 outfitId 直达，离开的导航不回退详情。
+  const [selectedOutfitId, setSelectedOutfitId] = useNavigationDetail<string | null>(
+    target =>
+      target.page === 'companion' && target.companionSection === 'wardrobe' ? (target.outfitId ?? null) : undefined,
+    null
+  )
+
   const [loaded, setLoaded] = useState(false)
   const librarySearch = useAssetLibrarySearch()
-  const setSelectedOutfitId = (id: string | null): void => updateAppearanceUi({ selectedOutfitId: id })
 
   // 冷启动须等待鉴权，否则水合会跳过读取。
   useEffect(() => {
@@ -37,11 +43,12 @@ export function AppearancePage(): React.JSX.Element {
     setLoaded(false)
   }, [authKind])
 
+  // 详情指向的着装不存在（已删除或未入柜）时退回列表。
   useEffect(() => {
     if (loaded && selectedOutfitId !== null && !outfits.some(outfit => outfit.id === selectedOutfitId)) {
       setSelectedOutfitId(null)
     }
-  }, [loaded, outfits, selectedOutfitId])
+  }, [loaded, outfits, selectedOutfitId, setSelectedOutfitId])
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">

@@ -125,6 +125,9 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
   const [hint, setHint] = useState<string | null>(null)
   const [savedHint, setSavedHint] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  // 就地编辑的选中与展开随组件生命周期，不跨菜单保留。
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [editorOpen, setEditorOpen] = useState(false)
   const loadId = useRef(0)
   const listRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<HTMLElement>(null)
@@ -174,10 +177,10 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
 
         if (page > 0 && !result.memories.length) {
           updateMemoryBrowser(presetId, {
-            page: page - 1,
-            selectedId: null,
-            editorOpen: false
+            page: page - 1
           })
+          setSelectedId(null)
+          setEditorOpen(false)
         }
       } catch (error) {
         if (!isLive() || requestId !== loadId.current) {
@@ -212,7 +215,7 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
     }
   }, [loading, presetId])
 
-  const selected = rows.find(row => row.id === browser.selectedId) ?? rows[0]
+  const selected = rows.find(row => row.id === selectedId) ?? rows[0]
   const draftKey = selected ? `${presetId}:${selected.id}` : ''
   const draft = memory.drafts[draftKey]
   const conflict = !!draft && selected?.content_version !== draft.baseVersion
@@ -228,14 +231,15 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
       page: 0,
       ...filter,
       cursors: paging ? browser.cursors : [null],
-      selectedId: null,
-      editorOpen: false,
       scrollTop: 0
     })
+    setSelectedId(null)
+    setEditorOpen(false)
   }
 
   const selectRow = (id: string): void => {
-    updateMemoryBrowser(presetId, { selectedId: id, editorOpen: true })
+    setSelectedId(id)
+    setEditorOpen(true)
     setSavedHint(null)
     window.requestAnimationFrame(() => {
       const list = listRef.current
@@ -250,7 +254,7 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
   }
 
   const closeEditor = (): void => {
-    updateMemoryBrowser(presetId, { editorOpen: false })
+    setEditorOpen(false)
     window.requestAnimationFrame(() => {
       listRef.current
         ?.querySelector<HTMLButtonElement>(`[data-memory-id="${selected?.id}"]`)
@@ -419,7 +423,8 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
         return
       }
 
-      updateMemoryBrowser(presetId, { selectedId: null, editorOpen: false })
+      setSelectedId(null)
+      setEditorOpen(false)
       await load(true)
     } catch (error) {
       if (isLive()) {
@@ -480,7 +485,7 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
             ref={listRef}
           >
             {rows.map(row => {
-              const editing = browser.editorOpen && selected?.id === row.id
+              const editing = editorOpen && selected?.id === row.id
 
               return (
                 <article
@@ -615,10 +620,10 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
                   updateMemoryBrowser(presetId, {
                     cursors: [...browser.cursors.slice(0, page + 1), nextCursor],
                     page: page + 1,
-                    selectedId: null,
-                    editorOpen: false,
                     scrollTop: 0
                   })
+                  setSelectedId(null)
+                  setEditorOpen(false)
                 }
               }}
               type="button"

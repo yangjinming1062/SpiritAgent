@@ -23,7 +23,6 @@ import {
 } from '@/modules/character'
 import { PortraitLightbox } from '@/shared'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { ArrowBackUp, ArrowLeft, FileImage, ImageIcon, Pencil, Send, Trash2 } from '@/shared/lib/icons'
 import { log } from '@/shared/lib/log'
 import { requestResource } from '@/shared/lib/resource-request'
@@ -47,12 +46,7 @@ import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import type { ImageReviseMode } from '@protocol'
 
-import {
-  $appearanceUi,
-  $appearanceUiImportRevision,
-  selectAppearanceDraft,
-  updateAppearanceUi
-} from './appearance-ui-state'
+import { $appearanceUi, selectAppearanceDraft, updateAppearanceUi } from './appearance-ui-state'
 
 const CARD_ACTION_CLASS =
   'inline-flex h-6 items-center justify-center rounded-lg bg-fill-faint px-1.5 text-muted transition hover:bg-fill-hover hover:text-strong disabled:pointer-events-none disabled:opacity-40'
@@ -77,12 +71,14 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
   const [failedPreview, setFailedPreview] = useState<string | null>(null)
   const [loadedPreview, setLoadedPreview] = useState<string | null>(null)
   const ui = useStore($appearanceUi)
-  const { designing, text, draftId } = ui
-  const listScrollTop = useLatestRef(ui.listScrollTop ?? 0)
+  const { text, draftId } = ui
+  // 制作区与列表滚动位置随组件生命周期，不跨菜单保留。
+  const [designing, setDesigning] = useState(false)
+  const [listScrollTop, setListScrollTop] = useState(0)
+  const listScrollRef = useRef(listScrollTop)
+  listScrollRef.current = listScrollTop
   const libraryRef = useRef<HTMLDivElement>(null)
   const visibleOutfits = outfits.filter(outfit => search.matches(outfit.name, outfit.description))
-  const importRevision = useStore($appearanceUiImportRevision)
-  const setDesigning = (next: boolean): void => updateAppearanceUi({ designing: next })
   const setText = (next: string): void => updateAppearanceUi({ text: next })
   const [outfitSelfSourceOpen, setOutfitSelfSourceOpen] = useState(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -93,17 +89,11 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
     const element = libraryRef.current
 
     if (element) {
-      element.scrollTop = listScrollTop.current
+      element.scrollTop = listScrollRef.current
     }
 
     // 按帧合并滚动位置写入。
     let frame = 0
-
-    const writePosition = (): void => {
-      if (element) {
-        updateAppearanceUi({ listScrollTop: element.scrollTop })
-      }
-    }
 
     const savePosition = (): void => {
       if (frame !== 0) {
@@ -112,7 +102,7 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
 
       frame = window.requestAnimationFrame(() => {
         frame = 0
-        writePosition()
+        setListScrollTop(element?.scrollTop ?? 0)
       })
     }
 
@@ -125,25 +115,23 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
         window.cancelAnimationFrame(frame)
         frame = 0
       }
-
-      writePosition()
     }
-  }, [designing, listScrollTop])
+  }, [designing])
 
   // 确认入柜后重拉列表——新装转为参考图就绪。
   const session = useOutfitDesignSession(
     draftId,
     id => {
-      if ($appearanceUi.get().draftId !== draftId || !$appearanceUi.get().designing) {
+      if ($appearanceUi.get().draftId !== draftId) {
         return
       }
 
       updateAppearanceUi({
-        designing: false,
         text: '',
-        draftId: null,
-        selectedOutfitId: id
+        draftId: null
       })
+      setDesigning(false)
+      onSelectOutfit(id)
       void hydrateWardrobe()
     },
     (id, submittedText) => {
@@ -164,24 +152,10 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
     }
   )
 
-  const observedImportRevision = useRef(importRevision)
   const currentDraft = session.draft
   const adoptDraft = session.adoptDraft
-  const restoreReference = session.restoreReference
   useEffect(() => {
-    const imported = observedImportRevision.current !== importRevision
-    observedImportRevision.current = importRevision
-
-    if (imported) {
-      setOutfitSelfSourceOpen(false)
-      setZoomUrl(null)
-    }
-
     if (draftId === null) {
-      if (imported) {
-        restoreReference()
-      }
-
       return
     }
 
@@ -190,10 +164,13 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
     if (wardrobeStatus === 'loaded' && !session.busy && saved?.status !== 'draft') {
       updateAppearanceUi({
         draftId: null,
-        designing: false,
-        text: '',
-        selectedOutfitId: saved?.status === 'ready' ? saved.id : null
+        text: ''
       })
+      setDesigning(false)
+
+      if (saved?.status === 'ready') {
+        onSelectOutfit(saved.id)
+      }
 
       return
     }
@@ -201,7 +178,7 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
     if (saved?.status === 'draft' && (!currentDraft || (wardrobeStatus === 'loaded' && !session.busy))) {
       adoptDraft(saved.id, saved.fullbodyUrl ?? '', saved.fullbodyPath)
     }
-  }, [adoptDraft, currentDraft, draftId, importRevision, outfits, restoreReference, session.busy, wardrobeStatus])
+  }, [adoptDraft, currentDraft, draftId, onSelectOutfit, outfits, session.busy, wardrobeStatus])
 
   useEffect(() => {
     messagesRef.current?.scrollTo?.({ top: messagesRef.current.scrollHeight })
@@ -247,6 +224,7 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
 
   const startDesign = (): void => {
     selectAppearanceDraft(null)
+    setDesigning(true)
     requestAnimationFrame(() => inputRef.current?.focus())
   }
 
@@ -335,7 +313,6 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
 
   const adoptOutfitSelfSource = async (image: PickedImage): Promise<void> => {
     const isLive = begin()
-    const importAtSubmit = $appearanceUiImportRevision.get()
     const selectedDraftId = $appearanceUi.get().draftId
 
     const res = session.draft
@@ -360,17 +337,14 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
 
     const resolved = res?.fullbody_url ? await resolvePortraitUrl(res.fullbody_url) : null
 
-    if (
-      !isLive() ||
-      importAtSubmit !== $appearanceUiImportRevision.get() ||
-      selectedDraftId !== $appearanceUi.get().draftId
-    ) {
+    if (!isLive() || selectedDraftId !== $appearanceUi.get().draftId) {
       return
     }
 
     // 从采纳后的草稿续上设计会话，可继续描述微调或直接确认入柜。
     if (res?.id) {
       updateAppearanceUi({ draftId: res.id })
+      setDesigning(true)
       session.adoptDraft(res.id, resolved ?? '', res.fullbody_url)
     }
 
@@ -730,6 +704,7 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
 
                 const continueDesign = (): void => {
                   selectAppearanceDraft(outfit.id)
+                  setDesigning(true)
                 }
 
                 const openOutfit = (): void => {

@@ -1,36 +1,22 @@
-import { defineAccountUiAtom } from '@/shared/lib/storage'
-import { isRecord } from '@client-shared/is-record'
+import { atom } from 'nanostores'
 
+import { registerStorageClearHandler } from '@/shared/lib/storage'
+
+// 环境草稿是会话级状态：跨切页保留、换号清空，不落盘；库/创建/详情视图随组件生命周期。
 export type ScenePageView = { kind: 'create' } | { kind: 'detail'; sceneId: string } | { kind: 'library' }
 
-interface SceneUiState {
-  view: ScenePageView
+export interface SceneUiState {
   notes: string
   editDrafts: Record<string, { title: string; description: string }>
-  listScrollTop?: number
 }
 
-const FALLBACK: SceneUiState = { view: { kind: 'library' }, notes: '', editDrafts: {} }
-const KEY = 'da.companion.background.ui.v1'
+const FALLBACK: SceneUiState = { notes: '', editDrafts: {} }
 
-function validState(value: unknown): value is SceneUiState {
-  if (!isRecord(value) || !isRecord(value.view) || typeof value.notes !== 'string' || !isRecord(value.editDrafts)) {
-    return false
-  }
+const state = atom<SceneUiState>(FALLBACK)
 
-  return (
-    (value.listScrollTop === undefined ||
-      (typeof value.listScrollTop === 'number' && Number.isFinite(value.listScrollTop) && value.listScrollTop >= 0)) &&
-    (value.view.kind === 'library' ||
-      value.view.kind === 'create' ||
-      (value.view.kind === 'detail' && typeof value.view.sceneId === 'string')) &&
-    Object.values(value.editDrafts).every(
-      draft => isRecord(draft) && typeof draft.title === 'string' && typeof draft.description === 'string'
-    )
-  )
-}
+export const $sceneUi = state
+export const updateSceneUi = (patch: Partial<SceneUiState>): void => state.set({ ...state.get(), ...patch })
 
-const state = defineAccountUiAtom<SceneUiState>({ key: KEY, fallback: FALLBACK, isPersistable: validState })
-export const $sceneUi = state.$atom
-export const updateSceneUi = state.set
-export const $sceneUiImportRevision = state.$importRevision
+registerStorageClearHandler(() => {
+  state.set(FALLBACK)
+})

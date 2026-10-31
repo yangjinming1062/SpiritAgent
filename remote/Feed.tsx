@@ -375,7 +375,8 @@ function DiaryView({ api, onRead, refresh }: { api: RemoteApi; onRead: () => voi
   const { runLatest, error } = useTask()
   const [entries, setEntries] = useState<Diary[]>([])
   const [loaded, setLoaded] = useState(false)
-  const [selected, setSelected] = usePageState<string | null>('diary.selected', null)
+  // 日记详情随组件生命周期，切 tab 即回列表；日期筛选保留在 usePageState。
+  const [selected, setSelected] = useState<string | null>(null)
   const [from, setFrom] = usePageState('diary.from', '')
   const [to, setTo] = usePageState('diary.to', '')
   const onReadRef = useRef(onRead)

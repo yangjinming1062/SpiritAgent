@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
+import { useNavigationDetail } from '@/app/navigation/navigation-detail'
 import type { PickedImage } from '@/modules/character'
 import {
   $pendingScene,
@@ -50,7 +51,8 @@ import { useStrings } from '@/shared/strings'
 import { type SceneCreateDraft, SceneCreateView } from './scene-create-view'
 import { SceneDetailView, type SceneEditDraft } from './scene-detail-view'
 import { SceneLibraryView } from './scene-library-view'
-import { $sceneUi, $sceneUiImportRevision, type ScenePageView, updateSceneUi } from './scene-ui-state'
+import { type ScenePageView } from './scene-ui-state'
+import { $sceneUi, updateSceneUi } from './scene-ui-state'
 
 interface ImageZoom {
   name: string
@@ -61,8 +63,6 @@ const INITIAL_CREATE_DRAFT: SceneCreateDraft = { notes: '', reference: null }
 
 export function ScenePage(): React.JSX.Element {
   const ui = useStore($sceneUi)
-  const importRevision = useStore($sceneUiImportRevision)
-  const observedImportRevision = useRef(importRevision)
   const authKind = useStore($auth).kind
   const library = useStore($sceneLibrary)
   const libraryStatus = useStore($sceneLibraryStatus)
@@ -78,8 +78,18 @@ export function ScenePage(): React.JSX.Element {
   const status = useStore($sceneTaskStatus)
   const dict = useStrings()
   const tToasts = dict.living.toasts
-  const view = ui.view
-  const setView = (next: ScenePageView): void => updateSceneUi({ view: next })
+
+  // 视图随组件生命周期；导航指向环境分区时才消费 sceneId 直达，离开的导航不回退视图。
+  const [view, setView] = useNavigationDetail<ScenePageView>(
+    target =>
+      target.page === 'companion' && target.companionSection === 'environment'
+        ? target.sceneId
+          ? { kind: 'detail', sceneId: target.sceneId }
+          : { kind: 'library' }
+        : undefined,
+    { kind: 'library' }
+  )
+
   const [queryDraft, setQueryDraft] = useState(query)
   const [reference, setReference] = useState<PickedImage | null>(null)
   const [referenceLoading, setReferenceLoading] = useState(true)
@@ -95,7 +105,10 @@ export function ScenePage(): React.JSX.Element {
   const [detailLoadError, setDetailLoadError] = useState<string | null>(null)
   const [zoom, setZoom] = useState<ImageZoom | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const returnScrollTop = useRef(ui.listScrollTop ?? 0)
+  const returnScrollTop = useRef(0)
+  // await 期间视图可能已切换；闭包值会过期，用 ref 读取最新视图做守卫。
+  const viewRef = useRef(view)
+  viewRef.current = view
   const begin = useAsyncGuard()
   const detail = view.kind === 'detail' ? (details[view.sceneId] ?? null) : null
 
@@ -129,17 +142,6 @@ export function ScenePage(): React.JSX.Element {
       changed()
     }
   }, [authKind, restoreReference])
-
-  useEffect(() => {
-    if (observedImportRevision.current === importRevision) {
-      return
-    }
-
-    observedImportRevision.current = importRevision
-    creationRevision.current += 1
-    setZoom(null)
-    restoreReference()
-  }, [importRevision, restoreReference])
 
   const changeCreateDraft = (next: Partial<SceneCreateDraft>): void => {
     creationRevision.current += 1
@@ -217,7 +219,6 @@ export function ScenePage(): React.JSX.Element {
 
     if (view.kind === 'library' && scrollRef.current) {
       returnScrollTop.current = scrollRef.current.scrollTop
-      updateSceneUi({ listScrollTop: returnScrollTop.current })
     }
 
     setView(next)
@@ -427,7 +428,6 @@ export function ScenePage(): React.JSX.Element {
                 if (isLive()) {
                   setQueryDraft('')
                   returnScrollTop.current = 0
-                  updateSceneUi({ listScrollTop: 0 })
 
                   if (scrollRef.current) {
                     scrollRef.current.scrollTop = 0
@@ -487,9 +487,9 @@ export function ScenePage(): React.JSX.Element {
           onLoad={async () => {
             const isLive = begin()
             const loaded = await refreshSceneStatus(view.sceneId)
-            const currentView = $sceneUi.get().view
 
-            if (loaded && isLive() && currentView.kind === 'detail' && currentView.sceneId === view.sceneId) {
+            // await 期间视图可能已切换（viewRef 持最新值），仅当仍停在同一详情时清除错误。
+            if (loaded && isLive() && viewRef.current.kind === 'detail' && viewRef.current.sceneId === view.sceneId) {
               setDetailLoadError(null)
             }
 
@@ -510,7 +510,7 @@ export function ScenePage(): React.JSX.Element {
         <SceneCreateView
           busy={busy || referenceLoading || submitting}
           draft={createDraft}
-          key={`${importRevision}:${referenceImportRevision}`}
+          key={referenceImportRevision}
           onAdopt={adoptCreatedImage}
           onBack={returnToLibrary}
           onCancelTask={async sceneId => {
@@ -524,7 +524,6 @@ export function ScenePage(): React.JSX.Element {
             if (isLive()) {
               setQueryDraft('')
               returnScrollTop.current = 0
-              updateSceneUi({ listScrollTop: 0 })
               returnToLibrary()
             }
           }}

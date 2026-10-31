@@ -1,12 +1,11 @@
-import { accountStorageKey, definePersistedAtom } from '@/shared/lib/storage'
+import { atom } from 'nanostores'
+
+import { registerStorageClearHandler } from '@/shared/lib/storage'
 import type {
   CompanionEditorUiSnapshot,
   CompanionMemoryBrowser,
   CompanionMemoryDraft
 } from '@client-shared/ipc/ui-state'
-import { isCompanionEditorUiSnapshot } from '@client-shared/ipc/ui-state'
-
-const KEY = 'da.companion.editors.v1'
 
 const FALLBACK: CompanionEditorUiSnapshot = {
   persona: null,
@@ -14,14 +13,12 @@ const FALLBACK: CompanionEditorUiSnapshot = {
   memory: { presetId: 'companion', section: 'recall', browsers: {}, drafts: {}, profileDrafts: {} }
 }
 
-const state = definePersistedAtom<CompanionEditorUiSnapshot>({
-  key: KEY,
-  fallback: FALLBACK,
-  isPersistable: isCompanionEditorUiSnapshot
-})
+// 资料、角色卡与记忆的编辑草稿是会话级状态：跨切页与模式交接保留（经主进程快照）、换号清空，不落盘。
+const state = atom<CompanionEditorUiSnapshot>(FALLBACK)
 
-export const $companionEditors = state.$atom
-export const updateCompanionEditors = state.set
+export const $companionEditors = state
+export const updateCompanionEditors = (patch: Partial<CompanionEditorUiSnapshot>): void =>
+  state.set({ ...state.get(), ...patch })
 export const captureCompanionEditorUiSnapshot = (): CompanionEditorUiSnapshot => structuredClone(state.get())
 
 export function applyCompanionEditorUiSnapshot(snapshot: CompanionEditorUiSnapshot): void {
@@ -35,8 +32,6 @@ export function memoryBrowser(presetId: string): CompanionMemoryBrowser {
       query: '',
       page: 0,
       cursors: [null],
-      selectedId: null,
-      editorOpen: false,
       scrollTop: 0
     }
   )
@@ -51,6 +46,7 @@ export function updateMemoryBrowser(presetId: string, update: Partial<CompanionM
   }
 
   state.set({
+    ...state.get(),
     memory: { ...memory, browsers: { ...memory.browsers, [presetId]: { ...current, ...update } } }
   })
 }
@@ -85,7 +81,7 @@ export function setMemoryDraft(
     delete next[key]
   }
 
-  state.set({ memory: { ...memory, [kind]: next } })
+  state.set({ ...state.get(), memory: { ...memory, [kind]: next } })
 }
 
 export function completeMemoryDraft(
@@ -113,8 +109,6 @@ export function completeMemoryDraft(
   }
 }
 
-window.addEventListener('storage', event => {
-  if (event.key === accountStorageKey(KEY)) {
-    state.reload()
-  }
+registerStorageClearHandler(() => {
+  state.set(structuredClone(FALLBACK))
 })

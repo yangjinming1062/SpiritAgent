@@ -1,30 +1,28 @@
-import { defineAccountUiAtom } from '@/shared/lib/storage'
+import { atom } from 'nanostores'
+
+import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { isVisualsUiSnapshot, type VisualsUiSnapshot } from '@ipc/contracts'
 
-const fallback: VisualsUiSnapshot = {
+const FALLBACK: VisualsUiSnapshot = {
   query: '',
   mediaKind: 'all',
   source: '',
   page: 0,
-  cursors: [null],
-  selectedId: null,
-  detailOpen: false
+  cursors: [null]
 }
 
-const ui = defineAccountUiAtom<VisualsUiSnapshot>({
-  key: 'da.visuals.ui.v1',
-  fallback,
-  isPersistable: isVisualsUiSnapshot
-})
+// 影像筛选与制作草稿是会话级状态：跨切页保留、换号清空，不落盘；详情随组件生命周期。
+const ui = atom<VisualsUiSnapshot>(FALLBACK)
 
-export const $visualsUi = ui.$atom
+export const $visualsUi = ui
 
 export function updateVisualsUi(patch: Partial<VisualsUiSnapshot>): void {
-  ui.set(patch.page === 0 ? { ...patch, cursors: [null] } : patch)
+  const next = patch.page === 0 ? { ...patch, cursors: [null] } : patch
+  ui.set({ ...ui.get(), ...next })
 }
 
 export function exportVisualsUiSnapshot(): VisualsUiSnapshot {
-  return structuredClone($visualsUi.get())
+  return structuredClone(ui.get())
 }
 
 export function importVisualsUiSnapshot(snapshot: VisualsUiSnapshot): void {
@@ -32,3 +30,7 @@ export function importVisualsUiSnapshot(snapshot: VisualsUiSnapshot): void {
     ui.set(structuredClone(snapshot))
   }
 }
+
+registerStorageClearHandler(() => {
+  ui.set(FALLBACK)
+})

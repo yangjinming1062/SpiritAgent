@@ -53,8 +53,12 @@ export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
       }
     }
 
-    if (target.pursuitId) {
-      url.searchParams.set('pursuitId', String(target.pursuitId))
+    for (const key of ['pursuitId', 'outfitId', 'sceneId', 'visualId'] as const) {
+      const value = target[key]
+
+      if (value) {
+        url.searchParams.set(key, value)
+      }
     }
 
     return url.toString()

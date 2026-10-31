@@ -330,7 +330,8 @@ export function Visuals({
   const nextCursor = useRef<string | null>(null)
   const [jobs, setJobs] = useState<VisualJob[]>([])
   const [currentVisualId, setCurrentVisualId] = useState<string | null>(null)
-  const [selected, setSelected] = usePageState<VisualDetail | null>('visuals.selected', null)
+  // 详情随组件生命周期，切 tab 即回列表；筛选与会话级草稿保留在 usePageState。
+  const [selected, setSelected] = useState<VisualDetail | null>(null)
   const [query, setQuery] = usePageState('visuals.query', '')
   const [mediaKind, setMediaKind] = usePageState<'all' | VisualMediaKind>('visuals.mediaKind', 'all')
   const [source, setSource] = usePageState('visuals.source', '')

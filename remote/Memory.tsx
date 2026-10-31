@@ -177,7 +177,8 @@ function MemoryList({ api, preset, refresh }: { api: RemoteApi; preset: string; 
   const [page, setPage] = usePageState(`memory.${preset}.page`, 0)
   const [cursors, setCursors] = usePageState<(string | null)[]>(`memory.${preset}.cursors`, [null])
   const cursor = cursors[page] ?? null
-  const [expanded, setExpanded] = usePageState<string | null>(`memory.${preset}.expanded`, null)
+  // 就地编辑的展开随组件生命周期，切 tab 即收起；筛选与编辑草稿保留在 usePageState。
+  const [expanded, setExpanded] = useState<string | null>(null)
   const [drafts, setDrafts] = usePageState<MemoryDrafts>(`memory.${preset}.drafts`, {})
   const request = useRef(0)
   const expandedRef = useRef(expanded)

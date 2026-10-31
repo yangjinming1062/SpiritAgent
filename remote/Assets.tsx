@@ -338,8 +338,9 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
   const [query, setQuery] = usePageState('scene.query', '')
   const [hasMore, setHasMore] = useState(false)
   const nextCursor = useRef<string | null>(null)
-  const [selected, setSelected] = usePageState<Scene | null>('scene.selected', null)
-  const [creating, setCreating] = usePageState('scene.creating', false)
+  // 详情与创建视图随组件生命周期，切 tab 或分区即回一级列表。
+  const [selected, setSelected] = useState<Scene | null>(null)
+  const [creating, setCreating] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [policySaving, setPolicySaving] = useState(false)
   const revision = useRef(0)
@@ -776,8 +777,9 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
   const [policy, setPolicy] = useState<string | null>(null)
   const [policySaving, setPolicySaving] = useState(false)
   const [loaded, setLoaded] = useState(false)
-  const [creating, setCreating] = usePageState('outfit.creating', false)
-  const [selectedId, setSelectedId] = usePageState<string | null>('outfit.selected', null)
+  // 详情与创建视图随组件生命周期，切 tab 或分区即回一级列表。
+  const [creating, setCreating] = useState(false)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const revision = useRef(0)
 
   const load = useCallback(async () => {

@@ -429,8 +429,9 @@ export function Actions({ api, refresh }: { api: RemoteApi; refresh: number }): 
     not_in_library: { rows: [], query: '' }
   })
   const [group, setGroup] = usePageState<ActionLibraryGroup>('actions.group', 'in_library')
-  const [selected, setSelected] = usePageState<string | null>('actions.selected', null)
-  const [creating, setCreating] = usePageState('actions.creating', false)
+  // 详情与创建视图随组件生命周期，切 tab 即回列表；筛选与编辑草稿保留在 usePageState。
+  const [selected, setSelected] = useState<string | null>(null)
+  const [creating, setCreating] = useState(false)
   const [query, setQuery] = usePageState('actions.query', '')
   const [loaded, setLoaded] = useState(false)
   const revision = useRef(0)

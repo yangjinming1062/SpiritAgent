@@ -335,7 +335,8 @@ export function MainRoot(): React.JSX.Element {
                   />
                 </div>
                 <PanelActivityProvider active={active && page !== 'chat'}>
-                  {page !== 'chat' && (
+                  {/* surface 关闭（隐藏）时卸载非聊天页：再次打开回到一级列表，草稿与筛选在内存 store 不受影响。 */}
+                  {page !== 'chat' && openVisible && (
                     <AppContentPage
                       containerRef={shellRef}
                       foreground={active}
