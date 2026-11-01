@@ -20,7 +20,6 @@ interface WizardModalProps {
   // 可选标题栏拖拽；默认关闭以保持现有向导的居中行为。
   draggable?: boolean
   // 可选点击卡片外关闭；默认关闭，避免误触关闭已有向导。
-  backdropClose?: boolean
   // 提交或上传期间禁用标题栏关闭按钮。
   closeDisabled?: boolean
   widthClass?: string
@@ -39,7 +38,6 @@ export function WizardModal({
   footer,
   escClose = true,
   draggable = false,
-  backdropClose = false,
   closeDisabled = false,
   widthClass = 'max-w-md'
 }: WizardModalProps): React.JSX.Element {
@@ -115,11 +113,6 @@ export function WizardModal({
       aria-label={typeof title === 'string' ? title : undefined}
       aria-modal="true"
       className="pointer-events-auto fixed inset-0 z-[60] flex items-center justify-center px-6 py-6 [-webkit-app-region:no-drag]"
-      onMouseDown={event => {
-        if (backdropClose && event.target === event.currentTarget) {
-          onClose()
-        }
-      }}
       ref={overlayRef}
       role="dialog"
     >

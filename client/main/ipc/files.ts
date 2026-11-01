@@ -1,5 +1,3 @@
-import path from 'node:path'
-
 import { nativeImage } from 'electron'
 import type { BrowserWindow, Dialog, IpcMain, WebContents } from 'electron'
 
@@ -85,23 +83,11 @@ export function registerFilesIpc({
     return dataUrlFromBuffer(buffer, mime)
   })
 
-  ipcMain.handle(IPC.invoke.selectPaths, async (_event, options: SpiritAgentSelectPathsOptions = {}) => {
-    const properties: Array<'multiSelections' | 'openDirectory' | 'openFile'> = options?.directories
-      ? ['openDirectory']
-      : ['openFile']
-
-    if (options?.multiple !== false) {
-      properties.push('multiSelections')
-    }
+  ipcMain.handle(IPC.invoke.selectPaths, async (_event, options: SpiritAgentSelectPathsOptions) => {
+    const properties: Array<'openDirectory' | 'openFile'> = options.directories ? ['openDirectory'] : ['openFile']
+    const openOptions = { filters: options.filters, properties, title: options.title }
 
     const mainWin = getMainWindow()
-
-    const openOptions = {
-      defaultPath: options?.defaultPath ? path.resolve(String(options.defaultPath)) : undefined,
-      filters: Array.isArray(options?.filters) ? options.filters : undefined,
-      properties,
-      title: options?.title || 'Add context'
-    }
 
     const result = mainWin
       ? await dialog.showOpenDialog(mainWin, openOptions)

@@ -424,7 +424,7 @@ async function fetchSceneDetail(
   return scene
 }
 
-export async function loadSceneDetail(sceneId: string): Promise<SceneAsset | null> {
+async function loadSceneDetail(sceneId: string): Promise<SceneAsset | null> {
   try {
     return await fetchSceneDetail(sceneId)
   } catch (error) {

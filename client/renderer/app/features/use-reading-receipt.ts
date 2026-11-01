@@ -17,7 +17,7 @@ export function useReadingReceipt({
   foreground,
   snapshot,
   displayedIds,
-  ready = true,
+  ready,
   markRead
 }: {
   scope: string
@@ -25,7 +25,7 @@ export function useReadingReceipt({
   foreground: boolean
   snapshot: readonly string[] | null
   displayedIds: readonly string[]
-  ready?: boolean
+  ready: boolean
   markRead: (ids: string[]) => Promise<boolean>
 }): void {
   const [state, setState] = useState<ReadingReceiptState>(() => ({

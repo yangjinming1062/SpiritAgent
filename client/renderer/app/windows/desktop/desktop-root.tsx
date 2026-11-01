@@ -105,7 +105,7 @@ export function DesktopRoot(): React.JSX.Element {
         ? visuals.emptyTitle
         : null)
 
-  const [focusedConversation, setFocusedConversation] = useState<'main' | null>(null)
+  const [mainChatFocused, setMainChatFocused] = useState(false)
   const [overlay, setOverlay] = useState<'account' | 'controls' | 'dock' | 'product' | null>(null)
   const accountOpen = overlay === 'account'
 
@@ -161,12 +161,10 @@ export function DesktopRoot(): React.JSX.Element {
     .join(' · ')
 
   // 内置窗口的活动承载以当前页面为准，最小化时不激活隐藏内容。
-  const focused = focusedConversation
-
   const panelsEnabled = foreground && uiStateReady && auth.kind === 'authenticated' && overlay === null
 
   const activePanel = panelsEnabled ? activeWindow : null
-  const mainChatActive = activePanel === 'chat' && focused === 'main'
+  const mainChatActive = activePanel === 'chat' && mainChatFocused
 
   const dockOpenChange = useCallback((open: boolean): void => {
     setOverlay(current => (open ? 'dock' : current === 'dock' ? null : current))
@@ -224,7 +222,7 @@ export function DesktopRoot(): React.JSX.Element {
 
       setOverlay(null)
       activate(id)
-      setFocusedConversation(id === 'chat' ? 'main' : null)
+      setMainChatFocused(id === 'chat')
     },
     [activate, appPage]
   )
@@ -280,7 +278,7 @@ export function DesktopRoot(): React.JSX.Element {
     handledNavigationRevision.current = navigationRevision
     activate(appPage)
     setOverlay(null)
-    setFocusedConversation(appPage === 'chat' ? 'main' : null)
+    setMainChatFocused(appPage === 'chat')
   }, [uiStateReady, navigationRevision, appPage, activate])
 
   useEffect(() => {

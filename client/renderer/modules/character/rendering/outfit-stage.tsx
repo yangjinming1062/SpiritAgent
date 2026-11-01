@@ -3,7 +3,6 @@ import type React from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import {
-  $spriteCanvasRect,
   $spriteContentRect,
   $spriteHeadRect,
   $stageOutfit,
@@ -235,7 +234,6 @@ export function OutfitStage({
       $mediaHitTest.set(null)
 
       if (!contentAlign) {
-        $spriteCanvasRect.set(null)
         $spriteContentRect.set(null)
         $spriteHeadRect.set(null)
       }
@@ -255,7 +253,6 @@ export function OutfitStage({
         bottom: canvas.top + bottom * height
       }
 
-      $spriteCanvasRect.set(canvas)
       $spriteContentRect.set(content)
       $spriteHeadRect.set({ ...content, bottom: content.top + (content.bottom - content.top) * 0.15 })
     }
@@ -292,7 +289,6 @@ export function OutfitStage({
       $mediaHitTest.set(null)
 
       if (!contentAlign) {
-        $spriteCanvasRect.set(null)
         $spriteContentRect.set(null)
         $spriteHeadRect.set(null)
       }

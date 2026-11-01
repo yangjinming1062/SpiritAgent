@@ -30,7 +30,7 @@ export interface BackendSessionPort {
   getSelectedAccountId: () => null | string
   listAccounts: () => Array<{ active: boolean; baseUrl: string; id: string; username: string }>
   logout: (
-    expectedSessionId?: string
+    sessionId: string
   ) => Promise<{ backendUnreachable?: boolean; error?: string; ignored?: boolean; ok: boolean }>
   refresh: (payload?: { clientContext?: BackendClientContext }) => Promise<null | SessionSnapshotPort>
   removeAccount: (accountId: string) => Promise<void>

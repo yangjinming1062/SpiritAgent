@@ -209,7 +209,6 @@ export interface MainUiStateUpdate extends MainUiStateData {
 
 export interface UiInputBusyState {
   recording: boolean
-  transcribing: boolean
   uploading: boolean
 }
 
@@ -321,11 +320,6 @@ export interface DesktopActivatePayload {
   code: string
 }
 
-export interface DesktopLogoutPayload {
-  expectedSessionId?: string
-  reason: 'expired' | 'user'
-}
-
 export interface DesktopAuthBroadcast {
   authenticated: boolean
   /** 仅明确移除账户时携带；各窗口删除该账户的持久缓存。 */
@@ -348,11 +342,9 @@ export type DesktopApiInvoke = <Operation extends DesktopApiOperationKey>(
 ) => Promise<DesktopApiResult<ApiResponse<Operation>>>
 
 export interface SpiritAgentSelectPathsOptions {
-  defaultPath?: string
   directories?: boolean
   filters?: Array<{ extensions: string[]; name: string }>
-  multiple?: boolean
-  title?: string
+  title: string
 }
 
 export interface SkillItem {
@@ -371,15 +363,8 @@ export interface ToolsetItem {
 }
 
 export interface RunnerConfigPatch {
-  op?: 'delete' | 'set'
   path: readonly (number | string)[]
-  value?: unknown
-}
-
-export interface MediaSttPayload {
-  dataUrl: string
-  filename?: string
-  language?: string
+  value: unknown
 }
 
 export interface AudioUploadPayload {
@@ -407,7 +392,8 @@ export interface VoiceSampleUploadResult extends AudioUploadResult {
 
 export interface MediaTtsPayload {
   context?: null | string
-  persist?: boolean
+  /** 是否把合成结果按内容寻址落盘，供离线复用。 */
+  persist: boolean
   text: string
   voice?: string
 }
@@ -494,7 +480,7 @@ export interface IpcInvokeContract {
   'spiritagent:auth:activate': (payload: DesktopActivatePayload) => DesktopAuthSnapshot | Promise<DesktopAuthSnapshot>
   'spiritagent:auth:refresh': () => DesktopAuthSnapshot | Promise<DesktopAuthSnapshot>
   'spiritagent:auth:logout': (
-    payload: DesktopLogoutPayload
+    sessionId: string
   ) =>
     | { backendUnreachable?: boolean; error?: string; ignored?: boolean; ok: boolean }
     | Promise<{ backendUnreachable?: boolean; error?: string; ignored?: boolean; ok: boolean }>
@@ -603,7 +589,6 @@ export interface IpcInvokeContract {
 
   // 媒体
   'spiritagent:media:prepare-output': () => Promise<void>
-  'spiritagent:media:stt': (payload: MediaSttPayload) => Promise<DesktopApiResult<{ text: string }>>
   'spiritagent:media:audio-upload': (payload: AudioUploadPayload) => Promise<DesktopApiResult<AudioUploadResult>>
   'spiritagent:media:voice-sample-upload': (
     payload: VoiceSampleUploadPayload
@@ -778,7 +763,6 @@ export const IPC = {
     toolsetsList: 'spiritagent:toolsets:list',
     toolsetSetEnabled: 'spiritagent:toolset:set-enabled',
     mediaPrepareOutput: 'spiritagent:media:prepare-output',
-    mediaStt: 'spiritagent:media:stt',
     mediaAudioUpload: 'spiritagent:media:audio-upload',
     mediaVoiceSampleUpload: 'spiritagent:media:voice-sample-upload',
     mediaTts: 'spiritagent:media:tts',

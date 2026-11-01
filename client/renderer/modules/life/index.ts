@@ -17,7 +17,6 @@ export {
   $lifeRevision,
   $lifeState,
   handleLifeUpdated,
-  LIFE_PAGE_SIZE,
   loadLifeDetail,
   loadLifeEvents,
   loadLifePursuits,

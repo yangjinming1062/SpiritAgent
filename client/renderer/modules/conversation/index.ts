@@ -7,7 +7,6 @@ export {
   $chatSessionId,
   $companionSessionId,
   $proactiveBubble,
-  type ChatMessageBody,
   clearExternalAttachment,
   pushExternalAttachment,
   setChatSession,
@@ -92,7 +91,6 @@ export { useConversationUnread } from './use-conversation-unread'
 
 export { useIsReadOnlySession } from './use-is-read-only-session'
 export {
-  $voiceBarPlayingId,
   activeVoiceMessageId,
   setConversationVoiceSink,
   setVoiceBarControl,

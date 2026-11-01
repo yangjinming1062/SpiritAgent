@@ -33,11 +33,11 @@ function accountSubmenuSide(left: number, right: number): AccountSubmenuSide {
 
 export function AccountMenu({
   onClose,
-  placement = 'below',
+  placement,
   bottomInset = VIEWPORT_MARGIN
 }: {
   onClose: () => void
-  placement?: 'above' | 'below' | 'top-center'
+  placement: 'above' | 'top-center'
   bottomInset?: number
 }): React.JSX.Element {
   const strings = useStrings()

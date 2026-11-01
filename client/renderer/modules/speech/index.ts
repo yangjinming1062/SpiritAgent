@@ -3,7 +3,6 @@ export { playPrepared, speak, speakScripted, stopSpeaking } from './tts'
 export {
   $voiceCatalogRevision,
   cloneVoice,
-  type CustomVoiceSummary,
   designVoice,
   fetchVoiceCatalogRaw,
   invalidateVoiceCatalog,

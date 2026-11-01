@@ -3,7 +3,6 @@ import type React from 'react'
 import { useLayoutEffect, useRef, useState } from 'react'
 
 import {
-  $spriteCanvasRect,
   $spriteContentRect,
   $spriteFootAnchor,
   $spriteHeadRect,
@@ -173,12 +172,6 @@ export function CharacterStage({
     }
 
     if (!contentAlign) {
-      $spriteCanvasRect.set({
-        left: offsetX / size.width,
-        top: offsetY / size.height,
-        right: (offsetX + width * scale) / size.width,
-        bottom: (offsetY + height * scale) / size.height
-      })
       $spriteContentRect.set(rect)
       const head = value.body?.headAnchor
       const headY = head ? (offsetY + head[1] * scale) / size.height : rect.top + (rect.bottom - rect.top) * 0.09
@@ -230,7 +223,6 @@ export function CharacterStage({
       $mediaHitTest.set(null)
 
       if (!contentAlign) {
-        $spriteCanvasRect.set(null)
         $spriteContentRect.set(null)
         $spriteHeadRect.set(null)
         $spriteFootAnchor.set(null)

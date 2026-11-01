@@ -49,10 +49,10 @@ export function PostsPage({
   foreground,
   mediaViewId
 }: {
-  containerRef?: RefObject<HTMLElement | null>
-  foreground?: boolean
-  mediaViewId?: string
-} = {}): React.JSX.Element {
+  containerRef: RefObject<HTMLElement | null>
+  foreground: boolean
+  mediaViewId: string
+}): React.JSX.Element {
   const strings = useStrings()
 
   return (
@@ -67,9 +67,9 @@ function PostsContent({
   foreground: suppliedForeground,
   mediaViewId
 }: {
-  foreground?: boolean
-  mediaViewId?: string
-} = {}): React.JSX.Element {
+  foreground: boolean
+  mediaViewId: string
+}): React.JSX.Element {
   const posts = useStore($posts)
   const loading = useStore($postsLoading)
   const hasMore = useStore($postsHasMore)

@@ -242,11 +242,9 @@ export function createUiStateBridge(options: UiStateOptions) {
 
     return activities.some(state => state.recording)
       ? '请结束录音后切换运行模式。'
-      : activities.some(state => state.transcribing)
-        ? '语音正在转写，完成后可以切换运行模式。'
-        : activities.some(state => state.uploading)
-          ? '附件正在上传，完成或取消后可以切换运行模式。'
-          : null
+      : activities.some(state => state.uploading)
+        ? '附件正在上传，完成或取消后可以切换运行模式。'
+        : null
   }
 
   function register(ipcMain: IpcMain): () => void {
@@ -296,7 +294,6 @@ export function createUiStateBridge(options: UiStateOptions) {
 
       const state = {
         recording: raw?.recording === true,
-        transcribing: raw?.transcribing === true,
         uploading: raw?.uploading === true
       }
 

@@ -27,7 +27,7 @@ export function registerRunnerConfigIpc({ ipcMain, isAuthorizedSender }: RunnerC
     }
   })
 
-  ipcMain.handle(IPC.invoke.runnerConfigPatch, async (event, patch?: RunnerConfigPatch) => {
+  ipcMain.handle(IPC.invoke.runnerConfigPatch, async (event, patch: RunnerConfigPatch) => {
     if (!isAuthorizedSender?.(event)) {
       return ACCESS_DENIED
     }
@@ -36,20 +36,10 @@ export function registerRunnerConfigIpc({ ipcMain, isAuthorizedSender }: RunnerC
       return { error: 'patch.path must be a non-empty array', ok: false }
     }
 
-    const op = patch.op ?? 'set'
-
-    if (op !== 'set' && op !== 'delete') {
-      return { error: `unknown op: ${op}`, ok: false }
-    }
-
     if (patch.path.length === 1 && patch.path[0] === 'language') {
-      if (op !== 'set') {
-        return { error: 'Unsupported language', ok: false }
-      }
-
       return setClientLanguage(patch.value)
     }
 
-    return store.patch(patch.path, { op, value: patch.value })
+    return store.patch(patch.path, patch.value)
   })
 }

@@ -48,7 +48,6 @@ export const $spatialPos = atom<{ x: number; y: number }>(getHomePosition())
 export const $homePosition = atom<{ x: number; y: number }>(getHomePosition())
 export const $spatialScale = atom<number>($defaultScale.get())
 export const $spatialLocomotion = atom<Locomotion>('still')
-export const $spriteCanvasRect = atom<{ left: number; top: number; right: number; bottom: number } | null>(null)
 
 export const $viewport = atom<ViewportSize>({ width: window.innerWidth, height: window.innerHeight })
 

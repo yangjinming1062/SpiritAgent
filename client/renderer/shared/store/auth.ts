@@ -85,5 +85,5 @@ export async function refreshSession(): Promise<void> {
 }
 
 export async function expireSession(sessionId: string): Promise<void> {
-  await accountApi().logout({ expectedSessionId: sessionId, reason: 'expired' })
+  await accountApi().logout(sessionId)
 }

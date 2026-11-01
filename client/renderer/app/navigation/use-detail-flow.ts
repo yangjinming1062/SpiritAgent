@@ -47,5 +47,5 @@ export function useDetailFlow<T>(options: {
 
   const closeDetail = useCallback((): void => setDetail(fallback), [fallback, setDetail])
 
-  return { detail, openDetail, closeDetail, setDetail, scrollRef, rememberListScroll, isDetailOpen: open }
+  return { detail, openDetail, closeDetail, setDetail, scrollRef }
 }

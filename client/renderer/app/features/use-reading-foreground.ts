@@ -1,11 +1,10 @@
 import { useStore } from '@nanostores/react'
 import { useEffect, useRef, useState } from 'react'
 
-import { $surfaceOpen, $surfaceOpenVisible, $surfaceScreenLocked } from '@/shared/store/surfaces'
+import { $surfaceScreenLocked } from '@/shared/store/surfaces'
 
-export function useReadingForeground(suppliedForeground?: boolean): boolean {
-  const surfaceOpen = useStore($surfaceOpen)
-  const surfaceVisible = useStore($surfaceOpenVisible)
+/** 阅读页的前台资格：调用方给出的页面级前景、未锁屏且文档处于活动状态。 */
+export function useReadingForeground(foreground: boolean): boolean {
   const screenLocked = useStore($surfaceScreenLocked)
 
   const [documentActive, setDocumentActive] = useState(
@@ -29,7 +28,7 @@ export function useReadingForeground(suppliedForeground?: boolean): boolean {
     }
   }, [])
 
-  return (suppliedForeground ?? (surfaceOpen && surfaceVisible)) && !screenLocked && documentActive
+  return foreground && !screenLocked && documentActive
 }
 
 // 仅在后台转前台的边沿触发一次；回调经渲染期同步的 ref 取最新闭包。

@@ -103,7 +103,7 @@ export const $lifeDetail = detail.$data
 export const $lifeDetailLoading = detail.$loading
 export const $lifeDetailError = detail.$error
 
-export const LIFE_PAGE_SIZE = 20
+const LIFE_PAGE_SIZE = 20
 let refreshQueued = false
 let refreshRevision = -1
 let refreshRequest: Promise<void> | null = null

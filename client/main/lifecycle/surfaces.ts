@@ -51,13 +51,13 @@ interface SurfacesManagerOptions {
   getCompanionPreference: () => SurfaceCompanionPreference
   getSpriteWindow: () => BrowserWindow | null
   isQuitting: () => boolean
-  isPreferencesSender?: (sender: WebContents) => boolean
-  routeToDesktop?: (payload: DesktopSurfaceOpenPayload) => boolean
-  prepareWindow?: (win: BrowserWindow, payload: DesktopSurfaceOpenPayload) => Promise<void>
-  navigateWindow?: (win: BrowserWindow, payload: DesktopSurfaceOpenPayload) => Promise<void> | void
+  isPreferencesSender: (sender: WebContents) => boolean
+  routeToDesktop: (payload: DesktopSurfaceOpenPayload) => boolean
+  prepareWindow: (win: BrowserWindow, payload: DesktopSurfaceOpenPayload) => Promise<void>
+  navigateWindow: (win: BrowserWindow, payload: DesktopSurfaceOpenPayload) => Promise<void> | void
   saveCompanionPreference: (preference: SurfaceCompanionPreference) => Promise<void>
-  rememberLog?: (chunk: string) => void
-  syncSpriteToDisplay?: (display: Electron.Display) => void
+  rememberLog: (chunk: string) => void
+  syncSpriteToDisplay: (display: Electron.Display) => void
 }
 
 interface SurfaceWindowState {
@@ -183,13 +183,11 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
 
   // 完整入口开启时桌面精灵窗虽隐藏，仍须跟随到同屏，确保关闭后原地恢复；这是主进程窗口副作用，不属于渲染层表面状态。
   function syncSpriteToSurfaceDisplay(win: BrowserWindow): void {
-    const sync = options.syncSpriteToDisplay
-
-    if (!sync || win.isDestroyed()) {
+    if (win.isDestroyed()) {
       return
     }
 
-    sync(screen.getDisplayMatching(win.getBounds()))
+    options.syncSpriteToDisplay(screen.getDisplayMatching(win.getBounds()))
   }
 
   function clearSurfaceDisplaySync(): void {
@@ -304,7 +302,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     forcePublish = false,
     restore = false
   ): Promise<void> => {
-    if (!restore && options.routeToDesktop?.(payload)) {
+    if (!restore && options.routeToDesktop(payload)) {
       publish(forcePublish)
 
       return
@@ -319,17 +317,17 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     const { win } = surface
 
     try {
-      await options.prepareWindow?.(win, payload)
+      await options.prepareWindow(win, payload)
     } catch (error) {
       if (restore) {
         throw error
       }
 
-      options.rememberLog?.(`[main-window] view restore failed: ${errorMessage(error)}`)
+      options.rememberLog(`[main-window] view restore failed: ${errorMessage(error)}`)
     }
 
     if (payload.page || payload.section || payload.sessionId || payload.messageKey) {
-      await options.navigateWindow?.(win, payload)
+      await options.navigateWindow(win, payload)
     }
 
     // navigate/create 期间用户退出：窗口已销毁，不能再 show/focus。
@@ -375,7 +373,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
 
   const toggleSurface = (payload: DesktopSurfaceOpenPayload): Promise<void> => {
     return withMutex(async () => {
-      if (options.routeToDesktop?.(payload)) {
+      if (options.routeToDesktop(payload)) {
         return
       }
 
@@ -566,7 +564,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
         const surface = findSurfaceWindow(BrowserWindow.fromWebContents(event.sender))
         const preference = parseCompanionPreference(raw)
 
-        if ((!surface && !options.isPreferencesSender?.(event.sender)) || !preference) {
+        if ((!surface && !options.isPreferencesSender(event.sender)) || !preference) {
           throw new Error('Invalid companion preference or surface sender')
         }
 
@@ -579,7 +577,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     )
   }
 
-  options.rememberLog?.('[surfaces] manager ready')
+  options.rememberLog('[surfaces] manager ready')
 
   return {
     closeSurface,

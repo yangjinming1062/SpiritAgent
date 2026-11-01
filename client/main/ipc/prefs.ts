@@ -49,7 +49,7 @@ export function registerPrefsIpc({ applyServerVoice, ipcMain, log }: PrefsIpcDep
     }
 
     void store
-      .patch(keyPath, { value })
+      .patch(keyPath, value)
       .then(result => {
         if (!result.ok) {
           log(`[prefs] set ${key} failed: ${result.error || 'unknown'}`)

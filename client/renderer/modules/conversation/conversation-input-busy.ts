@@ -2,12 +2,11 @@ import { atom, computed } from 'nanostores'
 
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 
-type InputActivity = 'recording' | 'transcribing' | 'uploading'
+type InputActivity = 'recording' | 'uploading'
 const $activities = atom<{ owner: symbol; activity: InputActivity }[]>([])
 
 export const $conversationInputBusy = computed($activities, activities => ({
   recording: activities.some(item => item.activity === 'recording'),
-  transcribing: activities.some(item => item.activity === 'transcribing'),
   uploading: activities.some(item => item.activity === 'uploading')
 }))
 

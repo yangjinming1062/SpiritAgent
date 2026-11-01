@@ -138,7 +138,6 @@ export interface DesktopBridge {
   }
   media: {
     prepareOutput: AsyncIpc<IpcInvokeContract['spiritagent:media:prepare-output']>
-    stt: AsyncIpc<IpcInvokeContract['spiritagent:media:stt']>
     uploadAudio: AsyncIpc<IpcInvokeContract['spiritagent:media:audio-upload']>
     uploadVoiceSample: AsyncIpc<IpcInvokeContract['spiritagent:media:voice-sample-upload']>
     tts: AsyncIpc<IpcInvokeContract['spiritagent:media:tts']>

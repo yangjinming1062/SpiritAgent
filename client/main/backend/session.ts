@@ -500,10 +500,10 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
   }
 
   function logout(
-    expectedSessionId?: string
+    sessionId: string
   ): Promise<{ backendUnreachable?: boolean; error?: string; ignored?: boolean; ok: boolean }> {
     return enqueue(async () => {
-      if (expectedSessionId && cached?.sessionId !== expectedSessionId) {
+      if (cached?.sessionId !== sessionId) {
         return { ignored: true, ok: true }
       }
 

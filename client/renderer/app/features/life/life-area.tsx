@@ -47,8 +47,8 @@ export function LifeDrawer({
 }): React.JSX.Element {
   const root = useRef<HTMLDivElement>(null)
   const t = useStrings().life
-  useDialogFocus(root, { restoreFocus: true, scope: 'window' })
-  useEscapeKey(onClose, { enabled: true })
+  useDialogFocus(root, { scope: 'window' })
+  useEscapeKey(onClose)
 
   return (
     <div className={styles.drawerLayer}>

@@ -45,8 +45,6 @@ interface SpriteStageProps {
   onContextMenu?: (e: React.MouseEvent) => void
   hidden?: boolean
   windowId?: number
-  allowDisplaySwitch?: boolean
-  onDropFiles?: (files: FileList) => void
 }
 
 // 12px 是为了避免触控板微抖动被误判为拖拽、把双击吞掉。
@@ -68,9 +66,7 @@ export function SpriteStage({
   onDoubleTap,
   onContextMenu,
   hidden = false,
-  windowId = 0,
-  allowDisplaySwitch = true,
-  onDropFiles
+  windowId = 0
 }: SpriteStageProps): React.JSX.Element {
   const mountRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -412,10 +408,7 @@ export function SpriteStage({
     }
 
     if (d.moved) {
-      if (
-        allowDisplaySwitch &&
-        (e.clientX < 0 || e.clientX > window.innerWidth || e.clientY < 0 || e.clientY > window.innerHeight)
-      ) {
+      if (e.clientX < 0 || e.clientX > window.innerWidth || e.clientY < 0 || e.clientY > window.innerHeight) {
         probeDisplaySwitch()
       }
 
@@ -525,11 +518,7 @@ export function SpriteStage({
         onDrop={e => {
           e.preventDefault()
 
-          if (onDropFiles) {
-            onDropFiles(e.dataTransfer.files)
-          } else {
-            handleDrop(e.dataTransfer.files)
-          }
+          handleDrop(e.dataTransfer.files)
         }}
         onLostPointerCapture={onPointerInterrupted}
         onPointerCancel={onPointerInterrupted}

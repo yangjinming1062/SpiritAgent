@@ -8,17 +8,15 @@ import { CHIP, CHIP_FILTER_ACTIVE } from './palette'
 
 export function SettingsContent({
   children,
-  contentClassName,
   scrollRef
 }: {
   children: ReactNode
-  contentClassName?: string
   scrollRef?: Ref<HTMLDivElement>
 }): React.JSX.Element {
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className={cn('h-full min-h-0 overflow-y-auto pb-20 pt-6', PAGE_INSET_X)} ref={scrollRef}>
-        <div className={cn('mx-auto w-full max-w-4xl text-strong', contentClassName)}>{children}</div>
+        <div className="mx-auto w-full max-w-4xl text-strong">{children}</div>
       </div>
     </section>
   )

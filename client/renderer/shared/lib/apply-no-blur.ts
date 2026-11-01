@@ -14,7 +14,7 @@ const manualReduceTransparency = definePersistedBoolean({
 })
 
 export const $manualReduceTransparency = manualReduceTransparency.$atom
-export const $noBlur = atom<boolean>(false)
+const $noBlur = atom<boolean>(false)
 const $autoGlassDegraded = atom<boolean>(false)
 
 let wired = false

@@ -391,10 +391,7 @@ const sessionRuntime = createSessionRuntime({
   userDataDir: app.getPath('userData')
 })
 
-const assetDiskCache = createAssetDiskCache({
-  defaultFetchFn: electronFetch,
-  spiritagentHome: SPIRITAGENT_HOME
-})
+const assetDiskCache = createAssetDiskCache({ spiritagentHome: SPIRITAGENT_HOME })
 
 const readBackendAsset = createBackendAssetReader({
   assetDiskCache,

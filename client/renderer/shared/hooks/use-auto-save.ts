@@ -6,7 +6,6 @@ export type AutoSaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
 interface UseAutoSaveOptions<T> {
   dirty: boolean
-  delayMs?: number
   onError?: (error: unknown) => void
   onSave: (value: T) => Promise<void>
   value: T
@@ -20,13 +19,7 @@ interface AutoSaveState {
 const DEFAULT_DELAY_MS = 350
 
 /** 防抖、串行提交设置草稿；组件卸载时会把尚未开始的最后一版立即提交。 */
-export function useAutoSave<T>({
-  dirty,
-  delayMs = DEFAULT_DELAY_MS,
-  onError,
-  onSave,
-  value
-}: UseAutoSaveOptions<T>): AutoSaveState {
+export function useAutoSave<T>({ dirty, onError, onSave, value }: UseAutoSaveOptions<T>): AutoSaveState {
   const mountedRef = useRef(true)
   const latestValueRef = useRef(value)
   const onErrorRef = useRef(onError)
@@ -134,8 +127,8 @@ export function useAutoSave<T>({
     timerRef.current = setTimeout(() => {
       timerRef.current = null
       flushRef.current()
-    }, delayMs)
-  }, [clearTimer, delayMs, dirty, value])
+    }, DEFAULT_DELAY_MS)
+  }, [clearTimer, dirty, value])
 
   useEffect(() => {
     mountedRef.current = true

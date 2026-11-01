@@ -86,7 +86,7 @@ function sceneFromLayer(layer: LayerMedia | null | undefined, phaseMatched = fal
  * 组合里的现有环境（不限时段版本也视为可用）。纯视觉表现，不改变生活事实，
  * 也不因时段变化生成新媒体。
  */
-export function sceneForPhase(
+function sceneForPhase(
   catalog: readonly LayerMedia[],
   current: LayerMedia | null | undefined,
   phase: DayPhase,

@@ -51,7 +51,7 @@ interface BackendAssetReaderDeps {
   assetDiskCache: AssetDiskCache
   assetFetchTimeoutMs: number
   ensureBackend: () => Promise<BackendConnection>
-  fetchImpl?: typeof globalThis.fetch
+  fetchImpl: typeof globalThis.fetch
   getCurrentAuth: GetCurrentAuth
   getSelectedAccountId: () => string | null
 }
@@ -89,7 +89,7 @@ export function createBackendAssetReader({
   assetDiskCache,
   assetFetchTimeoutMs,
   ensureBackend,
-  fetchImpl = globalThis.fetch,
+  fetchImpl,
   getCurrentAuth,
   getSelectedAccountId
 }: BackendAssetReaderDeps): (sender: WebContents, request?: AssetRequest) => Promise<CachedAsset> {

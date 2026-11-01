@@ -43,7 +43,7 @@ function OpenConfirmDialog({
   useInteractiveRegion(`confirm-dialog:${regionId}`, overlayRef)
   useLayoutEffect(() => probeInteractiveRegions(), [])
   useEscapeKey(() => onOpenChange(false), { busy })
-  useDialogFocus(contentRef, { restoreFocus: true })
+  useDialogFocus(contentRef)
 
   const confirm = async (): Promise<void> => {
     if (submitting.current) {

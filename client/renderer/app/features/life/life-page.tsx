@@ -150,7 +150,9 @@ export function LifePage({
     hasMore: boolean,
     busy: boolean,
     onChange: (value: number) => void
-  ): React.ReactNode => <Pager className={styles.pagination} hasMore={hasMore} onPageChange={onChange} page={page} />
+  ): React.ReactNode => (
+    <Pager busy={busy} className={styles.pagination} hasMore={hasMore} onPageChange={onChange} page={page} />
+  )
 
   return (
     <div

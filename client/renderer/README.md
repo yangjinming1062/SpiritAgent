@@ -26,7 +26,7 @@
 | 动态、日记与设置 | [posts](modules/posts/)、[diary](modules/diary/)、[settings](app/features/settings/) |
 | 通用 UI 与文案 | [panel](shared/panel/)、[components](shared/components/)、[字典](shared/strings/dictionaries/)；跨端中性文案与错误分类归根 [shared](../../shared/) |
 
-列表页交互走公共件，不再各页自拼：异步动作用 [use-panel-action.ts](shared/hooks/use-panel-action.ts)（busy + 换号/卸载守卫 + 失败 toast，key 化支持行级 busy）；列表四态（加载/失败重试/空态/内容）用 `AsyncSection`；分页用 `Pager`（pages/more 两模式）；素材库工具栏用 [asset-library-header.tsx](app/components/asset-library-header.tsx)（搜索 live/submit 两语义 + 筛选插槽 + 单个主创建按钮）；政策开关行用 `PolicyToggleRow`；列表→详情流的滚动保存恢复用 [use-detail-flow.ts](app/navigation/use-detail-flow.ts)；创建提交防重入与修订守卫用 [use-creation-submit.ts](shared/hooks/use-creation-submit.ts)。公共件只接数据与回调，查询与分页状态归各模块 store。
+列表页交互走公共件，不再各页自拼：异步动作用 [use-panel-action.ts](shared/hooks/use-panel-action.ts)（busy + 换号/卸载守卫 + 失败 toast，key 化支持行级 busy）；列表加载/失败重试/内容三态用 `AsyncSection`；分页用 `Pager`（pages/more 两模式）；素材库工具栏用 [asset-library-header.tsx](app/components/asset-library-header.tsx)（搜索 live/submit 两语义 + 筛选插槽 + 单个主创建按钮）；政策开关行用 `PolicyToggleRow`；列表→详情流的滚动保存恢复用 [use-detail-flow.ts](app/navigation/use-detail-flow.ts)；创建提交防重入与修订守卫用 [use-creation-submit.ts](shared/hooks/use-creation-submit.ts)。公共件只接数据与回调，查询与分页状态归各模块 store。
 
 ## 装配与状态归属
 
@@ -62,7 +62,7 @@
 
 主窗口外壳装配独立生活区，聊天组件不读取生活数据；桌面所有内置页面共用一个内部窗口。共用页面的筛选、草稿及阅读位置参与账户快照，来源视图在目标确认恢复后才释放资格。内部窗口只在本次会话有效，不跨启动恢复；切页按关闭语义卸载旧页面，主窗口 surface 关闭同样卸载非聊天页——菜单进入固定一级列表，详情态不跨菜单、不跨关窗保留。窗口内任意指针按下只激活所在页，同一页重复激活不重放导航，详情不会因为点击自身内容而退回列表。
 
-[panel-activity](shared/context/panel-activity.tsx) 把活动资格传入子面板和 Portal，子级不能解除父级禁用。切页保留对话实例及草稿，但关闭录音和新播放资格；旧麦克风或转写回包不能因重新激活而复活。查看器归发起视图，离开来源页释放。参考图片由 [creation-draft-image.ts](shared/lib/creation-draft-image.ts) 按账户保存并跨窗通知，不等同服务端成品。
+[panel-activity](shared/context/panel-activity.tsx) 把活动资格传入子面板和 Portal，子级不能解除父级禁用。切页保留对话实例及草稿，但关闭录音和新播放资格；旧麦克风或上传回包不能因重新激活而复活。查看器归发起视图，离开来源页释放。参考图片由 [creation-draft-image.ts](shared/lib/creation-draft-image.ts) 按账户保存并跨窗通知，不等同服务端成品。
 
 [desktop-visual-wallpaper.ts](app/windows/desktop/desktop-visual-wallpaper.ts) 消费呈现状态、认领和回执；静态回执共用 `visuals-store.ts` 的目标检查，按请求、呈现代次和状态修订去重。回执冲突不当作图片失败，服务端退避期间不重复上报。缓存与预加载使用成品 ID、版本及去签名不可变路径，不用签名 URL 作持久键。播放语义归 [呈现契约](../../docs/PROTOCOL.md#影像成品与模式隔离)。
 

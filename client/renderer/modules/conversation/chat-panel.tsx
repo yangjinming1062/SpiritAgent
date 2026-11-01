@@ -3,7 +3,6 @@ import type React from 'react'
 import { type RefObject, useEffect, useId, useRef, useState } from 'react'
 
 import { useEscapeKey } from '@/shared/hooks/use-escape-key'
-import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { SlidersHorizontal } from '@/shared/lib/icons'
 import { fetchSlashCommandMeta } from '@/shared/lib/slash-commands'
 import { cn } from '@/shared/lib/utils'
@@ -24,7 +23,6 @@ export interface ChatPanelProps {
   notice?: React.ReactNode
   groupAvatars?: boolean
   reveal?: { key: string; request: number }
-  gatewayState: ConnectionState
   inputWrapperClassName?: string
   isReadOnlySession: boolean
   scrollRef: RefObject<HTMLDivElement | null>
@@ -38,7 +36,6 @@ export function ChatPanel({
   notice,
   groupAvatars,
   reveal,
-  gatewayState,
   inputWrapperClassName,
   isReadOnlySession,
   scrollRef,
@@ -57,7 +54,7 @@ export function ChatPanel({
   const paramsButtonRef = useRef<HTMLButtonElement>(null)
   const paramsPanelId = useId()
 
-  const input = useChatInput({ gatewayState, isReadOnlySession })
+  const input = useChatInput({ isReadOnlySession })
   const dict = useStrings()
 
   useEffect(() => {

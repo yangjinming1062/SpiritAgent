@@ -39,7 +39,7 @@ export function setMotionLevel(level: MotionLevel): void {
   reportCloud('companion.motion_level', level)
 }
 
-export function reloadMotionLevel(): void {
+function reloadMotionLevel(): void {
   motionLevelPersisted.reload()
 }
 

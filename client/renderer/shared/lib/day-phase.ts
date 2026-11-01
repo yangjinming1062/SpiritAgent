@@ -12,7 +12,7 @@ const PHASE_FILTERS: Record<DayPhase, string> = {
 }
 
 /** 按小时粗分时段；边界重叠时偏向更亮的档位，避免频闪切换。 */
-export function dayPhaseAt(hour: number): DayPhase {
+function dayPhaseAt(hour: number): DayPhase {
   if (hour >= 7 && hour < 17) {
     return 'day'
   }

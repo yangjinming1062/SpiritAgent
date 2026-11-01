@@ -54,7 +54,7 @@ interface DesktopPresentationOptions {
   installWindowHandlers: (win: BrowserWindow, options?: { reloadOnCrash?: boolean }) => void
   lockZoom: (win: BrowserWindow) => void
   log: (message: string) => void
-  onModeChanged?: () => void
+  onModeChanged: () => void
 }
 
 export function createDesktopPresentation(options: DesktopPresentationOptions) {
@@ -134,7 +134,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       (effectiveMode === 'desktop' ? isDesktopSender(sender) : isSenderWindow(sender, options.getMainWindow())),
     onBusyChanged: () => {
       publish()
-      options.onModeChanged?.()
+      options.onModeChanged()
     }
   })
 
@@ -547,7 +547,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     if (notifiedMode !== effectiveMode || notifiedStatus !== status) {
       notifiedMode = effectiveMode
       notifiedStatus = status
-      options.onModeChanged?.()
+      options.onModeChanged()
     }
   }
 

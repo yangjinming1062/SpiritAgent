@@ -149,7 +149,7 @@ export async function deleteAction(actionId: string): Promise<void> {
   }
 }
 
-export function resetActionsForAccount(): void {
+function resetActionsForAccount(): void {
   epoch += 1
 
   for (const state of Object.values(actionGroups)) {

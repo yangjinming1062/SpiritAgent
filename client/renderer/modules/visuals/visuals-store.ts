@@ -557,7 +557,7 @@ export function handleVisualEvent(
   }
 }
 
-export function resetVisualsForAccount(): void {
+function resetVisualsForAccount(): void {
   epoch += 1
   refreshQuery = {}
   refreshQueued = false

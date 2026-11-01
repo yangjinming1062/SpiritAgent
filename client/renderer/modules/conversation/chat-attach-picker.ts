@@ -34,7 +34,6 @@ function getVideoUploadOptions() {
 
   return {
     filters: [{ extensions: VIDEO_EXTENSIONS, name: picker.videoFilterName }],
-    multiple: false,
     title: picker.selectVideo
   }
 }
@@ -44,7 +43,6 @@ function getImagePickOptions() {
 
   return {
     filters: [{ extensions: IMAGE_EXTENSIONS, name: picker.imageFilterName }],
-    multiple: false,
     title: picker.selectImage
   }
 }
@@ -81,7 +79,7 @@ async function pickPath(
 
 export function pickFile(setPending: SetPending, runtime: ConversationRuntime): Promise<void> {
   return pickPath(
-    { multiple: false, title: getStrings().chat.picker.selectFile },
+    { title: getStrings().chat.picker.selectFile },
     async path => {
       if (VIDEO_EXT.test(path)) {
         await attachVideoFile(path, setPending, runtime)
@@ -97,7 +95,7 @@ export function pickFile(setPending: SetPending, runtime: ConversationRuntime): 
 
 export function pickFolder(setPending: SetPending, runtime: ConversationRuntime): Promise<void> {
   return pickPath(
-    { directories: true, multiple: false, title: getStrings().chat.picker.selectFolder },
+    { directories: true, title: getStrings().chat.picker.selectFolder },
     path => setPending({ type: 'folder', folderName: basename(path), path }),
     runtime
   )

@@ -8,7 +8,6 @@ import { ApiError } from '../../../shared/errors'
 
 type ApiResultChannel =
   | typeof IPC.invoke.api
-  | typeof IPC.invoke.mediaStt
   | typeof IPC.invoke.mediaTts
   | typeof IPC.invoke.mediaAudioUpload
   | typeof IPC.invoke.mediaVoiceSampleUpload

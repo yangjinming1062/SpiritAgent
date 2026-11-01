@@ -1,6 +1,6 @@
 export { $screenLocked, reportInteractionStat, startActivityMonitor } from './activity'
 export { pickAvatarImage, type PickedImage, resolvePortraitUrl } from './avatar-image'
-export { $avatarSeeds, hydrateAvatarSeeds, patchAvatarSeeds, refreshAvatarSeeds } from './avatar-seeds-store'
+export { $avatarSeeds, hydrateAvatarSeeds, refreshAvatarSeeds } from './avatar-seeds-store'
 export {
   $characterCard,
   BODY_FEATURE_KEYS,
@@ -86,7 +86,6 @@ export {
   $spatialLocomotion,
   $spatialPos,
   $spatialScale,
-  $spriteCanvasRect,
   $spriteContentRect,
   $spriteFootAnchor,
   $spriteHeadRect,

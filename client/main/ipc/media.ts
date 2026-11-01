@@ -8,7 +8,6 @@ import {
   type AudioUploadPayload,
   type AudioUploadResult,
   IPC,
-  type MediaSttPayload,
   type MediaTtsPayload,
   type VoiceSampleUploadPayload,
   type VoiceSampleUploadResult
@@ -27,72 +26,18 @@ import { createBackendCaller, type GetCurrentAuth } from './connection'
 import { createTtsDiskCache } from './tts-disk-cache'
 
 const TTS_MAX_TEXT_CHARS = 4000
-const STT_MAX_AUDIO_BYTES = 24 * 1024 * 1024
+const AUDIO_UPLOAD_MAX_BYTES = 24 * 1024 * 1024
 const ATTACH_VIDEO_MAX_BYTES = 512 * 1024 * 1024
 const ATTACH_VIDEO_TIMEOUT_MS = 120_000
 const DEFAULT_TTS_LANGUAGE = 'zh'
-const DEFAULT_STT_LANGUAGE = 'zh'
-
-/** 媒体调用（STT / TTS）的语言回退：调用方显式 → 当前用户语言 → 兜底默认。 */
-function resolveMediaLanguage(payload: { language?: string } | undefined, fallback: string): string {
-  if (typeof payload?.language === 'string' && payload.language) {
-    return payload.language
-  }
-
-  const configLang = store.read().language
-
-  if (typeof configLang === 'string' && configLang) {
-    return configLang
-  }
-
-  return fallback
-}
-
 const MIN_TTS_INTERVAL_MS = 750
-const STT_MAX_CONCURRENCY = 2
-const STT_BURST = 4
-const STT_REFILL_RATE = 2
 const TTS_MAX_QUEUE_SIZE = 8
 const TTS_CACHE_MAX_ENTRIES = 100
 const TTS_CACHE_TTL_MS = 10 * 60 * 1000
 
 let ttsSeq = 0
-let sttSeq = 0
 const ttsAudioCache: Map<string, { dataUrl: string; expiresAt: number; mimeType: string }> = new Map()
 const inflightTts = new Map<string, Promise<{ dataUrl: string; mimeType: string }>>()
-
-class SttLimiter {
-  private activeCount = 0
-  private lastRefill = Date.now()
-  private tokens = STT_BURST
-
-  acquire(): () => void {
-    const now = Date.now()
-    const elapsed = (now - this.lastRefill) / 1000
-    this.tokens = Math.min(STT_BURST, this.tokens + elapsed * STT_REFILL_RATE)
-    this.lastRefill = now
-
-    if (this.tokens < 1) {
-      throw new Error('STT is busy: rate limit exceeded')
-    }
-
-    if (this.activeCount >= STT_MAX_CONCURRENCY) {
-      throw new Error('STT is busy: maximum concurrency reached')
-    }
-
-    this.tokens -= 1
-    this.activeCount += 1
-
-    let released = false
-
-    return () => {
-      if (!released) {
-        released = true
-        this.activeCount = Math.max(0, this.activeCount - 1)
-      }
-    }
-  }
-}
 
 class BoundedTtsQueue {
   private isProcessing = false
@@ -145,13 +90,13 @@ class BoundedTtsQueue {
 }
 
 function createAudioUploadForm(dataUrl: unknown, filename: string, invalidMessage: string): FormData {
-  if (typeof dataUrl !== 'string' || dataUrl.length > Math.ceil((STT_MAX_AUDIO_BYTES * 4) / 3) + 256) {
+  if (typeof dataUrl !== 'string' || dataUrl.length > Math.ceil((AUDIO_UPLOAD_MAX_BYTES * 4) / 3) + 256) {
     throw new Error(invalidMessage)
   }
 
   const { data, mime } = parseDataUrl(dataUrl)
 
-  if (data.length === 0 || data.length > STT_MAX_AUDIO_BYTES || !mime.startsWith('audio/')) {
+  if (data.length === 0 || data.length > AUDIO_UPLOAD_MAX_BYTES || !mime.startsWith('audio/')) {
     throw new Error(invalidMessage)
   }
 
@@ -197,47 +142,6 @@ function makeLog(
   base: Record<string, unknown>
 ): (event: string, extra?: Record<string, unknown>) => void {
   return (event, extra = {}) => log(formatKv(prefix, event, base, extra))
-}
-
-async function sttViaBackend({
-  connection,
-  data,
-  filename,
-  invokeApi,
-  language,
-  mime
-}: {
-  connection: BackendConnection
-  data: Buffer
-  filename?: string
-  invokeApi: BackendHttp['invoke']
-  language?: string
-  mime: string
-}): Promise<string> {
-  const form = new FormData()
-  const blob = new Blob([data], { type: mime })
-
-  const actualFilename =
-    filename || (mime.includes('wav') ? 'audio.wav' : mime.includes('webm') ? 'audio.webm' : 'audio.wav')
-
-  form.append('audio_file', blob, actualFilename)
-
-  const parsed = await invokeApi(
-    connection.baseUrl,
-    connection.token || undefined,
-    'media.speech_to_text',
-    {
-      body: form,
-      query: language ? { language } : {}
-    },
-    { timeoutMs: 0 }
-  )
-
-  if (typeof parsed?.text !== 'string') {
-    throw new Error('Backend STT returned no text')
-  }
-
-  return parsed.text
 }
 
 async function ttsViaBackend({
@@ -333,7 +237,6 @@ export function registerMediaIpc({
 }: MediaIpcDeps): { clearAccountCache: (accountId: string) => Promise<void> } {
   ipcMain.handle(IPC.invoke.mediaPrepareOutput, () => prepareAudioOutput())
   const diskCache = createTtsDiskCache({ spiritagentHome })
-  const sttLimiter = new SttLimiter()
   const ttsQueue = new BoundedTtsQueue()
   const callBackend = createBackendCaller({ ensureBackend, getCurrentAuth })
   const cacheEpochs = new Map<string, number>()
@@ -364,7 +267,7 @@ export function registerMediaIpc({
     ipcMain,
     IPC.invoke.mediaAudioUpload,
     async (event, payload: AudioUploadPayload): Promise<AudioUploadResult> => {
-      const authSessionId = payload?.authSessionId
+      const authSessionId = payload.authSessionId
       assertUploadAccount(authSessionId)
 
       if (!/^\d+$/.test(payload.sessionId)) {
@@ -398,7 +301,7 @@ export function registerMediaIpc({
     ipcMain,
     IPC.invoke.mediaVoiceSampleUpload,
     async (event, payload: VoiceSampleUploadPayload): Promise<VoiceSampleUploadResult> => {
-      const authSessionId = payload?.authSessionId
+      const authSessionId = payload.authSessionId
       assertUploadAccount(authSessionId)
 
       if (typeof payload.filename !== 'string' || !payload.filename.trim()) {
@@ -437,56 +340,9 @@ export function registerMediaIpc({
     }
   )
 
-  registerApiResult(ipcMain, IPC.invoke.mediaStt, async (event, payload?: MediaSttPayload) => {
-    const sttId = ++sttSeq
-    const { data, mime } = parseDataUrl(payload?.dataUrl || '')
-
-    if (data.length > STT_MAX_AUDIO_BYTES) {
-      throw new Error(`Audio too large (${data.length} bytes; max ${STT_MAX_AUDIO_BYTES})`)
-    }
-
-    const release = sttLimiter.acquire()
-
-    try {
-      const startedAt = Date.now()
-
-      const lang = resolveMediaLanguage(payload, DEFAULT_STT_LANGUAGE)
-
-      const sttLog = makeLog(log, '[stt]', {
-        bytes: data.length,
-        id: sttId,
-        lang,
-        mime
-      })
-
-      sttLog('start')
-
-      const text = await callBackend(event.sender, connection =>
-        sttViaBackend({
-          connection,
-          data,
-          filename: payload?.filename,
-          invokeApi,
-          language: lang,
-          mime
-        })
-      )
-
-      sttLog('done', {
-        chars: text.length,
-        ms: Date.now() - startedAt,
-        route: 'cloud'
-      })
-
-      return { text }
-    } finally {
-      release()
-    }
-  })
-
-  registerApiResult(ipcMain, IPC.invoke.mediaTts, async (event, payload?: MediaTtsPayload) => {
+  registerApiResult(ipcMain, IPC.invoke.mediaTts, async (event, payload: MediaTtsPayload) => {
     const ttsId = ++ttsSeq
-    const text = speechText(String(payload?.text || ''))
+    const text = speechText(payload.text)
 
     if (!text) {
       throw new Error('text is required')
@@ -496,7 +352,7 @@ export function registerMediaIpc({
       throw new Error(`Text too long (${text.length} chars; max ${TTS_MAX_TEXT_CHARS})`)
     }
 
-    const voice = payload?.voice || ''
+    const voice = payload.voice ?? ''
     const accountId = getSelectedAccountId()
     const authSessionId = getCurrentAuth()?.sessionId
 
@@ -517,13 +373,14 @@ export function registerMediaIpc({
     }
 
     // TTS 语言统一由主进程配置解析，渲染层不传。
-    const language = resolveMediaLanguage(undefined, DEFAULT_TTS_LANGUAGE)
-    const persist = payload?.persist === true
+    const configLanguage = store.read().language
+    const language = typeof configLanguage === 'string' && configLanguage ? configLanguage : DEFAULT_TTS_LANGUAGE
+    const persist = payload.persist
     const startedAt = Date.now()
 
     const ttsLog = makeLog(log, '[tts]', {
       chars: text.length,
-      ctx: payload?.context || 'default',
+      ctx: payload.context || 'default',
       id: ttsId,
       lang: language,
       persist,
@@ -638,7 +495,7 @@ export function registerMediaIpc({
     ipcMain,
     IPC.invoke.mediaVideoUpload,
     async (event, payload: AttachmentVideoUploadPayload): Promise<AttachmentVideoUploadResult> => {
-      const authSessionId = payload?.authSessionId
+      const authSessionId = payload.authSessionId
       assertUploadAccount(authSessionId)
 
       if (typeof payload?.path !== 'string' || !payload.path || !/^\d+$/.test(payload.sessionId)) {

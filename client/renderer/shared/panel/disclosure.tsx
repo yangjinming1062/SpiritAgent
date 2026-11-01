@@ -40,7 +40,6 @@ export function Disclosure({
   title,
   hint,
   children,
-  defaultOpen = false,
   open: controlledOpen,
   onOpenChange,
   variant = 'panel',
@@ -52,7 +51,6 @@ export function Disclosure({
   title: string
   hint?: string
   children: ReactNode
-  defaultOpen?: boolean
   open?: boolean
   onOpenChange?: (open: boolean) => void
   variant?: DisclosureVariant
@@ -62,8 +60,8 @@ export function Disclosure({
   bodyClassName?: string
   summaryClassName?: string
 }): React.JSX.Element {
-  const [expanded, setExpanded] = useState(defaultOpen)
-  const [visited, setVisited] = useState(defaultOpen)
+  const [expanded, setExpanded] = useState(false)
+  const [visited, setVisited] = useState(false)
   const open = controlledOpen ?? expanded
   const panel = variant === 'panel'
   const arrow = panel || chevron

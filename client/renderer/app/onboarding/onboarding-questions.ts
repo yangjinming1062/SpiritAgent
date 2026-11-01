@@ -53,7 +53,7 @@ const CALL_NAME_KINDS: readonly AnswerKind[] = [
   { chip: '自填', label: '那，想让我怎么叫您？', placeholder: '随便写，我记住就是了…' }
 ]
 
-export const QUESTIONS: readonly Question[] = [
+const QUESTIONS: readonly Question[] = [
   {
     key: 'name',
     text: '您好…我还不认识自己。您愿意给我一个名字吗？',

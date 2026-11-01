@@ -65,7 +65,7 @@ macOS 钥匙串验证须从已登录图形会话启动，SSH 安全会话可能�
 
 [desktop-presentation.ts](lifecycle/desktop-presentation.ts) 持有唯一模式状态与串行切换；`desktop-windows.ts` 持有窗口与就绪等待，`desktop-health.ts` 持有显示器／电源监听，`desktop-background-runtime.ts` 持有媒体字节、请求代次和回执。[desktop-host.ts](lifecycle/desktop-host.ts) 装配统一宿主端口；原生事务分别归 [Windows helper](../desktop-windows/README.md) 与 [macOS 模块](../desktop-macos/README.md)。
 
-切换先核验 sender、账户与载荷，再经 [ui-state.ts](ipc/ui-state.ts) 捕获来源视图并等待目标恢复。快照按账户存于进程内，不包含持久文件许可；录音、转写和上传共同阻止切换。组件缺失或准备失败在释放来源前返回实际失败，页面加载与就绪等待共享预算。
+切换先核验 sender、账户与载荷，再经 [ui-state.ts](ipc/ui-state.ts) 捕获来源视图并等待目标恢复。快照按账户存于进程内，不包含持久文件许可；录音与上传共同阻止切换。组件缺失或准备失败在释放来源前返回实际失败，页面加载与就绪等待共享预算。
 
 交互桌面使用完整 preload，背景仅接收已认证的媒体字节和播放状态。静态环境与透明造型分别传入背景窗口合成，所有回执复核已派发请求、账户与呈现代次。显示器逻辑坐标只管布局；Windows 目标像素经 `desktop-display-resolutions.ts` 的只读原生查询取得，不从取整 DIP 反推。桌面窗口固定缩放，退出恢复窗口模式缩放。
 
@@ -132,7 +132,7 @@ Electron 使用 `net.fetch`、`net.WebSocket` 保持系统代理和证书语义�
 
 ### 语音与附件
 
-[ipc/media.ts](ipc/media.ts) 经 HTTP 入口调用 STT / TTS 和上传；语音队列限制并发与速率，磁盘命中直接返回、不入云调用队列，内存及在途合并仍核账户。[ipc/files.ts](ipc/files.ts) 按尺寸与字节预算缩放图片附件，不扩大文件许可。
+[ipc/media.ts](ipc/media.ts) 经 HTTP 入口调用 TTS 和附件上传，转写归后端媒体处理；合成队列限制并发与速率，磁盘命中直接返回、不入云调用队列，内存及在途合并仍核账户。[ipc/files.ts](ipc/files.ts) 按尺寸与字节预算缩放图片附件，不扩大文件许可。
 
 ## 构建产物
 

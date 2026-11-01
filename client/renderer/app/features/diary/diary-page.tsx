@@ -56,7 +56,7 @@ function formatSelectedDate(dateStr: string, t: Dictionary['living']['diary']): 
   return weekDay ? t.dateFormat(dateStr, weekDay) : dateStr
 }
 
-export function DiaryPage({ foreground: suppliedForeground }: { foreground?: boolean } = {}): React.JSX.Element {
+export function DiaryPage({ foreground: suppliedForeground }: { foreground: boolean }): React.JSX.Element {
   const persona = useStore($persona)
   const diaryByDate = useStore($diaryByDate)
   const loading = useStore($diaryLoading)

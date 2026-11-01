@@ -171,7 +171,7 @@ export function registerShortcutsIpc(options: ShortcutsIpcDeps): void {
     async (_event, payload: DesktopShortcutsSetPayload): Promise<DesktopShortcutsState> => {
       const next = overlayShortcuts(payload?.shortcuts, readShortcutsConfig())
 
-      await store.patch(['shortcuts'], { value: next })
+      await store.patch(['shortcuts'], next)
       const state = applyShortcuts(next)
       broadcastShortcutsChanged(state)
 

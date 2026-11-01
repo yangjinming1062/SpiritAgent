@@ -2,7 +2,7 @@ import { clamp } from '@runtime'
 
 import type { Position, SpriteRect, ViewportSize } from './types'
 
-export const REST_MARGIN = 24
+const REST_MARGIN = 24
 
 /** 未缩放舞台尺寸，只随视口高度变化；落位与视频画布共用。 */
 export function baseSpriteSize(viewportHeight: number): { width: number; height: number } {
@@ -83,7 +83,7 @@ export function computeOverlayAnchorBesideSprite(opts: {
 }
 
 /** 边缘栖息吸附距离：松手时距屏幕左右边小于该值即吸附贴边。 */
-export const EDGE_PERCH_DISTANCE = 48
+const EDGE_PERCH_DISTANCE = 48
 
 /** 距屏幕左右边缘足够近时吸附贴边栖息；否则保持原位。 */
 export function perchToEdge(

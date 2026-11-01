@@ -24,7 +24,6 @@ import { createFocusCycleHandler } from '@/shared/lib/focus-cycle'
 import { ArrowLeft, List } from '@/shared/lib/icons'
 import { definePersistedBoolean, registerCompanionStorageKey } from '@/shared/lib/storage'
 import { ErrorBanner } from '@/shared/panel'
-import { $gatewayState } from '@/shared/store/gateway'
 import { useStrings } from '@/shared/strings'
 
 import styles from './conversation-page.module.css'
@@ -253,7 +252,6 @@ function MainChat({
   railAction: React.ReactNode
   reveal?: { key: string; request: number }
 }): React.JSX.Element {
-  const gatewayState = useStore($gatewayState)
   const readOnly = useIsReadOnlySession()
   usePendingConversationFeed()
   const navigationError = useStore($sessionNavigationError)
@@ -270,7 +268,6 @@ function MainChat({
   return (
     <ChatPanel
       className={styles.main}
-      gatewayState={gatewayState}
       groupAvatars
       heading={
         <div className={styles.heading}>

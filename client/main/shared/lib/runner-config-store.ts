@@ -154,7 +154,7 @@ export async function applyCloudValue(
 
 export async function patch(
   keyPath: readonly (number | string)[],
-  { op = 'set', value }: { op?: 'delete' | 'set'; value?: unknown } = {}
+  value: unknown
 ): Promise<{ error?: string; ok: boolean }> {
   if (!Array.isArray(keyPath) || keyPath.length === 0) {
     return { error: 'path must be a non-empty array', ok: false }
@@ -164,11 +164,11 @@ export async function patch(
     return { error: 'path contains an invalid key', ok: false }
   }
 
-  if (op !== 'delete' && !isJsonValue(value)) {
+  if (!isJsonValue(value)) {
     return { error: 'value must be JSON data', ok: false }
   }
 
-  await changeLocked(target => (op === 'delete' ? deleteIn(target, keyPath) : setIn(target, keyPath, value)))
+  await changeLocked(target => setIn(target, keyPath, value))
 
   return { ok: true }
 }
@@ -254,20 +254,4 @@ function setIn(obj: Record<string, unknown>, keyPath: readonly (number | string)
   }
 
   cursor[keyPath[keyPath.length - 1]] = value
-}
-
-function deleteIn(obj: Record<string, unknown>, keyPath: readonly (number | string)[]): void {
-  let cursor: Record<string, unknown> = obj
-
-  for (let i = 0; i < keyPath.length - 1; i++) {
-    const next = ownChild(cursor, keyPath[i])
-
-    if (next == null || typeof next !== 'object') {
-      return
-    }
-
-    cursor = next as Record<string, unknown>
-  }
-
-  delete cursor[keyPath[keyPath.length - 1]]
 }

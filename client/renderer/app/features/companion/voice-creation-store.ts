@@ -14,7 +14,7 @@ import { errorMessage } from '@runtime'
 import type { VoiceSample } from './use-voice-sample'
 
 export type VoiceTab = 'fixed' | 'design' | 'clone'
-export type VoiceOperation = 'idle' | 'describing' | 'generating' | 'confirming' | 'cancelling'
+type VoiceOperation = 'idle' | 'describing' | 'generating' | 'confirming' | 'cancelling'
 
 interface VoiceConfirmation {
   id: string
@@ -23,7 +23,7 @@ interface VoiceConfirmation {
 }
 
 /** 失败类别：与语言无关，界面据此选措辞与恢复动作。 */
-export type VoiceErrorCode = 'catalog' | 'design' | 'save' | 'cancel' | 'confirm_unknown'
+type VoiceErrorCode = 'catalog' | 'design' | 'save' | 'cancel' | 'confirm_unknown'
 
 interface VoiceCreationState {
   sessionId: string | null

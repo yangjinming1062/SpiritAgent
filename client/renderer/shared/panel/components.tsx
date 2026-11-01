@@ -216,24 +216,17 @@ export function EmptyState({
   title,
   description,
   action,
-  icon: Icon,
-  iconTone = 'accent'
+  icon: Icon
 }: {
   title: string
   description?: string
   action?: ReactNode
   icon?: IconComponent
-  iconTone?: 'accent' | 'muted'
 }): React.JSX.Element {
   return (
     <div className="grid min-h-36 place-items-center px-4 py-8 text-center">
       <div className="max-w-sm">
-        {Icon && (
-          <Icon
-            aria-hidden="true"
-            className={cn('mx-auto mb-2 size-6', iconTone === 'accent' ? 'text-accent' : 'text-muted')}
-          />
-        )}
+        {Icon && <Icon aria-hidden="true" className="mx-auto mb-2 size-6 text-accent" />}
         <div className="text-xs font-medium text-muted">{title}</div>
         {description && <div className="mt-1 text-[11px] leading-relaxed text-faint">{description}</div>}
         {action && <div className="mt-3 flex justify-center">{action}</div>}

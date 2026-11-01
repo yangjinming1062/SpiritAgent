@@ -6,57 +6,30 @@ export {
   loadMoreActions,
   refreshActionGroups,
   refreshActions,
-  resetActionsForAccount,
   retryActionReview,
   updateAction
 } from './actions-store'
 export type { VisualReceiptBody, VisualsListQuery } from './api'
 export { visualsApi } from './api'
-export {
-  bindPresentationDirector,
-  enqueueInteraction,
-  enqueueInteractionForward,
-  feedDirectorPresentation,
-  type InteractionKind,
-  resolveAmbientLoop
-} from './director'
-export { $ambientLoopChoice } from './director'
+export { bindPresentationDirector, enqueueInteraction, enqueueInteractionForward, resolveAmbientLoop } from './director'
 export { $performance } from './performance-scheduler'
-export {
-  $stagePlan,
-  deriveStagePlan,
-  type StageActorPlan,
-  type StageLayout,
-  type StagePlan,
-  type StageScenePlan
-} from './stage-plan'
+export { $stagePlan, deriveStagePlan, type StageLayout, type StageScenePlan } from './stage-plan'
 export type {
   ActionClipKind,
   ActionDefinition,
-  ActionDefinitionRequest,
   ActionLibraryGroup,
-  ActionListResponse,
   ActionMediaEntry,
-  ActionMediaListResponse,
   ActionReviewStatus,
-  ActionUpdateRequest,
-  PlaybackReceiptKind,
-  PlaybackStatus,
   VisualActualSnapshot,
   VisualDetail,
   VisualItem,
   VisualJob,
   VisualJobCommand,
-  VisualJobCommandRequest,
-  VisualJobState,
-  VisualListResponse,
   VisualMediaKind,
   VisualPlayCommand,
-  VisualPresentationUpdate,
   VisualsPresentation
 } from './types'
 export {
-  $visualPlayback,
   $visualsDetail,
   $visualsDetailError,
   $visualsError,
@@ -75,7 +48,6 @@ export {
   refreshVisualPresentation,
   refreshVisuals,
   regenerateVisual,
-  resetVisualsForAccount,
   sendStaticReceipt,
   sendVisualReceipt,
   setVisualPreferences,

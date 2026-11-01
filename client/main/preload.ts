@@ -7,7 +7,6 @@ import {
   type DesktopApiOperationKey,
   type DesktopApiResult,
   type DesktopAuthBroadcast,
-  type DesktopLogoutPayload,
   type DesktopPrefsHydrated,
   type DesktopRunnerStatusEvent,
   type DesktopServerVoiceSelection,
@@ -23,7 +22,6 @@ import {
   type IpcEventChannel,
   type IpcEventContract,
   type IpcInvokeContract,
-  type MediaSttPayload,
   type MediaTtsPayload,
   type RunnerConfigPatch,
   type SessionHistorySnapshot,
@@ -179,13 +177,12 @@ const desktopBridge = {
   getSession: () => invoke(IPC.invoke.authGetSession),
   getVersion: () => invoke(IPC.invoke.version),
   log: (payload: InvokePayload<typeof IPC.invoke.logEmit>) => invoke(IPC.invoke.logEmit, payload),
-  logout: (payload: DesktopLogoutPayload) => invoke(IPC.invoke.authLogout, payload),
+  logout: (sessionId: string) => invoke(IPC.invoke.authLogout, sessionId),
   media: {
     prepareOutput: () => invoke(IPC.invoke.mediaPrepareOutput),
     onboardingAudio: {
       read: (tag: string) => invoke(IPC.invoke.onboardingAudioRead, tag)
     },
-    stt: (payload: MediaSttPayload) => invoke(IPC.invoke.mediaStt, payload),
     uploadAudio: (payload: AudioUploadPayload) => invoke(IPC.invoke.mediaAudioUpload, payload),
     uploadVoiceSample: (payload: VoiceSampleUploadPayload) => invoke(IPC.invoke.mediaVoiceSampleUpload, payload),
     tts: (payload: MediaTtsPayload) => invoke(IPC.invoke.mediaTts, payload)

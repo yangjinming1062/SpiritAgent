@@ -13,7 +13,6 @@ import {
   useState
 } from 'react'
 
-import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { FileText, FolderOpen, ImageIcon, Mic, Plus, Send, Slash, SquareFilled, Video, X } from '@/shared/lib/icons'
 import {
   $slashCommandMeta,
@@ -35,7 +34,6 @@ import { SlashCommandPopover } from './slash-command-popover'
 export interface ChatSubmitState {
   editAttachments?: ChatAttachment[]
   editMessageId?: string
-  gatewayState: ConnectionState
   isGenerating: boolean
   isReadOnlySession: boolean
   pending: PendingAttachment | null
@@ -301,17 +299,13 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
   }
 
   // 编辑器高度由实际折行决定，min-h/max-h 限定起步与上限。
-  const editorElement = expanded ? (
+  const editorElement = (
     <textarea
       {...commonEditorProps}
-      className="w-full flex-1 resize-none bg-transparent border-0 outline-none text-xs text-strong placeholder:text-faint px-1.5 py-1.5 min-h-[2.4em] max-h-[7.2em] leading-snug field-sizing-content overflow-y-auto"
-      data-conversation-input="true"
-      ref={setEditorRef}
-    />
-  ) : (
-    <textarea
-      {...commonEditorProps}
-      className="w-full flex-1 resize-none bg-transparent border-0 outline-none text-xs px-1.5 py-0.5 text-strong placeholder:text-faint min-h-[1.5em] max-h-[7.2em] leading-snug field-sizing-content overflow-y-auto"
+      className={cn(
+        'w-full flex-1 resize-none bg-transparent border-0 outline-none text-xs text-strong placeholder:text-faint px-1.5 leading-snug field-sizing-content overflow-y-auto max-h-[7.2em]',
+        expanded ? 'py-1.5 min-h-[2.4em]' : 'py-0.5 min-h-[1.5em]'
+      )}
       data-conversation-input="true"
       ref={setEditorRef}
     />

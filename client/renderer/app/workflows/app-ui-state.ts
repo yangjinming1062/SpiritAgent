@@ -7,8 +7,6 @@ import { $lifeUi, exportLifeUiSnapshot, importLifeUiSnapshot } from '@/app/featu
 import { $visualsUi, exportVisualsUiSnapshot, importVisualsUiSnapshot } from '@/app/features/visuals/visuals-state'
 import {
   $appNavigationRevision,
-  $appPage,
-  $settingsSection,
   applyAppNavigation,
   getAppNavigation,
   readAppNavigationHash
@@ -25,7 +23,6 @@ import {
 import { log } from '@/shared/lib/log'
 import { shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
-import { $presentation } from '@/shared/store/presentation'
 import { $surfaceRole } from '@/shared/store/surfaces'
 import { $uiStateError, $uiStateReady, $uiStateRetry } from '@/shared/store/ui-state'
 import {
@@ -296,15 +293,12 @@ export function installAppUiStateSync(): () => void {
     $auth.listen(authChanged),
     $uiStateRetry.listen(initialize),
     $conversationInputBusy.listen(publishBusy),
-    $appPage.listen(schedulePublish),
-    $settingsSection.listen(schedulePublish),
     $appNavigationRevision.listen(schedulePublish),
     $chatSessionId.listen(schedulePublish),
     $mainConversationDraftRevision.listen(schedulePublish),
     $visualsUi.listen(schedulePublish),
     $lifeUi.listen(schedulePublish),
     $companionEditors.listen(schedulePublish),
-    $presentation.listen(schedulePublish),
     bridge.onRequest(enqueue)
   ]
 

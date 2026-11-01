@@ -1,12 +1,6 @@
 import type { dialog, IpcMain, WebContents } from 'electron'
 
-import {
-  type DesktopActivatePayload,
-  type DesktopAuthBroadcast,
-  type DesktopAuthSnapshot,
-  type DesktopLogoutPayload,
-  IPC
-} from '@ipc/contracts'
+import { type DesktopActivatePayload, type DesktopAuthBroadcast, type DesktopAuthSnapshot, IPC } from '@ipc/contracts'
 import { errorMessage } from '@runtime'
 
 import type { BackendClientContext, BackendSessionPort, SessionSnapshotPort } from '../shared/backend-port'
@@ -241,24 +235,17 @@ export function registerAuthIpc({
     })
   )
 
-  ipcMain.handle(IPC.invoke.authLogout, (_event, payload: DesktopLogoutPayload) =>
+  ipcMain.handle(IPC.invoke.authLogout, (_event, sessionId: string) =>
     enqueueAction(async () => {
-      const reason = payload?.reason
-      const expectedSessionId = payload?.expectedSessionId
-
-      if (
-        (reason !== 'user' && reason !== 'expired') ||
-        (expectedSessionId !== undefined && typeof expectedSessionId !== 'string') ||
-        (reason === 'expired' && !expectedSessionId)
-      ) {
+      if (typeof sessionId !== 'string' || !sessionId) {
         throw new Error('Invalid logout request.')
       }
 
       const session = deps.ensureBackendSession()
       const previous = session.getSession()
-      const result = await session.logout(expectedSessionId)
+      const result = await session.logout(sessionId)
 
-      if (!result.ignored || (reason === 'expired' && !session.getSession())) {
+      if (!result.ignored || !session.getSession()) {
         await publishChange(previous, null)
       }
 

@@ -51,7 +51,7 @@ interface Running {
 }
 
 /** 一个宿主一份运行态；HTTP 受理只推进到 waiting，播放器及回执负责后续推进。 */
-export function createPerformanceScheduler(ports: PerformancePorts, changed: (state: PerformanceSnapshot) => void) {
+function createPerformanceScheduler(ports: PerformancePorts, changed: (state: PerformanceSnapshot) => void) {
   let active: Running | null = null
   let state: PerformanceState = 'idle'
   let enabled = true

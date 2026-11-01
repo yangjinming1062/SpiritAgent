@@ -4,7 +4,6 @@ import { type ClipboardEvent, type DragEvent, type PointerEvent, useCallback, us
 import { useAtomListen } from '@/shared/hooks/use-atom-listen'
 import { blobToDataUrl } from '@/shared/lib/blob-data-url'
 import { resolveDroppedFiles } from '@/shared/lib/file-drop'
-import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { currentClearEpoch } from '@/shared/lib/storage'
 import { notify, notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
@@ -19,7 +18,6 @@ import { useVoiceRecorder } from './use-voice-recorder'
 
 // 主对话与轻语共享输入逻辑，草稿和附件归所属视图。
 export interface UseChatInputOptions {
-  gatewayState: ConnectionState
   isReadOnlySession: boolean
 }
 
@@ -32,7 +30,7 @@ export interface UseChatInputResult {
 // 跨挂载去重同一批外部投喂，附件归接收视图。
 let consumedExternalFeedNonce = 0
 
-export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOptions): UseChatInputResult {
+export function useChatInput({ isReadOnlySession }: UseChatInputOptions): UseChatInputResult {
   const view = useConversationView()
   const { controller } = view
   const ownerRef = useRef(controller)
@@ -182,7 +180,6 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
   const submitState: ChatSubmitState = {
     editAttachments: submit.editing?.attachments,
     editMessageId: submit.editing?.sourceMessageId,
-    gatewayState,
     isGenerating: submit.sending || submit.stopping || pendingBatchLen > 0 || turnInFlight || lastStreaming,
     isReadOnlySession,
     pending: submit.editing ? null : submit.pending,

@@ -69,19 +69,6 @@
   min-height: 0;
   min-width: 0;
 }
-.toolbar {
-  align-items: center;
-  display: flex;
-  flex: 0 0 auto;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: flex-end;
-  padding: 0 24px;
-}
-/* 工具栏没有可见内容时不占顶部留白，与无工具栏的页面保持同一上边距。 */
-.toolbar:has(> *) {
-  padding-top: 16px;
-}
 .scroller,
 .bounded {
   flex: 1;
@@ -161,18 +148,6 @@
   }
   .contentColumn {
     display: contents;
-  }
-  .toolbar,
-  .toolbar:has(> *) {
-    border-bottom: 1px solid var(--ui-line-hairline);
-    grid-column: 2;
-    grid-row: 1;
-    max-width: 50cqw;
-    padding: 4px 12px 4px 0;
-  }
-  .toolbar:empty {
-    max-width: 0;
-    padding: 0;
   }
   .scroller,
   .bounded {

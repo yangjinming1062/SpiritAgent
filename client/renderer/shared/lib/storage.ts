@@ -75,13 +75,13 @@ export function registerStorageRestoreHandler(handler: () => void): () => void {
   }
 }
 
-export function storedBoolean(key: string, fallback: boolean): boolean {
+function storedBoolean(key: string, fallback: boolean): boolean {
   const value = storedString(key)
 
   return value === null ? fallback : value === 'true'
 }
 
-export function persistBoolean(key: string, value: boolean): void {
+function persistBoolean(key: string, value: boolean): void {
   persistString(key, String(value))
 }
 

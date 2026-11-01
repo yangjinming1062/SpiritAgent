@@ -1,4 +1,4 @@
-import type { ReactNode, Ref } from 'react'
+import type { ReactNode } from 'react'
 import { useState } from 'react'
 
 import { Plus, Search } from '@/shared/lib/icons'
@@ -52,11 +52,9 @@ export function AssetLibraryHeader({
 export function LibraryToolbar({
   query,
   searchLabel,
-  searchPlaceholder,
   createLabel,
   searchMode = 'live',
   createDisabled = false,
-  createRef,
   filters,
   onQueryChange,
   onSearch,
@@ -64,11 +62,9 @@ export function LibraryToolbar({
 }: {
   query: string
   searchLabel: string
-  searchPlaceholder?: string
   createLabel: string
   searchMode?: 'live' | 'submit'
   createDisabled?: boolean
-  createRef?: Ref<HTMLButtonElement>
   /** 筛选插槽（下拉、类型切换等），排在搜索框之后。 */
   filters?: ReactNode
   onQueryChange: (query: string) => void
@@ -97,7 +93,7 @@ export function LibraryToolbar({
             onSearch?.()
           }
         }}
-        placeholder={searchPlaceholder ?? searchLabel}
+        placeholder={searchLabel}
         type="search"
         value={query}
       />
@@ -112,7 +108,6 @@ export function LibraryToolbar({
         className={cn(BTN_PRIMARY, 'shrink-0 whitespace-nowrap')}
         disabled={createDisabled}
         onClick={onCreate}
-        ref={createRef}
         type="button"
       >
         <Plus className="size-3.5" />

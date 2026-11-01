@@ -3,7 +3,7 @@ import { useState } from 'react'
 
 import { useResolvedMediaSrc } from './media-src'
 
-export interface MediaPreviewState {
+interface MediaPreviewState {
   /** 解析失败或媒体元素加载失败。 */
   failed: boolean
   /** 媒体元素加载失败时调用。 */
@@ -16,7 +16,7 @@ export interface MediaPreviewState {
   status: 'failed' | 'loading' | 'ready'
 }
 
-export interface MediaPreviewProps {
+interface MediaPreviewProps {
   children: (state: MediaPreviewState) => ReactNode
   type: 'image' | 'video'
   url: string

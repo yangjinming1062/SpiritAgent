@@ -26,7 +26,7 @@ export interface VoiceCatalog {
   customVoices: CustomVoiceSummary[]
 }
 
-export type CustomVoiceSummary = ApiSchemas['CustomVoiceSummary']
+type CustomVoiceSummary = ApiSchemas['CustomVoiceSummary']
 
 export interface VoiceDesignPreview {
   candidateId: string

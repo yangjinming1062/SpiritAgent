@@ -5,7 +5,6 @@ import path from 'node:path'
 import { sleep } from '@runtime'
 
 import { apiErrorFromResponse } from '../../../shared/api'
-import { ASSET_FETCH_TIMEOUT_MS } from '../security/hardening'
 import { mimeTypeForPath } from '../shared/mime'
 import { atomicWriteFile, isAccountId } from '../shared/utils'
 
@@ -22,16 +21,16 @@ export interface CachedAsset {
 }
 
 export interface AssetDiskCacheOptions {
-  defaultFetchFn?: typeof globalThis.fetch
   spiritagentHome: string
 }
 
 export interface EnsureAssetOptions {
   preferCache?: boolean
-  baseUrl?: string
-  fetchFn?: typeof globalThis.fetch
+  baseUrl: string
+  fetchFn: typeof globalThis.fetch
   rawUrl: string
-  timeoutMs?: number
+  timeoutMs: number
+  /** 未登录账户读取公共资产时为空。 */
   token?: string
 }
 
@@ -72,7 +71,7 @@ export function resolveBackendAssetUrl(rawUrl: string, baseUrl?: null | string):
   return `${baseUrl}${pathname}${search}`
 }
 
-export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetDiskCacheOptions): AssetDiskCache {
+export function createAssetDiskCache({ spiritagentHome }: AssetDiskCacheOptions): AssetDiskCache {
   const root = path.resolve(spiritagentHome, 'cache', 'assets')
   const accounts = new Map<string, ReturnType<typeof createAccountAssetCache>>()
 
@@ -84,7 +83,7 @@ export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetD
     let cache = accounts.get(accountId)
 
     if (!cache) {
-      cache = createAccountAssetCache(path.join(root, accountId), defaultFetchFn)
+      cache = createAccountAssetCache(path.join(root, accountId))
       accounts.set(accountId, cache)
     }
 
@@ -98,7 +97,7 @@ export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetD
   }
 }
 
-function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globalThis.fetch) {
+function createAccountAssetCache(cacheDir: string) {
   const inFlightDownloads = new Map<string, { controller: AbortController; promise: Promise<CachedAsset> }>()
   let clearing: Promise<void> | null = null
   let epoch = 0
@@ -184,7 +183,7 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
   async function download(opts: EnsureAssetOptions, cancellation: AbortSignal): Promise<CachedAsset> {
     await ensureDir()
 
-    const { baseUrl, fetchFn = defaultFetchFn || globalThis.fetch, rawUrl, timeoutMs, token } = opts
+    const { baseUrl, fetchFn, rawUrl, timeoutMs, token } = opts
 
     if (!rawUrl) {
       throw new Error('asset url is required')
@@ -203,8 +202,7 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
     const targetUrl = resolveBackendAssetUrl(rawUrl, baseUrl)
     // 错误与日志只带路径：签名参数（expires / sig）不得进入日志。
     const assetPath = new URL(rawUrl, 'http://127.0.0.1').pathname
-    const effectiveTimeout = timeoutMs ?? ASSET_FETCH_TIMEOUT_MS
-    const signal = AbortSignal.any([cancellation, AbortSignal.timeout(effectiveTimeout)])
+    const signal = AbortSignal.any([cancellation, AbortSignal.timeout(timeoutMs)])
 
     // 请求头和正文共享总期限；传输中断最多重试一次，取消和超时不重试。
     async function executeDownload(): Promise<{ body: Buffer | null; response: Response }> {
@@ -275,7 +273,7 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
       return serveStaleOrThrow(
         new Error(
           signal.aborted
-            ? `Asset download timed out after ${effectiveTimeout}ms: ${assetPath}`
+            ? `Asset download timed out after ${timeoutMs}ms: ${assetPath}`
             : `Asset download interrupted: ${assetPath}`,
           { cause: networkErr }
         ),

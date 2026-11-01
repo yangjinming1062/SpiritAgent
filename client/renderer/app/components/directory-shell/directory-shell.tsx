@@ -20,8 +20,7 @@ export function DirectoryShell<T extends string>({
   bounded = false,
   children,
   entries,
-  onSelect,
-  toolbar
+  onSelect
 }: {
   activeId: T
   ariaLabel: string
@@ -29,7 +28,6 @@ export function DirectoryShell<T extends string>({
   children: React.ReactNode
   entries: ReadonlyArray<DirectoryEntry<T>>
   onSelect: (id: T) => void
-  toolbar?: React.ReactNode
 }): React.JSX.Element {
   const scroller = useRef<HTMLDivElement>(null)
   const directory = useRef<HTMLElement>(null)
@@ -87,7 +85,6 @@ export function DirectoryShell<T extends string>({
           ))}
         </nav>
         <div className={styles.contentColumn}>
-          {toolbar ? <div className={styles.toolbar}>{toolbar}</div> : null}
           <div className={bounded ? styles.bounded : styles.scroller} ref={scroller}>
             <div className={bounded ? styles.boundedContent : styles.content}>{children}</div>
           </div>

@@ -56,7 +56,7 @@ function WhisperOverlayContent(): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const isReadOnlySession = useIsReadOnlySession()
-  const input = useChatInput({ gatewayState, isReadOnlySession })
+  const input = useChatInput({ isReadOnlySession })
 
   // 轻语加载唯一的陪伴会话；未加载或当前不在陪伴会话时定位到主陪伴会话。
   useEffect(() => {
