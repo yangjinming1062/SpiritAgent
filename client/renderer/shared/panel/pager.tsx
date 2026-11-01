@@ -73,9 +73,7 @@ export function Pager({
         {t.common.previous}
       </button>
       <span aria-live="polite" className="text-[11px] text-faint">
-        {totalPages !== null
-          ? t.common.pageOf(current + 1, totalPages)
-          : `${current + 1}`}
+        {totalPages !== null ? t.common.pageOf(current + 1, totalPages) : `${current + 1}`}
         {total !== null ? ` · ${t.common.totalItems(total)}` : ''}
       </span>
       <button

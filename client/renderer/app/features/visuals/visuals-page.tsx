@@ -91,7 +91,12 @@ export function VisualsPage(): React.JSX.Element {
   const { run, busy } = usePanelAction()
 
   // 详情随组件生命周期；导航指向影像分区时才消费 visualId 直达，离开的导航不回退详情。
-  const { detail: selectedId, openDetail, closeDetail: closeFlow, scrollRef } = useDetailFlow<string | null>({
+  const {
+    detail: selectedId,
+    openDetail,
+    closeDetail: closeFlow,
+    scrollRef
+  } = useDetailFlow<string | null>({
     select: target =>
       target.page === 'companion' && target.companionSection === 'visuals' ? (target.visualId ?? null) : undefined,
     fallback: null,
@@ -175,10 +180,13 @@ export function VisualsPage(): React.JSX.Element {
 
   const jobCommand = (job: VisualJob, command: VisualJobCommand): void => {
     const apply = (): Promise<void> =>
-      run(async () => {
-        await commandVisualJob(job.id, command)
-        await Promise.all([reloadDetail(), refreshVisuals()])
-      }, { failure: t.jobCommandFailed })
+      run(
+        async () => {
+          await commandVisualJob(job.id, command)
+          await Promise.all([reloadDetail(), refreshVisuals()])
+        },
+        { failure: t.jobCommandFailed }
+      )
 
     if (command === 'cancel') {
       void confirmAction({
@@ -203,14 +211,17 @@ export function VisualsPage(): React.JSX.Element {
       return
     }
 
-    void run(async () => {
-      await regenerateVisual(detail.id, {
-        expected_version: detail.version,
-        feedback: feedback.trim() || undefined,
-        video_feedback: videoFeedback.trim() || undefined
-      })
-      await Promise.all([reloadDetail(), refreshVisuals()])
-    }, { failure: t.redoFailed })
+    void run(
+      async () => {
+        await regenerateVisual(detail.id, {
+          expected_version: detail.version,
+          feedback: feedback.trim() || undefined,
+          video_feedback: videoFeedback.trim() || undefined
+        })
+        await Promise.all([reloadDetail(), refreshVisuals()])
+      },
+      { failure: t.redoFailed }
+    )
   }
 
   const deleteDetail = (): void => {
@@ -228,13 +239,16 @@ export function VisualsPage(): React.JSX.Element {
         return
       }
 
-      void run(async () => {
-        await visualsApi.delete(detail.id)
-        clearVisualDetail()
-        // 列表随后由筛选与页码变化重新拉取，不在这里再发一次不同筛选的读取。
-        closeFlow()
-        updateVisualsUi({ page: 0 })
-      }, { failure: t.deleteFailed })
+      void run(
+        async () => {
+          await visualsApi.delete(detail.id)
+          clearVisualDetail()
+          // 列表随后由筛选与页码变化重新拉取，不在这里再发一次不同筛选的读取。
+          closeFlow()
+          updateVisualsUi({ page: 0 })
+        },
+        { failure: t.deleteFailed }
+      )
     })
   }
 

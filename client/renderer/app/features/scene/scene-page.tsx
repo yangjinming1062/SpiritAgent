@@ -81,7 +81,11 @@ export function ScenePage(): React.JSX.Element {
   const tToasts = dict.living.toasts
 
   // 视图随组件生命周期；导航指向环境分区时才消费 sceneId 直达，离开的导航不回退视图。
-  const { detail: view, setDetail: setView, scrollRef } = useDetailFlow<ScenePageView>({
+  const {
+    detail: view,
+    setDetail: setView,
+    scrollRef
+  } = useDetailFlow<ScenePageView>({
     select: target =>
       target.page === 'companion' && target.companionSection === 'environment'
         ? target.sceneId

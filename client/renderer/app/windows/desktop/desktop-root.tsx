@@ -215,14 +215,18 @@ export function DesktopRoot(): React.JSX.Element {
     return () => window.removeEventListener('pointerup', onPointerUp, true)
   }, [])
 
+  // 窗口内每次指针按下都会激活所在页；同一页重复激活不重放导航，否则会按切页语义清空详情等瞬态状态。
   const activatePanel = useCallback(
     (id: AppPage): void => {
-      setAppPage(id)
+      if (appPage !== id) {
+        setAppPage(id)
+      }
+
       setOverlay(null)
       activate(id)
       setFocusedConversation(id === 'chat' ? 'main' : null)
     },
-    [activate]
+    [activate, appPage]
   )
 
   const openCompanionChat = useCallback((): void => {

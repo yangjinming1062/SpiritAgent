@@ -21,7 +21,27 @@ import {
 } from '@/modules/visuals'
 import { RENDERER_TIMINGS } from '@/shared/constants'
 import { usePanelAction } from '@/shared/hooks/use-panel-action'
-import { Badge, BTN_DANGER, BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, CapsuleTabs, CHIP, CHIP_FILTER_ACTIVE, confirmAction, EmptyState, ErrorBanner, FIELD_LABEL, INPUT_CLASS, LoadingBlock, Pager, PanelSelect, SettingCard, SettingsContent, SettingsSectionIntro } from '@/shared/panel'
+import {
+  Badge,
+  BTN_DANGER,
+  BTN_GHOST,
+  BTN_PRIMARY,
+  BTN_SUBTLE,
+  CapsuleTabs,
+  CHIP,
+  CHIP_FILTER_ACTIVE,
+  confirmAction,
+  EmptyState,
+  ErrorBanner,
+  FIELD_LABEL,
+  INPUT_CLASS,
+  LoadingBlock,
+  Pager,
+  PanelSelect,
+  SettingCard,
+  SettingsContent,
+  SettingsSectionIntro
+} from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
 
@@ -227,10 +247,11 @@ function ActionsPageContent(): React.JSX.Element {
       return
     }
 
-    void run(
-      () => visualsApi.createActorClip({ outfit_id: defaultOutfit.id, action_id: action.id }),
-      { failure: t.makeClipFailed, success: t.makeClipDone, key: `clip:${action.id}` }
-    )
+    void run(() => visualsApi.createActorClip({ outfit_id: defaultOutfit.id, action_id: action.id }), {
+      failure: t.makeClipFailed,
+      success: t.makeClipDone,
+      key: `clip:${action.id}`
+    })
   }
 
   const toggleMedia = (action: ActionDefinition): void => {
@@ -599,12 +620,7 @@ function ActionsPageContent(): React.JSX.Element {
             >
               {t.save}
             </button>
-            <button
-              className={BTN_GHOST}
-              disabled={busyKey === 'save'}
-              onClick={() => setEditing(null)}
-              type="button"
-            >
+            <button className={BTN_GHOST} disabled={busyKey === 'save'} onClick={() => setEditing(null)} type="button">
               {t.cancel}
             </button>
             {editing.id !== null && latestEditingAction && latestEditingAction.source !== 'preset' ? (
@@ -704,7 +720,12 @@ function ActionsPageContent(): React.JSX.Element {
                   </button>
                 )}
                 {action.source !== 'preset' && (
-                  <button className={BTN_DANGER} disabled={busyKey !== null} onClick={() => remove(action)} type="button">
+                  <button
+                    className={BTN_DANGER}
+                    disabled={busyKey !== null}
+                    onClick={() => remove(action)}
+                    type="button"
+                  >
                     {t.deleteLabel}
                   </button>
                 )}

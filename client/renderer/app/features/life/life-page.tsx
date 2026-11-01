@@ -145,14 +145,12 @@ export function LifePage({
     detail
   ])
 
-  const pagination = (page: number, hasMore: boolean, busy: boolean, onChange: (value: number) => void): React.ReactNode => (
-    <Pager
-      className={styles.pagination}
-      hasMore={hasMore}
-      onPageChange={onChange}
-      page={page}
-    />
-  )
+  const pagination = (
+    page: number,
+    hasMore: boolean,
+    busy: boolean,
+    onChange: (value: number) => void
+  ): React.ReactNode => <Pager className={styles.pagination} hasMore={hasMore} onPageChange={onChange} page={page} />
 
   return (
     <div

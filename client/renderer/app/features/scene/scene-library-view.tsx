@@ -12,15 +12,7 @@ import {
 } from '@/modules/scene'
 import { usePanelAction } from '@/shared/hooks/use-panel-action'
 import { RefreshCw, Sparkles } from '@/shared/lib/icons'
-import {
-  BTN_PRIMARY,
-  BTN_SUBTLE,
-  CreationFeedback,
-  HINT_TEXT,
-  Pager,
-  SettingCard,
-  Spinner
-} from '@/shared/panel'
+import { BTN_PRIMARY, BTN_SUBTLE, CreationFeedback, HINT_TEXT, Pager, SettingCard, Spinner } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
 interface SceneLibraryViewProps {
@@ -79,70 +71,71 @@ export function SceneLibraryView({
   }
 
   // 列表顶部单一状态条：加载失败 > 提交未知 > 进行中任务，同屏至多一条。
-  const statusBanner = status === 'error' ? (
-    <CreationFeedback
-      actions={
-        <button className={BTN_SUBTLE} onClick={onRetryLoad} type="button">
-          <RefreshCw className="size-3.5" />
-          <span>{strings.common.retry}</span>
-        </button>
-      }
-      state="error"
-      title={t.loadFailed}
-    />
-  ) : creationIssue?.outcome === 'unknown' ? (
-    <CreationFeedback
-      actions={
-        <>
-          <button className={BTN_SUBTLE} disabled={checking} onClick={checkStatus} type="button">
-            {checking ? strings.common.loading : t.inspectLibrary}
+  const statusBanner =
+    status === 'error' ? (
+      <CreationFeedback
+        actions={
+          <button className={BTN_SUBTLE} onClick={onRetryLoad} type="button">
+            <RefreshCw className="size-3.5" />
+            <span>{strings.common.retry}</span>
           </button>
-          {creationIssue.inspected ? (
-            <button
-              className={BTN_PRIMARY}
-              disabled={checking}
-              onClick={() => finishSceneCreationWait(creationIssue)}
-              type="button"
-            >
-              {strings.creation.finishWaiting}
+        }
+        state="error"
+        title={t.loadFailed}
+      />
+    ) : creationIssue?.outcome === 'unknown' ? (
+      <CreationFeedback
+        actions={
+          <>
+            <button className={BTN_SUBTLE} disabled={checking} onClick={checkStatus} type="button">
+              {checking ? strings.common.loading : t.inspectLibrary}
             </button>
-          ) : null}
-        </>
-      }
-      description={creationIssue.inspected ? strings.creation.inspectionHint : t.submissionUnknown}
-      state="unknown"
-      title={strings.creation.unknown}
-    />
-  ) : task ? (
-    <CreationFeedback
-      actions={
-        <button className={BTN_SUBTLE} onClick={() => onOpen(task.id)} type="button">
-          {t.openDetails}
-        </button>
-      }
-      description={
-        pending?.stage === 'waiting_upload'
-          ? t.waitingUploadHint
-          : regenerating
-            ? strings.creation.canLeave
-            : t.pendingOverlayHint
-      }
-      state={pending?.stage === 'waiting_upload' ? 'waiting' : 'working'}
-      title={
-        pending?.stage === 'waiting_upload'
-          ? t.waitingUploadOverlay
-          : stage === 'analyze'
-            ? t.analyzing
-            : stage === 'evaluating' || stage === 'submitting'
-              ? t.checking
-              : regenerating
-                ? t.imageRegenerating
-                : slow
-                  ? t.slow
-                  : t.pendingOverlay
-      }
-    />
-  ) : null
+            {creationIssue.inspected ? (
+              <button
+                className={BTN_PRIMARY}
+                disabled={checking}
+                onClick={() => finishSceneCreationWait(creationIssue)}
+                type="button"
+              >
+                {strings.creation.finishWaiting}
+              </button>
+            ) : null}
+          </>
+        }
+        description={creationIssue.inspected ? strings.creation.inspectionHint : t.submissionUnknown}
+        state="unknown"
+        title={strings.creation.unknown}
+      />
+    ) : task ? (
+      <CreationFeedback
+        actions={
+          <button className={BTN_SUBTLE} onClick={() => onOpen(task.id)} type="button">
+            {t.openDetails}
+          </button>
+        }
+        description={
+          pending?.stage === 'waiting_upload'
+            ? t.waitingUploadHint
+            : regenerating
+              ? strings.creation.canLeave
+              : t.pendingOverlayHint
+        }
+        state={pending?.stage === 'waiting_upload' ? 'waiting' : 'working'}
+        title={
+          pending?.stage === 'waiting_upload'
+            ? t.waitingUploadOverlay
+            : stage === 'analyze'
+              ? t.analyzing
+              : stage === 'evaluating' || stage === 'submitting'
+                ? t.checking
+                : regenerating
+                  ? t.imageRegenerating
+                  : slow
+                    ? t.slow
+                    : t.pendingOverlay
+        }
+      />
+    ) : null
 
   return (
     <>

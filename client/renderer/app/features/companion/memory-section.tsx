@@ -479,7 +479,9 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
       {loading ? (
         <LoadingBlock label={t.loading} />
       ) : rows.length === 0 ? (
-        !hint ? <EmptyState title={query ? dict.settings.persona.memoryNoMatch : t.empty} /> : null
+        !hint ? (
+          <EmptyState title={query ? dict.settings.persona.memoryNoMatch : t.empty} />
+        ) : null
       ) : (
         <>
           <div
