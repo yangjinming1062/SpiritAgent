@@ -175,32 +175,34 @@ export function RemotePage(): React.JSX.Element {
     }
   }, [active, beginGuard, busy, pairingExpiresAt, pairingId, pairingState, reloadDevices, t.paired, t.pollFailed])
 
-  async function updatePairing(request: () => Promise<RemotePairing>, failureMessage: string): Promise<void> {
+  function updatePairing(request: () => Promise<RemotePairing>, failureMessage: string): Promise<void> {
     const isLive = beginGuard()
     const revision = ++pairingRevision.current
     setBusy(true)
     setError('')
 
-    try {
-      const result = await request()
+    return (async () => {
+      try {
+        const result = await request()
 
-      if (isLive() && revision === pairingRevision.current) {
-        setPairing(result)
-        setNow(Date.now())
+        if (isLive() && revision === pairingRevision.current) {
+          setPairing(result)
+          setNow(Date.now())
 
-        if (result.state === 'paired') {
-          await reloadDevices()
+          if (result.state === 'paired') {
+            await reloadDevices()
+          }
+        }
+      } catch (cause) {
+        if (isLive() && revision === pairingRevision.current) {
+          setError(failureText(cause, failureMessage))
+        }
+      } finally {
+        if (isLive() && revision === pairingRevision.current) {
+          setBusy(false)
         }
       }
-    } catch (cause) {
-      if (isLive() && revision === pairingRevision.current) {
-        setError(failureText(cause, failureMessage))
-      }
-    } finally {
-      if (isLive() && revision === pairingRevision.current) {
-        setBusy(false)
-      }
-    }
+    })()
   }
 
   function connect(): Promise<void> {

@@ -56,7 +56,7 @@ import {
   Trash2
 } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
-import { Badge, ErrorBanner, IconAction, INPUT_CLASS, SearchField, Spinner } from '@/shared/panel'
+import { Badge, ErrorBanner, IconAction, INPUT_CLASS, Pager, SearchField, Spinner } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
 import type { SessionInfo } from '@protocol'
@@ -385,16 +385,13 @@ export function SessionSidebar({
             </div>
           </>
         )}
-        {(searchActive ? searchNextCursor : sessionsNextCursor) && (
-          <button
-            className="w-full rounded-xl py-2 text-xs text-muted"
-            disabled={searchActive ? searchLoading : loading}
-            onClick={() => void (searchActive ? runSessionSearch(search, true) : fetchSessions(true))}
-            type="button"
-          >
-            {t.loadMore}
-          </button>
-        )}
+        <Pager
+          busy={searchActive ? searchLoading : loading}
+          className="w-full"
+          hasMore={Boolean(searchActive ? searchNextCursor : sessionsNextCursor)}
+          mode="more"
+          onLoadMore={() => void (searchActive ? runSessionSearch(search, true) : fetchSessions(true))}
+        />
       </div>
 
       <div className="border-t border-line-hairline bg-transparent p-2.5">
@@ -437,16 +434,13 @@ export function SessionSidebar({
                 />
               ))
             )}
-            {archivedNextCursor && (
-              <button
-                className="w-full rounded-xl py-2 text-xs text-muted"
-                disabled={archivedLoading}
-                onClick={() => void fetchArchived(true)}
-                type="button"
-              >
-                {t.loadMore}
-              </button>
-            )}
+            <Pager
+              busy={archivedLoading}
+              className="w-full"
+              hasMore={Boolean(archivedNextCursor)}
+              mode="more"
+              onLoadMore={() => void fetchArchived(true)}
+            />
           </div>
         )}
       </div>

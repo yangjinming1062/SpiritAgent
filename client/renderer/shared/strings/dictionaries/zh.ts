@@ -127,6 +127,9 @@ export const dict = {
     search: '搜索',
     previous: '上一页',
     next: '下一页',
+    loadMore: '加载更多',
+    totalItems: (count: number) => `共 ${count} 项`,
+    pageOf: (page: number, total: number) => `第 ${page} / ${total} 页`,
     refresh: '刷新'
   },
 
@@ -1324,7 +1327,6 @@ export const dict = {
       videoDiscardTitle: '放弃这次视频动态？',
       videoDiscardDescription:
         '本次动态不会再发布；系统会清理它独占的本地视频。供应商任务可能仍在运行，已支付的费用不会因此退还。',
-      loadMore: '加载更多',
       replyPending: '回复中…',
       replyRetry: '回复失败 · 重试',
       replyRetryFailed: '重试未成功，请稍后再试',
@@ -1548,7 +1550,6 @@ export const dict = {
       new: '新建对话',
       searchAria: '搜索会话',
       searchPlaceholder: '搜索会话…',
-      loadMore: '加载更多',
       searchResultsHeading: '搜索结果',
       searching: '搜索中…',
       noMatch: '没有找到匹配会话',
@@ -1715,7 +1716,6 @@ export const dict = {
     custom: '自创',
     retry: '重试评审',
     retryFailed: '重试评审失败',
-    loadMore: '加载更多动作',
     title: '动作',
     intro: '已入库动作可用于制作影像；未入库动作可查看评审进度、修改或重试。',
     searchAria: '搜索动作',

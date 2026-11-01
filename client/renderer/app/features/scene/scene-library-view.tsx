@@ -1,9 +1,8 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useState } from 'react'
 
 import { AssetLibraryCard, AssetLibraryGrid } from '@/app/components/asset-library-card'
-import { AssetLibraryHeader, AssetLibraryToolbar } from '@/app/components/asset-library-header'
+import { AssetLibraryHeader, LibraryToolbar } from '@/app/components/asset-library-header'
 import {
   $sceneCreationIssue,
   finishSceneCreationWait,
@@ -11,14 +10,14 @@ import {
   type SceneAsset,
   type ScenePolicy
 } from '@/modules/scene'
-import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { usePanelAction } from '@/shared/hooks/use-panel-action'
 import { RefreshCw, Sparkles } from '@/shared/lib/icons'
 import {
   BTN_PRIMARY,
   BTN_SUBTLE,
   CreationFeedback,
   HINT_TEXT,
-  LoadingBlock,
+  Pager,
   SettingCard,
   Spinner
 } from '@/shared/panel'
@@ -70,23 +69,80 @@ export function SceneLibraryView({
   const strings = useStrings()
   const t = strings.living.scene
   const creationIssue = useStore($sceneCreationIssue)
-  const [checking, setChecking] = useState(false)
-  const begin = useAsyncGuard()
+  const { run, busyKey } = usePanelAction()
   const task = pending || regenerating
   const stage = regenerating?.regeneration?.stage || pending?.stage
+  const checking = busyKey === 'check'
 
-  const checkStatus = async (): Promise<void> => {
-    const isLive = begin()
-    setChecking(true)
-
-    try {
-      await onCheckStatus()
-    } finally {
-      if (isLive()) {
-        setChecking(false)
-      }
-    }
+  const checkStatus = (): void => {
+    void run(() => onCheckStatus(), { failure: t.loadFailed, key: 'check' })
   }
+
+  // 列表顶部单一状态条：加载失败 > 提交未知 > 进行中任务，同屏至多一条。
+  const statusBanner = status === 'error' ? (
+    <CreationFeedback
+      actions={
+        <button className={BTN_SUBTLE} onClick={onRetryLoad} type="button">
+          <RefreshCw className="size-3.5" />
+          <span>{strings.common.retry}</span>
+        </button>
+      }
+      state="error"
+      title={t.loadFailed}
+    />
+  ) : creationIssue?.outcome === 'unknown' ? (
+    <CreationFeedback
+      actions={
+        <>
+          <button className={BTN_SUBTLE} disabled={checking} onClick={checkStatus} type="button">
+            {checking ? strings.common.loading : t.inspectLibrary}
+          </button>
+          {creationIssue.inspected ? (
+            <button
+              className={BTN_PRIMARY}
+              disabled={checking}
+              onClick={() => finishSceneCreationWait(creationIssue)}
+              type="button"
+            >
+              {strings.creation.finishWaiting}
+            </button>
+          ) : null}
+        </>
+      }
+      description={creationIssue.inspected ? strings.creation.inspectionHint : t.submissionUnknown}
+      state="unknown"
+      title={strings.creation.unknown}
+    />
+  ) : task ? (
+    <CreationFeedback
+      actions={
+        <button className={BTN_SUBTLE} onClick={() => onOpen(task.id)} type="button">
+          {t.openDetails}
+        </button>
+      }
+      description={
+        pending?.stage === 'waiting_upload'
+          ? t.waitingUploadHint
+          : regenerating
+            ? strings.creation.canLeave
+            : t.pendingOverlayHint
+      }
+      state={pending?.stage === 'waiting_upload' ? 'waiting' : 'working'}
+      title={
+        pending?.stage === 'waiting_upload'
+          ? t.waitingUploadOverlay
+          : stage === 'analyze'
+            ? t.analyzing
+            : stage === 'evaluating' || stage === 'submitting'
+              ? t.checking
+              : regenerating
+                ? t.imageRegenerating
+                : slow
+                  ? t.slow
+                  : t.pendingOverlay
+      }
+    />
+  ) : null
 
   return (
     <>
@@ -109,86 +165,20 @@ export function SceneLibraryView({
           }
         ]}
       >
-        <AssetLibraryToolbar
+        <LibraryToolbar
           createLabel={t.generateButton}
           onCreate={onCreate}
           onQueryChange={onQueryChange}
           onSearch={onSearch}
           query={query}
-          searchButtonLabel={t.searchButton}
           searchLabel={t.search}
+          searchMode="submit"
         />
       </AssetLibraryHeader>
 
-      {creationIssue?.outcome === 'unknown' ? (
-        <CreationFeedback
-          actions={
-            <>
-              <button className={BTN_SUBTLE} disabled={checking} onClick={() => void checkStatus()} type="button">
-                {checking ? strings.common.loading : t.inspectLibrary}
-              </button>
-              {creationIssue.inspected ? (
-                <button
-                  className={BTN_PRIMARY}
-                  disabled={checking}
-                  onClick={() => finishSceneCreationWait(creationIssue)}
-                  type="button"
-                >
-                  {strings.creation.finishWaiting}
-                </button>
-              ) : null}
-            </>
-          }
-          description={creationIssue.inspected ? strings.creation.inspectionHint : t.submissionUnknown}
-          state="unknown"
-          title={strings.creation.unknown}
-        />
-      ) : null}
-      {task ? (
-        <CreationFeedback
-          actions={
-            <button className={BTN_SUBTLE} onClick={() => onOpen(task.id)} type="button">
-              {t.openDetails}
-            </button>
-          }
-          description={
-            pending?.stage === 'waiting_upload'
-              ? t.waitingUploadHint
-              : regenerating
-                ? strings.creation.canLeave
-                : t.pendingOverlayHint
-          }
-          state={pending?.stage === 'waiting_upload' ? 'waiting' : 'working'}
-          title={
-            pending?.stage === 'waiting_upload'
-              ? t.waitingUploadOverlay
-              : stage === 'analyze'
-                ? t.analyzing
-                : stage === 'evaluating' || stage === 'submitting'
-                  ? t.checking
-                  : regenerating
-                    ? t.imageRegenerating
-                    : slow
-                      ? t.slow
-                      : t.pendingOverlay
-          }
-        />
-      ) : null}
+      {statusBanner}
 
-      {status === 'error' ? (
-        <CreationFeedback
-          actions={
-            <button className={BTN_SUBTLE} onClick={onRetryLoad} type="button">
-              <RefreshCw className="size-3.5" />
-              <span>{strings.common.retry}</span>
-            </button>
-          }
-          state="error"
-          title={t.loadFailed}
-        />
-      ) : null}
-
-      {entries.length > 0 ? (
+      {status === 'error' ? null : entries.length > 0 ? (
         <AssetLibraryGrid>
           {entries.map(entry => {
             const isRegenerating = entry.regeneration?.status === 'pending'
@@ -234,9 +224,7 @@ export function SceneLibraryView({
             )
           })}
         </AssetLibraryGrid>
-      ) : status === 'loading' || status === 'idle' ? (
-        <LoadingBlock label={t.loading} />
-      ) : status !== 'error' ? (
+      ) : status === 'loading' || status === 'idle' ? null : (
         <SettingCard>
           <div className="space-y-3 p-6 text-center">
             <Sparkles className="mx-auto size-6 text-accent" />
@@ -248,21 +236,16 @@ export function SceneLibraryView({
             ) : null}
           </div>
         </SettingCard>
-      ) : null}
+      )}
 
-      {page > 0 || hasMore ? (
-        <div className="flex items-center justify-between gap-3">
-          <button className={BTN_SUBTLE} disabled={page === 0} onClick={() => onSetPage(page - 1)} type="button">
-            {t.previous}
-          </button>
-          <span className={HINT_TEXT}>
-            {page + 1} / {Math.ceil(total / PAGE_SIZE)}
-          </span>
-          <button className={BTN_SUBTLE} disabled={!hasMore} onClick={() => onSetPage(page + 1)} type="button">
-            {t.next}
-          </button>
-        </div>
-      ) : null}
+      <Pager
+        disabled={status === 'loading'}
+        hasMore={hasMore}
+        onPageChange={onSetPage}
+        page={page}
+        total={total}
+        totalPages={Math.ceil(total / PAGE_SIZE)}
+      />
     </>
   )
 }

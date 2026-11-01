@@ -3,7 +3,7 @@ import type React from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import { AssetLibraryCard, AssetLibraryGrid } from '@/app/components/asset-library-card'
-import { AssetLibraryHeader, type AssetLibrarySearch, AssetLibraryToolbar } from '@/app/components/asset-library-header'
+import { AssetLibraryHeader, type AssetLibrarySearch, LibraryToolbar } from '@/app/components/asset-library-header'
 import {
   $avatarSeeds,
   $outfitPolicy,
@@ -74,10 +74,8 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
   const { text, draftId } = ui
   // 制作区与列表滚动位置随组件生命周期，不跨菜单保留。
   const [designing, setDesigning] = useState(false)
-  const [listScrollTop, setListScrollTop] = useState(0)
-  const listScrollRef = useRef(listScrollTop)
-  listScrollRef.current = listScrollTop
   const libraryRef = useRef<HTMLDivElement>(null)
+  const listScrollRef = useRef(0)
   const visibleOutfits = outfits.filter(outfit => search.matches(outfit.name, outfit.description))
   const setText = (next: string): void => updateAppearanceUi({ text: next })
   const [outfitSelfSourceOpen, setOutfitSelfSourceOpen] = useState(false)
@@ -85,6 +83,7 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
   const messagesRef = useRef<HTMLDivElement>(null)
   const begin = useAsyncGuard()
 
+  // 进入列表时恢复上次离开的滚动位置；滚动写入按帧合并。
   useLayoutEffect(() => {
     const element = libraryRef.current
 
@@ -92,7 +91,6 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
       element.scrollTop = listScrollRef.current
     }
 
-    // 按帧合并滚动位置写入。
     let frame = 0
 
     const savePosition = (): void => {
@@ -102,7 +100,7 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
 
       frame = window.requestAnimationFrame(() => {
         frame = 0
-        setListScrollTop(element?.scrollTop ?? 0)
+        listScrollRef.current = element?.scrollTop ?? 0
       })
     }
 
@@ -194,32 +192,31 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
     })
   }
 
-  const completeDescription = async (id: string): Promise<void> => {
+  const completeDescription = (id: string): void => {
     const epoch = currentClearEpoch()
 
-    try {
-      await retryOutfitDescription(id)
-    } catch (err) {
-      log.warn('outfit', 'retry description failed', err)
+    withBusy(id, async () => {
+      try {
+        await retryOutfitDescription(id)
+      } catch (err) {
+        log.warn('outfit', 'retry description failed', err)
 
-      if (epoch === currentClearEpoch()) {
-        notifyError(err, t.descriptionRetryFailed)
+        if (epoch === currentClearEpoch()) {
+          notifyError(err, t.descriptionRetryFailed)
+        }
       }
-    }
+    })
   }
 
-  const removeOutfit = async (id: string): Promise<void> => {
-    const epoch = currentClearEpoch()
-
-    try {
-      await deleteOutfit(id)
-    } catch (err) {
-      log.warn('outfit', 'delete failed', err)
-
-      if (epoch === currentClearEpoch()) {
+  const removeOutfit = (id: string): void => {
+    withBusy(id, async () => {
+      try {
+        await deleteOutfit(id)
+      } catch (err) {
+        log.warn('outfit', 'delete failed', err)
         notifyError(err, t.deleteFailed)
       }
-    }
+    })
   }
 
   const startDesign = (): void => {
@@ -678,7 +675,7 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
                 }
               ]}
             >
-              <AssetLibraryToolbar
+              <LibraryToolbar
                 createLabel={t.startAction}
                 onCreate={startDesign}
                 onQueryChange={search.onQueryChange}
@@ -773,7 +770,7 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
                                 aria-label={t.retryDescription}
                                 className={CARD_ACTION_CLASS}
                                 disabled={busyId === outfit.id}
-                                onClick={() => withBusy(outfit.id, () => completeDescription(outfit.id))}
+                                onClick={() => completeDescription(outfit.id)}
                                 title={outfit.descriptionError ?? t.retryDescription}
                                 type="button"
                               >
@@ -792,7 +789,7 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
                                   variant: 'destructive'
                                 }).then(confirmed => {
                                   if (confirmed) {
-                                    withBusy(outfit.id, () => removeOutfit(outfit.id))
+                                    removeOutfit(outfit.id)
                                   }
                                 })
                               }}

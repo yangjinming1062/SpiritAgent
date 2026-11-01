@@ -11,7 +11,7 @@ import {
 } from '@/modules/posts'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { cn } from '@/shared/lib/utils'
-import { ActionRow, BTN_SUBTLE, ConfirmDialog } from '@/shared/panel'
+import { ActionRow, BTN_SUBTLE, ConfirmDialog, Pager } from '@/shared/panel'
 import { notify } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
@@ -182,11 +182,7 @@ export function PostVideoRecovery(): React.JSX.Element | null {
           />
         </div>
       ))}
-      {nextCursor !== null && (
-        <button className={BTN_SUBTLE} disabled={busy !== null} onClick={() => void loadMore()} type="button">
-          {t.loadMore}
-        </button>
-      )}
+      <Pager busy={busy !== null} hasMore={nextCursor !== null} mode="more" onLoadMore={() => void loadMore()} />
       <ConfirmDialog
         confirmLabel={t.videoDiscard}
         description={t.videoDiscardDescription}

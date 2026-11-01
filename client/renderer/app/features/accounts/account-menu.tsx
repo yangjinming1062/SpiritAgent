@@ -235,11 +235,11 @@ export function AccountMenu({
     }
   }, [retry, strings.common.operationFailed])
 
-  const run = async (action: () => Promise<unknown>): Promise<void> => {
+  const run = (action: () => Promise<unknown>): Promise<void> => {
     const isCurrent = captureAuthScope()
 
     if (!isCurrent) {
-      return
+      return Promise.resolve()
     }
 
     const isLive = beginAsync()
@@ -247,17 +247,19 @@ export function AccountMenu({
     closeSubmenu()
     onClose()
 
-    try {
-      await action()
-    } catch (error) {
-      if (isCurrent()) {
-        notifyError(error, strings.common.operationFailed)
+    return (async () => {
+      try {
+        await action()
+      } catch (error) {
+        if (isCurrent()) {
+          notifyError(error, strings.common.operationFailed)
+        }
+      } finally {
+        if (isLive()) {
+          setBusy(false)
+        }
       }
-    } finally {
-      if (isLive()) {
-        setBusy(false)
-      }
-    }
+    })()
   }
 
   const accountCounts = new Map<string, number>()

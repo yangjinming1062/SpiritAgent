@@ -1,7 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { IconDeviceMobile } from '@tabler/icons-react'
 import type React from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 
 import { RemotePage } from '@/app/features/remote/remote-page'
 import {
@@ -11,7 +11,7 @@ import {
   setSettingsSection,
   SETTINGS_SECTIONS
 } from '@/app/navigation/app-navigation'
-import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { usePanelAction } from '@/shared/hooks/use-panel-action'
 import { triggerHaptic } from '@/shared/lib/haptics'
 import {
   Brain,
@@ -29,7 +29,6 @@ import {
 import { CapsuleTabs, Disclosure, PanelSelect, SettingCard, SettingRow, SettingsSectionIntro } from '@/shared/panel'
 import { runnerApi } from '@/shared/platform/desktop'
 import { $locale } from '@/shared/store/locale'
-import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import type { SettingsSection, SettingsTab } from '@ipc/contracts'
 
@@ -61,28 +60,19 @@ const ICONS: Record<SettingsSection, IconComponent> = {
 function ApplicationSettings(): React.JSX.Element {
   const locale = useStore($locale)
   const strings = useStrings()
-  const [savingLanguage, setSavingLanguage] = useState(false)
-  const begin = useAsyncGuard()
+  const { run, busy: savingLanguage } = usePanelAction()
 
-  const changeLanguage = async (value: string): Promise<void> => {
-    const live = begin()
-    setSavingLanguage(true)
+  const changeLanguage = (value: string): void => {
+    void run(
+      async () => {
+        const result = await runnerApi().runnerConfig.patch({ path: ['language'], value })
 
-    try {
-      const result = await runnerApi().runnerConfig.patch({ path: ['language'], value })
-
-      if (!result.ok) {
-        throw new Error(result.error)
-      }
-    } catch (error) {
-      if (live()) {
-        notifyError(error, strings.settings.application.languageSaveFailed)
-      }
-    } finally {
-      if (live()) {
-        setSavingLanguage(false)
-      }
-    }
+        if (!result.ok) {
+          throw new Error(result.error)
+        }
+      },
+      { failure: strings.settings.application.languageSaveFailed }
+    )
   }
 
   return (
@@ -93,7 +83,7 @@ function ApplicationSettings(): React.JSX.Element {
           <PanelSelect
             ariaLabel={strings.settings.application.languageLabel}
             disabled={savingLanguage}
-            onChange={value => void changeLanguage(value)}
+            onChange={changeLanguage}
             options={[
               { value: 'zh', label: '简体中文' },
               { value: 'en', label: 'English' }

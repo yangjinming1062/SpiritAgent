@@ -22,7 +22,7 @@ import {
   loadLifeEvents,
   loadLifePursuits
 } from '@/modules/life'
-import { BTN_GHOST, BTN_SUBTLE, CapsuleTabs, ErrorBanner, LoadingBlock } from '@/shared/panel'
+import { BTN_GHOST, BTN_SUBTLE, CapsuleTabs, ErrorBanner, LoadingBlock, Pager } from '@/shared/panel'
 import { $locale } from '@/shared/store/locale'
 import { useStrings } from '@/shared/strings'
 
@@ -145,23 +145,14 @@ export function LifePage({
     detail
   ])
 
-  const pagination = (
-    page: number,
-    hasMore: boolean,
-    busy: boolean,
-    onChange: (value: number) => void
-  ): React.ReactNode =>
-    page > 0 || hasMore ? (
-      <div className={styles.pagination}>
-        <button className={BTN_SUBTLE} disabled={busy || page === 0} onClick={() => onChange(page - 1)} type="button">
-          {t.previous}
-        </button>
-        <span>{page + 1}</span>
-        <button className={BTN_SUBTLE} disabled={busy || !hasMore} onClick={() => onChange(page + 1)} type="button">
-          {t.next}
-        </button>
-      </div>
-    ) : null
+  const pagination = (page: number, hasMore: boolean, busy: boolean, onChange: (value: number) => void): React.ReactNode => (
+    <Pager
+      className={styles.pagination}
+      hasMore={hasMore}
+      onPageChange={onChange}
+      page={page}
+    />
+  )
 
   return (
     <div

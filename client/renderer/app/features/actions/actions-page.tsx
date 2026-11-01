@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
+import { LibraryToolbar } from '@/app/components/asset-library-header'
 import { $presentedOutfit, hydrateWardrobe } from '@/modules/character'
 import type { ActionClipKind, ActionDefinition } from '@/modules/visuals'
 import {
@@ -19,29 +20,9 @@ import {
   visualsApi
 } from '@/modules/visuals'
 import { RENDERER_TIMINGS } from '@/shared/constants'
-import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import { captureAuthScope } from '@/shared/lib/authed-api'
-import {
-  Badge,
-  BTN_DANGER,
-  BTN_GHOST,
-  BTN_PRIMARY,
-  BTN_SUBTLE,
-  CapsuleTabs,
-  confirmAction,
-  EmptyState,
-  ErrorBanner,
-  FIELD_LABEL,
-  INPUT_CLASS,
-  LoadingBlock,
-  PanelSelect,
-  SearchField,
-  SettingCard,
-  SettingsContent,
-  SettingsSectionIntro
-} from '@/shared/panel'
+import { usePanelAction } from '@/shared/hooks/use-panel-action'
+import { Badge, BTN_DANGER, BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, CapsuleTabs, CHIP, CHIP_FILTER_ACTIVE, confirmAction, EmptyState, ErrorBanner, FIELD_LABEL, INPUT_CLASS, LoadingBlock, Pager, PanelSelect, SettingCard, SettingsContent, SettingsSectionIntro } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
-import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
 import {
@@ -207,8 +188,7 @@ function ActionsPageContent(): React.JSX.Element {
     { id: null; draft: ActionDraft } | { id: string; draft: ActionDraft; expectedUpdatedAt: string } | null
   >(null)
 
-  const [busy, setBusy] = useState(false)
-  const [clipBusyId, setClipBusyId] = useState<string | null>(null)
+  const { run, busy, busyKey } = usePanelAction()
 
   const [mediaPanel, setMediaPanel] = useState<{
     expandedId: string | null
@@ -234,8 +214,6 @@ function ActionsPageContent(): React.JSX.Element {
     setMediaPanel({ expandedId: null, loadingId: null, errorId: null, rows: {} })
   }, [stageKey])
 
-  const begin = useAsyncGuard()
-
   const editingId = editing?.id
 
   useEffect(() => {
@@ -245,34 +223,14 @@ function ActionsPageContent(): React.JSX.Element {
   }, [auth])
 
   const makeClip = (action: ActionDefinition): void => {
-    if (!defaultOutfit || busy || clipBusyId) {
+    if (!defaultOutfit) {
       return
     }
 
-    const scope = captureAuthScope()
-    const live = begin()
-
-    setClipBusyId(action.id)
-    void visualsApi
-      .createActorClip({
-        outfit_id: defaultOutfit.id,
-        action_id: action.id
-      })
-      .then(() => {
-        if (scope?.() && live()) {
-          notify({ message: t.makeClipDone })
-        }
-      })
-      .catch(error_ => {
-        if (scope?.() && live()) {
-          notifyError(error_, t.makeClipFailed)
-        }
-      })
-      .finally(() => {
-        if (scope?.() && live()) {
-          setClipBusyId(null)
-        }
-      })
+    void run(
+      () => visualsApi.createActorClip({ outfit_id: defaultOutfit.id, action_id: action.id }),
+      { failure: t.makeClipFailed, success: t.makeClipDone, key: `clip:${action.id}` }
+    )
   }
 
   const toggleMedia = (action: ActionDefinition): void => {
@@ -288,29 +246,29 @@ function ActionsPageContent(): React.JSX.Element {
       return
     }
 
-    const scope = captureAuthScope()
     setMediaPanel(current => ({ ...current, expandedId: action.id, loadingId: action.id, errorId: null }))
     const generation = mediaGeneration.current
-    void visualsApi
-      .listActionMedia(action.id)
-      .then(response => {
-        if (scope?.() && generation === mediaGeneration.current) {
-          setMediaPanel(current => ({
-            ...current,
-            rows: { ...current.rows, [action.id]: response.media },
-            loadingId: current.loadingId === action.id ? null : current.loadingId
-          }))
-        }
-      })
-      .catch(() => {
-        if (scope?.() && generation === mediaGeneration.current) {
-          setMediaPanel(current => ({
-            ...current,
-            errorId: action.id,
-            loadingId: current.loadingId === action.id ? null : current.loadingId
-          }))
-        }
-      })
+    void run(() => visualsApi.listActionMedia(action.id), { failure: t.mediaLoadFailed }).then(result => {
+      if (generation !== mediaGeneration.current) {
+        return
+      }
+
+      if (result === undefined) {
+        setMediaPanel(current => ({
+          ...current,
+          errorId: action.id,
+          loadingId: current.loadingId === action.id ? null : current.loadingId
+        }))
+
+        return
+      }
+
+      setMediaPanel(current => ({
+        ...current,
+        rows: { ...current.rows, [action.id]: result.media },
+        loadingId: current.loadingId === action.id ? null : current.loadingId
+      }))
+    })
   }
 
   const latestEditingAction =
@@ -383,73 +341,55 @@ function ActionsPageContent(): React.JSX.Element {
   const validDraft = editing && isActionDesignValid(draftBody(editing.draft))
 
   const save = (): void => {
-    if (!editing || busy || editingLocked || !validDraft) {
+    if (!editing || editingLocked || !validDraft) {
       return
     }
 
     const draft = editing.draft
-    const scope = captureAuthScope()
     const body = draftBody(draft)
 
-    setBusy(true)
+    void run(
+      async () => {
+        const action =
+          editing.id === null
+            ? await createAction(body)
+            : await updateAction(editing.id, { ...body, expected_updated_at: editing.expectedUpdatedAt })
 
-    void (
-      editing.id === null
-        ? createAction(body)
-        : updateAction(editing.id, { ...body, expected_updated_at: editing.expectedUpdatedAt })
-    )
-      .then(action => {
-        if (!scope?.()) {
-          return
-        }
-
+        return action
+      },
+      { failure: t.saveFailed, key: 'save' }
+    )?.then(action => {
+      if (action) {
         setEditing(null)
         setGroup(action.status === 'approved' ? 'in_library' : 'not_in_library')
         setQuery('')
-      })
-      .catch(error_ => {
-        if (scope?.()) {
-          notifyError(error_, t.saveFailed)
-        }
-      })
-      .finally(() => {
-        if (scope?.()) {
-          setBusy(false)
-        }
-      })
+      }
+    })
   }
 
   const remove = (action: ActionDefinition): void => {
-    const scope = captureAuthScope()
     void confirmAction({
       title: t.deleteTitle,
       description: action.name,
       confirmLabel: t.deleteLabel,
       variant: 'destructive'
     }).then(confirmed => {
-      if (!confirmed || !scope?.()) {
+      if (!confirmed) {
         return
       }
 
-      setBusy(true)
-
-      void deleteAction(action.id)
-        .then(() => {
-          if (scope()) {
-            setEditing(current => (current?.id === action.id ? null : current))
-          }
-        })
-        .catch(error_ => {
-          if (scope()) {
-            notifyError(error_, t.deleteFailed)
-          }
-        })
-        .finally(() => {
-          if (scope()) {
-            setBusy(false)
-          }
-        })
+      void run(
+        async () => {
+          await deleteAction(action.id)
+          setEditing(current => (current?.id === action.id ? null : current))
+        },
+        { failure: t.deleteFailed, key: `delete:${action.id}` }
+      )
     })
+  }
+
+  const retryReview = (action: ActionDefinition): void => {
+    void run(() => retryActionReview(action), { failure: t.retryFailed, key: `retry:${action.id}` })
   }
 
   return (
@@ -466,21 +406,20 @@ function ActionsPageContent(): React.JSX.Element {
           value={group}
         />
       </div>
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <SearchField ariaLabel={t.searchAria} onChange={setQuery} placeholder={t.searchPlaceholder} value={query} />
-        <button
-          className={BTN_PRIMARY}
-          disabled={busy}
-          onClick={() => setEditing({ id: null, draft: emptyDraft() })}
-          type="button"
-        >
-          {t.create}
-        </button>
+      <div className="mb-3">
+        <LibraryToolbar
+          createDisabled={busy}
+          createLabel={t.create}
+          onCreate={() => setEditing({ id: null, draft: emptyDraft() })}
+          onQueryChange={setQuery}
+          query={query}
+          searchLabel={t.searchAria}
+        />
       </div>
       {error && <ErrorBanner message={t.loadFailed} />}
       {editing && (
         <SettingCard className="mb-3">
-          <fieldset className="flex flex-col gap-3 p-4" disabled={busy || editingLocked}>
+          <fieldset className="flex flex-col gap-3 p-4" disabled={busyKey === 'save' || editingLocked}>
             <h3 className="text-sm font-medium">{editing.id === null ? t.create : t.edit}</h3>
             {editingLocked ? <p className="text-[11px] text-warning-fg">{t.editingLocked}</p> : null}
             <label className="block">
@@ -570,7 +509,7 @@ function ActionsPageContent(): React.JSX.Element {
                   return (
                     <button
                       aria-pressed={active}
-                      className={active ? BTN_PRIMARY : BTN_GHOST}
+                      className={active ? CHIP_FILTER_ACTIVE : CHIP}
                       key={tag}
                       onClick={event => {
                         event.preventDefault()
@@ -654,15 +593,30 @@ function ActionsPageContent(): React.JSX.Element {
           <div className="flex gap-2 px-4 pb-4">
             <button
               className={BTN_PRIMARY}
-              disabled={busy || editingLocked || !validDraft}
+              disabled={busyKey === 'save' || editingLocked || !validDraft}
               onClick={save}
               type="button"
             >
               {t.save}
             </button>
-            <button className={BTN_GHOST} disabled={busy} onClick={() => setEditing(null)} type="button">
+            <button
+              className={BTN_GHOST}
+              disabled={busyKey === 'save'}
+              onClick={() => setEditing(null)}
+              type="button"
+            >
               {t.cancel}
             </button>
+            {editing.id !== null && latestEditingAction && latestEditingAction.source !== 'preset' ? (
+              <button
+                className={BTN_DANGER}
+                disabled={busyKey !== null}
+                onClick={() => remove(latestEditingAction)}
+                type="button"
+              >
+                {t.deleteLabel}
+              </button>
+            ) : null}
           </div>
         </SettingCard>
       )}
@@ -708,16 +662,16 @@ function ActionsPageContent(): React.JSX.Element {
                 {group === 'in_library' && defaultOutfit && action.status === 'approved' && (
                   <button
                     className={BTN_SUBTLE}
-                    disabled={busy || clipBusyId !== null}
+                    disabled={busyKey !== null}
                     onClick={() => makeClip(action)}
                     type="button"
                   >
-                    {clipBusyId === action.id ? t.makeClipBusy : t.makeClip}
+                    {busyKey === `clip:${action.id}` ? t.makeClipBusy : t.makeClip}
                   </button>
                 )}
                 <button
-                  className={BTN_SUBTLE}
-                  disabled={busy || mediaPanel.loadingId !== null}
+                  className={BTN_GHOST}
+                  disabled={busyKey !== null}
                   onClick={() => toggleMedia(action)}
                   type="button"
                 >
@@ -729,8 +683,8 @@ function ActionsPageContent(): React.JSX.Element {
                 </button>
                 {action.source !== 'preset' && (
                   <button
-                    className={BTN_SUBTLE}
-                    disabled={busy || action.status === 'pending' || action.status === 'reviewing'}
+                    className={BTN_GHOST}
+                    disabled={busyKey !== null || action.status === 'pending' || action.status === 'reviewing'}
                     onClick={() =>
                       setEditing({ id: action.id, draft: draftOf(action), expectedUpdatedAt: action.updated_at })
                     }
@@ -742,29 +696,15 @@ function ActionsPageContent(): React.JSX.Element {
                 {(action.status === 'failed' || action.status === 'deferred') && (
                   <button
                     className={BTN_SUBTLE}
-                    disabled={busy || editing?.id === action.id}
-                    onClick={() => {
-                      const scope = captureAuthScope()
-                      setBusy(true)
-                      void retryActionReview(action)
-                        .catch(error_ => {
-                          if (scope?.()) {
-                            notifyError(error_, t.retryFailed)
-                          }
-                        })
-                        .finally(() => {
-                          if (scope?.()) {
-                            setBusy(false)
-                          }
-                        })
-                    }}
+                    disabled={busyKey !== null || editing?.id === action.id}
+                    onClick={() => retryReview(action)}
                     type="button"
                   >
                     {t.retry}
                   </button>
                 )}
                 {action.source !== 'preset' && (
-                  <button className={BTN_DANGER} disabled={busy} onClick={() => remove(action)} type="button">
+                  <button className={BTN_DANGER} disabled={busyKey !== null} onClick={() => remove(action)} type="button">
                     {t.deleteLabel}
                   </button>
                 )}
@@ -782,16 +722,13 @@ function ActionsPageContent(): React.JSX.Element {
           ))}
         </SettingCard>
       )}
-      {nextCursor ? (
-        <button
-          className={BTN_SUBTLE}
-          disabled={loading || busy}
-          onClick={() => void loadMoreActions(group)}
-          type="button"
-        >
-          {t.loadMore}
-        </button>
-      ) : null}
+      <Pager
+        busy={loading}
+        className="mt-3"
+        hasMore={Boolean(nextCursor)}
+        mode="more"
+        onLoadMore={() => void loadMoreActions(group)}
+      />
     </SettingsContent>
   )
 }

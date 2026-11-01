@@ -23,7 +23,7 @@ import {
 import { ChevronDown, Sparkles, Trash2 } from '@/shared/lib/icons'
 import { currentClearEpoch } from '@/shared/lib/storage'
 import { cn } from '@/shared/lib/utils'
-import { BTN_ICON, BTN_PRIMARY, BTN_SUBTLE, ErrorBanner, INPUT_CLASS, LoadingBlock } from '@/shared/panel'
+import { BTN_ICON, BTN_PRIMARY, BTN_SUBTLE, ErrorBanner, INPUT_CLASS, LoadingBlock, Pager } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { $locale } from '@/shared/store/locale'
 import { notify } from '@/shared/store/notifications'
@@ -202,22 +202,19 @@ function PostsContent({
           </article>
         )
       })}
-      {hasMore && (
-        <button
-          className={cn(BTN_SUBTLE, styles.loadMore)}
-          disabled={loadingMore}
-          onClick={() => {
-            void loadMorePosts().then(ok => {
-              if (!ok) {
-                notify({ kind: 'error', message: t.loadFailed, title: t.loadFailed })
-              }
-            })
-          }}
-          type="button"
-        >
-          {loadingMore ? t.loading : t.loadMore}
-        </button>
-      )}
+      <Pager
+        busy={loadingMore}
+        className={styles.loadMore}
+        hasMore={hasMore}
+        mode="more"
+        onLoadMore={() => {
+          void loadMorePosts().then(ok => {
+            if (!ok) {
+              notify({ kind: 'error', message: t.loadFailed, title: t.loadFailed })
+            }
+          })
+        }}
+      />
     </div>
   )
 }

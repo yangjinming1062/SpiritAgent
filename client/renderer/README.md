@@ -26,6 +26,8 @@
 | 动态、日记与设置 | [posts](modules/posts/)、[diary](modules/diary/)、[settings](app/features/settings/) |
 | 通用 UI 与文案 | [panel](shared/panel/)、[components](shared/components/)、[字典](shared/strings/dictionaries/)；跨端中性文案与错误分类归根 [shared](../../shared/) |
 
+列表页交互走公共件，不再各页自拼：异步动作用 [use-panel-action.ts](shared/hooks/use-panel-action.ts)（busy + 换号/卸载守卫 + 失败 toast，key 化支持行级 busy）；列表四态（加载/失败重试/空态/内容）用 `AsyncSection`；分页用 `Pager`（pages/more 两模式）；素材库工具栏用 [asset-library-header.tsx](app/components/asset-library-header.tsx)（搜索 live/submit 两语义 + 筛选插槽 + 单个主创建按钮）；政策开关行用 `PolicyToggleRow`；列表→详情流的滚动保存恢复用 [use-detail-flow.ts](app/navigation/use-detail-flow.ts)；创建提交防重入与修订守卫用 [use-creation-submit.ts](shared/hooks/use-creation-submit.ts)。公共件只接数据与回调，查询与分页状态归各模块 store。
+
 ## 装配与状态归属
 
 窗口通过 `app/bootstrap` 装配账户、网关和 Provider，共用 `app/features`、`app/navigation` 与 [app-content-page.tsx](app/components/app-content-page.tsx)。[bind-presentation.ts](app/bootstrap/bind-presentation.ts) 在首次渲染前注入窄端口，未绑定端口调用立即失败；不能借 barrel 导入副作用装配资源。
@@ -130,7 +132,7 @@ speech 持唯一合成与播放队列，自动和点播共用。[conversation-sp
 
 [scene-store.ts](modules/scene/scene-store.ts) 分别持环境、任务和分页库。详情写入锁随任务而非页面存活，未知结果先回源核对，迟到读取不能覆盖新任务。详情先刷新恢复状态再加载图片，长等待降低轮询频率，查询不重试分析或生图。新图预载成功才换背景，失败保留旧图但更新任务和政策；环境固定画幅，不读取显示器尺寸。恢复与发布边界见 [场景契约](../../docs/PROTOCOL.md#场景任务与原位换图)。
 
-素材库共用 `asset-library-header.tsx` 与 `asset-library-card.tsx`，公共件只接数据和回调。衣柜本地筛选，环境服务端提交搜索，两者不能共用隐含的查询状态。
+素材库共用 `asset-library-header.tsx` 与 `asset-library-card.tsx`，公共件只接数据和回调。衣柜本地筛选（live 搜索），环境服务端提交搜索（submit 语义），两者不能共用隐含的查询状态。
 
 ## 主体舞台与静态呈现
 

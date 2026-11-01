@@ -1,8 +1,8 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { useNavigationDetail } from '@/app/navigation/navigation-detail'
+import { useDetailFlow } from '@/app/navigation/use-detail-flow'
 import type { PickedImage } from '@/modules/character'
 import {
   $pendingScene,
@@ -35,6 +35,8 @@ import {
 } from '@/modules/scene'
 import { PortraitLightbox } from '@/shared'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { useCreationSubmit } from '@/shared/hooks/use-creation-submit'
+import { usePanelAction } from '@/shared/hooks/use-panel-action'
 import {
   loadCreationDraftImage,
   saveCreationDraftImage,
@@ -62,7 +64,6 @@ interface ImageZoom {
 const INITIAL_CREATE_DRAFT: SceneCreateDraft = { notes: '', reference: null }
 
 export function ScenePage(): React.JSX.Element {
-  const ui = useStore($sceneUi)
   const authKind = useStore($auth).kind
   const library = useStore($sceneLibrary)
   const libraryStatus = useStore($sceneLibraryStatus)
@@ -80,36 +81,33 @@ export function ScenePage(): React.JSX.Element {
   const tToasts = dict.living.toasts
 
   // 视图随组件生命周期；导航指向环境分区时才消费 sceneId 直达，离开的导航不回退视图。
-  const [view, setView] = useNavigationDetail<ScenePageView>(
-    target =>
+  const { detail: view, setDetail: setView, scrollRef } = useDetailFlow<ScenePageView>({
+    select: target =>
       target.page === 'companion' && target.companionSection === 'environment'
         ? target.sceneId
           ? { kind: 'detail', sceneId: target.sceneId }
           : { kind: 'library' }
         : undefined,
-    { kind: 'library' }
-  )
+    fallback: { kind: 'library' },
+    isDetailOpen: value => value.kind !== 'library'
+  })
 
   const [queryDraft, setQueryDraft] = useState(query)
   const [reference, setReference] = useState<PickedImage | null>(null)
   const [referenceLoading, setReferenceLoading] = useState(true)
   const [referenceImportRevision, setReferenceImportRevision] = useState(0)
   const referenceRevision = useRef(0)
-  const creationRevision = useRef(0)
-  const submittingRef = useRef(false)
-  const [submitting, setSubmitting] = useState(false)
-  const [policyBusy, setPolicyBusy] = useState(false)
-  const createDraft: SceneCreateDraft = { notes: ui.notes, reference }
-  const editDrafts = ui.editDrafts
+  const createDraft: SceneCreateDraft = { notes: $sceneUi.get().notes, reference }
+  const editDrafts = $sceneUi.get().editDrafts
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailLoadError, setDetailLoadError] = useState<string | null>(null)
   const [zoom, setZoom] = useState<ImageZoom | null>(null)
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const returnScrollTop = useRef(0)
   // await 期间视图可能已切换；闭包值会过期，用 ref 读取最新视图做守卫。
   const viewRef = useRef(view)
   viewRef.current = view
   const begin = useAsyncGuard()
+  const { run, busyKey } = usePanelAction()
+  const submitGuard = useCreationSubmit()
   const detail = view.kind === 'detail' ? (details[view.sceneId] ?? null) : null
 
   const restoreReference = useCallback((): void => {
@@ -132,7 +130,7 @@ export function ScenePage(): React.JSX.Element {
     const restore = registerStorageRestoreHandler(restoreReference)
 
     const changed = subscribeCreationDraftImage('background', () => {
-      creationRevision.current += 1
+      submitGuard.bumpRevision()
       setReferenceImportRevision(revision => revision + 1)
       restoreReference()
     })
@@ -141,10 +139,10 @@ export function ScenePage(): React.JSX.Element {
       restore()
       changed()
     }
-  }, [authKind, restoreReference])
+  }, [authKind, restoreReference, submitGuard])
 
   const changeCreateDraft = (next: Partial<SceneCreateDraft>): void => {
-    creationRevision.current += 1
+    submitGuard.bumpRevision()
 
     if (next.notes !== undefined) {
       updateSceneUi({ notes: next.notes })
@@ -171,20 +169,10 @@ export function ScenePage(): React.JSX.Element {
     return registerStorageClearHandler(() => {
       setQueryDraft('')
       referenceRevision.current += 1
-      creationRevision.current += 1
-      submittingRef.current = false
-      setSubmitting(false)
       setReference(null)
       setZoom(null)
-      returnScrollTop.current = 0
     })
   }, [])
-
-  useLayoutEffect(() => {
-    if (view.kind === 'library' && scrollRef.current) {
-      scrollRef.current.scrollTop = returnScrollTop.current
-    }
-  }, [view])
 
   useEffect(() => {
     if (view.kind !== 'detail') {
@@ -215,12 +203,7 @@ export function ScenePage(): React.JSX.Element {
   }, [begin, tToasts.sceneStatusRefreshFailed, view])
 
   const openView = (next: ScenePageView): void => {
-    creationRevision.current += 1
-
-    if (view.kind === 'library' && scrollRef.current) {
-      returnScrollTop.current = scrollRef.current.scrollTop
-    }
-
+    submitGuard.bumpRevision()
     setView(next)
   }
 
@@ -255,14 +238,10 @@ export function ScenePage(): React.JSX.Element {
     return false
   }
 
-  const regenerate = async (sceneId: string): Promise<void> => {
-    await regenerateScene(sceneId)
-  }
-
   const saveAndRegenerate = async (sceneId: string): Promise<void> => {
     const isLive = begin()
     const draft = $sceneUi.get().editDrafts[sceneId]
-    const revision = creationRevision.current
+    const revision = submitGuard.currentRevision()
 
     if (!draft) {
       return
@@ -270,24 +249,19 @@ export function ScenePage(): React.JSX.Element {
 
     const saved = await saveInfo(sceneId)
 
-    if (!saved || !isLive() || revision !== creationRevision.current) {
+    if (!saved || !isLive() || revision !== submitGuard.currentRevision()) {
       return
     }
 
-    await regenerate(sceneId)
+    await regenerateScene(sceneId)
   }
 
-  const startCreation = async (input = createDraft, revision = creationRevision.current): Promise<void> => {
-    if (revision !== creationRevision.current) {
+  // 创建提交：createScene 自身持有提交互斥与失败呈现（creationIssue），页面只管跳转与草稿清理。
+  const startCreation = async (input = createDraft, revision = submitGuard.currentRevision()): Promise<void> => {
+    if (revision !== submitGuard.currentRevision() || !submitGuard.beginSubmit(() => referenceLoading)) {
       return
     }
 
-    if (submittingRef.current || referenceLoading) {
-      return
-    }
-
-    submittingRef.current = true
-    setSubmitting(true)
     const isLive = begin()
     triggerHaptic('open')
 
@@ -297,47 +271,39 @@ export function ScenePage(): React.JSX.Element {
         ...(input.reference ? { image: input.reference.base64, content_type: input.reference.contentType } : {})
       })
 
-      if (result.kind === 'created' && isLive() && revision === creationRevision.current) {
+      if (result.kind === 'created' && isLive() && revision === submitGuard.currentRevision()) {
         changeCreateDraft(INITIAL_CREATE_DRAFT)
         openDetail(result.sceneId)
       }
     } finally {
-      if (isLive()) {
-        submittingRef.current = false
-        setSubmitting(false)
-      }
+      submitGuard.endSubmit(revision)
     }
   }
 
   const adoptCreatedImage = async (image: PickedImage, sceneId?: string): Promise<void> => {
-    if (submittingRef.current) {
+    if (!submitGuard.beginSubmit()) {
       return
     }
 
-    submittingRef.current = true
-    setSubmitting(true)
     const isLive = begin()
-    const revision = creationRevision.current
+    const revision = submitGuard.currentRevision()
 
     try {
       const createdId = await adoptSceneImage(image, sceneId)
 
-      if (createdId && isLive() && revision === creationRevision.current) {
+      if (createdId && isLive() && revision === submitGuard.currentRevision()) {
         changeCreateDraft(INITIAL_CREATE_DRAFT)
         openDetail(createdId)
       }
     } finally {
-      if (isLive()) {
-        submittingRef.current = false
-        setSubmitting(false)
-      }
+      submitGuard.endSubmit(revision)
     }
   }
 
   const startAiForNewScene = async (): Promise<void> => {
     const isLive = begin()
     const input = createDraft
-    const revision = creationRevision.current
+    const revision = submitGuard.currentRevision()
     const waitingUpload = $pendingScene.get()
 
     try {
@@ -345,7 +311,7 @@ export function ScenePage(): React.JSX.Element {
         await cancelSceneTask(waitingUpload.id)
       }
 
-      if (!isLive() || revision !== creationRevision.current) {
+      if (!isLive() || revision !== submitGuard.currentRevision()) {
         return
       }
 
@@ -357,50 +323,29 @@ export function ScenePage(): React.JSX.Element {
     }
   }
 
-  const handleDelete = async (target: SceneAsset): Promise<void> => {
-    const isLive = begin()
-    triggerHaptic('tap')
-
-    try {
-      await deleteScene(target.id)
-
-      if (isLive()) {
+  const handleDelete = (target: SceneAsset): void => {
+    void run(
+      async () => {
+        await deleteScene(target.id)
         dropEditDraft(target.id)
         returnToLibrary()
         notify({ kind: 'success', message: tToasts.sceneDeleteSuccess })
-      }
-    } catch (error) {
-      if (isLive()) {
-        notifyError(error, tToasts.sceneDeleteFailed)
-      }
-    }
+      },
+      { failure: tToasts.sceneDeleteFailed }
+    )
   }
 
-  const handlePolicy = async (): Promise<void> => {
-    if (policyBusy) {
-      return
-    }
-
-    setPolicyBusy(true)
-    const isLive = begin()
+  const handlePolicy = (): void => {
     const next = policy === 'locked' ? 'llm_may_replace' : 'locked'
     triggerHaptic('selection')
 
-    try {
-      await setScenePolicy(next)
-
-      if (isLive()) {
+    void run(
+      async () => {
+        await setScenePolicy(next)
         notify({ kind: 'info', message: next === 'locked' ? tToasts.sceneLocked : tToasts.sceneUnlocked })
-      }
-    } catch (error) {
-      if (isLive()) {
-        notifyError(error, tToasts.sceneLockFailed)
-      }
-    } finally {
-      if (isLive()) {
-        setPolicyBusy(false)
-      }
-    }
+      },
+      { failure: tToasts.sceneLockFailed, key: 'policy' }
+    )
   }
 
   const handleCreatePrompt = (): Promise<{ id: string; prompt: string }> =>
@@ -422,21 +367,12 @@ export function ScenePage(): React.JSX.Element {
               entries={library}
               hasMore={hasMore}
               onCheckStatus={async () => {
-                const isLive = begin()
                 await inspectSceneCreationIssue()
-
-                if (isLive()) {
-                  setQueryDraft('')
-                  returnScrollTop.current = 0
-
-                  if (scrollRef.current) {
-                    scrollRef.current.scrollTop = 0
-                  }
-                }
+                setQueryDraft('')
               }}
               onCreate={openCreate}
               onOpen={openDetail}
-              onPolicyChange={() => void handlePolicy()}
+              onPolicyChange={handlePolicy}
               onQueryChange={setQueryDraft}
               onRetryLoad={() => void loadSceneLibrary()}
               onSearch={() => void loadSceneLibrary(queryDraft, 0)}
@@ -444,7 +380,7 @@ export function ScenePage(): React.JSX.Element {
               page={page}
               pending={pending}
               policy={policy}
-              policyBusy={policyBusy}
+              policyBusy={busyKey === 'policy'}
               query={queryDraft}
               regenerating={regenerating}
               slow={slow}
@@ -476,7 +412,7 @@ export function ScenePage(): React.JSX.Element {
             })
 
             if (confirmed) {
-              await handleDelete(scene)
+              handleDelete(scene)
             }
           }}
           onEdit={() => {
@@ -495,7 +431,7 @@ export function ScenePage(): React.JSX.Element {
 
             return loaded
           }}
-          onRegenerate={regenerate}
+          onRegenerate={regenerateScene}
           onRetryAnalysis={async sceneId => {
             await analyzeScene(sceneId)
           }}
@@ -508,7 +444,7 @@ export function ScenePage(): React.JSX.Element {
         />
       ) : (
         <SceneCreateView
-          busy={busy || referenceLoading || submitting}
+          busy={busy || referenceLoading || submitGuard.submitting}
           draft={createDraft}
           key={referenceImportRevision}
           onAdopt={adoptCreatedImage}
@@ -518,14 +454,9 @@ export function ScenePage(): React.JSX.Element {
           }}
           onChange={changeCreateDraft}
           onCheckStatus={async () => {
-            const isLive = begin()
             await inspectSceneCreationIssue()
-
-            if (isLive()) {
-              setQueryDraft('')
-              returnScrollTop.current = 0
-              returnToLibrary()
-            }
+            setQueryDraft('')
+            returnToLibrary()
           }}
           onCreate={() => void startCreation()}
           onFetchPrompt={handleCreatePrompt}

@@ -28,8 +28,10 @@ import {
   CreationFeedback,
   type CreationFeedbackState,
   Disclosure,
+  EmptyState,
   HINT_TEXT,
   INPUT_CLASS,
+  LoadingBlock,
   SettingCard,
   SETTINGS_ROW_DESC,
   SETTINGS_ROW_TITLE,
@@ -693,14 +695,18 @@ function VoiceManagerSession({
           </div>
         )}
         {catalogStatus !== 'ready' ? (
-          <div className="space-y-2">
-            <p className={HINT_TEXT}>{catalogStatus === 'error' ? t.loadFailed : dict.common.loading}</p>
-            {catalogStatus === 'error' && (
-              <button className={BTN_SUBTLE} onClick={() => setReload(value => value + 1)} type="button">
-                {dict.common.retry}
-              </button>
-            )}
-          </div>
+          catalogStatus === 'error' ? (
+            <EmptyState
+              action={
+                <button className={BTN_SUBTLE} onClick={() => setReload(value => value + 1)} type="button">
+                  {dict.common.retry}
+                </button>
+              }
+              title={t.loadFailed}
+            />
+          ) : (
+            <LoadingBlock label={dict.common.loading} />
+          )
         ) : tab === 'fixed' ? (
           <>
             <div>

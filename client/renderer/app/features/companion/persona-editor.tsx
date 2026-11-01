@@ -101,7 +101,7 @@ export function PersonaSection({
   const latestBase = baseOf(persona)
   const conflict = draft && fields.some(({ key }) => latestBase[key] !== draft.base[key])
 
-  const save = async (): Promise<void> => {
+  const save = (): void => {
     if (!draft) {
       return
     }
@@ -128,67 +128,69 @@ export function PersonaSection({
     setBusy(true)
     setHint(null)
 
-    try {
-      const expectedFields = Object.fromEntries(fields.map(({ key }) => [key, draft.base[key]]))
+    void (async () => {
+      try {
+        const expectedFields = Object.fromEntries(fields.map(({ key }) => [key, draft.base[key]]))
 
-      const body: PersonaUpdateRequest = {
-        definition_json: {
-          name: draft.values.name.trim(),
-          personality: draft.values.personality.trim(),
-          relationship: draft.values.relationship.trim(),
-          speaking_style: draft.values.speaking_style.trim()
-        },
-        expected_fields: expectedFields
-      }
-
-      const saved = await authedResource('companion.put_persona', { body })
-
-      if (!saved.ok) {
-        if (saved.reason === 'err') {
-          throw saved.error
+        const body: PersonaUpdateRequest = {
+          definition_json: {
+            name: draft.values.name.trim(),
+            personality: draft.values.personality.trim(),
+            relationship: draft.values.relationship.trim(),
+            speaking_style: draft.values.speaking_style.trim()
+          },
+          expected_fields: expectedFields
         }
 
-        return
-      }
+        const saved = await authedResource('companion.put_persona', { body })
 
-      if (!isCurrent()) {
-        return
-      }
+        if (!saved.ok) {
+          if (saved.reason === 'err') {
+            throw saved.error
+          }
 
-      if (!saved.value) {
-        throw new Error(t.hintSaveFailed)
-      }
+          return
+        }
 
-      applyPersonaResponse(saved.value)
+        if (!isCurrent()) {
+          return
+        }
 
-      if (JSON.stringify($companionEditors.get().persona) === JSON.stringify(draft)) {
-        updateCompanionEditors({ persona: null })
-      }
-    } catch (error) {
-      if (!isCurrent()) {
-        return
-      }
+        if (!saved.value) {
+          throw new Error(t.hintSaveFailed)
+        }
 
-      const refreshed = await hydratePersona({ silent: true })
+        applyPersonaResponse(saved.value)
 
-      if (!isCurrent()) {
-        return
-      }
-
-      const current = valuesOf($persona.get())
-
-      if (refreshed.ok && fields.every(({ key }) => current[key] === draft.values[key].trim())) {
         if (JSON.stringify($companionEditors.get().persona) === JSON.stringify(draft)) {
           updateCompanionEditors({ persona: null })
         }
-      } else if (isLive()) {
-        setHint(failureText(error, ipcErrorStatus(error) === 409 ? dict.common.changedElsewhere : t.hintSaveFailed))
+      } catch (error) {
+        if (!isCurrent()) {
+          return
+        }
+
+        const refreshed = await hydratePersona({ silent: true })
+
+        if (!isCurrent()) {
+          return
+        }
+
+        const current = valuesOf($persona.get())
+
+        if (refreshed.ok && fields.every(({ key }) => current[key] === draft.values[key].trim())) {
+          if (JSON.stringify($companionEditors.get().persona) === JSON.stringify(draft)) {
+            updateCompanionEditors({ persona: null })
+          }
+        } else if (isLive()) {
+          setHint(failureText(error, ipcErrorStatus(error) === 409 ? dict.common.changedElsewhere : t.hintSaveFailed))
+        }
+      } finally {
+        if (isLive()) {
+          setBusy(false)
+        }
       }
-    } finally {
-      if (isLive()) {
-        setBusy(false)
-      }
-    }
+    })()
   }
 
   if (!draft || !editorOpen) {
@@ -252,7 +254,7 @@ export function PersonaSection({
             aria-live="polite"
             className={BTN_SUBTLE}
             disabled={busy || !dirty || !!conflict}
-            onClick={() => void save()}
+            onClick={save}
             type="button"
           >
             {busy ? dict.common.saving : dict.common.saveChanges}

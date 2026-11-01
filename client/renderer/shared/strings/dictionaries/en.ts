@@ -130,6 +130,9 @@ export const dict: Dictionary = {
     search: 'Search',
     previous: 'Previous',
     next: 'Next',
+    loadMore: 'Load more',
+    totalItems: (count: number) => `${count} item${count === 1 ? '' : 's'}`,
+    pageOf: (page: number, total: number) => `Page ${page} of ${total}`,
     refresh: 'Refresh'
   },
 
@@ -1385,7 +1388,6 @@ export const dict: Dictionary = {
       videoDiscardTitle: 'Discard this video post?',
       videoDiscardDescription:
         'This post will not be published. Its exclusive local video will be removed. The provider task may still be running, and costs already incurred will not be refunded.',
-      loadMore: 'Load more',
       replyPending: 'Replying…',
       replyRetry: 'Reply failed · Retry',
       replyRetryFailed: 'Retry failed. Try again.',
@@ -1631,7 +1633,6 @@ export const dict: Dictionary = {
       new: 'New conversation',
       searchAria: 'Search conversations',
       searchPlaceholder: 'Search conversations…',
-      loadMore: 'Load more',
       searchResultsHeading: 'Search results',
       searching: 'Searching…',
       noMatch: 'No matching conversations',
@@ -1798,7 +1799,6 @@ export const dict: Dictionary = {
     custom: 'Custom',
     retry: 'Retry review',
     retryFailed: 'Could not retry the review',
-    loadMore: 'Load more actions',
     title: 'Actions',
     intro:
       'Actions in your library can be used to create visuals. Check reviews, edit or retry actions not yet included.',

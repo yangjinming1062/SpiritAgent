@@ -14,9 +14,12 @@ import {
   CHIP,
   confirmAction,
   Disclosure,
+  EmptyState,
   ErrorBanner,
   HINT_TEXT,
   INPUT_CLASS,
+  LoadingBlock,
+  Pager,
   PanelSelect
 } from '@/shared/panel'
 import { $locale } from '@/shared/store/locale'
@@ -474,9 +477,9 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
         )}
       </div>
       {loading ? (
-        <p className={HINT_TEXT}>{t.loading}</p>
+        <LoadingBlock label={t.loading} />
       ) : rows.length === 0 ? (
-        !hint && <p className={HINT_TEXT}>{query ? dict.settings.persona.memoryNoMatch : t.empty}</p>
+        !hint ? <EmptyState title={query ? dict.settings.persona.memoryNoMatch : t.empty} /> : null
       ) : (
         <>
           <div
@@ -602,35 +605,23 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
               )
             })}
           </div>
-          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-            <button
-              className={BTN_SUBTLE}
-              disabled={page === 0}
-              onClick={() => changeFilter({ page: page - 1 })}
-              type="button"
-            >
-              {dict.common.previous}
-            </button>
-            <span className={HINT_TEXT}>{page + 1}</span>
-            <button
-              className={BTN_SUBTLE}
-              disabled={!nextCursor}
-              onClick={() => {
-                if (nextCursor) {
-                  updateMemoryBrowser(presetId, {
-                    cursors: [...browser.cursors.slice(0, page + 1), nextCursor],
-                    page: page + 1,
-                    scrollTop: 0
-                  })
-                  setSelectedId(null)
-                  setEditorOpen(false)
-                }
-              }}
-              type="button"
-            >
-              {dict.common.next}
-            </button>
-          </div>
+          <Pager
+            hasMore={Boolean(nextCursor)}
+            onPageChange={next => {
+              if (next > page && nextCursor) {
+                updateMemoryBrowser(presetId, {
+                  cursors: [...browser.cursors.slice(0, page + 1), nextCursor],
+                  page: next,
+                  scrollTop: 0
+                })
+                setSelectedId(null)
+                setEditorOpen(false)
+              } else if (next < page) {
+                changeFilter({ page: next })
+              }
+            }}
+            page={page}
+          />
         </>
       )}
     </div>

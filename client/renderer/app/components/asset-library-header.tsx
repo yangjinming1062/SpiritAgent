@@ -3,98 +3,109 @@ import { useState } from 'react'
 
 import { Plus, Search } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
-import { BTN_PRIMARY, BTN_SUBTLE, SearchField, SettingCard, Toggle } from '@/shared/panel'
+import { BTN_PRIMARY, BTN_SUBTLE, SearchField, SettingCard } from '@/shared/panel'
+import { PolicyToggleRow } from '@/shared/panel/policy-toggle-row'
 
-interface LibraryPolicy {
-  id: string
-  label: string
-  description: string
-  status: string
-  checked: boolean
-  disabled: boolean
-  ariaLabel: string
-  onChange: () => void
-}
-
+/**
+ * 素材库页头：政策开关区（可选）+ 说明 + 工具栏 + 筛选插槽。
+ * 公共件只接数据和回调，不持有查询状态。
+ */
 export function AssetLibraryHeader({
   policies,
   description,
   children
 }: {
-  policies: LibraryPolicy[]
+  policies?: Array<{
+    id: string
+    label: string
+    description?: string
+    status?: string
+    checked: boolean
+    disabled: boolean
+    ariaLabel: string
+    onChange: () => void
+  }>
   description?: string
   children: ReactNode
 }): React.JSX.Element {
   return (
     <div className="space-y-4">
-      {policies.length > 0 && (
+      {policies && policies.length > 0 && (
         <SettingCard>
           {policies.map(policy => (
-            <div className="flex items-center justify-between gap-4 p-4" key={policy.id}>
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-strong">{policy.label}</p>
-                <p className="mt-1 text-xs leading-relaxed text-muted">{policy.description}</p>
-                <p aria-live="polite" className="mt-1 text-xs text-muted">
-                  {policy.status}
-                </p>
-              </div>
-              <Toggle
-                ariaLabel={policy.ariaLabel}
-                checked={policy.checked}
-                disabled={policy.disabled}
-                onChange={policy.onChange}
-              />
-            </div>
+            <PolicyToggleRow key={policy.id} {...policy} />
           ))}
         </SettingCard>
       )}
-      {description && <p className="text-[11px] leading-relaxed text-faint">{description}</p>}
+      {description ? <p className="text-[11px] leading-relaxed text-faint">{description}</p> : null}
       {children}
     </div>
   )
 }
 
-export function AssetLibraryToolbar({
+/**
+ * 统一素材库工具栏：搜索（即时过滤或提交式）+ 筛选插槽 + 单个主创建按钮。
+ * 每屏只有一个主操作（创建）；`mode` 区分搜索语义：
+ * - `live`：输入即过滤，本地列表用；
+ * - `submit`：回车或点搜索按钮提交，服务端搜索用。
+ */
+export function LibraryToolbar({
   query,
   searchLabel,
-  searchButtonLabel,
+  searchPlaceholder,
   createLabel,
+  searchMode = 'live',
   createDisabled = false,
   createRef,
+  filters,
   onQueryChange,
   onSearch,
   onCreate
 }: {
   query: string
   searchLabel: string
-  searchButtonLabel?: string
+  searchPlaceholder?: string
   createLabel: string
+  searchMode?: 'live' | 'submit'
   createDisabled?: boolean
   createRef?: Ref<HTMLButtonElement>
+  /** 筛选插槽（下拉、类型切换等），排在搜索框之后。 */
+  filters?: ReactNode
   onQueryChange: (query: string) => void
   onSearch?: () => void
   onCreate: () => void
 }): React.JSX.Element {
+  const submitted = searchMode === 'submit'
+
   return (
     <form
-      className="flex min-w-0 flex-wrap gap-2"
+      className="flex min-w-0 flex-wrap items-center gap-2"
       onSubmit={event => {
         event.preventDefault()
-        onSearch?.()
+
+        if (submitted) {
+          onSearch?.()
+        }
       }}
     >
       <SearchField
         ariaLabel={searchLabel}
-        className="min-w-24 max-w-none flex-1"
+        className="min-w-40 max-w-none flex-1"
         onChange={onQueryChange}
-        placeholder={searchLabel}
+        onKeyDown={event => {
+          if (submitted && event.key === 'Enter') {
+            onSearch?.()
+          }
+        }}
+        placeholder={searchPlaceholder ?? searchLabel}
         type="search"
         value={query}
       />
-      {onSearch && searchButtonLabel ? (
+      {filters}
+      {submitted ? (
         <button className={cn(BTN_SUBTLE, 'shrink-0 whitespace-nowrap px-3')} type="submit">
           <Search className="size-3.5" />
-          <span>{searchButtonLabel}</span>
+          <span>{searchLabel}</span>
         </button>
       ) : null}
       <button
