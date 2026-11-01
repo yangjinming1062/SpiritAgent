@@ -25,6 +25,7 @@ from .geometry import visual_aspect_matches
 from .import_jobs import import_job_view
 from .models import VisualImportJob, VisualItem, VisualJob, VisualPresentation, VisualVersion
 from .ports import request_stage_recovery, scene_reference_exists
+from .quality import quality_failure_message
 from .repository import (
     VisualNotFoundError,
     presentation_outfit,
@@ -327,6 +328,17 @@ def _job_action_name(snapshot: dict) -> str:
 
 def job_view(job: VisualJob) -> VisualJobView:
     progress = parse_job_progress(job.checkpoint)
+    error = job.error
+    if job.state == "failed" and progress is not None and progress.failure_reason == "quality_failed":
+        error = (
+            quality_failure_message(
+                progress.identity_score,
+                progress.identity_reason,
+                progress.review_verdict,
+                progress.review_reason,
+            )
+            or error
+        )
     return VisualJobView(
         id=job.id,
         target_kind=job.target_kind,
@@ -336,7 +348,7 @@ def job_view(job: VisualJob) -> VisualJobView:
         target_visual_id=job.target_visual_id,
         state=job.state,  # type: ignore[arg-type]
         stage=job.stage,
-        error=job.error,
+        error=error,
         failure_reason=progress.failure_reason if progress is not None and progress.failure_reason else None,
         result_visual_id=job.result_visual_id,
         updated_at=job.updated_at,
@@ -563,6 +575,10 @@ async def list_jobs(
             VisualJob.stage,
             VisualJob.error,
             VisualJob.checkpoint["failure_reason"].as_string().label("failure_reason"),
+            VisualJob.checkpoint["identity_score"].as_integer().label("identity_score"),
+            VisualJob.checkpoint["identity_reason"].as_string().label("identity_reason"),
+            VisualJob.checkpoint["review_verdict"].as_string().label("review_verdict"),
+            VisualJob.checkpoint["review_reason"].as_string().label("review_reason"),
             VisualJob.result_visual_id,
             VisualJob.updated_at,
         )
@@ -577,8 +593,18 @@ async def list_jobs(
                 )
             ).mappings()
         )
+        jobs = []
+        for row in rows[:limit]:
+            values = dict(row)
+            score = values.pop("identity_score")
+            identity_reason = values.pop("identity_reason") or ""
+            verdict = values.pop("review_verdict")
+            reason = values.pop("review_reason") or ""
+            if values["state"] == "failed" and values["failure_reason"] == "quality_failed":
+                values["error"] = quality_failure_message(score, identity_reason, verdict, reason) or values["error"]
+            jobs.append(VisualJobView.model_validate(values))
         return VisualJobListResponse(
-            jobs=[VisualJobView.model_validate(dict(row)) for row in rows[:limit]],
+            jobs=jobs,
             has_more=len(rows) > limit,
             next_cursor=str(rows[limit - 1]["id"]) if len(rows) > limit else None,
             limit=limit,

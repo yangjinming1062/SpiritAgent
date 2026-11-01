@@ -63,7 +63,7 @@ from features.media.character_images import (
     generate_character_images,
     generate_scene_images,
 )
-from features.media.identity_review import ImageGoalReviewFailure, score_character_frames_with_references
+from features.media.identity_review import ImageGoalReviewFailure, review_character_frames_with_references
 from features.media.image_generation import ImageGenerationError, ImageResultDownloadError, ImageReviewUnavailableError
 from features.media.video_queue.contracts import VideoQueueInfo, VideoQueueOwner, VideoQueueStoppedError
 from features.media.video_queue.service import (
@@ -109,6 +109,7 @@ from .prompts import (
     visual_source_reference_prompt,
 )
 from .publication import PublishedVisual, publish_opening_result, publish_visual_result
+from .quality import quality_failure_message
 from .repository import (
     VisualStateError,
     dispatch_play_command,
@@ -210,6 +211,7 @@ class VisualCandidateResult(BaseModel):
     asset: VisualAsset
     verdict: str
     reason: str
+    identity_reason: str = ""
 
 
 def visual_progress_has_unknown_submission(progress: VisualJobProgress) -> bool:
@@ -1079,7 +1081,7 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
 
     if progress.identity_score is None:
         identity_references = await _references(source)
-        progress.identity_score = await score_character_frames_with_references(
+        identity_review = await review_character_frames_with_references(
             user_id,
             (*identity_references, reference),
             uris,
@@ -1087,6 +1089,9 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
             task=AiTaskKey.visuals,
             before_submit=before_submit,
         )
+        if identity_review is not None:
+            progress.identity_score = identity_review.score
+            progress.identity_reason = identity_review.reason
         await _save_progress(user_id, job.id, progress, stage="review")
         if progress.identity_score is None:
             raise VisualCreationError("视频身份检查暂未完成，可以稍后继续", "review_unavailable")
@@ -1207,13 +1212,14 @@ async def _finish_job(
         progress.source = saved.source
         if progress.candidate is None:
             raise VisualStateError("当前制作还没有可用成品")
-        passed = (
-            progress.review_verdict == "pass"
-            and progress.identity_score is not None
-            and progress.identity_score >= MEDIA_IDENTITY_ACCEPT_SCORE
+        failure = quality_failure_message(
+            progress.identity_score,
+            progress.identity_reason,
+            progress.review_verdict,
+            progress.review_reason,
         )
-        if not passed:
-            raise VisualCreationError(progress.review_reason or "成品未通过检查，请重新生成", "quality_failed")
+        if failure is not None:
+            raise VisualCreationError(failure, "quality_failed")
         snapshot = _publication_snapshot(visual_snapshot(job), progress)
         asset = progress.candidate
         if asset.media_kind == "video" and snapshot.kind != "actor":
@@ -1581,6 +1587,7 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
                 progress.candidate = _opening_asset(job, progress)
                 progress.review_verdict = "pass"
                 progress.identity_score = progress.opening_review.score if progress.opening_review else None
+                progress.identity_reason = progress.opening_review.reason if progress.opening_review else ""
                 # 图片成品同样提供桌面与动态读取的画面描述；描述不可用时不阻断发布。
                 if allow_model_steps:
                     await _describe_frame(user_id, job_id, progress)
@@ -1675,6 +1682,7 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
                     asset=progress.candidate,
                     verdict=progress.review_verdict or "review",
                     reason=progress.review_reason,
+                    identity_reason=progress.identity_reason,
                 )
                 candidate = MediaCandidate(
                     path=progress.candidate.media_path,
@@ -1691,6 +1699,7 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
                 if chain.needs_next():
                     progress.candidate = None
                     progress.identity_score = None
+                    progress.identity_reason = ""
                     progress.review_verdict = None
                     progress.review_reason = ""
                     chain.result_url = None
@@ -1705,6 +1714,7 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
                 if best is not None and best.result_json:
                     chosen = VisualCandidateResult.model_validate_json(best.result_json)
                     progress.candidate, progress.identity_score = chosen.asset, best.score
+                    progress.identity_reason = chosen.identity_reason
                     progress.review_verdict, progress.review_reason = chosen.verdict, chosen.reason
                 break
             if progress.source_path:

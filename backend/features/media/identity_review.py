@@ -62,6 +62,12 @@ class CharacterImageReviewResult:
     failure: ImageGoalReviewFailure | None = None
 
 
+@dataclass(frozen=True)
+class CharacterMediaScore:
+    score: int
+    reason: str
+
+
 async def require_image_goal_review_config(user_id: int, task: AiTaskKey) -> UserLlmConfig:
     config = await load_user_llm_config(
         user_id,
@@ -221,7 +227,7 @@ def _score_output_category(payload: object) -> str:
     return "out_of_range" if type(payload["score"]) is int else "non_int"
 
 
-async def _score_media(
+async def _review_media(
     user_id: int,
     prompt: str,
     images: tuple[str, ...],
@@ -229,7 +235,7 @@ async def _score_media(
     before_submit: Callable[[], Awaitable[None]] | None = None,
     *,
     task: AiTaskKey,
-) -> int | None:
+) -> CharacterMediaScore | None:
     if not images or any(not image for image in images):
         logger.warning("character media score skipped: image missing", extra={"user_id": user_id})
         return None
@@ -245,11 +251,13 @@ async def _score_media(
         payload = parse_llm_json(raw)
         score = payload.get("score") if isinstance(payload, dict) else None
         if type(score) is int and 0 <= score <= 100:
+            reason = payload.get("reason")
+            reason = reason.strip() if isinstance(reason, str) else ""
             logger.info(
                 "character media scored",
-                extra={"user_id": user_id, "score": score, "reason": str(payload.get("reason") or "")[:200]},
+                extra={"user_id": user_id, "score": score, "reason": reason[:200]},
             )
-            return score
+            return CharacterMediaScore(score, reason)
         logger.warning(
             "character media score output invalid",
             extra={"user_id": user_id, "category": _score_output_category(payload), "output_chars": len(raw)},
@@ -270,7 +278,7 @@ async def score_character_image(
     identity_text: str = "",
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> int | None:
-    return await _score_media(
+    result = await _review_media(
         user_id,
         CHARACTER_MEDIA_IMAGE_SCORE,
         (identity_uri, candidate_uri),
@@ -278,6 +286,7 @@ async def score_character_image(
         before_submit,
         task=task,
     )
+    return result.score if result is not None else None
 
 
 async def score_character_image_with_references(
@@ -290,7 +299,7 @@ async def score_character_image_with_references(
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> int | None:
     """按头像和当前完整着装图的职责共同评分图片候选。"""
-    return await _score_media(
+    result = await _review_media(
         user_id,
         CHARACTER_MEDIA_SELF_IMAGE_SCORE,
         (*identity_uris, candidate_uri),
@@ -298,6 +307,7 @@ async def score_character_image_with_references(
         before_submit,
         task=task,
     )
+    return result.score if result is not None else None
 
 
 async def score_character_frames(
@@ -309,7 +319,7 @@ async def score_character_frames(
     identity_text: str = "",
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> int | None:
-    return await _score_media(
+    result = await _review_media(
         user_id,
         CHARACTER_MEDIA_VIDEO_SCORE,
         (identity_uri or "", *frame_uris),
@@ -317,6 +327,7 @@ async def score_character_frames(
         before_submit,
         task=task,
     )
+    return result.score if result is not None else None
 
 
 async def score_character_frames_with_references(
@@ -330,7 +341,30 @@ async def score_character_frames_with_references(
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> int | None:
     """按有序的多张身份参考及视频帧评分。"""
-    return await _score_media(
+    result = await review_character_frames_with_references(
+        user_id,
+        identity_uris,
+        frame_uris,
+        prompt,
+        task=task,
+        identity_text=identity_text,
+        before_submit=before_submit,
+    )
+    return result.score if result is not None else None
+
+
+async def review_character_frames_with_references(
+    user_id: int,
+    identity_uris: tuple[str, ...],
+    frame_uris: tuple[str, ...],
+    prompt: str,
+    *,
+    task: AiTaskKey,
+    identity_text: str = "",
+    before_submit: Callable[[], Awaitable[None]] | None = None,
+) -> CharacterMediaScore | None:
+    """视频评分及可持久保存的可见依据。"""
+    return await _review_media(
         user_id,
         prompt,
         (*identity_uris, *frame_uris),

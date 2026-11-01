@@ -509,6 +509,7 @@ class VisualJobProgress(BaseModel):
     video_chain_json: str | None = None
     candidate: VisualAsset | None = None
     identity_score: int | None = None
+    identity_reason: str = ""
     review_verdict: Literal["pass", "review"] | None = None
     review_reason: str = ""
     submission_unknown: bool = False
