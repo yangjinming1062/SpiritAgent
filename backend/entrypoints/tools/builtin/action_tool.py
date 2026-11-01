@@ -4,12 +4,12 @@ import json
 from typing import Any
 
 from features.action_library import queries as action_queries
+from features.action_library.prompts import ACTION_DESIGN_GUIDANCE, ACTION_MOTION_INTENSITY_DESCRIPTION
 from features.action_library.schemas import ActionAssetDesign, ActionAssetView, ActionClipKind, ActionTrigger
 from features.media.visual_semantics import ActionMotionIntensity, ActionPerformanceRole, SemanticTag
 from infrastructure.api_ids import ResourceId
 from infrastructure.database import SESSION_LOCAL
 from runtime.tools.registry import ToolsRegistry
-from workflows.companion_action_prompts import ACTION_DESIGN_MOTION_DESCRIPTION
 from workflows.visuals_companion import design_action_reference
 
 _MAX_SEARCH_RESULTS = 20
@@ -23,10 +23,11 @@ ACTION_INSPECT_TOOL_DESCRIPTION = (
     "deferred 表示待补充资料，rejected 表示内容未通过，failed 表示技术失败、尚未取得评审结论。"
 )
 ACTION_DESIGN_TOOL_DESCRIPTION = (
-    "登记一个新动作（名称、动作内容、结构化语义标签、表现角色、动作强度、适用条件、持续或短动作类型与时长）。"
+    "设计并登记一个以目标效果和必要条件为中心的新动作，让视频生成模型结合角色性格自行演绎具体表演。"
+    "填写名称、目标说明、结构化语义标签、表现角色、动作强度、适用条件、持续或短动作类型与时长。"
     "登记只保存定义并进入评审，不开始生成图片或视频；评审依据是角色身体能力与动作含义，具体环境与道具在每次生成时判断。"
     "已有合适的入库动作时优先复用；提交后用返回的 action_id 调用 action_inspect 查看结果，通过后才能用于制作。"
-    "不要用重复登记代替评审重试。"
+    "内容被拒绝时根据原因修正定义后再登记，不要用重复登记代替技术失败的评审重试。"
 )
 
 
@@ -125,7 +126,7 @@ def register(registry: ToolsRegistry) -> None:
     design_schema.pop("title", None)
     design_descriptions = {
         "name": "用户可见的简短动作名称，使用当前对话的语言。",
-        "motion_description": ACTION_DESIGN_MOTION_DESCRIPTION,
+        "motion_description": ACTION_DESIGN_GUIDANCE["zh"],
         "use_when": "适用条件列表，如「用户主动请求拥抱」。",
         "avoid_when": "应避免使用的条件。",
         "allowed_triggers": (
@@ -145,13 +146,10 @@ def register(registry: ToolsRegistry) -> None:
             "描述动作本身而非使用场景；场景归 use_when。"
         ),
         "performance_role": (
-            "表现角色：idle 常驻待机、sustained 可持续的专注状态、reaction 一次性行为反应；"
+            "表现用途：idle 常驻待机、sustained 持续状态或活动、reaction 一次性行为反应；"
             "省略时 loop 视为 sustained，once 视为 reaction。"
         ),
-        "motion_intensity": (
-            "动作幅度强度：subtle 轻微到几乎不可见、normal 日常幅度、expressive 明显大幅度；"
-            "轻量动态档只自动选择 subtle 动作，用户明确触发的反应可使用其他强度。"
-        ),
+        "motion_intensity": ACTION_MOTION_INTENSITY_DESCRIPTION,
         "interruptible": "是否允许已开始的动作被更高优先级互动或新的生活情境中断；结束后恢复当前有效的基础画面。",
     }
     for name, description in design_descriptions.items():

@@ -1,6 +1,8 @@
 """工具 schema 描述文本；结构（name/enum/类型/required）留在各工具文件，本模块只承载措辞。
 与 prompts.chat 的媒体/工具教学块语义耦合（如 subject='self' 在两处表述），调整时两边核对。"""
 
+from infrastructure.ai.media_guidance import VIDEO_GOAL_GUIDANCE
+
 COMPANION_WAIT_DESC = (
     "Save a one-time follow-up for a later time or desktop event, list saved follow-ups, or cancel one. Use it "
     "for something the user asked or agreed to, or a concrete check the task needs later; save it here instead of "
@@ -89,16 +91,7 @@ VIDEO_GENERATION_DESC = (
 
 VIDEO_GENERATION_PARAM_DESCS = {
     "prompt": (
-        "Use concise, positive descriptions of the requested scene and action. Give the necessary starting state "
-        "and the requested action or sequence. Keep every explicitly requested subject and action, in the stated "
-        "order; focus an open-ended request on a clear subject. Add key steps and pauses when the motion needs them. "
-        "Identify what moves and what stays "
-        "supported; hair, fabric and props respond to actual motion or environmental forces. For a held pose, "
-        "describe stable support, resting body parts and sustained expression; unless specifically requested otherwise, "
-        "breathing in a quiet state is barely visible and local, "
-        "and blinking is optional rather than a repeating beat. Describe a fixed camera for a still composition; "
-        "specify camera motion only when it serves the request. Match the "
-        "action's progression to the clip length. Describe the result as real footage. With subject='self', "
+        VIDEO_GOAL_GUIDANCE["en"] + "Describe the result as real footage. With subject='self', "
         "focus on the present scene and action; the character's appearance and styling are applied automatically."
     ),
     "subject": "Set to 'self' when the current character appears; their appearance and current outfit are supplied automatically.",

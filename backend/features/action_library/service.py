@@ -112,36 +112,53 @@ async def create_action(
 
 
 async def ensure_builtin_actions(db: AsyncSession, user_id: int) -> None:
-    """按稳定键补齐通用定义；不读取个人身份，也不启动评审或媒体制作。"""
+    """按稳定键同步系统拥有的通用定义，不启动评审或媒体制作。"""
     await lock_domain(db, user_id, "actions")
-    keys = set(await db.scalars(select(ActionDefinition.preset_key).where(ActionDefinition.user_id == user_id)))
-    for preset in ACTION_PRESETS:
-        if preset.key in keys:
-            continue
-        db.add(
-            ActionDefinition(
-                user_id=user_id,
-                preset_key=preset.key,
-                source="preset",
-                status="approved",
-                name=preset.name,
-                normalized_name=normalize_action_name(preset.name),
-                motion_description=preset.motion_description,
-                use_when_json=preset.use_when,
-                avoid_when_json=preset.avoid_when,
-                allowed_triggers_json=preset.triggers,
-                clip_kind=preset.clip_kind,
-                duration_seconds=preset.duration_seconds,
-                semantic_tags_json=list(preset.semantic_tags),
-                performance_role=preset.performance_role,
-                motion_intensity=preset.motion_intensity,
-                interruptible=preset.interruptible,
-                reason="",
-                review_reason="",
-                review_source_json={},
-            )
+    existing = {
+        row.preset_key: row
+        for row in await db.scalars(
+            select(ActionDefinition).where(ActionDefinition.user_id == user_id, ActionDefinition.source == "preset")
         )
+    }
+    changed = False
+    for preset in ACTION_PRESETS:
+        values = {
+            "name": preset.name,
+            "normalized_name": normalize_action_name(preset.name),
+            "motion_description": preset.motion_description,
+            "use_when_json": list(preset.use_when),
+            "avoid_when_json": list(preset.avoid_when),
+            "allowed_triggers_json": list(preset.triggers),
+            "clip_kind": preset.clip_kind,
+            "duration_seconds": preset.duration_seconds,
+            "semantic_tags_json": list(preset.semantic_tags),
+            "performance_role": preset.performance_role,
+            "motion_intensity": preset.motion_intensity,
+            "interruptible": preset.interruptible,
+        }
+        row = existing.get(preset.key)
+        if row is None:
+            db.add(
+                ActionDefinition(
+                    user_id=user_id,
+                    preset_key=preset.key,
+                    source="preset",
+                    status="approved",
+                    reason="",
+                    review_reason="",
+                    review_source_json={},
+                    **values,
+                )
+            )
+            changed = True
+        else:
+            for field, value in values.items():
+                if getattr(row, field) != value:
+                    setattr(row, field, value)
+                    changed = True
     await db.flush()
+    if changed:
+        emit_ws_event(db, user_id=user_id, event_type="companion.action.updated", payload={})
 
 
 async def _locked_action(db: AsyncSession, user_id: int, action_id: int) -> ActionDefinition | None:

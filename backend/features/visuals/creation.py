@@ -23,7 +23,7 @@ from features.media.identity_review import ImageGoalReviewFailure, review_charac
 from .models import VisualJob
 from .ports import read_planning_context
 from .prompts import VISUAL_CREATION_PLAN, VISUAL_OPENING_REPAIR, visual_source_reference_prompt
-from .repository import VisualStateError
+from .repository import VisualStateError, visual_snapshot
 from .schemas import ActorClipSource, CinematicSource, OpeningReview, VisualCreationPlan, VisualJobProgress
 
 
@@ -70,14 +70,34 @@ def _base_idle_plan(
         activity=motion,
         opening_description=(
             f"角色全身与所有附肢完整入画，位于干净均匀的纯色幕布前，{temperament}并自然选择一套安静、"
-            "可持续且符合身份、身体结构和当前造型的姿态；重心、支撑、接触关系和表情自然，视线与姿态"
-            "共同体现角色特征。"
+            "可持续且符合身份、身体结构和当前造型的姿态，重心、支撑和接触关系自然。"
         ),
         required_props=[],
         motion_requirements=(
             f"{motion} 保持该角色自然安静姿态的首尾连续，运动幅度按角色特征和动作定义安排，"
             "只保留能从起始姿态自然延续的局部变化。"
         ),
+    )
+
+
+async def _planning_references(
+    snapshot: ActorClipSource | CinematicSource, opening: str | None
+) -> tuple[tuple[str, ...], str]:
+    if opening:
+        image = await asyncio.to_thread(read_valid_image_data_uri, opening)
+        if not image:
+            raise VisualStateError("活动参考画面无法读取，请重新准备素材")
+        return (image,), "图 1 提供实际人物、造型和环境"
+    references = (
+        (snapshot.primary_reference_path, snapshot.primary_reference_hash),
+        (snapshot.outfit.path, snapshot.outfit.content_hash),
+        *(((snapshot.scene.path, snapshot.scene.content_hash),) if snapshot.kind == "cinematic" else ()),
+    )
+    images = tuple(
+        await asyncio.gather(*(asyncio.to_thread(read_visual_reference, path, digest) for path, digest in references))
+    )
+    return images, visual_source_reference_prompt(
+        snapshot.identity_reference_role, include_scene=snapshot.kind == "cinematic"
     )
 
 
@@ -97,21 +117,7 @@ async def ensure_creation_plan(
     if progress.creation_plan is not None:
         return
     opening = progress.pose_path or progress.previous_pose_path
-    if opening:
-        paths = (opening,)
-        reference_roles = "图 1 提供实际人物、造型和环境"
-    else:
-        paths = (
-            snapshot.primary_reference_path,
-            snapshot.outfit.path,
-            *((snapshot.scene.path,) if snapshot.kind == "cinematic" else ()),
-        )
-        reference_roles = visual_source_reference_prompt(
-            snapshot.identity_reference_role, include_scene=snapshot.kind == "cinematic"
-        )
-    images = tuple(await asyncio.gather(*(asyncio.to_thread(read_valid_image_data_uri, path) for path in paths)))
-    if not all(images):
-        raise VisualStateError("活动参考画面无法读取，请重新准备素材")
+    images, reference_roles = await _planning_references(snapshot, opening)
     decision = await vision_chat_json(
         user_id,
         VISUAL_CREATION_PLAN,
@@ -161,24 +167,23 @@ async def ensure_opening_repair(
         return
     if not progress.repair_reason or progress.repair_description:
         return
-    reference_path = progress.previous_pose_path or snapshot.primary_reference_path
-    image = await asyncio.to_thread(read_valid_image_data_uri, reference_path)
-    if not image:
-        raise VisualStateError("修复参考画面无法读取")
+    images, reference_roles = await _planning_references(snapshot, progress.previous_pose_path)
     repair = await vision_chat_json(
         user_id,
         VISUAL_OPENING_REPAIR,
         {
             "creation_plan": progress.creation_plan.model_dump() if progress.creation_plan else None,
+            "requirements": snapshot.requirements,
             "user_requirements": job.feedback,
             "video_feedback": job.video_feedback,
             "customization_priority": progress.customization_priority,
             "review_reason": progress.repair_reason,
             "reference_role": "opening" if progress.previous_pose_path else "identity",
+            "reference_roles": reference_roles,
         },
         response_model=_OpeningRepair,
         schema_name="visual_opening_repair",
-        reference_images=(image,),
+        reference_images=images,
         before_submit=before_submit,
         task=AiTaskKey.visuals,
     )
@@ -189,17 +194,21 @@ def opening_requirements(job: VisualJob, progress: VisualJobProgress) -> str:
     plan = progress.creation_plan
     if plan is None:
         raise VisualStateError("活动制作计划尚未准备好")
+    source = visual_snapshot(job).source
+    if source.kind not in {"actor", "cinematic"}:
+        raise VisualStateError("只有角色影像需要活动起始画面")
     return json.dumps(
         {
-            "activity": plan.activity,
-            "opening_description": plan.opening_description,
+            "activity": progress.action_description,
+            "opening_description": progress.repair_description or plan.opening_description,
+            "pose_scope": "上述姿态是实现活动的设计方案；未被用户明确指定、也非动作必需的脚距、视线角度和重心细节可自然调整，以身体有可靠支撑且能开始目标动作的单一状态为准",
             "required_props": plan.required_props,
             "motion_scope": "静态图只需具备后续运动的起始条件，不要求同时呈现运动过程、结束状态或多个阶段",
+            "requirements": source.requirements,
             "user_requirements": job.feedback,
             "video_feedback": job.video_feedback,
             "customization_priority": progress.customization_priority,
-            "customization_scope": "只核对静态可见要求和后续运动的起始条件；两类用户要求冲突时，customization_priority 指定的较新要求只覆盖明确涉及的维度，其余继续生效",
-            "opening_adjustment": progress.repair_description,
+            "customization_scope": "只核对静态可见要求和后续运动的起始条件；requirements 是最初的制作要求，两类调整只修正明确涉及的维度；两类调整冲突时按 customization_priority 采用较新一方，其余有效要求继续生效",
             "opening_state": "单个可执行的活动开始状态，必要物品可见且可操作，姿态有合理支撑和接触关系",
         },
         ensure_ascii=False,

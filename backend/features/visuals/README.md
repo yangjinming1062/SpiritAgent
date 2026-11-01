@@ -20,6 +20,7 @@
 |---|---|
 | 制作受理、重做与工作项控制 | [service.py](service.py)、[policy.py](policy.py)、[use_cases.py](use_cases.py) |
 | 图片/视频制作与发布 | [generation.py](generation.py)、[publication.py](publication.py)、[video_queue.py](video_queue.py) |
+| 视频目标与性格装配 | [prompt_assembly.py](prompt_assembly.py)、[prompts.py](prompts.py) |
 | 原件保存、分析、匹配与整理 | [imports.py](imports.py)、[import_jobs.py](import_jobs.py)、[import_reasoning.py](import_reasoning.py)、[import_prompts.py](import_prompts.py)；跨业务采纳归 [visual_imports.py](../../workflows/visual_imports.py) |
 | 生活请求与结果绑定 | [life.py](life.py) |
 | 库查询与实际呈现快照 | [queries.py](queries.py)、[repository.py](repository.py) |

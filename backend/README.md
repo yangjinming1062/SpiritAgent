@@ -182,7 +182,7 @@ Compose 与后端共用数据库凭据，默认连 `postgres:5432`；显式数�
 | [媒体](features/media/prompts.py)、[动作](features/action_library/prompts.py)、[影像](features/visuals/prompts.py) | 冻结参考、语义评审、组合策划和质量链 |
 | [记忆](features/memory/prompts.py)、[动态](features/posts/prompts.py) | 审阅、召回、创作与评论 |
 | [夜间](workflows/nightly/prompts.py)、[资讯检索](workflows/nightly/topic_prompts.py) | 规划、日记/反思、来源筛选与检查点 |
-| [工具](runtime/tools/prompts.py)、[伙伴动作](workflows/companion_action_prompts.py) | 工具说明、网页摘要与动作能力；参数仍以工具 schema 为准 |
+| [工具](runtime/tools/prompts.py)、[伙伴呈现视图](workflows/companion_action_prompts.py) | 工具说明、网页摘要与呈现视图；参数仍以工具 schema 为准 |
 
 声音设计由 [voice_design.py](workflows/voice_design.py) 装配实际适配器指南，不进入朗读正文；Runner 工具及发布脚本各自维护输入。修改遵循 [RULES](../RULES.md#提示词设计与修改规范)，完整生成链核对见 [PIPELINE](../docs/PIPELINE.md#完整提示词链检查入口)。
 

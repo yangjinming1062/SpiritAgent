@@ -4,14 +4,14 @@
 
 ## 入口与边界
 
-[service.py](service.py) 管理受理去重、编辑和评审结算；[review.py](review.py) 调用模型，[prompts.py](prompts.py) 定义任务。[queries.py](queries.py) 与 [views.py](views.py) 返回查询投影，[use_cases.py](use_cases.py) 转换请求错误。
+[service.py](service.py) 管理受理去重、编辑和评审结算；[review.py](review.py) 调用模型，[prompts.py](prompts.py) 维护定义评审及中英文共享设计指引。聊天工具、生活规划与夜间设计在各自的参数和系统说明中装配同一指引，系统说明仅在动作设计能力可用时加入。通用 [schemas.py](schemas.py) 不承载创作指令，上传影像中的动作识别仍以可见证据为准。[queries.py](queries.py) 与 [views.py](views.py) 返回查询投影，[use_cases.py](use_cases.py) 转换请求错误。
 
-[presets.py](presets.py) 维护通用内置定义，角色初始化和备份恢复按 `preset_key` 登记与匹配；名称只供展示和检索。持久字段与请求视图以 [models.py](models.py)、[schemas.py](schemas.py) 为准。语义词表归 [visual_semantics.py](../media/visual_semantics.py)，`performance_role` 缺省按播放方式派生，短动作只使用 reaction，循环使用 idle 或 sustained；`motion_intensity` 供动态档过滤，`interruptible` 约束演出中断，结束后统一恢复最新有效基础画面。列表按 ID 游标读取摘要，总数按需查询，不为列表加载完整冻结参考。
+[presets.py](presets.py) 维护通用内置定义，以目标效果、必要用品和活动成立条件表达，不预写面部操作或固定表演脚本。角色初始化和备份恢复按 `preset_key` 登记与匹配，已有内置目录在启动和账户恢复时同步系统定义，保留条目 ID；同步不修改自创动作、冻结成品或在途制作，也不发起媒体制作。名称只供展示和检索。持久字段与请求视图以 [models.py](models.py)、[schemas.py](schemas.py) 为准。语义词表归 [visual_semantics.py](../media/visual_semantics.py)，`performance_role` 缺省按播放方式派生，短动作只使用 reaction，循环使用 idle 或 sustained；`motion_intensity` 供动态档过滤，`interruptible` 约束演出中断，结束后统一恢复最新有效基础画面。列表按 ID 游标读取摘要，总数按需查询，不为列表加载完整冻结参考。
 
 ## 评审与恢复
 
 账户动作锁合并同名且内容相同的自创提交；评审任务按账户串行、同修订单飞。先认领并提交评审中状态，再读取参考和配置；每次付费调用前核对执行资格和修订，结算只接受当前评审修订。任务按修订登记，避免新修订被正在收尾的任务挡住；供应商等待不持事务。
 
-模型结论保存评审依据，技术异常保存可重试状态并记录诊断日志。动作、关联生活步骤和事件在同一事务结算；通过才能产生成功步骤，已失败的步骤不因后续重评成功被改写。认领提交回滚后按受理修订收敛等待状态，停机收敛同时覆盖尚未开始执行的任务。
+定义评审核对目标是否明确、必要条件与实际身体是否相容，不要求补齐具体表情、手势或逐秒脚本；成品质量在制作后按还原度与自然度判断。模型结论保存评审依据，技术异常保存可重试状态并记录诊断日志。动作、关联生活步骤和事件在同一事务结算；通过才能产生成功步骤，已失败的步骤不因后续重评成功被改写。认领提交回滚后按受理修订收敛等待状态，停机收敛同时覆盖尚未开始执行的任务。
 
 [lifecycle.py](lifecycle.py) 登记恢复与收敛，[backup.py](backup.py) 和 [asset_references.py](asset_references.py) 维护冻结资料及文件引用。修改时按 [Scripts](../../../scripts/README.md) 核对重复受理、并发编辑、缺失参考、模型错误、取消和重启，并用真实输入检查语义评审质量。

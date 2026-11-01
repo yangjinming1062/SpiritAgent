@@ -93,20 +93,17 @@ from .life import restart_visual_steps, settle_visual_steps
 from .models import VisualJob
 from .naming import schedule_visual_title
 from .ports import notify_visual_ready, request_base_motion_preparation
+from .prompt_assembly import video_generation_prompt
 from .prompts import (
     ACTOR_POSE_IMAGE_TEMPLATE,
     SCENE_MOTION_DESIGN,
     SCENE_PHASE_IMAGE_TEMPLATE,
-    SCENE_VIDEO_MOTION_TEMPLATE,
     SCENE_VIDEO_REVIEW,
     VISUAL_MOTION_DESIGN,
     VISUAL_POSE_EDIT_TEMPLATE,
     VISUAL_POSE_IMAGE_TEMPLATE,
     VISUAL_POSE_VARIANT_TEMPLATE,
     VISUAL_VIDEO_FRAME_DESCRIPTION,
-    VISUAL_VIDEO_LOOP,
-    VISUAL_VIDEO_MOTION_TEMPLATE,
-    VISUAL_VIDEO_ONCE,
     VISUAL_VIDEO_REVIEW,
     VISUAL_VIDEO_SCORE,
     visual_source_reference_prompt,
@@ -634,7 +631,10 @@ def _review_basis_stale(
         return (
             inputs.identity_reference == inputs.reference_image
             or inputs.identity_secondary_reference is None
-            or not (inputs.review_environment_reference_image or inputs.environment_reference_image)
+            or (
+                snapshot.kind == "cinematic"
+                and not (inputs.review_environment_reference_image or inputs.environment_reference_image)
+            )
         )
     return (
         snapshot.identity_reference_role == "fullbody"
@@ -806,7 +806,14 @@ async def _prepare_pose(
     goal = state.goal_reviews.get(candidate.path) if candidate else None
     with Image.open(resolved[0]) as original_image:
         original_size = ImageOps.exif_transpose(original_image).size
-    if goal is not None and goal.verdict == "pass" and original_size == (progress.frame_width, progress.frame_height):
+    # 冻结图片链可沿旧请求收尾，但旧判定不能绑定到当前制作要求。
+    if (
+        isinstance(state.inputs, CharacterImageInput)
+        and state.inputs.prompt == prompt
+        and goal is not None
+        and goal.verdict == "pass"
+        and original_size == (progress.frame_width, progress.frame_height)
+    ):
         progress.opening_review = OpeningReview(
             image_hash=await asyncio.to_thread(opening_image_hash, progress.pose_path),
             requirements_hash=opening_requirements_hash(job, progress),
@@ -892,8 +899,8 @@ async def _prepare_motion(
         user_id,
         VISUAL_MOTION_DESIGN,
         {
-            "persona": snapshot.persona,
             "action": progress.action_description,
+            "requirements": snapshot.requirements,
             "creation_plan": progress.creation_plan.model_dump() if progress.creation_plan else None,
             "kind": snapshot.action.clip_kind,
             "duration_seconds": progress.duration_seconds,
@@ -1082,7 +1089,7 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
     reference = await asyncio.to_thread(read_valid_image_data_uri, progress.pose_path)
     if resolved is None or not reference:
         raise VisualStateError("视频或已确认的参考画面无法读取")
-    samples = await asyncio.to_thread(sample_desktop_video_frames, resolved[0])
+    samples = await asyncio.to_thread(sample_desktop_video_frames, resolved[0], sample_count=9)
     uris = tuple(build_data_uri(frame, "image/webp") for frame in samples.frames)
     references = (reference,)
     async with SESSION_LOCAL() as db:
@@ -1092,11 +1099,12 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
         await _require_active_job(user_id, job.id, progress.generation_id)
 
     if progress.identity_score is None:
+        identity_references = await _references(source)
         progress.identity_score = await score_character_frames_with_references(
             user_id,
-            references,
+            (*identity_references, reference),
             uris,
-            VISUAL_VIDEO_SCORE.format(accept_score=MEDIA_IDENTITY_ACCEPT_SCORE),
+            visual_source_reference_prompt(source.identity_reference_role) + VISUAL_VIDEO_SCORE,
             task=AiTaskKey.visuals,
             before_submit=before_submit,
         )
@@ -1114,8 +1122,9 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
                 "reference_frame_count": len(references),
                 "output_language": language,
                 "action": progress.action_description,
-                "creation_plan": progress.creation_plan.model_dump() if progress.creation_plan else None,
-                "motion_prompt": progress.motion_prompt,
+                "motion_intensity": source.action.motion_intensity,
+                "requirements": source.requirements,
+                "required_props": progress.creation_plan.required_props if progress.creation_plan else [],
                 "feedback": job.feedback,
                 "customization_priority": progress.customization_priority,
                 "action_conditions": {
@@ -1799,16 +1808,12 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
                 )
                 pose = build_data_uri(normalized, "image/png")
                 request = VideoGenRequest(
-                    prompt=(
-                        SCENE_VIDEO_MOTION_TEMPLATE if snapshot.source.kind == "scene" else VISUAL_VIDEO_MOTION_TEMPLATE
-                    ).format(
-                        duration_seconds=progress.duration_seconds,
-                        cycle=VISUAL_VIDEO_LOOP if clip_kind == "loop" else VISUAL_VIDEO_ONCE,
-                        motion=progress.motion_prompt,
-                        feedback=job.feedback.strip() or "无",
-                        video_feedback=job.video_feedback.strip() or "无",
-                        customization_priority=progress.customization_priority,
+                    prompt=video_generation_prompt(
+                        snapshot.source,
+                        progress,
                         aspect_ratio=desired_ratio,
+                        feedback=job.feedback,
+                        video_feedback=job.video_feedback,
                     ),
                     duration=progress.duration_seconds,
                     resolution=chain.providers[index].video_resolution,

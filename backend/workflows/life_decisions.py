@@ -4,6 +4,7 @@ import asyncio
 from datetime import timedelta
 
 from features.accounts.queries import lock_active_user_ids, user_is_active
+from features.action_library.prompts import ACTION_DESIGN_GUIDANCE
 from features.companion.persona_service import onboarded_user_ids
 from features.companion.prompt_runtime import load_companion_prompt_context
 from features.conversation.context_window import load_recent_context_window
@@ -107,11 +108,17 @@ async def _consider_life(user_id: int, *, force: bool) -> dict[str, object]:
     async with SESSION_LOCAL() as db:
         evidence = await pursuit_evidence(db, user_id, [item.id for item in life.active_pursuits])
         recent_context = await load_recent_context_window(db, user_id)
-    decision = await call_llm_json(
-        config,
+    execution = await execution_context(user_id)
+    instructions = (
         resolve_prompt_text(_INSTRUCTIONS, context.language)
         .replace("{life_facts}", resolve_prompt_text(LIFE_FACT_GUIDANCE, context.language))
-        .replace("{life_narrative}", resolve_prompt_text(LIFE_NARRATIVE_GUIDANCE, context.language)),
+        .replace("{life_narrative}", resolve_prompt_text(LIFE_NARRATIVE_GUIDANCE, context.language))
+    )
+    if execution["capabilities"].get("action.design"):
+        instructions += "\n\naction.design: " + resolve_prompt_text(ACTION_DESIGN_GUIDANCE, context.language)
+    decision = await call_llm_json(
+        config,
+        instructions,
         {
             "persona": context.persona_extras,
             "current_time": context.current_time,
@@ -119,7 +126,7 @@ async def _consider_life(user_id: int, *, force: bool) -> dict[str, object]:
             "recent_context": recent_context,
             "life_context": life.prompt_payload(),
             "pursuit_evidence": evidence.prompt_payload(),
-            "execution": await execution_context(user_id),
+            "execution": execution,
         },
         schema=LifeDecision.model_json_schema(),
         schema_name="companion_life_decision",

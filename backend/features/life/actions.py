@@ -6,7 +6,9 @@ from typing import Annotated, Literal
 from infrastructure.api_ids import ResourceId
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, TypeAdapter
 
+from features.action_library.prompts import ACTION_DESIGN_GUIDANCE, ACTION_MOTION_INTENSITY_DESCRIPTION
 from features.action_library.schemas import ActionAssetDesign
+from features.media.visual_semantics import ActionMotionIntensity
 
 
 class ActionInput(BaseModel):
@@ -39,9 +41,8 @@ class OutfitAction(ActionInput):
 class DesignAction(ActionAssetDesign, ActionInput):
     capability: Literal["action.design"]
     name: str = Field(min_length=1, max_length=64, description="动作的简短名称")
-    motion_description: str = Field(
-        min_length=10, max_length=600, description="身体动作、过程和必要支撑，不表示已经执行"
-    )
+    motion_description: str = Field(min_length=10, max_length=600, description=ACTION_DESIGN_GUIDANCE["zh"])
+    motion_intensity: ActionMotionIntensity = Field(default="normal", description=ACTION_MOTION_INTENSITY_DESCRIPTION)
     reason: str = Field(min_length=1, max_length=400, description="当前生活为什么需要这种动作")
     use_when: list[str] = Field(default_factory=list, max_length=8, description="适合使用该动作的具体情境")
     avoid_when: list[str] = Field(default_factory=list, max_length=8, description="不宜使用该动作的情境")

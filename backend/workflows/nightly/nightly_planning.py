@@ -10,6 +10,7 @@ from typing import Any, Literal, TypeGuard
 from zoneinfo import ZoneInfo
 
 from features.accounts.queries import nightly_account
+from features.action_library.prompts import ACTION_DESIGN_GUIDANCE, ACTION_MOTION_INTENSITY_DESCRIPTION
 from features.action_library.queries import list_actions
 from features.appearance.character_card import load_character_snapshot
 from features.appearance.nightly import list_outfits
@@ -41,7 +42,6 @@ from runtime.memory_scope import MemoryScope
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from workflows.companion_action_prompts import ACTION_DESIGN_MOTION_DESCRIPTION
 from workflows.companion_actions import build_action_view
 from workflows.life_execution import submit_life_action
 from workflows.nightly.models import NightlyActivityAction, NightlyActivityLog
@@ -291,16 +291,17 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
         name="action.design",
         phase=25,
         description="提出一个有明确用途、可反复使用的新动作，先查看 actions.ready_actions 是否已有合适表达。"
+        "动作以目标效果和必要条件为中心，具体表演由视频生成模型结合角色性格自主决定。"
         "确有缺口才使用，没有具体价值时可以不设计；同一动作由系统统一去重和评审。"
         "自主创意不代表用户提出过同样要求。登记、制作完成与实际表演分别确认，后续内容不能将登记写成已做好或已表演。",
         arguments={
             "name": "string（1–64 字符）：动作的简短显示名称，不是动作标识或运动脚本。",
-            "motion_description": "string（10–600 字符）：" + ACTION_DESIGN_MOTION_DESCRIPTION,
+            "motion_description": "string（10–600 字符）：" + ACTION_DESIGN_GUIDANCE["zh"],
             "use_when": "list[string]（可选，最多 8 项，每项最多 120 字符）：适合使用该动作的交流情境，省略或空列表表示没有补充适用条件。",
             "avoid_when": "list[string]（可选，最多 8 项，每项最多 120 字符）：应避免使用该动作的情境，省略或空列表表示没有补充避免条件。",
             "semantic_tags": "list[string]（可选，最多 8 项）：动作本身的活动含义，从 idle、attention、interaction、reading、working、creating、thinking、resting、organizing、socializing、stretching、grooming、drinking、dancing 中选择。",
             "performance_role": "string（可选）：idle 常驻待机、sustained 持续状态、reaction 单次反应；循环仅用前两者，短动作仅用 reaction，省略按播放方式派生。",
-            "motion_intensity": "string（可选，默认 normal）：subtle 轻微、normal 日常幅度、expressive 明显大幅；与动作实际幅度相符。",
+            "motion_intensity": "string（可选，默认 normal）：" + ACTION_MOTION_INTENSITY_DESCRIPTION,
             "interruptible": "boolean（可选，默认 true）：是否允许更高优先级互动或新的生活情境中断，结束后恢复有效基础画面。",
             "reason": "string（1–400 字符）：现有动作无法满足的表达需要，以及本次新增动作的具体价值。",
             "duration_seconds": "integer（可选，默认4，1–15）：单个动作片段的时长，单位为秒；按可见过程与必要停留选择，长期陪伴不等于更长的单片段。完成后的时间可安定停留。",
@@ -986,9 +987,12 @@ async def run_nightly_planning(
             **date_context.model_dump(),
             **anomaly_stats,
         }
+        instructions = PLANNING_SYSTEM_PROMPT
+        if any(cap.name == "action.design" for cap in context.available_capabilities):
+            instructions += "\n\naction.design: " + resolve_prompt_text(ACTION_DESIGN_GUIDANCE, "en")
         plan = await call_llm_json(
             await load_user_llm_config(user_id, AiTaskKey.nightly),
-            PLANNING_SYSTEM_PROMPT,
+            instructions,
             payload,
             schema=NightlyPlanOutput.model_json_schema(),
             schema_name="nightly_plan",

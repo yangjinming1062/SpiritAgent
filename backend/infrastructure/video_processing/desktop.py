@@ -32,14 +32,16 @@ class DesktopVideoFrames:
     times_seconds: tuple[float, ...]
 
 
-def sample_desktop_video_frames(src: Path) -> DesktopVideoFrames:
+def sample_desktop_video_frames(src: Path, *, sample_count: int = 5) -> DesktopVideoFrames:
     """按实际帧时间抽取首尾和中间帧，支持原始帧率、VFR、旋转和非方形像素。"""
+    if sample_count < 2:
+        raise ValueError("视频采样至少需要首尾两帧")
     times = video_frame_times(src)
     first, last = times[0], times[-1]
     indices = sorted(
         {
             min(range(len(times)), key=lambda index: abs(times[index] - target))
-            for target in (first + (last - first) * fraction / 4 for fraction in range(5))
+            for target in (first + (last - first) * fraction / (sample_count - 1) for fraction in range(sample_count))
         },
     )
     with Image.open(BytesIO(extract_desktop_first_frame(src))) as frame:

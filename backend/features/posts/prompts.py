@@ -1,5 +1,7 @@
 """独立动态的发布决策与评论回复。"""
 
+from infrastructure.ai.media_guidance import VIDEO_GOAL_GUIDANCE
+
 from features.life.prompts import LIFE_FACT_GUIDANCE
 
 POST_DECISION_REPAIR_TEXTS: dict[str, str] = {
@@ -103,14 +105,11 @@ POST_PUBLISH_INSTRUCTIONS = {
         "publication_intent、title、body、text 和 narration 使用 output_language，人设或原资料的语言不覆盖它。"
         "title 是动态标题，body 是展示在动态中的文字：文字动态必须有正文，媒体动态可配简短文案。"
         "文字正文通常40–160字，资料少时可以更短。语音的 text 只写要朗读的内容，不混入制作要求。"
-        "图片的 prompt 描述一个画面中的主体、环境、构图与姿态；视频的 prompt 用简洁、正面的描述交代"
-        "必要的起始状态与主题所需的动作，按顺序保留作品需要的主体和过程，复杂动作再说明关键步骤与停顿，写清运动部位和保持稳定的支撑。"
-        "保持姿态时描述安定的身体与神态；未明确安排呼吸动作时，安静状态的呼吸仅有近乎不可察的局部变化，眨眼可偶发也可省略；"
-        "头发、衣物与道具的变化须有身体或环境作用依据。安静构图采用固定镜头，需要运镜时再写其方向与节奏。"
-        "动作进程与所选时长相称。"
+        "图片的 prompt 描述一个画面中的主体、环境、构图与姿态；"
+        f"视频的 prompt {VIDEO_GOAL_GUIDANCE['zh']}"
         "画面按生活中真实拍摄的质感描述，选择与主题有关的环境、光线、取景和日常细节。"
         "depicts_self 表示画面中是否出现你：出现时为true，否则为false。"
-        "为true时，已有参考提供你的固定外貌与当前造型，prompt 聚焦本次画面的神态、姿态、动作与必要的环境和镜头条件。"
+        "为true时，已有参考提供你的固定外貌与当前造型，prompt 聚焦本次目标、性格气质与必要的环境和镜头条件。"
         "只有 available_types 包含 audio 时才可提供 narration；它是可选的独立旁白，不要求画面人物与其对口型。\n\n"
         '决定不发时只输出 {"post":false}。发布时输出 '
         '{"post":true,"plan":{...}}。'
@@ -150,19 +149,12 @@ POST_PUBLISH_INSTRUCTIONS = {
         "for a text post, optional as a caption for media. A text body is usually one to three sentences, "
         "shorter when material is sparse. Audio text contains only words to be spoken, without production "
         "instructions. An image prompt describes the subjects, setting, composition and poses in one frame; "
-        "a video prompt uses concise, positive descriptions of the necessary starting state and the actions the "
-        "work needs. Preserve its subjects and necessary sequence in order, with key steps and pauses for complex "
-        "motion. Identify moving parts and stable support. "
-        "For a held pose, describe the settled body and sustained expression; unless the intended action calls for it, "
-        "breathing in a quiet state is barely visible and local, "
-        "and blinking is optional rather than a repeating beat. Hair, fabric and props respond to actual body motion "
-        "or environmental forces. Use a fixed camera for a quiet composition; describe its direction and pace when "
-        "camera motion serves the subject. Match the action's progression to the "
-        "chosen duration. Describe images and videos as real photographs or footage from everyday life, "
+        f"For a video prompt: {VIDEO_GOAL_GUIDANCE['en']}"
+        "Describe images and videos as real photographs or footage from everyday life, "
         "choosing setting, lighting, framing and ordinary details relevant to the subject. depicts_self indicates "
         "whether you appear in the image or video: true when you appear, false otherwise. When true, existing "
         "references provide your fixed appearance and current outfit; prompt focuses on the present scene's "
-        "expression, pose, action and necessary setting and camera conditions. "
+        "goal, temperament and necessary setting and camera conditions. "
         "Supply optional narration only when available_types includes audio; "
         "it is a separate voiceover, not lip sync.\n\n"
         'To decline, output only {"post":false}. To publish, output '

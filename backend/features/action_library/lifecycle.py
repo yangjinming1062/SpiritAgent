@@ -3,14 +3,24 @@
 from infrastructure.database import SESSION_LOCAL
 from runtime.lifecycle import RuntimeParticipant
 from runtime.task_supervisor import TASK_SUPERVISOR
+from sqlalchemy import select
 
-from .service import recover_interrupted_reviews
+from .models import ActionDefinition
+from .service import ensure_builtin_actions, recover_interrupted_reviews
 
 
 async def resume_action_reviews(user_id: int | None = None) -> None:
     async with SESSION_LOCAL() as db:
         await recover_interrupted_reviews(db, user_id)
+        owners = select(ActionDefinition.user_id).where(ActionDefinition.source == "preset").distinct()
+        if user_id is not None:
+            owners = owners.where(ActionDefinition.user_id == user_id)
+        user_ids = list(await db.scalars(owners))
         await db.commit()
+    for owner_id in user_ids:
+        async with SESSION_LOCAL() as db:
+            await ensure_builtin_actions(db, owner_id)
+            await db.commit()
 
 
 async def drain_action_reviews() -> None:

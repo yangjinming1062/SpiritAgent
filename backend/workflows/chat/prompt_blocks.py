@@ -5,6 +5,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from features.action_library.prompts import ACTION_DESIGN_GUIDANCE
 from infrastructure.constants import DEFAULT_LANGUAGE
 from infrastructure.text import format_local_date_str, resolve_language, resolve_prompt_text, utc_now
 from runtime.client_context import ChatRequestClientContext
@@ -106,6 +107,8 @@ def _companion_tool_guidance_block(config: AgentPromptConfig) -> str:
         parts.append(resolve_prompt_text(COMPANION_SKILL_GUIDANCES, config.language))
     if {"scene_list", "scene_create"}.issubset(config.valid_tool_names):
         parts.append(resolve_prompt_text(SCENE_TOOL_GUIDANCES, config.language))
+    if "action_design" in config.valid_tool_names:
+        parts.append("action_design: " + resolve_prompt_text(ACTION_DESIGN_GUIDANCE, config.language))
     return "\n".join(parts)
 
 
