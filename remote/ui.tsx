@@ -285,6 +285,32 @@ export function Empty({ title, children }: { title: string; children?: ReactNode
   )
 }
 
+export function ListSkeleton({ rows = 3 }: { rows?: number }): ReactElement {
+  return (
+    <div aria-hidden="true" className="skeleton-list">
+      {Array.from({ length: rows }, (_, index) => (
+        <div className="skeleton-row" key={index}>
+          <div className="skeleton sk-avatar" />
+          <div className="sk-lines">
+            <div className="skeleton sk-line" />
+            <div className="skeleton sk-line short" />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export function GridSkeleton({ cards = 6 }: { cards?: number }): ReactElement {
+  return (
+    <div aria-hidden="true" className="skeleton-grid">
+      {Array.from({ length: cards }, (_, index) => (
+        <div className="skeleton sk-card" key={index} />
+      ))}
+    </div>
+  )
+}
+
 /** 素材与影像列表共用的卡片；整卡可点进详情，不承载独立的卡片级动作。 */
 export function LibraryCard({
   active = false,

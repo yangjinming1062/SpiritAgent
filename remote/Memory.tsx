@@ -19,7 +19,7 @@ import {
   writeMemoryDraft
 } from './memory-state'
 import { saveWithReadback } from './save-result'
-import { Empty, Notice, useAlive, usePageScroll, usePageState, useTask } from './ui'
+import { Empty, ListSkeleton, Notice, useAlive, usePageScroll, usePageState, useTask } from './ui'
 
 type Status = 'active' | 'candidate' | 'invalidated' | 'expired'
 const STATUSES: { id: Status; label: string }[] = [
@@ -273,6 +273,7 @@ function MemoryList({ api, preset, refresh }: { api: RemoteApi; preset: string; 
           </button>
         </Notice>
       ) : null}
+      {!loaded && !rows.length ? <ListSkeleton /> : null}
       <div className="memory-list">
         {rows.map(row => {
           const draft = readMemoryDraft(drafts, row)

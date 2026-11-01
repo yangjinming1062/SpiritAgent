@@ -24,6 +24,7 @@ import type {
 import {
   Empty,
   FileInput,
+  ListSkeleton,
   Media,
   Notice,
   PageHeader,
@@ -937,7 +938,10 @@ export function Chat({
             更多会话
           </button>
         ) : null}
-        {listed.length === 0 ? <Empty title="从一句话开始">直接和伙伴聊聊，或点击右上角开始一段新对话。</Empty> : null}
+        {listed.length === 0 && busy ? <ListSkeleton /> : null}
+        {listed.length === 0 && !busy ? (
+          <Empty title="从一句话开始">直接和伙伴聊聊，或点击右上角开始一段新对话。</Empty>
+        ) : null}
       </div>
     )
   }

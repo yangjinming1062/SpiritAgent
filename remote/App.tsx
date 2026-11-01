@@ -9,6 +9,7 @@ import { ApiError, errorText, RemoteApi, RemoteGateway } from './api'
 import { Chat, clearChatState } from './Chat'
 import { Companion } from './Companion'
 import { Feed } from './Feed'
+import { readTheme, saveTheme, type ThemeChoice } from './theme'
 import type { RemoteSession } from './types'
 import { Notice, PageHeader, PageStateProvider, pauseMedia, useTask } from './ui'
 
@@ -424,6 +425,7 @@ function Settings({
   onLogout: () => void
 }): ReactElement {
   const task = useTask()
+  const [theme, setTheme] = useState<ThemeChoice>(readTheme)
 
   return (
     <div className="page">
@@ -445,7 +447,33 @@ function Settings({
             <dd>{new Date(session.device.expires_at).toLocaleDateString('zh-CN')}</dd>
           </div>
         </dl>
-        <p className="muted">陪伴、声音和显示偏好可以在电脑的设置中调整。这里退出只断开这台手机。</p>
+        <p className="muted">陪伴和声音偏好可以在电脑的设置中调整。这里退出只断开这台手机。</p>
+      </section>
+      <section className="card">
+        <h3>界面主题</h3>
+        <p className="muted">只影响这台手机上的页面显示。</p>
+        <div aria-label="界面主题" className="section-tabs">
+          {(
+            [
+              { id: 'system', label: '跟随系统' },
+              { id: 'light', label: '日色' },
+              { id: 'dark', label: '夜色' }
+            ] as const
+          ).map(item => (
+            <button
+              aria-pressed={theme === item.id}
+              className={theme === item.id ? 'selected' : ''}
+              key={item.id}
+              onClick={() => {
+                saveTheme(item.id)
+                setTheme(item.id)
+              }}
+              type="button"
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
       </section>
       {task.error ? <Notice>{task.error}</Notice> : null}
       <button

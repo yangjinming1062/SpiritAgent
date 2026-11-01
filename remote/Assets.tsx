@@ -15,6 +15,7 @@ import {
   Empty,
   FileInput,
   focusAfterRender,
+  GridSkeleton,
   LibraryCard,
   Media,
   Notice,
@@ -511,6 +512,7 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
       ) : null}
       {!creating && !selected ? (
         <>
+          {!loaded && !rows.length ? <GridSkeleton /> : null}
           <div className="asset-grid">
             {rows.map(row => (
               <LibraryCard
@@ -899,6 +901,7 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
       ) : null}
       {!creating && !selected ? (
         <>
+          {!loaded && !outfits.length ? <GridSkeleton /> : null}
           <div className="asset-grid outfits">
             {outfits.map(outfit => {
               return (
