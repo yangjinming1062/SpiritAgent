@@ -1,16 +1,17 @@
 import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 
+import type { VisualDetail } from '@protocol'
+
 import {
   emptyVisualCreation,
-  loadVisualMaterials,
   type VisualCreationDraft,
   visualCreationReady,
   type VisualMaterialOptions
 } from '../shared/visuals'
 
 import type { RemoteApi } from './api'
-import { errorText } from './api'
+import { useMaterialOptions } from './material-options'
 import { Notice, useAlive, usePageState, useTask } from './ui'
 
 export function VisualCreate({
@@ -18,45 +19,17 @@ export function VisualCreate({
   onDone
 }: {
   api: RemoteApi
-  onDone: (visualId?: string) => Promise<void>
+  onDone: (created?: VisualDetail) => Promise<void>
 }): ReactElement {
   const alive = useAlive()
   const [draft, setDraft] = usePageState('visuals.creation', emptyVisualCreation)
   const [requests, setRequests] = usePageState<Record<string, string>>('visuals.creationRequests', {})
   const [file, setFile] = usePageState<File | null>('visuals.uploadFile', null, false)
   const [preview, setPreview] = useState('')
-  const [materials, setMaterials] = useState<VisualMaterialOptions>({ outfits: [], scenes: [], actions: [] })
-  const [materialError, setMaterialError] = useState('')
+  const { materials, error: materialError } = useMaterialOptions(api, draft.mode === 'create', draft.mode)
   const { run, busy, error } = useTask()
   const upload = draft.mode === 'upload'
   const patch = (value: Partial<VisualCreationDraft>): void => setDraft(previous => ({ ...previous, ...value }))
-
-  useEffect(() => {
-    if (draft.mode !== 'create') {
-      return
-    }
-    let current = true
-    void loadVisualMaterials({
-      outfits: () => api.invoke('companion.get_outfits'),
-      scenes: cursor => api.invoke('companion_scenes.scene_list_route', { query: { cursor, limit: 100 } }),
-      actions: cursor =>
-        api.invoke('companion_actions.list_actions', { query: { cursor, limit: 100, group: 'in_library' } })
-    })
-      .then(value => {
-        if (current && alive()) {
-          setMaterials(value)
-          setMaterialError('')
-        }
-      })
-      .catch(failure => {
-        if (current && alive()) {
-          setMaterialError(errorText(failure))
-        }
-      })
-    return () => {
-      current = false
-    }
-  }, [api, draft.mode, alive])
 
   useEffect(() => {
     if (!file) {
@@ -87,7 +60,7 @@ export function VisualCreate({
       if (alive()) {
         setFile(null)
         patch({ mode: null })
-        await onDone(result.id)
+        await onDone(result)
       }
       return
     }

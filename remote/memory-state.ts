@@ -74,10 +74,10 @@ export async function* readActiveMemories(
   let cursor: string | null = null
   while (true) {
     const result: MemoryListResponse = await api.invoke('resource_catalog.get_memories', {
-      query: { ...query, status: 'active', limit: 500, cursor }
+      query: { ...query, limit: 500, cursor }
     })
     yield result.memories
-    cursor = result.next_cursor ?? null
+    cursor = result.next_cursor
     if (!result.memories.length || !cursor) {
       return
     }
@@ -85,7 +85,7 @@ export async function* readActiveMemories(
 }
 
 /** 写入结果不明时回读核对：按内容检索同一条，取回服务端保存的版本。 */
-export async function findSavedMemory(
+async function findSavedMemory(
   api: RemoteApi,
   preset: string,
   row: MemoryItem,

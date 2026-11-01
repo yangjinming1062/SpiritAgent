@@ -81,7 +81,7 @@ export class RemoteGateway {
       createSocket: url => new WebSocket(url),
       url: async streamId => {
         const { ticket } = await this.api.invoke('gateway.gateway_ticket', {
-          body: { stream_id: streamId ?? null }
+          body: { stream_id: streamId }
         })
         const url = new URL('/api/gateway/ws', location.origin)
         url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'

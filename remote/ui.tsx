@@ -18,6 +18,15 @@ export function videoQueueText(queue: VideoQueueState): string {
 
 const PageState = createContext<{ prefix: string; values: Map<string, unknown> } | null>(null)
 
+function usePageStore(): { prefix: string; values: Map<string, unknown> } {
+  const state = useContext(PageState)
+  if (!state) {
+    throw new Error('页面状态缺少应用上下文')
+  }
+
+  return state
+}
+
 export function PageStateProvider({ children, scope }: { children: ReactNode; scope: string }): ReactElement {
   const [state] = useState(() => ({ prefix: `remote:${scope}:ui:`, values: new Map<string, unknown>() }))
 
@@ -25,14 +34,14 @@ export function PageStateProvider({ children, scope }: { children: ReactNode; sc
 }
 
 export function usePageState<T>(key: string, initial: T, persist = true): [T, Dispatch<SetStateAction<T>>] {
-  const state = useContext(PageState)
+  const state = usePageStore()
   const [value, setValue] = useState<T>(() => {
-    if (state?.values.has(key)) {
+    if (state.values.has(key)) {
       return state.values.get(key) as T
     }
 
     try {
-      const saved = persist && state ? sessionStorage.getItem(state.prefix + key) : null
+      const saved = persist ? sessionStorage.getItem(state.prefix + key) : null
 
       return saved ? (JSON.parse(saved) as T) : initial
     } catch {
@@ -46,9 +55,9 @@ export function usePageState<T>(key: string, initial: T, persist = true): [T, Di
     action => {
       const next = typeof action === 'function' ? (action as (previous: T) => T)(valueRef.current) : action
       valueRef.current = next
-      state?.values.set(key, next)
+      state.values.set(key, next)
 
-      if (persist && state) {
+      if (persist) {
         try {
           sessionStorage.setItem(state.prefix + key, JSON.stringify(next))
         } catch {
@@ -64,11 +73,11 @@ export function usePageState<T>(key: string, initial: T, persist = true): [T, Di
 }
 
 export function usePageScroll(key: string, ready: boolean): void {
-  const state = useContext(PageState)
+  const state = usePageStore()
 
   useEffect(() => {
     const content = document.querySelector<HTMLElement>('.content')
-    if (!state || !content || !ready) {
+    if (!content || !ready) {
       return
     }
     const storageKey = state.prefix + `scroll:${key}`

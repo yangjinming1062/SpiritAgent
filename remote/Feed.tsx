@@ -20,6 +20,9 @@ import {
   useTask
 } from './ui'
 
+// 没有游标与 has_more：整页返回表示可能还有更早的日记。
+const DIARY_PAGE_SIZE = 100
+
 async function markReadAfterRender(
   unreadIds: string[],
   isCurrent: () => boolean,
@@ -386,7 +389,7 @@ function DiaryView({ api, onRead, refresh }: { api: RemoteApi; onRead: () => voi
   const load = useCallback(async () => {
     const revision = ++request.current
     const result = await api.invoke('companion_journal.get_diary', {
-      query: { from: from || undefined, to: to || undefined, limit: 100 }
+      query: { from: from || undefined, to: to || undefined, limit: DIARY_PAGE_SIZE }
     })
 
     if (alive() && revision === request.current) {
@@ -448,7 +451,7 @@ function DiaryView({ api, onRead, refresh }: { api: RemoteApi; onRead: () => voi
       ) : (
         <Empty title="日记还没写到这里">伙伴的第一人称日记会保存在这里。</Empty>
       )}
-      {entries.length === 100 ? (
+      {entries.length === DIARY_PAGE_SIZE ? (
         <button
           className="load-more"
           onClick={() => {

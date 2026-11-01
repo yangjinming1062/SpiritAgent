@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 
 import type { ApiSchemas } from '../shared/api.generated'
@@ -8,11 +7,11 @@ import {
   visualMaterialCopy,
   visualMaterialGroups
 } from '../shared/visual-materials'
-import { loadVisualMaterials, type VisualMaterialOptions } from '../shared/visuals'
+import type { VisualMaterialOptions } from '../shared/visuals'
 
 import type { RemoteApi } from './api'
-import { errorText } from './api'
-import { Media, Notice, useAlive, usePageState, useTask } from './ui'
+import { useMaterialOptions } from './material-options'
+import { Media, Notice, usePageState, useTask } from './ui'
 
 const a = visualMaterialCopy.zh
 
@@ -25,38 +24,13 @@ export function VisualAnalysis({
   visual: ApiSchemas['VisualDetailView']
   onChanged: () => Promise<void>
 }): ReactElement {
-  const alive = useAlive()
   const { run, busy, error } = useTask()
   const job = visual.analysis
   const { active, canContinue } = visualAnalysisControls(job)
-  const [materials, setMaterials] = useState<VisualMaterialOptions>({ outfits: [], scenes: [], actions: [] })
-  const [materialError, setMaterialError] = useState('')
   const materialRevision = job?.result?.components
     .map(row => `${row.material_id}:${row.status}:${row.operation_state}`)
     .join(',')
-  useEffect(() => {
-    let current = true
-    void loadVisualMaterials({
-      outfits: () => api.invoke('companion.get_outfits'),
-      scenes: cursor => api.invoke('companion_scenes.scene_list_route', { query: { cursor, limit: 100 } }),
-      actions: cursor =>
-        api.invoke('companion_actions.list_actions', { query: { cursor, limit: 100, group: 'in_library' } })
-    })
-      .then(value => {
-        if (current && alive()) {
-          setMaterials(value)
-          setMaterialError('')
-        }
-      })
-      .catch(failure => {
-        if (current && alive()) {
-          setMaterialError(errorText(failure))
-        }
-      })
-    return () => {
-      current = false
-    }
-  }, [api, materialRevision, visual.id, alive])
+  const { materials, error: materialError } = useMaterialOptions(api, true, materialRevision)
 
   const command = (body: ApiSchemas['ImportAnalysisRequest']): void => {
     void run(async () => {

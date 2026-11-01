@@ -5,7 +5,6 @@ import base64
 from infrastructure.request_errors import RequestError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.appearance.schemas import ImageAdoptRequest
 from features.companion.schemas import CompanionOperationResponse
 from features.scenes.models import SceneOrigin
 from features.scenes.queries import get_scene, get_scene_state, list_scenes, response_for_scene
@@ -84,7 +83,7 @@ async def post_scene_prompt(user_id: int, body: ScenePromptRequest) -> SceneResp
     return response_for_scene(row)
 
 
-async def _adopt_scene_image(user_id: int, scene_id: int | None, body: ImageAdoptRequest) -> SceneResponse:
+async def _adopt_scene_image(user_id: int, scene_id: int | None, body: SceneImportRequest) -> SceneResponse:
     data = _decode_image(body.image)
     try:
         row = await adopt_scene(user_id, scene_id, data=data)

@@ -80,8 +80,6 @@ class SceneGenerateRequest(BaseModel):
 
     notes: str | None = Field(default=None, max_length=500, pattern=r"^[^\x00]*$")
     image: str | None = Field(default=None, min_length=1, max_length=8 * 1024 * 1024)
-    # 客户端声明的类型只做入口约束；场景服务按图片实际格式编码。
-    content_type: Literal["image/png", "image/jpeg", "image/webp", "image/gif"] = "image/png"
 
 
 class ScenePromptRequest(BaseModel):

@@ -55,7 +55,6 @@ export type SceneWire = ApiSchemas['SceneResponse']
 interface SceneGenerationInput {
   notes?: string
   image?: string
-  content_type?: string
 }
 
 export const $pendingScene = atom<SceneAsset | null>(null)
@@ -678,17 +677,10 @@ export async function createScene(input: SceneGenerationInput = {}): Promise<Sce
   $sceneCreationIssue.set(null)
 
   try {
-    const { content_type, ...details } = input
-    const mime = (['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const).find(value => value === content_type)
-
-    if (content_type && !mime) {
-      throw new Error('仅支持 PNG / JPEG / WebP / GIF 图片')
-    }
-
     requestStarted = true
 
     const row = await sceneRequest('companion_scenes.create_scene', {
-      body: { ...details, content_type: mime, source: 'generate' }
+      body: { ...input, source: 'generate' }
     })
 
     if (epoch === currentClearEpoch()) {
@@ -735,16 +727,12 @@ export async function prepareScenePrompt(
   return { id: row.id, prompt: row.prompt }
 }
 
-export async function adoptSceneImage(
-  image: { base64: string; contentType: string },
-  sceneId?: string
-): Promise<string | null> {
+export async function adoptSceneImage(image: { base64: string }, sceneId?: string): Promise<string | null> {
   const result = await mutate('companion_scenes.create_scene', {
     body: {
       source: 'analysis',
       scene_id: sceneId ? sceneId : undefined,
-      image: image.base64,
-      content_type: image.contentType
+      image: image.base64
     }
   })
 

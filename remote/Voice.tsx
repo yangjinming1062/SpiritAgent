@@ -99,6 +99,7 @@ export function Voice({ api, refresh }: { api: RemoteApi; refresh: number }): Re
     return fixed?.label || (custom ? customVoiceLabel(custom) : current.voice_id)
   }
 
+  // 采纳会推进候选版本并改变已保存声音清单，须回读刷新后再继续操作。
   const adoptPreview = () =>
     run(async () => {
       if (!preview) {
@@ -194,8 +195,10 @@ export function Voice({ api, refresh }: { api: RemoteApi; refresh: number }): Re
                       disabled={busy || current?.voice_id === voice.id}
                       onClick={() =>
                         run(async () => {
-                          await api.invoke('voices.put_current_voice', { body: { voice_id: voice.id } })
-                          await load()
+                          const next = await api.invoke('voices.put_current_voice', { body: { voice_id: voice.id } })
+                          if (alive()) {
+                            setCurrent(next)
+                          }
                         })
                       }
                       type="button"
@@ -330,9 +333,7 @@ export function Voice({ api, refresh }: { api: RemoteApi; refresh: number }): Re
             disabled={busy}
             onClick={() =>
               run(async () => {
-                if (activeOperation) {
-                  await api.invoke('voices.delete_voice_operation', { path: { operation_id: activeOperation } })
-                }
+                await api.invoke('voices.delete_voice_operation', { path: { operation_id: activeOperation } })
               })
             }
             type="button"

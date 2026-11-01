@@ -133,7 +133,7 @@ export interface ApiSchemas {
   "OnboardingStateResponse": { "answers": { [key: string]: string }; "next_field": (string | null); "complete": boolean }
   "OutfitAdoptRequest": { "source": "analysis"; "description"?: (string | null); "image": string; "content_type"?: (string | null) }
   "OutfitCreateRequest": { "source": "generate"; "description"?: (string | null); "image"?: (string | null); "content_type"?: (string | null) }
-  "OutfitImageImportRequest": { "image": string; "content_type"?: (string | null); "source": "analysis" }
+  "OutfitImageImportRequest": { "image": string; "source": "analysis"; "content_type"?: (string | null) }
   "OutfitListResponse": { "outfits": Array<ApiSchemas["OutfitResponse"]>; "policy": "locked" | "llm_may_replace" }
   "OutfitPolicyRequest": { "policy": "locked" | "llm_may_replace" }
   "OutfitPolicyResponse": { "policy": "locked" | "llm_may_replace" }
@@ -287,10 +287,10 @@ export interface ApiSchemas {
   "RunnerRunnerToolSchema": { "name": string; "description": string; "parameters": { [key: string]: ApiSchemas["RunnerJsonValue"] }; [key: string]: unknown }
   "RunnerRunnerToolsResult": { "tools": Array<ApiSchemas["RunnerRunnerToolSchema"]> }
   "SceneDescriptionRequest": { "title": string; "description": string }
-  "SceneGenerateRequest": { "source": "generate"; "notes"?: (string | null); "image"?: (string | null); "content_type"?: "image/png" | "image/jpeg" | "image/webp" | "image/gif" }
+  "SceneGenerateRequest": { "source": "generate"; "notes"?: (string | null); "image"?: (string | null) }
   "SceneImageDimensions": { "width": number; "height": number }
   "SceneImageSize": { "width": number; "height": number }
-  "SceneImportRequest": { "image": string; "content_type"?: (string | null); "source": "analysis"; "scene_id"?: (string | null) }
+  "SceneImportRequest": { "image": string; "source": "analysis"; "scene_id"?: (string | null) }
   "SceneListResponse": { "scenes": Array<ApiSchemas["SceneResponse"]>; "total": (number | null); "has_more": boolean; "next_cursor": (string | null); "limit": number }
   "SceneMediaRef": { "scene_id": (string | null); "title": string; "path": string; "content_hash": string; "description": string; "revision": (string | null) }
   "SceneMediaRequest": { "request_id": string; "scene_id": string; "day_phase"?: ("dawn" | "day" | "dusk" | "night" | null); "requirements"?: string }

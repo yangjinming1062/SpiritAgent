@@ -218,21 +218,19 @@ export function Chat({
     [api, alive]
   )
   useEffect(() => () => cancellations.close(), [cancellations])
-  const draftKey = (id: string) => `remote:${userId}:${device}:draft:${id}`
-  const promptKey = (id: string) => `remote:${userId}:${device}:submission:${id}`
+  const draftKey = useCallback((id: string) => `remote:${userId}:${device}:draft:${id}`, [userId, device])
+  const promptKey = useCallback((id: string) => `remote:${userId}:${device}:submission:${id}`, [userId, device])
   const cancellationKey = useCallback((id: string) => `remote:${userId}:${device}:cancellation:${id}`, [userId, device])
 
   const confirmPrompt = useCallback(
     (id: string, request: PendingPrompt) => {
-      const submissionKey = `remote:${userId}:${device}:submission:${id}`
-      const savedDraftKey = `remote:${userId}:${device}:draft:${id}`
-      const stored = readPendingPrompt(submissionKey)
+      const stored = readPendingPrompt(promptKey(id))
       if (stored && stored.id !== request.id) {
         return
       }
-      sessionStorage.removeItem(submissionKey)
-      if (!request.replace && sessionStorage.getItem(savedDraftKey)?.trim() === request.text) {
-        sessionStorage.removeItem(savedDraftKey)
+      sessionStorage.removeItem(promptKey(id))
+      if (!request.replace && sessionStorage.getItem(draftKey(id))?.trim() === request.text) {
+        sessionStorage.removeItem(draftKey(id))
       }
       if (!alive() || selectedRef.current !== id || pending.current?.id !== request.id) {
         return
@@ -251,7 +249,7 @@ export function Chat({
         )
       }
     },
-    [alive, userId, device]
+    [alive, draftKey, promptKey]
   )
 
   const releaseRecording = useCallback(() => {
@@ -338,7 +336,7 @@ export function Chat({
         const firstId = incoming[0]?.id
         // 快照已覆盖的全量替换仍使旧分页失效，不能重放它的旧正文。
         const historyReplaced =
-          (result.history_revision ?? 0) !== (historyRevisions.current.get(id) ?? 0) ||
+          result.history_revision !== (historyRevisions.current.get(id) ?? 0) ||
           buffered.events.some(
             event =>
               event.stream_id === result.stream_id &&
@@ -346,7 +344,7 @@ export function Chat({
               event.seq <= (result.current_seq ?? 0) &&
               (event.type === 'message.replaced' || commandHistory(event) !== null)
           )
-        historyRevisions.current.set(id, result.history_revision ?? 0)
+        historyRevisions.current.set(id, result.history_revision)
         setMessages(previous =>
           result.truncated && !historyReplaced
             ? mergeMessages(
@@ -362,11 +360,10 @@ export function Chat({
 
         if (!result.active_turn && receipt && (receipt.status === 'failed' || receipt.status === 'interrupted')) {
           setFailure(receipt.error || '上一回合已中断，请核对会话后重试')
-          setRetryMessage(receipt.retry_message_id ?? null)
+          setRetryMessage(receipt.retry_message_id)
         }
 
-        const pendingKey = `remote:${userId}:${device}:submission:${id}`
-        const prior = readPendingPrompt(pendingKey)
+        const prior = readPendingPrompt(promptKey(id))
         let confirmed = receipt?.request_id === prior?.id || result.active_turn?.request_id === prior?.id
         if (prior && !confirmed) {
           const known = await readTurnReceipt(api, { sessionId: id, requestId: prior.id })
@@ -385,7 +382,7 @@ export function Chat({
         if (prior && confirmed) {
           confirmPrompt(id, prior)
         }
-        setReadOnly(result.info?.is_automation === true)
+        setReadOnly(result.info.is_automation)
         setHasMore(result.truncated === true || Boolean(result.next_cursor))
         const stopId = sessionStorage.getItem(cancellationKey(id))
         if (stopId) {
@@ -416,7 +413,7 @@ export function Chat({
         }
       }
     },
-    [alive, api, cancellationKey, cancellations, confirmPrompt, gateway, userId, device]
+    [alive, api, cancellationKey, cancellations, confirmPrompt, gateway, promptKey, userId, device]
   )
 
   finishCancellation.current = async (receipt, turn, error) => {
@@ -565,7 +562,7 @@ export function Chat({
       }
     } else if (event.type === 'error') {
       setFailure(event.payload.message)
-      setRetryMessage(event.payload.retry_message_id ?? null)
+      setRetryMessage(event.payload.retry_message_id)
     } else if (
       event.type === 'message.media' ||
       event.type === 'video_gen.queue' ||
@@ -693,8 +690,7 @@ export function Chat({
                       type: attachment.type,
                       file_url: attachment.url
                     }))
-                  }),
-            response_preference: 'text'
+                  })
           }
         }))
 
@@ -1049,12 +1045,24 @@ export function Chat({
         ) : null}
         {messages
           .filter(message => message.role === 'assistant' || message.role === 'user' || message.subtype)
-          .map((message, index) => (
+          .map(message => (
             <Message
               api={api}
               device={device}
-              key={message.id ?? `message-${index}`}
+              key={message.id}
               message={message}
+              onReplaceBubble={(bubbleIndex, bubble) =>
+                setMessages(previous =>
+                  previous.map(item =>
+                    item.id === message.id && item.content_type === 'companion_reply'
+                      ? {
+                          ...item,
+                          bubbles: item.bubbles.map((current, index) => (index === bubbleIndex ? bubble : current))
+                        }
+                      : item
+                  )
+                )
+              }
               refresh={refreshMessages}
               replace={
                 message.can_replace_reply && message.id === lastReplyMessageId
@@ -1070,7 +1078,7 @@ export function Chat({
           <div className="message assistant">
             <div className="bubble">
               {visibleTurn.bubbles.map((bubble, index) => (
-                <Bubble api={api} bubble={bubble} key={index} refresh={refreshMessages} />
+                <Bubble bubble={bubble} key={index} refresh={refreshMessages} />
               ))}
               {visibleTurn.text ? (
                 <p>{visibleTurn.text}</p>
@@ -1234,6 +1242,7 @@ function Message({
   refresh,
   userId,
   device,
+  onReplaceBubble,
   replace,
   replacing,
   replaceDisabled
@@ -1243,6 +1252,7 @@ function Message({
   refresh: () => void
   userId: string
   device: string
+  onReplaceBubble: (bubbleIndex: number, bubble: CompanionBubble) => void
   replace?: () => void
   replacing?: boolean
   replaceDisabled?: boolean
@@ -1270,14 +1280,18 @@ function Message({
         {message.content_type === 'companion_reply' ? (
           message.bubbles.map((bubble, index) => (
             <Bubble
-              api={api}
               bubble={bubble}
-              device={device}
-              index={index}
               key={index}
-              messageId={message.id}
               refresh={refresh}
-              userId={userId}
+              voice={{
+                progressKey: `remote:${userId}:${device}:voice:${message.id}:${index}`,
+                regenerate: async () => {
+                  const next = await api.invoke('sessions.retry_voice_bubble', {
+                    path: { message_id: message.id, bubble_index: index }
+                  })
+                  onReplaceBubble(index, next)
+                }
+              }}
             />
           ))
         ) : (
@@ -1320,28 +1334,17 @@ function Message({
 
 function Bubble({
   bubble,
-  api,
   refresh,
-  messageId,
-  index = 0,
-  userId,
-  device
+  voice
 }: {
   bubble: CompanionBubble
-  api: RemoteApi
   refresh: () => void
-  messageId?: string
-  index?: number
-  userId?: string
-  device?: string
+  /** 已持久化消息里的语音气泡：携带播放进度键与重新生成入口。 */
+  voice?: { progressKey: string; regenerate: () => Promise<void> }
 }): ReactElement {
   const { run, busy, error } = useTask()
   const audioRef = useRef<HTMLAudioElement>(null)
   const savedSecond = useRef(-1)
-  const progressKey =
-    userId !== undefined && device !== undefined && messageId !== undefined
-      ? `remote:${userId}:${device}:voice:${messageId}:${index}`
-      : null
 
   if (bubble.type === 'text') {
     return <p>{bubble.text}</p>
@@ -1352,60 +1355,49 @@ function Bubble({
   }
 
   if (bubble.type === 'voice') {
+    const audio = bubble.audio
+
     return (
       <div className="voice-bubble">
         <p>{bubble.text}</p>
-        {bubble.audio ? (
+        {audio ? (
           <audio
             controls
             onEnded={() => {
-              if (progressKey) {
-                localStorage.setItem(progressKey, String(bubble.audio?.duration ?? 0))
+              if (voice) {
+                localStorage.setItem(voice.progressKey, String(audio.duration))
               }
             }}
             onError={refresh}
             onLoadedMetadata={() => {
-              const audio = audioRef.current
-              const saved = progressKey ? Number(localStorage.getItem(progressKey)) : 0
+              const saved = voice ? Number(localStorage.getItem(voice.progressKey)) : 0
 
-              if (audio && Number.isFinite(saved) && saved < audio.duration) {
-                audio.currentTime = saved
+              if (audioRef.current && Number.isFinite(saved) && saved < audioRef.current.duration) {
+                audioRef.current.currentTime = saved
               }
             }}
             onPause={() => {
-              if (audioRef.current && progressKey) {
-                localStorage.setItem(progressKey, String(audioRef.current.currentTime))
+              if (audioRef.current && voice) {
+                localStorage.setItem(voice.progressKey, String(audioRef.current.currentTime))
               }
             }}
             onPlay={event => {
               pauseMedia(event.currentTarget)
             }}
             onTimeUpdate={() => {
-              const audio = audioRef.current
+              const current = audioRef.current
 
-              if (audio && progressKey && Math.floor(audio.currentTime) !== savedSecond.current) {
-                savedSecond.current = Math.floor(audio.currentTime)
-                localStorage.setItem(progressKey, String(audio.currentTime))
+              if (current && voice && Math.floor(current.currentTime) !== savedSecond.current) {
+                savedSecond.current = Math.floor(current.currentTime)
+                localStorage.setItem(voice.progressKey, String(current.currentTime))
               }
             }}
             preload="none"
             ref={audioRef}
-            src={bubble.audio.url}
+            src={audio.url}
           />
-        ) : messageId ? (
-          <button
-            className="subtle"
-            disabled={busy}
-            onClick={() =>
-              run(async () => {
-                await api.invoke('sessions.retry_voice_bubble', {
-                  path: { message_id: messageId, bubble_index: index }
-                })
-                refresh()
-              })
-            }
-            type="button"
-          >
+        ) : voice ? (
+          <button className="subtle" disabled={busy} onClick={() => run(voice.regenerate)} type="button">
             重新生成语音
           </button>
         ) : (

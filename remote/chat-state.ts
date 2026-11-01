@@ -37,7 +37,7 @@ export function advanceTurn(previous: ActiveTurn | null, event: GatewayEvent): A
           : finishSegment(turn)
       return {
         ...fresh,
-        replace_reply_message_id: event.payload.replace_reply_message_id ?? null,
+        replace_reply_message_id: event.payload.replace_reply_message_id,
         request_id: event.payload.request_id ?? fresh.request_id,
         running: true
       }

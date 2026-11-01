@@ -106,6 +106,9 @@ export function Assets({
   return kind === 'scene' ? <SceneLibrary api={api} refresh={refresh} /> : <Wardrobe api={api} refresh={refresh} />
 }
 
+/** 制作完成的素材实体，按类型区分供调用方直接落地，免二次读取。 */
+type CreatedAsset = { kind: 'scene'; value: Scene } | { kind: 'outfit'; value: Outfit }
+
 function AssetCreator({
   api,
   disabled = false,
@@ -119,7 +122,7 @@ function AssetCreator({
   kind: 'scene' | 'outfit'
   onCheck: () => Promise<void>
   onClose: () => void
-  onCreated: (id: string) => Promise<void>
+  onCreated: (created: CreatedAsset) => Promise<void>
 }): ReactElement {
   const { run, busy, error } = useTask()
   const alive = useAlive()
@@ -215,32 +218,55 @@ function AssetCreator({
           }
           onClick={() =>
             run(async () => {
-              const result = await submit(async () => {
+              const result = await submit(async (): Promise<CreatedAsset | undefined> => {
+                if (kind === 'scene') {
+                  if (source === 'upload') {
+                    if (!image) {
+                      return
+                    }
+                    return {
+                      kind: 'scene',
+                      value: await api.invoke('companion_scenes.create_scene', {
+                        body: { source: 'analysis', image: image.base64 }
+                      })
+                    }
+                  }
+                  return {
+                    kind: 'scene',
+                    value: await api.invoke('companion_scenes.create_scene', {
+                      body: { source: 'generate', notes: description.trim() || undefined, image: image?.base64 }
+                    })
+                  }
+                }
                 if (source === 'upload') {
                   if (!image) {
                     return
                   }
-                  const imported = { source: 'analysis' as const, image: image.base64, content_type: image.type }
-                  return scene
-                    ? api.invoke('companion_scenes.create_scene', { body: imported })
-                    : api.invoke('companion.post_outfit', {
-                        body: { ...imported, description: description.trim() || undefined }
-                      })
+                  return {
+                    kind: 'outfit',
+                    value: await api.invoke('companion.post_outfit', {
+                      body: {
+                        source: 'analysis',
+                        image: image.base64,
+                        content_type: image.type,
+                        description: description.trim() || undefined
+                      }
+                    })
+                  }
                 }
-                return scene
-                  ? api.invoke('companion_scenes.create_scene', {
-                      body: { source: 'generate', notes: description.trim() || undefined, ...imageBody }
-                    })
-                  : api.invoke('companion.post_outfit', {
-                      body: { source: 'generate', description: description.trim() || undefined, ...imageBody }
-                    })
+                return {
+                  kind: 'outfit',
+                  value: await api.invoke('companion.post_outfit', {
+                    body: { source: 'generate', description: description.trim() || undefined, ...imageBody }
+                  })
+                }
               })
               if (result && alive()) {
                 setDescription('')
                 setImage(null)
                 setPrompt('')
                 setSource('ai')
-                await onCreated(result.id)
+                await onCreated(result)
                 clearSubmission()
               }
             })
@@ -287,7 +313,7 @@ function AssetCreator({
                   if (alive()) {
                     setPrompt(result.prompt)
                     setSource('ai')
-                    await onCreated(result.id)
+                    await onCreated({ kind: 'scene', value: result })
                     clearSubmission()
                   }
                 } else {
@@ -354,7 +380,7 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
 
       const [library, current, detail] = await Promise.all([
         api.invoke('companion_scenes.scene_list_route', {
-          query: { q: query, cursor: append ? (nextCursor.current ?? undefined) : undefined, limit: 30 }
+          query: { q: query, cursor: append ? (nextCursor.current ?? undefined) : undefined }
         }),
         api.invoke('companion_scenes.read_scene_state'),
         selectedId
@@ -441,8 +467,10 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
               void run(async () => {
                 setPolicySaving(true)
                 try {
-                  await api.invoke('companion_scenes.patch_scene_policy', { body: { policy } })
-                  await load()
+                  const next = await api.invoke('companion_scenes.patch_scene_policy', { body: { policy } })
+                  if (alive()) {
+                    setState(current => (current ? { ...current, policy: next.policy } : current))
+                  }
                 } finally {
                   if (alive()) {
                     setPolicySaving(false)
@@ -487,10 +515,9 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
             setCreating(false)
             focusAfterRender('[data-create-asset="scene"]')
           }}
-          onCreated={async id => {
-            const row = await api.invoke('companion_scenes.scene_detail_route', { path: { scene_id: id } })
-            if (alive()) {
-              setSelected(row)
+          onCreated={async created => {
+            if (alive() && created.kind === 'scene') {
+              setSelected(created.value)
               setCreating(false)
             }
             await load()
@@ -759,7 +786,7 @@ function SceneDetail({
 
               if (alive()) {
                 await api.invoke('companion_scenes.create_scene', {
-                  body: { source: 'analysis', scene_id: scene.id, image: image.base64, content_type: image.type }
+                  body: { source: 'analysis', scene_id: scene.id, image: image.base64 }
                 })
                 await onUpdate()
               }
@@ -848,8 +875,10 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
               void run(async () => {
                 setPolicySaving(true)
                 try {
-                  await api.invoke('companion.patch_outfit_policy', { body: { policy: value } })
-                  await load()
+                  const next = await api.invoke('companion.patch_outfit_policy', { body: { policy: value } })
+                  if (alive()) {
+                    setPolicy(next.policy)
+                  }
                 } finally {
                   if (alive()) {
                     setPolicySaving(false)
@@ -871,9 +900,9 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
             setCreating(false)
             focusAfterRender('[data-create-asset="outfit"]')
           }}
-          onCreated={async id => {
+          onCreated={async ({ value }) => {
             if (alive()) {
-              setSelectedId(id)
+              setSelectedId(value.id)
               setCreating(false)
             }
             await load()

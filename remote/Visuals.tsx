@@ -410,15 +410,12 @@ export function Visuals({
           <PageHeader subtitle="创建、上传与收藏你和伙伴的影像" title="影像" />
           <VisualCreate
             api={api}
-            onDone={async visualId => {
+            onDone={async created => {
               setQuery('')
               setSource('')
               setMediaKind('all')
-              if (visualId) {
-                const detail = await api.invoke('companion_visuals.get_visual', { path: { visual_id: visualId } })
-                if (alive()) {
-                  setSelected(detail)
-                }
+              if (created) {
+                setSelected(created)
               }
               await load()
             }}

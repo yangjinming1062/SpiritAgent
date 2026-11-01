@@ -326,7 +326,7 @@ function ActionEditor({
             }
             type="button"
           >
-            {uiSaveLabel(action)}
+            {action ? '保存修改' : '创建动作'}
           </button>
         </div>
       )}
@@ -414,10 +414,6 @@ function ActionEditor({
   )
 }
 
-function uiSaveLabel(action: ActionDefinition | null): string {
-  return action ? '保存修改' : '创建动作'
-}
-
 export function Actions({ api, refresh }: { api: RemoteApi; refresh: number }): ReactElement {
   const alive = useAlive()
   const { run, runLatest, busy, error } = useTask()
@@ -458,8 +454,7 @@ export function Actions({ api, refresh }: { api: RemoteApi; refresh: number }): 
           query: {
             query: query.trim() || undefined,
             group,
-            cursor: append ? (nextCursor.current[group] ?? undefined) : undefined,
-            limit: 50
+            cursor: append ? (nextCursor.current[group] ?? undefined) : undefined
           }
         })
 
@@ -494,8 +489,6 @@ export function Actions({ api, refresh }: { api: RemoteApi; refresh: number }): 
     load,
     runLatest
   )
-
-  const visible = rows
 
   useEffect(() => {
     if (!selected) {
@@ -630,7 +623,7 @@ export function Actions({ api, refresh }: { api: RemoteApi; refresh: number }): 
           </div>
           {error || detailError ? <Notice>{error || detailError}</Notice> : null}
           <div className="asset-grid">
-            {visible.map(row => (
+            {rows.map(row => (
               <LibraryCard
                 cardKey={`action-${row.id}`}
                 imageAlt={row.name}
@@ -656,7 +649,7 @@ export function Actions({ api, refresh }: { api: RemoteApi; refresh: number }): 
               更多动作
             </button>
           ) : null}
-          {loaded && visible.length === 0 && !busy ? (
+          {loaded && rows.length === 0 && !busy ? (
             <Empty title={query ? '没有找到匹配动作' : group === 'in_library' ? '还没有已入库动作' : '没有未入库动作'}>
               自创动作通过评审后会加入动作库。
             </Empty>
