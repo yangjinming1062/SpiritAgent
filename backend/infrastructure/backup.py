@@ -117,7 +117,6 @@ class BackupTable:
     order_by_original_id: bool = False
     scope_column: str = "user_id"
     export_query: Callable[[int], Select[Any]] | None = None
-    export_payload: Callable[[dict[str, Any]], None] | None = None
     prepare_payload: PayloadHook | None = None
     validate_payload: PayloadCheck | None = None
     find_existing: ExistingRow | None = None
@@ -204,8 +203,6 @@ class BackupTable:
                 payload = {
                     column.name: row[self.identity_name if column.name == "id" else column.name] for column in columns
                 }
-                if self.export_payload is not None:
-                    self.export_payload(payload)
                 for name, value in payload.items():
                     if isinstance(value, datetime):
                         payload[name] = ensure_utc(value).isoformat()

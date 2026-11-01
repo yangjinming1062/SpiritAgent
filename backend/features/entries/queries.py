@@ -126,10 +126,7 @@ async def list_posts(
     )
     if cursor is not None:
         try:
-            boundary = decode_timestamp_cursor(cursor)
-            if boundary is None:
-                raise ValueError("Invalid cursor")
-            stamp, row_id = boundary
+            stamp, row_id = decode_timestamp_cursor(cursor)
         except (ValueError, TypeError) as exc:
             raise EntryError("无效的动态分页位置") from exc
         statement = statement.where(
@@ -261,10 +258,7 @@ async def list_comments(
     statement = select(EntryComment).where(EntryComment.user_id == user_id, EntryComment.post_id == post_id)
     if cursor is not None:
         try:
-            boundary = decode_timestamp_cursor(cursor)
-            if boundary is None:
-                raise ValueError("Invalid cursor")
-            stamp, row_id = boundary
+            stamp, row_id = decode_timestamp_cursor(cursor)
         except (ValueError, TypeError) as exc:
             raise EntryError("无效的评论分页位置") from exc
         statement = statement.where(tuple_(EntryComment.created_at, EntryComment.id) > (ensure_utc(stamp), row_id))

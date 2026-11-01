@@ -296,28 +296,24 @@ class LifeContext(BaseModel):
 
 class LifePursuitListResponse(BaseModel):
     items: list[LifePursuitView] = Field(default_factory=list)
-    total: int | None = None
     has_more: bool
     next_cursor: str | None
 
 
 class LifePursuitPublicListResponse(BaseModel):
     items: list[LifePursuitPublicView] = Field(default_factory=list)
-    total: int | None = None
     has_more: bool
     next_cursor: str | None
 
 
 class LifeEventListResponse(BaseModel):
     items: list[LifeEventView] = Field(default_factory=list)
-    total: int | None = None
     has_more: bool
     next_cursor: str | None
 
 
 class LifeEventPublicListResponse(BaseModel):
     items: list[LifeEventPublicView] = Field(default_factory=list)
-    total: int | None = None
     has_more: bool
     next_cursor: str | None
 

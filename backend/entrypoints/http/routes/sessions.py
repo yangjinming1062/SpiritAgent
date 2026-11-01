@@ -143,11 +143,8 @@ async def list_sessions(
     db: DbSession,
     limit: int = Query(default=40, ge=1, le=100),
     cursor: str | None = Query(default=None, max_length=1024),
-    include_total: bool = False,
-    min_messages: int = Query(default=0, ge=0, le=POSTGRES_INT8_MAX),
     archived: Literal["only", "exclude", "include"] = "exclude",
     order: Literal["recent", "created", "messages"] = "recent",
-    include_subagents: bool = False,
     q: str | None = Query(default=None, max_length=512, pattern=r"^[^\x00]*$"),
 ) -> DesktopSessionListResponse:
     return await list_session_resources(
@@ -155,11 +152,8 @@ async def list_sessions(
         db,
         limit=limit,
         cursor=cursor,
-        include_total=include_total,
-        min_messages=min_messages,
         archived=archived,
         order=order,
-        include_subagents=include_subagents,
         query=q,
     )
 

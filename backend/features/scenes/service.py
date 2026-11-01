@@ -653,7 +653,7 @@ async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> 
             or row.replacement_job.token != task_id
         ):
             return
-        if row.replacement_job is None or not row.replacement_job.checkpoint:
+        if not row.replacement_job.checkpoint:
             raise SceneStateError("重新生成任务资料缺失")
         frozen = SceneRegenerationState.model_validate(row.replacement_job.checkpoint)
         if frozen.task_id != task_id:
@@ -986,41 +986,25 @@ async def _resume_scene_row(row: CompanionScene) -> None:
         await resume_scene_generation(row.user_id, row.id)
 
 
-async def resume_scene_jobs() -> None:
+async def resume_scene_jobs(user_id: int | None = None) -> None:
+    """启动恢复未完成的场景任务；带 user_id 时只恢复该账户。"""
+
     async with SESSION_LOCAL() as db:
-        rows = (
-            await db.scalars(
-                select(CompanionScene).where(
-                    or_(
-                        CompanionScene.status == "pending",
-                        CompanionScene.replacement_job.has(SceneJob.availability == "pending"),
-                    ),
-                ),
-            )
-        ).all()
+        conditions = [
+            or_(
+                CompanionScene.status == "pending",
+                CompanionScene.replacement_job.has(SceneJob.availability == "pending"),
+            ),
+        ]
+        if user_id is not None:
+            conditions.append(CompanionScene.user_id == user_id)
+        rows = (await db.scalars(select(CompanionScene).where(*conditions))).all()
     for row in rows:
         await _resume_scene_row(row)
 
 
 async def _scene_paid_boundary(user_id: int) -> None:
     require_new_generation_call(user_id)
-
-
-async def resume_user_scene_jobs(user_id: int) -> None:
-    async with SESSION_LOCAL() as db:
-        rows = (
-            await db.scalars(
-                select(CompanionScene).where(
-                    CompanionScene.user_id == user_id,
-                    or_(
-                        CompanionScene.status == "pending",
-                        CompanionScene.replacement_job.has(SceneJob.availability == "pending"),
-                    ),
-                ),
-            )
-        ).all()
-    for row in rows:
-        await _resume_scene_row(row)
 
 
 _INITIAL_SCENE_DEFAULT_NOTES = "整洁宁静的日常起居空间，光线柔和，桌椅、床铺与少量个人物品摆放合理。"

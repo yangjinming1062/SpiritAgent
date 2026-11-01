@@ -107,7 +107,6 @@ class ActionListResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     actions: list[ActionAssetView]
-    total: int | None = None
     has_more: bool
     next_cursor: str | None = None
     limit: int

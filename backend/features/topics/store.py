@@ -114,8 +114,6 @@ async def reserve_request(
     limit: int,
 ) -> bool:
     row = await _locked_batch(db, batch_id, scope)
-    if kind not in {"search", "detail"}:
-        raise ValueError("Invalid topic request kind")
     column = "search_requests" if kind == "search" else "detail_requests"
     if row.status != "collecting" or getattr(row, column) >= limit or utc_now() >= ensure_utc(row.expires_at):
         return False

@@ -15,9 +15,6 @@ class DesktopSessionInfo(BaseModel):
     started_at: int
     last_active: int
     message_count: int
-    input_tokens: int
-    output_tokens: int
-    tool_call_count: int
     preview: str | None
     pinned: bool
     archived: bool
@@ -28,7 +25,6 @@ class DesktopSessionInfo(BaseModel):
 
 class DesktopSessionListResponse(BaseModel):
     limit: int
-    total: int | None = None
     has_more: bool
     next_cursor: str | None
     sessions: list[DesktopSessionInfo]

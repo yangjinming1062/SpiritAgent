@@ -1,13 +1,12 @@
 """动作素材：语义定义的列表、详情、创建、编辑与删除 REST 端点。"""
 
-from typing import Annotated, Literal
+from typing import Annotated
 
 from fastapi import Path, Query
 from features.action_library import queries as _action_queries
 from features.action_library import use_cases as _actions
 from features.action_library.schemas import (
     ActionAssetDesign,
-    ActionAssetStatus,
     ActionAssetUpdate,
     ActionAssetView,
     ActionLibraryGroup,
@@ -31,22 +30,16 @@ async def list_actions(
     user: CurrentUser,
     db: DbSession,
     query: Annotated[str | None, Query(max_length=200)] = None,
-    clip_kind: Annotated[Literal["once", "loop"] | None, Query()] = None,
-    status: ActionAssetStatus | None = None,
     group: ActionLibraryGroup = "in_library",
     cursor: Annotated[ResourceId | None, Query()] = None,
-    include_total: bool = False,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> ActionListResponse:
     return await _action_queries.list_actions(
         db,
         user.id,
         query=query,
-        clip_kind=clip_kind,
-        status=status,
         group=group,
         cursor=cursor,
-        include_total=include_total,
         limit=limit,
     )
 

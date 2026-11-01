@@ -136,8 +136,11 @@ def register_internal_event_handlers() -> None:
     register_internal_event_handler("companion.life.presentation_requested", life_presentation_requested)
 
 
-def wire_domain_hooks() -> None:
-    """业务域内需要触达生成流程或跨域副作用的少数入口，经装配层注入，保持域间依赖可登记、可检查。"""
+def register_all() -> None:
+    """登记供应商、工具与内部事件；并注入业务域需触达生成流程或跨域副作用的少数入口，保持域间依赖可登记、可检查。"""
+    register_providers()
+    register_tools()
+    register_internal_event_handlers()
     configure_event_serializer(serialize_gateway_event)
     configure_event_audience(gateway_event_audience, event_types=EVENT_CONTRACTS)
     set_job_intent_invalidator(invalidate_cron_companion_intents)
@@ -175,10 +178,3 @@ def wire_domain_hooks() -> None:
         scene_exists=scene_exists,
     )
     set_appearance_readiness_reader(appearance_readiness)
-
-
-def register_all() -> None:
-    register_providers()
-    register_tools()
-    register_internal_event_handlers()
-    wire_domain_hooks()

@@ -111,11 +111,6 @@ async def _upsert_memory(user_id: int, counters: _DailyCounters) -> None:
 
 async def record_interaction(user_id: int, kind: str, hour: int) -> dict:
     """累加当日 kind 计数并在越过阈值时写回 Memory；hour 是用户本地小时（客户端上报 getHours()），日期键同为本地日——夜间反思按本地日读取，两侧口径一致，无时区行时退化为 UTC。"""
-    if kind != "chat_turn":
-        raise ValueError(f"unknown interaction kind: {kind!r}")
-    if not isinstance(hour, int) or not 0 <= hour <= 23:
-        raise ValueError(f"hour must be int in [0, 23], got {hour!r}")
-
     counters = _get_or_seed(user_id, await _tz_for(user_id))
     counters.hour_buckets[hour] = counters.hour_buckets.get(hour, 0) + 1
     counters.chat_turn += 1

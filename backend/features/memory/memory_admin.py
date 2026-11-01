@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
 
 from features.memory.contracts import MemoryConflictError, MemoryDetail, MemoryListItem
-from features.memory.memory_namespaces import MEMORY_KINDS, RECALL_TAGS, participates_in_recall
+from features.memory.memory_namespaces import MEMORY_KINDS, participates_in_recall
 from features.memory.memory_store import (
     active_memory_filter,
     backfill_memory_embeddings,
@@ -45,18 +45,13 @@ def _memory_list_query(
     *,
     kind: str | None = None,
     status: str = "active",
-    tag: str | None = None,
     q: str | None = None,
 ) -> Select[tuple[Memory]]:
     if kind is not None and kind not in MEMORY_KINDS:
         raise ValueError(f"kind must be one of {sorted(MEMORY_KINDS)}")
-    if tag is not None and tag not in RECALL_TAGS:
-        raise ValueError(f"tag must be in {sorted(RECALL_TAGS)}")
     stmt = select(Memory).where(scope_filter(scope), _status_condition(status))
     if kind is not None:
         stmt = stmt.where(Memory.kind == kind)
-    if tag:
-        stmt = stmt.where(Memory.tags.contains([tag]))
     if q:
         stmt = stmt.where(
             or_(Memory.content.icontains(q, autoescape=True), Memory.context.icontains(q, autoescape=True)),
@@ -71,7 +66,6 @@ async def list_memories(
     *,
     kind: str | None = None,
     status: str = "active",
-    tag: str | None = None,
     q: str | None = None,
     limit: int | None = _LIST_DEFAULT_LIMIT,
     before: tuple[datetime, int] | None = None,
@@ -79,7 +73,7 @@ async def list_memories(
     """列出用户记忆；内部批处理可用 limit=None 读取全部，分页调用仍限制条数。"""
     if limit is not None and (limit <= 0 or limit > _LIST_MAX_LIMIT + 1):
         limit = _LIST_DEFAULT_LIMIT
-    stmt = _memory_list_query(scope, kind=kind, status=status, tag=tag, q=q)
+    stmt = _memory_list_query(scope, kind=kind, status=status, q=q)
     if before is not None:
         stmt = stmt.where(tuple_(Memory.updated_at, Memory.id) < before)
     rows = (await db.execute(stmt.order_by(Memory.updated_at.desc(), Memory.id.desc()).limit(limit))).scalars().all()
@@ -241,10 +235,8 @@ async def memory_counts(
     db: AsyncSession,
     scope: MemoryScope,
     *,
-    include_total: bool = False,
     kind: str | None = None,
     status: str = "active",
-    tag: str | None = None,
     q: str | None = None,
 ) -> dict[str, int]:
     recall = Memory.kind == "recall"
@@ -256,9 +248,6 @@ async def memory_counts(
         "user_profile": and_(Memory.kind == "user_profile", active_memory_filter()),
     }
     columns = [func.count().filter(condition).label(key) for key, condition in filters.items()]
-    if include_total:
-        filtered = _memory_list_query(scope, kind=kind, status=status, tag=tag, q=q).subquery()
-        columns.append(select(func.count()).select_from(filtered).correlate(None).scalar_subquery().label("total"))
     row = (await db.execute(select(*columns).where(scope_filter(scope)))).one()
     return dict(row._mapping)
 

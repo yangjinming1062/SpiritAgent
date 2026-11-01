@@ -53,7 +53,6 @@ from .schemas import (
     StageIntent,
     StageLayerMedia,
     StagePresentation,
-    VisualAssetKind,
     VisualDetailView,
     VisualItemView,
     VisualJobListResponse,
@@ -298,7 +297,6 @@ def item_view(item: VisualItem | PresentedVisual, snapshot: VisualSnapshot | Non
         scene_title=scene.title if scene else "",
         action_id=item.action_id,
         action_name=action.name if action else None,
-        input_image_id=item.input_image_id,
         input_image_hash=item.input_image_hash,
         created_at=item.created_at,
         updated_at=item.updated_at,
@@ -331,25 +329,16 @@ def job_view(job: VisualJob) -> VisualJobView:
     progress = parse_job_progress(job.checkpoint)
     return VisualJobView(
         id=job.id,
-        purpose=job.purpose,
         target_kind=job.target_kind,
         asset_kind=job.asset_kind,
         action_name=_job_action_name(job.snapshot_json),
         preparation=progress is not None and progress.source == "base_preparation",
         target_visual_id=job.target_visual_id,
-        expected_version=job.expected_version,
         state=job.state,  # type: ignore[arg-type]
         stage=job.stage,
-        feedback=job.feedback,
-        video_feedback=job.video_feedback,
-        repair_count=job.repair_count,
-        repair_limit=job.repair_limit,
         error=job.error,
         failure_reason=progress.failure_reason if progress is not None and progress.failure_reason else None,
         result_visual_id=job.result_visual_id,
-        result_image_id=job.result_image_id,
-        video_queue=progress.video_queue if progress is not None else None,
-        created_at=job.created_at,
         updated_at=job.updated_at,
     )
 
@@ -359,10 +348,6 @@ async def list_visuals(
     *,
     query: str | None = None,
     media_kind: VisualMediaKind | None = None,
-    asset_kind: VisualAssetKind | None = None,
-    outfit_id: int | None = None,
-    scene_id: int | None = None,
-    action_id: int | None = None,
     source: str | None = None,
     cursor: int | None = None,
     include_total: bool = False,
@@ -383,14 +368,6 @@ async def list_visuals(
             )
         if media_kind is not None:
             filters.append(VisualItem.media_kind == media_kind)
-        if asset_kind is not None:
-            filters.append(VisualItem.asset_kind == asset_kind)
-        if outfit_id is not None:
-            filters.append(VisualItem.outfit_id == outfit_id)
-        if scene_id is not None:
-            filters.append(VisualItem.scene_id == scene_id)
-        if action_id is not None:
-            filters.append(VisualItem.action_id == action_id)
         if source and source.strip():
             pattern = f"%{source.strip()}%"
             snapshot = VisualVersion.snapshot_json
@@ -435,7 +412,6 @@ async def list_visuals(
             VisualVersion.width,
             VisualVersion.height,
             VisualVersion.duration_ms,
-            VisualVersion.input_image_id,
             VisualVersion.input_image_hash,
             func.coalesce(VisualVersion.snapshot_json["source"]["outfit"]["name"].astext, "").label("outfit_name"),
             func.coalesce(VisualVersion.snapshot_json["source"]["scene"]["title"].astext, "").label("scene_title"),
@@ -555,7 +531,6 @@ async def visual_detail(user_id: int, visual_id: int) -> VisualDetailView:
         return VisualDetailView(
             **item_view(item, snapshot).model_dump(),
             snapshot=snapshot,
-            replaced_at_version=item.version - 1 if item.version > 1 else None,
             jobs=[job_view(job) for job in jobs],
             analysis=analysis,
         )
@@ -566,7 +541,6 @@ async def list_jobs(
     *,
     states: list[VisualJobState] | None = None,
     cursor: int | None = None,
-    include_total: bool = False,
     limit: int = 50,
 ) -> VisualJobListResponse:
     async with SESSION_LOCAL() as db:
@@ -576,35 +550,21 @@ async def list_jobs(
         ]
         if states:
             filters.append(VisualJob.state.in_(states))
-        total = (
-            (await db.scalar(select(func.count()).select_from(VisualJob).where(*filters)) or 0)
-            if include_total
-            else None
-        )
         if cursor is not None:
             filters.append(VisualJob.id < cursor)
         fields = (
             VisualJob.id,
-            VisualJob.purpose,
             VisualJob.target_kind,
             VisualJob.asset_kind,
             func.coalesce(VisualJob.snapshot_json["source"]["action"]["name"].astext, "").label("action_name"),
             func.coalesce(VisualJob.checkpoint["source"].as_string() == "base_preparation", False).label("preparation"),
             VisualJob.target_visual_id,
-            VisualJob.expected_version,
             VisualJob.state,
             VisualJob.stage,
-            VisualJob.feedback,
-            VisualJob.video_feedback,
-            VisualJob.repair_count,
-            VisualJob.repair_limit,
             VisualJob.error,
             VisualJob.checkpoint["failure_reason"].as_string().label("failure_reason"),
             VisualJob.result_visual_id,
-            VisualJob.result_image_id,
-            VisualJob.created_at,
             VisualJob.updated_at,
-            VisualJob.checkpoint["video_queue"].label("video_queue"),
         )
         rows = list(
             (
@@ -619,7 +579,6 @@ async def list_jobs(
         )
         return VisualJobListResponse(
             jobs=[VisualJobView.model_validate(dict(row)) for row in rows[:limit]],
-            total=total,
             has_more=len(rows) > limit,
             next_cursor=str(rows[limit - 1]["id"]) if len(rows) > limit else None,
             limit=limit,

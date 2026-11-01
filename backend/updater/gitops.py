@@ -90,7 +90,6 @@ async def repo_status(settings: UpdaterSettings) -> RepoStatus:
         )
     ).split()
     status.ahead, status.behind = int(counts[0]), int(counts[1])
-    status.diverged = status.ahead > 0 and status.behind > 0
     if status.behind:
         status.incoming = await list_commits(settings, f"{status.current_commit}..{status.remote_commit}", limit=50)
     return status

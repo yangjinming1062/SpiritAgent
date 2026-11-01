@@ -3,11 +3,19 @@ from collections.abc import Callable
 from infrastructure.config import SETTINGS
 from infrastructure.logger import get_logger
 from infrastructure.web.web_providers.base import WebSearchProvider
-from infrastructure.web.web_providers.brave_free.provider import BraveFreeWebSearchProvider
+from infrastructure.web.web_providers.brave_free.provider import BraveFreeWebSearchProvider, aclose_brave
 from infrastructure.web.web_providers.ddgs.provider import DDGSWebSearchProvider
-from infrastructure.web.web_providers.tavily.provider import TavilyWebSearchProvider
+from infrastructure.web.web_providers.tavily.provider import TavilyWebSearchProvider, aclose_tavily
 
 logger = get_logger(__name__)
+
+
+async def aclose_web_providers() -> None:
+    """lifespan 关闭时释放各供应商持有的长生命周期 ``httpx.AsyncClient`` 单例——``ddgs`` 不持有持久客户端。"""
+
+    await aclose_brave()
+    await aclose_tavily()
+
 
 # 每个 dispatcher 种类的默认后端，也是配置了未知后端名时的回退目标。
 _DEFAULT_BY_KIND: dict[str, str] = {"search": "ddgs", "extract": "tavily"}

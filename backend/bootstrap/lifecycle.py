@@ -24,7 +24,7 @@ from infrastructure.config import insecure_secret_settings
 from infrastructure.database import ENGINE, SESSION_LOCAL, database_url
 from infrastructure.logger import get_logger, setup_logging
 from infrastructure.temp_files import cleanup_expired
-from infrastructure.web.web_providers import aclose as aclose_web_providers
+from infrastructure.web.extract_provider import aclose_web_providers
 from runtime.background import BackgroundTask
 from runtime.events.loop import start_event_loop
 from runtime.lifecycle import RUNTIME_LIFECYCLE

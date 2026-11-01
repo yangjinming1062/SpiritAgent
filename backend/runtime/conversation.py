@@ -44,7 +44,6 @@ class ToolSnapshot:
 @dataclass
 class ActiveTurnSnapshot:
     request_id: str
-    origin_kind: str
     message_ids: list[ResourceId] = field(default_factory=list)
     assistant_message_id: ResourceId | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)

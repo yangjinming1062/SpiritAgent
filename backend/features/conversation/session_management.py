@@ -15,7 +15,6 @@ from runtime.events.emit import emit_ws_event
 from runtime.presets import resolve_preset_meta
 from runtime.turn_ownership import conversation_is_running, conversation_lock
 from sqlalchemy import (
-    BigInteger,
     ColumnElement,
     DateTime,
     String,
@@ -68,9 +67,6 @@ def _conversation_to_session_info(
     conv: Conversation,
     *,
     msg_count: int,
-    input_tok: int,
-    output_tok: int,
-    tool_count: int,
     preview: str | None,
     companion_name: str | None,
 ) -> DesktopSessionInfo:
@@ -82,9 +78,6 @@ def _conversation_to_session_info(
         started_at=int(conv.created_at.timestamp() * 1000),
         last_active=int(conv.updated_at.timestamp() * 1000),
         message_count=msg_count,
-        input_tokens=input_tok,
-        output_tokens=output_tok,
-        tool_call_count=tool_count,
         preview=preview,
         pinned=conv.pinned_at is not None,
         archived=conv.archived_at is not None,
@@ -140,8 +133,6 @@ def _session_sort(mode: str, message_count: ColumnElement | None = None) -> list
         if mode == "created"
         else Conversation.updated_at
     )
-    if metric is None:
-        raise ValueError("Message order requires statistics")
     return [
         (case((Conversation.kind == SPECIAL_KIND, 1), else_=0), True),
         (case((Conversation.pinned_at.is_not(None), 1), else_=0), True),
@@ -197,21 +188,17 @@ async def list_sessions(
     db: AsyncSession,
     limit: int = 40,
     cursor: str | None = None,
-    min_messages: int = 0,
     archived: Literal["only", "exclude", "include"] = "exclude",
     order: Literal["recent", "created", "messages"] = "recent",
-    include_subagents: bool = False,
     query: str | None = None,
     companion_name: str | None = None,
-    include_total: bool = False,
 ) -> DesktopSessionListResponse:
     conditions = [Conversation.user_id == user_id]
     if archived == "only":
         conditions.append(Conversation.archived_at.is_not(None))
     elif archived == "exclude":
         conditions.append(Conversation.archived_at.is_(None))
-        if not include_subagents:
-            conditions.append(Conversation.parent_id.is_(None))
+        conditions.append(Conversation.parent_id.is_(None))
     if query:
         query = query[:SEARCH_INPUT_MAX_LEN]
         escaped = (
@@ -238,10 +225,7 @@ async def list_sessions(
         )
     mode = "archived" if archived == "only" else order
     position = _session_cursor(cursor, mode)
-    if min_messages > 0:
-        conditions.append(Conversation.visible_message_count >= literal(min_messages, BigInteger()))
     selection = select(Conversation.id).where(*conditions)
-    total = int(await db.scalar(select(func.count()).select_from(selection.subquery())) or 0) if include_total else None
     ordering = _session_sort(mode, Conversation.visible_message_count)
     if position is not None:
         selection = selection.where(_after_session_cursor(ordering, position))
@@ -255,9 +239,6 @@ async def list_sessions(
             Conversation,
             _preview_subquery,
             Conversation.visible_message_count.label("msg_count"),
-            Conversation.input_token_count,
-            Conversation.output_token_count,
-            Conversation.tool_call_count,
         )
         .join(page, Conversation.id == page.c.id)
         .order_by(*(column.desc() if descending else column.asc() for column, descending in ordering))
@@ -266,21 +247,11 @@ async def list_sessions(
     more = len(rows) > limit
     rows = rows[:limit]
     sessions = [
-        _conversation_to_session_info(
-            conv,
-            msg_count=int(mc or 0),
-            input_tok=int(it or 0),
-            output_tok=int(ot or 0),
-            tool_count=int(tc or 0),
-            preview=preview,
-            companion_name=companion_name,
-        )
-        for conv, preview, mc, it, ot, tc in rows
+        _conversation_to_session_info(conv, msg_count=int(mc or 0), preview=preview, companion_name=companion_name)
+        for conv, preview, mc in rows
     ]
     next_cursor = _encode_session_cursor(rows[-1][0], mode, int(rows[-1].msg_count or 0)) if more else None
-    return DesktopSessionListResponse(
-        limit=limit, total=total, sessions=sessions, has_more=more, next_cursor=next_cursor
-    )
+    return DesktopSessionListResponse(limit=limit, sessions=sessions, has_more=more, next_cursor=next_cursor)
 
 
 async def patch_session(

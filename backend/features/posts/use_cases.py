@@ -75,13 +75,6 @@ async def get_publication_recoveries(
         raise RequestError(status_code=400, message="无效的任务分页位置") from exc
 
 
-async def get_publication_recovery(user_id: int, publication_id: ResourceId) -> PostPublicationRecovery:
-    try:
-        return await publication_recovery(user_id, publication_id)
-    except PostError as exc:
-        raise _error(exc) from exc
-
-
 async def query_publication_recovery(
     user_id: int, db: AsyncSession, publication_id: ResourceId
 ) -> PostPublicationRecovery:

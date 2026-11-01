@@ -37,7 +37,6 @@ from .schemas import (
     LifePursuitView,
     LifeStatePublicView,
     LifeStateView,
-    LifeStepPublicView,
     LifeStepRequest,
     LifeStepView,
 )
@@ -69,9 +68,9 @@ async def read_public_state(user_id: int) -> LifeStatePublicView:
 
 
 async def read_public_pursuits(
-    user_id: int, *, status: str | None, cursor: str | None, limit: int, include_total: bool = False
+    user_id: int, *, status: str | None, cursor: str | None, limit: int
 ) -> LifePursuitPublicListResponse:
-    response = await read_pursuits(user_id, status=status, cursor=cursor, limit=limit, include_total=include_total)
+    response = await read_pursuits(user_id, status=status, cursor=cursor, limit=limit)
     return LifePursuitPublicListResponse.model_validate(response, from_attributes=True)
 
 
@@ -79,11 +78,6 @@ async def read_step(user_id: int, step_id: int) -> LifeStepView | None:
     async with SESSION_LOCAL() as db:
         row = await db.scalar(select(LifeStep).where(LifeStep.user_id == user_id, LifeStep.id == step_id))
         return step_view(row) if row else None
-
-
-async def read_public_step(user_id: int, step_id: int) -> LifeStepPublicView | None:
-    step = await read_step(user_id, step_id)
-    return LifeStepPublicView.model_validate(step) if step is not None else None
 
 
 async def step_for_request(db: AsyncSession, user_id: int, request_id: str) -> LifeStepView | None:
@@ -155,28 +149,20 @@ async def read_public_pursuit(user_id: int, pursuit_id: int) -> LifePursuitPubli
     return LifePursuitPublicDetail.model_validate(detail) if detail is not None else None
 
 
-async def read_pursuits(
-    user_id: int, *, status: str | None, cursor: str | None, limit: int, include_total: bool = False
-) -> LifePursuitListResponse:
+async def read_pursuits(user_id: int, *, status: str | None, cursor: str | None, limit: int) -> LifePursuitListResponse:
     async with SESSION_LOCAL() as db:
-        return await list_pursuits(db, user_id, status=status, cursor=cursor, limit=limit, include_total=include_total)
+        return await list_pursuits(db, user_id, status=status, cursor=cursor, limit=limit)
 
 
-async def read_events(
-    user_id: int, *, pursuit_id: int | None, cursor: str | None, limit: int, include_total: bool = False
-) -> LifeEventListResponse:
+async def read_events(user_id: int, *, pursuit_id: int | None, cursor: str | None, limit: int) -> LifeEventListResponse:
     async with SESSION_LOCAL() as db:
-        return await list_events(
-            db, user_id, pursuit_id=pursuit_id, cursor=cursor, limit=limit, include_total=include_total
-        )
+        return await list_events(db, user_id, pursuit_id=pursuit_id, cursor=cursor, limit=limit)
 
 
 async def read_public_events(
-    user_id: int, *, pursuit_id: int | None, cursor: str | None, limit: int, include_total: bool = False
+    user_id: int, *, pursuit_id: int | None, cursor: str | None, limit: int
 ) -> LifeEventPublicListResponse:
-    response = await read_events(
-        user_id, pursuit_id=pursuit_id, cursor=cursor, limit=limit, include_total=include_total
-    )
+    response = await read_events(user_id, pursuit_id=pursuit_id, cursor=cursor, limit=limit)
     return LifeEventPublicListResponse.model_validate(response, from_attributes=True)
 
 

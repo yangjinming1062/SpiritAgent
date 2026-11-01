@@ -6,7 +6,6 @@ import type { ActiveTurn, SessionMessage } from './types'
 function emptyTurn(): ActiveTurn {
   return {
     request_id: '',
-    origin_kind: 'remote',
     message_ids: [],
     assistant_message_id: null,
     messages: [],
@@ -40,7 +39,6 @@ export function advanceTurn(previous: ActiveTurn | null, event: GatewayEvent): A
         ...fresh,
         replace_reply_message_id: event.payload.replace_reply_message_id ?? null,
         request_id: event.payload.request_id ?? fresh.request_id,
-        origin_kind: event.payload.origin_kind ?? fresh.origin_kind,
         running: true
       }
     }

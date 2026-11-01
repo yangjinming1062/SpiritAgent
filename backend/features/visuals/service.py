@@ -272,8 +272,7 @@ async def create_visual_job(
             if existing is not None:
                 if existing.purpose != "create" or existing.target_kind != target_kind:
                     raise VisualStateError("这个创建请求已经用于另一次制作")
-                if request_id:
-                    await bind_job_request(db, user_id, existing.id, request_id, combo_hash)
+                await bind_job_request(db, user_id, existing.id, request_id, combo_hash)
                 await bind_creation_step(db, user_id, existing, life_step)
                 await db.commit()
                 return job_view(existing)

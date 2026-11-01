@@ -96,7 +96,6 @@ class ChatEventEmitter:
                 if raw_type == "error":
                     payload.pop("retry_message_id", None)
             payload["request_id"] = turn.request_id
-            payload["origin_kind"] = turn.origin_kind
         await self._publisher.push_event(event_name, payload, session_id=self._session_id)
 
     @staticmethod

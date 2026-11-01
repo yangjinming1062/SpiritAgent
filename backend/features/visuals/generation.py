@@ -11,7 +11,7 @@ from typing import Literal, NamedTuple
 from infrastructure.ai.error_classifier import LlmCallBlockedError
 from infrastructure.ai.llm_client import build_provider, resolve_provider_chain, resolve_vision_chain
 from infrastructure.ai.prompt_engineer import VisualReasoningError, vision_chat_json
-from infrastructure.ai.providers.base import ServiceType, VideoGenProvider, VideoGenRequest
+from infrastructure.ai.providers.base import VideoGenProvider, VideoGenRequest
 from infrastructure.ai.selection import ProviderSelection, has_provider_selection, order_provider_chain
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import (
@@ -477,7 +477,6 @@ async def _aligned_outfit_reference(
             state=state,
             save_progress=save_alignment,
             before_submit=before_submit,
-            selection=progress.image_selection,
         )
     except ImageResultDownloadError:
         raise
@@ -757,7 +756,6 @@ async def _prepare_pose(
             save_progress=save_image,
             before_submit=before_submit,
             task=AiTaskKey.visuals,
-            selection=progress.image_selection,
         )
     except ImageResultDownloadError:
         raise
@@ -801,7 +799,6 @@ async def _prepare_pose(
     )
     progress.image_confirmed = False
     progress.motion_prompt = ""
-    progress.image_origin = state.selected_origin()
     candidate = state.best()
     goal = state.goal_reviews.get(candidate.path) if candidate else None
     with Image.open(resolved[0]) as original_image:
@@ -931,7 +928,6 @@ def _opening_asset(job: VisualJob, progress: VisualJobProgress) -> VisualAsset:
         media_path=progress.pose_path,
         width=progress.frame_width or progress.target_width,
         height=progress.frame_height or progress.target_height,
-        image_origin=progress.image_origin,
         visual_description=progress.visual_description,
         outfit_description=progress.outfit_description or "",
         creation_plan=progress.creation_plan,
@@ -971,11 +967,6 @@ async def _process_candidate(
         )
         progress.frame_width, progress.frame_height = result.width, result.height
         chain = MediaChainState.model_validate_json(progress.video_chain_json or "{}")
-        video_origin = (
-            chain.providers[chain.active_index].generation_origin(ServiceType.video_gen)
-            if chain.active_index is not None
-            else None
-        )
         return VisualAsset(
             media_kind="video",
             media_path=video or "",
@@ -984,8 +975,6 @@ async def _process_candidate(
             width=result.width,
             height=result.height,
             duration_ms=result.duration_ms,
-            image_origin=progress.image_origin,
-            video_origin=video_origin,
             visual_description=progress.visual_description,
             outfit_description=progress.outfit_description or "",
             creation_plan=progress.creation_plan,
@@ -1053,11 +1042,6 @@ async def _process_actor_candidate(
             await asyncio.to_thread(Path(path).unlink, missing_ok=True)
     progress.frame_width, progress.frame_height = media.width, media.height
     chain = MediaChainState.model_validate_json(progress.video_chain_json or "{}")
-    video_origin = (
-        chain.providers[chain.active_index].generation_origin(ServiceType.video_gen)
-        if chain.active_index is not None
-        else None
-    )
     return VisualAsset(
         media_kind="video",
         media_path=saved["video"],
@@ -1066,8 +1050,6 @@ async def _process_actor_candidate(
         width=media.width,
         height=media.height,
         duration_ms=media.duration_ms,
-        image_origin=progress.image_origin,
-        video_origin=video_origin,
         visual_description=progress.visual_description,
         outfit_description=progress.outfit_description or "",
         creation_plan=progress.creation_plan,
@@ -1417,15 +1399,13 @@ async def _prepare_scene_opening(
             state=state,
             save_progress=save_image,
             before_submit=before_submit,
-            selection=progress.image_selection,
             task=AiTaskKey.visuals,
         )
         generated = resolve_asset_reference(paths[0])
         if generated is None:
             raise VisualStateError("时段环境画面无法读取")
         data = await asyncio.to_thread(generated[0].read_bytes)
-        progress.image_origin = state.selected_origin()
-    normalized, width, height = await asyncio.to_thread(_frame_bytes, data, _delivery_aspect(progress))
+        normalized, width, height = await asyncio.to_thread(_frame_bytes, data, _delivery_aspect(progress))
     progress.pose_path = await save_companion_asset_async(
         normalized,
         user_id=user_id,
@@ -1551,7 +1531,6 @@ async def _ensure_video_chain(
             aspect_ratio=progress.aspect_ratio,
             target_width=progress.target_width,
             target_height=progress.target_height,
-            selection=progress.video_selection,
         )
         progress.duration_seconds = seconds
         chain = MediaChainState(providers=providers, generation_id=progress.generation_id)
@@ -1656,7 +1635,6 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
                             aspect_ratio=progress.aspect_ratio,
                             target_width=progress.target_width,
                             target_height=progress.target_height,
-                            selection=progress.video_selection,
                         )
                     except VisualStateError as planning_error:
                         raise VisualCreationError(str(planning_error), "activity_unsupported") from planning_error

@@ -50,11 +50,6 @@ async def get_publication_recoveries(
     return await _posts.get_publication_recoveries(user_id=user.id, limit=limit, cursor=cursor)
 
 
-@router.get("/publications/{publication_id}", response_model=PostPublicationRecovery)
-async def get_publication_recovery(user: CurrentUser, publication_id: ResourceId) -> PostPublicationRecovery:
-    return await _posts.get_publication_recovery(user_id=user.id, publication_id=publication_id)
-
-
 @router.post(
     "/publications/{publication_id}/query",
     response_model=PostPublicationRecovery,

@@ -1,6 +1,6 @@
 """动作素材的公开只读查询。"""
 
-from sqlalchemy import ColumnElement, func, or_, select
+from sqlalchemy import ColumnElement, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
@@ -67,7 +67,6 @@ async def list_actions(
     status: ActionAssetStatus | None = None,
     group: ActionLibraryGroup = "in_library",
     cursor: int | None = None,
-    include_total: bool = False,
     limit: int = 20,
 ) -> ActionListResponse:
     """按名称或动作内容分页检索；名称只用于检索，不作身份判别。"""
@@ -75,11 +74,6 @@ async def list_actions(
     conditions = _filters(user_id, query, clip_kind, status)
     conditions.append(
         ActionDefinition.status == "approved" if group == "in_library" else ActionDefinition.status != "approved"
-    )
-    total = (
-        (await db.scalar(select(func.count()).select_from(ActionDefinition).where(*conditions)) or 0)
-        if include_total
-        else None
     )
     if cursor is not None:
         conditions.append(ActionDefinition.id < cursor)
@@ -97,6 +91,5 @@ async def list_actions(
         actions=[definition_view(row) for row in rows[:limit]],
         has_more=len(rows) > limit,
         next_cursor=str(rows[limit - 1].id) if len(rows) > limit else None,
-        total=total,
         limit=limit,
     )

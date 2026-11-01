@@ -31,11 +31,8 @@ async def list_session_resources(
     *,
     limit: int = 40,
     cursor: str | None = None,
-    include_total: bool = False,
-    min_messages: int = 0,
     archived: Literal["only", "exclude", "include"] = "exclude",
     order: Literal["recent", "created", "messages"] = "recent",
-    include_subagents: bool = False,
     query: str | None = None,
 ) -> DesktopSessionListResponse:
     name = await read_companion_name(db, user_id)
@@ -44,11 +41,8 @@ async def list_session_resources(
         db,
         limit=limit,
         cursor=cursor,
-        include_total=include_total,
-        min_messages=min_messages,
         archived=archived,
         order=order,
-        include_subagents=include_subagents,
         query=query,
         companion_name=name or None,
     )

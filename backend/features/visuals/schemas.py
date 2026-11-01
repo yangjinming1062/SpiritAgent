@@ -9,14 +9,12 @@ import hashlib
 from datetime import datetime
 from typing import Annotated, Literal
 
-from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
 from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from features.action_library.schemas import ActionAssetDesign
 from features.life.schemas import FactType
 from features.media.identity_contracts import CharacterCardSnapshot, CharacterReferenceRole
-from features.media.video_queue.contracts import VideoQueueInfo
 from features.media.visual_semantics import (
     ActionMotionIntensity,
     ActionPerformanceRole,
@@ -443,8 +441,6 @@ class VisualAsset(BaseModel):
     width: int = Field(gt=0)
     height: int = Field(gt=0)
     duration_ms: int | None = Field(default=None, gt=0)
-    image_origin: GenerationOrigin | None = None
-    video_origin: GenerationOrigin | None = None
     visual_description: str = Field(default="", max_length=1500)
     outfit_description: str = Field(default="", max_length=1200)
     creation_plan: VisualCreationPlan | None = None
@@ -476,9 +472,6 @@ class VisualJobProgress(BaseModel):
     frame_width: int | None = Field(default=None, gt=0)
     frame_height: int | None = Field(default=None, gt=0)
     previous_pose_path: str | None = None
-    image_origin: GenerationOrigin | None = None
-    image_selection: ProviderSelection | None = None
-    video_selection: ProviderSelection | None = None
     visual_description: str = Field(default="", max_length=1500)
     outfit_description: str | None = Field(default=None, max_length=1200)
     action_description: str = ""
@@ -502,7 +495,6 @@ class VisualJobProgress(BaseModel):
     submission_unknown: bool = False
     failure_reason: str = ""
     source_path: str | None = None
-    video_queue: VideoQueueInfo | None = None
 
 
 def visual_snapshot_hash(snapshot: VisualSnapshot) -> str:
@@ -541,7 +533,6 @@ class VisualItemView(BaseModel):
     scene_title: str = ""
     action_id: ResourceId | None = None
     action_name: str | None = None
-    input_image_id: ResourceId | None = None
     input_image_hash: str | None = None
     created_at: datetime
     updated_at: datetime
@@ -591,7 +582,6 @@ class VisualJobView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: ResourceId
-    purpose: str
     target_kind: VisualMediaKind
     asset_kind: VisualAssetKind
     # 冻结输入里的动作名称，供库内标识这一次制作。
@@ -599,19 +589,11 @@ class VisualJobView(BaseModel):
     # 基础动态准备的工作项；用于区分自动准备与用户/自主制作。
     preparation: bool = False
     target_visual_id: ResourceId | None = None
-    expected_version: int | None = None
     state: VisualJobState
     stage: str
-    feedback: str = ""
-    video_feedback: str = ""
-    repair_count: int = 0
-    repair_limit: int = 1
     error: str | None = None
     failure_reason: str | None = None
     result_visual_id: ResourceId | None = None
-    result_image_id: ResourceId | None = None
-    video_queue: VideoQueueInfo | None = None
-    created_at: datetime
     updated_at: datetime
 
 
@@ -619,7 +601,6 @@ class VisualDetailView(VisualItemView):
     """成品详情：完整预览、冻结来源与实际媒体信息。"""
 
     snapshot: VisualSnapshot
-    replaced_at_version: int | None = None
     jobs: list[VisualJobView] = Field(default_factory=list)
     analysis: ImportAnalysisView | None = None
 
@@ -858,7 +839,6 @@ class PresentedVisual(BaseModel):
     scene_id: ResourceId | None
     action_id: ResourceId | None
     input_image_version_id: ResourceId | None = None
-    input_image_id: ResourceId | None
     input_image_path: str | None
     input_image_hash: str | None
     created_at: datetime
@@ -902,8 +882,6 @@ class ActorClipRequest(BaseModel):
     outfit_id: ResourceId = Field(gt=0)
     action_id: ResourceId = Field(gt=0)
     requirements: str = Field(default="", max_length=2000)
-    feedback: str = Field(default="", max_length=2000)
-    video_feedback: str = Field(default="", max_length=2000)
 
 
 class SceneMediaRequest(BaseModel):
@@ -916,8 +894,6 @@ class SceneMediaRequest(BaseModel):
     # 可选适用时段：为同一环境制作特定光线版本；空表示不限时段的普通版本。
     day_phase: DayPhase | None = None
     requirements: str = Field(default="", max_length=2000)
-    feedback: str = Field(default="", max_length=2000)
-    video_feedback: str = Field(default="", max_length=2000)
 
 
 class ActualPresentationSnapshot(BaseModel):
@@ -990,7 +966,6 @@ class VisualJobListResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     jobs: list[VisualJobView]
-    total: int | None = None
     has_more: bool
     next_cursor: str | None = None
     limit: int

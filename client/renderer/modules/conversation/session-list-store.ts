@@ -526,18 +526,15 @@ function forkSessionInfo(sourceSessionId: string, res: SessionSnapshot): Session
   return {
     archived: false,
     id: res.session_id,
-    input_tokens: 0,
     kind: res.info?.kind ?? 'standard',
     last_active: now,
     message_count: res.message_count,
-    output_tokens: 0,
     pinned: false,
     preview: null,
     started_at: now,
     system_preset_icon_key: source?.system_preset_icon_key ?? null,
     system_preset_id: source?.system_preset_id ?? null,
-    title: source?.title ?? null,
-    tool_call_count: 0
+    title: source?.title ?? null
   }
 }
 

@@ -15,13 +15,11 @@ from features.visuals.schemas import (
     ImportAnalysisView,
     SceneMediaRequest,
     StageReceipt,
-    VisualAssetKind,
     VisualClaimRequest,
     VisualClaimResponse,
     VisualDetailView,
     VisualJobCommandRequest,
     VisualJobListResponse,
-    VisualJobState,
     VisualJobView,
     VisualListResponse,
     VisualPlayCommand,
@@ -50,10 +48,6 @@ async def list_visuals(
     user: CurrentUser,
     query: Annotated[str | None, Query(max_length=200)] = None,
     media_kind: Annotated[Literal["image", "video"] | None, Query()] = None,
-    asset_kind: Annotated[VisualAssetKind | None, Query()] = None,
-    outfit_id: Annotated[ResourceId | None, Query(gt=0, le=POSTGRES_INT8_MAX)] = None,
-    scene_id: Annotated[ResourceId | None, Query(gt=0, le=POSTGRES_INT8_MAX)] = None,
-    action_id: Annotated[ResourceId | None, Query(gt=0, le=POSTGRES_INT8_MAX)] = None,
     source: Annotated[str | None, Query(max_length=200)] = None,
     cursor: Annotated[ResourceId | None, Query()] = None,
     include_total: bool = False,
@@ -63,10 +57,6 @@ async def list_visuals(
         user_id=user.id,
         query=query,
         media_kind=media_kind,
-        asset_kind=asset_kind,
-        outfit_id=outfit_id,
-        scene_id=scene_id,
-        action_id=action_id,
         source=source,
         cursor=cursor,
         include_total=include_total,
@@ -77,18 +67,10 @@ async def list_visuals(
 @router.get("/jobs", response_model=VisualJobListResponse)
 async def list_visual_jobs(
     user: CurrentUser,
-    state: Annotated[VisualJobState | None, Query()] = None,
     cursor: Annotated[ResourceId | None, Query()] = None,
-    include_total: bool = False,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> VisualJobListResponse:
-    return await _visual_queries.list_jobs(
-        user_id=user.id,
-        states=[state] if state else None,
-        cursor=cursor,
-        include_total=include_total,
-        limit=limit,
-    )
+    return await _visual_queries.list_jobs(user_id=user.id, cursor=cursor, limit=limit)
 
 
 @router.get("/by-action/{action_id}", response_model=ActionMediaListResponse)
@@ -169,8 +151,6 @@ async def create_actor_clip(user: CurrentUser, body: ActorClipRequest) -> Visual
             outfit_id=body.outfit_id,
             action_id=body.action_id,
             requirements=body.requirements,
-            feedback=body.feedback,
-            video_feedback=body.video_feedback,
         )
     except (ValueError, VisualError) as exc:
         raise RequestError(status_code=409, message=str(exc)) from exc
@@ -187,8 +167,6 @@ async def create_scene_media(user: CurrentUser, body: SceneMediaRequest) -> Visu
             scene_id=body.scene_id,
             day_phase=body.day_phase,
             requirements=body.requirements,
-            feedback=body.feedback,
-            video_feedback=body.video_feedback,
         )
     except (ValueError, VisualError) as exc:
         raise RequestError(status_code=409, message=str(exc)) from exc

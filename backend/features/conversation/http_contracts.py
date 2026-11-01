@@ -18,7 +18,6 @@ class BusinessRequest(BaseModel):
 
 class ActiveTurnView(BaseModel):
     request_id: str
-    origin_kind: str
     message_ids: list[ResourceId]
     assistant_message_id: ResourceId | None
     messages: list[SessionMessageView]

@@ -9,7 +9,6 @@ from features.memory.profile_fields import MemoryProfileChange
 class MemoryListResponse(BaseModel):
     memories: list[MemoryListItem]
     counts: dict[str, int]
-    total: int | None = None
     has_more: bool = False
     next_cursor: str | None = None
     system_preset_id: str

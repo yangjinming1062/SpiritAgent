@@ -271,7 +271,6 @@ def _clear_remote_handles(checkpoint: dict | None) -> dict | None:
         chain.queue_request_id = None
         chain.video_queue = None
         progress.video_chain_json = chain.model_dump_json()
-    progress.video_queue = None
     return progress.model_dump(mode="json")
 
 

@@ -119,11 +119,9 @@ class ActionExecutionResult(BaseModel):
     capability: str = ""
     fact: str | None = None
     reason: str | None = None
-    dependencies: list[str] | None = None
     outfit_id: ResourceId | None = None
     scene_id: ResourceId | None = None
     cron_job_id: ResourceId | None = None
-    expires_at: str | None = None
 
 
 class PlanningResult(BaseModel):
@@ -725,11 +723,7 @@ async def _execute_outreach_schedule(run: _ActionRun, parsed_args: OutreachSched
     job = await schedule_on_target_day(schedule)
     if job is None:
         return ActionExecutionResult(status="failed", reason="outreach does not run on target local date")
-    return ActionExecutionResult(
-        status="succeeded",
-        cron_job_id=job["id"],
-        expires_at=job.get("expires_at"),
-    )
+    return ActionExecutionResult(status="succeeded", cron_job_id=job["id"])
 
 
 async def _execute_life_action(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
@@ -855,14 +849,13 @@ async def _execute_persisted_action(
         return ActionExecutionResult(
             status="failed",
             reason="环境与造型相互独立，环境动作不能依赖造型动作",
-            dependencies=illegal_deps,
         )
     # 依赖要求前置动作整项成功；部分成功不解锁。
     unsatisfied = [
         dep for dep in arguments.get("depends_on", []) if dep not in by_key or by_key[dep].status != "succeeded"
     ]
     if unsatisfied:
-        return ActionExecutionResult(status="skipped", reason="dependency not completed", dependencies=unsatisfied)
+        return ActionExecutionResult(status="skipped", reason="dependency not completed")
     run = _ActionRun(
         user_id=user_id,
         row_id=row.id,

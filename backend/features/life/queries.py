@@ -246,16 +246,10 @@ async def list_pursuits(
     status: str | None = None,
     cursor: str | None = None,
     limit: int = 20,
-    include_total: bool = False,
 ) -> LifePursuitListResponse:
     where = [LifePursuit.user_id == user_id]
     if status:
         where.append(LifePursuit.status == status)
-    total = (
-        int(await db.scalar(select(func.count()).select_from(LifePursuit).where(*where)) or 0)
-        if include_total
-        else None
-    )
     if before := decode_timestamp_cursor(cursor):
         where.append(tuple_(LifePursuit.updated_at, LifePursuit.id) < before)
     rows = list(
@@ -270,7 +264,6 @@ async def list_pursuits(
     rows = rows[:limit]
     return LifePursuitListResponse(
         items=[pursuit_view(row) for row in rows],
-        total=total,
         has_more=more,
         next_cursor=encode_timestamp_cursor(rows[-1].updated_at, rows[-1].id) if more else None,
     )
@@ -281,19 +274,12 @@ async def list_events(
     user_id: int,
     *,
     pursuit_id: int | None = None,
-    before: datetime | None = None,
     cursor: str | None = None,
     limit: int = 20,
-    include_total: bool = False,
 ) -> LifeEventListResponse:
     where = [LifeEvent.user_id == user_id]
     if pursuit_id is not None:
         where.append(LifeEvent.pursuit_id == pursuit_id)
-    if before is not None:
-        where.append(LifeEvent.occurred_at < before)
-    total = (
-        int(await db.scalar(select(func.count()).select_from(LifeEvent).where(*where)) or 0) if include_total else None
-    )
     if position := decode_timestamp_cursor(cursor):
         where.append(tuple_(LifeEvent.occurred_at, LifeEvent.id) < position)
     rows = list(
@@ -305,7 +291,6 @@ async def list_events(
     rows = rows[:limit]
     return LifeEventListResponse(
         items=[event_view(row) for row in rows],
-        total=total,
         has_more=more,
         next_cursor=encode_timestamp_cursor(rows[-1].occurred_at, rows[-1].id) if more else None,
     )

@@ -78,7 +78,6 @@ async def assess_memory_changes(
     llm_config: UserLlmConfig,
     proposal: dict[str, Any] | None = None,
     advance_review: bool = False,
-    max_output_tokens: int | None = None,
     before_call: Callable[[], Awaitable[None]] | None = None,
     reasoning_effort: str | None = None,
 ) -> list[MemoryRecord]:
@@ -92,7 +91,6 @@ async def assess_memory_changes(
             llm_config,
             MEMORY_POLICY + "\n" + MEMORY_REVIEW_INSTRUCTIONS,
             payload,
-            max_output_tokens=max_output_tokens,
             json_output=True,
             before_call=before_call,
             reasoning_effort=reasoning_effort,
@@ -116,7 +114,6 @@ async def review_memories(
     through_message_id: int | None = None,
     llm_config: UserLlmConfig | None = None,
     task: AiTaskKey = AiTaskKey.memory_review,
-    max_output_tokens: int | None = None,
     before_call: Callable[[], Awaitable[None]] | None = None,
     reasoning_effort: str | None = None,
 ) -> None:
@@ -128,7 +125,6 @@ async def review_memories(
             through_message_id=through_message_id,
             llm_config=llm_config,
             task=task,
-            max_output_tokens=max_output_tokens,
             before_call=before_call,
             reasoning_effort=reasoning_effort,
         )
@@ -148,7 +144,6 @@ async def _review_batches(
     through_message_id: int | None = None,
     llm_config: UserLlmConfig | None = None,
     task: AiTaskKey = AiTaskKey.memory_review,
-    max_output_tokens: int | None = None,
     before_call: Callable[[], Awaitable[None]] | None = None,
     reasoning_effort: str | None = None,
 ) -> None:
@@ -179,7 +174,6 @@ async def _review_batches(
                 context,
                 llm_config=llm_config,
                 advance_review=True,
-                max_output_tokens=max_output_tokens,
                 before_call=before_call,
                 reasoning_effort=reasoning_effort,
             )

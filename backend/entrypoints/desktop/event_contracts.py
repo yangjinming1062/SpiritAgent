@@ -25,7 +25,6 @@ from entrypoints.desktop.contracts import EmptyResult
 
 class TurnEvent(BaseModel):
     request_id: str | None = None
-    origin_kind: str | None = None
     replace_reply_message_id: ResourceId | None = None
 
 

@@ -50,11 +50,9 @@ class RepoStatus(BaseModel):
     branch: str = ""
     upstream: str = ""
     current_commit: str = ""
-    current_commit_subject: str = ""
     ahead: int = 0
     behind: int = 0
     dirty: bool = False
-    diverged: bool = False
     remote_commit: str = ""
     incoming: list[CommitInfo] = Field(default_factory=list)
 

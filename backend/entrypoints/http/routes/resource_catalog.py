@@ -57,17 +57,13 @@ async def get_memories(
     system_preset_id: str,
     kind: str | None = None,
     status: Literal["active", "candidate", "invalidated", "expired"] = "active",
-    tag: str | None = None,
     q: str | None = Query(default=None, pattern=r"^[^\x00]*$"),
     limit: int = Query(default=100, ge=1, le=500),
     cursor: str | None = None,
-    include_total: bool = False,
 ) -> MemoryListResponse:
     scope = _scope(user.id, system_preset_id)
     try:
-        return await list_memory_view(
-            scope, kind=kind, status=status, tag=tag, query=q, limit=limit, cursor=cursor, include_total=include_total
-        )
+        return await list_memory_view(scope, kind=kind, status=status, query=q, limit=limit, cursor=cursor)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

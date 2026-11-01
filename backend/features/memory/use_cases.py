@@ -31,28 +31,22 @@ async def list_memory_view(
     *,
     kind: str | None,
     status: str,
-    tag: str | None,
     query: str | None,
     limit: int,
     cursor: str | None = None,
-    include_total: bool = False,
 ) -> MemoryListResponse:
     before = decode_timestamp_cursor(cursor)
     async with SESSION_LOCAL() as db:
-        rows = await list_memories(
-            db, scope, kind=kind, status=status, tag=tag, q=query, limit=limit + 1, before=before
-        )
+        rows = await list_memories(db, scope, kind=kind, status=status, q=query, limit=limit + 1, before=before)
         more = len(rows) > limit
         rows = rows[:limit]
         next_cursor = (
             encode_timestamp_cursor(datetime.fromisoformat(rows[-1].updated_at), rows[-1].id) if more else None
         )
-        counts = await memory_counts(db, scope, include_total=include_total, kind=kind, status=status, tag=tag, q=query)
-        total = counts.pop("total", None)
+        counts = await memory_counts(db, scope, kind=kind, status=status, q=query)
         return MemoryListResponse(
             memories=rows,
             counts=counts,
-            total=total,
             has_more=more,
             next_cursor=next_cursor,
             system_preset_id=scope.system_preset_id,

@@ -117,7 +117,6 @@ def create_submission_handler(
 
         snapshot = ActiveTurnSnapshot(
             request_id=params["request_id"],
-            origin_kind=actor.origin_kind,
             replace_reply_message_id=replace_reply_message_id,
         )
 
