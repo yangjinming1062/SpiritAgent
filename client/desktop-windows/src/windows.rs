@@ -29,6 +29,7 @@ const LEASE_DURATION: Duration = Duration::from_secs(10);
 const OVERLAY_GEOMETRY_TIMEOUT: Duration = Duration::from_secs(2);
 const DESKTOP_LAYER_TIMEOUT: Duration = Duration::from_secs(2);
 const HOTKEY_ID: i32 = 0x5341;
+const NON_RUDE_PROPERTY: &str = "NonRudeHWND";
 
 mod workspace;
 use workspace::{RestoreAppBar, Workspace};
@@ -434,6 +435,9 @@ struct RestoreWindow {
     ex_style: i64,
     bounds: Bounds,
     role: WindowRole,
+    // 旧 journal 未接管该属性，恢复时不改写未知原值。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    non_rude: Option<u64>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -581,6 +585,7 @@ fn validate_journal(journal: &Journal) -> Result<()> {
                 || entry.identity.pid != journal.parent_pid
                 || entry.identity.created != journal.parent_created
                 || !entry.bounds.valid()
+                || entry.non_rude.is_some_and(|value| usize::try_from(value).is_err())
                 || !(-2_147_483_648..=4_294_967_295).contains(&entry.style)
                 || !(-2_147_483_648..=4_294_967_295).contains(&entry.ex_style)
         })
@@ -851,6 +856,20 @@ fn set_parent(window: HWND, parent: HWND) -> Result<()> {
     Ok(())
 }
 
+fn set_non_rude(window: HWND, value: u64) -> Result<()> {
+    let value = usize::try_from(value).map_err(|_| "invalid desktop non-fullscreen property")?;
+    let property = wide(NON_RUDE_PROPERTY);
+    if value == 0 {
+        unsafe { RemovePropW(window, property.as_ptr()) };
+    } else if unsafe { SetPropW(window, property.as_ptr(), value as HANDLE) } == 0 {
+        return Err(failure("set desktop non-fullscreen property"));
+    }
+    if unsafe { GetPropW(window, property.as_ptr()) } as usize != value {
+        return Err("desktop non-fullscreen property did not settle".into());
+    }
+    Ok(())
+}
+
 fn move_window(window: HWND, parent: HWND, bounds: Bounds) -> Result<()> {
     let mut point = POINT {
         x: bounds.x,
@@ -1027,6 +1046,8 @@ fn set_top_level(saved: &RestoreWindow, bounds: Bounds, topmost: bool) -> Result
         return Err("desktop window identity changed".into());
     }
     let window = saved.identity.window();
+    // 整屏交互层仍是桌面，不能触发 Shell 的全屏勿扰与任务栏降层。
+    set_non_rude(window, 1)?;
     let mouse_passthrough =
         unsafe { GetWindowLongPtrW(window, GWL_EXSTYLE) } as u32 & WS_EX_TRANSPARENT;
     set_long(
@@ -1153,6 +1174,11 @@ fn restore_locked(path: &Path, expected_session: Option<&str>) -> Result<bool> {
                 });
             if let Err(error) = result {
                 failures.push(error);
+            }
+            if let Some(value) = saved.non_rude {
+                if let Err(error) = set_non_rude(window, value) {
+                    failures.push(error);
+                }
             }
             if let Err(error) = visibility(&saved.identity, saved.identity.visible) {
                 failures.push(error);
@@ -1402,6 +1428,9 @@ impl Session {
             if !unsafe { GetParent(window) }.is_null() {
                 return Err("desktop attachment requires an independent top-level window".into());
             }
+            let non_rude = spec.role.is_top_level().then(|| {
+                (unsafe { GetPropW(window, wide(NON_RUDE_PROPERTY).as_ptr()) }) as usize as u64
+            });
             windows.push(RestoreWindow {
                 identity,
                 parent: 0,
@@ -1409,6 +1438,7 @@ impl Session {
                 ex_style: unsafe { GetWindowLongPtrW(window, GWL_EXSTYLE) } as i64,
                 bounds: rectangle(window)?,
                 role: spec.role,
+                non_rude,
             });
         }
         worker()?;

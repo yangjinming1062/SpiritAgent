@@ -845,7 +845,7 @@ async def _execute_persisted_action(
     date_context: DateContext,
 ) -> ActionExecutionResult:
     arguments = row.arguments or {}
-    if illegal_deps := arguments.get("illegal_outfit_deps"):
+    if arguments.get("illegal_outfit_deps"):
         return ActionExecutionResult(
             status="failed",
             reason="环境与造型相互独立，环境动作不能依赖造型动作",

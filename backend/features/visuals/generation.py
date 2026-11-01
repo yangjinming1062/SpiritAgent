@@ -965,7 +965,6 @@ async def _process_candidate(
             directory=directory,
         )
         progress.frame_width, progress.frame_height = result.width, result.height
-        chain = MediaChainState.model_validate_json(progress.video_chain_json or "{}")
         return VisualAsset(
             media_kind="video",
             media_path=video or "",
@@ -1040,7 +1039,6 @@ async def _process_actor_candidate(
         for path in temporary_files:
             await asyncio.to_thread(Path(path).unlink, missing_ok=True)
     progress.frame_width, progress.frame_height = media.width, media.height
-    chain = MediaChainState.model_validate_json(progress.video_chain_json or "{}")
     return VisualAsset(
         media_kind="video",
         media_path=saved["video"],

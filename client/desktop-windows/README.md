@@ -22,6 +22,8 @@ Rust helper 管理 Explorer 挂载、系统工作区、运行窗口和异常恢�
 
 `focus` 只接受仍匹配身份、父层和可见性的登记界面，系统须处于桌面前台；先置前，待修饰键和鼠标释放后临时附着输入线程并复验前台。线程解除失败退出 host 交 guardian 恢复，不能保留附着继续运行。
 
+整屏交互层显示前设置 [`NonRudeHWND`](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-itaskbarlist2-markfullscreenwindow#remarks)，让 Shell 将其视为桌面界面，避免激活时触发全屏勿扰、通知图标增减和任务栏降层。原窗口属性随 journal 保存，正常停止和 guardian 恢复原值；不修改系统勿扰偏好或其他应用的全屏资格。
+
 ## 运行窗口
 
 [applications.rs](src/windows/applications.rs) 枚举当前虚拟桌面各屏普通／最小化窗口，排除壳、隐藏、工具浮窗和产品自身。会话共用 WinEvent，保留移动与销毁顺序，周期补扫；事件溢出清登记后全量校准。未变不广播，快照按 revision 分批，主进程收齐才采纳，换代丢弃半批。行大小及接收预算同时受 [explorer-desktop-host.ts](../main/lifecycle/explorer-desktop-host.ts) 限制。
