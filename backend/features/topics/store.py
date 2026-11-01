@@ -133,7 +133,7 @@ async def publish_batch(
     row = await _locked_batch(db, batch_id, scope)
     if row.status != "collecting":
         return TopicBatchSnapshot.model_validate(row)
-    if len(selections) > min(5, limit):
+    if len(selections) > limit:
         raise ValueError("Topic reserve exceeds limit")
     events: set[str] = set()
     sources: set[tuple[str, str]] = set()

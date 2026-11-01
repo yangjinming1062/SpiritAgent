@@ -49,17 +49,12 @@ def clear_user_proactive_state(user_id: int) -> None:
     _USER_PROACTIVE_STATE.pop(user_id, None)
 
 
-def note_user_contact(user_id: int) -> None:
-    rec = get_user_proactive_record(user_id)
-    rec.last_user_contact_ts = time.monotonic()
-    rec.contact_revision += 1
-
-
 @contextmanager
 def user_turn_activity(user_id: int, *, enabled: bool) -> Iterator[None]:
     rec = get_user_proactive_record(user_id)
     if enabled:
-        note_user_contact(user_id)
+        rec.last_user_contact_ts = time.monotonic()
+        rec.contact_revision += 1
         rec.busy_count += 1
     try:
         yield
