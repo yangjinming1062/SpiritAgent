@@ -305,6 +305,23 @@ class ImportComponent(BaseModel):
     can_extract: bool = True
     creation_method: Literal["pixels", "generated", "pose", "motion"] | None = None
     candidate_verdict: Literal["pass", "review", "fail"] | None = None
+    revision: int = Field(default=0, ge=0)
+    operation_state: Literal["idle", "queued", "running", "paused", "failed", "succeeded"] = "idle"
+    operation_stage: str = ""
+    failure_code: (
+        Literal[
+            "quality_rejected",
+            "action_rejected",
+            "generation_failed",
+            "result_download_failed",
+            "result_unknown",
+            "save_failed",
+            "processing_failed",
+            "identity_unavailable",
+        ]
+        | None
+    ) = None
+    extract_command: Literal["extract", "retry", "regenerate"] = "extract"
 
 
 class ImportAnalysisResult(BaseModel):
@@ -330,8 +347,10 @@ class ImportSelection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     key: str = Field(min_length=1, max_length=32)
-    command: Literal["existing", "extract", "skip", "undo"]
+    command: Literal["existing", "extract", "retry", "regenerate", "skip", "undo"]
     material_id: ResourceId | None = Field(default=None, gt=0)
+    expected_component_revision: int | None = Field(default=None, ge=0)
+    notes: str = Field(default="", max_length=2000)
 
     @model_validator(mode="after")
     def require_existing(self) -> "ImportSelection":

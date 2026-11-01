@@ -4,6 +4,7 @@ from infrastructure.database import SESSION_LOCAL
 from sqlalchemy import select
 
 from .import_jobs import ImportCatalogCandidate, ImportWork
+from .import_operations import import_operations
 from .models import VisualImportJob
 from .publication import publish_import_revision
 from .repository import VisualStateError, notify_visuals_updated, visual_item
@@ -12,7 +13,7 @@ from .schemas import ActorClipSource, AnalyzingVisualSource, CinematicSource, Sc
 
 async def complete_import_analysis(
     work: ImportWork, selected: list[ImportCatalogCandidate], reviewed: bool, reason: str
-) -> None:
+) -> bool:
     if (
         work.result is None
         or work.snapshot.source.original_path is None
@@ -154,6 +155,8 @@ async def complete_import_analysis(
         )
         if job is None or job.state != "running" or job.context_json.get("execution_key") != work.context.execution_key:
             raise VisualStateError("分析任务已取消或更新")
+        if any(entry.state in {"queued", "running"} for entry in import_operations(job.selections_json)):
+            return False
         item = await visual_item(db, work.user_id, work.visual_id, lock=True)
         source.analysis_revision = job.revision
         if work.context.animated_image:
@@ -193,10 +196,6 @@ async def complete_import_analysis(
         job.expected_version = work.expected_version + 1
         job.result_json = work.result.model_dump(mode="json")
         failed = any(entry.status == "failed" for entry in work.result.components)
-        failed_keys = {entry.observation.key for entry in work.result.components if entry.status == "failed"}
-        job.selections_json = [
-            selection.model_dump(mode="json") for selection in work.selections if selection.key in failed_keys
-        ]
         job.state, job.stage, job.error = (
             ("failed", "organize", "部分素材整理未完成，可重试；原件和已完成的结果已保存")
             if failed
@@ -204,3 +203,4 @@ async def complete_import_analysis(
         )
         await notify_visuals_updated(db, work.user_id)
         await db.commit()
+        return True

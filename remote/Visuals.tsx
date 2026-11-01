@@ -171,13 +171,19 @@ function VisualDetailPanel({
           {showOriginal ? '查看可呈现版本' : '查看原始文件'}
         </button>
       )}
-      {visual.description ? (
+      {visual.analysis ? (
+        <>
+          <p className="muted">{visual.auto_playable ? '已通过检查，可在合适情境中使用' : '仅收藏，暂不可自动播放'}</p>
+          <VisualAnalysis api={api} onChanged={onChanged} visual={visual} />
+        </>
+      ) : null}
+      {!visual.analysis && visual.description ? (
         <details className="optional-details">
           <summary>描述</summary>
           <p>{visual.description}</p>
         </details>
       ) : null}
-      {!pendingAnalysis && !visual.auto_playable ? (
+      {!visual.analysis && !pendingAnalysis && !visual.auto_playable ? (
         <div className="muted">
           <p>这个版本已完成并保留，目前不参与常驻轮换或生活演出。你仍可在影像库查看成品与检查记录。</p>
           {visual.snapshot.review_reason ? (
@@ -188,59 +194,61 @@ function VisualDetailPanel({
           ) : null}
         </div>
       ) : null}
-      <section className="card">
-        <h3>影像来源</h3>
-        {(() => {
-          if (source.kind === 'analysis') {
-            return (
-              <>
-                <p>原始文件：{source.original_filename}</p>
-                <p className="muted">原件完整保留，内容识别、素材关联与呈现资格见下方分析结果。</p>
-              </>
-            )
-          }
+      {!visual.analysis && (
+        <section className="card">
+          <h3>影像来源</h3>
+          {(() => {
+            if (source.kind === 'analysis') {
+              return (
+                <>
+                  <p>原始文件：{source.original_filename}</p>
+                  <p className="muted">原件完整保留，内容识别、素材关联与呈现资格见下方分析结果。</p>
+                </>
+              )
+            }
 
-          if (source.kind === 'scene') {
-            return (
-              <dl>
-                <div>
-                  <dt>环境</dt>
-                  <dd>{source.scene.title || '未命名环境'}</dd>
-                </div>
-              </dl>
-            )
-          }
-
-          return (
-            <>
-              <dl>
-                <div>
-                  <dt>衣柜</dt>
-                  <dd>{source.outfit.name || '未命名素材'}</dd>
-                </div>
-                {source.kind === 'cinematic' && (
+            if (source.kind === 'scene') {
+              return (
+                <dl>
                   <div>
                     <dt>环境</dt>
                     <dd>{source.scene.title || '未命名环境'}</dd>
                   </div>
-                )}
-                <div>
-                  <dt>动作</dt>
-                  <dd>
-                    {source.action.name}
-                    {source.action.clip_kind === 'loop' ? '（持续动作）' : '（短动作）'}
-                    {` · ${source.action.duration_seconds} 秒`}
-                  </dd>
-                </div>
-              </dl>
-              {source.action.use_when.length ? (
-                <p className="muted">适用情境：{source.action.use_when.join('、')}</p>
-              ) : null}
-              {source.requirements ? <p className="prompt-copy">{source.requirements}</p> : null}
-            </>
-          )
-        })()}
-      </section>
+                </dl>
+              )
+            }
+
+            return (
+              <>
+                <dl>
+                  <div>
+                    <dt>衣柜</dt>
+                    <dd>{source.outfit.name || '未命名素材'}</dd>
+                  </div>
+                  {source.kind === 'cinematic' && (
+                    <div>
+                      <dt>环境</dt>
+                      <dd>{source.scene.title || '未命名环境'}</dd>
+                    </div>
+                  )}
+                  <div>
+                    <dt>动作</dt>
+                    <dd>
+                      {source.action.name}
+                      {source.action.clip_kind === 'loop' ? '（持续动作）' : '（短动作）'}
+                      {` · ${source.action.duration_seconds} 秒`}
+                    </dd>
+                  </div>
+                </dl>
+                {source.action.use_when.length ? (
+                  <p className="muted">适用情境：{source.action.use_when.join('、')}</p>
+                ) : null}
+                {source.requirements ? <p className="prompt-copy">{source.requirements}</p> : null}
+              </>
+            )
+          })()}
+        </section>
+      )}
       {jobs.length ? (
         <section className="card">
           <h3>制作工作项</h3>
@@ -251,7 +259,7 @@ function VisualDetailPanel({
           </ul>
         </section>
       ) : null}
-      {source.kind !== 'analysis' && (
+      {!visual.analysis && source.kind !== 'analysis' && (
         <details className="optional-details">
           <summary>重做</summary>
           <p className="muted">按原来的素材组合重新制作，可以附上修改要求。不需要电脑在线。</p>
@@ -287,7 +295,6 @@ function VisualDetailPanel({
           </div>
         </details>
       )}
-      {visual.analysis && <VisualAnalysis api={api} onChanged={onChanged} visual={visual} />}
       {visual.original_url ? (
         <button
           disabled={busy}

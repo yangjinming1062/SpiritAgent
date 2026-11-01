@@ -1,10 +1,16 @@
 import type { ApiSchemas } from './api.generated'
 import type { VisualJobCommand, VisualJobState } from './protocol'
 
+export interface VisualMaterialOption {
+  id: string
+  name: string
+  preview?: string
+}
+
 export interface VisualMaterialOptions {
-  outfits: { id: string; name: string }[]
-  scenes: { id: string; name: string }[]
-  actions: { id: string; name: string }[]
+  outfits: VisualMaterialOption[]
+  scenes: VisualMaterialOption[]
+  actions: VisualMaterialOption[]
 }
 
 export async function loadVisualMaterials(reader: {
@@ -34,8 +40,12 @@ export async function loadVisualMaterials(reader: {
     })
   ])
   return {
-    outfits: wardrobe.outfits.filter(row => row.status === 'ready').map(row => ({ id: row.id, name: row.name })),
-    scenes: scenes.filter(row => row.status === 'ready').map(row => ({ id: row.id, name: row.title })),
+    outfits: wardrobe.outfits
+      .filter(row => row.status === 'ready')
+      .map(row => ({ id: row.id, name: row.name, preview: row.fullbody_url })),
+    scenes: scenes
+      .filter(row => row.status === 'ready')
+      .map(row => ({ id: row.id, name: row.title, preview: row.url })),
     actions: actions.filter(row => row.status === 'approved').map(row => ({ id: row.id, name: row.name }))
   }
 }

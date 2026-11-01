@@ -1562,8 +1562,11 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
         if not allow_model_steps and progress.candidate is not None and progress.review_verdict is not None:
             await _finish_job(user_id, job_id, progress, allow_followup_work=allow_model_steps)
             return
-        if not allow_model_steps and not visual_progress_has_video_work(  # 刻意不含 candidate：待评估候选不算在途视频工作
-            progress
+        if (
+            not allow_model_steps
+            and not visual_progress_has_video_work(  # 刻意不含 candidate：待评估候选不算在途视频工作
+                progress
+            )
         ):
             raise GenerationWorkPaused
         if not visual_progress_has_video_work(progress):

@@ -174,11 +174,11 @@ export async function refreshVisuals(query?: VisualsListQuery): Promise<void> {
   return request
 }
 
-/** 详情按 ID 单读并合并在途请求；迟到回写受账户与代次守卫。 */
-export function loadVisualDetail(visualId: string): Promise<VisualDetail> {
+/** 普通读取合并在途请求；写入后 fresh 读取使旧快照失效，迟到回写仍受账户与代次守卫。 */
+export function loadVisualDetail(visualId: string, options: { fresh?: boolean } = {}): Promise<VisualDetail> {
   const scope = captureAuthScope()
 
-  if (detailRequest?.id === visualId) {
+  if (!options.fresh && detailRequest?.id === visualId) {
     return detailRequest.request
   }
 

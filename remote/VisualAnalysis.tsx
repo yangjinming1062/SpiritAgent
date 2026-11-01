@@ -2,39 +2,19 @@ import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 
 import type { ApiSchemas } from '../shared/api.generated'
+import {
+  visualAnalysisControls,
+  visualMaterialControls,
+  visualMaterialCopy,
+  visualMaterialGroups
+} from '../shared/visual-materials'
 import { loadVisualMaterials, type VisualMaterialOptions } from '../shared/visuals'
 
 import type { RemoteApi } from './api'
 import { errorText } from './api'
 import { Media, Notice, useAlive, usePageState, useTask } from './ui'
 
-const STATE: Record<string, string> = {
-  queued: '等待分析',
-  running: '分析整理中',
-  paused: '分析已暂停',
-  succeeded: '分析完成',
-  failed: '分析需重试',
-  cancelled: '分析已取消',
-  unknown: '状态待核对'
-}
-const COMPONENT: Record<string, string> = {
-  recognized: '仅识别',
-  ambiguous: '待确认',
-  reused: '已关联',
-  created: '已入库',
-  reviewing: '动作评审中',
-  failed: '整理需重试',
-  skipped: '未关联',
-  undone: '已撤销入库'
-}
-const CONFIDENCE: Record<string, string> = { high: '高置信度', medium: '中等置信度', low: '低置信度' }
-const DECISION: Record<string, string> = { same: '一致', different: '不同', uncertain: '尚不确定' }
-const METHOD: Record<string, string> = {
-  pixels: '原图提取',
-  generated: '生成补全',
-  pose: '静态姿态',
-  motion: '视频动作'
-}
+const a = visualMaterialCopy.zh
 
 export function VisualAnalysis({
   api,
@@ -48,11 +28,12 @@ export function VisualAnalysis({
   const alive = useAlive()
   const { run, busy, error } = useTask()
   const job = visual.analysis
-  const active = job?.state === 'queued' || job?.state === 'running'
+  const { active, canContinue } = visualAnalysisControls(job)
   const [materials, setMaterials] = useState<VisualMaterialOptions>({ outfits: [], scenes: [], actions: [] })
   const [materialError, setMaterialError] = useState('')
-  const [selected, setSelected] = usePageState<Record<string, string>>('visuals.analysisSelections', {})
-  const [notes, setNotes] = usePageState(`visuals.analysisNotes.${visual.id}`, '')
+  const materialRevision = job?.result?.components
+    .map(row => `${row.material_id}:${row.status}:${row.operation_state}`)
+    .join(',')
   useEffect(() => {
     let current = true
     void loadVisualMaterials({
@@ -75,169 +56,183 @@ export function VisualAnalysis({
     return () => {
       current = false
     }
-  }, [api, active, visual.id, alive])
+  }, [api, materialRevision, visual.id, alive])
 
   const command = (body: ApiSchemas['ImportAnalysisRequest']): void => {
     void run(async () => {
       await api.invoke('companion_visuals.analyze_visual', {
         path: { visual_id: visual.id },
-        body: { ...body, notes, expected_revision: job?.revision }
+        body: { ...body, expected_revision: job?.revision }
       })
       await onChanged()
     })
   }
-  const choose = (
-    component: ApiSchemas['ImportComponent'],
-    operation: ApiSchemas['ImportSelection']['command'],
-    materialId?: string
-  ): void =>
-    command({
-      command: 'apply',
-      selections: [{ key: component.observation.key, command: operation, material_id: materialId }]
-    })
-  const reviewText = visual.snapshot.review_reason || job?.result?.understanding.presentation_reason || ''
   return (
-    <section className="card">
-      <div className="card-title">
-        <h3>识别与素材整理</h3>
-        {job && <span className="pill">{STATE[job.state]}</span>}
-      </div>
-      <p aria-live="polite" className="muted" role="status">
-        {active
-          ? job.stage === 'generate_material'
-            ? '正在生成补全素材，离开页面后任务仍会继续。'
-            : '正在分析原始影像并核对素材，离开页面后任务仍会继续。'
-          : !job
-            ? '原件已保存，可以分析内容并整理素材。'
-            : visual.auto_playable
-              ? '已通过检查，可在合适情境中使用。'
-              : '当前仅收藏，尚未满足自动呈现条件。'}
-      </p>
-      {job?.error && <Notice>{job.error}</Notice>}
-      {!active && (
-        <label>
-          修正或补充说明
-          <textarea disabled={busy} maxLength={2000} onChange={event => setNotes(event.target.value)} value={notes} />
-        </label>
+    <div className="visual-materials">
+      {visualMaterialGroups(job).map(group => (
+        <section aria-label={a.groups[group.kind]} className="card" key={group.kind}>
+          <h3>{a.groups[group.kind]}</h3>
+          {group.components.length === 0 ? (
+            <p className="muted">{!job?.result ? (active ? a.working : a.pending) : a.empty}</p>
+          ) : (
+            group.components.map(component => (
+              <MaterialRow
+                api={api}
+                component={component}
+                key={`${visual.id}:${component.observation.key}`}
+                onChanged={onChanged}
+                options={
+                  group.kind === 'outfit'
+                    ? materials.outfits
+                    : group.kind === 'scene'
+                      ? materials.scenes
+                      : materials.actions
+                }
+                visualId={visual.id}
+              />
+            ))
+          )}
+        </section>
+      ))}
+      {materialError && <Notice error={materialError} />}
+      {error && <Notice error={error} />}
+      {job?.error && canContinue && (
+        <p className="muted" role="status">
+          {job.stage === 'presentation_review' ? a.collection : a.states[job.state]}
+        </p>
       )}
       <div className="button-row">
         {active ? (
           <button disabled={busy} onClick={() => command({ command: 'cancel' })} type="button">
-            取消分析
+            {a.cancel}
           </button>
         ) : (
           <>
-            {(!job || job.state !== 'succeeded') && (
+            {canContinue && (
               <button disabled={busy} onClick={() => command({ command: 'retry' })} type="button">
-                {job ? '继续分析' : '分析影像'}
+                {job ? a.retry : a.start}
               </button>
             )}
             {job?.result && (
               <button disabled={busy} onClick={() => command({ command: 'reanalyze' })} type="button">
-                重新分析
+                {a.reanalyze}
               </button>
             )}
           </>
         )}
       </div>
-      {job?.result && (
-        <>
-          {job.result.understanding.identity_reason ? (
-            <details className="optional-details">
-              <summary>伙伴身份核对</summary>
-              <p>{job.result.understanding.identity_reason}</p>
-            </details>
-          ) : null}
-          {reviewText ? (
-            <details className="optional-details">
-              <summary>检查依据</summary>
-              <p>{reviewText}</p>
-            </details>
-          ) : null}
-          {job.result.components.map(component => {
-            const observation = component.observation
-            const key = `${visual.id}:${observation.key}`
-            const options =
-              observation.kind === 'outfit'
-                ? materials.outfits
-                : observation.kind === 'scene'
-                  ? materials.scenes
-                  : materials.actions
-            const chosen = selected[key] ?? ''
-            return (
-              <article className="card" key={observation.key}>
-                <div className="card-title">
-                  <h4>{observation.name}</h4>
-                  <span className="pill">{COMPONENT[component.status]}</span>
-                </div>
-                {component.creation_method && <p className="muted">{METHOD[component.creation_method]}</p>}
-                {component.preview_path && <Media type="image" url={component.preview_path} />}
-                {component.reason && <p className="muted">{component.reason}</p>}
-                <details className="optional-details">
-                  <summary>查看识别依据</summary>
-                  {observation.description ? <p>{observation.description}</p> : null}
-                  {observation.extraction_reason && observation.extraction_reason !== component.reason ? (
-                    <p className="muted">{observation.extraction_reason}</p>
-                  ) : null}
-                  {component.matches.length > 0 && (
-                    <>
-                      <p className="muted">近似素材 · {component.matches.length}</p>
-                      {component.matches.map(match => (
-                        <p className="muted" key={match.material_id}>
-                          {match.name} · {DECISION[match.decision]} · {CONFIDENCE[match.confidence]}：{match.evidence}
-                        </p>
-                      ))}
-                    </>
-                  )}
-                </details>
-                {!active && (
-                  <div className="card-divider">
-                    <label>
-                      选择已有素材
-                      <select
-                        disabled={busy}
-                        onChange={event => setSelected(previous => ({ ...previous, [key]: event.target.value }))}
-                        value={chosen}
-                      >
-                        <option value="">请选择</option>
-                        {options.map(option => (
-                          <option key={option.id} value={option.id}>
-                            {option.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <div className="button-row">
-                      <button
-                        disabled={busy || !chosen}
-                        onClick={() => choose(component, 'existing', chosen)}
-                        type="button"
-                      >
-                        关联此素材
-                      </button>
-                      {component.can_extract && (
-                        <button disabled={busy} onClick={() => choose(component, 'extract')} type="button">
-                          提取并入库
-                        </button>
-                      )}
-                      {component.created && component.material_id !== null && (
-                        <button disabled={busy} onClick={() => choose(component, 'undo')} type="button">
-                          撤销本次入库
-                        </button>
-                      )}
-                      <button disabled={busy} onClick={() => choose(component, 'skip')} type="button">
-                        暂不关联
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </article>
-            )
-          })}
-        </>
+    </div>
+  )
+}
+
+function MaterialRow({
+  api,
+  component,
+  options,
+  visualId,
+  onChanged
+}: {
+  api: RemoteApi
+  component: ApiSchemas['ImportComponent']
+  options: VisualMaterialOptions['outfits']
+  visualId: string
+  onChanged: () => Promise<void>
+}): ReactElement {
+  const key = `${visualId}:${component.observation.key}`
+  const [chosen, setChosen] = usePageState(`visuals.materialSelection.${key}`, '')
+  const [notes, setNotes] = usePageState(`visuals.materialNotes.${key}`, '')
+  const { run, busy, error } = useTask()
+  const controls = visualMaterialControls(component)
+  const disabled = busy || controls.busy
+  const linked = options.find(option => option.id === component.material_id)
+  const linkedName = linked?.name ?? component.observation.name
+  const previewPath = controls.linked
+    ? linked?.preview || (component.created ? component.preview_path : null)
+    : component.preview_path
+  const choose = (command: ApiSchemas['ImportSelection']['command'], materialId?: string): void => {
+    void run(async () => {
+      try {
+        await api.invoke('companion_visuals.analyze_visual', {
+          path: { visual_id: visualId },
+          body: {
+            command: 'apply',
+            selections: [
+              {
+                key: component.observation.key,
+                command,
+                material_id: materialId,
+                expected_component_revision: component.revision,
+                notes
+              }
+            ]
+          }
+        })
+      } finally {
+        await onChanged()
+      }
+    })
+  }
+  return (
+    <article aria-busy={disabled} className="card-divider">
+      <div className="card-title">
+        <h4>{controls.linked ? linkedName : component.observation.name}</h4>
+        <span className="pill">
+          {component.operation_state === 'running'
+            ? (a.stages[component.operation_stage] ?? a.states.running)
+            : a.components[controls.status]}
+        </span>
+      </div>
+      {controls.pose ? (
+        <p className="muted">{a.pose}</p>
+      ) : component.creation_method === 'generated' ? (
+        <p className="muted">{a.generated}</p>
+      ) : null}
+      {previewPath && <Media type="image" url={previewPath} />}
+      {controls.notice && (
+        <p className="muted" role="status">
+          {a.notices[controls.notice]}
+        </p>
       )}
-      {materialError && <Notice error={materialError} />}
+      <label>
+        {a.existing}
+        <select disabled={disabled} onChange={event => setChosen(event.target.value)} value={chosen}>
+          <option value="">{a.select}</option>
+          {options.map(option => (
+            <option key={option.id} value={option.id}>
+              {option.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <input
+        aria-label={a.notes}
+        disabled={disabled}
+        maxLength={2000}
+        onChange={event => setNotes(event.target.value)}
+        placeholder={a.notes}
+        value={notes}
+      />
+      <div className="button-row">
+        <button disabled={disabled || !chosen} onClick={() => choose('existing', chosen)} type="button">
+          {controls.linked ? a.change : a.apply}
+        </button>
+        {component.can_extract && (
+          <button disabled={disabled} onClick={() => choose(controls.extractCommand)} type="button">
+            {a[controls.extractLabel]}
+          </button>
+        )}
+        {component.created && component.material_id !== null && (
+          <button disabled={disabled} onClick={() => choose('undo')} type="button">
+            {a.undo}
+          </button>
+        )}
+        {!controls.linked && (
+          <button disabled={disabled} onClick={() => choose('skip')} type="button">
+            {a.skip}
+          </button>
+        )}
+      </div>
       {error && <Notice error={error} />}
-    </section>
+    </article>
   )
 }

@@ -1,5 +1,6 @@
 import type { ActionReviewStatus, VisualAssetKind } from '../../../../../shared/protocol'
 import { uiCopy } from '../../../../../shared/ui-copy'
+import { visualMaterialCopy } from '../../../../../shared/visual-materials'
 
 export const dict = {
   life: {
@@ -1801,70 +1802,7 @@ export const dict = {
   },
 
   visuals: {
-    analysis: {
-      title: '识别与素材整理',
-      notes: '修正或补充说明',
-      start: '分析影像',
-      retry: '继续分析',
-      reanalyze: '重新分析',
-      cancel: '取消分析',
-      working: '正在分析原始影像并核对素材，离开页面后任务仍会继续。',
-      idle: '原件已保存，可以分析内容并整理已有着装、环境与动作。',
-      approved: '已通过检查，可在合适情境中使用',
-      collection: '当前仅收藏，尚未满足自动呈现条件',
-      identity: '伙伴身份核对',
-      existing: '选择已有素材',
-      select: '请选择',
-      apply: '关联此素材',
-      extract: '提取并入库',
-      skip: '暂不关联',
-      undo: '撤销本次入库',
-      candidate: '近似素材',
-      noCandidates: '未找到已有的近似素材',
-      review: '检查依据',
-      descriptionLabel: '画面描述',
-      extractionLabel: '提取依据',
-      methods: { pixels: '原图提取', generated: '生成补全', pose: '静态姿态', motion: '视频动作' } as Record<
-        string,
-        string
-      >,
-      evidenceTitle: '查看识别依据',
-      failed: '影像分析操作失败',
-      states: {
-        queued: '等待分析',
-        running: '分析整理中',
-        paused: '分析已暂停',
-        succeeded: '分析完成',
-        failed: '分析需重试',
-        cancelled: '分析已取消',
-        unknown: '状态待核对'
-      } as Record<string, string>,
-      components: {
-        recognized: '仅识别',
-        ambiguous: '待确认',
-        reused: '已关联',
-        created: '已入库',
-        reviewing: '动作评审中',
-        failed: '整理需重试',
-        skipped: '未关联',
-        undone: '已撤销入库'
-      } as Record<string, string>,
-      confidence: { high: '高置信度', medium: '中等置信度', low: '低置信度' } as Record<string, string>,
-      decisions: { same: '一致', different: '不同', uncertain: '尚不确定' } as Record<string, string>,
-      stages: {
-        prepare_actor: '检查透明主体视频',
-        analyze: '理解画面',
-        organize: '整理素材',
-        match: '核对近似素材',
-        generate_material: '生成补全素材',
-        extraction_review: '检查提取素材',
-        action_review: '评审动作',
-        presentation_review: '检查呈现条件',
-        complete: '已完成',
-        interrupted: '等待继续',
-        cancelled: '已取消'
-      } as Record<string, string>
-    },
+    analysis: visualMaterialCopy.zh,
     composer: {
       create: '创建影像',
       upload: '上传影像',

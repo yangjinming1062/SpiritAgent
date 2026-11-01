@@ -14,6 +14,7 @@ from features.jobs.service import rewrite_job_checkpoints
 from features.media.chain import MediaChainState
 from features.media.contracts import RemovedVideoTask
 
+from .import_jobs import pause_import_operations
 from .models import (
     VisualImportJob,
     VisualItem,
@@ -301,6 +302,8 @@ async def _restore_imports(db: AsyncSession, rows: dict[str, list[dict[str, Any]
         if not value:
             return value
         for component in value.get("components", []):
+            if component.get("operation_state") in {"queued", "running", "paused"}:
+                component["operation_state"] = "idle"
             table = kinds[component["observation"]["kind"]]
             previous = component.get("material_id")
             component["material_id"] = _mapped(context, table, previous)
@@ -354,7 +357,8 @@ async def _restore_imports(db: AsyncSession, rows: dict[str, list[dict[str, Any]
                 selection["material_id"] = mapped
             selections.append(selection)
         row.selections_json = selections
-        if row.state in {"queued", "running", "unknown", "paused"}:
+        if row.state in {"queued", "running", "unknown", "paused", "cancelled"}:
+            pause_import_operations(row)
             row.state, row.stage, row.error = "paused", "interrupted", "备份恢复后请核对原分析结果并继续"
 
 

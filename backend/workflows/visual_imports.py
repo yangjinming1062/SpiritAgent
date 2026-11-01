@@ -19,7 +19,7 @@ from features.assets.lifecycle import cleanup_asset_directories_after_task
 from features.configuration.settings.values import get_user_setting
 from features.life.material_references import material_has_references
 from features.media.character_images import ImageChainState, generate_character_images, generate_scene_images
-from features.media.image_generation import ImageGenerationError
+from features.media.image_generation import ImageGenerationError, ImageResultDownloadError
 from features.scenes.import_materials import accept_imported_scene, undo_imported_scene
 from features.scenes.queries import scene_snapshot
 from features.scenes.snapshots import list_scene_snapshots
@@ -34,6 +34,7 @@ from features.visuals.import_jobs import (
     guard_import_work,
     recover_import_jobs,
     save_import_progress,
+    take_import_operation,
 )
 from features.visuals.import_media import (
     extract_region,
@@ -792,7 +793,11 @@ async def _extract_locked(work: ImportWork, component: ImportComponent, *, expli
     if work.result is None:
         raise ValueError("内容分析结果缺失")
     if observation.kind == "outfit" and (work.context.identity is None or not work.context.identity_path):
-        component.status, component.reason = "recognized", "伙伴身份尚未就绪，无法创建着装"
+        component.status, component.failure_code, component.reason = (
+            "failed",
+            "identity_unavailable",
+            "伙伴身份尚未就绪，无法创建着装",
+        )
         return
     if not explicit and not observation.extractable:
         component.status, component.reason = "recognized", observation.extraction_reason
@@ -823,7 +828,7 @@ async def _extract_locked(work: ImportWork, component: ImportComponent, *, expli
             )
             >= 2
         )
-        if not motion and (component.creation_method != "pose" or component.candidate_verdict in {"review", "fail"}):
+        if not motion and component.creation_method != "pose":
             if not explicit:
                 component.status, component.reason = "recognized", "可按画面中的静态姿态创建动作"
                 return
@@ -839,7 +844,7 @@ async def _extract_locked(work: ImportWork, component: ImportComponent, *, expli
             component.reason, component.candidate_verdict = evidence.reason, evidence.decision
             await save_import_progress(work, "action_review")
             if evidence.decision != "pass":
-                component.status = "recognized"
+                component.status, component.failure_code = "failed", "quality_rejected"
                 return
         evidence_reason = component.reason
         async with SESSION_LOCAL() as db:
@@ -895,6 +900,8 @@ async def _extract_locked(work: ImportWork, component: ImportComponent, *, expli
             await _remember_candidate(work, component)
         elif previous is not None and component.material_id != previous.material_id:
             await _restore_previous_reference(work, component, previous)
+        if component.status not in {"created", "reused"}:
+            component.status, component.failure_code = "failed", "action_rejected"
         return
     frame = work.context.frames[observation.frame_index]
     legacy_rejected = bool(
@@ -952,26 +959,9 @@ async def _extract_locked(work: ImportWork, component: ImportComponent, *, expli
             if component.preview_path and component.creation_method == "generated"
             else None
         )
-        if resolved is None or component.candidate_verdict != "pass":
+        if resolved is None:
             if component.creation_method != "generated":
                 component.preview_path = None
-            chain = work.context.image_chains.get(observation.key)
-            if (
-                component.status == "failed"
-                and chain is not None
-                and chain.phase in {"ready", "complete"}
-                and chain.stop_reason != "result_unknown"
-                and not chain.pending_urls
-                and not chain.can_retry_goal_review()
-                and (not chain.providers or (chain.phase == "complete" and chain.stop_reason == "exhausted"))
-            ):
-                work.context.image_chains.pop(observation.key)
-                component.preview_path = None
-            if component.creation_method == "generated" and component.candidate_verdict in {"review", "fail"}:
-                chain = work.context.image_chains.get(observation.key)
-                if chain is not None and chain.stop_reason != "result_unknown":
-                    work.context.image_chains.pop(observation.key)
-                    component.preview_path = None
             component.creation_method, component.candidate_verdict = "generated", None
             await save_import_progress(work, "generate_material")
             component.preview_path = await _generate_import_material(work, component)
@@ -979,12 +969,13 @@ async def _extract_locked(work: ImportWork, component: ImportComponent, *, expli
             resolved = resolve_asset_reference(component.preview_path)
             if resolved is None:
                 raise ValueError("生成的素材图片缺失")
+        if component.candidate_verdict != "pass":
             data = await run_blocking(resolved[0].read_bytes)
             verdict = await review_import_material(work, observation, data, creation_method="generated")
             component.reason, component.candidate_verdict = verdict.reason, verdict.decision
             await save_import_progress(work, "extraction_review")
             if verdict.decision != "pass":
-                component.status = "recognized"
+                component.status, component.failure_code = "failed", "quality_rejected"
                 return
 
     generated = component.creation_method == "generated"
@@ -1077,11 +1068,29 @@ async def _organize_component(work: ImportWork, component: ImportComponent) -> N
             component.status in {"created", "reused"}
             and component.material_id is not None
             and (
-                choice.command == "extract"
+                choice.command in {"extract", "retry", "regenerate"}
                 or (choice.command == "existing" and choice.material_id == component.material_id)
             )
         ):
             return
+        if choice.command in {"extract", "retry", "regenerate"}:
+            chain = work.context.image_chains.get(component.observation.key)
+            if choice.command == "regenerate":
+                if chain is not None and (
+                    chain.pending_urls
+                    or chain.phase in {"submitting", "storing", "evaluating"}
+                    or chain.stop_reason == "result_unknown"
+                ):
+                    raise ImageGenerationError(
+                        "已有结果需要继续处理", result_unknown=chain.stop_reason == "result_unknown"
+                    )
+                work.context.image_chains.pop(component.observation.key, None)
+                if component.creation_method == "pose":
+                    component.observation.action_design = None
+                component.preview_path, component.candidate_verdict, component.creation_method = None, None, None
+            elif component.candidate_verdict in {"review", "fail"}:
+                component.status, component.failure_code = "failed", "quality_rejected"
+                return
         if choice.command == "undo":
             await _undo(work, component)
         elif choice.command == "skip":
@@ -1170,33 +1179,50 @@ async def run_import_analysis(user_id: int, job_id: int) -> None:
                     await save_import_progress(work, "prepare_actor")
                     work.context.actor_asset = await prepare_imported_actor(work.media_path, work.user_id, work.id)
                     await save_import_progress(work, "organize")
-                for component in work.result.components:
-                    await guard_import_work(work)
-                    try:
-                        await _organize_component(work, component)
-                    except (GenerationWorkPaused, asyncio.CancelledError):
-                        raise
-                    except Exception as exc:
-                        logger.exception(
-                            "import material organization failed",
-                            extra={"user_id": user_id, "job_id": job_id, "component": component.observation.key},
-                        )
-                        component.status, component.reason = (
-                            "failed",
-                            str(exc)
-                            if isinstance(exc, VideoProcessError | ImageGenerationError)
-                            else "素材整理未完成，可保留原件并重试此条目",
-                        )
-                    async with _material_adoption_lock(work, component.observation.kind):
-                        await _cleanup_inactive_created_materials(work, component)
-                    await save_import_progress(work, "organize")
-                selected = []
-                for component in work.result.components:
-                    if component.material_id is not None and component.status in {"created", "reused"}:
-                        selected.append(await _read_selected(work, component.observation.kind, component.material_id))
-                await save_import_progress(work, "presentation_review")
-                verdict = await review_import_presentation(work, selected)
-                await complete_import_analysis(work, selected, verdict.decision == "pass", verdict.reason)
+                while True:
+                    while (component := await take_import_operation(work)) is not None:
+                        await guard_import_work(work)
+                        try:
+                            await _organize_component(work, component)
+                            async with _material_adoption_lock(work, component.observation.kind):
+                                await _cleanup_inactive_created_materials(work, component)
+                        except (GenerationWorkPaused, asyncio.CancelledError):
+                            raise
+                        except Exception as exc:
+                            logger.exception(
+                                "import material organization failed",
+                                extra={
+                                    "user_id": user_id,
+                                    "job_id": job_id,
+                                    "component": component.observation.key,
+                                },
+                            )
+                            if component.material_id is None or component.status not in {"created", "reused"}:
+                                component.status = "failed"
+                            component.failure_code = (
+                                "save_failed"
+                                if component.operation_stage == "save_material"
+                                else "result_download_failed"
+                                if isinstance(exc, ImageResultDownloadError)
+                                else "result_unknown"
+                                if isinstance(exc, ImageGenerationError) and exc.result_unknown
+                                else "generation_failed"
+                                if isinstance(exc, ImageGenerationError)
+                                else "processing_failed"
+                            )
+                            component.reason = str(exc)
+                        await save_import_progress(work, component.operation_stage or "organize", finish=True)
+                    selected = []
+                    for component in work.result.components:
+                        if component.material_id is not None and component.status in {"created", "reused"}:
+                            selected.append(
+                                await _read_selected(work, component.observation.kind, component.material_id)
+                            )
+                    await save_import_progress(work, "presentation_review")
+                    verdict = await review_import_presentation(work, selected)
+                    if await complete_import_analysis(work, selected, verdict.decision == "pass", verdict.reason):
+                        break
+
     except GenerationWorkPaused:
         if work:
             await fail_import_work(work, "账户维护期间暂停分析，原件和已完成结果保留", paused=True)

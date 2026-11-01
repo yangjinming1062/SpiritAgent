@@ -1,4 +1,5 @@
 import type { VisualAssetKind } from '../../../../../shared/protocol'
+import { visualMaterialCopy } from '../../../../../shared/visual-materials'
 
 import type { Dictionary } from './zh'
 
@@ -1887,75 +1888,7 @@ export const dict: Dictionary = {
   },
 
   visuals: {
-    analysis: {
-      title: 'Analysis and materials',
-      notes: 'Corrections or additional details',
-      start: 'Analyze media',
-      retry: 'Continue analysis',
-      reanalyze: 'Analyze again',
-      cancel: 'Cancel analysis',
-      working: 'Analyzing the original and checking materials. This continues after you leave the page.',
-      idle: 'The original is saved. Analyze it to organize its outfit, environment and actions.',
-      approved: 'Reviewed for use in suitable situations',
-      collection: 'Collected; automatic presentation is not yet approved',
-      identity: 'Companion identity',
-      existing: 'Choose an existing material',
-      select: 'Select',
-      apply: 'Link this material',
-      extract: 'Extract and add',
-      skip: 'Leave unlinked',
-      undo: 'Undo this addition',
-      candidate: 'Similar materials',
-      noCandidates: 'No similar existing materials found',
-      review: 'Review evidence',
-      descriptionLabel: 'Observed details',
-      extractionLabel: 'Extraction basis',
-      methods: {
-        pixels: 'Extracted',
-        generated: 'Generated completion',
-        pose: 'Still pose',
-        motion: 'Video action'
-      } as Record<string, string>,
-      evidenceTitle: 'Recognition details',
-      failed: 'Media analysis operation failed',
-      states: {
-        queued: 'Awaiting analysis',
-        running: 'Analyzing and organizing',
-        paused: 'Analysis paused',
-        succeeded: 'Analysis complete',
-        failed: 'Analysis needs a retry',
-        cancelled: 'Analysis cancelled',
-        unknown: 'Status needs checking'
-      } as Record<string, string>,
-      components: {
-        recognized: 'Recognized only',
-        ambiguous: 'Needs confirmation',
-        reused: 'Linked',
-        created: 'Added',
-        reviewing: 'Action under review',
-        failed: 'Organization needs a retry',
-        skipped: 'Unlinked',
-        undone: 'Addition undone'
-      } as Record<string, string>,
-      confidence: { high: 'High confidence', medium: 'Medium confidence', low: 'Low confidence' } as Record<
-        string,
-        string
-      >,
-      decisions: { same: 'Equivalent', different: 'Different', uncertain: 'Uncertain' } as Record<string, string>,
-      stages: {
-        prepare_actor: 'Checking transparent subject video',
-        analyze: 'Understanding content',
-        organize: 'Organizing materials',
-        match: 'Checking similar materials',
-        generate_material: 'Generating material',
-        extraction_review: 'Reviewing extraction',
-        action_review: 'Reviewing action',
-        presentation_review: 'Reviewing presentation',
-        complete: 'Complete',
-        interrupted: 'Ready to continue',
-        cancelled: 'Cancelled'
-      } as Record<string, string>
-    },
+    analysis: visualMaterialCopy.en,
     composer: {
       create: 'Create visual',
       upload: 'Upload visual',

@@ -241,84 +241,94 @@ function VisualDetailContent({
         </div>
       </SettingCard>
 
-      <SettingCard divided={false}>
-        <div className="space-y-5 p-4">
-          {detail.description ? (
-            <FactSection title={t.descriptionTitle}>
-              <ExpandableText
-                action="button"
-                className={VISUAL_BODY}
-                collapseLabel={t.collapse}
-                expandLabel={t.expand}
-                lines={4}
-                text={detail.description}
-              />
-            </FactSection>
-          ) : null}
-          <div className={cn('grid gap-5', !analysisPending && 'md:grid-cols-2')}>
-            {!analysisPending ? (
-              <FactSection title={t.eligibilityTitle}>
-                <div className="space-y-2">
-                  <PlayBadge
-                    label={detail.auto_playable ? t.autoPlayOn : t.autoPlayOff}
-                    playable={detail.auto_playable}
-                  />
-                  <p className={VISUAL_BODY}>{detail.auto_playable ? t.analysis.approved : t.autoPlayHint}</p>
-                  {!detail.auto_playable && detail.snapshot.review_reason ? (
-                    <Disclosure chevron title={t.autoPlayReview} variant="inline">
-                      <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-muted">
-                        {detail.snapshot.review_reason}
-                      </p>
-                    </Disclosure>
-                  ) : null}
-                </div>
+      {detail.analysis ? (
+        <>
+          <PlayBadge
+            label={detail.auto_playable ? t.autoPlayOn : t.analysis.collection}
+            playable={detail.auto_playable}
+          />
+          <VisualImportAnalysis visual={detail} />
+        </>
+      ) : (
+        <SettingCard divided={false}>
+          <div className="space-y-5 p-4">
+            {detail.description ? (
+              <FactSection title={t.descriptionTitle}>
+                <ExpandableText
+                  action="button"
+                  className={VISUAL_BODY}
+                  collapseLabel={t.collapse}
+                  expandLabel={t.expand}
+                  lines={4}
+                  text={detail.description}
+                />
               </FactSection>
             ) : null}
-            <FactSection title={t.sourceTitle}>
-              <div className="rounded-xl border border-line-hairline bg-fill-faint p-3">
-                {source.kind === 'analysis' ? (
-                  <dl className="space-y-2">
-                    <SourceRow label={t.composer.original} value={source.original_filename} />
-                  </dl>
-                ) : source.kind === 'scene' ? (
-                  <dl className="space-y-2">
-                    <SourceRow
-                      label={t.sourceScene}
-                      value={materialValue(detail.scene_id, source.scene.title || t.untitledScene)}
+            <div className={cn('grid gap-5', !analysisPending && 'md:grid-cols-2')}>
+              {!analysisPending ? (
+                <FactSection title={t.eligibilityTitle}>
+                  <div className="space-y-2">
+                    <PlayBadge
+                      label={detail.auto_playable ? t.autoPlayOn : t.autoPlayOff}
+                      playable={detail.auto_playable}
                     />
-                  </dl>
-                ) : (
-                  <>
+                    <p className={VISUAL_BODY}>{detail.auto_playable ? t.analysis.approved : t.autoPlayHint}</p>
+                    {!detail.auto_playable && detail.snapshot.review_reason ? (
+                      <Disclosure chevron title={t.autoPlayReview} variant="inline">
+                        <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-muted">
+                          {detail.snapshot.review_reason}
+                        </p>
+                      </Disclosure>
+                    ) : null}
+                  </div>
+                </FactSection>
+              ) : null}
+              <FactSection title={t.sourceTitle}>
+                <div className="rounded-xl border border-line-hairline bg-fill-faint p-3">
+                  {source.kind === 'analysis' ? (
                     <dl className="space-y-2">
-                      <SourceRow label={t.sourceOutfit} value={materialValue(detail.outfit_id, source.outfit.name)} />
-                      {source.kind === 'cinematic' ? (
-                        <SourceRow
-                          label={t.sourceScene}
-                          value={materialValue(detail.scene_id, source.scene.title || t.untitledScene)}
-                        />
-                      ) : null}
+                      <SourceRow label={t.composer.original} value={source.original_filename} />
+                    </dl>
+                  ) : source.kind === 'scene' ? (
+                    <dl className="space-y-2">
                       <SourceRow
-                        label={t.sourceAction}
-                        value={
-                          <>
-                            {materialValue(detail.action_id, source.action.name)}
-                            {actionMeta ? <span className="ml-1.5 text-[11px] text-faint">{actionMeta}</span> : null}
-                          </>
-                        }
+                        label={t.sourceScene}
+                        value={materialValue(detail.scene_id, source.scene.title || t.untitledScene)}
                       />
                     </dl>
-                    {source.action.motion_description ? (
-                      <p className="mt-3 whitespace-pre-wrap border-t border-line-hairline pt-2 text-[12px] leading-relaxed text-faint">
-                        {source.action.motion_description}
-                      </p>
-                    ) : null}
-                  </>
-                )}
-              </div>
-            </FactSection>
+                  ) : (
+                    <>
+                      <dl className="space-y-2">
+                        <SourceRow label={t.sourceOutfit} value={materialValue(detail.outfit_id, source.outfit.name)} />
+                        {source.kind === 'cinematic' ? (
+                          <SourceRow
+                            label={t.sourceScene}
+                            value={materialValue(detail.scene_id, source.scene.title || t.untitledScene)}
+                          />
+                        ) : null}
+                        <SourceRow
+                          label={t.sourceAction}
+                          value={
+                            <>
+                              {materialValue(detail.action_id, source.action.name)}
+                              {actionMeta ? <span className="ml-1.5 text-[11px] text-faint">{actionMeta}</span> : null}
+                            </>
+                          }
+                        />
+                      </dl>
+                      {source.action.motion_description ? (
+                        <p className="mt-3 whitespace-pre-wrap border-t border-line-hairline pt-2 text-[12px] leading-relaxed text-faint">
+                          {source.action.motion_description}
+                        </p>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+              </FactSection>
+            </div>
           </div>
-        </div>
-      </SettingCard>
+        </SettingCard>
+      )}
 
       {detail.jobs.length > 0 ? (
         <FactSection title={t.jobsHistoryTitle}>
@@ -330,7 +340,7 @@ function VisualDetailContent({
         </FactSection>
       ) : null}
 
-      {source.kind !== 'analysis' ? (
+      {!detail.analysis && source.kind !== 'analysis' ? (
         <Disclosure hint={t.redoHint} title={t.redoTitle} variant="panel">
           <div className="space-y-2">
             <label className="block">
@@ -362,8 +372,6 @@ function VisualDetailContent({
           </div>
         </Disclosure>
       ) : null}
-
-      {detail.analysis ? <VisualImportAnalysis visual={detail} /> : null}
 
       {zoom && preview.status === 'ready' ? (
         <PortraitLightbox name={detail.title} onClose={() => setZoom(false)} url={preview.src} />
