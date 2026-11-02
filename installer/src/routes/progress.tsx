@@ -23,7 +23,8 @@ export default function ProgressScreen({ bootstrap }: ProgressProps): React.JSX.
   const [showDetails, setShowDetails] = useState(false)
   const [actionError, setActionError] = useState('')
   const [cancelling, setCancelling] = useState(false)
-  const visualSize = showDetails ? 112 : 260
+  const visualSize = showDetails ? 112 : 264
+  const pct = progress.total ? progress.done / progress.total : 0
 
   const stageOrder = bootstrap.stageOrder
   const currentStageName = bootstrap.currentStage
@@ -52,9 +53,6 @@ export default function ProgressScreen({ bootstrap }: ProgressProps): React.JSX.
 
   return (
     <div className="spiritagent-fade-in relative isolate flex h-full flex-col overflow-hidden">
-      {/* 背景氛围光 */}
-      <span aria-hidden="true" className="spiritagent-glow" />
-
       {/* 进度细条：与顶部 Titlebar 区分，仅显示步骤进度计数；状态文案由下方 captionText 承担 */}
       <div className="flex shrink-0 items-center justify-end border-b border-line-hairline px-6 py-1.5 text-[11px] font-medium text-text-muted backdrop-blur-xs">
         {progress.total ? `已完成 ${progress.done} / ${progress.total} 个步骤` : '正在准备安装'}
@@ -77,16 +75,19 @@ export default function ProgressScreen({ bootstrap }: ProgressProps): React.JSX.
           {/* 中央蛋 */}
           <Egg
             cracks={progress.done}
+            progress={pct}
             phase={phase}
-            size={showDetails ? 88 : 208}
+            size={showDetails ? 88 : 196}
           />
+
+          {/* 阶段完成的扩散光，按完成数重放一次 */}
+          {progress.done > 0 && bootstrap.status === 'running' && (
+            <span key={progress.done} aria-hidden="true" className="sa-stage-pulse" />
+          )}
 
           {/* 破壳覆盖层，居中叠在主视觉上 */}
           {bootstrap.status === 'completed' && (
-            <div
-              className="pointer-events-none absolute -inset-8 rounded-full bg-radial from-amber-200/35 via-amber-100/10 to-transparent opacity-0 animate-warm-glow"
-              aria-hidden="true"
-            />
+            <span className="sa-hatch-glow" aria-hidden="true" />
           )}
         </div>
 
@@ -95,7 +96,14 @@ export default function ProgressScreen({ bootstrap }: ProgressProps): React.JSX.
           {bootstrap.status === 'running' && (
             <Loader2 size={14} className="animate-spin text-accent shrink-0" />
           )}
-          <span className="tracking-tight">{captionText}</span>
+          <span
+            className={clsx(
+              'tracking-tight',
+              bootstrap.status === 'running' && 'sa-text-sheen'
+            )}
+          >
+            {captionText}
+          </span>
         </div>
         <p className="mt-3 text-center text-sm leading-relaxed text-text-muted">
           {bootstrap.status === 'running' || bootstrap.status === 'idle' ? '请保持网络连接，安装会自动继续。' : '已有资料会保留在本机。'}

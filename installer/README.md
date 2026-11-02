@@ -9,6 +9,7 @@ Tauri 安装器负责首次安装与环境修复，日常运行及更新归 Clie
 | 启动、快路径及修复 | [lib.rs](src-tauri/src/lib.rs)、[bootstrap.rs](src-tauri/src/bootstrap.rs)；健康探针与 [Client 更新器](../client/main/runner/updater.ts)一致 |
 | 安装、取消和事件 | [install.sh](install.sh)、[install.ps1](install.ps1) 定义阶段，[powershell.rs](src-tauri/src/powershell.rs) 管进程，[events.rs](src-tauri/src/events.rs) 与 [store.ts](src/store.ts) 连接编排和 UI |
 | 路径与内嵌载荷 | [paths.rs](src-tauri/src/paths.rs)、[install_script.rs](src-tauri/src/install_script.rs)、[embedded_payload.rs](src-tauri/src/embedded_payload.rs)、[build.rs](src-tauri/build.rs) |
+| 界面与光效 | [ambience.tsx](src/components/ambience.tsx)、[halo.tsx](src/components/halo.tsx)、[egg.tsx](src/components/egg.tsx)、[light-core.tsx](src/components/light-core.tsx)、[styles.css](src/styles.css)；光效只表达真实阶段 |
 
 ## 资源与路径
 

@@ -1,6 +1,7 @@
 import type React from 'react'
 import { useState } from 'react'
 import { Button } from '../components/button'
+import { LightCore } from '../components/light-core'
 import { launchSpiritAgentDesktop } from '../store'
 import { Rocket, AlertCircle } from 'lucide-react'
 
@@ -22,14 +23,14 @@ export default function Success(): React.JSX.Element {
   }
 
   return (
-    <div className="spiritagent-fade-in installer-screen relative isolate flex h-full flex-col items-center gap-8 px-12 py-10">
-      <span aria-hidden="true" className="spiritagent-glow" />
+    <div className="spiritagent-fade-in installer-screen relative flex h-full flex-col items-center gap-8 px-12 py-10">
+      <LightCore variant="hatched" size={132} />
 
       <div className="w-full max-w-2xl min-w-0 text-center">
-        <h1 className="mx-auto mb-5 text-[clamp(2rem,5vw,3.5rem)] font-bold leading-tight tracking-tight text-accent">唤生已准备就绪</h1>
+        <h1 className="sa-title-grad mx-auto mb-5 text-[clamp(2rem,5vw,3.5rem)] font-bold leading-tight tracking-tight">唤生已准备就绪</h1>
 
         <p className="m-0 text-center text-base leading-normal tracking-tight text-text-body">
-          打开唤生，认识你的伙伴。以后也可以从电脑的应用列表中找到唤生。
+          打开唤生，开始创造你的 AI 伙伴。以后也可以从电脑的应用列表中找到唤生。
         </p>
       </div>
 

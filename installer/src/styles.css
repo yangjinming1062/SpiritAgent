@@ -1,4 +1,4 @@
-/* token 与 client/renderer/styles.css 的 cyber-glass 块同步（去掉精灵窗/工具窗维度）。 */
+/* 语义 token 与 client/renderer/styles.css 的 cyber-glass 块同步；--ui-stream-* 与 .sa-* 是安装器装饰光专用，不参与同步。 */
 
 @import 'tailwindcss';
 
@@ -31,7 +31,6 @@
   --color-focus-line: var(--ui-focus-line);
   --color-success: var(--ui-success);
   --color-destructive: #cf2d56;
-  --color-egg-shell: var(--ui-glow);
 
   --font-sans: var(--ui-font-sans);
   --font-mono: var(--ui-font-mono);
@@ -78,7 +77,25 @@
     --ui-accent-line: rgb(125 155 255 / 0.55);
     --ui-focus-line: rgb(125 155 255 / 0.75);
     --ui-success: rgb(52 211 153);
-    --ui-glow: rgb(125 155 255 / 0.28);
+    --ui-stream-a: #7d9bff;
+    --ui-stream-b: #a98cff;
+    --ui-stream-c: #5ee7d0;
+    --ui-stream-core: #f2f6ff;
+
+    --sa-arc-1: var(--ui-stream-c);
+    --sa-arc-2: var(--ui-stream-a);
+    --sa-arc-3: var(--ui-stream-b);
+    --sa-core-1: 255 244 214;
+    --sa-core-2: 255 214 138;
+    --sa-core-glow: 255 214 138;
+    --sa-core-glow-alpha: 0.28;
+    --sa-beam-1: rgba(125, 155, 255, 0.34);
+    --sa-beam-2: rgba(169, 140, 255, 0.28);
+    --sa-beam-3: rgba(94, 231, 208, 0.2);
+    --sa-streak-1: rgba(180, 196, 255, 0.3);
+    --sa-streak-2: rgba(94, 231, 208, 0.18);
+    --sa-egg-light: 1;
+    --sa-sheen-dur: 5.5s;
     --ui-noise: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
 
     --ui-font-sans:
@@ -163,32 +180,6 @@
   animation: spiritagent-fade-in 0.45s ease-out both;
 }
 
-/* 氛围光，用 --ui-accent-soft */
-.spiritagent-glow {
-  position: absolute;
-  left: 50%;
-  top: 42%;
-  width: min(72vw, 34rem);
-  height: min(72vw, 34rem);
-  transform: translate(-50%, -50%);
-  border-radius: 9999px;
-  background: radial-gradient(
-    closest-side,
-    color-mix(in srgb, var(--ui-accent) 30%, transparent),
-    transparent 70%
-  );
-  filter: blur(36px);
-  opacity: 0.7;
-  pointer-events: none;
-  z-index: -1;
-  animation: spiritagent-glow-pulse 3.4s ease-in-out infinite;
-}
-
-@keyframes spiritagent-glow-pulse {
-  0%, 100% { opacity: 0.6; }
-  50% { opacity: 0.95; }
-}
-
 @keyframes spiritagent-egg-pulse {
   0%, 100% {
     transform: scale(1);
@@ -257,12 +248,574 @@
   animation: spiritagent-warm-glow 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+.sa-ambience {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0.55;
+  transition: opacity 1.2s ease;
+}
+
+.sa-ambience-active {
+  opacity: 0.8;
+}
+
+.sa-ambience-bloom {
+  opacity: 0.95;
+  --sa-beam-2: rgba(196, 156, 255, 0.26);
+  --sa-beam-3: rgba(255, 214, 138, 0.16);
+}
+
+.sa-ambience-dim {
+  opacity: 0.18;
+}
+
+.sa-ambience-dim .sa-beam,
+.sa-ambience-dim .sa-streak {
+  animation-play-state: paused;
+}
+
+.sa-beam,
+.sa-streak {
+  position: absolute;
+  display: block;
+  border-radius: 9999px;
+  will-change: transform;
+}
+
+.sa-beam-a {
+  left: -16%;
+  top: -22%;
+  width: 92%;
+  height: 58%;
+  background: radial-gradient(closest-side, var(--sa-beam-1), transparent 72%);
+  animation: sa-beam-drift-a 27s ease-in-out infinite alternate;
+}
+
+.sa-beam-b {
+  right: -20%;
+  top: 24%;
+  width: 84%;
+  height: 52%;
+  background: radial-gradient(closest-side, var(--sa-beam-2), transparent 72%);
+  animation: sa-beam-drift-b 34s ease-in-out infinite alternate-reverse;
+}
+
+.sa-beam-c {
+  left: 2%;
+  bottom: -26%;
+  width: 96%;
+  height: 56%;
+  background: radial-gradient(closest-side, var(--sa-beam-3), transparent 72%);
+  animation: sa-beam-drift-c 23s ease-in-out infinite alternate;
+}
+
+.sa-streak {
+  left: -10%;
+  width: 120%;
+}
+
+.sa-streak-a {
+  top: 21%;
+  height: 16%;
+  background: radial-gradient(closest-side, var(--sa-streak-1), transparent 70%);
+  animation: sa-streak-drift 38s ease-in-out infinite alternate;
+}
+
+.sa-streak-b {
+  top: 63%;
+  height: 12%;
+  background: radial-gradient(closest-side, var(--sa-streak-2), transparent 70%);
+  animation: sa-streak-drift 46s ease-in-out infinite alternate-reverse;
+}
+
+.sa-rise {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(
+    0deg,
+    rgba(125, 155, 255, 0.2),
+    rgba(125, 155, 255, 0.07) 48%,
+    transparent
+  );
+  transition: height 1.1s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.sa-rise-front {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -28px;
+  display: block;
+  height: 56px;
+  background: linear-gradient(
+    180deg,
+    rgba(190, 206, 255, 0) 0%,
+    rgba(190, 206, 255, 0.1) 44%,
+    rgba(242, 246, 255, 0.16) 60%,
+    rgba(190, 206, 255, 0) 100%
+  );
+  -webkit-mask: linear-gradient(90deg, transparent, #000 16%, #000 84%, transparent);
+  mask: linear-gradient(90deg, transparent, #000 16%, #000 84%, transparent);
+  animation: sa-rise-breathe 5.5s ease-in-out infinite alternate;
+}
+
+.sa-ambience-bloom .sa-rise {
+  background: linear-gradient(
+    0deg,
+    rgba(255, 214, 138, 0.16),
+    rgba(255, 214, 138, 0.05) 50%,
+    transparent
+  );
+}
+
+.sa-ambience-bloom .sa-rise-front {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 236, 200, 0) 0%,
+    rgba(255, 236, 200, 0.12) 44%,
+    rgba(255, 255, 255, 0.18) 60%,
+    rgba(255, 236, 200, 0) 100%
+  );
+}
+
+.sa-ambience-dim .sa-rise {
+  opacity: 0;
+}
+
+.sa-arc-fill {
+  animation: sa-ring-fill 0.95s cubic-bezier(0.22, 0.9, 0.25, 1) both;
+}
+
+.sa-arc-sheen {
+  animation:
+    sa-ring-sheen var(--sa-sheen-dur, 5.5s) linear infinite,
+    sa-sheen-in 0.6s ease-out 0.95s both;
+}
+
+.sa-arc-comet {
+  animation: sa-ring-comet 2.8s linear infinite;
+}
+
+.sa-head {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: sa-head-pulse 2.4s ease-in-out infinite;
+}
+
+.sa-stage-pulse {
+  position: absolute;
+  inset: 0;
+  display: block;
+  border-radius: 9999px;
+  border: 1px solid rgba(160, 185, 255, 0.55);
+  box-shadow: 0 0 28px rgba(125, 155, 255, 0.35);
+  pointer-events: none;
+  animation: sa-stage-pulse 1.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.sa-hatch-glow {
+  position: absolute;
+  inset: -26px;
+  display: block;
+  border-radius: 9999px;
+  background: radial-gradient(
+    closest-side,
+    rgba(255, 226, 170, 0.36),
+    rgba(255, 200, 120, 0.12) 52%,
+    transparent 76%
+  );
+  pointer-events: none;
+  animation: sa-hatch-bloom 1.6s ease-out both;
+}
+
+.sa-core {
+  position: relative;
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+}
+
+.sa-core-glow {
+  position: absolute;
+  inset: -38%;
+  border-radius: 9999px;
+  pointer-events: none;
+}
+
+.sa-core-dormant .sa-core-glow {
+  background: radial-gradient(closest-side, rgba(125, 155, 255, 0.32), transparent 70%);
+  animation: sa-core-breathe 4.2s ease-in-out infinite alternate;
+}
+
+.sa-core-hatched .sa-core-glow {
+  background: radial-gradient(
+    closest-side,
+    rgb(var(--sa-core-glow) / var(--sa-core-glow-alpha, 0.28)),
+    transparent 70%
+  );
+  animation: sa-core-breathe 3.6s ease-in-out infinite alternate;
+}
+
+.sa-core-shell {
+  position: relative;
+  display: block;
+  overflow: visible;
+}
+
+.sa-core-orb {
+  position: absolute;
+  inset: 4%;
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle at 50% 44%,
+    rgb(var(--sa-core-1) / 0.98) 0%,
+    rgb(var(--sa-core-2) / 0.8) 24%,
+    rgb(var(--sa-core-2) / 0.26) 48%,
+    transparent 70%
+  );
+  animation: sa-core-breathe 3.6s ease-in-out infinite alternate;
+}
+
+.sa-rays {
+  position: absolute;
+  inset: -18%;
+  border-radius: 9999px;
+  background: repeating-conic-gradient(
+    from 0deg,
+    rgba(255, 236, 200, 0.82) 0deg 1.5deg,
+    transparent 1.5deg 30deg
+  );
+  -webkit-mask: radial-gradient(closest-side, transparent 24%, #000 38%, #000 72%, transparent 84%);
+  mask: radial-gradient(closest-side, transparent 24%, #000 38%, #000 72%, transparent 84%);
+  animation: sa-rays-spin 90s linear infinite;
+}
+
+.sa-orbit {
+  --sa-orbit-base: rgba(160, 180, 255, 0.14);
+  position: absolute;
+  border-radius: 9999px;
+  background:
+    conic-gradient(
+      from 0deg,
+      transparent 0 58%,
+      rgba(214, 226, 255, 0.9) 76%,
+      transparent 84% 100%
+    ),
+    var(--sa-orbit-base);
+  -webkit-mask: radial-gradient(closest-side, transparent calc(100% - 2px), #000 calc(100% - 1px));
+  mask: radial-gradient(closest-side, transparent calc(100% - 2px), #000 calc(100% - 1px));
+  animation: sa-orbit-spin 18s linear infinite;
+}
+
+.sa-core-dormant .sa-orbit {
+  inset: 3% 14%;
+}
+
+.sa-core-hatched .sa-orbit {
+  inset: -22%;
+  --sa-orbit-base: rgba(160, 180, 255, 0.07);
+}
+
+.sa-bloom {
+  position: absolute;
+  inset: -10%;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 224, 168, 0.55);
+  box-shadow: 0 0 40px rgba(255, 214, 138, 0.35);
+  pointer-events: none;
+  animation: sa-bloom 1.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.sa-title-grad {
+  background-image: linear-gradient(96deg, #a9bbff, #c9b6ff 42%, #8ff0e2 72%, #a9bbff);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: sa-title-flow 14s linear infinite;
+}
+
+.sa-text-sheen {
+  background-image: linear-gradient(
+    100deg,
+    var(--ui-text-body) 0%,
+    var(--ui-text-body) 40%,
+    #ffffff 50%,
+    var(--ui-text-body) 60%,
+    var(--ui-text-body) 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: sa-text-sheen 4.5s ease-in-out infinite;
+}
+
+.sa-btn-sheen {
+  background-image: linear-gradient(
+    110deg,
+    transparent 40%,
+    rgba(255, 255, 255, 0.38) 50%,
+    transparent 60%
+  );
+  background-size: 260% 100%;
+  background-position: 160% 0;
+  transition:
+    background-position 0.9s ease,
+    background-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.sa-btn-sheen:hover {
+  background-position: -60% 0;
+  box-shadow: 0 0 20px rgba(125, 155, 255, 0.35);
+}
+
+.sa-titlebar::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(125, 155, 255, 0.5) 22%,
+    rgba(214, 226, 255, 0.75) 50%,
+    rgba(125, 155, 255, 0.5) 78%,
+    transparent
+  );
+}
+
+@keyframes sa-beam-drift-a {
+  from {
+    transform: translate3d(-6%, -4%, 0) rotate(-18deg) scale(1.02);
+  }
+  to {
+    transform: translate3d(7%, 6%, 0) rotate(-12deg) scale(1.12);
+  }
+}
+
+@keyframes sa-beam-drift-b {
+  from {
+    transform: translate3d(5%, 4%, 0) rotate(14deg) scale(1.06);
+  }
+  to {
+    transform: translate3d(-6%, -5%, 0) rotate(9deg) scale(0.98);
+  }
+}
+
+@keyframes sa-beam-drift-c {
+  from {
+    transform: translate3d(-4%, 3%, 0) rotate(6deg) scale(1);
+  }
+  to {
+    transform: translate3d(5%, -4%, 0) rotate(11deg) scale(1.1);
+  }
+}
+
+@keyframes sa-streak-drift {
+  from {
+    transform: translate3d(-7%, 0, 0) rotate(-9deg);
+  }
+  to {
+    transform: translate3d(7%, 0, 0) rotate(-7deg);
+  }
+}
+
+@keyframes sa-rise-breathe {
+  from {
+    opacity: 0.55;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0.95;
+    transform: translateY(1px);
+  }
+}
+
+@keyframes sa-ring-fill {
+  from {
+    stroke-dasharray: 0 100;
+  }
+  to {
+    stroke-dasharray: 100 0;
+  }
+}
+
+@keyframes sa-ring-sheen {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+
+@keyframes sa-sheen-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 0.5;
+  }
+}
+
+@keyframes sa-ring-comet {
+  from {
+    stroke-dashoffset: 100;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes sa-head-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+@keyframes sa-stage-pulse {
+  from {
+    transform: scale(0.9);
+    opacity: 0.85;
+  }
+  to {
+    transform: scale(1.55);
+    opacity: 0;
+  }
+}
+
+@keyframes sa-hatch-bloom {
+  0% {
+    transform: scale(0.65);
+    opacity: 0;
+  }
+  35% {
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.25);
+    opacity: 0;
+  }
+}
+
+@keyframes sa-core-breathe {
+  from {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0.9;
+    transform: scale(1.04);
+  }
+}
+
+@keyframes sa-rays-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes sa-orbit-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes sa-bloom {
+  from {
+    transform: scale(0.7);
+    opacity: 0;
+  }
+  60% {
+    opacity: 1;
+  }
+  to {
+    transform: scale(1.15);
+    opacity: 0;
+  }
+}
+
+@keyframes sa-title-flow {
+  from {
+    background-position: 0% 50%;
+  }
+  to {
+    background-position: 200% 50%;
+  }
+}
+
+@keyframes sa-text-sheen {
+  0%,
+  55% {
+    background-position: 130% 0;
+  }
+  100% {
+    background-position: -30% 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .spiritagent-glow,
   .animate-egg-pulse,
   .animate-crack-flash,
   .animate-egg-tremor,
-  .animate-warm-glow {
+  .animate-warm-glow,
+  .sa-beam,
+  .sa-streak,
+  .sa-rise-front,
+  .sa-head,
+  .sa-arc-fill,
+  .sa-arc-sheen,
+  .sa-arc-comet,
+  .sa-stage-pulse,
+  .sa-hatch-glow,
+  .sa-core-glow,
+  .sa-core-orb,
+  .sa-core-breathe,
+  .sa-rays,
+  .sa-orbit,
+  .sa-bloom,
+  .sa-text-sheen,
+  .sa-title-grad,
+  .sa-btn-sheen {
     animation: none !important;
+    transition: none !important;
+  }
+
+  .sa-rise {
+    transition: none !important;
+  }
+
+  .sa-arc-sheen {
+    opacity: 0.5;
+  }
+
+  .sa-stage-pulse,
+  .sa-hatch-glow,
+  .sa-bloom {
+    opacity: 0;
   }
 }
