@@ -20,6 +20,7 @@ from infrastructure.assets.asset_store import (
     read_valid_image_data_uri,
     resolve_asset_reference,
     save_companion_asset_async,
+    save_image_chain_input_asset_async,
     save_video_job_asset_async,
     validate_image_bytes,
 )
@@ -491,8 +492,8 @@ async def _aligned_outfit_reference(
     snapshot: ActorClipSource | CinematicSource,
     progress: VisualJobProgress,
     directory: str,
-    identity_uri: str,
-    outfit_uri: str,
+    identity_path: str,
+    outfit_path: str,
 ) -> str:
     source_hash = _alignment_source_hash(snapshot)
     if progress.reference_alignment_source_hash is None:
@@ -513,7 +514,7 @@ async def _aligned_outfit_reference(
         reference = await asyncio.to_thread(read_valid_image_data_uri, progress.aligned_outfit_path)
         if not reference:
             raise VisualStateError("派生造型参考无法读取")
-        return reference
+        return progress.aligned_outfit_path
 
     async def save_alignment(value: ImageChainState) -> None:
         progress.reference_alignment_chain_json = value.model_dump_json()
@@ -526,11 +527,11 @@ async def _aligned_outfit_reference(
     try:
         path = await align_character_reference(
             user_id,
-            outfit_uri,
+            outfit_path,
             snapshot.identity,
             snapshot.outfit.description,
             task=AiTaskKey.visuals,
-            identity_reference=identity_uri,
+            identity_reference=identity_path,
             storage_directory=directory,
             state=state,
             save_progress=save_alignment,
@@ -555,7 +556,7 @@ async def _aligned_outfit_reference(
     reference = await asyncio.to_thread(read_valid_image_data_uri, path)
     if not reference:
         raise VisualStateError("派生造型参考无法读取")
-    return reference
+    return path
 
 
 def _frame_bytes(
@@ -565,6 +566,12 @@ def _frame_bytes(
 ) -> tuple[bytes, int, int]:
     validate_image_bytes(data)
     with Image.open(BytesIO(data)) as image:
+        original_png = (
+            image.format == "PNG"
+            and image.mode == "RGB"
+            and not getattr(image, "is_animated", False)
+            and image.getexif().get(274, 1) == 1
+        )
         ImageOps.exif_transpose(image, in_place=True)
         with image.convert("RGB") as rgb, BytesIO() as output:
             width, height = rgb.size
@@ -581,10 +588,14 @@ def _frame_bytes(
                     minimum, maximum = pixel_bounds
                     scale = min(max(1.0, minimum / width, minimum / height), maximum / width, maximum / height)
                     target_size = (max(1, round(width * scale)), max(1, round(height * scale)))
+                    if original_png and box == (0, 0, *rgb.size) and target_size == rgb.size:
+                        return data, width, height
                     with fitted.resize(target_size, Image.Resampling.LANCZOS) as resized:
                         resized.save(output, format="PNG")
                     width, height = target_size
                 else:
+                    if original_png and box == (0, 0, *rgb.size):
+                        return data, width, height
                     fitted.save(output, format="PNG")
             return output.getvalue(), width, height
 
@@ -714,12 +725,12 @@ async def _prepare_pose(
         await _require_active_job(user_id, job.id, progress.generation_id)
 
     previous = progress.previous_pose_path
-    identity, identity_outfit = await _references(snapshot)
-    environment = (
+    await _references(snapshot)
+    identity, identity_outfit = snapshot.primary_reference_path, snapshot.outfit.path
+    environment = None
+    if snapshot.kind == "cinematic":
         await asyncio.to_thread(read_visual_reference, snapshot.scene.path, snapshot.scene.content_hash)
-        if snapshot.kind == "cinematic"
-        else None
-    )
+        environment = snapshot.scene.path
     progress.frame_width, progress.frame_height = progress.target_width, progress.target_height
     progress.aspect_ratio = _delivery_aspect(progress)
     editing = bool(previous)
@@ -727,7 +738,7 @@ async def _prepare_pose(
         reference = await asyncio.to_thread(read_valid_image_data_uri, previous)
         if not reference:
             raise VisualStateError("要调整的画面无法读取")
-        portrait, outfit = reference, None
+        portrait, outfit = previous, None
         template = VISUAL_POSE_VARIANT_TEMPLATE if progress.regenerate_image else VISUAL_POSE_EDIT_TEMPLATE
         prompt = template.format(
             feedback=opening_requirements(job, progress),
@@ -842,18 +853,23 @@ async def _prepare_pose(
     resolved = resolve_asset_reference(paths[0])
     if resolved is None:
         raise VisualStateError("起始画面无法读取")
+    original_data = await asyncio.to_thread(resolved[0].read_bytes)
     generated_data, _width, _height = await asyncio.to_thread(
         _frame_bytes,
-        await asyncio.to_thread(resolved[0].read_bytes),
+        original_data,
         progress.aspect_ratio,
     )
     normalized, _width, _height = await _prepare_geometry(progress, generated_data)
-    progress.pose_path = await save_companion_asset_async(
-        normalized,
-        user_id=user_id,
-        label="visual_pose",
-        ext="png",
-        directory=directory,
+    progress.pose_path = (
+        paths[0]
+        if normalized == original_data
+        else await save_companion_asset_async(
+            normalized,
+            user_id=user_id,
+            label="visual_pose",
+            ext="png",
+            directory=directory,
+        )
     )
     progress.image_confirmed = False
     progress.motion_prompt = ""
@@ -1428,9 +1444,9 @@ async def _prepare_scene_opening(
     data = await asyncio.to_thread(resolved[0].read_bytes)
     if hashlib.sha256(data).hexdigest() != source.scene.content_hash:
         raise VisualStateError("环境素材已变化，请重新选择环境")
+    reference_path = source.scene.path
     if source.day_phase is not None:
         state = ImageChainState.model_validate_json(progress.image_chain_json or "{}")
-        reference_data, reference_mime = await asyncio.to_thread(validate_image_bytes, data)
 
         async def save_image(value: ImageChainState) -> None:
             progress.image_chain_json = value.model_dump_json()
@@ -1455,7 +1471,7 @@ async def _prepare_scene_opening(
             storage_directory=directory,
             target_width=progress.target_width,
             target_height=progress.target_height,
-            reference_image=build_data_uri(reference_data, reference_mime),
+            reference_image=source.scene.path,
             state=state,
             save_progress=save_image,
             before_submit=before_submit,
@@ -1465,13 +1481,18 @@ async def _prepare_scene_opening(
         if generated is None:
             raise VisualStateError("时段环境画面无法读取")
         data = await asyncio.to_thread(generated[0].read_bytes)
-        normalized, width, height = await asyncio.to_thread(_frame_bytes, data, _delivery_aspect(progress))
-    progress.pose_path = await save_companion_asset_async(
-        normalized,
-        user_id=user_id,
-        label="visual_pose",
-        ext="png",
-        directory=directory,
+        reference_path = paths[0]
+    normalized, width, height = await asyncio.to_thread(_frame_bytes, data, _delivery_aspect(progress))
+    progress.pose_path = (
+        reference_path
+        if normalized == data
+        else await save_companion_asset_async(
+            normalized,
+            user_id=user_id,
+            label="visual_pose",
+            ext="png",
+            directory=directory,
+        )
     )
     progress.frame_width, progress.frame_height = width, height
     progress.visual_description, progress.outfit_description = source.scene.description, ""
@@ -1843,13 +1864,24 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
                 if resolved is None:
                     raise VisualStateError("已确认的起始画面无法读取")
                 raw_frame = await asyncio.to_thread(resolved[0].read_bytes)
-                normalized, _width, _height = await asyncio.to_thread(
+                normalized, frame_width, frame_height = await asyncio.to_thread(
                     _frame_bytes,
                     raw_frame,
                     None,
                     provider.first_frame_size_range,
                 )
-                pose = build_data_uri(normalized, "image/png")
+                pose = (
+                    progress.pose_path
+                    if normalized == raw_frame
+                    else await save_image_chain_input_asset_async(
+                        normalized,
+                        user_id=user_id,
+                        generation_id=chain.generation_id,
+                        label=f"frame{frame_width}x{frame_height}",
+                        ext="png",
+                        directory=directory,
+                    )
+                )
                 request = VideoGenRequest(
                     prompt=video_generation_prompt(
                         snapshot.source,

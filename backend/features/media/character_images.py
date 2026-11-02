@@ -17,6 +17,7 @@ from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets import asset_store
 from infrastructure.assets.asset_store import build_data_uri
+from infrastructure.assets.image_references import freeze_image_references
 from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.constants import REMOTE_ASSET_DOWNLOAD_MAX_BYTES
 from infrastructure.database import SESSION_LOCAL
@@ -354,29 +355,21 @@ async def _freeze_input_references(
     generation_id: str,
     storage_directory: str,
 ) -> None:
-    """落库链的参考图在冻结时落为链资产，状态只存裸路径；相同原值只落一份。"""
+    """复用正式参考的裸路径，只有外部或临时输入需要转正。"""
     fields = _REFERENCE_FIELDS[type(inputs)]
-    frozen: dict[str, str] = {}
-    for attr, label in fields:
-        value = getattr(inputs, attr)
-        if not value or value in frozen or parse_companion_asset_path(value) is not None:
-            continue
-        data, _ = await image_asset_bytes(value, max_bytes=inputs.max_image_bytes)
-        ext = asset_store.sniff_media_ext(data)
-        if ext not in {"png", "jpg", "webp", "gif"}:
-            raise ImageGenerationError("生成图片无法读取")
-        frozen[value] = await asset_store.save_image_chain_input_asset_async(
-            data,
+    try:
+        frozen = await freeze_image_references(
+            {label: getattr(inputs, attr) for attr, label in fields},
             user_id=user_id,
             generation_id=generation_id,
-            label=label,
-            ext=ext,
             directory=storage_directory,
+            max_bytes=inputs.max_image_bytes,
         )
-    for attr, _label in fields:
-        value = getattr(inputs, attr)
-        if value:
-            setattr(inputs, attr, frozen.get(value, value))
+    except (OSError, ValueError) as exc:
+        raise ImageGenerationError("参考图片无法读取或不属于当前账户", internal=str(exc)) from exc
+    for attr, label in fields:
+        if label in frozen:
+            setattr(inputs, attr, frozen[label])
 
 
 async def _save_progress(state: ImageChainState, writer: ImageProgressWriter | None) -> None:
@@ -600,13 +593,12 @@ async def generate_character_images(
         state.inputs = inputs
         state.providers = [provider for _config, provider, _key in planned]
         configs = dict(enumerate(chain))
-        if save_progress is not None:
-            await _freeze_input_references(
-                state.inputs,
-                user_id=user_id,
-                generation_id=state.generation_id,
-                storage_directory=storage_directory,
-            )
+        await _freeze_input_references(
+            state.inputs,
+            user_id=user_id,
+            generation_id=state.generation_id,
+            storage_directory=storage_directory,
+        )
         await _save_progress(state, save_progress)
     if not isinstance(state.inputs, CharacterImageInput):
         raise ImageGenerationError("图片任务类型与角色生成不符")
@@ -685,13 +677,12 @@ async def generate_scene_images(
             providers.append(provider)
         state.inputs, state.providers = inputs, providers
         configs = dict(enumerate(chain))
-        if save_progress is not None:
-            await _freeze_input_references(
-                state.inputs,
-                user_id=user_id,
-                generation_id=state.generation_id,
-                storage_directory=storage_directory,
-            )
+        await _freeze_input_references(
+            state.inputs,
+            user_id=user_id,
+            generation_id=state.generation_id,
+            storage_directory=storage_directory,
+        )
         await _save_progress(state, save_progress)
     if not isinstance(state.inputs, SceneImageInput):
         raise ImageGenerationError("图片任务类型与场景生成不符")

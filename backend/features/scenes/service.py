@@ -11,6 +11,7 @@ from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets import asset_store
 from infrastructure.assets.asset_store import build_data_uri, validate_image_bytes
+from infrastructure.assets.image_references import freeze_image_references
 from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.async_io import cancel_and_wait, cancel_tasks
 from infrastructure.config import SETTINGS
@@ -241,6 +242,17 @@ async def _new_scene(
         row.initial_job.stage = "waiting_upload" if source == SceneSource.USER_UPLOAD.value else "prepare"
         db.add(row)
         await db.flush()
+        if reference_image:
+            state = ImageChainState()
+            references = await freeze_image_references(
+                {"ref": reference_image},
+                user_id=user_id,
+                generation_id=state.generation_id,
+                directory=asset_store.scene_asset_directory(row.id),
+                max_bytes=SCENE_DOWNLOAD_MAX_BYTES,
+            )
+            row.reference_image = references["ref"]
+            row.initial_job.checkpoint = state.model_dump(mode="json")
         if life_step is not None:
             await bind_job_request(db, user_id, row.initial_job.id, life_step.idempotency_key, fingerprint)
             await bind_step_in_session(db, user_id, life_step, business_ref={"job_id": row.initial_job.id})
@@ -634,13 +646,17 @@ async def _generate_wallpaper(
         best.artifacts.append(path)
     # 先登记确定的成品路径，取消或重启时仍可保护或回收裁切结果。
     await save_progress(state)
-    return await prepare_scene_wallpaper(
+    wallpaper = await prepare_scene_wallpaper(
         user_id,
         paths[0],
         generation_id=state.generation_id,
         target=target,
         storage_directory=asset_store.scene_asset_directory(scene_id),
     )
+    if wallpaper.path != path:
+        best.artifacts.remove(path)
+        await save_progress(state)
+    return wallpaper
 
 
 async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> None:

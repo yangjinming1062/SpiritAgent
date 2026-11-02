@@ -20,7 +20,7 @@ from infrastructure.ai.llm_client import MissingLlmConfigError
 from infrastructure.ai.prompt_engineer import VisualReasoningError
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.api_ids import ResourceId
-from infrastructure.assets.asset_store import read_asset_data_uri
+from infrastructure.assets.asset_store import resolve_asset_reference
 from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
@@ -48,13 +48,14 @@ _STRUCTURED_DELIVERY_HINT = (
 
 
 def _video_reference(reference: str, user_id: ResourceId) -> str | None:
-    """本人资产路径读为 data URI；data URI 与 http(s) 地址原样交给供应商链，其余值无效。"""
+    """保留本人的正式参考路径，外部输入由视频任务统一转正。"""
     if reference.startswith(("data:image/", "http://", "https://")):
         return reference
     parsed = parse_companion_asset_path(reference)
     if parsed is None or parsed[0] != user_id:
         return None
-    return read_asset_data_uri(reference)
+    resolved = resolve_asset_reference(reference)
+    return reference if resolved is not None and resolved[1].startswith("image/") else None
 
 
 def _result_unknown_payload(task_id: str, job: VideoJobSnapshot) -> dict[str, object]:

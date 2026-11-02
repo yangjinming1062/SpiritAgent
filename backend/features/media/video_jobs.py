@@ -19,6 +19,7 @@ from infrastructure.assets.asset_store import (
     sniff_media_ext,
     video_job_asset_path,
 )
+from infrastructure.assets.image_references import freeze_image_references, materialize_image_references
 from infrastructure.assets.media_download import download_media_result
 from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.assets.references import asset_paths
@@ -171,6 +172,10 @@ async def _score_self_video(
     if not identity_uri:
         return "invalid", None
     try:
+        references = await materialize_image_references(
+            {"identity": identity_uri, "outfit": outfit_uri}, user_id=user_id
+        )
+        identity_uri, outfit_uri = references["identity"], references.get("outfit")
         frames = await asyncio.to_thread(sample_key_frames, local)
 
         async def before_submit() -> None:
@@ -391,12 +396,18 @@ async def prepare_video_job(
     if not asset_directory:
         # 空串同缺省处理：按任务创建日冻结，不能把空目录写进任务参数落成根目录平铺。
         asset_directory = dated_asset_directory(utc_now(), await resolve_user_timezone(db, user_id) or "UTC")
+    frozen_references = await freeze_image_references(
+        {f"ref{index}": value for index, value in enumerate(reference_images)},
+        user_id=user_id,
+        generation_id=state.generation_id,
+        directory=asset_directory,
+    )
     params = _VideoJobParams(
         task=task,
         duration=duration,
         asset_directory=asset_directory,
         resolution=resolution,
-        reference_images=reference_images,
+        reference_images=tuple(frozen_references.values()),
         aspect_ratio=aspect_ratio,
         identity_reference_path=identity_reference_path,
         identity_snapshot=identity,

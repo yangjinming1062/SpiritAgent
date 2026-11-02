@@ -29,6 +29,15 @@ def scene_source_extension(data: bytes) -> str:
 
 def _fit_wallpaper(data: bytes, target: SceneImageSize) -> tuple[bytes, SceneImageDimensions]:
     with Image.open(io.BytesIO(data)) as source:
+        if (
+            source.format == "PNG"
+            and source.mode == "RGB"
+            and not getattr(source, "is_animated", False)
+            and source.size == (target.width, target.height)
+            and source.getexif().get(274, 1) == 1
+        ):
+            source.load()
+            return data, SceneImageDimensions(width=source.width, height=source.height)
         ImageOps.exif_transpose(source, in_place=True)
         source_size = SceneImageDimensions(width=source.width, height=source.height)
         rgb = nullcontext(source) if source.mode == "RGB" else source.convert("RGB")
@@ -54,10 +63,14 @@ async def prepare_scene_wallpaper(
         fitted, source_size = await asyncio.to_thread(_fit_wallpaper, data, target)
     except Exception as exc:
         raise ImageGenerationError("场景图片无法适配生活空间尺寸") from exc
-    path = await asset_store.save_scene_wallpaper_asset_async(
-        fitted,
-        user_id=user_id,
-        generation_id=generation_id,
-        directory=storage_directory,
+    path = (
+        source_path
+        if fitted == data
+        else await asset_store.save_scene_wallpaper_asset_async(
+            fitted,
+            user_id=user_id,
+            generation_id=generation_id,
+            directory=storage_directory,
+        )
     )
     return WallpaperAsset(path=path, source_size=source_size, image_size=target)

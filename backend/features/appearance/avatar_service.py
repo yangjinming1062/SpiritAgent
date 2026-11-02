@@ -14,7 +14,6 @@ from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.assets.asset_store import (
     build_data_uri,
     normalize_asset_reference,
-    outfit_asset_directory,
     read_asset_data_uri,
     resolve_asset_reference,
     save_companion_asset_async,
@@ -558,7 +557,7 @@ async def _write_avatar_step(
     secondary_reference_image: str | None = None,
     origin: GenerationOrigin | None = None,
 ) -> AvatarAsset:
-    """以新头像行替换激活头像并撤销头像确认；已确认身份的旧立绘在提交后删除。"""
+    """以新头像行替换激活头像并撤销头像确认；正式原图继续由历史行持有。"""
     prompt_payload: dict[str, str] = {"avatar_prompt": avatar_prompt, "style": style}
     if feedback is not None:
         prompt_payload["feedback"] = feedback
@@ -869,7 +868,6 @@ async def finalize_avatar(db: AsyncSession, user_id: int, *, expected_avatar_id:
             delete_portrait_file(new_path)
             raise
     elif await asyncio.to_thread(resolve_asset_reference, asset.asset_url) is None:
-        # 被替换的已确认头像只删文件、保留历史行；重新选中后不能把缺失的文件确认为头像。
         raise AvatarSourceUnreadableError("头像文件缺失或无法读取，请重新生成")
     return asset
 
@@ -1211,7 +1209,6 @@ async def prepare_initial_fullbody(user_id: int, *, extraction_id: str) -> bool:
     changed = prepared != seed[0]
 
     seed_path: str | None = None
-    outfit_path: str | None = None
     try:
         async with get_avatar_job_lock(user_id), SESSION_LOCAL() as db:
             card = await get_character_card(db, user_id, lock=True)
@@ -1264,13 +1261,7 @@ async def prepare_initial_fullbody(user_id: int, *, extraction_id: str) -> bool:
                 await flush_appearance(db, user_id)
             if changed or not outfit.fullbody_url:
                 previous_outfit_path = outfit.fullbody_url
-                outfit_path = await persist_portrait_bytes(
-                    user_id,
-                    prepared,
-                    "image/png",
-                    directory=outfit_asset_directory(outfit.id),
-                )
-                outfit.fullbody_url = outfit_path
+                outfit.fullbody_url = avatar.seed_fullbody_url
                 outfit.source_json = (
                     OutfitSource.model_validate(outfit.source_json)
                     .model_copy(
@@ -1290,8 +1281,7 @@ async def prepare_initial_fullbody(user_id: int, *, extraction_id: str) -> bool:
                 )
             await commit_appearance(db, user_id)
     except BaseException:
-        for path in (seed_path, outfit_path):
-            delete_portrait_file(path)
+        delete_portrait_file(seed_path)
         raise
     await cleanup_user_assets(user_id)
     return True

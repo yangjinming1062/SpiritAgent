@@ -17,6 +17,7 @@ from infrastructure.ai.providers.base import (
     VideoJobStatus,
 )
 from infrastructure.ai.providers.http import ProviderResultUnknownError
+from infrastructure.assets.image_references import materialize_image_references, owned_image_path
 from infrastructure.database import ENGINE, SESSION_LOCAL
 from infrastructure.hashing import sha256_hex
 from infrastructure.logger import get_logger
@@ -31,7 +32,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from features.jobs.service import settled_job_ids
+from features.jobs.service import bind_job_assets, settled_job_ids
 from features.media.chain import FrozenMediaProvider, resolve_frozen_media_provider, video_provider_failure_reason
 from features.media.video_polling import poll_video_task
 
@@ -128,8 +129,13 @@ async def enqueue_video_attempt(
     config = await resolve_frozen_media_provider(owner.user_id, "video_gen", frozen)
     if config is None:
         raise VideoQueueStoppedError("视频服务配置已变更，请重新发起制作")
+    paths: dict[str, str] = {}
+    if request is not None:
+        paths = {key: owned_image_path(value, owner.user_id) for key, value in _image_references(request).items()}
+        request = _with_image_references(request, paths)
     lane_id = await _lane_id(config)
     async with SESSION_LOCAL() as db:
+        await bind_job_assets(db, owner.user_id, owner.job_id, set(paths.values()), "input")
         await db.execute(
             insert(ProviderAttempt)
             .values(
@@ -180,6 +186,24 @@ async def enqueue_video_attempt(
             row.revision += 1
         await db.commit()
         return row.token
+
+
+def _image_references(request: VideoGenRequest) -> dict[str, str]:
+    values = {
+        "first": request.first_frame_image,
+        "last": request.last_frame_image,
+        **{f"ref{index}": value for index, value in enumerate(request.reference_images)},
+    }
+    return {key: value for key, value in values.items() if value}
+
+
+def _with_image_references(request: VideoGenRequest, references: dict[str, str]) -> VideoGenRequest:
+    return replace(
+        request,
+        first_frame_image=references.get("first"),
+        last_frame_image=references.get("last"),
+        reference_images=tuple(references[f"ref{index}"] for index in range(len(request.reference_images))),
+    )
 
 
 def _queue_info(row: ProviderAttempt, lane: ProviderLane) -> VideoQueueInfo | None:
@@ -616,6 +640,20 @@ async def _run_lane(lane_id: int) -> None:
             await _change(row.token, expected=("claimed",), state="paused")
             return
         request = _REQUEST.validate_python(current.request_json or {})
+        try:
+            request = _with_image_references(
+                request, await materialize_image_references(_image_references(request), user_id=row.user_id)
+            )
+        except (OSError, ValueError):
+            await _change(
+                row.token,
+                expected=("claimed",),
+                state="failed",
+                error_reason="format_error",
+                error_message="视频参考图片无法读取，请重新准备素材",
+                request_json=None,
+            )
+            return
         async with SESSION_LOCAL() as db:
             claimed = await db.get(ProviderAttempt, row.id, with_for_update=True)
             if claimed is None or claimed.state != "claimed":

@@ -12,7 +12,6 @@ from infrastructure.assets.asset_store import (
     build_data_uri,
     outfit_asset_directory,
     read_asset_data_uri,
-    unlink_companion_asset,
 )
 from infrastructure.assets.references import asset_paths
 from infrastructure.async_io import cancel_and_wait
@@ -276,16 +275,12 @@ async def _generate_outfit_fullbody(
         # 供应商图片地址在图片链内下载，失败时没有候选；API 日志只记 internal，堆栈在此保留。
         logger.warning("outfit image generation failed", extra={"user_id": user_id}, exc_info=True)
         raise AvatarGenerationError("造型图片制作未完成，请稍后重试", internal=f"{type(exc).__name__}: {exc}") from exc
+    retained = False
     try:
         data, _mime = await image_asset_bytes(paths[0])
         await asyncio.to_thread(validate_transparent_portrait, data)
-        path = await persist_portrait_bytes(
-            user_id,
-            data,
-            "image/png",
-            directory=outfit_asset_directory(outfit_id),
-        )
-        return path, origin
+        retained = True
+        return paths[0], origin
     except VideoProcessError as exc:
         raise AvatarGenerationError(str(exc), internal=exc.internal or str(exc)) from exc
     except ImageGenerationError as exc:
@@ -293,9 +288,9 @@ async def _generate_outfit_fullbody(
     except OSError as exc:
         raise AvatarGenerationError("生成结果保存失败，请稍后重试", internal=f"{type(exc).__name__}: {exc}") from exc
     finally:
-        if save_progress is None:
+        if not retained and save_progress is None:
             for path in paths:
-                await asyncio.to_thread(unlink_companion_asset, path)
+                await asyncio.to_thread(delete_portrait_file, path)
 
 
 async def _outfit_requirement(user_id: int, source: OutfitSource) -> str:
@@ -485,8 +480,8 @@ async def create_outfit_draft(
     draft_url, origin = await _generate_outfit_fullbody(
         user_id,
         prompt=prompt,
-        reference_image=identity_uri,
-        identity_reference=identity_uri,
+        reference_image=avatar.seed_fullbody_url,
+        identity_reference=avatar.seed_fullbody_url,
         identity=identity,
         outfit_id=outfit_id,
         image_state=image_state,
@@ -525,8 +520,9 @@ async def create_outfit_draft(
             await commit_appearance(db, user_id)
     except BaseException:
         await db.rollback()
-        for path in (ref_path, draft_url):
-            delete_portrait_file(path)
+        delete_portrait_file(ref_path)
+        if job_id is None:
+            delete_portrait_file(draft_url)
         raise
     await db.refresh(outfit)
     return outfit
@@ -563,9 +559,9 @@ async def regenerate_outfit_draft(
             effective_feedback,
             preserve=EDIT_PRESERVE_OUTFIT + "\n" + render_character_identity(identity),
         )
-        identity_uri = await _require_fullbody_seed_readable(avatar)
+        await _require_fullbody_seed_readable(avatar)
     else:
-        reference_uri = identity_uri = await _require_fullbody_seed_readable(avatar)
+        reference_uri = await _require_fullbody_seed_readable(avatar)
         prompt = await _prepare_outfit_regenerate_prompt(
             user_id,
             context,
@@ -577,8 +573,8 @@ async def regenerate_outfit_draft(
     draft_url, origin = await _generate_outfit_fullbody(
         user_id,
         prompt=prompt,
-        reference_image=reference_uri,
-        identity_reference=identity_uri,
+        reference_image=original_url if mode == "edit" else avatar.seed_fullbody_url,
+        identity_reference=avatar.seed_fullbody_url,
         identity=identity,
         outfit_id=outfit_id,
         image_edit=mode == "edit",

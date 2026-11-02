@@ -1,6 +1,5 @@
 """出镜媒体共用的固定身份、本次生成造型及视频参考准备。实际呈现快照提供默认造型，本次生成造型可单独覆盖；`outfit_override` 只作用于本次产物，不改素材或影像库。无角色出镜的图片与视频在此补上统一的真实拍摄要求。"""
 
-import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -8,7 +7,7 @@ from typing import Literal
 
 from infrastructure.ai.selection import ProviderSelection
 from infrastructure.ai.tasks import AiTaskKey
-from infrastructure.assets.asset_store import read_asset_data_uri
+from infrastructure.assets.image_references import require_owned_image_path
 from infrastructure.database import SESSION_LOCAL
 
 from features.appearance.avatar_service import FULLBODY_SIZE, AvatarSourceUnreadableError
@@ -41,11 +40,12 @@ from features.visuals.schemas import ActualPresentationSnapshot
 
 @dataclass(frozen=True)
 class SelfVisualContext:
+    user_id: int
     identity: CharacterCardSnapshot
-    identity_image: str
+    identity_path: str
     fullbody_path: str
     outfit_description: str
-    outfit_reference: str | None
+    outfit_path: str | None
     identity_reference_role: CharacterReferenceRole = "portrait"
 
 
@@ -85,19 +85,22 @@ async def load_self_visual_context(
             if not outfit_path:
                 raise AvatarSourceUnreadableError("当前呈现形象缺失，请先完成素材准备")
             outfit_description = presentation.outfit_description
-    reference = await asyncio.to_thread(read_asset_data_uri, identity_path)
-    if not reference:
-        raise AvatarSourceUnreadableError("身份参考缺失或无法读取，请重新生成")
-    outfit_reference = await asyncio.to_thread(read_asset_data_uri, outfit_path) if outfit_path else None
-    if not override and not outfit_reference:
-        raise AvatarSourceUnreadableError("当前呈现形象缺失或无法读取，请重新准备呈现素材")
+    try:
+        identity_path = await require_owned_image_path(identity_path, user_id=user_id)
+    except (OSError, ValueError) as exc:
+        raise AvatarSourceUnreadableError("身份参考缺失或无法读取，请重新生成") from exc
+    try:
+        outfit_path = await require_owned_image_path(outfit_path, user_id=user_id) if outfit_path else None
+    except (OSError, ValueError) as exc:
+        raise AvatarSourceUnreadableError("当前呈现形象缺失或无法读取，请重新准备呈现素材") from exc
     return SelfVisualPlan(
         context=SelfVisualContext(
+            user_id=user_id,
             identity=identity,
-            identity_image=reference,
+            identity_path=identity_path,
             fullbody_path=seed_path,
             outfit_description=outfit_description,
-            outfit_reference=outfit_reference,
+            outfit_path=outfit_path,
             identity_reference_role=role,
         ),
         override_outfit_description=override,
@@ -141,9 +144,9 @@ def optional_outfit_image_reference(plan: SelfVisualPlan) -> str | None:
     """返回本次造型参考；不在这里静默丢弃必需的第二张参考图。"""
     if plan.override_outfit_description:
         return None
-    if not plan.context.outfit_reference:
+    if not plan.context.outfit_path:
         raise AvatarSourceUnreadableError("当前呈现形象缺失或无法读取，请重新准备呈现素材")
-    return plan.context.outfit_reference
+    return plan.context.outfit_path
 
 
 @dataclass(frozen=True)
@@ -163,7 +166,7 @@ def build_self_image_inputs(plan: SelfVisualPlan, prompt: str) -> SelfImageInput
     return SelfImageInputs(
         prompt=build_self_image_prompt(plan, prompt, has_outfit_reference=bool(outfit)),
         identity=plan.context.identity,
-        reference_image=plan.context.identity_image,
+        reference_image=plan.context.identity_path,
         secondary_reference_image=outfit,
         identity_reference_mode=_identity_reference_mode(plan.context.identity_reference_role),
         identity_text=render_character_identity(plan.context.identity),
@@ -237,17 +240,18 @@ async def build_self_video_inputs(
     identity_reference_role: CharacterReferenceRole = plan.context.identity_reference_role
     references: tuple[str, ...]
     if plan.override_outfit_description:
-        references = (plan.context.identity_image,)
+        references = (plan.context.identity_path,)
     elif reference_image:
-        fullbody = await asyncio.to_thread(read_asset_data_uri, plan.context.fullbody_path)
-        if not fullbody:
-            raise AvatarSourceUnreadableError("全身身份参考缺失或无法读取")
+        try:
+            await require_owned_image_path(plan.context.fullbody_path, user_id=plan.context.user_id)
+        except (OSError, ValueError) as exc:
+            raise AvatarSourceUnreadableError("全身身份参考缺失或无法读取") from exc
         identity_reference_role = "fullbody"
-        references = (fullbody, reference_image)
+        references = (plan.context.fullbody_path, reference_image)
     else:
         outfit_reference = optional_outfit_image_reference(plan)
         references = (
-            (plan.context.identity_image, outfit_reference) if outfit_reference else (plan.context.identity_image,)
+            (plan.context.identity_path, outfit_reference) if outfit_reference else (plan.context.identity_path,)
         )
     has_outfit_reference = len(references) > 1
     outfit = plan.override_outfit_description or plan.context.outfit_description

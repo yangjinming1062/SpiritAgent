@@ -33,6 +33,9 @@ async def sync_appearance_assets(db: AsyncSession, user_id: int) -> None:
         if row not in db.new and not any(state.attrs[field].history.has_changes() for field in fields):
             continue
         paths = asset_paths([getattr(row, field) for field in fields], user_id)
+        if isinstance(row, AvatarAsset):
+            # 当前指针替换后，正式身份原图仍由该头像持有。
+            paths |= asset_paths([state.attrs[field].history.deleted for field in fields], user_id)
         changed.append((row, owner_key, paths))
     if not changed:
         return
@@ -42,8 +45,13 @@ async def sync_appearance_assets(db: AsyncSession, user_id: int) -> None:
         for field, path_field in _PRIMARY_ASSETS.get(type(row), {}).items():
             setattr(row, field, assets.get(getattr(row, path_field)))
     await db.flush()
-    conditions = [getattr(AppearanceAsset, owner_key) == row.id for row, owner_key, _ in changed]
-    await db.execute(delete(AppearanceAsset).where(AppearanceAsset.user_id == user_id, or_(*conditions)))
+    conditions = [
+        getattr(AppearanceAsset, owner_key) == row.id
+        for row, owner_key, _ in changed
+        if not isinstance(row, AvatarAsset)
+    ]
+    if conditions:
+        await db.execute(delete(AppearanceAsset).where(AppearanceAsset.user_id == user_id, or_(*conditions)))
     bindings = [
         {
             "user_id": user_id,
@@ -58,7 +66,7 @@ async def sync_appearance_assets(db: AsyncSession, user_id: int) -> None:
         for path in sorted(values - {getattr(row, field) for field in _PRIMARY_ASSETS.get(type(row), {}).values()})
     ]
     if bindings:
-        await db.execute(insert(AppearanceAsset), bindings)
+        await db.execute(insert(AppearanceAsset).on_conflict_do_nothing(), bindings)
 
 
 async def commit_appearance(db: AsyncSession, user_id: int) -> None:

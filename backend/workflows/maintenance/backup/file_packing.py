@@ -201,15 +201,22 @@ class UrlRewriter:
                     destination = self._target_root / target
                     if target and destination.resolve() != destination:
                         raise ValueError("目标素材路径经符号链接指向其他位置，无法安全恢复。")
+                    if target and destination.exists() and not destination.is_file():
+                        raise ValueError("目标素材路径已被非文件占用，无法安全恢复。")
                     candidate = destination if target and destination.is_file() else self._source_root / path
             self._available_files[path] = candidate if candidate is not None and candidate.is_file() else None
         return self._available_files[path]
 
-    def require_file(self, original: str) -> None:
+    def require_file(self, original: str, expected_hash: str | None = None) -> None:
         path = _storage_path(original)
         target = self._mapping.get(path, self._owned_target(path))
         if target is None or not target or self._available_file(path, target) is None:
             raise ValueError("必需的身份、场景或已发布媒体不在备份与目标账户中，无法恢复此类别。")
+        available = self._available_file(path, target)
+        if expected_hash is not None and available is not None:
+            with available.open("rb") as stream:
+                if hashlib.file_digest(stream, "sha256").hexdigest() != expected_hash:
+                    raise ValueError("目标素材路径的文件内容与备份不一致，无法安全恢复。")
 
     def __call__(self, original: str | None) -> str | None:
         if not original:
@@ -301,7 +308,7 @@ def validate_row_files(table: str, rows: list[dict[str, Any]], rewriter: UrlRewr
             path = row.get("path")
             if not isinstance(path, str) or not path:
                 raise ValueError("资产缺少存储路径")
-            rewriter.require_file(path)
+            rewriter.require_file(path, row.get("content_hash"))
 
 
 def collect_files_for_export(user_id: int, rows: dict[str, list[dict[str, Any]]]) -> list[Path]:
@@ -354,9 +361,7 @@ def plan_asset_mapping(
         digest = row.get("content_hash")
         if not isinstance(digest, str) or len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
             raise ValueError("备份资产缺少有效的内容哈希")
-        mapping[source] = str(
-            PurePosixPath("companion-assets", str(target_user_id), "imports", digest, PurePosixPath(source).name)
-        )
+        mapping[source] = str(PurePosixPath("companion-assets", str(target_user_id), parsed[1]))
     return mapping
 
 
