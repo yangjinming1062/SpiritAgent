@@ -42,7 +42,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_vision",
             toolset_id="browser_automation",
             schema=BROWSER_VISION_SCHEMA,
-            handler=lambda context, args: browser_vision(annotate=args.get("annotate", False)),
+            handler=lambda _context, args: browser_vision(annotate=args.get("annotate", False)),
             check_fn=check_browser_native_requirements,
             is_async=False,
         ),

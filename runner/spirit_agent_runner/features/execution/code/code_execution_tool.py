@@ -87,7 +87,9 @@ def _execute_remote(code: str, timeout: int, max_tool_calls: int) -> dict[str, A
             (env, rpc_dir, tool_call_counter, max_tool_calls, stop_event, rpc_token),
         )
         rpc_thread.start()
-        env_prefix = f"SPIRITAGENT_RPC_DIR={shlex.quote(rpc_dir)} SPIRITAGENT_RPC_TOKEN={rpc_token} PYTHONDONTWRITEBYTECODE=1"
+        env_prefix = (
+            f"SPIRITAGENT_RPC_DIR={shlex.quote(rpc_dir)} SPIRITAGENT_RPC_TOKEN={rpc_token} PYTHONDONTWRITEBYTECODE=1"
+        )
         if tz := timezone_setting():
             env_prefix += f" TZ={shlex.quote(tz)}"
         logger.info("Executing code on %s backend...", env_type)

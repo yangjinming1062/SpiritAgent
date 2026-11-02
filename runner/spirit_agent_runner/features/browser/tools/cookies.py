@@ -181,7 +181,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_cookies_get",
             toolset_id="browser_automation",
             schema=BROWSER_COOKIES_GET_SCHEMA,
-            handler=lambda context, args: browser_cookies_get(url=args.get("url")),
+            handler=lambda _context, args: browser_cookies_get(url=args.get("url")),
             check_fn=check_browser_cdp_requirements,
             is_async=False,
         ),
@@ -189,7 +189,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_cookies_set",
             toolset_id="browser_automation",
             schema=BROWSER_COOKIES_SET_SCHEMA,
-            handler=lambda context, args: browser_cookies_set(
+            handler=lambda _context, args: browser_cookies_set(
                 name=args.get("name", ""),
                 value=args.get("value", ""),
                 domain=args.get("domain", ""),
@@ -206,7 +206,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_cookies_clear",
             toolset_id="browser_automation",
             schema=BROWSER_COOKIES_CLEAR_SCHEMA,
-            handler=lambda context, args: browser_cookies_clear(
+            handler=lambda _context, args: browser_cookies_clear(
                 cookies=args.get("cookies", True),
                 storage=args.get("storage", True),
             ),
@@ -217,7 +217,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_storage_get",
             toolset_id="browser_automation",
             schema=BROWSER_STORAGE_GET_SCHEMA,
-            handler=lambda context, args: browser_storage_get(
+            handler=lambda _context, args: browser_storage_get(
                 key=args.get("key", ""),
                 origin=args.get("origin", ""),
                 kind=args.get("kind", "localStorage"),
@@ -229,7 +229,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_storage_set",
             toolset_id="browser_automation",
             schema=BROWSER_STORAGE_SET_SCHEMA,
-            handler=lambda context, args: browser_storage_set(
+            handler=lambda _context, args: browser_storage_set(
                 key=args.get("key", ""),
                 value=args.get("value", ""),
                 origin=args.get("origin", ""),

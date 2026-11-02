@@ -155,7 +155,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_screenshot_element",
             toolset_id="browser_automation",
             schema=BROWSER_SCREENSHOT_ELEMENT_SCHEMA,
-            handler=lambda context, args: browser_screenshot_element(
+            handler=lambda _context, args: browser_screenshot_element(
                 ref=args.get("ref", ""),
                 save_as=args.get("save_as"),
             ),
@@ -166,7 +166,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_pdf",
             toolset_id="browser_automation",
             schema=BROWSER_PDF_SCHEMA,
-            handler=lambda context, args: browser_pdf(
+            handler=lambda _context, args: browser_pdf(
                 save_as=args.get("save_as"),
                 landscape=args.get("landscape", False),
                 print_background=args.get("print_background", True),

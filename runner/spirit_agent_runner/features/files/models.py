@@ -2,7 +2,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-
 MAX_MATCH_CONTENT = 500
 MAX_EDIT_BYTES = 10 * 1024 * 1024
 BINARY_FILE_ERROR = "Binary file — read_file and patch only handle text."

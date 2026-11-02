@@ -60,7 +60,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_console",
             toolset_id="browser_automation",
             schema=BROWSER_CONSOLE_SCHEMA,
-            handler=lambda context, args: browser_console(
+            handler=lambda _context, args: browser_console(
                 clear=args.get("clear", False),
                 expression=args.get("expression"),
             ),

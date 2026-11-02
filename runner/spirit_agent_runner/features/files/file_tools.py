@@ -267,8 +267,13 @@ def write_file_tool(path: str, content: str) -> dict[str, Any]:
     except Exception as e:
         # 可预期的写入拒绝只记 debug，不污染 error 日志。
         expected = isinstance(e, PermissionError) or isinstance(e, OSError) and e.errno in _EXPECTED_WRITE_ERRNOS
-        logger.log(logging.DEBUG if expected else logging.ERROR, "write_file %s: %s", type(e).__name__, e,
-                   exc_info=not expected)
+        logger.log(
+            logging.DEBUG if expected else logging.ERROR,
+            "write_file %s: %s",
+            type(e).__name__,
+            e,
+            exc_info=not expected,
+        )
         return {"error": str(e)}
 
 
@@ -670,7 +675,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="list_directory",
             toolset_id="file_operations",
             schema=LIST_DIRECTORY_SCHEMA,
-            handler=lambda context, args: _handle_list_directory(args),
+            handler=lambda _context, args: _handle_list_directory(args),
             check_fn=None,
             is_async=False,
         ),
@@ -678,7 +683,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="read_file",
             toolset_id="file_operations",
             schema=READ_FILE_SCHEMA,
-            handler=lambda context, args: _handle_read_file(args),
+            handler=lambda _context, args: _handle_read_file(args),
             check_fn=None,
             is_async=False,
         ),
@@ -686,7 +691,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="write_file",
             toolset_id="file_operations",
             schema=WRITE_FILE_SCHEMA,
-            handler=lambda context, args: _handle_write_file(args),
+            handler=lambda _context, args: _handle_write_file(args),
             check_fn=None,
             is_async=False,
         ),
@@ -694,7 +699,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="patch",
             toolset_id="file_operations",
             schema=PATCH_SCHEMA,
-            handler=lambda context, args: _handle_patch(args),
+            handler=lambda _context, args: _handle_patch(args),
             check_fn=None,
             is_async=False,
         ),
@@ -702,7 +707,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="search_files",
             toolset_id="file_operations",
             schema=SEARCH_FILES_SCHEMA,
-            handler=lambda context, args: _handle_search_files(args),
+            handler=lambda _context, args: _handle_search_files(args),
             check_fn=None,
             is_async=False,
         ),

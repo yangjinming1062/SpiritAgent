@@ -101,6 +101,7 @@ class ProcessRegistry:
         while lines and any(noise in lines[0] for noise in _SHELL_NOISE_SUBSTRINGS):
             lines.pop(0)
         return "\n".join(lines)
+
     def _track(self, session: ProcessSession, reader: Callable[[ProcessSession], None], name: str) -> None:
         """先登记再启动读线程：读线程可能立即结束并把 session 移入 finished。"""
         with self._lock:

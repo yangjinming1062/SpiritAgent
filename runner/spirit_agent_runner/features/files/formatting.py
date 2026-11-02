@@ -134,9 +134,11 @@ def rank_similar_names(names: list[str], filename: str) -> list[str]:
             score = 60
         elif len(lf) > 2 and lf in lower_name:
             score = 40
-        elif ext and os.path.splitext(lf)[1] == ext and len(set(lower_name) & set(lf)) >= max(
-            len(lower_name), len(lf)
-        ) * 0.4:
+        elif (
+            ext
+            and os.path.splitext(lf)[1] == ext
+            and len(set(lower_name) & set(lf)) >= max(len(lower_name), len(lf)) * 0.4
+        ):
             score = 30
         if score > 0:
             scored.append((score, name))

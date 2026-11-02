@@ -70,7 +70,9 @@ class Refs:
     def record_som(self, elements: list[dict[str, Any]]) -> None:
         """写入 SoM ref（覆盖 is_visual）。"""
         with self._lock:
-            self._last_refs = {k: v for k, v in self._last_refs.items() if not (isinstance(v, dict) and v.get("is_visual"))}
+            self._last_refs = {
+                k: v for k, v in self._last_refs.items() if not (isinstance(v, dict) and v.get("is_visual"))
+            }
             for el in elements:
                 if isinstance(el, dict) and "ref_raw" in el and "ref" in el:
                     for key in (el["ref_raw"], el["ref"]):
@@ -290,7 +292,13 @@ class Refs:
             adj_cx, adj_cy = float(info["page_cx"]) - cur_sx, float(info["page_cy"]) - cur_sy
             logger.debug(
                 "Self-healing fallback: using page coordinates (%s, %s) with scroll (%s, %s) -> (%s, %s) for %s",
-                info["page_cx"], info["page_cy"], cur_sx, cur_sy, adj_cx, adj_cy, ref_str,
+                info["page_cx"],
+                info["page_cy"],
+                cur_sx,
+                cur_sy,
+                adj_cx,
+                adj_cy,
+                ref_str,
             )
             return adj_cx, adj_cy, None
 

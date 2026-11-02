@@ -39,7 +39,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_snapshot",
             toolset_id="browser_automation",
             schema=BROWSER_SNAPSHOT_SCHEMA,
-            handler=lambda context, args: browser_snapshot(full=args.get("full", False)),
+            handler=lambda _context, args: browser_snapshot(full=args.get("full", False)),
             check_fn=check_browser_native_requirements,
             is_async=False,
         ),

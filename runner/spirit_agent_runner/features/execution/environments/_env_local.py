@@ -34,7 +34,11 @@ def _resolve_shell_init_files() -> list[str]:
     candidates = (
         explicit
         if explicit
-        else (["~/.profile", "~/.bash_profile", "~/.bashrc"] if is_truthy_value(cfg_get(terminal_cfg, "auto_source_bashrc"), default=True) and not IS_WINDOWS else [])
+        else (
+            ["~/.profile", "~/.bash_profile", "~/.bashrc"]
+            if is_truthy_value(cfg_get(terminal_cfg, "auto_source_bashrc"), default=True) and not IS_WINDOWS
+            else []
+        )
     )
     return [p for raw in candidates if os.path.isfile(p := os.path.expandvars(os.path.expanduser(raw)))]
 

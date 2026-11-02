@@ -37,7 +37,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_dialog",
             toolset_id="browser_automation",
             schema=BROWSER_DIALOG_SCHEMA,
-            handler=lambda context, args: browser_dialog(
+            handler=lambda _context, args: browser_dialog(
                 action=args.get("action", ""),
                 prompt_text=args.get("prompt_text"),
                 dialog_id=args.get("dialog_id"),

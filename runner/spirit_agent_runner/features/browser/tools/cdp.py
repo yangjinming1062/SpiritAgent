@@ -107,7 +107,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_cdp",
             toolset_id="browser_automation",
             schema=BROWSER_CDP_SCHEMA,
-            handler=lambda context, args: browser_cdp(
+            handler=lambda _context, args: browser_cdp(
                 method=args.get("method", ""),
                 params=args.get("params"),
                 target_id=args.get("target_id"),

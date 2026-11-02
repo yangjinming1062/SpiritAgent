@@ -121,7 +121,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_set_viewport",
             toolset_id="browser_automation",
             schema=BROWSER_SET_VIEWPORT_SCHEMA,
-            handler=lambda context, args: browser_set_viewport(
+            handler=lambda _context, args: browser_set_viewport(
                 width=args.get("width"),
                 height=args.get("height"),
                 device_scale_factor=args.get("device_scale_factor", 1.0),
@@ -134,7 +134,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_set_user_agent",
             toolset_id="browser_automation",
             schema=BROWSER_SET_USER_AGENT_SCHEMA,
-            handler=lambda context, args: browser_set_user_agent(
+            handler=lambda _context, args: browser_set_user_agent(
                 user_agent=args.get("user_agent"),
                 platform=args.get("platform"),
                 accept_language=args.get("accept_language"),
@@ -146,7 +146,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_set_extra_headers",
             toolset_id="browser_automation",
             schema=BROWSER_SET_EXTRA_HEADERS_SCHEMA,
-            handler=lambda context, args: browser_set_extra_headers(
+            handler=lambda _context, args: browser_set_extra_headers(
                 headers=args.get("headers") or {},
             ),
             check_fn=check_browser_cdp_requirements,
@@ -156,7 +156,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_set_geolocation",
             toolset_id="browser_automation",
             schema=BROWSER_SET_GEOLOCATION_SCHEMA,
-            handler=lambda context, args: browser_set_geolocation(
+            handler=lambda _context, args: browser_set_geolocation(
                 lat=args.get("lat"),
                 lon=args.get("lon"),
                 accuracy=args.get("accuracy", 100.0),

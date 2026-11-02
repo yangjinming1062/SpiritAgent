@@ -110,7 +110,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_navigate",
             toolset_id="browser_automation",
             schema=BROWSER_NAVIGATE_SCHEMA,
-            handler=lambda context, args: browser_navigate(url=args.get("url", "")),
+            handler=lambda _context, args: browser_navigate(url=args.get("url", "")),
             check_fn=check_browser_native_requirements,
             is_async=False,
         ),
