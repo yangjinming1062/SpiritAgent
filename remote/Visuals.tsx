@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { VisualDetail, VisualItem, VisualJob, VisualJobCommand, VisualJobState, VisualMediaKind } from '@protocol'
 
+import { visualAnalysisControls, visualMaterialCopy } from '../shared/visual-materials'
 import { visualJobCommands } from '../shared/visuals'
 
 import type { RemoteApi } from './api'
@@ -48,8 +49,8 @@ const JOB_COMMAND_TEXT: Record<VisualJobCommand, string> = {
   retry: '重试'
 }
 
-function analysisPending(state: VisualJobState | null | undefined): boolean {
-  return state === 'queued' || state === 'running' || state === 'paused'
+function analysisPending(state: VisualItem['analysis_state'] | null | undefined): boolean {
+  return state === 'queued' || state === 'running' || state === 'paused' || state === 'awaiting_input'
 }
 
 function sourceSummary(item: Pick<VisualItem, 'action_name' | 'outfit_name' | 'scene_title'>): string {
@@ -135,7 +136,7 @@ function VisualDetailPanel({
 }): ReactElement {
   const { run, busy, error } = useTask()
   const [feedback, setFeedback] = usePageState(`visual.${visual.id}.feedback`, '')
-  const [showOriginal, setShowOriginal] = useState(false)
+  const [showOriginal, setShowOriginal] = useState(Boolean(visual.analysis))
   const { check, clearSubmission, reconciled, submit, submitted } = useAssetSubmission(`visual.${visual.id}`, onChanged)
   const jobs = visual.jobs
   const pendingAnalysis = analysisPending(visual.analysis?.state)
@@ -173,7 +174,11 @@ function VisualDetailPanel({
       )}
       {visual.analysis ? (
         <>
-          <p className="muted">{visual.auto_playable ? '已通过检查，可在合适情境中使用' : '仅收藏，暂不可自动播放'}</p>
+          <p className="muted">
+            {visual.auto_playable
+              ? visualMaterialCopy.zh.approved
+              : visualMaterialCopy.zh[visualAnalysisControls(visual.analysis).status]}
+          </p>
           <VisualAnalysis api={api} onChanged={onChanged} visual={visual} />
         </>
       ) : null}

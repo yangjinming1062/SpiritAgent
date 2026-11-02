@@ -1,24 +1,33 @@
 """场景候选核对是否重复描绘桌面伙伴；识别参考仅进入独立视觉检查。"""
 
 import asyncio
-import json
 from collections.abc import Awaitable, Callable
+from typing import Literal
 
 from infrastructure.ai.error_classifier import LlmCallBlockedError
-from infrastructure.ai.prompt_engineer import vision_chat
+from infrastructure.ai.models import ModelModality
+from infrastructure.ai.prompt_engineer import call_llm_json
 from infrastructure.ai.tasks import AiTaskKey
+from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.assets import asset_store
 from infrastructure.assets.asset_store import read_asset_data_uri
 from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
-from infrastructure.text import parse_llm_json
+from pydantic import BaseModel, ConfigDict, Field
 
 from features.media.image_generation import ImageReviewUnavailableError
 from features.media.prompts import SCENE_IMAGE_REVIEW_SYSTEM
 from features.media.reference_reader import confirmed_media_reference_paths
 
 logger = get_logger(__name__)
+
+
+class SceneImageReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal["accepted", "duplicate_character", "invalid_environment"]
+    reason: str = Field(min_length=1, max_length=1000)
 
 
 async def _companion_reference_uri(user_id: int) -> str:
@@ -41,22 +50,27 @@ async def review_scene_image(
 ) -> tuple[bool, str]:
     try:
         companion_uri = await _companion_reference_uri(user_id)
-        raw = await vision_chat(
-            user_id,
-            SCENE_IMAGE_REVIEW_SYSTEM,
-            json.dumps({"image_count": 2}, ensure_ascii=False),
-            reference_images=(companion_uri, candidate_uri),
-            before_submit=before_submit,
-            task=task,
+        config = await load_user_llm_config(
+            user_id, task, required_modalities=frozenset({ModelModality.text, ModelModality.image})
         )
-        payload = parse_llm_json(raw)
-        if (
-            not isinstance(payload, dict)
-            or type(payload.get("accepted")) is not bool
-            or not isinstance(payload.get("reason"), str)
-        ):
-            raise ValueError("场景内容核查返回无效结构")
-        accepted, reason = payload["accepted"], payload["reason"].strip()
+        payload = await call_llm_json(
+            config,
+            SCENE_IMAGE_REVIEW_SYSTEM,
+            {
+                "references": [
+                    {"image": 1, "role": "reference_character"},
+                    {"image": 2, "role": "candidate_environment"},
+                ]
+            },
+            schema=SceneImageReview.model_json_schema(),
+            schema_name="scene_image_review",
+            parse_output=SceneImageReview.model_validate,
+            repair_prompt="只修正已有结论的 JSON 结构或字段格式，保留 decision 与可见依据，不重新判断图像。",
+            reference_images=(companion_uri, candidate_uri),
+            before_call=before_submit,
+            preserve_choices=("decision",),
+        )
+        accepted, reason = payload.decision == "accepted", payload.reason.strip()
         logger.info("scene image reviewed", extra={"user_id": user_id, "accepted": accepted, "reason": reason[:200]})
         return accepted, reason
     except (LlmCallBlockedError, ImageReviewUnavailableError):

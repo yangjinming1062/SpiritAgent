@@ -8,14 +8,20 @@ from infrastructure.api_ids import ResourceId
 from infrastructure.assets.asset_store import resolve_asset_reference
 from infrastructure.database import SESSION_LOCAL
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.jobs.service import bind_job_assets
 from features.media.character_images import ImageChainState
 from features.media.identity_contracts import CharacterCardSnapshot
 
-from .import_operations import ImportOperation, import_operations, normalize_import_result
+from .import_operations import (
+    ImportOperation,
+    import_analysis_state,
+    import_operations,
+    normalize_import_result,
+    resume_material_operations,
+)
 from .models import VisualImportJob
 from .repository import (
     VisualNotFoundError,
@@ -108,7 +114,7 @@ def import_job_view(job: VisualImportJob) -> ImportAnalysisView:
                 component.operation_state = "paused" if job.state in {"paused", "cancelled"} else operation.state
     return ImportAnalysisView(
         id=job.id,
-        state=job.state,
+        state=import_analysis_state(job.state, job.stage),
         stage=job.stage,
         revision=job.revision,
         error=job.error,
@@ -173,6 +179,7 @@ async def command_import_job(user_id: int, visual_id: int, body: ImportAnalysisR
             if result is None or not body.selections:
                 raise VisualStateError("请先完成内容识别并选择素材")
             components = {entry.observation.key: entry for entry in result.components}
+            suspended = job.state == "cancelled" or (job.state == "paused" and job.stage != "confirmation")
             if len({entry.key for entry in body.selections}) != len(body.selections) or any(
                 entry.key not in components for entry in body.selections
             ):
@@ -198,15 +205,16 @@ async def command_import_job(user_id: int, visual_id: int, body: ImportAnalysisR
                 operations = [entry for entry in operations if entry.key != selection.key]
                 operation = ImportOperation(**selection.model_dump())
                 operation.notes = selection.notes.strip() or (body.notes or "").strip()
-                if job.state in {"paused", "cancelled"}:
+                if suspended:
                     operation.state = "paused"
                 operations.append(operation)
                 component.revision += 1
                 component.operation_state, component.operation_stage = operation.state, "organize"
             job.selections_json = [entry.model_dump(mode="json") for entry in operations]
             job.result_json = result.model_dump(mode="json")
-            if job.state not in {"running", "paused", "cancelled"}:
+            if job.state != "running" and not suspended:
                 job.state, job.stage, job.error = "queued", "organize", None
+                job.cancel_requested = False
         else:
             if job.state in {"queued", "running"}:
                 if job.state == "queued" and body.command == "retry" and body.expected_revision is None:
@@ -231,15 +239,8 @@ async def command_import_job(user_id: int, visual_id: int, body: ImportAnalysisR
                 )
                 job.result_json, job.selections_json = None, []
             else:
-                for operation in operations:
-                    if operation.state in {"paused", "running"}:
-                        operation.state = "queued"
-                        if result is not None:
-                            component = next(
-                                entry for entry in result.components if entry.observation.key == operation.key
-                            )
-                            component.operation_state = "queued"
-                            component.revision += 1
+                if result is not None:
+                    operations = resume_material_operations(result, operations, context.image_chains)
                 job.selections_json = [entry.model_dump(mode="json") for entry in operations]
                 if result is not None:
                     job.result_json = result.model_dump(mode="json")
@@ -343,10 +344,12 @@ async def take_import_operation(work: ImportWork) -> ImportComponent | None:
         component = next(entry for entry in work.result.components if entry.observation.key == operation.key)
         if operation.command != "organize":
             work.context.history.append(work.result.model_copy(deep=True))
-        work.context.correction_notes = operation.notes
+        if operation.command != "organize":
+            component.notes = operation.notes
         operation.state = "running"
         component.operation_state, component.operation_stage = "running", "organize"
         component.failure_code = None
+        component.failure_summary = ""
         component.revision += 1
         work.active_component_key, work.active_operation_id = operation.key, operation.id
         work.selections = (
@@ -488,21 +491,44 @@ async def fail_import_work(work: ImportWork, message: str, *, paused: bool = Fal
 
 async def recover_import_jobs(user_id: int | None = None) -> list[tuple[int, int]]:
     async with SESSION_LOCAL() as db:
-        query = select(VisualImportJob).where(VisualImportJob.state.in_(("running", "queued")))
+        query = (
+            select(VisualImportJob)
+            .where(
+                or_(
+                    VisualImportJob.state.in_(("running", "queued")),
+                    and_(VisualImportJob.state == "paused", VisualImportJob.stage == "interrupted"),
+                )
+            )
+            .with_for_update()
+        )
         if user_id is not None:
             query = query.where(VisualImportJob.user_id == user_id)
         jobs = list(await db.scalars(query))
         queued = []
         for job in jobs:
-            if job.state == "running":
+            context = ImportContext.model_validate(job.context_json)
+            interrupted = job.state == "running" or (job.state == "paused" and job.stage == "interrupted")
+            if interrupted:
                 pause_import_operations(job)
-                job.state, job.stage, job.error = (
-                    "paused",
-                    "interrupted",
-                    "分析已中断，原件与已完成结果保留，可继续分析",
+                result = ImportAnalysisResult.model_validate(job.result_json) if job.result_json else None
+                operations = import_operations(job.selections_json)
+                # 只恢复被中断的操作；已经失败的条目等待显式重试。
+                unresolved = any(
+                    chain.phase == "submitting" or chain.stop_reason == "result_unknown"
+                    for chain in context.image_chains.values()
                 )
+                if not unresolved and context.calls < 48:
+                    if result is not None:
+                        operations = resume_material_operations(
+                            result, operations, context.image_chains, include_failed=False
+                        )
+                        job.result_json = result.model_dump(mode="json")
+                        job.selections_json = [entry.model_dump(mode="json") for entry in operations]
+                    job.state, job.stage, job.error = "queued", "organize" if result else "analyze", None
+                elif interrupted:
+                    job.state, job.stage, job.error = "paused", "interrupted", "原任务需要核对，已保留原件与处理进度"
                 await notify_visuals_updated(db, job.user_id)
-            else:
+            if job.state == "queued":
                 queued.append((job.user_id, job.id))
         await db.commit()
         return queued

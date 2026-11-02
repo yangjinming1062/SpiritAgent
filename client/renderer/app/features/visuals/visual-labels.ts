@@ -5,7 +5,7 @@ export type VisualsCopy = Dictionary['visuals']
 
 /** 任务尚未收尾：列表与详情据此标注等待中的状态。 */
 export function isPendingState(state: string | null | undefined): boolean {
-  return state === 'queued' || state === 'running' || state === 'paused'
+  return state === 'queued' || state === 'running' || state === 'paused' || state === 'awaiting_input'
 }
 
 /** 会自动推进的状态；暂停与终态不会自行变化，不据此轮询。 */

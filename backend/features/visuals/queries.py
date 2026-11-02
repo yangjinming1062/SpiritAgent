@@ -23,6 +23,7 @@ from .eligibility import (
 )
 from .geometry import visual_aspect_matches
 from .import_jobs import import_job_view
+from .import_operations import import_analysis_state
 from .models import VisualImportJob, VisualItem, VisualJob, VisualPresentation, VisualVersion
 from .ports import request_stage_recovery, scene_reference_exists
 from .quality import quality_failure_message
@@ -450,16 +451,17 @@ async def list_visuals(
                 )
             ).mappings()
         )
-        analysis_states = dict(
-            (
+        analysis_states = {
+            visual_id: import_analysis_state(state, stage)
+            for visual_id, state, stage in (
                 await db.execute(
-                    select(VisualImportJob.visual_id, VisualImportJob.state).where(
+                    select(VisualImportJob.visual_id, VisualImportJob.state, VisualImportJob.stage).where(
                         VisualImportJob.user_id == user_id,
                         VisualImportJob.visual_id.in_([row["id"] for row in rows[:limit]]),
                     )
                 )
             ).all()
-        )
+        }
         views = []
         for row in rows[:limit]:
             values = dict(row)

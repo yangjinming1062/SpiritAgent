@@ -8,10 +8,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import numpy as np
-from infrastructure.assets.asset_store import resolve_asset_reference, save_companion_asset_async
+from infrastructure.assets.asset_store import build_data_uri, resolve_asset_reference, save_companion_asset_async
 from infrastructure.async_io import run_blocking
 from infrastructure.video_processing.actor_clip import prepare_actor_clip
-from infrastructure.video_processing.ffmpeg import alpha_input_args, ffmpeg_stdout, probe_video
+from infrastructure.video_processing.desktop import sample_desktop_video_frames
 from PIL import Image, ImageOps
 
 from .schemas import ActorClipBody, VisualAsset
@@ -40,30 +40,15 @@ def image_frame(data: bytes, *, max_edge: int = 1280) -> bytes:
         return output.getvalue()
 
 
-def video_frame(path: Path, seconds: float) -> bytes:
-    probe = probe_video(path)
-    return ffmpeg_stdout(
-        [
-            "-ss",
-            f"{max(0.0, seconds):.3f}",
-            *alpha_input_args(probe),
-            "-i",
-            str(path),
-            "-map",
-            "0:v:0",
-            "-frames:v",
-            "1",
-            "-an",
-            "-vf",
-            "scale=1280:1280:force_original_aspect_ratio=decrease",
-            "-f",
-            "image2pipe",
-            "-c:v",
-            "png",
-            "-",
-        ],
-        failure_message="上传视频抽帧失败",
-    )
+def import_reference_uri(reference: str) -> str | None:
+    """分析参考沿用原件采样精度，避免重复传输整张高分辨率图片。"""
+    resolved = resolve_asset_reference(reference)
+    if resolved is None:
+        return None
+    try:
+        return build_data_uri(image_frame(resolved[0].read_bytes()), "image/png")
+    except (OSError, ValueError):
+        return None
 
 
 def sample_import(reference: str, media_kind: str, duration_ms: int | None) -> ImportSamples:
@@ -92,9 +77,13 @@ def sample_import(reference: str, media_kind: str, duration_ms: int | None) -> I
             return ImportSamples(frames, True, elapsed if reliable else None, reliable)
     duration = (duration_ms or 0) / 1000
     count = min(24, max(3, round(duration * 2) + 1))
-    times = np.linspace(0, max(0, duration - min(0.15, duration / 10)), count)
+    samples = sample_desktop_video_frames(resolved[0], sample_count=count, max_edge=1280, preserve_alpha=True)
     return ImportSamples(
-        [ImportFrame(float(time), video_frame(resolved[0], float(time))) for time in times], duration_ms=duration_ms
+        [
+            ImportFrame(seconds, image_frame(data))
+            for seconds, data in zip(samples.times_seconds, samples.frames, strict=True)
+        ],
+        duration_ms=duration_ms,
     )
 
 

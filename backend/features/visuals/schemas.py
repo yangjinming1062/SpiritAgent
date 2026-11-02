@@ -31,6 +31,7 @@ VisualAssetKind = Literal["actor", "scene", "cinematic"]
 VisualCreationSource = Literal["user_requested", "autonomous", "base_preparation"]
 ActionClipKind = Literal["once", "loop"]
 VisualJobState = Literal["queued", "running", "paused", "succeeded", "failed", "cancelled", "unknown"]
+ImportAnalysisState = VisualJobState | Literal["awaiting_input"]
 PlaybackStatus = Literal["queued", "claimed", "started", "finished", "failed", "expired"]
 PlaybackReceiptKind = Literal["image", "video", "window_static"]
 # manual=用户点播、autonomous=伙伴自主选择、life=生活导演按情境选择、restore=恢复既有呈现。
@@ -103,7 +104,7 @@ class VisualCreationPlan(BaseModel):
 
 
 class MediaSemantics(BaseModel):
-    """从视频采样确认的实际表现与适用条件，不继承动作的全部通用用途。"""
+    """从原件画面确认的实际表现与适用条件，不继承动作的全部通用用途。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -301,6 +302,8 @@ class ImportComponent(BaseModel):
     extraction_key: str = ""
     created_materials: list[ImportCreatedMaterial] = Field(default_factory=list)
     reason: str = ""
+    failure_summary: str = ""
+    notes: str = Field(default="", max_length=2000)
     preview_path: str | None = None
     can_extract: bool = True
     creation_method: Literal["pixels", "generated", "pose", "motion"] | None = None
@@ -324,18 +327,29 @@ class ImportComponent(BaseModel):
     extract_command: Literal["extract", "retry", "regenerate"] = "extract"
 
 
+class ImportPlaybackBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: Literal[
+        "materials_incomplete", "identity", "outfit", "scene", "action", "semantics", "timing", "review", "animated"
+    ]
+    reason: str
+
+
 class ImportAnalysisResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     understanding: ImportUnderstanding
     components: list[ImportComponent] = Field(default_factory=list)
+    presentation_verdict: Literal["pass", "review", "fail"] | None = None
+    blocking_reasons: list[ImportPlaybackBlock] = Field(default_factory=list)
 
 
 class ImportAnalysisView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: ResourceId
-    state: VisualJobState
+    state: ImportAnalysisState
     stage: str
     revision: int
     error: str | None = None
@@ -559,7 +573,7 @@ class VisualItemView(BaseModel):
     # actor 主体元数据投影；路径已在响应出口转为客户端地址。
     body: ActorClipBody | None = None
     auto_playable: bool = Field(default=False, description="成品能否参与自动演出；不判断当前舞台是否适用")
-    analysis_state: VisualJobState | None = None
+    analysis_state: ImportAnalysisState | None = None
     original_url: str | None = None
 
 

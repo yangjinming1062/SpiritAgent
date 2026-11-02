@@ -1,6 +1,5 @@
 """原件内容理解与材料复核的实际多模态请求。"""
 
-import io
 from typing import Literal
 
 from infrastructure.ai.models import ModelModality
@@ -8,15 +7,15 @@ from infrastructure.ai.prompt_engineer import LlmJsonValidationError, call_llm_j
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.api_ids import ResourceId
-from infrastructure.assets.asset_store import build_data_uri, read_valid_image_data_uri
+from infrastructure.assets.asset_store import build_data_uri
 from infrastructure.async_io import run_blocking
-from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 from runtime.paid_work import require_new_generation_call
 
 from features.action_library.schemas import ActionAssetDesign
 
 from .import_jobs import ImportCatalogCandidate, ImportWork, guard_import_work
+from .import_media import image_frame, import_reference_uri
 from .import_prompts import (
     IMPORT_ACTION_EVIDENCE_REVIEW,
     IMPORT_EXTRACTION_REVIEW,
@@ -46,24 +45,40 @@ class ImportQualityVerdict(BaseModel):
     reason: str = Field(min_length=1, max_length=1000)
 
 
-async def _reference_images(work: ImportWork) -> tuple[list[str], list[dict[str, object]]]:
+def _component_notes(work: ImportWork, observation: ImportObservation) -> str:
+    return (
+        next((entry.notes for entry in work.result.components if entry.observation.key == observation.key), "")
+        if work.result
+        else ""
+    )
+
+
+def _append_reference(images: list[str], roles: list[dict[str, object]], uri: str, **attributes: object) -> None:
+    if uri not in images:
+        images.append(uri)
+    roles.append({"image": images.index(uri) + 1, **attributes})
+
+
+async def _reference_images(
+    work: ImportWork, *, include_identity: bool = True
+) -> tuple[list[str], list[dict[str, object]]]:
     images: list[str] = []
     roles: list[dict[str, object]] = []
     for index, frame in enumerate(work.context.frames):
-        uri = await run_blocking(read_valid_image_data_uri, frame.path)
+        uri = await run_blocking(import_reference_uri, frame.path)
         if uri is None:
             raise ValueError("上传影像的分析帧缺失，请重新分析")
-        images.append(uri)
-        roles.append({"image": len(images), "role": "original", "frame_index": index, "seconds": frame.seconds})
+        _append_reference(images, roles, uri, role="original", frame_index=index, seconds=frame.seconds)
+    if not include_identity:
+        return images, roles
     for role, path in (
         ("identity_portrait", work.context.portrait_path),
         ("identity_body", work.context.identity_path),
     ):
         if path:
-            uri = await run_blocking(read_valid_image_data_uri, path)
+            uri = await run_blocking(import_reference_uri, path)
             if uri:
-                images.append(uri)
-                roles.append({"image": len(images), "role": role})
+                _append_reference(images, roles, uri, role=role)
     return images, roles
 
 
@@ -80,6 +95,8 @@ async def understand_import(work: ImportWork) -> ImportUnderstanding:
 
     def parse(value: object) -> ImportUnderstanding:
         result = ImportUnderstanding.model_validate(value)
+        if (result.asset_kind != "scene" or work.media_kind == "video") and result.media_semantics is None:
+            raise LlmJsonValidationError("missing_playback_semantics", fields=("media_semantics",))
         if result.asset_kind == "actor" and (work.media_kind != "video" or not work.context.transparent_video):
             raise LlmJsonValidationError("actor_requires_transparent_video", fields=("asset_kind",))
         for observation in result.observations:
@@ -156,13 +173,12 @@ async def match_import_material(
 ) -> ImportMatchResult:
     if not candidates:
         return ImportMatchResult(decision="new")
-    images, roles = await _reference_images(work)
+    images, roles = await _reference_images(work, include_identity=observation.kind != "scene")
     for candidate in candidates:
         if candidate.path:
-            uri = await run_blocking(read_valid_image_data_uri, candidate.path)
+            uri = await run_blocking(import_reference_uri, candidate.path)
             if uri:
-                images.append(uri)
-                roles.append({"image": len(images), "role": "candidate", "material_id": str(candidate.material_id)})
+                _append_reference(images, roles, uri, role="candidate", material_id=str(candidate.material_id))
     allowed = {candidate.material_id for candidate in candidates}
 
     def parse(value: object) -> ImportMatchResult:
@@ -187,6 +203,7 @@ async def match_import_material(
         {
             "output_language": work.context.language,
             "observation": observation.model_dump(mode="json"),
+            "user_corrections": _component_notes(work, observation),
             "references": roles,
             "media_kind": work.media_kind,
             "candidates": [candidate.model_dump(mode="json", exclude={"path"}) for candidate in candidates],
@@ -204,11 +221,9 @@ async def match_import_material(
 async def review_import_material(
     work: ImportWork, observation: ImportObservation, data: bytes, *, creation_method: Literal["pixels", "generated"]
 ) -> ImportQualityVerdict:
-    images, roles = await _reference_images(work)
-    with Image.open(io.BytesIO(data)) as candidate:
-        mime = Image.MIME.get(candidate.format or "", "image/png")
-    images.append(build_data_uri(data, mime))
-    roles.append({"image": len(images), "role": "extracted_candidate"})
+    images, roles = await _reference_images(work, include_identity=observation.kind == "outfit")
+    candidate = await run_blocking(image_frame, data)
+    _append_reference(images, roles, build_data_uri(candidate, "image/png"), role="extracted_candidate")
     config = await load_user_llm_config(
         work.user_id, AiTaskKey.visuals, required_modalities=frozenset({ModelModality.text, ModelModality.image})
     )
@@ -219,6 +234,7 @@ async def review_import_material(
             "output_language": work.context.language,
             "references": roles,
             "observation": observation.model_dump(mode="json"),
+            "user_corrections": _component_notes(work, observation),
             "creation_method": creation_method,
         },
         schema=ImportQualityVerdict.model_json_schema(),
@@ -258,7 +274,7 @@ async def design_import_pose(work: ImportWork, observation: ImportObservation) -
             "output_language": work.context.language,
             "references": roles,
             "observation": observation.model_dump(mode="json"),
-            "user_corrections": work.context.correction_notes,
+            "user_corrections": _component_notes(work, observation),
         },
         schema=ActionAssetDesign.model_json_schema(),
         schema_name="visual_import_pose",
@@ -284,6 +300,7 @@ async def review_import_action(
             "references": roles,
             "duration_seconds": (work.duration_ms or 0) / 1000,
             "observation": observation.model_dump(mode="json"),
+            "user_corrections": _component_notes(work, observation),
         },
         schema=ImportQualityVerdict.model_json_schema(),
         schema_name="visual_import_action_evidence",
@@ -299,15 +316,10 @@ async def review_import_presentation(work: ImportWork, selected: list[ImportCata
     images, roles = await _reference_images(work)
     for candidate in selected:
         if candidate.path:
-            uri = await run_blocking(read_valid_image_data_uri, candidate.path)
+            uri = await run_blocking(import_reference_uri, candidate.path)
             if uri:
-                images.append(uri)
-                roles.append(
-                    {
-                        "image": len(images),
-                        "role": f"selected_{candidate.kind}",
-                        "material_id": str(candidate.material_id),
-                    }
+                _append_reference(
+                    images, roles, uri, role=f"selected_{candidate.kind}", material_id=str(candidate.material_id)
                 )
     config = await load_user_llm_config(
         work.user_id, AiTaskKey.visuals, required_modalities=frozenset({ModelModality.text, ModelModality.image})
@@ -322,6 +334,11 @@ async def review_import_presentation(work: ImportWork, selected: list[ImportCata
             "user_corrections": work.context.correction_notes,
             "duration_seconds": (work.duration_ms or 0) / 1000,
             "analysis": work.result.understanding.model_dump(mode="json") if work.result else None,
+            "component_corrections": {
+                entry.observation.key: entry.notes for entry in work.result.components if entry.notes
+            }
+            if work.result
+            else {},
             "selected_materials": [candidate.model_dump(mode="json", exclude={"path"}) for candidate in selected],
         },
         schema=ImportQualityVerdict.model_json_schema(),

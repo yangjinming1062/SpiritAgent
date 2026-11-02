@@ -359,7 +359,7 @@ async def _restore_imports(db: AsyncSession, rows: dict[str, list[dict[str, Any]
         row.selections_json = selections
         if row.state in {"queued", "running", "unknown", "paused", "cancelled"}:
             pause_import_operations(row)
-            row.state, row.stage, row.error = "paused", "interrupted", "备份恢复后请核对原分析结果并继续"
+            row.state, row.stage, row.error = "paused", "restored", "备份恢复后请核对原分析结果并继续"
 
 
 def backup_tables() -> tuple[BackupTable, ...]:

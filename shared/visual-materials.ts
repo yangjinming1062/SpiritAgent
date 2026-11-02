@@ -8,9 +8,20 @@ export function visualAnalysisControls(job: ApiSchemas['ImportAnalysisView'] | n
     !active &&
     (!job?.result ||
       ['paused', 'cancelled', 'unknown'].includes(job.state) ||
-      job.result.components.some(component => component.operation_state === 'paused') ||
-      (job.state === 'failed' && job.stage !== 'organize'))
-  return { active, canContinue }
+      job.result.components.some(component => ['paused', 'failed'].includes(component.operation_state)) ||
+      job.state === 'failed')
+  const status = active
+    ? 'working'
+    : job?.state === 'awaiting_input'
+      ? 'awaiting'
+      : job?.state === 'failed'
+        ? 'attention'
+        : job?.state === 'paused' || job?.state === 'cancelled'
+          ? 'paused'
+          : job?.state === 'succeeded'
+            ? 'collection'
+            : 'pending'
+  return { active, canContinue, status } as const
 }
 
 export function visualMaterialGroups(analysis: ApiSchemas['ImportAnalysisView'] | null | undefined) {
@@ -26,6 +37,8 @@ export function visualMaterialControls(component: Component) {
   return {
     busy,
     linked,
+    confirmation: component.status === 'ambiguous',
+    needsAction: !busy && !linked && ['failed', 'ambiguous', 'recognized'].includes(component.status),
     status: busy ? component.operation_state : component.status,
     extractCommand: component.extract_command,
     extractLabel:
@@ -58,12 +71,17 @@ export const visualMaterialCopy = {
     retry: '继续处理',
     reanalyze: '重新识别',
     cancel: '取消处理',
-    working: '正在识别影像…',
+    working: '正在整理影像…',
     idle: '原件已保存',
     pending: '尚未识别',
     empty: '未识别到此类素材',
     approved: '已通过检查，可在合适情境中使用',
     collection: '仅收藏，暂不可自动播放',
+    awaiting: '有信息需要确认',
+    attention: '素材整理未完成',
+    paused: '处理已暂停，原件与进度已保留',
+    manage: '调整与管理',
+    confirm: '确认素材',
     existing: '选择已有素材',
     select: '请选择',
     apply: '关联',
@@ -85,7 +103,8 @@ export const visualMaterialCopy = {
       succeeded: '已完成',
       failed: '需继续处理',
       cancelled: '已取消',
-      unknown: '待核对'
+      unknown: '待核对',
+      awaiting_input: '待确认'
     } as Record<string, string>,
     components: {
       recognized: '未关联',
@@ -135,6 +154,11 @@ export const visualMaterialCopy = {
     empty: 'No material of this type identified',
     approved: 'Checked and available for suitable situations',
     collection: 'Saved for viewing; automatic playback unavailable',
+    awaiting: 'Some information needs confirmation',
+    attention: 'Material organization incomplete',
+    paused: 'Paused; original and progress preserved',
+    manage: 'Adjust and manage',
+    confirm: 'Confirm material',
     existing: 'Choose an existing material',
     select: 'Select',
     apply: 'Link',
@@ -156,7 +180,8 @@ export const visualMaterialCopy = {
       succeeded: 'Completed',
       failed: 'Needs attention',
       cancelled: 'Cancelled',
-      unknown: 'Needs verification'
+      unknown: 'Needs verification',
+      awaiting_input: 'Needs confirmation'
     } as Record<string, string>,
     components: {
       recognized: 'Unlinked',

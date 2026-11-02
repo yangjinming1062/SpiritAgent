@@ -9,6 +9,7 @@ from PIL import Image
 from infrastructure.media_geometry import centered_crop_box
 from infrastructure.video_processing.ffmpeg import (
     VideoProcessError,
+    alpha_input_args,
     ffmpeg_stdout,
     probe_video,
     run_ffmpeg,
@@ -32,10 +33,14 @@ class DesktopVideoFrames:
     times_seconds: tuple[float, ...]
 
 
-def sample_desktop_video_frames(src: Path, *, sample_count: int = 5) -> DesktopVideoFrames:
+def sample_desktop_video_frames(
+    src: Path, *, sample_count: int = 5, max_edge: int = 1024, preserve_alpha: bool = False
+) -> DesktopVideoFrames:
     """按实际帧时间抽取首尾和中间帧，支持原始帧率、VFR、旋转和非方形像素。"""
     if sample_count < 2:
         raise ValueError("视频采样至少需要首尾两帧")
+    if max_edge < 2:
+        raise ValueError("视频采样尺寸无效")
     times = video_frame_times(src)
     first, last = times[0], times[-1]
     indices = sorted(
@@ -45,35 +50,37 @@ def sample_desktop_video_frames(src: Path, *, sample_count: int = 5) -> DesktopV
         },
     )
     with Image.open(BytesIO(extract_desktop_first_frame(src))) as frame:
-        scale = min(1.0, 1024 / max(frame.size))
+        scale = min(1.0, max_edge / max(frame.size))
         width, height = (max(2, round(value * scale / 2) * 2) for value in frame.size)
     selector = "+".join(f"eq(n\\,{index})" for index in indices)
+    pixel_format, mode, channels = ("rgba", "RGBA", 4) if preserve_alpha else ("rgb24", "RGB", 3)
     raw = ffmpeg_stdout(
         [
+            *(alpha_input_args(probe_video(src)) if preserve_alpha else []),
             "-i",
             str(src),
             "-map",
             "0:v:0",
             "-an",
             "-vf",
-            f"select={selector},scale={width}:{height},setsar=1,format=rgb24",
+            f"select={selector},scale={width}:{height},setsar=1,format={pixel_format}",
             "-fps_mode",
             "passthrough",
             "-f",
             "rawvideo",
             "-pix_fmt",
-            "rgb24",
+            pixel_format,
             "-",
         ],
         failure_message="桌面视频采样检查失败",
     )
-    frame_size = width * height * 3
+    frame_size = width * height * channels
     if len(raw) != frame_size * len(indices):
         raise VideoProcessError("桌面视频首尾帧无法完整解码")
     frames: list[bytes] = []
     for index in range(len(indices)):
         data = raw[index * frame_size : (index + 1) * frame_size]
-        with Image.frombytes("RGB", (width, height), data) as frame, BytesIO() as output:
+        with Image.frombytes(mode, (width, height), data) as frame, BytesIO() as output:
             frame.save(output, format="WEBP", lossless=True)
             frames.append(output.getvalue())
     return DesktopVideoFrames(tuple(frames), tuple(times[index] - first for index in indices))

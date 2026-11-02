@@ -1,5 +1,7 @@
 """分析结果追加不可变版本，并在同一事务完成分析任务。"""
 
+from typing import Literal
+
 from infrastructure.database import SESSION_LOCAL
 from sqlalchemy import select
 
@@ -8,11 +10,60 @@ from .import_operations import import_operations
 from .models import VisualImportJob
 from .publication import publish_import_revision
 from .repository import VisualStateError, notify_visuals_updated, visual_item
-from .schemas import ActorClipSource, AnalyzingVisualSource, CinematicSource, SceneMediaSource, VisualAsset
+from .schemas import (
+    ActorClipSource,
+    AnalyzingVisualSource,
+    CinematicSource,
+    ImportPlaybackBlock,
+    SceneMediaSource,
+    VisualAsset,
+)
+
+
+def import_playback_blocks(
+    work: ImportWork, selected: list[ImportCatalogCandidate], verdict: str, reason: str
+) -> list[ImportPlaybackBlock]:
+    if work.result is None:
+        raise VisualStateError("上传分析结果缺失")
+    understanding = work.result.understanding
+    blocks: list[ImportPlaybackBlock] = []
+    if any(entry.status not in {"created", "reused", "skipped", "undone"} for entry in work.result.components):
+        blocks.append(ImportPlaybackBlock(code="materials_incomplete", reason="素材整理尚未完成"))
+    if work.context.animated_image:
+        blocks.append(ImportPlaybackBlock(code="animated", reason="动图原件可预览，暂不支持自动播放"))
+    scenes = {entry.material_id for entry in selected if entry.scene is not None}
+    outfits = {entry.material_id for entry in selected if entry.outfit is not None}
+    actions = {entry.material_id: entry.action for entry in selected if entry.action is not None}
+    if understanding.asset_kind in {"scene", "cinematic"} and len(scenes) != 1:
+        blocks.append(ImportPlaybackBlock(code="scene", reason="需要确认与整段影像相符的环境"))
+    if understanding.asset_kind == "scene":
+        if understanding.identity_match != "absent":
+            blocks.append(ImportPlaybackBlock(code="identity", reason=understanding.identity_reason))
+    else:
+        if understanding.identity_match != "same" or work.context.identity is None:
+            blocks.append(ImportPlaybackBlock(code="identity", reason=understanding.identity_reason))
+        if len(outfits) != 1:
+            blocks.append(ImportPlaybackBlock(code="outfit", reason="需要确认与影像相符的着装"))
+        if len(actions) != 1:
+            blocks.append(ImportPlaybackBlock(code="action", reason="需要确认整段影像的动作或持续姿态"))
+    semantics = understanding.media_semantics
+    if (understanding.asset_kind != "scene" or work.media_kind == "video") and (
+        semantics is None or not semantics.auto_selectable
+    ):
+        blocks.append(ImportPlaybackBlock(code="semantics", reason="影像的整体含义或适用情境尚不明确"))
+    if work.media_kind == "video":
+        action = next(iter(actions.values())) if len(actions) == 1 else None
+        if (understanding.asset_kind == "scene" and understanding.clip_kind != "loop") or (
+            understanding.asset_kind != "scene" and (action is None or understanding.clip_kind != action.clip_kind)
+        ):
+            blocks.append(ImportPlaybackBlock(code="timing", reason="视频时序尚不符合对应动作的播放方式"))
+    if verdict != "pass" and not any(entry.code == "materials_incomplete" for entry in blocks):
+        blocks.append(ImportPlaybackBlock(code="review", reason=reason))
+    return blocks
 
 
 async def complete_import_analysis(
-    work: ImportWork, selected: list[ImportCatalogCandidate], reviewed: bool, reason: str
+    work: ImportWork, selected: list[ImportCatalogCandidate], verdict: Literal["pass", "review", "fail"], reason: str
 ) -> bool:
     if (
         work.result is None
@@ -25,35 +76,9 @@ async def complete_import_analysis(
     scene = next((entry.scene for entry in selected if entry.scene is not None), None)
     actions = [entry.action for entry in selected if entry.action is not None]
     action = actions[0] if len({entry.action_id for entry in actions}) == 1 else None
-    unresolved = any(entry.status in {"failed", "reviewing", "ambiguous"} for entry in work.result.components)
-    approved = reviewed and understanding.presentation_verdict == "pass" and not unresolved
-    if work.context.animated_image:
-        approved = False
-        reason = "动图原件已保留；当前在影像库中预览，不参与舞台自动呈现。" + reason
-    if understanding.asset_kind == "scene":
-        # 环境影像只有在冻结了可复用的环境素材后才能进入自动目录；
-        # 仅能描述环境但没有完整场景引用的原件仍可收藏和手动预览。
-        approved = approved and understanding.identity_match == "absent" and scene is not None
-    else:
-        approved = (
-            approved
-            and understanding.identity_match == "same"
-            and work.context.identity is not None
-            and outfit is not None
-        )
-        if understanding.asset_kind == "cinematic":
-            approved = approved and scene is not None
-        approved = (
-            approved and understanding.media_semantics is not None and understanding.media_semantics.auto_selectable
-        )
-    if work.media_kind == "video":
-        approved = (
-            approved and understanding.media_semantics is not None and understanding.media_semantics.auto_selectable
-        )
-        if understanding.asset_kind == "scene":
-            approved = approved and understanding.clip_kind == "loop"
-        else:
-            approved = approved and action is not None and understanding.clip_kind == action.clip_kind
+    work.result.presentation_verdict = verdict
+    work.result.blocking_reasons = import_playback_blocks(work, selected, verdict, reason)
+    approved = not work.result.blocking_reasons
     original = work.snapshot.source
     metadata = {
         key: value
@@ -199,6 +224,8 @@ async def complete_import_analysis(
         job.state, job.stage, job.error = (
             ("failed", "organize", "部分素材整理未完成，可重试；原件和已完成的结果已保存")
             if failed
+            else ("paused", "confirmation", "有信息需要确认，其他素材已整理保存")
+            if verdict == "review" or any(entry.status == "ambiguous" for entry in work.result.components)
             else ("succeeded", "complete", None)
         )
         await notify_visuals_updated(db, work.user_id)

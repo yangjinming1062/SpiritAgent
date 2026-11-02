@@ -422,6 +422,15 @@ async def _complete_images(state: ImageChainState, writer: ImageProgressWriter |
         if state.size_rejected:
             raise ImageGenerationError("生成图片画幅不符合要求")
         if isinstance(state.inputs, SceneImageInput) and any(candidate.evaluated for candidate in state.candidates):
+            for candidate in reversed(state.candidates):
+                if candidate.accepted is not False or not candidate.result_json:
+                    continue
+                try:
+                    review = json.loads(candidate.result_json)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(review, dict) and isinstance(review.get("reason"), str) and review["reason"].strip():
+                    raise ImageGenerationError(f"场景内容检查未通过：{review['reason'].strip()}")
             raise ImageGenerationError("场景生成未通过内容检查，请调整环境描述后重试")
         raise ImageGenerationError("图片生成失败，未取得可用候选")
     retained = set(selected) | {
@@ -495,7 +504,7 @@ async def generate_character_images(
                 await require_image_goal_review_config(user_id, task)
             except MissingLlmConfigError as exc:
                 raise ImageGenerationError(str(exc)) from exc
-        state.inputs = CharacterImageInput(
+        inputs = CharacterImageInput(
             prompt=prompt,
             size=size,
             aspect_ratio=aspect_ratio,
@@ -588,6 +597,7 @@ async def generate_character_images(
         if rank_by_resolution:
             planned.sort(key=lambda item: item[2])
         chain = [config for config, _provider, _key in planned]
+        state.inputs = inputs
         state.providers = [provider for _config, provider, _key in planned]
         configs = dict(enumerate(chain))
         if save_progress is not None:
@@ -639,7 +649,7 @@ async def generate_scene_images(
         raise ImageGenerationError("图片任务存储归属已变化")
     configs: dict[int, ProviderConfig] = {}
     if state.inputs is None:
-        state.inputs = SceneImageInput(
+        inputs = SceneImageInput(
             prompt=prompt,
             size=f"{target_width}x{target_height}",
             target_width=target_width,
@@ -660,6 +670,7 @@ async def generate_scene_images(
         chain, error = resolved.providers, resolved.error
         if error or not chain:
             raise ImageGenerationError(error or "图片生成服务未配置")
+        providers = []
         for config in chain:
             provider = FrozenMediaProvider.from_config(config)
             provider.max_images_per_request = resolve(
@@ -671,7 +682,8 @@ async def generate_scene_images(
             provider.image_aspect_ratio = canvas.aspect_ratio
             provider.image_resolution = canvas.resolution
             provider.image_exact_size = canvas.exact_size
-            state.providers.append(provider)
+            providers.append(provider)
+        state.inputs, state.providers = inputs, providers
         configs = dict(enumerate(chain))
         if save_progress is not None:
             await _freeze_input_references(

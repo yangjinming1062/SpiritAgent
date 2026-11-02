@@ -206,7 +206,7 @@ _CHARACTER_CARD_EXTRACTION_RULES = (
 )
 
 CHARACTER_CARD_PORTRAIT_EXTRACTION = (
-    "为角色卡提取图中角色可长期保持的头部固定外形，供后续画面保持同一面容。"
+    "观察图片，提取图中角色可长期保持的头部固定外形，供后续画面保持同一面容。"
     + _CHARACTER_CARD_EXTRACTION_RULES
     + "\n\n只提取有清晰视觉依据的头脸基本轮廓、五官结构与相对比例、面部天然材质与颜色、头部固有结构与稳定标记。"
     "适用于人类、动物、无常规五官的生物及自创角色；只描述实际可见的结构，不补造遮挡部位，"
@@ -224,7 +224,7 @@ CHARACTER_CARD_PORTRAIT_EXTRACTION = (
 )
 
 CHARACTER_CARD_BODY_EXTRACTION = (
-    "为角色卡提取图中角色头部以外的固定身体外形，供后续画面保持同一身体。"
+    "观察图片，提取图中角色头部以外的固定身体外形，供后续画面保持同一身体。"
     + _CHARACTER_CARD_EXTRACTION_RULES
     + "\n\n只分析实际显露的头部以外身体。"
     "衣袖、裤腿、鞋子和随身物品展示的是穿着轮廓或遮挡，不能用于补全内部身体。"

@@ -29,6 +29,11 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
   const [materials, setMaterials] = useState<VisualMaterialOptions>({ outfits: [], scenes: [], actions: [] })
   const [error, setError] = useState('')
   const begin = useAsyncGuard()
+  const ui = useStore($visualsUi)
+  const notesKey = `${visual.id}:analysis`
+  const notes = ui.analysisNotes?.[notesKey] ?? ''
+  const blockers = job?.result?.blocking_reasons ?? []
+  const showBlockers = !blockers.some(block => block.code === 'materials_incomplete')
 
   const materialRevision = job?.result?.components
     .map(row => `${row.material_id}:${row.status}:${row.operation_state}`)
@@ -72,6 +77,18 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
 
   return (
     <div className="space-y-4">
+      {active && job ? (
+        <p className={VISUAL_BODY} role="status">
+          {a.stages[job.stage] ?? a.working}
+        </p>
+      ) : null}
+      {showBlockers && blockers.length > 0 ? (
+        <ul className={`list-inside list-disc space-y-1 ${VISUAL_BODY}`} role="status">
+          {blockers.map(block => (
+            <li key={block.code}>{block.reason}</li>
+          ))}
+        </ul>
+      ) : null}
       {visualMaterialGroups(job).map(group => (
         <section
           aria-label={a.groups[group.kind]}
@@ -104,9 +121,9 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
           {error}
         </p>
       ) : null}
-      {job?.error && canContinue ? (
+      {job?.error && canContinue && !job.result?.components.some(component => component.status === 'failed') ? (
         <p className={VISUAL_BODY} role="status">
-          {job.stage === 'presentation_review' ? a.collection : a.states[job.state]}
+          {job.error}
         </p>
       ) : null}
       <div className="flex flex-wrap gap-2">
@@ -126,19 +143,35 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
                 {job ? a.retry : a.start}
               </button>
             ) : null}
-            {job?.result ? (
-              <button
-                className={BTN_GHOST}
-                disabled={busy}
-                onClick={() => command({ command: 'reanalyze' })}
-                type="button"
-              >
-                {a.reanalyze}
-              </button>
-            ) : null}
           </>
         )}
       </div>
+      {job?.result ? (
+        <details className="space-y-3">
+          <summary className={`cursor-pointer ${VISUAL_META}`}>{a.manage}</summary>
+          <label className={`block space-y-2 ${VISUAL_BODY}`}>
+            <span>{a.notes}</span>
+            <input
+              className={INPUT_CLASS}
+              maxLength={2000}
+              onChange={event =>
+                updateVisualsUi({
+                  analysisNotes: { ...$visualsUi.get().analysisNotes, [notesKey]: event.currentTarget.value }
+                })
+              }
+              value={notes}
+            />
+          </label>
+          <button
+            className={BTN_GHOST}
+            disabled={busy || active}
+            onClick={() => command({ command: 'reanalyze', notes })}
+            type="button"
+          >
+            {a.reanalyze}
+          </button>
+        </details>
+      ) : null}
     </div>
   )
 }
@@ -156,7 +189,7 @@ function MaterialRow({
   const ui = useStore($visualsUi)
   const key = `${visualId}:${component.observation.key}`
   const chosen = ui.analysisSelections?.[key] ?? ''
-  const notes = ui.analysisNotes?.[key] ?? ''
+  const notes = ui.analysisNotes?.[key] ?? component.notes
   const { run, busy } = usePanelAction()
   const controls = visualMaterialControls(component)
   const disabled = busy || controls.busy
@@ -224,60 +257,66 @@ function MaterialRow({
       ) : null}
       {controls.notice ? (
         <p className={VISUAL_BODY} role="status">
-          {a.notices[controls.notice]}
+          {component.failure_summary || (controls.confirmation ? component.reason : a.notices[controls.notice])}
         </p>
       ) : null}
-      <PanelSelect
-        ariaLabel={a.existing}
-        disabled={disabled}
-        onChange={value =>
-          updateVisualsUi({ analysisSelections: { ...$visualsUi.get().analysisSelections, [key]: value } })
-        }
-        options={[{ value: '', label: a.select }, ...options.map(option => ({ value: option.id, label: option.name }))]}
-        value={chosen}
-        widthClass="w-full"
-      />
-      <input
-        aria-label={a.notes}
-        className={INPUT_CLASS}
-        disabled={disabled}
-        maxLength={2000}
-        onChange={event =>
-          updateVisualsUi({ analysisNotes: { ...$visualsUi.get().analysisNotes, [key]: event.currentTarget.value } })
-        }
-        placeholder={a.notes}
-        value={notes}
-      />
-      <div className="flex flex-wrap gap-2">
+      {controls.needsAction && component.can_extract ? (
         <button
-          className={chosen ? BTN_PRIMARY : BTN_SUBTLE}
-          disabled={disabled || !chosen}
-          onClick={() => choose('existing', chosen)}
+          className={BTN_PRIMARY}
+          disabled={disabled}
+          onClick={() => choose(controls.extractCommand)}
           type="button"
         >
-          {controls.linked ? a.change : a.apply}
+          {a[controls.extractLabel]}
         </button>
-        {component.can_extract ? (
+      ) : null}
+      <details className="space-y-3" open={controls.confirmation || undefined}>
+        <summary className={`cursor-pointer ${VISUAL_META}`}>{controls.confirmation ? a.confirm : a.manage}</summary>
+        <PanelSelect
+          ariaLabel={a.existing}
+          disabled={disabled}
+          onChange={value =>
+            updateVisualsUi({ analysisSelections: { ...$visualsUi.get().analysisSelections, [key]: value } })
+          }
+          options={[
+            { value: '', label: a.select },
+            ...options.map(option => ({ value: option.id, label: option.name }))
+          ]}
+          value={chosen}
+          widthClass="w-full"
+        />
+        <input
+          aria-label={a.notes}
+          className={INPUT_CLASS}
+          disabled={disabled}
+          maxLength={2000}
+          onChange={event =>
+            updateVisualsUi({ analysisNotes: { ...$visualsUi.get().analysisNotes, [key]: event.currentTarget.value } })
+          }
+          placeholder={a.notes}
+          value={notes}
+        />
+        <div className="flex flex-wrap gap-2">
           <button
-            className={chosen ? BTN_SUBTLE : BTN_PRIMARY}
-            disabled={disabled}
-            onClick={() => choose(controls.extractCommand)}
+            className={chosen ? BTN_PRIMARY : BTN_SUBTLE}
+            disabled={disabled || !chosen}
+            onClick={() => choose('existing', chosen)}
             type="button"
           >
-            {a[controls.extractLabel]}
+            {controls.linked ? a.change : a.apply}
           </button>
-        ) : null}
-        {component.created && component.material_id !== null ? (
-          <button className={BTN_GHOST} disabled={disabled} onClick={() => choose('undo')} type="button">
-            {a.undo}
-          </button>
-        ) : null}
-        {!controls.linked ? (
-          <button className={BTN_GHOST} disabled={disabled} onClick={() => choose('skip')} type="button">
-            {a.skip}
-          </button>
-        ) : null}
-      </div>
+          {component.created && component.material_id !== null ? (
+            <button className={BTN_GHOST} disabled={disabled} onClick={() => choose('undo')} type="button">
+              {a.undo}
+            </button>
+          ) : null}
+          {!controls.linked ? (
+            <button className={BTN_GHOST} disabled={disabled} onClick={() => choose('skip')} type="button">
+              {a.skip}
+            </button>
+          ) : null}
+        </div>
+      </details>
     </article>
   )
 }

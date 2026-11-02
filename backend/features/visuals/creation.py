@@ -126,7 +126,7 @@ async def ensure_creation_plan(
             "reference_roles": reference_roles,
             "asset_kind": snapshot.kind,
             "personality": snapshot.persona.get("personality", ""),
-            "companion_context": {}
+            "character_context": {}
             if progress.source == "base_preparation"
             else (await read_planning_context(user_id, snapshot)).model_dump(),
             "action": progress.action_description,

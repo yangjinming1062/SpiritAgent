@@ -27,6 +27,9 @@ export function VisualAnalysis({
   const { run, busy, error } = useTask()
   const job = visual.analysis
   const { active, canContinue } = visualAnalysisControls(job)
+  const [notes, setNotes] = usePageState(`visuals.analysisNotes.${visual.id}`, '')
+  const blockers = job?.result?.blocking_reasons ?? []
+  const showBlockers = !blockers.some(block => block.code === 'materials_incomplete')
   const materialRevision = job?.result?.components
     .map(row => `${row.material_id}:${row.status}:${row.operation_state}`)
     .join(',')
@@ -43,6 +46,18 @@ export function VisualAnalysis({
   }
   return (
     <div className="visual-materials">
+      {active && job && (
+        <p className="muted" role="status">
+          {a.stages[job.stage] ?? a.working}
+        </p>
+      )}
+      {showBlockers && blockers.length > 0 && (
+        <ul className="muted" role="status">
+          {blockers.map(block => (
+            <li key={block.code}>{block.reason}</li>
+          ))}
+        </ul>
+      )}
       {visualMaterialGroups(job).map(group => (
         <section aria-label={a.groups[group.kind]} className="card" key={group.kind}>
           <h3>{a.groups[group.kind]}</h3>
@@ -70,9 +85,9 @@ export function VisualAnalysis({
       ))}
       {materialError && <Notice error={materialError} />}
       {error && <Notice error={error} />}
-      {job?.error && canContinue && (
+      {job?.error && canContinue && !job.result?.components.some(component => component.status === 'failed') && (
         <p className="muted" role="status">
-          {job.stage === 'presentation_review' ? a.collection : a.states[job.state]}
+          {job.error}
         </p>
       )}
       <div className="button-row">
@@ -87,14 +102,21 @@ export function VisualAnalysis({
                 {job ? a.retry : a.start}
               </button>
             )}
-            {job?.result && (
-              <button disabled={busy} onClick={() => command({ command: 'reanalyze' })} type="button">
-                {a.reanalyze}
-              </button>
-            )}
           </>
         )}
       </div>
+      {job?.result && (
+        <details>
+          <summary>{a.manage}</summary>
+          <label>
+            {a.notes}
+            <input maxLength={2000} onChange={event => setNotes(event.target.value)} value={notes} />
+          </label>
+          <button disabled={busy || active} onClick={() => command({ command: 'reanalyze', notes })} type="button">
+            {a.reanalyze}
+          </button>
+        </details>
+      )}
     </div>
   )
 }
@@ -114,7 +136,7 @@ function MaterialRow({
 }): ReactElement {
   const key = `${visualId}:${component.observation.key}`
   const [chosen, setChosen] = usePageState(`visuals.materialSelection.${key}`, '')
-  const [notes, setNotes] = usePageState(`visuals.materialNotes.${key}`, '')
+  const [notes, setNotes] = usePageState(`visuals.materialNotes.${key}`, component.notes)
   const { run, busy, error } = useTask()
   const controls = visualMaterialControls(component)
   const disabled = busy || controls.busy
@@ -164,48 +186,51 @@ function MaterialRow({
       {previewPath && <Media type="image" url={previewPath} />}
       {controls.notice && (
         <p className="muted" role="status">
-          {a.notices[controls.notice]}
+          {component.failure_summary || (controls.confirmation ? component.reason : a.notices[controls.notice])}
         </p>
       )}
-      <label>
-        {a.existing}
-        <select disabled={disabled} onChange={event => setChosen(event.target.value)} value={chosen}>
-          <option value="">{a.select}</option>
-          {options.map(option => (
-            <option key={option.id} value={option.id}>
-              {option.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <input
-        aria-label={a.notes}
-        disabled={disabled}
-        maxLength={2000}
-        onChange={event => setNotes(event.target.value)}
-        placeholder={a.notes}
-        value={notes}
-      />
-      <div className="button-row">
-        <button disabled={disabled || !chosen} onClick={() => choose('existing', chosen)} type="button">
-          {controls.linked ? a.change : a.apply}
+      {controls.needsAction && component.can_extract && (
+        <button disabled={disabled} onClick={() => choose(controls.extractCommand)} type="button">
+          {a[controls.extractLabel]}
         </button>
-        {component.can_extract && (
-          <button disabled={disabled} onClick={() => choose(controls.extractCommand)} type="button">
-            {a[controls.extractLabel]}
+      )}
+      <details open={controls.confirmation || undefined}>
+        <summary>{controls.confirmation ? a.confirm : a.manage}</summary>
+        <label>
+          {a.existing}
+          <select disabled={disabled} onChange={event => setChosen(event.target.value)} value={chosen}>
+            <option value="">{a.select}</option>
+            {options.map(option => (
+              <option key={option.id} value={option.id}>
+                {option.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <input
+          aria-label={a.notes}
+          disabled={disabled}
+          maxLength={2000}
+          onChange={event => setNotes(event.target.value)}
+          placeholder={a.notes}
+          value={notes}
+        />
+        <div className="button-row">
+          <button disabled={disabled || !chosen} onClick={() => choose('existing', chosen)} type="button">
+            {controls.linked ? a.change : a.apply}
           </button>
-        )}
-        {component.created && component.material_id !== null && (
-          <button disabled={disabled} onClick={() => choose('undo')} type="button">
-            {a.undo}
-          </button>
-        )}
-        {!controls.linked && (
-          <button disabled={disabled} onClick={() => choose('skip')} type="button">
-            {a.skip}
-          </button>
-        )}
-      </div>
+          {component.created && component.material_id !== null && (
+            <button disabled={disabled} onClick={() => choose('undo')} type="button">
+              {a.undo}
+            </button>
+          )}
+          {!controls.linked && (
+            <button disabled={disabled} onClick={() => choose('skip')} type="button">
+              {a.skip}
+            </button>
+          )}
+        </div>
+      </details>
       {error && <Notice error={error} />}
     </article>
   )

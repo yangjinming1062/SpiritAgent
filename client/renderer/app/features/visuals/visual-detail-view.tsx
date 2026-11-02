@@ -21,6 +21,8 @@ import {
 } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
+import { visualAnalysisControls } from '../../../../../shared/visual-materials'
+
 import { VisualImportAnalysis } from './visual-import-analysis'
 import { VisualJobRow } from './visual-job-row'
 import { formatDuration, isAdvancingState, isPendingState } from './visual-labels'
@@ -113,7 +115,7 @@ function VisualDetailContent({
   const t = dict.visuals
   const [feedback, setFeedback] = useState('')
   const [videoFeedback, setVideoFeedback] = useState('')
-  const [showOriginal, setShowOriginal] = useState(false)
+  const [showOriginal, setShowOriginal] = useState(Boolean(detail.analysis))
   const [zoom, setZoom] = useState(false)
 
   const source = detail.snapshot.source
@@ -244,7 +246,7 @@ function VisualDetailContent({
       {detail.analysis ? (
         <>
           <PlayBadge
-            label={detail.auto_playable ? t.autoPlayOn : t.analysis.collection}
+            label={detail.auto_playable ? t.autoPlayOn : t.analysis[visualAnalysisControls(detail.analysis).status]}
             playable={detail.auto_playable}
           />
           <VisualImportAnalysis visual={detail} />
