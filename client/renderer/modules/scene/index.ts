@@ -18,6 +18,7 @@ export {
   cancelSceneTask,
   createScene,
   deleteScene,
+  discardSceneCreationIssue,
   editScene,
   finishSceneCreationWait,
   hydrateScene,

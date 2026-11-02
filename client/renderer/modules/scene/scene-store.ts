@@ -594,6 +594,13 @@ export function finishSceneCreationWait(issue: SceneCreationIssue): void {
   }
 }
 
+/** 丢弃当前创建失败提醒（不含「结果未知」，未知必须先核对原任务）。 */
+export function discardSceneCreationIssue(): void {
+  if ($sceneCreationIssue.get()?.outcome === 'rejected') {
+    $sceneCreationIssue.set(null)
+  }
+}
+
 export function updateSceneMutationIssue(
   sceneId: string,
   update: (current: SceneMutationIssue | null) => SceneMutationIssue | null

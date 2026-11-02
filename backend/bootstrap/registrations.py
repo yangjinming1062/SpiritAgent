@@ -20,6 +20,7 @@ from features.appearance.queries import active_identity_reference, appearance_re
 from features.automation.cron_jobs import set_job_intent_invalidator
 from features.companion.appearance_ports import set_appearance_readiness_reader
 from features.companion.intents import invalidate_cron_companion_intents
+from features.companion.scene_ports import set_initial_scene_ensurer
 from features.configuration.queries import user_ai_config
 from features.conversation.reply_media import deliver_video_result
 from features.media.delivery import set_video_result_handler
@@ -29,6 +30,7 @@ from features.media.video_queue.ports import configure_video_queue_ports
 from features.media.video_queue.service import cancel_video_attempt
 from features.posts.ports import set_post_published_handler
 from features.scenes.queries import scene_exists
+from features.scenes.service import schedule_initial_scene
 from features.visuals.ports import configure_visual_hooks
 from features.visuals.video_queue import inspect_visual_video_owner
 from infrastructure.ai.configuration_reader import set_configuration_reader
@@ -172,3 +174,4 @@ def register_all() -> None:
         scene_exists=scene_exists,
     )
     set_appearance_readiness_reader(appearance_readiness)
+    set_initial_scene_ensurer(schedule_initial_scene)

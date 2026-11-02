@@ -222,7 +222,7 @@ Slash 元动作走 `POST /api/sessions/{session_id}/commands`，不交给 LLM。
 | 素材和影像 | [scenes](../backend/entrypoints/http/routes/companion_scenes.py)、[actions](../backend/entrypoints/http/routes/companion_actions.py)、[visuals](../backend/entrypoints/http/routes/companion_visuals.py) |
 | 生活与内容 | [life](../backend/entrypoints/http/routes/companion_life.py)、[posts](../backend/entrypoints/http/routes/companion_posts.py)、[journal](../backend/entrypoints/http/routes/companion_journal.py) |
 
-引导以服务端状态和已有资产恢复，完成条件归 [DESIGN](DESIGN.md#认识伙伴)。
+引导以服务端状态和已有资产恢复，完成条件归 [DESIGN](DESIGN.md#认识伙伴)。声音之后的环境步骤复用环境创建接口（描述/上传走用户创建链路），跳过经引导字段触发默认初始场景；服务端不再在角色卡就绪时自动排初始场景。
 
 ### 头像、全身与确认
 

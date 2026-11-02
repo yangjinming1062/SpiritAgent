@@ -13,6 +13,8 @@ export interface OnboardingAnswers {
   user_freeform?: string
   voice?: string
   voice_setup_skipped?: string
+  // 环境步骤仅记录「使用默认环境」的跳过决定；描述/上传走环境创建链路，不落引导字段。
+  environment_skipped?: string
 }
 
 export interface PersonaPayload {

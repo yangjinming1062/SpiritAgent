@@ -20,7 +20,7 @@ export function OnboardingProgress({ step }: { step: number }): React.JSX.Elemen
 
   return (
     <ol aria-label={t.progressAria} className={styles.progress} data-onboarding-drag-handle="">
-      {[t.steps.meet, t.steps.confirm, t.steps.voice].map((label, index) => (
+      {[t.steps.meet, t.steps.confirm, t.steps.voice, t.steps.environment].map((label, index) => (
         <li
           aria-current={step === index ? 'step' : undefined}
           className={styles.step}

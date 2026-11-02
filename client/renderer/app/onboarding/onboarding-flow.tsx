@@ -16,6 +16,7 @@ import { $gatewayState } from '@/shared/store/gateway'
 import { useStrings } from '@/shared/strings'
 
 import { computeBackTransition, type Phase, type VoiceStage } from './back-transition'
+import { EnvironmentPage } from './environment-page'
 import { playOnboardingAudio } from './onboarding-audio'
 import { DraggableDialog, ONBOARDING_PRIMARY_BUTTON, OnboardingProgress } from './onboarding-components'
 import { OnboardingDraft } from './onboarding-draft'
@@ -54,6 +55,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const [hint, setHint] = useState<string | null>(null)
   const [voiceStage, setVoiceStage] = useState<VoiceStage>('describe')
   const [voiceSaving, setVoiceSaving] = useState(false)
+  const [environmentBusy, setEnvironmentBusy] = useState(false)
   const [resumeState, setResumeState] = useState<'failed' | 'ok' | 'retrying'>('ok')
   const [resumeAttempt, setResumeAttempt] = useState(0)
   const resumedRef = useRef(false)
@@ -379,7 +381,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       return false
     }
 
-    setPhase('q-user')
+    setPhase('environment')
     setQIndex(0)
 
     return true
@@ -388,7 +390,15 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const isQuestionPhase = phase === 'q-character' || (phase === 'voice' && voiceStage === 'describe')
 
   const progressStep =
-    phase === 'q-character' ? 0 : phase === 'voice' ? 2 : phase === 'q-user' || phase === 'finishing' ? 3 : 1
+    phase === 'q-character'
+      ? 0
+      : phase === 'voice'
+        ? 2
+        : phase === 'environment'
+          ? 3
+          : phase === 'q-user' || phase === 'finishing'
+            ? 4
+            : 1
 
   return (
     <div className="fixed inset-0 z-50 pointer-events-none" style={{ pointerEvents: 'none' }}>
@@ -452,6 +462,20 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
               confirmVoice(false, voiceId, label, serverConfirmed, isSelectionCurrent)
             }
             preference={answers.voice}
+          />
+        )}
+        {phase === 'environment' && (
+          <EnvironmentPage
+            busy={environmentBusy}
+            error={hint}
+            onBack={onBack}
+            onBusyChange={setEnvironmentBusy}
+            onCompleted={() => {
+              setHint(null)
+              setPhase('q-user')
+              setQIndex(0)
+            }}
+            onError={message => setHint(message)}
           />
         )}
         {phase === 'q-user' && (

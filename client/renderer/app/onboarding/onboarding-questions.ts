@@ -169,6 +169,7 @@ export const PHASE_QUESTIONS: Record<Phase, readonly Question[]> = {
   hatching: [],
   'portrait-avatar': [],
   'fullbody-reference': [],
+  environment: [],
   finishing: []
 }
 

@@ -206,7 +206,7 @@ export const dict = {
   },
 
   onboarding: {
-    steps: { meet: '认识伙伴', confirm: '确认形象', voice: '选择声音' },
+    steps: { meet: '认识伙伴', confirm: '确认形象', voice: '选择声音', environment: '布置环境' },
     progressAria: '认识伙伴的进度',
     voiceTitle: '为伙伴选择声音',
     nextVoice: '继续选择声音',
@@ -263,7 +263,21 @@ export const dict = {
     compositionReference: '＋ 光线与构图参考',
     replaceCompositionReference: '更换构图参考',
     ownImageHint: '请使用单个角色、纯白背景的图片，采纳后将直接作为头像。',
-    ownImageTitle: '使用自己的图片'
+    ownImageTitle: '使用自己的图片',
+    environmentTitle: '为伙伴布置一个环境',
+    environmentHint: '描述伙伴生活的空间，或上传一张喜欢的图片作为初始环境。也可以先用默认环境，之后随时在环境库更换。',
+    environmentChecking: '正在查看环境状态…',
+    environmentExists: '环境已在准备或已就绪，可以稍后在「环境」中查看和管理。',
+    environmentContinue: '继续',
+    environmentNotesLabel: '描述你想要的环境',
+    environmentNotesPlaceholder: '比如：洒满阳光的木质小屋，窗外是一片竹林…',
+    environmentNotesRequired: '先写几句描述，或选择其他方式',
+    environmentGenerate: '按描述生成',
+    environmentUpload: '上传图片',
+    environmentSkip: '先用默认环境',
+    environmentPickTitle: '选择一张环境图片',
+    environmentCreateFailed: '环境创建未能完成，请重试',
+    environmentSkipFailed: '未能保存选择，请重试'
   },
 
   notifications: {

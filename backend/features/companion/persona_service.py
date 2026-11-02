@@ -2,6 +2,7 @@ from collections.abc import Collection, Mapping
 from typing import Any
 
 from infrastructure.constants import DEFAULT_LANGUAGE
+from infrastructure.logger import get_logger
 from infrastructure.text import resolve_language, resolve_prompt_text
 from runtime.events.emit import emit_ws_event
 from runtime.memory_scope import MemoryScope
@@ -15,11 +16,14 @@ from features.companion.models import Persona
 from features.companion.prompts import PERSONA_FIELD_LABELS, PERSONA_LABELS_TEXTS
 from features.companion.query_contracts import PersonaSnapshot
 from features.companion.repository import get_or_create_persona_row
+from features.companion.scene_ports import ensure_initial_scene
 from features.companion.schemas import OnboardingStateResponse
 from features.conversation.bootstrap import ensure_main_conversation_for_user
 from features.memory.memory_bootstrap import read_user_profile, record_user_profile
 from features.memory.models import USER_PROFILE_MAX_CONTENT_CHARS
 from features.memory.profile_fields import validate_profile_birthday
+
+logger = get_logger(__name__)
 
 # 人设字段顺序属于对外契约的一部分，它决定渲染出的系统提示词片段形状
 _REQUIRED_FIELDS: tuple[str, ...] = ("name", "personality", "speaking_style")
@@ -43,6 +47,7 @@ ONBOARDING_FIELDS: tuple[str, ...] = (
     "user_hobbies",
     "user_freeform",
     "voice_setup_skipped",
+    "environment_skipped",
 )
 _ONBOARDING_MAX_LEN: int = USER_PROFILE_MAX_CONTENT_CHARS
 
@@ -164,7 +169,7 @@ async def update_persona(
                     cleaned[locked] = current_draft[locked]
                 else:
                     cleaned.pop(locked, None)
-    for voice_field in ("voice", "voice_setup_skipped"):
+    for voice_field in ("voice", "voice_setup_skipped", "environment_skipped"):
         if current_draft.get(voice_field):
             cleaned[voice_field] = current_draft[voice_field]
     persona.definition_json = cleaned
@@ -253,8 +258,8 @@ async def submit_onboarding_field(
     """保存引导回答；人设定型后仅修改个人资料与声音选择。"""
     if field not in ONBOARDING_FIELDS:
         raise PersonaValidationError(f"unknown onboarding field: {field!r}", field)
-    if field == "voice_setup_skipped" and value not in (None, "true"):
-        raise PersonaValidationError("voice_setup_skipped must be true or null", field)
+    if field in ("voice_setup_skipped", "environment_skipped") and value not in (None, "true"):
+        raise PersonaValidationError(f"{field} must be true or null", field)
     if field.startswith("user_"):
         value = _onboarding_profile_value(field, value)
     if field == "user_birthday":
@@ -290,6 +295,22 @@ async def submit_onboarding_field(
             await db.commit()
             if completed:
                 schedule_first_greeting_claim(user_id)
+            next_step = await _next_onboarding_step(db, user_id, persona, draft)
+            return _state(draft, next_step, next_step is None)
+        # 跳过环境步骤即用户决定使用默认初始场景；标记先落库，默认场景创建失败不阻断引导，由启动恢复重试。
+        if field == "environment_skipped":
+            draft = load_persona_definition(persona)
+            if value == "true":
+                draft["environment_skipped"] = "true"
+            else:
+                draft.pop("environment_skipped", None)
+            persona.definition_json = draft
+            await db.commit()
+            if value == "true":
+                try:
+                    await ensure_initial_scene(user_id)
+                except Exception:
+                    logger.warning("default initial scene not scheduled", extra={"user_id": user_id}, exc_info=True)
             next_step = await _next_onboarding_step(db, user_id, persona, draft)
             return _state(draft, next_step, next_step is None)
         raise PersonaValidationError(

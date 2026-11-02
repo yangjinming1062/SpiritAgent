@@ -212,7 +212,12 @@ export const dict: Dictionary = {
   },
 
   onboarding: {
-    steps: { meet: 'Meet your companion', confirm: 'Confirm the look', voice: 'Choose a voice' },
+    steps: {
+      meet: 'Meet your companion',
+      confirm: 'Confirm the look',
+      voice: 'Choose a voice',
+      environment: 'Set the scene'
+    },
     progressAria: 'Getting to know your companion',
     voiceTitle: 'Choose a voice for your companion',
     nextVoice: 'Continue choosing a voice',
@@ -272,7 +277,22 @@ export const dict: Dictionary = {
     compositionReference: '+ Lighting and composition reference',
     replaceCompositionReference: 'Replace composition reference',
     ownImageHint: 'Use a single character on a plain white background. Accepting it sets the avatar directly.',
-    ownImageTitle: 'Use your own image'
+    ownImageTitle: 'Use your own image',
+    environmentTitle: 'Set the scene for your companion',
+    environmentHint:
+      'Describe the space your companion lives in, or upload a picture you like as the starting scene. You can also start with the default scene and change it later in Scenes.',
+    environmentChecking: 'Checking your scenes…',
+    environmentExists: 'A scene is already being prepared or is ready. You can manage it later under “Scenes”.',
+    environmentContinue: 'Continue',
+    environmentNotesLabel: 'Describe the scene you want',
+    environmentNotesPlaceholder: 'For example: a sunlit wooden cabin with a bamboo grove outside the window…',
+    environmentNotesRequired: 'Write a few words first, or pick another option',
+    environmentGenerate: 'Generate from description',
+    environmentUpload: 'Upload a picture',
+    environmentSkip: 'Use the default scene',
+    environmentPickTitle: 'Choose a scene picture',
+    environmentCreateFailed: 'The scene could not be created. Try again.',
+    environmentSkipFailed: 'Your choice could not be saved. Try again.'
   },
 
   notifications: {
