@@ -701,7 +701,8 @@ export const dict: Dictionary = {
       sectionTitle: 'Persona',
       categoriesAria: 'Companion categories',
       memoriesTitle: 'Memories',
-      memoryIntro: 'Each companion and assistant remembers its own conversations.',
+      memoryIntro:
+        'Each companion and assistant retains enduring information, preferences and relationship understanding from its own conversations. Review, edit or forget these memories; find life history and diaries on their own pages.',
       sections: {
         profile: 'Profile',
         voice: 'Voice',

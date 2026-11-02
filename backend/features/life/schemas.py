@@ -235,7 +235,7 @@ class LifeEventView(LifeResultView):
     event_key: str
     kind: str
     source: str
-    subject: str
+    subject: Literal["companion", "user", "system"]
     fact_type: FactType = "execution"
     fact: dict
     narrative: str | None = None
@@ -255,7 +255,7 @@ class LifeEventPublicView(LifeResultView):
     event_key: str
     kind: str
     source: str
-    subject: str
+    subject: Literal["companion", "user", "system"]
     fact_type: FactType = "execution"
     narrative: str | None = None
     occurred_at: datetime

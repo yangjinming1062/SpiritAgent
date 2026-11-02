@@ -102,7 +102,12 @@ AI_TASKS: tuple[AiTaskDefinition, ...] = (
         },
     ),
     _task(AiTaskKey.memory_review, "记忆", "记忆审阅", {"llm": ("陪伴与专业预设的回合后记忆审阅", "定期记忆审阅")}),
-    _task(AiTaskKey.memory_embedding, "记忆", "记忆向量", {"embedding": ("记忆入库向量", "对话与记忆检索的查询向量")}),
+    _task(
+        AiTaskKey.memory_embedding,
+        "记忆",
+        "记忆与经历向量",
+        {"embedding": ("认知、生活历史与日记的索引向量", "相关内容检索的查询向量")},
+    ),
     _task(
         AiTaskKey.nightly,
         "夜间",

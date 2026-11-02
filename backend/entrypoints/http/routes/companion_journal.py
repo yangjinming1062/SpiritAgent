@@ -2,15 +2,36 @@
 
 from datetime import date
 
-from fastapi import Query
-from features.journal.journal_service import has_unread_diary, list_diary, mark_diary_read, unread_diary_ids
-from features.journal.schemas import DiaryListResponse, DiaryReadRequest, DiaryUnreadResponse
+from fastapi import HTTPException, Query
+from features.journal.journal_service import (
+    has_unread_diary,
+    list_diary,
+    mark_diary_read,
+    search_diary,
+    unread_diary_ids,
+)
+from features.journal.schemas import DiaryListResponse, DiaryReadRequest, DiarySearchResponse, DiaryUnreadResponse
 from infrastructure.database import DbSession
+from infrastructure.http_contracts import operation_policy
 
 from entrypoints.http.auth import CurrentUser
 from entrypoints.http.routing import get_router
 
 router = get_router(prefix="/api/companion", tag="companion", remote=True)
+
+
+@router.get("/diary/search", response_model=DiarySearchResponse, openapi_extra=operation_policy(wait_for_model=True))
+async def search_diary_entries(
+    user: CurrentUser,
+    q: str = Query(default="", max_length=1000),
+    date_from: date | None = None,
+    date_to: date | None = None,
+    limit: int = Query(default=20, ge=1, le=50),
+) -> DiarySearchResponse:
+    try:
+        return await search_diary(user.id, query=q, date_from=date_from, date_to=date_to, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/diary", response_model=DiaryListResponse)

@@ -3,6 +3,7 @@
 from datetime import date, datetime
 
 from infrastructure.api_ids import ResourceId
+from infrastructure.search import SearchStatus
 from pydantic import BaseModel, ConfigDict, Field
 
 DIARY_BODY_MAX_CHARS = 2000
@@ -28,6 +29,11 @@ class DiaryEntryResponse(BaseModel):
 class DiaryListResponse(BaseModel):
     entries: list[DiaryEntryResponse]
     unread_diary_ids: list[ResourceId]
+
+
+class DiarySearchResponse(BaseModel):
+    entries: list[DiaryEntryResponse]
+    search: SearchStatus
 
 
 class DiaryUnreadResponse(BaseModel):

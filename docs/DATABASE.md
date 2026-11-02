@@ -112,6 +112,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
+    diary_search_index --> companion_entries
     entry_links -->|source / target| companion_entries
     entry_comments --> companion_entries
     entry_comments -->|reply target| entry_comments
@@ -121,7 +122,7 @@ flowchart LR
     post_publications --> video_gen_jobs
 ```
 
-动态和日记共享正文、阅读状态与附件，因此使用内容实体；创作与发布政策仍由 posts/journal 拥有。日记日期唯一性、来源动态与评论回复通过关系校验。列表只读取评论数量，正文独立分页；日记记忆索引可从正文重建。
+动态和日记共享正文、阅读状态与附件，因此使用内容实体；创作与发布政策仍由 posts/journal 拥有。日记日期唯一性、来源动态与评论回复通过关系校验。列表只读取评论数量，正文独立分页；日记独立检索索引可从正文重建，向量不进入备份。
 
 ## 生活、夜间与调度
 
@@ -131,6 +132,7 @@ flowchart LR
     life_states -->|activity| life_steps
     life_pursuits -->|previous| life_pursuits
     life_steps --> life_pursuits
+    life_event_search_index --> life_events
     life_events --> life_steps
     pursuit_evidence --> life_pursuits
     pursuit_evidence --> life_events
@@ -142,6 +144,8 @@ flowchart LR
 
 当前生活、持续事项、执行步骤和事实事件分开；结果外键及完成证据连接实际成果。阅读成果长期保留，不放入临时检查点。`life_action_admissions` 独立保存请求额度和提交事实，防止覆盖恢复重置额度或重投；删除结果指针不抹掉已发生事实。
 
+生活事件和日记各有可重建检索文本与向量，来源和索引以账户联合外键约束，文本改变立即撤销旧向量；只比较内容指纹、模型与实际维度一致的向量。
+
 夜间账本按本地业务日保存阶段与实际动作。Cron 管计划，陪伴意图管有界等待和回合，在线信号不成为长期事实。行为和恢复分别见 [生活](PROTOCOL.md#生活状态与生活事件)及[调度](PROTOCOL.md#调度)。
 
 ## 记忆、证据与向量
@@ -149,7 +153,6 @@ flowchart LR
 ```mermaid
 flowchart LR
     memories --> conversations
-    memories --> life_events
     memory_evidence --> memories
     memory_evidence --> messages
     memory_revisions --> memories

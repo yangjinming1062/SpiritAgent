@@ -2,10 +2,17 @@ import { IconMessageCircle, IconRefresh } from '@tabler/icons-react'
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import {
+  archiveSearchCopy,
+  type ArchiveSearchFilters,
+  archiveSearchQuery,
+  emptyArchiveSearch
+} from '../shared/archive-search'
 import { isRecord } from '../shared/gateway'
 
 import type { RemoteApi, RemoteGateway } from './api'
 import { ApiError } from './api'
+import { ArchiveSearchPanel } from './ArchiveSearch'
 import type { Diary, Post, Recovery } from './types'
 import {
   Empty,
@@ -380,97 +387,201 @@ function DiaryView({ api, onRead, refresh }: { api: RemoteApi; onRead: () => voi
   const [loaded, setLoaded] = useState(false)
   // 日记详情随组件生命周期，切 tab 即回列表；日期筛选保留在 usePageState。
   const [selected, setSelected] = useState<string | null>(null)
-  const [from, setFrom] = usePageState('diary.from', '')
   const [to, setTo] = usePageState('diary.to', '')
-  const onReadRef = useRef(onRead)
-  onReadRef.current = onRead
+  const [search, setSearch] = usePageState('diary.search', emptyArchiveSearch())
+  const tSearch = archiveSearchCopy()
+  const searchEntries = useCallback(
+    (filters: ArchiveSearchFilters) =>
+      api.invoke('companion_journal.search_diary_entries', { query: archiveSearchQuery(filters) }),
+    [api]
+  )
   const request = useRef(0)
 
   const load = useCallback(async () => {
     const revision = ++request.current
     const result = await api.invoke('companion_journal.get_diary', {
-      query: { from: from || undefined, to: to || undefined, limit: DIARY_PAGE_SIZE }
+      query: { to: to || undefined, limit: DIARY_PAGE_SIZE }
     })
 
     if (alive() && revision === request.current) {
       setEntries(result.entries)
       setLoaded(true)
-
-      await markReadAfterRender(
-        result.unread_diary_ids,
-        () => alive() && revision === request.current,
-        ids => api.invoke('companion_journal.read_diary', { body: { diary_ids: ids } }),
-        () => onReadRef.current()
-      )
     }
-  }, [api, alive, from, to])
+  }, [api, alive, to])
 
   useEffect(() => {
-    void runLatest(load)
-  }, [refresh, load, runLatest])
+    if (!search.applied) {
+      void runLatest(load)
+    }
+  }, [refresh, load, runLatest, search.applied])
   const entry = entries.find(value => value.id === selected)
-  usePageScroll(`diary.${selected ?? 'list'}.${from}.${to}`, loaded)
+  const reading = useDiaryRead(api, search.applied ? null : (entry?.id ?? null), onRead)
+  usePageScroll(`diary.${selected ?? 'list'}.${to}`, loaded && !search.applied)
 
   return (
     <>
-      {!entry ? (
-        <details className="filter-details">
-          <summary>按日期查找</summary>
-          <div className="date-filter">
-            <label>
-              从
-              <input onChange={event => setFrom(event.target.value)} type="date" value={from} />
-            </label>
-            <label>
-              至
-              <input onChange={event => setTo(event.target.value)} type="date" value={to} />
-            </label>
-          </div>
-        </details>
-      ) : null}
-      {error ? <Notice>{error}</Notice> : null}
+      <ArchiveSearchPanel
+        count={result => result.entries.length}
+        label={tSearch.diary}
+        load={searchEntries}
+        onChange={setSearch}
+        refresh={refresh}
+        value={search}
+      >
+        {result => (
+          <DiarySearchResults
+            api={api}
+            entries={result.entries}
+            key={JSON.stringify(search.applied)}
+            onRead={onRead}
+            scrollKey={`diary.search.${JSON.stringify(search.applied)}`}
+          />
+        )}
+      </ArchiveSearchPanel>
+      {!search.applied && (
+        <>
+          {error ? <Notice>{error}</Notice> : null}
+          {reading.error && (
+            <Notice>
+              {reading.error}
+              <button onClick={reading.retry} type="button">
+                重试同步已读
+              </button>
+            </Notice>
+          )}
+          {entry ? (
+            <article className="diary-entry">
+              <button className="subtle" onClick={() => setSelected(null)} type="button">
+                ‹ 返回日记
+              </button>
+              <p className="eyebrow">{entry.entry_date}</p>
+              <h2>{entry.title}</h2>
+              <div className="diary-body">{entry.body}</div>
+            </article>
+          ) : entries.length ? (
+            <div className="diary-list">
+              {entries.map(value => (
+                <button className="diary-preview" key={value.id} onClick={() => setSelected(value.id)} type="button">
+                  <time>{value.entry_date}</time>
+                  <h3>{value.title}</h3>
+                  <p>{value.body}</p>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <Empty title="日记还没写到这里">伙伴的第一人称日记会保存在这里。</Empty>
+          )}
+          {entries.length === DIARY_PAGE_SIZE ? (
+            <button
+              className="load-more"
+              onClick={() => {
+                const earliest = entries.at(-1)?.entry_date
+
+                if (earliest) {
+                  const date = new Date(`${earliest}T12:00:00`)
+                  date.setDate(date.getDate() - 1)
+                  setTo(
+                    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+                  )
+                  setSelected(null)
+                }
+              }}
+              type="button"
+            >
+              查看更早的日记
+            </button>
+          ) : null}
+        </>
+      )}
+    </>
+  )
+}
+
+function useDiaryRead(api: RemoteApi, id: string | null, onRead: () => void) {
+  const alive = useAlive()
+  const { runLatest, error } = useTask()
+  const callback = useRef(onRead)
+  callback.current = onRead
+  const [retryKey, setRetryKey] = useState(0)
+  useEffect(() => {
+    let current = true
+    let done = false
+    const read = (): void => {
+      if (!id || done || document.visibilityState !== 'visible' || !document.hasFocus()) {
+        return
+      }
+      void runLatest(() =>
+        markReadAfterRender(
+          [id],
+          () => current && alive(),
+          ids => api.invoke('companion_journal.read_diary', { body: { diary_ids: ids } }),
+          () => {
+            done = true
+            callback.current()
+          }
+        )
+      )
+    }
+    read()
+    window.addEventListener('focus', read)
+    document.addEventListener('visibilitychange', read)
+    return () => {
+      current = false
+      window.removeEventListener('focus', read)
+      document.removeEventListener('visibilitychange', read)
+    }
+  }, [api, id, alive, runLatest, retryKey])
+  return { error, retry: () => setRetryKey(value => value + 1) }
+}
+
+function DiarySearchResults({
+  api,
+  entries,
+  onRead,
+  scrollKey
+}: {
+  api: RemoteApi
+  entries: Diary[]
+  onRead: () => void
+  scrollKey: string
+}): ReactElement {
+  const [selected, setSelected] = useState<string | null>(null)
+  const entry = entries.find(item => item.id === selected)
+  usePageScroll(`${scrollKey}.${selected ?? 'list'}`, true)
+  const reading = useDiaryRead(api, entry?.id ?? null, onRead)
+  return (
+    <>
+      {reading.error && (
+        <Notice>
+          {reading.error}
+          <button onClick={reading.retry} type="button">
+            重试同步已读
+          </button>
+        </Notice>
+      )}
       {entry ? (
         <article className="diary-entry">
           <button className="subtle" onClick={() => setSelected(null)} type="button">
-            ‹ 返回日记
+            ‹ 返回搜索结果
           </button>
-          <p className="eyebrow">{entry.entry_date}</p>
+          <time>{entry.entry_date}</time>
           <h2>{entry.title}</h2>
           <div className="diary-body">{entry.body}</div>
         </article>
-      ) : entries.length ? (
+      ) : (
         <div className="diary-list">
-          {entries.map(value => (
-            <button className="diary-preview" key={value.id} onClick={() => setSelected(value.id)} type="button">
-              <time>{value.entry_date}</time>
-              <h3>{value.title}</h3>
-              <p>{value.body}</p>
+          {entries.map(item => (
+            <button className="diary-preview" key={item.id} onClick={() => setSelected(item.id)} type="button">
+              <time>{item.entry_date}</time>
+              <h3>{item.title}</h3>
+              <p>
+                {item.body.slice(0, 160)}
+                {item.body.length > 160 ? '…' : ''}
+              </p>
             </button>
           ))}
         </div>
-      ) : (
-        <Empty title="日记还没写到这里">伙伴的第一人称日记会保存在这里。</Empty>
       )}
-      {entries.length === DIARY_PAGE_SIZE ? (
-        <button
-          className="load-more"
-          onClick={() => {
-            const earliest = entries.at(-1)?.entry_date
-
-            if (earliest) {
-              const date = new Date(`${earliest}T12:00:00`)
-              date.setDate(date.getDate() - 1)
-              setTo(
-                `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-              )
-              setSelected(null)
-            }
-          }}
-          type="button"
-        >
-          查看更早的日记
-        </button>
-      ) : null}
     </>
   )
 }

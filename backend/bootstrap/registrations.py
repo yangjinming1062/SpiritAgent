@@ -5,6 +5,7 @@ from entrypoints.desktop.handlers import terminate_remote_sessions, terminate_us
 from entrypoints.tools import agent_delegate, cronjob_tool, search_tools_tool
 from entrypoints.tools import memory as memory_tools
 from entrypoints.tools.builtin.action_tool import register as register_actions
+from entrypoints.tools.builtin.archive_tool import register as register_archive_tools
 from entrypoints.tools.builtin.companion_wait_tool import register as register_companion_wait
 from entrypoints.tools.builtin.image_generation_tool import register as register_image_generation
 from entrypoints.tools.builtin.life_tool import register as register_life_tools
@@ -21,16 +22,11 @@ from features.companion.appearance_ports import set_appearance_readiness_reader
 from features.companion.intents import invalidate_cron_companion_intents
 from features.configuration.queries import user_ai_config
 from features.conversation.reply_media import deliver_video_result
-from features.entries.ports import set_entry_projector
-from features.entries.service import delete_diary
-from features.journal.journal_indexes import rebuild_diary_indexes
-from features.life.ports import set_life_events_projector
 from features.media.delivery import set_video_result_handler
 from features.media.reference_reader import MediaReferenceReaders, set_media_reference_readers
 from features.media.video_jobs import inspect_video_queue_owner as inspect_media_video_owner
 from features.media.video_queue.ports import configure_video_queue_ports
 from features.media.video_queue.service import cancel_video_attempt
-from features.memory.diary_hooks import set_diary_delete_handler
 from features.posts.ports import set_post_published_handler
 from features.scenes.queries import scene_exists
 from features.visuals.ports import configure_visual_hooks
@@ -73,7 +69,7 @@ from runtime.events.contracts import COMPANION_TURN_EVENT
 from runtime.events.loop import register_internal_event_handler
 from runtime.tools.registry import REGISTRY
 from workflows.automation.companion_turns import execute_companion_turn
-from workflows.life_events import project_life_events_to_memory, record_post_published
+from workflows.life_events import record_post_published
 from workflows.life_presentation import life_presentation_requested
 from workflows.onboarding.character_ready import complete_character_initialization
 from workflows.visual_decisions import initialize_visuals, schedule_visual_selection
@@ -121,6 +117,7 @@ def register_tools() -> None:
     register_visuals(REGISTRY)
     register_companion_wait(REGISTRY)
     register_life_tools(REGISTRY)
+    register_archive_tools(REGISTRY)
     register_image_generation(REGISTRY)
     register_scene(REGISTRY)
     register_send_message(REGISTRY)
@@ -157,9 +154,6 @@ def register_all() -> None:
     register_channel_lifecycle(
         ChannelLifecycle(close_desktop=terminate_user_gateway, close_remote=terminate_remote_sessions),
     )
-    set_entry_projector(rebuild_diary_indexes)
-    set_diary_delete_handler(delete_diary)
-    set_life_events_projector(project_life_events_to_memory)
     set_post_published_handler(record_post_published)
     set_media_reference_readers(
         MediaReferenceReaders(

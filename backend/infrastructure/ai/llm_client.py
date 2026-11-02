@@ -199,13 +199,13 @@ def build_provider[P: BaseProvider](config: ProviderConfig, provider_type: type[
 
 
 async def resolve_embedding_provider(db: AsyncSession, user_id: int) -> EmbeddingProvider | None:
-    """记忆向量任务的 embedding 供应商；未配置或解析失败时返回 None，降级为关键词召回。"""
+    """认知、生活和日记共用的向量供应商；未配置或解析失败时退回关键词召回。"""
     try:
         chain = await resolve_provider_chain(db, user_id, ServiceType.embedding, task=AiTaskKey.memory_embedding)
         return build_provider(chain[0], EmbeddingProvider) if chain else None
     except Exception:
         logger.warning(
-            "embedding provider resolution failed; falling back to keyword-only memory",
+            "embedding provider resolution failed; falling back to keyword retrieval",
             extra={"user_id": user_id},
             exc_info=True,
         )

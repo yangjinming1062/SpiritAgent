@@ -181,18 +181,6 @@ async def mark_entries_read(db: AsyncSession, user_id: int, kind: Literal["post"
     return await has_unread_entries(db, user_id, kind)
 
 
-async def delete_diary(db: AsyncSession, user_id: int, entry_date: date) -> int | None:
-    return await db.scalar(
-        delete(CompanionEntry)
-        .where(
-            CompanionEntry.user_id == user_id,
-            CompanionEntry.kind == "diary",
-            CompanionEntry.activity_date == entry_date,
-        )
-        .returning(CompanionEntry.id)
-    )
-
-
 async def create_user_comment(db: AsyncSession, user_id: int, post_id: int, content: str) -> CommentView:
     content = content.strip()
     if not content or len(content) > 500:

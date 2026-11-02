@@ -29,7 +29,7 @@ def format_memory_record(
     """显示依据、话题或所属日期，隐藏内部命名空间。"""
     labels = MEMORY_BASIS_LABELS[resolve_language(language)]
     parts = [labels.get(basis, basis)]
-    if kind in {"diary", "reflection"}:
+    if kind == "reflection":
         parts.append(NARRATIVE_MEMORY_LABELS[resolve_language(language)][kind])
         if local_date:
             parts.append(local_date)

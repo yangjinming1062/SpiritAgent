@@ -246,7 +246,7 @@ function MemoryList({ api, preset, refresh }: { api: RemoteApi; preset: string; 
 
   return (
     <>
-      <p className="muted">查看伙伴记住的事情，修改后会重新生效。待整理内容由伙伴继续整理。</p>
+      <p className="muted">这里保存交流中沉淀的长期信息、偏好与相处理解。生活历史和日记在各自页面查询。</p>
       <input
         aria-label="搜索记忆"
         className="search-input"

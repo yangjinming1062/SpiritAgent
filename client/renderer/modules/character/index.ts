@@ -1,4 +1,4 @@
-export { $screenLocked, reportInteractionStat, startActivityMonitor } from './activity'
+export { $screenLocked, startActivityMonitor } from './activity'
 export { pickAvatarImage, type PickedImage, resolvePortraitUrl } from './avatar-image'
 export { $avatarSeeds, hydrateAvatarSeeds, refreshAvatarSeeds } from './avatar-seeds-store'
 export {

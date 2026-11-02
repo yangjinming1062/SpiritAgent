@@ -1,16 +1,13 @@
 """人工记忆管理的账户用例，解析完成后传入明确的记忆作用域。"""
 
-from collections.abc import Sequence
 from datetime import datetime
 
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.pagination import decode_timestamp_cursor, encode_timestamp_cursor
 from runtime.memory_scope import EmbeddingItem, MemoryScope, MemorySource
-from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.memory.admin_contracts import MemoryListResponse
-from features.memory.contracts import MemoryDetail, SystemMemoryWrite
+from features.memory.contracts import MemoryDetail
 from features.memory.memory_admin import (
     list_memories,
     memory_counts,
@@ -20,10 +17,7 @@ from features.memory.memory_store import (
     backfill_memory_embeddings,
     create_memory,
     delete_memory,
-    source_date,
-    validate_source,
 )
-from features.memory.models import Memory
 
 
 async def list_memory_view(
@@ -80,43 +74,6 @@ async def remember_manual(
         result = EmbeddingItem(row.id, row.content, row.content_version)
     await backfill_memory_embeddings(scope, [result])
     return result
-
-
-async def ensure_system_memories_in_session(
-    db: AsyncSession, scope: MemoryScope, writes: Sequence[SystemMemoryWrite]
-) -> None:
-    if not writes:
-        return
-    if len({item.slot_key for item in writes}) != len(writes):
-        raise ValueError("Duplicate system memory slots in one batch")
-    for source in {item.source for item in writes}:
-        await validate_source(db, scope, source)
-    if any(
-        not item.slot_key or (item.source_event_id is not None and scope.system_preset_id != "companion")
-        for item in writes
-    ):
-        raise ValueError("Invalid system memory source or slot")
-    # 系统事实不参加用户事实审阅；唯一槽位保留已存在、已修改或已遗忘的记录。
-    for start in range(0, len(writes), 500):
-        values = [
-            {
-                "user_id": scope.user_id,
-                "system_preset_id": scope.system_preset_id,
-                "kind": "recall",
-                "slot_key": item.slot_key,
-                "content": item.content,
-                "context": item.context,
-                "tags": list(item.tags),
-                "basis": "system",
-                "source_kind": item.source.kind,
-                "source_conversation_id": item.source.session_id,
-                "source_event_id": item.source_event_id,
-                "source_batch_id": item.source.batch_id,
-                "local_date": source_date(item.source),
-            }
-            for item in writes[start : start + 500]
-        ]
-        await db.execute(insert(Memory).values(values).on_conflict_do_nothing())
 
 
 async def get_memory_detail(scope: MemoryScope, memory_id: int) -> MemoryDetail | None:

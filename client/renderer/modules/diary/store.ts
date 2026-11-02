@@ -26,7 +26,6 @@ export const $diaryHasUnread = atom(false)
 let diaryRevision = 0
 let eventRevision = 0
 const entryRevisions = new Map<string, number>()
-const deletedIds = new Set<string>()
 
 function toDiary(w: DiaryWire): DiaryEntry {
   return {
@@ -93,7 +92,6 @@ export async function hydrateDiary(opts: { from?: string; to?: string } = {}): P
 
       // 快照只替换读取前的条目；实时事件也可能用新 ID 替换同一天的日记。
       if (
-        !deletedIds.has(entry.id) &&
         (entryRevisions.get(entry.id) ?? 0) <= startedEvents &&
         (!current || (entryRevisions.get(current.id) ?? 0) <= startedEvents)
       ) {
@@ -103,7 +101,7 @@ export async function hydrateDiary(opts: { from?: string; to?: string } = {}): P
 
     $diaryByDate.set(next)
 
-    return result.value.unread_diary_ids.filter(id => !deletedIds.has(id))
+    return result.value.unread_diary_ids
   } finally {
     if (isCurrent() && version === diaryRevision) {
       $diaryLoading.set(false)
@@ -129,30 +127,11 @@ export function onJournalEvent(event: { payload?: unknown; type: string }): void
   const payload = event.payload
 
   if (event.type === 'companion.diary.created' && isDiaryWire(payload)) {
-    if (!deletedIds.has(payload.id)) {
-      entryRevisions.set(payload.id, ++eventRevision)
-      $diaryByDate.set({ ...$diaryByDate.get(), [payload.entry_date]: toDiary(payload) })
-    }
+    entryRevisions.set(payload.id, ++eventRevision)
+    $diaryByDate.set({ ...$diaryByDate.get(), [payload.entry_date]: toDiary(payload) })
 
     void hydrateDiaryUnread()
   } else if (event.type === 'companion.diary.read') {
-    void hydrateDiaryUnread()
-  } else if (
-    event.type === 'companion.diary.deleted' &&
-    isRecord(payload) &&
-    typeof payload.diary_id === 'string' &&
-    typeof payload.entry_date === 'string'
-  ) {
-    deletedIds.add(payload.diary_id)
-    entryRevisions.delete(payload.diary_id)
-    eventRevision++
-    const next = { ...$diaryByDate.get() }
-
-    if (next[payload.entry_date]?.id === payload.diary_id) {
-      delete next[payload.entry_date]
-      $diaryByDate.set(next)
-    }
-
     void hydrateDiaryUnread()
   }
 }
@@ -161,7 +140,6 @@ registerStorageClearHandler(() => {
   diaryRevision++
   eventRevision++
   entryRevisions.clear()
-  deletedIds.clear()
   $diaryByDate.set({})
   $diaryLoading.set(false)
 })

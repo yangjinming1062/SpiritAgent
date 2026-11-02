@@ -1,3 +1,4 @@
+export { diarySearch, searchDiary } from './search'
 export {
   $diaryByDate,
   $diaryHasUnread,

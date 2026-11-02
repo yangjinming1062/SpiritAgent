@@ -37,13 +37,6 @@ class Memory(ModelBase, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("user_id", "id", name="uq_memories_owner_id"),
         UniqueConstraint("user_id", "source_key", name="uq_memories_source_key"),
-        UniqueConstraint("user_id", "system_preset_id", "source_event_id", name="uq_memories_source_event"),
-        ForeignKeyConstraint(
-            ["user_id", "source_event_id"],
-            ["life_events.user_id", "life_events.id"],
-            ondelete="SET NULL (source_event_id)",
-            name="fk_memories_source_event",
-        ),
         UniqueConstraint("user_id", "system_preset_id", "kind", "slot_key", name="uq_memories_scope_slot"),
         ForeignKeyConstraint(
             ["user_id", "source_conversation_id"],
@@ -52,7 +45,7 @@ class Memory(ModelBase, TimestampMixin):
             name="fk_memories_source_conversation",
         ),
         CheckConstraint("content_version > 0", name="content_version"),
-        CheckConstraint("source_event_id IS NULL OR system_preset_id = 'companion'", name="life_source_scope"),
+        CheckConstraint("kind IN ('recall', 'user_profile', 'reflection')", name="kind"),
         CheckConstraint("status IN ('candidate', 'active', 'invalidated', 'forgotten')", name="status"),
         CheckConstraint("basis IN ('explicit', 'inferred', 'observed', 'system')", name="basis"),
         CheckConstraint("usage IN ('contextual', 'background')", name="usage"),
@@ -75,7 +68,6 @@ class Memory(ModelBase, TimestampMixin):
     category: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_kind: Mapped[str] = mapped_column(String(32))
     source_conversation_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    source_event_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     source_batch_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     local_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     content_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")

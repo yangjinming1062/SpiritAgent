@@ -7,6 +7,7 @@ from datetime import date, datetime
 from typing import Any
 
 from infrastructure.models import ModelBase, TimestampMixin
+from infrastructure.search_index import SearchIndexRow, search_index_constraints
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
@@ -234,6 +235,13 @@ class LifeEvent(ModelBase, TimestampMixin):
         Index("ix_life_events_pursuit_occurred", "user_id", "pursuit_id", text("occurred_at DESC"), text("id DESC")),
         Index("ix_life_events_user_kind", "user_id", "kind"),
     )
+
+
+class LifeEventSearchIndex(SearchIndexRow):
+    __tablename__ = "life_event_search_index"
+    __table_args__ = search_index_constraints(__tablename__)
+
+    record_id: Mapped[int] = mapped_column(ForeignKey("life_events.id", ondelete="CASCADE"))
 
 
 class PursuitEvidence(ModelBase):

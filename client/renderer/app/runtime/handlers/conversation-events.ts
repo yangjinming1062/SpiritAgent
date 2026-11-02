@@ -1,6 +1,6 @@
 import { syncConversationActivity } from '@/app/workflows/conversation-activity'
 import { isSpriteOverlayVisible } from '@/app/workflows/proactive-delivery'
-import { reportInteractionStat, triggerFootGlowPulse } from '@/modules/character'
+import { triggerFootGlowPulse } from '@/modules/character'
 import {
   $chatDraftFromUndo,
   $companionSessionId,
@@ -21,17 +21,7 @@ import { pendingReplyText } from './pending-reply'
 
 // 会话回合事件：message.*、Slash、压缩与撤回。
 
-/** 路由守卫计算出的窗口角色上下文，随事件传给各能力处理器。 */
-export interface EventRouteContext {
-  /** 精灵视图负责账户级呈现统计与协调。 */
-  isPresentationHost: boolean
-}
-
-export function handleConversationEvent(
-  event: GatewayEvent,
-  ctx: EventRouteContext,
-  runtime: ConversationRuntime
-): void {
+export function handleConversationEvent(event: GatewayEvent, runtime: ConversationRuntime): void {
   if (!runtime.isCurrent()) {
     return
   }
@@ -236,7 +226,6 @@ export function handleConversationEvent(
 
       const bubbles = payload.bubbles ?? undefined
       const media = payload.media ?? undefined
-      const text = payload.text ?? ''
 
       const replyExists =
         payload.message_id !== null &&
@@ -302,11 +291,6 @@ export function handleConversationEvent(
       }
 
       triggerFootGlowPulse('completed', 1200)
-
-      // 每日互动统计—— chat_turn 仅在确有文本可统计时计数
-      if (ctx.isPresentationHost && (bubbles?.some(bubble => 'text' in bubble && bubble.text.trim()) || text.trim())) {
-        reportInteractionStat('chat_turn')
-      }
 
       // in-flight 回合结束——清标记并冲刷回合期间排队的消息（合并为单次批量提交）。
       $chatTurnInFlight.set(false)

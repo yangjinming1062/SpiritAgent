@@ -15,11 +15,6 @@ RECALL_SCHEMA = {
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": MEMORY_RECALL_PARAM_DESCS["query"]},
-            "diary_date": {
-                "type": "string",
-                "format": "date",
-                "description": MEMORY_RECALL_PARAM_DESCS["diary_date"],
-            },
         },
     },
 }

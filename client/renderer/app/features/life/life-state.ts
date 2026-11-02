@@ -3,7 +3,10 @@ import { atom } from 'nanostores'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { isLifeUiSnapshot, type LifeUiSnapshot } from '@ipc/contracts'
 
+import { emptyArchiveSearch } from '../../../../../shared/archive-search'
+
 const FALLBACK: LifeUiSnapshot = {
+  search: emptyArchiveSearch(),
   status: 'active',
   pursuitPage: 0,
   pursuitCursors: [null],

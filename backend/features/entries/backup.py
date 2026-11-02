@@ -6,8 +6,8 @@ from infrastructure.backup import BackupContext, BackupRows, BackupTable
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .diary_search import rebuild_diary_search
 from .models import CompanionEntry, EntryAsset, EntryComment, EntryLink
-from .ports import rebuild_entry_projections
 
 
 def _prepare_comment(_raw: dict[str, Any], payload: dict[str, Any], _context: BackupContext) -> None:
@@ -41,7 +41,7 @@ async def _link_replies(
 
 
 async def _restore_projections(db: AsyncSession, _rows: BackupRows, context: BackupContext) -> None:
-    await rebuild_entry_projections(db, context.user_id)
+    await rebuild_diary_search(db, context.user_id)
 
 
 def backup_tables() -> tuple[BackupTable, ...]:

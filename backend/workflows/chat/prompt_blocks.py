@@ -14,6 +14,7 @@ from workflows.chat.prompts import (
     AGENT_IDENTITIES,
     ATTACHMENT_GUIDANCES,
     AUTOMATION_GUIDANCES,
+    COMPANION_ARCHIVE_GUIDANCES,
     COMPANION_CHAT_GUIDANCES,
     COMPANION_CONTEXT_GUIDANCES,
     COMPANION_DESKTOP_HINTS,
@@ -253,6 +254,7 @@ def _work_guidance_block(config: AgentPromptConfig) -> str:
 
 
 BLOCK_RENDERERS: dict[str, Callable[[AgentPromptConfig], str | None]] = {
+    "COMPANION_ARCHIVE_GUIDANCE": lambda config: resolve_prompt_text(COMPANION_ARCHIVE_GUIDANCES, config.language),
     "AUTOMATION_GUIDANCE": _automation_guidance_block,
     "LANGUAGE_DIRECTIVE": _language_directive_block,
     "WORK_GUIDANCE": _work_guidance_block,

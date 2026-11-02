@@ -14,6 +14,7 @@ from features.media.visual_semantics import SceneTags
 
 from .actions import CREATION_CAPABILITIES, LIFE_ACTION, ReadingResult
 from .models import LifeActionAdmission, LifeEvent, LifePursuit, LifeState, LifeStep, PursuitEvidence
+from .search import rebuild_life_search
 
 _REFERENCES = {
     "job_id": "jobs",
@@ -157,6 +158,9 @@ async def _restore_life(db: AsyncSession, rows: dict[str, list[dict[str, Any]]],
                 row.checkpoint = _remap(row.checkpoint, context)
             elif isinstance(row, LifeEvent):
                 row.fact_json = _remap(row.fact_json, context)
+
+    await db.flush()
+    await rebuild_life_search(db, context.user_id)
 
 
 def backup_tables() -> tuple[BackupTable, ...]:

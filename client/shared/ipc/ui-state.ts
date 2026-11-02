@@ -1,3 +1,4 @@
+import { type ArchiveSearchState, isArchiveSearchState } from '../../../shared/archive-search'
 import type {
   CharacterFeatures,
   CharacterOverrides,
@@ -10,6 +11,7 @@ import { isVisualCreationDraft, type VisualCreationDraft } from '../../../shared
 import { isRecord } from '../is-record'
 
 export interface LifeUiSnapshot {
+  search: ArchiveSearchState
   status: 'all' | 'active' | 'paused' | 'completed' | 'abandoned'
   pursuitPage: number
   pursuitCursors: (string | null)[]
@@ -20,6 +22,7 @@ export interface LifeUiSnapshot {
 export function isLifeUiSnapshot(value: unknown): value is LifeUiSnapshot {
   return (
     isRecord(value) &&
+    isArchiveSearchState(value.search) &&
     (value.status === 'all' ||
       value.status === 'active' ||
       value.status === 'paused' ||
@@ -33,6 +36,27 @@ export function isLifeUiSnapshot(value: unknown): value is LifeUiSnapshot {
     value.pursuitPage < value.pursuitCursors.length &&
     value.pursuitCursors[0] === null &&
     value.pursuitCursors.every(cursor => cursor === null || typeof cursor === 'string') &&
+    typeof value.scrollTop === 'number' &&
+    Number.isFinite(value.scrollTop) &&
+    value.scrollTop >= 0
+  )
+}
+
+export interface DiaryUiSnapshot {
+  search: ArchiveSearchState
+  selectedDate: string
+  month: string
+  scrollTop: number
+}
+
+export function isDiaryUiSnapshot(value: unknown): value is DiaryUiSnapshot {
+  return (
+    isRecord(value) &&
+    isArchiveSearchState(value.search) &&
+    typeof value.selectedDate === 'string' &&
+    /^\d{4}-\d{2}-\d{2}$/.test(value.selectedDate) &&
+    typeof value.month === 'string' &&
+    /^\d{4}-\d{2}-01$/.test(value.month) &&
     typeof value.scrollTop === 'number' &&
     Number.isFinite(value.scrollTop) &&
     value.scrollTop >= 0

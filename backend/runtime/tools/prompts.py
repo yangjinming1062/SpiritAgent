@@ -144,11 +144,10 @@ WEB_EXTRACT_PARAM_DESCS = {
 
 MEMORY_RETAIN_DESC = "Propose an atomic batch of evidence-grounded memory changes after memory_inspect, using the decision fields defined in memory_inspect's policy. An independent review may reject or revise it. Revise or invalidate incorrect facts using their ID and version. Never ask the user to approve maintenance."
 
-MEMORY_RECALL_DESC = "Search active, unexpired memories. Provide query or diary_date; when both are supplied, diary_date selects the dated record."
+MEMORY_RECALL_DESC = "Search active, unexpired cognitive memories: user information and revisable relationship understanding. Use life_recall for past activities and diary_recall for published diaries. Provide a topic query."
 
 MEMORY_RECALL_PARAM_DESCS = {
-    "query": "Topic or keywords to recall; ignored when diary_date is supplied",
-    "diary_date": "Read your published diary for this date in the user's local calendar, YYYY-MM-DD",
+    "query": "Topic or keywords about enduring user information or relationship understanding",
 }
 
 MEMORY_INSPECT_DESC = "Inspect original conversation evidence and memory versions before maintenance. Candidates and invalidated claims are NOT user facts and must not inform conversation. Optional query limits both records and quotable messages to those containing the text, so omit it when the evidence may be worded differently; before_memory_id pages through older records."

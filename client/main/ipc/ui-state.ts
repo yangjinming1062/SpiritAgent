@@ -6,6 +6,7 @@ import {
   type AppNavigationTarget,
   IPC,
   isCompanionEditorUiSnapshot,
+  isDiaryUiSnapshot,
   isLifeUiSnapshot,
   isVisualsUiSnapshot,
   type MainUiStateData,
@@ -37,6 +38,10 @@ interface WaitingReply {
 function stateData(raw: MainUiStateData): MainUiStateData {
   if (!isLifeUiSnapshot(raw?.life)) {
     throw new Error('生活页状态无效。')
+  }
+
+  if (!isDiaryUiSnapshot(raw?.diary)) {
+    throw new Error('日记页状态无效。')
   }
 
   const conversation = raw?.conversation
@@ -75,6 +80,7 @@ function stateData(raw: MainUiStateData): MainUiStateData {
   return structuredClone({
     navigation: normalizeAppNavigation(raw.navigation),
     life: raw.life,
+    diary: raw.diary,
     conversation,
     visuals,
     companionEditors

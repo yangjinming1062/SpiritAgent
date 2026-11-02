@@ -5,6 +5,7 @@ from typing import Any
 from uuid import uuid4
 
 from infrastructure.models import ModelBase, TimestampMixin
+from infrastructure.search_index import SearchIndexRow, search_index_constraints
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -49,6 +50,13 @@ class CompanionEntry(ModelBase, TimestampMixin):
     title: Mapped[str] = mapped_column(String(128), default="", server_default=text("''"))
     body: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     context_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+
+
+class DiarySearchIndex(SearchIndexRow):
+    __tablename__ = "diary_search_index"
+    __table_args__ = search_index_constraints(__tablename__)
+
+    record_id: Mapped[int] = mapped_column(ForeignKey("companion_entries.id", ondelete="CASCADE"))
 
 
 class EntryLink(ModelBase):

@@ -39,7 +39,6 @@ const CHECK_COOLDOWN_MS = 60 * 60 * 1000
 const DESKTOP_CHECK_MIN_MS = 5 * 60 * 1000
 const DESKTOP_CHECK_MAX_MS = 10 * 60 * 1000
 const USER_RETURN_IDLE_SECONDS = 5 * 60
-const STATS_POST_THROTTLE_MS = 60_000
 
 let timer: ReturnType<typeof setInterval> | null = null
 let lastIdleExpressionAt = 0
@@ -57,9 +56,6 @@ let lastSignalContext: string | null = null
 let pendingSignalContextChange = false
 let signalRevision = 0
 let companionAvailable = false
-
-let localChatTurnCount = 0
-let lastChatTurnSentAt = 0
 
 function resetDesktopExpression(): void {
   desktopExpressionScope = null
@@ -630,25 +626,4 @@ function stopActivityMonitor(): void {
   }
 
   runnerReady = false
-}
-
-// 客户端 stats RPC 节流：前 10 次逐次发送让后端尽快越过当日阈值，之后每 60 秒至多一次，其间事件丢弃。
-export function reportInteractionStat(kind: 'chat_turn'): void {
-  if ($auth.get().kind !== 'authenticated') {
-    return
-  }
-
-  localChatTurnCount += 1
-
-  const now = Date.now()
-
-  if (localChatTurnCount > 10 && now - lastChatTurnSentAt < STATS_POST_THROTTLE_MS) {
-    return
-  }
-
-  lastChatTurnSentAt = now
-
-  void requestResource('companion.record_interaction', { body: { kind, hour: new Date().getHours() } }).catch(() => {
-    // 即发即忘
-  })
 }

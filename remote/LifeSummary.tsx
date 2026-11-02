@@ -1,9 +1,17 @@
 import type { ReactElement } from 'react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { ApiSchemas } from '../shared/api.generated'
+import {
+  archiveSearchCopy,
+  type ArchiveSearchFilters,
+  archiveSearchQuery,
+  emptyArchiveSearch
+} from '../shared/archive-search'
 
 import type { RemoteApi } from './api'
+import { ArchiveSearchPanel } from './ArchiveSearch'
+import { usePageState } from './ui'
 
 const statuses = { active: '进行中', paused: '已暂停', completed: '已完成', abandoned: '已放下' }
 const states = {
@@ -16,6 +24,9 @@ const states = {
 }
 
 export function LifeSummary({ api, refresh }: { api: RemoteApi; refresh: number }): ReactElement {
+  const [search, setSearch] = usePageState('life.search', emptyArchiveSearch())
+  const pursuitsElement = useRef<HTMLDetailsElement>(null)
+  const t = archiveSearchCopy()
   const [life, setLife] = useState<ApiSchemas['LifeStatePublicView'] | null>(null)
   const [pursuits, setPursuits] = useState<ApiSchemas['LifePursuitPublicView'][]>([])
   const [selected, setSelected] = useState<string | null>(null)
@@ -23,6 +34,13 @@ export function LifeSummary({ api, refresh }: { api: RemoteApi; refresh: number 
   const [failed, setFailed] = useState(false)
   const [detailFailed, setDetailFailed] = useState(false)
   const [retry, setRetry] = useState(0)
+  const searchHistory = useCallback(
+    (filters: ArchiveSearchFilters) =>
+      api.invoke('companion_life.search_life_events', {
+        query: { ...archiveSearchQuery(filters), pursuit_id: selected ?? undefined }
+      }),
+    [api, selected]
+  )
   useEffect(() => {
     let current = true
     void Promise.all([
@@ -79,7 +97,7 @@ export function LifeSummary({ api, refresh }: { api: RemoteApi; refresh: number 
         </div>
       )}
       {pursuits.length > 0 && (
-        <details>
+        <details ref={pursuitsElement}>
           <summary>在意的事</summary>
           <ul>
             {pursuits.map(item => (
@@ -131,6 +149,61 @@ export function LifeSummary({ api, refresh }: { api: RemoteApi; refresh: number 
           )}
         </details>
       )}
+      <ArchiveSearchPanel
+        count={result => result.items.length}
+        label={t.life}
+        load={searchHistory}
+        onChange={setSearch}
+        refresh={refresh}
+        scope={selected ?? ''}
+        value={search}
+      >
+        {result => (
+          <ol className="archive-life-results">
+            {result.items.map(item => (
+              <li key={item.id}>
+                <time>{new Date(item.occurred_at).toLocaleString()}</time>
+                <small>
+                  {t.subjects[item.subject]} · {t.facts[item.fact_type]}
+                </small>
+                {item.narrative && <p>{item.narrative}</p>}
+                {item.reading_result && (
+                  <details>
+                    <summary>{t.notes}</summary>
+                    <p>{item.reading_result.notes}</p>
+                    <ul>
+                      {item.reading_result.sources.map(source => (
+                        <li key={source.url}>
+                          <a href={source.url} rel="noreferrer" target="_blank">
+                            {source.title || source.url}
+                          </a>
+                          {' · '}
+                          {source.content_kind === 'summary' ? '摘要' : source.excerpted ? '摘录' : '正文'}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+                {item.pursuit_id && (
+                  <button
+                    className="subtle"
+                    onClick={() => {
+                      setSelected(item.pursuit_id)
+                      if (pursuitsElement.current) {
+                        pursuitsElement.current.open = true
+                        pursuitsElement.current.scrollIntoView({ block: 'nearest' })
+                      }
+                    }}
+                    type="button"
+                  >
+                    {t.details}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ol>
+        )}
+      </ArchiveSearchPanel>
     </section>
   )
 }

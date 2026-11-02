@@ -2,6 +2,7 @@ import { atom, computed } from 'nanostores'
 
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
+import { createQueryResource } from '@/shared/lib/query-resource'
 import { requestResource } from '@/shared/lib/resource-request'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 
@@ -13,62 +14,6 @@ export const $lifeFocusedPursuit = atom<LifePursuit | null>(null)
 export const $lifeLoading = atom(false)
 export const $lifeError = atom(false)
 
-function createLifeResource<T>(fallback: T) {
-  const $data = atom(fallback)
-  const $loading = atom(false)
-  const $error = atom(false)
-  let request = 0
-  let queryKey: string | null = null
-
-  const clear = (): void => {
-    request++
-    queryKey = null
-    $data.set(fallback)
-    $loading.set(false)
-    $error.set(false)
-  }
-
-  registerStorageClearHandler(clear)
-
-  async function load(key: string, read: (current: () => boolean) => Promise<T>): Promise<void> {
-    const scope = captureAuthScope()
-
-    if (!scope) {
-      return
-    }
-
-    const token = ++request
-    const current = (): boolean => scope() && token === request
-
-    if (key !== queryKey) {
-      queryKey = key
-      $data.set(fallback)
-    }
-
-    $loading.set(true)
-    $error.set(false)
-
-    try {
-      const data = await read(current)
-
-      if (current()) {
-        $data.set(data)
-      }
-    } catch (error) {
-      if (current()) {
-        log.warn('life', `Could not load ${key}`, error)
-        $error.set(true)
-      }
-    } finally {
-      if (current()) {
-        $loading.set(false)
-      }
-    }
-  }
-
-  return { $data, $loading, $error, load, clear }
-}
-
 interface LifePageData<T> {
   items: T[]
   has_more: boolean
@@ -78,9 +23,9 @@ interface LifeEventPage extends LifePageData<LifeEvent> {
   page: number
   revision: number
 }
-const pursuits = createLifeResource<LifePageData<LifePursuit>>({ items: [], has_more: false, next_cursor: null })
+const pursuits = createQueryResource<LifePageData<LifePursuit>>({ items: [], has_more: false, next_cursor: null })
 
-const events = createLifeResource<LifeEventPage>({
+const events = createQueryResource<LifeEventPage>({
   items: [],
   has_more: false,
   next_cursor: null,
@@ -88,7 +33,7 @@ const events = createLifeResource<LifeEventPage>({
   revision: -1
 })
 
-const detail = createLifeResource<LifePursuitDetail | null>(null)
+const detail = createQueryResource<LifePursuitDetail | null>(null)
 
 export const $lifePursuits = computed(pursuits.$data, value => value.items)
 export const $lifePursuitsHasMore = computed(pursuits.$data, value => value.has_more)

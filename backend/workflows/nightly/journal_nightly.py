@@ -8,10 +8,11 @@ from zoneinfo import ZoneInfo
 
 from features.companion.narrative_prompts import NARRATIVE_REVISION_TEXTS
 from features.companion.narrative_quality import NarrativeQualityError, review_narrative
+from features.entries.diary_search import schedule_diary_embeddings
 from features.journal.journal_service import get_diary_by_date, publish_diary
 from features.journal.schemas import DIARY_BODY_MAX_CHARS, DiaryContent
 from features.life.context import read_life_context_in_session
-from features.memory.memory_narratives import backfill_diary_embeddings, load_companion_reflection
+from features.memory.memory_narratives import load_companion_reflection
 from features.posts.store import PostInteractions
 from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, call_llm_json
 from infrastructure.ai.tasks import AiTaskKey
@@ -67,7 +68,7 @@ async def project_today(
                 }
     if result is not None:
         if result:
-            await backfill_diary_embeddings(user_id)
+            schedule_diary_embeddings(user_id)
         return result
     if not in_nightly_window(utc_now(), ZoneInfo(user_timezone)):
         return False
@@ -103,7 +104,7 @@ async def project_today(
         await save_narrative_result(db, log_id, "journal", composed is not False)
         await db.commit()
     if composed is not False:
-        await backfill_diary_embeddings(user_id)
+        schedule_diary_embeddings(user_id)
     return composed is not False
 
 

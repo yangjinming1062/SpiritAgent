@@ -85,13 +85,7 @@ from features.appearance.views import (
     retry_outfit_description_view,
     select_avatar_view,
 )
-from features.companion.http_contracts import (
-    IdleExpressionRequest,
-    IdleExpressionResult,
-    InteractionStatsRequest,
-    InteractionStatsResult,
-)
-from features.companion.interaction_stats import record_interaction
+from features.companion.http_contracts import IdleExpressionRequest, IdleExpressionResult
 from features.companion.persona_service import (
     PersonaConflictError,
     PersonaValidationError,
@@ -131,11 +125,6 @@ from entrypoints.http.routing import get_router
 
 router = get_router()
 logger = get_logger(__name__)
-
-
-@router.post("/interactions", operation_id="companion.record_interaction", response_model=InteractionStatsResult)
-async def post_interaction(user: CurrentUser, body: InteractionStatsRequest) -> InteractionStatsResult:
-    return InteractionStatsResult.model_validate(await record_interaction(user.id, body.kind, body.hour))
 
 
 @router.post(

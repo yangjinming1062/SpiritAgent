@@ -22,7 +22,7 @@ import { $surfaceRole } from '@/shared/store/surfaces'
 
 import { $devMode, pushDevLog } from './dev-log'
 import { handleCharacterEvent } from './handlers/character-events'
-import { type EventRouteContext, handleConversationEvent } from './handlers/conversation-events'
+import { handleConversationEvent } from './handlers/conversation-events'
 import { handleDeliveryEvent } from './handlers/delivery-events'
 import { handleToolComplete, handleToolStart } from './handlers/tool-dispatch'
 
@@ -74,7 +74,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
     return
   }
 
-  const ctx: EventRouteContext = { isPresentationHost: $gateway.get()?.isPresentationHost ?? false }
+  const isPresentationHost = $gateway.get()?.isPresentationHost ?? false
 
   switch (event.type) {
     case 'companion.action.updated':
@@ -120,7 +120,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
     case 'error':
       if (runtime) {
-        handleConversationEvent(event, ctx, runtime)
+        handleConversationEvent(event, runtime)
       }
 
       break
@@ -134,7 +134,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       }
 
       if (runtime) {
-        handleConversationEvent(event, ctx, runtime)
+        handleConversationEvent(event, runtime)
       }
 
       break
@@ -148,7 +148,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       }
 
       if (runtime) {
-        handleConversationEvent(event, ctx, runtime)
+        handleConversationEvent(event, runtime)
       }
 
       break
@@ -218,8 +218,6 @@ export function handleGatewayEvent(event: GatewayEvent): void {
     case 'companion.diary.created':
 
     case 'companion.diary.read':
-
-    case 'companion.diary.deleted':
       onJournalEvent(event)
 
       break
@@ -243,7 +241,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       const occurredAt = Date.parse(event.payload.occurred_at)
 
       if (reaction === 'look' || reaction === 'smile' || reaction === 'stretch') {
-        if (ctx.isPresentationHost || $surfaceRole.get() === 'desktop') {
+        if (isPresentationHost || $surfaceRole.get() === 'desktop') {
           enqueueInteraction(reaction, eventId, occurredAt)
         } else {
           enqueueInteractionForward(reaction, eventId, occurredAt)

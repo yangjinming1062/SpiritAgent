@@ -1,0 +1,53 @@
+.form {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 16px 0;
+}
+.form label {
+  display: flex;
+  flex: 1 1 150px;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+.form .query {
+  flex: 3 1 240px;
+}
+.form label span,
+.feedback {
+  color: var(--ui-text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.form input {
+  min-height: 40px;
+  min-width: 0;
+  width: 100%;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.actions button {
+  min-height: 40px;
+}
+.feedback {
+  margin: 12px 0;
+}
+.feedback p {
+  margin: 6px 0;
+}
+@media (width < 480px) {
+  .form .query {
+    flex-basis: 100%;
+  }
+  .actions {
+    width: 100%;
+  }
+  .actions button {
+    min-height: 44px;
+  }
+}

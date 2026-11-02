@@ -674,7 +674,8 @@ export const dict = {
       sectionTitle: '角色',
       categoriesAria: '伙伴分类',
       memoriesTitle: '记忆',
-      memoryIntro: '伙伴和不同助手分别记住各自对话中的事情。你可以查看、修改或让它忘记。',
+      memoryIntro:
+        '伙伴和不同助手分别沉淀交流中的长期信息、偏好与相处理解。你可以查看、修改或让它忘记；生活历史和日记在各自页面查询。',
       sections: {
         profile: '资料',
         voice: '声音',

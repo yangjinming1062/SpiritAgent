@@ -182,8 +182,6 @@ async def update_memory(
             return None
         if row.content_version != expected_version:
             raise MemoryConflictError("这条记忆已在其他设备更新，请刷新后再保存。")
-        if row.kind == "diary":
-            raise ValueError("Published diary memories are read-only")
         cap = USER_PROFILE_MAX_CONTENT_CHARS if row.kind == "user_profile" else SETTINGS.memory_recall_max_content_chars
         if len(content) > cap:
             raise ValueError(f"content exceeds {cap} chars for {row.context or 'recall'}")

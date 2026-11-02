@@ -7,6 +7,7 @@ from typing import Any
 from infrastructure.api_ids import ResourceId
 from infrastructure.constants import DEFAULT_LANGUAGE
 from infrastructure.database import session_scope
+from infrastructure.search import extract_search_terms
 from infrastructure.text import resolve_language, utc_now
 from pydantic import BaseModel
 from runtime.memory_scope import EmbeddingItem, MemoryScope, MemorySource
@@ -25,7 +26,7 @@ from features.conversation.evidence import (
 )
 from features.memory.contracts import MemoryConflictError, MemoryEvidence, MemoryRecord
 from features.memory.memory_policy import MemoryDecision
-from features.memory.memory_retrieval import extract_search_terms, keyword_match_score
+from features.memory.memory_retrieval import keyword_match_score
 from features.memory.memory_store import (
     backfill_memory_embeddings,
     forget_record,

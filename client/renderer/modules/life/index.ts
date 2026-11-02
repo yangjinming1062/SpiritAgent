@@ -1,3 +1,4 @@
+export { lifeSearch, searchLife } from './search'
 export {
   $lifeDetail,
   $lifeDetailError,

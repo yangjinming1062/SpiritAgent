@@ -208,3 +208,12 @@
     padding: 16px;
   }
 }
+.searchResults {
+  display: grid;
+  gap: 16px;
+}
+.searchExcerpt {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 12px 0;
+}

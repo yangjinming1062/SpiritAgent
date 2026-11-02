@@ -82,6 +82,6 @@ COMPANION_REFLECTION_LABELS: dict[str, str] = {
 }
 
 NARRATIVE_MEMORY_LABELS: dict[str, dict[str, str]] = {
-    "zh": {"diary": "你发布的日记", "reflection": "你的相处理解"},
-    "en": {"diary": "your published diary", "reflection": "your understanding of how to interact"},
+    "zh": {"reflection": "你的相处理解"},
+    "en": {"reflection": "your understanding of how to interact"},
 }

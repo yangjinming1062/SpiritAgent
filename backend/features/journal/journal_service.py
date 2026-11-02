@@ -8,11 +8,10 @@ from runtime.events.emit import emit_ws_event
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.entries.contracts import EntryView
+from features.entries.diary_search import index_diary, search_diary_entries
 from features.entries.queries import diary_for_date, has_unread_entries, list_diary_entries, unread_entry_ids
 from features.entries.service import create_diary, mark_entries_read
-from features.journal.schemas import DiaryContent, DiaryEntryResponse
-
-from .journal_indexes import index_entry
+from features.journal.schemas import DiaryContent, DiaryEntryResponse, DiarySearchResponse
 
 
 def response_for_diary(row: EntryView | DiaryEntryResponse) -> DiaryEntryResponse:
@@ -41,7 +40,7 @@ async def publish_diary(
         db, user_id, entry_date=entry_date, title=content.title, body=content.body, post_ids=post_ids
     )
     if created:
-        await index_entry(db, row)
+        await index_diary(db, row)
         emit_ws_event(
             db,
             user_id=user_id,
@@ -53,6 +52,18 @@ async def publish_diary(
 
 async def unread_diary_ids(db: AsyncSession, user_id: int) -> list[int]:
     return await unread_entry_ids(db, user_id, "diary")
+
+
+async def search_diary(
+    user_id: int,
+    *,
+    query: str = "",
+    date_from: date | None = None,
+    date_to: date | None = None,
+    limit: int = 20,
+) -> DiarySearchResponse:
+    rows, status = await search_diary_entries(user_id, query=query, date_from=date_from, date_to=date_to, limit=limit)
+    return DiarySearchResponse(entries=[response_for_diary(row) for row in rows], search=status)
 
 
 async def has_unread_diary(db: AsyncSession, user_id: int) -> bool:

@@ -17,7 +17,7 @@ from features.memory.memory_bootstrap import read_user_profile
 from features.memory.memory_format import format_memory_record
 from features.memory.memory_narratives import load_companion_reflection, save_companion_reflection
 from features.memory.memory_review import review_memories
-from features.memory.memory_store import backfill_memory_embeddings, store_slotted_memory
+from features.memory.memory_store import backfill_memory_embeddings
 from features.posts.store import collect_post_interactions
 from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, call_llm_json
 from infrastructure.ai.tasks import AiTaskKey
@@ -27,7 +27,7 @@ from infrastructure.constants import NIGHTLY_REASONING_EFFORT
 from infrastructure.database import session_scope
 from infrastructure.logger import get_logger
 from infrastructure.text import format_local_iso, resolve_language, resolve_prompt_text, utc_now
-from runtime.memory_scope import EmbeddingItem, MemoryScope, MemorySource, validate_memory_scope
+from runtime.memory_scope import EmbeddingItem, MemoryScope, validate_memory_scope
 from runtime.presets import COMPANION_PRESET_ID
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -187,33 +187,6 @@ def _successful_action_facts(actions: dict[str, ActionExecutionResult]) -> list[
                 item[identifier] = value
         facts.append(item)
     return facts
-
-
-async def _write_action_memory(
-    scope: MemoryScope,
-    local_date_str: str,
-    actions: list[dict[str, Any]],
-    language: str,
-) -> None:
-    """把精灵真正做过的事写入可检索自传记忆，供次日对话自然延续。"""
-    if not actions:
-        return
-    prefix = "Nightly autonomous activities: " if language == "en" else "夜间自主活动："
-    content = prefix + "；".join(str(item["fact"]) for item in actions)
-    async with session_scope() as db:
-        embedding_item = await store_slotted_memory(
-            db,
-            scope,
-            f"nightly_actions:{local_date_str}",
-            content[: SETTINGS.memory_recall_max_content_chars],
-            ["other"],
-            kind="recall",
-            context="夜间活动",
-            source=MemorySource("reflection", batch_id=local_date_str),
-        )
-        await db.flush()
-        await db.commit()
-    await backfill_memory_embeddings(scope, [embedding_item])
 
 
 async def run_nightly_pipeline(scope: MemoryScope, target_date: date) -> bool:
@@ -452,18 +425,10 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         )
     action_facts = _successful_action_facts(action_results)
     try:
-        await _write_action_memory(scope, local_date_str, action_facts, user_language)
-    except Exception as exc:
-        logger.exception(
-            "nightly_activity: autonomous action memory failed",
-            extra={"user_id": user_id, "error": str(exc)},
-        )
-        stages.append({"stage": "action memory", "status": "error", "error": str(exc)})
-    try:
         await record_nightly_actions(user_id, local_date_str, action_facts)
     except Exception as exc:
         logger.exception(
-            "nightly_activity: life event projection failed",
+            "nightly_activity: life event recording failed",
             extra={"user_id": user_id, "error": str(exc)},
         )
         stages.append({"stage": "life events", "status": "error", "error": str(exc)})

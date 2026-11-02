@@ -1,4 +1,4 @@
-"""陪伴统计与自主咨询的 HTTP 输入和结果。"""
+"""陪伴表达与自主咨询的 HTTP 输入和结果。"""
 
 from typing import Literal
 
@@ -8,17 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class CompanionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-
-
-class InteractionStatsRequest(CompanionRequest):
-    kind: Literal["chat_turn"]
-    hour: int = Field(ge=0, le=23)
-
-
-class InteractionStatsResult(BaseModel):
-    recorded: Literal["chat_turn"]
-    threshold_met: bool
-    peak_hour: int | None
 
 
 class IdleExpressionRequest(CompanionRequest):

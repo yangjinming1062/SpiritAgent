@@ -6,7 +6,7 @@ from uuid import UUID
 
 from infrastructure.backup import BackupContext, BackupRows, BackupTable
 from runtime.memory_scope import MemoryScope, MemorySource, validate_memory_scope
-from sqlalchemy import Select, delete, or_, select, update
+from sqlalchemy import Select, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.conversation.evidence import original_user_messages
@@ -19,8 +19,6 @@ from .models import Memory, MemoryEvidenceRow, MemoryFingerprint, MemoryRevision
 def _prepare_memory(raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
     validate_memory_scope(MemoryScope(context.user_id, payload.get("system_preset_id")))
     UUID(payload["source_key"])
-    if payload.get("source_event_id") is not None and payload["system_preset_id"] != "companion":
-        raise ValueError("Life facts belong to the companion preset")
     if payload.get("source_kind") not in get_args(MemorySource.__annotations__["kind"]):
         raise ValueError("Invalid memory source kind")
     if payload.get("status") not in {"active", "candidate", "invalidated", "forgotten"}:
@@ -29,8 +27,8 @@ def _prepare_memory(raw: dict[str, Any], payload: dict[str, Any], context: Backu
         raise ValueError("Invalid memory basis")
     if payload.get("usage") not in {"contextual", "background"}:
         raise ValueError("Invalid memory usage")
-    if payload.get("kind") not in MEMORY_KINDS or payload["kind"] == "diary":
-        raise ValueError("Invalid memory kind; diary indexes are rebuilt from entries")
+    if payload.get("kind") not in MEMORY_KINDS:
+        raise ValueError("Invalid cognitive memory kind")
     if not isinstance(payload.get("tags"), list) or not all(isinstance(tag, str) for tag in payload["tags"]):
         raise ValueError("Memory tags must be strings")
     if payload.get("status") == "forgotten" and payload.get("content"):
@@ -38,11 +36,11 @@ def _prepare_memory(raw: dict[str, Any], payload: dict[str, Any], context: Backu
 
 
 def _query(user_id: int) -> Select[tuple[Memory]]:
-    return select(Memory).where(Memory.user_id == user_id, Memory.kind != "diary")
+    return select(Memory).where(Memory.user_id == user_id)
 
 
 async def _clear(db: AsyncSession, user_id: int) -> None:
-    await db.execute(delete(Memory).where(Memory.user_id == user_id, Memory.kind != "diary"))
+    await db.execute(delete(Memory).where(Memory.user_id == user_id))
 
 
 async def _restore_context(db: AsyncSession, rows: BackupRows, context: BackupContext) -> None:
@@ -151,7 +149,7 @@ def _evidence_query(user_id: int) -> Select[tuple[MemoryEvidenceRow]]:
     return (
         select(MemoryEvidenceRow)
         .join(Memory, Memory.id == MemoryEvidenceRow.memory_id)
-        .where(MemoryEvidenceRow.user_id == user_id, Memory.kind != "diary")
+        .where(MemoryEvidenceRow.user_id == user_id)
     )
 
 
@@ -159,16 +157,12 @@ def _revision_query(user_id: int) -> Select[tuple[MemoryRevision]]:
     return (
         select(MemoryRevision)
         .join(Memory, Memory.id == MemoryRevision.memory_id)
-        .where(MemoryRevision.user_id == user_id, Memory.kind != "diary")
+        .where(MemoryRevision.user_id == user_id)
     )
 
 
 def _fingerprint_query(user_id: int) -> Select[tuple[MemoryFingerprint]]:
-    return (
-        select(MemoryFingerprint)
-        .outerjoin(Memory, Memory.id == MemoryFingerprint.memory_id)
-        .where(MemoryFingerprint.user_id == user_id, or_(MemoryFingerprint.memory_id.is_(None), Memory.kind != "diary"))
-    )
+    return select(MemoryFingerprint).where(MemoryFingerprint.user_id == user_id)
 
 
 async def _find_memory(
@@ -206,7 +200,7 @@ def backup_tables() -> tuple[BackupTable, ...]:
         BackupTable(
             "memories",
             Memory,
-            foreign_keys={"source_conversation_id": "conversations", "source_event_id": "life_events"},
+            foreign_keys={"source_conversation_id": "conversations"},
             export_query=_query,
             prepare_payload=_prepare_memory,
             custom_delete=_clear,

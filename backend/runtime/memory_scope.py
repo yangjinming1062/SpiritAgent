@@ -14,7 +14,7 @@ class MemoryScope:
 
 @dataclass(frozen=True, slots=True)
 class MemorySource:
-    kind: Literal["tool", "manual", "onboarding", "reflection", "interaction", "diary"]
+    kind: Literal["tool", "manual", "onboarding", "reflection"]
     session_id: int | None = None
     batch_id: str | None = None
 

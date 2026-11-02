@@ -24,7 +24,6 @@ function resourceDomain(type: GatewayNetworkEvent['type']): 'companion' | 'diary
     case 'companion.posts.read':
       return 'posts'
     case 'companion.diary.created':
-    case 'companion.diary.deleted':
     case 'companion.diary.read':
       return 'diary'
     case 'memory.changed':

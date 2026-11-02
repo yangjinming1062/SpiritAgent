@@ -23,7 +23,7 @@ from features.memory.memory_format import (
     format_companion_reflection_block,
     format_proactive_memory_block,
 )
-from features.memory.memory_retrieval import MemoryEmbedding, MemoryRecallResult, retrieve_proactive_memories
+from features.memory.memory_retrieval import MemoryRecallResult, retrieve_proactive_memories
 from infrastructure.ai.llm_client import (
     MissingLlmConfigError,
     resolve_provider_chain,
@@ -34,6 +34,7 @@ from infrastructure.ai.responses import approx_responses_tokens, message_to_resp
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.config import SETTINGS
 from infrastructure.constants import DEFAULT_LANGUAGE, SESSION_TO_GLOBAL_KEY_ALIASES, TEMPERATURE_MAX, TEMPERATURE_MIN
+from infrastructure.search import QueryEmbedding
 from infrastructure.text import (
     format_day_marker,
     format_local_date_str,
@@ -280,7 +281,7 @@ async def build_turn_inputs(
     *,
     task: AiTaskKey,
     proactive_memory_query: str = "",
-    proactive_memory_embedding: MemoryEmbedding | None = None,
+    proactive_memory_embedding: QueryEmbedding | None = None,
     companion_proactive_turn: bool = False,
     excluded_tool_names: frozenset[str] = frozenset(),
     history: list[MessageSnapshot] | None = None,

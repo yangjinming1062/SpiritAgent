@@ -9,9 +9,7 @@ from features.companion.backup import backup_tables as companion_tables
 from features.configuration.backup import backup_tables as configuration_tables
 from features.conversation.backup import backup_tables as conversation_tables
 from features.entries.backup import backup_tables as entry_tables
-from features.entries.ports import set_entry_projector
 from features.jobs.backup import backup_tables as job_tables
-from features.journal.journal_indexes import rebuild_diary_indexes
 from features.life.backup import backup_tables as life_tables
 from features.media.backup import backup_tables as media_tables
 from features.memory.backup import backup_tables as memory_tables
@@ -23,7 +21,6 @@ from infrastructure.backup import BACKUP_REGISTRY
 
 
 def register_backup_tables() -> None:
-    set_entry_projector(rebuild_diary_indexes)
     contributions = (
         *account_tables(),
         *conversation_tables(),

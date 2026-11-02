@@ -167,15 +167,6 @@ async def diary_for_date(db: AsyncSession, user_id: int, entry_date: date) -> En
     return rows[0] if rows else None
 
 
-async def diary_texts(db: AsyncSession, user_id: int) -> list[tuple[date, str, str]]:
-    rows = await db.execute(
-        select(CompanionEntry.activity_date, CompanionEntry.title, CompanionEntry.body)
-        .where(CompanionEntry.user_id == user_id, CompanionEntry.kind == "diary")
-        .order_by(CompanionEntry.activity_date)
-    )
-    return list(rows.tuples())
-
-
 async def unread_entry_ids(db: AsyncSession, user_id: int, kind: Literal["post", "diary"]) -> list[int]:
     return list(
         await db.scalars(

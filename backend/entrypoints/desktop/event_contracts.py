@@ -254,11 +254,6 @@ class PostCommentDeletedEvent(BaseModel):
     comment_id: str
 
 
-class DiaryDeletedEvent(BaseModel):
-    diary_id: str
-    entry_date: str
-
-
 @dataclass(frozen=True)
 class EventContract:
     payload: type[BaseModel]
@@ -313,7 +308,6 @@ EVENT_CONTRACTS: dict[str, EventContract] = {
     "companion.post.comment.deleted": EventContract(PostCommentDeletedEvent, "all", "resource"),
     "companion.posts.read": EventContract(EmptyResult, "all", "resource"),
     "companion.diary.created": EventContract(DiaryEntryResponse, "all", "resource"),
-    "companion.diary.deleted": EventContract(DiaryDeletedEvent, "all", "resource"),
     "companion.diary.read": EventContract(EmptyResult, "all", "resource"),
     "companion.topic_feedback.updated": EventContract(TopicFeedbackSnapshot, "all", "resource"),
 }

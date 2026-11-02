@@ -23,10 +23,10 @@ class ToolDomain:
 DOMAIN_CATALOG: tuple[ToolDomain, ...] = (
     ToolDomain(
         id="life",
-        description_zh="伙伴的持续事项与阅读成果",
-        description_en="Companion pursuits and reading results",
-        aliases=("life", "生活", "事项", "计划", "暂停", "放弃"),
-        extra_tools=("life_inspect", "life_adjust"),
+        description_zh="伙伴的持续事项、生活历史、阅读所得与日记",
+        description_en="Companion pursuits, life history, reading notes and diaries",
+        aliases=("life", "diary", "生活", "经历", "事项", "计划", "暂停", "放弃", "日记"),
+        extra_tools=("life_inspect", "life_adjust", "life_recall", "diary_recall"),
     ),
     ToolDomain(
         id="browser",
@@ -60,7 +60,7 @@ DOMAIN_CATALOG: tuple[ToolDomain, ...] = (
         id="memory",
         description_zh="长期记忆",
         description_en="Long-term memory",
-        aliases=("memory", "diary", "reflection", "记忆", "日记", "反思", "相处", "回忆", "记住", "备忘"),
+        aliases=("memory", "reflection", "记忆", "反思", "相处", "回忆", "记住", "备忘"),
         extra_tools=("memory_retain", "memory_recall", "memory_inspect"),
     ),
     ToolDomain(

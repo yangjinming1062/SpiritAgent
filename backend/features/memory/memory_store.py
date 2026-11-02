@@ -1,6 +1,5 @@
 import asyncio
 import hashlib
-import math
 from dataclasses import dataclass
 from datetime import date
 
@@ -9,6 +8,7 @@ from infrastructure.ai.providers.base import EmbeddingProvider
 from infrastructure.database import session_scope
 from infrastructure.domain_locks import transaction_owner, transaction_owns
 from infrastructure.logger import get_logger
+from infrastructure.search import valid_vectors
 from infrastructure.text import utc_now
 from runtime.background import TaskBag
 from runtime.events.emit import emit_ws_event
@@ -21,7 +21,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from features.accounts.queries import user_is_active
 from features.conversation.evidence import source_conversation_exists
 
-from .diary_hooks import delete_diary_record
 from .memory_namespaces import MEMORY_KINDS
 from .models import Memory, MemoryEmbeddingRow
 from .records import clear_memory_details
@@ -225,21 +224,6 @@ async def upsert_slotted_memory(
     return (await upsert_memory_slots(db, scope, [MemorySlotWrite(kind, slot_key, content, tags, source, context)]))[0]
 
 
-async def store_slotted_memory(
-    db: AsyncSession,
-    scope: MemoryScope,
-    slot_key: str,
-    content: str,
-    tags: list[str],
-    *,
-    source: MemorySource,
-    kind: str,
-    context: str = "",
-) -> EmbeddingItem:
-    row = await upsert_slotted_memory(db, scope, slot_key, content, tags, source=source, kind=kind, context=context)
-    return EmbeddingItem(row.id, row.content, row.content_version)
-
-
 def active_memory_filter() -> ColumnElement[bool]:
     return and_(Memory.status == "active", (Memory.expires_at.is_(None) | (Memory.expires_at > func.now())))
 
@@ -259,7 +243,7 @@ async def memory_write_lock(db: AsyncSession, scope: MemoryScope) -> None:
 
 def forget_record(row: Memory) -> None:
     row.content, row.context, row.tags = "", "", []
-    row.source_conversation_id, row.source_event_id, row.source_batch_id = None, None, None
+    row.source_conversation_id, row.source_batch_id = None, None
     row.reason = "Forgotten; original evidence must not be reused"
     row.status, row.usage, row.expires_at = "forgotten", "contextual", None
     row.content_version += 1
@@ -271,15 +255,6 @@ async def delete_memory(db: AsyncSession, scope: MemoryScope, memory_id: int) ->
     row = await get_memory(db, scope, memory_id)
     if row is None or row.status == "forgotten":
         return False
-    if scope.system_preset_id == "companion" and row.kind == "diary" and row.local_date:
-        diary_id = await delete_diary_record(db, scope.user_id, row.local_date)
-        if diary_id is not None:
-            emit_ws_event(
-                db,
-                user_id=scope.user_id,
-                event_type="companion.diary.deleted",
-                payload={"diary_id": diary_id, "entry_date": row.local_date.isoformat()},
-            )
     await clear_memory_details(db, [row.id], suppress=True)
     forget_record(row)
     emit_ws_event(
@@ -309,13 +284,9 @@ async def backfill_memory_embeddings(
         if provider is None:
             return False
         vectors = await generate_embeddings([row.content for row in rows], provider, user_id=scope.user_id)
-        if vectors is None or len(vectors) != len(rows) or not vectors or not vectors[0]:
+        if vectors is None or not valid_vectors(vectors, len(rows), expected_dimensions):
             return False
         dimensions = len(vectors[0])
-        if expected_dimensions is not None and dimensions != expected_dimensions:
-            return False
-        if any(len(vector) != dimensions or not all(math.isfinite(value) for value in vector) for vector in vectors):
-            return False
         model_key = embedding_model_key(provider.config)
         supplied = {row.id: (row, vector) for row, vector in zip(rows, vectors, strict=True)}
         async with session_scope() as db:

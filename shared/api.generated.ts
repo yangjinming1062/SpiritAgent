@@ -77,6 +77,7 @@ export interface ApiSchemas {
   "DiaryEntryResponse": { "id": string; "entry_date": string; "title": string; "body": string; "post_ids": Array<string>; "created_at": (string | null); "updated_at": (string | null) }
   "DiaryListResponse": { "entries": Array<ApiSchemas["DiaryEntryResponse"]>; "unread_diary_ids": Array<string> }
   "DiaryReadRequest": { "diary_ids": Array<string> }
+  "DiarySearchResponse": { "entries": Array<ApiSchemas["DiaryEntryResponse"]>; "search": ApiSchemas["SearchStatus"] }
   "DiaryUnreadResponse": { "has_unread": boolean }
   "ExchangeRequest": { "token": string; "device_name"?: string }
   "FullbodyAdoptRequest": { "image": string; "content_type"?: (string | null) }
@@ -99,16 +100,16 @@ export interface ApiSchemas {
   "ImportPlaybackBlock": { "code": "materials_incomplete" | "identity" | "outfit" | "scene" | "action" | "semantics" | "timing" | "review" | "animated"; "reason": string }
   "ImportSelection": { "key": string; "command": "existing" | "extract" | "retry" | "regenerate" | "skip" | "undo"; "material_id"?: (string | null); "expected_component_revision"?: (number | null); "notes"?: string }
   "ImportUnderstanding": { "title": string; "description": string; "asset_kind": "actor" | "scene" | "cinematic"; "identity_match": "same" | "different" | "uncertain" | "absent"; "identity_reason": string; "presentation_verdict": "pass" | "review" | "fail"; "presentation_reason": string; "clip_kind": ("once" | "loop" | null); "media_semantics": (ApiSchemas["MediaSemantics"] | null); "observations": Array<ApiSchemas["ImportObservation"]> }
-  "InteractionStatsRequest": { "kind": "chat_turn"; "hour": number }
-  "InteractionStatsResult": { "recorded": "chat_turn"; "threshold_met": boolean; "peak_hour": (number | null) }
   "JsonValue": unknown
   "JsonValueInput": unknown
   "LastSubmissionSnapshot": { "request_id": string; "status": string; "error": (string | null); "message_ids": Array<string>; "retry_message_id": (string | null); "replace_reply_message_id": (string | null); "result_message_id": (string | null) }
   "LifeEventPublicListResponse": { "items": Array<ApiSchemas["LifeEventPublicView"]>; "has_more": boolean; "next_cursor": (string | null) }
-  "LifeEventPublicView": { "id": string; "event_key": string; "kind": string; "source": string; "subject": string; "fact_type": "intent" | "virtual_activity" | "execution" | "result"; "narrative": (string | null); "occurred_at": string; "pursuit_id": (string | null); "step_id": (string | null); "result_ref": { [key: string]: unknown }; "is_meaningful": boolean }
+  "LifeEventPublicView": { "id": string; "event_key": string; "kind": string; "source": string; "subject": "companion" | "user" | "system"; "fact_type": "intent" | "virtual_activity" | "execution" | "result"; "narrative": (string | null); "occurred_at": string; "pursuit_id": (string | null); "step_id": (string | null); "result_ref": { [key: string]: unknown }; "is_meaningful": boolean }
   "LifePursuitPublicDetail": { "id": string; "narrative": (string | null); "status": "active" | "paused" | "completed" | "abandoned"; "status_source": string; "status_changed_at": (string | null); "resume_after": (string | null); "previous_pursuit_id": (string | null); "started_at": string; "completed_at": (string | null); "result_ref": { [key: string]: unknown }; "updated_at": string; "steps": Array<ApiSchemas["LifeStepPublicView"]> }
   "LifePursuitPublicListResponse": { "items": Array<ApiSchemas["LifePursuitPublicView"]>; "has_more": boolean; "next_cursor": (string | null) }
   "LifePursuitPublicView": { "id": string; "narrative": (string | null); "status": "active" | "paused" | "completed" | "abandoned"; "status_source": string; "status_changed_at": (string | null); "resume_after": (string | null); "previous_pursuit_id": (string | null); "started_at": string; "completed_at": (string | null); "result_ref": { [key: string]: unknown }; "updated_at": string }
+  "LifeSearchItem": { "id": string; "event_key": string; "kind": string; "source": string; "subject": "companion" | "user" | "system"; "fact_type": "intent" | "virtual_activity" | "execution" | "result"; "narrative": (string | null); "occurred_at": string; "pursuit_id": (string | null); "step_id": (string | null); "result_ref": { [key: string]: unknown }; "is_meaningful": boolean; "reading_result": (ApiSchemas["ReadingResultView"] | null) }
+  "LifeSearchResponse": { "items": Array<ApiSchemas["LifeSearchItem"]>; "search": ApiSchemas["SearchStatus"] }
   "LifeStatePublicView": { "user_id": string; "narrative": (string | null); "activity_kind": "intent" | "virtual_activity" | "execution" | "result"; "activity_type": "idle" | "reading" | "working" | "creating" | "thinking" | "resting" | "organizing" | "socializing"; "activity_started_at": (string | null); "active_pursuit_id": (string | null); "revision": number; "updated_at": string }
   "LifeStepPublicView": { "id": string; "pursuit_id": (string | null); "kind": string; "narrative": (string | null); "state": "planned" | "running" | "completed" | "failed" | "cancelled" | "unknown"; "source": string; "disposition": string; "not_before": (string | null); "reading_result": (ApiSchemas["ReadingResultView"] | null); "result_ref": { [key: string]: unknown }; "failure_code": (string | null); "started_at": (string | null); "finished_at": (string | null) }
   "LinkBubble": { "type": "link"; "topic_id": string; "title": string; "platform": "x" | "xiaohongshu"; "url": string; "published_at": string }
@@ -192,7 +193,6 @@ export interface ApiSchemas {
   "RpcCompanionSignalResult": { "queued": boolean }
   "RpcCompressionEvent": { "request_id": (string | null); "replace_reply_message_id": (string | null); "session_id": (string | null); "subtype": string; "text": string; "message_id": (string | null) }
   "RpcCompressionUsage": { "total_tokens": number; "context_window": number }
-  "RpcDiaryDeletedEvent": { "diary_id": string; "entry_date": string }
   "RpcDiaryEntryResponse": { "id": string; "entry_date": string; "title": string; "body": string; "post_ids": Array<string>; "created_at": (string | null); "updated_at": (string | null) }
   "RpcEmptyResult": { [key: string]: unknown }
   "RpcGatewayAckResult": { "acked": number; "pruned": number }
@@ -305,6 +305,7 @@ export interface ApiSchemas {
   "SceneSource": "generated" | "user_upload"
   "SceneStateResponse": { "policy": ApiSchemas["ScenePolicy"]; "materials": Array<ApiSchemas["SceneResponse"]>; "generation_pending": boolean }
   "SceneStatus": "pending" | "ready" | "description_failed" | "failed" | "cancelled"
+  "SearchStatus": { "mode": "hybrid" | "keyword" | "timeline"; "indexing": boolean }
   "ServiceCheckResultView": { "repo": ApiSchemas["ServiceRepoView"]; "incoming": Array<ApiSchemas["ServiceCommitInfo"]>; "issues": Array<ApiSchemas["ServicePreflightIssue"]> }
   "ServiceCommitInfo": { "sha": string; "short_sha": string; "subject": string; "author": string; "committed_at": (string | null) }
   "ServicePreflightIssue": { "check": "git" | "ssh" | "docker" | "compose" | "repository" | "upstream" | "worktree" | "divergence"; "message": string }
@@ -435,7 +436,6 @@ export interface ApiOperations {
   "admin.export_user_backup": { path: { "user_id": string }; query: Record<string, never>; body: undefined; input: { path: { "user_id": string }; query?: never; body?: never }; response: Uint8Array }
   "admin.import_user_backup": { path: { "user_id": string }; query: { "mode"?: "overwrite" | "merge"; "sections"?: (Array<string> | null) }; body: FormData; input: { path: { "user_id": string }; query?: { "mode"?: "overwrite" | "merge"; "sections"?: (Array<string> | null) }; body: FormData }; response: ApiSchemas["UserBackupImportResponse"] }
   "gateway.gateway_ticket": { path: Record<string, never>; query: Record<string, never>; body: (ApiSchemas["GatewayTicketRequest"] | null); input: { path?: never; query?: never; body?: (ApiSchemas["GatewayTicketRequest"] | null) }; response: ApiSchemas["GatewayTicketResponse"] }
-  "companion.record_interaction": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["InteractionStatsRequest"]; input: { path?: never; query?: never; body: ApiSchemas["InteractionStatsRequest"] }; response: ApiSchemas["InteractionStatsResult"] }
   "companion.idle_expression": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["IdleExpressionRequest"]; input: { path?: never; query?: never; body: ApiSchemas["IdleExpressionRequest"] }; response: ApiSchemas["IdleExpressionResult"] }
   "companion.get_character_card_route": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: (ApiSchemas["CharacterCardResponse"] | null) }
   "companion.patch_character_card_route": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["CharacterCardUpdate"]; input: { path?: never; query?: never; body: ApiSchemas["CharacterCardUpdate"] }; response: ApiSchemas["CharacterCardResponse"] }
@@ -490,9 +490,11 @@ export interface ApiOperations {
   "companion_visuals.command_visual_job": { path: { "job_id": string }; query: Record<string, never>; body: ApiSchemas["VisualJobCommandRequest"]; input: { path: { "job_id": string }; query?: never; body: ApiSchemas["VisualJobCommandRequest"] }; response: ApiSchemas["VisualJobView"] }
   "companion_visuals.claim_play": { path: { "play_id": string }; query: Record<string, never>; body: ApiSchemas["VisualClaimRequest"]; input: { path: { "play_id": string }; query?: never; body: ApiSchemas["VisualClaimRequest"] }; response: ApiSchemas["VisualClaimResponse"] }
   "companion_visuals.receipt_play": { path: { "play_id": string }; query: Record<string, never>; body: ApiSchemas["VisualReceiptRequest"]; input: { path: { "play_id": string }; query?: never; body: ApiSchemas["VisualReceiptRequest"] }; response: ApiSchemas["VisualReceiptResponse"] }
+  "companion_journal.search_diary_entries": { path: Record<string, never>; query: { "q"?: string; "date_from"?: (string | null); "date_to"?: (string | null); "limit"?: number }; body: undefined; input: { path?: never; query?: { "q"?: string; "date_from"?: (string | null); "date_to"?: (string | null); "limit"?: number }; body?: never }; response: ApiSchemas["DiarySearchResponse"] }
   "companion_journal.get_diary": { path: Record<string, never>; query: { "from"?: (string | null); "to"?: (string | null); "limit"?: number }; body: undefined; input: { path?: never; query?: { "from"?: (string | null); "to"?: (string | null); "limit"?: number }; body?: never }; response: ApiSchemas["DiaryListResponse"] }
   "companion_journal.get_diary_unread": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["DiaryUnreadResponse"] }
   "companion_journal.read_diary": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["DiaryReadRequest"]; input: { path?: never; query?: never; body: ApiSchemas["DiaryReadRequest"] }; response: ApiSchemas["DiaryUnreadResponse"] }
+  "companion_life.search_life_events": { path: Record<string, never>; query: { "q"?: string; "date_from"?: (string | null); "date_to"?: (string | null); "pursuit_id"?: (string | null); "limit"?: number }; body: undefined; input: { path?: never; query?: { "q"?: string; "date_from"?: (string | null); "date_to"?: (string | null); "pursuit_id"?: (string | null); "limit"?: number }; body?: never }; response: ApiSchemas["LifeSearchResponse"] }
   "companion_life.get_life": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["LifeStatePublicView"] }
   "companion_life.get_life_pursuits": { path: Record<string, never>; query: { "status"?: (string | null); "cursor"?: (string | null); "limit"?: number }; body: undefined; input: { path?: never; query?: { "status"?: (string | null); "cursor"?: (string | null); "limit"?: number }; body?: never }; response: ApiSchemas["LifePursuitPublicListResponse"] }
   "companion_life.get_life_pursuit": { path: { "pursuit_id": string }; query: Record<string, never>; body: undefined; input: { path: { "pursuit_id": string }; query?: never; body?: never }; response: ApiSchemas["LifePursuitPublicDetail"] }
@@ -614,7 +616,6 @@ export interface GatewayEventPayloads {
   "companion.action.updated": ApiSchemas["RpcEmptyResult"]
   "companion.character_card.updated": ApiSchemas["RpcCharacterCardEvent"]
   "companion.diary.created": ApiSchemas["RpcDiaryEntryResponse"]
-  "companion.diary.deleted": ApiSchemas["RpcDiaryDeletedEvent"]
   "companion.diary.read": ApiSchemas["RpcEmptyResult"]
   "companion.life.updated": ApiSchemas["RpcLifeUpdatedEvent"]
   "companion.message": ApiSchemas["RpcCompanionMessageEvent"]
@@ -905,17 +906,6 @@ export const API_OPERATIONS = {
     ],
     "wait_for_model": false,
     "ipc": false
-  },
-  "companion.record_interaction": {
-    "path": "/api/companion/interactions",
-    "method": "POST",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "desktop"
-    ],
-    "wait_for_model": false,
-    "ipc": true
   },
   "companion.idle_expression": {
     "path": "/api/companion/idle-expressions",
@@ -1547,6 +1537,18 @@ export const API_OPERATIONS = {
     "wait_for_model": false,
     "ipc": true
   },
+  "companion_journal.search_diary_entries": {
+    "path": "/api/companion/diary/search",
+    "method": "GET",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "desktop",
+      "remote"
+    ],
+    "wait_for_model": true,
+    "ipc": true
+  },
   "companion_journal.get_diary": {
     "path": "/api/companion/diary",
     "method": "GET",
@@ -1581,6 +1583,18 @@ export const API_OPERATIONS = {
       "remote"
     ],
     "wait_for_model": false,
+    "ipc": true
+  },
+  "companion_life.search_life_events": {
+    "path": "/api/companion/life/events/search",
+    "method": "GET",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "desktop",
+      "remote"
+    ],
+    "wait_for_model": true,
     "ipc": true
   },
   "companion_life.get_life": {
@@ -2856,12 +2870,6 @@ export const EVENT_POLICIES = {
     "baseline": false
   },
   "companion.diary.created": {
-    "audience": "all",
-    "snapshot": false,
-    "recovery": "resource",
-    "baseline": false
-  },
-  "companion.diary.deleted": {
     "audience": "all",
     "snapshot": false,
     "recovery": "resource",

@@ -64,6 +64,7 @@
 | 字段组与模型入口 | 语义 |
 |---|---|
 | 内容、评论与附件：[entries/models.py](../backend/features/entries/models.py) | 动态/日记共享正文和阅读状态，日记按账户/业务日期唯一；来源动态用有方向和顺序的关联保存，评论回复限定同账户同内容 |
+| 日记检索：同一[内容模型](../backend/features/entries/models.py) | `diary_search_index` 保存来源、可重建文本、内容指纹和兼容空间向量；来源删除级联索引，正文不复制进记忆 |
 | 发布工作：[publication_models.py](../backend/features/posts/publication_models.py) | 计划、媒体任务和结果归发布详情；`outcome` 表示业务事实，继承的执行状态表示进度，二者不能互换 |
 
 ## 生活、夜间与调度
@@ -71,6 +72,7 @@
 | 字段组与模型入口 | 语义 |
 |---|---|
 | 状态、事项、步骤与事件：[life/models.py](../backend/features/life/models.py) | 生活状态行串行化写入，`activity_type` 与 `scene_tags_json` 保存当前活动类别及有依据的环境、物品条件供视觉投影；状态、事项、步骤和事件分别保存模型生成的用户叙事，事项保存目标/进展和调整来源，步骤保存可执行动作、永久阅读成果及结构化 `failure_code`，原始错误留在任务边界；事件保留事实性质、主体、叙事和结果；完成证据经关联表连接。`0003_life_narrative_reset` 清理旧生活历史后启用这些字段。 |
+| 生活检索：同一[模型文件](../backend/features/life/models.py) | `life_event_search_index` 引用本账户事件，索引受控事实、叙事及阅读所得，按内容指纹、模型和实际维度核对向量 |
 | 请求额度与提交：同一[模型文件](../backend/features/life/models.py) | `life_action_admissions` 独立保存额度归属和已提交事实，覆盖恢复按请求合并，不能从可覆盖的事项历史重新计数 |
 | 夜间账本：[nightly/models.py](../backend/workflows/nightly/models.py) | 按账户/本地日期组织阶段、预算和动作身份，关联实际任务与结果；账本计划不证明执行完成 |
 | 自动化与等待：[automation/models.py](../backend/features/automation/models.py)、[intent_models.py](../backend/features/companion/intent_models.py) | Cron 保存计划和任务会话，陪伴意图保存等待条件、租约和终态；`source_kind` 与 `cron_job_id` 表示触发来源，`source_key` 仍用于可移植身份 |
@@ -79,6 +81,6 @@
 
 ## 记忆与证据
 
-[记忆模型](../backend/features/memory/models.py)分别保存当前内容、原始证据、修订、遗忘指纹和向量：分类及槽位有显式字段，`context` 仅是展示话题；证据消息缺失不能产生新事实。指纹可失去原记忆指针，继续抑制同一来源重学；向量按内容版本、模型和实际维度保存，只比较同作用域同空间的有效内容。
+[记忆模型](../backend/features/memory/models.py)只承载普通认知、用户资料和相处理解，分别保存当前内容、原始证据、修订、遗忘指纹和向量：分类及槽位有显式字段，`context` 仅是展示话题；证据消息缺失不能产生新事实。指纹可失去原记忆指针，继续抑制同一来源重学；向量按内容版本、模型和实际维度保存，只比较同作用域同空间的有效内容。
 
 保留期与删除关系见 [必要历史](DATABASE.md#必要历史)，人工编辑、审阅与遗忘的行为见 [记忆模块](../backend/features/memory/README.md)。

@@ -17,6 +17,7 @@ import {
   $lifePursuitsHasMore,
   $lifePursuitsLoading,
   $lifePursuitsNextCursor,
+  lifeSearch,
   lifeTimeline,
   loadLifeDetail,
   loadLifeEvents,
@@ -29,6 +30,7 @@ import { useStrings } from '@/shared/strings'
 import { isResourceId } from '../../../../../shared/resource-id'
 
 import { LifeOverview } from './life-overview'
+import { LifeArchiveSearch } from './life-search'
 import { $lifeUi, $lifeUiRestoreRevision, updateLifeUi } from './life-state'
 import styles from './life.module.css'
 import { useLife } from './use-life'
@@ -49,6 +51,9 @@ export function LifePage({
   const pursuitsNextCursor = useStore($lifePursuitsNextCursor)
   const pursuitsLoading = useStore($lifePursuitsLoading)
   const pursuitsError = useStore($lifePursuitsError)
+  const searchResult = useStore(lifeSearch.$data)
+  const searchLoading = useStore(lifeSearch.$loading)
+  const searchError = useStore(lifeSearch.$error)
   const events = useStore($lifeEvents)
   const eventsHasMore = useStore($lifeEventsHasMore)
   const eventsLoading = useStore($lifeEventsLoading)
@@ -106,10 +111,10 @@ export function LifePage({
   }, [visible, revision, selectedId])
 
   useEffect(() => {
-    if (visible) {
+    if (visible && !ui.search.applied) {
       void loadLifeEvents(ui.eventPage, selectedId ?? undefined)
     }
-  }, [visible, revision, ui.eventPage, selectedId])
+  }, [visible, revision, ui.eventPage, selectedId, ui.search.applied])
 
   useLayoutEffect(() => {
     pendingScroll.current = $lifeUi.get().scrollTop
@@ -121,6 +126,7 @@ export function LifePage({
       visible &&
       root.current &&
       pendingScroll.current !== null &&
+      (!ui.search.applied || (!searchLoading && (searchResult !== null || searchError))) &&
       !$lifePursuitsLoading.get() &&
       !$lifeEventsLoading.get() &&
       !$lifeDetailLoading.get() &&
@@ -136,6 +142,10 @@ export function LifePage({
     restoreRevision,
     pursuitsLoading,
     eventsLoading,
+    searchLoading,
+    searchError,
+    searchResult,
+    ui.search.applied,
     detailLoading,
     pursuitsError,
     eventsError,
@@ -291,74 +301,81 @@ export function LifePage({
           )}
         </section>
       )}
-      <section className={styles.section}>
-        <h2>{t.eventsTitle}</h2>
-        {eventsError && (
-          <ErrorBanner
-            message={t.failed}
-            onRetry={() => void loadLifeEvents(ui.eventPage, selectedId ?? undefined)}
-            retryLabel={strings.common.retry}
-          />
-        )}
-        {eventsLoading && events.length === 0 ? (
-          <LoadingBlock label={t.loading} />
-        ) : (
-          <ol className={styles.timeline}>
-            {timeline.map(entry => (
-              <li key={entry.id}>
-                <time dateTime={entry.occurredAt}>{formatDate(entry.occurredAt)}</time>
-                <div className={styles.eventBody}>
-                  <span className={styles.eyebrow}>{t.eventLabels[entry.kind]}</span>
-                  {entry.text && <p>{entry.text}</p>}
-                  <div className={styles.actions}>
-                    {entry.pursuitId && entry.pursuitId !== selectedId && (
-                      <button className={BTN_GHOST} onClick={() => selectPursuit(entry.pursuitId)} type="button">
-                        {t.details}
-                      </button>
-                    )}
-                    {entry.visualId && (
-                      <button className={BTN_GHOST} onClick={() => openResult('visual', entry.visualId)} type="button">
-                        {t.openVisual}
-                      </button>
-                    )}
-                    {entry.postId && (
-                      <button
-                        className={BTN_GHOST}
-                        onClick={() => void applyAppNavigation({ page: 'posts' })}
-                        type="button"
-                      >
-                        {t.openPosts}
-                      </button>
-                    )}
-                    {entry.diaryId && (
-                      <button
-                        className={BTN_GHOST}
-                        onClick={() => void applyAppNavigation({ page: 'diary' })}
-                        type="button"
-                      >
-                        {t.openDiary}
-                      </button>
-                    )}
+      <LifeArchiveSearch onSelectPursuit={selectPursuit} pursuitId={selectedId} revision={revision} visible={visible} />
+      {!ui.search.applied && (
+        <section className={styles.section}>
+          <h2>{t.eventsTitle}</h2>
+          {eventsError && (
+            <ErrorBanner
+              message={t.failed}
+              onRetry={() => void loadLifeEvents(ui.eventPage, selectedId ?? undefined)}
+              retryLabel={strings.common.retry}
+            />
+          )}
+          {eventsLoading && events.length === 0 ? (
+            <LoadingBlock label={t.loading} />
+          ) : (
+            <ol className={styles.timeline}>
+              {timeline.map(entry => (
+                <li key={entry.id}>
+                  <time dateTime={entry.occurredAt}>{formatDate(entry.occurredAt)}</time>
+                  <div className={styles.eventBody}>
+                    <span className={styles.eyebrow}>{t.eventLabels[entry.kind]}</span>
+                    {entry.text && <p>{entry.text}</p>}
+                    <div className={styles.actions}>
+                      {entry.pursuitId && entry.pursuitId !== selectedId && (
+                        <button className={BTN_GHOST} onClick={() => selectPursuit(entry.pursuitId)} type="button">
+                          {t.details}
+                        </button>
+                      )}
+                      {entry.visualId && (
+                        <button
+                          className={BTN_GHOST}
+                          onClick={() => openResult('visual', entry.visualId)}
+                          type="button"
+                        >
+                          {t.openVisual}
+                        </button>
+                      )}
+                      {entry.postId && (
+                        <button
+                          className={BTN_GHOST}
+                          onClick={() => void applyAppNavigation({ page: 'posts' })}
+                          type="button"
+                        >
+                          {t.openPosts}
+                        </button>
+                      )}
+                      {entry.diaryId && (
+                        <button
+                          className={BTN_GHOST}
+                          onClick={() => void applyAppNavigation({ page: 'diary' })}
+                          type="button"
+                        >
+                          {t.openDiary}
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              </li>
-            ))}
-            {!eventsLoading && !eventsError && timeline.length === 0 && (
-              <li className={styles.empty}>{t.emptyEvents}</li>
-            )}
-          </ol>
-        )}
-        {eventsHasMore && (
-          <button
-            className={BTN_SUBTLE}
-            disabled={eventsLoading}
-            onClick={() => updateLifeUi({ eventPage: ui.eventPage + 1 })}
-            type="button"
-          >
-            {t.moreEvents}
-          </button>
-        )}
-      </section>
+                </li>
+              ))}
+              {!eventsLoading && !eventsError && timeline.length === 0 && (
+                <li className={styles.empty}>{t.emptyEvents}</li>
+              )}
+            </ol>
+          )}
+          {eventsHasMore && (
+            <button
+              className={BTN_SUBTLE}
+              disabled={eventsLoading}
+              onClick={() => updateLifeUi({ eventPage: ui.eventPage + 1 })}
+              type="button"
+            >
+              {t.moreEvents}
+            </button>
+          )}
+        </section>
+      )}
     </div>
   )
 }

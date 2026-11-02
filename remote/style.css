@@ -1933,3 +1933,53 @@ dd {
     transition: none !important;
   }
 }
+.archive-search {
+  margin-top: 20px;
+}
+.archive-search-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+}
+.archive-search-form label {
+  display: flex;
+  flex: 1 1 135px;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+.archive-search-form .archive-search-query {
+  flex: 2 1 100%;
+}
+.archive-search-form input {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+}
+.archive-search-form .row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.archive-search-form button {
+  min-height: 44px;
+}
+.archive-life-results {
+  display: grid;
+  gap: 16px;
+  padding: 0;
+  list-style: none;
+}
+.archive-life-results > li {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+}
+.archive-life-results p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.archive-life-results small,
+.archive-life-results time {
+  display: block;
+}

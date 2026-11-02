@@ -1,18 +1,8 @@
 from dataclasses import dataclass
-from datetime import date
 from typing import Any, Literal
 
 from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, Field
-from runtime.memory_scope import MemorySource
-
-
-@dataclass(frozen=True)
-class DiaryIndexSource:
-    user_id: int
-    entry_date: date
-    title: str
-    body: str
 
 
 @dataclass(frozen=True)
@@ -70,13 +60,3 @@ class MemoryListItem(MemorySummary):
 class MemoryDetail(MemoryListItem):
     evidence: list[MemoryEvidence]
     revisions: list[dict[str, Any]]
-
-
-@dataclass(frozen=True)
-class SystemMemoryWrite:
-    content: str
-    context: str
-    tags: tuple[str, ...]
-    source: MemorySource
-    slot_key: str
-    source_event_id: int | None = None

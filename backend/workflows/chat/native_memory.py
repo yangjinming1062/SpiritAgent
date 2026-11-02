@@ -1,6 +1,6 @@
 import json
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import datetime
 from typing import Any
 
 from features.memory.memory_learning import MemoryReviewContext, load_review_context
@@ -83,24 +83,15 @@ class NativeMemory:
                 if query is not None and not isinstance(query, str):
                     return tool_error("query must be a string")
                 query = query or ""
-                raw_date = args.get("diary_date")
-                diary_date = None
-                if raw_date is not None:
-                    if not isinstance(raw_date, str):
-                        return tool_error("diary_date must be YYYY-MM-DD")
-                    diary_date = date.fromisoformat(raw_date)
-                    if diary_date.isoformat() != raw_date:
-                        return tool_error("diary_date must be YYYY-MM-DD")
-                if not query.strip() and diary_date is None:
-                    return tool_error("Provide query or diary_date")
-                vector = await embed_memory_text(self._scope.user_id, query) if diary_date is None else None
+                if not query.strip():
+                    return tool_error("Provide a non-empty query")
+                vector = await embed_memory_text(self._scope.user_id, query)
                 async with session_scope() as db:
                     rows = await retrieve_hybrid_memories(
                         db,
                         self._scope,
                         query,
                         query_embedding=vector,
-                        diary_date=diary_date,
                     )
                 return json.dumps(
                     {"memories": [row.model_dump(mode="json") for row in rows]}, default=str, ensure_ascii=False

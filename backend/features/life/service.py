@@ -25,7 +25,6 @@ from .models import (
     LifeStep,
     PursuitEvidence,
 )
-from .ports import LifeEventProjection, project_life_events
 from .queries import result_reference
 from .schemas import (
     EVIDENCE_EVENT_KINDS,
@@ -34,6 +33,7 @@ from .schemas import (
     LifeDecisionRequest,
     LifeEventInput,
 )
+from .search import index_life_events
 
 
 class LifeStateConflictError(ValueError):
@@ -45,6 +45,30 @@ class LifeInputError(ValueError):
 
 
 logger = get_logger(__name__)
+
+
+async def _index_events(db: AsyncSession, user_id: int, events: Sequence[LifeEvent]) -> None:
+    meaningful = [event for event in events if event.is_meaningful]
+    if not meaningful:
+        return
+    try:
+        async with db.begin_nested():
+            await index_life_events(db, user_id, meaningful)
+        return
+    except Exception:
+        logger.warning("life search batch indexing failed", extra={"user_id": user_id}, exc_info=True)
+    if len(meaningful) == 1:
+        return
+    for event in meaningful:
+        try:
+            async with db.begin_nested():
+                await index_life_events(db, user_id, [event])
+        except Exception:
+            logger.warning(
+                "life search event indexing failed",
+                extra={"user_id": user_id, "event_id": event.id},
+                exc_info=True,
+            )
 
 
 def result_values(value: dict) -> dict[str, Any]:
@@ -59,31 +83,6 @@ def result_values(value: dict) -> dict[str, Any]:
 def assign_result(row: LifeStep | LifeEvent, value: dict) -> None:
     for key, item in result_values(value).items():
         setattr(row, key, item)
-
-
-async def _project_events(db: AsyncSession, user_id: int, events: Sequence[LifeEventProjection]) -> None:
-    meaningful = [item for item in events if item.event.is_meaningful]
-    if not meaningful:
-        return
-    try:
-        async with db.begin_nested():
-            await project_life_events(db, user_id, meaningful)
-        return
-    except Exception:
-        logger.warning("life event memory batch projection failed", extra={"user_id": user_id}, exc_info=True)
-    if len(meaningful) == 1:
-        return
-    # 一条投影失败不能阻止其余事实生成索引；异常路径单独隔离重试。
-    for item in meaningful:
-        try:
-            async with db.begin_nested():
-                await project_life_events(db, user_id, [item])
-        except Exception:
-            logger.warning(
-                "life event memory projection failed",
-                extra={"user_id": user_id, "event_key": item.event.event_key},
-                exc_info=True,
-            )
 
 
 def _event_matches(row: LifeEvent, event: LifeEventInput) -> bool:
@@ -541,15 +540,15 @@ async def _record_event_batch(
             set_committed_value(state, key, value)
         flag_dirty(state)
     records = {**existing, **inserted}
-    projections = [
-        LifeEventProjection(item.model_copy(deep=True), records[item.event_key].occurred_at, records[item.event_key].id)
+    from_records = [
+        records[item.event_key]
         for item in inputs
         if item.event_key in inserted or _event_matches(records[item.event_key], item)
     ]
     for row in inserted.values():
         flag_dirty(row)
-    await _project_events(db, user_id, projections)
     await db.flush()
+    await _index_events(db, user_id, from_records)
     return [records[item.event_key] for item in inputs]
 
 
