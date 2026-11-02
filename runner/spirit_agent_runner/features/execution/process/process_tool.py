@@ -44,11 +44,8 @@ PROCESS_SCHEMA = {
             "limit": {"type": "integer", "description": "Max lines to return for 'log' action", "minimum": 1},
         },
         "required": ["action"],
+        # list 禁带 session_id、其余动作必带的精确校验由 handler 执行（backend 不校验 anyOf/allOf）。
         "allOf": [
-            {
-                "if": {"properties": {"action": {"const": "list"}}},
-                "then": {"not": {"required": ["session_id"]}},
-            },
             {
                 "if": {
                     "properties": {
@@ -78,11 +75,19 @@ def _coerce_int(value: Any, field_name: str) -> int | None:
         raise ValueError(f"{field_name} must be an integer, got {type(value).__name__}: {value!r}") from None
 
 
-def _handle_process(args: dict[str, Any], task_id: str) -> dict[str, Any]:
+def _handle_process(args: dict[str, Any]) -> dict[str, Any]:
     process_registry = get_process_registry()
     action = args.get("action", "")
-    valid_actions = {"list", "poll", "log", "wait", "kill", "write", "submit", "close"}
-    if not isinstance(action, str) or action not in valid_actions:
+    if not isinstance(action, str) or action not in {
+        "list",
+        "poll",
+        "log",
+        "wait",
+        "kill",
+        "write",
+        "submit",
+        "close",
+    }:
         return {"error": f"Unknown process action: {action}. Use: list, poll, log, wait, kill, write, submit, close"}
     session_id = args.get("session_id", "")
     if not isinstance(session_id, str):
@@ -109,7 +114,7 @@ def _handle_process(args: dict[str, Any], task_id: str) -> dict[str, Any]:
         return {"error": str(e)}
     match action:
         case "list":
-            return {"processes": process_registry.list_sessions(task_id=task_id)}
+            return {"processes": process_registry.list_sessions()}
         case "poll":
             return process_registry.poll(session_id)
         case "log":
@@ -128,9 +133,6 @@ def _handle_process(args: dict[str, Any], task_id: str) -> dict[str, Any]:
             return process_registry.submit_stdin(session_id, args["data"])
         case "close":
             return process_registry.close_stdin(session_id)
-        case _:
-            # action was validated above; keep a defensive branch if the dispatch table changes.
-            return {"error": f"Unknown process action: {action}"}
 
 
 def get_tool_definitions() -> list[ToolDefinition]:
@@ -139,10 +141,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="process",
             toolset_id="process_management",
             schema=PROCESS_SCHEMA,
-            handler=lambda context, args: _handle_process(
-                args,
-                task_id=context.task_id,
-            ),
+            handler=lambda _context, args: _handle_process(args),
             check_fn=None,
             is_async=False,
         ),

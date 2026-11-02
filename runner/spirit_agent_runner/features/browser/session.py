@@ -19,7 +19,7 @@ from spirit_agent_runner.features.browser.dialog_manager import (
 from spirit_agent_runner.features.browser.engine.launcher import NativeBrowserProcess, launch_chromium
 from spirit_agent_runner.features.browser.profile_manager import cleanup_old_profiles, profile_root, resolve_profile_dir
 from spirit_agent_runner.features.browser.supervisor import CDPSupervisor
-from spirit_agent_runner.features.browser.supervisor_registry import SupervisorRegistry
+from spirit_agent_runner.features.browser.supervisor_registry import SESSION_KEY, SupervisorRegistry
 
 logger = logging.getLogger(__name__)
 _DEFAULT_INACTIVITY_TIMEOUT_S = 300
@@ -105,12 +105,15 @@ def allow_private_urls() -> bool:
 
 
 class BrowserManager:
-    """Own task sessions, supervisor lifecycle locks and idle cleanup for one Runner."""
+    """Own task sessions, supervisor lifecycle locks and idle cleanup for one Runner.
+
+    工具上下文无 task 维度（ToolExecuteRequest 不携带 task_id），全部会话共用固定键。
+    """
 
     def __init__(self, config_provider: Callable[[], dict[str, Any]] = load_config) -> None:
         self._config_provider = config_provider
         self._registry = SupervisorRegistry()
-        self._sessions: dict[str, SessionInfo] = {}
+        self._session: SessionInfo | None = None
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -130,14 +133,14 @@ class BrowserManager:
                 self._thread.start()
 
     @contextmanager
-    def session(self, task_id: str, *, create: bool = False) -> Iterator[SessionInfo | None]:
-        with self._registry.lifecycle(task_id), self._lock:
+    def session(self, *, create: bool = False) -> Iterator[SessionInfo | None]:
+        with self._registry.lifecycle(), self._lock:
             if self._closed:
                 raise RuntimeError("Browser manager is closed")
-            info = self._sessions.get(task_id)
+            info = self._session
             if info is None and create:
                 info = SessionInfo()
-                self._sessions[task_id] = info
+                self._session = info
             if info is not None:
                 info.active_users += 1
                 info.last_active_at = time.time()
@@ -145,17 +148,19 @@ class BrowserManager:
             yield info
         finally:
             if info is not None:
-                with self._registry.lifecycle(task_id), self._lock:
+                with self._registry.lifecycle(), self._lock:
                     info.active_users -= 1
                     info.last_active_at = time.time()
 
-    def ensure_supervisor(self, task_id: str) -> CDPSupervisor:
-        with self._registry.lifecycle(task_id):
+    def ensure_supervisor(self) -> CDPSupervisor:
+        with self._registry.lifecycle():
             with self._lock:
                 if self._closed:
                     raise RuntimeError("Browser manager is closed")
-                info = self._sessions[task_id]
-            supervisor = self._registry.get(task_id)
+                info = self._session
+                if info is None:
+                    raise RuntimeError("Browser session is not open")
+            supervisor = self._registry.get()
             if supervisor is not None and supervisor.active:
                 try:
                     supervisor.pages.ensure_active_page()
@@ -170,18 +175,17 @@ class BrowserManager:
                 raise RuntimeError(
                     "Browser connection is recovering while other tool calls are still using this session",
                 )
-            self._registry.stop(task_id)
+            self._registry.stop()
             info.supervisor = None
             if info.launch_handle is not None:
                 info.launch_handle.terminate()
                 info.launch_handle = None
             try:
                 if not (cdp_url := get_cdp_override()):
-                    info.launch_handle = launch_chromium(profile_dir=resolve_profile_dir(task_id))
+                    info.launch_handle = launch_chromium(profile_dir=resolve_profile_dir(SESSION_KEY))
                     cdp_url = info.launch_handle.cdp_url
                 policy, timeout_s = get_dialog_policy_config()
                 supervisor = self._registry.get_or_start(
-                    task_id,
                     cdp_url,
                     launch_handle=info.launch_handle,
                     auto_owned=info.launch_handle is not None,
@@ -196,10 +200,10 @@ class BrowserManager:
             info.supervisor = supervisor
             return supervisor
 
-    def _shutdown_session(self, task_id: str, info: SessionInfo) -> None:
+    def _shutdown_session(self, info: SessionInfo) -> None:
         try:
             if info.supervisor is not None:
-                self._registry.stop(task_id, expected=info.supervisor)
+                self._registry.stop(expected=info.supervisor)
         finally:
             info.supervisor = None
             if info.launch_handle is not None:
@@ -209,19 +213,17 @@ class BrowserManager:
     def cleanup_idle(self) -> None:
         cutoff = time.time() - inactivity_timeout_s(self._config_provider())
         with self._lock:
-            expired = [
-                (key, info)
-                for key, info in self._sessions.items()
-                if info.active_users == 0 and info.last_active_at < cutoff
-            ]
-        for task_id, info in expired:
-            with self._registry.lifecycle(task_id):
+            info = self._session
+            if info is not None and (info.active_users or info.last_active_at >= cutoff):
+                info = None
+        if info is not None:
+            with self._registry.lifecycle():
                 with self._lock:
-                    if self._sessions.get(task_id) is not info or info.active_users or info.last_active_at >= cutoff:
-                        continue
-                    del self._sessions[task_id]
-                logger.info("Closing inactive browser session: %s", task_id)
-                self._shutdown_session(task_id, info)
+                    if self._session is not info or info.active_users or info.last_active_at >= cutoff:
+                        return
+                    self._session = None
+                logger.info("Closing inactive browser session")
+                self._shutdown_session(info)
 
     def _cleanup_worker(self) -> None:
         while not self._stop.wait(30.0):
@@ -236,19 +238,19 @@ class BrowserManager:
                 return
             self._closed = True
             self._stop.set()
-            sessions = list(self._sessions.items())
+            info = self._session
         if self._thread is not None and self._thread is not threading.current_thread():
             self._thread.join(timeout=5.0)
-        for task_id, info in sessions:
-            with self._registry.lifecycle(task_id):
+        if info is not None:
+            with self._registry.lifecycle():
                 with self._lock:
-                    if self._sessions.get(task_id) is not info:
-                        continue
-                    del self._sessions[task_id]
+                    if self._session is not info:
+                        return
+                    self._session = None
                 try:
-                    self._shutdown_session(task_id, info)
+                    self._shutdown_session(info)
                 except Exception:
-                    logger.exception("Browser session shutdown failed for %s", task_id)
+                    logger.exception("Browser session shutdown failed")
         self.camofox.close()
         try:
             cleanup_old_profiles(root=profile_root(self._config_provider()))

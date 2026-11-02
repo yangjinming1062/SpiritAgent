@@ -5,7 +5,7 @@ from contextlib import contextmanager
 
 from spirit_agent_runner.contracts.config import cfg_get, load_config
 
-_MAX_PATHS_PER_TASK = 4096
+_MAX_PATHS = 4096
 
 
 def _disabled() -> bool:
@@ -23,17 +23,14 @@ class FileStateRegistry:
     """记录读/写版本，写入前提示外部修改；同路径读改写经 lock_path 串行。"""
 
     def __init__(self) -> None:
-        self._reads: dict[str, dict[str, tuple[float, bool]]] = {}  # task_id → path → (mtime, 是否局部读取)
+        self._reads: dict[str, tuple[float, bool]] = {}  # path → (mtime, 是否局部读取)
         self._path_locks: dict[str, threading.Lock] = {}
         self._meta_lock = threading.Lock()
         self._state_lock = threading.Lock()
 
-    def clear(self, task_id: str | None = None) -> None:
+    def clear(self) -> None:
         with self._state_lock:
-            if task_id is None:
-                self._reads.clear()
-            else:
-                self._reads.pop(task_id, None)
+            self._reads.clear()
 
     @contextmanager
     def lock_path(self, resolved: str) -> Iterator[None]:
@@ -42,28 +39,28 @@ class FileStateRegistry:
         with lock:
             yield
 
-    def _record(self, task_id: str, resolved: str, *, partial: bool) -> None:
+    def _record(self, resolved: str, *, partial: bool) -> None:
         if _disabled() or (mtime := _safe_mtime(resolved)) is None:
             return
         with self._state_lock:
-            reads = self._reads.setdefault(task_id, {})
-            reads.pop(resolved, None)
-            reads[resolved] = (mtime, partial)
-            for key in list(reads)[: max(0, len(reads) - _MAX_PATHS_PER_TASK)]:
-                del reads[key]
+            # 重建插入序保证最新读写排在末尾，超限时淘汰最旧。
+            self._reads.pop(resolved, None)
+            self._reads[resolved] = (mtime, partial)
+            for key in list(self._reads)[: max(0, len(self._reads) - _MAX_PATHS)]:
+                del self._reads[key]
 
-    def record_read(self, task_id: str, resolved: str, *, partial: bool) -> None:
-        self._record(task_id, resolved, partial=partial)
+    def record_read(self, resolved: str, *, partial: bool) -> None:
+        self._record(resolved, partial=partial)
 
-    def note_write(self, task_id: str, resolved: str) -> None:
-        self._record(task_id, resolved, partial=False)
+    def note_write(self, resolved: str) -> None:
+        self._record(resolved, partial=False)
 
-    def check_stale(self, task_id: str, resolved: str, *, whole_file: bool) -> str | None:
+    def check_stale(self, resolved: str, *, whole_file: bool) -> str | None:
         """返回面向模型的提示；``whole_file`` 为整文件覆盖时额外提示只读过局部。"""
         if _disabled():
             return None
         with self._state_lock:
-            stamp = self._reads.get(task_id, {}).get(resolved)
+            stamp = self._reads.get(resolved)
         if stamp is None or (current_mtime := _safe_mtime(resolved)) is None:
             return None
         if current_mtime != stamp[0]:

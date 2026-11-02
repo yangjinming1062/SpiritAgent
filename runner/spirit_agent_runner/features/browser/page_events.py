@@ -40,13 +40,12 @@ class PageEvents:
 
     def dispatch_frame_navigated(self, params: dict[str, Any]) -> None:
         fid = params.get("frame", {}).get("id", "")
-        waiters = self._frame_navigated_waiters.pop(fid, ()) or ()
-        for fut in waiters:
+        for fut in self._frame_navigated_waiters.pop(fid, []):
             if not fut.done():
                 fut.set_result(params)
 
     def dispatch_lifecycle(self, params: dict[str, Any]) -> None:
-        waiters = self._lifecycle_waiters.pop((params.get("loaderId", ""), params.get("name", "")), ()) or ()
+        waiters = self._lifecycle_waiters.pop((params.get("loaderId", ""), params.get("name", "")), [])
         for fut in waiters:
             if not fut.done():
                 fut.set_result(params)

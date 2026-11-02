@@ -31,16 +31,12 @@ def local_run_env() -> dict[str, str]:
 def _resolve_shell_init_files() -> list[str]:
     terminal_cfg = cfg_get(load_config(), "terminal", default={})
     explicit = [str(f) for f in (cfg_get(terminal_cfg, "shell_init_files", default=None) or []) if f]
-    auto_bashrc = is_truthy_value(cfg_get(terminal_cfg, "auto_source_bashrc"), default=True)
-    return [
-        p
-        for raw in (
-            explicit
-            if explicit
-            else (["~/.profile", "~/.bash_profile", "~/.bashrc"] if auto_bashrc and not IS_WINDOWS else [])
-        )
-        if os.path.isfile(p := os.path.expandvars(os.path.expanduser(raw)))
-    ]
+    candidates = (
+        explicit
+        if explicit
+        else (["~/.profile", "~/.bash_profile", "~/.bashrc"] if is_truthy_value(cfg_get(terminal_cfg, "auto_source_bashrc"), default=True) and not IS_WINDOWS else [])
+    )
+    return [p for raw in candidates if os.path.isfile(p := os.path.expandvars(os.path.expanduser(raw)))]
 
 
 def _prepend_shell_init(cmd_string: str, files: list[str]) -> str:
@@ -83,11 +79,10 @@ class LocalEnvironment(BaseEnvironment):
     ) -> subprocess.Popen:
         if login and (init_files := _resolve_shell_init_files()):
             cmd_string = _prepend_shell_init(cmd_string, init_files)
-        args = (
-            [find_bash(config=load_config()), "-l", "-c", cmd_string]
-            if login
-            else [find_bash(config=load_config()), "-c", cmd_string]
-        )
+        args = [find_bash(config=load_config())]
+        if login:
+            args.append("-l")
+        args += ["-c", cmd_string]
         safe_cwd = resolve_safe_cwd(self.cwd)
         if safe_cwd != self.cwd:
             if safe_cwd != (msys_to_windows_path(self.cwd) if IS_WINDOWS else self.cwd):
@@ -120,7 +115,8 @@ class LocalEnvironment(BaseEnvironment):
             with contextlib.suppress(OSError):
                 proc.kill()
 
-    def _update_cwd(self, result: dict) -> None:
+    def _extract_cwd_from_output(self, result: dict) -> None:
+        """本地额外信任 cwd 文件，并校验 marker 结果是存在目录。"""
         try:
             with open(self._cwd_file, encoding="utf-8") as f:
                 cwd_path = f.read().strip()
@@ -130,9 +126,6 @@ class LocalEnvironment(BaseEnvironment):
             cwd_path = msys_to_windows_path(cwd_path)
         if cwd_path and os.path.isdir(cwd_path):
             self.cwd = cwd_path
-        self._extract_cwd_from_output(result)
-
-    def _extract_cwd_from_output(self, result: dict) -> None:
         prev_cwd = self.cwd
         super()._extract_cwd_from_output(result)
         if self.cwd != prev_cwd:

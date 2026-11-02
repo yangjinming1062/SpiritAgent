@@ -25,11 +25,6 @@ logger = logging.getLogger(__name__)
 _ASKPASS_SECRET_ENV = "SPIRITAGENT_SSH_ASKPASS_SECRET"
 
 
-def _ensure_ssh_available() -> None:
-    if not shutil.which("ssh"):
-        raise RuntimeError("SSH is not installed or not in PATH. Install OpenSSH client.")
-
-
 class SSHEnvironment(BaseEnvironment):
     """基于 SSH ControlMaster 的远端终端：每个实例独占一条主连接，文件经 tar 增量同步。"""
 
@@ -37,8 +32,8 @@ class SSHEnvironment(BaseEnvironment):
         self,
         host: str,
         user: str,
-        cwd: str = "~",
-        timeout: int = 60,
+        cwd: str,
+        timeout: int,
         port: int = 22,
         key_path: str = "",
         password: str = "",
@@ -56,7 +51,8 @@ class SSHEnvironment(BaseEnvironment):
         self.control_socket = control_dir / f"{self._session_id}.sock"
         self._askpass: Path | None = None
         try:
-            _ensure_ssh_available()
+            if not shutil.which("ssh"):
+                raise RuntimeError("SSH is not installed or not in PATH. Install OpenSSH client.")
             self._askpass = self._create_askpass(control_dir)
             self._establish_connection()
             self._remote_home = self._detect_remote_home()
@@ -260,7 +256,7 @@ class SSHEnvironment(BaseEnvironment):
         stdin_data: str | None = None,
     ) -> subprocess.Popen:
         cmd = self._build_ssh_command()
-        cmd.extend(["bash", "-l", "-c", shlex.quote(cmd_string)] if login else ["bash", "-c", shlex.quote(cmd_string)])
+        cmd.append(("bash -l -c " if login else "bash -c ") + shlex.quote(cmd_string))
         return _popen_bash(cmd, stdin_data, self._ssh_env())
 
     def _close_connection(self) -> None:

@@ -1,23 +1,22 @@
 import difflib
 import os
+import re
 from typing import Any
 
 from spirit_agent_runner.contracts.output import get_max_line_length, get_max_lines
 from spirit_agent_runner.features.files.binary_extensions import has_binary_extension
 from spirit_agent_runner.features.files.models import (
-    _CONTEXT_DELIM_RE,
-    _SEARCH_LINE_RE,
-    _UTF8_BOM,
     DEFAULT_READ_LIMIT,
-    DEFAULT_READ_OFFSET,
-    DEFAULT_SEARCH_LIMIT,
-    DEFAULT_SEARCH_OFFSET,
     MAX_EDIT_BYTES,
     MAX_MATCH_CONTENT,
     ReadResult,
     SearchMatch,
     SearchResult,
 )
+
+_UTF8_BOM = "﻿"
+_SEARCH_LINE_RE = re.compile(r"^([A-Za-z]:)?(.*?):(\d+):(.*)$")
+_CONTEXT_DELIM_RE = re.compile(r"-(\d+)-")
 
 
 def _not_utf8_error(path: str) -> str:
@@ -32,25 +31,17 @@ def too_large_to_edit_error(path: str, size: int) -> str:
 
 
 def _detect_line_ending(sample: str) -> str | None:
-    """返回 ``sample`` 中的主要换行符；无法判断时返回 None。"""
-    if not sample:
-        return None
+    """返回 ``sample`` 开头的主要换行符；无法判断时返回 None。"""
     head = sample[:4096]
     if "\r\n" in head:
         return "\r\n"
-    if "\n" in head:
-        return "\n"
-    return None
+    return "\n" if "\n" in head else None
 
 
 def _normalize_line_endings(text: str, target: str) -> str:
     """将 ``text`` 中所有换行符统一为 ``target``（``\\n`` 或 ``\\r\\n``）。"""
-    lf_normalized = text.replace("\r\n", "\n").replace("\r", "\n")
-    if target == "\n":
-        return lf_normalized
-    if target == "\r\n":
-        return lf_normalized.replace("\n", "\r\n")
-    return text
+    lf = text.replace("\r\n", "\n").replace("\r", "\n")
+    return lf if target == "\n" else lf.replace("\n", "\r\n") if target == "\r\n" else text
 
 
 def _strip_bom(text: str) -> tuple[str, bool]:
@@ -61,7 +52,6 @@ def _strip_bom(text: str) -> tuple[str, bool]:
 
 
 def _has_bom(text: str | None) -> bool:
-    """若 ``text`` 以 UTF-8 BOM 开头则返回 True。"""
     return bool(text) and text.startswith(_UTF8_BOM)
 
 
@@ -142,12 +132,12 @@ def rank_similar_names(names: list[str], filename: str) -> list[str]:
             score = 70
         elif lower_name in lf:
             score = 60
-        elif lf in lower_name and len(lf) > 2:
+        elif len(lf) > 2 and lf in lower_name:
             score = 40
-        elif ext and os.path.splitext(lf)[1] == ext:
-            common = set(lower_name) & set(lf)
-            if len(common) >= max(len(lower_name), len(lf)) * 0.4:
-                score = 30
+        elif ext and os.path.splitext(lf)[1] == ext and len(set(lower_name) & set(lf)) >= max(
+            len(lower_name), len(lf)
+        ) * 0.4:
+            score = 30
         if score > 0:
             scored.append((score, name))
     scored.sort(key=lambda x: -x[0])
@@ -172,33 +162,14 @@ def _coerce_int(value: Any, default: int) -> int:
         return default
 
 
-def normalize_read_pagination(offset: Any = DEFAULT_READ_OFFSET, limit: Any = DEFAULT_READ_LIMIT) -> tuple[int, int]:
+def normalize_read_pagination(offset: Any = 1, limit: Any = DEFAULT_READ_LIMIT) -> tuple[int, int]:
     """返回 read_file 的安全分页边界。"""
-    normalized_offset = max(1, _coerce_int(offset, DEFAULT_READ_OFFSET))
-    normalized_limit = max(1, min(_coerce_int(limit, DEFAULT_READ_LIMIT), get_max_lines()))
-    return normalized_offset, normalized_limit
+    return max(1, _coerce_int(offset, 1)), max(1, min(_coerce_int(limit, DEFAULT_READ_LIMIT), get_max_lines()))
 
 
-def normalize_search_pagination(
-    offset: Any = DEFAULT_SEARCH_OFFSET,
-    limit: Any = DEFAULT_SEARCH_LIMIT,
-) -> tuple[int, int]:
+def normalize_search_pagination(offset: Any = 0, limit: Any = 50) -> tuple[int, int]:
     """返回 shell head/tail 管线安全的搜索分页边界。"""
-    normalized_offset = max(0, _coerce_int(offset, DEFAULT_SEARCH_OFFSET))
-    normalized_limit = max(1, _coerce_int(limit, DEFAULT_SEARCH_LIMIT))
-    return normalized_offset, normalized_limit
-
-
-def _split_tool_diagnostics(output: str) -> tuple[str, str]:
-    """把 rg/grep 自身的诊断行（stderr 合并进输出）与匹配结果分开。"""
-    diagnostics: list[str] = []
-    payload: list[str] = []
-    for line in output.split("\n"):
-        if not line.strip():
-            continue
-        stripped = line.lstrip()
-        (diagnostics if stripped.startswith(("rg: ", "grep: ")) else payload).append(line)
-    return "\n".join(diagnostics), "\n".join(payload)
+    return max(0, _coerce_int(offset, 0)), max(1, _coerce_int(limit, 50))
 
 
 def _parse_search_context_line(line: str) -> tuple[str, int, str] | None:
@@ -211,14 +182,12 @@ def _parse_search_context_line(line: str) -> tuple[str, int, str] | None:
     if match is None:
         return None
     path = line[: match.start()]
-    if not path:
-        return None
-    return path, int(match.group(1)), line[match.end() :]
+    return (path, int(match.group(1)), line[match.end() :]) if path else None
 
 
 def _parse_search_output(stdout: str, output_mode: str, limit: int, offset: int, context: int) -> SearchResult:
-    """把 rg/grep 输出解析为分页后的 SearchResult。"""
-    lines = [ln for ln in stdout.split("\n") if ln]
+    """把 rg/grep 输出解析为分页后的 SearchResult；丢弃混入 stdout 的 rg/grep 自身诊断行。"""
+    lines = [ln for ln in stdout.split("\n") if ln and not ln.lstrip().startswith(("rg: ", "grep: "))]
     if output_mode == "files_only":
         return SearchResult(
             files=lines[offset : offset + limit],

@@ -85,7 +85,7 @@ class RunnerEmptyRequest(BaseModel):
 
 
 class RunnerToolSchema(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
     name: str
     description: str = ""
     parameters: dict[str, JsonValue] = Field(default_factory=dict)
@@ -114,7 +114,6 @@ class RunnerCallResult(BaseModel):
 
 class RunnerCancelResult(BaseModel):
     ok: bool
-    error: Literal["no_in_flight"] | None = None
 
 
 class RunnerCapabilitiesPayload(BaseModel):
@@ -146,23 +145,6 @@ class RunnerCapabilitiesChangedPayload(BaseModel):
     probe_failed: bool
 
 
-class RunnerSystemInfo(BaseModel):
-    platform: str
-    python: str
-    release: str
-    machine: str
-
-
-class RunnerInfoResult(RunnerReadyPayload):
-    started_at: float
-    uptime_seconds: float
-    reconnect_count: int
-    tool_count: int
-    network_reachable: bool
-    disk_free_bytes: int | None
-    system: RunnerSystemInfo
-
-
 @dataclass(frozen=True, slots=True)
 class RunnerRpcContract:
     request: type[BaseModel]
@@ -173,7 +155,6 @@ RUNNER_CONTRACTS = {
     "tools.execute": RunnerRpcContract(ToolExecuteRequest, RunnerToolResult),
     "tools.list": RunnerRpcContract(RunnerEmptyRequest, RunnerToolsResult),
     "config.replace": RunnerRpcContract(ConfigReplaceRequest, RunnerConfigResult),
-    "runner.info": RunnerRpcContract(RunnerEmptyRequest, RunnerInfoResult),
     "calls.get": RunnerRpcContract(CallGetRequest, RunnerCallResult),
     "calls.cancel": RunnerRpcContract(CallCancelRequest, RunnerCancelResult),
 }

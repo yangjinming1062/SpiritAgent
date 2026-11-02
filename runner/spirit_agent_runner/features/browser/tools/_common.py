@@ -59,7 +59,10 @@ def website_policy_error(url: str) -> dict[str, Any] | None:
 
 
 def guard_browser_url(url: str, *, allow_private: bool | None = None) -> tuple[str, dict[str, Any] | None]:
-    """浏览器 URL 预检（凭据/协议/SSRF/站点策略）；返回 (url, error|None)。页面内跳转不经此。"""
+    """浏览器 URL 预检（凭据/协议/SSRF/站点策略）；返回 (url, error|None)。页面内跳转不经此。
+
+    allow_private 供调用方在单次请求内复用同一配置读取结果（navigate 的跳转复核）。
+    """
     if url == "about:blank":
         return url, None
     if SECRET_PREFIX_RE.search(url) or SECRET_PREFIX_RE.search(unquote(url)):
@@ -111,12 +114,11 @@ def compact_snapshot(supervisor: CDPSupervisor) -> dict[str, Any]:
 
 
 @contextmanager
-def browser_session(task_id: str | None, *, create: bool = False) -> Iterator[tuple[CDPSupervisor | None, str]]:
+def browser_session(*, create: bool = False) -> Iterator[CDPSupervisor | None]:
     """持有会话至工具返回；create 时按当前配置连接或启动，无会话由调用方返回错误。"""
-    key = task_id or "default"
     manager = current_manager()
-    with manager.session(key, create=create) as info:
+    with manager.session(create=create) as info:
         supervisor = info.supervisor if info is not None else None
         if create:
-            supervisor = manager.ensure_supervisor(key)
-        yield supervisor, key
+            supervisor = manager.ensure_supervisor()
+        yield supervisor

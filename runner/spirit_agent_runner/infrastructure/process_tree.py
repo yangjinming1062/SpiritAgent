@@ -4,7 +4,6 @@ import os
 import signal
 import subprocess
 import time
-from dataclasses import dataclass
 from typing import Any
 
 import psutil
@@ -20,14 +19,6 @@ SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
 SIGTERM = getattr(signal, "SIGTERM", 15)
 
 
-@dataclass(frozen=True)
-class TerminationResult:
-    target_pid: int
-    pgid: int | None
-    escalated: bool
-    elapsed_seconds: float
-
-
 def terminate_tree(
     target: ProcessTarget,
     *,
@@ -35,12 +26,13 @@ def terminate_tree(
     force_timeout: float = 2.0,
     escalate: bool = False,
     pgid: int | None = None,
-) -> TerminationResult:
+) -> None:
     """软杀 → 等待 → 可选强杀 → psutil 兜底."""
     pid = _resolve_pid(target)
     if IS_WINDOWS:
-        return _terminate_tree_windows(target, pid, graceful_timeout, force_timeout, escalate)
-    return _terminate_tree_posix(target, pid, graceful_timeout, force_timeout, escalate, pgid)
+        _terminate_tree_windows(target, pid, graceful_timeout, force_timeout, escalate)
+    else:
+        _terminate_tree_posix(target, pid, graceful_timeout, force_timeout, escalate, pgid)
 
 
 def _resolve_pid(target: ProcessTarget) -> int:
@@ -56,9 +48,7 @@ def _terminate_tree_posix(
     force_timeout: float,
     escalate: bool,
     hinted_pgid: int | None,
-) -> TerminationResult:
-    start = time.monotonic()
-
+) -> None:
     resolved_pgid = hinted_pgid
     if resolved_pgid is None:
         with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
@@ -87,7 +77,6 @@ def _terminate_tree_posix(
             os.kill(pid, SIGTERM)
         main_group_exited = _wait_for_pid(target, pid, graceful_timeout)
 
-    escalated = False
     if not main_group_exited and escalate:
         if can_signal_group and resolved_pgid is not None:
             with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
@@ -97,7 +86,6 @@ def _terminate_tree_posix(
             with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
                 os.kill(pid, SIGKILL)
             _wait_for_pid(target, pid, force_timeout)
-        escalated = True
 
     # 不能因 main_group_exited=True 就 return —— 孙子若 setsid 逃出主 pgid 仍存活。
     for orphan_pid in orphan_pids:
@@ -116,8 +104,6 @@ def _terminate_tree_posix(
             continue
         with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
             os.kill(orphan_pid, SIGKILL)
-
-    return TerminationResult(pid, resolved_pgid if can_signal_group else None, escalated, time.monotonic() - start)
 
 
 def _wait_for_pgroup(target: ProcessTarget, pgid: int, timeout: float) -> bool:
@@ -163,10 +149,8 @@ def _terminate_tree_windows(
     graceful_timeout: float,
     force_timeout: float,
     escalate: bool,
-) -> TerminationResult:
-    start = time.monotonic()
+) -> None:
     proc = target if isinstance(target, subprocess.Popen) else None
-    escalated = False
 
     kill_tree(pid, force=False)
     try:
@@ -179,7 +163,6 @@ def _terminate_tree_windows(
         pass
     except (subprocess.TimeoutExpired, psutil.TimeoutExpired):
         kill_tree(pid, force=True)
-        escalated = True
 
     if escalate and not (proc is not None and proc.poll() is not None) and pid_exists(pid):
         try:
@@ -191,6 +174,3 @@ def _terminate_tree_windows(
             pass
         except (subprocess.TimeoutExpired, psutil.TimeoutExpired):
             kill_tree(pid, force=True, timeout=force_timeout)
-            escalated = True
-
-    return TerminationResult(pid, None, escalated, time.monotonic() - start)

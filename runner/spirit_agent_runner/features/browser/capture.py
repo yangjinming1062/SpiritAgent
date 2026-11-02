@@ -96,7 +96,6 @@ class CaptureOperations:
                 "ok": False,
                 "error": f"Element '{ref}' could not be resolved to a DOM element (coordinate-based refs or elements no longer in the DOM cannot be used for screenshot_element)",
             }
-
         sid = (sids := self._session_ids()).active or sids.page
         box = self.send_cdp("DOM.getBoxModel", {"objectId": obj_id}, session_id=sid)
         if not box.get("ok"):
@@ -138,10 +137,9 @@ class CaptureOperations:
         if not res.get("ok"):
             return res
 
-        data_b64 = res.get("result", {}).get("data", "")
-        raw_bytes = base64.b64decode(data_b64)
         out_path = Path(path) if path else Path(tempfile.gettempdir()) / f"element_{uuid.uuid4().hex[:8]}.png"
         out_path.parent.mkdir(parents=True, exist_ok=True)
+        raw_bytes = base64.b64decode(res.get("result", {}).get("data", ""))
         out_path.write_bytes(raw_bytes)
         return {"ok": True, "path": str(out_path), "bytes": len(raw_bytes)}
 
@@ -154,20 +152,21 @@ class CaptureOperations:
         paper_width: float = 8.5,
         paper_height: float = 11.0,
     ) -> dict[str, Any]:
-        sid = (sids := self._session_ids()).active or sids.page
-        params = {
-            "landscape": landscape,
-            "printBackground": print_background,
-            "paperWidth": paper_width,
-            "paperHeight": paper_height,
-        }
-        res = self.send_cdp("Page.printToPDF", params, session_id=sid, timeout=20.0)
+        res = self.send_cdp(
+            "Page.printToPDF",
+            {
+                "landscape": landscape,
+                "printBackground": print_background,
+                "paperWidth": paper_width,
+                "paperHeight": paper_height,
+            },
+            session_id=(sids := self._session_ids()).active or sids.page,
+            timeout=20.0,
+        )
         if not res.get("ok"):
             return res
 
-        data_b64 = res.get("result", {}).get("data", "")
-        raw_bytes = base64.b64decode(data_b64)
         out_path = Path(path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_bytes(raw_bytes)
-        return {"ok": True, "path": str(out_path), "bytes": len(raw_bytes)}
+        out_path.write_bytes(base64.b64decode(res.get("result", {}).get("data", "")))
+        return {"ok": True, "path": str(out_path), "bytes": out_path.stat().st_size}

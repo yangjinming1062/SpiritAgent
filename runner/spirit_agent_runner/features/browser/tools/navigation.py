@@ -49,7 +49,7 @@ def _reject_redirect(final_url: str, original_url: str, allow_private: bool) -> 
     return None
 
 
-def browser_navigate(url: str, task_id: str | None = None) -> dict[str, Any]:
+def browser_navigate(url: str) -> dict[str, Any]:
     """导航到指定 URL 并返回结果对象（含首屏快照、跳转后 SSRF 校验、bot 检测提示）。"""
     if not url.strip():
         return {"success": False, "error": "url is required"}
@@ -59,10 +59,10 @@ def browser_navigate(url: str, task_id: str | None = None) -> dict[str, Any]:
         return url_err
 
     if is_camofox_mode():
-        return camofox_navigate(url, task_id)
+        return camofox_navigate(url)
 
     try:
-        with browser_session(task_id, create=True) as (supervisor, _):
+        with browser_session(create=True) as supervisor:
             if supervisor is None:
                 return no_supervisor()
             nav_res = supervisor.navigate(url)
@@ -90,11 +90,11 @@ def browser_navigate(url: str, task_id: str | None = None) -> dict[str, Any]:
         return {"success": False, "error": f"{type(e).__name__}: {e}"}
 
 
-def browser_back(task_id: str | None = None) -> dict[str, Any]:
+def browser_back() -> dict[str, Any]:
     if is_camofox_mode():
-        return camofox_back(task_id)
+        return camofox_back()
 
-    with browser_session(task_id) as (supervisor, _):
+    with browser_session() as supervisor:
         if supervisor is None:
             return no_supervisor()
 
@@ -110,7 +110,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_navigate",
             toolset_id="browser_automation",
             schema=BROWSER_NAVIGATE_SCHEMA,
-            handler=lambda context, args: browser_navigate(url=args.get("url", ""), task_id=context.task_id),
+            handler=lambda context, args: browser_navigate(url=args.get("url", "")),
             check_fn=check_browser_native_requirements,
             is_async=False,
         ),
@@ -118,7 +118,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_back",
             toolset_id="browser_automation",
             schema=BROWSER_BACK_SCHEMA,
-            handler=lambda context, _args: browser_back(task_id=context.task_id),
+            handler=lambda _context, _args: browser_back(),
             check_fn=check_browser_native_requirements,
             is_async=False,
         ),

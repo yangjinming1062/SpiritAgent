@@ -5,42 +5,50 @@ from collections.abc import Callable
 
 import yaml
 
-from spirit_agent_runner.features.files.models import _LINTER_UNUSABLE_PATTERNS
+# 外部检查器命令：``{file}`` 为占位符；进程内能校验的格式见 LINTERS_INPROC。
+LINTERS: dict[str, str] = {
+    ".js": "node --check {file} 2>&1",
+    # --no-install：防 npx 临时下同名包。
+    ".ts": "npx --no-install tsc --noEmit {file} 2>&1",
+    ".go": "go vet {file} 2>&1",
+    ".rs": "rustfmt --check {file} 2>&1",
+}
+
+# 命令输出命中任一模式时视为检查器自身不可用（环境缺依赖），按 skipped 处理而非报语法错误。
+_LINTER_UNUSABLE_PATTERNS: dict[str, tuple[str, ...]] = {
+    "npx": (
+        "this is not the tsc command you are looking for",
+        "could not determine executable to run",
+        "not found in npm registry",
+        "canceled due to missing packages",
+    ),
+    "rustfmt": ("no input filename given", "error: not a workspace"),
+    "go": ("cannot find package", "go: cannot find main module"),
+}
 
 
 def _looks_like_linter_unusable(base_cmd: str, output: str) -> bool:
-    """若 ``output`` 表明 ``base_cmd`` 自身无法运行则返回 True。"""
     patterns = _LINTER_UNUSABLE_PATTERNS.get(base_cmd)
-    if not patterns:
-        return False
-    lower = output.lower()
-    return any(p in lower for p in patterns)
+    return bool(patterns) and any(p in output.lower() for p in patterns)
 
 
 def _lint_json_inproc(content: str) -> tuple[bool, str]:
-    """进程内 JSON 语法校验。"""
     try:
         json.loads(content)
         return True, ""
-    except json.JSONDecodeError as e:
-        return False, f"JSONDecodeError: {e.msg} (line {e.lineno}, column {e.colno})"
     except Exception as e:
         return False, f"{type(e).__name__}: {e}"
 
 
 def _lint_yaml_inproc(content: str) -> tuple[bool, str]:
-    """进程内 YAML 语法校验。"""
     try:
         yaml.safe_load(content)
         return True, ""
-    except yaml.YAMLError as e:
-        return False, f"YAMLError: {e}"
     except Exception as e:
         return False, f"{type(e).__name__}: {e}"
 
 
 def _lint_toml_inproc(content: str) -> tuple[bool, str]:
-    """进程内 TOML 语法校验。"""
     try:
         tomllib.loads(content)
         return True, ""
@@ -49,7 +57,6 @@ def _lint_toml_inproc(content: str) -> tuple[bool, str]:
 
 
 def _lint_python_inproc(content: str) -> tuple[bool, str]:
-    """通过 ast.parse 进行进程内 Python 语法校验。"""
     try:
         ast.parse(content)
         return True, ""

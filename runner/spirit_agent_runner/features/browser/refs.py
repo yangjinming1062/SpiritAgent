@@ -68,11 +68,9 @@ class Refs:
             self._last_refs.clear()
 
     def record_som(self, elements: list[dict[str, Any]]) -> None:
-        """写入 SoM ref（覆盖 is_visual）；不用裸数字键，避免与 eN/@eN 命名空间冲突。"""
+        """写入 SoM ref（覆盖 is_visual）。"""
         with self._lock:
-            self._last_refs = {
-                k: v for k, v in self._last_refs.items() if not (isinstance(v, dict) and v.get("is_visual"))
-            }
+            self._last_refs = {k: v for k, v in self._last_refs.items() if not (isinstance(v, dict) and v.get("is_visual"))}
             for el in elements:
                 if isinstance(el, dict) and "ref_raw" in el and "ref" in el:
                     for key in (el["ref_raw"], el["ref"]):
@@ -120,7 +118,7 @@ class Refs:
                 if generation != self._generation:
                     return {"ok": False, "error": "The page changed while taking the snapshot; try again."}
 
-            return {"ok": True, "snapshot": text, "refs": refs, "element_count": len(refs) // 2 if refs else 0}
+            return {"ok": True, "snapshot": text, "element_count": len(refs) // 2 if refs else 0}
 
         fut = safe_schedule_threadsafe(_do_snapshot(), loop)
         if fut is None:
@@ -284,31 +282,15 @@ class Refs:
             ):
                 return center[0], center[1], obj_id
 
-        cur_sx, cur_sy = 0.0, 0.0
-        scroll_eval_ok = False
-        try:
-            scroll_res = self._evaluate_runtime(_SCROLL_OFFSET_EXPR)
-            if isinstance(scroll_res, dict) and scroll_res.get("ok") and isinstance(scroll_res.get("result"), dict):
-                cur_sx = float(scroll_res["result"].get("x", 0))
-                cur_sy = float(scroll_res["result"].get("y", 0))
-                scroll_eval_ok = True
-        except Exception as exc:
-            logger.debug("Scroll adjustment evaluation error: %s", exc)
-
         if info and "page_cx" in info and "page_cy" in info:
-            if not scroll_eval_ok:
+            scroll_res = self._evaluate_runtime(_SCROLL_OFFSET_EXPR)
+            if not (scroll_res.get("ok") and isinstance(scroll_res.get("result"), dict)):
                 raise ValueError(f"Element '{ref}' coordinate fallback failed: unable to evaluate page scroll offset")
-            adj_cx = float(info["page_cx"]) - cur_sx
-            adj_cy = float(info["page_cy"]) - cur_sy
+            cur_sx, cur_sy = float(scroll_res["result"].get("x", 0)), float(scroll_res["result"].get("y", 0))
+            adj_cx, adj_cy = float(info["page_cx"]) - cur_sx, float(info["page_cy"]) - cur_sy
             logger.debug(
                 "Self-healing fallback: using page coordinates (%s, %s) with scroll (%s, %s) -> (%s, %s) for %s",
-                info["page_cx"],
-                info["page_cy"],
-                cur_sx,
-                cur_sy,
-                adj_cx,
-                adj_cy,
-                ref_str,
+                info["page_cx"], info["page_cy"], cur_sx, cur_sy, adj_cx, adj_cy, ref_str,
             )
             return adj_cx, adj_cy, None
 
@@ -343,15 +325,12 @@ class Refs:
         return {"ok": True, "matches": items}
 
     def get_images(self) -> dict[str, Any]:
-        js = (
+        return self._evaluate_runtime(
             "(function(){"
             "return Array.from(document.querySelectorAll('img')).map(img => ({"
-            "  src: img.src || '',"
-            "  alt: img.alt || '',"
-            "  width: img.naturalWidth || img.width || 0,"
-            "  height: img.naturalHeight || img.height || 0,"
+            "  src: img.src || '', alt: img.alt || '',"
+            "  width: img.naturalWidth || img.width || 0, height: img.naturalHeight || img.height || 0,"
             "  ref: img.getAttribute('aria-ref') || ''"
             "}));"
             "})()"
         )
-        return self._evaluate_runtime(js)

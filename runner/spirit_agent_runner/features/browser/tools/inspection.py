@@ -7,11 +7,11 @@ from spirit_agent_runner.features.browser.schemas import BROWSER_CONSOLE_SCHEMA,
 from spirit_agent_runner.features.browser.tools._common import browser_session, camofox_unsupported, no_supervisor
 
 
-def browser_console(clear: bool = False, expression: str | None = None, task_id: str | None = None) -> dict[str, Any]:
+def browser_console(clear: bool = False, expression: str | None = None) -> dict[str, Any]:
     if is_camofox_mode():
         return camofox_unsupported("browser_console")
 
-    with browser_session(task_id) as (supervisor, _):
+    with browser_session() as supervisor:
         if supervisor is None:
             return no_supervisor()
 
@@ -39,11 +39,11 @@ def browser_console(clear: bool = False, expression: str | None = None, task_id:
         }
 
 
-def browser_get_images(task_id: str | None = None) -> dict[str, Any]:
+def browser_get_images() -> dict[str, Any]:
     if is_camofox_mode():
-        return camofox_get_images(task_id)
+        return camofox_get_images()
 
-    with browser_session(task_id) as (supervisor, _):
+    with browser_session() as supervisor:
         if supervisor is None:
             return no_supervisor()
 
@@ -63,7 +63,6 @@ def get_tool_definitions() -> list[ToolDefinition]:
             handler=lambda context, args: browser_console(
                 clear=args.get("clear", False),
                 expression=args.get("expression"),
-                task_id=context.task_id,
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,
@@ -72,7 +71,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_get_images",
             toolset_id="browser_automation",
             schema=BROWSER_GET_IMAGES_SCHEMA,
-            handler=lambda context, _args: browser_get_images(task_id=context.task_id),
+            handler=lambda _context, _args: browser_get_images(),
             check_fn=check_browser_native_requirements,
             is_async=False,
         ),

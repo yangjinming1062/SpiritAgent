@@ -17,14 +17,13 @@ def browser_set_viewport(
     height: int | None,
     device_scale_factor: float = 1.0,
     mobile: bool = False,
-    task_id: str | None = None,
 ) -> dict[str, Any]:
     if is_camofox_mode():
         return camofox_unsupported("browser_set_viewport")
     if width is None or height is None:
         return {"success": False, "error": "width and height are required"}
 
-    with browser_session(task_id) as (supervisor, _):
+    with browser_session() as supervisor:
         if supervisor is None:
             return no_supervisor()
 
@@ -44,7 +43,6 @@ def browser_set_user_agent(
     user_agent: str | None = None,
     platform: str | None = None,
     accept_language: str | None = None,
-    task_id: str | None = None,
 ) -> dict[str, Any]:
     if is_camofox_mode():
         return camofox_unsupported("browser_set_user_agent")
@@ -52,7 +50,7 @@ def browser_set_user_agent(
     if user_agent is None and platform is None and accept_language is None:
         return {"success": False, "error": "At least one of user_agent, platform, or accept_language is required"}
 
-    with browser_session(task_id) as (supervisor, _):
+    with browser_session() as supervisor:
         if supervisor is None:
             return no_supervisor()
 
@@ -68,11 +66,11 @@ def browser_set_user_agent(
         return {"success": False, "error": res.get("error", "Failed to set user agent")}
 
 
-def browser_set_extra_headers(headers: dict[str, str], task_id: str | None = None) -> dict[str, Any]:
+def browser_set_extra_headers(headers: dict[str, str]) -> dict[str, Any]:
     if is_camofox_mode():
         return camofox_unsupported("browser_set_extra_headers")
 
-    with browser_session(task_id) as (supervisor, _):
+    with browser_session() as supervisor:
         if supervisor is None:
             return no_supervisor()
 
@@ -89,14 +87,13 @@ def browser_set_geolocation(
     lat: float | None = None,
     lon: float | None = None,
     accuracy: float = 100.0,
-    task_id: str | None = None,
 ) -> dict[str, Any]:
     if is_camofox_mode():
         return camofox_unsupported("browser_set_geolocation")
     if (lat is None) != (lon is None):
         return {"success": False, "error": "Provide both lat and lon, or neither to clear the override"}
 
-    with browser_session(task_id) as (supervisor, _):
+    with browser_session() as supervisor:
         if supervisor is None:
             return no_supervisor()
 
@@ -129,7 +126,6 @@ def get_tool_definitions() -> list[ToolDefinition]:
                 height=args.get("height"),
                 device_scale_factor=args.get("device_scale_factor", 1.0),
                 mobile=args.get("mobile", False),
-                task_id=context.task_id,
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,
@@ -142,7 +138,6 @@ def get_tool_definitions() -> list[ToolDefinition]:
                 user_agent=args.get("user_agent"),
                 platform=args.get("platform"),
                 accept_language=args.get("accept_language"),
-                task_id=context.task_id,
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,
@@ -153,7 +148,6 @@ def get_tool_definitions() -> list[ToolDefinition]:
             schema=BROWSER_SET_EXTRA_HEADERS_SCHEMA,
             handler=lambda context, args: browser_set_extra_headers(
                 headers=args.get("headers") or {},
-                task_id=context.task_id,
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,
@@ -166,7 +160,6 @@ def get_tool_definitions() -> list[ToolDefinition]:
                 lat=args.get("lat"),
                 lon=args.get("lon"),
                 accuracy=args.get("accuracy", 100.0),
-                task_id=context.task_id,
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,

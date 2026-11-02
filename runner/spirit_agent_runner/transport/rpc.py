@@ -133,7 +133,6 @@ class RunnerTransport:
                 if not tried_connect:
                     await asyncio.sleep(1.0)
                     continue
-                self.runtime.reconnect_count += 1
                 self.runtime.reconnect_streak += 1
                 attempt += 1
                 await asyncio.sleep(min(2.0 * 2 ** min(attempt - 1, 4), 30.0))

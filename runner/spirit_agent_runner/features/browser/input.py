@@ -9,23 +9,18 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-# 按键名→(DOM key, code, VK, text)；带 text 须 keyDown 才产生字符。
+# 按键名→(DOM key, code, VK, text)；带 text 须 keyDown 才产生字符。键名与 browser_press schema 一致。
 _KEYS: dict[str, tuple[str, str, int, str]] = {
     "enter": ("Enter", "Enter", 13, "\r"),
     "tab": ("Tab", "Tab", 9, ""),
     "escape": ("Escape", "Escape", 27, ""),
-    "esc": ("Escape", "Escape", 27, ""),
     "backspace": ("Backspace", "Backspace", 8, ""),
     "delete": ("Delete", "Delete", 46, ""),
     "space": (" ", "Space", 32, " "),
     "arrowup": ("ArrowUp", "ArrowUp", 38, ""),
-    "up": ("ArrowUp", "ArrowUp", 38, ""),
     "arrowdown": ("ArrowDown", "ArrowDown", 40, ""),
-    "down": ("ArrowDown", "ArrowDown", 40, ""),
     "arrowleft": ("ArrowLeft", "ArrowLeft", 37, ""),
-    "left": ("ArrowLeft", "ArrowLeft", 37, ""),
     "arrowright": ("ArrowRight", "ArrowRight", 39, ""),
-    "right": ("ArrowRight", "ArrowRight", 39, ""),
     "pageup": ("PageUp", "PageUp", 33, ""),
     "pagedown": ("PageDown", "PageDown", 34, ""),
     "home": ("Home", "Home", 36, ""),
@@ -39,6 +34,8 @@ _DRAG_MODIFIERS: dict[str, tuple[int, str, str, int]] = {
     "ctrl": (2, "Control", "ControlLeft", 17),
     "alt": (1, "Alt", "AltLeft", 18),
 }
+
+_SCROLL_DELTAS = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
 
 
 def parse_numeric_unit(
@@ -146,7 +143,6 @@ class InputDispatch:
 
         sid = self._session_id_provider()
 
-        js_cleared = False
         if obj_id:
             eval_clear = self._send_cdp(
                 "Runtime.callFunctionOn",
@@ -184,11 +180,9 @@ class InputDispatch:
             clear_result = eval_clear.get("result", {})
             if clear_result.get("exceptionDetails"):
                 return {"ok": False, "error": "Failed to focus and clear the editable input"}
-            js_cleared = clear_result.get("result", {}).get("value") is True
-            if not js_cleared:
+            if clear_result.get("result", {}).get("value") is not True:
                 return {"ok": False, "error": f"Target '{ref}' is not an editable input field"}
-
-        if not js_cleared:
+        else:
             res = self._dispatch_left_click(sid, cx, cy)
             if not res.get("ok"):
                 return res
@@ -247,21 +241,13 @@ class InputDispatch:
 
     def scroll_page(self, direction: str = "down", pixels: int = 500) -> dict[str, Any]:
         sid = self._session_id_provider()
-        d = (direction or "down").strip().lower()
+        d = direction.strip().lower()
         amount = max(0, min(int(pixels), 5000))
-        if d == "up":
-            delta_x, delta_y = 0, -amount
-        elif d == "left":
-            delta_x, delta_y = -amount, 0
-        elif d == "right":
-            delta_x, delta_y = amount, 0
-        elif d == "down":
-            delta_x, delta_y = 0, amount
-        else:
+        if not (delta := _SCROLL_DELTAS.get(d)):
             return {"ok": False, "error": f"Invalid scroll direction '{direction}' (expected down/up/left/right)"}
         res = self._send_cdp(
             "Input.dispatchMouseEvent",
-            {"type": "mouseWheel", "x": 100, "y": 100, "deltaX": delta_x, "deltaY": delta_y},
+            {"type": "mouseWheel", "x": 100, "y": 100, "deltaX": delta[0] * amount, "deltaY": delta[1] * amount},
             session_id=sid,
         )
         if not res.get("ok"):
@@ -383,8 +369,6 @@ class InputDispatch:
         return {"ok": True, "from": from_ref, "to": to_ref}
 
     def press_key(self, key: str, modifiers: int = 0) -> dict[str, Any]:
-        sid = self._session_id_provider()
-        # 未知键必须报错，防假成功。
         spec = _KEYS.get(key.strip().lower())
         if spec is None:
             supported = ", ".join(sorted({"Space" if k == " " else k for k, *_ in _KEYS.values()}))
@@ -399,7 +383,7 @@ class InputDispatch:
         }
         if text:
             down_evt |= {"text": text, "unmodifiedText": text}
-        down = self._send_cdp("Input.dispatchKeyEvent", down_evt, session_id=sid)
+        down = self._send_cdp("Input.dispatchKeyEvent", down_evt, session_id=self._session_id_provider())
         if opened := _dialog_opened_by(down):
             return {"ok": True, "pressed": key, "dialog": opened}
         if not down.get("ok"):
@@ -407,7 +391,7 @@ class InputDispatch:
         up = self._send_cdp(
             "Input.dispatchKeyEvent",
             {"type": "keyUp", "windowsVirtualKeyCode": vk, "modifiers": modifiers, "key": dom_key, "code": code},
-            session_id=sid,
+            session_id=self._session_id_provider(),
         )
         if opened := _dialog_opened_by(up):
             return {"ok": True, "pressed": key, "dialog": opened}

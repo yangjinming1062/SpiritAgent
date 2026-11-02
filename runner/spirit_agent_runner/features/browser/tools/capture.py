@@ -32,13 +32,12 @@ from spirit_agent_runner.infrastructure.constants import get_spiritagent_dir
 def browser_screenshot_element(
     ref: str,
     save_as: str | None = None,
-    task_id: str | None = None,
 ) -> dict[str, Any]:
     """截取单个元素并把图片直接附到主对话上下文，同时保留本地文件。"""
     if is_camofox_mode():
         return camofox_unsupported("browser_screenshot_element")
 
-    with browser_session(task_id) as (supervisor, _):
+    with browser_session() as supervisor:
         if supervisor is None:
             return no_supervisor()
 
@@ -58,12 +57,11 @@ def browser_pdf(
     print_background: bool = True,
     paper_width: float = 8.5,
     paper_height: float = 11.0,
-    task_id: str | None = None,
 ) -> dict[str, Any]:
     if is_camofox_mode():
         return camofox_unsupported("browser_pdf")
 
-    with browser_session(task_id) as (supervisor, _):
+    with browser_session() as supervisor:
         if supervisor is None:
             return no_supervisor()
 
@@ -90,7 +88,6 @@ def browser_download(
     ref_or_url: str,
     save_as: str | None = None,
     timeout_s: float = 30.0,
-    task_id: str | None = None,
     cancel_token: threading.Event | None = None,
 ) -> dict[str, Any]:
     """通过点击 ref 链接或导航至下载 URL 触发并等待文件下载。"""
@@ -100,7 +97,7 @@ def browser_download(
     if cancel_token is not None and cancel_token.is_set():
         return {"success": False, "error": "Caller cancelled before download", "cancelled": True}
 
-    with browser_session(task_id) as (supervisor, _):
+    with browser_session() as supervisor:
         if supervisor is None:
             return no_supervisor()
 
@@ -161,7 +158,6 @@ def get_tool_definitions() -> list[ToolDefinition]:
             handler=lambda context, args: browser_screenshot_element(
                 ref=args.get("ref", ""),
                 save_as=args.get("save_as"),
-                task_id=context.task_id,
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,
@@ -176,7 +172,6 @@ def get_tool_definitions() -> list[ToolDefinition]:
                 print_background=args.get("print_background", True),
                 paper_width=args.get("paper_width", 8.5),
                 paper_height=args.get("paper_height", 11.0),
-                task_id=context.task_id,
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,
@@ -189,7 +184,6 @@ def get_tool_definitions() -> list[ToolDefinition]:
                 ref_or_url=args.get("ref_or_url", ""),
                 save_as=args.get("save_as"),
                 timeout_s=args.get("timeout_s", 30.0),
-                task_id=context.task_id,
                 cancel_token=context.cancel_event,
             ),
             check_fn=check_browser_cdp_requirements,

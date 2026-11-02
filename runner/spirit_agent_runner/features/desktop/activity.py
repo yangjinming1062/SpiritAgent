@@ -2,6 +2,7 @@ import logging
 import subprocess
 import time
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 import psutil
@@ -237,12 +238,12 @@ def click_at(x: int, y: int, button: str = "left", clicks: int = 1) -> dict[str,
     return {"clicked": True, "x": x, "y": y, "button": button, "clicks": clicks}
 
 
-def _class_name(hwnd: int) -> str:
+def class_name(hwnd: int) -> str:
     buf = ctypes.create_unicode_buffer(256)
     return buf.value if _user32.GetClassNameW(hwnd, buf, 256) > 0 else ""
 
 
-def _window_text(hwnd: int) -> str:
+def window_text(hwnd: int) -> str:
     if (length := _user32.GetWindowTextLengthW(hwnd)) <= 0:
         return ""
     buf = ctypes.create_unicode_buffer(length + 1)
@@ -250,10 +251,20 @@ def _window_text(hwnd: int) -> str:
     return buf.value
 
 
-def _window_pid(hwnd: int) -> int:
+def window_pid(hwnd: int) -> int:
     pid = wintypes.DWORD()
     _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
     return pid.value
+
+
+def enum_windows(callback: Callable[[int], None]) -> None:
+    """枚举全部顶层窗口（含不可见），按 Z 序从前到后回调。仅 Windows 可调用。"""
+
+    def _cb(hwnd: int, _lparam: int) -> bool:
+        callback(hwnd)
+        return True
+
+    _user32.EnumWindows(_WNDENUMPROC(_cb), 0)
 
 
 def _dwm_bounds(hwnd: int) -> tuple[int, int, int, int] | None:
@@ -366,7 +377,7 @@ def _locked_windows() -> bool:
     try:
         if not (hwnd := _user32.GetForegroundWindow()):
             return True
-        return _class_name(hwnd) in {"LockScreenBackstop", "LogonUI"}
+        return class_name(hwnd) in {"LockScreenBackstop", "LogonUI"}
     except Exception as e:
         logger.debug("win lock probe failed: %s", e)
         return False
@@ -392,7 +403,7 @@ def _focus_windows() -> dict[str, Any]:
             return {}
         # 前台是壳层时沿 Z 序找用户窗口。
         for _ in range(8):
-            if _class_name(hwnd) not in _SHELL_WINDOW_CLASSES and _user32.IsWindowVisible(hwnd):
+            if class_name(hwnd) not in _SHELL_WINDOW_CLASSES and _user32.IsWindowVisible(hwnd):
                 break
             if not (next_hwnd := _user32.GetWindow(hwnd, _GW_HWNDNEXT)):
                 break
@@ -404,8 +415,8 @@ def _focus_windows() -> dict[str, Any]:
         real_hwnd = info.hwndFocus or info.hwndActive or hwnd
         top = _user32.GetAncestor(real_hwnd, _GA_ROOT) or real_hwnd
 
-        pid = _window_pid(top)
-        title = _window_text(top)
+        pid = window_pid(top)
+        title = window_text(top)
         result: dict[str, Any] = {
             "name": _process_exe(pid) or title,
             "pid": pid,
@@ -453,7 +464,7 @@ def _focus_macos() -> dict[str, Any]:
 def _fullscreen_windows() -> bool:
     """前台窗口覆盖整个显示器（含任务栏区域）才算全屏；最大化窗口不覆盖任务栏，桌面外壳窗口不算。"""
     try:
-        if not (hwnd := _user32.GetForegroundWindow()) or _class_name(hwnd) in _SHELL_WINDOW_CLASSES:
+        if not (hwnd := _user32.GetForegroundWindow()) or class_name(hwnd) in _SHELL_WINDOW_CLASSES:
             return False
         win = wintypes.RECT()
         if not _user32.GetWindowRect(hwnd, ctypes.byref(win)):
@@ -507,24 +518,24 @@ def _windows_windows() -> WindowScene:
         results: list[WindowInfo] = []
         exe_cache: dict[int, str] = {}
 
-        def collect(hwnd: int, _lparam: int) -> bool:
+        def collect(hwnd: int) -> None:
             if not _user32.IsWindowVisible(hwnd) or _user32.IsIconic(hwnd):
-                return True
+                return
             cloaked = wintypes.DWORD()
             if (
                 _dwmapi.DwmGetWindowAttribute(hwnd, _DWMWA_CLOAKED, ctypes.byref(cloaked), ctypes.sizeof(cloaked)) == 0
                 and cloaked.value
             ):
-                return True
-            if _class_name(hwnd) in _SHELL_WINDOW_CLASSES or (bounds := _dwm_bounds(hwnd)) is None:
-                return True
-            if not (title := _window_text(hwnd)):
-                return True
-            pid = _window_pid(hwnd)
+                return
+            if class_name(hwnd) in _SHELL_WINDOW_CLASSES or (bounds := _dwm_bounds(hwnd)) is None:
+                return
+            if not (title := window_text(hwnd)):
+                return
+            pid = window_pid(hwnd)
             if pid not in exe_cache:
                 exe_cache[pid] = _process_exe(pid)
             if (exe := exe_cache[pid]).casefold() == "spiritagent.exe":
-                return True
+                return
             x, y, w, h = bounds
             results.append(
                 WindowInfo(
@@ -541,10 +552,8 @@ def _windows_windows() -> WindowScene:
                     z_order=len(results),
                 ),
             )
-            return True
 
-        if not _user32.EnumWindows(_WNDENUMPROC(collect), 0):
-            raise ctypes.WinError()
+        enum_windows(collect)
         return WindowScene(windows=results, runner_instance_id=_WINDOW_SCENE_INSTANCE_ID)
     except Exception as e:
         logger.debug("win get_windows failed: %s", e)

@@ -7,10 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from spirit_agent_runner.contracts.context import current_context
 from spirit_agent_runner.features.execution.environments._env_base import BaseEnvironment
-from spirit_agent_runner.features.execution.environments.config import (
-    normalize_environment_config,
-    resolve_task_id,
-)
+from spirit_agent_runner.features.execution.environments.config import normalize_environment_config
 
 if TYPE_CHECKING:
     from spirit_agent_runner.features.execution.manager import ExecutionManager
@@ -44,13 +41,9 @@ def get_env_config() -> dict[str, Any]:
     return normalize_environment_config(current_context().config)
 
 
-def current_task_id() -> str:
-    return resolve_task_id(current_context().task_id)
-
-
 @contextmanager
-def use_environment(task_id: str) -> Iterator[BaseEnvironment]:
-    with current_manager().use_environment(task_id, current_context().config) as environment:
+def use_environment() -> Iterator[BaseEnvironment]:
+    with current_manager().use_environment(current_context().config) as environment:
         yield environment
 
 

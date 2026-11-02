@@ -76,10 +76,8 @@ def get_skill_description(frontmatter: dict[str, Any], body: str = "") -> str:
     )
 
 
-def get_spiritagent_metadata(frontmatter: dict[str, Any] | None) -> dict[str, Any]:
+def get_spiritagent_metadata(frontmatter: dict[str, Any]) -> dict[str, Any]:
     """返回 frontmatter.metadata.spiritagent 作为 dict；任一环节缺失或类型不对则返回 {}。"""
-    if not isinstance(frontmatter, dict):
-        return {}
     metadata = frontmatter.get("metadata")
     if not isinstance(metadata, dict):
         return {}

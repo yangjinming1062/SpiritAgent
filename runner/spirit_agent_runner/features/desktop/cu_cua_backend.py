@@ -28,7 +28,7 @@ from spirit_agent_runner.features.desktop.cu_backend import (
     UIElement,
 )
 from spirit_agent_runner.infrastructure.async_bridge import safe_schedule_threadsafe
-from spirit_agent_runner.infrastructure.constants import IS_MACOS, get_spiritagent_home
+from spirit_agent_runner.infrastructure.constants import get_spiritagent_home
 from spirit_agent_runner.infrastructure.env_passthrough import is_env_passthrough
 
 logger = logging.getLogger(__name__)
@@ -406,7 +406,7 @@ class CuaDriverBackend(ComputerUseBackend):
             self._bridge.stop()
 
     def is_available(self) -> bool:
-        return IS_MACOS and cua_driver_binary_available()
+        return cua_driver_binary_available()
 
     def _query(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         out = self._session.call_tool(name, args, retry_on_disconnect=True)
@@ -453,7 +453,7 @@ class CuaDriverBackend(ComputerUseBackend):
         with self._state_lock:
             return self._element_refs.get(element)
 
-    def capture(self, mode: str = "som", app: str | None = None) -> CaptureResult:
+    def capture(self, mode: str, app: str | None) -> CaptureResult:
         if app and app.lower() in DESKTOP_SENTINELS:
             windows = [w for w in self._list_windows() if w.app_name.lower() in _MACOS_SHELL_APP_NAMES]
             if not windows:
@@ -469,7 +469,7 @@ class CuaDriverBackend(ComputerUseBackend):
         self._set_target(windows[0])
         return self._capture_window(windows[0], mode)
 
-    def recapture(self, mode: str = "som") -> CaptureResult:
+    def recapture(self, mode: str) -> CaptureResult:
         if (target := self._current_target()) is None:
             raise LookupError("no window has been captured yet; call capture first")
         return self._capture_window(target, mode)
@@ -527,12 +527,12 @@ class CuaDriverBackend(ComputerUseBackend):
     def click(
         self,
         *,
-        element: int | None = None,
-        x: int | None = None,
-        y: int | None = None,
-        button: str = "left",
-        click_count: int = 1,
-        modifiers: list[str] | None = None,
+        element: int | None,
+        x: int | None,
+        y: int | None,
+        button: str,
+        click_count: int,
+        modifiers: list[str] | None,
     ) -> ActionResult:
         if (target := self._current_target()) is None:
             return _no_target("click")
@@ -561,12 +561,12 @@ class CuaDriverBackend(ComputerUseBackend):
     def drag(
         self,
         *,
-        from_element: int | None = None,
-        to_element: int | None = None,
-        from_xy: tuple[int, int] | None = None,
-        to_xy: tuple[int, int] | None = None,
-        button: str = "left",
-        modifiers: list[str] | None = None,
+        from_element: int | None,
+        to_element: int | None,
+        from_xy: tuple[int, int] | None,
+        to_xy: tuple[int, int] | None,
+        button: str,
+        modifiers: list[str] | None,
     ) -> ActionResult:
         # macOS 仅前台拖拽，本后端不启用。
         return ActionResult(ok=False, action="drag", message="Dragging is not supported on macOS.")
@@ -575,11 +575,11 @@ class CuaDriverBackend(ComputerUseBackend):
         self,
         *,
         direction: str,
-        amount: int = 3,
-        element: int | None = None,
-        x: int | None = None,
-        y: int | None = None,
-        modifiers: list[str] | None = None,
+        amount: int,
+        element: int | None,
+        x: int | None,
+        y: int | None,
+        modifiers: list[str] | None,
     ) -> ActionResult:
         if (target := self._current_target()) is None:
             return _no_target("scroll")
@@ -589,7 +589,7 @@ class CuaDriverBackend(ComputerUseBackend):
                 action="scroll",
                 message="Modifier keys are not supported for scrolling on macOS.",
             )
-        args: dict[str, Any] = {"pid": target.pid, "direction": direction, "amount": max(1, min(50, amount))}
+        args: dict[str, Any] = {"pid": target.pid, "direction": direction, "amount": amount}
         if element is not None:
             if (ref := self._element_ref(element)) is None:
                 return _unknown_element("scroll", element)
@@ -623,7 +623,7 @@ class CuaDriverBackend(ComputerUseBackend):
         res.action = "key"
         return res
 
-    def set_value(self, value: str, element: int | None = None) -> ActionResult:
+    def set_value(self, value: str, element: int | None) -> ActionResult:
         if (target := self._current_target()) is None:
             return _no_target("set_value")
         if element is None:
@@ -646,7 +646,7 @@ class CuaDriverBackend(ComputerUseBackend):
             ]
         return []
 
-    def focus_app(self, app: str, bring_to_front: bool = False) -> ActionResult:
+    def focus_app(self, app: str, bring_to_front: bool) -> ActionResult:
         if not (windows := self._match_windows(app)):
             return ActionResult(ok=False, action="focus_app", message=f"No on-screen window found for app '{app}'.")
         target = windows[0]

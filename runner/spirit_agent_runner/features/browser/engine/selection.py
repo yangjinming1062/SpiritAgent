@@ -15,7 +15,10 @@ def select_option_with_eval(
     label: str | None = None,
     index: int | None = None,
 ) -> dict[str, Any]:
-    """在 <select> 或自定义下拉菜单中选择目标项；eval_fn 为 supervisor.evaluate_runtime。"""
+    """在 <select> 或自定义下拉菜单中选择目标项；eval_fn 为 supervisor.evaluate_runtime。
+
+    入口的三选一校验由 browser_select 完成，这里兜底调用链其他入口。
+    """
     if value is None and label is None and index is None:
         return {"success": False, "error": "At least one of `value`, `label`, or `index` must be provided."}
 

@@ -56,7 +56,7 @@ _denied_paths_cache: tuple[str, frozenset[str]] | None = None
 _denied_prefixes_cache: tuple[str, tuple[str, ...]] | None = None
 
 
-def build_write_denied_paths(home: str) -> frozenset[str]:
+def _build_write_denied_paths(home: str) -> frozenset[str]:
     global _denied_paths_cache
     cached = _denied_paths_cache
     if cached and cached[0] == home:
@@ -93,7 +93,7 @@ def build_write_denied_paths(home: str) -> frozenset[str]:
         return result
 
 
-def build_write_denied_prefixes(home: str) -> tuple[str, ...]:
+def _build_write_denied_prefixes(home: str) -> tuple[str, ...]:
     global _denied_prefixes_cache
     cached = _denied_prefixes_cache
     if cached and cached[0] == home:
@@ -295,7 +295,7 @@ def _get_final_path_by_handle(path_str: str) -> str | None:
         return None
 
 
-def canonicalize_path(path: str) -> str:
+def _canonicalize_path(path: str) -> str:
     """跨平台权威路径规范化（Windows 上处理 NT 设备前缀、ADS、8.3 短名、符号链接/连接点，缺失路径回溯到已存在父目录）。"""
     if not path:
         return ""
@@ -335,16 +335,16 @@ def _cmp_key(path: str) -> str:
 
 def is_write_denied(path: str, *, config: dict[str, Any] | None = None) -> bool:
     try:
-        home = canonicalize_path("~")
-        resolved = canonicalize_path(str(path))
+        home = _canonicalize_path("~")
+        resolved = _canonicalize_path(str(path))
     except Exception:
         return True
 
     base_resolved, stream_suffix = _split_ads_stream(resolved)
     keys = {_cmp_key(resolved), _cmp_key(base_resolved)}
-    if keys & {_cmp_key(p) for p in build_write_denied_paths(home)}:
+    if keys & {_cmp_key(p) for p in _build_write_denied_paths(home)}:
         return True
-    prefixes = [_cmp_key(p) for p in build_write_denied_prefixes(home)]
+    prefixes = [_cmp_key(p) for p in _build_write_denied_prefixes(home)]
     if any(key.startswith(prefix) for key in keys for prefix in prefixes):
         return True
     # 同时拦受保护目录的流元数据写。
@@ -363,7 +363,7 @@ def _read_blocked_keys(spiritagent_home: str) -> frozenset[str]:
 
 def get_read_block_error(path: str) -> str | None:
     try:
-        resolved = canonicalize_path(str(path))
+        resolved = _canonicalize_path(str(path))
     except Exception:
         return None
 

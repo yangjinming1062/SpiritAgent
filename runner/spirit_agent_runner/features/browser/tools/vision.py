@@ -10,12 +10,12 @@ from spirit_agent_runner.features.browser.tools._common import browser_session, 
 from spirit_agent_runner.infrastructure.constants import get_spiritagent_dir
 
 
-def browser_vision(annotate: bool = False, task_id: str | None = None) -> dict[str, Any]:
+def browser_vision(annotate: bool = False) -> dict[str, Any]:
     """截图当前页面并把截图直接附到主对话上下文。"""
     if is_camofox_mode():
-        return camofox_vision(annotate=annotate, task_id=task_id)
+        return camofox_vision(annotate=annotate)
 
-    with browser_session(task_id) as (supervisor, _):
+    with browser_session() as supervisor:
         if supervisor is None:
             return no_supervisor()
 
@@ -42,7 +42,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_vision",
             toolset_id="browser_automation",
             schema=BROWSER_VISION_SCHEMA,
-            handler=lambda context, args: browser_vision(annotate=args.get("annotate", False), task_id=context.task_id),
+            handler=lambda context, args: browser_vision(annotate=args.get("annotate", False)),
             check_fn=check_browser_native_requirements,
             is_async=False,
         ),

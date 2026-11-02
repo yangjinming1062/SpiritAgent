@@ -33,9 +33,6 @@ class BatchOperations:
         cancel_token: threading.Event | None = None,
     ) -> dict[str, Any]:
         """按序执行一组浏览器操作；任一步失败即停止，全部成功后等待页面沉降。"""
-        if not actions or not isinstance(actions, list):
-            return {"ok": False, "error": "actions must be a non-empty list"}
-
         try:
             if isinstance(wait_between_ms, bool):
                 raise TypeError("bool not allowed")
@@ -99,8 +96,7 @@ class BatchOperations:
     ) -> dict[str, Any]:
         if not isinstance(act, dict):
             return {"ok": False, "error": f"Action at index {step} must be a dict"}
-        raw_ref = act.get("ref")
-        ref = "" if raw_ref is None else str(raw_ref).strip()
+        ref = str(act.get("ref") or "").strip()
 
         if act_type == "click":
             return self._operations.click_ref(ref, wait_stable=False)

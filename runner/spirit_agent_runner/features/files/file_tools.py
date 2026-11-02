@@ -10,7 +10,7 @@ from typing import Any
 from spirit_agent_runner.contracts.config import load_config
 from spirit_agent_runner.contracts.output import DEFAULT_MAX_LINES
 from spirit_agent_runner.contracts.tooling import DEFAULT_MAX_RESULT_SIZE_CHARS, ToolDefinition
-from spirit_agent_runner.features.execution.api import resolve_task_id, use_environment
+from spirit_agent_runner.features.execution.api import use_environment
 from spirit_agent_runner.features.files.backends.ssh import ShellFileOperations
 from spirit_agent_runner.features.files.binary_extensions import has_binary_extension
 from spirit_agent_runner.features.files.formatting import normalize_read_pagination, normalize_search_pagination
@@ -34,11 +34,6 @@ _EXPECTED_WRITE_ERRNOS = {errno.EACCES, errno.EPERM, errno.EROFS}
 
 # 以字符近似 token（100K≈25–35K）；可由 file_read_max_chars 覆盖。
 _DEFAULT_MAX_READ_CHARS = 100_000
-
-
-def _get_max_read_chars() -> int:
-    value = load_config().get("file_read_max_chars")
-    return int(value) if isinstance(value, int | float) and value > 0 else _DEFAULT_MAX_READ_CHARS
 
 
 _LARGE_FILE_HINT_BYTES = 512_000
@@ -139,24 +134,17 @@ def _sensitive_write_error(target: str, local: bool) -> str | None:
     return None
 
 
-def _is_expected_write_exception(exc: Exception) -> bool:
-    """返回 True 表示是可预期的写入拒绝（不应记入 error 日志）。"""
-    if isinstance(exc, PermissionError):
-        return True
-    return bool(isinstance(exc, OSError) and exc.errno in _EXPECTED_WRITE_ERRNOS)
-
-
 @contextmanager
-def _file_ops(task_id: str) -> Iterator[FileOperations]:
-    """在 with 块内返回任务终端环境对应的文件操作实例并持有该环境：local 环境用原生 I/O，其他环境经 shell 执行。"""
-    task_id = resolve_task_id(task_id)
-    with use_environment(task_id) as env:
-        with current_manager().lock:
+def _file_ops() -> Iterator[FileOperations]:
+    """在 with 块内返回当前终端环境对应的文件操作实例并持有该环境：local 环境用原生 I/O，其他环境经 shell 执行。"""
+    with use_environment() as env:
+        manager = current_manager()
+        with manager.lock:
             # 缓存仅绑定同一环境对象时复用。
-            file_ops = current_manager().operations.get(task_id)
+            file_ops = manager.operations
             if file_ops is None or file_ops.env is not env:
                 file_ops = NativeFileOperations(env) if env.env_type == "local" else ShellFileOperations(env)
-                current_manager().operations[task_id] = file_ops
+                manager.operations = file_ops
         yield file_ops
 
 
@@ -167,12 +155,12 @@ def _target(file_ops: FileOperations, path: str, *, follow_symlinks: bool = True
     return path
 
 
-def list_directory_tool(path: str, task_id: str = "default") -> dict[str, Any]:
+def list_directory_tool(path: str) -> dict[str, Any]:
     """列出目录内容。"""
     if not path:
         return {"error": "list_directory: missing 'path'."}
     try:
-        with _file_ops(task_id) as file_ops:
+        with _file_ops() as file_ops:
             target = _target(file_ops, path)
             if block_error := get_read_block_error(target):
                 return {"error": str(block_error)}
@@ -191,18 +179,13 @@ def list_directory_tool(path: str, task_id: str = "default") -> dict[str, Any]:
         return {"error": str(e)}
 
 
-def read_file_tool(
-    path: str,
-    offset: int = 1,
-    limit: int = DEFAULT_READ_LIMIT,
-    task_id: str = "default",
-) -> dict[str, Any]:
+def read_file_tool(path: str, offset: int = 1, limit: int = DEFAULT_READ_LIMIT) -> dict[str, Any]:
     """带分页与行号读取文件。"""
     if not path:
         return {"error": "read_file: missing 'path'."}
     try:
         offset, limit = normalize_read_pagination(offset, limit)
-        with _file_ops(task_id) as file_ops:
+        with _file_ops() as file_ops:
             local = isinstance(file_ops, NativeFileOperations)
             target = _target(file_ops, path)
             # 字面与解析路径都查：拦别名与指向设备的链接。
@@ -218,7 +201,8 @@ def read_file_tool(
             result = file_ops.read_file(target, offset, limit)
             result_dict = result.to_dict()
             # 按进入上下文的内容计字符。
-            max_chars = _get_max_read_chars()
+            value = load_config().get("file_read_max_chars")
+            max_chars = int(value) if isinstance(value, int | float) and value > 0 else _DEFAULT_MAX_READ_CHARS
             if len(result.content) > max_chars:
                 return {
                     "error": f"Read produced {len(result.content):,} characters which exceeds the safety limit ({max_chars:,} chars). "
@@ -235,7 +219,7 @@ def read_file_tool(
                     "section you need with offset and limit to keep context usage efficient."
                 )
             if local and not result.error:
-                current_manager().state.record_read(task_id, target, partial=offset > 1 or result.truncated)
+                current_manager().state.record_read(target, partial=offset > 1 or result.truncated)
             return result_dict
     except Exception as e:
         return {"error": str(e)}
@@ -255,35 +239,36 @@ def _masked_overwrite_error(file_ops: FileOperations, target: str, content: str)
     )
 
 
-def write_file_tool(path: str, content: str, task_id: str = "default") -> dict[str, Any]:
+def write_file_tool(path: str, content: str) -> dict[str, Any]:
     """把内容写入文件。"""
     try:
-        with _file_ops(task_id) as file_ops:
+        with _file_ops() as file_ops:
             local = isinstance(file_ops, NativeFileOperations)
+            state = current_manager().state
             target = _target(file_ops, path)
             if sensitive_err := _sensitive_write_error(target, local):
                 return {"error": str(sensitive_err)}
             # 同路径读改写串行。
-            with current_manager().state.lock_path(target):
+            with state.lock_path(target):
                 if masked_error := _masked_overwrite_error(file_ops, target, content):
                     return {"error": str(masked_error)}
-                warning = current_manager().state.check_stale(task_id, target, whole_file=True) if local else None
+                warning = state.check_stale(target, whole_file=True) if local else None
                 result = file_ops.write_file(target, content)
                 result_dict = result.to_dict()
                 if not result.error:
                     result_dict["files_modified"] = [target]
                     if local:
-                        current_manager().state.note_write(task_id, target)
+                        state.note_write(target)
             if local:
                 result_dict["resolved_path"] = target
             if warning:
                 result_dict["_warning"] = warning
             return result_dict
     except Exception as e:
-        if _is_expected_write_exception(e):
-            logger.debug("write_file expected denial: %s: %s", type(e).__name__, e)
-        else:
-            logger.error("write_file error: %s: %s", type(e).__name__, e, exc_info=True)
+        # 可预期的写入拒绝只记 debug，不污染 error 日志。
+        expected = isinstance(e, PermissionError) or isinstance(e, OSError) and e.errno in _EXPECTED_WRITE_ERRNOS
+        logger.log(logging.DEBUG if expected else logging.ERROR, "write_file %s: %s", type(e).__name__, e,
+                   exc_info=not expected)
         return {"error": str(e)}
 
 
@@ -294,11 +279,10 @@ def patch_tool(
     new_string: str | None = None,
     replace_all: bool = False,
     patch: str | None = None,
-    task_id: str = "default",
 ) -> dict[str, Any]:
     """以 replace 模式或 V4A 补丁格式修改文件。"""
     try:
-        with _file_ops(task_id) as file_ops:
+        with _file_ops() as file_ops:
             local = isinstance(file_ops, NativeFileOperations)
             targets: list[str] = []
             operations: list[PatchOperation] = []
@@ -337,15 +321,12 @@ def patch_tool(
                     return {"error": str(sensitive_err)}
 
             unique_targets = sorted(set(targets))
+            state = current_manager().state
             # 固定加锁顺序防死锁。
             with ExitStack() as locks:
                 for target in unique_targets:
-                    locks.enter_context(current_manager().state.lock_path(target))
-                warnings = [
-                    w
-                    for t in unique_targets
-                    if local and (w := current_manager().state.check_stale(task_id, t, whole_file=False))
-                ]
+                    locks.enter_context(state.lock_path(target))
+                warnings = [w for t in unique_targets if local and (w := state.check_stale(t, whole_file=False))]
                 result: PatchResult
                 if mode == "replace":
                     result = file_ops.patch_replace(targets[0], old_string or "", new_string or "", replace_all)
@@ -353,7 +334,7 @@ def patch_tool(
                     result = apply_v4a_operations(operations, file_ops)
                 if local and result.success:
                     for target in unique_targets:
-                        current_manager().state.note_write(task_id, target)
+                        state.note_write(target)
 
             result_dict = result.to_dict()
             if mode == "replace" and local:
@@ -379,12 +360,11 @@ def search_tool(
     offset: int = 0,
     output_mode: str = "content",
     context: int = 0,
-    task_id: str = "default",
 ) -> dict[str, Any]:
     """搜索内容或文件名。"""
     try:
         offset, limit = normalize_search_pagination(offset, limit)
-        with _file_ops(task_id) as file_ops:
+        with _file_ops() as file_ops:
             if block_error := get_read_block_error(_target(file_ops, path)):
                 return {"error": str(block_error)}
             result = file_ops.search(
@@ -622,30 +602,25 @@ SEARCH_FILES_SCHEMA = {
 }
 
 
-def _handle_list_directory(args: dict[str, Any], task_id: str) -> dict[str, Any]:
-    return list_directory_tool(args.get("path", ""), task_id)
+def _handle_list_directory(args: dict[str, Any]) -> dict[str, Any]:
+    return list_directory_tool(args.get("path", ""))
 
 
-def _handle_read_file(args: dict[str, Any], task_id: str) -> dict[str, Any]:
-    return read_file_tool(
-        args.get("path", ""),
-        args.get("offset", 1),
-        args.get("limit", DEFAULT_READ_LIMIT),
-        task_id,
-    )
+def _handle_read_file(args: dict[str, Any]) -> dict[str, Any]:
+    return read_file_tool(args.get("path", ""), args.get("offset", 1), args.get("limit", DEFAULT_READ_LIMIT))
 
 
-def _handle_write_file(args: dict[str, Any], task_id: str) -> dict[str, Any]:
+def _handle_write_file(args: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(path := args.get("path"), str) or not path:
         return {"error": "write_file: missing 'path'."}
     if "content" not in args:
         return {"error": "write_file: missing 'content'."}
     if not isinstance(content := args["content"], str):
         return {"error": f"write_file: 'content' must be string, got {type(content).__name__}."}
-    return write_file_tool(path, content, task_id)
+    return write_file_tool(path, content)
 
 
-def _handle_patch(args: dict[str, Any], task_id: str) -> dict[str, Any]:
+def _handle_patch(args: dict[str, Any]) -> dict[str, Any]:
     mode = args.get("mode", "replace")
     if mode == "replace":
         missing = [field for field in ("path", "old_string", "new_string") if field not in args]
@@ -673,11 +648,10 @@ def _handle_patch(args: dict[str, Any], task_id: str) -> dict[str, Any]:
         args.get("new_string"),
         bool(args.get("replace_all", False)),
         args.get("patch"),
-        task_id,
     )
 
 
-def _handle_search_files(args: dict[str, Any], task_id: str) -> dict[str, Any]:
+def _handle_search_files(args: dict[str, Any]) -> dict[str, Any]:
     return search_tool(
         args.get("pattern", ""),
         args.get("target", "content"),
@@ -687,7 +661,6 @@ def _handle_search_files(args: dict[str, Any], task_id: str) -> dict[str, Any]:
         args.get("offset", 0),
         args.get("output_mode", "content"),
         args.get("context", 0),
-        task_id,
     )
 
 
@@ -697,10 +670,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="list_directory",
             toolset_id="file_operations",
             schema=LIST_DIRECTORY_SCHEMA,
-            handler=lambda context, args: _handle_list_directory(
-                args,
-                task_id=context.task_id,
-            ),
+            handler=lambda context, args: _handle_list_directory(args),
             check_fn=None,
             is_async=False,
         ),
@@ -708,10 +678,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="read_file",
             toolset_id="file_operations",
             schema=READ_FILE_SCHEMA,
-            handler=lambda context, args: _handle_read_file(
-                args,
-                task_id=context.task_id,
-            ),
+            handler=lambda context, args: _handle_read_file(args),
             check_fn=None,
             is_async=False,
         ),
@@ -719,10 +686,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="write_file",
             toolset_id="file_operations",
             schema=WRITE_FILE_SCHEMA,
-            handler=lambda context, args: _handle_write_file(
-                args,
-                task_id=context.task_id,
-            ),
+            handler=lambda context, args: _handle_write_file(args),
             check_fn=None,
             is_async=False,
         ),
@@ -730,10 +694,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="patch",
             toolset_id="file_operations",
             schema=PATCH_SCHEMA,
-            handler=lambda context, args: _handle_patch(
-                args,
-                task_id=context.task_id,
-            ),
+            handler=lambda context, args: _handle_patch(args),
             check_fn=None,
             is_async=False,
         ),
@@ -741,10 +702,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="search_files",
             toolset_id="file_operations",
             schema=SEARCH_FILES_SCHEMA,
-            handler=lambda context, args: _handle_search_files(
-                args,
-                task_id=context.task_id,
-            ),
+            handler=lambda context, args: _handle_search_files(args),
             check_fn=None,
             is_async=False,
         ),

@@ -31,9 +31,10 @@ def _safe_save_name(save_as: str | None, default: str) -> str:
 
 
 def _get_downloads_dir() -> Path:
-    d = get_spiritagent_dir("cache/downloads")
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    """下载交付目录（按需创建）。"""
+    downloads = get_spiritagent_dir("cache/downloads")
+    downloads.mkdir(parents=True, exist_ok=True)
+    return downloads
 
 
 def _truncate_snapshot(snapshot_text: str, max_chars: int = 8000) -> str:

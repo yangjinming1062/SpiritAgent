@@ -1,9 +1,8 @@
-import enum
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import Any
 
 from spirit_agent_runner.features.browser.refs import SessionIds
 
@@ -17,11 +16,11 @@ PAGE_DOMAINS: tuple[tuple[str, dict[str, Any] | None], ...] = (
 )
 
 
-class _Unset(enum.Enum):
-    UNSET = enum.auto()
+class _Unset:
+    """set_session 未传字段的哨兵。"""
 
 
-@dataclass
+_UNSET = _Unset()
 class FrameInfo:
     frame_id: str
     url: str
@@ -46,9 +45,6 @@ class ConsoleEvent:
     url: str | None = None
 
 
-_UNSET: Final = _Unset.UNSET
-
-
 class PageState:
     """Own selected page identity, attached tabs, frames and console history."""
 
@@ -69,7 +65,7 @@ class PageState:
 
     def record_attachment(self, target_id: str, session_id: str, frame_id: str = "") -> None:
         with self._lock:
-            self._attached_targets[target_id] = {"session_id": session_id, "title": "", "frame_id": frame_id}
+            self._attached_targets[target_id] = {"session_id": session_id, "frame_id": frame_id}
 
     def frame_tree(self) -> dict[str, Any]:
         with self._lock:
@@ -193,12 +189,9 @@ class PageState:
 
     def attach_target(self, target_id: str) -> dict[str, Any]:
         result = self.send_cdp("Target.attachToTarget", {"targetId": target_id, "flatten": True})
-        if not result.get("ok"):
-            return result
-        session_id = result.get("result", {}).get("sessionId")
-        if session_id:
+        if session_id := (result.get("result", {}) or {}).get("sessionId") if result.get("ok") else None:
             with self._lock:
-                self._attached_targets[target_id] = {"session_id": session_id, "title": ""}
+                self._attached_targets[target_id] = {"session_id": session_id, "frame_id": ""}
         return result
 
     def close_tab(self, tab_id: str | None = None) -> dict[str, Any]:
@@ -311,7 +304,10 @@ class PageState:
         target_id = target_info.get("targetId", "")
         if target_info.get("type") == "page" and target_id and session_id:
             with self._lock:
-                self._attached_targets[target_id] = {"session_id": session_id, "title": target_info.get("title", "")}
+                self._attached_targets[target_id] = {
+                    "session_id": session_id,
+                    "frame_id": "",
+                }
 
     def on_target_detached(self, params: dict[str, Any]) -> None:
         self.forget_target(params.get("targetId"), params.get("sessionId"))
@@ -337,5 +333,4 @@ class PageState:
 
         with self._lock:
             self._console_events.append(event)
-            if len(self._console_events) > CONSOLE_HISTORY_MAX:
-                self._console_events.pop(0)
+            del self._console_events[:-CONSOLE_HISTORY_MAX]

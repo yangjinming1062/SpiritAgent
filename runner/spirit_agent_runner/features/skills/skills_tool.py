@@ -50,6 +50,85 @@ def _get_category_from_path(skill_path: Path) -> str | None:
     return None
 
 
+def _linked_files(skill_dir: Path) -> dict[str, list[str]]:
+    """按 references / templates / assets / scripts 枚举技能的支持文件相对路径；templates 与 assets 递归。"""
+    linked: dict[str, list[str]] = {}
+    patterns = {
+        "references": (["*.md"], False),
+        "templates": (["*.md", "*.py", "*.yaml", "*.yml", "*.json", "*.tex", "*.sh"], True),
+        "assets": (["*"], True),
+        "scripts": (["*.py", "*.sh", "*.bash", "*.js", "*.ts", "*.rb"], False),
+    }
+    for sub, (subs, recursive) in patterns.items():
+        if not (sub_dir := skill_dir / sub).exists():
+            continue
+        find = sub_dir.rglob if recursive else sub_dir.glob
+        files = [str(f.relative_to(skill_dir)) for pattern in subs for f in find(pattern) if f.is_file()]
+        if files:
+            linked[sub] = files
+    return linked
+
+
+def _view_linked_file(name: str, skill_dir: Path, file_path: str) -> dict[str, Any]:
+    """读取技能内的支持文件；大小与写端同一闸门。"""
+    if has_traversal_component(file_path):
+        return {
+            "success": False,
+            "error": "Path traversal ('..') is not allowed.",
+            "hint": "Use a relative path within the skill directory",
+        }
+    target_file = skill_dir / file_path
+    if traversal_error := validate_within_dir(target_file, skill_dir):
+        return {
+            "success": False,
+            "error": traversal_error,
+            "hint": "Use a relative path within the skill directory",
+        }
+    if not target_file.exists():
+        available_files: dict[str, list[str]] = {
+            "references": [],
+            "templates": [],
+            "assets": [],
+            "scripts": [],
+            "other": [],
+        }
+        for f in skill_dir.rglob("*"):
+            if f.is_file() and f.name != "SKILL.md":
+                rel = str(f.relative_to(skill_dir))
+                if rel.startswith(("references/", "templates/", "assets/", "scripts/")):
+                    available_files[rel.partition("/")[0]].append(rel)
+                elif f.suffix in {".md", ".py", ".yaml", ".yml", ".json", ".tex", ".sh"}:
+                    available_files["other"].append(rel)
+        return {
+            "success": False,
+            "error": f"File '{file_path}' not found in skill '{name}'.",
+            "available_files": {k: v for k, v in available_files.items() if v},
+            "hint": "Use one of the available file paths listed above",
+        }
+    if (file_size := target_file.stat().st_size) > MAX_SKILL_FILE_BYTES:
+        return {
+            "success": False,
+            "error": f"File '{file_path}' is {file_size} bytes, exceeds {MAX_SKILL_FILE_BYTES}-byte skill-file read cap.",
+            "hint": "Link a smaller excerpt via patch or split the file outside the skill bundle.",
+        }
+    try:
+        return {
+            "success": True,
+            "name": name,
+            "file": file_path,
+            "content": target_file.read_text(encoding="utf-8"),
+            "file_type": target_file.suffix,
+        }
+    except UnicodeDecodeError:
+        return {
+            "success": True,
+            "name": name,
+            "file": file_path,
+            "content": f"[Binary file: {target_file.name}, size: {target_file.stat().st_size} bytes]",
+            "is_binary": True,
+        }
+
+
 def _parse_tags(tags_value: Any) -> list[str]:
     if not tags_value:
         return []
@@ -185,92 +264,14 @@ def skill_view(name: str, file_path: str | None = None) -> dict[str, Any]:
             return {"success": False, "error": f"Skill '{resolved_name}' is disabled in the user's skill settings."}
 
         if file_path:
-            if has_traversal_component(file_path):
-                return {
-                    "success": False,
-                    "error": "Path traversal ('..') is not allowed.",
-                    "hint": "Use a relative path within the skill directory",
-                }
-            target_file = skill_dir / file_path
-            if traversal_error := validate_within_dir(target_file, skill_dir):
-                return {
-                    "success": False,
-                    "error": traversal_error,
-                    "hint": "Use a relative path within the skill directory",
-                }
-            if not target_file.exists():
-                available_files = {"references": [], "templates": [], "assets": [], "scripts": [], "other": []}
-                for f in skill_dir.rglob("*"):
-                    if f.is_file() and f.name != "SKILL.md":
-                        rel = str(f.relative_to(skill_dir))
-                        if rel.startswith(("references/", "templates/", "assets/", "scripts/")):
-                            available_files[rel.partition("/")[0]].append(rel)
-                        elif f.suffix in {".md", ".py", ".yaml", ".yml", ".json", ".tex", ".sh"}:
-                            available_files["other"].append(rel)
-                available_files = {k: v for k, v in available_files.items() if v}
-                return {
-                    "success": False,
-                    "error": f"File '{file_path}' not found in skill '{name}'.",
-                    "available_files": available_files,
-                    "hint": "Use one of the available file paths listed above",
-                }
-            try:
-                # 读端同闸：写端 1 MiB 不能让 view 绕过，防链接文件撑爆上下文。
-                file_size = target_file.stat().st_size
-                if file_size > MAX_SKILL_FILE_BYTES:
-                    return {
-                        "success": False,
-                        "error": (
-                            f"File '{file_path}' is {file_size} bytes, "
-                            f"exceeds {MAX_SKILL_FILE_BYTES}-byte skill-file read cap."
-                        ),
-                        "hint": ("Link a smaller excerpt via patch or split the file outside the skill bundle."),
-                    }
-                f_content = target_file.read_text(encoding="utf-8")
-                return {
-                    "success": True,
-                    "name": name,
-                    "file": file_path,
-                    "content": f_content,
-                    "file_type": target_file.suffix,
-                }
-            except UnicodeDecodeError:
-                return {
-                    "success": True,
-                    "name": name,
-                    "file": file_path,
-                    "content": f"[Binary file: {target_file.name}, size: {target_file.stat().st_size} bytes]",
-                    "is_binary": True,
-                }
-
-        ref_files, tmp_files, ast_files, scr_files = [], [], [], []
-        if (ref_dir := skill_dir / "references").exists():
-            ref_files = [str(f.relative_to(skill_dir)) for f in ref_dir.glob("*.md")]
-        if (tmp_dir := skill_dir / "templates").exists():
-            for ext in ["*.md", "*.py", "*.yaml", "*.yml", "*.json", "*.tex", "*.sh"]:
-                tmp_files.extend(str(f.relative_to(skill_dir)) for f in tmp_dir.rglob(ext))
-        if (ast_dir := skill_dir / "assets").exists():
-            ast_files = [str(f.relative_to(skill_dir)) for f in ast_dir.rglob("*") if f.is_file()]
-        if (scr_dir := skill_dir / "scripts").exists():
-            for ext in ["*.py", "*.sh", "*.bash", "*.js", "*.ts", "*.rb"]:
-                scr_files.extend(str(f.relative_to(skill_dir)) for f in scr_dir.glob(ext))
+            return _view_linked_file(name, skill_dir, file_path)
 
         spiritagent_meta = get_spiritagent_metadata(parsed_frontmatter)
         tags = _parse_tags(spiritagent_meta.get("tags") or parsed_frontmatter.get("tags", ""))
         related_skills = _parse_tags(
             spiritagent_meta.get("related_skills") or parsed_frontmatter.get("related_skills", ""),
         )
-
-        linked_files = {
-            k: v
-            for k, v in [
-                ("references", ref_files),
-                ("templates", tmp_files),
-                ("assets", ast_files),
-                ("scripts", scr_files),
-            ]
-            if v
-        }
+        linked_files = _linked_files(skill_dir)
 
         # path 按技能所在根目录取相对路径（根可能是共享技能目录或当前学习域目录）。
         rel_path = skill_md.relative_to(search_root).as_posix()

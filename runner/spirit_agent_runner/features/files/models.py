@@ -1,23 +1,10 @@
-import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-_SEARCH_LINE_RE = re.compile(r"^([A-Za-z]:)?(.*?):(\d+):(.*)$")
-
-
-_CONTEXT_DELIM_RE = re.compile(r"-(\d+)-")
-
-
-_UTF8_BOM = "﻿"
-
 
 MAX_MATCH_CONTENT = 500
-
-
 MAX_EDIT_BYTES = 10 * 1024 * 1024
-
-
 BINARY_FILE_ERROR = "Binary file — read_file and patch only handle text."
 
 
@@ -124,37 +111,7 @@ class ExecuteResult:
     exit_code: int = 0
 
 
-LINTERS = {
-    ".js": "node --check {file} 2>&1",
-    # --no-install：防 npx 临时下同名包。
-    ".ts": "npx --no-install tsc --noEmit {file} 2>&1",
-    ".go": "go vet {file} 2>&1",
-    ".rs": "rustfmt --check {file} 2>&1",
-}
-
-
-_LINTER_UNUSABLE_PATTERNS = {
-    "npx": (
-        "this is not the tsc command you are looking for",
-        "could not determine executable to run",
-        "not found in npm registry",
-        "canceled due to missing packages",
-    ),
-    "rustfmt": ("no input filename given", "error: not a workspace"),
-    "go": ("cannot find package", "go: cannot find main module"),
-}
-
-
-DEFAULT_READ_OFFSET = 1
-
-
 DEFAULT_READ_LIMIT = 500
-
-
-DEFAULT_SEARCH_OFFSET = 0
-
-
-DEFAULT_SEARCH_LIMIT = 50
 
 
 class OperationType(Enum):
@@ -166,7 +123,7 @@ class OperationType(Enum):
 
 @dataclass(slots=True)
 class HunkLine:
-    prefix: str  # "+", "-", or " "
+    prefix: str  # 取 "+"、"-" 或 " "
     content: str
 
 

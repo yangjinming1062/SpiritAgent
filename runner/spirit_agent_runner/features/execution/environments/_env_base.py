@@ -13,7 +13,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import IO, Protocol
 
-from spirit_agent_runner.contracts.config import cfg_get, load_config
+from spirit_agent_runner.contracts.config import cfg_get, cfg_int, load_config
 from spirit_agent_runner.contracts.interrupt import is_interrupted
 from spirit_agent_runner.features.execution.environments._cmd_rewrite import (
     _rewrite_compound_background,
@@ -109,13 +109,8 @@ class EnvironmentSpec:
 
 class BaseEnvironment(ABC):
     _snapshot_timeout: int = 30
-    # env_type：local/ssh，file_ops 据此路由。
-    env_type: str = ""
-    # 创建参数；配置变化时据此处置。
-    spec: EnvironmentSpec | None = None
-
-    def get_temp_dir(self) -> str:
-        return "/tmp"
+    env_type: str = ""  # local/ssh，file_ops 据此路由。
+    spec: EnvironmentSpec | None = None  # 创建参数；配置变化时据此处置。
 
     def __init__(self, cwd: str, timeout: int) -> None:
         self.cwd = cwd
@@ -127,11 +122,12 @@ class BaseEnvironment(ABC):
         self._cwd_marker = _cwd_marker(self._session_id)
         self._snapshot_ready = False
         self._snapshot_created_at: float = 0.0
-        # 执行中命令数，cleanup 据此续命。
-        self._executing_count = 0
+        self._executing_count = 0  # 执行中命令数，cleanup 据此续命。
         self._executing_lock = threading.Lock()
-        # use_environment 持有数。
-        self.leases = 0
+        self.leases = 0  # use_environment 持有数。
+
+    @abstractmethod
+    def get_temp_dir(self) -> str: ...
 
     @abstractmethod
     def _run_bash(
@@ -165,7 +161,7 @@ class BaseEnvironment(ABC):
             result = self._wait_for_process(proc, timeout=self._snapshot_timeout)
             self._snapshot_ready = True
             self._snapshot_created_at = time.time()
-            self._update_cwd(result)
+            self._extract_cwd_from_output(result)
             logger.info("Session snapshot created (session=%s, cwd=%s)", self._session_id, self.cwd)
         except Exception as exc:
             logger.warning(
@@ -306,9 +302,6 @@ class BaseEnvironment(ABC):
         with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
             proc.kill()
 
-    def _update_cwd(self, result: dict) -> None:
-        self._extract_cwd_from_output(result)
-
     def _extract_cwd_from_output(self, result: dict) -> None:
         output = result.get("output", "")
         marker = self._cwd_marker
@@ -325,10 +318,7 @@ class BaseEnvironment(ABC):
 
     def _before_execute(self) -> None:
         if self._snapshot_ready:
-            try:
-                max_age = int(cfg_get(load_config(), "terminal", "env_snapshot_max_age", default=86400))
-            except (ValueError, TypeError):
-                max_age = 86400
+            max_age = cfg_int(cfg_get(load_config(), "terminal") or {}, "env_snapshot_max_age", 86400)
             if not os.path.exists(self._snapshot_path) or (
                 max_age > 0 and (time.time() - self._snapshot_created_at > max_age)
             ):
@@ -358,7 +348,7 @@ class BaseEnvironment(ABC):
         finally:
             with self._executing_lock:
                 self._executing_count -= 1
-        self._update_cwd(result)
+        self._extract_cwd_from_output(result)
         return result
 
     @property

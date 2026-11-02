@@ -17,6 +17,8 @@ _BATCH_ACTIONS = frozenset({"click", "type", "press", "hover", "scroll", "wait",
 
 
 def _validate_batch_actions(actions: list[dict[str, Any]]) -> str | None:
+    if not actions:
+        return "actions must be a non-empty list of action objects"
     for index, action in enumerate(actions):
         if not isinstance(action, dict):
             return f"Action at index {index} must be an object"
@@ -47,19 +49,16 @@ def browser_batch(
     actions: list[dict[str, Any]],
     return_snapshot: bool = True,
     wait_between_ms: int = 100,
-    task_id: str | None = None,
     cancel_token: threading.Event | None = None,
 ) -> dict[str, Any]:
     """按序执行一组页面动作，首个失败即停止并返回已执行步骤。"""
     if is_camofox_mode():
         return camofox_unsupported("browser_batch")
 
-    if not actions or not isinstance(actions, list):
-        return {"success": False, "error": "actions parameter must be a non-empty list of action objects"}
     if validation_error := _validate_batch_actions(actions):
         return {"success": False, "error": validation_error}
 
-    with browser_session(task_id) as (supervisor, _):
+    with browser_session() as supervisor:
         if supervisor is None:
             return no_supervisor()
 
@@ -93,7 +92,6 @@ def get_tool_definitions() -> list[ToolDefinition]:
                 actions=args.get("actions", []),
                 return_snapshot=args.get("return_snapshot", True),
                 wait_between_ms=args.get("wait_between_ms", 100),
-                task_id=context.task_id,
                 cancel_token=context.cancel_event,
             ),
             check_fn=check_browser_cdp_requirements,

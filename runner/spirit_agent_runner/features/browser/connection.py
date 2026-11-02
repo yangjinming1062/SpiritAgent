@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import itertools
 import json
 import logging
 import random
@@ -21,9 +22,10 @@ _NAVIGATION_METHODS = frozenset({"Page.navigate", "Page.navigateToHistoryEntry",
 class CdpConnection:
     """Own one CDP socket, event-loop thread, requests and reconnect lifecycle."""
 
+    _seq = itertools.count(1)
+
     def __init__(
         self,
-        task_id: str,
         cdp_url: str,
         *,
         launch_handle: NativeBrowserProcess | None,
@@ -32,10 +34,10 @@ class CdpConnection:
         handle_event: Callable[[str, dict[str, Any], str | None], None],
         pending_dialog: Callable[..., PendingDialog | None],
     ) -> None:
-        self.task_id = task_id
         self.cdp_url = cdp_url
         self.launch_handle = launch_handle
         self.auto_owned = auto_owned
+        self._tag = f"cdp-{next(CdpConnection._seq)}"
         self._on_connect = on_connect
         self._handle_event = handle_event
         self._pending_dialog = pending_dialog
@@ -74,7 +76,7 @@ class CdpConnection:
             self._start_error = None
             self._thread = threading.Thread(
                 target=self._thread_main,
-                name=f"cdp-supervisor-{self.task_id}",
+                name=f"{self._tag}",
                 daemon=True,
             )
             self._thread.start()
@@ -98,7 +100,7 @@ class CdpConnection:
         if self._thread is not None and self._thread.is_alive() and self._thread is not threading.current_thread():
             self._thread.join(timeout=5.0)
             if self._thread.is_alive():
-                logger.warning("CDP supervisor %s thread did not exit within 5s", self.task_id)
+                logger.warning("CDP supervisor %s thread did not exit within 5s", self._tag)
 
         with self._state_lock:
             self._active = False
@@ -114,7 +116,7 @@ class CdpConnection:
     def _thread_main(self) -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        self._main_task = loop.create_task(self._run(), name=f"cdp-supervisor-{self.task_id}")
+        self._main_task = loop.create_task(self._run(), name=f"{self._tag}")
         self._loop = loop
         try:
             loop.run_until_complete(self._main_task)
@@ -124,7 +126,7 @@ class CdpConnection:
             if not self._ready_event.is_set():
                 self._start_error = e
             else:
-                logger.warning("CDP supervisor %s crashed: %s", self.task_id, e)
+                logger.warning("CDP supervisor %s crashed: %s", self._tag, e)
         finally:
             pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
             for t in pending:
@@ -149,7 +151,7 @@ class CdpConnection:
             except Exception as e:
                 if not self._ready_event.is_set():
                     raise
-                logger.warning("CDP supervisor %s reconnect failed: %s", self.task_id, e)
+                logger.warning("CDP supervisor %s reconnect failed: %s", self._tag, e)
                 if self._launched_browser_exited():
                     return
                 await asyncio.sleep(random.uniform(0.0, backoff))
@@ -169,7 +171,7 @@ class CdpConnection:
             except Exception as e:
                 if not self._ready_event.is_set():
                     raise
-                logger.warning("CDP supervisor %s session dropped: %s", self.task_id, e)
+                logger.warning("CDP supervisor %s session dropped: %s", self._tag, e)
             finally:
                 with self._state_lock:
                     self._active = False
@@ -194,7 +196,7 @@ class CdpConnection:
         """自行启动的浏览器进程已退出（崩溃或用户关闭窗口）时不再重连，由下次导航重新启动。"""
         if not self.auto_owned or self.launch_handle is None or (code := self.launch_handle.poll()) is None:
             return False
-        logger.warning("CDP supervisor %s: browser process exited with code %s; not reconnecting", self.task_id, code)
+        logger.warning("CDP supervisor %s: browser process exited with code %s; not reconnecting", self._tag, code)
         return True
 
     async def send(
@@ -280,7 +282,7 @@ class CdpConnection:
             try:
                 msg = json.loads(raw)
             except ValueError:
-                logger.debug("CDP supervisor %s dropped non-JSON frame", self.task_id)
+                logger.debug("CDP supervisor %s dropped non-JSON frame", self._tag)
                 continue
 
             if "id" in msg:
@@ -294,4 +296,4 @@ class CdpConnection:
                 try:
                     self._handle_event(msg["method"], msg.get("params", {}), msg.get("sessionId"))
                 except Exception:
-                    logger.exception("CDP supervisor %s failed to handle %s", self.task_id, msg["method"])
+                    logger.exception("CDP supervisor %s failed to handle %s", self._tag, msg["method"])

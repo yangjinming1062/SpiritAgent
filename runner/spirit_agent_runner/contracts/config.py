@@ -31,21 +31,10 @@ def cfg_get(d: Any, *keys: str, default: Any = None) -> Any:
     return default if d is None else d
 
 
-def get_env_type(default: str = "local") -> str:
-    """归一化 ``terminal.env_type``：去空白、转小写、缺失回落到 ``default``。"""
-    val = cfg_get(load_config(), "terminal", "env_type", default=default)
-    return str(val).strip().lower() or default
-
-
 def cfg_str(section: dict[str, Any], key: str, default: str = "") -> str:
     """把配置值强制为字符串并去前后空白。"""
     v = section.get(key, default)
     return str(v).strip() if v is not None else default
-
-
-def cfg_bool(section: dict[str, Any], key: str, default: bool = False) -> bool:
-    """通过 ``is_truthy_value`` 把配置值转 bool。"""
-    return is_truthy_value(section.get(key), default=default)
 
 
 def cfg_int(section: dict[str, Any], key: str, default: int = 0) -> int:

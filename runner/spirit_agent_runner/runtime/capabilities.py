@@ -1,8 +1,6 @@
 import shutil
-import socket
 import sys
 import time
-from pathlib import Path
 from typing import Any
 
 from spirit_agent_runner.infrastructure.constants import IS_WINDOWS
@@ -61,23 +59,6 @@ def _probe_system_activity() -> tuple[bool, str | None]:
         return False, "CGSessionCopyCurrentDictionary returned None"
     except Exception as e:
         return False, f"macOS Quartz probe failed: {e}"
-
-
-def network_reachable(host: str = "1.1.1.1", port: int = 443, timeout: float = 1.5) -> bool:
-    """轻量连通性探测（供 ``runner.info`` 上报网络状态），避免握手超时。"""
-    try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except OSError:
-        return False
-
-
-def disk_free_bytes(path: str | Path = ".") -> int | None:
-    """``path`` 所在文件系统的剩余字节数；无法查询时返回 ``None``。"""
-    try:
-        return shutil.disk_usage(path).free
-    except OSError:
-        return None
 
 
 class CapabilityProbe:

@@ -13,10 +13,10 @@ import time
 import uuid
 from typing import Any
 
-from spirit_agent_runner.contracts.config import cfg_get, cfg_int, load_config
+from spirit_agent_runner.contracts.config import cfg_int
 from spirit_agent_runner.contracts.interrupt import is_interrupted
 from spirit_agent_runner.contracts.tooling import ToolDefinition
-from spirit_agent_runner.features.execution.api import BaseEnvironment, current_task_id, get_env_config, use_environment
+from spirit_agent_runner.features.execution.api import BaseEnvironment, get_env_config, use_environment
 from spirit_agent_runner.features.execution.code.child_api import generate_spiritagent_tools_module
 from spirit_agent_runner.features.execution.code.output import (
     MAX_STDERR_BYTES,
@@ -38,6 +38,7 @@ from spirit_agent_runner.features.execution.code.selection import (
     execution_mode,
     resolve_child_cwd,
     resolve_child_python,
+    timezone_setting,
 )
 from spirit_agent_runner.infrastructure.constants import CREATE_NO_WINDOW, IS_WINDOWS
 from spirit_agent_runner.infrastructure.process_tree import terminate_tree
@@ -47,7 +48,6 @@ logger = logging.getLogger(__name__)
 
 def _execute_remote(code: str, timeout: int, max_tool_calls: int) -> dict[str, Any]:
     """经 SSH 执行远端 Python 脚本，通过文件 RPC 转发工具调用。"""
-    task_id = current_task_id()
     tool_call_counter = [0]
     exec_start = time.monotonic()
     stop_event = threading.Event()
@@ -57,7 +57,7 @@ def _execute_remote(code: str, timeout: int, max_tool_calls: int) -> dict[str, A
     # 持有环境直到远端暂存目录清理完。
     held_env = contextlib.ExitStack()
     try:
-        env = held_env.enter_context(use_environment(task_id))
+        env = held_env.enter_context(use_environment())
         env_type = env.env_type
         py_check = env.execute("command -v python3 >/dev/null 2>&1 && echo OK", timeout=15)
         if "OK" not in py_check.get("output", ""):
@@ -87,12 +87,10 @@ def _execute_remote(code: str, timeout: int, max_tool_calls: int) -> dict[str, A
             (env, rpc_dir, tool_call_counter, max_tool_calls, stop_event, rpc_token),
         )
         rpc_thread.start()
-        env_prefix = (
-            f"SPIRITAGENT_RPC_DIR={shlex.quote(rpc_dir)} SPIRITAGENT_RPC_TOKEN={rpc_token} PYTHONDONTWRITEBYTECODE=1"
-        )
-        if tz := str(cfg_get(load_config(), "terminal", "timezone", default="")).strip():
+        env_prefix = f"SPIRITAGENT_RPC_DIR={shlex.quote(rpc_dir)} SPIRITAGENT_RPC_TOKEN={rpc_token} PYTHONDONTWRITEBYTECODE=1"
+        if tz := timezone_setting():
             env_prefix += f" TZ={shlex.quote(tz)}"
-        logger.info("Executing code on %s backend (task %s)...", env_type, task_id)
+        logger.info("Executing code on %s backend...", env_type)
         # 脚本在终端会话目录运行，spiritagent_tools 随脚本目录进入 sys.path。
         script_result = env.execute(
             f"{env_prefix} python3 {shlex.quote(f'{sandbox_dir}/script.py')}",

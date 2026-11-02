@@ -12,14 +12,9 @@ def _safe_getcwd() -> str:
         return os.path.expanduser("~")
 
 
-def resolve_task_id(task_id: str | None) -> str:
-    return task_id or "default"
-
-
 def normalize_environment_config(config: dict[str, Any]) -> dict[str, Any]:
-    """加载并规范化 `terminal.*` 配置（env_type、cwd、超时、SSH 字段等）。"""
-    cfg = config
-    t = cfg.get("terminal") if isinstance(cfg, dict) else {}
+    """加载并规范化 `terminal.*` 配置中与执行相关的字段（env_type、cwd、超时、空闲寿命）。"""
+    t = config.get("terminal") if isinstance(config, dict) else {}
     t = t if isinstance(t, dict) else {}
 
     env_type = cfg_str(t, "env_type", "local")
@@ -27,36 +22,28 @@ def normalize_environment_config(config: dict[str, Any]) -> dict[str, Any]:
     cwd = cfg_str(t, "cwd", _safe_getcwd() if env_type == "local" else "~")
     if cwd and env_type == "local":
         cwd = os.path.expanduser(cwd)
-    ssh_cfg = t.get("ssh")
-    if not isinstance(ssh_cfg, dict):
-        ssh_cfg = {}
     return {
         "env_type": env_type,
         "cwd": cwd,
         "timeout": cfg_int(t, "timeout", 180),
         "lifetime_seconds": cfg_int(t, "lifetime_seconds", 300),
-        "ssh_host": cfg_str(ssh_cfg, "host"),
-        "ssh_user": cfg_str(ssh_cfg, "user"),
-        # 空端口回落默认，勿直接 int()。
-        "ssh_port": cfg_int(ssh_cfg, "port", 22),
-        "ssh_key": cfg_str(ssh_cfg, "key"),
-        # 密码不去空白。
-        "ssh_password": "" if (password := ssh_cfg.get("password")) is None else str(password),
     }
 
 
 def environment_spec(config: dict[str, Any]) -> EnvironmentSpec:
     """当前 terminal 配置对应的环境创建参数；本地环境不带 SSH 字段，修改它们不影响本地环境。"""
-    config = normalize_environment_config(config)
-    ssh = (
-        SSHTarget(
-            host=config["ssh_host"],
-            user=config["ssh_user"],
-            port=config["ssh_port"],
-            key=config["ssh_key"],
-            password=config["ssh_password"],
+    cfg = normalize_environment_config(config)
+    ssh = None
+    if cfg["env_type"] == "ssh":
+        t = config.get("terminal") if isinstance(config, dict) else {}
+        ssh_cfg = t.get("ssh") if isinstance(t, dict) and isinstance(t.get("ssh"), dict) else {}
+        ssh = SSHTarget(
+            host=cfg_str(ssh_cfg, "host"),
+            user=cfg_str(ssh_cfg, "user"),
+            # 空端口回落默认，勿直接 int()。
+            port=cfg_int(ssh_cfg, "port", 22),
+            key=cfg_str(ssh_cfg, "key"),
+            # 密码不去空白。
+            password="" if (password := ssh_cfg.get("password")) is None else str(password),
         )
-        if config["env_type"] == "ssh"
-        else None
-    )
-    return EnvironmentSpec(env_type=config["env_type"], cwd=config["cwd"], timeout=config["timeout"], ssh=ssh)
+    return EnvironmentSpec(env_type=cfg["env_type"], cwd=cfg["cwd"], timeout=cfg["timeout"], ssh=ssh)

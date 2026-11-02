@@ -17,7 +17,7 @@ from spirit_agent_runner.features.browser.tools._common import (
 )
 
 
-def browser_tab_new(url: str | None = None, task_id: str | None = None) -> dict[str, Any]:
+def browser_tab_new(url: str | None = None) -> dict[str, Any]:
     if is_camofox_mode():
         return camofox_unsupported("browser_tab_new")
 
@@ -25,7 +25,7 @@ def browser_tab_new(url: str | None = None, task_id: str | None = None) -> dict[
     if url_err is not None:
         return url_err
 
-    with browser_session(task_id) as (supervisor, _):
+    with browser_session() as supervisor:
         if supervisor is None:
             return no_supervisor()
 
@@ -50,11 +50,11 @@ def browser_tab_new(url: str | None = None, task_id: str | None = None) -> dict[
         return {"success": True, "tab_id": target_id, "url": target_url}
 
 
-def browser_tab_switch(tab_id: str, task_id: str | None = None) -> dict[str, Any]:
+def browser_tab_switch(tab_id: str) -> dict[str, Any]:
     if is_camofox_mode():
         return camofox_unsupported("browser_tab_switch")
 
-    with browser_session(task_id) as (supervisor, _):
+    with browser_session() as supervisor:
         if supervisor is None:
             return no_supervisor()
 
@@ -75,11 +75,11 @@ def browser_tab_switch(tab_id: str, task_id: str | None = None) -> dict[str, Any
         return {"success": True, "active_tab_id": tab_id}
 
 
-def browser_tab_close(tab_id: str | None = None, task_id: str | None = None) -> dict[str, Any]:
+def browser_tab_close(tab_id: str | None = None) -> dict[str, Any]:
     if is_camofox_mode():
         return camofox_unsupported("browser_tab_close")
 
-    with browser_session(task_id) as (supervisor, _):
+    with browser_session() as supervisor:
         if supervisor is None:
             return no_supervisor()
 
@@ -89,11 +89,11 @@ def browser_tab_close(tab_id: str | None = None, task_id: str | None = None) -> 
         return {"success": False, "error": res.get("error", "Failed to close tab")}
 
 
-def browser_tab_list(task_id: str | None = None) -> dict[str, Any]:
+def browser_tab_list() -> dict[str, Any]:
     if is_camofox_mode():
         return camofox_unsupported("browser_tab_list")
 
-    with browser_session(task_id) as (supervisor, _):
+    with browser_session() as supervisor:
         if supervisor is None:
             return no_supervisor()
 
@@ -128,7 +128,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_tab_new",
             toolset_id="browser_automation",
             schema=BROWSER_TAB_NEW_SCHEMA,
-            handler=lambda context, args: browser_tab_new(url=args.get("url"), task_id=context.task_id),
+            handler=lambda context, args: browser_tab_new(url=args.get("url")),
             check_fn=check_browser_cdp_requirements,
             is_async=False,
         ),
@@ -136,7 +136,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_tab_switch",
             toolset_id="browser_automation",
             schema=BROWSER_TAB_SWITCH_SCHEMA,
-            handler=lambda context, args: browser_tab_switch(tab_id=args.get("tab_id", ""), task_id=context.task_id),
+            handler=lambda context, args: browser_tab_switch(tab_id=args.get("tab_id", "")),
             check_fn=check_browser_cdp_requirements,
             is_async=False,
         ),
@@ -144,7 +144,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_tab_close",
             toolset_id="browser_automation",
             schema=BROWSER_TAB_CLOSE_SCHEMA,
-            handler=lambda context, args: browser_tab_close(tab_id=args.get("tab_id"), task_id=context.task_id),
+            handler=lambda context, args: browser_tab_close(tab_id=args.get("tab_id")),
             check_fn=check_browser_cdp_requirements,
             is_async=False,
         ),
@@ -152,7 +152,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_tab_list",
             toolset_id="browser_automation",
             schema=BROWSER_TAB_LIST_SCHEMA,
-            handler=lambda context, _args: browser_tab_list(task_id=context.task_id),
+            handler=lambda _context, _args: browser_tab_list(),
             check_fn=check_browser_cdp_requirements,
             is_async=False,
         ),

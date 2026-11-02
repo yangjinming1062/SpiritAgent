@@ -132,11 +132,9 @@ class FileSyncManager:
     def sync_back(self) -> None:
         if not self._pushed_hashes and not self._synced_files:
             return
-        lock_path = get_spiritagent_home() / ".sync.lock"
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
         for attempt in range(_SYNC_BACK_MAX_RETRIES):
             try:
-                self._sync_back_once(lock_path)
+                self._sync_back_once(get_spiritagent_home() / ".sync.lock")
                 return
             except Exception as exc:
                 if attempt == _SYNC_BACK_MAX_RETRIES - 1:

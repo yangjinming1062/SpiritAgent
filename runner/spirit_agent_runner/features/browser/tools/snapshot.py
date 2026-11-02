@@ -8,12 +8,12 @@ from spirit_agent_runner.features.browser.schemas import BROWSER_SNAPSHOT_SCHEMA
 from spirit_agent_runner.features.browser.tools._common import action_error, browser_session, no_supervisor
 
 
-def browser_snapshot(full: bool = False, task_id: str | None = None) -> dict[str, Any]:
+def browser_snapshot(full: bool = False) -> dict[str, Any]:
     """获取当前页面可访问性树快照（紧凑或完整），超长按行截断，并附未决弹窗与 frame 概况。"""
     if is_camofox_mode():
-        return camofox_snapshot(task_id)
+        return camofox_snapshot()
 
-    with browser_session(task_id) as (supervisor, _):
+    with browser_session() as supervisor:
         if supervisor is None:
             return no_supervisor()
 
@@ -39,7 +39,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_snapshot",
             toolset_id="browser_automation",
             schema=BROWSER_SNAPSHOT_SCHEMA,
-            handler=lambda context, args: browser_snapshot(full=args.get("full", False), task_id=context.task_id),
+            handler=lambda context, args: browser_snapshot(full=args.get("full", False)),
             check_fn=check_browser_native_requirements,
             is_async=False,
         ),

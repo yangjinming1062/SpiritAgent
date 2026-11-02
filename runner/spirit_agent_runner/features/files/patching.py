@@ -141,7 +141,7 @@ def _retry_windowed(content: str, search: str, replace: str, hint: str) -> tuple
         return content, "context hint not found"
     start = max(0, pos - 500)
     end = min(len(content), pos + 2000)
-    window_new, _count, _, error = fuzzy_find_and_replace(content[start:end], search, replace, replace_all=False)
+    window_new, _count, error = fuzzy_find_and_replace(content[start:end], search, replace, replace_all=False)
     if error is not None:
         return content, error
     return content[:start] + window_new + content[end:], None
@@ -159,7 +159,7 @@ def _apply_hunks(content: str, hunks: list[Hunk]) -> tuple[str, str | None]:
             else:
                 content = content.rstrip("\n") + "\n" + replace + "\n"
             continue
-        new_content, _count, _strategy, error = fuzzy_find_and_replace(content, search, replace, replace_all=False)
+        new_content, _count, error = fuzzy_find_and_replace(content, search, replace, replace_all=False)
         if error is not None and hunk.context_hint:
             new_content, error = _retry_windowed(content, search, replace, hunk.context_hint)
         if error is not None:

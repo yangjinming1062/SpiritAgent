@@ -7,7 +7,6 @@ from spirit_agent_runner.contracts.config import load_config
 from spirit_agent_runner.features.files.formatting import (
     _not_utf8_error,
     _parse_search_output,
-    _split_tool_diagnostics,
     _strip_bom,
     build_read_result,
     is_binary_content,
@@ -19,9 +18,6 @@ from spirit_agent_runner.features.files.linting import LINTERS_INPROC
 from spirit_agent_runner.features.files.models import (
     BINARY_FILE_ERROR,
     DEFAULT_READ_LIMIT,
-    DEFAULT_READ_OFFSET,
-    DEFAULT_SEARCH_LIMIT,
-    DEFAULT_SEARCH_OFFSET,
     MAX_EDIT_BYTES,
     ExecuteResult,
     ListResult,
@@ -114,7 +110,7 @@ class ShellFileOperations(FileOperations):
         similar = [posixpath.join(dir_path, n) for n in rank_similar_names(names, posixpath.basename(path))]
         return ReadResult(error=f"File not found: {path}", similar_files=similar)
 
-    def read_file(self, path: str, offset: int = DEFAULT_READ_OFFSET, limit: int = DEFAULT_READ_LIMIT) -> ReadResult:
+    def read_file(self, path: str, offset: int = 1, limit: int = DEFAULT_READ_LIMIT) -> ReadResult:
         path = self._expand_path(path)
         q = self._escape_shell_arg(path)
         # awk NR 计入无结尾换行行。
@@ -270,8 +266,8 @@ class ShellFileOperations(FileOperations):
         path: str = ".",
         target: str = "content",
         file_glob: str | None = None,
-        limit: int = DEFAULT_SEARCH_LIMIT,
-        offset: int = DEFAULT_SEARCH_OFFSET,
+        limit: int = 50,
+        offset: int = 0,
         output_mode: str = "content",
         context: int = 0,
     ) -> SearchResult:
@@ -362,5 +358,4 @@ class ShellFileOperations(FileOperations):
             return SearchResult(
                 error=f"Search failed: {result.stdout.strip() or f'exit code {result.exit_code}'}",
             )
-        _, payload = _split_tool_diagnostics(result.stdout)
-        return _parse_search_output(payload, output_mode, limit, offset, context)
+        return _parse_search_output(result.stdout, output_mode, limit, offset, context)

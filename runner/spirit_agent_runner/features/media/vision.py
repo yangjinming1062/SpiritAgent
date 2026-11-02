@@ -54,7 +54,9 @@ def _is_path_in_safe_roots(local_path: Path) -> bool:
     return any(resolved.is_relative_to(root) for root in _allowed_image_roots())
 
 
-async def vision_analyze_tool(image_url: str) -> dict[str, Any]:
+async def _vision_analyze(args: dict[str, Any]) -> dict[str, Any]:
+    """加载本地安全路径或 http(s) URL 的图片，返回多模态 content；临时下载文件用完即删。"""
+    image_url = str(args.get("image_url", ""))
     temp_path, should_cleanup = None, True
     try:
         if is_interrupted():
@@ -83,8 +85,9 @@ async def vision_analyze_tool(image_url: str) -> dict[str, Any]:
         img_url = await run_in_thread(_prepare_image)
         size = temp_path.stat().st_size
         # 只回显文件名。
-        safe_source = temp_path.name
-        text = f"Image loaded ({size:,} bytes) from {safe_source}. Inspect it and answer any pending question about it."
+        text = (
+            f"Image loaded ({size:,} bytes) from {temp_path.name}. Inspect it and answer any pending question about it."
+        )
         return {
             "_multimodal": True,
             "content": [
@@ -96,15 +99,11 @@ async def vision_analyze_tool(image_url: str) -> dict[str, Any]:
     except Exception as e:
         err_msg = f"Error loading image: {e}"
         logger.error("%s", err_msg, exc_info=True)
-        return {"error": str(err_msg), "success": False}
+        return {"error": err_msg, "success": False}
     finally:
         if should_cleanup and temp_path:
             with contextlib.suppress(Exception):
                 await run_in_thread(temp_path.unlink)
-
-
-async def _handle_vision_analyze(args: dict[str, Any]) -> dict[str, Any]:
-    return await vision_analyze_tool(args.get("image_url", ""))
 
 
 def get_tool_definitions() -> list[ToolDefinition]:
@@ -113,8 +112,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="vision_analyze",
             toolset_id="media_analysis",
             schema=VISION_ANALYZE_SCHEMA,
-            handler=lambda _context, args: _handle_vision_analyze(args),
-            check_fn=None,
+            handler=lambda _context, args: _vision_analyze(args),
             is_async=True,
         ),
     ]

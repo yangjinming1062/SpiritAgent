@@ -54,9 +54,9 @@ def _get_camofox_config() -> dict[str, Any]:
     return cfg if isinstance(cfg, dict) else {}
 
 
-def _camofox_identity_override(task_id: str | None, camofox_cfg: dict[str, Any]) -> dict[str, str] | None:
+def _camofox_identity_override(camofox_cfg: dict[str, Any]) -> dict[str, str] | None:
     user_id = str(camofox_cfg.get("user_id") or "").strip()
-    session_key = str(camofox_cfg.get("session_key") or "").strip() or f"task_{(task_id or 'default')[:16]}"
+    session_key = str(camofox_cfg.get("session_key") or "").strip() or "task_default"
     if not user_id:
         return None
     return {"user_id": user_id, "session_key": session_key}
@@ -120,33 +120,29 @@ def _adopt_existing_tab(session: dict[str, Any]) -> dict[str, Any]:
     return session
 
 
-def _get_session(task_id: str | None) -> dict[str, Any]:
-    task_id = task_id or "default"
+def _get_session() -> dict[str, Any]:
     state = current_manager().camofox
     with state.lock:
-        if task_id not in state.sessions:
+        if state.session is None:
             camofox_cfg = _get_camofox_config()
-            identity = _camofox_identity_override(task_id, camofox_cfg)
+            identity = _camofox_identity_override(camofox_cfg)
             if identity is None and is_truthy_value(camofox_cfg.get("managed_persistence")):
-                identity = get_camofox_identity(task_id)
+                identity = get_camofox_identity()
             managed = identity is not None
             if identity is None:
-                identity = {
-                    "user_id": f"spiritagent_{uuid.uuid4().hex[:10]}",
-                    "session_key": f"task_{task_id[:16]}",
-                }
-            state.sessions[task_id] = {
+                identity = {"user_id": f"spiritagent_{uuid.uuid4().hex[:10]}", "session_key": "task_default"}
+            state.session = {
                 **identity,
                 "tab_id": None,
                 "managed": managed,
                 "adopt_existing_tab": managed and is_truthy_value(camofox_cfg.get("adopt_existing_tab")),
             }
-        session = state.sessions[task_id]
+        session = state.session
     return _adopt_existing_tab(session)
 
 
-def _ensure_tab(task_id: str | None, url: str = "about:blank") -> dict[str, Any]:
-    session = _get_session(task_id)
+def _ensure_tab(url: str = "about:blank") -> dict[str, Any]:
+    session = _get_session()
     if session["tab_id"]:
         return session
     data = _post(
@@ -164,22 +160,18 @@ def _post(path: str, body: dict[str, Any], timeout: int = _DEFAULT_TIMEOUT) -> d
 
 
 def _get(path: str, params: dict[str, Any] | None = None, timeout: int = _DEFAULT_TIMEOUT) -> dict[str, Any]:
-    return _get_raw(path, params=params, timeout=timeout).json()
-
-
-def _get_raw(path: str, params: dict[str, Any] | None = None, timeout: int = _DEFAULT_TIMEOUT) -> httpx.Response:
     resp = httpx.get(f"{get_camofox_url()}{path}", params=params, timeout=timeout)
     resp.raise_for_status()
-    return resp
+    return resp.json()
 
 
-def camofox_navigate(url: str, task_id: str | None = None) -> dict[str, Any]:
+def camofox_navigate(url: str) -> dict[str, Any]:
     """通过 Camofox REST 后端导航到 url。"""
     try:
         browser_url, rewrite_info = _rewrite_loopback_url_for_camofox(url)
-        session = _get_session(task_id)
+        session = _get_session()
         if not session["tab_id"]:
-            session = _ensure_tab(task_id, browser_url)
+            session = _ensure_tab(browser_url)
             data = {"ok": True, "url": browser_url}
         else:
             data = _post(
@@ -221,10 +213,10 @@ def camofox_navigate(url: str, task_id: str | None = None) -> dict[str, Any]:
         return tool_error(str(e), success=False)
 
 
-def camofox_snapshot(task_id: str | None = None) -> dict[str, Any]:
+def camofox_snapshot() -> dict[str, Any]:
     """取 Camofox 后端的页面快照，超长按行截断。"""
     try:
-        session = _get_session(task_id)
+        session = _get_session()
         if not session["tab_id"]:
             return tool_error("No browser session. Call browser_navigate first.", success=False)
         data = _get(f"/tabs/{session['tab_id']}/snapshot", params={"userId": session["user_id"]})
@@ -237,10 +229,10 @@ def camofox_snapshot(task_id: str | None = None) -> dict[str, Any]:
         return tool_error(str(e), success=False)
 
 
-def camofox_click(ref: str, task_id: str | None = None) -> dict[str, Any]:
+def camofox_click(ref: str) -> dict[str, Any]:
     """在 Camofox 当前 tab 上点击 ref 元素。"""
     try:
-        session = _get_session(task_id)
+        session = _get_session()
         if not session["tab_id"]:
             return tool_error("No browser session. Call browser_navigate first.", success=False)
         clean_ref = ref.lstrip("@")
@@ -250,10 +242,10 @@ def camofox_click(ref: str, task_id: str | None = None) -> dict[str, Any]:
         return tool_error(str(e), success=False)
 
 
-def camofox_type(ref: str, text: str, task_id: str | None = None) -> dict[str, Any]:
+def camofox_type(ref: str, text: str) -> dict[str, Any]:
     """在 Camofox 当前 tab 上向 ref 元素输入 text。"""
     try:
-        session = _get_session(task_id)
+        session = _get_session()
         if not session["tab_id"]:
             return tool_error("No browser session. Call browser_navigate first.", success=False)
         clean_ref = ref.lstrip("@")
@@ -263,10 +255,10 @@ def camofox_type(ref: str, text: str, task_id: str | None = None) -> dict[str, A
         return tool_error(str(e), success=False)
 
 
-def camofox_scroll(direction: str, task_id: str | None = None) -> dict[str, Any]:
+def camofox_scroll(direction: str) -> dict[str, Any]:
     """在 Camofox 当前 tab 上按 direction 滚动。"""
     try:
-        session = _get_session(task_id)
+        session = _get_session()
         if not session["tab_id"]:
             return tool_error("No browser session. Call browser_navigate first.", success=False)
         _post(f"/tabs/{session['tab_id']}/scroll", {"userId": session["user_id"], "direction": direction})
@@ -275,10 +267,10 @@ def camofox_scroll(direction: str, task_id: str | None = None) -> dict[str, Any]
         return tool_error(str(e), success=False)
 
 
-def camofox_back(task_id: str | None = None) -> dict[str, Any]:
+def camofox_back() -> dict[str, Any]:
     """让 Camofox 当前 tab 退回历史上一页。"""
     try:
-        session = _get_session(task_id)
+        session = _get_session()
         if not session["tab_id"]:
             return tool_error("No browser session. Call browser_navigate first.", success=False)
         data = _post(f"/tabs/{session['tab_id']}/back", {"userId": session["user_id"]})
@@ -287,10 +279,10 @@ def camofox_back(task_id: str | None = None) -> dict[str, Any]:
         return tool_error(str(e), success=False)
 
 
-def camofox_press(key: str, task_id: str | None = None) -> dict[str, Any]:
+def camofox_press(key: str) -> dict[str, Any]:
     """在 Camofox 当前 tab 上按下指定按键。"""
     try:
-        session = _get_session(task_id)
+        session = _get_session()
         if not session["tab_id"]:
             return tool_error("No browser session. Call browser_navigate first.", success=False)
         _post(f"/tabs/{session['tab_id']}/press", {"userId": session["user_id"], "key": key})
@@ -299,10 +291,10 @@ def camofox_press(key: str, task_id: str | None = None) -> dict[str, Any]:
         return tool_error(str(e), success=False)
 
 
-def camofox_get_images(task_id: str | None = None) -> dict[str, Any]:
+def camofox_get_images() -> dict[str, Any]:
     """从 Camofox 页面快照中解析出所有图片的 src 与 alt。"""
     try:
-        session = _get_session(task_id)
+        session = _get_session()
         if not session["tab_id"]:
             return tool_error("No browser session. Call browser_navigate first.", success=False)
         data = _get(f"/tabs/{session['tab_id']}/snapshot", params={"userId": session["user_id"]})
@@ -323,13 +315,16 @@ def camofox_get_images(task_id: str | None = None) -> dict[str, Any]:
         return tool_error(str(e), success=False)
 
 
-def camofox_vision(annotate: bool = False, task_id: str | None = None) -> dict[str, Any]:
+def camofox_vision(annotate: bool = False) -> dict[str, Any]:
     """截图 Camofox 当前 tab 并把截图直接附到主对话上下文。"""
     try:
-        session = _get_session(task_id)
+        session = _get_session()
         if not session["tab_id"]:
             return tool_error("No browser session. Call browser_navigate first.", success=False)
-        resp = _get_raw(f"/tabs/{session['tab_id']}/screenshot", params={"userId": session["user_id"]})
+        resp = httpx.get(
+            f"{get_camofox_url()}/tabs/{session['tab_id']}/screenshot", params={"userId": session["user_id"]}
+        )
+        resp.raise_for_status()
         screenshots_dir = get_spiritagent_dir("cache/screenshots")
         screenshots_dir.mkdir(parents=True, exist_ok=True)
         screenshot_path = str(screenshots_dir / f"browser_screenshot_{uuid.uuid4().hex[:8]}.png")

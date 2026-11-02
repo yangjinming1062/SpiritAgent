@@ -31,13 +31,13 @@ def fuzzy_find_and_replace(
     old_string: str,
     new_string: str,
     replace_all: bool = False,
-) -> tuple[str, int, str | None, str | None]:
-    """按策略链查找并替换；返回 (new_content, match_count, strategy_name, error)。"""
+) -> tuple[str, int, str | None]:
+    """按策略链查找并替换；返回 (new_content, match_count, error)。"""
     if not old_string:
-        return content, 0, None, "old_string cannot be empty"
+        return content, 0, "old_string cannot be empty"
 
     if old_string == new_string:
-        return content, 0, None, "old_string and new_string are identical"
+        return content, 0, "old_string and new_string are identical"
 
     strategies: list[tuple[str, Callable]] = [
         ("exact", _strategy_exact),
@@ -58,17 +58,14 @@ def fuzzy_find_and_replace(
                 return (
                     content,
                     0,
-                    None,
-                    (
-                        f"Found {len(matches)} matches for old_string. Provide more context to make it unique, or use replace_all=True."
-                    ),
+                    f"Found {len(matches)} matches for old_string. Provide more context to make it unique, or use replace_all=True.",
                 )
 
             # 转义漂移防护：非 exact 命中时若 new 含 \'/\" 而匹配区没有，按序列化漂移拒绝写入。
             if strategy_name != "exact":
                 drift_err = _detect_escape_drift(content, matches, old_string, new_string)
                 if drift_err:
-                    return content, 0, None, drift_err
+                    return content, 0, drift_err
 
             # escape_normalized 命中时 new 也须一并反转义，否则字面 \n 会写进文件。
             if strategy_name == "escape_normalized":
@@ -81,9 +78,9 @@ def fuzzy_find_and_replace(
                 effective_new,
                 old_string=old_string if strategy_name != "exact" else None,
             )
-            return new_content, len(matches), strategy_name, None
+            return new_content, len(matches), None
 
-    return content, 0, None, "Could not find a match for old_string in the file"
+    return content, 0, "Could not find a match for old_string in the file"
 
 
 def _detect_escape_drift(content: str, matches: list[tuple[int, int]], old_string: str, new_string: str) -> str | None:

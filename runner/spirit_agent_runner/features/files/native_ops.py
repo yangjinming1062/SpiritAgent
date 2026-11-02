@@ -23,9 +23,6 @@ from spirit_agent_runner.features.files.linting import LINTERS_INPROC
 from spirit_agent_runner.features.files.models import (
     BINARY_FILE_ERROR,
     DEFAULT_READ_LIMIT,
-    DEFAULT_READ_OFFSET,
-    DEFAULT_SEARCH_LIMIT,
-    DEFAULT_SEARCH_OFFSET,
     MAX_EDIT_BYTES,
     MAX_MATCH_CONTENT,
     ExecuteResult,
@@ -92,7 +89,7 @@ class NativeFileOperations(FileOperations):
         similar = [str(p.parent / n) for n in rank_similar_names(names, p.name)]
         return ReadResult(error=f"File not found: {path}", similar_files=similar)
 
-    def read_file(self, path: str, offset: int = DEFAULT_READ_OFFSET, limit: int = DEFAULT_READ_LIMIT) -> ReadResult:
+    def read_file(self, path: str, offset: int = 1, limit: int = DEFAULT_READ_LIMIT) -> ReadResult:
         p = self.resolve_path(path)
         if not p.exists():
             return self._not_found(p, path)
@@ -230,8 +227,8 @@ class NativeFileOperations(FileOperations):
         path: str = ".",
         target: str = "content",
         file_glob: str | None = None,
-        limit: int = DEFAULT_SEARCH_LIMIT,
-        offset: int = DEFAULT_SEARCH_OFFSET,
+        limit: int = 50,
+        offset: int = 0,
         output_mode: str = "content",
         context: int = 0,
     ) -> SearchResult:

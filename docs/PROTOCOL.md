@@ -400,7 +400,7 @@ sequenceDiagram
 
 ### 能力与进程代次
 
-能力、健康状态和进程代次的字段定义见 [Runner 契约](../runner/spirit_agent_runner/contracts/rpc.py)。`run_generation` 每次进程启动变化，进程内重连不变；连续重连次数与生命周期累计次数不混用。
+能力、健康状态和进程代次的字段定义见 [Runner 契约](../runner/spirit_agent_runner/contracts/rpc.py)。`run_generation` 每次进程启动变化，进程内重连不变；`reconnect_streak` 只统计连续失败重连，成功握手即归零。
 
 当前 Client 不消费运行期能力通知，握手能力快照与进程代次也不参与门控；新派发资格取决于桥状态、WS 连接及成功同步的工具清单。
 

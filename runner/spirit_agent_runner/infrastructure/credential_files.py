@@ -34,11 +34,10 @@ def _load_config_files(*, config: dict[str, Any] | None = None) -> list[tuple[st
 
 
 def iter_credential_files(remote_base: str, *, config: dict[str, Any] | None = None) -> list[dict[str, str]]:
+    # is_file 已在 _load_config_files 核过，直接映射。
     base = remote_base.rstrip("/")
     return [
-        {"host_path": host_path, "remote_path": f"{base}/{rel}"}
-        for host_path, rel in _load_config_files(config=config)
-        if Path(host_path).is_file()
+        {"host_path": host_path, "remote_path": f"{base}/{rel}"} for host_path, rel in _load_config_files(config=config)
     ]
 
 

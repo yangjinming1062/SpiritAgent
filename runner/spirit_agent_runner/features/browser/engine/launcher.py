@@ -21,6 +21,8 @@ from spirit_agent_runner.infrastructure.process_tree import terminate_tree
 
 logger = logging.getLogger(__name__)
 
+_STARTUP_TIMEOUT_S = 20.0
+
 
 class BrowserLaunchError(Exception):
     """浏览器启动失败异常。"""
@@ -41,10 +43,6 @@ class NativeBrowserProcess:
         self._browser_process = browser_process
         self._terminated = False
         self._lock = threading.Lock()
-
-    @property
-    def pid(self) -> int:
-        return self._browser_process.pid if self._browser_process is not None else self.proc.pid
 
     def poll(self) -> int | None:
         """Windows 浏览器正常重启后以接管的主进程为准，不把启动器退出当作浏览器死亡。"""
@@ -72,16 +70,17 @@ class NativeBrowserProcess:
                 with contextlib.suppress(OSError):
                     os.killpg(self.proc.pid, signal.SIGKILL)
             return
+        target = self._browser_process.pid if self._browser_process is not None else self.proc.pid
         try:
             terminate_tree(
-                self._browser_process.pid if self._browser_process is not None else self.proc,
+                self._browser_process if self._browser_process is not None else self.proc,
                 graceful_timeout=3.0,
                 force_timeout=2.0,
                 escalate=True,
                 pgid=self.proc.pid if posix else None,
             )
         except Exception as e:
-            logger.warning("Error killing browser process tree %s: %s", self.pid, e)
+            logger.warning("Error killing browser process tree %s: %s", target, e)
 
 
 def _find_relaunched_browser(executable: Path, profile_dir: Path, launched_at: float) -> psutil.Process | None:
@@ -198,21 +197,9 @@ def _find_browser_linux() -> Path | None:
     return None
 
 
-def _is_headless_configured() -> bool:
-    """读取配置是否开启 headless（默认 False，即 headed）。"""
-    return is_truthy_value(cfg_get(load_config(), "browser", "headless"), default=False)
-
-
-def launch_chromium(
-    *,
-    executable: Path | None = None,
-    profile_dir: Path,
-    headless: bool | None = None,
-    extra_args: list[str] | None = None,
-    startup_timeout_s: float = 20.0,
-) -> NativeBrowserProcess:
+def launch_chromium(*, profile_dir: Path) -> NativeBrowserProcess:
     """启动原生 Chromium 进程并等待 DevToolsActivePort 就绪。"""
-    exe = executable or find_browser_binary()
+    exe = find_browser_binary()
     if exe is None or not exe.is_file():
         raise BrowserLaunchError(
             "No supported browser (Edge, Chrome, Brave, Chromium) found. Install one or set 'browser.executable_path'.",
@@ -224,8 +211,8 @@ def launch_chromium(
         profile_dir = profile_dir.parent / f"{profile_dir.name}_{secrets.token_hex(4)}"
         profile_dir.mkdir(parents=True, exist_ok=True)
 
-    if headless is None:
-        headless = _is_headless_configured()
+    # 默认 headed；headless 时 Windows 下须 CREATE_NO_WINDOW 防止闪烁控制台。
+    headless = is_truthy_value(cfg_get(load_config(), "browser", "headless"), default=False)
 
     args = [
         str(exe),
@@ -249,9 +236,6 @@ def launch_chromium(
 
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         args.extend(["--no-sandbox", "--disable-dev-shm-usage"])
-
-    if extra_args:
-        args.extend(extra_args)
 
     popen_kwargs: dict[str, Any] = {
         "stdin": subprocess.DEVNULL,
@@ -281,7 +265,7 @@ def launch_chromium(
     except Exception as e:
         raise BrowserLaunchError(f"Failed to spawn browser process {exe}: {e}") from e
 
-    deadline = time.monotonic() + startup_timeout_s
+    deadline = time.monotonic() + _STARTUP_TIMEOUT_S
     port: int | None = None
     ws_path: str = ""
     browser_process: psutil.Process | None = None
@@ -310,7 +294,7 @@ def launch_chromium(
 
         if port is None or not ws_path or (proc.poll() is not None and browser_process is None):
             raise BrowserLaunchError(
-                f"Timed out waiting for a live browser and DevToolsActivePort in {profile_dir} after {startup_timeout_s}s",
+                f"Timed out waiting for a live browser and DevToolsActivePort in {profile_dir} after {_STARTUP_TIMEOUT_S}s",
             )
     except BaseException:
         if browser_process is None and sys.platform == "win32" and proc.poll() == 0:

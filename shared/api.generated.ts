@@ -276,16 +276,14 @@ export interface ApiSchemas {
   "RunnerInputToolExecuteRequest": { "name": string; "args"?: { [key: string]: ApiSchemas["RunnerInputJsonValue"] }; "call_id"?: (string | null); "skill_scope"?: (ApiSchemas["RunnerInputSkillScopeRequest"] | null) }
   "RunnerJsonValue": unknown
   "RunnerRunnerCallResult": { "call_id": string; "status": "claimed" | "completed" | "failed" | "unknown" | "not_found"; "result": ApiSchemas["RunnerJsonValue"]; "error": (string | null); "claimed_at": (number | number | null); "finished_at": (number | number | null) }
-  "RunnerRunnerCancelResult": { "ok": boolean; "error": ("no_in_flight" | null) }
+  "RunnerRunnerCancelResult": { "ok": boolean }
   "RunnerRunnerCapabilitiesChangedPayload": { "run_generation": string; "capabilities": ApiSchemas["RunnerRunnerCapabilitiesPayload"]; "probe_failed": boolean }
   "RunnerRunnerCapabilitiesPayload": { "microphone": (boolean | null); "screen_capture": (boolean | null); "system_activity": (boolean | null); "platform": (string | null); "python": (string | null) }
   "RunnerRunnerCapabilityHealth": { "available": boolean; "reason": (string | null) }
   "RunnerRunnerConfigResult": { "ok": true }
-  "RunnerRunnerInfoResult": { "version": string; "run_generation": string; "pid": number; "capabilities": ApiSchemas["RunnerRunnerCapabilitiesPayload"]; "capabilities_health": { [key: string]: ApiSchemas["RunnerRunnerCapabilityHealth"] }; "probe_failed": boolean; "reconnect_streak": number; "started_at": number; "uptime_seconds": number; "reconnect_count": number; "tool_count": number; "network_reachable": boolean; "disk_free_bytes": (number | null); "system": ApiSchemas["RunnerRunnerSystemInfo"] }
   "RunnerRunnerReadyPayload": { "version": string; "run_generation": string; "pid": number; "capabilities": ApiSchemas["RunnerRunnerCapabilitiesPayload"]; "capabilities_health": { [key: string]: ApiSchemas["RunnerRunnerCapabilityHealth"] }; "probe_failed": boolean; "reconnect_streak": number }
-  "RunnerRunnerSystemInfo": { "platform": string; "python": string; "release": string; "machine": string }
   "RunnerRunnerToolResult": ApiSchemas["RunnerJsonValue"]
-  "RunnerRunnerToolSchema": { "name": string; "description": string; "parameters": { [key: string]: ApiSchemas["RunnerJsonValue"] }; [key: string]: unknown }
+  "RunnerRunnerToolSchema": { "name": string; "description": string; "parameters": { [key: string]: ApiSchemas["RunnerJsonValue"] } }
   "RunnerRunnerToolsResult": { "tools": Array<ApiSchemas["RunnerRunnerToolSchema"]> }
   "SceneDescriptionRequest": { "title": string; "description": string }
   "SceneGenerateRequest": { "source": "generate"; "notes"?: (string | null); "image"?: (string | null) }
@@ -666,7 +664,6 @@ export interface RunnerOperations {
   "calls.cancel": { request: ApiSchemas["RunnerInputCallCancelRequest"]; response: ApiSchemas["RunnerRunnerCancelResult"] }
   "calls.get": { request: ApiSchemas["RunnerInputCallGetRequest"]; response: ApiSchemas["RunnerRunnerCallResult"] }
   "config.replace": { request: ApiSchemas["RunnerInputConfigReplaceRequest"]; response: ApiSchemas["RunnerRunnerConfigResult"] }
-  "runner.info": { request: ApiSchemas["RunnerInputRunnerEmptyRequest"]; response: ApiSchemas["RunnerRunnerInfoResult"] }
   "tools.execute": { request: ApiSchemas["RunnerInputToolExecuteRequest"]; response: ApiSchemas["RunnerRunnerToolResult"] }
   "tools.list": { request: ApiSchemas["RunnerInputRunnerEmptyRequest"]; response: ApiSchemas["RunnerRunnerToolsResult"] }
 }

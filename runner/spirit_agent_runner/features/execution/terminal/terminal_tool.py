@@ -4,7 +4,7 @@ import sys
 from copy import deepcopy
 from typing import Any
 
-from spirit_agent_runner.contracts.config import cfg_get, load_config
+from spirit_agent_runner.contracts.config import cfg_get, cfg_int, load_config
 from spirit_agent_runner.contracts.interrupt import is_interrupted
 from spirit_agent_runner.contracts.tooling import DEFAULT_MAX_RESULT_SIZE_CHARS, ToolDefinition
 from spirit_agent_runner.features.execution.api import (
@@ -12,7 +12,6 @@ from spirit_agent_runner.features.execution.api import (
     EnvironmentBusyError,
     get_env_config,
     get_process_registry,
-    resolve_task_id,
     use_environment,
 )
 from spirit_agent_runner.infrastructure.clean import clean_output
@@ -31,22 +30,17 @@ _WORKDIR_SAFE_RE = re.compile(r"^[A-Za-z0-9/\\:_\-.~ +@=,]+$")
 
 def _foreground_max_timeout() -> int:
     # 调用时读取：导入早于配置推送。
-    try:
-        return int(cfg_get(load_config(), "terminal", "max_foreground_timeout", default=DEFAULT_FOREGROUND_MAX_TIMEOUT))
-    except (TypeError, ValueError):
-        return DEFAULT_FOREGROUND_MAX_TIMEOUT
+    return cfg_int(cfg_get(load_config(), "terminal") or {}, "max_foreground_timeout", DEFAULT_FOREGROUND_MAX_TIMEOUT)
 
 
 def _validate_workdir(workdir: str) -> str | None:
     if _WORKDIR_SAFE_RE.match(workdir):
         return None
-    for ch in workdir:
-        if not _WORKDIR_SAFE_RE.match(ch):
-            return (
-                f"Blocked: workdir contains disallowed character {ch!r}. "
-                "Use a simple filesystem path without shell metacharacters."
-            )
-    return "Blocked: workdir contains disallowed characters."
+    ch = next((c for c in workdir if not _WORKDIR_SAFE_RE.match(c)), "?")
+    return (
+        f"Blocked: workdir contains disallowed character {ch!r}. "
+        "Use a simple filesystem path without shell metacharacters."
+    )
 
 
 WINDOWS_TOOL_DESCRIPTION = """Execute shell commands on the user's Windows host through Git Bash.
@@ -98,18 +92,16 @@ Pipe git output to cat if it might page.
 """
 
 
-def _normalize_terminal_platform(platform_name: str | None = None) -> str:
-    normalized = (platform_name or sys.platform).lower()
+def _normalize_terminal_platform(platform_name: str) -> str:
+    normalized = platform_name.lower()
     if normalized in {"win32", "windows", "cygwin", "msys"}:
         return "win32"
     if normalized in {"darwin", "macos"}:
         return "darwin"
-    raise ValueError(
-        f"Unsupported terminal host platform: {platform_name or sys.platform!r}. Use win32 or darwin.",
-    )
+    raise ValueError(f"Unsupported terminal host platform: {platform_name!r}. Use win32 or darwin.")
 
 
-def build_terminal_tool_description(platform_name: str | None = None, env_type: str = "local") -> str:
+def build_terminal_tool_description(platform_name: str, env_type: str = "local") -> str:
     if env_type == "ssh":
         backend_description = REMOTE_TOOL_DESCRIPTION
     else:
@@ -243,7 +235,7 @@ _LINUX_SERVICE_COMMAND_RE = re.compile(
 )
 
 
-def _blocked_host_command_error(command: str, env_type: str, platform_name: str | None = None) -> str | None:
+def _blocked_host_command_error(command: str, env_type: str, platform_name: str) -> str | None:
     if env_type != "local":
         return None
     platform = _normalize_terminal_platform(platform_name)
@@ -269,7 +261,7 @@ def _error_result(error: str, *, status: str = "error", exit_code: int = -1) -> 
     return {"output": "", "exit_code": exit_code, "error": error, "status": status}
 
 
-def _start_background(env: BaseEnvironment, command: str, cwd: str, task_id: str, pty: bool) -> dict[str, Any]:
+def _start_background(env: BaseEnvironment, command: str, cwd: str, pty: bool) -> dict[str, Any]:
     process_registry = get_process_registry()
     result: dict[str, Any] = {}
     use_pty = pty
@@ -282,9 +274,9 @@ def _start_background(env: BaseEnvironment, command: str, cwd: str, task_id: str
         )
     try:
         if env.env_type == "local":
-            session = process_registry.spawn_local(command=command, cwd=cwd, task_id=task_id, use_pty=use_pty)
+            session = process_registry.spawn_local(command=command, cwd=cwd, use_pty=use_pty)
         else:
-            session = process_registry.spawn_via_env(env=env, command=command, cwd=cwd, task_id=task_id)
+            session = process_registry.spawn_via_env(env=env, command=command, cwd=cwd)
     except Exception as e:
         logger.warning("Background process failed to start: %s", e)
         return _error_result(f"Failed to start background process: {e}")
@@ -328,11 +320,10 @@ def terminal_tool(
     command: str,
     background: bool = False,
     timeout: int | None = None,
-    task_id: str | None = None,
     workdir: str | None = None,
     pty: bool = False,
 ) -> dict[str, Any]:
-    """在对应 task 的终端环境中执行单条 shell 命令（前台或后台），必要时懒创建环境。
+    """执行单条 shell 命令（前台或后台），必要时懒创建环境。
 
     取消经 ``is_interrupted()`` 感知（ContextVar 关联当前请求）：前台等待循环据此终止进程树。
     """
@@ -340,7 +331,7 @@ def terminal_tool(
         if timeout is not None and timeout < 1:
             return _error_result("timeout must be at least 1")
         config = get_env_config()
-        if blocked_host_error := _blocked_host_command_error(command, config["env_type"]):
+        if blocked_host_error := _blocked_host_command_error(command, config["env_type"], sys.platform):
             return _error_result(blocked_host_error, status="blocked")
         if workdir and (workdir_error := _validate_workdir(workdir)):
             logger.warning("Blocked dangerous workdir: %s (command: %s)", workdir[:200], command[:200])
@@ -354,11 +345,10 @@ def terminal_tool(
                 )
             if guidance := _foreground_background_guidance(command):
                 return _error_result(guidance)
-        effective_task_id = resolve_task_id(task_id)
-        with use_environment(effective_task_id) as env:
+        with use_environment() as env:
             cwd = workdir or env.cwd
             if background:
-                return _start_background(env, command, cwd, effective_task_id, pty)
+                return _start_background(env, command, cwd, pty)
             return _run_foreground(env, command, cwd, timeout or config["timeout"])
     except EnvironmentBusyError as e:
         return _error_result(str(e))
@@ -416,7 +406,7 @@ _TERMINAL_SCHEMA_TEMPLATE: dict[str, Any] = {
 }
 
 
-def build_terminal_schema(platform_name: str | None = None, env_type: str = "local") -> dict[str, Any]:
+def build_terminal_schema(platform_name: str, env_type: str = "local") -> dict[str, Any]:
     if env_type == "ssh":
         command_description = "The shell command to execute on the configured remote host."
     else:
@@ -433,7 +423,7 @@ def build_terminal_schema(platform_name: str | None = None, env_type: str = "loc
     return schema
 
 
-def _handle_terminal(args: dict[str, Any], task_id: str) -> dict[str, Any]:
+def _handle_terminal(args: dict[str, Any]) -> dict[str, Any]:
     command = args.get("command")
     if not isinstance(command, str):
         return _error_result(f"Invalid command: expected string, got {type(command).__name__}")
@@ -447,7 +437,6 @@ def _handle_terminal(args: dict[str, Any], task_id: str) -> dict[str, Any]:
         command=command,
         background=bool(args.get("background", False)),
         timeout=timeout,
-        task_id=task_id,
         workdir=args.get("workdir"),
         pty=bool(args.get("pty", False)),
     )
@@ -455,7 +444,7 @@ def _handle_terminal(args: dict[str, Any], task_id: str) -> dict[str, Any]:
 
 def _current_terminal_schema() -> dict[str, Any]:
     # 列表时读取，与执行时 env_type 一致。
-    return build_terminal_schema(env_type=get_env_config()["env_type"])
+    return build_terminal_schema(sys.platform, env_type=get_env_config()["env_type"])
 
 
 def get_tool_definitions() -> list[ToolDefinition]:
@@ -464,10 +453,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="terminal",
             toolset_id="terminal",
             schema=_current_terminal_schema,
-            handler=lambda context, args: _handle_terminal(
-                args,
-                task_id=context.task_id,
-            ),
+            handler=lambda _context, args: _handle_terminal(args),
             check_fn=None,
             is_async=False,
         ),

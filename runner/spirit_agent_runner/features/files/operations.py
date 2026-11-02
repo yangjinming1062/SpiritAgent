@@ -3,13 +3,9 @@ from abc import ABC, abstractmethod
 from typing import Any, Protocol
 
 from spirit_agent_runner.features.files.formatting import _restore_line_endings, _strip_bom, _to_lf, _unified_diff
-from spirit_agent_runner.features.files.linting import LINTERS_INPROC, _looks_like_linter_unusable
+from spirit_agent_runner.features.files.linting import LINTERS, LINTERS_INPROC, _looks_like_linter_unusable
 from spirit_agent_runner.features.files.models import (
     DEFAULT_READ_LIMIT,
-    DEFAULT_READ_OFFSET,
-    DEFAULT_SEARCH_LIMIT,
-    DEFAULT_SEARCH_OFFSET,
-    LINTERS,
     ExecuteResult,
     LintResult,
     ListResult,
@@ -31,7 +27,6 @@ class TerminalEnv(Protocol):
     def execute(
         self,
         command: str,
-        cwd: str = "",
         *,
         timeout: int | None = None,
         stdin_data: str | None = None,
@@ -45,7 +40,7 @@ class FileOperations(ABC):
         self.env = env
 
     @abstractmethod
-    def read_file(self, path: str, offset: int = DEFAULT_READ_OFFSET, limit: int = DEFAULT_READ_LIMIT) -> ReadResult:
+    def read_file(self, path: str, offset: int = 1, limit: int = DEFAULT_READ_LIMIT) -> ReadResult:
         """按行分页读取文本并加行号。"""
 
     @abstractmethod
@@ -75,8 +70,8 @@ class FileOperations(ABC):
         path: str = ".",
         target: str = "content",
         file_glob: str | None = None,
-        limit: int = DEFAULT_SEARCH_LIMIT,
-        offset: int = DEFAULT_SEARCH_OFFSET,
+        limit: int = 50,
+        offset: int = 0,
         output_mode: str = "content",
         context: int = 0,
     ) -> SearchResult: ...
@@ -97,7 +92,7 @@ class FileOperations(ABC):
             return PatchResult(error=read.error)
         content, ending = _to_lf(read.content)
         old_string, new_string = _to_lf(old_string)[0], _to_lf(new_string)[0]
-        new_content, _count, _strategy, error = fuzzy_find_and_replace(content, old_string, new_string, replace_all)
+        new_content, _count, error = fuzzy_find_and_replace(content, old_string, new_string, replace_all)
         if error is not None:
             return PatchResult(error=error + format_no_match_hint(error, 0, old_string, content))
         written = self.write_file(path, _restore_line_endings(new_content, ending))

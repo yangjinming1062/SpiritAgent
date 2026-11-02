@@ -114,7 +114,7 @@ def _blocked_type_pattern(text: str) -> str | None:
 
 
 def _validate_action_args(action: str, args: dict[str, Any]) -> str | None:
-    """Reject incomplete or malformed actions before starting the desktop backend or sending input."""
+    """在启动桌面后端或发送输入前拒绝不完整或畸形的动作。"""
     try:
         if action == "capture":
             mode = str(args.get("mode") or "som")
@@ -231,13 +231,13 @@ def handle_computer_use(args: dict[str, Any]) -> dict[str, Any]:
     if not (action := str(args.get("action") or "").strip().lower()):
         return {"error": "missing `action`"}
     if validation_error := _validate_action_args(action, args):
-        return {"error": str(validation_error)}
-    if action == "type" and (pattern := _blocked_type_pattern(str(args.get("text", "")))):
+        return {"error": validation_error}
+    if action == "type" and (pattern := _blocked_type_pattern(args["text"])):
         return {
             "error": f"blocked pattern in type text: {pattern!r}",
             "hint": "Dangerous shell patterns cannot be typed via computer_use.",
         }
-    if action == "key" and (blocked := _blocked_key_combo(_parse_key_combo(str(args.get("keys") or "")))):
+    if action == "key" and (blocked := _blocked_key_combo(_parse_key_combo(args["keys"]))):
         return {
             "error": f"blocked key combo: {'+'.join(sorted(blocked))}",
             "hint": "Destructive system shortcuts are hard-blocked.",
@@ -269,7 +269,7 @@ def _dispatch(backend: ComputerUseBackend, action: str, args: dict[str, Any]) ->
     match action:
         case "capture":
             return _capture_response(
-                backend.capture(mode=str(args.get("mode") or "som"), app=args.get("app") or None),
+                backend.capture(str(args.get("mode") or "som"), args.get("app") or None),
                 int(args.get("max_elements", 100)),
             )
         case "wait":
@@ -291,8 +291,6 @@ def _dispatch(backend: ComputerUseBackend, action: str, args: dict[str, Any]) ->
                 modifiers=_canonical_modifiers(args.get("modifiers")),
             )
         case "drag":
-            if args.get("from_element") is None and not args.get("from_coordinate"):
-                return {"error": "drag requires from_coordinate/to_coordinate or from_element/to_element"}
             res = backend.drag(
                 from_element=_optional_int(args.get("from_element")),
                 to_element=_optional_int(args.get("to_element")),
@@ -334,7 +332,7 @@ def _action_result_payload(res: ActionResult) -> dict[str, Any]:
 def _respond(backend: ComputerUseBackend, res: ActionResult, capture_after: bool) -> dict[str, Any]:
     if capture_after and res.ok:
         try:
-            return _capture_response(backend.recapture("som"), action=res)
+            return _capture_response(backend.recapture("som"), max_elements=100, action=res)
         except Exception as e:
             logger.warning("follow-up capture failed: %s", e)
             return _action_result_payload(res) | {"capture_error": clean_output(str(e), config=load_config())}
@@ -343,7 +341,7 @@ def _respond(backend: ComputerUseBackend, res: ActionResult, capture_after: bool
 
 def _capture_response(
     cap: CaptureResult,
-    max_elements: int = 100,
+    max_elements: int,
     action: ActionResult | None = None,
 ) -> dict[str, Any]:
     total = len(cap.elements)

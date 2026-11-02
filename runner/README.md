@@ -19,7 +19,7 @@ Runner 在用户设备执行本机工具，不持有后端账户凭据。跨端�
 
 `bootstrap` 是唯一组合根。transport 只调用 runtime 公共接口；runtime 持配置、工具目录与在途调用，经 `ToolDefinition` 执行，不导入具体能力。features 拥有工具规则和资源，contracts 提供上下文与数据契约，infrastructure 提供跨能力原语。依赖方向由 [架构门禁](../scripts/check_runner_architecture.py) 检查。
 
-工具说明、schema、探测及处理函数由能力就近定义；依赖配置的说明在列举时基于同一快照生成。`ConfigStore` 更新替换配置并推进代次，调用取得独立快照，`ToolContext` 固定 task、call、学习域及取消信号；`ContextVar` 传递作用域，工作线程保留该上下文。普通 RPC 和代码子调用共用执行器，后者另受白名单、参数与预算约束，不能绕过禁用工具。
+工具说明、schema、探测及处理函数由能力就近定义；依赖配置的说明在列举时基于同一快照生成。`ConfigStore` 更新替换配置并推进代次，调用取得独立快照，`ToolContext` 固定 call、学习域及取消信号；`ContextVar` 传递作用域，工作线程保留该上下文。普通 RPC 和代码子调用共用执行器，后者另受白名单、参数与预算约束，不能绕过禁用工具。
 
 | 资源 | 所有者与释放 |
 |---|---|
@@ -53,7 +53,7 @@ HTTP 共用 `httpx[socks]`。[url_safety.py](spirit_agent_runner/infrastructure/
 
 ### 终端与子进程
 
-说明按 `terminal.env_type` 生成：本机分别适配 Windows Git Bash／macOS BSD 并阻挡不适用的 Linux 管理命令，SSH 不套本机规则。ExecutionManager 按 task 复用环境，参数和配置变化决定租约处理：
+说明按 `terminal.env_type` 生成：本机分别适配 Windows Git Bash／macOS BSD 并阻挡不适用的 Linux 管理命令，SSH 不套本机规则。ExecutionManager 维护唯一环境并按配置变化决定租约处理：
 
 | 变化 | 处理 |
 |---|---|
@@ -74,7 +74,7 @@ SSH 密钥优先，密码通过临时 askpass 和 `SSH_ASKPASS_REQUIRE=force` �
 
 ### 浏览器与桌面生命周期
 
-后端依次选择 CDP URL、Camofox URL、本机 Chromium。CDP 会话按 task 串行启停，持有期间不回收；失联主管仍有调用持有时拒绝重建，清理复核实例身份。Windows 启动恢复只接管本次创建、exe 和独立 profile 均匹配的主进程，profile 占用以独占打开判断，不能凭残留 lockfile 判定。
+后端依次选择 CDP URL、Camofox URL、本机 Chromium。CDP 会话串行启停，持有期间不回收；失联主管仍有调用持有时拒绝重建，清理复核实例身份。Windows 启动恢复只接管本次创建、exe 和独立 profile 均匹配的主进程，profile 占用以独占打开判断，不能凭残留 lockfile 判定。
 
 Camofox 只暴露其支持的导航、快照、输入与视觉操作；标签、下载、Cookie、存储、仿真、原生弹窗、CDP 及批处理不提供。后端切换须重新核对实际清单，不能只改说明。
 

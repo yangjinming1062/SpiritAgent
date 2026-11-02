@@ -254,8 +254,7 @@ class DialogManager:
             frame_id=dialog.frame_id,
         )
         self._recent.append(record)
-        if len(self._recent) > RECENT_DIALOGS_MAX * 2:
-            self._recent = self._recent[-RECENT_DIALOGS_MAX:]
+        del self._recent[:-RECENT_DIALOGS_MAX]
 
     def _expire_watchdog(self, dialog: PendingDialog) -> None:
         with self._lock:

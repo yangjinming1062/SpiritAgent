@@ -10,16 +10,13 @@ from .tracking import FileStateRegistry
 class FileManager:
     def __init__(self) -> None:
         self.lock = threading.RLock()
-        self.operations: dict[str, FileOperations] = {}
+        self.operations: FileOperations | None = None
         self.state = FileStateRegistry()
 
-    def clear(self, task_id: str | None = None) -> None:
+    def clear(self) -> None:
         with self.lock:
-            if task_id is None:
-                self.operations.clear()
-            else:
-                self.operations.pop(task_id, None)
-            self.state.clear(task_id)
+            self.operations = None
+            self.state.clear()
 
     def close(self) -> None:
         self.clear()

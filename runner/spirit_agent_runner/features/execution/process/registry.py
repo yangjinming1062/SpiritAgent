@@ -37,6 +37,15 @@ MAX_PROCESSES = 64  # 同时跟踪的进程上限，超出时淘汰最早结束�
 
 _STDIN_UNAVAILABLE = "Process stdin is not available (remote process, or stdin was closed)"
 
+# bash 无 job control / 非 TTY 时的启动告警。
+_SHELL_NOISE_SUBSTRINGS = (
+    "bash: cannot set terminal process group",
+    "bash: no job control in this shell",
+    "no job control in this shell",
+    "cannot set terminal process group",
+    "tcsetattr: Inappropriate ioctl for device",
+)
+
 
 @dataclass
 class ProcessSession:
@@ -44,7 +53,6 @@ class ProcessSession:
 
     id: str  # "proc_xxxxxxxxxxxx"
     command: str
-    task_id: str
     cwd: str
     started_at: float
     pid: int | None = None  # 本机为宿主 PID；SSH 为远端包裹子 shell 的 PID
@@ -81,14 +89,6 @@ class PTYBufferFull(OSError):
 class ProcessRegistry:
     """运行中 / 已结束后台进程的内存注册表，线程安全。"""
 
-    _SHELL_NOISE_SUBSTRINGS = (
-        "bash: cannot set terminal process group",
-        "bash: no job control in this shell",
-        "no job control in this shell",
-        "cannot set terminal process group",
-        "tcsetattr: Inappropriate ioctl for device",
-    )
-
     def __init__(self) -> None:
         self._running: dict[str, ProcessSession] = {}
         self._finished: dict[str, ProcessSession] = {}
@@ -98,10 +98,9 @@ class ProcessRegistry:
     def _clean_shell_noise(text: str) -> str:
         """剥掉输出开头几行的 shell 启动告警（交互式 shell 标志等）。"""
         lines = text.split("\n")
-        while lines and any(noise in lines[0] for noise in ProcessRegistry._SHELL_NOISE_SUBSTRINGS):
+        while lines and any(noise in lines[0] for noise in _SHELL_NOISE_SUBSTRINGS):
             lines.pop(0)
         return "\n".join(lines)
-
     def _track(self, session: ProcessSession, reader: Callable[[ProcessSession], None], name: str) -> None:
         """先登记再启动读线程：读线程可能立即结束并把 session 移入 finished。"""
         with self._lock:
@@ -131,12 +130,11 @@ class ProcessRegistry:
             self._mark_exited(session, None)
             raise
 
-    def spawn_local(self, command: str, cwd: str, task_id: str, use_pty: bool = False) -> ProcessSession:
+    def spawn_local(self, command: str, cwd: str, use_pty: bool) -> ProcessSession:
         """在本机派生后台进程；``use_pty=True`` 在伪终端中运行，供交互式 CLI 使用。"""
         session = ProcessSession(
             id=f"proc_{uuid.uuid4().hex[:12]}",
             command=command,
-            task_id=task_id,
             cwd=resolve_safe_cwd(cwd),
             started_at=time.time(),
         )
@@ -168,12 +166,11 @@ class ProcessRegistry:
         self._track(session, self._reader_loop, "proc-reader")
         return session
 
-    def spawn_via_env(self, env: BaseEnvironment, command: str, cwd: str, task_id: str) -> ProcessSession:
+    def spawn_via_env(self, env: BaseEnvironment, command: str, cwd: str) -> ProcessSession:
         """SSH 派生后台进程（nohup+临时文件轮询）；不支持实时管道与 stdin。"""
         session = ProcessSession(
             id=f"proc_{uuid.uuid4().hex[:12]}",
             command=command,
-            task_id=task_id,
             cwd=cwd,
             started_at=time.time(),
             env_ref=env,
@@ -338,17 +335,16 @@ class ProcessRegistry:
             result["exit_code"] = session.exit_code
         return result
 
-    def read_log(self, session_id: str, offset: int = 0, limit: int = 200) -> dict:
-        """读取完整输出日志，按行分页（默认返回末尾 limit 行）。"""
-        if limit < 1:
-            return {"status": "error", "error": "limit must be at least 1"}
+    def read_log(self, session_id: str, offset: int, limit: int) -> dict:
+        """读取完整输出日志，按行分页（offset=0 返回末尾 limit 行）。"""
         session = self.get(session_id)
         if session is None:
             return {"status": "not_found", "error": f"No process with ID {session_id}"}
         with session._lock:
             buffer = session.output_buffer
         lines = clean_output(buffer, config=load_config()).splitlines()
-        selected = lines[-limit:] if offset == 0 and limit > 0 else lines[offset : offset + limit]
+        # offset=0 表示"末尾 limit 行"，否则按行窗口分页。
+        selected = lines[-limit:] if offset == 0 else lines[offset : offset + limit]
         joined = "\n".join(selected)
         # 结果大小兜底截断。
         max_chars = DEFAULT_MAX_RESULT_SIZE_CHARS
@@ -366,8 +362,6 @@ class ProcessRegistry:
 
     def wait(self, session_id: str, timeout: int | None = None) -> dict:
         """阻塞到进程退出、超时或调用被取消；等待上限为 terminal.timeout，防止模型传入过大值。"""
-        if timeout is not None and timeout < 1:
-            return {"status": "error", "error": "timeout must be at least 1"}
         max_timeout = get_env_config()["timeout"]
         timeout_note = None
         if timeout and timeout > max_timeout:
@@ -528,7 +522,7 @@ class ProcessRegistry:
         except Exception as e:
             return {"status": "error", "error": str(e), "bytes_written": bytes_written}
 
-    def submit_stdin(self, session_id: str, data: str = "") -> dict:
+    def submit_stdin(self, session_id: str, data: str) -> dict:
         """向运行中进程的 stdin 发送 data + 换行（等价于按一次 Enter）。"""
         return self.write_stdin(session_id, data + "\n")
 
@@ -553,14 +547,12 @@ class ProcessRegistry:
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
-    def list_sessions(self, task_id: str | None = None) -> list[dict[str, Any]]:
-        """列出运行中和最近结束的后台进程（可按 task_id 过滤）。"""
+    def list_sessions(self) -> list[dict[str, Any]]:
+        """列出运行中和最近结束的后台进程。"""
         with self._lock:
             all_sessions = list(self._running.values()) + list(self._finished.values())
         result = []
         for s in all_sessions:
-            if task_id and s.task_id != task_id:
-                continue
             entry = {
                 "session_id": s.id,
                 "command": clean_output(s.command, config=load_config())[:200],
@@ -576,10 +568,10 @@ class ProcessRegistry:
             result.append(entry)
         return result
 
-    def has_active_processes(self, task_id: str) -> bool:
-        """task_id 下是否还有运行中进程（环境清理据此续命）。"""
+    def has_active_processes(self) -> bool:
+        """是否还有运行中后台进程（环境清理据此续命）。"""
         with self._lock:
-            return any(s.task_id == task_id and not s.exited for s in self._running.values())
+            return any(not s.exited for s in self._running.values())
 
     def kill_all(self) -> int:
         """终止全部运行中进程，返回成功终止的条数。"""

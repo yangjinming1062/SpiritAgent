@@ -39,7 +39,7 @@ class CallManager:
         for call in calls:
             call.cancel_event.set()
             call.task.cancel()
-        return {"ok": True} if calls else {"ok": False, "error": "no_in_flight"}
+        return {"ok": bool(calls)}
 
     async def execute(self, connection_id: str, req_id: object, request: ToolExecuteRequest) -> Any:
         if self._closing:

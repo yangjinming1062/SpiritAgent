@@ -13,7 +13,6 @@ def browser_dialog(
     action: str,
     prompt_text: str | None = None,
     dialog_id: str | None = None,
-    task_id: str | None = None,
 ) -> dict[str, Any]:
     """应答当前阻塞页面的 JS 弹窗（accept / dismiss）。"""
     if is_camofox_mode():
@@ -22,7 +21,7 @@ def browser_dialog(
     if action not in _VALID_DIALOG_ACTIONS:
         return {"success": False, "error": f"action must be 'accept' or 'dismiss', got {action!r}"}
 
-    with browser_session(task_id) as (supervisor, _):
+    with browser_session() as supervisor:
         if supervisor is None:
             return no_supervisor()
 
@@ -42,7 +41,6 @@ def get_tool_definitions() -> list[ToolDefinition]:
                 action=args.get("action", ""),
                 prompt_text=args.get("prompt_text"),
                 dialog_id=args.get("dialog_id"),
-                task_id=context.task_id,
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,

@@ -56,35 +56,35 @@ class ComputerUseBackend(ABC):
     def is_available(self) -> bool: ...
 
     @abstractmethod
-    def capture(self, mode: str = "som", app: str | None = None) -> CaptureResult:
+    def capture(self, mode: str, app: str | None) -> CaptureResult:
         """app 为空时截取前台窗口；截取对象成为后续输入动作的目标。"""
 
     @abstractmethod
-    def recapture(self, mode: str = "som") -> CaptureResult:
+    def recapture(self, mode: str) -> CaptureResult:
         """重新截取当前目标窗口，不重新选择目标。"""
 
     @abstractmethod
     def click(
         self,
         *,
-        element: int | None = None,
-        x: int | None = None,
-        y: int | None = None,
-        button: str = "left",
-        click_count: int = 1,
-        modifiers: list[str] | None = None,
+        element: int | None,
+        x: int | None,
+        y: int | None,
+        button: str,
+        click_count: int,
+        modifiers: list[str] | None,
     ) -> ActionResult: ...
 
     @abstractmethod
     def drag(
         self,
         *,
-        from_element: int | None = None,
-        to_element: int | None = None,
-        from_xy: tuple[int, int] | None = None,
-        to_xy: tuple[int, int] | None = None,
-        button: str = "left",
-        modifiers: list[str] | None = None,
+        from_element: int | None,
+        to_element: int | None,
+        from_xy: tuple[int, int] | None,
+        to_xy: tuple[int, int] | None,
+        button: str,
+        modifiers: list[str] | None,
     ) -> ActionResult: ...
 
     @abstractmethod
@@ -92,11 +92,11 @@ class ComputerUseBackend(ABC):
         self,
         *,
         direction: str,
-        amount: int = 3,
-        element: int | None = None,
-        x: int | None = None,
-        y: int | None = None,
-        modifiers: list[str] | None = None,
+        amount: int,
+        element: int | None,
+        x: int | None,
+        y: int | None,
+        modifiers: list[str] | None,
     ) -> ActionResult: ...
 
     @abstractmethod
@@ -109,11 +109,12 @@ class ComputerUseBackend(ABC):
     def list_apps(self) -> list[dict[str, Any]]: ...
 
     @abstractmethod
-    def focus_app(self, app: str, bring_to_front: bool = False) -> ActionResult: ...
+    def focus_app(self, app: str, bring_to_front: bool) -> ActionResult: ...
 
     @abstractmethod
-    def set_value(self, value: str, element: int | None = None) -> ActionResult: ...
+    def set_value(self, value: str, element: int | None) -> ActionResult: ...
 
     def wait(self, seconds: float) -> ActionResult:
+        # 上限与工具校验一致，防后端被直接调用时超长等待。
         time.sleep(max(0.0, min(seconds, 30.0)))
         return ActionResult(ok=True, action="wait", message=f"waited {seconds:.2f}s")

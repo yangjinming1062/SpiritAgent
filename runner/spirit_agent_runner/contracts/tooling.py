@@ -17,7 +17,6 @@ class ToolError(Exception):
 @dataclass(frozen=True, slots=True)
 class ToolContext:
     config: dict[str, Any] = field(default_factory=dict)
-    task_id: str = "default"
     cancel_event: threading.Event = field(default_factory=threading.Event)
     call_id: str | None = None
     skill_scope: SkillScope | None = None

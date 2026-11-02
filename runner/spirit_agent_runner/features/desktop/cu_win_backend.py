@@ -14,6 +14,7 @@ import psutil
 import pyperclip
 from PIL import Image, ImageDraw, ImageFont
 
+from spirit_agent_runner.features.desktop.activity import class_name, enum_windows, window_pid, window_text
 from spirit_agent_runner.features.desktop.cu_backend import (
     DESKTOP_SENTINELS,
     ActionResult,
@@ -62,37 +63,6 @@ def _map_key(key: str) -> str:
     return _WINDOWS_KEY_MAP.get(key, key)
 
 
-def _enum_windows(callback: Callable[[int], None]) -> None:
-    proto = ctypes.WINFUNCTYPE(ctypes.wintypes.BOOL, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
-
-    def _cb(hwnd: int, _lparam: int) -> bool:
-        callback(hwnd)
-        return True
-
-    ctypes.windll.user32.EnumWindows(proto(_cb), 0)
-
-
-def _class_name(hwnd: int) -> str:
-    buf = ctypes.create_unicode_buffer(256)
-    n = ctypes.windll.user32.GetClassNameW(hwnd, buf, 256)
-    return buf.value if n > 0 else ""
-
-
-def _window_title(hwnd: int) -> str:
-    length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
-    if length <= 0:
-        return ""
-    buf = ctypes.create_unicode_buffer(length + 1)
-    ctypes.windll.user32.GetWindowTextW(hwnd, buf, length + 1)
-    return buf.value
-
-
-def _window_pid(hwnd: int) -> int:
-    pid = ctypes.wintypes.DWORD()
-    ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-    return pid.value
-
-
 def _window_rect(hwnd: int) -> tuple[int, int, int, int] | None:
     rect = ctypes.wintypes.RECT()
     if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
@@ -107,9 +77,9 @@ def _visible_windows_by_pid() -> dict[int, list[int]]:
 
     def collect(hwnd: int) -> None:
         if ctypes.windll.user32.IsWindowVisible(hwnd):
-            windows.setdefault(_window_pid(hwnd), []).append(hwnd)
+            windows.setdefault(window_pid(hwnd), []).append(hwnd)
 
-    _enum_windows(collect)
+    enum_windows(collect)
     return windows
 
 
@@ -262,7 +232,7 @@ class WinBackend(ComputerUseBackend):
             return len(sct.monitors) > 1
 
     @_serialized
-    def capture(self, mode: str = "som", app: str | None = None) -> CaptureResult:
+    def capture(self, mode: str, app: str | None) -> CaptureResult:
         if app and app.lower() in DESKTOP_SENTINELS:
             hwnd, name = self._find_shell_window()
             if hwnd is None:
@@ -274,12 +244,12 @@ class WinBackend(ComputerUseBackend):
         else:
             if not (hwnd := ctypes.windll.user32.GetForegroundWindow()):
                 raise LookupError("no foreground window to capture")
-            name = _window_title(hwnd)
+            name = window_text(hwnd)
         self._set_target(hwnd, name)
         return self._capture_target(mode)
 
     @_serialized
-    def recapture(self, mode: str = "som") -> CaptureResult:
+    def recapture(self, mode: str) -> CaptureResult:
         if self._hwnd is None:
             raise LookupError("no window has been captured yet; call capture first")
         return self._capture_target(mode)
@@ -297,7 +267,7 @@ class WinBackend(ComputerUseBackend):
         if (rect := _window_rect(hwnd)) is None:
             raise LookupError("the target window has no visible area; it may be minimized")
         left, top, width, height = rect
-        capture = CaptureResult(mode=mode, width=width, height=height, app=self._app, window_title=_window_title(hwnd))
+        capture = CaptureResult(mode=mode, width=width, height=height, app=self._app, window_title=window_text(hwnd))
 
         self._elements, self._controls = [], []
         if mode != "vision":
@@ -393,12 +363,12 @@ class WinBackend(ComputerUseBackend):
     def click(
         self,
         *,
-        element: int | None = None,
-        x: int | None = None,
-        y: int | None = None,
-        button: str = "left",
-        click_count: int = 1,
-        modifiers: list[str] | None = None,
+        element: int | None,
+        x: int | None,
+        y: int | None,
+        button: str,
+        click_count: int,
+        modifiers: list[str] | None,
     ) -> ActionResult:
         try:
             sx, sy = self._screen_point(element, (x, y) if x is not None and y is not None else None)
@@ -413,12 +383,12 @@ class WinBackend(ComputerUseBackend):
     def drag(
         self,
         *,
-        from_element: int | None = None,
-        to_element: int | None = None,
-        from_xy: tuple[int, int] | None = None,
-        to_xy: tuple[int, int] | None = None,
-        button: str = "left",
-        modifiers: list[str] | None = None,
+        from_element: int | None,
+        to_element: int | None,
+        from_xy: tuple[int, int] | None,
+        to_xy: tuple[int, int] | None,
+        button: str,
+        modifiers: list[str] | None,
     ) -> ActionResult:
         try:
             start = self._screen_point(from_element, from_xy)
@@ -443,11 +413,11 @@ class WinBackend(ComputerUseBackend):
         self,
         *,
         direction: str,
-        amount: int = 3,
-        element: int | None = None,
-        x: int | None = None,
-        y: int | None = None,
-        modifiers: list[str] | None = None,
+        amount: int,
+        element: int | None,
+        x: int | None,
+        y: int | None,
+        modifiers: list[str] | None,
     ) -> ActionResult:
         ticks = max(1, min(50, amount))
         delta = ticks * _WHEEL_DELTA * (1 if direction in {"up", "right"} else -1)
@@ -515,7 +485,7 @@ class WinBackend(ComputerUseBackend):
         return apps
 
     @_serialized
-    def focus_app(self, app: str, bring_to_front: bool = False) -> ActionResult:
+    def focus_app(self, app: str, bring_to_front: bool) -> ActionResult:
         hwnd, name = self._find_window_by_app(app)
         if hwnd is None:
             return ActionResult(ok=False, action="focus_app", message=f"No window found for app '{app}'.")
@@ -535,7 +505,7 @@ class WinBackend(ComputerUseBackend):
         return ActionResult(ok=True, action="focus_app", message=f"Raised and focused {name}.")
 
     @_serialized
-    def set_value(self, value: str, element: int | None = None) -> ActionResult:
+    def set_value(self, value: str, element: int | None) -> ActionResult:
         if element is None:
             return ActionResult(ok=False, action="set_value", message="set_value requires element.")
         if not 0 <= element < len(self._controls):
@@ -582,8 +552,8 @@ class WinBackend(ComputerUseBackend):
         found: list[tuple[int, str]] = []
 
         def collect(hwnd: int) -> None:
-            if ctypes.windll.user32.IsWindowVisible(hwnd) and (cls := _class_name(hwnd)).lower() in _WIN_SHELL_CLASSES:
+            if ctypes.windll.user32.IsWindowVisible(hwnd) and (cls := class_name(hwnd)).lower() in _WIN_SHELL_CLASSES:
                 found.append((hwnd, cls))
 
-        _enum_windows(collect)
+        enum_windows(collect)
         return found[0] if found else (None, "")

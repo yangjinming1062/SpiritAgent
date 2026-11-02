@@ -274,6 +274,7 @@ def parse_som_results(raw_json: str) -> list[dict[str, Any]]:
 
 
 def format_som_annotation_context(elements: list[dict[str, Any]], max_items: int = 60) -> str:
+    """角标注释上下文；超出的元素折叠为计数行。"""
     if not elements:
         return ""
     lines = ["Visual Element Annotations (badge number [N] -> ref & action):"]

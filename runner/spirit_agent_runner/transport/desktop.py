@@ -135,11 +135,8 @@ def read_endpoint() -> DesktopEndpoint | None:
         if isinstance(pid, int) and pid > 0 and pid_state(pid) is PidState.NOT_FOUND:
             return None
         return DesktopEndpoint(path=path, token=token)
-    except (ValueError, OSError) as exc:
-        logger.warning("read_endpoint encountered %s: %s", type(exc).__name__, exc)
-        return None
     except Exception as exc:
-        logger.warning("read_endpoint unexpected failure: %s", exc)
+        logger.warning("read_endpoint failed: %s", exc)
         return None
 
 

@@ -49,7 +49,6 @@ def browser_cdp(
     params: dict[str, Any] | None = None,
     target_id: str | None = None,
     timeout: float = _CDP_TIMEOUT_DEFAULT,
-    task_id: str | None = None,
 ) -> dict[str, Any]:
     """转发一条原生 CDP 命令；统一经由主管调度。"""
     if is_camofox_mode():
@@ -68,7 +67,7 @@ def browser_cdp(
 
     has_override = bool(str(cfg_get(load_config(), "browser", "cdp_url", default="")).strip())
     try:
-        with browser_session(task_id, create=has_override) as (supervisor, _):
+        with browser_session(create=has_override) as supervisor:
             if supervisor is None:
                 return tool_error(NO_SUPERVISOR_MSG)
             call_params = params or {}
@@ -113,7 +112,6 @@ def get_tool_definitions() -> list[ToolDefinition]:
                 params=args.get("params"),
                 target_id=args.get("target_id"),
                 timeout=args.get("timeout", _CDP_TIMEOUT_DEFAULT),
-                task_id=context.task_id,
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,

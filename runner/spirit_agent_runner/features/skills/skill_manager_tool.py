@@ -364,16 +364,9 @@ def skill_manage(
     learned_skills_root()
     try:
         if action == "create":
-            if not content:
-                return {"error": "content is required for 'create'. Provide the full SKILL.md text.", "success": False}
-            result = _create_skill(name, content, category)
+            result = _create_skill(name, content or "", category)
         elif action == "edit":
-            if not content:
-                return {
-                    "error": "content is required for 'edit'. Provide the full updated SKILL.md text.",
-                    "success": False,
-                }
-            result = _edit_skill(name, content)
+            result = _edit_skill(name, content or "")
         elif action == "patch":
             result = _patch_skill(name, old_string or "", new_string, file_path, replace_all)
         elif action == "delete":

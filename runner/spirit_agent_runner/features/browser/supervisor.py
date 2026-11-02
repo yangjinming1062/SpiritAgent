@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import itertools
 import logging
 import tempfile
 import threading
@@ -30,6 +31,7 @@ from spirit_agent_runner.features.browser.refs import Refs
 from spirit_agent_runner.infrastructure.async_bridge import safe_schedule_threadsafe
 
 logger = logging.getLogger(__name__)
+_SUPERVISOR_SEQ = itertools.count(1)
 
 
 class NavigationError(Exception):
@@ -54,11 +56,10 @@ class SupervisorSnapshot:
 
 
 class CDPSupervisor:
-    """Compose a CDP connection, page state and browser operations for one task."""
+    """Compose a CDP connection, page state and browser operations for the session."""
 
     def __init__(
         self,
-        task_id: str,
         cdp_url: str,
         *,
         launch_handle: NativeBrowserProcess | None = None,
@@ -71,7 +72,6 @@ class CDPSupervisor:
         self.pages = PageState(self.send_cdp, lambda: self._refs.note_root_navigation())
         self.events = PageEvents()
         self.connection = CdpConnection(
-            task_id,
             cdp_url,
             launch_handle=launch_handle,
             auto_owned=auto_owned,
@@ -415,19 +415,16 @@ class CDPSupervisor:
         self.pages.set_session(page=page_sid, active=page_sid)
         self.pages.record_attachment(target_id, page_sid)
 
-        sid = page_sid
-
-        ft_resp = await self.connection.send("Page.getFrameTree", session_id=sid)
+        ft_resp = await self.connection.send("Page.getFrameTree", session_id=page_sid)
         frame = ft_resp.get("result", {}).get("frameTree", {}).get("frame", {})
-        root = frame.get("id", "")
-        if root:
+        if root := frame.get("id", ""):
             self.pages.record_root_frame(frame)
         else:
             self.pages.set_session(root_frame="")
         self.pages.record_attachment(target_id, page_sid, root)
 
-        await self._enable_page_domains(sid)
-        await self.connection.send("Page.bringToFront", session_id=sid)
+        await self._enable_page_domains(page_sid)
+        await self.connection.send("Page.bringToFront", session_id=page_sid)
         await self.connection.send(
             "Browser.setDownloadBehavior",
             {"behavior": "allow", "eventsEnabled": True, "downloadPath": tempfile.gettempdir()},
@@ -435,7 +432,7 @@ class CDPSupervisor:
         await self.connection.send(
             "Target.setAutoAttach",
             {"autoAttach": True, "waitForDebuggerOnStart": False, "flatten": True},
-            session_id=sid,
+            session_id=page_sid,
         )
 
     def _on_event(self, method: str, params: dict[str, Any], session_id: str | None) -> None:

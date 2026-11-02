@@ -14,11 +14,11 @@ from spirit_agent_runner.features.browser.schemas import (
 from spirit_agent_runner.features.browser.tools._common import browser_session, camofox_unsupported, no_supervisor
 
 
-def browser_cookies_get(url: str | None = None, task_id: str | None = None) -> dict[str, Any]:
+def browser_cookies_get(url: str | None = None) -> dict[str, Any]:
     if is_camofox_mode():
         return camofox_unsupported("browser_cookies_get")
 
-    with browser_session(task_id) as (supervisor, _):
+    with browser_session() as supervisor:
         if supervisor is None:
             return no_supervisor()
 
@@ -41,12 +41,11 @@ def browser_cookies_set(
     http_only: bool = False,
     secure: bool = False,
     same_site: str | None = None,
-    task_id: str | None = None,
 ) -> dict[str, Any]:
     if is_camofox_mode():
         return camofox_unsupported("browser_cookies_set")
 
-    with browser_session(task_id) as (supervisor, _):
+    with browser_session() as supervisor:
         if supervisor is None:
             return no_supervisor()
 
@@ -100,12 +99,12 @@ def browser_cookies_set(
         return payload
 
 
-def browser_cookies_clear(cookies: bool = True, storage: bool = True, task_id: str | None = None) -> dict[str, Any]:
+def browser_cookies_clear(cookies: bool = True, storage: bool = True) -> dict[str, Any]:
     """清空浏览器全部 cookie 和/或全部源的站点存储；两者都是全局操作，不限当前源。"""
     if is_camofox_mode():
         return camofox_unsupported("browser_cookies_clear")
 
-    with browser_session(task_id) as (supervisor, _):
+    with browser_session() as supervisor:
         if supervisor is None:
             return no_supervisor()
 
@@ -134,12 +133,11 @@ def browser_storage_get(
     key: str,
     origin: str,
     kind: str = "localStorage",
-    task_id: str | None = None,
 ) -> dict[str, Any]:
     if is_camofox_mode():
         return camofox_unsupported("browser_storage_get")
 
-    with browser_session(task_id) as (supervisor, _):
+    with browser_session() as supervisor:
         if supervisor is None:
             return no_supervisor()
 
@@ -159,12 +157,11 @@ def browser_storage_set(
     value: str,
     origin: str,
     kind: str = "localStorage",
-    task_id: str | None = None,
 ) -> dict[str, Any]:
     if is_camofox_mode():
         return camofox_unsupported("browser_storage_set")
 
-    with browser_session(task_id) as (supervisor, _):
+    with browser_session() as supervisor:
         if supervisor is None:
             return no_supervisor()
 
@@ -184,7 +181,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_cookies_get",
             toolset_id="browser_automation",
             schema=BROWSER_COOKIES_GET_SCHEMA,
-            handler=lambda context, args: browser_cookies_get(url=args.get("url"), task_id=context.task_id),
+            handler=lambda context, args: browser_cookies_get(url=args.get("url")),
             check_fn=check_browser_cdp_requirements,
             is_async=False,
         ),
@@ -201,7 +198,6 @@ def get_tool_definitions() -> list[ToolDefinition]:
                 http_only=args.get("httpOnly", False),
                 secure=args.get("secure", False),
                 same_site=args.get("sameSite"),
-                task_id=context.task_id,
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,
@@ -213,7 +209,6 @@ def get_tool_definitions() -> list[ToolDefinition]:
             handler=lambda context, args: browser_cookies_clear(
                 cookies=args.get("cookies", True),
                 storage=args.get("storage", True),
-                task_id=context.task_id,
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,
@@ -226,7 +221,6 @@ def get_tool_definitions() -> list[ToolDefinition]:
                 key=args.get("key", ""),
                 origin=args.get("origin", ""),
                 kind=args.get("kind", "localStorage"),
-                task_id=context.task_id,
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,
@@ -240,7 +234,6 @@ def get_tool_definitions() -> list[ToolDefinition]:
                 value=args.get("value", ""),
                 origin=args.get("origin", ""),
                 kind=args.get("kind", "localStorage"),
-                task_id=context.task_id,
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,

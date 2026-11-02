@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from spirit_agent_runner.contracts.config import cfg_get, cfg_str, load_config
-from spirit_agent_runner.features.execution.api import current_task_id, use_environment
+from spirit_agent_runner.features.execution.api import use_environment
 from spirit_agent_runner.infrastructure.constants import CREATE_NO_WINDOW, IS_WINDOWS, get_subprocess_home
 from spirit_agent_runner.infrastructure.env_passthrough import is_env_passthrough
 from spirit_agent_runner.infrastructure.path_helpers import find_python
@@ -119,9 +119,14 @@ def build_child_env(staging_dir: str, rpc_endpoint: str, rpc_token: str) -> dict
     child_env["PYTHONUTF8"] = "1"
     child_env["PYTHONPATH"] = os.pathsep.join(p for p in (staging_dir, child_env.get("PYTHONPATH", "")) if p)
     child_env["HOME"] = str(get_subprocess_home())
-    if tz := str(cfg_get(load_config(), "terminal", "timezone", default="")).strip():
+    if tz := timezone_setting():
         child_env["TZ"] = tz
     return child_env
+
+
+def timezone_setting() -> str:
+    """`terminal.timezone` 非空值（去空白），本机与远端子进程共用。"""
+    return str(cfg_get(load_config(), "terminal", "timezone", default="")).strip()
 
 
 def code_execution_config() -> dict[str, Any]:
@@ -188,6 +193,6 @@ def resolve_child_cwd(mode: str, staging_dir: str) -> str:
     """project 模式在终端当前工作目录运行（随终端 cd 变化，目录不存在时回落 staging），strict 模式直接用 staging。"""
     if mode != "project":
         return staging_dir
-    with use_environment(current_task_id()) as env:
+    with use_environment() as env:
         cwd = env.cwd
     return cwd if os.path.isdir(cwd) else staging_dir

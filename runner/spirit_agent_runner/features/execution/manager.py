@@ -27,16 +27,18 @@ _TARGET_BUSY_MESSAGE = (
 
 
 class ExecutionManager:
+    """单环境复用规则：无持有且无运行中后台进程才可重建；执行类型或 SSH 目标变化时拒绝新调用。"""
+
     def __init__(self, get_config: Callable[[], dict[str, Any]], tool_invoker: ToolInvoker | None = None) -> None:
         self._get_config = get_config
         self._tool_invoker = tool_invoker
         self.processes = ProcessRegistry()
-        self._environments: dict[str, BaseEnvironment] = {}
-        self._last_activity: dict[str, float] = {}
+        self._environment: BaseEnvironment | None = None
+        self._last_activity = 0.0
         self._environment_lock = threading.Lock()
-        self._creation_locks: dict[str, threading.Lock] = {}
-        self._creation_locks_lock = threading.Lock()
-        self._cleanup_environment: Callable[[str], None] | None = None
+        self._creation_lock = threading.Lock()
+        # 环境停止时清空 files 侧缓存；无参即清全部，单环境语义等价。
+        self._cleanup_environment: Callable[[], None] | None = None
         self._stop_event = threading.Event()
         self._cleanup_thread: threading.Thread | None = None
         self._closed = False
@@ -44,7 +46,7 @@ class ExecutionManager:
     def set_tool_invoker(self, invoker: ToolInvoker) -> None:
         self._tool_invoker = invoker
 
-    def set_environment_cleanup(self, cleanup: Callable[[str], None]) -> None:
+    def set_environment_cleanup(self, cleanup: Callable[[], None]) -> None:
         self._cleanup_environment = cleanup
 
     def invoke_tool(self, context: ToolContext, name: str, args: dict[str, Any]) -> Any:
@@ -61,86 +63,69 @@ class ExecutionManager:
             self._cleanup_thread = threading.Thread(target=self._cleanup_worker, daemon=True, name="execution-cleanup")
             self._cleanup_thread.start()
 
-    def _lease(self, task_id: str, environment: BaseEnvironment) -> BaseEnvironment:
+    def _lease(self, environment: BaseEnvironment) -> BaseEnvironment:
         environment.leases += 1
-        self._last_activity[task_id] = time.monotonic()
+        self._last_activity = time.monotonic()
         return environment
 
-    def _acquire(self, task_id: str, spec: EnvironmentSpec) -> BaseEnvironment:
-        with self._environment_lock:
-            if self._closed:
-                raise RuntimeError("Execution manager has been closed")
-            if (environment := self._environments.get(task_id)) is not None and environment.spec == spec:
-                return self._lease(task_id, environment)
-        with self._creation_locks_lock:
-            task_lock = self._creation_locks.setdefault(task_id, threading.Lock())
-        with task_lock:
+    def _acquire(self, spec: EnvironmentSpec) -> BaseEnvironment:
+        with self._creation_lock:
             with self._environment_lock:
                 if self._closed:
                     raise RuntimeError("Execution manager has been closed")
-                if (environment := self._environments.get(task_id)) is not None and environment.spec == spec:
-                    return self._lease(task_id, environment)
-                if environment is not None:
-                    in_use = environment.in_use or self.processes.has_active_processes(task_id)
-                    if in_use and environment.spec is not None and environment.spec.target == spec.target:
-                        return self._lease(task_id, environment)
-                    if in_use:
-                        raise EnvironmentBusyError(_TARGET_BUSY_MESSAGE)
-                    self._environments.pop(task_id, None)
-                    self._last_activity.pop(task_id, None)
+                if (environment := self._environment) is not None and environment.spec == spec:
+                    return self._lease(environment)
+                if environment is not None and (environment.in_use or self.processes.has_active_processes()):
+                    # 使用中仅 cwd／超时变化：沿用至空闲。
+                    if environment.spec is not None and environment.spec.target == spec.target:
+                        return self._lease(environment)
+                    raise EnvironmentBusyError(_TARGET_BUSY_MESSAGE)
+                self._environment = None
             if environment is not None:
-                self._stop_environment(task_id, environment)
+                self._stop_environment(environment)
             environment = create_environment(spec)
             with self._environment_lock:
                 if not self._closed:
-                    self._environments[task_id] = environment
-                    return self._lease(task_id, environment)
-            self._stop_environment(task_id, environment)
+                    self._environment = environment
+                    return self._lease(environment)
+            self._stop_environment(environment)
             raise RuntimeError("Execution manager was closed while creating an environment")
 
     @contextmanager
-    def use_environment(self, task_id: str, config: dict[str, Any]) -> Iterator[BaseEnvironment]:
-        environment = self._acquire(task_id, environment_spec(config))
+    def use_environment(self, config: dict[str, Any]) -> Iterator[BaseEnvironment]:
+        environment = self._acquire(environment_spec(config))
         try:
             yield environment
         finally:
             with self._environment_lock:
                 environment.leases -= 1
-                if self._environments.get(task_id) is environment:
-                    self._last_activity[task_id] = time.monotonic()
+                if self._environment is environment:
+                    self._last_activity = time.monotonic()
 
-    def _stop_environment(self, task_id: str, environment: BaseEnvironment) -> None:
+    def _stop_environment(self, environment: BaseEnvironment) -> None:
         if self._cleanup_environment is not None:
             try:
-                self._cleanup_environment(task_id)
+                self._cleanup_environment()
             except Exception:
-                logger.warning("File state cleanup failed for task %s", task_id, exc_info=True)
+                logger.warning("File state cleanup failed", exc_info=True)
         try:
             environment.cleanup()
         except Exception:
-            logger.warning("Environment cleanup failed for task %s", task_id, exc_info=True)
+            logger.warning("Environment cleanup failed", exc_info=True)
 
     def cleanup_inactive(self, lifetime_seconds: int) -> None:
         with self._environment_lock:
-            task_ids = list(self._environments)
-        for task_id in task_ids:
-            with self._creation_locks_lock:
-                task_lock = self._creation_locks.setdefault(task_id, threading.Lock())
-            with task_lock:
-                now = time.monotonic()
-                with self._environment_lock:
-                    environment = self._environments.get(task_id)
-                    if environment is None:
-                        continue
-                    if environment.in_use or self.processes.has_active_processes(task_id):
-                        self._last_activity[task_id] = now
-                        continue
-                    if now - self._last_activity.get(task_id, now) <= lifetime_seconds:
-                        continue
-                    self._environments.pop(task_id)
-                    self._last_activity.pop(task_id, None)
-                # 清理和同任务重建共用锁，旧环境不能清掉新环境的文件状态。
-                self._stop_environment(task_id, environment)
+            environment = self._environment
+            if environment is None:
+                return
+            now = time.monotonic()
+            if environment.in_use or self.processes.has_active_processes():
+                self._last_activity = now
+                return
+            if now - self._last_activity <= lifetime_seconds:
+                return
+            self._environment = None
+        self._stop_environment(environment)
 
     def _cleanup_worker(self) -> None:
         while not self._stop_event.is_set():
@@ -163,8 +148,7 @@ class ExecutionManager:
         with execution_scope(self), invocation_scope(ToolContext(config=self._get_config())):
             self.processes.close()
             with self._environment_lock:
-                environments = list(self._environments.items())
-                self._environments.clear()
-                self._last_activity.clear()
-            for task_id, environment in environments:
-                self._stop_environment(task_id, environment)
+                environment = self._environment
+                self._environment = None
+            if environment is not None:
+                self._stop_environment(environment)
