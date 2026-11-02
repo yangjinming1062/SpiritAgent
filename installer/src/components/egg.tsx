@@ -19,17 +19,12 @@ const CRACK_PATHS = [
 
 interface EggProps {
   cracks: number
-  progress?: number
-  phase?: EggPhase
+  progress: number
+  phase: EggPhase
   size?: number
 }
 
-export function Egg({
-  cracks,
-  progress,
-  phase = 'idle',
-  size = 320
-}: EggProps): React.JSX.Element {
+export function Egg({ cracks, progress, phase = 'idle', size = 320 }: EggProps): React.JSX.Element {
   const [flashingIdx, setFlashingIdx] = useState<number | null>(null)
 
   useEffect(() => {
@@ -43,7 +38,7 @@ export function Egg({
   }, [cracks])
 
   const visibleCracks = Math.min(6, Math.max(0, cracks))
-  const pct = Math.min(1, Math.max(0, progress ?? visibleCracks / 6))
+  const pct = Math.min(1, Math.max(0, progress))
   const innerOpacity = (0.06 + 0.2 * pct).toFixed(3)
   const hotOpacity = (0.2 + 0.55 * pct).toFixed(3)
   const leakOpacity = (0.1 + 0.34 * pct).toFixed(3)

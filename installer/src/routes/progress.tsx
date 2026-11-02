@@ -5,20 +5,11 @@ import { Button } from '../components/button'
 import { Egg, type EggPhase } from '../components/egg'
 import { Halo } from '../components/halo'
 import { StageList } from '../components/stage-list'
-import {
-  cancelInstall,
-  $progress,
-  stageLabel,
-  type BootstrapStateModel
-} from '../store'
+import { cancelInstall, $progress, stageTitle, type BootstrapStateModel } from '../store'
 import { FileText, ChevronRight, Loader2 } from 'lucide-react'
 import clsx from 'clsx'
 
-interface ProgressProps {
-  bootstrap: BootstrapStateModel
-}
-
-export default function ProgressScreen({ bootstrap }: ProgressProps): React.JSX.Element {
+export default function ProgressScreen({ bootstrap }: { bootstrap: BootstrapStateModel }): React.JSX.Element {
   const progress = useStore($progress)
   const [showDetails, setShowDetails] = useState(false)
   const [actionError, setActionError] = useState('')
@@ -26,9 +17,10 @@ export default function ProgressScreen({ bootstrap }: ProgressProps): React.JSX.
   const visualSize = showDetails ? 112 : 264
   const pct = progress.total ? progress.done / progress.total : 0
 
-  const stageOrder = bootstrap.stageOrder
   const currentStageName = bootstrap.currentStage
-  const currentStageIdx = currentStageName ? stageOrder.indexOf(currentStageName) : -1
+  const currentStageIdx = currentStageName
+    ? bootstrap.stageOrder.findIndex((s) => s.name === currentStageName)
+    : -1
 
   let phase: EggPhase = 'idle'
   if (bootstrap.status === 'completed') {
@@ -39,7 +31,7 @@ export default function ProgressScreen({ bootstrap }: ProgressProps): React.JSX.
     phase = 'cracking'
   }
 
-  const failedIdx = stageOrder.findIndex((name) => bootstrap.stages[name]?.state === 'failed')
+  const failedIdx = bootstrap.stageOrder.findIndex((s) => bootstrap.stages[s.name]?.state === 'failed')
   const failedAt = failedIdx >= 0 ? failedIdx : null
 
   const captionText =
@@ -47,9 +39,7 @@ export default function ProgressScreen({ bootstrap }: ProgressProps): React.JSX.
       ? '安装完成，马上就好'
       : bootstrap.status === 'failed'
         ? '安装暂时停止，正在准备恢复选项'
-        : currentStageName
-          ? stageLabel(currentStageName)
-          : '准备中…'
+        : stageTitle(bootstrap.stageOrder, currentStageName)
 
   return (
     <div className="spiritagent-fade-in relative isolate flex h-full flex-col overflow-hidden">
@@ -73,12 +63,7 @@ export default function ProgressScreen({ bootstrap }: ProgressProps): React.JSX.
           />
 
           {/* 中央蛋 */}
-          <Egg
-            cracks={progress.done}
-            progress={pct}
-            phase={phase}
-            size={showDetails ? 88 : 196}
-          />
+          <Egg cracks={progress.done} progress={pct} phase={phase} size={showDetails ? 88 : 196} />
 
           {/* 阶段完成的扩散光，按完成数重放一次 */}
           {progress.done > 0 && bootstrap.status === 'running' && (

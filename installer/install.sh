@@ -1,119 +1,52 @@
 #!/usr/bin/env bash
-# SpiritAgent 安装脚本（macOS/bash）。协议：-Manifest 输出阶段列表；-Stage NAME -Json 执行单阶段。payload 经 SPIRITAGENT_BUNDLED_* 或 --bundled-*-dir 传入（参数优先）。
+# SpiritAgent 安装脚本（macOS/bash）。协议：-Manifest 输出阶段列表；-Stage NAME 执行单阶段。payload 经 SPIRITAGENT_BUNDLED_* 传入。
 
 set -euo pipefail
 shopt -s nullglob
 
 PROTOCOL_VERSION=2
-SCRIPT_NAME="install.sh"
 PYTHON_VERSION="3.13"
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
-  DEFAULT_SPIRITAGENT_HOME_UNIX="$HOME/Library/Application Support/SpiritAgent"
+  DEFAULT_SPIRITAGENT_HOME="$HOME/Library/Application Support/SpiritAgent"
 else
-  DEFAULT_SPIRITAGENT_HOME_UNIX="$HOME/.spiritagent"
+  DEFAULT_SPIRITAGENT_HOME="$HOME/.spiritagent"
 fi
 
-RUNNER_WHEEL_GLOB="spirit_agent-*.whl"
-
-# 桌面端格式默认 dmg，可由 SPIRITAGENT_INSTALLER_FORMAT 覆盖
-DEFAULT_DESKTOP_FORMAT="dmg"
-
-SPIRITAGENT_HOME_ARG=""
-BUNDLED_RUNNER_DIR_ARG=""
-BUNDLED_DESKTOP_DIR_ARG=""
-BUNDLED_SKILLS_DIR_ARG=""
-BUNDLED_ONBOARDING_AUDIO_DIR_ARG=""
-
-MODE="stage"
-STAGE=""
-
-usage() {
-  cat <<EOF
-$SCRIPT_NAME — 唤生 桌面版安装器 (6-stage payload release)
-
-Usage:
-  $SCRIPT_NAME -Manifest
-  $SCRIPT_NAME -Stage NAME [-Json] [-NonInteractive] \\
-      [--spiritagent-home PATH] \\
-      [--bundled-runner-dir PATH] \\
-      [--bundled-desktop-dir PATH] \\
-      [--bundled-skills-dir PATH] \\
-      [--bundled-onboarding-audio-dir PATH]
-
-Stages: welcome, install-python, unpack-runner, unpack-desktop, install-skills, finalize.
-EOF
-}
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -Manifest|--manifest)         MODE="manifest"; shift ;;
-    -Stage|--stage)               MODE="stage"; STAGE="$2"; shift 2 ;;
-    -Json|--json|-NonInteractive|--non-interactive) shift ;;
-    --spiritagent-home)                  SPIRITAGENT_HOME_ARG="$2"; shift 2 ;;
-    --bundled-runner-dir)         BUNDLED_RUNNER_DIR_ARG="$2"; shift 2 ;;
-    --bundled-desktop-dir)        BUNDLED_DESKTOP_DIR_ARG="$2"; shift 2 ;;
-    --bundled-skills-dir)         BUNDLED_SKILLS_DIR_ARG="$2"; shift 2 ;;
-    --bundled-onboarding-audio-dir) BUNDLED_ONBOARDING_AUDIO_DIR_ARG="$2"; shift 2 ;;
-    -h|--help)                    usage; exit 0 ;;
-    *)                            echo "unknown arg: $1" >&2; exit 2 ;;
-  esac
-done
-
-# 参数 > 环境变量 > 默认值（与 install.ps1 一致）
-SPIRITAGENT_HOME_RESOLVED="${SPIRITAGENT_HOME_ARG:-${SPIRITAGENT_HOME:-$DEFAULT_SPIRITAGENT_HOME_UNIX}}"
-BUNDLED_RUNNER_DIR="${BUNDLED_RUNNER_DIR_ARG:-${SPIRITAGENT_BUNDLED_RUNNER_DIR:-}}"
-BUNDLED_DESKTOP_DIR="${BUNDLED_DESKTOP_DIR_ARG:-${SPIRITAGENT_BUNDLED_DESKTOP_DIR:-}}"
-BUNDLED_SKILLS_DIR="${BUNDLED_SKILLS_DIR_ARG:-${SPIRITAGENT_BUNDLED_SKILLS_DIR:-}}"
-BUNDLED_ONBOARDING_AUDIO_DIR="${BUNDLED_ONBOARDING_AUDIO_DIR_ARG:-${SPIRITAGENT_BUNDLED_ONBOARDING_AUDIO_DIR:-}}"
-DESKTOP_FORMAT="${SPIRITAGENT_INSTALLER_FORMAT:-$DEFAULT_DESKTOP_FORMAT}"
+SPIRITAGENT_HOME="${SPIRITAGENT_HOME:-$DEFAULT_SPIRITAGENT_HOME}"
+BUNDLED_RUNNER_DIR="${SPIRITAGENT_BUNDLED_RUNNER_DIR:-}"
+BUNDLED_DESKTOP_DIR="${SPIRITAGENT_BUNDLED_DESKTOP_DIR:-}"
+BUNDLED_SKILLS_DIR="${SPIRITAGENT_BUNDLED_SKILLS_DIR:-}"
+BUNDLED_ONBOARDING_AUDIO_DIR="${SPIRITAGENT_BUNDLED_ONBOARDING_AUDIO_DIR:-}"
+DESKTOP_FORMAT="${SPIRITAGENT_INSTALLER_FORMAT:-dmg}"
+UV_CMD="${UV_CMD:-}"
 
 emit_manifest() {
-  printf '__SPIRITAGENT_MANIFEST__:{"protocol_version": %s, "stages": [{"name": "welcome", "title": "准备安装", "category": "setup", "needs_user_input": false}, {"name": "install-python", "title": "安装 Python 运行时", "category": "prereqs", "needs_user_input": false}, {"name": "unpack-runner", "title": "安装 唤生 运行器", "category": "payload", "needs_user_input": false}, {"name": "unpack-desktop", "title": "安装 唤生 桌面应用", "category": "payload", "needs_user_input": false}, {"name": "install-skills", "title": "安装内置技能", "category": "payload", "needs_user_input": false}, {"name": "finalize", "title": "完成安装", "category": "finalize", "needs_user_input": false}]}\n' "$PROTOCOL_VERSION"
-}
-
-emit_stage_err() {
-  local stage="$1" reason="$2"
-  local esc="${reason//\\/\\\\}"
-  esc="${esc//\"/\\\"}"
-  printf '__SPIRITAGENT_STAGE_RESULT__:{"ok": false, "stage": "%s", "reason": "%s"}\n' "$stage" "$esc"
+  printf '__SPIRITAGENT_MANIFEST__:{"protocol_version": %s, "stages": [{"name": "welcome", "title": "准备安装"}, {"name": "install-python", "title": "准备运行环境"}, {"name": "unpack-runner", "title": "安装电脑助手"}, {"name": "unpack-desktop", "title": "安装唤生应用"}, {"name": "install-skills", "title": "准备常用功能"}, {"name": "finalize", "title": "完成安装设置"}]}\n' "$PROTOCOL_VERSION"
 }
 
 install_uv() {
-  local managed_uv="$SPIRITAGENT_HOME_RESOLVED/bin/uv"
-  if [[ -f "$managed_uv" ]]; then
-    UV_CMD="$managed_uv"
-    return 0
-  fi
+  local managed_uv="$SPIRITAGENT_HOME/bin/uv"
+  [[ -f "$managed_uv" ]] && { UV_CMD="$managed_uv"; return 0; }
 
-  mkdir -p "$SPIRITAGENT_HOME_RESOLVED/bin"
-
+  mkdir -p "$SPIRITAGENT_HOME/bin"
   if command -v curl >/dev/null 2>&1; then
-    curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR="$SPIRITAGENT_HOME_RESOLVED/bin" sh 2>/dev/null
+    curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR="$SPIRITAGENT_HOME/bin" sh 2>/dev/null
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO- https://astral.sh/uv/install.sh | UV_INSTALL_DIR="$SPIRITAGENT_HOME_RESOLVED/bin" sh 2>/dev/null
+    wget -qO- https://astral.sh/uv/install.sh | UV_INSTALL_DIR="$SPIRITAGENT_HOME/bin" sh 2>/dev/null
   else
     return 1
   fi
 
-  if [[ -f "$managed_uv" ]]; then
-    UV_CMD="$managed_uv"
-    return 0
-  fi
-  return 1
+  [[ -f "$managed_uv" ]] && UV_CMD="$managed_uv"
 }
 
 install_officecli() {
-  if command -v officecli >/dev/null 2>&1; then
-    return 0
-  fi
-  local managed_officecli="$SPIRITAGENT_HOME_RESOLVED/bin/officecli"
-  if [[ -f "$managed_officecli" ]]; then
-    return 0
-  fi
+  command -v officecli >/dev/null 2>&1 && return 0
+  local managed_officecli="$SPIRITAGENT_HOME/bin/officecli"
+  [[ -f "$managed_officecli" ]] && return 0
 
-  mkdir -p "$SPIRITAGENT_HOME_RESOLVED/bin"
-
+  mkdir -p "$SPIRITAGENT_HOME/bin"
   if command -v curl >/dev/null 2>&1; then
     curl -fsSL https://d.officecli.ai/install.sh | bash 2>/dev/null || true
   elif command -v wget >/dev/null 2>&1; then
@@ -123,15 +56,11 @@ install_officecli() {
   if [[ -f "$HOME/.local/bin/officecli" && ! -f "$managed_officecli" ]]; then
     cp "$HOME/.local/bin/officecli" "$managed_officecli" 2>/dev/null || true
   fi
-
-  return 0
 }
 
 test_python() {
-  if [[ -z "${UV_CMD:-}" ]]; then
-    if ! install_uv; then
-      return 1
-    fi
+  if [[ -z "$UV_CMD" ]] && ! install_uv; then
+    return 1
   fi
 
   local ver found
@@ -152,69 +81,57 @@ test_python() {
 # 阶段 1：welcome
 stage_welcome() {
   # mkdir 失败不中断，由下方 -d 检查统一发错误帧，避免 set -e 无结果帧退出
-  mkdir -p "$SPIRITAGENT_HOME_RESOLVED/bin" \
-           "$SPIRITAGENT_HOME_RESOLVED/skills" \
-           "$SPIRITAGENT_HOME_RESOLVED/logs" || true
+  mkdir -p "$SPIRITAGENT_HOME/bin" "$SPIRITAGENT_HOME/skills" "$SPIRITAGENT_HOME/logs" || true
 
-  if [[ ! -d "$SPIRITAGENT_HOME_RESOLVED" ]]; then
-    emit_stage_err welcome "could not create SPIRITAGENT_HOME: $SPIRITAGENT_HOME_RESOLVED"
+  if [[ ! -d "$SPIRITAGENT_HOME" ]]; then
+    echo "could not create SPIRITAGENT_HOME: $SPIRITAGENT_HOME" >&2
     return 1
   fi
-  if [[ ! -w "$SPIRITAGENT_HOME_RESOLVED" ]]; then
-    emit_stage_err welcome "SPIRITAGENT_HOME not writable: $SPIRITAGENT_HOME_RESOLVED"
+  if [[ ! -w "$SPIRITAGENT_HOME" ]]; then
+    echo "SPIRITAGENT_HOME not writable: $SPIRITAGENT_HOME" >&2
     return 1
   fi
-
-  local marker="$SPIRITAGENT_HOME_RESOLVED/.spiritagent-bootstrap-complete"
-  local is_reinstall="false"
-  [[ -f "$marker" ]] && is_reinstall="true"
-
-  printf '__SPIRITAGENT_STAGE_RESULT__:{"ok": true, "stage": "welcome", "data": {"spiritagent_home": "%s", "is_reinstall": %s}}\n' \
-    "$SPIRITAGENT_HOME_RESOLVED" "$is_reinstall"
 }
 
 # 阶段 2：安装 Python
 stage_install_python() {
-  if test_python; then
-    printf '__SPIRITAGENT_STAGE_RESULT__:{"ok": true, "stage": "install-python", "data": {"version": "%s"}}\n' "$PYTHON_VERSION"
-    return 0
+  if ! test_python; then
+    echo "Python $PYTHON_VERSION is required but could not be installed. Install Python manually from https://www.python.org/downloads/ and re-run." >&2
+    return 1
   fi
-
-  emit_stage_err install-python "Python $PYTHON_VERSION is required but could not be installed. Install Python manually from https://www.python.org/downloads/ and re-run."
-  return 1
 }
 
 # 阶段 3：解包运行器
 stage_unpack_runner() {
   # 每阶段独立进程，须重新推导 uv 与 Python 版本（可能落在 3.14 回退）
-  if [[ -z "${UV_CMD:-}" ]] && ! test_python; then
-    emit_stage_err unpack-runner "Python runtime not available (uv or Python missing)"
+  if [[ -z "$UV_CMD" ]] && ! test_python; then
+    echo "Python runtime not available (uv or Python missing)" >&2
     return 1
   fi
 
   if [[ -z "$BUNDLED_RUNNER_DIR" ]]; then
-    emit_stage_err unpack-runner "--bundled-runner-dir (or SPIRITAGENT_BUNDLED_RUNNER_DIR) is required"
+    echo "SPIRITAGENT_BUNDLED_RUNNER_DIR is required" >&2
     return 1
   fi
   if [[ ! -d "$BUNDLED_RUNNER_DIR" ]]; then
-    emit_stage_err unpack-runner "bundled runner dir not found: $BUNDLED_RUNNER_DIR"
+    echo "bundled runner dir not found: $BUNDLED_RUNNER_DIR" >&2
     return 1
   fi
 
   local wheel
-  wheel=("$BUNDLED_RUNNER_DIR"/$RUNNER_WHEEL_GLOB)
+  wheel=("$BUNDLED_RUNNER_DIR"/spirit_agent-*.whl)
   if [[ ${#wheel[@]} -ne 1 || ! -f "${wheel[0]}" ]]; then
-    emit_stage_err unpack-runner "expected one runner wheel in $BUNDLED_RUNNER_DIR"
+    echo "expected one runner wheel in $BUNDLED_RUNNER_DIR" >&2
     return 1
   fi
   wheel="${wheel[0]}"
 
-  local runner_dir="$SPIRITAGENT_HOME_RESOLVED/runner"
+  local runner_dir="$SPIRITAGENT_HOME/runner"
   mkdir -p "$runner_dir"
 
   # --clear 重建 venv，缺省遇已存在目录会报错并留下损坏环境
   "$UV_CMD" venv "$runner_dir/.venv" --python "$PYTHON_VERSION" --clear 2>/dev/null || {
-    emit_stage_err unpack-runner "uv venv failed"
+    echo "uv venv failed" >&2
     return 1
   }
 
@@ -224,135 +141,120 @@ stage_unpack_runner() {
     if ! "$UV_CMD" pip install --python "$runner_dir/.venv/bin/python" \
         --index-url "$index_url" \
         "$wheel" 2>/dev/null; then
-      emit_stage_err unpack-runner "uv pip install failed (PyPI + fallback mirror)"
+      echo "uv pip install failed (PyPI + fallback mirror)" >&2
       return 1
     fi
   fi
 
   if ! "$runner_dir/.venv/bin/python" -I -m spirit_agent_runner --check; then
-    emit_stage_err unpack-runner "runner health check failed"
+    echo "runner health check failed" >&2
     return 1
   fi
 
   # onboarding 音频按语言子目录映射至 audio/onboarding/<lang>/
-  local audio_count=0
   if [[ -n "$BUNDLED_ONBOARDING_AUDIO_DIR" && -d "$BUNDLED_ONBOARDING_AUDIO_DIR" ]]; then
     for lang_dir in "$BUNDLED_ONBOARDING_AUDIO_DIR"/*/; do
       [[ -d "$lang_dir" ]] || continue
-      local lang
-      lang=$(basename "$lang_dir")
-      local audio_target="$SPIRITAGENT_HOME_RESOLVED/audio/onboarding/$lang"
-      mkdir -p "$audio_target"
-      cp -R "$lang_dir"/. "$audio_target"/
+      mkdir -p "$SPIRITAGENT_HOME/audio/onboarding/$(basename "$lang_dir")"
+      cp -R "$lang_dir"/. "$SPIRITAGENT_HOME/audio/onboarding/$(basename "$lang_dir")"/
     done
-    audio_count=$(find "$SPIRITAGENT_HOME_RESOLVED/audio/onboarding" -name '*.mp3' -type f | wc -l | tr -d ' ')
   fi
-
-  local size
-  size=$(stat -c%s "$wheel" 2>/dev/null || stat -f%z "$wheel" 2>/dev/null || echo 0)
-  printf '__SPIRITAGENT_STAGE_RESULT__:{"ok": true, "stage": "unpack-runner", "data": {"venv": "%s/runner/.venv", "wheel": "%s", "size_bytes": %s, "onboarding_audio_copied": %s}}\n' \
-    "$SPIRITAGENT_HOME_RESOLVED" "$(basename "$wheel")" "$size" "$audio_count"
 }
 
 # 阶段 4：解包桌面端
 stage_unpack_desktop() {
   if [[ -z "$BUNDLED_DESKTOP_DIR" ]]; then
-    emit_stage_err unpack-desktop "--bundled-desktop-dir (or SPIRITAGENT_BUNDLED_DESKTOP_DIR) is required"
+    echo "SPIRITAGENT_BUNDLED_DESKTOP_DIR is required" >&2
     return 1
   fi
   if [[ ! -d "$BUNDLED_DESKTOP_DIR" ]]; then
-    emit_stage_err unpack-desktop "bundled desktop dir not found: $BUNDLED_DESKTOP_DIR"
+    echo "bundled desktop dir not found: $BUNDLED_DESKTOP_DIR" >&2
     return 1
   fi
 
-  # macOS 仅支持 dmg
-  local artifacts=()
-  case "$DESKTOP_FORMAT" in
-    dmg)
-      artifacts=("$BUNDLED_DESKTOP_DIR"/*.dmg)
-      ;;
-    *)
-      emit_stage_err unpack-desktop "desktop format '$DESKTOP_FORMAT' is not supported on this platform (use install.ps1 on Windows)"
-      return 1
-      ;;
-  esac
+  if [[ "$DESKTOP_FORMAT" != "dmg" ]]; then
+    echo "desktop format '$DESKTOP_FORMAT' is not supported on this platform (use install.ps1 on Windows)" >&2
+    return 1
+  fi
 
-  local artifact="${artifacts[0]:-}"
-  if [[ -z "$artifact" || ! -f "$artifact" ]]; then
-    emit_stage_err unpack-desktop "no desktop artifact found in $BUNDLED_DESKTOP_DIR (format=$DESKTOP_FORMAT)"
+  local artifact
+  artifact=("$BUNDLED_DESKTOP_DIR"/*.dmg)
+  if [[ ${#artifact[@]} -ne 1 || ! -f "${artifact[0]}" ]]; then
+    echo "no desktop artifact found in $BUNDLED_DESKTOP_DIR (format=$DESKTOP_FORMAT)" >&2
+    return 1
+  fi
+  artifact="${artifact[0]}"
+
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    echo "dmg format requires macOS host" >&2
     return 1
   fi
 
   # 挂载 DMG，拷 SpiritAgent.app 到 /Applications，卸载并清 xattr
-  if [[ "$(uname -s)" != "Darwin" ]]; then
-    emit_stage_err unpack-desktop "dmg format requires macOS host"
-    return 1
-  fi
   local mount_point
   mount_point=$(hdiutil attach -nobrowse -readonly "$artifact" 2>/dev/null | awk '/\/Volumes/{print $3; exit}')
   if [[ -z "$mount_point" ]]; then
-    emit_stage_err unpack-desktop "failed to mount $artifact"
+    echo "failed to mount $artifact" >&2
     return 1
   fi
   if [[ ! -d "$mount_point/SpiritAgent.app" ]]; then
     hdiutil detach "$mount_point" 2>/dev/null || true
-    emit_stage_err unpack-desktop "SpiritAgent.app not found in DMG $artifact"
+    echo "SpiritAgent.app not found in DMG $artifact" >&2
     return 1
   fi
   rm -rf /Applications/SpiritAgent.app
   # 拷贝失败须先卸载 DMG，避免 set -e 退出时挂载点泄漏
   if ! cp -R "$mount_point/SpiritAgent.app" /Applications/SpiritAgent.app; then
     hdiutil detach "$mount_point" 2>/dev/null || true
-    emit_stage_err unpack-desktop "failed to copy SpiritAgent.app from $artifact"
+    echo "failed to copy SpiritAgent.app from $artifact" >&2
     return 1
   fi
   hdiutil detach "$mount_point" 2>/dev/null || true
   xattr -cr /Applications/SpiritAgent.app 2>/dev/null || true
-  printf '__SPIRITAGENT_STAGE_RESULT__:{"ok": true, "stage": "unpack-desktop", "data": {"installed_path": "/Applications/SpiritAgent.app", "format": "dmg"}}\n'
 }
 
 # 阶段 5：安装技能
 stage_install_skills() {
   if [[ -z "$BUNDLED_SKILLS_DIR" ]]; then
-    emit_stage_err install-skills "--bundled-skills-dir (or SPIRITAGENT_BUNDLED_SKILLS_DIR) is required"
+    echo "SPIRITAGENT_BUNDLED_SKILLS_DIR is required" >&2
     return 1
   fi
   if [[ ! -d "$BUNDLED_SKILLS_DIR" ]]; then
-    emit_stage_err install-skills "bundled skills dir not found: $BUNDLED_SKILLS_DIR"
+    echo "bundled skills dir not found: $BUNDLED_SKILLS_DIR" >&2
     return 1
   fi
 
-  # 尊重 .no-bundled-skills 标记
-  if [[ -f "$SPIRITAGENT_HOME_RESOLVED/.no-bundled-skills" ]]; then
-    printf '__SPIRITAGENT_STAGE_RESULT__:{"ok": true, "stage": "install-skills", "skipped": true, "reason": "user opted out via .no-bundled-skills"}\n'
+  # 尊重 .no-bundled-skills 标记（skipped 语义由 Tauri 侧按退出码判断）
+  if [[ -f "$SPIRITAGENT_HOME/.no-bundled-skills" ]]; then
     return 0
   fi
 
-  # rsync 不加 --delete，保留用户自装 skills
-  mkdir -p "$SPIRITAGENT_HOME_RESOLVED/skills"
+  # 不加 --delete，保留用户自装 skills
+  mkdir -p "$SPIRITAGENT_HOME/skills"
   if command -v rsync >/dev/null 2>&1; then
-    rsync -a "$BUNDLED_SKILLS_DIR/" "$SPIRITAGENT_HOME_RESOLVED/skills/"
+    rsync -a "$BUNDLED_SKILLS_DIR/" "$SPIRITAGENT_HOME/skills/"
   else
-    cp -R "$BUNDLED_SKILLS_DIR/." "$SPIRITAGENT_HOME_RESOLVED/skills/"
+    cp -R "$BUNDLED_SKILLS_DIR/." "$SPIRITAGENT_HOME/skills/"
   fi
 
   # OfficeCLI 尽力安装
   install_officecli || true
-
-  local bundled_count
-  bundled_count=$(find "$SPIRITAGENT_HOME_RESOLVED/skills" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
-
-  printf '__SPIRITAGENT_STAGE_RESULT__:{"ok": true, "stage": "install-skills", "data": {"bundled_count": %s}}\n' \
-    "$bundled_count"
 }
 
 # 阶段 6：收尾
 stage_finalize() {
-  : > "$SPIRITAGENT_HOME_RESOLVED/.spiritagent-bootstrap-complete"
-
-  printf '__SPIRITAGENT_STAGE_RESULT__:{"ok": true, "stage": "finalize", "data": {"marker": "%s/.spiritagent-bootstrap-complete"}}\n' \
-    "$SPIRITAGENT_HOME_RESOLVED"
+  : > "$SPIRITAGENT_HOME/.spiritagent-bootstrap-complete"
 }
+
+MODE="stage"
+STAGE=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -Manifest|--manifest) MODE="manifest"; shift ;;
+    -Stage|--stage)       STAGE="$2"; shift 2 ;;
+    *)                    echo "unknown arg: $1" >&2; exit 2 ;;
+  esac
+done
 
 case "$MODE" in
   manifest)
@@ -360,7 +262,7 @@ case "$MODE" in
     ;;
   stage)
     if [[ -z "$STAGE" ]]; then
-      echo "error: --stage NAME is required (or pass -Manifest)" >&2
+      echo "error: -Stage NAME is required (or pass -Manifest)" >&2
       exit 2
     fi
     case "$STAGE" in
@@ -370,10 +272,7 @@ case "$MODE" in
       unpack-desktop)  stage_unpack_desktop ;;
       install-skills)  stage_install_skills ;;
       finalize)        stage_finalize ;;
-      *)
-        emit_stage_err "$STAGE" "unknown stage"
-        exit 1
-        ;;
+      *)               echo "unknown stage: $STAGE" >&2; exit 1 ;;
     esac
     ;;
 esac

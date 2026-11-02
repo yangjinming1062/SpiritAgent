@@ -2,23 +2,13 @@ import type React from 'react'
 import { useState } from 'react'
 import { useStore } from '@nanostores/react'
 import { Button } from '../components/button'
-import {
-  $logPath,
-  openLogDir,
-  stageLabel,
-  startInstall,
-  type BootstrapStateModel
-} from '../store'
+import { $logPath, openLogDir, startInstall, type BootstrapStateModel } from '../store'
 import { RefreshCw, FileText } from 'lucide-react'
 
-interface FailureProps {
-  bootstrap: BootstrapStateModel
-}
-
-export default function Failure({ bootstrap }: FailureProps): React.JSX.Element {
+export default function Failure({ bootstrap }: { bootstrap: BootstrapStateModel }): React.JSX.Element {
   const logPath = useStore($logPath)
   const [logError, setLogError] = useState('')
-  const failed = bootstrap.stageOrder.find(name => bootstrap.stages[name]?.state === 'failed')
+  const failed = bootstrap.stageOrder.find((s) => bootstrap.stages[s.name]?.state === 'failed')
   const raw = bootstrap.error ?? ''
   const recovery = /cancel|取消|终止/i.test(raw)
     ? '安装已停止。想继续时，点击下方按钮重新开始。'
@@ -38,7 +28,7 @@ export default function Failure({ bootstrap }: FailureProps): React.JSX.Element 
         <p className="m-0 mx-auto max-w-xl text-center text-sm leading-normal tracking-tight text-text-body">
           {recovery}
         </p>
-        {failed ? <p className="mt-3 text-sm text-text-muted">停在“{stageLabel(failed)}”这一步。</p> : null}
+        {failed ? <p className="mt-3 text-sm text-text-muted">停在“{failed.title}”这一步。</p> : null}
         <p className="mt-3 text-sm text-text-muted">已有资料会保留，重试会重新准备应用文件。</p>
       </div>
 

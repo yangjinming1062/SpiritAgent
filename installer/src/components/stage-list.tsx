@@ -3,13 +3,8 @@ import { useEffect, useRef } from 'react'
 import { Check, X, ChevronRight, Loader2 } from 'lucide-react'
 import clsx from 'clsx'
 import type { BootstrapStateModel, StageState } from '../store'
-import { stageLabel } from '../store'
 
-interface StageListProps {
-  bootstrap: BootstrapStateModel
-}
-
-export function StageList({ bootstrap }: StageListProps): React.JSX.Element {
+export function StageList({ bootstrap }: { bootstrap: BootstrapStateModel }): React.JSX.Element {
   const logEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -22,12 +17,12 @@ export function StageList({ bootstrap }: StageListProps): React.JSX.Element {
     <div className="flex h-full overflow-hidden rounded-lg border border-line-strong bg-glass shadow-md backdrop-blur-xs">
       <div className="flex-1 overflow-y-auto px-4 py-3">
         <ol className="space-y-1">
-          {bootstrap.stageOrder.map((name) => {
-            const rec = bootstrap.stages[name]
+          {bootstrap.stageOrder.map((stage) => {
+            const rec = bootstrap.stages[stage.name]
             if (!rec) return null
             return (
               <li
-                key={name}
+                key={stage.name}
                 className={clsx(
                   'flex items-center gap-3 rounded-md px-3 py-1.5 text-xs transition-colors',
                   rec.state === 'running' && 'bg-accent-soft font-medium text-text-strong',
@@ -38,7 +33,7 @@ export function StageList({ bootstrap }: StageListProps): React.JSX.Element {
                 )}
               >
                 <StateIcon state={rec.state} />
-                <span className="flex-1 truncate">{stageLabel(name)}</span>
+                <span className="flex-1 truncate">{stage.title}</span>
                 {rec.durationMs != null && (
                   <span className="text-[11px] font-mono text-text-muted">
                     {formatDuration(rec.durationMs)}
@@ -87,12 +82,7 @@ function StateIcon({ state }: { state: StageState | null }) {
   if (state === 'failed') {
     return <X size={13} className="text-destructive" />
   }
-  return (
-    <div
-      className="h-[5px] w-[5px] rounded-full bg-text-faint"
-      aria-hidden
-    />
-  )
+  return <div className="h-[5px] w-[5px] rounded-full bg-text-faint" aria-hidden />
 }
 
 function formatDuration(ms: number): string {

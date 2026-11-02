@@ -33,7 +33,7 @@ Tauri 安装器负责首次安装与环境修复，日常运行及更新归 Clie
 
 阶段真源为两端脚本 manifest：准备 → Python → Runner → 桌面包 → 技能 → 完成。每阶段是独立进程，不能依赖前阶段 shell 变量；Runner 使用 uv 管理 Python 和独立 venv，优先已有 3.13、再 3.14，否则安装 3.13。仅 finalize 写完成标记。
 
-编排经 `-Manifest`／`-Stage` 调用脚本，环境变量 `SPIRITAGENT_BUNDLED_*` 与 `SPIRITAGENT_INSTALLER_FORMAT` 传递载荷，显式同义参数优先。协议只解析带哨兵的单行 JSON，普通日志不能充当结果。[失败页](src/routes/failure.tsx) 提供日志和重试入口。
+编排经 `-Manifest`／`-Stage` 调用脚本，环境变量 `SPIRITAGENT_BUNDLED_*` 与 `SPIRITAGENT_INSTALLER_FORMAT` 传递载荷。manifest 只解析带哨兵的单行 JSON，普通日志不能充当结果；阶段成败与原因经退出码及 stderr 回传。[失败页](src/routes/failure.tsx) 提供日志和重试入口。
 
 取消与关闭均等待当前流程结束，包含 manifest 读取；关闭中拒绝新安装，重复关闭共用退出。进程树尽力由 macOS 进程组／Windows Job Object 终止，失败回退只停脚本，残余输出读取有预算。取消可能留下半成品或已挂载 DMG；重试从头执行，`uv venv --clear` 重建 Runner，不凭旧标记跳过阶段。
 
@@ -45,7 +45,7 @@ Tauri 安装器负责首次安装与环境修复，日常运行及更新归 Clie
 | 技能与 OfficeCLI | 同名覆盖，用户内容保留；`.no-bundled-skills` 同时跳过技能和 OfficeCLI，后者安装失败不阻断主体；后续技能同步由 [Client](../client/main/lifecycle/bundled-skills.ts) 管理 |
 | 安装器副本 | 尽力复制到 Home 下 `spiritagent-setup[.exe]`，失败不阻断。修复优先原完整安装器加 `--repair`；macOS 暂存符号链接不进入内嵌 ZIP，脱离 `.app` resources 的副本不保证独立修复 |
 | macOS 签名 | 自拷贝清 quarantine 后检查，未签名或损坏 ad-hoc 可补签，证书签名只验不降级；桌面 `.app` 仅清扩展属性 |
-| Windows 桌面 | 默认静默运行内嵌 NSIS；手动 ZIP 模式需自备 ZIP，释放到 Home 下 `apps/SpiritAgent/`，完成页支持启动但不创建快捷方式；NSIS 卸载保留 Home 数据 |
+| Windows 桌面 | 默认静默运行内嵌 NSIS；手动 ZIP 模式需自备 ZIP，释放到 Home 下 `apps/SpiritAgent/`，完成页可启动但不创建快捷方式；NSIS 卸载保留 Home 数据 |
 
 ## 内置技能文档
 
@@ -57,4 +57,4 @@ Tauri 安装器负责首次安装与环境修复，日常运行及更新归 Clie
 
 Tauri Rust 与前端 API 保持相同次版本，依赖变更同时更新 [Cargo.toml](src-tauri/Cargo.toml)、[package.json](package.json) 和锁文件。构建门禁隔离安装实际 wheel 并核入口、版本和静态定义；安装阶段再次健康检查，失败不继续。
 
-按目标平台验证首装、修复、macOS 快路径、取消和失败重试，同时检查实际内嵌文件、路径与 BOM；签名、启动和进程树终止需要实机。运行 Cargo 测试前把 `SPIRITAGENT_HOME` 指向专用临时目录，ZIP 回退测试会创建并删除桌面占位文件。命令见 [Scripts](../scripts/README.md#构建安装器)。
+按目标平台验证首装、修复、macOS 快路径、取消和失败重试，同时检查实际内嵌文件、路径与 BOM；签名、启动和进程树终止需要实机。运行 Cargo 测试前把 `SPIRITAGENT_HOME` 指向专用临时目录并先暂存完整载荷。命令见 [Scripts](../scripts/README.md#构建安装器)。

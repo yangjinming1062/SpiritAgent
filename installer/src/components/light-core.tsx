@@ -3,11 +3,11 @@ import { EGG_PATH } from './egg'
 
 interface LightCoreProps {
   variant: 'dormant' | 'hatched'
-  size?: number
+  size: number
 }
 
 // 光核：欢迎页是尚未孵化的蛋壳微光，完成页是破壳后的暖光。
-export function LightCore({ variant, size = 116 }: LightCoreProps): React.JSX.Element {
+export function LightCore({ variant, size }: LightCoreProps): React.JSX.Element {
   if (variant === 'dormant') {
     return (
       <div className="sa-core sa-core-dormant" style={{ width: size, height: size }}>

@@ -7,11 +7,9 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5175",
     "build": "tsc -b && vite build",
-    "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "tauri:build:debug": "tauri build --debug",
     "tauri:build:nobundle": "tauri build --no-bundle"
   },
   "dependencies": {

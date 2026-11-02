@@ -7,22 +7,6 @@ use tauri::{AppHandle, Manager};
 
 use crate::embedded_payload;
 
-#[derive(Debug, Clone)]
-pub struct ResolvedScript {
-    pub path: PathBuf,
-    pub source: ScriptSource,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ScriptSource {
-    /// `$SPIRITAGENT_SETUP_DEV_REPO_ROOT` 指向的本地 checkout。
-    DevCheckout,
-    /// Tauri bundle.resources（payload/ 与 exe 同级）。
-    Bundled,
-    /// build.rs 嵌入的 payload zip（单 exe）。
-    Embedded,
-}
-
 #[derive(Debug, Clone, Copy)]
 pub enum ScriptKind {
     Ps1,
@@ -47,61 +31,39 @@ impl ScriptKind {
 }
 
 /// 解析安装脚本：dev 入口 → bundle.resources → 嵌入 zip。
-pub async fn resolve(
-    app: &AppHandle,
-    kind: ScriptKind,
-    emit_log: &impl Fn(&str),
-) -> Result<ResolvedScript> {
+pub async fn resolve(app: &AppHandle, kind: ScriptKind) -> Result<PathBuf> {
     // 1) 开发入口：环境变量指向 checkout，免重打包
     if let Ok(repo_root) = std::env::var("SPIRITAGENT_SETUP_DEV_REPO_ROOT") {
         let candidate = PathBuf::from(repo_root).join("installer").join(kind.filename());
         if candidate.exists() {
-            emit_log(&format!(
-                "[bootstrap] dev mode — using local {} at {}",
-                kind.filename(),
-                candidate.display()
-            ));
-            return Ok(ResolvedScript {
-                path: candidate,
-                source: ScriptSource::DevCheckout,
-            });
+            tracing::info!(?candidate, "dev mode — using local install script");
+            return Ok(candidate);
         }
     }
 
     // 2) 生产路径：Tauri bundle.resources
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        if let Ok(bundled) = resolve_bundled(&resource_dir, kind) {
-            emit_log(&format!(
-                "[bootstrap] using bundled {} at {}",
-                kind.filename(),
-                bundled.display()
-            ));
-            return Ok(ResolvedScript {
-                path: bundled,
-                source: ScriptSource::Bundled,
-            });
-        }
+    if let Ok(bundled) = app
+        .path()
+        .resource_dir()
+        .map_err(anyhow::Error::from)
+        .and_then(|dir| resolve_bundled(&dir, kind))
+    {
+        tracing::info!(?bundled, "using bundled install script");
+        return Ok(bundled);
     }
 
     // 3) 单 exe：解压嵌入 zip 到 bootstrap-payload/payload/
-    let payload_dir = embedded_payload::payload_dir()
-        .with_context(|| "extracting embedded payload zip".to_string())?;
-    let script_path = payload_dir.join(kind.filename());
+    let script_path = embedded_payload::payload_dir()
+        .with_context(|| "extracting embedded payload zip".to_string())?
+        .join(kind.filename());
     if !script_path.is_file() {
         return Err(anyhow!(
             "embedded payload is missing {} (build.rs likely failed to package ../payload/)",
             script_path.display()
         ));
     }
-    emit_log(&format!(
-        "[bootstrap] using embedded {} at {}",
-        kind.filename(),
-        script_path.display()
-    ));
-    Ok(ResolvedScript {
-        path: script_path,
-        source: ScriptSource::Embedded,
-    })
+    tracing::info!(?script_path, "using embedded install script");
+    Ok(script_path)
 }
 
 /// 从 bundle.resources 读取安装脚本；纯函数便于临时目录单测。
@@ -134,23 +96,15 @@ mod tests {
         base
     }
 
-    fn write_fake_bundled_script(install_root: &Path, kind: ScriptKind) {
-        let payload = install_root.join("payload");
-        fs::create_dir_all(&payload).unwrap();
-        fs::write(payload.join(kind.filename()), b"#!/bin/sh\necho fake\n").unwrap();
-    }
-
     #[test]
     fn resolve_bundled_returns_script_in_payload() {
         let tmp = unique_tmp_dir("bundled-ok");
-        write_fake_bundled_script(&tmp, ScriptKind::Sh);
+        let payload = tmp.join("payload");
+        fs::create_dir_all(&payload).unwrap();
+        fs::write(payload.join("install.sh"), b"#!/bin/sh\necho fake\n").unwrap();
 
         let resolved = resolve_bundled(&tmp, ScriptKind::Sh).unwrap();
         assert!(resolved.ends_with("install.sh"));
-        assert_eq!(
-            fs::read_to_string(&resolved).unwrap(),
-            "#!/bin/sh\necho fake\n"
-        );
 
         let _ = fs::remove_dir_all(&tmp);
     }

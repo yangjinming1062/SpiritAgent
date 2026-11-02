@@ -2,32 +2,17 @@
 
 use serde::{Deserialize, Serialize};
 
-/// 由 `install.ps1 -Manifest` 报告的阶段定义。
+/// 由 `install 脚本 -Manifest` 报告的阶段定义；`title` 直接用于 UI 展示。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StageInfo {
     pub name: String,
     pub title: String,
-    pub category: String,
-    // -NonInteractive 下 needs_user_input 阶段以 skipped 跳过，交后续引导处理。
-    pub needs_user_input: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
     pub stages: Vec<StageInfo>,
     pub protocol_version: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StageResultPayload {
-    pub stage: String,
-    pub ok: bool,
-    #[serde(default)]
-    pub skipped: bool,
-    #[serde(default)]
-    pub reason: Option<String>,
-    #[serde(default)]
-    pub data: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,38 +37,20 @@ pub enum LogStream {
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum BootstrapEvent {
     /// 启动时一次，附带完整阶段列表。
-    Manifest {
-        stages: Vec<StageInfo>,
-        #[serde(rename = "protocolVersion")]
-        protocol_version: u32,
-    },
-    /// 阶段状态切换；`result` 仅终态填充。
+    Manifest { stages: Vec<StageInfo> },
+    /// 阶段状态切换；`durationMs` 仅终态填充。
     Stage {
         name: String,
         state: StageState,
         #[serde(rename = "durationMs", skip_serializing_if = "Option::is_none")]
         duration_ms: Option<u64>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        result: Option<StageResultPayload>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
     /// 脚本 stdout/stderr 原始行。
-    Log {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        stage: Option<String>,
-        line: String,
-        stream: LogStream,
-    },
+    Log { line: String, stream: LogStream },
     /// 全部阶段成功后一次。
-    Complete {
-        #[serde(rename = "installRoot")]
-        install_root: String,
-    },
+    Complete,
     /// 流程中止时一次。
-    Failed {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        stage: Option<String>,
-        error: String,
-    },
+    Failed { error: String },
 }

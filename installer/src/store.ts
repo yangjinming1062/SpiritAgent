@@ -4,21 +4,6 @@ import { Channel, invoke } from '@tauri-apps/api/core'
 export interface StageInfo {
   name: string
   title: string
-  category: string
-  needs_user_input: boolean
-}
-
-const STAGE_LABELS: Record<string, string> = {
-  welcome: '准备安装',
-  'install-python': '准备运行环境',
-  'unpack-runner': '安装电脑助手',
-  'unpack-desktop': '安装唤生应用',
-  'install-skills': '准备常用功能',
-  finalize: '完成安装设置'
-}
-
-export function stageLabel(name: string): string {
-  return STAGE_LABELS[name] ?? '准备安装'
 }
 
 export type StageState = 'running' | 'succeeded' | 'skipped' | 'failed'
@@ -31,11 +16,10 @@ export interface StageRecord {
 export interface BootstrapStateModel {
   status: 'idle' | 'running' | 'completed' | 'failed'
   stages: Record<string, StageRecord>
-  stageOrder: string[]
+  stageOrder: StageInfo[]
   currentStage: string | null
-  installRoot: string | null
   error: string | null
-  logs: Array<{ stage?: string; line: string; stream?: 'stdout' | 'stderr' }>
+  logs: Array<{ line: string; stream?: 'stdout' | 'stderr' }>
 }
 
 const INITIAL: BootstrapStateModel = {
@@ -43,7 +27,6 @@ const INITIAL: BootstrapStateModel = {
   stages: {},
   stageOrder: [],
   currentStage: null,
-  installRoot: null,
   error: null,
   logs: []
 }
@@ -54,60 +37,25 @@ export const $route = atom<Route>('welcome')
 export const $bootstrap = atom<BootstrapStateModel>(INITIAL)
 export const $logPath = atom<string | null>(null)
 
+export function stageTitle(stages: StageInfo[], name: string | null): string {
+  if (!name) return '准备中…'
+  return stages.find((s) => s.name === name)?.title ?? '准备中…'
+}
+
 export const $progress = computed($bootstrap, (b) => {
-  const total = b.stageOrder.length
-  let done = 0
-  for (const name of b.stageOrder) {
-    const s = b.stages[name]?.state
-    if (s === 'succeeded' || s === 'skipped') done += 1
-  }
-  return { done, total }
+  const done = b.stageOrder.filter((s) => {
+    const state = b.stages[s.name]?.state
+    return state === 'succeeded' || state === 'skipped'
+  }).length
+  return { done, total: b.stageOrder.length }
 })
 
-interface BootstrapManifestEvent {
-  type: 'manifest'
-  stages: StageInfo[]
-  protocolVersion: number
-}
-
-interface BootstrapStageEvent {
-  type: 'stage'
-  name: string
-  state: StageState
-  durationMs?: number
-  result?: {
-    stage: string
-    ok: boolean
-    skipped: boolean
-    reason?: string
-  }
-  error?: string
-}
-
-interface BootstrapLogEvent {
-  type: 'log'
-  stage?: string
-  line: string
-  stream?: 'stdout' | 'stderr'
-}
-
-interface BootstrapCompleteEvent {
-  type: 'complete'
-  installRoot: string
-}
-
-interface BootstrapFailedEvent {
-  type: 'failed'
-  stage?: string
-  error: string
-}
-
 type BootstrapEvent =
-  | BootstrapManifestEvent
-  | BootstrapStageEvent
-  | BootstrapLogEvent
-  | BootstrapCompleteEvent
-  | BootstrapFailedEvent
+  | { type: 'manifest'; stages: StageInfo[] }
+  | { type: 'stage'; name: string; state: StageState; durationMs?: number; error?: string }
+  | { type: 'log'; line: string; stream?: 'stdout' | 'stderr' }
+  | { type: 'complete' }
+  | { type: 'failed'; error: string }
 
 let routeTimer: ReturnType<typeof setTimeout> | null = null
 let installRevision = 0
@@ -123,60 +71,40 @@ function clearRouteTimer(): void {
 function handleBootstrapEvent(payload: BootstrapEvent): void {
   const cur = $bootstrap.get()
   switch (payload.type) {
-    case 'manifest': {
+    case 'manifest':
       clearRouteTimer()
-      const stages: Record<string, StageRecord> = {}
-      const order: string[] = []
-      for (const s of payload.stages) {
-        stages[s.name] = { state: null }
-        order.push(s.name)
-      }
       $bootstrap.set({
         ...cur,
         status: 'running',
-        stages,
-        stageOrder: order,
+        stages: Object.fromEntries(payload.stages.map((s) => [s.name, { state: null }])),
+        stageOrder: payload.stages,
         currentStage: null,
-        installRoot: null,
         error: null,
         logs: []
       })
       $route.set('progress')
       break
-    }
     case 'stage': {
-      const existing = cur.stages[payload.name]
-      if (!existing) {
+      if (!cur.stages[payload.name]) {
         console.warn('stage event for unknown stage', payload.name)
         break
       }
-      const next: StageRecord = {
-        state: payload.state,
-        durationMs: payload.durationMs
-      }
       $bootstrap.set({
         ...cur,
-        stages: { ...cur.stages, [payload.name]: next },
-        currentStage:
-          payload.state === 'running' ? payload.name : cur.currentStage
+        stages: { ...cur.stages, [payload.name]: { state: payload.state, durationMs: payload.durationMs } },
+        currentStage: payload.state === 'running' ? payload.name : cur.currentStage
       })
       break
     }
     case 'log': {
-      const logs = [...cur.logs, { stage: payload.stage, line: payload.line, stream: payload.stream }]
       // 限制滚动缓冲，避免长流程日志导致前端 OOM。
-      const trimmed = logs.length > 2000 ? logs.slice(-2000) : logs
-      $bootstrap.set({ ...cur, logs: trimmed })
+      const logs = [...cur.logs, { line: payload.line, stream: payload.stream }]
+      $bootstrap.set({ ...cur, logs: logs.length > 2000 ? logs.slice(-2000) : logs })
       break
     }
     case 'complete':
       clearRouteTimer()
-      $bootstrap.set({
-        ...cur,
-        status: 'completed',
-        installRoot: payload.installRoot,
-        currentStage: null
-      })
+      $bootstrap.set({ ...cur, status: 'completed', currentStage: null })
       routeTimer = setTimeout(() => {
         routeTimer = null
         $route.set('success')
@@ -184,12 +112,7 @@ function handleBootstrapEvent(payload: BootstrapEvent): void {
       break
     case 'failed':
       clearRouteTimer()
-      $bootstrap.set({
-        ...cur,
-        status: 'failed',
-        error: payload.error,
-        currentStage: null
-      })
+      $bootstrap.set({ ...cur, status: 'failed', error: payload.error, currentStage: null })
       routeTimer = setTimeout(() => {
         routeTimer = null
         $route.set('failure')
@@ -202,7 +125,7 @@ export async function initialize(): Promise<void> {
   try {
     $logPath.set(await invoke<string>('get_log_path'))
   } catch (err) {
-    console.warn('failed to fetch installer paths', err)
+    console.warn('failed to fetch installer log path', err)
   }
 }
 
@@ -213,17 +136,12 @@ export async function startInstall(): Promise<void> {
   $bootstrap.set({ ...INITIAL, status: 'running' })
   $route.set('progress')
 
+  const channel = new Channel<BootstrapEvent>()
+  channel.onmessage = (payload) => {
+    if (revision === installRevision) handleBootstrapEvent(payload)
+  }
+  startRequest = invoke<void>('start_bootstrap', { onEvent: channel })
   try {
-    const channel = new Channel<BootstrapEvent>()
-    channel.onmessage = (payload) => {
-      if (revision === installRevision) handleBootstrapEvent(payload)
-    }
-    startRequest = invoke<void>('start_bootstrap', {
-      args: {
-        spiritagent_home: null
-      },
-      onEvent: channel
-    })
     await startRequest
   } catch (error) {
     if (revision !== installRevision) return
@@ -252,7 +170,6 @@ export async function cancelInstall(): Promise<void> {
 }
 
 export async function launchSpiritAgentDesktop(): Promise<void> {
-  if (!$bootstrap.get().installRoot) throw new Error('no install root')
   await invoke('launch_spiritagent_desktop')
 }
 

@@ -1,17 +1,9 @@
-﻿# 唤生 安装脚本（Windows/PowerShell 5.1+）。协议：-Manifest 输出阶段列表；-Stage NAME -Json 执行单阶段。payload 经 SPIRITAGENT_BUNDLED_* 或 -Bundled*Dir 传入（参数优先）。
+﻿# 唤生 安装脚本（Windows/PowerShell 5.1+）。协议：-Manifest 输出阶段列表；-Stage NAME 执行单阶段。payload 经 SPIRITAGENT_BUNDLED_* 传入。
 
 [CmdletBinding()]
 param(
     [switch]$Manifest,
-    [string]$Stage,
-    [switch]$Json,
-    [switch]$NonInteractive,
-    [string]$SpiritAgentHome,
-    [string]$BundledRunnerDir,
-    [string]$BundledDesktopDir,
-    [string]$BundledSkillsDir,
-    [string]$BundledOnboardingAudioDir,
-    [string]$InstallerFormat
+    [string]$Stage
 )
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -20,35 +12,20 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 $InformationPreference = 'Continue'
 $ErrorActionPreference = "Stop"
 $ProtocolVersion = 2
-$RunnerWheelGlob = "spirit_agent-*.whl"
-$DefaultDesktopFormat = "nsis"
 $PythonVersion = "3.13"
 $PythonFallbackVersions = @("3.14")
 
-# 参数 > 环境变量 > 默认值（与 install.sh 一致）
-if (-not $SpiritAgentHome) {
-    if ($env:SPIRITAGENT_HOME) { $SpiritAgentHome = $env:SPIRITAGENT_HOME }
-    else { $SpiritAgentHome = Join-Path $env:LOCALAPPDATA "SpiritAgent" }
-}
-if (-not $BundledRunnerDir -and $env:SPIRITAGENT_BUNDLED_RUNNER_DIR) { $BundledRunnerDir = $env:SPIRITAGENT_BUNDLED_RUNNER_DIR }
-if (-not $BundledDesktopDir -and $env:SPIRITAGENT_BUNDLED_DESKTOP_DIR) { $BundledDesktopDir = $env:SPIRITAGENT_BUNDLED_DESKTOP_DIR }
-if (-not $BundledSkillsDir -and $env:SPIRITAGENT_BUNDLED_SKILLS_DIR) { $BundledSkillsDir = $env:SPIRITAGENT_BUNDLED_SKILLS_DIR }
-if (-not $BundledOnboardingAudioDir -and $env:SPIRITAGENT_BUNDLED_ONBOARDING_AUDIO_DIR) { $BundledOnboardingAudioDir = $env:SPIRITAGENT_BUNDLED_ONBOARDING_AUDIO_DIR }
-if (-not $InstallerFormat) {
-    if ($env:SPIRITAGENT_INSTALLER_FORMAT) { $InstallerFormat = $env:SPIRITAGENT_INSTALLER_FORMAT }
-    else { $InstallerFormat = $DefaultDesktopFormat }
-}
+# 环境变量 > 默认值（与 install.sh 一致）
+if (-not $env:SPIRITAGENT_HOME) { $env:SPIRITAGENT_HOME = Join-Path $env:LOCALAPPDATA "SpiritAgent" }
+$SpiritAgentHome = $env:SPIRITAGENT_HOME
+$BundledRunnerDir = $env:SPIRITAGENT_BUNDLED_RUNNER_DIR
+$BundledDesktopDir = $env:SPIRITAGENT_BUNDLED_DESKTOP_DIR
+$BundledSkillsDir = $env:SPIRITAGENT_BUNDLED_SKILLS_DIR
+$BundledOnboardingAudioDir = $env:SPIRITAGENT_BUNDLED_ONBOARDING_AUDIO_DIR
+$InstallerFormat = if ($env:SPIRITAGENT_INSTALLER_FORMAT) { $env:SPIRITAGENT_INSTALLER_FORMAT } else { "nsis" }
 
 function Emit-Manifest {
-    Write-Output "__SPIRITAGENT_MANIFEST__:{`"protocol_version`": $ProtocolVersion, `"stages`": [{`"name`": `"welcome`", `"title`": `"\u51c6\u5907\u5b89\u88c5`", `"category`": `"setup`", `"needs_user_input`": false}, {`"name`": `"install-python`", `"title`": `"\u5b89\u88c5 Python \u8fd0\u884c\u65f6`", `"category`": `"prereqs`", `"needs_user_input`": false}, {`"name`": `"unpack-runner`", `"title`": `"\u5b89\u88c5 \u5524\u751f \u8fd0\u884c\u5668`", `"category`": `"payload`", `"needs_user_input`": false}, {`"name`": `"unpack-desktop`", `"title`": `"\u5b89\u88c5 \u5524\u751f \u684c\u9762\u5e94\u7528`", `"category`": `"payload`", `"needs_user_input`": false}, {`"name`": `"install-skills`", `"title`": `"\u5b89\u88c5\u5185\u7f6e\u6280\u80fd`", `"category`": `"payload`", `"needs_user_input`": false}, {`"name`": `"finalize`", `"title`": `"\u5b8c\u6210\u5b89\u88c5`", `"category`": `"finalize`", `"needs_user_input`": false}]}"
-}
-
-function Emit-StageResult([hashtable]$result) {
-    Write-Output ("__SPIRITAGENT_STAGE_RESULT__:" + (ConvertTo-Json -InputObject $result -Depth 4 -Compress))
-}
-
-function Emit-StageErr([string]$stage, [string]$reason) {
-    Emit-StageResult @{ ok = $false; stage = $stage; reason = $reason }
+    Write-Output "__SPIRITAGENT_MANIFEST__:{`"protocol_version`": $ProtocolVersion, `"stages`": [{`"name`": `"welcome`", `"title`": `"\u51c6\u5907\u5b89\u88c5`"}, {`"name`": `"install-python`", `"title`": `"\u51c6\u5907\u8fd0\u884c\u73af\u5883`"}, {`"name`": `"unpack-runner`", `"title`": `"\u5b89\u88c5\u7535\u8111\u52a9\u624b`"}, {`"name`": `"unpack-desktop`", `"title`": `"\u5b89\u88c5\u5524\u751f\u5e94\u7528`"}, {`"name`": `"install-skills`", `"title`": `"\u51c6\u5907\u5e38\u7528\u529f\u80fd`"}, {`"name`": `"finalize`", `"title`": `"\u5b8c\u6210\u5b89\u88c5\u8bbe\u7f6e`"}]}"
 }
 
 function Install-Uv {
@@ -68,11 +45,11 @@ function Install-Uv {
         $psHostExe = Get-PowerShellHostExe
         & $psHostExe -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex" 2>&1 | Out-Null
 
-        if (-not (Test-Path $managedUv)) {
-            return $false
+        if (Test-Path $managedUv) {
+            $script:UvCmd = $managedUv
+            return $true
         }
-        $script:UvCmd = $managedUv
-        return $true
+        return $false
     } catch {
         return $false
     }
@@ -82,7 +59,7 @@ function Install-OfficeCli {
     $existing = Get-Command "officecli" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     $managedOfficeCli = Join-Path $SpiritAgentHome "bin\officecli.exe"
     if ($existing -or (Test-Path $managedOfficeCli)) {
-        return $true
+        return
     }
 
     try {
@@ -101,12 +78,8 @@ function Install-OfficeCli {
             $binDir = Join-Path $SpiritAgentHome "bin"
             if (-not (Test-Path $binDir)) { New-Item -ItemType Directory -Force -Path $binDir | Out-Null }
             Copy-Item -Force $defaultInstallExe (Join-Path $binDir "officecli.exe")
-            return $true
         }
-        return (Test-Path $managedOfficeCli)
-    } catch {
-        return $false
-    }
+    } catch { }
 }
 
 function Get-PowerShellHostExe {
@@ -158,78 +131,60 @@ function Test-Python {
     return $false
 }
 
+# EAP=Stop 下 Write-Error 会抛异常吞掉退出码；错误帧统一走 stderr + 显式退出码
+function Fail([string]$reason) {
+    [Console]::Error.WriteLine($reason)
+    return 1
+}
+
 # 阶段 1：welcome
 function Stage-Welcome {
-    $bin = Join-Path $SpiritAgentHome "bin"
-    $skills = Join-Path $SpiritAgentHome "skills"
-    $logs = Join-Path $SpiritAgentHome "logs"
-
-    foreach ($d in @($bin, $skills, $logs)) {
+    foreach ($d in @("$SpiritAgentHome\bin", "$SpiritAgentHome\skills", "$SpiritAgentHome\logs")) {
         if (-not (Test-Path $d)) {
             New-Item -ItemType Directory -Force -Path $d | Out-Null
         }
     }
-
     if (-not (Test-Path $SpiritAgentHome -PathType Container)) {
-        Emit-StageErr "welcome" "could not create SPIRITAGENT_HOME: $SpiritAgentHome"
-        return 1
+        return Fail "could not create SPIRITAGENT_HOME: $SpiritAgentHome"
     }
-
-    $marker = Join-Path $SpiritAgentHome ".spiritagent-bootstrap-complete"
-    $isReinstall = Test-Path $marker
-
-    Emit-StageResult @{ ok = $true; stage = "welcome"; data = @{ spiritagent_home = $SpiritAgentHome; is_reinstall = $isReinstall } }
     return 0
 }
 
 # 阶段 2：安装 Python
 function Stage-InstallPython {
-    if (Test-Python) {
-        Emit-StageResult @{ ok = $true; stage = "install-python"; data = @{ version = $script:PythonVersion } }
-        return 0
-    }
-
-    Emit-StageErr "install-python" "Python $PythonVersion is required but could not be installed. Install Python manually from https://www.python.org/downloads/ and re-run."
-    return 1
+    if (Test-Python) { return 0 }
+    return Fail "Python $PythonVersion is required but could not be installed. Install Python manually from https://www.python.org/downloads/ and re-run."
 }
 
 # 阶段 3：解包运行器
 function Stage-UnpackRunner {
     if (-not $script:UvCmd -or -not $script:PythonVersion) {
         if (-not (Test-Python)) {
-            Emit-StageErr "unpack-runner" "Python runtime not available (uv or Python missing)"
-            return 1
+            return Fail "Python runtime not available (uv or Python missing)"
         }
     }
 
     if (-not $BundledRunnerDir) {
-        Emit-StageErr "unpack-runner" "-BundledRunnerDir (or SPIRITAGENT_BUNDLED_RUNNER_DIR) is required"
-        return 1
+        return Fail "SPIRITAGENT_BUNDLED_RUNNER_DIR is required"
     }
     if (-not (Test-Path $BundledRunnerDir -PathType Container)) {
-        Emit-StageErr "unpack-runner" "bundled runner dir not found: $BundledRunnerDir"
-        return 1
+        return Fail "bundled runner dir not found: $BundledRunnerDir"
     }
 
-    $wheels = @(Get-ChildItem -Path $BundledRunnerDir -Filter $RunnerWheelGlob -File -ErrorAction SilentlyContinue)
+    $wheels = @(Get-ChildItem -Path $BundledRunnerDir -Filter "spirit_agent-*.whl" -File -ErrorAction SilentlyContinue)
     if ($wheels.Count -ne 1) {
-        Emit-StageErr "unpack-runner" "expected one runner wheel in $BundledRunnerDir, found $($wheels.Count)"
-        return 1
+        return Fail "expected one runner wheel in $BundledRunnerDir, found $($wheels.Count)"
     }
     $wheel = $wheels[0]
 
-    $runnerDir = Join-Path $SpiritAgentHome "runner"
-    if (-not (Test-Path $runnerDir)) { New-Item -ItemType Directory -Force -Path $runnerDir | Out-Null }
-
-    # 创建 venv（依赖 install-python 完成）
-    $venvDir = Join-Path $runnerDir ".venv"
+    $venvDir = Join-Path $SpiritAgentHome "runner\.venv"
     $prevEAP = $ErrorActionPreference
     try {
         $ErrorActionPreference = "Continue"
+        # 创建 venv（依赖 install-python 完成）；--clear 重建，避免遗留损坏环境
         $venvOutput = & $script:UvCmd venv $venvDir --python $script:PythonVersion --clear 2>&1
         if ($LASTEXITCODE) {
-            Emit-StageErr "unpack-runner" "uv venv failed: $($venvOutput -join ' | ')"
-            return 1
+            return Fail "uv venv failed: $($venvOutput -join ' | ')"
         }
 
         # 安装 wheel（含依赖一次性装入 venv）
@@ -242,103 +197,78 @@ function Stage-UnpackRunner {
             if (-not $pypiIndex) { $pypiIndex = "https://mirrors.aliyun.com/pypi/simple/" }
             $pipOutputRetry = & $script:UvCmd pip install --python $pythonExe $wheel.FullName --index-url $pypiIndex 2>&1
             if ($LASTEXITCODE) {
-                Emit-StageErr "unpack-runner" "uv pip install failed: $($pipOutputRetry -join ' | ')"
-                return 1
+                return Fail "uv pip install failed: $($pipOutputRetry -join ' | ')"
             }
         }
 
         $checkOutput = & $pythonExe -I -m spirit_agent_runner --check 2>&1
         if ($LASTEXITCODE) {
-            Emit-StageErr "unpack-runner" "runner health check failed: $($checkOutput -join ' | ')"
-            return 1
+            return Fail "runner health check failed: $($checkOutput -join ' | ')"
         }
     } finally {
         $ErrorActionPreference = $prevEAP
     }
 
     # onboarding 音频：语言子目录 1:1 映射至 audio/onboarding/<lang>/
-    $audioCount = 0
     if ($BundledOnboardingAudioDir -and (Test-Path $BundledOnboardingAudioDir -PathType Container)) {
         Get-ChildItem -Path $BundledOnboardingAudioDir -Directory | ForEach-Object {
-            $audioTarget = Join-Path (Join-Path (Join-Path $SpiritAgentHome "audio") "onboarding") $_.Name
+            $audioTarget = Join-Path $SpiritAgentHome "audio\onboarding\$($_.Name)"
             if (-not (Test-Path $audioTarget)) { New-Item -ItemType Directory -Force -Path $audioTarget | Out-Null }
             Copy-Item -Recurse -Force (Join-Path $_.FullName "*") $audioTarget
         }
-        $audioRoot = Join-Path (Join-Path $SpiritAgentHome "audio") "onboarding"
-        $audioCount = (Get-ChildItem -Path $audioRoot -Filter "*.mp3" -Recurse -File -ErrorAction SilentlyContinue).Count
     }
 
-    Emit-StageResult @{ ok = $true; stage = "unpack-runner"; data = @{ venv = $venvDir; wheel = $wheel.Name; size_bytes = $wheel.Length; onboarding_audio_copied = $audioCount } }
     return 0
 }
 
 # 阶段 4：解包桌面端
 function Stage-UnpackDesktop {
     if (-not $BundledDesktopDir) {
-        Emit-StageErr "unpack-desktop" "-BundledDesktopDir (or SPIRITAGENT_BUNDLED_DESKTOP_DIR) is required"
-        return 1
+        return Fail "SPIRITAGENT_BUNDLED_DESKTOP_DIR is required"
     }
     if (-not (Test-Path $BundledDesktopDir -PathType Container)) {
-        Emit-StageErr "unpack-desktop" "bundled desktop dir not found: $BundledDesktopDir"
-        return 1
+        return Fail "bundled desktop dir not found: $BundledDesktopDir"
     }
 
-    $artifact = $null
     switch ($InstallerFormat) {
-        "nsis" { $artifact = Get-ChildItem -Path $BundledDesktopDir -Filter "*.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1 }
-        "zip"  { $artifact = Get-ChildItem -Path $BundledDesktopDir -Filter "*.zip"  -File -ErrorAction SilentlyContinue | Select-Object -First 1 }
+        "nsis" { $pattern = "*.exe" }
+        "zip"  { $pattern = "*.zip" }
         default {
-            Emit-StageErr "unpack-desktop" "unknown desktop format: $InstallerFormat"
-            return 1
+            return Fail "unknown desktop format: $InstallerFormat"
         }
     }
-
+    $artifact = Get-ChildItem -Path $BundledDesktopDir -Filter $pattern -File -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $artifact) {
-        Emit-StageErr "unpack-desktop" "no desktop artifact found in $BundledDesktopDir (format=$InstallerFormat)"
-        return 1
+        return Fail "no desktop artifact found in $BundledDesktopDir (format=$InstallerFormat)"
     }
-    $artifactPath = $artifact.FullName
 
-    switch ($InstallerFormat) {
-        "nsis" {
-            # NSIS /S 静默安装，/D 指定目录；已有可见窗口，子进程不再开控制台
-            $localPrograms = Join-Path $env:LOCALAPPDATA "Programs"
-            $installDir = Join-Path $localPrograms "SpiritAgent"
-            if (-not (Test-Path $installDir)) { New-Item -ItemType Directory -Force -Path $installDir | Out-Null }
-            $proc = Start-Process -FilePath $artifactPath `
-                                  -ArgumentList @("/S", "/D=$installDir") `
-                                  -Wait -NoNewWindow -PassThru
-            if ($proc.ExitCode -ne 0) {
-                Emit-StageErr "unpack-desktop" "NSIS installer exited with code $($proc.ExitCode)"
-                return 1
-            }
+    if ($InstallerFormat -eq "nsis") {
+        # NSIS /S 静默安装，/D 指定目录；已有可见窗口，子进程不再开控制台
+        $installDir = Join-Path $env:LOCALAPPDATA "Programs\SpiritAgent"
+        if (-not (Test-Path $installDir)) { New-Item -ItemType Directory -Force -Path $installDir | Out-Null }
+        $proc = Start-Process -FilePath $artifact.FullName -ArgumentList @("/S", "/D=$installDir") -Wait -NoNewWindow -PassThru
+        if ($proc.ExitCode -ne 0) {
+            return Fail "NSIS installer exited with code $($proc.ExitCode)"
         }
-        "zip" {
-            # ZIP 回退路径与 bootstrap.rs 的桌面查找保持一致。
-            $installDir = Join-Path $SpiritAgentHome "apps\SpiritAgent"
-            if (Test-Path $installDir) { Remove-Item -Recurse -Force $installDir }
-            Expand-Archive -Path $artifactPath -DestinationPath $installDir -Force
-        }
+    } else {
+        $installDir = Join-Path $SpiritAgentHome "apps\SpiritAgent"
+        if (Test-Path $installDir) { Remove-Item -Recurse -Force $installDir }
+        Expand-Archive -Path $artifact.FullName -DestinationPath $installDir -Force
     }
-    Emit-StageResult @{ ok = $true; stage = "unpack-desktop"; data = @{ installed_path = $installDir; format = $InstallerFormat } }
     return 0
 }
 
 # 阶段 5：安装技能
 function Stage-InstallSkills {
     if (-not $BundledSkillsDir) {
-        Emit-StageErr "install-skills" "-BundledSkillsDir (or SPIRITAGENT_BUNDLED_SKILLS_DIR) is required"
-        return 1
+        return Fail "SPIRITAGENT_BUNDLED_SKILLS_DIR is required"
     }
     if (-not (Test-Path $BundledSkillsDir -PathType Container)) {
-        Emit-StageErr "install-skills" "bundled skills dir not found: $BundledSkillsDir"
-        return 1
+        return Fail "bundled skills dir not found: $BundledSkillsDir"
     }
 
     # 尊重 .no-bundled-skills 标记
-    $noSkillsMarker = Join-Path $SpiritAgentHome ".no-bundled-skills"
-    if (Test-Path $noSkillsMarker) {
-        Emit-StageResult @{ ok = $true; stage = "install-skills"; skipped = $true; reason = "user opted out via .no-bundled-skills" }
+    if (Test-Path (Join-Path $SpiritAgentHome ".no-bundled-skills")) {
         return 0
     }
 
@@ -348,24 +278,17 @@ function Stage-InstallSkills {
     # /E 只增不删，保留用户自装技能；退出码 0-7 成功，>=8 失败
     & robocopy $BundledSkillsDir $skillsDir /E /NFL /NDL /NJH /NJS /NP /R:0 /W:0 | Out-Null
     if ($LASTEXITCODE -ge 8) {
-        Emit-StageErr "install-skills" "robocopy skills failed: exit $LASTEXITCODE"
-        return 1
+        return Fail "robocopy skills failed: exit $LASTEXITCODE"
     }
 
     # OfficeCLI 尽力安装
     Install-OfficeCli | Out-Null
-
-    $bundledCount = (Get-ChildItem -Path $skillsDir -Directory -ErrorAction SilentlyContinue | Measure-Object).Count
-    Emit-StageResult @{ ok = $true; stage = "install-skills"; data = @{ bundled_count = $bundledCount } }
     return 0
 }
 
 # 阶段 6：收尾
 function Stage-Finalize {
-    $marker = Join-Path $SpiritAgentHome ".spiritagent-bootstrap-complete"
-    Set-Content -Path $marker -Value "" -NoNewline
-
-    Emit-StageResult @{ ok = $true; stage = "finalize"; data = @{ marker = $marker } }
+    Set-Content -Path (Join-Path $SpiritAgentHome ".spiritagent-bootstrap-complete") -Value "" -NoNewline
     return 0
 }
 
@@ -375,27 +298,20 @@ if ($Manifest) {
 }
 
 if (-not $Stage) {
-    Write-Error "error: -Stage NAME is required (or pass -Manifest)"
+    [Console]::Error.WriteLine("error: -Stage NAME is required (or pass -Manifest)")
     exit 2
 }
 
-# 阶段 JSON 帧走 stdout；阶段 return 值作退出码。
-function Run-Stage([scriptblock]$fn) {
-    $result = @(& $fn)
-    $code = if ($result.Count -gt 0) { $result[-1] } else { 0 }
-    $result | Select-Object -First ($result.Count - 1) | ForEach-Object { Write-Output $_ }
-    if ($code) { exit $code }
-}
-
+# 阶段函数返回值即退出码；exit 落 stderr 供 Tauri 判失败原因。
 switch ($Stage) {
-    "welcome"        { Run-Stage { Stage-Welcome } }
-    "install-python" { Run-Stage { Stage-InstallPython } }
-    "unpack-runner"  { Run-Stage { Stage-UnpackRunner } }
-    "unpack-desktop" { Run-Stage { Stage-UnpackDesktop } }
-    "install-skills" { Run-Stage { Stage-InstallSkills } }
-    "finalize"       { Run-Stage { Stage-Finalize } }
+    "welcome"        { exit (Stage-Welcome) }
+    "install-python" { exit (Stage-InstallPython) }
+    "unpack-runner"  { exit (Stage-UnpackRunner) }
+    "unpack-desktop" { exit (Stage-UnpackDesktop) }
+    "install-skills" { exit (Stage-InstallSkills) }
+    "finalize"       { exit (Stage-Finalize) }
     default {
-        Emit-StageErr $Stage "unknown stage"
+        [Console]::Error.WriteLine("unknown stage: $Stage")
         exit 1
     }
 }

@@ -2,11 +2,11 @@ import type React from 'react'
 import clsx from 'clsx'
 
 interface HaloProps {
-  total?: number
+  total: number
   done: number
-  runningIdx?: number | null
-  failedAt?: number | null
-  size?: number
+  runningIdx: number | null
+  failedAt: number | null
+  size: number
   className?: string
 }
 
@@ -43,11 +43,11 @@ function arcPath(startAngle: number, endAngle: number): string {
 
 // 光轨：每段按真实阶段点亮，完成段由 sa-ring-fill 从起点灌满。
 export function Halo({
-  total = 6,
+  total,
   done,
-  runningIdx = null,
-  failedAt = null,
-  size = 264,
+  runningIdx,
+  failedAt,
+  size,
   className
 }: HaloProps): React.JSX.Element {
   const segments = Array.from({ length: total }, (_, i) => i)

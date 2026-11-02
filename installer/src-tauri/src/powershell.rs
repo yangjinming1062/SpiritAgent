@@ -27,8 +27,8 @@ pub struct ScriptResult {
 /// 取消信号：`cancel_tx.send(()).await` 中止脚本。
 pub type CancelRx = mpsc::Receiver<()>;
 
-/// bundle.resources 布局派生的可选上下文，经 `SPIRITAGENT_BUNDLED_*` 下发给子脚本。
-#[derive(Debug, Clone, Default)]
+/// bundle.resources 布局派生的上下文，经 `SPIRITAGENT_BUNDLED_*` 下发给子脚本。
+#[derive(Debug, Clone)]
 pub struct BundleContext {
     /// Runner wheel。
     pub bundled_runner_dir: Option<std::path::PathBuf>,
@@ -39,27 +39,22 @@ pub struct BundleContext {
     /// 按语言子目录的引导音频。
     pub bundled_onboarding_audio_dir: Option<std::path::PathBuf>,
     /// `dmg` | `nsis`，unpack-desktop 据此选择安装方式。
-    pub installer_format: Option<String>,
+    pub installer_format: String,
 }
 
 /// 启动 install 脚本并流式返回输出；各阶段共用取消通道，触发后终止整棵进程树。
 pub async fn run_script(
     script_path: &Path,
-    args: &[String],
+    args: &[&str],
     sink: StreamSink,
-    spiritagent_home_override: Option<&str>,
     bundle: &BundleContext,
     cancel_rx: &mut Option<CancelRx>,
 ) -> Result<ScriptResult> {
     let mut cmd = build_command(script_path, args);
 
     // 稳定 cwd，避免安装器被替换后从已删除目录启动报 getcwd 错误
-    if let Some(cwd) = stable_script_cwd(script_path, spiritagent_home_override) {
+    if let Some(cwd) = script_path.parent().filter(|p| p.is_dir()) {
         cmd.current_dir(cwd);
-    }
-
-    if let Some(home) = spiritagent_home_override {
-        cmd.env("SPIRITAGENT_HOME", home);
     }
 
     // SPIRITAGENT_BUNDLED_* 独立下发（None 即省略），不与 CLI 覆盖冲突
@@ -75,9 +70,7 @@ pub async fn run_script(
     if let Some(p) = &bundle.bundled_onboarding_audio_dir {
         cmd.env("SPIRITAGENT_BUNDLED_ONBOARDING_AUDIO_DIR", p);
     }
-    if let Some(fmt) = &bundle.installer_format {
-        cmd.env("SPIRITAGENT_INSTALLER_FORMAT", fmt);
-    }
+    cmd.env("SPIRITAGENT_INSTALLER_FORMAT", &bundle.installer_format);
 
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -264,16 +257,6 @@ fn assign_to_new_job(process: std::os::windows::io::RawHandle) -> std::io::Resul
     Ok(job)
 }
 
-fn stable_script_cwd<'a>(script_path: &'a Path, spiritagent_home_override: Option<&'a str>) -> Option<&'a Path> {
-    if let Some(home) = spiritagent_home_override {
-        let path = Path::new(home);
-        if path.is_dir() {
-            return Some(path);
-        }
-    }
-    script_path.parent().filter(|p| p.is_dir())
-}
-
 async fn recv_cancel(rx: &mut Option<CancelRx>) {
     match rx {
         Some(r) => {
@@ -284,26 +267,22 @@ async fn recv_cancel(rx: &mut Option<CancelRx>) {
 }
 
 #[cfg(target_os = "windows")]
-fn build_command(script_path: &Path, args: &[String]) -> Command {
+fn build_command(script_path: &Path, args: &[&str]) -> Command {
     // install.ps1 为 PS 5.1 兼容；优先 powershell.exe，不依赖 pwsh 7+
     let mut cmd = Command::new(windows_powershell_exe());
     cmd.arg("-NoProfile");
     cmd.arg("-ExecutionPolicy").arg("Bypass");
     cmd.arg("-File").arg(script_path);
-    for a in args {
-        cmd.arg(a);
-    }
+    cmd.args(args);
     cmd
 }
 
 #[cfg(not(target_os = "windows"))]
-fn build_command(script_path: &Path, args: &[String]) -> Command {
+fn build_command(script_path: &Path, args: &[&str]) -> Command {
     // install.sh 按 bash 3.2 基线编写
     let mut cmd = Command::new("bash");
     cmd.arg(script_path);
-    for a in args {
-        cmd.arg(a);
-    }
+    cmd.args(args);
     cmd
 }
 
@@ -348,22 +327,8 @@ fn interpreter_label() -> String {
     "bash".to_string()
 }
 
-pub const STAGE_RESULT_SENTINEL: &str = "__SPIRITAGENT_STAGE_RESULT__:";
 pub const MANIFEST_SENTINEL: &str = "__SPIRITAGENT_MANIFEST__:";
 const INSTALL_PROTOCOL_VERSION: u32 = 2;
-
-/// 解析 sentinel 前缀标记的阶段结果 JSON 行。
-pub fn parse_stage_result(stdout: &str) -> Option<crate::events::StageResultPayload> {
-    for line in stdout.lines().rev() {
-        let trimmed = line.trim();
-        if let Some(payload_str) = trimmed.strip_prefix(STAGE_RESULT_SENTINEL) {
-            if let Ok(parsed) = serde_json::from_str::<crate::events::StageResultPayload>(payload_str.trim()) {
-                return Some(parsed);
-            }
-        }
-    }
-    None
-}
 
 /// `-Manifest` 负载解析：找由 sentinel 前缀标记的单行 NDJSON 负载。
 pub fn parse_manifest(stdout: &str) -> Option<crate::events::Manifest> {
@@ -385,35 +350,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_stage_result_with_sentinel_picks_last_sentinel_line() {
-        let stdout = r#"
-[bootstrap] some info
-__SPIRITAGENT_STAGE_RESULT__:{"ok": false, "stage": "venv", "reason": "bad python"}
-__SPIRITAGENT_STAGE_RESULT__:{"ok": true, "stage": "venv"}
-final non-json banner
-"#;
-        let result = parse_stage_result(stdout).unwrap();
-        assert_eq!(result.stage, "venv");
-        assert!(result.ok);
-    }
-
-    #[test]
-    fn parse_stage_result_rejects_bare_json_without_sentinel() {
-        let stdout = r#"
-[bootstrap] some info
-{"ok": false, "stage": "venv", "reason": "bad python"}
-{"ok": true, "stage": "venv"}
-final non-json banner
-"#;
-        let result = parse_stage_result(stdout);
-        assert!(result.is_none(), "bare JSON without sentinel must not match");
-    }
-
-    #[test]
     fn parse_manifest_with_sentinel_finds_stages_array() {
         let stdout = r#"
 info line
-__SPIRITAGENT_MANIFEST__:{"stages": [{"name": "install-python", "title": "Python", "category": "prereqs", "needs_user_input": false}], "protocol_version": 2}
+__SPIRITAGENT_MANIFEST__:{"stages": [{"name": "install-python", "title": "Python"}], "protocol_version": 2}
 trailing info
 "#;
         let m = parse_manifest(stdout).unwrap();
@@ -426,23 +366,14 @@ trailing info
     fn parse_manifest_rejects_bare_json_without_sentinel() {
         let stdout = r#"
 info line
-{"stages": [{"name": "install-python", "title": "Python", "category": "prereqs", "needs_user_input": false}], "protocol_version": 2}
+{"stages": [{"name": "install-python", "title": "Python"}], "protocol_version": 2}
 "#;
-        let m = parse_manifest(stdout);
-        assert!(m.is_none(), "bare JSON without sentinel must not match");
+        assert!(parse_manifest(stdout).is_none(), "bare JSON without sentinel must not match");
     }
 
     #[test]
-    fn parse_returns_none_when_no_match() {
-        assert!(parse_stage_result("just banner\n").is_none());
+    fn parse_manifest_returns_none_when_no_match() {
         assert!(parse_manifest("just banner\n").is_none());
-    }
-
-    #[test]
-    fn stable_script_cwd_prefers_existing_spiritagent_home() {
-        let script = Path::new("/tmp/install.sh");
-        let cwd = stable_script_cwd(script, Some("/"));
-        assert_eq!(cwd, Some(Path::new("/")));
     }
 
     #[test]

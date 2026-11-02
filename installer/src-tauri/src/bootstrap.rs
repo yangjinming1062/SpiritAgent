@@ -6,21 +6,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
-use serde::Deserialize;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 use tokio::sync::{mpsc, watch};
 
 use crate::events::{BootstrapEvent, LogStream, Manifest, StageState};
-use crate::install_script::{self, ScriptKind, ScriptSource};
+use crate::install_script::{self, ScriptKind};
 use crate::powershell::{self, BundleContext, StreamSink};
 use crate::AppState;
-
-#[derive(Debug, Deserialize)]
-pub struct StartBootstrapArgs {
-    /// SPIRITAGENT_HOME 覆盖，仅测试使用。
-    pub spiritagent_home: Option<String>,
-}
 
 /// bootstrap 运行句柄；供取消与防重入。
 pub struct BootstrapHandle {
@@ -33,32 +26,24 @@ pub struct BootstrapHandle {
 pub async fn start_bootstrap(
     app: AppHandle,
     state: State<'_, Arc<AppState>>,
-    args: StartBootstrapArgs,
     on_event: Channel<BootstrapEvent>,
 ) -> Result<(), String> {
     let mut guard = state.bootstrap.lock().await;
     if state.closing.load(Ordering::Acquire) {
         return Err("Installer is closing".into());
     }
-    if let Some(h) = guard.as_ref() {
-        if h.running {
-            return Err("Bootstrap is already running".into());
-        }
+    if guard.as_ref().is_some_and(|h| h.running) {
+        return Err("Bootstrap is already running".into());
     }
 
     let (cancel_tx, cancel_rx) = mpsc::channel::<()>(1);
     let (finished_tx, finished_rx) = watch::channel(false);
-    *guard = Some(BootstrapHandle {
-        cancel_tx,
-        running: true,
-        finished: finished_rx,
-    });
+    *guard = Some(BootstrapHandle { cancel_tx, running: true, finished: finished_rx });
     drop(guard);
 
     let state_for_task = state.inner().clone();
-
     tokio::spawn(async move {
-        let _ = run_bootstrap(app, args, Some(cancel_rx), on_event).await;
+        let _ = run_bootstrap(app, Some(cancel_rx), on_event).await;
         let mut guard = state_for_task.bootstrap.lock().await;
         if let Some(h) = guard.as_mut() {
             h.running = false;
@@ -101,17 +86,11 @@ pub async fn launch_spiritagent_desktop(app: AppHandle) -> Result<(), String> {
     })?;
 
     tracing::info!(?exe_path, "launching SpiritAgent desktop");
-
     // 脱离安装器独立运行；macOS 走 LaunchServices 以规避 cwd/quarantine 异常。
     let mut cmd = tokio::process::Command::from(desktop_launch_command(&exe_path));
-
-    cmd.spawn().map_err(|e| {
-        format!("failed to launch {}: {e}", exe_path.display())
-    })?;
-
+    cmd.spawn().map_err(|e| format!("failed to launch {}: {e}", exe_path.display()))?;
     // 留 ~150ms 让子进程真正起来再退出
-    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-
+    tokio::time::sleep(Duration::from_millis(150)).await;
     app.exit(0);
     Ok(())
 }
@@ -122,17 +101,14 @@ static DESKTOP_ROOT_OVERRIDE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mut
 
 #[cfg(test)]
 pub(crate) fn set_desktop_root_override_for_test(p: Option<PathBuf>) {
-    let mut guard = DESKTOP_ROOT_OVERRIDE.lock().unwrap();
-    *guard = p;
+    *DESKTOP_ROOT_OVERRIDE.lock().unwrap() = p;
 }
 
 /// 桌面端规范安装路径；与 install 脚本 Stage-UnpackDesktop 一致。
 pub(crate) fn desktop_install_root() -> PathBuf {
     #[cfg(test)]
-    {
-        if let Some(p) = DESKTOP_ROOT_OVERRIDE.lock().unwrap().as_ref() {
-            return p.clone();
-        }
+    if let Some(p) = DESKTOP_ROOT_OVERRIDE.lock().unwrap().as_ref() {
+        return p.clone();
     }
     #[cfg(target_os = "macos")]
     {
@@ -157,26 +133,17 @@ pub(crate) fn resolve_spiritagent_desktop_exe() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         let exe = desktop_install_root().join("Contents").join("MacOS").join("SpiritAgent");
-        if exe.exists() {
-            return Some(exe);
-        }
+        exe.exists().then_some(exe)
     }
     #[cfg(target_os = "windows")]
     {
         let exe = desktop_install_root().join("SpiritAgent.exe");
-        if exe.exists() {
-            return Some(exe);
-        }
-        // 兜底 ZIP 布局：$SPIRITAGENT_HOME/apps/SpiritAgent/SpiritAgent.exe
-        let zip_exe = crate::paths::spiritagent_home()
-            .join("apps")
-            .join("SpiritAgent")
-            .join("SpiritAgent.exe");
-        if zip_exe.exists() {
-            return Some(zip_exe);
-        }
+        exe.exists().then_some(exe)
     }
-    None
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        None
+    }
 }
 
 /// 与 Client 更新器共用包内健康检查入口。
@@ -186,7 +153,6 @@ fn runner_venv_is_healthy() -> bool {
     let Some(venv_python) = crate::paths::runner_venv_python() else {
         return false;
     };
-
     let Ok(mut child) = Command::new(&venv_python)
         .args(["-I", "-m", "spirit_agent_runner", "--check"])
         .stdout(Stdio::null())
@@ -199,9 +165,7 @@ fn runner_venv_is_healthy() -> bool {
     loop {
         match child.try_wait() {
             Ok(Some(status)) => return status.success(),
-            Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(100));
-            }
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(100)),
             result => {
                 tracing::warn!(?result, "Runner health check failed or timed out");
                 let _ = child.kill();
@@ -232,22 +196,16 @@ pub(crate) fn spawn_installed_desktop() -> std::io::Result<()> {
 #[cfg(target_os = "macos")]
 fn app_bundle_for_exe(exe: &std::path::Path) -> Option<PathBuf> {
     let app = exe.parent()?.parent()?.parent()?.to_path_buf();
-    if app.extension().and_then(|e| e.to_str()) == Some("app") && app.is_dir() {
-        Some(app)
-    } else {
-        None
-    }
+    (app.extension().and_then(|e| e.to_str()) == Some("app") && app.is_dir()).then_some(app)
 }
 
 fn desktop_launch_command(exe_path: &Path) -> std::process::Command {
     #[cfg(target_os = "macos")]
-    {
-        if let Some(app_bundle) = app_bundle_for_exe(exe_path) {
-            let mut cmd = std::process::Command::new("/usr/bin/open");
-            cmd.arg(app_bundle);
-            cmd.current_dir(crate::paths::spiritagent_home());
-            return cmd;
-        }
+    if let Some(app_bundle) = app_bundle_for_exe(exe_path) {
+        let mut cmd = std::process::Command::new("/usr/bin/open");
+        cmd.arg(app_bundle);
+        cmd.current_dir(crate::paths::spiritagent_home());
+        return cmd;
     }
 
     let mut cmd = std::process::Command::new(exe_path);
@@ -263,363 +221,177 @@ fn desktop_launch_command(exe_path: &Path) -> std::process::Command {
 
 async fn run_bootstrap(
     app: AppHandle,
-    args: StartBootstrapArgs,
     mut cancel_rx: Option<powershell::CancelRx>,
     on_event: Channel<BootstrapEvent>,
 ) -> Result<()> {
     let kind = ScriptKind::for_current_os();
-
     tracing::info!(?kind, "bootstrap starting");
 
-    let on_event_for_log = on_event.clone();
-    let emit_log = move |line: &str| {
-        emit_event(
-            &on_event_for_log,
-            BootstrapEvent::Log {
-                stage: None,
-                line: line.to_string(),
-                stream: LogStream::Stdout,
-            },
-        );
-        // info! 保证默认过滤下写入 bootstrap-installer.log
-        tracing::info!(target: "bootstrap.log", "{line}");
-    };
-
     // 1) 解析 install 脚本：dev → bundle.resources → 嵌入 zip
-    let script = install_script::resolve(&app, kind, &emit_log)
-        .await
-        .map_err(|e| {
-            let msg = format!("resolve install script failed: {e:#}");
-            fail_bootstrap(&on_event, None, msg)
-        })?;
-
-    let source_note = match &script.source {
-        ScriptSource::DevCheckout => "dev checkout",
-        ScriptSource::Bundled => "bundled",
-        ScriptSource::Embedded => "embedded",
-    };
-    emit_log(&format!(
-        "[bootstrap] script {} via {}",
-        script.path.display(),
-        source_note
-    ));
-
-    // 2) 拉取 manifest，解析后广播阶段列表
-    let manifest_args = vec!["-Manifest".to_string()];
+    let script = install_script::resolve(&app, kind).await.map_err(|e| {
+        fail_bootstrap(&on_event, format!("resolve install script failed: {e:#}"))
+    })?;
 
     let bundle_ctx = build_bundle_context(&app);
 
-    if cancellation_signalled(&mut cancel_rx) {
-        return Err(fail_bootstrap(&on_event, None, "cancelled by user".to_string()));
-    }
-    let manifest_result = run_install_script(
-        &on_event,
-        &script.path,
-        &manifest_args,
-        args.spiritagent_home.as_deref(),
-        &bundle_ctx,
-        &mut cancel_rx,
-        Some("__manifest__".to_string()),
-    )
-    .await
-    .map_err(|e| fail_bootstrap(&on_event, None, e.to_string()))?;
-
-    if manifest_result.killed {
-        return Err(fail_bootstrap(&on_event, None, "cancelled by user".to_string()));
-    }
-
-    if manifest_result.exit_code != Some(0) {
-        let err = format!(
+    // 2) 拉取 manifest，解析后广播阶段列表
+    let manifest_result =
+        run_install_script(&on_event, &script, &["-Manifest"], &bundle_ctx, &mut cancel_rx).await;
+    let manifest: Manifest = match manifest_result {
+        Ok(result) if result.exit_code == Some(0) && !result.killed => {
+            powershell::parse_manifest(&result.stdout).ok_or_else(|| {
+                anyhow!(
+                    "{} -Manifest produced no parseable JSON payload\n{}",
+                    kind.filename(),
+                    truncate(&result.stdout, MANIFEST_PREVIEW_CHARS)
+                )
+            })
+        }
+        Ok(result) => Err(anyhow!(
             "{} -Manifest failed: exit {:?}\n{}",
             kind.filename(),
-            manifest_result.exit_code,
-            manifest_result.stderr.trim()
-        );
-        return Err(fail_bootstrap(&on_event, None, err));
+            result.exit_code,
+            result.stderr.trim()
+        )),
+        Err(e) => Err(anyhow!("install script invocation failed: {e:#}")),
     }
+    .map_err(|e| fail_bootstrap(&on_event, e.to_string()))?;
 
-    let manifest: Manifest = powershell::parse_manifest(&manifest_result.stdout).ok_or_else(|| {
-        let err = format!(
-            "{} -Manifest produced no parseable JSON payload\n{}",
-            kind.filename(),
-            truncate(&manifest_result.stdout, MANIFEST_PREVIEW_CHARS)
-        );
-        fail_bootstrap(&on_event, None, err)
-    })?;
+    emit_event(&on_event, BootstrapEvent::Manifest { stages: manifest.stages.clone() });
 
-    emit_event(
-        &on_event,
-        BootstrapEvent::Manifest {
-            stages: manifest.stages.clone(),
-            protocol_version: manifest.protocol_version,
-        },
-    );
-
-    // 3) 顺序执行各阶段
+    // 3) 顺序执行各阶段；阶段成败以退出码为准
     for stage in &manifest.stages {
         if cancellation_signalled(&mut cancel_rx) {
-            return Err(fail_bootstrap(
-                &on_event,
-                Some(stage.name.clone()),
-                "bootstrap cancelled by user".into(),
-            ));
+            return Err(fail_bootstrap(&on_event, "bootstrap cancelled by user".into()));
         }
 
         let started = Instant::now();
-        emit_event(
-            &on_event,
-            BootstrapEvent::Stage {
-                name: stage.name.clone(),
-                state: StageState::Running,
-                duration_ms: None,
-                result: None,
-                error: None,
-            },
-        );
-
-        let stage_args = vec![
-            "-Stage".to_string(),
-            stage.name.clone(),
-            "-NonInteractive".to_string(),
-            "-Json".to_string(),
-        ];
+        emit_event(&on_event, BootstrapEvent::Stage {
+            name: stage.name.clone(),
+            state: StageState::Running,
+            duration_ms: None,
+            error: None,
+        });
 
         let stage_result = run_install_script(
             &on_event,
-            &script.path,
-            &stage_args,
-            args.spiritagent_home.as_deref(),
+            &script,
+            &["-Stage", &stage.name],
             &bundle_ctx,
             &mut cancel_rx,
-            Some(stage.name.clone()),
         )
         .await
-        .map_err(|e| fail_bootstrap(&on_event, Some(stage.name.clone()), e.to_string()))?;
+        .map_err(|e| fail_bootstrap(&on_event, e.to_string()))?;
 
-        let duration_ms = started.elapsed().as_millis() as u64;
-
-        let result_frame = if stage_result.killed {
-            None
+        let (state, error) = if stage_result.killed {
+            (StageState::Failed, Some("cancelled by user".into()))
+        } else if stage_result.exit_code == Some(0) {
+            (StageState::Succeeded, None)
         } else {
-            powershell::parse_stage_result(&stage_result.stdout)
+            let reason = stage_result
+                .stderr
+                .trim()
+                .is_empty()
+                .then(|| format!("stage {} exited with code {:?}", stage.name, stage_result.exit_code))
+                .unwrap_or_else(|| stage_result.stderr.trim().to_string());
+            (StageState::Failed, Some(reason))
         };
-        let (state, error) = match result_frame.as_ref() {
-            None if stage_result.killed => (StageState::Failed, Some("cancelled by user".into())),
-            Some(frame) if frame.ok => (
-                if frame.skipped {
-                    StageState::Skipped
-                } else {
-                    StageState::Succeeded
-                },
-                None,
-            ),
-            Some(frame) => (
-                StageState::Failed,
-                Some(frame.reason.clone().unwrap_or_else(|| {
-                    format!("exit code {:?}", stage_result.exit_code)
-                })),
-            ),
-            None => {
-                let stdout_preview = truncate(&stage_result.stdout, STAGE_PREVIEW_CHARS);
-                let stderr_preview = truncate(&stage_result.stderr, STAGE_PREVIEW_CHARS);
-                tracing::error!(
-                    stage = %stage.name,
-                    exit = ?stage_result.exit_code,
-                    stdout_len = stage_result.stdout.len(),
-                    stderr_len = stage_result.stderr.len(),
-                    stdout = %stdout_preview,
-                    stderr = %stderr_preview,
-                    "stage produced no JSON result frame"
-                );
-                let error = format!(
-                    "{} -Stage {} produced no JSON result frame (exit={:?})\nstdout: {}\nstderr: {}",
-                    kind.filename(),
-                    stage.name,
-                    stage_result.exit_code,
-                    stdout_preview,
-                    stderr_preview
-                );
-                (StageState::Failed, Some(error))
-            }
-        };
-        emit_event(
-            &on_event,
-            BootstrapEvent::Stage {
-                name: stage.name.clone(),
-                state,
-                duration_ms: Some(duration_ms),
-                result: result_frame,
-                error: error.clone(),
-            },
-        );
+        emit_event(&on_event, BootstrapEvent::Stage {
+            name: stage.name.clone(),
+            state,
+            duration_ms: Some(started.elapsed().as_millis() as u64),
+            error: error.clone(),
+        });
         if let Some(error) = error {
-            return Err(fail_bootstrap(&on_event, Some(stage.name.clone()), error));
+            return Err(fail_bootstrap(&on_event, error));
         }
     }
-
-    // install_root 即 spiritagent_home，负载直接落 $SPIRITAGENT_HOME
-    let install_root = args
-        .spiritagent_home
-        .unwrap_or_else(|| crate::paths::spiritagent_home().to_string_lossy().into_owned());
 
     // 自拷贝到稳定路径供快捷方式指向；最佳努力，失败不中断安装
     if let Err(err) = crate::paths::copy_self_to_spiritagent_home() {
         tracing::warn!(?err, "failed to copy installer into SPIRITAGENT_HOME (non-fatal)");
-        emit_log(&format!(
-            "[bootstrap] warning: could not stage installer binary: {err}"
-        ));
     }
 
-    emit_event(
-        &on_event,
-        BootstrapEvent::Complete {
-            install_root,
-        },
-    );
-
+    emit_event(&on_event, BootstrapEvent::Complete);
     Ok(())
 }
 
 fn cancellation_signalled(cancel_rx: &mut Option<powershell::CancelRx>) -> bool {
-    if let Some(rx) = cancel_rx.as_mut() {
-        rx.try_recv().is_ok()
-    } else {
-        false
-    }
+    cancel_rx.as_mut().is_some_and(|rx| rx.try_recv().is_ok())
 }
 
 async fn run_install_script(
     on_event: &Channel<BootstrapEvent>,
     script_path: &std::path::Path,
-    args: &[String],
-    spiritagent_home_override: Option<&str>,
+    args: &[&str],
     bundle: &BundleContext,
     cancel_rx: &mut Option<powershell::CancelRx>,
-    stage_name: Option<String>,
 ) -> Result<powershell::ScriptResult> {
     let on_event_stdout = on_event.clone();
-    let stage_for_stdout = stage_name.clone();
     let on_event_stderr = on_event.clone();
-    let stage_for_stderr = stage_name;
-
     let sink = StreamSink {
         on_stdout_line: Box::new(move |line: &str| {
-            emit_event(
-                &on_event_stdout,
-                BootstrapEvent::Log {
-                    stage: stage_for_stdout.clone(),
-                    line: line.to_string(),
-                    stream: LogStream::Stdout,
-                },
-            );
-            // Tauri 事件流在失败页挂载后即丢弃，需同时落滚动日志
-            match &stage_for_stdout {
-                Some(name) => {
-                    tracing::info!(target: "bootstrap.log", stage = %name, "{line}")
-                }
-                None => tracing::info!(target: "bootstrap.log", "{line}"),
-            }
+            emit_event(&on_event_stdout, BootstrapEvent::Log {
+                line: line.to_string(),
+                stream: LogStream::Stdout,
+            });
+            // info! 保证默认过滤下写入 bootstrap-installer.log
+            tracing::info!(target: "bootstrap.log", "{line}");
         }),
         on_stderr_line: Box::new(move |line: &str| {
-            emit_event(
-                &on_event_stderr,
-                BootstrapEvent::Log {
-                    stage: stage_for_stderr.clone(),
-                    line: line.to_string(),
-                    stream: LogStream::Stderr,
-                },
-            );
-            // stderr 用 warn! 以便与 stdout 区分
-            match &stage_for_stderr {
-                Some(name) => {
-                    tracing::warn!(target: "bootstrap.log", stage = %name, "stderr: {line}")
-                }
-                None => tracing::warn!(target: "bootstrap.log", "stderr: {line}"),
-            }
+            emit_event(&on_event_stderr, BootstrapEvent::Log {
+                line: line.to_string(),
+                stream: LogStream::Stderr,
+            });
+            tracing::warn!(target: "bootstrap.log", "stderr: {line}");
         }),
     };
 
-    powershell::run_script(script_path, args, sink, spiritagent_home_override, bundle, cancel_rx)
+    powershell::run_script(script_path, args, sink, bundle, cancel_rx)
         .await
-        .map_err(|e| {
-            tracing::error!(?e, "install script invocation failed");
-            anyhow!("install script invocation failed: {e:#}")
-        })
+        .map_err(|e| anyhow!("install script invocation failed: {e:#}"))
 }
 
 /// 失败同时送达前端事件流与返回值；缺 Failed 事件会让前端卡在 running。
-fn fail_bootstrap(
-    on_event: &Channel<BootstrapEvent>,
-    stage: Option<String>,
-    err: String,
-) -> anyhow::Error {
-    emit_event(
-        &on_event,
-        BootstrapEvent::Failed {
-            stage,
-            error: err.clone(),
-        },
-    );
+fn fail_bootstrap(on_event: &Channel<BootstrapEvent>, err: String) -> anyhow::Error {
+    emit_event(&on_event, BootstrapEvent::Failed { error: err.clone() });
     anyhow!(err)
 }
 
 /// 以 `<bundle.resources>/payload/` 为锚点构建 BundleContext；单 exe 时回退 embedded 解压目录。
 fn build_bundle_context(app: &AppHandle) -> BundleContext {
-    let mut payload = app.path().resource_dir().ok().map(|d| d.join("payload"));
-
-    if !payload.as_ref().map(|p| p.is_dir()).unwrap_or(false) {
-        if let Ok(embedded) = crate::embedded_payload::payload_dir() {
-            payload = Some(embedded);
-        }
-    }
-
-    let installer_format = if cfg!(target_os = "macos") {
-        "dmg"
-    } else {
-        "nsis"
-    }
-    .to_string();
+    let payload = app
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|d| d.join("payload"))
+        .filter(|p| p.is_dir())
+        .or_else(|| crate::embedded_payload::payload_dir().ok());
 
     BundleContext {
         bundled_runner_dir: payload.as_ref().map(|d| d.join("runner")),
         bundled_desktop_dir: payload.as_ref().map(|d| d.join("client")),
         bundled_skills_dir: payload.as_ref().map(|d| d.join("skills")),
         bundled_onboarding_audio_dir: payload.as_ref().map(|d| d.join("onboarding-audio")),
-        installer_format: Some(installer_format),
+        installer_format: if cfg!(target_os = "macos") { "dmg" } else { "nsis" }.to_string(),
     }
 }
 
 fn emit_event(on_event: &Channel<BootstrapEvent>, event: BootstrapEvent) {
     // 生命周期帧落滚动日志；脚本日志行由 sink 回调处理
     match &event {
-        BootstrapEvent::Manifest { stages, .. } => {
+        BootstrapEvent::Manifest { stages } => {
             tracing::info!(
                 stage_count = stages.len(),
                 names = ?stages.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
                 "manifest received"
             );
         }
-        BootstrapEvent::Stage {
-            name,
-            state,
-            duration_ms,
-            error,
-            ..
-        } => {
-            tracing::info!(
-                stage = %name,
-                ?state,
-                duration_ms = ?duration_ms,
-                error = ?error,
-                "stage transition"
-            );
+        BootstrapEvent::Stage { name, state, duration_ms, error, .. } => {
+            tracing::info!(stage = %name, ?state, duration_ms = ?duration_ms, ?error, "stage transition");
         }
-        BootstrapEvent::Complete { install_root, .. } => {
-            tracing::info!(install_root = %install_root, "bootstrap complete");
-        }
-        BootstrapEvent::Failed { stage, error } => {
-            tracing::error!(stage = ?stage, error = %error, "bootstrap FAILED");
-        }
+        BootstrapEvent::Complete => tracing::info!("bootstrap complete"),
+        BootstrapEvent::Failed { error } => tracing::error!(error = %error, "bootstrap FAILED"),
         BootstrapEvent::Log { .. } => {}
     }
     if let Err(e) = on_event.send(event) {
@@ -627,8 +399,7 @@ fn emit_event(on_event: &Channel<BootstrapEvent>, event: BootstrapEvent) {
     }
 }
 
-// 截断上限：manifest 可能多行 JSON，给更大窗口
-const STAGE_PREVIEW_CHARS: usize = 2000;
+// manifest 可能多行 JSON，给更大截断窗口
 const MANIFEST_PREVIEW_CHARS: usize = 4000;
 
 fn truncate(s: &str, max: usize) -> String {
@@ -659,9 +430,7 @@ mod tests {
     /// 构造伪已安装桌面端；布局对齐 Stage-UnpackDesktop 产物。
     fn make_installed_desktop(install_root: &Path) -> PathBuf {
         if cfg!(target_os = "macos") {
-            let macos_dir = install_root
-                .join("Contents")
-                .join("MacOS");
+            let macos_dir = install_root.join("Contents").join("MacOS");
             std::fs::create_dir_all(&macos_dir).unwrap();
             std::fs::write(macos_dir.join("SpiritAgent"), b"#!/bin/sh\n").unwrap();
         } else {
@@ -701,27 +470,6 @@ mod tests {
             resolve_spiritagent_desktop_exe().is_none(),
             "no resolved desktop when nothing has been installed"
         );
-        let _ = std::fs::remove_dir_all(&root);
-        set_desktop_root_override_for_test(None);
-    }
-
-    #[test]
-    #[cfg(target_os = "windows")]
-    fn test_resolve_spiritagent_desktop_exe_zip_fallback() {
-        let _lock = TEST_MUTEX.lock().unwrap();
-        let root = unique_tmp_dir("app-zip-none");
-        set_desktop_root_override_for_test(Some(root.clone()));
-        let home = crate::paths::spiritagent_home();
-        let zip_dir = home.join("apps").join("SpiritAgent");
-        let _ = std::fs::create_dir_all(&zip_dir);
-        let zip_exe = zip_dir.join("SpiritAgent.exe");
-        let _ = std::fs::write(&zip_exe, b"stub");
-
-        let resolved = resolve_spiritagent_desktop_exe();
-        assert!(resolved.is_some(), "should resolve desktop exe in zip_layout path");
-        assert_eq!(resolved.unwrap(), zip_exe);
-
-        let _ = std::fs::remove_file(&zip_exe);
         let _ = std::fs::remove_dir_all(&root);
         set_desktop_root_override_for_test(None);
     }
