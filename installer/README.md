@@ -13,7 +13,7 @@ Tauri 安装器负责首次安装与环境修复，日常运行及更新归 Clie
 
 ## 资源与路径
 
-载荷包含安装脚本、桌面包、单个 Runner wheel、技能和引导音频。uv、Python、Runner 第三方依赖及可选 OfficeCLI 仍可能联网下载，不能将载荷完整等同离线可安装。
+载荷包含安装脚本、桌面包、单个 Runner wheel、技能和引导音频；构建期校验这些项齐全，缺项直接失败，避免产出装不上的安装器。uv、Python、Runner 第三方依赖及可选 OfficeCLI 仍可能联网下载，不能将载荷完整等同离线可安装。
 
 脚本依次从开发仓库覆盖、Tauri resources 和内嵌 ZIP 查找；`SPIRITAGENT_SETUP_DEV_REPO_ROOT` 只替换脚本，不准备载荷，载荷仅从后两者读取。Windows 单 EXE 解压到 Home 下 `bootstrap-payload/payload/`。`skills/` 经构建暂存并打入桌面 `extraResources`；入库的 `payload/onboarding-audio/` 不能随暂存清理。PowerShell 5.1 所需的 `install.ps1` UTF-8 BOM 必须按字节保留，`install.cmd` 仅用于开发。
 

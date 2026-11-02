@@ -5,18 +5,11 @@ fn main() {
     let payload_src = PathBuf::from("../payload");
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR set by cargo");
     let zip_path = PathBuf::from(&out_dir).join("payload.zip");
-    if payload_src.exists() {
-        build_payload_zip(&payload_src, &zip_path);
-        println!("cargo:rerun-if-changed={}", payload_src.display());
-    } else {
-        println!(
-            "cargo:warning=spiritagent-bootstrap: ../payload not found; \
-             embedded payload will be empty — single-exe distribution will fail"
-        );
-        // 空 zip 也要写：include_bytes! 要求文件存在
-        std::fs::File::create(&zip_path)
-            .unwrap_or_else(|e| panic!("create empty payload.zip at {}: {e}", zip_path.display()));
-    }
+
+    // 载荷不完整会产出装不上的安装器（缺桌面产物时运行期才报错），构建期直接失败
+    require_payload(&payload_src);
+    build_payload_zip(&payload_src, &zip_path);
+    println!("cargo:rerun-if-changed={}", payload_src.display());
 
     // asInvoker，避免启发式要求 UAC 提权
     #[cfg(target_os = "windows")]
@@ -30,6 +23,34 @@ fn main() {
     let attrs = tauri_build::Attributes::new();
 
     tauri_build::try_build(attrs).expect("failed to run tauri-build");
+}
+
+/// 单 exe 与 bundle 共用同一份载荷，缺任一项都会在安装阶段失败。
+fn require_payload(payload: &Path) {
+    let non_empty_dir = |dir: &Path| {
+        std::fs::read_dir(dir)
+            .map(|mut entries| entries.next().is_some())
+            .unwrap_or(false)
+    };
+
+    let mut missing: Vec<&str> = ["install.sh", "install.ps1"]
+        .into_iter()
+        .filter(|name| !payload.join(name).is_file())
+        .collect();
+    for dir in ["runner", "client", "skills", "onboarding-audio"] {
+        if !non_empty_dir(&payload.join(dir)) {
+            missing.push(dir);
+        }
+    }
+
+    if !missing.is_empty() {
+        panic!(
+            "installer payload incomplete at {}: missing or empty {:?}\n\
+             run `python scripts/build.py --version <version> --target <win|mac>` to stage a complete payload",
+            payload.display(),
+            missing
+        );
+    }
 }
 
 /// 递归打包 src 为 zip；arcname 用相对 POSIX 路径。

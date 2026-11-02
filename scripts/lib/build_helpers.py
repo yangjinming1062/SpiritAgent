@@ -154,52 +154,6 @@ def stage_payload(repo_root: Path | None = None, target: str | None = None) -> N
     print("    install scripts: install.sh, install.ps1")
 
 
-def get_tauri_conf_path(repo_root: Path | None = None) -> Path:
-    root = repo_root or get_repo_root()
-    return root / "installer" / "src-tauri" / "tauri.conf.json"
-
-
-def patch_tauri_config(repo_root: Path | None = None) -> None:
-    """备份并 patch tauri.conf.json，把 payload/client 桌面产物追加至 bundle.resources。"""
-    root = repo_root or get_repo_root()
-    conf_path = get_tauri_conf_path(root)
-    bak_path = conf_path.with_name(conf_path.name + ".tauri-build.bak")
-
-    if not conf_path.is_file():
-        raise FileNotFoundError(f"tauri.conf.json not found: {conf_path}")
-
-    shutil.copy2(conf_path, bak_path)
-
-    client_payload_dir = root / "installer" / "payload" / "client"
-    client_files = [f for f in client_payload_dir.iterdir() if f.is_file()]
-    if not client_files:
-        raise FileNotFoundError(f"No desktop artifact in {client_payload_dir}")
-
-    desktop_name = client_files[0].name
-    desktop_rel = f"../payload/client/{desktop_name}"
-
-    print(f"==> [build_helpers] Patching {conf_path}: bundle.resources += {desktop_rel}")
-    data = json.loads(conf_path.read_text(encoding="utf-8"))
-
-    bundle = data.setdefault("bundle", {})
-    resources: list[str] = bundle.setdefault("resources", [])
-    if desktop_rel not in resources:
-        resources.append(desktop_rel)
-
-    conf_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
-
-
-def restore_tauri_config(repo_root: Path | None = None) -> None:
-    """恢复 tauri.conf.json 备份并删除备份文件。"""
-    root = repo_root or get_repo_root()
-    conf_path = get_tauri_conf_path(root)
-    bak_path = conf_path.with_name(conf_path.name + ".tauri-build.bak")
-
-    if bak_path.is_file():
-        print(f"==> [build_helpers] Restoring {conf_path}")
-        shutil.move(str(bak_path), str(conf_path))
-
-
 def find_desktop_artifact(target: str, version: str, repo_root: Path | None = None) -> Path | None:
     """在 client/release/ 中定位桌面产物。"""
     root = repo_root or get_repo_root()

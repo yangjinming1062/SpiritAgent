@@ -150,7 +150,7 @@ Runner 在临时源码副本构建；暂存只接受目标版本的唯一 wheel�
 uv run --no-project --python 3.13 python scripts/check_runner_package.py
 ```
 
-载荷和 Tauri 配置由 [build_helpers.py](lib/build_helpers.py)准备，构建结束恢复配置。macOS 输出安装器 DMG 及规范文件名副本；Windows 输出 Setup EXE 和 update ZIP。Windows ZIP 包含桌面产物、blockmap、单一 Runner wheel 与签名清单，需 PowerShell、openssl 及[签名私钥](release-keys/README.md)。
+载荷由 [build_helpers.py](lib/build_helpers.py)暂存，Installer 构建期校验载荷完整（安装脚本、Runner wheel、桌面产物、技能、引导音频），缺项直接失败。macOS 输出安装器 DMG 及规范文件名副本；Windows 输出 Setup EXE 和 update ZIP。Windows ZIP 包含桌面产物、blockmap、单一 Runner wheel 与签名清单，需 PowerShell、openssl 及[签名私钥](release-keys/README.md)。
 
 `--sign-identity`／`--notary-profile` 与 `--cert-thumbprint` 作用于桌面产物，不签 Installer 本身；Client `.app` 公证另由上一节配置控制。产物、载荷与安装修复验收见 [Installer](../installer/README.md)。
 

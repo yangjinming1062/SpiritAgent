@@ -16,8 +16,6 @@ sys.path.insert(0, str(SCRIPT_DIR / "lib"))
 from build_helpers import (  # noqa: E402
     find_desktop_artifact,
     get_repo_root,
-    patch_tauri_config,
-    restore_tauri_config,
     set_version,
     stage_payload,
 )
@@ -201,17 +199,13 @@ def main() -> int:
         shutil.copy2(desktop_artifact, dest_desktop_path)
 
     installer_dir = repo_root / "installer"
-    patch_tauri_config(repo_root)
-    try:
-        print("==> Tauri build")
-        run_cmd(["pnpm", "install", "--frozen-lockfile"], cwd=installer_dir)
-        if target == "mac":
-            run_cmd(["pnpm", "run", "tauri:build"], cwd=installer_dir)
-        else:
-            # 不走 `pnpm run tauri -- build`：pnpm 会把 `--` 原样转发，tauri CLI(clap) 拒绝 `-- build`。
-            run_cmd(["pnpm", "run", "tauri:build:nobundle"], cwd=installer_dir)
-    finally:
-        restore_tauri_config(repo_root)
+    print("==> Tauri build")
+    run_cmd(["pnpm", "install", "--frozen-lockfile"], cwd=installer_dir)
+    if target == "mac":
+        run_cmd(["pnpm", "run", "tauri:build"], cwd=installer_dir)
+    else:
+        # 不走 `pnpm run tauri -- build`：pnpm 会把 `--` 原样转发，tauri CLI(clap) 拒绝 `-- build`。
+        run_cmd(["pnpm", "run", "tauri:build:nobundle"], cwd=installer_dir)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     if target == "mac":

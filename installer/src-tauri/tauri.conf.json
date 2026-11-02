@@ -44,6 +44,7 @@
     ],
     "resources": [
       "../payload/runner/",
+      "../payload/client",
       "../payload/skills",
       "../payload/onboarding-audio",
       "../payload/install.sh",

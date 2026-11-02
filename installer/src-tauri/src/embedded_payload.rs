@@ -138,7 +138,7 @@ mod tests {
     fn payload_zip_parses() {
         let cursor = std::io::Cursor::new(PAYLOAD_ZIP);
         let mut archive = zip::ZipArchive::new(cursor).expect("zip should parse");
-        // 安装脚本与包含入口的 Runner wheel 必须同时随载荷交付。
+        // 安装脚本、桌面安装包与包含入口的 Runner wheel 必须同时随载荷交付。
         let names: Vec<String> = (0..archive.len())
             .map(|i| archive.by_index(i).unwrap().name().to_string())
             .collect();
@@ -155,6 +155,12 @@ mod tests {
                 .iter()
                 .any(|n| n.contains("runner/spirit_agent-") && n.ends_with(".whl")),
             "expected runner wheel in payload zip"
+        );
+        assert!(
+            names
+                .iter()
+                .any(|n| n.starts_with("client/") && n.ends_with(".exe")),
+            "expected desktop installer in payload zip"
         );
     }
 }
