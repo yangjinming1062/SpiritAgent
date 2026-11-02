@@ -22,11 +22,13 @@ from .eligibility import automatic_media_ready
 from .generation import (
     cancel_visual_job,
     pause_visual_job,
+    restart_video_generation,
     resume_known_result,
     schedule_visual_job,
     visual_image_chain_exhausted,
     visual_progress_has_unknown_submission,
     visual_progress_has_video_work,
+    visual_video_chain_exhausted,
 )
 from .geometry import visual_aspect_ratio
 from .life import bind_creation_step, restart_visual_steps, settle_visual_steps
@@ -1033,7 +1035,22 @@ async def retry_job(user_id: int, job_id: int) -> VisualJobView:
             progress.failure_reason in {"image_unsuitable", "reference_unsuitable"}
             or bool(progress.image_only and visual_image_chain_exhausted(progress))
         )
-        if new_image:
+        new_video = (
+            job.state == "failed"
+            and job.target_kind == "video"
+            and (
+                progress.failure_reason in {"quality_failed", "material_rejected", "queue_stopped"}
+                or visual_video_chain_exhausted(progress)
+            )
+        )
+        if new_video:
+            require_new_generation_call(user_id)
+            snapshot = visual_snapshot(job)
+            clip_kind = "loop" if snapshot.source.kind == "scene" else snapshot.source.action.clip_kind
+            await restart_video_generation(user_id, clip_kind, progress)
+            stage = "video"
+        elif new_image:
+            require_new_generation_call(user_id)
             if progress.failure_reason == "reference_unsuitable":
                 progress.reference_alignment_chain_json = None
                 progress.reference_alignment_source_hash = None
@@ -1048,9 +1065,14 @@ async def retry_job(user_id: int, job_id: int) -> VisualJobView:
                 reference_path=reference,
                 new_budget=True,
             )
-            require_new_generation_call(user_id)
+            stage = "repairing"
+        else:
+            stage = None
+        if stage is not None:
             job.checkpoint = progress.model_dump(mode="json")
-            job.state, job.stage, job.error = "running", "repairing", None
+            job.candidates_json = None
+            job.state, job.stage, job.error = "running", stage, None
+            job.finished_at = None
             await notify_visuals_updated(db, user_id)
             view = job_view(job)
             await restart_visual_steps(db, user_id, job)

@@ -7,11 +7,12 @@ from fractions import Fraction
 from io import BytesIO
 from pathlib import Path
 from typing import Literal, NamedTuple
+from uuid import uuid4
 
 from infrastructure.ai.error_classifier import LlmCallBlockedError
 from infrastructure.ai.llm_client import build_provider, resolve_provider_chain, resolve_vision_chain
 from infrastructure.ai.prompt_engineer import VisualReasoningError, vision_chat_json
-from infrastructure.ai.providers.base import VideoGenProvider, VideoGenRequest
+from infrastructure.ai.providers.base import ServiceType, VideoGenProvider, VideoGenRequest
 from infrastructure.ai.selection import ProviderSelection, has_provider_selection, order_provider_chain
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import (
@@ -270,6 +271,62 @@ def visual_progress_has_video_work(progress: VisualJobProgress) -> bool:
         or progress.source_path
         or progress.candidate
     )
+
+
+def visual_video_chain_exhausted(progress: VisualJobProgress) -> bool:
+    if not progress.video_chain_json or visual_progress_has_video_work(progress):
+        return False
+    chain = MediaChainState.model_validate_json(progress.video_chain_json)
+    return bool(
+        chain.providers
+        and chain.phase in {"ready", "complete"}
+        and chain.next_index >= len(chain.providers)
+        and not visual_progress_has_unknown_submission(progress)
+    )
+
+
+async def restart_video_generation(user_id: int, clip_kind: str, progress: VisualJobProgress) -> None:
+    """显式重做已终止的视频，保留起始图和制作目标，重新选择一轮供应商。"""
+    chain = MediaChainState.model_validate_json(progress.video_chain_json or "{}")
+    previous = next(
+        (
+            candidate
+            for candidate in chain.candidates
+            if progress.candidate and candidate.path == progress.candidate.media_path
+        ),
+        None,
+    )
+    index = previous.attempt if previous else chain.active_index
+    if index is None and chain.next_index:
+        index = chain.next_index - 1
+    selection = (
+        ProviderSelection(mode="next", origin=chain.providers[index].generation_origin(ServiceType.video_gen))
+        if index is not None and 0 <= index < len(chain.providers)
+        else None
+    )
+    seconds, providers = await resolve_visual_video_plan(
+        user_id,
+        clip_kind=clip_kind,
+        duration_seconds=progress.duration_seconds,
+        aspect_ratio=progress.aspect_ratio,
+        target_width=progress.target_width,
+        target_height=progress.target_height,
+        selection=selection,
+    )
+    progress.generation_id = uuid4().hex
+    progress.video_chain_json = MediaChainState(
+        providers=providers, generation_id=progress.generation_id
+    ).model_dump_json()
+    progress.duration_seconds = seconds
+    progress.source_path = None
+    progress.candidate = None
+    progress.identity_score = None
+    progress.identity_reason = ""
+    progress.review_verdict = None
+    progress.review_reason = ""
+    progress.failure_reason = ""
+    progress.paused_by_user = False
+    progress.submission_unknown = False
 
 
 def resume_known_result(progress: VisualJobProgress) -> None:

@@ -397,7 +397,6 @@ async def _publish(
             version.c.outfit_id,
             version.c.scene_id,
             version.c.action_id,
-            version.c.input_image_id,
             version.c.input_image_version_id,
             version.c.input_image_path,
             version.c.input_image_hash,
