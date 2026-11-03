@@ -92,9 +92,7 @@ async def describe_character_form(
     feedback: str = "",
     outfit_description: str = "",
     previous_feedback: list[str] | None = None,
-    body_baseline: dict[str, str] | None = None,
     reference_images: tuple[str, ...],
-    identity: str = "",
     allow_body_change: bool = False,
 ) -> str:
     """视觉模型根据开放描述与实际参考判断材质、结构和稳定待机姿态。"""
@@ -103,8 +101,7 @@ async def describe_character_form(
         CHARACTER_FORM_INSTRUCTIONS
         + "\n\n"
         + (CHARACTER_FORM_REDRAW_BODY if allow_body_change else CHARACTER_FORM_KEEP_BODY)
-        + ("\n\n" + CHARACTER_FORM_SECONDARY_REFERENCE if len(reference_images) > 1 else "")
-        + ("\n\n" + identity if identity else ""),
+        + ("\n\n" + CHARACTER_FORM_SECONDARY_REFERENCE if len(reference_images) > 1 else ""),
         json.dumps(
             {
                 "biological_type": species,
@@ -112,7 +109,6 @@ async def describe_character_form(
                 "feedback": feedback,
                 "outfit_description": outfit_description,
                 "previous_feedback": previous_feedback or [],
-                "body_baseline": body_baseline or {},
             },
             ensure_ascii=False,
         ),
@@ -127,7 +123,6 @@ async def build_outfit_prompt(
     reference_image: str,
     species: str,
     requirement: str,
-    identity: str,
     feedback: str = "",
     previous_feedback: list[str] | None = None,
     personality: str = "",
@@ -138,7 +133,6 @@ async def build_outfit_prompt(
     direction = await describe_character_form(
         user_id,
         species=species,
-        identity=identity,
         personality=personality,
         feedback=feedback,
         previous_feedback=previous_feedback,
@@ -150,7 +144,6 @@ async def build_outfit_prompt(
         (
             OUTFIT_CHANGE_LEAD,
             FULLBODY_PRESERVE_CHARACTER,
-            identity,
             CHARACTER_VISUAL_STYLE,
             f"画幅比例 {canvas_aspect}；{FULLBODY_FRAME}" if canvas_aspect else FULLBODY_FRAME,
             OUTFIT_BODY_DIRECTION_TEMPLATE.format(direction=direction),

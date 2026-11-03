@@ -172,7 +172,9 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
     case 'companion.voice.updated':
 
-    case 'companion.character_card.updated':
+    case 'companion.visual_identity.updated':
+
+    case 'companion.appearance_preparation.updated':
 
     case 'companion.outfit.updated':
       handleCharacterEvent(event)

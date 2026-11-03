@@ -1,7 +1,7 @@
 import json
 import re
 
-from features.appearance.character_card import load_character_snapshot
+from features.appearance.observations import load_visual_observation
 from features.companion.prompts import OUTFIT_DESCRIPTION_LABELS_TEXTS, OUTFIT_LABELS_TEXTS
 from features.media.identity_rendering import render_character_appearance
 from infrastructure.text import resolve_prompt_text
@@ -38,7 +38,7 @@ async def build_companion_environment_prompt(
 
     parts: list[str] = []
     presentation = action_view.presentation
-    if appearance := render_character_appearance(await load_character_snapshot(db, user_id), language=language):
+    if appearance := render_character_appearance(await load_visual_observation(db, user_id), language=language):
         parts.append(appearance)
     if presentation.outfit_description:
         parts.append(resolve_prompt_text(OUTFIT_LABELS_TEXTS, language))

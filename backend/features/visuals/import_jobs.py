@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.jobs.service import bind_job_assets
 from features.media.character_images import ImageChainState
-from features.media.identity_contracts import CharacterCardSnapshot
+from features.media.identity_contracts import VisualIdentitySnapshot
 
 from .import_operations import (
     ImportOperation,
@@ -70,7 +70,7 @@ class ImportContext(BaseModel):
     user_notes: str = ""
     notes_initialized: bool = False
     correction_notes: str = ""
-    identity: CharacterCardSnapshot | None = None
+    identity: VisualIdentitySnapshot | None = None
     identity_path: str | None = None
     identity_hash: str | None = None
     portrait_path: str | None = None

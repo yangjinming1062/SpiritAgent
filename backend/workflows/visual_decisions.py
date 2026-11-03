@@ -5,6 +5,7 @@ from datetime import timedelta
 from typing import Any, Literal, Self
 
 from features.action_library.queries import list_actions
+from features.action_library.service import ensure_builtin_actions
 from features.appearance.queries import ready_outfit_snapshots
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
 from features.companion.prompt_runtime import load_companion_prompt_context
@@ -208,6 +209,9 @@ def schedule_visual_selection(user_id: int) -> None:
 
 
 async def initialize_visuals(user_id: int, _payload: dict[str, Any]) -> None:
+    async with SESSION_LOCAL() as db:
+        await ensure_builtin_actions(db, user_id)
+        await db.commit()
     schedule_base_motion_preparation(user_id)
     await evaluate_life_presentation(user_id, force=True)
 

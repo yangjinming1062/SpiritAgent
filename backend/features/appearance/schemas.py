@@ -14,6 +14,11 @@ class AvatarAssetResponse(BaseModel):
     asset_url: str
     seed_fullbody_url: str = ""
     is_fullbody_confirmed: bool = False
+    identity_revision: int = 0
+    preparation_status: Literal["queued", "running", "paused", "unknown", "succeeded", "failed", "cancelled"] | None = (
+        None
+    )
+    preparation_error: str | None = None
     prompt: str = ""
     status: SucceededStatus = "succeeded"
 
@@ -179,3 +184,9 @@ class OutfitPolicyResponse(BaseModel):
 class OutfitImageImportRequest(ImageAdoptRequest):
     source: Literal["analysis"]
     content_type: str | None = Field(default=None, max_length=64)
+
+
+class PreparationRetryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: int = Field(ge=1)

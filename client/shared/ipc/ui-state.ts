@@ -1,11 +1,5 @@
 import { type ArchiveSearchState, isArchiveSearchState } from '../../../shared/archive-search'
-import type {
-  CharacterFeatures,
-  CharacterOverrides,
-  ChatAttachment,
-  MemoryListRequest,
-  PersonaEditableField
-} from '../../../shared/protocol'
+import type { ChatAttachment, MemoryListRequest, PersonaEditableField } from '../../../shared/protocol'
 import { isResourceId } from '../../../shared/resource-id'
 import { isVisualCreationDraft, type VisualCreationDraft } from '../../../shared/visuals'
 import { isRecord } from '../is-record'
@@ -82,16 +76,6 @@ export interface CompanionEditorUiSnapshot {
     values: Record<PersonaEditableField, string>
     base: Record<PersonaEditableField, string | null>
   } | null
-  characterCards: Record<
-    string,
-    {
-      revision: number
-      features: CharacterFeatures
-      automatic: CharacterFeatures
-      overrides: CharacterOverrides
-      changes: CharacterOverrides
-    }
-  >
   memory: {
     presetId: string
     section: 'recall' | 'profile'
@@ -101,21 +85,10 @@ export interface CompanionEditorUiSnapshot {
   }
 }
 
-const PERSONA_FIELDS = ['name', 'personality', 'relationship', 'speaking_style']
-
-const CHARACTER_FIELDS = [
-  'head_shape',
-  'facial_features',
-  'facial_surface',
-  'head_identifiers',
-  'body_shape',
-  'proportions',
-  'limbs_and_appendages',
-  'body_surface'
-]
+const PERSONA_FIELDS = ['name', 'personality', 'relationship', 'speaking_style', 'age', 'occupation', 'background']
 
 export function isCompanionEditorUiSnapshot(value: unknown): value is CompanionEditorUiSnapshot {
-  if (!isRecord(value) || !isRecord(value.characterCards) || !isRecord(value.memory)) {
+  if (!isRecord(value) || !isRecord(value.memory)) {
     return false
   }
 
@@ -130,12 +103,6 @@ export function isCompanionEditorUiSnapshot(value: unknown): value is CompanionE
     Number.isSafeInteger(draft.baseVersion) &&
     draft.baseVersion >= 0
 
-  const validChanges = (changes: unknown): boolean =>
-    isRecord(changes) &&
-    Object.entries(changes).every(
-      ([key, text]) => CHARACTER_FIELDS.includes(key) && (text === null || typeof text === 'string')
-    )
-
   const validFields = (fields: unknown, keys: string[], nullable = false): boolean =>
     isRecord(fields) && keys.every(key => typeof fields[key] === 'string' || (nullable && fields[key] === null))
 
@@ -144,17 +111,6 @@ export function isCompanionEditorUiSnapshot(value: unknown): value is CompanionE
       (isRecord(persona) &&
         validFields(persona.values, PERSONA_FIELDS) &&
         validFields(persona.base, PERSONA_FIELDS, true))) &&
-    Object.values(value.characterCards).every(
-      card =>
-        isRecord(card) &&
-        typeof card.revision === 'number' &&
-        Number.isSafeInteger(card.revision) &&
-        card.revision > 0 &&
-        validFields(card.features, CHARACTER_FIELDS) &&
-        validFields(card.automatic, CHARACTER_FIELDS) &&
-        validChanges(card.overrides) &&
-        validChanges(card.changes)
-    ) &&
     typeof memory.presetId === 'string' &&
     (memory.section === 'recall' || memory.section === 'profile') &&
     isRecord(memory.browsers) &&

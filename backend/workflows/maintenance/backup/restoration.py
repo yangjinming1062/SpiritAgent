@@ -60,13 +60,13 @@ def load_backup_rows(
     row_counts: dict[str, int],
     *,
     selected_tables: frozenset[str] | None = None,
-    schema: str = "0004",
+    schema: str = "0005",
 ) -> BackupReadResult:
     wanted = set(TABLES) if selected_tables is None else set(selected_tables)
     failures = []
     rows: dict[str, list[dict[str, Any]]] = {}
-    if schema != "0004":
-        raise ValueError("Backup schema must be 0004")
+    if schema != "0005":
+        raise ValueError("Backup schema must be 0005")
     expected = set(TABLES)
     if set(manifest_tables) != expected:
         raise ValueError(f"Backup tables must match the complete {schema} schema")

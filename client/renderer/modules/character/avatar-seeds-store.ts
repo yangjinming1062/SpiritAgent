@@ -306,7 +306,7 @@ export function hydrateAvatarSeeds(): Promise<AvatarSeeds> {
   return load
 }
 
-/** 角色卡事件后的服务端刷新：即使本地两张图都已缓存，也以最新已采纳种子替换旧路径。 */
+/** 视觉身份事件后的服务端刷新：即使本地两张图都已缓存，也以最新已采纳种子替换旧路径。 */
 export async function refreshAvatarSeeds(): Promise<void> {
   const gen = seedEpoch
   const epoch = currentClearEpoch()

@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from features.media.identity_contracts import CharacterCardSnapshot
+from features.media.identity_contracts import VisualIdentitySnapshot
 from features.media.visual_semantics import ActionMotionIntensity, ActionPerformanceRole, SemanticTags
 
 ABSOLUTE_MAX_DURATION_SECONDS = 15
@@ -99,7 +99,7 @@ class ActionReviewSource(BaseModel):
     identity_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     portrait_path: str = Field(min_length=1)
     portrait_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    identity: CharacterCardSnapshot
+    identity: VisualIdentitySnapshot
     persona: dict[str, str] = Field(default_factory=dict)
 
 

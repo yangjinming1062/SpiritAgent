@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react'
-import { useState } from 'react'
+import { type ChangeEvent, useState } from 'react'
 
 import {
   $persona,
@@ -44,7 +44,10 @@ function valuesOf(persona: ReturnType<typeof $persona.get>): PersonaValues {
     name: persona?.name ?? '',
     personality: persona?.personality ?? '',
     relationship: persona?.relationship ?? '',
-    speaking_style: persona?.speaking_style ?? ''
+    speaking_style: persona?.speaking_style ?? '',
+    age: persona?.age ?? '',
+    occupation: persona?.occupation ?? '',
+    background: persona?.background ?? ''
   }
 }
 
@@ -53,7 +56,10 @@ function baseOf(persona: ReturnType<typeof $persona.get>): Record<PersonaEditabl
     name: persona?.name ?? null,
     personality: persona?.personality ?? null,
     relationship: persona?.relationship ?? null,
-    speaking_style: persona?.speaking_style ?? null
+    speaking_style: persona?.speaking_style ?? null,
+    age: persona?.age ?? null,
+    occupation: persona?.occupation ?? null,
+    background: persona?.background ?? null
   }
 }
 
@@ -76,6 +82,9 @@ export function PersonaSection({
 
   const fields: readonly PersonaField[] = [
     { key: 'name', label: t.nameLabel, placeholder: t.namePlaceholder },
+    { key: 'age', label: t.ageLabel, placeholder: t.agePlaceholder },
+    { key: 'occupation', label: t.occupationLabel, placeholder: t.occupationPlaceholder },
+    { key: 'background', label: t.backgroundLabel, placeholder: t.backgroundPlaceholder },
     {
       key: 'relationship',
       label: t.relationshipLabel,
@@ -137,7 +146,10 @@ export function PersonaSection({
             name: draft.values.name.trim(),
             personality: draft.values.personality.trim(),
             relationship: draft.values.relationship.trim(),
-            speaking_style: draft.values.speaking_style.trim()
+            speaking_style: draft.values.speaking_style.trim(),
+            age: draft.values.age.trim(),
+            occupation: draft.values.occupation.trim(),
+            background: draft.values.background.trim()
           },
           expected_fields: expectedFields
         }
@@ -282,39 +294,44 @@ export function PersonaSection({
           <p className={SECTION_TITLE}>{t.editHeading}</p>
           {dirty && <span className={HINT_TEXT}>{dict.common.unsavedChanges}</span>}
         </div>
-        {fields.map(({ key, label, placeholder, presets }) => (
-          <label className="block" key={key}>
-            <span className={FIELD_LABEL}>{label}</span>
-            <input
-              className={INPUT_CLASS}
-              disabled={busy}
-              maxLength={500}
-              onChange={event =>
-                updateCompanionEditors({
-                  persona: { ...draft, values: { ...draft.values, [key]: event.target.value } }
-                })
-              }
-              placeholder={placeholder}
-              value={draft.values[key]}
-            />
-            {presets && (
-              <div className="mt-1.5 flex flex-wrap gap-1.5">
-                {presets.map(value => (
-                  <Chip
-                    active={draft.values[key] === value}
-                    key={value}
-                    label={value}
-                    onClick={() => {
-                      if (!busy) {
-                        updateCompanionEditors({ persona: { ...draft, values: { ...draft.values, [key]: value } } })
-                      }
-                    }}
-                  />
-                ))}
-              </div>
-            )}
-          </label>
-        ))}
+        {fields.map(({ key, label, placeholder, presets }) => {
+          const Control = key === 'background' ? 'textarea' : 'input'
+
+          return (
+            <label className="block" key={key}>
+              <span className={FIELD_LABEL}>{label}</span>
+              <Control
+                className={INPUT_CLASS}
+                disabled={busy}
+                maxLength={key === 'background' ? 2000 : 500}
+                onChange={(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+                  updateCompanionEditors({
+                    persona: { ...draft, values: { ...draft.values, [key]: event.target.value } }
+                  })
+                }
+                placeholder={placeholder}
+                rows={key === 'background' ? 5 : undefined}
+                value={draft.values[key]}
+              />
+              {presets && (
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {presets.map(value => (
+                    <Chip
+                      active={draft.values[key] === value}
+                      key={value}
+                      label={value}
+                      onClick={() => {
+                        if (!busy) {
+                          updateCompanionEditors({ persona: { ...draft, values: { ...draft.values, [key]: value } } })
+                        }
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
+            </label>
+          )
+        })}
         {conflict && (
           <div className="rounded-xl border border-line-hairline p-3 text-xs text-amber-300/90">
             <p>{dict.common.changedElsewhere}</p>

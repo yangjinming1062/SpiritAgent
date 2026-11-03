@@ -12,7 +12,7 @@ from features.action_library.queries import action_detail, list_actions
 from features.action_library.review import review_action
 from features.action_library.service import create_action, retry_review, update_action
 from features.appearance.avatar_service import FULLBODY_SIZE
-from features.appearance.character_card import load_character_snapshot, render_character_identity
+from features.appearance.identity import load_visual_identity
 from features.appearance.import_materials import accept_imported_outfit, undo_imported_outfit
 from features.appearance.queries import avatar_snapshot, ready_outfit_snapshot, ready_outfit_snapshots
 from features.assets.lifecycle import cleanup_asset_directories_after_task
@@ -158,7 +158,7 @@ async def _load_context(work: ImportWork) -> None:
         return
     async with SESSION_LOCAL() as db:
         context.language = resolve_language(await get_user_setting(db, work.user_id, "language"))
-        identity = await load_character_snapshot(db, work.user_id)
+        identity = await load_visual_identity(db, work.user_id)
         avatar = (
             await avatar_snapshot(db, work.user_id, identity.avatar_id) if identity and identity.avatar_id else None
         )
@@ -719,7 +719,6 @@ async def _generate_import_material(work: ImportWork, component: ImportComponent
             secondary_reference_image=frame,
             identity_reference=work.context.identity_path,
             identity_reference_mode="primary",
-            identity_text=render_character_identity(work.context.identity),
             goal_review="required",
             prefer_transparent_background=True,
             state=state,

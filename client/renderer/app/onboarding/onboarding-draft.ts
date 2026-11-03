@@ -1,25 +1,65 @@
 import { assembleCharacterPersona, assemblePersona, type OnboardingAnswers } from '@/modules/character'
 import { captureAuthScope } from '@/shared/lib/authed-api'
-import { backendDetailMessage, isClientErrorIpc } from '@/shared/lib/ipc-error'
+import { backendDetailMessage, ipcErrorStatus, isClientErrorIpc } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { authedResource, requestResource } from '@/shared/lib/resource-request'
 import { sleep } from '@runtime'
 
 import type { ApiSchemas } from '../../../../shared/api.generated'
 
-import type { QKey } from './onboarding-questions'
+import { type QKey, USER_QUESTIONS } from './onboarding-questions'
 
 type OnboardingResumeState = ApiSchemas['OnboardingStateResponse']
+type PersonaRequest = ApiSchemas['PersonaUpdate']
+export const ONBOARDING_PERSONA_FIELDS = [
+  'name',
+  'biological_type',
+  'gender',
+  'relationship',
+  'personality',
+  'speaking_style',
+  'age',
+  'occupation',
+  'background'
+] as const satisfies readonly (keyof NonNullable<PersonaRequest['expected_fields']>)[]
+export type OnboardingPersonaConflict = Partial<Record<(typeof ONBOARDING_PERSONA_FIELDS)[number], string | null>>
 
 // 串行草稿写入归引导视图持有；释放后，排队任务与重试均不能使用新账户。
 export class OnboardingDraft {
   private active = false
   private generation = 0
   private submissions: Promise<void> = Promise.resolve()
+  private personaBase: Record<string, string> | null = null
+  private conflictingPersona: Record<string, string> | null = null
+
+  personaConflict(): OnboardingPersonaConflict | null {
+    if (!this.conflictingPersona || !this.personaBase) {
+      return null
+    }
+
+    const changed: OnboardingPersonaConflict = {}
+
+    for (const key of ONBOARDING_PERSONA_FIELDS) {
+      if ((this.conflictingPersona[key] || null) !== (this.personaBase[key] || null)) {
+        changed[key] = this.conflictingPersona[key] || null
+      }
+    }
+
+    return changed
+  }
+
+  reviewPersonaConflict(): void {
+    if (this.conflictingPersona) {
+      this.personaBase = this.conflictingPersona
+      this.conflictingPersona = null
+    }
+  }
 
   start(): void {
     this.active = true
     this.generation += 1
+    this.personaBase = null
+    this.conflictingPersona = null
   }
 
   dispose(): void {
@@ -41,6 +81,10 @@ export class OnboardingDraft {
     const submission = this.submissions.then(async () => {
       if (!isCurrent()) {
         return false
+      }
+
+      if (this.personaBase && ONBOARDING_PERSONA_FIELDS.some(key => key === field)) {
+        return true
       }
 
       try {
@@ -69,7 +113,14 @@ export class OnboardingDraft {
     try {
       const state = await requestResource('onboarding.get_onboarding')
 
-      return isCurrent() ? state : null
+      if (!isCurrent()) {
+        return null
+      }
+
+      this.personaBase = state.persona_complete ? { ...state.answers } : null
+      this.conflictingPersona = null
+
+      return state
     } catch (error) {
       if (isCurrent()) {
         log.warn('onboarding', 'resume state failed', error)
@@ -106,6 +157,16 @@ export class OnboardingDraft {
 
     try {
       const voiceSaved = !selectedVoice || (await this.retry(() => this.submit('voice', selectedVoice), isCurrent))
+
+      for (const { key } of USER_QUESTIONS) {
+        if (
+          completeAnswers[key] !== undefined &&
+          !(await this.retry(() => this.submit(key, completeAnswers[key] || null), isCurrent))
+        ) {
+          return '资料保存失败，请检查网络后再点「完成」重试'
+        }
+      }
+
       await this.submissions
 
       const saved =
@@ -126,16 +187,70 @@ export class OnboardingDraft {
       return false
     }
 
-    const result = await authedResource('companion.put_persona', {
-      body: { definition_json: { ...payload } }
-    })
+    const body: PersonaRequest = { definition_json: { ...payload } }
+
+    if (this.personaBase) {
+      body.definition_json = {}
+      body.expected_fields = {}
+
+      for (const key of ONBOARDING_PERSONA_FIELDS) {
+        const value = payload[key] || null
+        const original = this.personaBase[key] || null
+
+        if (value !== original) {
+          body.definition_json[key] = value
+          body.expected_fields[key] = original
+        }
+      }
+
+      if (Object.keys(body.definition_json).length === 0) {
+        return true
+      }
+    }
+
+    const result = await authedResource('companion.put_persona', { body })
 
     if (!isCurrent() || (!result.ok && result.reason === 'unauth')) {
       return false
     }
 
-    if (result.ok) {
+    if (result.ok && result.value) {
+      this.recordPersonaSave(body, result.value)
+      this.conflictingPersona = null
+
       return true
+    }
+
+    const latest = await authedResource('companion.get_persona')
+
+    if (!isCurrent()) {
+      return false
+    }
+
+    const fresh = latest.ok ? latest.value : null
+
+    if (fresh) {
+      if (
+        fresh.is_complete &&
+        Object.entries(body.definition_json).every(
+          ([key, value]) => (fresh.definition_json[key] || null) === (value || null)
+        )
+      ) {
+        this.recordPersonaSave(body, fresh)
+        this.conflictingPersona = null
+
+        return true
+      }
+
+      if (!result.ok && ipcErrorStatus(result.error) === 409) {
+        this.conflictingPersona = fresh.definition_json
+        // 另一端已完成首次保存时，本地仍以空起点核对，显式确认后才采用最新起点。
+        this.personaBase ??= {}
+      }
+    }
+
+    if (result.ok) {
+      return false
     }
 
     if (isClientErrorIpc(result.error)) {
@@ -145,6 +260,18 @@ export class OnboardingDraft {
     log.warn('onboarding', 'persona save failed', result.error)
 
     return false
+  }
+
+  private recordPersonaSave(body: PersonaRequest, response: ApiSchemas['PersonaResponse']): void {
+    const base = { ...this.personaBase }
+
+    for (const key of ONBOARDING_PERSONA_FIELDS) {
+      if (key in body.definition_json) {
+        base[key] = response.definition_json[key] || ''
+      }
+    }
+
+    this.personaBase = base
   }
 
   private async retry(fn: () => Promise<boolean>, isCurrent: () => boolean): Promise<boolean> {

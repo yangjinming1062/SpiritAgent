@@ -6,6 +6,10 @@ export interface OnboardingAnswers {
   relationship?: string
   personality?: string
   speaking_style?: string
+  age?: string
+  occupation?: string
+  background?: string
+  background_complete?: string
   user_call_name?: string
   user_gender?: string
   user_birthday?: string
@@ -21,6 +25,9 @@ export interface PersonaPayload {
   name: string
   personality: string
   speaking_style: string
+  age?: string
+  occupation?: string
+  background?: string
   relationship?: string
   biological_type?: string
   gender?: string
@@ -71,6 +78,9 @@ export function assemblePersona(answers: OnboardingAnswers, previous?: Partial<P
   const optional: Array<[keyof PersonaPayload, string | undefined, number]> = [
     ['biological_type', answers.biological_type ?? prev.biological_type, MAX_SPECIES_GENDER],
     ['gender', answers.gender ?? prev.gender, MAX_SPECIES_GENDER],
+    ['age', answers.age ?? prev.age, 500],
+    ['occupation', answers.occupation ?? prev.occupation, 500],
+    ['background', answers.background ?? prev.background, 2000],
     ['relationship', answers.relationship ?? prev.relationship, MAX_RELATIONSHIP],
     ['user_call_name', answers.user_call_name ?? prev.user_call_name, MAX_USER_TEXT],
     ['user_gender', answers.user_gender ?? prev.user_gender, MAX_USER_TEXT],

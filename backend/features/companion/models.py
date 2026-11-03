@@ -29,6 +29,7 @@ class Persona(ModelBase, TimestampMixin):
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     definition_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    onboarding_progress_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
     personality_tags_json: Mapped[list[Any]] = mapped_column(JSONB, default=list, server_default=text("'[]'"))
     is_complete: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), index=True)
     is_portrait_confirmed: Mapped[bool] = mapped_column(

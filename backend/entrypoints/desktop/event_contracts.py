@@ -198,10 +198,13 @@ class OutfitChangedEvent(BaseModel):
     outfit_id: ResourceId
 
 
-class CharacterCardEvent(BaseModel):
+class VisualIdentityEvent(BaseModel):
     avatar_id: ResourceId
     revision: int
-    status: Literal["pending", "running", "ready", "failed"]
+
+
+class AppearancePreparationEvent(BaseModel):
+    avatar_id: ResourceId
 
 
 class VisualUpdatedEvent(BaseModel):
@@ -293,7 +296,8 @@ EVENT_CONTRACTS: dict[str, EventContract] = {
     "companion.voice.updated": EventContract(VoiceUpdatedEvent, "desktop", "resource"),
     "companion.scene.updated": EventContract(SceneChangedEvent, "all", "resource"),
     "companion.outfit.updated": EventContract(OutfitChangedEvent, "all", "resource"),
-    "companion.character_card.updated": EventContract(CharacterCardEvent, "all", "resource"),
+    "companion.visual_identity.updated": EventContract(VisualIdentityEvent, "all", "resource"),
+    "companion.appearance_preparation.updated": EventContract(AppearancePreparationEvent, "all", "resource"),
     "companion.visual.updated": EventContract(VisualUpdatedEvent, "all", "resource"),
     "companion.life.updated": EventContract(LifeUpdatedEvent, "all", "resource"),
     "companion.action.updated": EventContract(EmptyResult, "all", "resource"),

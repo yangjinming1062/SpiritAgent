@@ -16,10 +16,11 @@ import { $gatewayState } from '@/shared/store/gateway'
 import { useStrings } from '@/shared/strings'
 
 import { computeBackTransition, type Phase, type VoiceStage } from './back-transition'
+import { BackgroundPage, OnboardingConflictNotice } from './background-page'
 import { EnvironmentPage } from './environment-page'
 import { playOnboardingAudio } from './onboarding-audio'
 import { DraggableDialog, ONBOARDING_PRIMARY_BUTTON, OnboardingProgress } from './onboarding-components'
-import { OnboardingDraft } from './onboarding-draft'
+import { OnboardingDraft, type OnboardingPersonaConflict } from './onboarding-draft'
 import {
   type AnswerKind,
   CHARACTER_QUESTIONS,
@@ -53,8 +54,17 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const [input, setInput] = useState('')
   const [answerKind, setAnswerKind] = useState<AnswerKind | null>(null)
   const [hint, setHint] = useState<string | null>(null)
+  const [personaConflict, setPersonaConflict] = useState<OnboardingPersonaConflict | null>(null)
+
+  const reviewPersonaConflict = (): void => {
+    draft.reviewPersonaConflict()
+    setPersonaConflict(null)
+    setHint(null)
+  }
+
   const [voiceStage, setVoiceStage] = useState<VoiceStage>('describe')
   const [voiceSaving, setVoiceSaving] = useState(false)
+  const [characterSaving, setCharacterSaving] = useState(false)
   const [environmentBusy, setEnvironmentBusy] = useState(false)
   const [resumeState, setResumeState] = useState<'failed' | 'ok' | 'retrying'>('ok')
   const [resumeAttempt, setResumeAttempt] = useState(0)
@@ -235,6 +245,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
     const isLive = begin()
     savingCharacterRef.current = true
+    setCharacterSaving(true)
     setHint(null)
 
     try {
@@ -246,6 +257,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
       if (failure) {
         setHint(failure)
+        setPersonaConflict(draft.personaConflict())
 
         return
       }
@@ -253,6 +265,10 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       setPhase('portrait-generate')
     } finally {
       savingCharacterRef.current = false
+
+      if (isLive()) {
+        setCharacterSaving(false)
+      }
     }
   }
 
@@ -269,6 +285,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
     if (failure) {
       setHint(failure)
+      setPersonaConflict(draft.personaConflict())
       setPhase('q-user')
 
       return
@@ -278,7 +295,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     onCompletedRef.current()
   }
 
-  const advance = (currentAnswers: OnboardingAnswers): void => {
+  const advance = (_currentAnswers: OnboardingAnswers): void => {
     if (phase === 'voice' && voiceStage === 'describe') {
       setVoiceStage('catalog')
 
@@ -288,7 +305,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     if (qIndex < currentList.length - 1) {
       setQIndex(qIndex + 1)
     } else if (phase === 'q-character') {
-      void enterPortraitStage(currentAnswers)
+      setPhase('background')
     }
   }
 
@@ -390,7 +407,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const isQuestionPhase = phase === 'q-character' || (phase === 'voice' && voiceStage === 'describe')
 
   const progressStep =
-    phase === 'q-character'
+    phase === 'q-character' || phase === 'background'
       ? 0
       : phase === 'voice'
         ? 2
@@ -442,6 +459,28 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             textareaRef={textareaRef}
           />
         )}
+        {resumeState === 'ok' && phase === 'background' && (
+          <BackgroundPage
+            answers={answers}
+            busy={characterSaving}
+            conflict={personaConflict}
+            hint={hint}
+            onBack={onBack}
+            onBlur={key => {
+              void draft.submit(key, answersRef.current[key] || null)
+            }}
+            onChange={(key, value) => {
+              setAnswers(previous => ({ ...previous, [key]: value }))
+              setHint(null)
+            }}
+            onContinue={skip => {
+              const next = skip ? { ...answers, age: '', occupation: '', background: '' } : answers
+              setAnswers(next)
+              void enterPortraitStage(next)
+            }}
+            onReviewConflict={reviewPersonaConflict}
+          />
+        )}
         <PortraitPages
           answers={answers}
           hint={hint}
@@ -488,6 +527,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                   </button>
                   <button
                     className={`ml-auto ${ONBOARDING_PRIMARY_BUTTON}`}
+                    disabled={personaConflict !== null}
                     onClick={() => {
                       setHint(null)
                       setPhase('finishing')
@@ -547,6 +587,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                   {hint}
                 </p>
               )}
+              <OnboardingConflictNotice conflict={personaConflict} onReview={reviewPersonaConflict} />
             </div>
           </CreationWorkspace>
         )}

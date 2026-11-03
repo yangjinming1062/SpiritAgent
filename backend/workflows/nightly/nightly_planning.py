@@ -12,8 +12,8 @@ from zoneinfo import ZoneInfo
 from features.accounts.queries import nightly_account
 from features.action_library.prompts import ACTION_DESIGN_GUIDANCE, ACTION_MOTION_INTENSITY_DESCRIPTION
 from features.action_library.queries import list_actions
-from features.appearance.character_card import load_character_snapshot
 from features.appearance.nightly import list_outfits
+from features.appearance.observations import load_visual_observation
 from features.automation.cron_jobs import create_job, remove_job
 from features.companion.planning_queries import PersonaPlanningSnapshot, planning_persona
 from features.configuration.settings.values import load_user_settings
@@ -431,7 +431,7 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
         life_context = await read_life_context_in_session(db, user_id)
         outfits = await list_outfits(db, user_id)
         scene = await get_scene_state(db, user_id)
-        character = await load_character_snapshot(db, user_id)
+        observation = await load_visual_observation(db, user_id)
         settings = await load_user_settings(db, user_id, ("language",))
         reference_image_available = await _image_provider_available(
             db,
@@ -481,8 +481,8 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
 
     language = resolve_language(settings.get("language"))
     definition = dict(persona.definition) if persona is not None else {}
-    if character is not None:
-        definition["fixed_features"] = render_character_appearance(character, language=language)
+    if observation is not None:
+        definition["visual_observation"] = render_character_appearance(observation, language=language)
     context = PlanningContext(
         policies=_policies(persona),
         providers=PlanningProviders(

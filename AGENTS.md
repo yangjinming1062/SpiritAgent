@@ -7,7 +7,7 @@
 | 产品定位、体验原则与生活验收 | [设计目标](docs/DESIGN.md#设计目标)、[生活闭环](docs/DESIGN.md#生活闭环) | [持续生活验收](scripts/README.md#持续生活验收)、[README](README.md) |
 | 生活状态、持续事项、执行与经历 | [持续生活](docs/DESIGN.md#持续生活)、[生活契约](docs/PROTOCOL.md#生活状态与生活事件) | [生活模块](backend/features/life/README.md)、[Backend](backend/README.md#任务入口)、[生活浏览](client/renderer/README.md#生活读取与浏览)、[Remote](remote/README.md) |
 | 对话、气泡、语音、历史恢复 | [会话与消息](docs/PROTOCOL.md#会话与消息) | [对话编排](backend/workflows/chat/README.md#关键入口)、[Client](client/README.md#任务入口) |
-| 初始化、角色卡与衣柜素材 | [认识伙伴](docs/DESIGN.md#认识伙伴)、[身份与参考](docs/PIPELINE.md#身份造型与参考输入) | [外观](backend/features/appearance/README.md#关键入口) |
+| 初始化、人物设定与衣柜素材 | [认识伙伴](docs/DESIGN.md#认识伙伴)、[身份与参考](docs/PIPELINE.md#身份造型与参考输入) | [外观](backend/features/appearance/README.md#关键入口) |
 | 环境素材创建与重生成 | [场景任务](docs/PROTOCOL.md#场景任务与原位换图)、[自主添置](docs/PROTOCOL.md#场景素材与自主添置) | [场景改动链](backend/features/scenes/README.md#场景改动链) |
 | 动作素材与影像 | [影像成品](docs/PROTOCOL.md#影像成品与模式隔离)、[动作素材与播放](docs/PROTOCOL.md#动作素材与影像播放)、[组合制作](docs/PIPELINE.md#组合影像制作) | [影像](backend/features/visuals/README.md)、[动作素材](backend/features/action_library/README.md)、[渲染层](client/renderer/README.md#角色呈现契约) |
 | 记忆学习、编辑与遗忘，学习技能 | [记忆作用域](docs/PROTOCOL.md#预设记忆与学习作用域) | [记忆模块](backend/features/memory/README.md)、[Runner 学习技能](runner/README.md#按预设学习技能) |

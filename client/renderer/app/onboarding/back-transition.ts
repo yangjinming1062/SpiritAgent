@@ -1,5 +1,6 @@
 export type Phase =
   | 'q-character'
+  | 'background'
   | 'portrait-generate'
   | 'hatching'
   | 'portrait-avatar'
@@ -56,6 +57,10 @@ export function computeBackTransition(state: BackState, characterQuestionsCount:
   }
 
   if (state.phase === 'portrait-generate') {
+    return { phase: 'background' }
+  }
+
+  if (state.phase === 'background') {
     return { phase: 'q-character', qIndex: characterQuestionsCount - 1 }
   }
 

@@ -22,6 +22,7 @@ from features.media.prompts import (
     CHARACTER_MEDIA_IMAGE_SCORE,
     CHARACTER_MEDIA_SELF_IMAGE_SCORE,
     CHARACTER_MEDIA_VIDEO_SCORE,
+    FULLBODY_CANDIDATE_IDENTITY_SCORE,
 )
 
 logger = get_logger(__name__)
@@ -88,7 +89,6 @@ async def review_character_image_goal(
     identity_reference_mode: Literal["primary", "portrait_and_outfit"],
     secondary_uri: str | None = None,
     environment_uri: str | None = None,
-    identity_text: str = "",
     previous_failure: ImageGoalReviewFailure | None = None,
     task: AiTaskKey,
     before_submit: Callable[[], Awaitable[None]] | None = None,
@@ -161,7 +161,6 @@ async def review_character_image_goal(
             ),
             {
                 "image_count": len(images),
-                "identity": identity_text,
                 "generation_prompt": generation_prompt,
                 "saved_decisions": {
                     "score": original_score,
@@ -231,7 +230,6 @@ async def _review_media(
     user_id: int,
     prompt: str,
     images: tuple[str, ...],
-    identity_text: str = "",
     before_submit: Callable[[], Awaitable[None]] | None = None,
     *,
     task: AiTaskKey,
@@ -243,7 +241,7 @@ async def _review_media(
         raw = await vision_chat(
             user_id,
             prompt.format(accept_score=MEDIA_IDENTITY_ACCEPT_SCORE),
-            json.dumps({"image_count": len(images), "identity": identity_text}, ensure_ascii=False),
+            json.dumps({"image_count": len(images)}, ensure_ascii=False),
             reference_images=images,
             before_submit=before_submit,
             task=task,
@@ -269,20 +267,33 @@ async def _review_media(
     return None
 
 
+async def score_portrait_identity(
+    user_id: int,
+    identity_uri: str,
+    candidate_uri: str,
+    *,
+    task: AiTaskKey,
+    before_submit: Callable[[], Awaitable[None]] | None = None,
+) -> int | None:
+    """全身采纳允许改身体，只复核头像固定的面容与物种。"""
+    result = await _review_media(
+        user_id, FULLBODY_CANDIDATE_IDENTITY_SCORE, (identity_uri, candidate_uri), before_submit, task=task
+    )
+    return result.score if result is not None else None
+
+
 async def score_character_image(
     user_id: int,
     identity_uri: str,
     candidate_uri: str,
     *,
     task: AiTaskKey,
-    identity_text: str = "",
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> int | None:
     result = await _review_media(
         user_id,
         CHARACTER_MEDIA_IMAGE_SCORE,
         (identity_uri, candidate_uri),
-        identity_text,
         before_submit,
         task=task,
     )
@@ -295,7 +306,6 @@ async def score_character_image_with_references(
     candidate_uri: str,
     *,
     task: AiTaskKey,
-    identity_text: str = "",
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> int | None:
     """按头像和当前完整着装图的职责共同评分图片候选。"""
@@ -303,7 +313,6 @@ async def score_character_image_with_references(
         user_id,
         CHARACTER_MEDIA_SELF_IMAGE_SCORE,
         (*identity_uris, candidate_uri),
-        identity_text,
         before_submit,
         task=task,
     )
@@ -316,14 +325,12 @@ async def score_character_frames(
     frame_uris: tuple[str, ...],
     *,
     task: AiTaskKey,
-    identity_text: str = "",
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> int | None:
     result = await _review_media(
         user_id,
         CHARACTER_MEDIA_VIDEO_SCORE,
         (identity_uri or "", *frame_uris),
-        identity_text,
         before_submit,
         task=task,
     )
@@ -337,7 +344,6 @@ async def score_character_frames_with_references(
     prompt: str,
     *,
     task: AiTaskKey,
-    identity_text: str = "",
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> int | None:
     """按有序的多张身份参考及视频帧评分。"""
@@ -347,7 +353,6 @@ async def score_character_frames_with_references(
         frame_uris,
         prompt,
         task=task,
-        identity_text=identity_text,
         before_submit=before_submit,
     )
     return result.score if result is not None else None
@@ -360,7 +365,6 @@ async def review_character_frames_with_references(
     prompt: str,
     *,
     task: AiTaskKey,
-    identity_text: str = "",
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> CharacterMediaScore | None:
     """视频评分及可持久保存的可见依据。"""
@@ -368,7 +372,6 @@ async def review_character_frames_with_references(
         user_id,
         prompt,
         (*identity_uris, *frame_uris),
-        identity_text,
         before_submit,
         task=task,
     )

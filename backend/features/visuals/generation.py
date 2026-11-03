@@ -42,7 +42,6 @@ from runtime.user_maintenance import track_user_task
 from sqlalchemy import select
 from sqlalchemy.orm.attributes import set_committed_value
 
-from features.appearance.character_card import render_character_identity
 from features.appearance.visual_identity import align_character_reference
 from features.assets.lifecycle import cleanup_asset_directories_after_task
 from features.companion.proactive_runtime import get_presentation_snapshot
@@ -528,10 +527,10 @@ async def _aligned_outfit_reference(
         path = await align_character_reference(
             user_id,
             outfit_path,
-            snapshot.identity,
             snapshot.outfit.description,
             task=AiTaskKey.visuals,
             identity_reference=identity_path,
+            identity_reference_role=snapshot.identity_reference_role,
             storage_directory=directory,
             state=state,
             save_progress=save_alignment,
@@ -761,7 +760,6 @@ async def _prepare_pose(
             prompt = ACTOR_POSE_IMAGE_TEMPLATE.format(
                 references=visual_source_reference_prompt(snapshot.identity_reference_role),
                 pose=opening_requirements(job, progress),
-                identity=render_character_identity(snapshot.identity),
                 aspect_ratio=progress.aspect_ratio,
             )
         else:
@@ -770,7 +768,6 @@ async def _prepare_pose(
                     snapshot.identity_reference_role, include_scene=snapshot.kind == "cinematic"
                 ),
                 pose=opening_requirements(job, progress),
-                identity=render_character_identity(snapshot.identity),
                 aspect_ratio=progress.aspect_ratio,
             )
     state = (
@@ -794,7 +791,6 @@ async def _prepare_pose(
         state.inputs.identity_secondary_reference = snapshot.outfit.path
         state.inputs.review_environment_reference_image = snapshot.scene.path if snapshot.kind == "cinematic" else None
         state.inputs.identity_reference_mode = reference_mode
-        state.inputs.identity_text = render_character_identity(snapshot.identity)
 
     async def save_image(value: ImageChainState) -> None:
         progress.image_chain_json = value.model_dump_json()
@@ -812,7 +808,6 @@ async def _prepare_pose(
             identity_reference=identity,
             identity_secondary_reference=identity_outfit,
             identity_reference_mode=reference_mode,
-            identity_text=render_character_identity(snapshot.identity),
             image_edit=editing,
             goal_review="required",
             size=f"{progress.target_width}x{progress.target_height}",

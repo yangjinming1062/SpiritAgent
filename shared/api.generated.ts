@@ -17,7 +17,7 @@ export interface ApiSchemas {
   "ActorClipBody": { "mask_path": (string | null); "first_frame_path": (string | null); "last_frame_path": (string | null); "foot_anchor": ([number, number] | null); "head_anchor": ([number, number] | null); "body_bounds": ([number, number, number, number] | null); "hit_bounds": ([number, number, number, number] | null); "continuity_key": (string | null) }
   "ActorClipRef": { "visual_id": string; "version": number }
   "ActorClipRequest": { "request_id": string; "outfit_id": string; "action_id": string; "requirements"?: string }
-  "ActorClipSource": { "original_filename": (string | null); "original_path": (string | null); "original_content_hash": (string | null); "original_width": (number | null); "original_height": (number | null); "original_duration_ms": (number | null); "analysis_job_id": (string | null); "analysis_revision": (number | null); "analysis_pending": boolean; "presentation_approved": boolean; "identity_reason": string; "kind": "actor"; "identity": ApiSchemas["CharacterCardSnapshot"]; "identity_path": string; "identity_hash": string; "portrait_path": string; "portrait_hash": string; "identity_reference_role": "portrait" | "fullbody"; "outfit": ApiSchemas["ComboMaterialRef"]; "action": ApiSchemas["ActionMaterialRef"]; "media_semantics": (ApiSchemas["MediaSemantics"] | null); "plan": (ApiSchemas["VisualCreationPlan"] | null); "requirements": string; "feedback": string; "video_feedback": string; "persona": { [key: string]: string } }
+  "ActorClipSource": { "original_filename": (string | null); "original_path": (string | null); "original_content_hash": (string | null); "original_width": (number | null); "original_height": (number | null); "original_duration_ms": (number | null); "analysis_job_id": (string | null); "analysis_revision": (number | null); "analysis_pending": boolean; "presentation_approved": boolean; "identity_reason": string; "kind": "actor"; "identity": ApiSchemas["VisualIdentitySnapshot"]; "identity_path": string; "identity_hash": string; "portrait_path": string; "portrait_hash": string; "identity_reference_role": "portrait" | "fullbody"; "outfit": ApiSchemas["ComboMaterialRef"]; "action": ApiSchemas["ActionMaterialRef"]; "media_semantics": (ApiSchemas["MediaSemantics"] | null); "plan": (ApiSchemas["VisualCreationPlan"] | null); "requirements": string; "feedback": string; "video_feedback": string; "persona": { [key: string]: string } }
   "ActualPresentationSnapshot": { "visual_id": (string | null); "media_kind": ("image" | "video" | null); "asset_kind": ("actor" | "scene" | "cinematic" | null); "visual_version": (number | null); "visual_description": string; "visual_path": (string | null); "outfit_path": (string | null); "outfit_hash": (string | null); "outfit_description": string; "scene_path": (string | null); "scene_hash": (string | null); "scene_description": string; "identity_path": (string | null); "identity_hash": (string | null); "identity_reference_role": "portrait" | "fullbody"; "ready": boolean }
   "AdminLoginRequest": { "username": string; "password": string }
   "AdminTokenResponse": { "access_token": string; "expires_in": number }
@@ -25,10 +25,10 @@ export interface ApiSchemas {
   "AiTaskKey": "companion_chat" | "work_chat" | "scheduled_task" | "proactive" | "memory_review" | "memory_embedding" | "nightly" | "posts" | "appearance" | "outfit" | "scene" | "visuals" | "speech_input" | "companion_voice" | "speech_preview" | "voice_design" | "voice_clone"
   "AiTaskKeyInput": "companion_chat" | "work_chat" | "scheduled_task" | "proactive" | "memory_review" | "memory_embedding" | "nightly" | "posts" | "appearance" | "outfit" | "scene" | "visuals" | "speech_input" | "companion_voice" | "speech_preview" | "voice_design" | "voice_clone"
   "AmbientCatalogEntry": { "visual_id": string; "version": number; "media_kind": "image" | "video"; "asset_kind": "actor" | "scene" | "cinematic"; "clip_kind": ("once" | "loop" | null); "media_url": string; "poster_url": (string | null); "width": number; "height": number; "duration_ms": (number | null); "description": string; "body": (ApiSchemas["ActorClipBody"] | null); "day_phase": ("dawn" | "day" | "dusk" | "night" | null); "scene_content_hash": (string | null); "action_id": (string | null); "action_name": string; "preset_key": (string | null); "semantic_tags": Array<"idle" | "attention" | "interaction" | "reading" | "working" | "creating" | "thinking" | "resting" | "organizing" | "socializing" | "stretching" | "grooming" | "drinking" | "dancing">; "performance_role": "idle" | "sustained" | "reaction"; "motion_intensity": "subtle" | "normal" | "expressive"; "interruptible": boolean; "media_semantics": (ApiSchemas["MediaSemantics"] | null); "allowed_triggers": Array<string>; "use_when": Array<string>; "avoid_when": Array<string> }
-  "AnalyzingVisualSource": { "original_filename": string; "original_path": string; "original_content_hash": string; "original_width": (number | null); "original_height": (number | null); "original_duration_ms": (number | null); "analysis_job_id": (string | null); "analysis_revision": (number | null); "analysis_pending": boolean; "presentation_approved": boolean; "identity_reason": string; "kind": "analysis"; "asset_kind": "actor" | "scene" | "cinematic"; "identity": (ApiSchemas["CharacterCardSnapshot"] | null); "identity_path": (string | null); "identity_hash": (string | null); "portrait_path": (string | null); "portrait_hash": (string | null); "identity_reference_role": "portrait" | "fullbody"; "outfit": (ApiSchemas["ComboMaterialRef"] | null); "scene": (ApiSchemas["SceneMediaRef"] | null); "action": (ApiSchemas["ActionMaterialRef"] | null); "media_semantics": (ApiSchemas["MediaSemantics"] | null); "clip_kind": ("once" | "loop" | null) }
+  "AnalyzingVisualSource": { "original_filename": string; "original_path": string; "original_content_hash": string; "original_width": (number | null); "original_height": (number | null); "original_duration_ms": (number | null); "analysis_job_id": (string | null); "analysis_revision": (number | null); "analysis_pending": boolean; "presentation_approved": boolean; "identity_reason": string; "kind": "analysis"; "asset_kind": "actor" | "scene" | "cinematic"; "identity": (ApiSchemas["VisualIdentitySnapshot"] | null); "identity_path": (string | null); "identity_hash": (string | null); "portrait_path": (string | null); "portrait_hash": (string | null); "identity_reference_role": "portrait" | "fullbody"; "outfit": (ApiSchemas["ComboMaterialRef"] | null); "scene": (ApiSchemas["SceneMediaRef"] | null); "action": (ApiSchemas["ActionMaterialRef"] | null); "media_semantics": (ApiSchemas["MediaSemantics"] | null); "clip_kind": ("once" | "loop" | null) }
   "ApiError": { "code": string; "message": string; "details": ApiSchemas["JsonValue"]; "request_id": string }
   "ApiErrorResponse": { "error": ApiSchemas["ApiError"] }
-  "AvatarAssetResponse": { "id": string; "asset_url": string; "seed_fullbody_url": string; "is_fullbody_confirmed": boolean; "prompt": string; "status": "succeeded" }
+  "AvatarAssetResponse": { "id": string; "asset_url": string; "seed_fullbody_url": string; "is_fullbody_confirmed": boolean; "identity_revision": number; "preparation_status": ("queued" | "running" | "paused" | "unknown" | "succeeded" | "failed" | "cancelled" | null); "preparation_error": (string | null); "prompt": string; "status": "succeeded" }
   "AvatarFromImageRequest": { "source": "reference"; "image": string; "content_type"?: (string | null); "description"?: (string | null); "presentation_image"?: (string | null); "presentation_content_type"?: (string | null) }
   "AvatarGenerateRequest": { "source": "generate"; "mode"?: ("edit" | "regenerate" | null); "feedback"?: (string | null) }
   "AvatarHistoryResponse": { "history": Array<ApiSchemas["AvatarAssetResponse"]> }
@@ -39,19 +39,12 @@ export interface ApiSchemas {
   "CapabilityChainsInput": { "llm"?: Array<ApiSchemas["CapabilityCardInput"]>; "stt"?: Array<ApiSchemas["CapabilityCardInput"]>; "tts"?: Array<ApiSchemas["CapabilityCardInput"]>; "image_gen"?: Array<ApiSchemas["CapabilityCardInput"]>; "video_gen"?: Array<ApiSchemas["CapabilityCardInput"]>; "embedding"?: Array<ApiSchemas["CapabilityCardInput"]> }
   "ChainPolicy": { "chain": Array<string> }
   "ChainPolicyInput": { "chain"?: Array<string> }
-  "CharacterCardExtract": { "expected_avatar_id": string; "expected_revision": number }
-  "CharacterCardResponse": { "avatar_id": string; "revision": number; "features": ApiSchemas["CharacterFeatures"]; "overrides": ApiSchemas["CharacterOverrides"]; "automatic": ApiSchemas["CharacterFeatures"]; "status": "pending" | "running" | "ready" | "failed"; "portrait_status": "pending" | "running" | "ready" | "failed"; "body_status": "pending" | "running" | "ready" | "failed"; "error": (string | null) }
-  "CharacterCardSnapshot": { "avatar_id": (string | null); "revision": number; "features": ApiSchemas["CharacterFeatures"]; "overrides": ApiSchemas["CharacterOverrides"] }
-  "CharacterCardUpdate": { "expected_avatar_id": string; "expected_revision": number; "changes": ApiSchemas["CharacterOverridesInput"] }
-  "CharacterFeatures": { "body_shape": string; "proportions": string; "limbs_and_appendages": string; "body_surface": string; "head_shape": string; "facial_features": string; "facial_surface": string; "head_identifiers": string }
-  "CharacterOverrides": { "head_shape": (string | null); "facial_features": (string | null); "facial_surface": (string | null); "head_identifiers": (string | null); "body_shape": (string | null); "proportions": (string | null); "limbs_and_appendages": (string | null); "body_surface": (string | null) }
-  "CharacterOverridesInput": { "head_shape"?: (string | null); "facial_features"?: (string | null); "facial_surface"?: (string | null); "head_identifiers"?: (string | null); "body_shape"?: (string | null); "proportions"?: (string | null); "limbs_and_appendages"?: (string | null); "body_surface"?: (string | null) }
   "ChatAttachment": { "type": "image" | "video" | "audio"; "file_url": string }
   "ChatAudioUploadResponse": { "url": string; "mime_type": string; "duration": number }
   "ChatRequestClientContext": { "environment_hints"?: (string | null); "platform_hints"?: (string | null) }
   "ChatVideoUploadResponse": { "url": string }
   "CinematicRequest": { "request_id": string; "outfit_id": string; "scene_id": string; "action_id": string; "media_kind"?: "image" | "video"; "requirements"?: string }
-  "CinematicSource": { "original_filename": (string | null); "original_path": (string | null); "original_content_hash": (string | null); "original_width": (number | null); "original_height": (number | null); "original_duration_ms": (number | null); "analysis_job_id": (string | null); "analysis_revision": (number | null); "analysis_pending": boolean; "presentation_approved": boolean; "identity_reason": string; "kind": "cinematic"; "identity": ApiSchemas["CharacterCardSnapshot"]; "identity_path": string; "identity_hash": string; "portrait_path": string; "portrait_hash": string; "identity_reference_role": "portrait" | "fullbody"; "outfit": ApiSchemas["ComboMaterialRef"]; "scene": ApiSchemas["SceneMediaRef"]; "action": ApiSchemas["ActionMaterialRef"]; "media_semantics": (ApiSchemas["MediaSemantics"] | null); "plan": (ApiSchemas["VisualCreationPlan"] | null); "requirements": string; "feedback": string; "video_feedback": string; "persona": { [key: string]: string } }
+  "CinematicSource": { "original_filename": (string | null); "original_path": (string | null); "original_content_hash": (string | null); "original_width": (number | null); "original_height": (number | null); "original_duration_ms": (number | null); "analysis_job_id": (string | null); "analysis_revision": (number | null); "analysis_pending": boolean; "presentation_approved": boolean; "identity_reason": string; "kind": "cinematic"; "identity": ApiSchemas["VisualIdentitySnapshot"]; "identity_path": string; "identity_hash": string; "portrait_path": string; "portrait_hash": string; "identity_reference_role": "portrait" | "fullbody"; "outfit": ApiSchemas["ComboMaterialRef"]; "scene": ApiSchemas["SceneMediaRef"]; "action": ApiSchemas["ActionMaterialRef"]; "media_semantics": (ApiSchemas["MediaSemantics"] | null); "plan": (ApiSchemas["VisualCreationPlan"] | null); "requirements": string; "feedback": string; "video_feedback": string; "persona": { [key: string]: string } }
   "ClientMediaBubble": { "type": "image" | "video"; "media_id": string; "status": "pending" | "ready" | "failed" | "result_unknown"; "url": (string | null); "error": (string | null); "video_queue": (ApiSchemas["VideoQueueInfo"] | null) }
   "ClientMediaEntry": { "type": "image" | "video" | "audio"; "url": string; "audio_url": (string | null); "duration": (number | null); "transcript": (string | null) }
   "ComboMaterialRef": { "material_id": (string | null); "name": string; "path": string; "content_hash": string; "description": string; "revision": (string | null) }
@@ -132,7 +125,7 @@ export interface ApiSchemas {
   "NightlyActivityLogItem": { "id": string; "user_id": string; "target_date": string; "status": string; "summary": (string | null); "payload": ({ [key: string]: unknown } | null); "created_at": (string | null); "updated_at": (string | null) }
   "NightlyActivityLogListResponse": { "items": Array<ApiSchemas["NightlyActivityLogItem"]> }
   "OnboardingPatchRequest": { "field": string; "value"?: (string | null) }
-  "OnboardingStateResponse": { "answers": { [key: string]: string }; "next_field": (string | null); "complete": boolean }
+  "OnboardingStateResponse": { "answers": { [key: string]: string }; "next_field": (string | null); "complete": boolean; "persona_complete": boolean }
   "OutfitAdoptRequest": { "source": "analysis"; "description"?: (string | null); "image": string; "content_type"?: (string | null) }
   "OutfitCreateRequest": { "source": "generate"; "description"?: (string | null); "image"?: (string | null); "content_type"?: (string | null) }
   "OutfitImageImportRequest": { "image": string; "source": "analysis"; "content_type"?: (string | null) }
@@ -159,6 +152,7 @@ export interface ApiSchemas {
   "PostReadRequest": { "post_ids": Array<string> }
   "PostResponse": { "id": string; "published_at": string; "content_type": ApiSchemas["PostContentType"]; "title": string; "body": string; "media_url": (string | null); "audio_url": (string | null); "comments": Array<ApiSchemas["PostCommentResponse"]>; "comment_count": number; "comments_next_cursor": (string | null); "comments_loaded": boolean }
   "PostUnreadResponse": { "has_unread": boolean }
+  "PreparationRetryRequest": { "expected_revision": number }
   "PromptBatchMessage": { "text": string; "attachments"?: (Array<ApiSchemas["ChatAttachment"]> | null) }
   "PromptPresetListResponse": { "presets": Array<ApiSchemas["PromptPresetSummary"]> }
   "PromptPresetSummary": { "id": string; "name": string; "description": string; "icon_key": string }
@@ -180,8 +174,8 @@ export interface ApiSchemas {
   "ReplyBubbleView": (ApiSchemas["TextBubble"] | ApiSchemas["VoiceBubbleView"] | ApiSchemas["ClientMediaBubble"] | ApiSchemas["LinkBubble"])
   "RpcActorClipBody": { "mask_path": (string | null); "first_frame_path": (string | null); "last_frame_path": (string | null); "foot_anchor": ([number, number] | null); "head_anchor": ([number, number] | null); "body_bounds": ([number, number, number, number] | null); "hit_bounds": ([number, number, number, number] | null); "continuity_key": (string | null) }
   "RpcActorClipRef": { "visual_id": string; "version": number }
+  "RpcAppearancePreparationEvent": { "avatar_id": string }
   "RpcCacheUsage": { "request_count": number; "reported_request_count": number; "input_tokens": (number | null); "cached_input_tokens": (number | null); "cache_hit_rate": (number | null) }
-  "RpcCharacterCardEvent": { "avatar_id": string; "revision": number; "status": "pending" | "running" | "ready" | "failed" }
   "RpcClientMediaBubble": { "type": "image" | "video"; "media_id": string; "status": "pending" | "ready" | "failed" | "result_unknown"; "url": (string | null); "error": (string | null); "video_queue": (ApiSchemas["RpcVideoQueueInfo"] | null) }
   "RpcClientMediaEntry": { "type": "image" | "video" | "audio"; "url": string; "audio_url": (string | null); "duration": (number | null); "transcript": (string | null) }
   "RpcComboMaterialRef": { "material_id": (string | null); "name": string; "path": string; "content_hash": string; "description": string; "revision": (string | null) }
@@ -260,6 +254,7 @@ export interface ApiSchemas {
   "RpcVideoFailedEvent": { "task_id": string; "session_id": (string | null); "error": (string | null); "status_message_id": (string | null); "status_text": (string | null) }
   "RpcVideoQueueEvent": { "task_id": string; "session_id": (string | null); "media_id": (string | null); "video_queue": (ApiSchemas["RpcVideoQueueInfo"] | null) }
   "RpcVideoQueueInfo": { "state": "waiting" | "rate_limited" | "blocked"; "next_retry_at": (string | null) }
+  "RpcVisualIdentityEvent": { "avatar_id": string; "revision": number }
   "RpcVisualPlayCommand": { "play_id": string; "status": "queued"; "asset_kind": "actor" | "scene" | "cinematic"; "visual_id": string; "visual_version": number; "media_kind": "image" | "video"; "media_path": string; "poster_path": (string | null); "input_image_hash": (string | null); "clip_kind": ("once" | "loop" | null); "loop": boolean; "transition": "natural" | "fade"; "presentation_epoch": number; "state_revision": number; "source": "manual" | "autonomous" | "life" | "restore"; "origin": "user" | "life" | "restore"; "expires_at": string; "composition": (ApiSchemas["RpcStageComposition"] | null); "outfit": (ApiSchemas["RpcComboMaterialRef"] | null); "scene": (ApiSchemas["RpcSceneMediaRef"] | null); "body": (ApiSchemas["RpcActorClipBody"] | null); "day_phase": ("dawn" | "day" | "dusk" | "night" | null) }
   "RpcVisualPlaybackEvent": { "play_id": string; "status": "queued" | "claimed" | "started" | "finished" | "failed" | "expired"; "receipt_kind": ("image" | "video" | "window_static" | null) }
   "RpcVisualUpdatedEvent": { "version": number }
@@ -380,6 +375,7 @@ export interface ApiSchemas {
   "VisualClaimResponse": { "claimed": boolean }
   "VisualCreationPlan": { "activity": string; "opening_description": string; "required_props": Array<string>; "motion_requirements": string }
   "VisualDetailView": { "id": string; "media_kind": "image" | "video"; "asset_kind": "actor" | "scene" | "cinematic"; "clip_kind": ("once" | "loop" | null); "title": string; "status": string; "media_url": string; "poster_url": (string | null); "width": number; "height": number; "duration_ms": (number | null); "version": number; "description": string; "outfit_id": (string | null); "outfit_name": string; "scene_id": (string | null); "scene_title": string; "action_id": (string | null); "action_name": (string | null); "input_image_hash": (string | null); "created_at": string; "updated_at": string; "body": (ApiSchemas["ActorClipBody"] | null); "auto_playable": boolean; "analysis_state": ("queued" | "running" | "paused" | "succeeded" | "failed" | "cancelled" | "unknown" | "awaiting_input" | null); "original_url": (string | null); "snapshot": ApiSchemas["VisualSnapshot"]; "jobs": Array<ApiSchemas["VisualJobView"]>; "analysis": (ApiSchemas["ImportAnalysisView"] | null) }
+  "VisualIdentitySnapshot": { "avatar_id": (string | null); "revision": number }
   "VisualItemView": { "id": string; "media_kind": "image" | "video"; "asset_kind": "actor" | "scene" | "cinematic"; "clip_kind": ("once" | "loop" | null); "title": string; "status": string; "media_url": string; "poster_url": (string | null); "width": number; "height": number; "duration_ms": (number | null); "version": number; "description": string; "outfit_id": (string | null); "outfit_name": string; "scene_id": (string | null); "scene_title": string; "action_id": (string | null); "action_name": (string | null); "input_image_hash": (string | null); "created_at": string; "updated_at": string; "body": (ApiSchemas["ActorClipBody"] | null); "auto_playable": boolean; "analysis_state": ("queued" | "running" | "paused" | "succeeded" | "failed" | "cancelled" | "unknown" | "awaiting_input" | null); "original_url": (string | null) }
   "VisualJobCommandRequest": { "command": "pause" | "resume" | "cancel" | "retry" }
   "VisualJobListResponse": { "jobs": Array<ApiSchemas["VisualJobView"]>; "has_more": boolean; "next_cursor": (string | null); "limit": number }
@@ -437,9 +433,7 @@ export interface ApiOperations {
   "admin.import_user_backup": { path: { "user_id": string }; query: { "mode"?: "overwrite" | "merge"; "sections"?: (Array<string> | null) }; body: FormData; input: { path: { "user_id": string }; query?: { "mode"?: "overwrite" | "merge"; "sections"?: (Array<string> | null) }; body: FormData }; response: ApiSchemas["UserBackupImportResponse"] }
   "gateway.gateway_ticket": { path: Record<string, never>; query: Record<string, never>; body: (ApiSchemas["GatewayTicketRequest"] | null); input: { path?: never; query?: never; body?: (ApiSchemas["GatewayTicketRequest"] | null) }; response: ApiSchemas["GatewayTicketResponse"] }
   "companion.idle_expression": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["IdleExpressionRequest"]; input: { path?: never; query?: never; body: ApiSchemas["IdleExpressionRequest"] }; response: ApiSchemas["IdleExpressionResult"] }
-  "companion.get_character_card_route": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: (ApiSchemas["CharacterCardResponse"] | null) }
-  "companion.patch_character_card_route": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["CharacterCardUpdate"]; input: { path?: never; query?: never; body: ApiSchemas["CharacterCardUpdate"] }; response: ApiSchemas["CharacterCardResponse"] }
-  "companion.extract_character_card_route": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["CharacterCardExtract"]; input: { path?: never; query?: never; body: ApiSchemas["CharacterCardExtract"] }; response: ApiSchemas["CharacterCardResponse"] }
+  "companion.retry_appearance_preparation": { path: { "avatar_id": string }; query: Record<string, never>; body: ApiSchemas["PreparationRetryRequest"]; input: { path: { "avatar_id": string }; query?: never; body: ApiSchemas["PreparationRetryRequest"] }; response: ApiSchemas["AvatarAssetResponse"] }
   "companion.get_persona": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["PersonaResponse"] }
   "companion.put_persona": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["PersonaUpdate"]; input: { path?: never; query?: never; body: ApiSchemas["PersonaUpdate"] }; response: ApiSchemas["PersonaResponse"] }
   "companion.post_portrait_confirm": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["PortraitConfirmRequest"]; input: { path?: never; query?: never; body: ApiSchemas["PortraitConfirmRequest"] }; response: ApiSchemas["CompanionOperationResponse"] }
@@ -451,7 +445,7 @@ export interface ApiOperations {
   "companion.put_avatar_select": { path: { "avatar_id": string }; query: Record<string, never>; body: undefined; input: { path: { "avatar_id": string }; query?: never; body?: never }; response: ApiSchemas["AvatarAssetResponse"] }
   "companion.post_fullbody_reference": { path: { "avatar_id": string }; query: Record<string, never>; body: ApiSchemas["FullbodyReferenceGenerateRequest"]; input: { path: { "avatar_id": string }; query?: never; body: ApiSchemas["FullbodyReferenceGenerateRequest"] }; response: (ApiSchemas["AvatarAssetResponse"] | ApiSchemas["FullbodyCandidateResponse"]) }
   "companion.get_fullbody_candidate": { path: { "avatar_id": string }; query: Record<string, never>; body: undefined; input: { path: { "avatar_id": string }; query?: never; body?: never }; response: (ApiSchemas["FullbodyCandidateResponse"] | null) }
-  "companion.post_fullbody_candidate_analyze": { path: { "avatar_id": string; "candidate_id": string }; query: Record<string, never>; body: undefined; input: { path: { "avatar_id": string; "candidate_id": string }; query?: never; body?: never }; response: ApiSchemas["FullbodyCandidateResponse"] }
+  "companion.post_fullbody_candidate_review": { path: { "avatar_id": string; "candidate_id": string }; query: Record<string, never>; body: undefined; input: { path: { "avatar_id": string; "candidate_id": string }; query?: never; body?: never }; response: ApiSchemas["FullbodyCandidateResponse"] }
   "companion.post_fullbody_candidate_accept": { path: { "avatar_id": string; "candidate_id": string }; query: Record<string, never>; body: undefined; input: { path: { "avatar_id": string; "candidate_id": string }; query?: never; body?: never }; response: ApiSchemas["AvatarAssetResponse"] }
   "companion.post_fullbody_confirm": { path: { "avatar_id": string }; query: Record<string, never>; body: ApiSchemas["FullbodyConfirmRequest"]; input: { path: { "avatar_id": string }; query?: never; body: ApiSchemas["FullbodyConfirmRequest"] }; response: ApiSchemas["AvatarAssetResponse"] }
   "companion.post_fullbody_prompt": { path: { "avatar_id": string }; query: Record<string, never>; body: ApiSchemas["FullbodyPromptRequest"]; input: { path: { "avatar_id": string }; query?: never; body?: ApiSchemas["FullbodyPromptRequest"] }; response: ApiSchemas["ImagePromptResponse"] }
@@ -614,7 +608,7 @@ export interface RpcOperations {
 export interface GatewayEventPayloads {
   "command.result": ApiSchemas["RpcCommandDispatchResult"]
   "companion.action.updated": ApiSchemas["RpcEmptyResult"]
-  "companion.character_card.updated": ApiSchemas["RpcCharacterCardEvent"]
+  "companion.appearance_preparation.updated": ApiSchemas["RpcAppearancePreparationEvent"]
   "companion.diary.created": ApiSchemas["RpcDiaryEntryResponse"]
   "companion.diary.read": ApiSchemas["RpcEmptyResult"]
   "companion.life.updated": ApiSchemas["RpcLifeUpdatedEvent"]
@@ -632,6 +626,7 @@ export interface GatewayEventPayloads {
   "companion.visual.play": ApiSchemas["RpcVisualPlayCommand"]
   "companion.visual.playback": ApiSchemas["RpcVisualPlaybackEvent"]
   "companion.visual.updated": ApiSchemas["RpcVisualUpdatedEvent"]
+  "companion.visual_identity.updated": ApiSchemas["RpcVisualIdentityEvent"]
   "companion.voice.updated": ApiSchemas["RpcVoiceUpdatedEvent"]
   "compress.completed": ApiSchemas["RpcCompressionEvent"]
   "error": ApiSchemas["RpcGatewayErrorEvent"]
@@ -918,32 +913,8 @@ export const API_OPERATIONS = {
     "wait_for_model": true,
     "ipc": true
   },
-  "companion.get_character_card_route": {
-    "path": "/api/companion/character-card",
-    "method": "GET",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "desktop",
-      "remote"
-    ],
-    "wait_for_model": false,
-    "ipc": true
-  },
-  "companion.patch_character_card_route": {
-    "path": "/api/companion/character-card",
-    "method": "PATCH",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "desktop",
-      "remote"
-    ],
-    "wait_for_model": false,
-    "ipc": true
-  },
-  "companion.extract_character_card_route": {
-    "path": "/api/companion/character-card/extract",
+  "companion.retry_appearance_preparation": {
+    "path": "/api/companion/avatar/{avatar_id}/preparation/retry",
     "method": "POST",
     "encoding": "json",
     "response": "json",
@@ -1078,8 +1049,8 @@ export const API_OPERATIONS = {
     "wait_for_model": false,
     "ipc": true
   },
-  "companion.post_fullbody_candidate_analyze": {
-    "path": "/api/companion/avatar/{avatar_id}/fullbody/candidate/{candidate_id}/analyze",
+  "companion.post_fullbody_candidate_review": {
+    "path": "/api/companion/avatar/{avatar_id}/fullbody/candidate/{candidate_id}/review",
     "method": "POST",
     "encoding": "json",
     "response": "json",
@@ -2863,7 +2834,7 @@ export const EVENT_POLICIES = {
     "recovery": "resource",
     "baseline": false
   },
-  "companion.character_card.updated": {
+  "companion.appearance_preparation.updated": {
     "audience": "all",
     "snapshot": false,
     "recovery": "resource",
@@ -2966,6 +2937,12 @@ export const EVENT_POLICIES = {
     "baseline": false
   },
   "companion.visual.updated": {
+    "audience": "all",
+    "snapshot": false,
+    "recovery": "resource",
+    "baseline": false
+  },
+  "companion.visual_identity.updated": {
     "audience": "all",
     "snapshot": false,
     "recovery": "resource",

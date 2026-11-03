@@ -33,7 +33,7 @@ import {
   hydrateFullbodyReference,
   regenerateFullbodyReference,
   restoreFullbodyReferenceVersion,
-  retryFullbodyCandidateAnalysis
+  retryFullbodyCandidateReview
 } from './fullbody-reference-store'
 import { GenerationActionsGroup } from './generation-actions'
 import { MAX_IMAGE_DESCRIPTION } from './persona'
@@ -408,7 +408,7 @@ export function FullbodyReferencePanel({
                 : dict.creation.imageLoadFailed
               : confirmError
                 ? t.restoreFailed
-                : t.retryCandidateAnalysisFailed
+                : t.retryCandidateReviewFailed
             : dict.creation.review
       }
     />
@@ -437,10 +437,10 @@ export function FullbodyReferencePanel({
                 <button
                   className={BTN_SUBTLE}
                   disabled={busy || currentImageUnavailable}
-                  onClick={() => void retryFullbodyCandidateAnalysis(avatarId)}
+                  onClick={() => void retryFullbodyCandidateReview(avatarId)}
                   type="button"
                 >
-                  {t.retryCandidateAnalysis}
+                  {t.retryCandidateReview}
                 </button>
               ))}
             {(onBack || onContinue) && (

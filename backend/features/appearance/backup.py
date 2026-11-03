@@ -6,16 +6,17 @@ from typing import Any
 from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.backup import BackupContext, BackupTable
 
-from features.media.identity_contracts import CharacterFeatures, CharacterOverrides
+from features.media.identity_contracts import VisualObservation
 
 from .models import (
     AppearanceAsset,
+    AppearancePreparationJob,
     AvatarAsset,
-    CharacterAnalysisJob,
     CompanionOutfit,
     FullbodyCandidate,
     OutfitCreationJob,
     OutfitSource,
+    VisualObservationJob,
 )
 
 
@@ -24,14 +25,11 @@ def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: 
         for field in ("generation_origin_json", "fullbody_generation_origin_json"):
             if payload.get(field):
                 payload[field] = GenerationOrigin.model_validate(payload[field]).model_dump(mode="json")
-        revision = payload["revision"]
+        revision = payload["identity_revision"]
         if not isinstance(revision, int) or isinstance(revision, bool) or revision < 0:
-            raise ValueError("Invalid character card revision")
-        payload["automatic_json"] = CharacterFeatures.model_validate(payload["automatic_json"]).model_dump(mode="json")
-        payload["overrides_json"] = CharacterOverrides.model_validate(payload["overrides_json"]).model_dump(
-            mode="json",
-            exclude_none=True,
-        )
+            raise ValueError("Invalid visual identity revision")
+    if table == "visual_observation_jobs" and payload.get("result_json"):
+        payload["result_json"] = VisualObservation.model_validate(payload["result_json"]).model_dump(mode="json")
 
     if table == "companion_outfits":
         payload["source_json"] = OutfitSource.model_validate(payload["source_json"]).dump()
@@ -52,7 +50,7 @@ def backup_tables() -> tuple[BackupTable, ...]:
             "avatar_assets",
             AvatarAsset,
             foreign_keys={
-                "analysis_job_id": "character_analysis_jobs",
+                "preparation_job_id": "appearance_preparation_jobs",
                 "portrait_asset_id": "assets",
                 "fullbody_asset_id": "assets",
             },
@@ -65,7 +63,15 @@ def backup_tables() -> tuple[BackupTable, ...]:
             prepare_payload=partial(_prepare, "companion_outfits"),
         ),
         BackupTable(
-            "character_analysis_jobs", CharacterAnalysisJob, foreign_keys={"id": "jobs", "avatar_id": "avatar_assets"}
+            "appearance_preparation_jobs",
+            AppearancePreparationJob,
+            foreign_keys={"id": "jobs", "avatar_id": "avatar_assets"},
+        ),
+        BackupTable(
+            "visual_observation_jobs",
+            VisualObservationJob,
+            foreign_keys={"id": "jobs", "avatar_id": "avatar_assets"},
+            prepare_payload=partial(_prepare, "visual_observation_jobs"),
         ),
         BackupTable(
             "companion_fullbody_candidates",
@@ -79,7 +85,8 @@ def backup_tables() -> tuple[BackupTable, ...]:
                 "avatar_id": "avatar_assets",
                 "outfit_id": "companion_outfits",
                 "candidate_id": "companion_fullbody_candidates",
-                "analysis_job_id": "character_analysis_jobs",
+                "preparation_job_id": "appearance_preparation_jobs",
+                "observation_job_id": "visual_observation_jobs",
                 "asset_id": "assets",
             },
         ),

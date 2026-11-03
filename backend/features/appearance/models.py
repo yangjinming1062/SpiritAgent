@@ -25,6 +25,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 if TYPE_CHECKING:
     from features.accounts.models import User
 
+PREPARATION_RESUMABLE_STATES = ("queued", "running", "paused", "unknown")
+
 
 class OutfitSource(BaseModel):
     """着装设计来源、已接受反馈与生成时的身份快照。"""
@@ -36,8 +38,8 @@ class OutfitSource(BaseModel):
     reference_image_path: str | None = None
     reference_description: str | None = None
     feedback_history: list[str] = Field(default_factory=list)
-    # 角色卡修订用于追溯；全身来源用于下游选择身份与造型参考的职责。
-    character_card_revision: int | None = None
+    # 视觉身份版本用于追溯；全身来源用于下游选择身份与造型参考的职责。
+    identity_revision: int | None = None
     identity_reference_path: str = Field(min_length=1)
 
     @field_validator("reference_image_path", "reference_description")
@@ -99,14 +101,12 @@ class AvatarAsset(ModelBase, TimestampMixin):
     active: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    revision: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
-    automatic_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
-    overrides_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
-    analysis_job_id: Mapped[int | None] = mapped_column(
-        ForeignKey("character_analysis_jobs.id", ondelete="SET NULL", use_alter=True)
+    identity_revision: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    preparation_job_id: Mapped[int | None] = mapped_column(
+        ForeignKey("appearance_preparation_jobs.id", ondelete="SET NULL", use_alter=True)
     )
-    analysis_job: Mapped["CharacterAnalysisJob | None"] = relationship(
-        foreign_keys=[analysis_job_id], lazy="joined", post_update=True
+    preparation_job: Mapped["AppearancePreparationJob | None"] = relationship(
+        foreign_keys=[preparation_job_id], lazy="joined", post_update=True
     )
 
     user: Mapped["User"] = relationship(back_populates="avatar_assets")
@@ -125,7 +125,6 @@ class FullbodyCandidate(ModelBase, TimestampMixin):
     asset_id: Mapped[int | None] = mapped_column(ForeignKey("assets.id", ondelete="RESTRICT"))
     base_asset_id: Mapped[int | None] = mapped_column(ForeignKey("assets.id", ondelete="RESTRICT"))
     generation_origin_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-    body_features_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
     status: Mapped[str] = mapped_column(String(16), default="pending", server_default=text("'pending'"), index=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -134,7 +133,8 @@ class AppearanceAsset(ModelBase):
     __tablename__ = "appearance_assets"
     __table_args__ = (
         CheckConstraint(
-            "num_nonnulls(avatar_id, outfit_id, candidate_id, analysis_job_id) = 1", name="appearance_asset_owner"
+            "num_nonnulls(avatar_id, outfit_id, candidate_id, preparation_job_id, observation_job_id) = 1",
+            name="appearance_asset_owner",
         ),
         UniqueConstraint("avatar_id", "asset_id", name="uq_avatar_asset_binding"),
         UniqueConstraint("outfit_id", "asset_id", name="uq_outfit_asset_binding"),
@@ -146,22 +146,36 @@ class AppearanceAsset(ModelBase):
     candidate_id: Mapped[int | None] = mapped_column(
         ForeignKey("companion_fullbody_candidates.id", ondelete="CASCADE"), index=True
     )
-    analysis_job_id: Mapped[int | None] = mapped_column(
-        ForeignKey("character_analysis_jobs.id", ondelete="CASCADE"), index=True
+    preparation_job_id: Mapped[int | None] = mapped_column(
+        ForeignKey("appearance_preparation_jobs.id", ondelete="CASCADE"), index=True
+    )
+    observation_job_id: Mapped[int | None] = mapped_column(
+        ForeignKey("visual_observation_jobs.id", ondelete="CASCADE"), index=True
     )
     asset_id: Mapped[int] = mapped_column(ForeignKey("assets.id", ondelete="RESTRICT"), index=True)
 
 
-class CharacterAnalysisJob(JobRecord):
-    __tablename__ = "character_analysis_jobs"
-    __mapper_args__ = {"polymorphic_identity": "character_analysis"}
+class AppearancePreparationJob(JobRecord):
+    __tablename__ = "appearance_preparation_jobs"
+    __mapper_args__ = {"polymorphic_identity": "appearance.prepare"}
     id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), primary_key=True)
     owner_id: Mapped[int] = mapped_column(BigInteger)
     avatar_id: Mapped[int | None] = mapped_column(ForeignKey("avatar_assets.id", ondelete="SET NULL"), index=True)
-    extraction_id: Mapped[str] = mapped_column(String(36), default="")
-    portrait_status: Mapped[str] = mapped_column(String(16), default="pending", server_default=text("'pending'"))
-    body_status: Mapped[str] = mapped_column(String(16), default="pending", server_default=text("'pending'"))
-    portrait_result_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
-    body_result_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
-    portrait_source_path: Mapped[str] = mapped_column(String(2048), default="")
-    body_source_path: Mapped[str] = mapped_column(String(2048), default="")
+    preparation_id: Mapped[str] = mapped_column(String(36))
+    identity_revision: Mapped[int] = mapped_column(Integer)
+    portrait_source_path: Mapped[str] = mapped_column(String(2048))
+    body_source_path: Mapped[str] = mapped_column(String(2048))
+
+
+class VisualObservationJob(JobRecord):
+    __tablename__ = "visual_observation_jobs"
+    __table_args__ = (UniqueConstraint("avatar_id", "identity_revision", name="uq_visual_observation_identity"),)
+    __mapper_args__ = {"polymorphic_identity": "visual.observe"}
+    id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), primary_key=True)
+    owner_id: Mapped[int] = mapped_column(BigInteger)
+    avatar_id: Mapped[int | None] = mapped_column(ForeignKey("avatar_assets.id", ondelete="SET NULL"), index=True)
+    identity_revision: Mapped[int] = mapped_column(Integer)
+    portrait_source_path: Mapped[str] = mapped_column(String(2048))
+    body_source_path: Mapped[str] = mapped_column(String(2048))
+    result_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))

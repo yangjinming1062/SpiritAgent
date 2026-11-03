@@ -20,7 +20,7 @@
 | 手机配对与设备授权：[remote/models.py](../backend/features/accounts/remote/models.py) | 一次性授权摘要、兑换期限与设备撤销分别保存，独立于桌面登录，不进入用户备份 |
 | 用户/系统设置：[settings/models.py](../backend/features/configuration/settings/models.py) | 用户值为结构化设置；`system_settings` 的每项值是 JSON 文本，由 [system_settings.py](../backend/features/configuration/system_settings.py)校验水合，不能直接按 JSONB 对待 |
 | 模型配置与资讯连接：[configuration/models.py](../backend/features/configuration/models.py) | 模型配置按用户一对一；资讯连接按账户/平台唯一，凭证修订和扫码登录修订各自隔离迟到结果，均不属于普通设置同步 |
-| 人格与政策：[companion/models.py](../backend/features/companion/models.py) | `personas` 定义伙伴及自主政策，当前活动和实际显示各有独立状态 |
+| 人格与政策：[companion/models.py](../backend/features/companion/models.py) | `personas` 保存人物背景、独立引导进度及自主政策，当前活动和实际显示各有独立状态 |
 | 声音与分发：[voice_models.py](../backend/features/media/voice_models.py)、[updates/models.py](../backend/features/updates/models.py) | 声音当前槽位指向不可变方案版本，消息引用制作时的版本；更新版本是全局分发资料，不归某个产品账户 |
 
 ## 会话与话题
@@ -44,8 +44,8 @@
 
 | 字段组与模型入口 | 语义 |
 |---|---|
-| 身份、特征与用户覆盖：[appearance/models.py](../backend/features/appearance/models.py) | 确认形象维护统一修订；自动提取值和人工覆盖分离。候选与分析任务独立于当前身份，失败不撤销已发布资料 |
-| 衣柜与造型任务：同一[模型文件](../backend/features/appearance/models.py) | 衣柜保存已采纳造型及来源；`outfit_creation_jobs` 保存自主制作详情并继承共享任务。多文件关系只归属身份、造型、候选或分析任务之一 |
+| 视觉身份与内部观察：[appearance/models.py](../backend/features/appearance/models.py) | 确认图维护独立身份版本；透明准备和视觉观察任务分别拥有冻结来源。观察仅供文字理解，失败不影响身份资格 |
+| 衣柜与造型任务：同一[模型文件](../backend/features/appearance/models.py) | 衣柜保存已采纳造型及来源；`outfit_creation_jobs` 保存自主制作详情并继承共享任务。多文件关系只归属身份、造型、候选、准备任务或观察任务之一 |
 | 环境与制作：[scenes/models.py](../backend/features/scenes/models.py) | 素材保存上传源、展示图和目标/源/实际尺寸，初始和替换任务独立；没有“当前启用环境”字段，新制作失败保留可用素材 |
 | 动作定义：[action_library/models.py](../backend/features/action_library/models.py) | 保存动作含义、适用条件和播放方式；自创动作另冻结评审依据，定义不是可播成品 |
 

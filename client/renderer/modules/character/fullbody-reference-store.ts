@@ -487,7 +487,7 @@ export async function acceptFullbodyCandidate(avatarId: string): Promise<boolean
   }
 }
 
-export async function retryFullbodyCandidateAnalysis(avatarId: string): Promise<boolean> {
+export async function retryFullbodyCandidateReview(avatarId: string): Promise<boolean> {
   const current = $fullbodyReference.get()
 
   if (current.avatarId !== avatarId || !current.candidateId || current.busy) {
@@ -498,7 +498,7 @@ export async function retryFullbodyCandidateAnalysis(avatarId: string): Promise<
   $fullbodyReference.set({ ...current, busy: true, candidateError: null })
 
   try {
-    const result = await requestResource('companion.post_fullbody_candidate_analyze', {
+    const result = await requestResource('companion.post_fullbody_candidate_review', {
       path: { avatar_id: avatarId, candidate_id: current.candidateId }
     })
 
@@ -517,9 +517,9 @@ export async function retryFullbodyCandidateAnalysis(avatarId: string): Promise<
 
     const httpStatus = ipcErrorStatus(error)
 
-    // 无状态码（超时、断连）或 404/409 时，先前未返回的分析可能已写成 ready，候选也可能已被采纳或替换；重读最近有效候选，面板才不会停在重试分析。
+    // 无状态码（超时、断连）或 404/409 时，先前未返回的复核可能已写成 ready，候选也可能已被采纳或替换；重读最近有效候选，面板才不会停在重试复核。
     if (httpStatus === null || httpStatus === 404 || httpStatus === 409) {
-      log.warn('fullbody-reference', 'Candidate analysis result unknown', error)
+      log.warn('fullbody-reference', 'Candidate review result unknown', error)
       await hydrateFullbodyReference(avatarId)
 
       return $fullbodyReference.get().candidateStatus === 'ready'
@@ -530,7 +530,7 @@ export async function retryFullbodyCandidateAnalysis(avatarId: string): Promise<
       busy: false,
       candidateError: backendDetailMessage(
         error,
-        getStrings().settings.persona.fullbodyReference.retryCandidateAnalysisFailed
+        getStrings().settings.persona.fullbodyReference.retryCandidateReviewFailed
       )
     })
 

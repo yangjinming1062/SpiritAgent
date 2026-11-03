@@ -147,7 +147,6 @@ async def _review_action(user_id: int, current: ActionAssetView, source: ActionR
             }
         ),
         "reason": current.reason,
-        "identity": source.identity.features.model_dump(),
         "persona": source.persona,
     }
     return await call_llm_json(

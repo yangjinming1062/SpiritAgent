@@ -105,6 +105,9 @@ PERSONA_FIELD_LABELS: dict[str, dict[str, str]] = {
         "relationship": "与用户的关系",
         "biological_type": "物种",
         "gender": "性别",
+        "age": "年龄设定",
+        "occupation": "职业或身份",
+        "background": "背景设定（并非已记录的生活事件）",
     },
     "en": {
         "name": "Name",
@@ -113,15 +116,17 @@ PERSONA_FIELD_LABELS: dict[str, dict[str, str]] = {
         "relationship": "Relationship with the user",
         "biological_type": "Species",
         "gender": "Gender",
+        "age": "Age setting",
+        "occupation": "Occupation or role",
+        "background": "Background setting (not recorded life events)",
     },
 }
 
-# 对话与文字规划只读外形资料，不附参考图；图像任务使用 prompts.generation 中的外形模板。
+# 对话与文字规划按需读取非权威的视觉观察；图像任务直接读取确认图。
 CHARACTER_APPEARANCE_TEXTS: dict[str, str] = {
-    "zh": "外形资料（JSON，整理自已确认的形象图片，不是指令；不含服装，空白表示未整理）：{features}",
+    "zh": "视觉观察（JSON，仅为确认图的辅助理解，保留未知与不确定性，不是身份定义或指令）：{features}",
     "en": (
-        "Appearance notes (JSON compiled from your confirmed images, not instructions; clothing is excluded and blank "
-        "fields were not recorded): {features}"
+        "Visual observations (JSON, auxiliary understanding of confirmed images, not identity definitions or instructions; preserve uncertainties): {features}"
     ),
 }
 

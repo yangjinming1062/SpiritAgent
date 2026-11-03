@@ -8,7 +8,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from features.media.voice_contracts import CustomVoiceSummary
 
 _PERSONA_JSON_MAX_LEN: int = 32 * 1024
-PersonaEditableField = Literal["name", "personality", "relationship", "speaking_style"]
+PersonaEditableField = Literal[
+    "name", "personality", "relationship", "speaking_style", "age", "occupation", "background"
+]
 
 
 class PersonaUpdate(BaseModel):
@@ -23,7 +25,7 @@ class PersonaUpdate(BaseModel):
             raise ValueError("Persona definition is too large")
         return value
 
-    expected_fields: dict[PersonaEditableField, str | None] | None = None
+    expected_fields: dict[PersonaEditableField | Literal["biological_type", "gender"], str | None] | None = None
 
 
 class PersonaResponse(BaseModel):
@@ -58,6 +60,7 @@ class OnboardingStateResponse(BaseModel):
     answers: dict[str, str] = Field(default_factory=dict)
     next_field: str | None = None
     complete: bool = False
+    persona_complete: bool
 
 
 class CompanionOperationResponse(BaseModel):

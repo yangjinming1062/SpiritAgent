@@ -9,7 +9,7 @@
 | 对话、语音、上下文与工具循环 | [对话编排](workflows/chat/README.md) |
 | 持续生活、执行与经历回流 | [生活](features/life/README.md) |
 | 记忆、证据、编辑与遗忘 | [记忆](features/memory/README.md) |
-| 头像、角色卡、衣柜与环境 | [外观](features/appearance/README.md)、[场景](features/scenes/README.md) |
+| 头像、视觉身份、衣柜与环境 | [外观](features/appearance/README.md)、[场景](features/scenes/README.md) |
 | 动作、影像与公共媒体 | [动作](features/action_library/README.md)、[影像](features/visuals/README.md)、[媒体](features/media/README.md) |
 | 动态与日记 | [动态](features/posts/README.md)、[内容存储](features/entries/README.md)、[journal_service.py](features/journal/journal_service.py) |
 | Cron、主动陪伴与夜间 | [业务调度](#业务调度)、[cron.py](entrypoints/scheduler/cron.py)、[cron_jobs.py](features/automation/cron_jobs.py) |

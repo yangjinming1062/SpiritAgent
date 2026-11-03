@@ -27,10 +27,12 @@ logger = get_logger(__name__)
 
 # 人设字段顺序属于对外契约的一部分，它决定渲染出的系统提示词片段形状
 _REQUIRED_FIELDS: tuple[str, ...] = ("name", "personality", "speaking_style")
-_OPTIONAL_FIELDS: tuple[str, ...] = ("relationship", "biological_type", "gender")
+_OPTIONAL_FIELDS: tuple[str, ...] = ("relationship", "biological_type", "gender", "age", "occupation", "background")
 _KNOWN_FIELDS: frozenset[str] = frozenset(_REQUIRED_FIELDS + _OPTIONAL_FIELDS)
 _MAX_FIELD_LEN: int = 500
-_EDITABLE_FIELDS = frozenset({"name", "personality", "relationship", "speaking_style"})
+_EDITABLE_FIELDS = frozenset(
+    {"name", "personality", "relationship", "speaking_style", "age", "occupation", "background"}
+)
 
 # 引导问答的原始字段，按提问顺序排列；未完成时以草稿存 definition_json，user_* 由 update_persona 路由进 Memory。
 ONBOARDING_FIELDS: tuple[str, ...] = (
@@ -40,6 +42,10 @@ ONBOARDING_FIELDS: tuple[str, ...] = (
     "relationship",
     "personality",
     "speaking_style",
+    "age",
+    "occupation",
+    "background",
+    "background_complete",
     "voice",
     "user_call_name",
     "user_gender",
@@ -51,9 +57,8 @@ ONBOARDING_FIELDS: tuple[str, ...] = (
 )
 _ONBOARDING_MAX_LEN: int = USER_PROFILE_MAX_CONTENT_CHARS
 
-# voice 之前的字段构成角色阶段，由唯一的顺序事实源派生。
-_VOICE_FIELD_INDEX: int = ONBOARDING_FIELDS.index("voice")
-_CHARACTER_ONBOARDING_FIELDS: tuple[str, ...] = ONBOARDING_FIELDS[:_VOICE_FIELD_INDEX]
+# 基础问答之后单独收集可选背景，形象与声音由各自状态恢复。
+_CHARACTER_ONBOARDING_FIELDS: tuple[str, ...] = ONBOARDING_FIELDS[: ONBOARDING_FIELDS.index("age")]
 
 
 class PersonaValidationError(ValueError):
@@ -93,12 +98,19 @@ def _validate_definition(definition: dict[str, Any]) -> dict[str, str]:
     for key, value in definition.items():
         if key not in _KNOWN_FIELDS:
             raise PersonaValidationError(f"unknown persona field: {key!r}", key)
+        if key in _OPTIONAL_FIELDS and (value is None or (isinstance(value, str) and not value.strip())):
+            continue
         if not isinstance(value, str):
             raise PersonaValidationError(f"persona.{key} must be a string", key)
         stripped = value.strip()
         if not stripped:
             raise PersonaValidationError(f"persona.{key} must be non-empty", key)
-        cleaned[key] = stripped[:_MAX_FIELD_LEN]
+        if "\x00" in stripped:
+            raise PersonaValidationError(f"persona.{key} must not contain NUL characters", key)
+        maximum = 2000 if key == "background" else _MAX_FIELD_LEN
+        if len(stripped) > maximum:
+            raise PersonaValidationError(f"persona.{key} must be at most {maximum} characters", key)
+        cleaned[key] = stripped
     for key in _REQUIRED_FIELDS:
         if key not in cleaned:
             raise PersonaValidationError(f"persona.{key} is required", key)
@@ -137,12 +149,18 @@ async def update_persona(
     persona = await get_or_create_persona_row(db, user_id)
     await db.refresh(persona, with_for_update=True)
     current_draft = load_persona_definition(persona)
+    if persona.is_complete and expected_fields is None:
+        raise PersonaConflictError("人物设定已保存，请核对最新内容后再提交修改。")
     if expected_fields is not None:
         if not persona.is_complete:
             raise PersonaValidationError("请先完成伙伴资料引导，再编辑伙伴资料。")
         submitted = set(definition)
-        if not submitted or not submitted.issubset(_EDITABLE_FIELDS):
-            raise PersonaValidationError("只能编辑名字、性格、关系和说话方式。")
+        if not submitted or not submitted.issubset(_KNOWN_FIELDS):
+            raise PersonaValidationError("只能编辑人物设定。")
+        if submitted - _EDITABLE_FIELDS:
+            avatar = await read_appearance_readiness(db, user_id)
+            if avatar is not None and avatar.is_fullbody_confirmed:
+                raise PersonaValidationError("已确认的物种和性别不可修改。")
         if not submitted.issubset(expected_fields):
             raise PersonaValidationError("expected_fields must contain the original value for each edited field")
         for key, original in expected_fields.items():
@@ -151,7 +169,7 @@ async def update_persona(
         persona_def = {key: value for key, value in current_draft.items() if key in _KNOWN_FIELDS}
         for key in submitted:
             value = definition[key]
-            if key == "relationship" and isinstance(value, str) and not value.strip():
+            if key in _OPTIONAL_FIELDS and (value is None or isinstance(value, str) and not value.strip()):
                 persona_def.pop(key, None)
             else:
                 persona_def[key] = value
@@ -162,17 +180,11 @@ async def update_persona(
         persona_def = {key: value for key, value in definition.items() if not key.startswith("user_")}
         cleaned = _validate_definition(persona_def)
         await record_user_profile(db, MemoryScope(user_id, "companion"), user_profile)
-        avatar = await read_appearance_readiness(db, user_id)
-        if avatar is not None and avatar.is_fullbody_confirmed:
-            for locked in ("biological_type", "gender"):
-                if locked in current_draft:
-                    cleaned[locked] = current_draft[locked]
-                else:
-                    cleaned.pop(locked, None)
     for voice_field in ("voice", "voice_setup_skipped", "environment_skipped"):
         if current_draft.get(voice_field):
             cleaned[voice_field] = current_draft[voice_field]
     persona.definition_json = cleaned
+    persona.onboarding_progress_json = {**persona.onboarding_progress_json, "background_complete": True}
     # persona_extras 不缓存：build_system_prompt_extras 运行期按 session language 从 definition_json 实时渲染，避免英语会话拿到 onboarding 烤进去的中文头部。
     persona.is_complete = True
     session_id = await ensure_main_conversation_for_user(db, persona.user_id, commit=False)
@@ -208,14 +220,18 @@ def render_extras(definition: dict[str, str], *, language: str = DEFAULT_LANGUAG
     return "\n".join(lines)
 
 
-def _state(answers: dict[str, str], next_field: str | None, complete: bool) -> OnboardingStateResponse:
-    return OnboardingStateResponse(answers=answers, next_field=next_field, complete=complete)
+def _state(
+    persona: Persona, answers: dict[str, str], next_field: str | None, complete: bool
+) -> OnboardingStateResponse:
+    return OnboardingStateResponse(
+        answers=answers, next_field=next_field, complete=complete, persona_complete=persona.is_complete
+    )
 
 
 async def _next_onboarding_step(db: AsyncSession, user_id: int, persona: Persona, draft: dict[str, str]) -> str | None:
     """返回必需的引导步骤；声音已选择或用户明确暂时使用文字后可完成。"""
     if not persona.is_complete:
-        return next((f for f in _CHARACTER_ONBOARDING_FIELDS if not draft.get(f)), "portrait")
+        return _next_character_step(persona, draft)
     if not persona.is_portrait_confirmed:
         return "portrait"
     avatar = await read_appearance_readiness(db, user_id)
@@ -226,6 +242,14 @@ async def _next_onboarding_step(db: AsyncSession, user_id: int, persona: Persona
     if not draft.get("voice") and draft.get("voice_setup_skipped") != "true":
         return "voice"
     return None
+
+
+def _next_character_step(persona: Persona, draft: dict[str, str]) -> str:
+    completed = set(persona.onboarding_progress_json.get("completed_fields", []))
+    for field in _CHARACTER_ONBOARDING_FIELDS:
+        if field not in completed and not draft.get(field):
+            return field
+    return "portrait" if persona.onboarding_progress_json.get("background_complete") else "background"
 
 
 async def onboarded_user_ids(db: AsyncSession, user_ids: Collection[int]) -> set[int]:
@@ -244,12 +268,12 @@ async def get_onboarding_state(db: AsyncSession, user_id: int) -> OnboardingStat
     draft = load_persona_definition(persona)
     next_step = await _next_onboarding_step(db, user_id, persona, draft)
     if next_step is None:
-        return _state({}, None, True)
+        return _state(persona, {}, None, True)
     if not persona.is_complete:
-        return _state(draft, next_step, False)
+        return _state(persona, draft, next_step, False)
     # 合并草稿与 Memory，让桌面端在形象与音色阶段仍能预填已答资料。
     user_profile = await read_user_profile(db, MemoryScope(user_id, "companion"))
-    return _state({**draft, **user_profile}, next_step, False)
+    return _state(persona, {**draft, **user_profile}, next_step, False)
 
 
 async def submit_onboarding_field(
@@ -258,6 +282,8 @@ async def submit_onboarding_field(
     """保存引导回答；人设定型后仅修改个人资料与声音选择。"""
     if field not in ONBOARDING_FIELDS:
         raise PersonaValidationError(f"unknown onboarding field: {field!r}", field)
+    if field == "background_complete" and value != "true":
+        raise PersonaValidationError("background_complete must be true", field)
     if field in ("voice_setup_skipped", "environment_skipped") and value not in (None, "true"):
         raise PersonaValidationError(f"{field} must be true or null", field)
     if field.startswith("user_"):
@@ -266,6 +292,13 @@ async def submit_onboarding_field(
         _validate_birthday(value)
     persona = await get_or_create_persona_row(db, user_id)
     await db.refresh(persona, with_for_update=True)
+    if field == "background_complete":
+        if persona.is_complete:
+            raise PersonaValidationError("人物设定已完成，请通过资料编辑器修改。", field)
+        persona.onboarding_progress_json = {**persona.onboarding_progress_json, "background_complete": True}
+        await db.commit()
+        draft = load_persona_definition(persona)
+        return _state(persona, draft, _next_character_step(persona, draft), False)
     if persona.is_complete:
         if field.startswith("user_"):
             if value:
@@ -276,7 +309,7 @@ async def submit_onboarding_field(
                 )
                 await db.commit()
             # 传空值不动 Memory 行：清除 user_* 条目通过记忆管理删除
-            return _state(load_persona_definition(persona), None, True)
+            return _state(persona, load_persona_definition(persona), None, True)
         # 声音选择和暂用文字都是明确操作，保存独立标记，不以伪造的音色名称占位。
         if field in ("voice", "voice_setup_skipped"):
             draft = load_persona_definition(persona)
@@ -296,7 +329,7 @@ async def submit_onboarding_field(
             if completed:
                 schedule_first_greeting_claim(user_id)
             next_step = await _next_onboarding_step(db, user_id, persona, draft)
-            return _state(draft, next_step, next_step is None)
+            return _state(persona, draft, next_step, next_step is None)
         # 跳过环境步骤即用户决定使用默认初始场景；标记先落库，默认场景创建失败不阻断引导，由启动恢复重试。
         if field == "environment_skipped":
             draft = load_persona_definition(persona)
@@ -312,19 +345,26 @@ async def submit_onboarding_field(
                 except Exception:
                     logger.warning("default initial scene not scheduled", extra={"user_id": user_id}, exc_info=True)
             next_step = await _next_onboarding_step(db, user_id, persona, draft)
-            return _state(draft, next_step, next_step is None)
+            return _state(persona, draft, next_step, next_step is None)
         raise PersonaValidationError(
             f"onboarding field {field!r} cannot be edited after persona is finalized; use PUT /api/companion/persona",
             field,
         )
     draft = load_persona_definition(persona)
+    if value is not None and "\x00" in value:
+        raise PersonaValidationError(f"persona.{field} must not contain NUL characters", field)
+    maximum = 2000 if field == "background" or field.startswith("user_") else _MAX_FIELD_LEN
+    if value and len(value.strip()) > maximum:
+        raise PersonaValidationError(f"persona.{field} must be at most {maximum} characters", field)
     if value and value.strip():
         draft[field] = value.strip()[:_ONBOARDING_MAX_LEN]
     else:
         draft.pop(field, None)
     persona.definition_json = draft
+    completed = set(persona.onboarding_progress_json.get("completed_fields", []))
+    completed.add(field)
+    persona.onboarding_progress_json = {**persona.onboarding_progress_json, "completed_fields": sorted(completed)}
     await db.commit()
     answers = draft
-    missing_character = next((f for f in _CHARACTER_ONBOARDING_FIELDS if not answers.get(f)), None)
-    next_field = missing_character if missing_character is not None else "portrait"
-    return _state(answers, next_field, False)
+    next_field = _next_character_step(persona, answers)
+    return _state(persona, answers, next_field, False)

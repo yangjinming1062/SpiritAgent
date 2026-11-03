@@ -475,7 +475,7 @@ async function deleteUser(id) {
 const BACKUP_SECTION_LABELS = Object.freeze({
     user_preferences: '用户偏好', conversations: '会话', messages: '消息', message_assets: '消息附件',
     assets: '资产清单', jobs: '任务记录', job_requests: '任务请求', job_assets: '任务附件',
-    appearance_assets: '形象附件', character_analysis_jobs: '形象分析', companion_fullbody_candidates: '待采纳形象',
+    appearance_assets: '形象附件', appearance_preparation_jobs: '形象准备', visual_observation_jobs: '视觉观察', companion_fullbody_candidates: '待采纳形象',
     visual_versions: '影像版本', visual_version_assets: '影像附件', visual_playbacks: '播放记录', scene_jobs: '场景制作',
     video_gen_jobs: '视频制作', post_publications: '动态发布',
     memory_evidence: '记忆证据', memory_revisions: '记忆修订', memory_fingerprints: '遗忘指纹',

@@ -33,6 +33,9 @@ export function applyPersonaResponse(response: PersonaResponse): void {
   $persona.set({
     biological_type: parsed.biological_type,
     gender: parsed.gender,
+    age: parsed.age,
+    occupation: parsed.occupation,
+    background: parsed.background,
     name: parsed.name ?? '',
     personality: parsed.personality ?? '',
     relationship: parsed.relationship,

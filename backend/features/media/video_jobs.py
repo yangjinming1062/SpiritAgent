@@ -54,16 +54,12 @@ from features.media.chain import (
 )
 from features.media.contracts import VideoJobSnapshot
 from features.media.delivery import deliver_video_result
-from features.media.identity_contracts import CharacterCardSnapshot, CharacterReferenceRole
+from features.media.identity_contracts import CharacterReferenceRole, VisualIdentitySnapshot
 from features.media.identity_review import score_character_frames, score_character_frames_with_references
 from features.media.models import VideoGenJob
 from features.media.prompts import CHARACTER_MEDIA_SELF_VIDEO_SCORE
 from features.media.queries import video_job_snapshot
-from features.media.reference_reader import (
-    active_identity_reference,
-    character_snapshot_is_current,
-    render_character_identity,
-)
+from features.media.reference_reader import active_identity_reference, visual_identity_is_current
 from features.media.video_queue.contracts import VideoQueueInfo, VideoQueueOwner, VideoQueueStoppedError
 from features.media.video_queue.service import (
     acknowledge_video_attempt,
@@ -95,7 +91,7 @@ class _VideoJobParams(BaseModel):
     reference_images: tuple[str, ...] = ()
     aspect_ratio: str | None
     identity_reference_path: str | None
-    identity_snapshot: CharacterCardSnapshot | None
+    identity_snapshot: VisualIdentitySnapshot | None
     identity_reference_role: CharacterReferenceRole = "portrait"
     asset_generation_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     asset_directory: str
@@ -146,7 +142,6 @@ async def _score_self_video(
     task: AiTaskKey,
     identity_uri: str | None,
     outfit_uri: str | None = None,
-    identity_text: str = "",
     identity_reference_role: CharacterReferenceRole = "portrait",
     job_id: int | None = None,
 ) -> tuple[str, int | None]:
@@ -191,7 +186,6 @@ async def _score_self_video(
                 frame_uris,
                 CHARACTER_MEDIA_SELF_VIDEO_SCORE,
                 task=task,
-                identity_text=identity_text,
                 before_submit=before_submit,
             )
         else:
@@ -200,7 +194,6 @@ async def _score_self_video(
                 identity_uri,
                 frame_uris,
                 task=task,
-                identity_text=identity_text,
                 before_submit=before_submit,
             )
         async with SESSION_LOCAL() as db:
@@ -375,7 +368,7 @@ async def prepare_video_job(
     aspect_ratio: str | None,
     reference_images: tuple[str, ...] = (),
     identity_reference_path: str | None = None,
-    identity: CharacterCardSnapshot | None = None,
+    identity: VisualIdentitySnapshot | None = None,
     identity_reference_role: CharacterReferenceRole = "portrait",
     structured_reply: bool = False,
     media_id: str | None = None,
@@ -467,7 +460,7 @@ async def enqueue_video_job(
     aspect_ratio: str | None,
     reference_images: tuple[str, ...] = (),
     identity_reference_path: str | None = None,
-    identity: CharacterCardSnapshot | None = None,
+    identity: VisualIdentitySnapshot | None = None,
     identity_reference_role: CharacterReferenceRole = "portrait",
     structured_reply: bool = False,
     media_id: str | None = None,
@@ -544,7 +537,7 @@ async def _finalize_best_video(job_id: int, *, warning: str | None = None) -> No
             return
         params = _VideoJobParams.model_validate(row.params_json)
         snapshot = params.identity_snapshot
-        if snapshot is not None and not await character_snapshot_is_current(db, row.user_id, snapshot):
+        if snapshot is not None and not await visual_identity_is_current(db, row.user_id, snapshot):
             await db.rollback()
             await _record_failure(job_id, reason="identity_changed")
             return
@@ -599,7 +592,7 @@ async def _evaluate_stored_video(job_id: int) -> str:
     snapshot = params.identity_snapshot
     if snapshot is not None:
         async with SESSION_LOCAL() as db:
-            if not await character_snapshot_is_current(db, user_id, snapshot):
+            if not await visual_identity_is_current(db, user_id, snapshot):
                 return "stale"
     if params.identity_reference_path and is_user_in_maintenance(user_id):
         return "paused"
@@ -613,7 +606,6 @@ async def _evaluate_stored_video(job_id: int) -> str:
             outfit_uri=params.reference_images[1]
             if snapshot is not None and len(params.reference_images) > 1
             else None,
-            identity_text=render_character_identity(snapshot) if snapshot else "",
             identity_reference_role=params.identity_reference_role,
             job_id=job_id,
         )
@@ -621,7 +613,7 @@ async def _evaluate_stored_video(job_id: int) -> str:
         return "paused"
     if snapshot is not None:
         async with SESSION_LOCAL() as db:
-            if not await character_snapshot_is_current(db, user_id, snapshot):
+            if not await visual_identity_is_current(db, user_id, snapshot):
                 return "stale"
     async with SESSION_LOCAL() as db:
         row = await db.get(VideoGenJob, job_id, with_for_update=True)
@@ -700,7 +692,7 @@ async def inspect_video_queue_owner(
         if (
             before_submit
             and params.identity_snapshot is not None
-            and not await character_snapshot_is_current(
+            and not await visual_identity_is_current(
                 db,
                 job.user_id,
                 params.identity_snapshot,
@@ -1289,7 +1281,7 @@ async def post_video_asset(db: AsyncSession, user_id: int, job_id: int) -> str:
     if job_id in _INFLIGHT:
         raise ValueError("视频任务仍在收尾，请稍后重试")
     params = _VideoJobParams.model_validate(row.params_json)
-    if params.identity_snapshot is not None and not await character_snapshot_is_current(
+    if params.identity_snapshot is not None and not await visual_identity_is_current(
         db,
         user_id,
         params.identity_snapshot,

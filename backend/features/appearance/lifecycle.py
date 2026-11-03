@@ -2,10 +2,10 @@
 
 from runtime.lifecycle import RuntimeParticipant
 
-from .character_extraction import (
-    drain_character_extractions,
-    resume_character_extractions,
-    resume_user_character_extraction,
+from .background_tasks import (
+    drain_appearance_tasks,
+    resume_appearance_tasks,
+    resume_user_appearance_tasks,
 )
 from .outfit_service import drain_outfit_descriptions, recover_outfit_descriptions
 
@@ -18,9 +18,9 @@ def runtime_participants() -> tuple[RuntimeParticipant, ...]:
             drain=drain_outfit_descriptions,
         ),
         RuntimeParticipant(
-            "appearance.character_extraction",
-            recover=resume_character_extractions,
-            resume_user=resume_user_character_extraction,
-            drain=drain_character_extractions,
+            "appearance.background_tasks",
+            recover=resume_appearance_tasks,
+            resume_user=resume_user_appearance_tasks,
+            drain=drain_appearance_tasks,
         ),
     )

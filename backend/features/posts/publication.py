@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
 from features.accounts.queries import user_is_active
-from features.appearance.character_card import character_snapshot_is_current
+from features.appearance.identity import visual_identity_is_current
 from features.appearance.visual_identity import (
     build_plain_image_prompt,
     build_plain_video_prompt,
@@ -48,7 +48,7 @@ from features.entries.queries import recent_posts
 from features.jobs.service import bind_job_assets
 from features.media.character_images import generate_character_images
 from features.media.contracts import VideoJobSnapshot
-from features.media.identity_contracts import CharacterCardSnapshot, CharacterReferenceRole
+from features.media.identity_contracts import CharacterReferenceRole, VisualIdentitySnapshot
 from features.media.image_generation import ImageGenerationError, generate_images
 from features.media.queries import get_job, get_video_jobs
 from features.media.speech import synthesize_speech
@@ -395,7 +395,6 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
                 secondary_reference_image=inputs.secondary_reference_image,
                 identity_reference_mode=inputs.identity_reference_mode,
                 goal_review="required",
-                identity_text=inputs.identity_text,
                 task=AiTaskKey.posts,
             )
         else:
@@ -532,10 +531,10 @@ async def _run_publication(task_id: int) -> None:
             await _save(task_id, phase="media_ready", **progress)
         if progress.get("identity"):
             async with SESSION_LOCAL() as db:
-                current = await character_snapshot_is_current(
+                current = await visual_identity_is_current(
                     db,
                     row.user_id,
-                    CharacterCardSnapshot.model_validate(progress["identity"]),
+                    VisualIdentitySnapshot.model_validate(progress["identity"]),
                 )
             if not current:
                 await _save(task_id, status="blocked", error="伙伴外形已更新，本次旧参考作品未发布")
@@ -756,10 +755,10 @@ async def _publish_checked_video(user_id: int, task_id: int) -> PostPublicationR
         job_id = row.video_job_id
         if plan.content_type != PostContentType.VIDEO or job_id is None:
             raise PostError("本任务没有可查询的原视频成品")
-        if (row.checkpoint or {}).get("identity") and not await character_snapshot_is_current(
+        if (row.checkpoint or {}).get("identity") and not await visual_identity_is_current(
             db,
             user_id,
-            CharacterCardSnapshot.model_validate(row.checkpoint["identity"]),
+            VisualIdentitySnapshot.model_validate(row.checkpoint["identity"]),
         ):
             raise PostBlockedError("伙伴外形已更新，不能发布旧参考视频")
         try:

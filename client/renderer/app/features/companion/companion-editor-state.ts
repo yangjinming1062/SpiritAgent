@@ -9,11 +9,10 @@ import type {
 
 const FALLBACK: CompanionEditorUiSnapshot = {
   persona: null,
-  characterCards: {},
   memory: { presetId: 'companion', section: 'recall', browsers: {}, drafts: {}, profileDrafts: {} }
 }
 
-// 资料、角色卡与记忆的编辑草稿是会话级状态：跨切页与模式交接保留（经主进程快照）、换号清空，不落盘。
+// 资料与记忆的编辑草稿是会话级状态：跨切页与模式交接保留（经主进程快照）、换号清空，不落盘。
 const state = atom<CompanionEditorUiSnapshot>(FALLBACK)
 
 export const $companionEditors = state

@@ -193,7 +193,7 @@
             <button class="modal-close" data-close aria-label="关闭">✕</button>
         </div>
         <div class="modal-body">
-            <p style="margin:0 0 0.6rem; color:var(--text-2); font-size:0.82rem;">导出为全量数据：角色与形象、角色卡、衣柜与动作、场景、用户画像与设置、音色、长期记忆、动态、日记、定时任务和会话记录。</p>
+            <p style="margin:0 0 0.6rem; color:var(--text-2); font-size:0.82rem;">导出为全量数据：角色与形象、内部视觉观察、衣柜与动作、场景、用户画像与设置、音色、长期记忆、动态、日记、定时任务和会话记录。</p>
             <p class="hint">恢复时可在导入对话框选择范围（如仅基础身份）。备份包含用户 API 凭据，请妥善保存。导入后请重新启动客户端以刷新数据。</p>
         </div>
         <div class="modal-foot">
@@ -220,9 +220,9 @@
                     <label class="checkbox-row"><input type="radio" name="bk_scope" value="identity" onchange="onBackupScopeChange()"> 基础身份</label>
                     <label class="checkbox-row"><input type="radio" name="bk_scope" value="custom" onchange="onBackupScopeChange()"> 自定义</label>
                 </div>
-                <div class="hint" id="backupScopeHint">恢复人设与音色、头像与全身形象（含确认状态）、角色卡。写入空用户后无需再走引导。</div>
+                <div class="hint" id="backupScopeHint">恢复人设与音色、头像与全身形象（含确认状态）、内部视觉观察。写入空用户后无需再走引导。</div>
                 <div id="backupSectionBoxes" style="display:none; margin-top:0.45rem; padding:0.55rem 0.65rem; border:1px solid var(--border); border-radius:8px;">
-                    <label class="checkbox-row"><input type="checkbox" class="bk_section" value="identity" checked> 基础身份（人设、头像与全身形象、角色卡）</label>
+                    <label class="checkbox-row"><input type="checkbox" class="bk_section" value="identity" checked> 基础身份（人设、头像与全身形象、内部视觉观察）</label>
                     <label class="checkbox-row"><input type="checkbox" class="bk_section" value="conversations"> 会话记录（消息与附件）</label>
                     <label class="checkbox-row"><input type="checkbox" class="bk_section" value="memories"> 长期记忆</label>
                     <label class="checkbox-row"><input type="checkbox" class="bk_section" value="entries"> 动态与日记</label>

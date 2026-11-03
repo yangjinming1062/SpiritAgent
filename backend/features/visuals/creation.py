@@ -16,7 +16,6 @@ from infrastructure.assets.asset_store import (
 )
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from features.appearance.character_card import render_character_identity
 from features.media.chain import MEDIA_IDENTITY_ACCEPT_SCORE
 from features.media.identity_review import ImageGoalReviewFailure, review_character_image_goal
 
@@ -232,7 +231,6 @@ def opening_reference_hash(snapshot: ActorClipSource | CinematicSource) -> str:
         "role": snapshot.identity_reference_role,
         "outfit": snapshot.outfit.content_hash,
         "scene": snapshot.scene.content_hash if snapshot.kind == "cinematic" else None,
-        "identity_text": render_character_identity(snapshot.identity),
     }
     return hashlib.sha256(json.dumps(references, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
@@ -288,7 +286,6 @@ async def review_existing_opening(
         secondary_uri=secondary,
         generation_prompt=opening_requirements(job, progress),
         identity_reference_mode=reference_mode,
-        identity_text=render_character_identity(snapshot.identity),
         previous_failure=ImageGoalReviewFailure(
             status="invalid" if saved.status == "complete" else saved.status,
             score=saved.score,

@@ -88,7 +88,6 @@ class CharacterImageInput(BaseModel):
     review_environment_reference_image: str | None = None
     identity_reference_mode: Literal["primary", "portrait_and_outfit"] = "portrait_and_outfit"
     goal_review: Literal["none", "required"] = "none"
-    identity_text: str = ""
     max_image_bytes: int = Field(default=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, gt=0)
     size_enforced: bool = False
     prefer_transparent_background: bool = False
@@ -457,7 +456,6 @@ async def generate_character_images(
     secondary_reference_image: str | None = None,
     environment_reference_image: str | None = None,
     image_edit: bool = False,
-    identity_text: str = "",
     identity_secondary_reference: str | None = None,
     review_environment_reference_image: str | None = None,
     identity_reference_mode: Literal["primary", "portrait_and_outfit"] = "portrait_and_outfit",
@@ -511,7 +509,6 @@ async def generate_character_images(
             review_environment_reference_image=review_environment_reference_image,
             identity_reference_mode=identity_reference_mode,
             goal_review=goal_review,
-            identity_text=identity_text,
             max_image_bytes=max_image_bytes,
             size_enforced=size_enforced,
             prefer_transparent_background=prefer_transparent_background,
@@ -893,7 +890,6 @@ async def _run_image_chain(
                                 environment_uri=review_environment_uri,
                                 generation_prompt=inputs.prompt,
                                 identity_reference_mode=inputs.identity_reference_mode,
-                                identity_text=inputs.identity_text,
                                 previous_failure=state.goal_review_failures.get(candidate.path),
                                 task=task,
                                 before_submit=before_submit,
@@ -915,7 +911,6 @@ async def _run_image_chain(
                                 (identity_uri or "", secondary_uri),
                                 uri,
                                 task=task,
-                                identity_text=inputs.identity_text,
                                 before_submit=before_submit,
                             )
                         else:
@@ -924,7 +919,6 @@ async def _run_image_chain(
                                 identity_uri,
                                 uri,
                                 task=task,
-                                identity_text=inputs.identity_text,
                                 before_submit=before_submit,
                             )
                         state.accept_score(candidate, score)

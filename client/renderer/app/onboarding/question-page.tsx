@@ -4,6 +4,7 @@ import { cn } from '@/shared/lib/utils'
 import { BTN_GHOST, Chip, CreationActionBar, CreationWorkspace, DatePicker, INPUT_CLASS } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
+import { submitOnEnter } from './keyboard'
 import { ONBOARDING_PRIMARY_BUTTON } from './onboarding-components'
 import type { AnswerKind, Question } from './onboarding-questions'
 import styles from './onboarding.module.css'
@@ -61,23 +62,7 @@ export function QuestionPage({
   }
 
   const onAnswerKeyDown = (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>): void => {
-    if (
-      event.key !== 'Enter' ||
-      event.nativeEvent.isComposing ||
-      event.nativeEvent.keyCode === 229 ||
-      event.shiftKey ||
-      event.ctrlKey ||
-      event.altKey ||
-      event.metaKey
-    ) {
-      return
-    }
-
-    event.preventDefault()
-
-    if (!event.repeat) {
-      onSend()
-    }
+    submitOnEnter(event, onSend)
   }
 
   return (

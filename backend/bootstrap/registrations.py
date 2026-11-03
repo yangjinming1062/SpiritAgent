@@ -14,8 +14,7 @@ from entrypoints.tools.builtin.send_message_tool import register as register_sen
 from entrypoints.tools.builtin.video_generation_tool import register as register_video_generation
 from entrypoints.tools.builtin.visual_tool import register as register_visuals
 from entrypoints.tools.builtin.web_tools import register as register_web
-from features.appearance.character_card import character_snapshot_is_current, render_character_identity
-from features.appearance.completion import set_character_ready_handler
+from features.appearance.identity import visual_identity_is_current
 from features.appearance.queries import active_identity_reference, appearance_readiness, confirmed_media_reference_paths
 from features.automation.cron_jobs import set_job_intent_invalidator
 from features.companion.appearance_ports import set_appearance_readiness_reader
@@ -73,7 +72,6 @@ from runtime.tools.registry import REGISTRY
 from workflows.automation.companion_turns import execute_companion_turn
 from workflows.life_events import record_post_published
 from workflows.life_presentation import life_presentation_requested
-from workflows.onboarding.character_ready import complete_character_initialization
 from workflows.visual_decisions import initialize_visuals, schedule_visual_selection
 from workflows.visual_planning import visual_planning_context
 from workflows.visual_preparation import schedule_base_motion_preparation
@@ -161,11 +159,9 @@ def register_all() -> None:
         MediaReferenceReaders(
             active_identity=active_identity_reference,
             confirmed_paths=confirmed_media_reference_paths,
-            identity_is_current=character_snapshot_is_current,
-            render_identity=render_character_identity,
+            identity_is_current=visual_identity_is_current,
         ),
     )
-    set_character_ready_handler(complete_character_initialization)
     configure_visual_hooks(
         planning_reader=visual_planning_context,
         ready_handler=schedule_visual_selection,

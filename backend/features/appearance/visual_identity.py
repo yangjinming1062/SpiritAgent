@@ -1,6 +1,5 @@
 """出镜媒体共用的固定身份、本次生成造型及视频参考准备。实际呈现快照提供默认造型，本次生成造型可单独覆盖；`outfit_override` 只作用于本次产物，不改素材或影像库。无角色出镜的图片与视频在此补上统一的真实拍摄要求。"""
 
-import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal
@@ -11,10 +10,10 @@ from infrastructure.assets.image_references import require_owned_image_path
 from infrastructure.database import SESSION_LOCAL
 
 from features.appearance.avatar_service import FULLBODY_SIZE, AvatarSourceUnreadableError
-from features.appearance.character_card import render_character_identity, require_character_snapshot
+from features.appearance.identity import require_visual_identity
 from features.appearance.models import AvatarAsset
 from features.media.character_images import ImageChainState, ImageProgressWriter, generate_character_images
-from features.media.identity_contracts import BodyFeatures, CharacterCardSnapshot, CharacterReferenceRole
+from features.media.identity_contracts import CharacterReferenceRole, VisualIdentitySnapshot
 from features.media.prompts import (
     CHARACTER_APPEARANCE_ALIGNMENT_REFERENCES,
     CHARACTER_APPEARANCE_FULLBODY_REFERENCE_ALIGN,
@@ -41,7 +40,7 @@ from features.visuals.schemas import ActualPresentationSnapshot
 @dataclass(frozen=True)
 class SelfVisualContext:
     user_id: int
-    identity: CharacterCardSnapshot
+    identity: VisualIdentitySnapshot
     identity_path: str
     fullbody_path: str
     outfit_description: str
@@ -70,7 +69,7 @@ async def load_self_visual_context(
     """按调用方传入的实际呈现快照装配出镜造型：窗口造型取静态造型素材（outfit_path/outfit_description），实际呈现已有成品画面时以 visual_description 为准。override 非空即关造型参考，只作用于本次产物。素材缺失时明确失败。"""
     override = (outfit_override or "").strip()
     async with SESSION_LOCAL() as db:
-        identity = await require_character_snapshot(db, user_id)
+        identity = await require_visual_identity(db, user_id)
         avatar = await db.get(AvatarAsset, identity.avatar_id)
         if avatar is None:
             raise AvatarSourceUnreadableError("角色形象缺失")
@@ -127,7 +126,6 @@ def build_self_image_prompt(plan: SelfVisualPlan, prompt: str, *, has_outfit_ref
     if has_outfit_reference:
         template = SELF_IMAGE_STYLING_REFERENCE if fullbody else SELF_IMAGE_OUTFIT_REFERENCE
         parts.append(template.format(outfit=outfit or "未提供"))
-    parts.append(render_character_identity(plan.context.identity))
     return "\n".join(parts)
 
 
@@ -154,11 +152,10 @@ class SelfImageInputs:
     """一次出镜图片的冻结提示词与参考参数，调用方原样传给生成入口。"""
 
     prompt: str
-    identity: CharacterCardSnapshot
+    identity: VisualIdentitySnapshot
     reference_image: str
     secondary_reference_image: str | None
     identity_reference_mode: Literal["primary", "portrait_and_outfit"]
-    identity_text: str
 
 
 def build_self_image_inputs(plan: SelfVisualPlan, prompt: str) -> SelfImageInputs:
@@ -169,14 +166,12 @@ def build_self_image_inputs(plan: SelfVisualPlan, prompt: str) -> SelfImageInput
         reference_image=plan.context.identity_path,
         secondary_reference_image=outfit,
         identity_reference_mode=_identity_reference_mode(plan.context.identity_reference_role),
-        identity_text=render_character_identity(plan.context.identity),
     )
 
 
 async def align_character_reference(
     user_id: int,
     outfit_image: str,
-    identity: CharacterCardSnapshot,
     outfit_description: str,
     *,
     task: AiTaskKey,
@@ -198,7 +193,6 @@ async def align_character_reference(
         references
         + "\n"
         + alignment.format(
-            identity=render_character_identity(identity),
             outfit=outfit_description or "沿用图 2 可见造型",
         )
         + "\n"
@@ -213,7 +207,6 @@ async def align_character_reference(
         identity_reference=identity_reference,
         identity_reference_mode=_identity_reference_mode(identity_reference_role),
         goal_review="required",
-        identity_text=render_character_identity(identity),
         state=state,
         save_progress=save_progress,
         before_submit=before_submit,
@@ -266,10 +259,6 @@ async def build_self_video_inputs(
     reference = (
         SELF_VIDEO_FULLBODY_REFERENCE if identity_reference_role == "fullbody" else SELF_VIDEO_PORTRAIT_REFERENCE
     )
-    if not has_outfit_reference:
-        body = plan.context.identity.features.model_dump(include=set(BodyFeatures.model_fields), exclude_defaults=True)
-        if body:
-            reference += "身体特征补充资料（JSON）：" + json.dumps(body, ensure_ascii=False) + "。"
     return SelfVideoInputs(
         prompt=SELF_VIDEO_REFERENCE_TEMPLATE.format(reference=reference, outfit=outfit_instructions, prompt=prompt),
         references=references,

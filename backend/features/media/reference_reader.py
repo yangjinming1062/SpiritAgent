@@ -5,15 +5,14 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .identity_contracts import CharacterCardSnapshot
+from .identity_contracts import VisualIdentitySnapshot
 
 
 @dataclass(frozen=True)
 class MediaReferenceReaders:
     active_identity: Callable[[AsyncSession, int], Awaitable[str | None]]
     confirmed_paths: Callable[[AsyncSession, int], Awaitable[tuple[str, ...]]]
-    identity_is_current: Callable[[AsyncSession, int, CharacterCardSnapshot], Awaitable[bool]]
-    render_identity: Callable[[CharacterCardSnapshot | None], str]
+    identity_is_current: Callable[[AsyncSession, int, VisualIdentitySnapshot], Awaitable[bool]]
 
 
 _READERS: MediaReferenceReaders | None = None
@@ -38,9 +37,5 @@ async def confirmed_media_reference_paths(db: AsyncSession, user_id: int) -> tup
     return await _readers().confirmed_paths(db, user_id)
 
 
-async def character_snapshot_is_current(db: AsyncSession, user_id: int, snapshot: CharacterCardSnapshot) -> bool:
+async def visual_identity_is_current(db: AsyncSession, user_id: int, snapshot: VisualIdentitySnapshot) -> bool:
     return await _readers().identity_is_current(db, user_id, snapshot)
-
-
-def render_character_identity(snapshot: CharacterCardSnapshot | None) -> str:
-    return _readers().render_identity(snapshot)

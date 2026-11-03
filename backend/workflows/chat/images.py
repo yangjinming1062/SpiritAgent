@@ -7,7 +7,7 @@ from typing import Literal, get_args
 from uuid import uuid4
 
 from features.appearance.avatar_service import AvatarGenerationError
-from features.appearance.character_card import character_snapshot_is_current, render_character_identity
+from features.appearance.identity import visual_identity_is_current
 from features.appearance.visual_identity import (
     build_plain_image_prompt,
     build_self_image_inputs,
@@ -16,7 +16,7 @@ from features.appearance.visual_identity import (
 from features.conversation.prompts import CHAT_IMAGE_CORRECTION_PREFIX
 from features.media.chain import MEDIA_IDENTITY_ACCEPT_SCORE
 from features.media.character_images import ImageChainState, generate_character_images
-from features.media.identity_contracts import CharacterCardSnapshot
+from features.media.identity_contracts import VisualIdentitySnapshot
 from features.media.image_generation import ImageGenerationError, generate_images
 from features.media.turn_state import ImagePlan, MediaArtifact, MediaInspection, MediaTurnState
 from features.visuals.queries import prompt_presentation_snapshot
@@ -109,7 +109,7 @@ async def _generate_batch(
         )
         return result.urls
 
-    identity = CharacterCardSnapshot.model_validate_json(plan.identity_json) if plan.identity_json else None
+    identity = VisualIdentitySnapshot.model_validate_json(plan.identity_json) if plan.identity_json else None
     if identity is None:
         urls = await request(n)
         filled = min(len(urls), n)
@@ -141,7 +141,7 @@ async def _generate_batch(
                 break
         return results
     async with SESSION_LOCAL() as db:
-        if not await character_snapshot_is_current(db, user_id, identity):
+        if not await visual_identity_is_current(db, user_id, identity):
             raise ImageGenerationError("角色外形已更新，请使用当前形象重新提出生成请求")
     state = ImageChainState()
     await generate_character_images(
@@ -155,7 +155,6 @@ async def _generate_batch(
         identity_reference=plan.reference_image or "",
         identity_reference_mode=plan.identity_reference_mode,
         goal_review="required",
-        identity_text=render_character_identity(identity),
         state=state,
         task=task,
     )
@@ -169,7 +168,7 @@ async def _generate_batch(
         results[slot] = ImageSlotResult("ready", url=best.path, score=best.score)
         delivered.append(best.path)
     async with SESSION_LOCAL() as db:
-        current = await character_snapshot_is_current(db, user_id, identity)
+        current = await visual_identity_is_current(db, user_id, identity)
     if not current:
         for url in delivered:
             await asyncio.to_thread(asset_store.unlink_companion_asset, url)

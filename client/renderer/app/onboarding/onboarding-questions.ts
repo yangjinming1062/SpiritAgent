@@ -149,7 +149,7 @@ const QUESTIONS: readonly Question[] = [
   }
 ]
 
-// 确认全身形象后固定；外形细节由角色卡维护。
+// 确认全身形象后固定；外形以确认图为准。
 export const LOCKED_FIELD_LABELS: Partial<Record<QKey, string>> = {
   biological_type: '物种',
   gender: '性别'
@@ -165,6 +165,7 @@ export const PHASE_QUESTIONS: Record<Phase, readonly Question[]> = {
   'q-character': CHARACTER_QUESTIONS,
   'q-user': USER_QUESTIONS,
   voice: VOICE_QUESTIONS,
+  background: [],
   'portrait-generate': [],
   hatching: [],
   'portrait-avatar': [],
@@ -186,6 +187,10 @@ interface ResumeTarget {
 export function resolveResumeTarget(nextField: string | null | undefined): ResumeTarget | null {
   if (!nextField) {
     return null
+  }
+
+  if (nextField === 'background') {
+    return { phase: 'background' }
   }
 
   if (nextField === 'portrait') {
@@ -216,6 +221,12 @@ export function resolveResumeTarget(nextField: string | null | undefined): Resum
 // 本地非空编辑优先，服务端草稿只补未填写项。
 export function mergeResumeAnswers(local: OnboardingAnswers, saved: Record<string, string>): OnboardingAnswers {
   const merged = { ...local }
+
+  for (const key of ['age', 'occupation', 'background'] as const) {
+    if (merged[key] === undefined && saved[key] !== undefined) {
+      merged[key] = saved[key]
+    }
+  }
 
   for (const question of QUESTIONS) {
     if ((merged[question.key] == null || merged[question.key] === '') && saved[question.key] !== undefined) {

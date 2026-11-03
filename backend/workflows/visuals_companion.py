@@ -19,8 +19,9 @@ from features.action_library.schemas import (
     ActionReviewRequest,
     ActionReviewSource,
 )
-from features.appearance.character_card import CharacterCardNotReadyError, require_character_snapshot
+from features.appearance.identity import VisualIdentityNotReadyError, require_visual_identity
 from features.appearance.queries import avatar_snapshot, outfit_identity_matches, ready_outfit_snapshot
+from features.companion.definition import visual_persona_definition
 from features.companion.disturbance import get_disturbance_tier
 from features.companion.persona_service import load_persona_definition
 from features.companion.proactive_runtime import get_user_proactive_record
@@ -100,8 +101,8 @@ async def load_visual_snapshot(
     if asset_kind not in ("actor", "cinematic"):
         raise ComboAssemblyError("影像库当前只受理主体动画与完整场景影像的制作")
     try:
-        identity = await require_character_snapshot(db, user_id)
-    except CharacterCardNotReadyError as exc:
+        identity = await require_visual_identity(db, user_id)
+    except VisualIdentityNotReadyError as exc:
         raise ComboAssemblyError(str(exc)) from exc
     avatar = await avatar_snapshot(db, user_id, identity.avatar_id)
     persona = await persona_snapshot(db, user_id)
@@ -125,7 +126,7 @@ async def load_visual_snapshot(
     width, height = target_width, target_height
     if not width or not height:
         width, height = DEFAULT_TARGET
-    persona_definition = load_persona_definition(persona) if persona is not None else {}
+    persona_definition = visual_persona_definition(load_persona_definition(persona)) if persona is not None else {}
     shared = {
         "identity": identity,
         "identity_path": avatar.seed_fullbody_url,
@@ -231,7 +232,7 @@ async def design_action_reference(
 
 
 async def load_action_review_source(db: AsyncSession, user_id: int) -> ActionReviewSource:
-    identity = await require_character_snapshot(db, user_id)
+    identity = await require_visual_identity(db, user_id)
     avatar = await avatar_snapshot(db, user_id, identity.avatar_id)
     persona = await persona_snapshot(db, user_id)
     if avatar is None or not avatar.seed_fullbody_url or not avatar.asset_url:
@@ -246,7 +247,7 @@ async def load_action_review_source(db: AsyncSession, user_id: int) -> ActionRev
         portrait_path=avatar.asset_url,
         portrait_hash=portrait_hash,
         identity=identity,
-        persona=load_persona_definition(persona) if persona is not None else {},
+        persona=visual_persona_definition(load_persona_definition(persona)) if persona is not None else {},
     )
 
 

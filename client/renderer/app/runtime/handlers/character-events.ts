@@ -2,7 +2,6 @@ import {
   $activeAvatarId,
   $companionMood,
   applyServerCompanionVoiceId,
-  hydrateCharacterCard,
   hydrateFullbodyReference,
   hydrateWardrobe,
   refreshAvatarSeeds
@@ -37,9 +36,9 @@ export function handleCharacterEvent(event: GatewayEvent): void {
       break
     }
 
-    case 'companion.character_card.updated': {
+    case 'companion.visual_identity.updated':
+    case 'companion.appearance_preparation.updated': {
       if (authed()) {
-        void hydrateCharacterCard().catch(error => log.warn('character-card', 'Refresh failed', error))
         void refreshAvatarSeeds()
           .then(() => {
             const avatarId = $activeAvatarId.get()

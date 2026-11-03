@@ -2,14 +2,6 @@ export { $screenLocked, startActivityMonitor } from './activity'
 export { pickAvatarImage, type PickedImage, resolvePortraitUrl } from './avatar-image'
 export { $avatarSeeds, hydrateAvatarSeeds, refreshAvatarSeeds } from './avatar-seeds-store'
 export {
-  $characterCard,
-  BODY_FEATURE_KEYS,
-  extractCharacterCard,
-  hydrateCharacterCard,
-  PORTRAIT_FEATURE_KEYS,
-  saveCharacterCard
-} from './character-card-store'
-export {
   $companionLifecycle,
   $effectiveTier,
   $quietUntil,
@@ -132,4 +124,3 @@ export {
   setOutfitPolicy
 } from './wardrobe/wardrobe-store'
 export { $windowActorMedia, $windowActorPlayback, type WindowActorMedia } from './window-media'
-export type { CharacterOverrides } from '@protocol'

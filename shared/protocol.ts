@@ -10,17 +10,15 @@ export type SessionInfo = ApiSchemas['DesktopSessionInfo']
 /** 预设目录仅下发公开元数据。 */
 export type SystemPresetSummary = ApiSchemas['PromptPresetSummary']
 
-export type PersonaEditableField = keyof NonNullable<ApiSchemas['PersonaUpdate']['expected_fields']>
+export type PersonaEditableField = Exclude<
+  keyof NonNullable<ApiSchemas['PersonaUpdate']['expected_fields']>,
+  'biological_type' | 'gender'
+>
 
 export type PersonaResponse = ApiSchemas['PersonaResponse']
+export type AvatarAppearance = ApiSchemas['AvatarAssetResponse']
 
 export type PersonaUpdateRequest = ApiSchemas['PersonaUpdate']
-
-export type CharacterFeatureKey = keyof ApiSchemas['CharacterFeatures']
-export type CharacterFeatures = ApiSchemas['CharacterFeatures']
-export type CharacterOverrides = ApiSchemas['CharacterOverridesInput']
-
-export type CharacterCard = ApiSchemas['CharacterCardResponse']
 
 export type MemoryItem = ApiSchemas['MemoryListItem']
 export type MemoryListResponse = ApiSchemas['MemoryListResponse']

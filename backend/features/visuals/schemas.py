@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from features.action_library.schemas import ActionAssetDesign
 from features.life.schemas import FactType
-from features.media.identity_contracts import CharacterCardSnapshot, CharacterReferenceRole
+from features.media.identity_contracts import CharacterReferenceRole, VisualIdentitySnapshot
 from features.media.visual_semantics import (
     ActionMotionIntensity,
     ActionPerformanceRole,
@@ -144,7 +144,7 @@ class ActorClipSource(VisualSourceMetadata):
     """透明主体动画的冻结输入：身份、造型与动作；不固定背景。"""
 
     kind: Literal["actor"] = "actor"
-    identity: CharacterCardSnapshot
+    identity: VisualIdentitySnapshot
     identity_path: str = Field(min_length=1)
     identity_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     portrait_path: str = Field(min_length=1)
@@ -189,7 +189,7 @@ class CinematicSource(VisualSourceMetadata):
     """完整场景影像的冻结输入：身份、造型、环境与动作的整体组合。"""
 
     kind: Literal["cinematic"] = "cinematic"
-    identity: CharacterCardSnapshot
+    identity: VisualIdentitySnapshot
     identity_path: str = Field(min_length=1)
     identity_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     portrait_path: str = Field(min_length=1)
@@ -387,7 +387,7 @@ class AnalyzingVisualSource(VisualSourceMetadata):
 
     kind: Literal["analysis"] = "analysis"
     asset_kind: VisualAssetKind = "cinematic"
-    identity: CharacterCardSnapshot | None = None
+    identity: VisualIdentitySnapshot | None = None
     identity_path: str | None = None
     identity_hash: str | None = None
     portrait_path: str | None = None

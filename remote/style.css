@@ -1158,19 +1158,6 @@ dd {
 .edit-fields .field-label {
   margin-top: 0;
 }
-.field-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-2);
-  margin-bottom: var(--sp-2);
-  font-size: var(--fs-body-sm);
-}
-.field-toolbar button {
-  min-height: 44px;
-  padding: 4px 10px;
-  font-size: var(--fs-meta);
-}
 .draft-label,
 .save-status {
   margin-block: var(--sp-3);
@@ -1181,11 +1168,6 @@ dd {
 }
 .save-status {
   color: var(--success);
-}
-.feature-group {
-  margin-top: var(--sp-6);
-  padding-top: var(--sp-5);
-  border-top: 1px solid var(--line);
 }
 .character-images {
   display: flex;

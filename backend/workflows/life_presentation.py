@@ -9,7 +9,7 @@ import asyncio
 from datetime import datetime, timedelta
 from uuid import uuid4
 
-from features.appearance.character_card import CharacterCardNotReadyError, require_character_snapshot
+from features.appearance.identity import VisualIdentityNotReadyError, require_visual_identity
 from features.appearance.queries import avatar_snapshot, initial_outfit_snapshot
 from features.companion.motion import get_motion_level
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
@@ -106,8 +106,8 @@ async def _fresh_static_snapshot(
                 )
         if not target.identity_path or not target.identity_hash:
             try:
-                identity = await require_character_snapshot(db, user_id)
-            except CharacterCardNotReadyError:
+                identity = await require_visual_identity(db, user_id)
+            except VisualIdentityNotReadyError:
                 avatar = None
             else:
                 avatar = await avatar_snapshot(db, user_id, identity.avatar_id)

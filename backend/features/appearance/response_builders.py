@@ -12,6 +12,9 @@ def avatar_response(asset: AvatarAsset) -> AvatarAssetResponse:
         asset_url=re_sign_bare_path(asset.asset_url) or asset.asset_url,
         seed_fullbody_url=re_sign_bare_path(asset.seed_fullbody_url) or asset.seed_fullbody_url or "",
         is_fullbody_confirmed=asset.is_fullbody_confirmed,
+        identity_revision=asset.identity_revision,
+        preparation_status=asset.preparation_job.state if asset.preparation_job else None,
+        preparation_error=asset.preparation_job.error if asset.preparation_job else None,
         prompt=payload.get("avatar_prompt", ""),
         status="succeeded",
     )

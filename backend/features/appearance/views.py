@@ -4,8 +4,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.appearance import avatar_service as _avatar
 from features.appearance import outfit_service as _outfit
-from features.appearance.character_card import character_card_response, get_character_card
-from features.appearance.character_card_contracts import CharacterCardResponse
 from features.appearance.response_builders import avatar_response, outfit_response
 from features.appearance.schemas import AvatarAssetResponse, FullbodyCandidateResponse, ImageReviseMode, OutfitResponse
 
@@ -196,6 +194,7 @@ async def retry_outfit_description_view(db: AsyncSession, user_id: int, outfit_i
     return outfit_response(await _outfit.retry_outfit_description(db=db, user_id=user_id, outfit_id=outfit_id))
 
 
-async def character_card_view(db: AsyncSession, user_id: int) -> CharacterCardResponse | None:
-    row = await get_character_card(db, user_id)
-    return character_card_response(row) if row is not None else None
+async def retry_appearance_preparation_view(
+    db: AsyncSession, user_id: int, avatar_id: int, expected_revision: int
+) -> AvatarAssetResponse:
+    return avatar_response(await _avatar.retry_initial_preparation(db, user_id, avatar_id, expected_revision))

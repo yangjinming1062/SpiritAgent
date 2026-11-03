@@ -47,7 +47,8 @@ ACTION_LIBRARY_TABLES = VISUALS_TABLES | {
     "appearance_assets",
     "avatar_assets",
     "personas",
-    "character_analysis_jobs",
+    "appearance_preparation_jobs",
+    "visual_observation_jobs",
     "companion_fullbody_candidates",
 }
 POST_TABLES = frozenset(
@@ -60,7 +61,8 @@ BACKUP_SECTIONS: dict[str, tuple[str, ...]] = {
         "companion_outfits",
         "outfit_creation_jobs",
         "companion_fullbody_candidates",
-        "character_analysis_jobs",
+        "appearance_preparation_jobs",
+        "visual_observation_jobs",
         "appearance_assets",
     ),
     "conversations": tuple(sorted(CONVERSATION_TABLES)),

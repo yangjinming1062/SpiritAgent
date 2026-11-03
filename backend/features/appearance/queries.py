@@ -46,7 +46,7 @@ async def avatar_snapshot(db: AsyncSession, user_id: int, avatar_id: int) -> Ava
 
 
 def outfit_identity_matches(source_json: dict[str, Any], identity_reference_path: str) -> bool:
-    """只核对全身来源；角色卡文字修订不改变身体身份。"""
+    """只核对全身来源；人物设定修改不改变身体身份。"""
     source = OutfitSource.model_validate(source_json)
     return bool(identity_reference_path) and source.identity_reference_path == identity_reference_path
 

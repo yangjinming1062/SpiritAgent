@@ -16,20 +16,10 @@ from features.appearance.avatar_service import (
     latest_fullbody_candidate,
     prepare_avatar_prompt,
     prepare_fullbody_prompt,
-    retry_fullbody_candidate_analysis,
+    retry_fullbody_candidate_review,
 )
-from features.appearance.character_card import (
-    CharacterCardConflictError,
-    CharacterCardNotReadyError,
-    request_character_extraction,
-    update_character_card,
-)
-from features.appearance.character_card_contracts import (
-    CharacterCardExtract,
-    CharacterCardResponse,
-    CharacterCardUpdate,
-)
-from features.appearance.character_extraction import schedule_character_extraction
+from features.appearance.background_tasks import schedule_appearance_tasks
+from features.appearance.identity import VisualIdentityNotReadyError
 from features.appearance.outfit_service import (
     OutfitDraftUnavailableError,
     OutfitError,
@@ -63,6 +53,7 @@ from features.appearance.schemas import (
     OutfitPromptRequest,
     OutfitRegenerateRequest,
     OutfitResponse,
+    PreparationRetryRequest,
 )
 from features.appearance.views import (
     accept_fullbody_candidate_view,
@@ -70,7 +61,6 @@ from features.appearance.views import (
     adopt_fullbody_seed_view,
     adopt_outfit_draft_image_view,
     adopt_outfit_regenerate_image_view,
-    character_card_view,
     confirm_fullbody_seed_view,
     confirm_outfit_view,
     create_outfit_draft_view,
@@ -82,6 +72,7 @@ from features.appearance.views import (
     regenerate_avatar_from_image_view,
     regenerate_avatar_view,
     regenerate_outfit_draft_view,
+    retry_appearance_preparation_view,
     retry_outfit_description_view,
     select_avatar_view,
 )
@@ -139,48 +130,19 @@ async def post_idle_expression(user: CurrentUser, body: IdleExpressionRequest) -
     )
 
 
-@router.get(
-    "/character-card",
-    response_model=CharacterCardResponse | None,
-    openapi_extra=operation_policy(identities=("desktop", "remote")),
-)
-async def get_character_card_route(user: CurrentUser, db: DbSession) -> CharacterCardResponse | None:
-    return await character_card_view(db, user.id)
-
-
-@router.patch(
-    "/character-card",
-    response_model=CharacterCardResponse,
-    openapi_extra=operation_policy(identities=("desktop", "remote")),
-)
-async def patch_character_card_route(
-    body: CharacterCardUpdate, user: CurrentUser, db: DbSession
-) -> CharacterCardResponse:
-    try:
-        return await update_character_card(db, user.id, body)
-    except (CharacterCardConflictError, CharacterCardNotReadyError) as exc:
-        raise RequestError(status_code=409, message=str(exc)) from exc
-
-
 @router.post(
-    "/character-card/extract",
-    response_model=CharacterCardResponse,
+    "/avatar/{avatar_id}/preparation/retry",
+    response_model=AvatarAssetResponse,
     openapi_extra=operation_policy(identities=("desktop", "remote")),
 )
-@limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
-async def extract_character_card_route(
-    request: Request, body: CharacterCardExtract, user: CurrentUser, db: DbSession
-) -> CharacterCardResponse:
+async def retry_appearance_preparation(
+    avatar_id: ResourceId, body: PreparationRetryRequest, user: CurrentUser, db: DbSession
+) -> AvatarAssetResponse:
     try:
-        result = await request_character_extraction(
-            db,
-            user.id,
-            expected_avatar_id=body.expected_avatar_id,
-            expected_revision=body.expected_revision,
-        )
-    except (CharacterCardConflictError, CharacterCardNotReadyError) as exc:
+        result = await retry_appearance_preparation_view(db, user.id, avatar_id, body.expected_revision)
+    except AvatarConflictError as exc:
         raise RequestError(status_code=409, message=str(exc)) from exc
-    schedule_character_extraction(user.id)
+    schedule_appearance_tasks(user.id)
     return result
 
 
@@ -402,15 +364,15 @@ async def get_fullbody_candidate(avatar_id: ResourceId, user: CurrentUser) -> Fu
 
 
 @router.post(
-    "/avatar/{avatar_id}/fullbody/candidate/{candidate_id}/analyze",
+    "/avatar/{avatar_id}/fullbody/candidate/{candidate_id}/review",
     response_model=FullbodyCandidateResponse,
     openapi_extra=operation_policy(wait_for_model=True),
 )
-async def post_fullbody_candidate_analyze(
+async def post_fullbody_candidate_review(
     avatar_id: ResourceId, candidate_id: ResourceId, user: CurrentUser
 ) -> FullbodyCandidateResponse:
     try:
-        return await retry_fullbody_candidate_analysis(user.id, avatar_id, candidate_id)
+        return await retry_fullbody_candidate_review(user.id, avatar_id, candidate_id)
     except AvatarNotFoundError as exc:
         raise RequestError(status_code=404, message=str(exc)) from exc
     except AvatarGenerationError as exc:
@@ -427,6 +389,7 @@ async def post_fullbody_candidate_accept(
 ) -> AvatarAssetResponse:
     try:
         asset = await accept_fullbody_candidate_view(user.id, avatar_id, candidate_id)
+        schedule_appearance_tasks(user.id)
     except (AvatarGenerationError, VisualReasoningError) as exc:
         raise _avatar_request_error(exc) from exc
     return asset
@@ -445,13 +408,13 @@ async def post_fullbody_confirm(
         asset = await confirm_fullbody_seed_view(user.id, avatar_id=avatar_id, expected_url=body.expected_url)
     except AvatarGenerationError as exc:
         raise _avatar_request_error(exc)
-    schedule_character_extraction(user.id)
+    schedule_appearance_tasks(user.id)
     return asset
 
 
 def _avatar_request_error(exc: AvatarGenerationError | VisualReasoningError) -> RequestError:
     """自备图提示词/采纳端点共用的错误映射：语义与对应生成端点一致。"""
-    if isinstance(exc, CharacterCardNotReadyError):
+    if isinstance(exc, VisualIdentityNotReadyError):
         return RequestError(status_code=409, message=str(exc))
     if isinstance(exc, VisualReasoningError):
         return RequestError(status_code=502, message=str(exc))
@@ -514,7 +477,7 @@ async def post_fullbody_adopt(
     except (AvatarGenerationError, VisualReasoningError) as exc:
         raise _avatar_request_error(exc)
     if isinstance(asset, AvatarAssetResponse) and asset.is_fullbody_confirmed:
-        schedule_character_extraction(user.id)
+        schedule_appearance_tasks(user.id)
     return asset
 
 

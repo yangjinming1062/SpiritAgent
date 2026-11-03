@@ -55,7 +55,8 @@ flowchart LR
     job_assets --> assets
     provider_attempts --> jobs
     provider_attempts --> provider_lanes
-    character_analysis_jobs --> jobs
+    appearance_preparation_jobs --> jobs
+    visual_observation_jobs --> jobs
     outfit_creation_jobs --> jobs
     scene_jobs --> jobs
     visual_jobs --> jobs
@@ -71,8 +72,9 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    avatar_assets -->|analysis| character_analysis_jobs
-    character_analysis_jobs -->|target| avatar_assets
+    avatar_assets -->|preparation| appearance_preparation_jobs
+    appearance_preparation_jobs -->|target| avatar_assets
+    visual_observation_jobs -->|identity version| avatar_assets
     companion_fullbody_candidates --> avatar_assets
     outfit_creation_jobs --> companion_outfits
     appearance_assets -->|one owner| avatar_assets
@@ -81,9 +83,9 @@ flowchart LR
     scene_jobs -->|target| companion_scenes
 ```
 
-确认身份统一管理自动特征、人工覆盖和修订，候选/分析失败不撤销已发布身份。衣柜、环境和动作是可复用定义，各自与制作过程分离；新制作失败保留当前素材。环境保存上传源和展示图，不保存“启用环境”；实际显示由呈现领域记录。
+确认图及独立身份版本归头像行；透明准备与内部观察各有持久任务，失败不撤销身份。Persona 保存可选人物背景，初始化完成进度独立于字段是否非空。衣柜、环境和动作是可复用定义，各自与制作过程分离；新制作失败保留当前素材。环境保存上传源和展示图，不保存“启用环境”；实际显示由呈现领域记录。
 
-头像行的当前文件外键可切换，`appearance_assets` 累计持有被替换的正式身份图，避免历史原图失去引用；衣柜与影像可共享同一个资产登记。图片文件以不可变路径区分，无独立图片版本表，角色卡修订继续用于资料并发校验。
+头像行的当前文件外键可切换，`appearance_assets` 累计持有被替换的正式身份图，避免历史原图失去引用；衣柜与影像可共享同一个资产登记。图片文件以不可变路径区分，无独立图片版本表，视觉身份版本只随明确确认/采纳推进，用于生成与候选的并发校验。
 
 动作的可用性由评审状态决定，不另存入库布尔值。通用内置定义通过账户内唯一 `preset_key` 补齐，自创动作该值为空；名称不承担唯一身份。内置动作 ID 在升级中保持稳定，备份按内置键合并，避免创建重复定义或改绑影像引用。
 

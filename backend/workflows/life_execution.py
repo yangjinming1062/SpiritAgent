@@ -6,7 +6,7 @@ from typing import Any
 
 from features.accounts.queries import nightly_account, user_is_active
 from features.action_library.queries import action_detail, list_actions
-from features.appearance.character_card import CARD_NOT_ANALYZED, load_character_snapshot
+from features.appearance.identity import IDENTITY_NOT_CONFIRMED, load_visual_identity
 from features.appearance.outfit_jobs import create_outfit_job, run_outfit_job
 from features.appearance.queries import ready_outfit_snapshots
 from features.companion.persona_service import onboarded_user_ids
@@ -68,7 +68,7 @@ async def execution_context(user_id: int) -> dict[str, Any]:
         actions = (await list_actions(db, user_id, status="approved", limit=50)).actions
         topics = await load_prompt_topics(db, MemoryScope(user_id, "companion"), utc_now())
         persona = await persona_snapshot(db, user_id)
-        character_ready = await load_character_snapshot(db, user_id) is not None
+        character_ready = await load_visual_identity(db, user_id) is not None
         disabled = disabled_backend_tool_names(await load_user_settings(db, user_id))
     # 只读自主开关，跳过导演目录装配。
     visuals = await presentation_state(user_id, with_catalog=False)
@@ -117,9 +117,9 @@ async def _block_reason(user_id: int, step: LifeStepView) -> tuple[str, str] | N
             return "unavailable", "账户未激活或伙伴引导尚未完成"
         if (
             step.kind in {"outfit.create", "visual.generate", "action.design"}
-            and await load_character_snapshot(db, user_id) is None
+            and await load_visual_identity(db, user_id) is None
         ):
-            return "unavailable", CARD_NOT_ANALYZED
+            return "unavailable", IDENTITY_NOT_CONFIRMED
         persona = await persona_snapshot(db, user_id)
         disabled = disabled_backend_tool_names(await load_user_settings(db, user_id))
         if step.source == "nightly":

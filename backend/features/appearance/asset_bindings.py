@@ -7,11 +7,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.assets.service import asset_paths_in_session, ensure_assets_in_session
 
-from .models import AppearanceAsset, AvatarAsset, CharacterAnalysisJob, CompanionOutfit, FullbodyCandidate
+from .models import (
+    AppearanceAsset,
+    AppearancePreparationJob,
+    AvatarAsset,
+    CompanionOutfit,
+    FullbodyCandidate,
+    VisualObservationJob,
+)
 
 _REFERENCES = {
     AvatarAsset: ("avatar_id", ("asset_url", "seed_fullbody_url")),
-    CharacterAnalysisJob: ("analysis_job_id", ("portrait_source_path", "body_source_path")),
+    AppearancePreparationJob: ("preparation_job_id", ("portrait_source_path", "body_source_path")),
+    VisualObservationJob: ("observation_job_id", ("portrait_source_path", "body_source_path")),
     CompanionOutfit: ("outfit_id", ("fullbody_url", "source_json")),
     FullbodyCandidate: ("candidate_id", ("image_url", "base_fullbody_url")),
 }
@@ -58,7 +66,8 @@ async def sync_appearance_assets(db: AsyncSession, user_id: int) -> None:
             "avatar_id": None,
             "outfit_id": None,
             "candidate_id": None,
-            "analysis_job_id": None,
+            "preparation_job_id": None,
+            "observation_job_id": None,
             owner_key: row.id,
             "asset_id": assets[path],
         }

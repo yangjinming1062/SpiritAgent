@@ -9,11 +9,11 @@ from runtime.events.emit import emit_ws_event
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.media.identity_contracts import CharacterCardSnapshot
+from features.media.identity_contracts import VisualIdentitySnapshot
 
 from .asset_bindings import flush_appearance
 from .avatar_service import validate_transparent_portrait
-from .character_card import character_snapshot_is_current
+from .identity import visual_identity_is_current
 from .models import CompanionOutfit, OutfitSource
 from .query_contracts import OutfitSnapshot
 
@@ -26,7 +26,7 @@ async def accept_imported_outfit(
     path: str,
     name: str,
     description: str,
-    identity: CharacterCardSnapshot,
+    identity: VisualIdentitySnapshot,
     identity_path: str,
     reference_path: str | None = None,
     generation_origin: GenerationOrigin | None = None,
@@ -37,7 +37,7 @@ async def accept_imported_outfit(
     )
     if existing is not None:
         return OutfitSnapshot.model_validate(existing)
-    if not await character_snapshot_is_current(db, user_id, identity):
+    if not await visual_identity_is_current(db, user_id, identity):
         raise ValueError("伙伴身份已变化，请重新核对提取的着装")
     resolved = resolve_asset_reference(path)
     if resolved is None:
@@ -54,7 +54,7 @@ async def accept_imported_outfit(
         status="ready",
         source_json=OutfitSource(
             description=description,
-            character_card_revision=identity.revision,
+            identity_revision=identity.revision,
             identity_reference_path=identity_path,
             reference_image_path=reference_path,
             generation_origin=generation_origin,
