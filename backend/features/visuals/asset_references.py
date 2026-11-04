@@ -116,6 +116,9 @@ async def _automatic_version_ids(db: AsyncSession, user_id: int) -> set[int]:
                 clip_kind=clip_kind,
                 body=version.body_json,
                 presentation_approved=source.presentation_approved,
+                review_result=snapshot.review_result,
+                reference_source=source.model_dump(mode="json"),
+                media_content_hash=version.content_hash,
                 scene_reference=scene is not None,
                 action_clip_kind=source.action.clip_kind if source.action else None,
             ):

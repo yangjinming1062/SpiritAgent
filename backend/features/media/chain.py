@@ -17,11 +17,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from runtime.user_maintenance import track_user_task
 
 from features.media.contracts import RemovedVideoTask
+from features.media.review_contracts import ReviewEvidence, ReviewVerdict, VisualReview
 from features.media.video_queue.contracts import VideoQueueInfo
 from features.media.video_queue.ports import cancel_queue_request
 
 logger = get_logger(__name__)
-MEDIA_IDENTITY_ACCEPT_SCORE = 75
 
 
 class MediaProviderFailedError(RuntimeError):
@@ -105,9 +105,13 @@ class MediaCandidate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     path: str
+    generation_id: str | None = None
     attempt: int
     slot: int = 0
-    score: int | None = Field(default=None, ge=0, le=100)
+    identity_verdict: ReviewVerdict | None = None
+    identity_reason: str = ""
+    evidence: ReviewEvidence | None = None
+    review: VisualReview | None = None
     evaluated: bool = False
     accepted: bool | None = None
     artifacts: list[str] = Field(default_factory=list)
@@ -141,39 +145,27 @@ class MediaChainState(BaseModel):
         self.video_queue = None
 
     def best(self, slot: int = 0) -> MediaCandidate | None:
-        candidates = [candidate for candidate in self.candidates if candidate.slot == slot]
-        return max(candidates, key=lambda item: item.score if item.score is not None else -1, default=None)
+        return self.best_qualified(slot) or next((c for c in self.candidates if c.slot == slot), None)
 
     def best_qualified(self, slot: int = 0) -> MediaCandidate | None:
-        return max(
+        return next(
             (
-                candidate
-                for candidate in self.candidates
-                if candidate.slot == slot
-                and candidate.evaluated
-                and candidate.score is not None
-                and candidate.score >= MEDIA_IDENTITY_ACCEPT_SCORE
-                and candidate.accepted is not False
+                c
+                for c in self.candidates
+                if c.slot == slot
+                and c.evaluated
+                and c.accepted is not False
+                and c.review is not None
+                and c.review.verdict == "pass"
             ),
-            key=lambda candidate: candidate.score if candidate.score is not None else -1,
-            default=None,
+            None,
         )
 
-    def accept_score(self, candidate: MediaCandidate, score: int | None) -> None:
-        candidate.score = score
-        candidate.evaluated = True
-        if score is None:
-            self.stop_reason = "score_unavailable"
-        logger.info(
-            "media identity candidate scored",
-            extra={
-                "provider": self.providers[candidate.attempt].provider,
-                "model": self.providers[candidate.attempt].model,
-                "chain_index": candidate.attempt,
-                "slot": candidate.slot,
-                "score": score,
-            },
-        )
+    def accept_identity_review(self, candidate: MediaCandidate, verdict: ReviewVerdict | None) -> None:
+        candidate.identity_verdict = verdict
+        candidate.evaluated = verdict is not None
+        if verdict in (None, "review"):
+            self.stop_reason = "review_pending"
 
     def needs_next(self, slot: int = 0) -> bool:
         return not self.stop_reason and self.next_index < len(self.providers) and self.best_qualified(slot) is None

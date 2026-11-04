@@ -12,7 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from features.jobs.service import rewrite_job_checkpoints
 
 from .chain import MediaChainState
-from .models import VideoGenJob
+from .identity_contracts import VisualIdentitySnapshot
+from .models import ImageGenJob, MediaContinuation, MediaManualOperation, MediaReviewAttempt, VideoGenJob
+from .review_views import ImageJobParams
 from .video_jobs import _VideoJobParams
 from .voice_models import CustomVoice
 
@@ -122,9 +124,16 @@ async def _restore_video_jobs(db: AsyncSession, rows: dict[str, list[dict[str, A
     patches = []
     for raw in rows.get("video_gen_jobs", []):
         original = str(raw["id"])
-        if ("video_gen_jobs", original) not in context.rewriter.inserted_rows:
+        mapped_job = context.id_map.get("video_gen_jobs", {}).get(original)
+        if mapped_job is None:
             continue
-        params = _VideoJobParams.model_validate(context.rewriter.rewrite(raw["params_json"]))
+        inserted = ("video_gen_jobs", original) in context.rewriter.inserted_rows
+        row = await db.get(VideoGenJob, int(mapped_job))
+        if not inserted and (context.mode != "overwrite" or row.cleanup_requested_at):
+            continue
+        params = _VideoJobParams.model_validate(
+            context.rewriter.rewrite(raw["params_json"]) if inserted else row.params_json
+        )
         if params.identity_snapshot is not None:
             mapped = context.id_map.get("avatar_assets", {}).get(str(params.identity_snapshot.avatar_id))
             params = params.model_copy(
@@ -134,7 +143,16 @@ async def _restore_video_jobs(db: AsyncSession, rows: dict[str, list[dict[str, A
                     )
                 }
             )
+        if params.request_scope and params.request_scope.startswith("user:") and raw.get("source_message_id"):
+            mapped_source = context.id_map.get("messages", {}).get(str(raw["source_message_id"]))
+            if mapped_source is not None:
+                params.request_scope = f"user:{mapped_source}"
         patches.append((context.id_map["video_gen_jobs"][original], params.model_dump(mode="json")))
+        if not inserted:
+            row.conversation_id = context.id_map.get("conversations", {}).get(str(raw.get("conversation_id")))
+            row.source_message_id = context.id_map.get("messages", {}).get(str(raw.get("source_message_id")))
+            row.reply_message_id = context.id_map.get("messages", {}).get(str(raw.get("reply_message_id")))
+    await db.flush()
     for start in range(0, len(patches), 500):
         payload = (
             values(column("row_id", BigInteger), column("params", JSONB))
@@ -154,8 +172,146 @@ async def _restore_video_jobs(db: AsyncSession, rows: dict[str, list[dict[str, A
     await rewrite_job_checkpoints(db, context.user_id, ids, _clear_video_handle)
 
 
+def _prepare_image(raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
+    payload["params_json"] = ImageJobParams.model_validate(payload["params_json"]).model_dump(mode="json")
+
+
+async def _restore_image_jobs(db: AsyncSession, rows: dict[str, list[dict[str, Any]]], context: BackupContext) -> None:
+    for raw in rows.get("image_gen_jobs", []):
+        mapped_job = context.id_map.get("image_gen_jobs", {}).get(str(raw["id"]))
+        if mapped_job is None:
+            continue
+        inserted = ("image_gen_jobs", str(raw["id"])) in context.rewriter.inserted_rows
+        row = await db.get(ImageGenJob, int(mapped_job))
+        if not inserted and (context.mode != "overwrite" or row.cleanup_requested_at):
+            continue
+        params = ImageJobParams.model_validate(
+            context.rewriter.rewrite(raw["params_json"]) if inserted else row.params_json
+        )
+        if params.identity_json:
+            identity = VisualIdentitySnapshot.model_validate_json(params.identity_json)
+            mapped = context.id_map.get("avatar_assets", {}).get(str(identity.avatar_id))
+            params.identity_json = identity.model_copy(
+                update={"avatar_id": int(mapped) if mapped is not None else None}
+            ).model_dump_json()
+        if params.request_scope.startswith("user:") and raw.get("source_message_id"):
+            mapped_source = context.id_map.get("messages", {}).get(str(raw["source_message_id"]))
+            if mapped_source is not None:
+                params.request_scope = f"user:{mapped_source}"
+        bindings = {
+            media_id: str(context.id_map["messages"][str(message_id)])
+            for media_id, message_id in raw["bindings_json"].items()
+            if str(message_id) in context.id_map.get("messages", {})
+            and (inserted or row.bindings_json.get(media_id) == str(message_id))
+        }
+        if not inserted:
+            row.conversation_id = context.id_map.get("conversations", {}).get(str(raw.get("conversation_id")))
+            row.source_message_id = context.id_map.get("messages", {}).get(str(raw.get("source_message_id")))
+            await db.flush()
+        row.params_json, row.bindings_json = params.model_dump(mode="json"), bindings
+    await db.flush()
+
+
+def _prepare_continuation(raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
+    payload["automatic"] = False
+    if payload["state"] != "complete":
+        payload["state"] = "waiting"
+
+
+async def _restore_continuation_results(
+    db: AsyncSession, rows: dict[str, list[dict[str, Any]]], context: BackupContext
+) -> None:
+    if context.mode == "overwrite":
+        ids = [int(value) for value in context.id_map.get("media_continuations", {}).values()]
+        await db.execute(
+            update(MediaContinuation)
+            .where(MediaContinuation.user_id == context.user_id, MediaContinuation.id.in_(ids))
+            .values(automatic=False)
+        )
+    for raw in rows.get("media_continuations", []):
+        if ("media_continuations", str(raw["id"])) not in context.rewriter.inserted_rows:
+            continue
+        result = context.rewriter.rewrite(dict(raw.get("result_json") or {}))
+        for field, table in {
+            "job_id": "jobs",
+            "prepared_job_id": "jobs",
+            "outfit_id": "companion_outfits",
+            "post_id": "companion_entries",
+            "message_id": "messages",
+        }.items():
+            if field in result:
+                mapped_result = context.id_map.get(table, {}).get(str(result[field]))
+                result[field] = str(mapped_result) if mapped_result is not None else None
+        await db.execute(
+            update(MediaContinuation)
+            .where(
+                MediaContinuation.user_id == context.user_id,
+                MediaContinuation.id == int(context.id_map["media_continuations"][str(raw["id"])]),
+            )
+            .values(result_json=result or None)
+        )
+
+
+def _prepare_review_attempt(raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
+    if payload["state"] == "running":
+        payload["state"] = "interrupted"
+
+
+def _prepare_manual_operation(raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
+    result = dict(payload["result_json"])
+    mapped = context.id_map.get("jobs", {}).get(str(result.get("job_id")))
+    result["job_id"] = int(mapped) if mapped is not None else 0
+    result["start_pending"] = False
+    payload["result_json"] = result
+
+
+async def _restore_manual_operations(
+    db: AsyncSession, rows: dict[str, list[dict[str, Any]]], context: BackupContext
+) -> None:
+    if context.mode != "overwrite":
+        return
+    ids = [int(value) for value in context.id_map.get("media_manual_operations", {}).values()]
+    for operation in await db.scalars(
+        select(MediaManualOperation).where(
+            MediaManualOperation.user_id == context.user_id, MediaManualOperation.id.in_(ids)
+        )
+    ):
+        if operation.result_json.get("start_pending"):
+            operation.result_json = {**operation.result_json, "start_pending": False}
+
+
 def backup_tables() -> tuple[BackupTable, ...]:
     return (
+        BackupTable(
+            "media_manual_operations",
+            MediaManualOperation,
+            foreign_keys={"job_id": "jobs"},
+            unique_keys=("request_id",),
+            prepare_payload=_prepare_manual_operation,
+            restore_context=_restore_manual_operations,
+        ),
+        BackupTable(
+            "image_gen_jobs",
+            ImageGenJob,
+            foreign_keys={"id": "jobs", "conversation_id": "conversations", "source_message_id": "messages"},
+            prepare_payload=_prepare_image,
+            restore_context=_restore_image_jobs,
+        ),
+        BackupTable(
+            "media_review_attempts",
+            MediaReviewAttempt,
+            foreign_keys={"job_id": "jobs"},
+            unique_keys=("request_id",),
+            prepare_payload=_prepare_review_attempt,
+        ),
+        BackupTable(
+            "media_continuations",
+            MediaContinuation,
+            foreign_keys={"dependency_job_id": "jobs", "owner_job_id": "jobs"},
+            unique_keys=("operation_id",),
+            prepare_payload=_prepare_continuation,
+            restore_context=_restore_continuation_results,
+        ),
         BackupTable("video_gen_jobs", VideoGenJob, prepare_payload=_prepare_video, restore_context=_restore_video_jobs),
         BackupTable(
             "custom_voices",

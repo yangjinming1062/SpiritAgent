@@ -2,10 +2,8 @@
 
 from infrastructure.assets.asset_store import resolve_asset_reference
 
-
-def frozen_approval(kind: str | None, value: bool | None) -> bool:
-    """旧制作快照默认通过；分析中的原件必须明确通过。"""
-    return value if value is not None else kind != "analysis"
+from features.media.review_contracts import VisualReview, visual_reference_basis
+from features.media.review_evidence import review_evidence_intact
 
 
 def existing_asset(reference: str | None) -> str | None:
@@ -29,10 +27,32 @@ def automatic_media_ready(
     auto_selectable: bool | None,
     clip_kind: str | None,
     body: dict | None,
-    presentation_approved: bool = True,
+    presentation_approved: bool | None = False,
+    review_result: VisualReview | dict | None = None,
+    reference_source: dict | None = None,
+    media_content_hash: str | None = None,
     scene_reference: bool = True,
     action_clip_kind: str | None = None,
 ) -> bool:
+    try:
+        report = (
+            review_result if isinstance(review_result, VisualReview) else VisualReview.model_validate(review_result)
+        )
+    except ValueError:
+        return False
+    required = {"goal", "quality"} | ({"identity"} if asset_kind in {"actor", "cinematic"} else set())
+    if reference_source is None or report.reference_basis != visual_reference_basis(reference_source):
+        return False
+    if not required.issubset(report.required) or report.verdict != "pass" or report.evidence is None:
+        return False
+    resolved = resolve_asset_reference(media_path)
+    if (
+        resolved is None
+        or media_content_hash is None
+        or report.evidence.media_hash != media_content_hash
+        or not review_evidence_intact(report.evidence)
+    ):
+        return False
     return bool(
         presentation_approved
         and (media_kind == "video" or media_kind == "image")

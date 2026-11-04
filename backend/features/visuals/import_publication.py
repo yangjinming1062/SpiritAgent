@@ -5,6 +5,8 @@ from typing import Literal
 from infrastructure.database import SESSION_LOCAL
 from sqlalchemy import select
 
+from features.media.review_contracts import review_dimension_passes, visual_reference_basis
+
 from .import_jobs import ImportCatalogCandidate, ImportWork
 from .import_operations import import_operations
 from .models import VisualImportJob
@@ -17,6 +19,7 @@ from .schemas import (
     ImportPlaybackBlock,
     SceneMediaSource,
     VisualAsset,
+    VisualSnapshot,
 )
 
 
@@ -26,6 +29,7 @@ def import_playback_blocks(
     if work.result is None:
         raise VisualStateError("上传分析结果缺失")
     understanding = work.result.understanding
+    final_review = work.context.presentation_review
     blocks: list[ImportPlaybackBlock] = []
     if any(entry.status not in {"created", "reused", "skipped", "undone"} for entry in work.result.components):
         blocks.append(ImportPlaybackBlock(code="materials_incomplete", reason="素材整理尚未完成"))
@@ -37,11 +41,18 @@ def import_playback_blocks(
     if understanding.asset_kind in {"scene", "cinematic"} and len(scenes) != 1:
         blocks.append(ImportPlaybackBlock(code="scene", reason="需要确认与整段影像相符的环境"))
     if understanding.asset_kind == "scene":
-        if understanding.identity_match != "absent":
+        if not review_dimension_passes(final_review, "goal") and understanding.identity_match != "absent":
             blocks.append(ImportPlaybackBlock(code="identity", reason=understanding.identity_reason))
     else:
-        if understanding.identity_match != "same" or work.context.identity is None:
-            blocks.append(ImportPlaybackBlock(code="identity", reason=understanding.identity_reason))
+        if work.context.identity is None or not review_dimension_passes(final_review, "identity"):
+            blocks.append(
+                ImportPlaybackBlock(
+                    code="identity",
+                    reason=final_review.identity.reason
+                    if final_review and final_review.identity
+                    else understanding.identity_reason,
+                )
+            )
         if len(outfits) != 1:
             blocks.append(ImportPlaybackBlock(code="outfit", reason="需要确认与影像相符的着装"))
         if len(actions) != 1:
@@ -62,6 +73,36 @@ def import_playback_blocks(
     return blocks
 
 
+def update_pending_import_review(work: ImportWork) -> None:
+    report, pending = work.context.presentation_review, work.context.pending_application
+    if report is None or pending is None or work.result is None:
+        return
+    selected = [
+        candidate
+        for candidate in work.context.candidates
+        if any(
+            entry.material_id == candidate.material_id
+            and entry.observation.kind == candidate.kind
+            and entry.status in {"created", "reused"}
+            for entry in work.result.components
+        )
+    ]
+    reason = "；".join(getattr(report, name).reason for name in report.required if getattr(report, name)) or (
+        "用户人工放行" if report.human_approval else "检查尚未完成"
+    )
+    work.result.presentation_verdict = report.verdict
+    work.result.blocking_reasons = import_playback_blocks(work, selected, report.verdict, reason)
+    pending = dict(pending)
+    snapshot = dict(pending["snapshot"])
+    source = dict(snapshot["source"])
+    report.reference_basis = visual_reference_basis(source)
+    snapshot["review_result"] = report.model_dump(mode="json")
+    source["presentation_approved"] = report.verdict == "pass" and not work.result.blocking_reasons
+    snapshot["source"] = source
+    pending["snapshot"] = snapshot
+    work.context.pending_application = pending
+
+
 async def complete_import_analysis(
     work: ImportWork, selected: list[ImportCatalogCandidate], verdict: Literal["pass", "review", "fail"], reason: str
 ) -> bool:
@@ -78,7 +119,11 @@ async def complete_import_analysis(
     action = actions[0] if len({entry.action_id for entry in actions}) == 1 else None
     work.result.presentation_verdict = verdict
     work.result.blocking_reasons = import_playback_blocks(work, selected, verdict, reason)
-    approved = not work.result.blocking_reasons
+    approved = (
+        not work.result.blocking_reasons
+        and work.context.presentation_review is not None
+        and work.context.presentation_review.verdict == "pass"
+    )
     original = work.snapshot.source
     metadata = {
         key: value
@@ -186,7 +231,11 @@ async def complete_import_analysis(
         source.analysis_revision = job.revision
         if work.context.animated_image:
             source.original_duration_ms = work.duration_ms
-        snapshot = work.snapshot.model_copy(update={"source": source, "review_reason": reason})
+        if work.context.presentation_review is not None:
+            work.context.presentation_review.reference_basis = visual_reference_basis(source.model_dump(mode="json"))
+        snapshot = work.snapshot.model_copy(
+            update={"source": source, "review_reason": reason, "review_result": work.context.presentation_review}
+        )
         asset = VisualAsset(
             media_kind=item.media_kind,
             media_path=item.media_path,
@@ -209,25 +258,44 @@ async def complete_import_analysis(
                 }
             )
         automatic_titles = {original.original_filename, original.original_filename[:160], ""}
-        await publish_import_revision(
-            db,
-            work.user_id,
-            item.id,
-            work.expected_version,
-            asset=asset,
-            snapshot=snapshot,
-            title=understanding.title if item.title in automatic_titles else item.title,
-        )
-        job.expected_version = work.expected_version + 1
+        work.context.pending_application = {
+            "asset": asset.model_dump(mode="json"),
+            "snapshot": snapshot.model_dump(mode="json"),
+            "title": understanding.title if item.title in automatic_titles else item.title,
+            "expected_version": work.expected_version,
+        }
+        job.context_json = work.context.model_dump(mode="json")
         job.result_json = work.result.model_dump(mode="json")
-        failed = any(entry.status == "failed" for entry in work.result.components)
-        job.state, job.stage, job.error = (
-            ("failed", "organize", "部分素材整理未完成，可重试；原件和已完成的结果已保存")
-            if failed
-            else ("paused", "confirmation", "有信息需要确认，其他素材已整理保存")
-            if verdict == "review" or any(entry.status == "ambiguous" for entry in work.result.components)
-            else ("succeeded", "complete", None)
-        )
+        job.state, job.stage, job.error = "paused", "review_pending" if verdict == "review" else "confirmation", None
         await notify_visuals_updated(db, work.user_id)
         await db.commit()
         return True
+
+
+async def apply_import_result(user_id: int, visual_id: int, expected_revision: int | None) -> None:
+    async with SESSION_LOCAL() as db:
+        job = await db.scalar(
+            select(VisualImportJob)
+            .where(VisualImportJob.user_id == user_id, VisualImportJob.visual_id == visual_id)
+            .with_for_update()
+        )
+        if job is None or expected_revision is None or job.revision != expected_revision:
+            raise VisualStateError("分析版本已变化，请刷新")
+        pending = job.context_json.get("pending_application")
+        if pending is None or job.stage != "confirmation":
+            raise VisualStateError("分析结果尚不能应用")
+        if any(
+            entry.state in {"queued", "running", "paused", "failed"} for entry in import_operations(job.selections_json)
+        ):
+            raise VisualStateError("素材操作尚未完成")
+        await visual_item(db, user_id, visual_id, lock=True)
+        snapshot = VisualSnapshot.model_validate(pending["snapshot"])
+        asset = VisualAsset.model_validate(pending["asset"])
+        await publish_import_revision(
+            db, user_id, visual_id, pending["expected_version"], asset=asset, snapshot=snapshot, title=pending["title"]
+        )
+        job.expected_version = pending["expected_version"] + 1
+        job.state, job.stage, job.error = "succeeded", "complete", None
+        job.context_json = {**job.context_json, "pending_application": None}
+        await notify_visuals_updated(db, user_id)
+        await db.commit()

@@ -6,6 +6,7 @@ import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useClipboard } from '@/shared/hooks/use-clipboard'
 import { ArrowBackUp, ChevronDown, Copy, GitFork, Pencil, RefreshCw, Search } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
+import { MediaReviewButton } from '@/shared/panel/media-review-button'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import { voicePlaybackKey } from '@ipc/contracts'
@@ -414,7 +415,18 @@ function MessageBubbleWithBody({
                 : body.replyMedia.error ||
                   (body.replyMedia.status === 'result_unknown'
                     ? dict.chat.media.resultUnknown
-                    : dict.chat.media.generationFailed)}
+                    : body.replyMedia.status === 'review_pending'
+                      ? dict.chat.media.reviewPending
+                      : dict.chat.media.generationFailed)}
+              {(body.replyMedia.status === 'review_pending' || body.replyMedia.status === 'failed') &&
+              body.replyMedia.job_id ? (
+                <MediaReviewButton jobId={body.replyMedia.job_id} mediaId={body.replyMedia.media_id} />
+              ) : null}
+              {body.replyMedia.status === 'result_unknown' &&
+              body.replyMedia.type === 'video' &&
+              body.replyMedia.job_id ? (
+                <MediaReviewButton jobId={body.replyMedia.job_id} mediaId={body.replyMedia.media_id} receiveResult />
+              ) : null}
             </div>
           ) : null}
           {body.media?.length ? (

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from infrastructure.assets import asset_store
-from sqlalchemy import ColumnElement, Select, and_, func, or_, select
+from sqlalchemy import ColumnElement, Select, and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -74,7 +74,7 @@ def _snapshot_statement(conditions: list[ColumnElement[bool]], *, state_only: bo
         CompanionScene.media_path == "",
         CompanionScene.prompt != "",
         CompanionScene.target_size_json.is_not(None),
-        func.coalesce(initial.stage, "prepare").not_in(("submitting", "review_failed")),
+        func.coalesce(initial.stage, "prepare").not_in(("submitting", "review_failed", "review_pending")),
         func.coalesce(initial.checkpoint["phase"].astext, "") != "submitting",
         func.coalesce(initial.checkpoint["stop_reason"].astext, "") != "result_unknown",
     )
@@ -89,6 +89,11 @@ def _snapshot_statement(conditions: list[ColumnElement[bool]], *, state_only: bo
             replacement.error.label("regeneration_error"),
             replacement.token.label("regeneration_task_id"),
             retry.label("can_retry_generation"),
+            case(
+                (replacement.stage.in_(("review_pending", "confirmation")), replacement.id),
+                (initial.stage.in_(("review_pending", "confirmation")), initial.id),
+                else_=None,
+            ).label("review_job_id"),
         )
         .select_from(CompanionScene)
         .outerjoin(initial, initial.id == CompanionScene.initial_job_id)
@@ -175,7 +180,7 @@ def can_retry_scene_generation(row: CompanionScene | SceneSnapshot) -> bool:
         or row.media_path
         or not row.prompt
         or not row.target_size_json
-        or row.initial_job.stage in {"submitting", "review_failed"}
+        or row.initial_job.stage in {"submitting", "review_failed", "review_pending"}
     ):
         return False
     state = ImageChainState.model_validate(row.initial_job.checkpoint) if row.initial_job.checkpoint else None
@@ -191,6 +196,7 @@ def response_for_scene(row: CompanionScene | SceneSnapshot) -> SceneResponse:
             "status": row.status,
             "stage": row.stage,
             "can_retry_generation": can_retry_scene_generation(row),
+            "review_job_id": row.review_job_id,
             "origin": row.origin,
             "source": row.source,
             **{
@@ -250,6 +256,11 @@ def scene_view(row: CompanionScene) -> SceneSnapshot:
             "regeneration_error": replacement.error if replacement is not None else None,
             "regeneration_task_id": replacement.token if replacement is not None else None,
             "can_retry_generation": can_retry_scene_generation(row),
+            "review_job_id": replacement.id
+            if replacement and replacement.stage in {"review_pending", "confirmation"}
+            else initial.id
+            if initial and initial.stage in {"review_pending", "confirmation"}
+            else None,
         }
     )
 

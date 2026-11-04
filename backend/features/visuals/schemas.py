@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from features.action_library.schemas import ActionAssetDesign
 from features.life.schemas import FactType
 from features.media.identity_contracts import CharacterReferenceRole, VisualIdentitySnapshot
+from features.media.review_contracts import HumanReviewApproval, ReviewEvidence, ReviewVerdict, VisualReview
 from features.media.visual_semantics import (
     ActionMotionIntensity,
     ActionPerformanceRole,
@@ -136,7 +137,7 @@ class VisualSourceMetadata(BaseModel):
     analysis_job_id: ResourceId | None = None
     analysis_revision: int | None = None
     analysis_pending: bool = False
-    presentation_approved: bool = True
+    presentation_approved: bool = False
     identity_reason: str = ""
 
 
@@ -377,7 +378,7 @@ class ImportAnalysisRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     expected_revision: int | None = Field(default=None, ge=0)
-    command: Literal["retry", "cancel", "apply", "reanalyze"] = "retry"
+    command: Literal["retry", "cancel", "apply", "apply_result", "reanalyze"] = "retry"
     selections: list[ImportSelection] = Field(default_factory=list, max_length=12)
     notes: str | None = Field(default=None, max_length=2000)
 
@@ -422,6 +423,7 @@ class VisualSnapshot(BaseModel):
     target_width: int = Field(gt=0, le=VISUAL_MAX_EDGE, strict=True)
     target_height: int = Field(gt=0, le=VISUAL_MAX_EDGE, strict=True)
     review_reason: str = Field(default="", description="已发布成品的实际检查依据；制作输入为空")
+    review_result: VisualReview | None = None
 
     @property
     def kind(self) -> VisualAssetKind:
@@ -437,7 +439,11 @@ class OpeningReview(BaseModel):
     requirements_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     reference_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     status: Literal["complete", "unavailable", "invalid", "blocked"] = "complete"
-    score: int | None = Field(default=None, ge=0, le=100, strict=True)
+    identity_verdict: ReviewVerdict | None = None
+    identity_reason: str = ""
+    quality_reason: str = ""
+    evidence: ReviewEvidence | None = None
+    human_approval: HumanReviewApproval | None = None
     verdict: Literal["pass", "review", "fail"] | None = None
     quality_verdict: Literal["pass", "review", "fail"] | None = None
     reason: str = ""
@@ -522,9 +528,15 @@ class VisualJobProgress(BaseModel):
     image_chain_json: str | None = None
     video_chain_json: str | None = None
     candidate: VisualAsset | None = None
-    identity_score: int | None = None
+    identity_verdict: ReviewVerdict | None = None
     identity_reason: str = ""
-    review_verdict: Literal["pass", "review"] | None = None
+    review_verdict: ReviewVerdict | None = None
+    quality_verdict: ReviewVerdict | None = None
+    quality_reason: str = ""
+    identity_evidence: ReviewEvidence | None = None
+    video_evidence: ReviewEvidence | None = None
+    review_result: VisualReview | None = None
+    review_only: bool = False
     review_reason: str = ""
     submission_unknown: bool = False
     failure_reason: str = ""

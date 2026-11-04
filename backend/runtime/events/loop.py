@@ -121,6 +121,7 @@ async def _claim_pending_events(local_user_ids: list[int]) -> list[Row]:
             select(WSEvent.id)
             .where(
                 or_(
+                    WSEvent.event_type.in_(tuple(_handlers)),
                     WSEvent.user_id.in_(MANAGER.local_user_ids()),
                     and_(
                         WSEvent.user_id.in_(local_user_ids),
@@ -303,7 +304,7 @@ async def _process_events(seen: int) -> int:
 async def _dispatch_claimed_batch() -> tuple[int, bool]:
     """认领并派发一批待投递事件，返回认领数量与是否有事件未能交给用户派发器。"""
     local_user_ids = MANAGER.event_user_ids()
-    if not local_user_ids:
+    if not local_user_ids and not _handlers:
         return 0, False
     claimed = await _claim_pending_events(local_user_ids)
 
@@ -323,6 +324,16 @@ async def _dispatch_claimed_batch() -> tuple[int, bool]:
             task.add_done_callback(lambda t, et=event_type, uid=user_id: _discard_event_task(et, uid, t))
             task.add_done_callback(_log_event_task_failure)
             handled_delivered_ids.append(event_id)
+            # 受众为 all 的事件在内部处理之外仍要送达客户端；本行已按内部处理认领，推送失败不回退业务唤醒。
+            if event_type in remote_event_types():
+                try:
+                    await MANAGER.publish_event(user_id, event_type, payload, event_id=event_id)
+                except Exception:
+                    logger.warning(
+                        "Internal event client notification deferred to snapshot",
+                        extra={"event_id": event_id},
+                        exc_info=True,
+                    )
             continue
 
         try:

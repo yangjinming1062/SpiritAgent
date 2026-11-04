@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.assets.lifecycle import enqueue_asset_cleanup
 from features.assets.references import message_asset_paths
+from features.media.image_jobs import invalidate_image_jobs
 from features.media.queries import invalidate_conversation_video_jobs
 from features.media.voice_queries import custom_voice_tokens, voice_asset_references
 
@@ -49,6 +50,7 @@ async def collect_message_asset_releases(
         message_ids,
         session_ids if from_message_id is None else (),
     )
+    await invalidate_image_jobs(db, user_id, message_ids, session_ids if from_message_id is None else set())
     released |= asset_paths([reference.model_dump() for reference in jobs.references], user_id)
     payloads = await invalidate_history_events(
         db,

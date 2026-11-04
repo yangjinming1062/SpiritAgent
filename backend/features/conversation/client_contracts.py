@@ -12,7 +12,9 @@ from features.media.video_queue.contracts import VideoQueueInfo
 class ClientMediaBubble(BaseModel):
     type: Literal["image", "video"]
     media_id: str
-    status: Literal["pending", "ready", "failed", "result_unknown"]
+    status: Literal["pending", "ready", "failed", "result_unknown", "review_pending"]
+    job_id: ResourceId | None = None
+    media_revision: int = 0
     url: str | None
     error: str | None
     video_queue: VideoQueueInfo | None = None

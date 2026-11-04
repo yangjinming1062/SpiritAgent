@@ -83,13 +83,17 @@ class LinkBubble(LinkBubbleInput):
         return value
 
 
+MediaBubbleStatus = Literal["pending", "ready", "failed", "result_unknown", "review_pending"]
+
+
 class MediaBubble(MediaBubbleInput):
-    status: Literal["pending", "ready", "failed", "result_unknown"]
+    status: MediaBubbleStatus
     url: str | None = None
     error: str | None = None
     # 服务端绑定，不下发模型也不由客户端决定归属。
     goal_id: str = Field(min_length=1, max_length=128)
     job_id: ResourceId | None = Field(default=None, gt=0)
+    media_revision: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")
     def validate_asset_state(self) -> "MediaBubble":
@@ -97,8 +101,6 @@ class MediaBubble(MediaBubbleInput):
             raise ValueError("Invalid media asset path")
         if (self.status == "ready") != bool(self.url):
             raise ValueError("Ready media requires an asset; unfinished media cannot bind one")
-        if self.type == "image" and self.job_id is not None:
-            raise ValueError("Images cannot bind a video task")
         return self
 
 

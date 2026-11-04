@@ -90,6 +90,10 @@ def _roles(asset: VisualAsset, snapshot: VisualSnapshot) -> dict[str, str]:
             "outfit": source.outfit.path if source.outfit else None,
             "scene": source.scene.path if source.scene else None,
         }
+    if snapshot.review_result and snapshot.review_result.evidence:
+        paths.update(
+            {f"review_{index}": entry.path for index, entry in enumerate(snapshot.review_result.evidence.images)}
+        )
     if source.original_path:
         paths["original"] = source.original_path
     return {role: path for role, value in paths.items() if (path := _path(value)) is not None}

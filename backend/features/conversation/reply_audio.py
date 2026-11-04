@@ -37,6 +37,8 @@ def client_reply_bubbles(reply: CompanionReply) -> list[dict]:
                 {
                     "type": bubble.type,
                     "media_id": bubble.media_id,
+                    "job_id": str(bubble.job_id) if bubble.job_id else None,
+                    "media_revision": bubble.media_revision,
                     "status": bubble.status,
                     "url": client_asset_url(bubble.url) if bubble.url else None,
                     "error": bubble.error,

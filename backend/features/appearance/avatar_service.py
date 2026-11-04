@@ -3,7 +3,7 @@ import contextlib
 import io
 from collections.abc import Awaitable, Callable
 
-from infrastructure.ai.error_classifier import LlmCallBlockedError, LLMRuntimeError, is_content_policy_error_message
+from infrastructure.ai.error_classifier import LLMRuntimeError, is_content_policy_error_message
 from infrastructure.ai.prompt_engineer import chat
 from infrastructure.ai.providers._size_aspect import SIZE_TO_ASPECT
 from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
@@ -21,6 +21,7 @@ from infrastructure.assets.asset_store import (
 from infrastructure.async_io import run_blocking
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
+from infrastructure.request_errors import RequestError
 from infrastructure.temp_files import save_file
 from infrastructure.text import parse_llm_json
 from infrastructure.video_processing.ffmpeg import ActionMaterialRejectedError, VideoProcessError
@@ -43,7 +44,7 @@ from features.appearance.identity import (
     require_visual_identity,
     visual_identity_is_current,
 )
-from features.appearance.models import AvatarAsset, CompanionOutfit, FullbodyCandidate, OutfitSource
+from features.appearance.models import AvatarAsset, CompanionOutfit, FullbodyCandidate, FullbodyReviewJob, OutfitSource
 from features.appearance.prompt_assembly import (
     build_avatar_reference_prompt,
     build_image_edit_prompt,
@@ -60,14 +61,24 @@ from features.assets.lifecycle import cleanup_user_assets, enqueue_asset_cleanup
 from features.companion.persona_service import load_persona_definition
 from features.companion.query_contracts import PersonaSnapshot
 from features.companion.visual_state import ensure_persona_snapshot, lock_persona_snapshot, reset_portrait_confirmation
-from features.media.chain import MEDIA_IDENTITY_ACCEPT_SCORE
+from features.jobs.service import bind_job_assets
+from features.media.chain import MediaCandidate
 from features.media.character_images import image_asset_bytes
-from features.media.identity_contracts import (
-    VisualIdentitySnapshot,
-)
-from features.media.identity_review import score_portrait_identity
+from features.media.identity_contracts import VisualIdentitySnapshot
+from features.media.identity_review import IdentityReview, review_portrait_identity
 from features.media.image_generation import GeneratedImages, ImageGenerationError, generate_images
+from features.media.manual_reviews import manual_candidate_views
 from features.media.prompts import MODERATION_SANITIZATION_PROMPT
+from features.media.review_contracts import (
+    ReviewDecision,
+    ReviewEvidence,
+    VisualReview,
+    candidate_review_key,
+    review_basis,
+)
+from features.media.review_evidence import review_media_intact
+from features.media.review_operations import review_media_job
+from features.media.review_views import MediaJobView, MediaReviewRequest, MediaSlotView, review_request_matches
 
 logger = get_logger(__name__)
 
@@ -165,6 +176,7 @@ class AvatarConflictError(ValueError):
 def fullbody_candidate_response(candidate: FullbodyCandidate) -> FullbodyCandidateResponse:
     return FullbodyCandidateResponse(
         id=candidate.id,
+        review_job_id=(candidate.review_json or {}).get("job_id"),
         avatar_id=candidate.avatar_id,
         image_url=re_sign_bare_path(candidate.image_url) or candidate.image_url,
         status=candidate.status,
@@ -195,49 +207,97 @@ async def latest_fullbody_candidate(user_id: int, avatar_id: int) -> FullbodyCan
         return fullbody_candidate_response(row)
 
 
-async def _review_fullbody_candidate(user_id: int, candidate_id: int, path: str) -> FullbodyCandidateResponse:
+async def _review_fullbody_candidate(
+    user_id: int, candidate_id: int, path: str, expected: MediaReviewRequest | None = None
+) -> FullbodyCandidateResponse:
     """直接对照确认头像复核候选；允许用户明确调整身体。"""
     async with SESSION_LOCAL() as db:
-        identity = await require_visual_identity(db, user_id)
-        avatar = await db.get(AvatarAsset, identity.avatar_id)
+        current_candidate = await db.get(FullbodyCandidate, candidate_id)
+        if current_candidate is None or current_candidate.user_id != user_id or current_candidate.image_url != path:
+            raise AvatarGenerationError("候选图已更新，请刷新后重试")
+        identity = VisualIdentitySnapshot(
+            avatar_id=current_candidate.avatar_id, revision=current_candidate.base_revision
+        )
+        avatar = await db.get(AvatarAsset, current_candidate.avatar_id)
         if avatar is None:
             raise AvatarNotFoundError("确认形象不存在")
         portrait_path = avatar.asset_url
-        current_candidate = await db.get(FullbodyCandidate, candidate_id)
-        if (
-            current_candidate is None
-            or current_candidate.user_id != user_id
-            or current_candidate.image_url != path
-            or current_candidate.base_revision != identity.revision
-            or current_candidate.base_fullbody_url != avatar.seed_fullbody_url
-        ):
+        if expected is None and not await visual_identity_is_current(db, user_id, identity):
             raise AvatarGenerationError("确认形象或候选图已更新，请刷新后重试")
 
+    async with SESSION_LOCAL() as db:
+        review_job = await db.scalar(
+            select(FullbodyReviewJob)
+            .where(FullbodyReviewJob.candidate_id == candidate_id, FullbodyReviewJob.user_id == user_id)
+            .with_for_update()
+        )
+        if review_job is None:
+            review_job = FullbodyReviewJob(
+                user_id=user_id,
+                candidate_id=candidate_id,
+                state="running",
+                checkpoint={"portrait_path": portrait_path, "candidate_path": path},
+            )
+            db.add(review_job)
+            await db.flush()
+        if expected is not None and not review_request_matches(
+            await fullbody_review_view(user_id, review_job.id), expected
+        ):
+            raise AvatarGenerationError("检查依据或任务版本已变化")
+        review_job.state, review_job.stage = "running", "reviewing"
+        saved_report = (
+            IdentityReview.model_validate(review_job.checkpoint["report"])
+            if (review_job.checkpoint or {}).get("report")
+            else None
+        )
+        portrait_path = review_job.checkpoint["portrait_path"]
+        review_job_id = review_job.id
+        await bind_job_assets(db, user_id, review_job_id, {portrait_path, path}, "review")
+        await db.commit()
+
+    async def save_evidence(evidence: ReviewEvidence) -> None:
+        async with SESSION_LOCAL() as db:
+            job = await db.get(FullbodyReviewJob, review_job_id, with_for_update=True)
+            job.checkpoint = {
+                **(job.checkpoint or {}),
+                "report": IdentityReview(
+                    verdict="review", reason="检查尚未完成", evidence=evidence, status="unavailable"
+                ).model_dump(mode="json"),
+            }
+            await bind_job_assets(db, user_id, job.id, {entry.path for entry in evidence.images}, "review")
+            await db.commit()
+
+    identity_verdict: IdentityReview | None = None
     error: str | None = None
     try:
-        reference, candidate = await asyncio.gather(
-            asyncio.to_thread(read_asset_data_uri, portrait_path),
-            asyncio.to_thread(read_asset_data_uri, path),
-        )
-        if not reference or not candidate:
-            raise AvatarSourceUnreadableError("确认头像或候选图片无法读取")
+        reference, candidate = "", ""
+        if saved_report is None or saved_report.evidence is None:
+            reference, candidate = await asyncio.gather(
+                asyncio.to_thread(read_asset_data_uri, portrait_path),
+                asyncio.to_thread(read_asset_data_uri, path),
+            )
+            if not reference or not candidate:
+                raise AvatarSourceUnreadableError("确认头像或候选图片无法读取")
 
         async def before_review() -> None:
             require_new_generation_call(user_id)
-            async with SESSION_LOCAL() as db:
-                if not await visual_identity_is_current(db, user_id, identity):
-                    raise LlmCallBlockedError("确认形象已更新")
 
-        score = await score_portrait_identity(
-            user_id, reference, candidate, task=AiTaskKey.appearance, before_submit=before_review
+        identity_verdict = await review_portrait_identity(
+            user_id,
+            reference,
+            candidate,
+            task=AiTaskKey.appearance,
+            before_submit=before_review,
+            evidence=saved_report.evidence if saved_report else None,
+            save_evidence=save_evidence,
         )
-        if score is None or score < MEDIA_IDENTITY_ACCEPT_SCORE:
-            error = "候选图未通过面容与物种复核，请调整图片后重试"
+        if identity_verdict.verdict != "pass" or identity_verdict.status != "complete":
+            error = identity_verdict.reason
     except GenerationWorkPaused:
         error = "制作已暂停，恢复后可重试图片复核"
     except Exception:
         logger.warning("fullbody candidate review failed", extra={"candidate_id": candidate_id}, exc_info=True)
-        error = "图片复核暂未完成，请重试复核"
+        error = "图片检查暂未完成，可以查看候选后采用或重新生成"
     async with SESSION_LOCAL() as db:
         row = await db.scalar(
             select(FullbodyCandidate)
@@ -246,10 +306,27 @@ async def _review_fullbody_candidate(user_id: int, candidate_id: int, path: str)
         )
         if row is None or row.status not in ("pending", "failed") or row.image_url != path:
             raise AvatarGenerationError("全身候选图已变化，请刷新")
-        if row.base_revision != identity.revision or not await visual_identity_is_current(db, user_id, identity):
-            raise AvatarGenerationError("确认形象已更新，请重新制作候选图")
-        row.status = "failed" if error else "ready"
-        row.error = error
+        current_identity = await visual_identity_is_current(db, user_id, identity)
+        row.status = (
+            "pending"
+            if identity_verdict is None or identity_verdict.verdict == "review"
+            else "failed"
+            if error
+            else "ready"
+            if current_identity
+            else "failed"
+        )
+        job = await db.get(FullbodyReviewJob, review_job_id, with_for_update=True)
+        if identity_verdict is not None:
+            job.checkpoint = {**(job.checkpoint or {}), "report": identity_verdict.model_dump(mode="json")}
+            job.result_json = job.checkpoint
+        job.state, job.stage = "paused", "review_pending" if row.status == "pending" else "confirmation"
+        row.review_json = {
+            "job_id": review_job_id,
+            "report": identity_verdict.model_dump(mode="json") if identity_verdict else None,
+        }
+        emit_ws_event(db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(review_job_id)})
+        row.error = error if current_identity else "原任务身份已失效，候选和检查依据已保留，不能按当前身份采纳"
         await commit_appearance(db, user_id)
         return fullbody_candidate_response(row)
 
@@ -258,6 +335,7 @@ async def retry_fullbody_candidate_review(
     user_id: int,
     avatar_id: int,
     candidate_id: int,
+    request: MediaReviewRequest,
 ) -> FullbodyCandidateResponse:
     async with get_avatar_job_lock(user_id):
         async with SESSION_LOCAL() as db:
@@ -272,8 +350,13 @@ async def retry_fullbody_candidate_review(
                 raise AvatarNotFoundError("全身候选图不存在")
             if row.status not in ("pending", "failed"):
                 raise AvatarNotFoundError("全身候选图不存在或已采纳")
-            path = row.image_url
-        return await _review_fullbody_candidate(user_id, candidate_id, path)
+        job_id = (row.review_json or {}).get("job_id")
+        if job_id is None:
+            raise AvatarGenerationError("原检查任务不可用")
+        await review_media_job(user_id, int(job_id), request)
+        async with SESSION_LOCAL() as db:
+            current = await db.get(FullbodyCandidate, candidate_id)
+            return fullbody_candidate_response(current)
 
 
 async def _save_fullbody_candidate(
@@ -373,6 +456,25 @@ async def accept_fullbody_candidate(user_id: int, avatar_id: int, candidate_id: 
                 raise AvatarNotFoundError("全身候选图或当前角色不存在")
             if row.status != "ready":
                 raise AvatarGenerationError("请先完成候选图的图片复核")
+            report_data = (row.review_json or {}).get("report")
+            report = IdentityReview.model_validate(report_data) if report_data else None
+            manual = (
+                VisualReview.model_validate(row.review_json["manual_review"])
+                if row.review_json.get("manual_review")
+                else None
+            )
+            accepted = (
+                manual.verdict == "pass"
+                if manual
+                else report is not None and report.status == "complete" and report.verdict == "pass"
+            )
+            evidence = manual.evidence if manual else report.evidence if report else None
+            if (
+                not accepted
+                or evidence is None
+                or not await asyncio.to_thread(review_media_intact, evidence, row.image_url)
+            ):
+                raise AvatarGenerationError("候选检查尚未完成或证据已变化，不能采纳")
             if (
                 identity_asset.identity_revision != row.base_revision
                 or avatar.seed_fullbody_url != row.base_fullbody_url
@@ -382,6 +484,12 @@ async def accept_fullbody_candidate(user_id: int, avatar_id: int, candidate_id: 
                 raise AvatarGenerationError("全身候选图已变化，请刷新")
             avatar.seed_fullbody_url = row.image_url
             avatar.fullbody_generation_origin_json = row.generation_origin_json
+            avatar.fullbody_review_json = row.review_json
+            review_job_id = (row.review_json or {}).get("job_id")
+            if review_job_id:
+                accepted_review = await db.get(FullbodyReviewJob, review_job_id, with_for_update=True)
+                if accepted_review:
+                    accepted_review.state, accepted_review.stage = "succeeded", "complete"
             row.status = "accepted"
             await initialize_visual_identity(db, avatar)
             await commit_appearance(db, user_id)
@@ -1257,3 +1365,89 @@ async def retry_initial_preparation(
         emit_preparation_updated(db, user_id, avatar_id)
         await commit_appearance(db, user_id)
     return asset
+
+
+async def fullbody_review_view(user_id: int, job_id: int) -> MediaJobView:
+    async with SESSION_LOCAL() as db:
+        job = await db.scalar(
+            select(FullbodyReviewJob).where(FullbodyReviewJob.id == job_id, FullbodyReviewJob.user_id == user_id)
+        )
+        if job is None:
+            raise RequestError(status_code=404, message="找不到全身检查任务")
+        candidate = await db.get(FullbodyCandidate, job.candidate_id)
+        report_data = job.checkpoint or job.result_json
+        report = IdentityReview.model_validate(report_data["report"]) if report_data.get("report") else None
+        candidate_key = candidate_review_key(job.source_key)
+        review = (
+            VisualReview(
+                required=("identity",),
+                identity=ReviewDecision(verdict=report.verdict, reason=report.reason),
+                status=report.status,
+                evidence=report.evidence,
+            )
+            if report
+            else None
+        )
+        if report_data.get("manual_review"):
+            review = VisualReview.model_validate(report_data["manual_review"])
+        basis = review_basis(review, None, candidate_key)
+        return MediaJobView(
+            id=job.id,
+            kind=job.kind,
+            state=job.state,
+            stage=job.stage,
+            revision=job.revision,
+            required_slots=1,
+            ready_slots=int(review is not None and review.verdict == "pass"),
+            complete=job.state == "succeeded",
+            slots=[
+                MediaSlotView(
+                    slot=0,
+                    media_id=str(job.candidate_id),
+                    status=job.stage,
+                    review=review,
+                    basis_id=basis,
+                    candidate_basis_id=candidate_key,
+                    preview_url=re_sign_bare_path(
+                        candidate.image_url if candidate else report_data.get("candidate_path")
+                    ),
+                    can_review=job.stage == "review_pending"
+                    and candidate is not None
+                    and (report is None or report.verdict == "review" and report.status != "blocked"),
+                    error=candidate.error if candidate else None,
+                    candidates=await manual_candidate_views(
+                        [MediaCandidate(path=candidate.image_url, attempt=0, review=review)]
+                    )
+                    if candidate
+                    else [],
+                )
+            ],
+        )
+
+
+async def recover_fullbody_reviews() -> None:
+    async with SESSION_LOCAL() as db:
+        jobs = await db.scalars(select(FullbodyReviewJob).where(FullbodyReviewJob.state == "running"))
+        for job in jobs:
+            job.state, job.stage = "paused", "review_pending"
+            job.error = "图片检查已中断，候选和原依据已保留"
+            candidate = await db.get(FullbodyCandidate, job.candidate_id) if job.candidate_id else None
+            if candidate is not None:
+                candidate.review_json = {"job_id": job.id, "report": (job.checkpoint or {}).get("report")}
+                candidate.status, candidate.error = "pending", job.error
+                await flush_appearance(db, job.user_id)
+        await db.commit()
+
+
+async def review_fullbody_job(user_id: int, job_id: int, slot: int, expected: MediaReviewRequest) -> MediaJobView:
+    async with SESSION_LOCAL() as db:
+        job = await db.scalar(
+            select(FullbodyReviewJob).where(FullbodyReviewJob.id == job_id, FullbodyReviewJob.user_id == user_id)
+        )
+        if job is None or slot != 0:
+            raise RequestError(status_code=404, message="找不到全身检查任务")
+        candidate = await db.get(FullbodyCandidate, job.candidate_id)
+        if candidate is None:
+            raise RequestError(status_code=404, message="全身候选已不存在")
+    await _review_fullbody_candidate(user_id, candidate.id, candidate.image_url, expected)
+    return await fullbody_review_view(user_id, job_id)

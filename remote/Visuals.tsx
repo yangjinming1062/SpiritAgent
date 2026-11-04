@@ -9,6 +9,7 @@ import { visualJobCommands } from '../shared/visuals'
 
 import type { RemoteApi } from './api'
 import { ApiError } from './api'
+import { MediaReviewButton } from './MediaReviewButton'
 import {
   AssetResultRecovery,
   Empty,
@@ -97,26 +98,29 @@ function VisualJobRow({
         {job.error ? <small>{job.error}</small> : null}
         {error ? <Notice error={error} /> : null}
       </div>
-      {visualJobCommands(job.state, job.failure_reason).map(command => (
-        <button
-          disabled={busy}
-          key={command}
-          onClick={() =>
-            run(async () => {
-              await api.invoke('companion_visuals.command_visual_job', {
-                path: { job_id: job.id },
-                body: { command }
+      {job.stage === 'review_pending' ? <MediaReviewButton api={api} jobId={job.id} onChanged={onChanged} /> : null}
+      {visualJobCommands(job.state, job.failure_reason)
+        .filter(command => job.stage !== 'review_pending' || command === 'cancel')
+        .map(command => (
+          <button
+            disabled={busy}
+            key={command}
+            onClick={() =>
+              run(async () => {
+                await api.invoke('companion_visuals.command_visual_job', {
+                  path: { job_id: job.id },
+                  body: { command }
+                })
+                await onChanged()
               })
-              await onChanged()
-            })
-          }
-          type="button"
-        >
-          {command === 'resume' && job.failure_reason === 'result_download_failed'
-            ? '继续接收原成品'
-            : JOB_COMMAND_TEXT[command]}
-        </button>
-      ))}
+            }
+            type="button"
+          >
+            {command === 'resume' && job.failure_reason === 'result_download_failed'
+              ? '继续接收原成品'
+              : JOB_COMMAND_TEXT[command]}
+          </button>
+        ))}
     </li>
   )
 }

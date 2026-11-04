@@ -14,6 +14,9 @@ from fastapi import FastAPI
 from features.accounts.queries import list_user_ids
 from features.assets.lifecycle import cleanup_user_assets
 from features.configuration.system_settings import load_and_apply_system_settings
+from features.media.continuations import reconcile_media_waits
+from features.media.image_jobs import cleanup_user_image_jobs
+from features.media.manual_reviews import recover_manual_operations
 from features.media.video_jobs import cleanup_user_video_jobs
 from features.media.video_queue.service import cleanup_video_queue
 from features.posts.publication import gc_autonomous_publications
@@ -71,6 +74,9 @@ async def _cleanup_formal_assets(*, discover: bool) -> None:
                 await cleanup_user_video_jobs(user_id)
             except Exception:
                 logger.warning("Abandoned video cleanup failed", extra={"user_id": user_id}, exc_info=True)
+            await _best_effort("image jobs", cleanup_user_image_jobs(user_id), level=logging.WARNING)
+            await _best_effort("media continuations", reconcile_media_waits(user_id), level=logging.WARNING)
+            await _best_effort("manual media operations", recover_manual_operations(user_id), level=logging.WARNING)
             await cleanup_user_assets(user_id, discover=discover)
 
 

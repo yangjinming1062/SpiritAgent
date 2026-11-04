@@ -1,23 +1,21 @@
 """聊天图片请求、实际验图与有界重做。"""
 
 import asyncio
+import hashlib
 import json
 from dataclasses import asdict, dataclass, replace
 from typing import Literal, get_args
 from uuid import uuid4
 
 from features.appearance.avatar_service import AvatarGenerationError
-from features.appearance.identity import visual_identity_is_current
 from features.appearance.visual_identity import (
     build_plain_image_prompt,
     build_self_image_inputs,
     load_self_visual_context,
 )
 from features.conversation.prompts import CHAT_IMAGE_CORRECTION_PREFIX
-from features.media.chain import MEDIA_IDENTITY_ACCEPT_SCORE
-from features.media.character_images import ImageChainState, generate_character_images
-from features.media.identity_contracts import VisualIdentitySnapshot
-from features.media.image_generation import ImageGenerationError, generate_images
+from features.media.image_generation import ImageGenerationError
+from features.media.image_jobs import produce_image_batch
 from features.media.turn_state import ImagePlan, MediaArtifact, MediaInspection, MediaTurnState
 from features.visuals.queries import prompt_presentation_snapshot
 from infrastructure.ai.prompt_engineer import VisualReasoningError, vision_chat
@@ -25,7 +23,6 @@ from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets import asset_store
 from infrastructure.assets.asset_store import build_data_uri
 from infrastructure.assets.paths import parse_companion_asset_path
-from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import parse_llm_json, tool_error
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -60,16 +57,18 @@ class InspectionResult(BaseModel):
 
 @dataclass(frozen=True)
 class ImageSlotResult:
-    status: Literal["ready", "failed", "result_unknown"]
+    status: Literal["pending", "ready", "failed", "result_unknown", "review_pending"]
     url: str | None = None
-    score: int | None = None
+    identity_verdict: str | None = None
     error: str | None = None
+    job_id: int | None = None
+    media_id: str | None = None
 
 
 async def _freeze_plan(request: ImageRequest, user_id: int) -> ImagePlan:
     if request.subject != "self":
         return ImagePlan(
-            request=request.prompt,
+            request=request.model_dump_json(),
             prompt=build_plain_image_prompt(request.prompt),
             size=request.aspect_ratio,
         )
@@ -80,6 +79,7 @@ async def _freeze_plan(request: ImageRequest, user_id: int) -> ImagePlan:
         request=request.model_dump_json(),
         prompt=inputs.prompt,
         size=request.aspect_ratio,
+        subject="self",
         reference_image=inputs.reference_image,
         secondary_reference_image=inputs.secondary_reference_image,
         identity_json=inputs.identity.model_dump_json(),
@@ -93,97 +93,36 @@ async def _generate_batch(
     directory: str,
     task: AiTaskKey,
     n: int,
+    *,
+    turn: MediaTurnState,
+    media_ids: list[str],
+    parent_media_id: str | None = None,
 ) -> list[ImageSlotResult]:
-    """逐张保留就绪、失败与未知结果；硬失败整体抛出，由调用方按 request 落状态。"""
-    results = [ImageSlotResult("failed", error="图片生成失败，未取得可用候选") for _ in range(n)]
-
-    async def request(count: int) -> list[str]:
-        result = await generate_images(
-            plan.prompt,
-            size=plan.size,
-            n=count,
-            user_id=user_id,
-            persist_user_assets=True,
-            storage_directory=directory,
-            task=task,
-        )
-        return result.urls
-
-    identity = VisualIdentitySnapshot.model_validate_json(plan.identity_json) if plan.identity_json else None
-    if identity is None:
-        urls = await request(n)
-        filled = min(len(urls), n)
-        results[:filled] = [ImageSlotResult("ready", url=url) for url in urls[:filled]]
-        # 供应商单次出图上限不同可能少给（gemini 忽略 n 等）；缺额先批量补齐，批量不可用再逐张兜底。
-        index = filled
-        while index < n:
-            try:
-                retry = await request(n - index)
-            except ImageGenerationError as exc:
-                if exc.result_unknown:
-                    results[index:] = [ImageSlotResult("result_unknown", error=str(exc)) for _ in range(index, n)]
-                    return results
-                retry = []
-            got = min(len(retry), n - index)
-            results[index : index + got] = [ImageSlotResult("ready", url=url) for url in retry[:got]]
-            index += got
-            if got == 0:
-                for slot in range(index, n):
-                    try:
-                        single = await request(1)
-                    except ImageGenerationError as exc:
-                        if exc.result_unknown:
-                            results[slot:] = [ImageSlotResult("result_unknown", error=str(exc)) for _ in range(slot, n)]
-                            return results
-                        results[slot] = ImageSlotResult("failed", error=str(exc))
-                        continue
-                    results[slot] = ImageSlotResult("ready", url=single[0])
-                break
-        return results
-    async with SESSION_LOCAL() as db:
-        if not await visual_identity_is_current(db, user_id, identity):
-            raise ImageGenerationError("角色外形已更新，请使用当前形象重新提出生成请求")
-    state = ImageChainState()
-    await generate_character_images(
-        plan.prompt,
-        size=plan.size,
-        n=n,
-        user_id=user_id,
-        storage_directory=directory,
-        reference_image=plan.reference_image or "",
-        secondary_reference_image=plan.secondary_reference_image,
-        identity_reference=plan.reference_image or "",
-        identity_reference_mode=plan.identity_reference_mode,
-        goal_review="required",
-        state=state,
+    key = hashlib.sha256((plan.request + str(n) + (parent_media_id or "")).encode()).hexdigest()
+    result = await produce_image_batch(
+        user_id,
+        turn.session_id,
+        turn.source_message_id,
+        plan,
+        media_ids,
+        directory=directory,
         task=task,
+        request_id=f"chat-image:{turn.request_scope}:{key}",
+        request_scope=turn.request_scope,
+        goal_ids=[turn.artifacts[media_id].goal_id for media_id in media_ids],
+        parent_media_id=parent_media_id,
     )
-    delivered: list[str] = []
-    for slot in range(n):
-        best = state.best(slot)
-        if best is None:
-            if state.stop_reason == "result_unknown":
-                results[slot] = ImageSlotResult("result_unknown", error="图片生成结果尚未确认，请勿重复提交")
-            continue
-        results[slot] = ImageSlotResult("ready", url=best.path, score=best.score)
-        delivered.append(best.path)
-    async with SESSION_LOCAL() as db:
-        current = await visual_identity_is_current(db, user_id, identity)
-    if not current:
-        for url in delivered:
-            await asyncio.to_thread(asset_store.unlink_companion_asset, url)
-        raise ImageGenerationError("生成期间角色外形已更新，本轮图片未交付")
-    return results
-
-
-async def _generate(plan: ImagePlan, user_id: int, directory: str, task: AiTaskKey) -> tuple[str, int | None]:
-    result = (await _generate_batch(plan, user_id, directory, task, 1))[0]
-    if result.status != "ready" or result.url is None:
-        raise ImageGenerationError(
-            result.error or "图片生成服务没有返回图片",
-            result_unknown=result.status == "result_unknown",
+    return [
+        ImageSlotResult(
+            status=slot.status,
+            url=asset_store.normalize_asset_reference(slot.url) or None,
+            identity_verdict=slot.review.identity.verdict if slot.review and slot.review.identity else None,
+            error=slot.error,
+            job_id=result.id,
+            media_id=slot.media_id,
         )
-    return result.url, result.score
+        for slot in result.slots
+    ]
 
 
 def _artifact_failure(exc: BaseException) -> tuple[str, str]:
@@ -200,15 +139,33 @@ def _fail_all(artifacts: list[MediaArtifact], status: str, error: str) -> None:
         artifact.status, artifact.error = status, error
 
 
-async def _produce(state: MediaTurnState, artifact: MediaArtifact, plan: ImagePlan) -> None:
+async def _produce(
+    state: MediaTurnState, artifact: MediaArtifact, plan: ImagePlan, *, parent_media_id: str | None = None
+) -> None:
     try:
-        artifact.url, artifact.identity_score = await _generate(
-            plan,
-            state.user_id,
-            state.asset_directory,
-            AiTaskKey(state.task),
+        result = (
+            await _generate_batch(
+                plan,
+                state.user_id,
+                state.asset_directory,
+                AiTaskKey(state.task),
+                1,
+                turn=state,
+                media_ids=[artifact.media_id],
+            )
+        )[0]
+        if result.media_id and result.media_id != artifact.media_id:
+            state.artifacts.pop(artifact.media_id, None)
+            artifact.media_id = result.media_id
+            state.artifacts[artifact.media_id] = artifact
+            state.current_versions[artifact.goal_id] = artifact.media_id
+        artifact.url, artifact.identity_verdict, artifact.status, artifact.error, artifact.job_id = (
+            result.url,
+            result.identity_verdict,
+            result.status,
+            result.error,
+            result.job_id,
         )
-        artifact.status = "ready"
     except asyncio.CancelledError as exc:
         artifact.status, artifact.error = _artifact_failure(exc)
         raise
@@ -223,7 +180,7 @@ def _delivery_hint(state: MediaTurnState) -> str:
     """图片就绪后的下一步：交付由最终回复完成，模型不必再调用工具。"""
     if state.structured_reply:
         return (
-            "Ready images are delivered in your final reply: put each ready media_id in an image bubble. "
+            "Ready images are delivered in your final reply: put each media_id in an image bubble, including retained jobs awaiting review as waiting cards. "
             "The reply is not a tool call, so no further tool call is needed."
         )
     return "Ready images are attached to your reply automatically; describe the result briefly."
@@ -233,11 +190,22 @@ def _call_result(state: MediaTurnState, media_ids: list[str], *, reused: bool = 
     """本次调用的图片结果；一张都没有就绪时按失败返回，保持顶层 error 供模型与循环守卫识别。"""
     media = [state.artifacts[media_id].tool_view() for media_id in media_ids]
     ready = any(item["status"] == "ready" for item in media)
-    payload: dict[str, object] = {"success": ready, "media": media}
+    payload: dict[str, object] = {
+        "success": bool(media) and all(item["status"] == "ready" for item in media),
+        "accepted": True,
+        "complete": bool(media) and all(item["status"] == "ready" for item in media),
+        "requested_count": len(media),
+        "ready_count": sum(item["status"] == "ready" for item in media),
+        "media": media,
+    }
     if reused:
         payload["reused"] = True
     if ready:
         payload["next"] = _delivery_hint(state)
+    elif any(item["status"] in {"pending", "review_pending"} for item in media):
+        payload["next"] = (
+            "Media candidates are retained. Deliver their waiting cards; do not regenerate or retry checks automatically."
+        )
     else:
         payload["error"] = next((item["error"] for item in media if item.get("error")), "图片生成失败")
     return json.dumps(payload, ensure_ascii=False)
@@ -300,6 +268,8 @@ async def generate_chat_images(arguments: dict, state: MediaTurnState) -> str:
                 state.asset_directory,
                 AiTaskKey(state.task),
                 len(artifacts),
+                turn=state,
+                media_ids=media_ids,
             )
         except asyncio.CancelledError as exc:
             _fail_all(artifacts, *_artifact_failure(exc))
@@ -310,11 +280,22 @@ async def generate_chat_images(arguments: dict, state: MediaTurnState) -> str:
         except Exception as exc:
             _fail_all(artifacts, *_artifact_failure(exc))
             raise
-        for artifact, result in zip(artifacts, results):
+        for index, (artifact, result) in enumerate(zip(artifacts, results, strict=True)):
+            artifact.job_id = result.job_id
+            if result.media_id and result.media_id != artifact.media_id:
+                state.artifacts.pop(artifact.media_id, None)
+                state.current_versions.pop(artifact.goal_id, None)
+                artifact.media_id = artifact.goal_id = result.media_id
+                state.artifacts[artifact.media_id] = artifact
+                state.current_versions[artifact.goal_id] = artifact.media_id
+                media_ids[index] = artifact.media_id
+                state.image_requests[key] = media_ids
             if result.status != "ready" or result.url is None:
-                artifact.status, artifact.error = result.status, result.error or "图片生成服务没有返回图片"
+                artifact.status, artifact.error = result.status, result.error
+                if result.status in {"pending", "review_pending"}:
+                    state.required_goals.add(artifact.goal_id)
                 continue
-            artifact.url, artifact.identity_score = result.url, result.score
+            artifact.url, artifact.identity_verdict = result.url, result.identity_verdict
             artifact.status = "ready"
             state.required_goals.add(artifact.goal_id)
     finally:
@@ -375,12 +356,12 @@ async def inspect_chat_image(media_id: str, state: MediaTurnState) -> str:
             uri = await asyncio.to_thread(build_data_uri, data, local[1])
             raw = await vision_chat(
                 state.user_id,
-                MEDIA_INSPECTION_INSTRUCTIONS.format(accept_score=MEDIA_IDENTITY_ACCEPT_SCORE),
+                MEDIA_INSPECTION_INSTRUCTIONS,
                 json.dumps(
                     {
                         "user_request": state.original_request,
                         "image_request": plan.request if plan else "",
-                        "identity_score": artifact.identity_score,
+                        "identity_verdict": artifact.identity_verdict,
                     },
                     ensure_ascii=False,
                 ),
@@ -433,7 +414,7 @@ async def regenerate_chat_image(media_id: str, inspection_id: str, correction: s
         revised = MediaArtifact(uuid4().hex, "image", artifact.goal_id, "pending")
         state.artifacts[revised.media_id] = revised
         state.current_versions[artifact.goal_id] = revised.media_id
-    await _produce(state, revised, plan)
+    await _produce(state, revised, plan, parent_media_id=media_id)
     return json.dumps(
         {
             "success": revised.status == "ready",

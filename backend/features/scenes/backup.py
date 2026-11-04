@@ -6,7 +6,7 @@ from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.backup import BackupContext, BackupTable
 
 from .models import CompanionScene, SceneJob
-from .schemas import SceneDescriptionRequest, SceneImageDimensions, SceneImageSize
+from .schemas import SceneDescriptionRequest, SceneImageDimensions, SceneImageSize, SceneReviewSnapshot
 
 
 def _prepare(raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
@@ -14,6 +14,8 @@ def _prepare(raw: dict[str, Any], payload: dict[str, Any], context: BackupContex
         payload["status"] = "failed"
     if payload.get("generation_origin_json"):
         GenerationOrigin.model_validate(payload["generation_origin_json"])
+    if payload.get("review_result_json"):
+        SceneReviewSnapshot.model_validate(payload["review_result_json"])
     if payload.get("status") == "ready":
         SceneDescriptionRequest.model_validate(
             {"title": payload.get("title"), "description": payload.get("description")}

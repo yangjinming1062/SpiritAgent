@@ -89,6 +89,8 @@ flowchart LR
 
 动作的可用性由评审状态决定，不另存入库布尔值。通用内置定义通过账户内唯一 `preset_key` 补齐，自创动作该值为空；名称不承担唯一身份。内置动作 ID 在升级中保持稳定，备份按内置键合并，避免创建重复定义或改绑影像引用。
 
+聊天图片以 `image_gen_jobs` 继承共享任务，按槽位保存媒体与消息绑定；`media_review_attempts` 独立保留请求去重和续审预算，`media_manual_operations` 保存人工采用或重做的原输入、候选依据、请求身份及调度交接，`media_continuations` 保留业务依赖及原继续身份。业务所属任务通过 `owner_job_id` 关联，账户归属仍用 `user_id`。`fullbody_review_jobs` 持有全身候选的检查证据；手动和自主造型通过请求来源分离权限。待复核没有完成时间，任务资产引用持续生效。
+
 ## 影像与不可变版本
 
 ```mermaid

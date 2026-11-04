@@ -1,5 +1,6 @@
 """原件内容理解与材料复核的实际多模态请求。"""
 
+import json
 from typing import Literal
 
 from infrastructure.ai.models import ModelModality
@@ -7,14 +8,17 @@ from infrastructure.ai.prompt_engineer import LlmJsonValidationError, call_llm_j
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.api_ids import ResourceId
-from infrastructure.assets.asset_store import build_data_uri
+from infrastructure.assets.asset_store import build_data_uri, resolve_asset_reference
 from infrastructure.async_io import run_blocking
+from infrastructure.video_processing.desktop import sample_desktop_video_frames
 from pydantic import BaseModel, ConfigDict, Field
 from runtime.paid_work import require_new_generation_call
 
 from features.action_library.schemas import ActionAssetDesign
+from features.media.review_contracts import ReviewDecision, ReviewVerdict, VisualReview
+from features.media.review_evidence import freeze_review_evidence, read_review_evidence
 
-from .import_jobs import ImportCatalogCandidate, ImportWork, guard_import_work
+from .import_jobs import ImportCatalogCandidate, ImportWork, guard_import_work, save_import_progress
 from .import_media import image_frame, import_reference_uri
 from .import_prompts import (
     IMPORT_ACTION_EVIDENCE_REVIEW,
@@ -43,6 +47,16 @@ class ImportQualityVerdict(BaseModel):
     model_config = ConfigDict(extra="forbid")
     decision: Literal["pass", "review", "fail"]
     reason: str = Field(min_length=1, max_length=1000)
+
+
+class ImportPresentationReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    identity_verdict: ReviewVerdict
+    identity_reason: str
+    goal_verdict: ReviewVerdict
+    goal_reason: str = Field(min_length=1)
+    quality_verdict: ReviewVerdict
+    quality_reason: str = Field(min_length=1)
 
 
 def _component_notes(work: ImportWork, observation: ImportObservation) -> str:
@@ -84,7 +98,7 @@ async def _reference_images(
 
 async def _before_call(work: ImportWork) -> None:
     require_new_generation_call(work.user_id)
-    await guard_import_work(work, paid=True)
+    await guard_import_work(work, paid=not work.context.review_only)
 
 
 async def understand_import(work: ImportWork) -> ImportUnderstanding:
@@ -313,6 +327,12 @@ async def review_import_action(
 
 
 async def review_import_presentation(work: ImportWork, selected: list[ImportCatalogCandidate]) -> ImportQualityVerdict:
+    if (
+        work.context.presentation_review
+        and work.context.presentation_review.human_approval
+        and work.context.presentation_review.verdict == "pass"
+    ):
+        return ImportQualityVerdict(decision="pass", reason="用户人工放行")
     images, roles = await _reference_images(work)
     for candidate in selected:
         if candidate.path:
@@ -321,31 +341,79 @@ async def review_import_presentation(work: ImportWork, selected: list[ImportCata
                 _append_reference(
                     images, roles, uri, role=f"selected_{candidate.kind}", material_id=str(candidate.material_id)
                 )
+    delivery_path = work.context.actor_asset.media_path if work.context.actor_asset else work.media_path
+    if work.context.actor_asset and work.media_kind == "video" and work.context.presentation_review is None:
+        resolved = resolve_asset_reference(delivery_path)
+        if resolved is None:
+            raise ValueError("主体成品无法读取")
+        delivered = await run_blocking(sample_desktop_video_frames, resolved[0], sample_count=9)
+        for frame, seconds in zip(delivered.frames, delivered.times_seconds, strict=True):
+            _append_reference(
+                images, roles, build_data_uri(frame, "image/webp"), role="delivered_frame", seconds=seconds
+            )
     config = await load_user_llm_config(
         work.user_id, AiTaskKey.visuals, required_modalities=frozenset({ModelModality.text, ModelModality.image})
     )
-    return await call_llm_json(
+    payload = {
+        "references": roles,
+        "selected_materials": [candidate.model_dump(mode="json", exclude={"path"}) for candidate in selected],
+        "analysis": work.result.understanding.model_dump(mode="json") if work.result else None,
+        "user_corrections": work.context.correction_notes,
+        "output_language": work.context.language,
+        "media_kind": work.media_kind,
+        "asset_kind": work.result.understanding.asset_kind if work.result else None,
+        "duration_seconds": (work.duration_ms or 0) / 1000,
+        "component_corrections": {entry.observation.key: entry.notes for entry in work.result.components if entry.notes}
+        if work.result
+        else {},
+    }
+    prompt = IMPORT_PRESENTATION_REVIEW
+    previous = work.context.presentation_review
+    evidence = previous.evidence if previous else None
+    if evidence is None:
+        evidence = await freeze_review_evidence(
+            work.user_id, tuple(images), prompt=prompt, context=payload, media_path=delivery_path
+        )
+        work.context.presentation_review = VisualReview(
+            required=("goal", "quality")
+            if work.result and work.result.understanding.asset_kind == "scene"
+            else ("identity", "goal", "quality"),
+            evidence=evidence,
+            status="unavailable",
+        )
+        await save_import_progress(work, "presentation_review")
+    result = await call_llm_json(
         config,
-        IMPORT_PRESENTATION_REVIEW,
-        {
-            "output_language": work.context.language,
-            "references": roles,
-            "media_kind": work.media_kind,
-            "user_corrections": work.context.correction_notes,
-            "duration_seconds": (work.duration_ms or 0) / 1000,
-            "analysis": work.result.understanding.model_dump(mode="json") if work.result else None,
-            "component_corrections": {
-                entry.observation.key: entry.notes for entry in work.result.components if entry.notes
-            }
-            if work.result
-            else {},
-            "selected_materials": [candidate.model_dump(mode="json", exclude={"path"}) for candidate in selected],
-        },
-        schema=ImportQualityVerdict.model_json_schema(),
+        evidence.policy_prompt,
+        json.loads(evidence.context_json),
+        schema=ImportPresentationReview.model_json_schema(),
         schema_name="visual_import_presentation_review",
-        parse_output=ImportQualityVerdict.model_validate,
+        parse_output=ImportPresentationReview.model_validate,
         repair_prompt=IMPORT_JSON_REPAIR,
-        reference_images=tuple(images),
-        preserve_choices=("decision",),
+        reference_images=await read_review_evidence(evidence),
+        preserve_choices=("identity_verdict", "goal_verdict", "quality_verdict"),
         before_call=lambda: _before_call(work),
+    )
+
+    report = VisualReview(
+        required=("goal", "quality")
+        if work.result and work.result.understanding.asset_kind == "scene"
+        else ("identity", "goal", "quality"),
+        identity=ReviewDecision(verdict=result.identity_verdict, reason=result.identity_reason)
+        if result.identity_verdict and result.identity_reason
+        else None,
+        goal=ReviewDecision(verdict=result.goal_verdict, reason=result.goal_reason),
+        quality=ReviewDecision(verdict=result.quality_verdict, reason=result.quality_reason),
+        evidence=evidence,
+    )
+    if previous:
+        for name in report.required:
+            saved = getattr(previous, name)
+            if saved is not None and saved.verdict in {"pass", "fail"}:
+                setattr(report, name, saved)
+    work.context.presentation_review = report
+    await save_import_progress(work, "presentation_review")
+    return ImportQualityVerdict(
+        decision=report.verdict,
+        reason="；".join(getattr(report, name).reason for name in report.required if getattr(report, name)),
     )

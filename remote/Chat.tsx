@@ -12,6 +12,7 @@ import type { GatewayEvent, RemoteApi, RemoteGateway } from './api'
 import { ApiError, errorText, readImage } from './api'
 import { newRequestId } from './browser'
 import { activeReplyIsPersisted, advanceTurn, commandHistory, mergeMessages } from './chat-state'
+import { MediaReviewButton } from './MediaReviewButton'
 import { TopicFeedbackProvider, TopicLink } from './TopicLink'
 import type {
   ActiveTurn,
@@ -1078,7 +1079,7 @@ export function Chat({
           <div className="message assistant">
             <div className="bubble">
               {visibleTurn.bubbles.map((bubble, index) => (
-                <Bubble bubble={bubble} key={index} refresh={refreshMessages} />
+                <Bubble api={api} bubble={bubble} key={index} refresh={refreshMessages} />
               ))}
               {visibleTurn.text ? (
                 <p>{visibleTurn.text}</p>
@@ -1280,6 +1281,7 @@ function Message({
         {message.content_type === 'companion_reply' ? (
           message.bubbles.map((bubble, index) => (
             <Bubble
+              api={api}
               bubble={bubble}
               key={index}
               refresh={refresh}
@@ -1333,10 +1335,12 @@ function Message({
 }
 
 function Bubble({
+  api,
   bubble,
   refresh,
   voice
 }: {
+  api: RemoteApi
   bubble: CompanionBubble
   refresh: () => void
   /** 已持久化消息里的语音气泡：携带播放进度键与重新生成入口。 */
@@ -1418,11 +1422,25 @@ function Bubble({
           ? videoQueueText(bubble.video_queue)
           : bubble.status === 'pending'
             ? '正在制作'
-            : bubble.status === 'result_unknown'
-              ? '结果待确认'
-              : '制作失败'}
+            : bubble.status === 'review_pending'
+              ? '等待选择候选'
+              : bubble.status === 'result_unknown'
+                ? '结果待确认'
+                : '制作失败'}
       </span>
       {bubble.error ? <p>{bubble.error}</p> : null}
+      {(bubble.status === 'review_pending' || bubble.status === 'failed') && bubble.job_id ? (
+        <MediaReviewButton api={api} jobId={bubble.job_id} mediaId={bubble.media_id} onChanged={refresh} />
+      ) : null}
+      {bubble.status === 'result_unknown' && bubble.type === 'video' && bubble.job_id ? (
+        <MediaReviewButton
+          api={api}
+          jobId={bubble.job_id}
+          mediaId={bubble.media_id}
+          onChanged={refresh}
+          receiveResult
+        />
+      ) : null}
       <button onClick={refresh} type="button">
         刷新状态
       </button>

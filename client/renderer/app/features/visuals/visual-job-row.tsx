@@ -2,6 +2,7 @@ import type React from 'react'
 
 import type { VisualJob, VisualJobCommand } from '@/modules/visuals'
 import { Badge, BTN_SUBTLE, SettingRow } from '@/shared/panel'
+import { MediaReviewButton } from '@/shared/panel/media-review-button'
 
 import { visualJobCommands } from '../../../../../shared/visuals'
 
@@ -38,11 +39,20 @@ export function VisualJobRow({
       label={visualJobLabel(job, t)}
     >
       <div className="flex flex-wrap gap-2">
-        {visualJobCommands(job.state, job.failure_reason).map(command => (
-          <button className={BTN_SUBTLE} disabled={busy} key={command} onClick={() => onCommand(command)} type="button">
-            {labels[command]}
-          </button>
-        ))}
+        {job.stage === 'review_pending' ? <MediaReviewButton jobId={job.id} /> : null}
+        {visualJobCommands(job.state, job.failure_reason)
+          .filter(command => job.stage !== 'review_pending' || command === 'cancel')
+          .map(command => (
+            <button
+              className={BTN_SUBTLE}
+              disabled={busy}
+              key={command}
+              onClick={() => onCommand(command)}
+              type="button"
+            >
+              {labels[command]}
+            </button>
+          ))}
       </div>
     </SettingRow>
   )

@@ -12,7 +12,7 @@ from infrastructure.database import SESSION_LOCAL
 from features.appearance.avatar_service import FULLBODY_SIZE, AvatarSourceUnreadableError
 from features.appearance.identity import require_visual_identity
 from features.appearance.models import AvatarAsset
-from features.media.character_images import ImageChainState, ImageProgressWriter, generate_character_images
+from features.media.character_images import ImageChainState, ImageProgressWriter, generate_reviewed_images
 from features.media.identity_contracts import CharacterReferenceRole, VisualIdentitySnapshot
 from features.media.prompts import (
     CHARACTER_APPEARANCE_ALIGNMENT_REFERENCES,
@@ -189,7 +189,7 @@ async def align_character_reference(
         if identity_reference_role == "fullbody"
         else (CHARACTER_APPEARANCE_ALIGNMENT_REFERENCES, CHARACTER_APPEARANCE_REFERENCE_ALIGN)
     )
-    paths = await generate_character_images(
+    paths = await generate_reviewed_images(
         references
         + "\n"
         + alignment.format(

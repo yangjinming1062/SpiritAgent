@@ -8,6 +8,7 @@ import { usePanelAction } from '@/shared/hooks/use-panel-action'
 import { failureText } from '@/shared/lib/ipc-error'
 import { requestResource } from '@/shared/lib/resource-request'
 import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, PanelSelect, Pill } from '@/shared/panel'
+import { MediaReviewButton } from '@/shared/panel/media-review-button'
 import { useStrings } from '@/shared/strings'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
@@ -77,6 +78,13 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
 
   return (
     <div className="space-y-4">
+      {job?.stage === 'review_pending' ? <MediaReviewButton jobId={job.id} /> : null}
+      {job?.stage === 'confirmation' ? (
+        <button disabled={busy} onClick={() => command({ command: 'apply_result' })} type="button">
+          {a.applyResult}
+        </button>
+      ) : null}
+
       {active && job ? (
         <p className={VISUAL_BODY} role="status">
           {a.stages[job.stage] ?? a.working}
@@ -133,7 +141,7 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
           </button>
         ) : (
           <>
-            {canContinue ? (
+            {canContinue && job?.stage !== 'review_pending' && job?.stage !== 'confirmation' ? (
               <button
                 className={BTN_SUBTLE}
                 disabled={busy}

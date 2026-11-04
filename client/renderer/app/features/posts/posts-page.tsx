@@ -33,7 +33,7 @@ import { useForegroundRestored, useReadingForeground } from '../use-reading-fore
 import { useReadingReceipt } from '../use-reading-receipt'
 import { useReadingReload } from '../use-reading-reload'
 
-import { PostVideoRecovery } from './post-video-recovery'
+import { PostMediaRecovery } from './post-media-recovery'
 import styles from './posts.module.css'
 
 function formatDate(formatter: Intl.DateTimeFormat, iso: string): string {
@@ -135,7 +135,7 @@ function PostsContent({
 
   const recovery =
     authState.kind === 'authenticated' ? (
-      <PostVideoRecovery key={`${authState.snapshot.sessionId}:${reloadKey}`} />
+      <PostMediaRecovery key={`${authState.snapshot.sessionId}:${reloadKey}`} />
     ) : null
 
   if (posts.length === 0) {

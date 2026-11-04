@@ -25,6 +25,7 @@ CONVERSATION_TABLES = frozenset(
         "companion_topic_feedback",
         "companion_topic_usages",
         "video_gen_jobs",
+        "image_gen_jobs",
     }
 )
 VISUALS_TABLES = frozenset(
@@ -50,6 +51,7 @@ ACTION_LIBRARY_TABLES = VISUALS_TABLES | {
     "appearance_preparation_jobs",
     "visual_observation_jobs",
     "companion_fullbody_candidates",
+    "fullbody_review_jobs",
 }
 POST_TABLES = frozenset(
     {"companion_entries", "entry_links", "entry_assets", "entry_comments", "post_publications", "video_gen_jobs"}
@@ -61,6 +63,7 @@ BACKUP_SECTIONS: dict[str, tuple[str, ...]] = {
         "companion_outfits",
         "outfit_creation_jobs",
         "companion_fullbody_candidates",
+        "fullbody_review_jobs",
         "appearance_preparation_jobs",
         "visual_observation_jobs",
         "appearance_assets",
@@ -104,7 +107,19 @@ def tables_for_sections(sections: Sequence[str] | None) -> tuple[frozenset[str],
     for item in normalized:
         tables.update(BACKUP_SECTIONS[item])
     # 共享资产和任务记录采用合并恢复，不清除其他类别正在使用的记录。
-    tables.update(name for name in ("assets", "jobs", "job_requests", "job_assets") if name in TABLES)
+    tables.update(
+        name
+        for name in (
+            "assets",
+            "jobs",
+            "job_requests",
+            "job_assets",
+            "media_review_attempts",
+            "media_continuations",
+            "media_manual_operations",
+        )
+        if name in TABLES
+    )
     changed = True
     while changed:
         before = set(tables)

@@ -568,13 +568,13 @@ export function createChatMessageController(state: ConversationState) {
 
     const key = mediaUpdateKey(messageId, mediaId)
 
-    if (mediaUpdates.has(key)) {
+    const previous = mediaUpdates.get(key)
+
+    if (previous && (previous.status === 'ready' || previous.media_revision >= bubble.media_revision)) {
       return
     }
 
-    if (bubble.status !== 'pending') {
-      mediaUpdates.set(key, bubble)
-    }
+    mediaUpdates.set(key, bubble)
 
     for (const item of $chatMessageList.get()) {
       const body = $chatMessageBodies.get()[item.id]
@@ -583,7 +583,7 @@ export function createChatMessageController(state: ConversationState) {
         continue
       }
 
-      if (body.replyMedia.status !== 'pending') {
+      if (body.replyMedia.status === 'ready' || body.replyMedia.media_revision >= bubble.media_revision) {
         continue
       }
 

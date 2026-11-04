@@ -27,6 +27,7 @@ from runtime.user_maintenance import is_user_in_maintenance, track_user_task
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.accounts.queries import user_is_active
 from features.appearance.asset_bindings import commit_appearance
 from features.appearance.avatar_service import (
     FULLBODY_ASPECT,
@@ -58,16 +59,24 @@ from features.assets.lifecycle import (
 )
 from features.companion.persona_service import load_persona_definition
 from features.companion.policy_contracts import OUTFIT_POLICY_DEFAULT
-from features.companion.visual_state import change_outfit_policy, ensure_persona_snapshot, persona_snapshot
+from features.companion.visual_state import (
+    change_outfit_policy,
+    ensure_persona_snapshot,
+    lock_persona_snapshot,
+    persona_snapshot,
+)
 from features.configuration.settings.values import get_user_setting
 from features.media.character_images import (
     ImageChainState,
     ImageProgressWriter,
-    generate_character_images,
+    generate_reviewed_images,
     image_asset_bytes,
 )
+from features.media.continuations import finish_media_operation, wait_for_media
 from features.media.identity_contracts import VisualIdentitySnapshot
-from features.media.image_generation import ImageGenerationError
+from features.media.image_generation import ImageGenerationError, ImageReviewUnavailableError
+from features.media.review_contracts import VisualReview, review_passes
+from features.media.review_evidence import review_media_intact
 
 logger = get_logger(__name__)
 
@@ -92,6 +101,10 @@ class OutfitNotFoundError(OutfitError):
 
 class OutfitStateError(OutfitError):
     """状态守卫拒绝（非法状态转换 / 删除保护）。"""
+
+
+class OutfitContinuationBlocked(OutfitStateError):
+    """原自主任务的采用权限已变化，候选与草稿继续保留。"""
 
 
 class OutfitDraftUnavailableError(OutfitError):
@@ -245,16 +258,63 @@ async def _generate_outfit_fullbody(
     image_edit: bool = False,
     selection: ProviderSelection | None = None,
     image_state: ImageChainState | None = None,
+    design_description: str | None = None,
+    expected_url: str | None = None,
     save_progress: ImageProgressWriter | None = None,
-) -> tuple[str, GenerationOrigin | None]:
+) -> tuple[str, GenerationOrigin | None, int | None, VisualReview]:
+    manual_job_id: int | None = None
+    if image_state is None:
+        image_state = ImageChainState()
+        async with SESSION_LOCAL() as session:
+            manual_job = OutfitCreationJob(
+                user_id=user_id,
+                request_source="manual",
+                description=prompt,
+                state="running",
+                checkpoint={
+                    "outfit_id": outfit_id,
+                    "manual_input": {
+                        "prompt": prompt,
+                        "reference_image": reference_image,
+                        "identity_reference": identity_reference,
+                        "identity": identity.model_dump(mode="json"),
+                        "image_edit": image_edit,
+                        "description": design_description,
+                        "expected_url": expected_url,
+                    },
+                },
+            )
+            session.add(manual_job)
+            await session.flush()
+            manual_job_id = manual_job.id
+            await wait_for_media(
+                session,
+                user_id=user_id,
+                owner_kind="outfit.create",
+                owner_job_id=manual_job.id,
+                dependency_job_id=manual_job.id,
+                operation_id=f"outfit:{manual_job.source_key}:continue",
+                automatic=False,
+                context={"source": "manual"},
+            )
+            await session.commit()
+
+        async def save_manual(value: ImageChainState) -> None:
+            await save_outfit_progress(
+                user_id, manual_job_id, image_chain=value.model_dump(mode="json"), paths=value.stored_paths()
+            )
+
+        save_progress = save_manual
+
     async def generate(text: str) -> tuple[list[str], GenerationOrigin | None]:
         state = image_state if image_state is not None else ImageChainState()
-        paths = await generate_character_images(
+        paths = await generate_reviewed_images(
             text,
             user_id=user_id,
             storage_directory=outfit_asset_directory(outfit_id),
             reference_image=reference_image,
             identity_reference=identity_reference,
+            identity_reference_mode="primary",
             size=FULLBODY_SIZE,
             image_edit=image_edit,
             prefer_transparent_background=True,
@@ -268,6 +328,16 @@ async def _generate_outfit_fullbody(
     try:
         paths, origin = await generate_with_moderation_retry(user_id, prompt, generate, task=AiTaskKey.outfit)
     except ImageGenerationError as exc:
+        if manual_job_id is not None:
+            async with SESSION_LOCAL() as session:
+                manual_job = await session.get(OutfitCreationJob, manual_job_id, with_for_update=True)
+                manual_job.state, manual_job.stage, manual_job.error = (
+                    ("paused", "review_pending", str(exc))
+                    if isinstance(exc, ImageReviewUnavailableError)
+                    or bool((manual_job.checkpoint or {}).get("image_chain", {}).get("candidates"))
+                    else ("failed", "failed", str(exc))
+                )
+                await session.commit()
         raise AvatarGenerationError(str(exc), internal=exc.internal) from exc
     except Exception as exc:
         # 供应商图片地址在图片链内下载，失败时没有候选；API 日志只记 internal，堆栈在此保留。
@@ -278,7 +348,15 @@ async def _generate_outfit_fullbody(
         data, _mime = await image_asset_bytes(paths[0])
         await asyncio.to_thread(validate_transparent_portrait, data)
         retained = True
-        return paths[0], origin
+        if manual_job_id is not None:
+            async with SESSION_LOCAL() as session:
+                manual_job = await session.get(OutfitCreationJob, manual_job_id, with_for_update=True)
+                manual_job.state, manual_job.stage = "paused", "confirmation"
+                await session.commit()
+        selected = image_state.best()
+        if selected is None or not review_passes(selected.review, ("identity", "goal", "quality")):
+            raise OutfitStateError("原造型缺少适用的检查结论，候选已保留")
+        return paths[0], origin, manual_job_id, selected.review
     except VideoProcessError as exc:
         raise AvatarGenerationError(str(exc), internal=exc.internal or str(exc)) from exc
     except ImageGenerationError as exc:
@@ -433,6 +511,10 @@ async def create_outfit_draft(
         raise OutfitStateError("外观编号分配失败")
     await commit_appearance(db, user_id)
     if job_id is not None:
+        if progress.get("identity") and not await visual_identity_is_current(
+            db, user_id, VisualIdentitySnapshot.model_validate(progress["identity"])
+        ):
+            raise OutfitContinuationBlocked("原任务身份已失效，候选与草稿已保留")
         if (
             progress.get("identity_revision", identity.revision) != identity.revision
             or progress.get("identity_path", avatar.seed_fullbody_url) != avatar.seed_fullbody_url
@@ -444,6 +526,7 @@ async def create_outfit_draft(
             outfit_id=outfit_id,
             identity_revision=identity.revision,
             identity_path=avatar.seed_fullbody_url,
+            identity=identity.model_dump(mode="json"),
             paths={avatar.seed_fullbody_url},
         )
     await _require_outfit_matting(user_id)
@@ -473,7 +556,7 @@ async def create_outfit_draft(
                 user_id, job_id, image_chain=state.model_dump(mode="json"), paths=state.stored_paths()
             )
 
-    draft_url, origin = await _generate_outfit_fullbody(
+    draft_url, origin, manual_job_id, review = await _generate_outfit_fullbody(
         user_id,
         prompt=prompt,
         reference_image=avatar.seed_fullbody_url,
@@ -481,10 +564,12 @@ async def create_outfit_draft(
         identity=identity,
         outfit_id=outfit_id,
         image_state=image_state,
+        design_description=effective_description,
         save_progress=save_image if job_id is not None else None,
     )
 
     source.generation_origin = origin
+    source.review_result = review
     ref_path: str | None = None
     try:
         if image is not None:
@@ -513,6 +598,12 @@ async def create_outfit_draft(
                 if creation is None or creation.user_id != user_id:
                     raise OutfitStateError("原造型制作任务已失效")
                 creation.result_outfit_id = outfit.id
+            if manual_job_id is not None:
+                manual_job = await db.get(OutfitCreationJob, manual_job_id, with_for_update=True)
+                manual_job.result_outfit_id, manual_job.state, manual_job.stage = outfit.id, "succeeded", "complete"
+                await finish_media_operation(
+                    db, user_id, f"outfit:{manual_job.source_key}:continue", {"outfit_id": str(outfit.id)}
+                )
             await commit_appearance(db, user_id)
     except BaseException:
         await db.rollback()
@@ -547,7 +638,7 @@ async def regenerate_outfit_draft(
         source_identity = source.identity_reference_path
         if source_identity != avatar.seed_fullbody_url:
             raise OutfitStateError("全身形象已变化，请按当前形象重新生成外观")
-        # 编辑保持上一版图像的身份与造型；独立评分仍比较当前全身身份图。
+        # 编辑保持上一版图像的身份与造型；独立检查仍比较当前全身身份图。
         reference_uri = await asyncio.to_thread(read_asset_data_uri, original_url)
         if not reference_uri:
             raise OutfitDraftUnavailableError("上一版草稿图片无法读取，请改用重新生成")
@@ -566,7 +657,7 @@ async def regenerate_outfit_draft(
             effective_feedback,
         )
 
-    draft_url, origin = await _generate_outfit_fullbody(
+    draft_url, origin, manual_job_id, review = await _generate_outfit_fullbody(
         user_id,
         prompt=prompt,
         reference_image=original_url if mode == "edit" else avatar.seed_fullbody_url,
@@ -574,6 +665,8 @@ async def regenerate_outfit_draft(
         identity=identity,
         outfit_id=outfit_id,
         image_edit=mode == "edit",
+        design_description=source.description,
+        expected_url=original_url,
         selection=ProviderSelection(origin=source.generation_origin, mode="current" if mode == "edit" else "next"),
     )
 
@@ -586,8 +679,15 @@ async def regenerate_outfit_draft(
         source.identity_revision = identity.revision
         source.identity_reference_path = avatar.seed_fullbody_url
         source.generation_origin = origin
+        source.review_result = review
         if effective_feedback:
             source.feedback_history = [*source.feedback_history, effective_feedback]
+        if manual_job_id is not None:
+            manual_job = await db.get(OutfitCreationJob, manual_job_id, with_for_update=True)
+            manual_job.result_outfit_id, manual_job.state, manual_job.stage = outfit.id, "succeeded", "complete"
+            await finish_media_operation(
+                db, user_id, f"outfit:{manual_job.source_key}:continue", {"outfit_id": str(outfit.id)}
+            )
         await _commit_outfit_draft_image(
             db,
             user_id,
@@ -600,7 +700,9 @@ async def regenerate_outfit_draft(
     return outfit
 
 
-async def confirm_outfit(db: AsyncSession, user_id: int, outfit_id: int) -> CompanionOutfit:
+async def confirm_outfit(
+    db: AsyncSession, user_id: int, outfit_id: int, *, creation_job_id: int | None = None
+) -> CompanionOutfit:
     """验收已保存的透明草稿并入柜，保留生成时的来源。"""
     async with get_avatar_job_lock(user_id):
         outfit = await _get_outfit(db, user_id, outfit_id)
@@ -638,6 +740,49 @@ async def confirm_outfit(db: AsyncSession, user_id: int, outfit_id: int) -> Comp
             ):
                 raise OutfitStateError("外观已发生变化，请刷新后重试")
             outfit.fullbody_url = persisted or original_url
+            if creation_job_id is not None:
+                creation = await db.get(OutfitCreationJob, creation_job_id, with_for_update=True)
+                if (
+                    creation is None
+                    or creation.user_id != user_id
+                    or creation.state != "running"
+                    or creation.cancel_requested
+                    or not await user_is_active(db, user_id)
+                ):
+                    raise OutfitContinuationBlocked("原造型任务已取消或账户不可用，草稿已保留")
+                chain = ImageChainState.model_validate((creation.checkpoint or {}).get("image_chain", {}))
+                selected = chain.best()
+                if (
+                    selected is None
+                    or selected.path != original_url
+                    or not review_passes(selected.review, ("identity", "goal", "quality"))
+                    or not await asyncio.to_thread(review_media_intact, selected.review.evidence, original_url)
+                ):
+                    raise OutfitContinuationBlocked("草稿或检查依据已变化，原候选已保留")
+                try:
+                    persona = await lock_persona_snapshot(db, user_id)
+                except ValueError as exc:
+                    raise OutfitContinuationBlocked("角色资料尚未就绪，候选与草稿已保留") from exc
+                frozen = (creation.checkpoint or {}).get("identity")
+                if (
+                    not persona.is_complete
+                    or persona.outfit_policy == "locked"
+                    or frozen is None
+                    or not await visual_identity_is_current(db, user_id, VisualIdentitySnapshot.model_validate(frozen))
+                ):
+                    raise OutfitContinuationBlocked("原授权或身份已变化，候选与草稿已保留")
+                source = OutfitSource.model_validate(outfit.source_json)
+                source.review_result = selected.review
+                outfit.source_json = source.dump()
+                creation.result_outfit_id, creation.state, creation.stage, creation.error = (
+                    outfit.id,
+                    "succeeded",
+                    "complete",
+                    None,
+                )
+                await finish_media_operation(
+                    db, user_id, f"outfit:{creation.source_key}:continue", {"outfit_id": str(outfit.id)}
+                )
             outfit.status = "ready"
             emit_ws_event(
                 db, user_id=user_id, event_type="companion.life.presentation_requested", payload={"force": True}
@@ -771,6 +916,7 @@ async def adopt_outfit_regenerate_image(
             raise OutfitStateError("确认形象已更新，请重新上传外观")
         source = OutfitSource.model_validate(outfit.source_json)
         source.generation_origin = None
+        source.review_result = None
         source.identity_revision = identity.revision
         source.identity_reference_path = identity_path
         await _commit_outfit_draft_image(

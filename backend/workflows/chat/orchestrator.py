@@ -425,6 +425,8 @@ async def _run_chat_turn(
                 task=task.value,
                 structured_reply=companion_reply,
                 request=req.message.content,
+                source_message_id=user_message_id,
+                request_scope=f"user:{user_message_id}" if user_message_id is not None else submission_request_id,
                 retry_after_message_id=persisted_message_id if final_reply_only else None,
             )
             media_turn.source_message_id = user_message_id
@@ -694,6 +696,7 @@ async def _run_chat_turn(
                     track_task=track_task,
                     replace_reply_message_id=replace_reply_message_id,
                     submission_request_id=submission_request_id,
+                    media_request_scope=media_turn.request_scope,
                 )
                 break
 

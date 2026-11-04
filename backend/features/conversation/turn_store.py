@@ -20,13 +20,14 @@ from features.conversation.attachments import prune_media_in_range
 from features.conversation.context_window import CHECKPOINT_SUBTYPE
 from features.conversation.models import Conversation, Message
 from features.conversation.replacement import replacement_source_id
-from features.conversation.replies import CompanionReply, MediaBubble
+from features.conversation.replies import CompanionReply, MediaBubble, TextBubble
 from features.conversation.reply_media import apply_video_status, bind_reply_videos
 from features.conversation.request_contracts import ChatAttachment, ChatMessageRequest
 from features.conversation.snapshots import MessageSnapshot
 from features.conversation.store_contracts import AssistantTurnData, CompressionInfo
 from features.conversation.submission_models import PromptSubmission
 from features.conversation.turn_access import message_snapshot
+from features.media.image_jobs import transfer_image_bindings
 from features.media.queries import transfer_reply_videos
 from features.media.turn_state import MediaArtifact
 from features.topics.store import record_topic_usage
@@ -220,6 +221,7 @@ async def replace_assistant_message(
         )
         db.add(row)
         await flush_conversation(db)
+        await transfer_image_bindings(db, user_id, old_message_id, row.id)
         jobs = await transfer_reply_videos(
             db,
             user_id=user_id,
@@ -236,6 +238,19 @@ async def replace_assistant_message(
         if old is None:
             raise ValueError("Previous reply is no longer available")
         reply = data.reply
+        if reply is None and old.reply_json:
+            previous_reply = CompanionReply.from_saved_snapshot(old.reply_json, old.content or "")
+            previous_bubbles = [bubble for bubble in previous_reply.bubbles if isinstance(bubble, MediaBubble)]
+            if previous_bubbles:
+                reply = CompanionReply(
+                    bubbles=([TextBubble(type="text", text=data.content)] if data.content.strip() else [])
+                    + previous_bubbles
+                )
+                row.content_type = "companion_reply"
+                row.content = json.dumps(
+                    [bubble.model_dump(include={"type", "text", "media_id"}) for bubble in reply.bubbles],
+                    ensure_ascii=False,
+                )
         if reply is not None:
             old_reply = (
                 CompanionReply.from_saved_snapshot(old.reply_json, old.content or "") if old.reply_json else None

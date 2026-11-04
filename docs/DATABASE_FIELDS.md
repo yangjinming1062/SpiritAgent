@@ -45,8 +45,8 @@
 | 字段组与模型入口 | 语义 |
 |---|---|
 | 视觉身份与内部观察：[appearance/models.py](../backend/features/appearance/models.py) | 确认图维护独立身份版本；透明准备和视觉观察任务分别拥有冻结来源。观察仅供文字理解，失败不影响身份资格 |
-| 衣柜与造型任务：同一[模型文件](../backend/features/appearance/models.py) | 衣柜保存已采纳造型及来源；`outfit_creation_jobs` 保存自主制作详情并继承共享任务。多文件关系只归属身份、造型、候选、准备任务或观察任务之一 |
-| 环境与制作：[scenes/models.py](../backend/features/scenes/models.py) | 素材保存上传源、展示图和目标/源/实际尺寸，初始和替换任务独立；没有“当前启用环境”字段，新制作失败保留可用素材 |
+| 衣柜与造型任务：同一[模型文件](../backend/features/appearance/models.py) | 衣柜保存已采纳造型、来源及最终检查依据；`outfit_creation_jobs` 按请求来源区分手动与自主制作，只有自主路径关联生活步骤。全身候选的检查任务独立保留判断及证据，采纳后的依据存入头像快照。多文件关系只归属身份、造型、候选、准备任务或观察任务之一 |
+| 环境与制作：[scenes/models.py](../backend/features/scenes/models.py) | 素材保存上传源、展示图、目标/源/实际尺寸及最终检查依据与派生文件哈希，初始和替换任务独立；没有“当前启用环境”字段，新制作失败保留可用素材 |
 | 动作定义：[action_library/models.py](../backend/features/action_library/models.py) | 保存动作含义、适用条件和播放方式；自创动作另冻结评审依据，定义不是可播成品 |
 
 ## 影像、播放与媒体制作
@@ -55,7 +55,7 @@
 |---|---|
 | 成品、版本与原件分析：[visuals/models.py](../backend/features/visuals/models.py) | 稳定成品 ID 与不可变版本分离；`asset_kind` 区分 actor/scene/cinematic 三类资产，版本保存判别联合冻结输入（`snapshot_json.source.kind`，分析期间可为 `analysis`，完成后为普通资产类型；原始文件信息和呈现审核资格可附着于任何来源）、分析任务的上下文/结果/条目操作队列（含命令与补充说明快照，条目结果独立保存操作状态与修订）及稳定原件哈希（派生透明视频后仍用于重复内容去重）、视频实际表现与适用条件（`source.media_semantics`）、实际输入图、文件关系与 actor 主体元数据（`body_json`），成功重做才切换当前指针 |
 | 制作与呈现：同一[模型文件](../backend/features/visuals/models.py) | 工作项的目标/预期版本控制采纳；呈现保存当前/持续版本、舞台组合（`composition_json`，含持续画面选择来源与生活驱动组合的生活上下文）与生活意图（`intent_json`，含结构化活动类别与建议视觉标签）、静态素材目标与已显示快照、待播指令和代次；播放记录保存具体版本的指令与回执，`selection` 与生活上下文两列随指令登记、回执时推进组合；动作定义（[action_library/models.py](../backend/features/action_library/models.py)）另存语义标签、表现角色、动作强度与可中断属性，随冻结输入进入影像快照 |
-| 公共视频：[media/models.py](../backend/features/media/models.py) | 来源消息、回复绑定和视频制作详情；通用控制状态归 jobs，远端状态归 provider attempts |
+| 公共媒体：[media/models.py](../backend/features/media/models.py) | 图片按稳定媒体身份和槽位、视频按原任务保存冻结输入、来源消息与交付绑定；检查尝试保存独立请求、执行身份和依据，人工操作保存所选候选内容与原判断快照，业务继续记录保存所属任务、原权限及结果。通用控制状态归 jobs，远端状态归 provider attempts；模型判断与独立人工放行依据见 [review_contracts.py](../backend/features/media/review_contracts.py)，待复核与待业务确认均为非终态 |
 
 成品/版本成对外键还校验版本属于该成品；循环指针可分阶段写入，提交时必须完整。显示事实不得从生活活动、待播指令或文件存在推断。
 

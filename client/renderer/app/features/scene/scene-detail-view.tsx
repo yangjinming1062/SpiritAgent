@@ -31,6 +31,7 @@ import {
   SettingCard,
   Spinner
 } from '@/shared/panel'
+import { MediaReviewButton } from '@/shared/panel/media-review-button'
 import { useStrings } from '@/shared/strings'
 
 export interface SceneEditDraft {
@@ -163,9 +164,10 @@ export function SceneDetailView({
   const canRetryAnalysis = Boolean(
     detail &&
     (((detail.status === 'description_failed' || detail.status === 'cancelled') && hasImage) ||
-      (detail.status === 'failed' && detail.stage === 'review_failed') ||
+      (detail.status === 'failed' && ['review_failed', 'confirmation'].includes(detail.stage)) ||
       (detail.regeneration?.status === 'failed' &&
-        (detail.regeneration.stage === 'analyze' || detail.regeneration.stage === 'review_failed')))
+        (detail.regeneration.stage === 'analyze' ||
+          ['review_failed', 'confirmation'].includes(detail.regeneration.stage))))
   )
 
   const canRetryGeneration = detail?.can_retry_generation
@@ -421,6 +423,7 @@ export function SceneDetailView({
     <div className="space-y-2">
       {feedback}
       <CreationActionBar>
+        {detail?.review_job_id ? <MediaReviewButton jobId={detail.review_job_id} /> : null}
         {canRetryGeneration ? (
           <button
             className={BTN_PRIMARY}

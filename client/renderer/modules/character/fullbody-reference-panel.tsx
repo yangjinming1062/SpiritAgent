@@ -32,8 +32,7 @@ import {
   clearFullbodyReferenceHistory,
   hydrateFullbodyReference,
   regenerateFullbodyReference,
-  restoreFullbodyReferenceVersion,
-  retryFullbodyCandidateReview
+  restoreFullbodyReferenceVersion
 } from './fullbody-reference-store'
 import { GenerationActionsGroup } from './generation-actions'
 import { MAX_IMAGE_DESCRIPTION } from './persona'
@@ -325,9 +324,9 @@ export function FullbodyReferencePanel({
       editReason={
         reference ? t.editDisabledByReference : !feedback.trim() ? genActions.editRequiresFeedback : undefined
       }
-      onEdit={current && state.rawUrl ? () => void submit('edit') : undefined}
+      onEdit={!state.candidateId && current && state.rawUrl ? () => void submit('edit') : undefined}
       onRegenerate={() => void submit('regenerate')}
-      onSelfSource={onboarding ? undefined : openSelfSource}
+      onSelfSource={onboarding || state.candidateId ? undefined : openSelfSource}
       regenerateDisabled={generationBlocked}
       regenerateLabel={current && state.rawUrl ? undefined : genActions.generate}
       selfSourceDisabled={generationBlocked}
@@ -408,7 +407,7 @@ export function FullbodyReferencePanel({
                 : dict.creation.imageLoadFailed
               : confirmError
                 ? t.restoreFailed
-                : t.retryCandidateReviewFailed
+                : t.acceptCandidateFailed
             : dict.creation.review
       }
     />
@@ -421,28 +420,16 @@ export function FullbodyReferencePanel({
         footer={
           <CreationActionBar description={creationFeedback}>
             {!onboarding && generationActions}
-            {!onboarding &&
-              current &&
-              state.candidateId &&
-              (state.candidateStatus === 'ready' ? (
-                <button
-                  className={BTN_PRIMARY}
-                  disabled={busy || currentImageUnavailable || !previewReady}
-                  onClick={() => void acceptFullbodyCandidate(avatarId)}
-                  type="button"
-                >
-                  {t.acceptCandidate}
-                </button>
-              ) : (
-                <button
-                  className={BTN_SUBTLE}
-                  disabled={busy || currentImageUnavailable}
-                  onClick={() => void retryFullbodyCandidateReview(avatarId)}
-                  type="button"
-                >
-                  {t.retryCandidateReview}
-                </button>
-              ))}
+            {!onboarding && current && state.candidateId && (
+              <button
+                className={BTN_PRIMARY}
+                disabled={busy || currentImageUnavailable || !previewReady}
+                onClick={() => void acceptFullbodyCandidate(avatarId)}
+                type="button"
+              >
+                {t.acceptCandidate}
+              </button>
+            )}
             {(onBack || onContinue) && (
               <div
                 className={

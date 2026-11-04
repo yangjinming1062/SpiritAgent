@@ -18,6 +18,7 @@ class PostPublicationResult(BaseModel):
     status: Literal[
         "queued",
         "running",
+        "paused",
         "published",
         "partial",
         "failed",
@@ -32,7 +33,10 @@ class PostPublicationResult(BaseModel):
 
 class PostPublicationRecovery(PostPublicationResult):
     title: str
-    video_status: Literal["pending", "ready", "failed", "unknown", "discarded"]
+    media_kind: Literal["image", "video"]
+    media_status: Literal["pending", "review_pending", "ready", "failed", "unknown", "discarded"]
+    media_job_id: ResourceId | None = None
+    can_publish: bool = False
     media_url: str | None
     can_discard: bool
 

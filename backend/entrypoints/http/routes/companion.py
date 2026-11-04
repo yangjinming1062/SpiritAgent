@@ -89,6 +89,7 @@ from features.companion.schemas import (
     PortraitConfirmRequest,
 )
 from features.companion.views import get_persona_view, update_persona_view
+from features.media.review_views import MediaReviewRequest
 from infrastructure.ai.error_classifier import LLMRuntimeError
 from infrastructure.ai.llm_client import MissingLlmConfigError
 from infrastructure.ai.prompt_engineer import VisualReasoningError
@@ -369,10 +370,10 @@ async def get_fullbody_candidate(avatar_id: ResourceId, user: CurrentUser) -> Fu
     openapi_extra=operation_policy(wait_for_model=True),
 )
 async def post_fullbody_candidate_review(
-    avatar_id: ResourceId, candidate_id: ResourceId, user: CurrentUser
+    avatar_id: ResourceId, candidate_id: ResourceId, body: MediaReviewRequest, user: CurrentUser
 ) -> FullbodyCandidateResponse:
     try:
-        return await retry_fullbody_candidate_review(user.id, avatar_id, candidate_id)
+        return await retry_fullbody_candidate_review(user.id, avatar_id, candidate_id, body)
     except AvatarNotFoundError as exc:
         raise RequestError(status_code=404, message=str(exc)) from exc
     except AvatarGenerationError as exc:

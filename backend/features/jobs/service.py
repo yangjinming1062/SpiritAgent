@@ -1,6 +1,7 @@
 """任务身份和生命周期的事务内公共操作。"""
 
 from collections.abc import Callable, Collection
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -20,6 +21,35 @@ class CompletedJob:
     revision: int
     finished_at: datetime
     updated_at: datetime
+
+
+@dataclass(frozen=True)
+class JobControl:
+    id: int
+    kind: str
+    state: str
+    stage: str
+    revision: int
+    cancel_requested: bool
+    cleanup_pending: bool
+    checkpoint: dict | None
+
+
+async def owned_job_control(db: AsyncSession, user_id: int, job_id: int, *, lock: bool = False) -> JobControl | None:
+    statement = select(
+        JobRecord.id,
+        JobRecord.kind,
+        JobRecord.state,
+        JobRecord.stage,
+        JobRecord.revision,
+        JobRecord.cancel_requested,
+        JobRecord.cleanup_pending,
+        JobRecord.checkpoint,
+    ).where(JobRecord.user_id == user_id, JobRecord.id == job_id)
+    if lock:
+        statement = statement.with_for_update()
+    row = (await db.execute(statement)).mappings().first()
+    return JobControl(**{**row, "checkpoint": deepcopy(row["checkpoint"])}) if row else None
 
 
 def completion_cte(user_id: int, job_id: int, expected_revision: int, checkpoint: dict) -> CTE:
@@ -199,3 +229,28 @@ async def settled_job_ids(db: AsyncSession) -> set[int]:
             )
         )
     )
+
+
+async def owned_job_kind(db: AsyncSession, user_id: int, job_id: int) -> str | None:
+    return await db.scalar(select(JobRecord.kind).where(JobRecord.id == job_id, JobRecord.user_id == user_id))
+
+
+async def pause_interrupted_reviews(db: AsyncSession, job_ids: Collection[int]) -> None:
+    if job_ids:
+        await db.execute(
+            update(JobRecord)
+            .where(
+                JobRecord.id.in_(job_ids),
+                JobRecord.state == "running",
+                JobRecord.stage.in_(
+                    ("reviewing", "evaluating", "review", "checking", "presentation_review", "review_pending")
+                ),
+            )
+            .values(
+                state="paused",
+                stage="review_pending",
+                finished_at=None,
+                revision=JobRecord.revision + 1,
+                error="检查已中断，候选和原依据已保留",
+            )
+        )

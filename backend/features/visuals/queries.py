@@ -19,7 +19,6 @@ from .eligibility import (
     actor_body_ready,
     automatic_media_ready,
     existing_asset,
-    frozen_approval,
 )
 from .geometry import visual_aspect_matches
 from .import_jobs import import_job_view
@@ -92,7 +91,7 @@ def _frozen_clip_kind() -> ColumnElement[str | None]:
 def _source_matches_stage(source: dict, *, outfit: ComboMaterialRef | None, identity_hash: str | None) -> bool:
     """只让当前身份/造型的伙伴成品进入舞台清单；环境成品不绑定伙伴。"""
 
-    if not frozen_approval(source.get("kind"), source.get("presentation_approved")):
+    if not source.get("presentation_approved"):
         return False
     if source.get("kind") == "scene":
         return bool(source.get("scene"))
@@ -220,7 +219,12 @@ async def reusable_actor_clip(user_id: int, source: ActorClipSource) -> bool:
 
     async with SESSION_LOCAL() as db:
         rows = await db.execute(
-            select(VisualVersion.media_path, VisualVersion.snapshot_json, VisualVersion.body_json)
+            select(
+                VisualVersion.media_path,
+                VisualVersion.snapshot_json,
+                VisualVersion.body_json,
+                VisualVersion.content_hash,
+            )
             .join(VisualItem, VisualItem.id == VisualVersion.visual_id)
             .where(
                 VisualItem.user_id == user_id,
@@ -231,8 +235,9 @@ async def reusable_actor_clip(user_id: int, source: ActorClipSource) -> bool:
                 VisualItem.action_id == source.action.action_id,
             ),
         )
-        for path, snapshot_json, body in rows:
-            frozen = VisualSnapshot.model_validate(snapshot_json).source
+        for path, snapshot_json, body, content_hash in rows:
+            snapshot = VisualSnapshot.model_validate(snapshot_json)
+            frozen = snapshot.source
             if (
                 not isinstance(frozen, (ActorClipSource, AnalyzingVisualSource))
                 or not body
@@ -256,6 +261,9 @@ async def reusable_actor_clip(user_id: int, source: ActorClipSource) -> bool:
                     clip_kind=frozen.clip_kind if frozen.kind == "analysis" else frozen.action.clip_kind,
                     body=body,
                     presentation_approved=frozen.presentation_approved,
+                    review_result=snapshot.review_result,
+                    reference_source=frozen.model_dump(mode="json"),
+                    media_content_hash=content_hash,
                     action_clip_kind=frozen.action.clip_kind,
                 )
             ):
@@ -312,6 +320,9 @@ def item_view(item: VisualItem | PresentedVisual, snapshot: VisualSnapshot | Non
             clip_kind=visual_clip_kind(item, snapshot),
             body=item.body_json,
             presentation_approved=source.presentation_approved,
+            review_result=snapshot.review_result,
+            reference_source=source.model_dump(mode="json"),
+            media_content_hash=item.content_hash,
             scene_reference=getattr(source, "scene", None) is not None,
             action_clip_kind=action.clip_kind if action else None,
         ),
@@ -333,7 +344,7 @@ def job_view(job: VisualJob) -> VisualJobView:
     if job.state == "failed" and progress is not None and progress.failure_reason == "quality_failed":
         error = (
             quality_failure_message(
-                progress.identity_score,
+                progress.identity_verdict,
                 progress.identity_reason,
                 progress.review_verdict,
                 progress.review_reason,
@@ -430,6 +441,9 @@ async def list_visuals(
             func.coalesce(VisualVersion.snapshot_json["source"]["scene"]["title"].astext, "").label("scene_title"),
             VisualVersion.snapshot_json["source"]["action"]["name"].astext.label("action_name"),
             VisualVersion.snapshot_json["source"]["kind"].astext.label("source_kind"),
+            VisualVersion.snapshot_json["review_result"].label("review_result"),
+            VisualVersion.content_hash.label("media_content_hash"),
+            VisualVersion.snapshot_json["source"].label("reference_source"),
             VisualVersion.snapshot_json["source"]["media_semantics"]["auto_selectable"]
             .as_boolean()
             .label("auto_selectable"),
@@ -473,8 +487,8 @@ async def list_visuals(
             values["original_url"] = client_asset_url(original_path) if original_path else None
             scene_reference = values.pop("scene_reference")
             action_clip_kind = values.pop("action_clip_kind")
-            source_kind = values.pop("source_kind")
-            approved = frozen_approval(source_kind, values.pop("presentation_approved"))
+            values.pop("source_kind")
+            approved = values.pop("presentation_approved")
             values["auto_playable"] = automatic_media_ready(
                 media_kind=values["media_kind"],
                 asset_kind=values["asset_kind"],
@@ -483,6 +497,9 @@ async def list_visuals(
                 clip_kind=values["clip_kind"],
                 body=values.pop("body_json"),
                 presentation_approved=approved,
+                review_result=values.pop("review_result"),
+                reference_source=values.pop("reference_source"),
+                media_content_hash=values.pop("media_content_hash"),
                 scene_reference=bool(scene_reference and scene_reference != "null"),
                 action_clip_kind=action_clip_kind,
             )
@@ -577,7 +594,7 @@ async def list_jobs(
             VisualJob.stage,
             VisualJob.error,
             VisualJob.checkpoint["failure_reason"].as_string().label("failure_reason"),
-            VisualJob.checkpoint["identity_score"].as_integer().label("identity_score"),
+            VisualJob.checkpoint["identity_verdict"].as_string().label("identity_verdict"),
             VisualJob.checkpoint["identity_reason"].as_string().label("identity_reason"),
             VisualJob.checkpoint["review_verdict"].as_string().label("review_verdict"),
             VisualJob.checkpoint["review_reason"].as_string().label("review_reason"),
@@ -598,12 +615,14 @@ async def list_jobs(
         jobs = []
         for row in rows[:limit]:
             values = dict(row)
-            score = values.pop("identity_score")
+            identity_verdict = values.pop("identity_verdict")
             identity_reason = values.pop("identity_reason") or ""
             verdict = values.pop("review_verdict")
             reason = values.pop("review_reason") or ""
             if values["state"] == "failed" and values["failure_reason"] == "quality_failed":
-                values["error"] = quality_failure_message(score, identity_reason, verdict, reason) or values["error"]
+                values["error"] = (
+                    quality_failure_message(identity_verdict, identity_reason, verdict, reason) or values["error"]
+                )
             jobs.append(VisualJobView.model_validate(values))
         return VisualJobListResponse(
             jobs=jobs,
@@ -815,6 +834,8 @@ async def ambient_catalog(db: AsyncSession, state: VisualPresentation, *, limit:
             VisualVersion.description,
             VisualVersion.body_json,
             VisualVersion.snapshot_json["source"].label("source"),
+            VisualVersion.snapshot_json["review_result"].label("review_result"),
+            VisualVersion.content_hash.label("media_content_hash"),
         )
         .select_from(VisualItem)
         .join(VisualVersion, VisualVersion.visual_id == VisualItem.id)
@@ -851,7 +872,10 @@ async def ambient_catalog(db: AsyncSession, state: VisualPresentation, *, limit:
                 auto_selectable=(source.get("media_semantics") or {}).get("auto_selectable"),
                 clip_kind=row.clip_kind,
                 body=row.body_json,
-                presentation_approved=frozen_approval(source.get("kind"), source.get("presentation_approved")),
+                presentation_approved=source.get("presentation_approved"),
+                review_result=row.review_result,
+                reference_source=source,
+                media_content_hash=row.media_content_hash,
                 scene_reference=bool(source.get("scene")),
                 action_clip_kind=(source.get("action") or {}).get("clip_kind"),
             ):
@@ -936,7 +960,8 @@ async def _ambient_actor(db: AsyncSession, state: VisualPresentation) -> StageLa
         .order_by(VisualVersion.id.desc())
     )
     for version in versions:
-        frozen = VisualSnapshot.model_validate(version.snapshot_json).source
+        snapshot = VisualSnapshot.model_validate(version.snapshot_json)
+        frozen = snapshot.source
         if (
             isinstance(frozen, (ActorClipSource, AnalyzingVisualSource))
             and (frozen.kind != "analysis" or (frozen.asset_kind == "actor" and frozen.presentation_approved))
@@ -953,6 +978,9 @@ async def _ambient_actor(db: AsyncSession, state: VisualPresentation) -> StageLa
                 clip_kind="loop",
                 body=version.body_json,
                 presentation_approved=frozen.presentation_approved,
+                review_result=snapshot.review_result,
+                reference_source=frozen.model_dump(mode="json"),
+                media_content_hash=version.content_hash,
                 action_clip_kind=frozen.action.clip_kind,
             )
         ):
@@ -1192,6 +1220,8 @@ async def visual_play_catalog(user_id: int, trigger: str) -> list[VisualPlayOpti
                 VisualVersion.outfit_description,
                 VisualVersion.snapshot_json["source"]["scene"]["description"].astext.label("scene_description"),
                 VisualVersion.snapshot_json["source"].label("source"),
+                VisualVersion.snapshot_json["review_result"].label("review_result"),
+                VisualVersion.content_hash.label("media_content_hash"),
             )
             .select_from(VisualItem)
             .join(VisualVersion, VisualVersion.id == VisualItem.current_version_id)
@@ -1279,6 +1309,8 @@ async def action_media_implementations(
             VisualVersion.width,
             VisualVersion.height,
             VisualVersion.snapshot_json["source"].label("source"),
+            VisualVersion.snapshot_json["review_result"].label("review_result"),
+            VisualVersion.content_hash.label("media_content_hash"),
             VisualVersion.snapshot_json["source"]["outfit"]["name"].astext.label("outfit_name"),
         )
         rows = list(

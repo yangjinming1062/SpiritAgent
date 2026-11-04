@@ -6,7 +6,10 @@ import json
 from typing import Literal, NamedTuple
 
 from features.action_library.queries import action_by_preset_key
+from features.appearance.identity import visual_identity_is_current
 from features.appearance.queries import initial_outfit_snapshot, ready_outfit_snapshot
+from features.media.continuations import MediaWait, wait_for_media
+from features.media.identity_contracts import VisualIdentitySnapshot
 from features.visuals.generation import wait_visual_job
 from features.visuals.queries import (
     creation_request,
@@ -14,13 +17,16 @@ from features.visuals.queries import (
     job_review_reason,
     reusable_actor_clip,
 )
+from features.visuals.reviews import visual_review_view
 from features.visuals.schemas import ActorClipSource, VisualSnapshot
-from features.visuals.service import create_visual_job
+from features.visuals.service import create_visual_job, resume_job
 from infrastructure.assets.write_protection import user_asset_lock
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
+from runtime.events.emit import emit_ws_event
 from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
 from runtime.task_supervisor import TASK_SUPERVISOR
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from workflows.visuals_companion import load_visual_snapshot
 
@@ -108,6 +114,23 @@ async def _prepare_action(user_id: int, key: str, target: tuple[str, str] | None
                 source="base_preparation",
                 request_id=request_id,
             )
+    async with SESSION_LOCAL() as db:
+        await wait_for_media(
+            db,
+            user_id=user_id,
+            owner_kind="visuals.preparation",
+            owner_job_id=job.id,
+            dependency_job_id=job.id,
+            operation_id=f"{request_id}:continue",
+            automatic=True,
+            context={
+                "preset": key,
+                "index": (*_CORE_PRESETS, *_PROGRESSIVE_PRESETS).index(key),
+                "target": list(selected),
+                "identity": source.identity.model_dump(mode="json"),
+            },
+        )
+        await db.commit()
     if await wait_visual_job(user_id, job.id) != "succeeded":
         return None
     # 制作完成不等于可自动演出：成品照常保留在影像库，只有实际语义确认合格才计入准备。
@@ -189,4 +212,30 @@ async def start_base_motion_preparation() -> None:
 
 
 async def resume_base_motion_preparation(user_id: int) -> None:
+    schedule_base_motion_preparation(user_id)
+
+
+async def continue_base_preparation(db: AsyncSession, wait: MediaWait) -> dict | None:
+    if not await visual_identity_is_current(
+        db, wait.user_id, VisualIdentitySnapshot.model_validate(wait.context_json["identity"])
+    ):
+        return None
+    outfit = await current_outfit_reference(wait.user_id)
+    if outfit is not None and outfit.content_hash != wait.context_json["target"][1]:
+        return None
+    view = await visual_review_view(wait.user_id, wait.dependency_job_id)
+    if view.state == "succeeded":
+        emit_ws_event(
+            db,
+            user_id=wait.user_id,
+            event_type="visual.preparation.continue",
+            payload={"job_id": str(wait.dependency_job_id)},
+        )
+        return {"prepared_job_id": str(wait.dependency_job_id)}
+    if view.stage == "confirmation" and view.ready_slots == view.required_slots:
+        await resume_job(wait.user_id, wait.dependency_job_id)
+    return None
+
+
+async def preparation_continue_requested(user_id: int, payload: dict) -> None:
     schedule_base_motion_preparation(user_id)

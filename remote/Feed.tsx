@@ -13,6 +13,7 @@ import { isRecord } from '../shared/gateway'
 import type { RemoteApi, RemoteGateway } from './api'
 import { ApiError } from './api'
 import { ArchiveSearchPanel } from './ArchiveSearch'
+import { MediaReviewButton } from './MediaReviewButton'
 import type { Diary, Post, Recovery } from './types'
 import {
   Empty,
@@ -250,7 +251,11 @@ function Posts({
         }
         revision.current++
         pendingRefresh.current.posts.add(id)
-      } else if (event.type === 'video_gen.completed' || event.type === 'video_gen.failed') {
+      } else if (
+        event.type === 'video_gen.completed' ||
+        event.type === 'video_gen.failed' ||
+        event.type === 'media.review.updated'
+      ) {
         pendingRefresh.current.recovery = true
       } else {
         return
@@ -289,26 +294,50 @@ function Posts({
           <summary>待处理的制作 · {recoveries.length}</summary>
           {recoveries.map(item => (
             <section className="recovery-item" key={item.publication_id}>
-              <strong>{item.title || '视频动态'}</strong>
+              <strong>{item.title || '媒体动态'}</strong>
               <span className="pill">
-                {item.video_status === 'pending'
-                  ? '制作中'
-                  : item.video_status === 'unknown'
-                    ? '结果待核对'
-                    : item.video_status === 'ready'
-                      ? '已就绪'
-                      : '制作失败'}
+                {item.media_status === 'review_pending'
+                  ? '等待选择候选'
+                  : item.media_status === 'pending'
+                    ? '制作中'
+                    : item.media_status === 'unknown'
+                      ? '结果待核对'
+                      : item.media_status === 'ready'
+                        ? '已就绪'
+                        : '制作失败'}
               </span>
               {item.media_url ? (
                 <Media
                   refresh={() => {
                     void run(() => loadRecovery())
                   }}
-                  type="video"
+                  type={item.media_kind}
                   url={item.media_url}
                 />
               ) : null}
               {item.error ? <Notice>{item.error}</Notice> : null}
+              {(item.media_status === 'review_pending' || item.media_status === 'failed') && item.media_job_id ? (
+                <MediaReviewButton api={api} jobId={item.media_job_id} onChanged={() => loadRecovery()} />
+              ) : null}
+              {item.can_publish ? (
+                <button
+                  disabled={busy}
+                  onClick={() =>
+                    run(async () => {
+                      const job = await api.invoke('media.get_media_job', { path: { job_id: item.publication_id } })
+                      await api.invoke('media.continue_media_business', {
+                        path: { job_id: item.publication_id },
+                        body: { action: 'publish_post', expected_revision: job.revision }
+                      })
+                      await loadRecovery()
+                      await load()
+                    })
+                  }
+                  type="button"
+                >
+                  继续发布
+                </button>
+              ) : null}
               <div className="button-row">
                 <button
                   disabled={busy}

@@ -7,7 +7,15 @@ from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from features.appearance.schemas import ImageAdoptRequest
+from features.media.review_contracts import VisualReview
 from features.scenes.models import SceneOrigin, ScenePolicy, SceneSource, SceneStatus
+
+
+class SceneReviewSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    review: VisualReview
+    source_path: str
+    output_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class SceneImageDimensions(BaseModel):
@@ -36,6 +44,7 @@ class SceneRegenerationResponse(BaseModel):
 
 
 class SceneResponse(BaseModel):
+    review_job_id: ResourceId | None = None
     id: ResourceId
     status: SceneStatus
     stage: str

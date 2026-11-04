@@ -7,6 +7,7 @@ from functools import partial
 from typing import Any
 
 from infrastructure.ai.selection import GenerationOrigin
+from infrastructure.assets.asset_store import normalize_asset_reference
 from infrastructure.assets.write_protection import user_asset_lock
 from infrastructure.backup import BackupContext, BackupRows, BackupTable
 from runtime.memory_scope import MemoryScope, validate_memory_scope
@@ -14,6 +15,9 @@ from sqlalchemy import bindparam, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.conversation.asset_releases import collect_message_asset_releases
+from features.media.image_jobs import conversation_image_jobs
+from features.media.queries import get_video_jobs
+from features.media.review_views import MediaJobView
 from features.media.voice_queries import resolve_custom_voice_references
 from features.topics.schemas import TopicCardSnapshot
 from features.topics.store import validate_restored_topic_cards
@@ -85,9 +89,15 @@ def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: 
             if isinstance(bubble, LinkBubble):
                 bubble.topic_id = int(topic_map[str(bubble.topic_id)])
             if isinstance(bubble, MediaBubble):
-                bubble.job_id = None
-                if bubble.status == "pending":
-                    bubble.status, bubble.url, bubble.error = "failed", None, "恢复的生成任务不可继续，请重新提出请求"
+                original_job = bubble.job_id
+                mapped = context.id_map.get("jobs", {}).get(str(original_job)) if original_job else None
+                bubble.job_id = int(mapped) if mapped is not None else None
+                if bubble.status in {"pending", "review_pending"}:
+                    bubble.status, bubble.url, bubble.error = (
+                        ("review_pending" if bubble.job_id else "failed"),
+                        None,
+                        "恢复的媒体任务保持停止；查看候选后可采用或重新生成",
+                    )
         # 保留原文缺省字段，避免把供应商默认列表和速度补成 null。
         payload["content"] = json.dumps(source, ensure_ascii=False)
         # 改写后模型不变式的重验由 messages 恢复钩子对 reply_json 的解析兜底。
@@ -267,6 +277,67 @@ async def _check_cards(
 async def _restore_context(db: AsyncSession, rows: BackupRows, context: BackupContext) -> None:
     await restore_conversation_context(db, rows, context)
     inserted = {identity for table, identity in context.rewriter.inserted_rows if table == "messages"}
+    restored_messages = [
+        int(context.id_map["messages"][identity])
+        for identity in inserted
+        if identity in context.id_map.get("messages", {})
+    ]
+    image_jobs: dict[int, dict[int, MediaJobView]] = {}
+    for message in await db.scalars(
+        select(Message).where(
+            Message.user_id == context.user_id, Message.id.in_(restored_messages), Message.reply_json.is_not(None)
+        )
+    ):
+        if not message.reply_json:
+            continue
+        if message.conversation_id not in image_jobs:
+            image_jobs[message.conversation_id] = {
+                job.id: job for job in await conversation_image_jobs(db, context.user_id, str(message.conversation_id))
+            }
+        reply = CompanionReply.from_saved_snapshot(message.reply_json, message.content or "")
+        ids = [
+            bubble.job_id
+            for bubble in reply.bubbles
+            if isinstance(bubble, MediaBubble) and bubble.type == "video" and bubble.job_id is not None
+        ]
+        videos = await get_video_jobs(db, context.user_id, ids)
+        for bubble in reply.bubbles:
+            if not isinstance(bubble, MediaBubble) or bubble.job_id is None:
+                continue
+            image_job = image_jobs[message.conversation_id].get(bubble.job_id)
+            valid = (
+                image_job is not None and image_job.bindings.get(bubble.media_id) == str(message.id)
+                if bubble.type == "image"
+                else bubble.job_id in videos
+                and videos[bubble.job_id].session_id == str(message.conversation_id)
+                and videos[bubble.job_id].reply_message_id == message.id
+            )
+            if valid and bubble.type == "image":
+                slot = next((slot for slot in image_job.slots if slot.media_id == bubble.media_id), None)
+                if slot and slot.delivered and slot.status == "ready":
+                    bubble.status, bubble.url, bubble.error, bubble.media_revision = (
+                        "ready",
+                        normalize_asset_reference(slot.url),
+                        None,
+                        slot.media_revision,
+                    )
+            elif valid and videos[bubble.job_id].status == "succeeded":
+                video = videos[bubble.job_id]
+                bubble.status, bubble.url, bubble.error, bubble.media_revision = (
+                    "ready",
+                    video.video_url,
+                    None,
+                    video.revision,
+                )
+            if not valid:
+                bubble.job_id = None
+                if bubble.status in {"pending", "review_pending"}:
+                    bubble.status, bubble.url, bubble.error = (
+                        "failed",
+                        None,
+                        "原媒体任务未完整恢复，文件和已有结果已保留",
+                    )
+        message.reply_json = reply.model_dump(mode="json")
     references = {
         str(row["id"]): message_voice_references(row.get("reply_json"))
         for row in rows.get("messages", [])

@@ -33,6 +33,7 @@ from infrastructure.video_processing.matting import require_matting_model
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.media.prompts import IMAGE_OPAQUE_BACKGROUND, IMAGE_TRANSPARENT_BACKGROUND
+from features.media.review_contracts import ReviewPendingError
 
 logger = get_logger(__name__)
 
@@ -57,7 +58,7 @@ class ImageGenerationError(Exception):
         self.classified: ClassifiedError | None = None
 
 
-class ImageReviewUnavailableError(ImageGenerationError):
+class ImageReviewUnavailableError(ImageGenerationError, ReviewPendingError):
     """已保存候选尚未完成画面核查；仅重试分析，不重新提交生图。"""
 
 

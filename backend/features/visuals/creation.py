@@ -16,8 +16,8 @@ from infrastructure.assets.asset_store import (
 )
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from features.media.chain import MEDIA_IDENTITY_ACCEPT_SCORE
 from features.media.identity_review import ImageGoalReviewFailure, review_character_image_goal
+from features.media.review_contracts import ReviewDecision, ReviewEvidence, VisualReview
 
 from .models import VisualJob
 from .ports import read_planning_context
@@ -256,6 +256,7 @@ async def review_existing_opening(
     *,
     snapshot: ActorClipSource | CinematicSource,
     before_submit: Callable[[], Awaitable[None]],
+    save_progress: Callable[[], Awaitable[None]],
 ) -> OpeningReview:
     image_hash = await asyncio.to_thread(opening_image_hash, progress.pose_path)
     requirements_hash = opening_requirements_hash(job, progress)
@@ -266,19 +267,46 @@ async def review_existing_opening(
         or saved.requirements_hash != requirements_hash
         or saved.reference_hash != reference_hash
     ):
-        saved = None
-    if saved is not None and saved.status == "complete" and saved.quality_verdict is not None:
+        raise VisualCreationError("原检查的图片、参考或要求已变化，请另建制作或评估请求", "evidence_invalid")
+    if saved is not None and saved.human_approval is not None and opening_passed(saved):
         return saved
-    image = await asyncio.to_thread(read_valid_image_data_uri, progress.pose_path)
-    if not image:
-        raise VisualStateError("起始画面无法读取")
-    reference = await asyncio.to_thread(
-        read_visual_reference,
-        snapshot.primary_reference_path,
-        snapshot.primary_reference_hash,
-    )
-    secondary = await asyncio.to_thread(read_visual_reference, snapshot.outfit.path, snapshot.outfit.content_hash)
+    if (
+        saved is not None
+        and saved.status == "complete"
+        and saved.quality_verdict in {"pass", "fail"}
+        and saved.verdict in {"pass", "fail"}
+        and saved.identity_verdict in {"pass", "fail"}
+    ):
+        return saved
+    image, reference, secondary, environment = "", "", None, None
+    if saved is None or saved.evidence is None:
+        image = await asyncio.to_thread(read_valid_image_data_uri, progress.pose_path)
+        if not image:
+            raise VisualStateError("起始画面无法读取")
+        reference = await asyncio.to_thread(
+            read_visual_reference, snapshot.primary_reference_path, snapshot.primary_reference_hash
+        )
+        secondary = await asyncio.to_thread(read_visual_reference, snapshot.outfit.path, snapshot.outfit.content_hash)
+        if snapshot.kind == "cinematic":
+            environment = await asyncio.to_thread(
+                read_visual_reference, snapshot.scene.path, snapshot.scene.content_hash
+            )
     reference_mode = snapshot.identity_reference_mode
+
+    async def save_evidence(evidence: ReviewEvidence) -> None:
+        progress.opening_review = (
+            saved.model_copy(update={"evidence": evidence})
+            if saved
+            else OpeningReview(
+                image_hash=image_hash,
+                requirements_hash=requirements_hash,
+                reference_hash=reference_hash,
+                evidence=evidence,
+                status="unavailable",
+            )
+        )
+        await save_progress()
+
     result = await review_character_image_goal(
         user_id,
         reference,
@@ -288,21 +316,20 @@ async def review_existing_opening(
         identity_reference_mode=reference_mode,
         previous_failure=ImageGoalReviewFailure(
             status="invalid" if saved.status == "complete" else saved.status,
-            score=saved.score,
+            identity_verdict=saved.identity_verdict,
+            identity_reason=saved.identity_reason,
+            goal_reason=saved.reason,
+            quality_reason=saved.quality_reason,
             verdict=saved.verdict,
             quality_verdict=saved.quality_verdict,
         )
         if saved is not None
         else None,
-        environment_uri=await asyncio.to_thread(
-            read_visual_reference,
-            snapshot.scene.path,
-            snapshot.scene.content_hash,
-        )
-        if snapshot.kind == "cinematic"
-        else None,
+        environment_uri=environment,
         task=AiTaskKey.visuals,
         before_submit=before_submit,
+        evidence=saved.evidence if saved else None,
+        save_evidence=save_evidence,
     )
     # goal 与 failure 互斥且同名字段语义一致；失败时沿用已保存判定，续审只补缺失项。
     decided = result.goal or result.failure
@@ -311,27 +338,52 @@ async def review_existing_opening(
         requirements_hash=requirements_hash,
         reference_hash=reference_hash,
         status=result.failure.status if result.failure else "complete",
-        score=result.score,
+        identity_verdict=result.identity_verdict,
+        identity_reason=result.identity_reason,
+        quality_reason=result.goal.quality_reason
+        if result.goal
+        else result.failure.quality_reason
+        if result.failure
+        else "",
+        evidence=result.evidence,
         verdict=decided.verdict if decided else None,
         quality_verdict=decided.quality_verdict if decided else None,
-        reason=result.goal.reason if result.goal else "画面检查暂未完成",
+        reason=result.goal.reason
+        if result.goal
+        else result.failure.goal_reason
+        if result.failure and result.failure.goal_reason
+        else "画面检查暂未完成",
     )
     return progress.opening_review
 
 
-def opening_passed(review: OpeningReview) -> bool:
-    return (
-        review.status == "complete"
-        and review.verdict == "pass"
-        and review.quality_verdict == "pass"
-        and review.score is not None
-        and review.score >= MEDIA_IDENTITY_ACCEPT_SCORE
+def opening_visual_review(review: OpeningReview) -> VisualReview:
+    return VisualReview(
+        required=("identity", "goal", "quality"),
+        identity=ReviewDecision(verdict=review.identity_verdict, reason=review.identity_reason)
+        if review.identity_verdict and review.identity_reason
+        else None,
+        goal=ReviewDecision(verdict=review.verdict, reason=review.reason) if review.verdict and review.reason else None,
+        quality=ReviewDecision(verdict=review.quality_verdict, reason=review.quality_reason)
+        if review.quality_verdict and review.quality_reason
+        else None,
+        evidence=review.evidence,
+        status=review.status,
+        human_approval=review.human_approval,
     )
 
 
-def identity_score_passed(review: OpeningReview | None) -> bool:
-    """身份分达标即可把候选作为修复底图，不要求画面要求与自然度同时通过。"""
-    return review is not None and review.score is not None and review.score >= MEDIA_IDENTITY_ACCEPT_SCORE
+def opening_passed(review: OpeningReview) -> bool:
+    return opening_visual_review(review).verdict == "pass"
+
+
+def identity_review_passed(review: OpeningReview | None) -> bool:
+    """身份明确一致即可把候选作为修复底图，不要求画面要求与自然度同时通过。"""
+    return (
+        review is not None
+        and (review.identity_verdict == "pass" or opening_passed(review))
+        and review.evidence is not None
+    )
 
 
 def begin_opening_repair(
@@ -360,6 +412,10 @@ def begin_opening_repair(
     progress.pose_path = ""
     progress.image_chain_json = None
     progress.opening_review = None
+    progress.review_result = None
+    progress.identity_evidence = None
+    progress.video_evidence = None
+    progress.quality_verdict = None
     progress.image_confirmed = False
     progress.image_only = True
     progress.motion_prompt = ""

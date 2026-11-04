@@ -3,10 +3,10 @@ import { authedResource } from '@/shared/lib/resource-request'
 
 import type { ApiSchemas } from '../../../../shared/api.generated'
 
-export type VideoPublicationRecovery = ApiSchemas['PostPublicationRecovery']
-type VideoPublicationRecoveryList = ApiSchemas['PostPublicationRecoveryList']
+export type MediaPublicationRecovery = ApiSchemas['PostPublicationRecovery']
+type MediaPublicationRecoveryList = ApiSchemas['PostPublicationRecoveryList']
 
-export async function listVideoPublications(cursor?: string): Promise<VideoPublicationRecoveryList | null> {
+export async function listMediaPublications(cursor?: string): Promise<MediaPublicationRecoveryList | null> {
   const result = await authedResource('companion_posts.get_publication_recoveries', {
     query: { cursor }
   })
@@ -14,7 +14,7 @@ export async function listVideoPublications(cursor?: string): Promise<VideoPubli
   return apiSucceeded(result, 'posts', 'video recovery list failed') ? result.value : null
 }
 
-export async function queryVideoPublication(id: string): Promise<VideoPublicationRecovery | null> {
+export async function queryMediaPublication(id: string): Promise<MediaPublicationRecovery | null> {
   const result = await authedResource('companion_posts.query_publication_recovery', {
     path: { publication_id: id }
   })
@@ -22,7 +22,7 @@ export async function queryVideoPublication(id: string): Promise<VideoPublicatio
   return apiSucceeded(result, 'posts', 'video recovery query failed') ? result.value : null
 }
 
-export async function resolveVideoPublication(id: string): Promise<boolean> {
+export async function discardMediaPublication(id: string): Promise<boolean> {
   const result = await authedResource('companion_posts.discard_publication', {
     path: { publication_id: id }
   })

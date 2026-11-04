@@ -422,6 +422,31 @@ async def update_business_steps_in_session(
         emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"revision": revision})
 
 
+async def wait_business_media_in_session(db: AsyncSession, user_id: int, kind: str, job_id: int, reason: str) -> None:
+    rows = list(
+        await db.scalars(
+            select(LifeStep)
+            .where(
+                LifeStep.user_id == user_id,
+                LifeStep.kind == kind,
+                LifeStep.job_id == job_id,
+                LifeStep.state == "running",
+            )
+            .with_for_update()
+        )
+    )
+    if not rows:
+        return
+    state = await get_or_create_state(db, user_id, lock=True)
+    for row in rows:
+        row.disposition, row.wait_reason, row.failure_code = "waiting", reason, "review_pending"
+        row.finished_at, row.error = None, None
+        if state.activity_step_id == row.id:
+            state.activity_step_id = None
+    state.revision += 1
+    emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"revision": state.revision})
+
+
 async def record_events_in_session(
     db: AsyncSession, user_id: int, events: Sequence[LifeEventInput]
 ) -> list[LifeEventView]:

@@ -5,7 +5,11 @@ from collections.abc import Sequence
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.life.schemas import LifeEventInput, LifeStepRequest
-from features.life.use_cases import bind_step_in_session, update_business_steps_in_session
+from features.life.use_cases import (
+    bind_step_in_session,
+    update_business_steps_in_session,
+    wait_business_media_in_session,
+)
 
 from .models import VisualJob
 from .repository import visual_progress
@@ -43,6 +47,9 @@ async def settle_visual_steps(
     result_ref: dict | None = None,
     additional_events: Sequence[LifeEventInput] = (),
 ) -> None:
+    if job.state == "paused" and job.stage == "review_pending":
+        await wait_business_media_in_session(db, user_id, "visual.generate", job.id, "媒体已保留，等待检查")
+        return
     if job.state not in {"succeeded", "failed", "cancelled", "unknown"}:
         return
     progress = visual_progress(job)

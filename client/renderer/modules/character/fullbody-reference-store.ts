@@ -30,6 +30,7 @@ interface FullbodyReferenceState {
   candidateId: string | null
   candidateStatus: 'pending' | 'ready' | 'failed' | null
   candidateError: string | null
+  candidateChoice?: { jobId: string; revision: number; id: string } | null
   history: FullbodyReferenceVersion[]
 }
 
@@ -55,6 +56,22 @@ const EMPTY_STATE: FullbodyReferenceState = {
   candidateStatus: null,
   candidateError: null,
   history: []
+}
+
+async function readCandidateChoice(
+  candidate: ApiSchemas['FullbodyCandidateResponse'] | null
+): Promise<FullbodyReferenceState['candidateChoice']> {
+  if (!candidate?.review_job_id) {
+    return null
+  }
+
+  const job = await requestResource('media.get_media_job', { path: { job_id: candidate.review_job_id } }).catch(
+    () => null
+  )
+
+  const choice = job?.slots[0]?.candidates[0]
+
+  return job && choice ? { jobId: job.id, revision: job.revision, id: choice.id } : null
 }
 
 function isFullbodyReferenceIndex(value: unknown): value is FullbodyReferenceIndex {
@@ -225,6 +242,7 @@ function updateReference(
       }
 
       const rawUrl = candidate?.image_url || asset?.seed_fullbody_url || null
+      const candidateChoice = await readCandidateChoice(candidate)
 
       if (generate && !rawUrl) {
         throw new Error('The fullbody reference response has no image')
@@ -257,6 +275,7 @@ function updateReference(
         error: rawUrl && !previewUrl ? 'preview' : null,
         errorMessage: null,
         candidateId: candidate?.id ?? null,
+        candidateChoice,
         candidateStatus:
           candidate?.status === 'pending' || candidate?.status === 'ready' || candidate?.status === 'failed'
             ? candidate.status
@@ -331,6 +350,7 @@ export async function restoreFullbodyReferenceVersion(avatarId: string, versionI
     }
 
     const rawUrl = 'image_url' in response ? response.image_url : response.seed_fullbody_url || null
+    const candidateChoice = await readCandidateChoice('avatar_id' in response ? response : null)
     const previewUrl = await resolvePortraitUrl(rawUrl, { preferCache: true })
 
     if (!isCurrent()) {
@@ -363,6 +383,7 @@ export async function restoreFullbodyReferenceVersion(avatarId: string, versionI
       error: rawUrl && !previewUrl ? 'preview' : null,
       errorMessage: null,
       candidateId: 'avatar_id' in response ? response.id : null,
+      candidateChoice,
       candidateStatus:
         'avatar_id' in response &&
         (response.status === 'pending' || response.status === 'ready' || response.status === 'failed')
@@ -417,7 +438,7 @@ export function regenerateFullbodyReference(
 export async function acceptFullbodyCandidate(avatarId: string): Promise<boolean> {
   const current = $fullbodyReference.get()
 
-  if (current.avatarId !== avatarId || !current.candidateId || current.candidateStatus !== 'ready' || current.busy) {
+  if (current.avatarId !== avatarId || !current.candidateId || current.busy) {
     return false
   }
 
@@ -425,9 +446,36 @@ export async function acceptFullbodyCandidate(avatarId: string): Promise<boolean
   $fullbodyReference.set({ ...current, busy: true, errorMessage: null })
 
   try {
-    const response = await requestResource('companion.post_fullbody_candidate_accept', {
-      path: { avatar_id: avatarId, candidate_id: current.candidateId }
-    })
+    let response: ApiSchemas['AvatarAssetResponse']
+
+    if (current.candidateStatus === 'ready') {
+      response = await requestResource('companion.post_fullbody_candidate_accept', {
+        path: { avatar_id: avatarId, candidate_id: current.candidateId }
+      })
+    } else {
+      const choice = current.candidateChoice
+
+      if (!choice) {
+        throw new Error('原候选版本尚未核对，请刷新后重试')
+      }
+
+      const result = await requestResource('media.manually_handle_media', {
+        path: { job_id: choice.jobId },
+        body: {
+          request_id: crypto.randomUUID(),
+          action: 'approve',
+          slot: 0,
+          candidate_id: choice.id,
+          expected_revision: choice.revision
+        }
+      })
+
+      if (!result.complete) {
+        throw new Error(result.slots[0]?.error || '候选状态已变化，请刷新后重试')
+      }
+
+      response = await requestResource('companion.get_avatar')
+    }
 
     if (!isCurrent()) {
       return false
@@ -481,57 +529,6 @@ export async function acceptFullbodyCandidate(avatarId: string): Promise<boolean
       ...current,
       busy: false,
       candidateError: backendDetailMessage(error, getStrings().settings.persona.fullbodyReference.acceptCandidateFailed)
-    })
-
-    return false
-  }
-}
-
-export async function retryFullbodyCandidateReview(avatarId: string): Promise<boolean> {
-  const current = $fullbodyReference.get()
-
-  if (current.avatarId !== avatarId || !current.candidateId || current.busy) {
-    return false
-  }
-
-  const isCurrent = beginOperation(avatarId)
-  $fullbodyReference.set({ ...current, busy: true, candidateError: null })
-
-  try {
-    const result = await requestResource('companion.post_fullbody_candidate_review', {
-      path: { avatar_id: avatarId, candidate_id: current.candidateId }
-    })
-
-    if (!isCurrent()) {
-      return false
-    }
-
-    const status = result.status === 'ready' ? 'ready' : 'failed'
-    $fullbodyReference.set({ ...current, busy: false, candidateStatus: status, candidateError: result.error ?? null })
-
-    return status === 'ready'
-  } catch (error) {
-    if (!isCurrent()) {
-      return false
-    }
-
-    const httpStatus = ipcErrorStatus(error)
-
-    // 无状态码（超时、断连）或 404/409 时，先前未返回的复核可能已写成 ready，候选也可能已被采纳或替换；重读最近有效候选，面板才不会停在重试复核。
-    if (httpStatus === null || httpStatus === 404 || httpStatus === 409) {
-      log.warn('fullbody-reference', 'Candidate review result unknown', error)
-      await hydrateFullbodyReference(avatarId)
-
-      return $fullbodyReference.get().candidateStatus === 'ready'
-    }
-
-    $fullbodyReference.set({
-      ...current,
-      busy: false,
-      candidateError: backendDetailMessage(
-        error,
-        getStrings().settings.persona.fullbodyReference.retryCandidateReviewFailed
-      )
     })
 
     return false

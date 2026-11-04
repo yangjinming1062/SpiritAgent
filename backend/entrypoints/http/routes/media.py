@@ -2,17 +2,25 @@ from urllib.parse import quote
 
 from fastapi import File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
+from features.appearance.outfit_reviews import list_outfit_review_jobs
 from features.conversation import media_uploads as _uploads
 from features.conversation.speech_contracts import ChatAudioUploadResponse, ChatVideoUploadResponse
 from features.media import use_cases as _media
+from features.media.continuations import continue_owned_media_operation
 from features.media.http_contracts import ProviderOperationError, TtsRequest
+from features.media.manual_reviews import manual_media_action
+from features.media.review_operations import query_media_job, review_media_job
+from features.media.review_views import MediaContinueRequest, MediaJobView, MediaManualRequest, MediaReviewRequest
 from features.media.speech_contracts import SpeechToTextResponse
+from features.media.video_jobs import receive_video_result
 from features.media.voice_contracts import VoiceSampleResponse
 from features.media.voices import upload_voice_sample
 from infrastructure.ai.llm_client import MissingLlmConfigError
+from infrastructure.api_ids import ResourceId
 from infrastructure.config import SETTINGS
 from infrastructure.database import DbSession
 from infrastructure.http_contracts import operation_policy
+from infrastructure.request_errors import RequestError
 
 from entrypoints.http.auth import CurrentUser
 from entrypoints.http.rate_limit import limiter
@@ -125,3 +133,47 @@ async def text_to_speech(request: Request, body: TtsRequest, user: CurrentUser) 
         raise missing_config_error("语音合成服务")
     except ProviderOperationError as exc:
         raise provider_request_error(exc.error, exc.operation) from exc.error
+
+
+@router.get("/jobs/{job_id}", response_model=MediaJobView)
+async def get_media_job(job_id: ResourceId, user: CurrentUser) -> MediaJobView:
+    return await query_media_job(user.id, job_id)
+
+
+@router.post("/jobs/{job_id}/review", response_model=MediaJobView, openapi_extra=operation_policy(wait_for_model=True))
+async def post_media_job_review(job_id: ResourceId, body: MediaReviewRequest, user: CurrentUser) -> MediaJobView:
+    return await review_media_job(user.id, job_id, body)
+
+
+@router.get("/jobs", response_model=list[MediaJobView])
+async def get_outfit_review_jobs(user: CurrentUser) -> list[MediaJobView]:
+    return await list_outfit_review_jobs(user.id)
+
+
+@router.post("/jobs/{job_id}/manual", response_model=MediaJobView, openapi_extra=operation_policy(wait_for_model=True))
+async def manually_handle_media(job_id: ResourceId, body: MediaManualRequest, user: CurrentUser) -> MediaJobView:
+    return await manual_media_action(user.id, job_id, body)
+
+
+@router.post("/jobs/{job_id}/continue", response_model=MediaJobView)
+async def continue_media_business(job_id: ResourceId, body: MediaContinueRequest, user: CurrentUser) -> MediaJobView:
+    view = await query_media_job(user.id, job_id)
+    if view.revision != body.expected_revision:
+        raise RequestError(status_code=409, message="任务状态已变化，请刷新")
+    try:
+        await continue_owned_media_operation(user.id, job_id, body.action)
+    except ValueError as exc:
+        raise RequestError(status_code=409, message=str(exc)) from exc
+    updated = await query_media_job(user.id, job_id)
+    if updated.revision == view.revision and updated.state == "paused":
+        raise RequestError(status_code=409, message="原授权或检查条件尚不满足，结果已保留")
+    return updated
+
+
+@router.post("/jobs/{job_id}/receive", response_model=MediaJobView, openapi_extra=operation_policy(wait_for_model=True))
+async def receive_media_result(job_id: ResourceId, user: CurrentUser) -> MediaJobView:
+    try:
+        await receive_video_result(user.id, job_id)
+    except ValueError as exc:
+        raise RequestError(status_code=409, message=str(exc)) from exc
+    return await query_media_job(user.id, job_id)

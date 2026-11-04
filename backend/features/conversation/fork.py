@@ -104,7 +104,7 @@ async def _fork_conversation_from_message(
             for bubble in reply.bubbles:
                 if isinstance(bubble, MediaBubble):
                     bubble.job_id = None
-                    if bubble.status == "pending":
+                    if bubble.status in {"pending", "review_pending", "result_unknown"}:
                         bubble.status, bubble.url, bubble.error = "failed", None, "生成任务属于原会话"
             copied_reply = reply.model_dump(mode="json")
         copy = Message(

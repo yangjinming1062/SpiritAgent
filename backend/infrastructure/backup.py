@@ -331,18 +331,29 @@ class BackupTable:
         query = query.where(self._model.__table__.c[reference_column].is_not(None))
         return await db.scalar(query.limit(1)) is not None
 
-    def _deletion_query(self, user_id: int, preserve_unfinished: bool) -> Select[Any]:
+    def _deletion_query(
+        self, user_id: int, preserve_unfinished: bool, preserve_job_ids: frozenset[int] = frozenset()
+    ) -> Select[Any]:
         ids = self._query(user_id).with_only_columns(self.identity_column, maintain_column_froms=True)
         if preserve_unfinished and self.inherited_identity == "jobs":
             root = self._model.__mapper__.inherits.local_table
             ids = ids.where(root.c.state.in_(("succeeded", "failed", "cancelled")), root.c.cleanup_pending.is_(False))
+            if preserve_job_ids:
+                ids = ids.where(root.c.id.not_in(preserve_job_ids))
         return ids
 
-    async def clear(self, db: AsyncSession, user_id: int, *, preserve_unfinished: bool = False) -> None:
+    async def clear(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        *,
+        preserve_unfinished: bool = False,
+        preserve_job_ids: frozenset[int] = frozenset(),
+    ) -> None:
         if self.custom_delete is not None:
             await self.custom_delete(db, user_id)
         elif self.custom_restore is None:
-            ids = self._deletion_query(user_id, preserve_unfinished)
+            ids = self._deletion_query(user_id, preserve_unfinished, preserve_job_ids)
             if preserve_unfinished and self.inherited_identity == "jobs":
                 root = self._model.__mapper__.inherits.local_table
                 await db.execute(
@@ -432,7 +443,9 @@ class BackupRegistry:
         self._tables = ordered
         BACKUP_TABLE_ORDER[:] = ordered
 
-    async def detach_retained_job_targets(self, db: AsyncSession, user_id: int, selected: set[str]) -> None:
+    async def detach_retained_job_targets(
+        self, db: AsyncSession, user_id: int, selected: set[str], preserve_job_ids: frozenset[int] = frozenset()
+    ) -> None:
         for contributor in self._tables.values():
             if contributor.inherited_identity != "jobs":
                 continue
@@ -441,14 +454,20 @@ class BackupRegistry:
             retained = (
                 contributor._query(user_id)
                 .with_only_columns(contributor.identity_column, maintain_column_froms=True)
-                .where(or_(root.c.state.not_in(("succeeded", "failed", "cancelled")), root.c.cleanup_pending.is_(True)))
+                .where(
+                    or_(
+                        root.c.state.not_in(("succeeded", "failed", "cancelled")),
+                        root.c.cleanup_pending.is_(True),
+                        root.c.id.in_(preserve_job_ids),
+                    )
+                )
             )
             changes = {}
             matches = []
             for column, target in contributor.references.items():
                 if target not in selected or not contributor.column_nullable(column):
                     continue
-                condition = table.c[column].in_(self._tables[target]._deletion_query(user_id, True))
+                condition = table.c[column].in_(self._tables[target]._deletion_query(user_id, True, preserve_job_ids))
                 changes[column] = case((condition, None), else_=table.c[column])
                 matches.append(condition)
             if changes:

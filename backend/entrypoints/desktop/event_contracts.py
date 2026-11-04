@@ -51,6 +51,7 @@ class MessageBubbleEvent(TurnEvent):
 
 
 class MessageMediaEvent(MessageBubbleEvent):
+    media_revision: int = 0
     bubble: ClientMediaBubble
     session_id: str
     media_id: str
@@ -257,6 +258,14 @@ class PostCommentDeletedEvent(BaseModel):
     comment_id: str
 
 
+class MediaReviewUpdatedEvent(BaseModel):
+    job_id: ResourceId
+
+
+class PublicationContinueEvent(BaseModel):
+    publication_id: ResourceId
+
+
 @dataclass(frozen=True)
 class EventContract:
     payload: type[BaseModel]
@@ -266,6 +275,10 @@ class EventContract:
 
 
 EVENT_CONTRACTS: dict[str, EventContract] = {
+    "outfit.creation.continue": EventContract(MediaReviewUpdatedEvent, "all", "resource"),
+    "visual.preparation.continue": EventContract(MediaReviewUpdatedEvent, "all", "resource"),
+    "media.review.updated": EventContract(MediaReviewUpdatedEvent, "all", "resource"),
+    "post.publication.continue": EventContract(PublicationContinueEvent, "all", "resource"),
     "message.delta": EventContract(MessageDeltaEvent, "all", "session", baseline=True),
     "message.reasoning.delta": EventContract(MessageDeltaEvent, "all", "session", baseline=True),
     "message.start": EventContract(TurnEvent, "all", "session", baseline=True),

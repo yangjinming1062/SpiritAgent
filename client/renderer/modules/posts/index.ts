@@ -1,8 +1,8 @@
 export {
-  listVideoPublications,
-  queryVideoPublication,
-  resolveVideoPublication,
-  type VideoPublicationRecovery
+  discardMediaPublication,
+  listMediaPublications,
+  type MediaPublicationRecovery,
+  queryMediaPublication
 } from './recovery'
 export {
   $posts,

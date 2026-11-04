@@ -68,6 +68,7 @@ class CompanionScene(ModelBase, TimestampMixin):
     upload_asset_id: Mapped[int | None] = mapped_column(ForeignKey("assets.id", ondelete="RESTRICT"))
     media_path: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
     generation_origin_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    review_result_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
     upload_source_path: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
     reference_image: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

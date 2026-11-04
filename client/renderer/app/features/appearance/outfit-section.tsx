@@ -47,6 +47,7 @@ import { useStrings } from '@/shared/strings'
 import type { ImageReviseMode } from '@protocol'
 
 import { $appearanceUi, selectAppearanceDraft, updateAppearanceUi } from './appearance-ui-state'
+import { OutfitReviewTasks } from './outfit-review-tasks'
 
 const CARD_ACTION_CLASS =
   'inline-flex h-6 items-center justify-center rounded-lg bg-fill-faint px-1.5 text-muted transition hover:bg-fill-hover hover:text-strong disabled:pointer-events-none disabled:opacity-40'
@@ -410,6 +411,7 @@ export function OutfitSection({ onSelectOutfit, search }: OutfitSectionProps): R
 
   return (
     <div className="flex min-h-0 flex-1 flex-col border-b border-line-hairline bg-surface-panel">
+      <OutfitReviewTasks refreshKey={session.busy} />
       {designing ? (
         <CreationWorkspace
           footer={

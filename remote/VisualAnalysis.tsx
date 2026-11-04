@@ -11,6 +11,7 @@ import type { VisualMaterialOptions } from '../shared/visuals'
 
 import type { RemoteApi } from './api'
 import { useMaterialOptions } from './material-options'
+import { MediaReviewButton } from './MediaReviewButton'
 import { Media, Notice, usePageState, useTask } from './ui'
 
 const a = visualMaterialCopy.zh
@@ -46,6 +47,13 @@ export function VisualAnalysis({
   }
   return (
     <div className="visual-materials">
+      {job?.stage === 'review_pending' ? <MediaReviewButton api={api} jobId={job.id} /> : null}
+      {job?.stage === 'confirmation' ? (
+        <button disabled={busy} onClick={() => command({ command: 'apply_result' })} type="button">
+          应用分析结果
+        </button>
+      ) : null}
+
       {active && job && (
         <p className="muted" role="status">
           {a.stages[job.stage] ?? a.working}
@@ -97,7 +105,7 @@ export function VisualAnalysis({
           </button>
         ) : (
           <>
-            {canContinue && (
+            {canContinue && job?.stage !== 'review_pending' && job?.stage !== 'confirmation' && (
               <button disabled={busy} onClick={() => command({ command: 'retry' })} type="button">
                 {job ? a.retry : a.start}
               </button>

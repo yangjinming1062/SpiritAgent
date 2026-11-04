@@ -18,7 +18,7 @@ from features.appearance.queries import avatar_snapshot, ready_outfit_snapshot, 
 from features.assets.lifecycle import cleanup_asset_directories_after_task
 from features.configuration.settings.values import get_user_setting
 from features.life.material_references import material_has_references
-from features.media.character_images import ImageChainState, generate_character_images, generate_scene_images
+from features.media.character_images import ImageChainState, generate_reviewed_images, generate_scene_images
 from features.media.image_generation import ImageGenerationError, ImageResultDownloadError, ImageReviewUnavailableError
 from features.scenes.import_materials import accept_imported_scene, undo_imported_scene
 from features.scenes.queries import scene_snapshot
@@ -46,7 +46,7 @@ from features.visuals.import_media import (
 )
 from features.visuals.import_operations import extraction_command
 from features.visuals.import_prompts import IMPORT_OUTFIT_GENERATION, IMPORT_SCENE_GENERATION
-from features.visuals.import_publication import complete_import_analysis
+from features.visuals.import_publication import apply_import_result, complete_import_analysis
 from features.visuals.import_reasoning import (
     ImportQualityVerdict,
     design_import_pose,
@@ -123,6 +123,14 @@ def schedule_import_analysis(user_id: int, job_id: int) -> None:
     task.add_done_callback(lambda finished: _TASKS.pop(key, None) if _TASKS.get(key) is finished else None)
 
 
+async def run_manual_import_job(user_id: int, job_id: int) -> bool:
+    previous = _TASKS.get((user_id, job_id))
+    if previous is not None and not previous.done():
+        return False
+    schedule_import_analysis(user_id, job_id)
+    return True
+
+
 async def queue_import_analysis(user_id: int, visual_id: int) -> ImportAnalysisView | None:
     view = await ensure_import_job(user_id, visual_id)
     if view is not None and view.state == "queued":
@@ -131,6 +139,9 @@ async def queue_import_analysis(user_id: int, visual_id: int) -> ImportAnalysisV
 
 
 async def control_import_analysis(user_id: int, visual_id: int, request: ImportAnalysisRequest) -> ImportAnalysisView:
+    if request.command == "apply_result":
+        await apply_import_result(user_id, visual_id, request.expected_revision)
+        return await ensure_import_job(user_id, visual_id)
     view = await command_import_job(user_id, visual_id, request)
     if request.command == "cancel":
         task = _TASKS.get((user_id, view.id))
@@ -324,6 +335,13 @@ async def _material_adoption_lock(work: ImportWork, kind: str) -> AsyncIterator[
 
 
 async def _read_selected(work: ImportWork, kind: str, material_id: int) -> ImportCatalogCandidate:
+    if work.context.presentation_review and work.context.presentation_review.human_approval:
+        frozen = next(
+            (entry for entry in work.context.candidates if entry.kind == kind and entry.material_id == material_id),
+            None,
+        )
+        if frozen is not None:
+            return frozen
     async with SESSION_LOCAL() as db:
         if kind == "outfit":
             row = await ready_outfit_snapshot(db, work.user_id, material_id)
@@ -709,7 +727,7 @@ async def _generate_import_material(work: ImportWork, component: ImportComponent
         if work.context.identity is None or not work.context.identity_path:
             raise ValueError("伙伴身份尚未就绪，无法生成着装")
         await run_blocking(require_matting_model)
-        paths = await generate_character_images(
+        paths = await generate_reviewed_images(
             IMPORT_OUTFIT_GENERATION.format(observation=description),
             user_id=work.user_id,
             task=AiTaskKey.outfit,
@@ -747,7 +765,15 @@ async def _extract_locked(work: ImportWork, component: ImportComponent, *, expli
     prepared = component.candidate_verdict == "pass" and (
         component.preview_path is not None or component.creation_method in {"pose", "motion"}
     )
-    if not prepared and await _recheck_existing_material(work, component, explicit=explicit):
+    chain = work.context.image_chains.get(observation.key)
+    regenerating = (
+        explicit
+        and component.creation_method == "generated"
+        and chain is not None
+        and not chain.candidates
+        and chain.phase == "ready"
+    )
+    if not prepared and not regenerating and await _recheck_existing_material(work, component, explicit=explicit):
         return
     previous = _current_owned_material(work, component)
     component.extraction_key = component.extraction_key or str(
@@ -1134,7 +1160,9 @@ async def run_import_analysis(user_id: int, job_id: int) -> None:
                                 },
                             )
                             if component.material_id is None or component.status not in {"created", "reused"}:
-                                component.status = "failed"
+                                component.status = (
+                                    "reviewing" if isinstance(exc, ImageReviewUnavailableError) else "failed"
+                                )
                             component.failure_code = (
                                 "save_failed"
                                 if component.operation_stage == "save_material"

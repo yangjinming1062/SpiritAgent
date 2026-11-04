@@ -12,6 +12,7 @@ class SceneSnapshot(BaseModel):
     user_id: ResourceId
     status: str
     can_retry_generation: bool = False
+    review_job_id: ResourceId | None = None
     stage: str
     origin: str
     source: str

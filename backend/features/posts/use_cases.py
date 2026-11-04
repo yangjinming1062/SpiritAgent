@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from features.entries.contracts import EntryError
 from features.entries.queries import list_comments
 from features.posts.publication import (
-    discard_publication_video,
+    discard_publication_media,
     list_publication_recoveries,
     publication_recovery,
 )
@@ -90,7 +90,7 @@ async def discard_publication_recovery(
 ) -> PostPublicationResult:
     await db.commit()
     try:
-        return await discard_publication_video(user_id, publication_id)
+        return await discard_publication_media(user_id, publication_id)
     except PostError as exc:
         raise _error(exc) from exc
 

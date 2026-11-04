@@ -17,11 +17,11 @@ from .models import (
 )
 
 _REFERENCES = {
-    AvatarAsset: ("avatar_id", ("asset_url", "seed_fullbody_url")),
+    AvatarAsset: ("avatar_id", ("asset_url", "seed_fullbody_url", "fullbody_review_json")),
     AppearancePreparationJob: ("preparation_job_id", ("portrait_source_path", "body_source_path")),
     VisualObservationJob: ("observation_job_id", ("portrait_source_path", "body_source_path")),
     CompanionOutfit: ("outfit_id", ("fullbody_url", "source_json")),
-    FullbodyCandidate: ("candidate_id", ("image_url", "base_fullbody_url")),
+    FullbodyCandidate: ("candidate_id", ("image_url", "base_fullbody_url", "review_json")),
 }
 _PRIMARY_ASSETS = {
     AvatarAsset: {"portrait_asset_id": "asset_url", "fullbody_asset_id": "seed_fullbody_url"},

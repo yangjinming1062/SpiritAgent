@@ -24,6 +24,7 @@ class AvatarAssetResponse(BaseModel):
 
 
 class FullbodyCandidateResponse(BaseModel):
+    review_job_id: ResourceId | None = None
     id: ResourceId
     avatar_id: ResourceId
     image_url: str

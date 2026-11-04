@@ -791,6 +791,29 @@ dd {
   font-size: var(--fs-meta);
   white-space: pre-wrap;
 }
+.media-review-panel,
+.media-review-slot,
+.media-review-candidate {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  width: 100%;
+  gap: 8px;
+}
+.media-review-candidate {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+.media-review-candidate .media {
+  max-height: 240px;
+  object-fit: contain;
+}
+.media-review-decision {
+  display: block;
+}
 .media-pending {
   margin-top: var(--sp-2);
   padding: var(--sp-3);

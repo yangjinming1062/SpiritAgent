@@ -4,7 +4,7 @@ from datetime import date, datetime
 from typing import Any
 
 from infrastructure.job_models import JobRecord
-from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, String, func
+from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, String, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -19,6 +19,7 @@ class PostPublication(JobRecord):
     activity_date: Mapped[date] = mapped_column(Date)
     outcome: Mapped[str | None] = mapped_column(String(24), nullable=True)
     request_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    review_result_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
     plan_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
     video_job_id: Mapped[int | None] = mapped_column(ForeignKey("video_gen_jobs.id", ondelete="SET NULL"), index=True)
     post_id: Mapped[int | None] = mapped_column(ForeignKey("companion_entries.id", ondelete="SET NULL"), nullable=True)

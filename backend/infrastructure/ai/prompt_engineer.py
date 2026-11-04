@@ -427,6 +427,10 @@ async def call_llm_json[T](
                 )
                 if changed:
                     raise LlmJsonValidationError("decision_changed", fields=changed)
+                if repair and reference_images:
+                    missing_decisions = tuple(name for name in explicit_choices if name not in preserved_fields)
+                    if missing_decisions:
+                        raise LlmJsonValidationError("visual_decision_missing_from_original", fields=missing_decisions)
                 result = parse_output(parsed)
             except ValueError as exc:
                 if classified := classify_response_text(raw):

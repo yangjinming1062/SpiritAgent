@@ -29,7 +29,18 @@ from .file_packing import UrlRewriter, plan_asset_mapping, referenced_backup_fil
 from .serializers import CONVERSATION_TABLES, TABLES, VISUALS_TABLES, insert_rows, read_table_rows
 
 logger = get_logger(__name__)
-_SHARED_TABLES = frozenset({"assets", "jobs", "job_requests", "job_assets", "life_action_admissions"})
+_SHARED_TABLES = frozenset(
+    {
+        "assets",
+        "jobs",
+        "job_requests",
+        "job_assets",
+        "life_action_admissions",
+        "media_review_attempts",
+        "media_continuations",
+        "media_manual_operations",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -60,13 +71,13 @@ def load_backup_rows(
     row_counts: dict[str, int],
     *,
     selected_tables: frozenset[str] | None = None,
-    schema: str = "0005",
+    schema: str = "0006",
 ) -> BackupReadResult:
     wanted = set(TABLES) if selected_tables is None else set(selected_tables)
     failures = []
     rows: dict[str, list[dict[str, Any]]] = {}
-    if schema != "0005":
-        raise ValueError("Backup schema must be 0005")
+    if schema != "0006":
+        raise ValueError("Backup schema must be 0006")
     expected = set(TABLES)
     if set(manifest_tables) != expected:
         raise ValueError(f"Backup tables must match the complete {schema} schema")
@@ -93,9 +104,15 @@ def load_backup_rows(
             for record in records
         }
         rows["jobs"] = [record for record in rows["jobs"] if str(record["id"]) in job_ids]
-        for name in ("job_requests", "job_assets"):
+        for name in ("job_requests", "job_assets", "media_review_attempts", "media_manual_operations"):
             if name in rows:
                 rows[name] = [record for record in rows[name] if str(record["job_id"]) in job_ids]
+        if "media_continuations" in rows:
+            rows["media_continuations"] = [
+                record
+                for record in rows["media_continuations"]
+                if str(record["dependency_job_id"]) in job_ids and str(record["owner_job_id"]) in job_ids
+            ]
     BACKUP_REGISTRY.validate_job_graph(rows)
     if rows.get("assets"):
         ids = {
@@ -132,7 +149,8 @@ async def _finish_relations(db: AsyncSession, rows: dict[str, list[dict[str, Any
         patches.setdefault(table, {}).setdefault(original_id, {"id": row_id})[column] = mapped
     for table, records in patches.items():
         await BACKUP_REGISTRY.table(table).patch_rows(db, list(records.values()))
-    for table in TABLES:
+    # 消息快照校验须看到媒体所有者已经恢复的绑定。
+    for table in [name for name in TABLES if name != "messages"] + ["messages"]:
         if table in rows and (callback := BACKUP_REGISTRY.table(table).restore_context) is not None:
             await callback(db, rows, context)
     await db.flush()
@@ -210,7 +228,15 @@ async def _preflight(
 
 async def _clear_selected(db: AsyncSession, user_id: int, rows: dict[str, list[dict[str, Any]]]) -> None:
     selected = set(rows) - _SHARED_TABLES - {"user_preferences"}
-    await BACKUP_REGISTRY.detach_retained_job_targets(db, user_id, selected)
+    sources = {
+        record["source_key"] for record in rows.get("jobs", []) if record["kind"] in {"media.image", "media.video"}
+    }
+    preserved = frozenset(
+        record["id"]
+        for record in await BACKUP_REGISTRY.table("jobs").export(db, user_id)
+        if record["source_key"] in sources
+    )
+    await BACKUP_REGISTRY.detach_retained_job_targets(db, user_id, selected, preserved)
     for child_name in BACKUP_REGISTRY.names:
         if child_name in selected:
             continue
@@ -220,7 +246,7 @@ async def _clear_selected(db: AsyncSession, user_id: int, rows: dict[str, list[d
                 raise ValueError(f"保留的 {child_name} 仍引用 {parent}，请同时选择相关类别。")
     for table in reversed(TABLES):
         if table in selected:
-            await BACKUP_REGISTRY.table(table).clear(db, user_id, preserve_unfinished=True)
+            await BACKUP_REGISTRY.table(table).clear(db, user_id, preserve_unfinished=True, preserve_job_ids=preserved)
 
 
 async def _copy_backup_files(

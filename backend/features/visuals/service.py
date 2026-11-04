@@ -17,7 +17,7 @@ from features.jobs.service import bind_job_assets, bind_job_request, requested_j
 from features.life.schemas import LifeStepRequest
 from features.life.use_cases import presentation_revision_matches, require_step_submission
 
-from .creation import begin_opening_repair, identity_score_passed
+from .creation import begin_opening_repair, identity_review_passed
 from .eligibility import automatic_media_ready
 from .generation import (
     cancel_visual_job,
@@ -533,6 +533,9 @@ async def play_visual(
                 clip_kind=visual_clip_kind(item, snapshot),
                 body=item.body_json,
                 presentation_approved=media_source.presentation_approved,
+                review_result=snapshot.review_result,
+                reference_source=media_source.model_dump(mode="json"),
+                media_content_hash=item.content_hash,
                 scene_reference=getattr(media_source, "scene", None) is not None,
                 action_clip_kind=action.clip_kind if action else None,
             ):
@@ -890,6 +893,8 @@ async def resume_job(user_id: int, job_id: int) -> VisualJobView:
             raise VisualStateError("制作草稿已失效")
         if job.state == "unknown" and progress.failure_reason != "result_download_failed":
             raise VisualStateError("供应商提交结果尚未确认，请先核对结果或放弃本次制作")
+        if job.stage == "review_pending":
+            raise VisualStateError("候选已保留，请查看候选后采用或重新生成")
         if progress.failure_reason == "review_blocked":
             raise VisualStateError("图片检查未通过服务审核，请调整制作要求或参考形象后重新制作")
         if visual_progress_has_unknown_submission(progress):
@@ -908,6 +913,7 @@ async def resume_job(user_id: int, job_id: int) -> VisualJobView:
                 allow_model_steps = False
             else:
                 raise
+        progress.review_only = False
         progress.paused_by_user = False
         if progress.failure_reason == "result_download_failed":
             resume_known_result(progress)
@@ -1057,7 +1063,7 @@ async def retry_job(user_id: int, job_id: int) -> VisualJobView:
                 progress.aligned_outfit_path = None
                 progress.aligned_outfit_hash = None
             review = progress.opening_review
-            reference = progress.pose_path if identity_score_passed(review) else None
+            reference = progress.pose_path if identity_review_passed(review) else None
             begin_opening_repair(
                 job,
                 progress,

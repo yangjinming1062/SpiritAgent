@@ -3,29 +3,41 @@ import { useEffect, useState } from 'react'
 
 import { InlineMedia } from '@/modules/media'
 import {
+  discardMediaPublication,
   hydratePosts,
-  listVideoPublications,
-  queryVideoPublication,
-  resolveVideoPublication,
-  type VideoPublicationRecovery
+  listMediaPublications,
+  type MediaPublicationRecovery,
+  queryMediaPublication
 } from '@/modules/posts'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { requestResource } from '@/shared/lib/resource-request'
 import { cn } from '@/shared/lib/utils'
 import { ActionRow, BTN_SUBTLE, ConfirmDialog, Pager } from '@/shared/panel'
+import { MediaReviewButton } from '@/shared/panel/media-review-button'
+import { gatewayApi } from '@/shared/platform/desktop'
 import { notify } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
 import styles from './posts.module.css'
 
-export function PostVideoRecovery(): React.JSX.Element | null {
+export function PostMediaRecovery(): React.JSX.Element | null {
   const t = useStrings().living.posts
-  const [items, setItems] = useState<VideoPublicationRecovery[]>([])
+  const [items, setItems] = useState<MediaPublicationRecovery[]>([])
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [discardId, setDiscardId] = useState<string | null>(null)
   const [loadFailed, setLoadFailed] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const beginAsync = useAsyncGuard()
+  useEffect(
+    () =>
+      gatewayApi().onGatewayEvent(({ event }) => {
+        if (event.type === 'media.review.updated') {
+          setRefreshKey(value => value + 1)
+        }
+      }),
+    []
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -35,7 +47,7 @@ export function PostVideoRecovery(): React.JSX.Element | null {
     setBusy(null)
     setDiscardId(null)
     setLoadFailed(false)
-    void listVideoPublications().then(result => {
+    void listMediaPublications().then(result => {
       if (cancelled || !isLive()) {
         return
       }
@@ -56,7 +68,7 @@ export function PostVideoRecovery(): React.JSX.Element | null {
   const query = async (id: string): Promise<void> => {
     const isLive = beginAsync()
     setBusy(id)
-    const result = await queryVideoPublication(id)
+    const result = await queryMediaPublication(id)
 
     if (!isLive()) {
       return
@@ -72,14 +84,43 @@ export function PostVideoRecovery(): React.JSX.Element | null {
         setItems(current => current.map(item => (item.publication_id === id ? result : item)))
       }
     } else {
-      notify({ kind: 'error', message: t.videoQueryFailed, title: t.videoQueryFailed })
+      notify({ kind: 'error', message: t.mediaQueryFailed, title: t.mediaQueryFailed })
+    }
+  }
+
+  const publish = async (id: string): Promise<void> => {
+    const isLive = beginAsync()
+    setBusy(id)
+
+    try {
+      const job = await requestResource('media.get_media_job', { path: { job_id: id } })
+      await requestResource('media.continue_media_business', {
+        path: { job_id: id },
+        body: { action: 'publish_post', expected_revision: job.revision }
+      })
+
+      if (isLive()) {
+        setRefreshKey(value => value + 1)
+      }
+    } catch (cause) {
+      if (isLive()) {
+        notify({
+          kind: 'error',
+          title: t.mediaPublish,
+          message: cause instanceof Error ? cause.message : String(cause)
+        })
+      }
+    } finally {
+      if (isLive()) {
+        setBusy(null)
+      }
     }
   }
 
   const resolve = async (id: string): Promise<void> => {
     const isLive = beginAsync()
     setBusy(id)
-    const ok = await resolveVideoPublication(id)
+    const ok = await discardMediaPublication(id)
 
     if (!isLive()) {
       return
@@ -93,8 +134,8 @@ export function PostVideoRecovery(): React.JSX.Element | null {
     } else {
       notify({
         kind: 'error',
-        message: t.videoDiscardFailed,
-        title: t.videoDiscardFailed
+        message: t.mediaDiscardFailed,
+        title: t.mediaDiscardFailed
       })
     }
   }
@@ -106,7 +147,7 @@ export function PostVideoRecovery(): React.JSX.Element | null {
 
     const isLive = beginAsync()
     setBusy('more')
-    const result = await listVideoPublications(nextCursor)
+    const result = await listMediaPublications(nextCursor)
 
     if (!isLive()) {
       return
@@ -128,9 +169,9 @@ export function PostVideoRecovery(): React.JSX.Element | null {
   if (loadFailed) {
     return (
       <div className={cn('liquid-glass-card', styles.card)}>
-        <p className={styles.body}>{t.videoRecoveryLoadFailed}</p>
+        <p className={styles.body}>{t.mediaRecoveryLoadFailed}</p>
         <button className={BTN_SUBTLE} onClick={() => setRefreshKey(current => current + 1)} type="button">
-          {t.videoRefresh}
+          {t.mediaRefresh}
         </button>
       </div>
     )
@@ -143,39 +184,54 @@ export function PostVideoRecovery(): React.JSX.Element | null {
   return (
     <section className={cn('liquid-glass-card', styles.card)}>
       <div className="flex items-center justify-between gap-2">
-        <h3 className={styles.title}>{t.videoRecoveryHeading}</h3>
+        <h3 className={styles.title}>{t.mediaRecoveryHeading}</h3>
         <button
           className={BTN_SUBTLE}
           disabled={busy !== null}
           onClick={() => setRefreshKey(current => current + 1)}
           type="button"
         >
-          {t.videoRefresh}
+          {t.mediaRefresh}
         </button>
       </div>
-      <p className={styles.body}>{t.videoRecoveryHint}</p>
+      <p className={styles.body}>{t.mediaRecoveryHint}</p>
       {items.map(item => (
         <div className="space-y-2 border-t border-line-standard pt-3" key={item.publication_id}>
           <p className={styles.title}>{item.title}</p>
           <p className={styles.body}>
             {item.status === 'discarded' && item.can_discard
-              ? t.videoCleanupPending
-              : t.videoRecoveryStatuses[item.video_status]}
+              ? t.mediaCleanupPending
+              : t.mediaRecoveryStatuses[item.media_status]}
           </p>
           {item.error && <p className={styles.body}>{item.error}</p>}
-          {item.media_url && <InlineMedia alt={item.title} audioUrl={null} mediaType="video" url={item.media_url} />}
+          {item.media_url && (
+            <InlineMedia alt={item.title} audioUrl={null} mediaType={item.media_kind} url={item.media_url} />
+          )}
+          {(item.media_status === 'review_pending' || item.media_status === 'failed') && item.media_job_id ? (
+            <MediaReviewButton jobId={item.media_job_id} />
+          ) : null}
+          {item.can_publish ? (
+            <button
+              className={BTN_SUBTLE}
+              disabled={busy !== null}
+              onClick={() => void publish(item.publication_id)}
+              type="button"
+            >
+              {t.mediaPublish}
+            </button>
+          ) : null}
           <ActionRow
             actions={[
               {
                 className: BTN_SUBTLE,
                 disabled: busy !== null,
-                label: t.videoQuery,
+                label: t.mediaQuery,
                 onClick: () => void query(item.publication_id)
               },
               {
                 className: BTN_SUBTLE,
                 disabled: busy !== null || !item.can_discard,
-                label: item.status === 'discarded' ? t.videoRetryCleanup : t.videoDiscard,
+                label: item.status === 'discarded' ? t.mediaRetryCleanup : t.mediaDiscard,
                 onClick: () => setDiscardId(item.publication_id)
               }
             ]}
@@ -184,8 +240,8 @@ export function PostVideoRecovery(): React.JSX.Element | null {
       ))}
       <Pager busy={busy !== null} hasMore={nextCursor !== null} mode="more" onLoadMore={() => void loadMore()} />
       <ConfirmDialog
-        confirmLabel={t.videoDiscard}
-        description={t.videoDiscardDescription}
+        confirmLabel={t.mediaDiscard}
+        description={t.mediaDiscardDescription}
         onConfirm={() => {
           if (discardId) {
             void resolve(discardId)
@@ -197,7 +253,7 @@ export function PostVideoRecovery(): React.JSX.Element | null {
           }
         }}
         open={discardId !== null}
-        title={t.videoDiscardTitle}
+        title={t.mediaDiscardTitle}
       />
     </section>
   )

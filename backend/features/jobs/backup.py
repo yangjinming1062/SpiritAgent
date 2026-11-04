@@ -10,7 +10,12 @@ from .models import JobAsset, JobRequest
 
 def _prepare_job(raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
     if payload["state"] in {"queued", "running", "paused", "unknown"}:
-        payload["state"] = "unknown"
+        if payload["stage"] in {"review_pending", "confirmation", "reviewing", "review", "presentation_review"}:
+            payload["state"] = "paused"
+            if payload["stage"] not in {"review_pending", "confirmation"}:
+                payload["stage"] = "review_pending"
+        else:
+            payload["state"] = "unknown"
         payload["error"] = "导入的制作记录需要先核对原执行结果，不会自动重新提交"
         payload["finished_at"] = None
     payload["cancel_requested"] = False

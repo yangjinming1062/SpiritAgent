@@ -6,6 +6,7 @@ from datetime import datetime
 from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict
 
+from .review_contracts import VisualReview
 from .video_queue.contracts import VideoQueueInfo
 
 
@@ -14,7 +15,9 @@ class VideoJobSnapshot(BaseModel):
 
     id: ResourceId
     user_id: ResourceId
+    revision: int = 0
     session_id: str | None
+    request_scope: str | None = None
     source_message_id: ResourceId | None
     structured_reply: bool
     media_id: str | None
@@ -25,6 +28,7 @@ class VideoJobSnapshot(BaseModel):
     error_reason: str | None
     error_message: str | None
     cleanup_requested_at: datetime | None
+    review: VisualReview | None = None
     candidate_ready: bool
     video_queue: VideoQueueInfo | None = None
 

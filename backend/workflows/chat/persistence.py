@@ -1,7 +1,7 @@
 import asyncio
 import json
 from collections.abc import Coroutine
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Any
 
 from features.companion.mood import update_mood_from_companion_turn
@@ -10,6 +10,7 @@ from features.conversation.audio_input import ensure_audio_transcripts
 from features.conversation.history import build_session_messages, client_media_entries
 from features.conversation.replies import LinkBubble, MediaBubble
 from features.conversation.reply_audio import cancel_reply_audio, client_reply_bubbles, synthesize_reply_audio
+from features.conversation.reply_media import plain_media_delivery_reply
 from features.conversation.snapshots import ConversationSnapshot
 from features.conversation.store_contracts import AssistantTurnData
 from features.conversation.title_generation import auto_generate_title
@@ -158,16 +159,30 @@ async def _persist_assistant_no_tool_turn(
     track_task: TrackTask | None,
     replace_reply_message_id: int | None = None,
     submission_request_id: str | None = None,
+    media_request_scope: str | None = None,
 ) -> None:
     """保存终端答复与媒体，交付气泡，并调度回合后任务。陪伴用户会话使用结构化回复，与文本回复的媒体附件互斥。"""
     reply = result.reply
     turn_content = result.turn_content
+    turn_data = _turn_data(result)
+    if persist and reply is None and media_request_scope is not None:
+        async with session_scope() as db:
+            plain_reply = await plain_media_delivery_reply(db, user_id, str(conv.id), turn_content, media_request_scope)
+        if plain_reply is not None:
+            reply = plain_reply
+            turn_content = json.dumps(
+                [bubble.model_dump(include={"type", "text", "media_id"}) for bubble in reply.bubbles],
+                ensure_ascii=False,
+            )
+            turn_data = replace(turn_data, content=turn_content, reply=reply)
+            media = None
+
     if replace_reply_message_id is not None:
         message_id = await replace_assistant_message(
             conv.id,
             user_id,
             replace_reply_message_id,
-            _turn_data(result),
+            turn_data,
             media,
             request_id=submission_request_id,
         )
@@ -196,7 +211,7 @@ async def _persist_assistant_no_tool_turn(
         return
     assistant_message_id: int | None = None
     if persist and (turn_content or media or result.reasoning):
-        assistant_message_id = await persist_assistant_message(conv.id, user_id, _turn_data(result), media)
+        assistant_message_id = await persist_assistant_message(conv.id, user_id, turn_data, media)
     if reply and assistant_message_id is not None:
         message_id = assistant_message_id
 

@@ -729,10 +729,8 @@ export const dict: Dictionary = {
         confirmHint: 'Confirming saves this look in the wardrobe as a styling material for visuals.',
         candidateHint:
           'This full-body image is awaiting acceptance. Body proportions may change; accepting it updates the body reference for future generations. Saved looks remain in the wardrobe; future creations use the newly accepted body reference.',
-        acceptCandidate: 'Accept new full-body image',
-        retryCandidateReview: 'Retry image review',
+        acceptCandidate: 'Use this candidate',
         acceptCandidateFailed: 'Could not accept this image. Try again.',
-        retryCandidateReviewFailed: 'Image review failed. Try again.',
         adoptHint:
           'Adopting confirms this full-body image and prepares transparent styling materials in the background. Choose the initial environment in the following step.',
         adoptPreviewFailed: 'The image was saved, but its preview is not ready. Reload before confirming.',
@@ -1033,9 +1031,10 @@ export const dict: Dictionary = {
     sendFailed: 'Send failed',
 
     media: {
-      generating: 'Generating video…',
+      generating: 'Creating media…',
       generationFailed: 'Generation failed',
       resultUnknown: 'Generation result is not yet confirmed',
+      reviewPending: 'Choose a candidate',
       imageLoading: 'Loading image…',
       loadFailed: "Couldn't load media"
     },
@@ -1374,27 +1373,29 @@ export const dict: Dictionary = {
       intro: 'Explore the moments your companion shares and leave a comment.',
       expand: 'Read more',
       collapse: 'Show less',
-      videoRecoveryHeading: 'Video posts awaiting check',
-      videoRecoveryHint:
-        'Check the original task when its result is unknown. Videos are published after passing their checks.',
-      videoRecoveryLoadFailed: 'Could not load video posts awaiting check. Refresh the posts page.',
-      videoRecoveryStatuses: {
-        pending: 'The original video task is still pending',
-        ready: 'The video is ready and will be published automatically',
-        failed: 'The original video task failed',
-        unknown: 'The original video result is unconfirmed',
+      mediaPublish: 'Continue publishing',
+      mediaRecoveryHeading: 'Media posts awaiting review',
+      mediaRecoveryHint:
+        'Check the original task when its result is unknown. Publishing requires the original task to verify its permission separately.',
+      mediaRecoveryLoadFailed: 'Could not load media posts awaiting check. Refresh the posts page.',
+      mediaRecoveryStatuses: {
+        review_pending: 'Choose a candidate',
+        pending: 'The original media task is still pending',
+        ready: 'Checks passed; awaiting the original publication operation',
+        failed: 'The original media task failed',
+        unknown: 'The original media result is unconfirmed',
         discarded: 'Discarded'
       },
-      videoQuery: 'Check original task',
-      videoRefresh: 'Refresh',
-      videoDiscard: 'Discard',
-      videoCleanupPending: 'Publication was discarded. Some local assets still need cleanup.',
-      videoRetryCleanup: 'Retry cleanup',
-      videoQueryFailed: 'Could not check the original video task. Try again.',
-      videoDiscardFailed: 'Discard did not complete. Try again.',
-      videoDiscardTitle: 'Discard this video post?',
-      videoDiscardDescription:
-        'This post will not be published. Its exclusive local video will be removed. The provider task may still be running, and costs already incurred will not be refunded.',
+      mediaQuery: 'Check original task',
+      mediaRefresh: 'Refresh',
+      mediaDiscard: 'Discard',
+      mediaCleanupPending: 'Publication was discarded. Some local assets still need cleanup.',
+      mediaRetryCleanup: 'Retry cleanup',
+      mediaQueryFailed: 'Could not check the original media task. Try again.',
+      mediaDiscardFailed: 'Discard did not complete. Try again.',
+      mediaDiscardTitle: 'Discard this media post?',
+      mediaDiscardDescription:
+        'This post will not be published. Its exclusive local media will be removed. The provider task may still be running, and costs already incurred will not be refunded.',
       replyPending: 'Replying…',
       replyRetry: 'Reply failed · Retry',
       replyRetryFailed: 'Retry failed. Try again.',

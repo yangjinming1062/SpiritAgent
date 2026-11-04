@@ -1,5 +1,6 @@
 """动态发布事务；内容、评论和附件通过 entries 领域操作。"""
 
+import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -17,6 +18,9 @@ from features.accounts.queries import user_is_active
 from features.entries import queries as entries_queries
 from features.entries import service as entries_service
 from features.entries.contracts import CommentView, EntryError, EntryNotFoundError, EntryView, PostContentType
+from features.media.continuations import finish_media_operation
+from features.media.review_contracts import VisualReview, review_passes
+from features.media.review_evidence import review_media_intact
 from features.posts.ports import notify_post_published
 from features.posts.publication_models import PostPublication
 from features.posts.schemas import PostCommentResponse, PostContext, PostPublicationResult, PostResponse
@@ -135,6 +139,7 @@ async def commit_publication(
     audio_url: str | None,
     context: PostContext,
     partial: bool,
+    media_review: VisualReview | None = None,
 ) -> EntryView:
     task = await db.scalar(
         select(PostPublication)
@@ -160,6 +165,15 @@ async def commit_publication(
     for path in (media_url, audio_url):
         if path is not None and (not (parsed := parse_companion_asset_path(path)) or parsed[0] != task.user_id):
             raise PostError("动态只能引用本账户的正式媒体资产")
+    if content_type in {PostContentType.IMAGE, PostContentType.VIDEO}:
+        required = (
+            ("identity", "goal", "quality") if (task.plan_json or {}).get("depicts_self") else ("goal", "quality")
+        )
+        if not review_passes(media_review, required) or not await asyncio.to_thread(
+            review_media_intact, media_review.evidence, media_url
+        ):
+            raise PostError("媒体检查尚未通过或证据已变化，内容未发布")
+    task.review_result_json = media_review.model_dump(mode="json") if media_review else {}
     row = await entries_service.create_post(
         db,
         task.user_id,
@@ -175,6 +189,7 @@ async def commit_publication(
     task.state = "succeeded"
     task.outcome = "partial" if partial else "published"
     task.stage = "complete"
+    await finish_media_operation(db, task.user_id, f"post:{task.source_key}:publish", {"post_id": str(row.id)})
     await notify_post_published(db, row.user_id, row.id)
     emit_ws_event(
         db,

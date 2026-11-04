@@ -3,6 +3,7 @@
 import asyncio
 from dataclasses import dataclass, field
 from typing import Literal
+from uuid import uuid4
 
 # 媒体请求受理后保留的工具步：足够核对结果或补做一次，其余回合时间留给最终回复。
 MEDIA_FOLLOW_UP_STEPS = 2
@@ -13,6 +14,7 @@ class ImagePlan:
     request: str
     prompt: str
     size: str
+    subject: Literal["self"] | None = None
     reference_image: str | None = None
     secondary_reference_image: str | None = None
     identity_json: str | None = None
@@ -24,12 +26,13 @@ class MediaArtifact:
     media_id: str
     type: Literal["image", "video"]
     goal_id: str
-    status: Literal["pending", "ready", "failed", "result_unknown"]
+    status: Literal["pending", "ready", "failed", "result_unknown", "review_pending"]
     url: str | None = None
     error: str | None = None
     job_id: int | None = None
-    identity_score: int | None = None
+    identity_verdict: str | None = None
     bound_message_id: int | None = None
+    media_revision: int = 0
 
     def tool_view(self) -> dict:
         return {
@@ -41,7 +44,7 @@ class MediaArtifact:
             **({"url": self.url} if self.url else {}),
             **({"error": self.error} if self.error else {}),
             **({"task_id": str(self.job_id)} if self.job_id is not None else {}),
-            **({"identity_score": self.identity_score} if self.identity_score is not None else {}),
+            **({"identity_verdict": self.identity_verdict} if self.identity_verdict is not None else {}),
         }
 
 
@@ -61,6 +64,7 @@ class MediaTurnState:
     structured_reply: bool = False
     original_request: str = ""
     source_message_id: int | None = None
+    request_scope: str = field(default_factory=lambda: uuid4().hex)
     asset_directory: str = ""
     artifacts: dict[str, MediaArtifact] = field(default_factory=dict)
     plans: dict[str, ImagePlan] = field(default_factory=dict)

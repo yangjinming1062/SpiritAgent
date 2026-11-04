@@ -42,6 +42,8 @@ from features.life.use_cases import bind_step_in_session, require_step_submissio
 from features.media.character_images import ImageChainState, ImageProgressWriter, generate_scene_images
 from features.media.image_generation import ImageGenerationError, ImageResultDownloadError, ImageReviewUnavailableError
 from features.media.provider_attempts import count_scene_submissions, record_scene_submission
+from features.media.review_contracts import review_passes
+from features.media.review_evidence import asset_file_hash, review_media_intact
 from features.scenes.asset_references import sync_scene_assets
 from features.scenes.models import (
     CompanionScene,
@@ -55,7 +57,7 @@ from features.scenes.prompt_assembly import build_scene_prompt
 from features.scenes.prompts import SCENE_DESCRIBE_SYSTEM
 from features.scenes.queries import can_retry_scene_generation, get_pending_scene_task, get_scene, scene_view
 from features.scenes.query_contracts import SceneSnapshot
-from features.scenes.schemas import SceneDescriptionRequest, SceneImageDimensions, SceneImageSize
+from features.scenes.schemas import SceneDescriptionRequest, SceneImageDimensions, SceneImageSize, SceneReviewSnapshot
 from features.scenes.wallpaper import SCENE_IMAGE_SIZE, WallpaperAsset, prepare_scene_wallpaper, scene_source_extension
 from features.visuals.static_presentation import invalidate_scene_presentation
 
@@ -472,10 +474,17 @@ async def retry_scene_description(user_id: int, scene_id: int) -> CompanionScene
         if await get_pending_scene_task(db, user_id) is not None:
             raise SceneStateError("已有场景正在准备")
         if (
+            row.initial_job
+            and row.initial_job.stage == "review_pending"
+            or row.replacement_job
+            and row.replacement_job.stage == "review_pending"
+        ):
+            raise SceneStateError("原候选等待检查，请先使用继续检查入口")
+        if (
             row.replacement_job is not None
             and row.replacement_job.availability == "failed"
             and row.replacement_job.checkpoint
-            and row.replacement_job.stage in {"analyze", "review_failed"}
+            and row.replacement_job.stage in {"analyze", "review_failed", "confirmation"}
         ):
             frozen = SceneRegenerationState.model_validate(row.replacement_job.checkpoint)
             regeneration_task_id = frozen.task_id
@@ -486,7 +495,11 @@ async def retry_scene_description(user_id: int, scene_id: int) -> CompanionScene
             row.status = "pending"
             row.initial_job.stage = "analyze"
             row.initial_job.error = None
-        elif row.status == "failed" and row.initial_job.stage == "review_failed" and row.initial_job.checkpoint:
+        elif (
+            row.status == "failed"
+            and row.initial_job.stage in {"review_failed", "review_pending", "confirmation"}
+            and row.initial_job.checkpoint
+        ):
             row.status = "pending"
             row.initial_job.stage = "evaluating"
             row.initial_job.error = None
@@ -659,6 +672,21 @@ async def _generate_wallpaper(
     return wallpaper
 
 
+async def _scene_review_snapshot(state: ImageChainState, output_path: str) -> dict:
+    selected = state.best()
+    if (
+        selected is None
+        or not review_passes(selected.review, ("goal", "quality"))
+        or not await asyncio.to_thread(review_media_intact, selected.review.evidence, selected.path)
+    ):
+        raise SceneStateError("原环境候选缺少有效检查依据，候选已保留")
+    return SceneReviewSnapshot(
+        review=selected.review,
+        source_path=selected.path,
+        output_hash=await asyncio.to_thread(asset_file_hash, output_path),
+    ).model_dump(mode="json")
+
+
 async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> None:
     async with SESSION_LOCAL() as db:
         row = await get_scene(db, user_id, scene_id)
@@ -725,6 +753,7 @@ async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> 
                 return
             old_path = row.media_path
             row.media_path = frozen.wallpaper_path
+            row.review_result_json = await _scene_review_snapshot(state, frozen.wallpaper_path)
             origin = state.selected_origin()
             row.generation_origin_json = origin.model_dump(mode="json") if origin else None
             row.description = description.description
@@ -780,6 +809,7 @@ async def _mark_regeneration_failed(
             if row.replacement_job.checkpoint
             else None
         )
+        review_failed = review_failed or current is not None and bool(current.image_chain.candidates)
         retry_analysis = current is not None and (bool(current.wallpaper_path) or review_failed)
         if current and current.image_chain.phase == "submitting":
             error = "生图提交结果未知，未自动重复付费请求；请核对供应商任务后再决定是否重新生成"
@@ -794,6 +824,8 @@ async def _mark_regeneration_failed(
         row.replacement_job.availability = "failed"
         row.replacement_job.stage = "review_failed" if review_failed else "analyze" if retry_analysis else "failed"
         row.replacement_job.error = error
+        if review_failed and row.replacement_job is not None:
+            row.replacement_job.state, row.replacement_job.stage = "paused", "review_pending"
         if unknown and row.replacement_job is not None:
             row.replacement_job.state = "unknown"
         await _event(db, user_id, "companion.scene.updated", scene_id)
@@ -866,6 +898,7 @@ async def _run_pipeline(scene_id: int, user_id: int) -> None:
                 await _reclaim_assets(user_id, {wallpaper.path})
                 return
             fresh.media_path = wallpaper.path
+            fresh.review_result_json = await _scene_review_snapshot(state, wallpaper.path)
             origin = state.selected_origin()
             fresh.generation_origin_json = origin.model_dump(mode="json") if origin else None
             fresh.target_size_json = target.model_dump(mode="json")
@@ -889,10 +922,11 @@ async def _mark_failed(
         row.initial_job.error = error
         if row.initial_job.checkpoint:
             progress = ImageChainState.model_validate(row.initial_job.checkpoint)
+            review_failed = review_failed or bool(progress.candidates)
             if download_failed or progress.phase == "submitting" or progress.stop_reason == "result_unknown":
                 row.initial_job.state = "unknown"
-        if review_failed:
-            row.initial_job.stage = "review_failed"
+        if review_failed and row.initial_job.state != "unknown":
+            row.initial_job.state, row.initial_job.stage = "paused", "review_pending"
         await _event(db, user_id, "companion.scene.updated", scene_id)
         await db.commit()
 

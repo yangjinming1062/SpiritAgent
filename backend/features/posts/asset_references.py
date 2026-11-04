@@ -16,4 +16,10 @@ async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
         ),
     ):
         referenced |= asset_paths([row.request_json, row.plan_json, row.checkpoint], user_id)
+    for proof in await db.scalars(
+        select(PostPublication.review_result_json).where(
+            PostPublication.user_id == user_id, PostPublication.post_id.is_not(None)
+        )
+    ):
+        referenced |= asset_paths(proof, user_id)
     return referenced

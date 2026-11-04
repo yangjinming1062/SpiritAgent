@@ -22,6 +22,8 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from features.media.review_contracts import VisualReview
+
 if TYPE_CHECKING:
     from features.accounts.models import User
 
@@ -41,6 +43,7 @@ class OutfitSource(BaseModel):
     # 视觉身份版本用于追溯；全身来源用于下游选择身份与造型参考的职责。
     identity_revision: int | None = None
     identity_reference_path: str = Field(min_length=1)
+    review_result: VisualReview | None = None
 
     @field_validator("reference_image_path", "reference_description")
     @classmethod
@@ -57,6 +60,7 @@ class OutfitCreationJob(JobRecord):
     __mapper_args__ = {"polymorphic_identity": "outfit.create"}
     id: Mapped[int] = mapped_column(BigInteger, ForeignKey("jobs.id", ondelete="CASCADE"), primary_key=True)
     owner_id: Mapped[int] = mapped_column(BigInteger)
+    request_source: Mapped[str] = mapped_column(String(16), default="autonomous", server_default=text("'autonomous'"))
     description: Mapped[str] = mapped_column(Text)
     result_outfit_id: Mapped[int | None] = mapped_column(ForeignKey("companion_outfits.id", ondelete="SET NULL"))
 
@@ -95,6 +99,7 @@ class AvatarAsset(ModelBase, TimestampMixin):
     generation_origin_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     fullbody_generation_origin_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     # 日常出镜的全身参考；锁定身份后仍可重绘。
+    fullbody_review_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
     seed_fullbody_url: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
     # 身份锁定的持久标志，不能由可重绘的种子路径推断。
     is_fullbody_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
@@ -119,6 +124,7 @@ class FullbodyCandidate(ModelBase, TimestampMixin):
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     avatar_id: Mapped[int] = mapped_column(ForeignKey("avatar_assets.id", ondelete="CASCADE"), index=True)
+    review_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
     base_fullbody_url: Mapped[str] = mapped_column(String(2048))
     base_revision: Mapped[int] = mapped_column(Integer)
     image_url: Mapped[str] = mapped_column(String(2048))
@@ -127,6 +133,17 @@ class FullbodyCandidate(ModelBase, TimestampMixin):
     generation_origin_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="pending", server_default=text("'pending'"), index=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class FullbodyReviewJob(JobRecord):
+    __tablename__ = "fullbody_review_jobs"
+    __mapper_args__ = {"polymorphic_identity": "appearance.fullbody_review"}
+    id: Mapped[int] = mapped_column(BigInteger, ForeignKey("jobs.id", ondelete="CASCADE"), primary_key=True)
+    owner_id: Mapped[int] = mapped_column(BigInteger)
+    candidate_id: Mapped[int | None] = mapped_column(
+        ForeignKey("companion_fullbody_candidates.id", ondelete="SET NULL"), unique=True
+    )
+    result_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
 
 class AppearanceAsset(ModelBase):

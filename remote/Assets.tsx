@@ -9,6 +9,7 @@ import { uiCopy } from '../shared/ui-copy'
 import type { RemoteApi } from './api'
 import { ApiError, readImage } from './api'
 import { copyText, newRequestId } from './browser'
+import { MediaReviewButton } from './MediaReviewButton'
 import type { Outfit, Scene } from './types'
 import {
   AssetResultRecovery,
@@ -592,9 +593,9 @@ function SceneDetail({
   const picker = useRef<HTMLInputElement>(null)
   const canRetryAnalysis =
     ((scene.status === 'description_failed' || scene.status === 'cancelled') && Boolean(scene.url)) ||
-    (scene.status === 'failed' && scene.stage === 'review_failed') ||
+    (scene.status === 'failed' && ['review_failed', 'confirmation'].includes(scene.stage)) ||
     (scene.regeneration?.status === 'failed' &&
-      (scene.regeneration.stage === 'analyze' || scene.regeneration.stage === 'review_failed'))
+      (scene.regeneration.stage === 'analyze' || ['review_failed', 'confirmation'].includes(scene.regeneration.stage)))
   const regenerate = () =>
     run(() =>
       submit(async () => {
@@ -699,6 +700,7 @@ function SceneDetail({
           {motionNotice ? <p className="muted">{motionNotice}</p> : null}
         </>
       ) : null}
+      {scene.review_job_id ? <MediaReviewButton api={api} jobId={scene.review_job_id} onChanged={onUpdate} /> : null}
       {scene.error || scene.regeneration?.error ? <Notice>{scene.error || scene.regeneration?.error}</Notice> : null}
       {scene.can_retry_generation || (scene.regeneration?.status === 'failed' && !canRetryAnalysis) ? (
         <button disabled={busy || submitted} onClick={regenerate} type="button">
@@ -803,6 +805,7 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
   const { run, runLatest, busy, error } = useTask()
   const alive = useAlive()
   const [outfits, setOutfits] = useState<Outfit[]>([])
+  const [reviewJobs, setReviewJobs] = useState<ApiSchemas['MediaJobView'][]>([])
   const [policy, setPolicy] = useState<string | null>(null)
   const [policySaving, setPolicySaving] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -814,9 +817,11 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
   const load = useCallback(async () => {
     const current = ++revision.current
     const wardrobe = await api.invoke('companion.get_outfits')
+    const pendingJobs = await api.invoke('media.get_outfit_review_jobs')
 
     if (alive() && current === revision.current) {
       setOutfits(wardrobe.outfits)
+      setReviewJobs(pendingJobs)
       setPolicy(wardrobe.policy)
       setLoaded(true)
     }
@@ -865,6 +870,12 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
               <IconRefresh size={20} />
             </button>
           </div>
+          {reviewJobs.map(job => (
+            <section className="card" key={job.id}>
+              <p>{job.slots[0]?.error}</p>
+              <MediaReviewButton api={api} jobId={job.id} onChanged={load} />
+            </section>
+          ))}
           <AssetPolicyToggle
             checked={policy === 'llm_may_replace'}
             description="伙伴可以自行设计并收藏新的衣服素材。"

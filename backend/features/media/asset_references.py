@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from datetime import timedelta
 
 from infrastructure.assets.references import asset_paths
 from infrastructure.text import utc_now
@@ -9,6 +10,8 @@ from features.assets.service import asset_paths_in_session
 from features.configuration.settings.values import get_user_setting
 from features.jobs.service import job_asset_paths
 
+from .character_images import ImageChainState
+from .models import ImageGenJob, MediaManualOperation, VideoGenJob
 from .voice_models import CustomVoice
 from .voice_queries import custom_voice_tokens
 from .voice_usage import used_voice_ids
@@ -16,6 +19,33 @@ from .voice_usage import used_voice_ids
 
 async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
     referenced = await job_asset_paths(db, user_id)
+    for snapshot, result in await db.execute(
+        select(MediaManualOperation.snapshot_json, MediaManualOperation.result_json).where(
+            MediaManualOperation.user_id == user_id, MediaManualOperation.created_at >= utc_now() - timedelta(days=90)
+        )
+    ):
+        referenced |= asset_paths([snapshot, result], user_id)
+    for result, state in await db.execute(
+        select(ImageGenJob.result_json, ImageGenJob.state).where(
+            ImageGenJob.user_id == user_id, ImageGenJob.cleanup_requested_at.is_(None)
+        )
+    ):
+        if state == "succeeded":
+            chain = ImageChainState.model_validate(result.get("chain") or {})
+            for slot in {candidate.slot for candidate in chain.candidates}:
+                candidate = chain.best(slot)
+                if candidate is not None:
+                    referenced |= asset_paths(candidate.model_dump(mode="json"), user_id)
+        else:
+            referenced |= asset_paths(result, user_id)
+    for result in await db.scalars(
+        select(VideoGenJob.review_result_json).where(
+            VideoGenJob.user_id == user_id,
+            VideoGenJob.cleanup_requested_at.is_(None),
+            VideoGenJob.state.in_(("queued", "running", "paused", "unknown", "succeeded")),
+        )
+    ):
+        referenced |= asset_paths(result, user_id)
     selected_tokens = custom_voice_tokens(await get_user_setting(db, user_id, "companion.voice_id"))
     rows = list(
         await db.execute(

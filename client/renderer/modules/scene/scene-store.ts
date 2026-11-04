@@ -32,6 +32,7 @@ export interface SceneAsset {
   status: SceneStatus
   stage: string
   can_retry_generation: boolean
+  review_job_id?: string | null
   source: string
   origin: string
   target_size: SceneImageSize | null

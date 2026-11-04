@@ -14,7 +14,12 @@ from .models import CompanionScene
 async def sync_scene_assets(db: AsyncSession, row: CompanionScene) -> None:
     initial = asset_paths([row.reference_image, row.initial_job.checkpoint if row.initial_job else None], row.user_id)
     replacement = asset_paths(row.replacement_job.checkpoint if row.replacement_job else None, row.user_id)
-    paths = initial | replacement | {path for path in (row.media_path, row.upload_source_path) if path}
+    paths = (
+        initial
+        | replacement
+        | asset_paths(row.review_result_json, row.user_id)
+        | {path for path in (row.media_path, row.upload_source_path) if path}
+    )
     existing = {
         path for path in paths if (resolved := resolve_asset_reference(path)) is not None and resolved[0].is_file()
     }
@@ -43,4 +48,16 @@ async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
         select(CompanionScene.media_asset_id, CompanionScene.upload_asset_id).where(CompanionScene.user_id == user_id)
     )
     asset_ids = {asset_id for row in rows for asset_id in row if asset_id is not None}
-    return set((await asset_paths_in_session(db, user_id, asset_ids)).values()) | await job_asset_paths(db, user_id)
+    proofs = set().union(
+        *(
+            asset_paths(value, user_id)
+            for value in await db.scalars(
+                select(CompanionScene.review_result_json).where(CompanionScene.user_id == user_id)
+            )
+        )
+    )
+    return (
+        set((await asset_paths_in_session(db, user_id, asset_ids)).values())
+        | await job_asset_paths(db, user_id)
+        | proofs
+    )
