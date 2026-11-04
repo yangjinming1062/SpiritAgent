@@ -47,7 +47,7 @@ def sample_desktop_video_frames(
         {
             min(range(len(times)), key=lambda index: abs(times[index] - target))
             for target in (first + (last - first) * fraction / (sample_count - 1) for fraction in range(sample_count))
-        },
+        }
     )
     with Image.open(BytesIO(extract_desktop_first_frame(src))) as frame:
         scale = min(1.0, max_edge / max(frame.size))
@@ -134,12 +134,7 @@ def _fit_filter(first_frame: bytes, aspect_ratio: str | None) -> tuple[str, tupl
         raise VideoProcessError("桌面视频分辨率超出处理上限")
     target = _target_dimensions(aspect_ratio) if aspect_ratio else (width, height)
     try:
-        crop_left, crop_top, crop_right, crop_bottom = centered_crop_box(
-            width,
-            height,
-            *target,
-            alignment=2,
-        )
+        crop_left, crop_top, crop_right, crop_bottom = centered_crop_box(width, height, *target, alignment=2)
     except ValueError as exc:
         raise VideoProcessError("桌面视频画幅差异超过少量裁切范围，请重新调整") from exc
     output_width, output_height = crop_right - crop_left, crop_bottom - crop_top
@@ -161,12 +156,7 @@ def _desktop_result(dst: Path, expected_size: tuple[int, int], *, fitted: bool) 
         frame.save(buffer, format="WEBP", quality=90)
         cover = buffer.getvalue()
     return DesktopVideoResult(
-        output.width,
-        output.height,
-        round(output.duration_seconds * 1000),
-        cover,
-        first_frame,
-        fitted,
+        output.width, output.height, round(output.duration_seconds * 1000), cover, first_frame, fitted
     )
 
 

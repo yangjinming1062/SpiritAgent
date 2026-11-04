@@ -70,10 +70,7 @@ def prepare_ai_config(update: AIConfigUpdate, previous: AIConfig | None, system:
         providers.append(prepare_provider_card(card, old).model_dump(mode="json"))
     try:
         config = AIConfig.model_validate(
-            {
-                **update.model_dump(mode="json", exclude={"providers"}),
-                "providers": providers,
-            },
+            {**update.model_dump(mode="json", exclude={"providers"}), "providers": providers}
         )
     except ValidationError as exc:
         reasons = "；".join(error["msg"].removeprefix("Value error, ") for error in exc.errors())
@@ -89,7 +86,7 @@ def prepare_provider_card(update: ProviderCardUpdate, previous: ProviderCard | N
         {
             **update.model_dump(exclude={"api_key_set", "clear_api_key"}),
             "api_key": "" if update.clear_api_key else update.api_key or (previous.api_key if previous else ""),
-        },
+        }
     )
 
 

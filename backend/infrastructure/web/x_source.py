@@ -63,9 +63,7 @@ class _XBootstrapClient:
                     and (not is_page or parsed.path != "/x/migrate")
                 ):
                     raise SocialSourceError(
-                        "X signing bootstrap target is not allowed",
-                        code=422,
-                        reason="bootstrap_failed",
+                        "X signing bootstrap target is not allowed", code=422, reason="bootstrap_failed"
                     )
                 if self.guard_error is not None:
                     raise self.guard_error
@@ -130,10 +128,7 @@ class XSource:
                 for key, value in self._x_cookies.items():
                     cookies.set(key, value, domain=".x.com")
                 async with safe_outbound_async_client(
-                    timeout=45,
-                    follow_redirects=False,
-                    cookies=cookies,
-                    headers={"user-agent": _USER_AGENT},
+                    timeout=45, follow_redirects=False, cookies=cookies, headers={"user-agent": _USER_AGENT}
                 ) as client:
                     bootstrap = _XBootstrapClient(client, before_request)
                     try:
@@ -149,30 +144,21 @@ class XSource:
                             raise
                         if isinstance(exc, XClIdAccountError):
                             raise SocialSourceError(
-                                "X account login is required for signing",
-                                code=401,
-                                reason="login_required",
+                                "X account login is required for signing", code=401, reason="login_required"
                             ) from None
                         if isinstance(exc, httpx.HTTPError):
                             raise SocialSourceError(
-                                "X signing bootstrap network error",
-                                reason="network_error",
+                                "X signing bootstrap network error", reason="network_error"
                             ) from None
                         if isinstance(exc, (XClIdParseError, ValueError, TypeError, IndexError, KeyError)):
                             raise SocialSourceError(
-                                "X signing bootstrap could not be parsed",
-                                code=422,
-                                reason="bootstrap_failed",
+                                "X signing bootstrap could not be parsed", code=422, reason="bootstrap_failed"
                             ) from None
                         raise
             return self._x_signer.calc("GET", path)
 
     async def _x_request(
-        self,
-        operation: str,
-        variables: dict[str, Any],
-        *,
-        before_request: RequestGuard | None,
+        self, operation: str, variables: dict[str, Any], *, before_request: RequestGuard | None
     ) -> dict[str, Any]:
         if not self._x_cookies:
             raise SocialSourceError("X search cookies are not configured", code=400, reason="unconfigured")
@@ -193,10 +179,7 @@ class XSource:
         try:
             async with safe_outbound_async_client(timeout=45, follow_redirects=False) as client:
                 response = await client.get(
-                    f"{_X_GRAPHQL_URL}/{operation}",
-                    params=params,
-                    headers=headers,
-                    cookies=self._x_cookies,
+                    f"{_X_GRAPHQL_URL}/{operation}", params=params, headers=headers, cookies=self._x_cookies
                 )
                 if not 200 <= response.status_code < 300:
                     raise SocialSourceError(
@@ -237,27 +220,21 @@ class XSource:
             variables["cursor"] = str(cursor["cursor"])
         raw = await self._x_request(OP_SearchTimeline, variables, before_request=before_request)
         timeline = _mapping(
-            _mapping(_mapping(raw["data"].get("search_by_raw_query")).get("search_timeline")).get("timeline"),
+            _mapping(_mapping(raw["data"].get("search_by_raw_query")).get("search_timeline")).get("timeline")
         )
         if not isinstance(timeline.get("instructions"), list):
             raise SocialSourceError("X search timeline shape changed", code=422, reason="response_invalid")
         try:
             tweets = list(parse_tweets(raw))
         except (KeyError, TypeError, ValueError) as exc:
-            raise SocialSourceError(
-                "X source content could not be parsed",
-                code=422,
-                reason="parser_failed",
-            ) from exc
+            raise SocialSourceError("X source content could not be parsed", code=422, reason="parser_failed") from exc
         if not tweets and find_obj(raw, lambda item: item.get("__typename") == "Tweet") is not None:
             raise SocialSourceError("X source content could not be parsed", code=422, reason="parser_failed")
         try:
             sources = [_tweet_source(tweet, utc_now()) for tweet in tweets]
         except (AttributeError, TypeError, ValueError) as exc:
             raise SocialSourceError(
-                "X source content could not be normalized",
-                code=422,
-                reason="parser_failed",
+                "X source content could not be normalized", code=422, reason="parser_failed"
             ) from exc
         candidates = [
             source
@@ -271,10 +248,7 @@ class XSource:
         return SocialSearchPage(candidates=candidates, next_cursor={"cursor": next_value} if next_value else None)
 
     async def detail(
-        self,
-        candidate: SocialContent,
-        *,
-        before_request: RequestGuard | None = None,
+        self, candidate: SocialContent, *, before_request: RequestGuard | None = None
     ) -> SocialContent | None:
         if candidate.platform != "x":
             raise SocialSourceError("Unexpected source platform", code=400, reason="unsupported_platform")
@@ -294,16 +268,11 @@ class XSource:
         try:
             tweet = parse_tweet(raw, int(candidate.source_id))
         except (KeyError, TypeError, ValueError) as exc:
-            raise SocialSourceError(
-                "X source content could not be parsed",
-                code=422,
-                reason="parser_failed",
-            ) from exc
+            raise SocialSourceError("X source content could not be parsed", code=422, reason="parser_failed") from exc
         if (
             tweet is None
             and find_obj(
-                raw,
-                lambda item: item.get("__typename") == "Tweet" and item.get("rest_id") == candidate.source_id,
+                raw, lambda item: item.get("__typename") == "Tweet" and item.get("rest_id") == candidate.source_id
             )
             is not None
         ):
@@ -312,7 +281,5 @@ class XSource:
             return _tweet_source(tweet, utc_now()) if tweet is not None else None
         except (AttributeError, TypeError, ValueError) as exc:
             raise SocialSourceError(
-                "X source content could not be normalized",
-                code=422,
-                reason="parser_failed",
+                "X source content could not be normalized", code=422, reason="parser_failed"
             ) from exc

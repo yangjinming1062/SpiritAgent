@@ -11,12 +11,7 @@ from features.appearance.queries import initial_outfit_snapshot, ready_outfit_sn
 from features.media.continuations import MediaWait, wait_for_media
 from features.media.identity_contracts import VisualIdentitySnapshot
 from features.visuals.generation import wait_visual_job
-from features.visuals.queries import (
-    creation_request,
-    current_outfit_reference,
-    job_review_reason,
-    reusable_actor_clip,
-)
+from features.visuals.queries import creation_request, current_outfit_reference, job_review_reason, reusable_actor_clip
 from features.visuals.reviews import visual_review_view
 from features.visuals.schemas import ActorClipSource, VisualSnapshot
 from features.visuals.service import create_visual_job, resume_job
@@ -108,11 +103,7 @@ async def _prepare_action(user_id: int, key: str, target: tuple[str, str] | None
             job = original[0]
         else:
             job = await create_visual_job(
-                user_id,
-                snapshot=snapshot,
-                target_kind="video",
-                source="base_preparation",
-                request_id=request_id,
+                user_id, snapshot=snapshot, target_kind="video", source="base_preparation", request_id=request_id
             )
     async with SESSION_LOCAL() as db:
         await wait_for_media(

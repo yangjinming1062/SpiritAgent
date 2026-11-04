@@ -1,8 +1,6 @@
 from typing import Any
 
-DEFAULT_CONFIG = {
-    "agent": {"reasoning_effort": "low", "temperature": 0.7},
-}
+DEFAULT_CONFIG = {"agent": {"reasoning_effort": "low", "temperature": 0.7}}
 
 
 def settings_to_config(values: dict[str, Any]) -> dict[str, Any]:

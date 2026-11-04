@@ -61,7 +61,7 @@ class ContractRouter(APIRouter):
                     method=method.upper(),
                     identities=identities,
                     upload=policy["upload"],
-                ),
+                )
             )
 
 

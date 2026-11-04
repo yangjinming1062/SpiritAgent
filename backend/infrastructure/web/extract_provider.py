@@ -34,8 +34,7 @@ def _get_provider(name: str, *, kind: str) -> WebSearchProvider:
     if factory is None:
         fallback = _DEFAULT_BY_KIND[kind]
         logger.error(
-            "Unknown web provider, falling back",
-            extra={"kind": kind, "provider_name": name, "fallback": fallback},
+            "Unknown web provider, falling back", extra={"kind": kind, "provider_name": name, "fallback": fallback}
         )
         factory = _PROVIDER_FACTORIES[fallback]
     return factory()
@@ -46,9 +45,7 @@ def resolve_search_provider() -> WebSearchProvider:
     provider = _get_provider(SETTINGS.web_search_backend or _DEFAULT_BY_KIND["search"], kind="search")
     if not provider.is_available() and provider.name != _DEFAULT_BY_KIND["search"]:
         logger.info(
-            "Web search provider '%s' not configured; falling back to %s",
-            provider.name,
-            _DEFAULT_BY_KIND["search"],
+            "Web search provider '%s' not configured; falling back to %s", provider.name, _DEFAULT_BY_KIND["search"]
         )
         provider = _get_provider(_DEFAULT_BY_KIND["search"], kind="search")
     return provider

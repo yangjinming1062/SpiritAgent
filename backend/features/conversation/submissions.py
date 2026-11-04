@@ -60,17 +60,13 @@ def _receipt(row: PromptSubmission, conversation_id: int, fingerprint: str | Non
 
 
 async def find_submission(
-    user_id: int,
-    conversation_id: int,
-    request_id: str,
-    fingerprint: str | None,
+    user_id: int, conversation_id: int, request_id: str, fingerprint: str | None
 ) -> SubmissionReceipt | None:
     async with session_scope() as db:
         row = await db.scalar(
             select(PromptSubmission).where(
-                PromptSubmission.user_id == user_id,
-                PromptSubmission.request_id == request_id,
-            ),
+                PromptSubmission.user_id == user_id, PromptSubmission.request_id == request_id
+            )
         )
         if row is None:
             return None
@@ -118,15 +114,12 @@ async def reserve_submission(
                 replace_reply_message_id=replace_reply_message_id,
             )
             .on_conflict_do_nothing(constraint="uq_prompt_submissions_user_request")
-            .returning(PromptSubmission.id),
+            .returning(PromptSubmission.id)
         )
         await commit_conversation(db)
         if inserted_id is not None:
             return SubmissionReceipt(
-                request_id,
-                "accepted",
-                None,
-                replace_reply_message_id=replace_reply_message_id,
+                request_id, "accepted", None, replace_reply_message_id=replace_reply_message_id
             ), True
     existing = await find_submission(user_id, conversation_id, request_id, fingerprint)
     if existing is None:
@@ -139,10 +132,7 @@ async def _load_locked_input_ids(db: AsyncSession, submission: PromptSubmission)
     identifiers = list(
         await db.scalars(
             select(SubmissionMessage.message_id)
-            .where(
-                SubmissionMessage.user_id == submission.user_id,
-                SubmissionMessage.submission_id == submission.id,
-            )
+            .where(SubmissionMessage.user_id == submission.user_id, SubmissionMessage.submission_id == submission.id)
             .order_by(SubmissionMessage.position)
         )
     )
@@ -170,11 +160,7 @@ async def replace_submission_messages(db: AsyncSession, submission: PromptSubmis
         inserted = set(
             await db.scalars(
                 insert(SubmissionMessage)
-                .from_select(
-                    ["user_id", "submission_id", "message_id", "position"],
-                    source,
-                    include_defaults=False,
-                )
+                .from_select(["user_id", "submission_id", "message_id", "position"], source, include_defaults=False)
                 .returning(SubmissionMessage.message_id)
             )
         )
@@ -256,23 +242,15 @@ async def persist_submission_inputs(
 
 
 async def record_submission_state(
-    user_id: int,
-    request_id: str,
-    status: str,
-    *,
-    message_ids: list[int] | None = None,
-    error: str | None = None,
+    user_id: int, request_id: str, status: str, *, message_ids: list[int] | None = None, error: str | None = None
 ) -> tuple[str, str | None]:
     values: dict[str, object] = {"status": status, "error": error}
     async with session_scope() as db:
         row = await db.scalar(
             select(PromptSubmission)
             .options(defer(PromptSubmission.message_ids, raiseload=True))
-            .where(
-                PromptSubmission.user_id == user_id,
-                PromptSubmission.request_id == request_id,
-            )
-            .with_for_update(),
+            .where(PromptSubmission.user_id == user_id, PromptSubmission.request_id == request_id)
+            .with_for_update()
         )
         if row is None:
             return status, error
@@ -291,12 +269,8 @@ async def recover_interrupted_submissions() -> None:
     async with session_scope() as db:
         rows = list(
             await db.scalars(
-                select(PromptSubmission)
-                .where(
-                    PromptSubmission.status.in_(("accepted", "running")),
-                )
-                .with_for_update(),
-            ),
+                select(PromptSubmission).where(PromptSubmission.status.in_(("accepted", "running"))).with_for_update()
+            )
         )
         for row in rows:
             if row.result_message_id is not None:
@@ -311,6 +285,6 @@ async def recover_interrupted_submissions() -> None:
                     role="system",
                     subtype="status_interrupted",
                     content=row.error,
-                ),
+                )
             )
         await commit_conversation(db)

@@ -36,12 +36,7 @@ async def companion_idle_expression(user_id: int, params: dict) -> dict:
     if await get_disturbance_tier(user_id) != "autonomous":
         return {"expressed": False, "action_id": None, "reason": "autonomous tier required"}
     now = time.monotonic()
-    if _user_throttled(
-        _last_idle_expression_ts,
-        user_id,
-        SETTINGS.companion_idle_expression_min_interval_seconds,
-        now,
-    ):
+    if _user_throttled(_last_idle_expression_ts, user_id, SETTINGS.companion_idle_expression_min_interval_seconds, now):
         logger.debug(
             "idle_expression: throttled",
             extra={"user_id": user_id, "since_sec": round(now - _last_idle_expression_ts.get(user_id, 0.0), 3)},
@@ -55,11 +50,7 @@ async def companion_idle_expression(user_id: int, params: dict) -> dict:
 async def companion_signal(user_id: int, params: dict) -> dict[str, bool]:
     available = params["available"]
     event = params.get("event")
-    became_available = observe_companion_presence(
-        user_id,
-        available,
-        presentation_mode=params["presentation_mode"],
-    )
+    became_available = observe_companion_presence(user_id, available, presentation_mode=params["presentation_mode"])
     if not available:
         await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
         return {"queued": False}

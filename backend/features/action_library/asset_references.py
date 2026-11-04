@@ -10,7 +10,7 @@ from .models import ActionDefinition
 async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
     referenced: set[str] = set()
     for source in await db.scalars(
-        select(ActionDefinition.review_source_json).where(ActionDefinition.user_id == user_id),
+        select(ActionDefinition.review_source_json).where(ActionDefinition.user_id == user_id)
     ):
         referenced |= asset_paths(source, user_id)
     return referenced

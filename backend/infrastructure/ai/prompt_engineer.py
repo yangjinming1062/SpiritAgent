@@ -124,10 +124,10 @@ async def _call_text_response(provider: ChatProvider, request: dict[str, Any]) -
 def _response_text(response: Response, *, validate_text: bool = True) -> str:
     if response.error is not None:
         classified = classify_api_error(
-            ProviderError("LLM response failed", body={"error": response.error.model_dump()}),
+            ProviderError("LLM response failed", body={"error": response.error.model_dump()})
         )
         raise LLMRuntimeError(
-            ClassifiedError(classified.reason, classified.status_code, _response_failure_detail(response)),
+            ClassifiedError(classified.reason, classified.status_code, _response_failure_detail(response))
         )
     details = response.incomplete_details
     if (
@@ -177,17 +177,14 @@ async def call_llm_once(
         )
         if json_output:
             request.update(
-                await provider.structured_response_options({"type": "object"}, name="json_object", allow_tools=False),
+                await provider.structured_response_options({"type": "object"}, name="json_object", allow_tools=False)
             )
         if before_call is not None:
             await before_call()
-        text = await _call_text_response(
-            provider,
-            request,
-        )
+        text = await _call_text_response(provider, request)
         if json_output and not isinstance(parse_llm_json(text), dict):
             raise LLMRuntimeError(
-                ClassifiedError(FailoverReason.format_error, None, "LLM response is not a JSON object"),
+                ClassifiedError(FailoverReason.format_error, None, "LLM response is not a JSON object")
             )
         if validate_output is not None:
             validate_output(text)
@@ -240,7 +237,7 @@ def _schema_discriminator_choices(schema: dict[str, Any]) -> tuple[dict[str, Any
                 name: field["const"]
                 for name, field in branch.get("properties", {}).items()
                 if name in required and "const" in field
-            },
+            }
         )
     shared = set.intersection(*(set(branch) for branch in branches))
     discriminators = {
@@ -288,11 +285,7 @@ async def call_llm_json[T](
         if diagnostic.validation != "ok":
             logger.warning(
                 "structured LLM output failed",
-                extra={
-                    "user_id": llm_cfg.user_id,
-                    "schema_name": schema_name,
-                    **diagnostic.model_dump(),
-                },
+                extra={"user_id": llm_cfg.user_id, "schema_name": schema_name, **diagnostic.model_dump()},
             )
 
     async def call(provider: ChatProvider) -> T:
@@ -316,10 +309,7 @@ async def call_llm_json[T](
             input_items = [{"role": "user", "content": content}]
             budget = max_output_tokens
             options = await provider.structured_response_options(
-                schema,
-                name=schema_name,
-                allow_tools=False,
-                repair=repair,
+                schema, name=schema_name, allow_tools=False, repair=repair
             )
             # JSON 模式不带字段语义；供应商未下发原生 schema 时随指令提供。
             native_schema = (
@@ -400,7 +390,7 @@ async def call_llm_json[T](
                 diagnostic.validation = "unexpected_output"
                 record(diagnostic)
                 raise LLMRuntimeError(
-                    ClassifiedError(FailoverReason.format_error, None, "Structured response returned a tool call"),
+                    ClassifiedError(FailoverReason.format_error, None, "Structured response returned a tool call")
                 )
             syntax_feedback: dict[str, str | int] | None = None
             parsed: Any = None
@@ -472,10 +462,8 @@ async def call_llm_json[T](
                     continue
                 raise LLMRuntimeError(
                     ClassifiedError(
-                        FailoverReason.format_error,
-                        None,
-                        f"{schema_name}: invalid structured output ({code})",
-                    ),
+                        FailoverReason.format_error, None, f"{schema_name}: invalid structured output ({code})"
+                    )
                 ) from None
             diagnostic.validation = "ok"
             record(diagnostic)
@@ -484,17 +472,11 @@ async def call_llm_json[T](
     return await execute_with_fallback(llm_cfg.chain, ChatProvider, call, user_id=llm_cfg.user_id)
 
 
-async def _load_vision_config(
-    user_id: int | None,
-    task: AiTaskKey,
-    reference_images: tuple[str, ...],
-) -> UserLlmConfig:
+async def _load_vision_config(user_id: int | None, task: AiTaskKey, reference_images: tuple[str, ...]) -> UserLlmConfig:
     if not reference_images or any(not uri for uri in reference_images):
         raise ValueError("visual reasoning requires readable reference images")
     config = await load_user_llm_config(
-        user_id,
-        task,
-        required_modalities=frozenset({ModelModality.text, ModelModality.image}),
+        user_id, task, required_modalities=frozenset({ModelModality.text, ModelModality.image})
     )
     if not config.is_configured:
         raise VisualReasoningError("视觉分析服务未配置，请联系管理员")
@@ -536,9 +518,7 @@ async def vision_chat_json[T: BaseModel](
         raise
     except Exception as exc:
         logger.warning(
-            "visual structured reasoning failed",
-            extra={"user_id": user_id, "schema_name": schema_name},
-            exc_info=True,
+            "visual structured reasoning failed", extra={"user_id": user_id, "schema_name": schema_name}, exc_info=True
         )
         validation = diagnostics[-1].validation if diagnostics else None
         message = (
@@ -572,17 +552,13 @@ async def vision_chat(
         response = await call_with_retry(
             provider.raw_client(),
             config=provider.config,
-            **build_responses_kwargs(
-                model=provider.config.model,
-                instructions=system_prompt,
-                input_items=input_items,
-            ),
+            **build_responses_kwargs(model=provider.config.model, instructions=system_prompt, input_items=input_items),
         )
         result = strip_outer_code_fence(_response_text(response))
         if not result:
             # 未完成或空结果可换下一家视觉模型
             raise LLMRuntimeError(
-                ClassifiedError(FailoverReason.empty_result, None, f"vision response unusable ({response.status})"),
+                ClassifiedError(FailoverReason.empty_result, None, f"vision response unusable ({response.status})")
             )
         return result
 

@@ -2,17 +2,7 @@ from datetime import datetime
 
 from infrastructure.job_models import JobRecord
 from infrastructure.models import ModelBase, TimestampMixin
-from sqlalchemy import (
-    BigInteger,
-    Boolean,
-    DateTime,
-    ForeignKey,
-    Integer,
-    String,
-    Text,
-    UniqueConstraint,
-    text,
-)
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -89,14 +79,10 @@ class VideoGenJob(JobRecord):
     structured_reply: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
     media_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     reply_message_id: Mapped[int | None] = mapped_column(
-        ForeignKey("messages.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
+        ForeignKey("messages.id", ondelete="SET NULL"), nullable=True, index=True
     )
     source_message_id: Mapped[int | None] = mapped_column(
-        ForeignKey("messages.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
+        ForeignKey("messages.id", ondelete="SET NULL"), nullable=True, index=True
     )
     # 历史修改先同事务失效；后台只处理撤销和清理，不再制作或交付。
     cleanup_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)

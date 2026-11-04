@@ -48,11 +48,7 @@ async def list_session_resources(
     )
 
 
-async def session_runtime_info(
-    user_id: int,
-    runtime: RuntimeSession,
-    conv: ConversationSnapshot,
-) -> SessionRuntimeInfo:
+async def session_runtime_info(user_id: int, runtime: RuntimeSession, conv: ConversationSnapshot) -> SessionRuntimeInfo:
     async with SESSION_LOCAL() as db:
         user_settings = await load_user_settings(db, user_id)
         llm_config = await resolve_user_llm_config(db, user_id, conversation_ai_task(conv))
@@ -66,22 +62,13 @@ async def session_resource(user_id: int, conv: ConversationSnapshot) -> SessionC
     runtime = account.runtime_sessions.get(str(conv.id)) if account else None
     if runtime is None:
         runtime = new_runtime_session(
-            conversation_id=conv.id,
-            settings_json=conv.settings_json,
-            kind=conv.kind,
-            is_automation=conv.is_automation,
+            conversation_id=conv.id, settings_json=conv.settings_json, kind=conv.kind, is_automation=conv.is_automation
         )
-    return SessionCreateResult(
-        session_id=str(conv.id),
-        info=await session_runtime_info(user_id, runtime, conv),
-    )
+    return SessionCreateResult(session_id=str(conv.id), info=await session_runtime_info(user_id, runtime, conv))
 
 
 async def patch_session_resource(
-    user_id: int,
-    db: AsyncSession,
-    session_id: str,
-    patch: DesktopSessionPatchRequest,
+    user_id: int, db: AsyncSession, session_id: str, patch: DesktopSessionPatchRequest
 ) -> SessionCreateResult:
     account = get_account_runtime(user_id)
     runtime = account.runtime_sessions.get(session_id) if account else None

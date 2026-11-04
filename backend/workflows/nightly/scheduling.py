@@ -22,7 +22,7 @@ async def unfinished_logs(db: AsyncSession, user_ids: Collection[int]) -> dict[i
     rows = await db.scalars(
         select(NightlyActivityLog)
         .where(NightlyActivityLog.user_id.in_(user_ids), NightlyActivityLog.status.in_(("running", "failed")))
-        .order_by(NightlyActivityLog.target_date.desc()),
+        .order_by(NightlyActivityLog.target_date.desc())
     )
     for row in rows:
         result.setdefault(row.user_id, []).append(UnfinishedNightlyLog(row.id, row.user_id, row.target_date))
@@ -34,5 +34,5 @@ async def close_expired_logs(db: AsyncSession, log_ids: Collection[int]) -> None
         await db.execute(
             update(NightlyActivityLog)
             .where(NightlyActivityLog.id.in_(log_ids))
-            .values(status="completed_with_errors", summary="已超过恢复窗口，未确认动作不再重放"),
+            .values(status="completed_with_errors", summary="已超过恢复窗口，未确认动作不再重放")
         )

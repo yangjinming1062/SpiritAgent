@@ -62,11 +62,7 @@ async def _git_value(
                 await log(line)
     if output.code != 0:
         detail = redact_text((output.stderr or output.stdout).strip())
-        raise GitError(
-            f"git {args[0]} 失败：{detail or f'exit={output.code}'}",
-            stage=stage,
-            reason=reason,
-        )
+        raise GitError(f"git {args[0]} 失败：{detail or f'exit={output.code}'}", stage=stage, reason=reason)
     return output.stdout.strip()
 
 

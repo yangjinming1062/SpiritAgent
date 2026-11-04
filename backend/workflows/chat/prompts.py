@@ -794,10 +794,7 @@ LANGUAGE_DIRECTIVES: dict[str, str] = {
     "original form.",
 }
 
-VOLATILE_LABELS: dict[str, str] = {
-    "zh": "当前日期：",
-    "en": "Current date: ",
-}
+VOLATILE_LABELS: dict[str, str] = {"zh": "当前日期：", "en": "Current date: "}
 
 VOLATILE_TIMEZONE_NOTES: dict[str, str] = {
     "zh": "（用户本地时区：{timezone}）",
@@ -814,10 +811,7 @@ ENVIRONMENT_HINTS_LABELS: dict[str, str] = {
     "en": "# Device environment (reported by the desktop client)",
 }
 
-MEMORY_TOOL_LABELS: dict[str, str] = {
-    "zh": "# 长期记忆工具",
-    "en": "# Long-term memory tools",
-}
+MEMORY_TOOL_LABELS: dict[str, str] = {"zh": "# 长期记忆工具", "en": "# Long-term memory tools"}
 
 MEMORY_RECALL_GUIDANCES: dict[str, str] = {
     "zh": "需要补充与当前话题相关的记忆时用 memory_recall；保留结果中的来源、依据、范围和时效，不把自己的记录或推断当作用户确认。",

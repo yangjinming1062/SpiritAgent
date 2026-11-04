@@ -70,11 +70,7 @@ from features.visuals.schemas import (
     SceneMediaRef,
 )
 from infrastructure.ai.tasks import AiTaskKey
-from infrastructure.assets.asset_store import (
-    compute_file_sha256,
-    resolve_asset_reference,
-    save_companion_asset_async,
-)
+from infrastructure.assets.asset_store import compute_file_sha256, resolve_asset_reference, save_companion_asset_async
 from infrastructure.assets.write_protection import asset_write_context
 from infrastructure.async_io import run_blocking
 from infrastructure.database import ENGINE, SESSION_LOCAL
@@ -415,9 +411,7 @@ def _remember_created_material(component: ImportComponent) -> None:
     _append_created_material(
         component,
         ImportCreatedMaterial(
-            kind=component.observation.kind,
-            material_id=component.material_id,
-            extraction_key=component.extraction_key,
+            kind=component.observation.kind, material_id=component.material_id, extraction_key=component.extraction_key
         ),
     )
 
@@ -498,11 +492,9 @@ async def _release_plan(work: ImportWork, component: ImportComponent, material: 
     preserved = await _material_is_referenced(work, component, material.material_id)
     if preserved:
         return _ReleasePlan(material=material, preserved=True, adopt=None)
-    handler = {
-        "outfit": undo_imported_outfit,
-        "scene": undo_imported_scene,
-        "action": undo_imported_action,
-    }[component.observation.kind]
+    handler = {"outfit": undo_imported_outfit, "scene": undo_imported_scene, "action": undo_imported_action}[
+        component.observation.kind
+    ]
 
     async def adopt(db: AsyncSession) -> None:
         await handler(db, work.user_id, material.material_id, material.extraction_key)
@@ -521,11 +513,7 @@ def _apply_release_plan(work: ImportWork, plan: _ReleasePlan) -> None:
 
 
 async def _change_reference(
-    work: ImportWork,
-    component: ImportComponent,
-    material_id: int,
-    *,
-    previous: ImportCreatedMaterial | None = None,
+    work: ImportWork, component: ImportComponent, material_id: int, *, previous: ImportCreatedMaterial | None = None
 ) -> tuple[Callable[[AsyncSession], Awaitable[None]] | None, str]:
     """切换当前关联，并准备在同一保存事务中清理不再使用的旧素材。"""
 
@@ -1153,11 +1141,7 @@ async def run_import_analysis(user_id: int, job_id: int) -> None:
                         except Exception as exc:
                             logger.exception(
                                 "import material organization failed",
-                                extra={
-                                    "user_id": user_id,
-                                    "job_id": job_id,
-                                    "component": component.observation.key,
-                                },
+                                extra={"user_id": user_id, "job_id": job_id, "component": component.observation.key},
                             )
                             if component.material_id is None or component.status not in {"created", "reused"}:
                                 component.status = (

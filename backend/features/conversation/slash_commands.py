@@ -53,11 +53,7 @@ SLASH_COMMANDS: dict[str, SlashCommand] = {}
 
 
 def register_slash_command(
-    *,
-    name: str,
-    aliases: tuple[str, ...] | list[str] = (),
-    description: str = "",
-    requires_confirmation: bool = False,
+    *, name: str, aliases: tuple[str, ...] | list[str] = (), description: str = "", requires_confirmation: bool = False
 ) -> Callable[[SlashCommandHandler], SlashCommandHandler]:
     """装饰器：注册协程为 SlashCommand。主名与别名共享同一实例；重复注册同 key 时后者覆盖并 warning。"""
 
@@ -106,7 +102,7 @@ def list_commands_for_user() -> list[dict]:
                 "aliases": list(cmd.aliases),
                 "description": cmd.description,
                 "requires_confirmation": cmd.requires_confirmation,
-            },
+            }
         )
     out.sort(key=lambda x: x["name"])
     return out

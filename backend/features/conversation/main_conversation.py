@@ -27,7 +27,7 @@ async def get_main_conversation(db: AsyncSession, user_id: int) -> Conversation 
                 Conversation.user_id == user_id,
                 Conversation.kind == SPECIAL_KIND,
                 Conversation.system_preset_id == "companion",
-            ),
+            )
         )
     ).scalar_one_or_none()
 

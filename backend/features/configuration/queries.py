@@ -19,7 +19,7 @@ async def user_ai_configs(db: AsyncSession, user_ids: Collection[int]) -> dict[i
     result = {user_id: AIConfig() for user_id in user_ids}
     if result:
         rows = await db.execute(
-            select(UserModelConfig.user_id, UserModelConfig.ai_config).where(UserModelConfig.user_id.in_(result)),
+            select(UserModelConfig.user_id, UserModelConfig.ai_config).where(UserModelConfig.user_id.in_(result))
         )
         result.update({user_id: AIConfig.model_validate(raw) for user_id, raw in rows})
     return result

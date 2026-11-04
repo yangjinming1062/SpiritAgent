@@ -100,13 +100,7 @@ async def pending_conversation_video_jobs(
 
 
 async def bind_video_reply(
-    db: AsyncSession,
-    *,
-    user_id: int,
-    session_id: str,
-    job_id: int,
-    media_id: str,
-    message_id: int,
+    db: AsyncSession, *, user_id: int, session_id: str, job_id: int, media_id: str, message_id: int
 ) -> VideoJobSnapshot:
     row = await db.scalar(select(VideoGenJob).where(VideoGenJob.id == job_id).with_for_update())
     if row is None or row.user_id != user_id or row.conversation_id != int(session_id) or row.media_id != media_id:
@@ -131,19 +125,14 @@ async def bind_video_reply(
 
 
 async def transfer_reply_videos(
-    db: AsyncSession,
-    *,
-    user_id: int,
-    session_id: str,
-    from_message_id: int,
-    to_message_id: int,
+    db: AsyncSession, *, user_id: int, session_id: str, from_message_id: int, to_message_id: int
 ) -> tuple[VideoJobSnapshot, ...]:
     """替换回答时先锁视频再锁消息；交接与消息替换由调用方同事务提交。"""
     rows = await db.scalars(
         select(VideoGenJob)
         .where(VideoGenJob.reply_message_id == from_message_id)
         .order_by(VideoGenJob.id)
-        .with_for_update(),
+        .with_for_update()
     )
     transferred = []
     for row in rows:
@@ -165,10 +154,7 @@ def _asset_references(row: VideoGenJob) -> VideoJobAssetReferences:
 
 
 async def invalidate_conversation_video_jobs(
-    db: AsyncSession,
-    user_id: int,
-    message_ids: Collection[int],
-    session_ids: Collection[str] = (),
+    db: AsyncSession, user_id: int, message_ids: Collection[int], session_ids: Collection[str] = ()
 ) -> ReleasedVideoJobs:
     """源用户消息先由会话所有者加锁；视频行依 ID 锁定，与终态交付保持相同顺序。"""
     ownership = or_(VideoGenJob.source_message_id.in_(message_ids), VideoGenJob.reply_message_id.in_(message_ids))
@@ -179,13 +165,12 @@ async def invalidate_conversation_video_jobs(
             select(VideoGenJob)
             .where(VideoGenJob.user_id == user_id, ownership)
             .order_by(VideoGenJob.id)
-            .with_for_update(),
-        ),
+            .with_for_update()
+        )
     )
     for row in rows:
         row.cleanup_requested_at = utc_now()
         row.cleanup_pending = True
     return ReleasedVideoJobs(
-        job_ids=frozenset(row.id for row in rows),
-        references=tuple(_asset_references(row) for row in rows),
+        job_ids=frozenset(row.id for row in rows), references=tuple(_asset_references(row) for row in rows)
     )

@@ -56,11 +56,7 @@ def build_avatar_reference_prompt(
         reference="图 1" if has_presentation_reference else "参考图",
         presentation=AVATAR_PRESENTATION_REFERENCE if has_presentation_reference else "",
         payload=json.dumps(
-            {
-                "personality": personality.strip(),
-                "feedback": (feedback or "").strip(),
-            },
-            ensure_ascii=False,
+            {"personality": personality.strip(), "feedback": (feedback or "").strip()}, ensure_ascii=False
         ),
         description=f"画面与神态建议：{description.strip()}" if description.strip() else "",
     )
@@ -155,10 +151,10 @@ async def build_outfit_prompt(
                         "feedback": feedback,
                     },
                     ensure_ascii=False,
-                ),
+                )
             ),
             OUTFIT_BACKGROUND,
-        ),
+        )
     )
     if require_transparent_background:
         prompt += "\n\n" + IMAGE_TRANSPARENT_BACKGROUND

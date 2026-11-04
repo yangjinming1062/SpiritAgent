@@ -144,10 +144,7 @@ async def ensure_creation_plan(
         task=AiTaskKey.visuals,
     )
     if not decision.supported:
-        raise VisualCreationError(
-            decision.reason or "当前角色或环境不适合这个活动，请更换动作",
-            "activity_unsupported",
-        )
+        raise VisualCreationError(decision.reason or "当前角色或环境不适合这个活动，请更换动作", "activity_unsupported")
     progress.creation_plan = decision.plan
     progress.motion_prompt = ""
 
@@ -387,18 +384,11 @@ def identity_review_passed(review: OpeningReview | None) -> bool:
 
 
 def begin_opening_repair(
-    job: VisualJob,
-    progress: VisualJobProgress,
-    *,
-    reason: str,
-    reference_path: str | None,
-    new_budget: bool = False,
+    job: VisualJob, progress: VisualJobProgress, *, reason: str, reference_path: str | None, new_budget: bool = False
 ) -> None:
     if job.repair_count >= job.repair_limit and not new_budget:
         raise VisualCreationError(
-            "这次还未准备好适合活动的画面，可以点击再试一次",
-            "image_unsuitable",
-            repair_reason=reason,
+            "这次还未准备好适合活动的画面，可以点击再试一次", "image_unsuitable", repair_reason=reason
         )
     if new_budget:
         job.repair_count = 0

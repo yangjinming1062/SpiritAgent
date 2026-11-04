@@ -72,27 +72,18 @@ async def design_configuration(user_id: int, provider_name: str = "") -> Provide
 
 async def upload_voice_sample(user_id: int, file: UploadSource) -> VoiceSampleResponse:
     data = await read_capped_upload(
-        file,
-        STT_MAX_AUDIO_BYTES,
-        RequestError(status_code=413, message="声音样本不能超过 24 MiB"),
+        file, STT_MAX_AUDIO_BYTES, RequestError(status_code=413, message="声音样本不能超过 24 MiB")
     )
     if not data:
         raise RequestError(status_code=422, message="音频文件为空，请重新录制或上传")
     try:
         normalized, duration = await asyncio.to_thread(
-            voice_sample_wav_bytes,
-            data,
-            max_duration=60,
-            max_bytes=VOICE_REFERENCE_MAX_BASE64_BYTES * 3 // 4,
+            voice_sample_wav_bytes, data, max_duration=60, max_bytes=VOICE_REFERENCE_MAX_BASE64_BYTES * 3 // 4
         )
     except (ValueError, VideoProcessError) as exc:
         raise RequestError(status_code=422, message=str(exc)) from exc
     path = await save_companion_asset_async(
-        normalized,
-        user_id=user_id,
-        label="voice-sample",
-        ext="wav",
-        directory="voices",
+        normalized, user_id=user_id, label="voice-sample", ext="wav", directory="voices"
     )
     token = uuid4().hex
     try:
@@ -105,7 +96,7 @@ async def upload_voice_sample(user_id: int, file: UploadSource) -> VoiceSampleRe
                     reference_path=path,
                     duration=duration,
                     expires_at=utc_now() + _SAMPLE_TTL,
-                ),
+                )
             )
             await commit_voices(db)
     except BaseException:
@@ -138,11 +129,7 @@ async def _save_preview(
     native_voice = result.voice_id if isinstance(result, VoiceDesignResult) else ""
     _, extension = await asyncio.to_thread(audio_bytes_info, audio)
     path = await save_companion_asset_async(
-        audio,
-        user_id=user_id,
-        label="voice-preview",
-        ext=extension,
-        directory="voices",
+        audio, user_id=user_id, label="voice-preview", ext=extension, directory="voices"
     )
     token = uuid4().hex
     try:
@@ -163,7 +150,7 @@ async def _save_preview(
                     expected_version=expected_version,
                     expected_voice_id=expected_voice_id,
                     expires_at=utc_now() + _SAMPLE_TTL,
-                ),
+                )
             )
             await commit_voices(db)
     except BaseException:
@@ -182,11 +169,7 @@ async def _save_preview(
 
 
 async def design_voice(
-    user_id: int,
-    prompt: str,
-    *,
-    preview_text: str,
-    provider_name: str = "",
+    user_id: int, prompt: str, *, preview_text: str, provider_name: str = ""
 ) -> VoicePreviewResponse:
     prompt = validate_voice_prompt(prompt)
     config = await design_configuration(user_id, provider_name)
@@ -211,10 +194,8 @@ async def clone_voice(user_id: int, sample_id: str, *, preview_text: str) -> Voi
         async with session_scope() as db:
             row = await db.scalar(
                 select(CustomVoice).where(
-                    CustomVoice.user_id == user_id,
-                    CustomVoice.token == sample_id,
-                    CustomVoice.kind == "sample",
-                ),
+                    CustomVoice.user_id == user_id, CustomVoice.token == sample_id, CustomVoice.kind == "sample"
+                )
             )
             if (
                 row is None
@@ -238,14 +219,7 @@ async def clone_voice(user_id: int, sample_id: str, *, preview_text: str) -> Voi
         user_id=user_id,
     )
     return await _save_preview(
-        user_id,
-        "clone",
-        config,
-        result,
-        version,
-        selected_voice,
-        reference_path=path,
-        duration=duration,
+        user_id, "clone", config, result, version, selected_voice, reference_path=path, duration=duration
     )
 
 
@@ -254,7 +228,7 @@ async def confirm_voice(user_id: int, candidate_id: str, expected_version: int) 
         candidate = await db.scalar(
             select(CustomVoice)
             .where(CustomVoice.user_id == user_id, CustomVoice.token == candidate_id)
-            .with_for_update(),
+            .with_for_update()
         )
         if candidate is None or candidate.kind not in {"design", "clone"}:
             raise ValueError("试听方案不存在，请重新生成")
@@ -275,15 +249,14 @@ async def confirm_voice(user_id: int, candidate_id: str, expected_version: int) 
             if current_voice != custom_voice_reference(candidate.provider, candidate.token):
                 raise ValueError("当前使用的声音已改变，请刷新后重新选择")
             return VoiceConfirmResponse(
-                voice_id=custom_voice_reference(candidate.provider, candidate.token),
-                version=candidate.version,
+                voice_id=custom_voice_reference(candidate.provider, candidate.token), version=candidate.version
             )
         if candidate.version or candidate.expires_at is None or ensure_utc(candidate.expires_at) <= utc_now():
             raise ValueError("试听方案已过期或已被替换，请重新生成")
         previous = await db.scalar(
             select(CustomVoice)
             .where(CustomVoice.user_id == user_id, CustomVoice.kind == candidate.kind, CustomVoice.is_current.is_(True))
-            .with_for_update(),
+            .with_for_update()
         )
         current_version = (
             await db.scalar(select(func.max(CustomVoice.version)).where(CustomVoice.user_id == user_id)) or 0
@@ -297,9 +270,7 @@ async def confirm_voice(user_id: int, candidate_id: str, expected_version: int) 
         if previous:
             previous.is_current = False
             await enqueue_asset_cleanup(
-                db,
-                user_id,
-                [path for path in (previous.reference_path, previous.preview_path) if path],
+                db, user_id, [path for path in (previous.reference_path, previous.preview_path) if path]
             )
             await flush_voices(db)
         candidate.is_current = True

@@ -25,10 +25,7 @@ COMPANION_WAIT_SCHEMA: dict[str, object] = {
                 "pattern": "^[1-9][0-9]*$",
                 "description": COMPANION_WAIT_PARAM_DESCS["intent_id"],
             },
-            "intent": {
-                "type": "string",
-                "description": COMPANION_WAIT_PARAM_DESCS["intent"],
-            },
+            "intent": {"type": "string", "description": COMPANION_WAIT_PARAM_DESCS["intent"]},
             "after_seconds": {
                 "type": "integer",
                 "minimum": 60,
@@ -76,10 +73,7 @@ async def companion_wait(
         if action != "schedule":
             raise ValueError("action must be schedule, list or cancel")
         request = CompanionWaitRequest(
-            intent=intent or "",
-            after_seconds=after_seconds,
-            wake_on=wake_on,
-            expires_seconds=expires_seconds,
+            intent=intent or "", after_seconds=after_seconds, wake_on=wake_on, expires_seconds=expires_seconds
         )
         result = await set_companion_wait(user_id, request, intent_id)
         return json.dumps({"intent_id": str(result), "scheduled": True})

@@ -44,10 +44,7 @@ _ATTACHMENT_FETCH_TEXTS: dict[str, str] = {
     "en": "The model service couldn't fetch the media file attached to this turn, the file may have expired or be inaccessible, please upload it again",
 }
 _ATTACHMENT_FETCH_DETAIL = "The LLM provider couldn't fetch the media file attached to this turn. The file may have expired or the URL may not be publicly accessible. Try re-uploading the file."
-_CALL_FAILED_TEXTS: dict[str, str] = {
-    "zh": "模型调用失败，请重试",
-    "en": "The model call failed, please try again",
-}
+_CALL_FAILED_TEXTS: dict[str, str] = {"zh": "模型调用失败，请重试", "en": "The model call failed, please try again"}
 # 未列出的失败原因（请求格式、无结果、未知）用 _CALL_FAILED_TEXTS。
 _LLM_FAILURE_TEXTS: dict[FailoverReason, dict[str, str]] = {
     FailoverReason.auth: _ACCESS_TEXTS,
@@ -67,16 +64,12 @@ _LLM_FAILURE_TEXTS: dict[FailoverReason, dict[str, str]] = {
 
 async def _emit(emitter: Emitter, message: str, detail: str, retry_message_id: int | None) -> None:
     await emitter.send_json(
-        {"type": "error", "message": message, "detail": detail, "retry_message_id": retry_message_id},
+        {"type": "error", "message": message, "detail": detail, "retry_message_id": retry_message_id}
     )
 
 
 async def _emit_localized(
-    emitter: Emitter,
-    texts: dict[str, str],
-    language: str | None,
-    detail: str,
-    retry_message_id: int | None,
+    emitter: Emitter, texts: dict[str, str], language: str | None, detail: str, retry_message_id: int | None
 ) -> None:
     await _emit(emitter, resolve_prompt_text(texts, language), detail, retry_message_id)
 
@@ -87,11 +80,7 @@ async def emit_conversation_unavailable(emitter: Emitter, language: str | None, 
 
 
 async def emit_llm_error(
-    emitter: Emitter,
-    exc: LLMRuntimeError,
-    language: str | None,
-    *,
-    retry_message_id: int | None,
+    emitter: Emitter, exc: LLMRuntimeError, language: str | None, *, retry_message_id: int | None
 ) -> None:
     """LLM 调用失败：按失败原因给出引导语，供应商消息（已脱敏）附在其后；失败原因枚举值只进 ``detail``。attachment_fetch_failed 只给简短说明，避免暴露内部细节。"""
     classified = exc.classified
@@ -106,11 +95,7 @@ async def emit_llm_error(
 
 
 async def emit_llm_unavailable(
-    emitter: Emitter,
-    exc: MissingLlmConfigError | RuntimeError,
-    language: str | None,
-    *,
-    retry_message_id: int | None,
+    emitter: Emitter, exc: MissingLlmConfigError | RuntimeError, language: str | None, *, retry_message_id: int | None
 ) -> None:
     """配置缺失（含会话带视频却没有视频理解模型）或响应未正常完成。RuntimeError 的文本来自供应商或内部状态，只进 ``detail``。"""
     if isinstance(exc, MissingVideoModelError):

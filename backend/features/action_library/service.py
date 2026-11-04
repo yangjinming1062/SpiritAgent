@@ -63,7 +63,7 @@ async def create_action(
             ActionDefinition.user_id == user_id,
             ActionDefinition.source != "preset",
             ActionDefinition.normalized_name == normalize_action_name(design.name),
-        ),
+        )
     )
     for item in existing:
         if (
@@ -166,7 +166,7 @@ async def _locked_action(db: AsyncSession, user_id: int, action_id: int) -> Acti
     return await db.scalar(
         select(ActionDefinition)
         .where(ActionDefinition.user_id == user_id, ActionDefinition.id == action_id)
-        .execution_options(populate_existing=True),
+        .execution_options(populate_existing=True)
     )
 
 
@@ -180,9 +180,7 @@ def require_action_editable(current: ActionAssetView, expected_updated_at: datet
 
 
 def prepare_action_update(
-    current: ActionAssetView,
-    design: ActionAssetDesign,
-    expected_updated_at: datetime,
+    current: ActionAssetView, design: ActionAssetDesign, expected_updated_at: datetime
 ) -> ActionAssetDesign | None:
     """装配前判断是否需要身份参考，写入时在锁内重核同一规则。"""
     require_action_editable(current, expected_updated_at)
@@ -255,12 +253,7 @@ async def delete_action(db: AsyncSession, user_id: int, action_id: int) -> bool:
     if row.source == "preset":
         raise ValueError("内置动作不可删除")
     await update_business_steps_in_session(
-        db,
-        user_id,
-        kind="action.design",
-        business_ref={"action_id": action_id},
-        state="failed",
-        error="动作已删除",
+        db, user_id, kind="action.design", business_ref={"action_id": action_id}, state="failed", error="动作已删除"
     )
     await db.delete(row)
     await db.flush()
@@ -269,12 +262,7 @@ async def delete_action(db: AsyncSession, user_id: int, action_id: int) -> bool:
 
 
 async def retry_review(
-    db: AsyncSession,
-    user_id: int,
-    action_id: int,
-    *,
-    expected_updated_at: datetime,
-    review_source_json: dict[str, Any],
+    db: AsyncSession, user_id: int, action_id: int, *, expected_updated_at: datetime, review_source_json: dict[str, Any]
 ) -> ActionAssetView | None:
     row = await _locked_action(db, user_id, action_id)
     if row is None:
@@ -287,11 +275,7 @@ async def retry_review(
 
 
 async def begin_review(
-    db: AsyncSession,
-    user_id: int,
-    action_id: int,
-    *,
-    expected_updated_at: datetime,
+    db: AsyncSession, user_id: int, action_id: int, *, expected_updated_at: datetime
 ) -> tuple[ActionAssetView, dict[str, Any]] | None:
     row = await _locked_action(db, user_id, action_id)
     if row is None or row.status != "pending" or ensure_utc(row.updated_at) != ensure_utc(expected_updated_at):

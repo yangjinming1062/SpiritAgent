@@ -77,7 +77,4 @@ class VideoQueueConfirmFinished(VideoQueueResolutionBase):
     task_id: None = None
 
 
-type VideoQueueResolution = Annotated[
-    VideoQueueAttachTask | VideoQueueConfirmFinished,
-    Field(discriminator="action"),
-]
+type VideoQueueResolution = Annotated[VideoQueueAttachTask | VideoQueueConfirmFinished, Field(discriminator="action")]

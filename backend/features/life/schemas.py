@@ -379,9 +379,7 @@ class LifeDecisionFields(BaseModel):
     )
     next_step: str | None = Field(default=None, max_length=1000, description="接下来打算做什么；不代表已经执行")
     evidence_event_ids: list[ResourceId] = Field(
-        default_factory=list,
-        max_length=EVIDENCE_EVENTS_PER_PURSUIT,
-        description="支持进展或完成总结的已提供事件 id",
+        default_factory=list, max_length=EVIDENCE_EVENTS_PER_PURSUIT, description="支持进展或完成总结的已提供事件 id"
     )
 
 

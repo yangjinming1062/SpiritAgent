@@ -51,12 +51,7 @@ def _fit_wallpaper(data: bytes, target: SceneImageSize) -> tuple[bytes, SceneIma
 
 
 async def prepare_scene_wallpaper(
-    user_id: int,
-    source_path: str,
-    *,
-    generation_id: str,
-    storage_directory: str,
-    target: SceneImageSize,
+    user_id: int, source_path: str, *, generation_id: str, storage_directory: str, target: SceneImageSize
 ) -> WallpaperAsset:
     data, _ = await image_asset_bytes(source_path)
     try:
@@ -67,10 +62,7 @@ async def prepare_scene_wallpaper(
         source_path
         if fitted == data
         else await asset_store.save_scene_wallpaper_asset_async(
-            fitted,
-            user_id=user_id,
-            generation_id=generation_id,
-            directory=storage_directory,
+            fitted, user_id=user_id, generation_id=generation_id, directory=storage_directory
         )
     )
     return WallpaperAsset(path=path, source_size=source_size, image_size=target)

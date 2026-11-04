@@ -15,12 +15,7 @@ from .models import VisualJob
 from .repository import visual_progress
 
 
-async def bind_creation_step(
-    db: AsyncSession,
-    user_id: int,
-    job: VisualJob,
-    request: LifeStepRequest | None,
-) -> None:
+async def bind_creation_step(db: AsyncSession, user_id: int, job: VisualJob, request: LifeStepRequest | None) -> None:
     if request is None:
         return
     progress = visual_progress(job)
@@ -31,10 +26,7 @@ async def bind_creation_step(
         db,
         user_id,
         request,
-        business_ref={
-            "job_id": job.id,
-            "generation_id": progress.generation_id if progress is not None else None,
-        },
+        business_ref={"job_id": job.id, "generation_id": progress.generation_id if progress is not None else None},
     )
     await settle_visual_steps(db, user_id, job)
 
@@ -78,9 +70,5 @@ async def settle_visual_steps(
 
 async def restart_visual_steps(db: AsyncSession, user_id: int, job: VisualJob) -> None:
     await update_business_steps_in_session(
-        db,
-        user_id,
-        kind="visual.generate",
-        business_ref={"job_id": job.id},
-        state="running",
+        db, user_id, kind="visual.generate", business_ref={"job_id": job.id}, state="running"
     )

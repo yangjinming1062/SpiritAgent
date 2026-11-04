@@ -65,9 +65,7 @@ class TopicUsage(ModelBase, TimestampMixin):
     system_preset_id: Mapped[str] = mapped_column(String(32))
     topic_id: Mapped[int] = mapped_column(ForeignKey("companion_topics.id", ondelete="CASCADE"), index=True)
     message_id: Mapped[int | None] = mapped_column(
-        ForeignKey("messages.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
+        ForeignKey("messages.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
 

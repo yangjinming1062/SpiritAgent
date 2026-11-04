@@ -6,15 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 ServiceUpdateStage = Literal[
-    "preflight",
-    "fetch",
-    "fast_forward",
-    "build",
-    "restart",
-    "verify",
-    "done",
-    "failed",
-    "interrupted",
+    "preflight", "fetch", "fast_forward", "build", "restart", "verify", "done", "failed", "interrupted"
 ]
 
 

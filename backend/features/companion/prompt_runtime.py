@@ -92,8 +92,7 @@ async def run_prompt_json(
     if not isinstance(parsed, dict):
         # 输出基于用户对话生成，常规日志不记原文；开启 LLM 调试日志后可按响应 ID 对照。
         logger.warning(
-            f"{log_prefix}: unparseable LLM response",
-            extra={"user_id": user_id, "raw_chars": len(raw or "")},
+            f"{log_prefix}: unparseable LLM response", extra={"user_id": user_id, "raw_chars": len(raw or "")}
         )
         return PromptOutcome(parsed=None, reason="unparseable")
     return PromptOutcome(parsed=parsed, reason=None)

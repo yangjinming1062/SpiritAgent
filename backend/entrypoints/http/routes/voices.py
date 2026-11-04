@@ -88,77 +88,44 @@ async def put_current_voice(user: CurrentUser, db: DbSession, body: CurrentVoice
     return CurrentVoiceResponse(voice_id=await write_current_voice(db, user.id, body.voice_id))
 
 
-@router.post(
-    "/match",
-    response_model=VoiceMatchResponse,
-)
+@router.post("/match", response_model=VoiceMatchResponse)
 async def post_voice_match(user: CurrentUser, db: DbSession, body: VoiceMatchRequest) -> VoiceMatchResponse:
     return await match_user_voice(db, user.id, body.preference, normalize_voice_language(body.language))
 
 
-@router.post(
-    "/candidates",
-    response_model=VoicePreviewResponse,
-    openapi_extra=operation_policy(wait_for_model=True),
-)
+@router.post("/candidates", response_model=VoicePreviewResponse, openapi_extra=operation_policy(wait_for_model=True))
 async def post_voice_candidate(
-    user: CurrentUser,
-    body: Annotated[VoiceDesignRequest | VoiceCloneRequest, Body(discriminator="kind")],
+    user: CurrentUser, body: Annotated[VoiceDesignRequest | VoiceCloneRequest, Body(discriminator="kind")]
 ) -> VoicePreviewResponse:
     try:
         if body.kind == "design":
             return await run_voice_operation(
                 user.id,
                 body.operation_id,
-                lambda: design_voice(
-                    user.id,
-                    body.prompt,
-                    preview_text=body.preview_text,
-                    provider_name=body.provider,
-                ),
+                lambda: design_voice(user.id, body.prompt, preview_text=body.preview_text, provider_name=body.provider),
             )
         return await run_voice_operation(
-            user.id,
-            body.operation_id,
-            lambda: clone_voice(
-                user.id,
-                body.sample_id,
-                preview_text=body.preview_text,
-            ),
+            user.id, body.operation_id, lambda: clone_voice(user.id, body.sample_id, preview_text=body.preview_text)
         )
     except (ValueError, MissingLlmConfigError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@router.post(
-    "/prompt",
-    response_model=VoicePromptResponse,
-    openapi_extra=operation_policy(wait_for_model=True),
-)
+@router.post("/prompt", response_model=VoicePromptResponse, openapi_extra=operation_policy(wait_for_model=True))
 async def post_voice_prompt(user: CurrentUser, body: VoicePromptRequest) -> VoicePromptResponse:
     try:
         return await run_voice_operation(
             user.id,
             body.operation_id,
-            lambda: generate_voice_prompt(
-                user.id,
-                body.current_prompt,
-                body.feedback,
-                body.preference,
-            ),
+            lambda: generate_voice_prompt(user.id, body.current_prompt, body.feedback, body.preference),
         )
     except (ValueError, MissingLlmConfigError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@router.post(
-    "/candidates/{candidate_id}/confirmation",
-    response_model=VoiceConfirmResponse,
-)
+@router.post("/candidates/{candidate_id}/confirmation", response_model=VoiceConfirmResponse)
 async def post_voice_confirmation(
-    user: CurrentUser,
-    candidate_id: Annotated[str, Path(pattern=r"^[a-f0-9]{32}$")],
-    body: VoiceConfirmRequest,
+    user: CurrentUser, candidate_id: Annotated[str, Path(pattern=r"^[a-f0-9]{32}$")], body: VoiceConfirmRequest
 ) -> VoiceConfirmResponse:
     try:
         return await confirm_voice(user.id, candidate_id, body.expected_version)
@@ -166,10 +133,7 @@ async def post_voice_confirmation(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@router.delete(
-    "/operations/{operation_id}",
-    response_model=VoiceCancelResponse,
-)
+@router.delete("/operations/{operation_id}", response_model=VoiceCancelResponse)
 async def delete_voice_operation(user: CurrentUser, operation_id: str) -> VoiceCancelResponse:
     try:
         return VoiceCancelResponse(cancelled=cancel_voice_operation(user.id, operation_id))

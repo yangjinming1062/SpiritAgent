@@ -8,10 +8,7 @@ import onnxruntime as ort
 from PIL import Image, ImageFilter
 
 from infrastructure.config import SETTINGS
-from infrastructure.video_processing.ffmpeg import (
-    VideoProcessError,
-    VideoToolUnavailableError,
-)
+from infrastructure.video_processing.ffmpeg import VideoProcessError, VideoToolUnavailableError
 
 _IMAGE_MATTING_MAX_PIXELS = 1_000_000
 
@@ -44,7 +41,7 @@ class ForegroundMatte:
         alpha = np.clip((alpha - 0.02) / 0.96, 0, 1)
         # 只在均匀背景且语义边缘半透明时去背景混色；实体 RGB 不改动。
         border = np.concatenate(
-            (rgb[:3].reshape(-1, 3), rgb[-3:].reshape(-1, 3), rgb[:, :3].reshape(-1, 3), rgb[:, -3:].reshape(-1, 3)),
+            (rgb[:3].reshape(-1, 3), rgb[-3:].reshape(-1, 3), rgb[:, :3].reshape(-1, 3), rgb[:, -3:].reshape(-1, 3))
         )
         background = np.median(border, axis=0)
         if float(np.quantile(np.abs(border - background), 0.9)) < 0.035:
@@ -91,15 +88,11 @@ def _refine_image_edges(image: Image.Image, segmented: Image.Image) -> Image.Ima
     trimap = np.full((size[1], size[0]), 0.5, dtype=np.float64)
     trimap[foreground], trimap[background] = 1.0, 0.0
     try:
-        alpha = estimate_alpha_cf(
-            np.asarray(work, dtype=np.float64) / 255,
-            trimap,
-            cg_kwargs={"maxiter": 2000},
-        )
+        alpha = estimate_alpha_cf(np.asarray(work, dtype=np.float64) / 255, trimap, cg_kwargs={"maxiter": 2000})
         if alpha.shape != trimap.shape or not np.isfinite(alpha).all():
             raise ValueError("invalid image alpha")
         alpha = np.asarray(
-            Image.fromarray(alpha.astype(np.float32)).resize(source.size, Image.Resampling.BILINEAR),
+            Image.fromarray(alpha.astype(np.float32)).resize(source.size, Image.Resampling.BILINEAR)
         ).clip(0, 1)
         original = np.asarray(source, dtype=np.float32) / 255
         colors = estimate_foreground_ml(original, alpha)

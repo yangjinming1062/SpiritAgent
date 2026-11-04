@@ -23,14 +23,7 @@ async def record_post_published(db: AsyncSession, user_id: int, post_id: int) ->
     )
 
 
-async def record_diary_published(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    entry_date: str,
-    title: str,
-    diary_id: int,
-) -> None:
+async def record_diary_published(db: AsyncSession, user_id: int, *, entry_date: str, title: str, diary_id: int) -> None:
     """日记和生活事件共用夜间事务。"""
 
     await accept_event_in_session(

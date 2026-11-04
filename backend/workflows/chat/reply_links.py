@@ -24,8 +24,7 @@ _STORED_MEDIA = re.compile(
     re.IGNORECASE,
 )
 _INLINE_MEDIA = re.compile(
-    r"!\[[^\]\r\n]*\](?:\([^\r\n]*?\)|\[[^\]\r\n]*\])|<(?:img|audio|video|source)\b[^>]*>",
-    re.IGNORECASE,
+    r"!\[[^\]\r\n]*\](?:\([^\r\n]*?\)|\[[^\]\r\n]*\])|<(?:img|audio|video|source)\b[^>]*>", re.IGNORECASE
 )
 
 
@@ -73,10 +72,7 @@ class ReplyReferences:
 
 
 def validate_reply_links(
-    bubbles: list[dict[str, JsonValue]],
-    *,
-    kind: Literal["dialogue", "written"],
-    references: ReplyReferences,
+    bubbles: list[dict[str, JsonValue]], *, kind: Literal["dialogue", "written"], references: ReplyReferences
 ) -> None:
     sources = references.sources
     for index, bubble in enumerate(bubbles):
@@ -111,6 +107,6 @@ def validate_reply_links(
                         "type": "value_error",
                         "loc": ("bubbles", index, bubble["type"], "text"),
                         "ctx": {"error": ValueError(error)},
-                    },
+                    }
                 ],
             )

@@ -43,21 +43,14 @@ def format_memory_record(
 async def format_memories_block(db: AsyncSession, scope: MemoryScope, *, language: str = DEFAULT_LANGUAGE) -> str:
     rows = await db.scalars(
         select(Memory)
-        .where(
-            scope_filter(scope),
-            active_memory_filter(),
-            Memory.kind == "recall",
-        )
-        .order_by(Memory.updated_at.desc(), Memory.id),
+        .where(scope_filter(scope), active_memory_filter(), Memory.kind == "recall")
+        .order_by(Memory.updated_at.desc(), Memory.id)
     )
     return "\n".join(format_memory_record(r.content, r.basis, r.context, language=language) for r in rows)
 
 
 async def format_background_memory_block(
-    db: AsyncSession,
-    scope: MemoryScope,
-    *,
-    language: str = DEFAULT_LANGUAGE,
+    db: AsyncSession, scope: MemoryScope, *, language: str = DEFAULT_LANGUAGE
 ) -> str:
     rows = (
         await db.scalars(
@@ -69,7 +62,7 @@ async def format_background_memory_block(
                 Memory.basis == "explicit",
                 Memory.kind == "recall",
             )
-            .order_by(Memory.id),
+            .order_by(Memory.id)
         )
     ).all()
     if not rows:
@@ -95,10 +88,7 @@ def format_proactive_memory_block(memories: list[MemoryRecallResult], *, languag
 
 
 async def format_companion_reflection_block(
-    db: AsyncSession,
-    scope: MemoryScope,
-    *,
-    language: str = DEFAULT_LANGUAGE,
+    db: AsyncSession, scope: MemoryScope, *, language: str = DEFAULT_LANGUAGE
 ) -> str:
     row = await load_companion_reflection(db, scope)
     if row is None:
@@ -107,11 +97,6 @@ async def format_companion_reflection_block(
         resolve_prompt_text(COMPANION_REFLECTION_LABELS, language)
         + "\n"
         + format_memory_record(
-            row.content,
-            row.basis,
-            row.context,
-            language=language,
-            local_date=row.local_date,
-            kind="reflection",
+            row.content, row.basis, row.context, language=language, local_date=row.local_date, kind="reflection"
         )
     )

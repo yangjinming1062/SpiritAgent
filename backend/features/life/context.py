@@ -14,11 +14,7 @@ from .schemas import LifeContext
 
 
 async def read_life_context_in_session(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    pursuit_limit: int = 5,
-    event_limit: int = 12,
+    db: AsyncSession, user_id: int, *, pursuit_limit: int = 5, event_limit: int = 12
 ) -> LifeContext:
     """在调用方事务内读取一份一致的生活快照。"""
 

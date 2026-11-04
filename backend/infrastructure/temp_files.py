@@ -104,10 +104,7 @@ def save_file(data: bytes, content_type: str, ext: str, *, user_id: int) -> str:
         logger.warning("temp file write failed; partial removed", extra={"file_id": file_id, "error": str(exc)})
         raise
 
-    logger.info(
-        "Temp file saved",
-        extra={"file_id": file_id, "size": len(data), "user_id": user_id},
-    )
+    logger.info("Temp file saved", extra={"file_id": file_id, "size": len(data), "user_id": user_id})
     return file_id
 
 

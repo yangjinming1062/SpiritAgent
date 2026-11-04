@@ -64,11 +64,7 @@ class ChatSchemaResponsesClient:
         return request
 
     async def _complete_with_format_fallback[T](
-        self,
-        request: dict[str, Any],
-        create: Callable[..., Awaitable[T]],
-        *,
-        endpoint: Literal["chat", "responses"],
+        self, request: dict[str, Any], create: Callable[..., Awaitable[T]], *, endpoint: Literal["chat", "responses"]
     ) -> T:
         # 仅在接口明确拒绝格式参数、尚未产生模型结果时降级；成功返回始终只消费一次。
         format_key = "response_format" if endpoint == "chat" else "text"
@@ -93,11 +89,7 @@ class ChatSchemaResponsesClient:
                     request = {key: value for key, value in request.items() if key != format_key}
 
     async def _chat_completion(self, request: dict[str, Any]) -> ChatCompletion:
-        return await self._complete_with_format_fallback(
-            request,
-            self._client.chat.completions.create,
-            endpoint="chat",
-        )
+        return await self._complete_with_format_fallback(request, self._client.chat.completions.create, endpoint="chat")
 
     async def _responses_completion(self, request: dict[str, Any]) -> Response:
         return await self._complete_with_format_fallback(request, self._client.responses.create, endpoint="responses")
@@ -162,7 +154,7 @@ def chat_completion_response(completion: ChatCompletion) -> Response:
                 "type": "reasoning",
                 "summary": [],
                 "content": [{"type": "reasoning_text", "text": reasoning_text}],
-            },
+            }
         )
     if message.content:
         output.append(
@@ -172,7 +164,7 @@ def chat_completion_response(completion: ChatCompletion) -> Response:
                 "role": "assistant",
                 "status": "completed",
                 "content": [{"type": "output_text", "text": message.content, "annotations": []}],
-            },
+            }
         )
     for call in message.tool_calls or []:
         if call.type != "function":
@@ -184,7 +176,7 @@ def chat_completion_response(completion: ChatCompletion) -> Response:
                 "type": "function_call",
                 "name": call.function.name,
                 "arguments": call.function.arguments,
-            },
+            }
         )
     if message.function_call is not None:
         output.append(
@@ -193,7 +185,7 @@ def chat_completion_response(completion: ChatCompletion) -> Response:
                 "type": "function_call",
                 "name": message.function_call.name,
                 "arguments": message.function_call.arguments,
-            },
+            }
         )
     usage = completion.usage
     parsed_usage = read_llm_usage(usage)
@@ -215,14 +207,13 @@ def chat_completion_response(completion: ChatCompletion) -> Response:
                 output_tokens=usage.completion_tokens,
                 total_tokens=usage.total_tokens,
                 input_tokens_details=InputTokensDetails.model_construct(
-                    cached_tokens=parsed_usage.cached_input_tokens,
-                    cache_write_tokens=parsed_usage.cache_write_tokens,
+                    cached_tokens=parsed_usage.cached_input_tokens, cache_write_tokens=parsed_usage.cache_write_tokens
                 ),
                 output_tokens_details=OutputTokensDetails.model_construct(
-                    reasoning_tokens=parsed_usage.reasoning_tokens,
+                    reasoning_tokens=parsed_usage.reasoning_tokens
                 ),
             )
             if usage
             else None,
-        },
+        }
     )

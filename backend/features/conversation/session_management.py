@@ -14,19 +14,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 from runtime.events.emit import emit_ws_event
 from runtime.presets import resolve_preset_meta
 from runtime.turn_ownership import conversation_is_running, conversation_lock
-from sqlalchemy import (
-    ColumnElement,
-    DateTime,
-    String,
-    and_,
-    case,
-    cast,
-    func,
-    literal,
-    literal_column,
-    or_,
-    select,
-)
+from sqlalchemy import ColumnElement, DateTime, String, and_, case, cast, func, literal, literal_column, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.conversation.asset_releases import collect_message_asset_releases
@@ -64,11 +52,7 @@ _preview_subquery = (
 
 
 def _conversation_to_session_info(
-    conv: Conversation,
-    *,
-    msg_count: int,
-    preview: str | None,
-    companion_name: str | None,
+    conv: Conversation, *, msg_count: int, preview: str | None, companion_name: str | None
 ) -> DesktopSessionInfo:
     preset = resolve_preset_meta(conv.system_preset_id) if not conv.is_automation else None
     return DesktopSessionInfo(
@@ -235,11 +219,7 @@ async def list_sessions(
         .cte("session_page")
     )
     statement = (
-        select(
-            Conversation,
-            _preview_subquery,
-            Conversation.visible_message_count.label("msg_count"),
-        )
+        select(Conversation, _preview_subquery, Conversation.visible_message_count.label("msg_count"))
         .join(page, Conversation.id == page.c.id)
         .order_by(*(column.desc() if descending else column.asc() for column, descending in ordering))
     )
@@ -255,21 +235,15 @@ async def list_sessions(
 
 
 async def patch_session(
-    user_id: int,
-    db: AsyncSession,
-    session_id: str,
-    body: DesktopSessionPatchRequest,
+    user_id: int, db: AsyncSession, session_id: str, body: DesktopSessionPatchRequest
 ) -> ConversationSnapshot:
     conversation_id = parse_session_id(session_id) if session_id.isdecimal() else None
     if conversation_id is None:
         raise RequestError(status_code=404, message="Session not found")
     conv = await db.scalar(
         select(Conversation)
-        .where(
-            Conversation.id == conversation_id,
-            Conversation.user_id == user_id,
-        )
-        .with_for_update(),
+        .where(Conversation.id == conversation_id, Conversation.user_id == user_id)
+        .with_for_update()
     )
     if conv is None:
         raise RequestError(status_code=404, message="Session not found")
@@ -308,7 +282,7 @@ async def delete_session(user_id: int, db: AsyncSession, session_id: str) -> Des
         raise RequestError(status_code=403, message="System preset conversations cannot be modified or deleted")
     descendants = select(Conversation.id).where(Conversation.parent_id == conv.id).cte("descendants", recursive=True)
     descendants = descendants.union(
-        select(Conversation.id).join(descendants, Conversation.parent_id == descendants.c.id),
+        select(Conversation.id).join(descendants, Conversation.parent_id == descendants.c.id)
     )
     subtree = sorted({conv.id, *await db.scalars(select(descendants.c.id))})
     async with AsyncExitStack() as locks:

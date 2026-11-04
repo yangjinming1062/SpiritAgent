@@ -36,30 +36,18 @@ class ReplyReplacement:
 
 @overload
 async def _replacement_candidates(
-    db: AsyncSession,
-    conv: Conversation | None,
-    message_id: int,
-    *,
-    with_message: Literal[False],
+    db: AsyncSession, conv: Conversation | None, message_id: int, *, with_message: Literal[False]
 ) -> tuple[int, int]: ...
 
 
 @overload
 async def _replacement_candidates(
-    db: AsyncSession,
-    conv: Conversation | None,
-    message_id: int,
-    *,
-    with_message: Literal[True],
+    db: AsyncSession, conv: Conversation | None, message_id: int, *, with_message: Literal[True]
 ) -> tuple[Message, Message]: ...
 
 
 async def _replacement_candidates(
-    db: AsyncSession,
-    conv: Conversation | None,
-    message_id: int,
-    *,
-    with_message: bool,
+    db: AsyncSession, conv: Conversation | None, message_id: int, *, with_message: bool
 ) -> tuple[int, int] | tuple[Message, Message]:
     """校验换回答资格并返回 (用户源行, 最新回答)；with_message 时同查询附带实体，否则仅取轻投影 id。"""
     if conv is None or conv.is_automation or conv.parent_id is not None or conv.kind not in {"standard", "special"}:
@@ -79,7 +67,7 @@ async def _replacement_candidates(
         await db.execute(
             latest_stmt.where(Message.conversation_id == conv.id, Message.role.in_(("user", "assistant")))
             .order_by(Message.id.desc())
-            .limit(1),
+            .limit(1)
         )
     ).one_or_none()
     if (
@@ -95,7 +83,7 @@ async def _replacement_candidates(
         await db.execute(
             source_stmt.where(Message.conversation_id == conv.id, Message.role == "user")
             .order_by(Message.id.desc())
-            .limit(1),
+            .limit(1)
         )
     ).one_or_none()
     if source is None or source.subtype is not None or source.id >= latest.id:
@@ -112,10 +100,7 @@ async def replacement_source_id(db: AsyncSession, user_id: int, session_id: str,
 
 
 async def reply_replacement_target(
-    db: AsyncSession,
-    user_id: int,
-    session_id: str,
-    message_id: int,
+    db: AsyncSession, user_id: int, session_id: str, message_id: int
 ) -> ReplyReplacement:
     """调用方持有会话锁；摘要覆盖或新消息出现后，旧回答不再允许更换。"""
     conv = await Conversation.by_session_id(db, session_id, user_id)

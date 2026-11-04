@@ -17,10 +17,7 @@ _SUCCESS_WITHOUT_URL_RECHECKS = 3
 
 
 async def poll_video_task(
-    provider: VideoGenProvider,
-    task_id: str,
-    *,
-    before_poll: Callable[[], Awaitable[None]] | None = None,
+    provider: VideoGenProvider, task_id: str, *, before_poll: Callable[[], Awaitable[None]] | None = None
 ) -> VideoJobStatus:
     """临时查询失败沿原句柄退避；调用方检查不参与供应商错误重试。"""
     attempt = 0
@@ -45,8 +42,7 @@ async def poll_video_task(
         else:
             if status.status == "failed":
                 logger.warning(
-                    "video task failed at provider",
-                    extra={**log_extra, "error": redact_sensitive_text(status.error)},
+                    "video task failed at provider", extra={**log_extra, "error": redact_sensitive_text(status.error)}
                 )
             if status.status == "succeeded" and not status.download_url:
                 missing_url_attempts += 1
@@ -72,5 +68,5 @@ async def poll_video_task(
                 attempt,
                 base_interval=SETTINGS.video_gen_poll_interval_seconds,
                 max_interval=SETTINGS.video_gen_poll_backoff_max_seconds,
-            ),
+            )
         )

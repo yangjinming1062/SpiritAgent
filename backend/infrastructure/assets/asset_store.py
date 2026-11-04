@@ -164,9 +164,7 @@ def _signing_key() -> bytes:
     secret = SETTINGS.companion_asset_signing_key
     if secret:
         return secret.encode("utf-8")
-    raise RuntimeError(
-        "companion_asset_signing_key is empty — lifespan startup should have failed before this point.",
-    )
+    raise RuntimeError("companion_asset_signing_key is empty — lifespan startup should have failed before this point.")
 
 
 def _sign(user_id: int, filename: str, expires_at: int) -> str:
@@ -312,18 +310,10 @@ async def _save_generation_asset_async(data: bytes, user_id: int, bare_path: str
 
 
 async def save_video_job_asset_async(
-    data: bytes,
-    *,
-    user_id: int,
-    job_id: int,
-    attempt: int,
-    generation_id: str,
-    directory: str,
+    data: bytes, *, user_id: int, job_id: int, attempt: int, generation_id: str, directory: str
 ) -> str:
     return await _save_generation_asset_async(
-        data,
-        user_id,
-        video_job_asset_path(user_id, job_id, attempt, generation_id=generation_id, directory=directory),
+        data, user_id, video_job_asset_path(user_id, job_id, attempt, generation_id=generation_id, directory=directory)
     )
 
 
@@ -332,13 +322,7 @@ def _is_generation_id(value: str) -> bool:
 
 
 def image_chain_asset_path(
-    user_id: int,
-    generation_id: str,
-    attempt: int,
-    slot: int,
-    ext: str,
-    *,
-    directory: str,
+    user_id: int, generation_id: str, attempt: int, slot: int, ext: str, *, directory: str
 ) -> str:
     if (
         user_id <= 0
@@ -359,26 +343,15 @@ def scene_wallpaper_asset_path(user_id: int, generation_id: str, *, directory: s
 
 async def save_scene_wallpaper_asset_async(data: bytes, *, user_id: int, generation_id: str, directory: str) -> str:
     return await _save_generation_asset_async(
-        data,
-        user_id,
-        scene_wallpaper_asset_path(user_id, generation_id, directory=directory),
+        data, user_id, scene_wallpaper_asset_path(user_id, generation_id, directory=directory)
     )
 
 
 async def save_image_chain_asset_async(
-    data: bytes,
-    *,
-    user_id: int,
-    generation_id: str,
-    attempt: int,
-    slot: int,
-    ext: str,
-    directory: str,
+    data: bytes, *, user_id: int, generation_id: str, attempt: int, slot: int, ext: str, directory: str
 ) -> str:
     return await _save_generation_asset_async(
-        data,
-        user_id,
-        image_chain_asset_path(user_id, generation_id, attempt, slot, ext, directory=directory),
+        data, user_id, image_chain_asset_path(user_id, generation_id, attempt, slot, ext, directory=directory)
     )
 
 
@@ -395,18 +368,10 @@ def image_chain_input_asset_path(user_id: int, generation_id: str, label: str, e
 
 
 async def save_image_chain_input_asset_async(
-    data: bytes,
-    *,
-    user_id: int,
-    generation_id: str,
-    label: str,
-    ext: str,
-    directory: str,
+    data: bytes, *, user_id: int, generation_id: str, label: str, ext: str, directory: str
 ) -> str:
     return await _save_generation_asset_async(
-        data,
-        user_id,
-        image_chain_input_asset_path(user_id, generation_id, label, ext, directory=directory),
+        data, user_id, image_chain_input_asset_path(user_id, generation_id, label, ext, directory=directory)
     )
 
 

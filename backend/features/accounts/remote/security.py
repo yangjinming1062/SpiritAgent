@@ -83,11 +83,9 @@ async def cancel_pending_pairings(db: AsyncSession, user_id: int) -> None:
     await db.execute(
         update(RemotePairing)
         .where(
-            RemotePairing.user_id == user_id,
-            RemotePairing.cancelled_at.is_(None),
-            RemotePairing.consumed_at.is_(None),
+            RemotePairing.user_id == user_id, RemotePairing.cancelled_at.is_(None), RemotePairing.consumed_at.is_(None)
         )
-        .values(cancelled_at=utc_now()),
+        .values(cancelled_at=utc_now())
     )
 
 

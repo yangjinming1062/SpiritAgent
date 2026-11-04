@@ -59,15 +59,11 @@ class Conversation(ModelBase, TimestampMixin):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     # 仅子 Agent 会话指向发起会话，随其级联删除。
     parent_id: Mapped[int | None] = mapped_column(
-        ForeignKey("conversations.id", ondelete="CASCADE"),
-        nullable=True,
-        index=True,
+        ForeignKey("conversations.id", ondelete="CASCADE"), nullable=True, index=True
     )
     # 派生来源；来源删除时置空，派生会话保留。
     forked_from_id: Mapped[int | None] = mapped_column(
-        ForeignKey("conversations.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
+        ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True, index=True
     )
     # special=唯一陪伴主会话；standard=用户创建或任务型 Cron。
     kind: Mapped[str] = mapped_column(String(32), default="standard", server_default=text("'standard'"))
@@ -92,14 +88,10 @@ class Conversation(ModelBase, TimestampMixin):
 
     user: Mapped["User"] = relationship(back_populates="conversations")
     parent: Mapped["Conversation | None"] = relationship(
-        remote_side="Conversation.id",
-        foreign_keys="Conversation.parent_id",
-        back_populates="children",
+        remote_side="Conversation.id", foreign_keys="Conversation.parent_id", back_populates="children"
     )
     children: Mapped[list["Conversation"]] = relationship(
-        foreign_keys="Conversation.parent_id",
-        back_populates="parent",
-        passive_deletes=True,
+        foreign_keys="Conversation.parent_id", back_populates="parent", passive_deletes=True
     )
     messages: Mapped[list["Message"]] = relationship(back_populates="conversation", passive_deletes=True)
 
@@ -131,12 +123,10 @@ class Message(ModelBase):
             postgresql_where=text("role = 'user' AND content IS NOT NULL AND content != ''"),
         ),
         CheckConstraint(
-            "content_type IN ('text', 'multimodal_v1', 'companion_reply')",
-            name="ck_messages_content_type",
+            "content_type IN ('text', 'multimodal_v1', 'companion_reply')", name="ck_messages_content_type"
         ),
         CheckConstraint(
-            "(content_type = 'companion_reply') = (reply_json IS NOT NULL)",
-            name="ck_messages_reply_delivery",
+            "(content_type = 'companion_reply') = (reply_json IS NOT NULL)", name="ck_messages_reply_delivery"
         ),
         CheckConstraint(
             "content_type != 'companion_reply' OR (role = 'assistant' AND content IS NOT NULL AND tool_calls IS NULL)",
@@ -155,9 +145,7 @@ class Message(ModelBase):
     completion_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     turn_duration_ms: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     content_type: Mapped[Literal["text", "multimodal_v1", "companion_reply"]] = mapped_column(
-        String(32),
-        default="text",
-        server_default=text("'text'"),
+        String(32), default="text", server_default=text("'text'")
     )
     # 文本会话的生成附件；结构化回复的媒体保存在 reply_json。
     media_json: Mapped[list[Any] | None] = mapped_column(JSONB, nullable=True)
@@ -190,6 +178,5 @@ class MessageVoiceRef(ModelBase):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     message_id: Mapped[int] = mapped_column(ForeignKey("messages.id", ondelete="CASCADE"), index=True)
     voice_id: Mapped[int] = mapped_column(
-        ForeignKey("custom_voices.id", ondelete="NO ACTION", deferrable=True, initially="DEFERRED"),
-        index=True,
+        ForeignKey("custom_voices.id", ondelete="NO ACTION", deferrable=True, initially="DEFERRED"), index=True
     )

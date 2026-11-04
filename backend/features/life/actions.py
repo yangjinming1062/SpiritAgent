@@ -109,10 +109,7 @@ class ReadingResultView(ActionInput):
 class NextAction(ActionInput):
     description: str = Field(min_length=1, max_length=1000, description="供执行器登记的动作描述，不代表已经执行")
     narrative: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=1000,
-        description="伙伴面向用户的第一人称计划；不代表已经执行",
+        default=None, min_length=1, max_length=1000, description="伙伴面向用户的第一人称计划；不代表已经执行"
     )
     action: LifeAction
     not_before: AwareDatetime | None = Field(

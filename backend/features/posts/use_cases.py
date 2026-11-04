@@ -6,11 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.entries.contracts import EntryError
 from features.entries.queries import list_comments
-from features.posts.publication import (
-    discard_publication_media,
-    list_publication_recoveries,
-    publication_recovery,
-)
+from features.posts.publication import discard_publication_media, list_publication_recoveries, publication_recovery
 from features.posts.replies import schedule_companion_reply
 from features.posts.schemas import (
     PostCommentCreateRequest,
@@ -50,9 +46,7 @@ async def get_posts(user_id: int, db: AsyncSession, cursor: str | None = None, l
     except PostError as exc:
         raise RequestError(status_code=400, message=str(exc)) from exc
     return PostListResponse(
-        posts=[response_for_post(row) for row in rows],
-        next_cursor=next_cursor,
-        unread_post_ids=unread_ids,
+        posts=[response_for_post(row) for row in rows], next_cursor=next_cursor, unread_post_ids=unread_ids
     )
 
 
@@ -61,9 +55,7 @@ async def get_posts_unread(user_id: int, db: AsyncSession) -> PostUnreadResponse
 
 
 async def read_posts(user_id: int, db: AsyncSession, body: PostReadRequest) -> PostUnreadResponse:
-    return PostUnreadResponse(
-        has_unread=await mark_posts_read(db, user_id, body.post_ids),
-    )
+    return PostUnreadResponse(has_unread=await mark_posts_read(db, user_id, body.post_ids))
 
 
 async def get_publication_recoveries(
@@ -120,10 +112,7 @@ async def get_comments(
 
 
 async def post_comment(
-    user_id: int,
-    db: AsyncSession,
-    post_id: ResourceId,
-    body: PostCommentCreateRequest,
+    user_id: int, db: AsyncSession, post_id: ResourceId, body: PostCommentCreateRequest
 ) -> PostCommentResponse:
     try:
         row = await create_comment(db, user_id, post_id, body.content)

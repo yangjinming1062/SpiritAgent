@@ -60,11 +60,7 @@ class NativeMemory:
                 async with session_scope() as db:
                     config = await resolve_user_llm_config(db, self._scope.user_id, self._task)
                 rows = await assess_memory_changes(
-                    self._scope,
-                    self._source,
-                    self._inspection,
-                    llm_config=config,
-                    proposal=proposal.model_dump(),
+                    self._scope, self._source, self._inspection, llm_config=config, proposal=proposal.model_dump()
                 )
                 self._inspection = None
                 return json.dumps(
@@ -87,12 +83,7 @@ class NativeMemory:
                     return tool_error("Provide a non-empty query")
                 vector = await embed_memory_text(self._scope.user_id, query)
                 async with session_scope() as db:
-                    rows = await retrieve_hybrid_memories(
-                        db,
-                        self._scope,
-                        query,
-                        query_embedding=vector,
-                    )
+                    rows = await retrieve_hybrid_memories(db, self._scope, query, query_embedding=vector)
                 return json.dumps(
                     {"memories": [row.model_dump(mode="json") for row in rows]}, default=str, ensure_ascii=False
                 )

@@ -63,11 +63,7 @@ def _path(value: str | None) -> str | None:
 
 def _roles(asset: VisualAsset, snapshot: VisualSnapshot) -> dict[str, str]:
     source = snapshot.source
-    paths = {
-        "media": asset.media_path,
-        "poster": asset.poster_path,
-        "input": asset.input_image_path,
-    }
+    paths = {"media": asset.media_path, "poster": asset.poster_path, "input": asset.input_image_path}
     if asset.body is not None:
         paths |= {
             "mask": asset.body.mask_path,
@@ -75,11 +71,7 @@ def _roles(asset: VisualAsset, snapshot: VisualSnapshot) -> dict[str, str]:
             "last_frame": asset.body.last_frame_path,
         }
     if source.kind in ("actor", "cinematic"):
-        paths |= {
-            "identity": source.identity_path,
-            "portrait": source.portrait_path,
-            "outfit": source.outfit.path,
-        }
+        paths |= {"identity": source.identity_path, "portrait": source.portrait_path, "outfit": source.outfit.path}
     if source.kind in ("scene", "cinematic"):
         paths["scene"] = source.scene.path
     if source.kind == "analysis":
@@ -177,8 +169,7 @@ def _publish_entity(
                 *([] if isinstance(job, PublicationTarget) else [items.c.asset_kind == snapshot.kind]),
                 items.c.current_version_id.in_(
                     select(versions.c.id).where(
-                        versions.c.visual_id == job.target_visual_id,
-                        versions.c.number == job.expected_version,
+                        versions.c.visual_id == job.target_visual_id, versions.c.number == job.expected_version
                     )
                 ),
             )
@@ -236,8 +227,7 @@ def _publish_entity(
     if asset.media_kind == "image" and not regenerate:
         # UPSERT RETURNING 能读取并发获胜者的完整版本；普通SELECT仍使用语句开始时的快照。
         version_write = version_write.on_conflict_do_update(
-            index_elements=[versions.c.id],
-            set_={"id": version_write.excluded.id},
+            index_elements=[versions.c.id], set_={"id": version_write.excluded.id}
         )
     version = version_write.returning(*versions.c).cte(f"{prefix}_version")
     bindings = (
@@ -357,9 +347,7 @@ async def _publish(
     result = (
         update(details)
         .where(details.c.id == job.id, details.c.owner_id == item.c.user_id, version.c.visual_id == item.c.id)
-        .values(
-            **pointers,
-        )
+        .values(**pointers)
         .returning(details.c.result_image_id, details.c.result_image_version_id)
         .cte("job_result")
     )
@@ -427,24 +415,13 @@ async def _publish(
 
 
 async def publish_visual_result(
-    db: AsyncSession,
-    user_id: int,
-    job: VisualJob,
-    asset: VisualAsset,
-    *,
-    snapshot: VisualSnapshot,
-    checkpoint: dict,
+    db: AsyncSession, user_id: int, job: VisualJob, asset: VisualAsset, *, snapshot: VisualSnapshot, checkpoint: dict
 ) -> VisualPublication:
     return await _publish(db, user_id, job, asset, snapshot=snapshot, role="result", checkpoint=checkpoint)
 
 
 async def publish_imported_visual(
-    db: AsyncSession,
-    user_id: int,
-    asset: VisualAsset,
-    snapshot: VisualSnapshot,
-    *,
-    title: str,
+    db: AsyncSession, user_id: int, asset: VisualAsset, snapshot: VisualSnapshot, *, title: str
 ) -> int:
     """原件经确定性检查后直接发布；不制造生成任务或视频起始图成品。"""
 
@@ -494,12 +471,7 @@ async def publish_import_revision(
 
 
 async def publish_opening_result(
-    db: AsyncSession,
-    user_id: int,
-    job: VisualJob,
-    asset: VisualAsset,
-    *,
-    snapshot: VisualSnapshot,
+    db: AsyncSession, user_id: int, job: VisualJob, asset: VisualAsset, *, snapshot: VisualSnapshot
 ) -> PublishedVisual:
     if asset.media_kind != "image":
         raise VisualStateError("起始画面必须是图片")

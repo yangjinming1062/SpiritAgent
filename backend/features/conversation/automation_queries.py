@@ -27,5 +27,5 @@ async def owned_task_conversation_id(db: AsyncSession, user_id: int, conversatio
             Conversation.user_id == user_id,
             Conversation.kind == STANDARD_KIND,
             Conversation.is_automation.is_(True),
-        ),
+        )
     )

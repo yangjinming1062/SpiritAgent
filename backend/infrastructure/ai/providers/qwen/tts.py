@@ -107,10 +107,7 @@ class QwenTTSProvider(TTSProvider):
 
     async def synthesize(self, text: str, *, voice: str, speech_style: SpeechStyle | None) -> TTSResult:
         chosen_voice = pick_catalog_voice(voice, self.VOICE_CATALOG, provider=self.provider_name)
-        payload = {
-            "model": self.config.model,
-            "input": {"text": text, "voice": chosen_voice},
-        }
+        payload = {"model": self.config.model, "input": {"text": text, "voice": chosen_voice}}
         resp = await self._client.post("/services/aigc/multimodal-generation/generation", json=payload)
         body = raise_for_qwen_response(resp)
 
@@ -127,7 +124,7 @@ class QwenTTSProvider(TTSProvider):
                         FailoverReason.result_download_failed,
                         classify_api_error(exc).status_code,
                         "语音已生成，但音频下载失败。",
-                    ),
+                    )
                 ) from exc
         else:
             raise RuntimeError(f"qwen tts returned no audio: {body}")

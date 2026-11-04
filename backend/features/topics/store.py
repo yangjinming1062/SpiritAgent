@@ -31,8 +31,7 @@ def _validate_scope(scope: MemoryScope) -> None:
 
 
 def _scope(
-    model: type[CompanionTopic] | type[TopicBatch] | type[TopicUsage] | type[TopicFeedback],
-    scope: MemoryScope,
+    model: type[CompanionTopic] | type[TopicBatch] | type[TopicUsage] | type[TopicFeedback], scope: MemoryScope
 ) -> tuple[Any, Any]:
     _validate_scope(scope)
     return model.user_id == scope.user_id, model.system_preset_id == scope.system_preset_id
@@ -40,7 +39,7 @@ def _scope(
 
 async def load_batch(db: AsyncSession, scope: MemoryScope, activity_date: date) -> TopicBatchSnapshot | None:
     row = await db.scalar(
-        select(TopicBatch).where(*_scope(TopicBatch, scope), TopicBatch.activity_date == activity_date),
+        select(TopicBatch).where(*_scope(TopicBatch, scope), TopicBatch.activity_date == activity_date)
     )
     return TopicBatchSnapshot.model_validate(row) if row else None
 
@@ -85,7 +84,7 @@ async def _locked_batch(db: AsyncSession, batch_id: int, scope: MemoryScope) -> 
         select(TopicBatch)
         .where(TopicBatch.id == batch_id, *_scope(TopicBatch, scope))
         .with_for_update()
-        .execution_options(populate_existing=True),
+        .execution_options(populate_existing=True)
     )
     if row is None:
         raise ValueError("Topic batch is missing")
@@ -93,10 +92,7 @@ async def _locked_batch(db: AsyncSession, batch_id: int, scope: MemoryScope) -> 
 
 
 async def save_checkpoint(
-    db: AsyncSession,
-    batch_id: int,
-    scope: MemoryScope,
-    checkpoint: dict[str, Any],
+    db: AsyncSession, batch_id: int, scope: MemoryScope, checkpoint: dict[str, Any]
 ) -> TopicBatchSnapshot:
     row = await _locked_batch(db, batch_id, scope)
     if row.status == "collecting":
@@ -106,12 +102,7 @@ async def save_checkpoint(
 
 
 async def reserve_request(
-    db: AsyncSession,
-    batch_id: int,
-    scope: MemoryScope,
-    *,
-    kind: Literal["search", "detail"],
-    limit: int,
+    db: AsyncSession, batch_id: int, scope: MemoryScope, *, kind: Literal["search", "detail"], limit: int
 ) -> bool:
     row = await _locked_batch(db, batch_id, scope)
     column = "search_requests" if kind == "search" else "detail_requests"
@@ -123,12 +114,7 @@ async def reserve_request(
 
 
 async def publish_batch(
-    db: AsyncSession,
-    batch_id: int,
-    scope: MemoryScope,
-    selections: Sequence[TopicSelection],
-    *,
-    limit: int = 5,
+    db: AsyncSession, batch_id: int, scope: MemoryScope, selections: Sequence[TopicSelection], *, limit: int = 5
 ) -> TopicBatchSnapshot:
     row = await _locked_batch(db, batch_id, scope)
     if row.status != "collecting":
@@ -157,7 +143,7 @@ async def publish_batch(
                 *_scope(CompanionTopic, scope),
                 CompanionTopic.platform == source.platform,
                 CompanionTopic.source_id == source.source_id,
-            ),
+            )
         )
         if existing is not None:
             continue
@@ -169,7 +155,7 @@ async def publish_batch(
                 **source.model_dump(exclude={"url"}),
                 url=canonical,
                 **selection.model_dump(exclude={"source"}),
-            ),
+            )
         )
     row.status = "ready"
     row.error = None
@@ -211,25 +197,17 @@ async def _load_topic_snapshots(db: AsyncSession, scope: MemoryScope, *where: An
             .join(TopicBatch, TopicBatch.id == CompanionTopic.batch_id)
             .outerjoin(TopicFeedback, TopicFeedback.topic_id == CompanionTopic.id)
             .where(*_scope(CompanionTopic, scope), *where)
-            .order_by(CompanionTopic.id),
+            .order_by(CompanionTopic.id)
         )
     ).all()
     return [_snapshot(topic, was_used, feedback) for topic, was_used, feedback in rows]
 
 
 async def load_prompt_topics(
-    db: AsyncSession,
-    scope: MemoryScope,
-    now: datetime,
-    *,
-    historical_topic_ids: Sequence[int] = (),
+    db: AsyncSession, scope: MemoryScope, now: datetime, *, historical_topic_ids: Sequence[int] = ()
 ) -> list[TopicSnapshot]:
     used = _used(scope)
-    return await _load_topic_snapshots(
-        db,
-        scope,
-        or_(_active(now), CompanionTopic.id.in_(historical_topic_ids) & used),
-    )
+    return await _load_topic_snapshots(db, scope, or_(_active(now), CompanionTopic.id.in_(historical_topic_ids) & used))
 
 
 async def read_saved_topics(db: AsyncSession, scope: MemoryScope, topic_ids: Sequence[int]) -> list[TopicSnapshot]:
@@ -245,7 +223,7 @@ async def has_unshared_topics(db: AsyncSession, scope: MemoryScope, now: datetim
             select(CompanionTopic.id)
             .join(TopicBatch)
             .where(*_scope(CompanionTopic, scope), _active(now), ~_used(scope))
-            .limit(1),
+            .limit(1)
         )
         is not None
     )
@@ -256,10 +234,7 @@ async def load_batch_topics(db: AsyncSession, scope: MemoryScope, batch_id: int)
 
 
 async def resolve_topic_cards(
-    db: AsyncSession,
-    scope: MemoryScope,
-    topic_ids: Sequence[int],
-    now: datetime,
+    db: AsyncSession, scope: MemoryScope, topic_ids: Sequence[int], now: datetime
 ) -> list[TopicCardSnapshot]:
     snapshots = await load_prompt_topics(db, scope, now, historical_topic_ids=topic_ids)
     by_id = {topic.topic_id: topic for topic in snapshots}
@@ -294,8 +269,8 @@ async def record_topic_usage(
                     *_scope(CompanionTopic, scope),
                     CompanionTopic.id.in_(topic_ids),
                     or_(_active(authorized_at), _used(scope)),
-                ),
-            ),
+                )
+            )
         )
         available = {topic.id for topic in topics}
         if any(type(topic_id) is not int or topic_id not in available for topic_id in topic_ids):
@@ -306,18 +281,13 @@ async def record_topic_usage(
     existing = set(
         await db.scalars(
             select(TopicUsage.topic_id).where(
-                *_scope(TopicUsage, scope),
-                TopicUsage.topic_id.in_(ids),
-                TopicUsage.message_id == message_id,
-            ),
-        ),
+                *_scope(TopicUsage, scope), TopicUsage.topic_id.in_(ids), TopicUsage.message_id == message_id
+            )
+        )
     )
     db.add_all(
         TopicUsage(
-            user_id=scope.user_id,
-            system_preset_id=scope.system_preset_id,
-            topic_id=topic_id,
-            message_id=message_id,
+            user_id=scope.user_id, system_preset_id=scope.system_preset_id, topic_id=topic_id, message_id=message_id
         )
         for topic_id in ids
         if topic_id not in existing
@@ -326,18 +296,15 @@ async def record_topic_usage(
 
 
 async def validate_restored_topic_cards(
-    db: AsyncSession,
-    scope: MemoryScope,
-    cards: Sequence[TopicCardSnapshot],
+    db: AsyncSession, scope: MemoryScope, cards: Sequence[TopicCardSnapshot]
 ) -> None:
     """恢复使用证据前验证来源绑定；恢复资料不能扩大来源归属或更换原文地址。"""
     topics = list(
         await db.scalars(
             select(CompanionTopic).where(
-                *_scope(CompanionTopic, scope),
-                CompanionTopic.id.in_([card.topic_id for card in cards]),
-            ),
-        ),
+                *_scope(CompanionTopic, scope), CompanionTopic.id.in_([card.topic_id for card in cards])
+            )
+        )
     )
     by_id = {topic.id: topic for topic in topics}
     for card in cards:
@@ -353,11 +320,7 @@ async def validate_restored_topic_cards(
 
 
 async def recent_topic_feedback(
-    db: AsyncSession,
-    scope: MemoryScope,
-    since: datetime,
-    *,
-    limit: int | None = 40,
+    db: AsyncSession, scope: MemoryScope, since: datetime, *, limit: int | None = 40
 ) -> list[dict[str, Any]]:
     usages = (
         select(TopicUsage.topic_id, func.max(TopicUsage.created_at).label("used_at"))
@@ -375,7 +338,7 @@ async def recent_topic_feedback(
                 or_(usages.c.used_at >= since, TopicFeedback.updated_at >= since, CompanionTopic.created_at >= since),
             )
             .order_by(func.coalesce(TopicFeedback.updated_at, usages.c.used_at, CompanionTopic.created_at).desc())
-            .limit(limit),
+            .limit(limit)
         )
     ).all()
     return [
@@ -390,7 +353,7 @@ async def recent_topic_feedback(
 
 async def _feedback_topic(db: AsyncSession, scope: MemoryScope, topic_id: int) -> CompanionTopic:
     topic = await db.scalar(
-        select(CompanionTopic).where(CompanionTopic.id == topic_id, *_scope(CompanionTopic, scope), _used(scope)),
+        select(CompanionTopic).where(CompanionTopic.id == topic_id, *_scope(CompanionTopic, scope), _used(scope))
     )
     if topic is None:
         raise RequestError(status_code=404, message="话题不存在或尚未分享")
@@ -398,9 +361,7 @@ async def _feedback_topic(db: AsyncSession, scope: MemoryScope, topic_id: int) -
 
 
 async def get_topic_feedback(
-    db: AsyncSession,
-    scope: MemoryScope,
-    topic_ids: Sequence[int],
+    db: AsyncSession, scope: MemoryScope, topic_ids: Sequence[int]
 ) -> list[TopicFeedbackSnapshot]:
     ids = list(dict.fromkeys(topic_ids))
     if not ids:
@@ -408,7 +369,7 @@ async def get_topic_feedback(
     rows = await db.execute(
         select(CompanionTopic.id, TopicFeedback.value, TopicFeedback.updated_at)
         .outerjoin(TopicFeedback, and_(TopicFeedback.topic_id == CompanionTopic.id, *_scope(TopicFeedback, scope)))
-        .where(*_scope(CompanionTopic, scope), CompanionTopic.id.in_(ids), _used(scope)),
+        .where(*_scope(CompanionTopic, scope), CompanionTopic.id.in_(ids), _used(scope))
     )
     snapshots = {
         topic_id: TopicFeedbackSnapshot(topic_id=topic_id, value=value, updated_at=updated_at)
@@ -420,24 +381,18 @@ async def get_topic_feedback(
 
 
 async def set_topic_feedback(
-    db: AsyncSession,
-    scope: MemoryScope,
-    topic_id: int,
-    value: TopicFeedbackValue | None,
+    db: AsyncSession, scope: MemoryScope, topic_id: int, value: TopicFeedbackValue | None
 ) -> TopicFeedbackSnapshot:
     if value not in {"like", "less", None}:
         raise ValueError("Invalid topic feedback value")
     await lock_account(db, scope.user_id)
     await _feedback_topic(db, scope, topic_id)
     row = await db.scalar(
-        select(TopicFeedback).where(*_scope(TopicFeedback, scope), TopicFeedback.topic_id == topic_id),
+        select(TopicFeedback).where(*_scope(TopicFeedback, scope), TopicFeedback.topic_id == topic_id)
     )
     if row is None:
         row = TopicFeedback(
-            user_id=scope.user_id,
-            system_preset_id=scope.system_preset_id,
-            topic_id=topic_id,
-            value=value,
+            user_id=scope.user_id, system_preset_id=scope.system_preset_id, topic_id=topic_id, value=value
         )
         db.add(row)
     elif row.value == value:

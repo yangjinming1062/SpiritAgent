@@ -20,11 +20,7 @@ from entrypoints.http.routing import get_router
 router = get_router(remote=True)
 
 
-@router.post(
-    "/ticket",
-    response_model=GatewayTicketResponse,
-    openapi_extra=operation_policy(ipc=False),
-)
+@router.post("/ticket", response_model=GatewayTicketResponse, openapi_extra=operation_policy(ipc=False))
 async def gateway_ticket(
     request: Request,
     response: Response,
@@ -33,11 +29,7 @@ async def gateway_ticket(
     credentials: HTTPAuthorizationCredentials | None = Depends(BEARER_SCHEME),
 ) -> GatewayTicketResponse:
     identity = await get_request_identity(
-        request,
-        db,
-        credentials,
-        content_only=False,
-        stream_id=body.stream_id if body else None,
+        request, db, credentials, content_only=False, stream_id=body.stream_id if body else None
     )
     response.headers["Cache-Control"] = "no-store"
     return issue_gateway_ticket(identity)

@@ -14,10 +14,7 @@ async def read_feedback(db: AsyncSession, user_id: int, topic_ids: Sequence[int]
 
 
 async def update_feedback(
-    db: AsyncSession,
-    user_id: int,
-    topic_id: int,
-    body: TopicFeedbackRequest,
+    db: AsyncSession, user_id: int, topic_id: int, body: TopicFeedbackRequest
 ) -> TopicFeedbackSnapshot:
     result = await set_topic_feedback(db, MemoryScope(user_id, "companion"), topic_id, body.value)
     await db.commit()

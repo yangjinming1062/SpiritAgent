@@ -7,12 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .contracts import NarrativeMemorySnapshot
-from .memory_store import (
-    active_memory_filter,
-    memory_write_lock,
-    scope_filter,
-    upsert_slotted_memory,
-)
+from .memory_store import active_memory_filter, memory_write_lock, scope_filter, upsert_slotted_memory
 from .models import Memory
 
 

@@ -7,17 +7,7 @@ from uuid import uuid4
 
 from infrastructure.job_models import JobRecord
 from infrastructure.models import ModelBase, TimestampMixin
-from sqlalchemy import (
-    BigInteger,
-    DateTime,
-    ForeignKey,
-    Integer,
-    String,
-    Text,
-    UniqueConstraint,
-    func,
-    text,
-)
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 

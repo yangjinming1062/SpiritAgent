@@ -78,11 +78,7 @@ def track_user_task(
 ) -> None:
     """登记用户后台任务；可取消任务在维护期立即取消，付费生成任务则等待自然落地。"""
     TASK_SUPERVISOR.register(
-        task,
-        owner=owner,
-        user_id=user_id,
-        cancel_on_maintenance=cancel_on_maintenance,
-        on_error=on_error,
+        task, owner=owner, user_id=user_id, cancel_on_maintenance=cancel_on_maintenance, on_error=on_error
     )
     if cancel_on_maintenance and user_id in _MAINTENANCE_USERS and not task.done():
         cancel_tasks((task,))

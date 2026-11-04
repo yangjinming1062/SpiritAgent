@@ -9,10 +9,7 @@ from .naming import drain_visual_title_jobs, resume_visual_title_jobs, stop_visu
 def runtime_participants() -> tuple[RuntimeParticipant, ...]:
     return (
         RuntimeParticipant(
-            "visuals.generation",
-            recover=resume_visual_jobs,
-            resume_user=resume_visual_jobs,
-            drain=drain,
+            "visuals.generation", recover=resume_visual_jobs, resume_user=resume_visual_jobs, drain=drain
         ),
         RuntimeParticipant(
             "visuals.naming",

@@ -344,10 +344,7 @@ async def take_import_operation(work: ImportWork) -> ImportComponent | None:
     async with SESSION_LOCAL() as db:
         job = await db.scalar(
             select(VisualImportJob)
-            .where(
-                VisualImportJob.id == work.id,
-                VisualImportJob.user_id == work.user_id,
-            )
+            .where(VisualImportJob.id == work.id, VisualImportJob.user_id == work.user_id)
             .with_for_update()
         )
         require_import_execution(job, work)
@@ -448,10 +445,7 @@ async def save_import_progress(
         async with SESSION_LOCAL() as db:
             job = await db.scalar(
                 select(VisualImportJob)
-                .where(
-                    VisualImportJob.id == work.id,
-                    VisualImportJob.user_id == work.user_id,
-                )
+                .where(VisualImportJob.id == work.id, VisualImportJob.user_id == work.user_id)
                 .with_for_update()
             )
             require_import_execution(job, work)

@@ -96,33 +96,22 @@ def _qr_png(value: Any) -> str:
 
 class XiaohongshuServiceClient:
     async def _request(
-        self,
-        path: str,
-        *,
-        payload: dict[str, Any],
-        before_request: RequestGuard | None = None,
+        self, path: str, *, payload: dict[str, Any], before_request: RequestGuard | None = None
     ) -> dict[str, Any]:
         if before_request is not None:
             await before_request()
         try:
             async with asyncio.timeout(_TIMEOUT_SECONDS):
                 async with trusted_service_async_client(
-                    _BASE_URL,
-                    timeout=httpx.Timeout(30, connect=10, pool=10),
+                    _BASE_URL, timeout=httpx.Timeout(30, connect=10, pool=10)
                 ) as client:
-                    async with client.stream(
-                        "POST",
-                        _BASE_URL + path,
-                        json=payload,
-                    ) as response:
+                    async with client.stream("POST", _BASE_URL + path, json=payload) as response:
                         status_code = response.status_code
                         body = await read_capped_response(
                             response,
                             max_bytes=_MAX_RESPONSE_BYTES,
                             too_large=SocialSourceError(
-                                "Xiaohongshu response exceeded its limit",
-                                code=422,
-                                reason="response_invalid",
+                                "Xiaohongshu response exceeded its limit", code=422, reason="response_invalid"
                             ),
                         )
             try:
@@ -130,18 +119,14 @@ class XiaohongshuServiceClient:
             except (ValueError, UnicodeError, RecursionError):
                 if 200 <= status_code < 300:
                     raise SocialSourceError(
-                        "Xiaohongshu service response is invalid",
-                        code=422,
-                        reason="response_invalid",
+                        "Xiaohongshu service response is invalid", code=422, reason="response_invalid"
                     ) from None
                 raw = None
         except (httpx.HTTPError, TimeoutError):
             raise SocialSourceError("Xiaohongshu service is unavailable", reason="network_error") from None
         except (ValueError, UnicodeError, RecursionError):
             raise SocialSourceError(
-                "Xiaohongshu service response is invalid",
-                code=422,
-                reason="response_invalid",
+                "Xiaohongshu service response is invalid", code=422, reason="response_invalid"
             ) from None
         if not 200 <= status_code < 300:
             reason = (
@@ -169,9 +154,7 @@ class XiaohongshuServiceClient:
             raise SocialSourceError("Xiaohongshu service rejected the operation", code=status_code, reason=reason)
         if not isinstance(raw, dict) or raw.get("success") is not True or not isinstance(raw.get("data"), dict):
             raise SocialSourceError(
-                "Xiaohongshu service returned an invalid result",
-                code=422,
-                reason="response_invalid",
+                "Xiaohongshu service returned an invalid result", code=422, reason="response_invalid"
             )
         return raw["data"]
 
@@ -188,27 +171,19 @@ class XiaohongshuServiceClient:
                 raise ValueError("Invalid QR expiry")
         except (KeyError, TypeError, ValueError):
             raise SocialSourceError("Xiaohongshu QR expiry is invalid", code=422, reason="response_invalid") from None
-        return SocialLoginQrCode(
-            image=_qr_png(data.get("img")),
-            expires_at=expires_at,
-            session_id=session_id,
-        )
+        return SocialLoginQrCode(image=_qr_png(data.get("img")), expires_at=expires_at, session_id=session_id)
 
     async def login_session(self, owner: str, session_id: str) -> SocialLoginResult:
         _validate_owner(owner)
         if not re.fullmatch(_SESSION_ID_PATTERN, session_id):
             raise ValueError("Invalid login session ID")
-        data = await self._request(
-            "/api/v1/accounts/login/session",
-            payload={"owner": owner, "session_id": session_id},
-        )
+        data = await self._request("/api/v1/accounts/login/session", payload={"owner": owner, "session_id": session_id})
         return _session_status(data, session_id)
 
     async def submit_verification(self, owner: str, payload: SocialLoginVerification) -> SocialLoginResult:
         _validate_owner(owner)
         data = await self._request(
-            "/api/v1/accounts/login/verification",
-            payload={"owner": owner, **payload.model_dump()},
+            "/api/v1/accounts/login/verification", payload={"owner": owner, **payload.model_dump()}
         )
         return _session_status(data, payload.session_id)
 
@@ -216,17 +191,10 @@ class XiaohongshuServiceClient:
         _validate_owner(owner)
         if not re.fullmatch(_SESSION_ID_PATTERN, session_id):
             raise ValueError("Invalid login session ID")
-        await self._request(
-            "/api/v1/accounts/login/cancel",
-            payload={"owner": owner, "session_id": session_id},
-        )
+        await self._request("/api/v1/accounts/login/cancel", payload={"owner": owner, "session_id": session_id})
 
     async def search_feeds(
-        self,
-        keyword: str,
-        *,
-        cookies: list[dict[str, JsonValue]],
-        before_request: RequestGuard | None = None,
+        self, keyword: str, *, cookies: list[dict[str, JsonValue]], before_request: RequestGuard | None = None
     ) -> dict[str, Any]:
         return await self._request(
             "/api/v1/accounts/feeds/search",

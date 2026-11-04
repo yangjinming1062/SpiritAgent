@@ -24,10 +24,7 @@ _VOICE_DESCRIPTION_TASK = """根据角色资料写出日常说话的音色描述
 
 
 async def generate_voice_prompt(
-    user_id: int,
-    current_prompt: str = "",
-    feedback: str = "",
-    preference: str = "",
+    user_id: int, current_prompt: str = "", feedback: str = "", preference: str = ""
 ) -> VoicePromptResponse:
     current_prompt, feedback, preference = current_prompt.strip(), feedback.strip(), preference.strip()
     if len(current_prompt) > MAX_VOICE_DESIGN_PROMPT_CHARS or max(len(feedback), len(preference)) > 2000:

@@ -3,11 +3,7 @@ from pathlib import Path
 from typing import Any, Literal, Self
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import (
-    BaseSettings,
-    PydanticBaseSettingsSource,
-    SettingsConfigDict,
-)
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 from sqlalchemy import URL
 
 from infrastructure.ai.config import AIConfig
@@ -116,20 +112,12 @@ class Settings(BaseSettings):
     llm_max_retry_delay: float = Field(default=60.0, ge=0, validation_alias="LLM_MAX_RETRY_DELAY")
 
     video_gen_poll_interval_seconds: float = Field(
-        default=5.0,
-        gt=0,
-        validation_alias="VIDEO_GEN_POLL_INTERVAL_SECONDS",
+        default=5.0, gt=0, validation_alias="VIDEO_GEN_POLL_INTERVAL_SECONDS"
     )
     video_gen_poll_backoff_max_seconds: float = Field(
-        default=40.0,
-        gt=0,
-        validation_alias="VIDEO_GEN_POLL_BACKOFF_MAX_SECONDS",
+        default=40.0, gt=0, validation_alias="VIDEO_GEN_POLL_BACKOFF_MAX_SECONDS"
     )
-    video_gen_download_max_bytes: int = Field(
-        default=209715200,
-        gt=0,
-        validation_alias="VIDEO_GEN_DOWNLOAD_MAX_BYTES",
-    )
+    video_gen_download_max_bytes: int = Field(default=209715200, gt=0, validation_alias="VIDEO_GEN_DOWNLOAD_MAX_BYTES")
 
     web_search_backend: str = Field(default="ddgs", validation_alias="WEB_SEARCH_BACKEND")
     web_extract_backend: str = Field(default="tavily", validation_alias="WEB_EXTRACT_BACKEND")
@@ -141,26 +129,17 @@ class Settings(BaseSettings):
     # 服务更新器共享 socket 目录；目录为空或没有 socket 时按未启用处理。
     service_updater_socket_dir: str = Field(default="", validation_alias="SERVICE_UPDATER_SOCKET_DIR")
     topic_search_requests_per_night: int = Field(
-        default=6,
-        ge=0,
-        le=60,
-        validation_alias="TOPIC_SEARCH_REQUESTS_PER_NIGHT",
+        default=6, ge=0, le=60, validation_alias="TOPIC_SEARCH_REQUESTS_PER_NIGHT"
     )
     topic_candidate_limit: int = Field(default=60, ge=0, le=300, validation_alias="TOPIC_CANDIDATE_LIMIT")
     topic_detail_requests_per_night: int = Field(
-        default=10,
-        ge=0,
-        le=60,
-        validation_alias="TOPIC_DETAIL_REQUESTS_PER_NIGHT",
+        default=10, ge=0, le=60, validation_alias="TOPIC_DETAIL_REQUESTS_PER_NIGHT"
     )
     topic_reserve_limit: int = Field(default=5, ge=0, le=5, validation_alias="TOPIC_RESERVE_LIMIT")
 
     # 与会话级覆盖同范围：会话设置中低于 0.3 的阈值按无效处理。
     context_compression_threshold: float = Field(
-        default=0.70,
-        ge=0.3,
-        le=1,
-        validation_alias="CONTEXT_COMPRESSION_THRESHOLD",
+        default=0.70, ge=0.3, le=1, validation_alias="CONTEXT_COMPRESSION_THRESHOLD"
     )
     context_summary_target_tokens: int = Field(default=5000, gt=0, validation_alias="CONTEXT_SUMMARY_TARGET_TOKENS")
     enable_context_compression: bool = Field(default=True, validation_alias="ENABLE_CONTEXT_COMPRESSION")
@@ -168,37 +147,25 @@ class Settings(BaseSettings):
 
     # 陪伴交互节奏：桌面互动的 LLM 成本窗口与主动行为的静默门槛。
     companion_idle_expression_min_interval_seconds: float = Field(
-        default=2.0,
-        gt=0,
-        validation_alias="COMPANION_IDLE_EXPRESSION_MIN_INTERVAL_SECONDS",
+        default=2.0, gt=0, validation_alias="COMPANION_IDLE_EXPRESSION_MIN_INTERVAL_SECONDS"
     )
     companion_contact_quiet_seconds: float = Field(
-        default=60.0,
-        gt=0,
-        validation_alias="COMPANION_CONTACT_QUIET_SECONDS",
+        default=60.0, gt=0, validation_alias="COMPANION_CONTACT_QUIET_SECONDS"
     )
     desktop_disconnect_grace_seconds: float = Field(
-        default=30.0,
-        gt=0,
-        validation_alias="DESKTOP_DISCONNECT_GRACE_SECONDS",
+        default=30.0, gt=0, validation_alias="DESKTOP_DISCONNECT_GRACE_SECONDS"
     )
     companion_max_pending_intents: int = Field(default=16, gt=0, validation_alias="COMPANION_MAX_PENDING_INTENTS")
     companion_min_turn_interval_seconds: float = Field(
-        default=60.0,
-        gt=0,
-        validation_alias="COMPANION_MIN_TURN_INTERVAL_SECONDS",
+        default=60.0, gt=0, validation_alias="COMPANION_MIN_TURN_INTERVAL_SECONDS"
     )
 
     # 记忆维护与召回注入的节流与预算。
     memory_review_interval_seconds: float = Field(
-        default=6 * 3600.0,
-        gt=0,
-        validation_alias="MEMORY_REVIEW_INTERVAL_SECONDS",
+        default=6 * 3600.0, gt=0, validation_alias="MEMORY_REVIEW_INTERVAL_SECONDS"
     )
     memory_recall_max_content_chars: int = Field(
-        default=8_000,
-        gt=0,
-        validation_alias="MEMORY_RECALL_MAX_CONTENT_CHARS",
+        default=8_000, gt=0, validation_alias="MEMORY_RECALL_MAX_CONTENT_CHARS"
     )
 
     # 动作库：自主创建开关。
@@ -222,14 +189,10 @@ class Settings(BaseSettings):
     media_stt_rate_limit_per_minute: int = Field(default=20, gt=0, validation_alias="MEDIA_STT_RATE_LIMIT_PER_MINUTE")
     media_tts_rate_limit_per_minute: int = Field(default=30, gt=0, validation_alias="MEDIA_TTS_RATE_LIMIT_PER_MINUTE")
     media_video_rate_limit_per_minute: int = Field(
-        default=10,
-        gt=0,
-        validation_alias="MEDIA_VIDEO_RATE_LIMIT_PER_MINUTE",
+        default=10, gt=0, validation_alias="MEDIA_VIDEO_RATE_LIMIT_PER_MINUTE"
     )
     companion_avatar_generate_rate_limit_per_minute: int = Field(
-        default=3,
-        gt=0,
-        validation_alias="COMPANION_AVATAR_GENERATE_RATE_LIMIT_PER_MINUTE",
+        default=3, gt=0, validation_alias="COMPANION_AVATAR_GENERATE_RATE_LIMIT_PER_MINUTE"
     )
     # 小于等于 0 表示不限额，因此不设下界。
     scene_llm_create_per_24h: int = Field(default=1, validation_alias="SCENE_LLM_CREATE_PER_24H")
@@ -243,14 +206,11 @@ class Settings(BaseSettings):
     # 附件的体积/条数配额。
     max_attachments_per_turn: int = Field(default=16, gt=0, validation_alias="MAX_ATTACHMENTS_PER_TURN")
     attachment_session_quota_bytes: int = Field(
-        default=512 * 1024 * 1024,
-        gt=0,
-        validation_alias="ATTACHMENT_SESSION_QUOTA_BYTES",
+        default=512 * 1024 * 1024, gt=0, validation_alias="ATTACHMENT_SESSION_QUOTA_BYTES"
     )
 
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
-        default="INFO",
-        validation_alias="LOG_LEVEL",
+        default="INFO", validation_alias="LOG_LEVEL"
     )
     log_format: Literal["json", "text"] = Field(default="json", validation_alias="LOG_FORMAT")
     llm_debug_logging: bool = Field(default=False, validation_alias="LLM_DEBUG_LOGGING")

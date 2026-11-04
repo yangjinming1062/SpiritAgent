@@ -61,7 +61,7 @@ def session_response(user_id: int, username: str, device: RemoteDeviceIdentity, 
 async def create_pairing(user_id: int, db: AsyncSession) -> PairingResponse:
     base_url = remote_public_base_url()
     active_user_id = await db.scalar(
-        select(User.id).where(User.id == user_id, User.is_active.is_(True)).with_for_update(),
+        select(User.id).where(User.id == user_id, User.is_active.is_(True)).with_for_update()
     )
     if active_user_id is None:
         raise RequestError(status_code=401, message="账户已停用。")
@@ -79,7 +79,7 @@ async def create_pairing(user_id: int, db: AsyncSession) -> PairingResponse:
 
 async def pairing_status(pairing_id: int, user_id: int, db: AsyncSession) -> PairingResponse:
     pairing = await db.scalar(
-        select(RemotePairing).where(RemotePairing.id == pairing_id, RemotePairing.user_id == user_id),
+        select(RemotePairing).where(RemotePairing.id == pairing_id, RemotePairing.user_id == user_id)
     )
     if pairing is None:
         raise RequestError(status_code=404, message="二维码不存在。")
@@ -88,7 +88,7 @@ async def pairing_status(pairing_id: int, user_id: int, db: AsyncSession) -> Pai
 
 async def cancel_pairing(pairing_id: int, user_id: int, db: AsyncSession) -> None:
     pairing = await db.scalar(
-        select(RemotePairing).where(RemotePairing.id == pairing_id, RemotePairing.user_id == user_id).with_for_update(),
+        select(RemotePairing).where(RemotePairing.id == pairing_id, RemotePairing.user_id == user_id).with_for_update()
     )
     if pairing is None:
         raise RequestError(status_code=404, message="二维码不存在。")
@@ -103,9 +103,7 @@ async def exchange_pairing(payload: ExchangeRequest, db: AsyncSession, old_token
     if user_id is None:
         raise RequestError(status_code=401, message="二维码无效，请重新连接。")
     # 与二维码刷新、凭据重置共用用户锁；对待兑换码再取行锁。
-    user = await db.scalar(
-        select(User).where(User.id == user_id, User.is_active.is_(True)).with_for_update(),
-    )
+    user = await db.scalar(select(User).where(User.id == user_id, User.is_active.is_(True)).with_for_update())
     if is_user_in_maintenance(user_id):
         raise RequestError(status_code=503, message="用户数据正在维护，请稍后重试。")
     pairing = await db.scalar(select(RemotePairing).where(RemotePairing.token_hash == digest).with_for_update())
@@ -130,7 +128,7 @@ async def exchange_pairing(payload: ExchangeRequest, db: AsyncSession, old_token
     old_device = None
     if old_token and len(old_token) <= REMOTE_TOKEN_MAX_LENGTH:
         old_device = await db.scalar(
-            select(RemoteSession).where(RemoteSession.token_hash == hash_remote_token(old_token)),
+            select(RemoteSession).where(RemoteSession.token_hash == hash_remote_token(old_token))
         )
         if old_device is not None:
             await revoke_remote_grants(db, old_device.user_id, old_device.id)
@@ -154,7 +152,7 @@ async def list_remote_devices(user_id: int, db: AsyncSession) -> DeviceListRespo
                 RemoteSession.revoked_at.is_(None),
                 RemoteSession.expires_at > utc_now(),
             )
-            .order_by(RemoteSession.last_seen_at.desc(), RemoteSession.id.desc()),
+            .order_by(RemoteSession.last_seen_at.desc(), RemoteSession.id.desc())
         )
     ).all()
     return DeviceListResponse(items=[DeviceResponse.model_validate(device) for device in devices])

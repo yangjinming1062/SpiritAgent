@@ -85,8 +85,7 @@ class QwenVideoGenProvider(VideoGenProvider):
         api_resolution = self.native_resolution(req.resolution or "")
         if not api_resolution:
             raise ProviderError(
-                f"qwen video_gen requires resolution in {self.resolutions}, got {req.resolution!r}",
-                status_code=400,
+                f"qwen video_gen requires resolution in {self.resolutions}, got {req.resolution!r}", status_code=400
             )
 
         media: list[dict] = [{"type": "reference_image", "url": image} for image in req.reference_images]
@@ -108,9 +107,7 @@ class QwenVideoGenProvider(VideoGenProvider):
             },
         }
         resp = await self._client.post(
-            "/services/aigc/video-generation/video-synthesis",
-            json=payload,
-            headers={"X-DashScope-Async": "enable"},
+            "/services/aigc/video-generation/video-synthesis", json=payload, headers={"X-DashScope-Async": "enable"}
         )
         body = raise_for_qwen_response(resp)
         output = body.get("output")
@@ -130,8 +127,7 @@ class QwenVideoGenProvider(VideoGenProvider):
         if norm is None:
             # 未知状态继续轮询，原值写入日志便于运维排查。
             logger.warning(
-                "unknown video task status",
-                extra={"provider": "qwen", "task_id": task_id, "status": raw_status},
+                "unknown video task status", extra={"provider": "qwen", "task_id": task_id, "status": raw_status}
             )
             norm = "processing"
         download_url = output.get("video_url") if norm == "succeeded" else None

@@ -220,14 +220,7 @@ def select_image_canvas(config: ProviderConfig, width: int, height: int, *, near
     if provider == "minimax":
         if model == "image-01":
             return _pixel_canvas(
-                width,
-                height,
-                step=8,
-                min_area=512**2,
-                max_ratio=4,
-                min_edge=512,
-                max_edge=2048,
-                nearest=nearest,
+                width, height, step=8, min_area=512**2, max_ratio=4, min_edge=512, max_edge=2048, nearest=nearest
             )
         if nearest:
             return _closest_canvas(

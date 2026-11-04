@@ -19,8 +19,7 @@ class MiMoSpeechStyle(BaseModel):
     provider: Literal["mimo"]
     model: str = Field(min_length=1, max_length=100)
     styles: list[Annotated[str, Field(min_length=1, max_length=80, pattern=r"^[^\[\]()<>\r\n]+$")]] = Field(
-        default_factory=list,
-        max_length=4,
+        default_factory=list, max_length=4
     )
     instruction: str | None = Field(default=None, min_length=1, max_length=500)
     segments: list[SpeechSegment] = Field(default_factory=list, max_length=12)

@@ -43,9 +43,7 @@ async def read_posts(user: CurrentUser, db: DbSession, body: PostReadRequest) ->
 
 @router.get("/publications", response_model=PostPublicationRecoveryList)
 async def get_publication_recoveries(
-    user: CurrentUser,
-    limit: int = Query(default=50, ge=1, le=100),
-    cursor: str | None = None,
+    user: CurrentUser, limit: int = Query(default=50, ge=1, le=100), cursor: str | None = None
 ) -> PostPublicationRecoveryList:
     return await _posts.get_publication_recoveries(user_id=user.id, limit=limit, cursor=cursor)
 

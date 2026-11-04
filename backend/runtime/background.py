@@ -59,11 +59,7 @@ class TaskBag:
             TASK_SUPERVISOR.register(task, owner=self._name, on_error=on_error)
         else:
             track_user_task(
-                user_id,
-                task,
-                owner=self._name,
-                cancel_on_maintenance=cancel_on_maintenance,
-                on_error=on_error,
+                user_id, task, owner=self._name, cancel_on_maintenance=cancel_on_maintenance, on_error=on_error
             )
 
     async def drain(self) -> None:

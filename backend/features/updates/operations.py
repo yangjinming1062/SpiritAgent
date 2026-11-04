@@ -33,26 +33,10 @@ CHUNK_SIZE = 1024 * 1024
 _VERSION_LOCK = asyncio.Lock()
 
 
-ALLOWED_ARCHIVE_SUFFIXES = (
-    ".exe",
-    ".blockmap",
-    ".zip",
-    ".dmg",
-    ".whl",
-    "manifest.json",
-    "latest-runner.yml",
-)
+ALLOWED_ARCHIVE_SUFFIXES = (".exe", ".blockmap", ".zip", ".dmg", ".whl", "manifest.json", "latest-runner.yml")
 
 
-DOWNLOAD_SUFFIXES = (
-    ".exe",
-    ".blockmap",
-    ".zip",
-    ".dmg",
-    ".dmg.blockmap",
-    ".whl",
-    "latest-runner.yml",
-)
+DOWNLOAD_SUFFIXES = (".exe", ".blockmap", ".zip", ".dmg", ".dmg.blockmap", ".whl", "latest-runner.yml")
 
 
 _BAD_ZIP_ERRORS = (zipfile.BadZipFile, zlib.error, EOFError, RuntimeError, OSError)
@@ -63,7 +47,7 @@ async def _get_latest(db: AsyncSession) -> UpdateVersion:
         select(UpdateVersion)
         .where(UpdateVersion.is_active.is_(True))
         .order_by(UpdateVersion.created_at.desc())
-        .limit(1),
+        .limit(1)
     )
     # 请求级会话要到响应（含安装包下载）发送完毕才关闭，读完即提交，不让连接占用到那时。
     await db.commit()
@@ -78,10 +62,7 @@ def _pick_asset(versions_dir: Path, *patterns: str) -> Path | None:
 
 
 def _release_manifest(
-    latest: UpdateVersion,
-    filename: str | None,
-    sha512: str | None,
-    size: int | None,
+    latest: UpdateVersion, filename: str | None, sha512: str | None, size: int | None
 ) -> ReleaseManifestResponse:
     """electron-updater 平台清单；文件名、摘要与大小在上传时一并落库。"""
     if not filename or not sha512 or size is None:
@@ -173,8 +154,7 @@ def _inspect_release(versions_dir: Path, version: str) -> tuple[Path, Path | Non
             runner_version = runner_manifest.get("version") if isinstance(runner_manifest, dict) else None
         else:
             match = re.search(
-                r"(?m)^[ \t]*version[ \t]*:[ \t]*['\"]?(\d+\.\d+\.\d+)['\"]?[ \t]*(?:#.*)?$",
-                manifest_text,
+                r"(?m)^[ \t]*version[ \t]*:[ \t]*['\"]?(\d+\.\d+\.\d+)['\"]?[ \t]*(?:#.*)?$", manifest_text
             )
             runner_version = match.group(1) if match else None
     except (ValueError, UnicodeError) as exc:
@@ -253,9 +233,7 @@ async def create_version(admin: str, db: AsyncSession, file: UploadSource, relea
                     await run_blocking(shutil.rmtree, versions_dir)
                 except OSError:
                     logger.warning(
-                        "failed to clean rejected release directory",
-                        extra={"version": version},
-                        exc_info=True,
+                        "failed to clean rejected release directory", extra={"version": version}, exc_info=True
                     )
                 raise
     await db.refresh(record)

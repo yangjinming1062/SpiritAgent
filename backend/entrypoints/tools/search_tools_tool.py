@@ -11,30 +11,17 @@ SEARCH_TOOLS_SCHEMA = {
     "description": SEARCH_TOOLS_DESC,
     "parameters": {
         "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": SEARCH_TOOLS_PARAM_DESCS["query"],
-            },
-        },
+        "properties": {"query": {"type": "string", "description": SEARCH_TOOLS_PARAM_DESCS["query"]}},
         "required": ["query"],
     },
 }
 
 
 async def search_tools_tool(
-    query: str,
-    user_id: ResourceId,
-    user_settings: dict[str, Any],
-    excluded_tool_names: frozenset[str],
-    **_: object,
+    query: str, user_id: ResourceId, user_settings: dict[str, Any], excluded_tool_names: frozenset[str], **_: object
 ) -> str:
     # 与回合装配同源的用户设置过滤，再去掉本回合执行层排除的工具，避免解锁后被派发层拒绝。
-    available_schemas = REGISTRY.get_all_schemas(
-        user_id,
-        user_settings=user_settings,
-        exclude=excluded_tool_names,
-    )
+    available_schemas = REGISTRY.get_all_schemas(user_id, user_settings=user_settings, exclude=excluded_tool_names)
     results = search_domains_and_tools(query if isinstance(query, str) else "", available_schemas)
     return json.dumps({"matched_tools": results}, ensure_ascii=False)
 

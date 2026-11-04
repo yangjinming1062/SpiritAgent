@@ -32,7 +32,7 @@ _ALPHA_PIX_FMTS: frozenset[str] = frozenset(
         "rgba",
         "argb",
         "abgr",
-    },
+    }
 )
 
 FFPROBE_TIMEOUT_SECONDS = 600.0
@@ -85,10 +85,7 @@ def _binary(name: str) -> str:
 def _run(args: list[str], *, timeout: float | None = None) -> subprocess.CompletedProcess[bytes]:
     try:
         return subprocess.run(  # 参数列表固定构造，不经 shell。
-            args,
-            capture_output=True,
-            timeout=timeout,
-            check=False,
+            args, capture_output=True, timeout=timeout, check=False
         )
     except subprocess.TimeoutExpired as exc:
         raise VideoToolUnavailableError("媒体信息读取超时", internal=str(exc)) from exc
@@ -191,7 +188,7 @@ def video_frame_times(path: Path) -> tuple[float, ...]:
             "-of",
             "json",
             str(path),
-        ],
+        ]
     )
     if proc.returncode != 0:
         raise VideoProcessError("视频帧时间读取失败", internal=proc.stderr.decode("utf-8", "replace")[:2000])

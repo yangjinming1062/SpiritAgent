@@ -22,11 +22,7 @@ from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.constants import REMOTE_ASSET_DOWNLOAD_MAX_BYTES
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
-from infrastructure.media_geometry import (
-    MAX_DESKTOP_CROP_FRACTION,
-    can_crop_to_aspect,
-    resolution_fit_key,
-)
+from infrastructure.media_geometry import MAX_DESKTOP_CROP_FRACTION, can_crop_to_aspect, resolution_fit_key
 from infrastructure.network import download_capped
 from infrastructure.video_processing.ffmpeg import VideoProcessError
 from infrastructure.video_processing.image import prepare_transparent_image
@@ -272,12 +268,7 @@ def _expected_aspect_ratio(size: str, *, exact_size: bool = False) -> float | No
 
 
 def _size_matches_request(
-    size: str,
-    width: int,
-    height: int,
-    *,
-    exact_size: bool = False,
-    tolerance: float = _SIZE_ASPECT_TOLERANCE,
+    size: str, width: int, height: int, *, exact_size: bool = False, tolerance: float = _SIZE_ASPECT_TOLERANCE
 ) -> bool:
     expected = _expected_aspect_ratio(size, exact_size=exact_size)
     if expected is None or width <= 0 or height <= 0:
@@ -287,11 +278,7 @@ def _size_matches_request(
 
 
 def _validate_image(
-    data: bytes,
-    *,
-    size: str | None = None,
-    size_enforced: bool = False,
-    exact_size: bool = False,
+    data: bytes, *, size: str | None = None, size_enforced: bool = False, exact_size: bool = False
 ) -> str:
     ext = asset_store.sniff_media_ext(data)
     if ext not in ("png", "jpg", "webp", "gif"):
@@ -305,14 +292,9 @@ def _validate_image(
     native_mismatch = size_enforced and size and not _size_matches_request(size, width, height, exact_size=exact_size)
     if native_mismatch:
         logger.info(
-            "image size gate rejected candidate",
-            extra={"width": width, "height": height, "requested_size": size},
+            "image size gate rejected candidate", extra={"width": width, "height": height, "requested_size": size}
         )
-        raise ImageGenerationError(
-            f"生成图片画幅不符合要求（{width}x{height}）",
-            can_fallback=True,
-            size_mismatch=True,
-        )
+        raise ImageGenerationError(f"生成图片画幅不符合要求（{width}x{height}）", can_fallback=True, size_mismatch=True)
     return ext
 
 
@@ -348,11 +330,7 @@ def _reference_image_canvas(data: bytes) -> ImageCanvas:
 
 
 async def _freeze_input_references(
-    inputs: ReviewedImageInput | SceneImageInput,
-    *,
-    user_id: int,
-    generation_id: str,
-    storage_directory: str,
+    inputs: ReviewedImageInput | SceneImageInput, *, user_id: int, generation_id: str, storage_directory: str
 ) -> None:
     """复用正式参考的裸路径，只有外部或临时输入需要转正。"""
     fields = _REFERENCE_FIELDS[type(inputs)]
@@ -404,10 +382,7 @@ async def _complete_images(state: ImageChainState, writer: ImageProgressWriter |
                     else "图片未通过身份与画面要求检查，本次结果未交付"
                 )
         if state.stop_reason == "result_unknown":
-            raise ImageGenerationError(
-                "图片生成结果未知，请核对供应商任务后再决定是否重做",
-                result_unknown=True,
-            )
+            raise ImageGenerationError("图片生成结果未知，请核对供应商任务后再决定是否重做", result_unknown=True)
         if state.size_rejected:
             raise ImageGenerationError("生成图片画幅不符合要求")
         if isinstance(state.inputs, SceneImageInput) and any(candidate.evaluated for candidate in state.candidates):
@@ -565,11 +540,7 @@ async def generate_reviewed_images(
                     target_aspect = target_width / target_height
                     can_fit = (
                         native_aspect is not None
-                        and 1
-                        - min(
-                            native_aspect / target_aspect,
-                            target_aspect / native_aspect,
-                        )
+                        and 1 - min(native_aspect / target_aspect, target_aspect / native_aspect)
                         <= MAX_DESKTOP_CROP_FRACTION + 1e-9
                     )
                 if not can_fit:
@@ -577,12 +548,7 @@ async def generate_reviewed_images(
                 if nearest_resolution:
                     if canvas.native_width is None or canvas.native_height is None:
                         raise ValueError("图片档位缺少原生尺寸规格")
-                    fit_key = resolution_fit_key(
-                        canvas.native_width,
-                        canvas.native_height,
-                        target_width,
-                        target_height,
-                    )
+                    fit_key = resolution_fit_key(canvas.native_width, canvas.native_height, target_width, target_height)
                 provider.image_size = canvas.size
                 provider.image_aspect_ratio = canvas.aspect_ratio
                 provider.image_resolution = canvas.resolution
@@ -597,10 +563,7 @@ async def generate_reviewed_images(
         state.providers = [provider for _config, provider, _key in planned]
         configs = dict(enumerate(chain))
         await _freeze_input_references(
-            state.inputs,
-            user_id=user_id,
-            generation_id=state.generation_id,
-            storage_directory=storage_directory,
+            state.inputs, user_id=user_id, generation_id=state.generation_id, storage_directory=storage_directory
         )
         await _save_progress(state, save_progress)
     if not isinstance(state.inputs, ReviewedImageInput):
@@ -670,8 +633,7 @@ async def generate_scene_images(
         for config in chain:
             provider = FrozenMediaProvider.from_config(config)
             provider.max_images_per_request = resolve(
-                ServiceType.image_gen,
-                config.provider_name,
+                ServiceType.image_gen, config.provider_name
             ).max_images_per_request
             canvas = select_image_canvas(config, target_width, target_height)
             provider.image_size = canvas.size
@@ -682,10 +644,7 @@ async def generate_scene_images(
         state.inputs, state.providers = inputs, providers
         configs = dict(enumerate(chain))
         await _freeze_input_references(
-            state.inputs,
-            user_id=user_id,
-            generation_id=state.generation_id,
-            storage_directory=storage_directory,
+            state.inputs, user_id=user_id, generation_id=state.generation_id, storage_directory=storage_directory
         )
         await _save_progress(state, save_progress)
     if not isinstance(state.inputs, SceneImageInput):
@@ -887,11 +846,7 @@ async def _run_image_chain(
                         state.pending_slots.pop(0)
                         await _save_progress(state, save_progress)
                         continue
-                    candidate = MediaCandidate(
-                        path=path,
-                        attempt=state.active_index or 0,
-                        slot=state.pending_slots[0],
-                    )
+                    candidate = MediaCandidate(path=path, attempt=state.active_index or 0, slot=state.pending_slots[0])
                     state.candidates.append(candidate)
                     state.pending_urls.pop(0)
                     state.pending_slots.pop(0)
@@ -1039,9 +994,7 @@ async def _run_image_chain(
             if not state.remaining_slots:
                 return await _complete_images(state, save_progress)
             config = configs.get(index) or await resolve_frozen_media_provider(
-                user_id,
-                "image_gen",
-                state.providers[index],
+                user_id, "image_gen", state.providers[index]
             )
             if config is None:
                 state.next_index = index + 1

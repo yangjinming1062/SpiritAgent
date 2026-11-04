@@ -55,12 +55,7 @@ async def unread_diary_ids(db: AsyncSession, user_id: int) -> list[int]:
 
 
 async def search_diary(
-    user_id: int,
-    *,
-    query: str = "",
-    date_from: date | None = None,
-    date_to: date | None = None,
-    limit: int = 20,
+    user_id: int, *, query: str = "", date_from: date | None = None, date_to: date | None = None, limit: int = 20
 ) -> DiarySearchResponse:
     rows, status = await search_diary_entries(user_id, query=query, date_from=date_from, date_to=date_to, limit=limit)
     return DiarySearchResponse(entries=[response_for_diary(row) for row in rows], search=status)

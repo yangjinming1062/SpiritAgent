@@ -19,12 +19,7 @@ class UndoNotAllowedError(Exception):
     """会话 kind 不可撤回（special）。"""
 
 
-async def resolve_undo_target(
-    db: AsyncSession,
-    user_id: int,
-    session_id: str,
-    source_message_id: int,
-) -> Conversation:
+async def resolve_undo_target(db: AsyncSession, user_id: int, session_id: str, source_message_id: int) -> Conversation:
     """校验会话归属、kind、锚点存在且为 user-role；通过后返回 Conversation。不碰磁盘、不删行。"""
     conv = await Conversation.by_session_id(db, session_id, user_id=user_id)
     if conv is None:
@@ -35,21 +30,16 @@ async def resolve_undo_target(
 
     anchor_row = (
         await db.execute(
-            select(Message.role).where(
-                Message.id == source_message_id,
-                Message.conversation_id == conv.id,
-            ),
+            select(Message.role).where(Message.id == source_message_id, Message.conversation_id == conv.id)
         )
     ).first()
     if anchor_row is None:
-        raise SourceNotFoundError(
-            f"锚点消息不在会话内: message_id={source_message_id} session_id={session_id!r}",
-        )
+        raise SourceNotFoundError(f"锚点消息不在会话内: message_id={source_message_id} session_id={session_id!r}")
 
     (anchor_role,) = anchor_row
     if anchor_role != "user":
         raise UndoNotAllowedError(
-            f"撤回仅支持 user-role 消息（source_message_id={source_message_id} 是 {anchor_role!r}）",
+            f"撤回仅支持 user-role 消息（source_message_id={source_message_id} 是 {anchor_role!r}）"
         )
     return conv
 
@@ -74,37 +64,24 @@ def _undo_anchor(content: str | None, content_type: str) -> UndoAnchor:
 
 
 async def undo_conversation_to_message(
-    db: AsyncSession,
-    conv: Conversation,
-    source_message_id: int,
+    db: AsyncSession, conv: Conversation, source_message_id: int
 ) -> SessionUndoResult:
     """硬删 ``id >= source_message_id`` 的行并 hydrate；调用方必须已 resolve 且已 prune。"""
     anchor_row = (
         await db.execute(
             select(Message.content, Message.content_type).where(
-                Message.id == source_message_id,
-                Message.conversation_id == conv.id,
-            ),
+                Message.id == source_message_id, Message.conversation_id == conv.id
+            )
         )
     ).first()
     if anchor_row is None:
-        raise SourceNotFoundError(
-            f"锚点消息不在会话内: message_id={source_message_id} conversation_id={conv.id}",
-        )
+        raise SourceNotFoundError(f"锚点消息不在会话内: message_id={source_message_id} conversation_id={conv.id}")
     anchor_content, anchor_content_type = anchor_row
 
     async with user_asset_lock(conv.user_id):
-        removed = await collect_message_asset_releases(
-            db,
-            conv.user_id,
-            [conv.id],
-            from_message_id=source_message_id,
-        )
+        removed = await collect_message_asset_releases(db, conv.user_id, [conv.id], from_message_id=source_message_id)
         result = await db.execute(
-            delete(Message).where(
-                Message.conversation_id == conv.id,
-                Message.id >= source_message_id,
-            ),
+            delete(Message).where(Message.conversation_id == conv.id, Message.id >= source_message_id)
         )
         deleted_count = int(result.rowcount)
         await db.commit()

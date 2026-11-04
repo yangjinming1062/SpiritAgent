@@ -106,9 +106,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
                 await asyncio.sleep(60)
                 minute += 1
                 await _best_effort(
-                    "formal assets",
-                    _cleanup_formal_assets(discover=minute % 60 == 0),
-                    level=logging.WARNING,
+                    "formal assets", _cleanup_formal_assets(discover=minute % 60 == 0), level=logging.WARNING
                 )
                 if minute % 60:
                     continue
@@ -132,7 +130,4 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
 
         await _best_effort("database engine", ENGINE.dispose())
         await _best_effort("web providers", aclose_web_providers())
-        await _best_effort(
-            "LLM clients",
-            asyncio.wait_for(aclose_all(), timeout=_LLM_CLIENT_CLOSE_TIMEOUT_SECONDS),
-        )
+        await _best_effort("LLM clients", asyncio.wait_for(aclose_all(), timeout=_LLM_CLIENT_CLOSE_TIMEOUT_SECONDS))

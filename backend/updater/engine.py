@@ -5,14 +5,7 @@ import secrets
 
 from updater import compose, gitops
 from updater.config import UpdaterSettings
-from updater.contracts import (
-    CheckResult,
-    PreflightIssue,
-    RepoStatus,
-    TaskKind,
-    UpdaterError,
-    UpdateStage,
-)
+from updater.contracts import CheckResult, PreflightIssue, RepoStatus, TaskKind, UpdaterError, UpdateStage
 from updater.redact import redact_text
 from updater.runner import LineSink, stream_command
 from updater.state import StateStore, TaskRecord, utc_now

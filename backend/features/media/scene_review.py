@@ -116,12 +116,7 @@ async def review_scene_image(
                 goal = previous.goal
             if previous.quality and previous.quality.verdict in {"pass", "fail"}:
                 quality = previous.quality
-        return VisualReview(
-            required=("goal", "quality"),
-            goal=goal,
-            quality=quality,
-            evidence=evidence,
-        )
+        return VisualReview(required=("goal", "quality"), goal=goal, quality=quality, evidence=evidence)
     except GenerationWorkPaused:
         raise
     except Exception as exc:

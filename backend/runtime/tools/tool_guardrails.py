@@ -24,7 +24,7 @@ _IDEMPOTENT_TOOL_NAMES = frozenset(
         "browser_pdf",
         "browser_screenshot_element",
         "browser_tab_list",
-    },
+    }
 )
 
 # terminal 故意不在此列——其危险面是命令字符串里的 shell 重定向（> ~/.ssh/authorized_keys），不是显式路径参数。runner 侧对命令文本做独立扫描；后端仅扫路径参数无法在不解析 shell 的前提下覆盖
@@ -47,7 +47,7 @@ _EFFECT_TOOLS = frozenset(
         "scene_create",
         "cronjob",
         "memory_retain",
-    },
+    }
 )
 _EFFECT_FOLLOW_UP_STEPS = 2
 # 状态型工具在一个回合内的调用上限：合理需求至多几次，超出只会是空转。
@@ -164,9 +164,7 @@ class ToolCallGuardrailController:
             )
         if same_count >= _SAME_TOOL_FAILURE_WARN_AFTER:
             return _LoopWarning(
-                "same_tool_failure_warning",
-                same_count,
-                _tool_failure_recovery_hint(tool_name, same_count),
+                "same_tool_failure_warning", same_count, _tool_failure_recovery_hint(tool_name, same_count)
             )
         return None
 

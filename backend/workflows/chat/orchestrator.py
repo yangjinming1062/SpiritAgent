@@ -66,11 +66,7 @@ from workflows.chat.streaming import (
 from workflows.chat.system_prompt import build_companion_environment_prompt
 from workflows.chat.tool_dispatch import _ToolDispatchContext, available_media_tool_schemas, matched_tool_names
 from workflows.chat.topic_context import load_topic_context
-from workflows.chat.turn_errors import (
-    emit_conversation_unavailable,
-    emit_llm_error,
-    emit_llm_unavailable,
-)
+from workflows.chat.turn_errors import emit_conversation_unavailable, emit_llm_error, emit_llm_unavailable
 from workflows.chat.turn_inputs import (
     build_turn_inputs,
     estimate_context_tokens,
@@ -93,10 +89,7 @@ class _BufferedReplacementEmitter:
 
 
 def _compression_temperature(settings: dict[str, Any]) -> float:
-    return parse_temperature(
-        settings.get("chat.compression_temperature"),
-        CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT,
-    )
+    return parse_temperature(settings.get("chat.compression_temperature"), CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT)
 
 
 @dataclass(frozen=True)
@@ -121,14 +114,7 @@ async def compress_session_history(
     async with session_scope() as db:
         effective_settings = merge_session_settings(await load_user_settings(db, user_id), session_settings)
         inputs = await build_turn_inputs(
-            db,
-            conv,
-            user_id,
-            req,
-            client_context,
-            effective_settings,
-            memory_scope,
-            task=task,
+            db, conv, user_id, req, client_context, effective_settings, memory_scope, task=task
         )
     compressed, info = await compress_history(
         inputs.context,
@@ -141,17 +127,13 @@ async def compress_session_history(
     )
     if info is None:
         return ManualCompressionResult(
-            info=None,
-            total_tokens=inputs.estimated_tokens,
-            context_window=inputs.ctx_length,
+            info=None, total_tokens=inputs.estimated_tokens, context_window=inputs.ctx_length
         )
     async with session_scope() as db:
         await persist_compression_checkpoint(db, conv.id, info, user_id=user_id)
         history = await context_messages(db, conv)
     return ManualCompressionResult(
-        info=info,
-        total_tokens=estimate_context_tokens(compressed, history),
-        context_window=inputs.ctx_length,
+        info=info, total_tokens=estimate_context_tokens(compressed, history), context_window=inputs.ctx_length
     )
 
 
@@ -273,11 +255,7 @@ async def _run_chat_turn(
                 else:
                     user_message_id = await persist_user_message(db, conv.id, req.message, user_id=user_id)
                     await emitter.send_json(
-                        {
-                            "type": "message.persisted",
-                            "role": "user",
-                            "message_ids": [user_message_id],
-                        },
+                        {"type": "message.persisted", "role": "user", "message_ids": [user_message_id]}
                     )
 
             # 回合起点重读 user_settings（PUT /api/config 后下一回合即生效）；会话级覆写再覆盖其上，只构建一次供门控与派发共用。
@@ -320,10 +298,7 @@ async def _run_chat_turn(
                     raise
                 logger.warning("LLM turn failed: %s", exc)
                 await emit_llm_unavailable(
-                    emitter,
-                    exc,
-                    effective_settings.get("language"),
-                    retry_message_id=user_message_id,
+                    emitter, exc, effective_settings.get("language"), retry_message_id=user_message_id
                 )
                 return
             # 本轮尾部资料没有持久化来源，不进入持久摘要。
@@ -331,7 +306,7 @@ async def _run_chat_turn(
             if replacement is not None:
                 inputs.context["instructions"] += resolve_prompt_text(REPLACE_REPLY_GUIDANCES, inputs.language)
                 inputs.context["input"].append(
-                    user_text_item(json.dumps({"previous_reply": replacement.previous.content}, ensure_ascii=False)),
+                    user_text_item(json.dumps({"previous_reply": replacement.previous.content}, ensure_ascii=False))
                 )
             waits = (
                 await list_companion_intents(db, user_id)
@@ -343,8 +318,8 @@ async def _run_chat_turn(
                     user_text_item(
                         resolve_prompt_text(PENDING_INTENTIONS_LABELS, inputs.language)
                         + "\n"
-                        + json.dumps([wait.model_dump(mode="json") for wait in waits], ensure_ascii=False),
-                    ),
+                        + json.dumps([wait.model_dump(mode="json") for wait in waits], ensure_ascii=False)
+                    )
                 )
             if ephemeral and req.message.content:
                 inputs.context["input"].append(user_text_item(req.message.content))
@@ -355,10 +330,7 @@ async def _run_chat_turn(
         if (
             not final_reply_only
             and SETTINGS.enable_context_compression
-            and effective_settings.get(
-                "chat.enable_context_compression",
-                True,
-            )
+            and effective_settings.get("chat.enable_context_compression", True)
             and compression_due(
                 inputs.context,
                 context_length=inputs.ctx_length,
@@ -383,11 +355,7 @@ async def _run_chat_turn(
             if compress_info is not None:
                 async with session_scope() as db:
                     checkpoint = await persist_compression_checkpoint(
-                        db,
-                        conv.id,
-                        compress_info,
-                        user_id=user_id,
-                        notify_user_id=user_id if headless else None,
+                        db, conv.id, compress_info, user_id=user_id, notify_user_id=user_id if headless else None
                     )
                 # 自动压缩单行插入；手动 /压缩 走 command.result + hydrate=true，互斥互补。
                 await emitter.send_json(
@@ -396,7 +364,7 @@ async def _run_chat_turn(
                         "subtype": checkpoint.subtype,
                         "text": checkpoint.content,
                         "message_id": checkpoint.id,
-                    },
+                    }
                 )
         # 本轮输入按窗口的四分之一（字符数取 token 数，对中文偏保守）放宽，避免超长粘贴被历史条目的上限截断。
         current_context = truncate_responses_context(
@@ -432,8 +400,7 @@ async def _run_chat_turn(
             media_turn.source_message_id = user_message_id
             if replacement is not None and replacement.previous.reply_json:
                 old_reply = CompanionReply.from_saved_snapshot(
-                    replacement.previous.reply_json,
-                    replacement.previous.content or "",
+                    replacement.previous.reply_json, replacement.previous.content or ""
                 )
                 retained_ids = {b.media_id for b in old_reply.bubbles if isinstance(b, MediaBubble)}
                 media_turn.artifacts = {
@@ -499,10 +466,7 @@ async def _run_chat_turn(
                 if conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None:
                     action_view = await build_action_view(user_id)
                     environment = await build_companion_environment_prompt(
-                        db,
-                        user_id,
-                        language=inputs.language,
-                        action_view=action_view,
+                        db, user_id, language=inputs.language, action_view=action_view
                     )
                     instruction_parts.append(environment)
                     action_tools_not_ready = await unavailable_action_tool_names(user_id, action_view=action_view)
@@ -526,23 +490,20 @@ async def _run_chat_turn(
             schemas_by_name = {
                 schema_name(schema): schema
                 for schema in REGISTRY.get_all_schemas(
-                    user_id,
-                    user_settings=effective_settings,
-                    exclude=inputs.excluded_tool_names,
+                    user_id, user_settings=effective_settings, exclude=inputs.excluded_tool_names
                 )
             }
             available_schemas = apply_search_tools_catalog(
                 available_media_tool_schemas(
                     [schema for name, schema in schemas_by_name.items() if name not in action_tools_not_ready],
                     media_turn,
-                ),
+                )
             )
             available_by_name = {schema_name(schema): schema for schema in available_schemas}
             if companion_reply:
                 active_tool_names.update(VISUAL_TOOL_NAMES & available_by_name.keys())
             dispatch_ctx = replace(
-                dispatch_ctx,
-                unavailable_tool_names=frozenset(schemas_by_name.keys() - available_by_name.keys()),
+                dispatch_ctx, unavailable_tool_names=frozenset(schemas_by_name.keys() - available_by_name.keys())
             )
             active_schemas = [available_by_name[name] for name in active_tool_names if name in available_by_name]
             # 正文交付前按链切换；每个槽位使用自己的模型、窗口和干净的请求副本。
@@ -643,7 +604,7 @@ async def _run_chat_turn(
                 llm_result = await execute_media_with_fallback(
                     llm_chain,
                     request_input_modalities(
-                        _reply_repair_history(current_context["input"]) if reply_only else current_context["input"],
+                        _reply_repair_history(current_context["input"]) if reply_only else current_context["input"]
                     ),
                     _call,
                     user_id=user_id,
@@ -666,7 +627,7 @@ async def _run_chat_turn(
                         "message": "本次回复的格式不正确，请重试。"
                         if inputs.language == "zh"
                         else "The reply could not be generated in the required format. Please try again.",
-                    },
+                    }
                 )
                 break
             except (MissingLlmConfigError, RuntimeError) as exc:

@@ -50,10 +50,7 @@ class VisualItem(ModelBase, TimestampMixin):
             postgresql_where=text("media_kind = 'image'"),
         ),
         Index("ix_visual_items_catalog", "user_id", "status", "media_kind", "asset_kind", "id"),
-        CheckConstraint(
-            "asset_kind <> 'actor' OR media_kind = 'video'",
-            name="ck_visual_items_actor_video",
-        ),
+        CheckConstraint("asset_kind <> 'actor' OR media_kind = 'video'", name="ck_visual_items_actor_video"),
     )
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
@@ -247,9 +244,7 @@ class VisualJob(JobRecord):
 
     # 重做目标；空表示新建。等待、失败、暂停和取消均保留目标成品。
     target_visual_id: Mapped[int | None] = mapped_column(
-        ForeignKey("visual_items.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
+        ForeignKey("visual_items.id", ondelete="SET NULL"), nullable=True, index=True
     )
     purpose: Mapped[str] = mapped_column(String(16), default="create", server_default=text("'create'"))
     target_kind: Mapped[str] = mapped_column(String(8), default="video", server_default=text("'video'"))
@@ -262,13 +257,11 @@ class VisualJob(JobRecord):
     repair_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     repair_limit: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
     result_visual_id: Mapped[int | None] = mapped_column(
-        ForeignKey("visual_items.id", ondelete="NO ACTION", deferrable=True, initially="DEFERRED"),
-        nullable=True,
+        ForeignKey("visual_items.id", ondelete="NO ACTION", deferrable=True, initially="DEFERRED"), nullable=True
     )
     # 目标包含视频时，合格起始图也独立入库。
     result_image_id: Mapped[int | None] = mapped_column(
-        ForeignKey("visual_items.id", ondelete="NO ACTION", deferrable=True, initially="DEFERRED"),
-        nullable=True,
+        ForeignKey("visual_items.id", ondelete="NO ACTION", deferrable=True, initially="DEFERRED"), nullable=True
     )
     result_version_id: Mapped[int | None] = mapped_column(BigInteger)
     result_image_version_id: Mapped[int | None] = mapped_column(BigInteger)
@@ -330,13 +323,11 @@ class VisualPresentation(ModelBase, TimestampMixin):
     current_version_id: Mapped[int | None] = mapped_column(BigInteger)
     loop_version_id: Mapped[int | None] = mapped_column(BigInteger)
     current_visual_id: Mapped[int | None] = mapped_column(
-        ForeignKey("visual_items.id", ondelete="NO ACTION", deferrable=True, initially="DEFERRED"),
-        nullable=True,
+        ForeignKey("visual_items.id", ondelete="NO ACTION", deferrable=True, initially="DEFERRED"), nullable=True
     )
     # 短动作播放期间保留的有效持续影像。
     loop_visual_id: Mapped[int | None] = mapped_column(
-        ForeignKey("visual_items.id", ondelete="NO ACTION", deferrable=True, initially="DEFERRED"),
-        nullable=True,
+        ForeignKey("visual_items.id", ondelete="NO ACTION", deferrable=True, initially="DEFERRED"), nullable=True
     )
     autonomous_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"))
     # 本机呈现上下文的目标画幅（像素），组合制作以此冻结目标。
@@ -366,10 +357,7 @@ class VisualPlayback(ModelBase, TimestampMixin):
     )
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    visual_id: Mapped[int] = mapped_column(
-        ForeignKey("visual_items.id", ondelete="CASCADE"),
-        index=True,
-    )
+    visual_id: Mapped[int] = mapped_column(ForeignKey("visual_items.id", ondelete="CASCADE"), index=True)
     version_id: Mapped[int] = mapped_column(BigInteger, index=True)
     visual_version: Mapped[int] = mapped_column(Integer)
     play_id: Mapped[str] = mapped_column(String(36))

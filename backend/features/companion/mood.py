@@ -42,20 +42,11 @@ async def _save_mood(user_id: int, mood: str) -> None:
             ),
         )
         emit_ws_event(db, user_id=user_id, event_type="companion.mood", payload={"mood": mood})
-        emit_ws_event(
-            db,
-            user_id=user_id,
-            event_type="companion.life.updated",
-            payload={"event_key": event.event_key},
-        )
+        emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"event_key": event.event_key})
         await db.commit()
 
 
-async def update_mood_from_companion_turn(
-    user_id: int,
-    user_message: str,
-    assistant_bubbles: list[str],
-) -> str | None:
+async def update_mood_from_companion_turn(user_id: int, user_message: str, assistant_bubbles: list[str]) -> str | None:
     """在陪伴聊天完成后单独推理心情；结果不进入消息正文。"""
     ctx = await load_companion_prompt_context(user_id)
     if ctx is None:

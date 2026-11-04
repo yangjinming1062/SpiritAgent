@@ -23,11 +23,7 @@ _RETRYABLE_TRANSPORT_EXC: tuple[type[BaseException], ...] = (
     httpx.NetworkError,
     httpx.RemoteProtocolError,
 )
-_SAFE_BEFORE_SEND_EXC: tuple[type[BaseException], ...] = (
-    httpx.ConnectError,
-    httpx.ConnectTimeout,
-    httpx.PoolTimeout,
-)
+_SAFE_BEFORE_SEND_EXC: tuple[type[BaseException], ...] = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
 _IDEMPOTENT_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "PUT", "DELETE"})
 
 # 请求校验失败：请求畸形每次重试结果相同；部分网关以 5xx 返回，需排除出 5xx 重试并归为格式错误
@@ -59,12 +55,7 @@ class _RetryAsyncTransport(httpx.AsyncBaseTransport):
     """透明包装 inner，只重放不会重复产生供应商副作用的请求。"""
 
     def __init__(
-        self,
-        inner: httpx.AsyncBaseTransport,
-        *,
-        max_retries: int,
-        base_delay: float,
-        max_delay: float,
+        self, inner: httpx.AsyncBaseTransport, *, max_retries: int, base_delay: float, max_delay: float
     ) -> None:
         self._inner = inner
         self._max_attempts = max(1, max_retries + 1)
@@ -83,16 +74,9 @@ class _RetryAsyncTransport(httpx.AsyncBaseTransport):
                 if not _can_retry(request, exc):
                     logger.warning(
                         "provider http result unknown; automatic retry suppressed",
-                        extra={
-                            "method": request.method,
-                            "url": str(request.url),
-                            "error": type(exc).__name__,
-                        },
+                        extra={"method": request.method, "url": str(request.url), "error": type(exc).__name__},
                     )
-                    raise ProviderResultUnknownError(
-                        request.method,
-                        str(request.url),
-                    ) from exc
+                    raise ProviderResultUnknownError(request.method, str(request.url)) from exc
                 if attempt + 1 >= self._max_attempts:
                     break
                 delay = min(self._base_delay * (2**attempt), self._max_delay)
@@ -159,11 +143,7 @@ class _ResultUnknownOnReadStream(httpx.AsyncByteStream):
 
 def _clone_request(request: httpx.Request, body: bytes) -> httpx.Request:
     return httpx.Request(
-        method=request.method,
-        url=request.url,
-        headers=request.headers,
-        content=body,
-        extensions=request.extensions,
+        method=request.method, url=request.url, headers=request.headers, content=body, extensions=request.extensions
     )
 
 
@@ -225,19 +205,13 @@ class _UnusedFrontendTransport(httpx.AsyncBaseTransport):
 
 class _RotatingAsyncClient(httpx.AsyncClient):
     def __init__(
-        self,
-        *,
-        transport_factory: Callable[[_ClientSettings], httpx.AsyncBaseTransport],
-        **kwargs: Any,
+        self, *, transport_factory: Callable[[_ClientSettings], httpx.AsyncBaseTransport], **kwargs: Any
     ) -> None:
         self._transport_factory = transport_factory
         super().__init__(transport=_UnusedFrontendTransport(), **kwargs)
 
     def build_delegate(self, settings: _ClientSettings) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
-            timeout=ai_http_timeout(),
-            transport=self._transport_factory(settings),
-        )
+        return httpx.AsyncClient(timeout=ai_http_timeout(), transport=self._transport_factory(settings))
 
     async def send(
         self,
@@ -252,17 +226,9 @@ class _RotatingAsyncClient(httpx.AsyncClient):
         generation, client = _delegate_for(self)
         release_here = True
         try:
-            response = await client.send(
-                request,
-                stream=stream,
-                auth=auth,
-                follow_redirects=follow_redirects,
-            )
+            response = await client.send(request, stream=stream, auth=auth, follow_redirects=follow_redirects)
             if stream:
-                response.stream = _GenerationStream(
-                    response.stream,
-                    lambda: _release_generation(generation),
-                )
+                response.stream = _GenerationStream(response.stream, lambda: _release_generation(generation))
                 release_here = False
             return response
         finally:
@@ -271,10 +237,7 @@ class _RotatingAsyncClient(httpx.AsyncClient):
 
 
 _cache_lock = threading.Lock()
-_pinned_generation: ContextVar[_ClientGeneration | None] = ContextVar(
-    "llm_http_generation",
-    default=None,
-)
+_pinned_generation: ContextVar[_ClientGeneration | None] = ContextVar("llm_http_generation", default=None)
 _clients: dict[tuple[str, tuple[tuple[str, str], ...]], _RotatingAsyncClient] = {}
 _clients_openai: dict[tuple[str, str], AsyncOpenAI] = {}
 _retirement_tasks: set[asyncio.Task[None]] = set()
@@ -370,10 +333,7 @@ def _retire_generation(generation: _ClientGeneration) -> None:
         if not generation.active and not generation.clients:
             generation.closed = True
             return
-    task = asyncio.create_task(
-        _close_generation(generation),
-        name="llm-http-client-retirement",
-    )
+    task = asyncio.create_task(_close_generation(generation), name="llm-http-client-retirement")
     with _cache_lock:
         _retirement_tasks.add(task)
     task.add_done_callback(_forget_retirement_task)
@@ -395,9 +355,7 @@ def rotate_http_clients() -> None:
 
 
 async def _close_all_clients(
-    retiring: _ClientGeneration,
-    clients: list[_RotatingAsyncClient],
-    clients_openai: list[AsyncOpenAI],
+    retiring: _ClientGeneration, clients: list[_RotatingAsyncClient], clients_openai: list[AsyncOpenAI]
 ) -> None:
     global _closing
     _retire_generation(retiring)
@@ -446,8 +404,7 @@ async def aclose_all() -> None:
             task = None
     if task is None:
         task = asyncio.create_task(
-            _close_all_clients(retiring, clients, clients_openai),
-            name="llm-http-client-shutdown",
+            _close_all_clients(retiring, clients, clients_openai), name="llm-http-client-shutdown"
         )
         with _cache_lock:
             _shutdown_task = task
@@ -470,12 +427,7 @@ class _RetryAwareAsyncOpenAI(AsyncOpenAI):
         return super()._should_retry(response, *args, **kwargs)
 
     async def request(
-        self,
-        cast_to: type[Any],
-        options: Any,
-        *,
-        stream: bool = False,
-        stream_cls: type[Any] | None = None,
+        self, cast_to: type[Any], options: Any, *, stream: bool = False, stream_cls: type[Any] | None = None
     ) -> Any:  # type: ignore[override]
         generation = _acquire_generation()
         token = _pinned_generation.set(generation)
@@ -487,12 +439,7 @@ class _RetryAwareAsyncOpenAI(AsyncOpenAI):
         if updates:
             options = options.model_copy(update=updates)
         try:
-            return await super().request(
-                cast_to,
-                options,
-                stream=stream,
-                stream_cls=stream_cls,
-            )
+            return await super().request(cast_to, options, stream=stream, stream_cls=stream_cls)
         finally:
             _pinned_generation.reset(token)
             _release_generation(generation)
@@ -533,10 +480,7 @@ def get_async_client(api_key: str, base_url: str) -> AsyncOpenAI:
         if client is not None:
             return client
         settings = _generation.settings
-        http_client = _RotatingAsyncClient(
-            timeout=ai_http_timeout(),
-            transport_factory=_openai_transport,
-        )
+        http_client = _RotatingAsyncClient(timeout=ai_http_timeout(), transport_factory=_openai_transport)
         client = _RetryAwareAsyncOpenAI(
             api_key=api_key,
             base_url=key[1],

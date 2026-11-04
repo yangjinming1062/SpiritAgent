@@ -16,11 +16,7 @@ from runtime.memory_scope import MemoryScope, MemorySource
 
 from features.conversation.evidence import latest_scope_message_id
 from features.memory.contracts import MemoryConflictError, MemoryRecord
-from features.memory.memory_learning import (
-    MemoryReviewContext,
-    apply_memory_decisions,
-    load_review_context,
-)
+from features.memory.memory_learning import MemoryReviewContext, apply_memory_decisions, load_review_context
 from features.memory.memory_policy import MemoryDecisions
 from features.memory.prompts import MEMORY_POLICY, MEMORY_REVIEW_INSTRUCTIONS
 

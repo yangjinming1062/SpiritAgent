@@ -142,15 +142,7 @@ class MiMoTTSProvider(TTSProvider):
             if len(encoded) > VOICE_REFERENCE_MAX_BASE64_BYTES:
                 raise ValueError("MiMo 声音克隆参考音频 Base64 不能超过 10 MB")
             messages = [{"role": "user", "content": instruction}, {"role": "assistant", "content": text}]
-            return (
-                model,
-                messages,
-                {
-                    "format": "mp3",
-                    "voice": f"data:{reference_audio.mime};base64,{encoded}",
-                },
-                "",
-            )
+            return (model, messages, {"format": "mp3", "voice": f"data:{reference_audio.mime};base64,{encoded}"}, "")
         if design_prompt:
             if not design_prompt.strip():
                 raise ValueError("voice design prompt is empty")
@@ -170,12 +162,7 @@ class MiMoTTSProvider(TTSProvider):
         return await self._synthesize_request(model, messages, audio_kwargs, chosen_voice)
 
     async def synthesize_designed(
-        self,
-        text: str,
-        *,
-        prompt: str,
-        voice: str,
-        speech_style: SpeechStyle | None,
+        self, text: str, *, prompt: str, voice: str, speech_style: SpeechStyle | None
     ) -> TTSResult:
         if not prompt.strip():
             raise ValueError("voice design prompt is empty")
@@ -183,26 +170,15 @@ class MiMoTTSProvider(TTSProvider):
         return await self._synthesize_request(model, messages, audio_kwargs, chosen_voice)
 
     async def synthesize_with_reference(
-        self,
-        text: str,
-        *,
-        reference_audio: VoiceReferenceAudio,
-        speech_style: SpeechStyle | None,
+        self, text: str, *, reference_audio: VoiceReferenceAudio, speech_style: SpeechStyle | None
     ) -> TTSResult:
         model, messages, audio_kwargs, chosen_voice = self._request_parts(
-            text,
-            "",
-            speech_style,
-            reference_audio=reference_audio,
+            text, "", speech_style, reference_audio=reference_audio
         )
         return await self._synthesize_request(model, messages, audio_kwargs, chosen_voice)
 
     async def _synthesize_request(
-        self,
-        model: str,
-        messages: list[dict],
-        audio_kwargs: dict,
-        chosen_voice: str,
+        self, model: str, messages: list[dict], audio_kwargs: dict, chosen_voice: str
     ) -> TTSResult:
         response = await self._client.chat.completions.create(model=model, messages=messages, audio=audio_kwargs)
         choice = response.choices[0] if response.choices else None
@@ -213,15 +189,7 @@ class MiMoTTSProvider(TTSProvider):
         return TTSResult(audio=base64.b64decode(choice.message.audio.data), mime="audio/mpeg", voice=chosen_voice)
 
     async def design_voice(self, prompt: str, *, preview_text: str) -> VoiceDesignResult:
-        result = await self.synthesize_designed(
-            preview_text,
-            prompt=prompt,
-            voice="",
-            speech_style=None,
-        )
+        result = await self.synthesize_designed(preview_text, prompt=prompt, voice="", speech_style=None)
         return VoiceDesignResult(
-            voice_id="",
-            trial_audio=result.audio,
-            trial_audio_mime=result.mime,
-            provider=self.provider_name,
+            voice_id="", trial_audio=result.audio, trial_audio_mime=result.mime, provider=self.provider_name
         )

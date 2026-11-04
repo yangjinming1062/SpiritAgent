@@ -47,12 +47,7 @@ async def rebuild_diary_search(db: AsyncSession, user_id: int) -> None:
 
 
 async def search_diary_entries(
-    user_id: int,
-    *,
-    query: str = "",
-    date_from: date | None = None,
-    date_to: date | None = None,
-    limit: int = 20,
+    user_id: int, *, query: str = "", date_from: date | None = None, date_to: date | None = None, limit: int = 20
 ) -> tuple[list[EntryView], SearchStatus]:
     if not 1 <= limit <= 50 or len(query) > 1000:
         raise ValueError("检索数量须为 1–50，搜索词不超过 1000 字符")

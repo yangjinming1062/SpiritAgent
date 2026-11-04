@@ -53,11 +53,7 @@ async def _handle_cron_action(
         if not schedule or not prompt:
             return tool_error("schedule and prompt are required for create")
         job = await create_job(
-            scope=scope,
-            prompt=prompt,
-            schedule=schedule,
-            name=name or "cron job",
-            kind=kind or "standard",
+            scope=scope, prompt=prompt, schedule=schedule, name=name or "cron job", kind=kind or "standard"
         )
         return json.dumps(
             {"success": True, "message": f"Cron job '{job.get('name')}' created.", "job": _job_payload(job)},
@@ -70,7 +66,7 @@ async def _handle_cron_action(
         )
     if action not in {"remove", "get", *_UPDATE_VERBS}:
         return tool_error(
-            f"Unknown cronjob action: {action!r}. Allowed: create, list, update, remove, pause, resume, get.",
+            f"Unknown cronjob action: {action!r}. Allowed: create, list, update, remove, pause, resume, get."
         )
 
     job_id = coerce_int(job_id_raw, None)
@@ -126,11 +122,7 @@ CRONJOB_SCHEMA = {
             "action": {"type": "string", "description": CRONJOB_PARAM_DESCS["action"]},
             "job_id": {"type": "string", "pattern": "^[1-9][0-9]*$", "description": CRONJOB_PARAM_DESCS["job_id"]},
             "prompt": {"type": "string", "description": CRONJOB_PARAM_DESCS["prompt"]},
-            "schedule": {
-                "type": "string",
-                "maxLength": 128,
-                "description": CRONJOB_PARAM_DESCS["schedule"],
-            },
+            "schedule": {"type": "string", "maxLength": 128, "description": CRONJOB_PARAM_DESCS["schedule"]},
             "name": {"type": "string", "maxLength": 128, "description": CRONJOB_PARAM_DESCS["name"]},
             "kind": {
                 "type": "string",

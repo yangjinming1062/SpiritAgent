@@ -92,10 +92,7 @@ PERSONALITY_TAGGER_PROMPT = (
 )
 
 
-PERSONA_LABELS_TEXTS: dict[str, str] = {
-    "zh": "# 角色设定",
-    "en": "# Character persona",
-}
+PERSONA_LABELS_TEXTS: dict[str, str] = {"zh": "# 角色设定", "en": "# Character persona"}
 
 PERSONA_FIELD_LABELS: dict[str, dict[str, str]] = {
     "zh": {

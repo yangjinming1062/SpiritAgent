@@ -56,7 +56,7 @@ _READ_ONLY_TOOLS: frozenset[str] = frozenset(
         "system.get_windows",
         "system.get_work_area",
         "system.get_cursor_pos",
-    },
+    }
 )
 
 
@@ -65,8 +65,7 @@ def _build_proactive_hint(intent: CompanionIntentView, disturbance_tier: str, la
         resolve_prompt_text(PROACTIVE_CONTEXT_LABELS, language)
         + "\n"
         + json.dumps(
-            {"intent": intent.model_dump(mode="json"), "disturbance_tier": disturbance_tier},
-            ensure_ascii=False,
+            {"intent": intent.model_dump(mode="json"), "disturbance_tier": disturbance_tier}, ensure_ascii=False
         )
     )
 
@@ -153,13 +152,7 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
                         frozenset()
                         if disturbance_tier == "autonomous"
                         else frozenset(
-                            {
-                                "visual_play",
-                                "visual_generate",
-                                "image_generate",
-                                "image_regenerate",
-                                "video_generate",
-                            },
+                            {"visual_play", "visual_generate", "image_generate", "image_regenerate", "video_generate"}
                         )
                     ),
                 )
@@ -177,7 +170,7 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
                 user_message_id=message_id,
                 error=_turn_error(emitter, language),
                 tools_started=_tools_may_have_effects(emitter),
-            ),
+            )
         )
         try:
             delivered = await asyncio.shield(finish_task)

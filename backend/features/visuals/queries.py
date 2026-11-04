@@ -18,11 +18,7 @@ from features.media.video_queue.contracts import VideoQueueInfo
 from features.media.video_queue.service import video_attempt_queue_info
 
 from .client_assets import client_body
-from .eligibility import (
-    actor_body_ready,
-    automatic_media_ready,
-    existing_asset,
-)
+from .eligibility import actor_body_ready, automatic_media_ready, existing_asset
 from .geometry import visual_aspect_matches
 from .import_jobs import import_job_view
 from .import_operations import import_analysis_state
@@ -120,12 +116,7 @@ def _frozen_auto_selectable(source: VisualSource) -> bool | None:
 
 
 def _fits_target_area(
-    width: int,
-    height: int,
-    *,
-    asset_kind: str,
-    target_width: int | None,
-    target_height: int | None,
+    width: int, height: int, *, asset_kind: str, target_width: int | None, target_height: int | None
 ) -> bool:
     """过滤明显不适合目标画幅的完整场景；透明主体与环境成品不按此收窄。"""
 
@@ -236,7 +227,7 @@ async def reusable_actor_clip(user_id: int, source: ActorClipSource) -> bool:
                 VisualItem.status == "ready",
                 VisualItem.outfit_id == source.outfit.material_id,
                 VisualItem.action_id == source.action.action_id,
-            ),
+            )
         )
         for path, snapshot_json, body, content_hash in rows:
             snapshot = VisualSnapshot.model_validate(snapshot_json)
@@ -347,10 +338,7 @@ def _job_view(job: VisualJob, queue_info: VideoQueueInfo | None = None) -> Visua
     if job.state == "failed" and progress is not None and progress.failure_reason == "quality_failed":
         error = (
             quality_failure_message(
-                progress.identity_verdict,
-                progress.identity_reason,
-                progress.review_verdict,
-                progress.review_reason,
+                progress.identity_verdict, progress.identity_reason, progress.review_verdict, progress.review_reason
             )
             or error
         )
@@ -420,7 +408,7 @@ async def list_visuals(
                     snapshot["source"]["outfit"]["name"].astext.ilike(pattern),
                     snapshot["source"]["scene"]["title"].astext.ilike(pattern),
                     snapshot["source"]["action"]["name"].astext.ilike(pattern),
-                ),
+                )
             )
         total = (
             (
@@ -535,9 +523,7 @@ async def list_visuals(
 
 async def visual_detail(user_id: int, visual_id: int) -> VisualDetailView:
     async with SESSION_LOCAL() as db:
-        item = await db.scalar(
-            select(VisualItem).where(VisualItem.id == visual_id, VisualItem.user_id == user_id),
-        )
+        item = await db.scalar(select(VisualItem).where(VisualItem.id == visual_id, VisualItem.user_id == user_id))
         if item is None:
             raise VisualNotFoundError("找不到对应的成品")
         jobs = list(
@@ -552,8 +538,8 @@ async def visual_detail(user_id: int, visual_id: int) -> VisualDetailView:
                         VisualJob.result_image_id == visual_id,
                     ),
                 )
-                .order_by(VisualJob.id.desc()),
-            ),
+                .order_by(VisualJob.id.desc())
+            )
         )
         snapshot = visual_snapshot(item)
         analysis_job = await db.scalar(
@@ -588,11 +574,7 @@ async def visual_detail(user_id: int, visual_id: int) -> VisualDetailView:
 
 
 async def list_jobs(
-    user_id: int,
-    *,
-    states: list[VisualJobState] | None = None,
-    cursor: int | None = None,
-    limit: int = 50,
+    user_id: int, *, states: list[VisualJobState] | None = None, cursor: int | None = None, limit: int = 50
 ) -> VisualJobListResponse:
     async with SESSION_LOCAL() as db:
         filters = [
@@ -776,11 +758,7 @@ async def _layer_media(
         await db.execute(
             select(VisualItem, VisualVersion)
             .join(VisualVersion, VisualVersion.visual_id == VisualItem.id)
-            .where(
-                VisualItem.id == visual_id,
-                VisualItem.user_id == user_id,
-                VisualVersion.number == version,
-            )
+            .where(VisualItem.id == visual_id, VisualItem.user_id == user_id, VisualVersion.number == version)
         )
     ).one_or_none()
     if row is None:
@@ -1159,7 +1137,7 @@ async def _presentation_snapshot(user_id: int, *, for_prompt: bool) -> ActualPre
             or (item.asset_kind == "actor" and item.receipt_kind == "video")
         )
         visual_path = existing_asset(
-            item.media_path if item.media_kind == "image" else item.input_image_path or item.poster_path,
+            item.media_path if item.media_kind == "image" else item.input_image_path or item.poster_path
         )
         source = snapshot.source
         composition = stage_composition(row) if row else None
@@ -1302,11 +1280,7 @@ async def visual_play_catalog(user_id: int, trigger: str) -> list[VisualPlayOpti
 
 
 async def action_media_implementations(
-    user_id: int,
-    action_id: int,
-    *,
-    cursor: int | None = None,
-    limit: int = 30,
+    user_id: int, action_id: int, *, cursor: int | None = None, limit: int = 30
 ) -> ActionMediaListResponse:
     """动作详情的媒体实现清单：该动作已制作的可播成品投影。
 
@@ -1317,11 +1291,7 @@ async def action_media_implementations(
     async with SESSION_LOCAL() as db:
         state = await db.scalar(select(VisualPresentation).where(VisualPresentation.user_id == user_id))
         outfit, identity_hash = frozen_stage_reference(state) if state is not None else (None, None)
-        filters = [
-            VisualItem.user_id == user_id,
-            VisualItem.action_id == action_id,
-            VisualItem.status == "ready",
-        ]
+        filters = [VisualItem.user_id == user_id, VisualItem.action_id == action_id, VisualItem.status == "ready"]
         if cursor is not None:
             filters.append(VisualItem.id < cursor)
         fields = (

@@ -24,10 +24,7 @@ from features.memory.memory_format import (
     format_proactive_memory_block,
 )
 from features.memory.memory_retrieval import MemoryRecallResult, retrieve_proactive_memories
-from infrastructure.ai.llm_client import (
-    MissingLlmConfigError,
-    resolve_provider_chain,
-)
+from infrastructure.ai.llm_client import MissingLlmConfigError, resolve_provider_chain
 from infrastructure.ai.providers.base import ProviderConfig, ReasoningEffort
 from infrastructure.ai.providers.registry import resolve_context_tokens
 from infrastructure.ai.responses import approx_responses_tokens, message_to_response_items
@@ -98,8 +95,7 @@ def resolve_inference_settings(settings: dict[str, Any]) -> InferenceSettings:
     reasoning = settings.get("agent.reasoning_effort")
     reasoning = _parse_reasoning_effort(reasoning) if isinstance(reasoning, str) else None
     threshold = parse_temperature(
-        settings.get("chat.context_compression_threshold"),
-        SETTINGS.context_compression_threshold,
+        settings.get("chat.context_compression_threshold"), SETTINGS.context_compression_threshold
     )
     return InferenceSettings(
         temperature=parse_temperature(settings.get("agent.temperature"), DEFAULT_CONFIG["agent"]["temperature"]),
@@ -119,8 +115,7 @@ def merge_session_settings(user_settings: dict[str, Any], session_settings: dict
 
 
 def _merge_client_context(
-    session_ctx: ChatRequestClientContext | None,
-    request_ctx: ChatRequestClientContext | None,
+    session_ctx: ChatRequestClientContext | None, request_ctx: ChatRequestClientContext | None
 ) -> ChatRequestClientContext | None:
     """请求逐字段覆盖会话级客户端资料。"""
     if session_ctx is None or request_ctx is None:
@@ -157,11 +152,7 @@ def user_text_item(text: str) -> dict[str, Any]:
 
 
 def _maybe_append_day_marker(
-    items: list[dict[str, Any]],
-    dt: datetime | None,
-    prev_date_key: str | None,
-    user_local_tz: str | None,
-    lang: str,
+    items: list[dict[str, Any]], dt: datetime | None, prev_date_key: str | None, user_local_tz: str | None, lang: str
 ) -> str | None:
     if dt is None:
         return prev_date_key
@@ -199,11 +190,7 @@ def _history_to_responses_context(
         item_start = len(context["input"])
         if inject_time_perception:
             prev_date_key = _maybe_append_day_marker(
-                context["input"],
-                msg.created_at,
-                prev_date_key,
-                user_local_tz,
-                lang,
+                context["input"], msg.created_at, prev_date_key, user_local_tz, lang
             )
             if msg.role == "user" and msg.created_at is not None:
                 clock = format_time_anchor(msg.created_at, last_user_at, user_local_tz, lang)
@@ -228,7 +215,7 @@ def _history_to_responses_context(
                         "type": "function_call_output",
                         "call_id": call_id,
                         "output": tool_error(INTERRUPTED_RUNNING_ERROR),
-                    },
+                    }
                 )
         source_id = msg.summary_through_message_id if msg.subtype == CHECKPOINT_SUBTYPE else msg.id
         if source_id is None:
@@ -297,12 +284,7 @@ async def build_turn_inputs(
     first_user_msg_content = message_text(first_user_msg) if first_user_msg else None
 
     # 基础链用于估算当前对话窗口；压缩沿所属任务链解析，实际回合按截断和视频内联后幸存的媒体选链。
-    llm_chain = await resolve_provider_chain(
-        db,
-        user_id,
-        "llm",
-        task=task,
-    )
+    llm_chain = await resolve_provider_chain(db, user_id, "llm", task=task)
     if not llm_chain:
         raise MissingLlmConfigError("no provider configured for service 'llm'")
 
@@ -311,9 +293,7 @@ async def build_turn_inputs(
     )
     action_excluded = await unavailable_action_tool_names(user_id)
     all_schemas = REGISTRY.get_all_schemas(
-        user_id,
-        user_settings=user_settings,
-        exclude=excluded_tool_names | action_excluded,
+        user_id, user_settings=user_settings, exclude=excluded_tool_names | action_excluded
     )
     persona = await persona_snapshot(db, user_id) if is_companion else None
     # 入口处一次性 normalize 语言：避免 lang="fr" 等未支持值在 volatile header 与 day marker 处分别走不同分支。
@@ -328,9 +308,7 @@ async def build_turn_inputs(
         background_memory_extras = await format_background_memory_block(db, memory_scope, language=session_lang)
         if is_companion:
             companion_reflection_extras = await format_companion_reflection_block(
-                db,
-                memory_scope,
-                language=session_lang,
+                db, memory_scope, language=session_lang
             )
             life_context = await read_life_context_in_session(db, user_id, pursuit_limit=3, event_limit=6)
             life_label = (
@@ -342,21 +320,14 @@ async def build_turn_inputs(
                 LIFE_FACT_GUIDANCE[session_lang]
                 + "\n"
                 + life_label
-                + json.dumps(
-                    life_context.prompt_payload(),
-                    ensure_ascii=False,
-                )
+                + json.dumps(life_context.prompt_payload(), ensure_ascii=False)
             )
             companion_reflection_extras = "\n\n".join(
                 part for part in (companion_reflection_extras, life_block) if part
             )
         if proactive_memory_query:
             proactive_rows = await retrieve_proactive_memories(
-                db,
-                memory_scope,
-                proactive_memory_query,
-                query_embedding=proactive_memory_embedding,
-                limit=3,
+                db, memory_scope, proactive_memory_query, query_embedding=proactive_memory_embedding, limit=3
             )
     if companion_reflection_extras:
         proactive_rows = [row for row in proactive_rows if row.kind != "reflection"]
@@ -366,10 +337,7 @@ async def build_turn_inputs(
         valid_tool_names=[schema_name(s) for s in all_schemas],
         companion_proactive_turn=companion_proactive_turn,
         client_context=_merge_client_context(session_client_context, req.client_context),
-        persona_extras=build_system_prompt_extras(
-            persona,
-            language=session_lang,
-        ),
+        persona_extras=build_system_prompt_extras(persona, language=session_lang),
         user_profile_extras=user_profile_extras,
         background_memory_extras=background_memory_extras,
         companion_reflection_extras=companion_reflection_extras,
@@ -401,10 +369,7 @@ async def build_turn_inputs(
     if is_companion and (not companion_proactive_turn or await get_disturbance_tier(user_id, db=db) == "autonomous"):
         selected_voice = user_settings.get("companion.voice_id")
         speech_config, speech_voice = await resolve_reply_voice(
-            db,
-            user_id,
-            selected_voice if isinstance(selected_voice, str) else "",
-            session_lang,
+            db, user_id, selected_voice if isinstance(selected_voice, str) else "", session_lang
         )
 
     return TurnInputs(

@@ -49,7 +49,7 @@ def validate_source_url(platform: SocialPlatform, source_id: str, url: str) -> s
             parsed.path,
             urlencode({key: values[0] for key, values in query.items() if key in definition.query_keys}),
             "",
-        ),
+        )
     )
 
 

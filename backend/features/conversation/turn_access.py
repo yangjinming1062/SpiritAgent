@@ -79,7 +79,7 @@ async def conversation_topic_ids(db: AsyncSession, conv: ConversationSnapshot) -
             Message.id > conv.context_after_message_id,
             Message.content_type == "companion_reply",
             references != [],
-        ),
+        )
     )
     # reply_json 按 JSON/API 表示保存，ResourceId 会序列化为字符串；进入
     # 数据库条件前恢复为整数，避免与 BIGINT 主键比较时发生类型冲突。

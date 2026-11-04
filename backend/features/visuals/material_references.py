@@ -9,16 +9,8 @@ from .models import VisualImportJob, VisualItem, VisualJob, VisualPresentation, 
 
 MaterialKind = Literal["outfit", "scene", "action"]
 
-_MATERIAL_COLUMNS = {
-    "outfit": "outfit_id",
-    "scene": "scene_id",
-    "action": "action_id",
-}
-_MATERIAL_JSON_KEYS = {
-    "outfit": "material_id",
-    "scene": "scene_id",
-    "action": "action_id",
-}
+_MATERIAL_COLUMNS = {"outfit": "outfit_id", "scene": "scene_id", "action": "action_id"}
+_MATERIAL_JSON_KEYS = {"outfit": "material_id", "scene": "scene_id", "action": "action_id"}
 
 
 def _analysis_contains_material(value: object, kind: MaterialKind, material_id: int) -> bool:
@@ -113,11 +105,9 @@ async def material_has_external_references(
         if any(_analysis_contains_material(value, kind, material_id) for value in row):
             return True
 
-    import_query = select(
-        VisualImportJob.id,
-        VisualImportJob.result_json,
-        VisualImportJob.context_json,
-    ).where(VisualImportJob.user_id == user_id)
+    import_query = select(VisualImportJob.id, VisualImportJob.result_json, VisualImportJob.context_json).where(
+        VisualImportJob.user_id == user_id
+    )
     if exclude_import_job_id is not None:
         import_query = import_query.where(VisualImportJob.id != exclude_import_job_id)
     for row in await db.execute(import_query):

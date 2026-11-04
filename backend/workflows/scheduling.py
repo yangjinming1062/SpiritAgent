@@ -175,12 +175,7 @@ async def _bulk_cas_advance(due_jobs: list[DueJob], now: datetime) -> list[DueJo
         for job in sorted(fired, key=lambda row: (row.user_id, row.id)):
             if job.kind != STANDARD_CRON_KIND:
                 await enqueue_companion_intent(
-                    db,
-                    job.user_id,
-                    job.prompt,
-                    source_kind="cron",
-                    cron_job_id=job.id,
-                    expires_at=job.expires_at,
+                    db, job.user_id, job.prompt, source_kind="cron", cron_job_id=job.id, expires_at=job.expires_at
                 )
         await delete_consumed_one_shots(db, fired)
         await db.commit()
@@ -204,10 +199,7 @@ async def _advance_due_jobs(due_jobs: list[DueJob], now: datetime) -> None:
         and job.expires_at is not None
         and job.user_id in online_users
     }
-    still_results = await asyncio.gather(
-        *(is_still(user_id) for user_id in deferred_users),
-        return_exceptions=True,
-    )
+    still_results = await asyncio.gather(*(is_still(user_id) for user_id in deferred_users), return_exceptions=True)
     still_by_user: dict[int, bool] = {}
     for user_id, result in zip(deferred_users, still_results, strict=True):
         if isinstance(result, BaseException):
@@ -305,10 +297,7 @@ async def _maybe_run_ignored_outreach() -> None:
                 await enqueue_companion_intent(db, uid, prompt, source_kind="checkin")
                 await db.commit()
             await queue_companion_intent(uid)
-        logger.info(
-            "cron: ignored-outreach turn requested",
-            extra={"user_id": uid, "ignored_minutes": ignored_minutes},
-        )
+        logger.info("cron: ignored-outreach turn requested", extra={"user_id": uid, "ignored_minutes": ignored_minutes})
 
 
 async def run_tick() -> None:
@@ -325,8 +314,7 @@ async def run_tick() -> None:
     due_jobs = await _select_due_jobs()
     if len(due_jobs) > _MAX_DUE_PER_TICK:
         logger.warning(
-            "cron: tick over cap, deferred to next tick",
-            extra={"due_count": len(due_jobs), "cap": _MAX_DUE_PER_TICK},
+            "cron: tick over cap, deferred to next tick", extra={"due_count": len(due_jobs), "cap": _MAX_DUE_PER_TICK}
         )
     due_jobs = due_jobs[:_MAX_DUE_PER_TICK]
     if not due_jobs:
@@ -442,8 +430,7 @@ async def _maybe_run_autonomous_activity(now: datetime) -> None:
             local_now = now.astimezone(zone)
             latest_date = local_now.date() - timedelta(days=1)
             await close_expired_logs(
-                db,
-                [log.id for log in unfinished.get(user_id, ()) if log.target_date < latest_date],
+                db, [log.id for log in unfinished.get(user_id, ()) if log.target_date < latest_date]
             )
             if not in_nightly_window(now, zone):
                 continue

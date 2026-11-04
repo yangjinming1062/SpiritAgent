@@ -15,11 +15,7 @@ from entrypoints.http.routing import get_router
 router = get_router()
 
 
-@router.post(
-    "/activate",
-    response_model=TokenResponse,
-    openapi_extra=operation_policy(ipc=False),
-)
+@router.post("/activate", response_model=TokenResponse, openapi_extra=operation_policy(ipc=False))
 @limiter.limit(lambda: f"{SETTINGS.login_rate_limit_per_minute}/minute", key_func=get_remote_address)
 async def activate(payload: ActivateRequest, request: Request, db: DbSession) -> TokenResponse:
     """用激活码换取会话 JWT：激活码是 base64url JSON {b, t}，t 字段经哈希后按 activation_token_hash 查用户；成功后停用旧会话、签发 JWT 并写 LoginRecord。"""
@@ -33,16 +29,9 @@ async def activate(payload: ActivateRequest, request: Request, db: DbSession) ->
     return result
 
 
-@router.post(
-    "/refresh",
-    response_model=TokenResponse,
-    openapi_extra=operation_policy(ipc=False),
-)
+@router.post("/refresh", response_model=TokenResponse, openapi_extra=operation_policy(ipc=False))
 async def refresh_session(
-    payload: RefreshRequest,
-    request: Request,
-    session: CurrentSession,
-    db: DbSession,
+    payload: RefreshRequest, request: Request, session: CurrentSession, db: DbSession
 ) -> TokenResponse:
     user, login_record = session
     return await refresh_login(
@@ -55,11 +44,7 @@ async def refresh_session(
     )
 
 
-@router.post(
-    "/logout",
-    response_model=MessageResponse,
-    openapi_extra=operation_policy(ipc=False),
-)
+@router.post("/logout", response_model=MessageResponse, openapi_extra=operation_policy(ipc=False))
 async def logout(session: CurrentSession, db: DbSession) -> MessageResponse:
     user, login_record = session
     await logout_login(user.id, login_record.id, db)

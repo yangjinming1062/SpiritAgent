@@ -10,7 +10,7 @@ from infrastructure.assets.paths import parse_companion_asset_path
 ASSET_TOKEN_TRAILING_PUNCTUATION = ".!?，。；！"
 
 _ASSET_TOKEN = re.compile(
-    r"(?<![\w/-])(?:https?://[^\s<>\"'()\[\]{}]+)?(?:/api/companion/asset/|companion-assets/)[^\s<>\"'()\[\]{},;]+",
+    r"(?<![\w/-])(?:https?://[^\s<>\"'()\[\]{}]+)?(?:/api/companion/asset/|companion-assets/)[^\s<>\"'()\[\]{},;]+"
 )
 
 

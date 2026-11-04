@@ -186,10 +186,7 @@ async def visual_job_row(db: AsyncSession, user_id: int, job_id: int, *, lock: b
 async def publication_rows(db: AsyncSession, user_id: int, job_id: int) -> tuple[VisualJob, VisualPresentation]:
     query = (
         select(VisualJob, VisualPresentation)
-        .join(
-            VisualPresentation,
-            VisualPresentation.user_id == VisualJob.user_id,
-        )
+        .join(VisualPresentation, VisualPresentation.user_id == VisualJob.user_id)
         .where(VisualJob.id == job_id, VisualJob.user_id == user_id)
         .with_for_update(of=(VisualJob, VisualPresentation))
     )
@@ -203,11 +200,7 @@ async def publication_rows(db: AsyncSession, user_id: int, job_id: int) -> tuple
 
 
 async def presentation_row(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    create: bool = False,
-    lock: bool = False,
+    db: AsyncSession, user_id: int, *, create: bool = False, lock: bool = False
 ) -> VisualPresentation | None:
     if not lock:
         existing = await db.get(VisualPresentation, user_id)
@@ -237,7 +230,7 @@ async def playback_row(db: AsyncSession, user_id: int, play_id: str) -> VisualPl
         select(VisualPlayback)
         .where(VisualPlayback.user_id == user_id, VisualPlayback.play_id == play_id)
         .with_for_update()
-        .execution_options(populate_existing=True),
+        .execution_options(populate_existing=True)
     )
     if play is None:
         raise VisualNotFoundError("找不到对应的播放")
@@ -403,11 +396,7 @@ def _clip_body(item: VisualItem | PresentedVisual) -> ActorClipBody | None:
 
 
 def emit_playback_receipt(
-    db: AsyncSession,
-    user_id: int,
-    play_id: str,
-    status: PlaybackStatus,
-    receipt_kind: str | None,
+    db: AsyncSession, user_id: int, play_id: str, status: PlaybackStatus, receipt_kind: str | None
 ) -> None:
     emit_ws_event(
         db,

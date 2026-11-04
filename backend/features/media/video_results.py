@@ -87,10 +87,5 @@ async def download_and_store_video(
     if sniff_media_ext(data) != "mp4":
         raise RuntimeError("provider returned a payload that is not an mp4 stream")
     return await save_video_job_asset_async(
-        data,
-        user_id=user_id,
-        job_id=job_id,
-        attempt=attempt,
-        generation_id=generation_id,
-        directory=directory,
+        data, user_id=user_id, job_id=job_id, attempt=attempt, generation_id=generation_id, directory=directory
     )

@@ -9,7 +9,7 @@ from infrastructure.config import SETTINGS
 
 # stdlib LogRecord 属性集合（导入时取，防未来 Python 字段泄漏到 JSON）；`color_message` 来自 uvicorn，`message`/`asctime` 由 Formatter 填充会与 extra= 冲突。
 _RESERVED_LOGRECORD_KEYS: frozenset[str] = frozenset(
-    set(logging.LogRecord("", 0, "", 0, "", (), None).__dict__) | {"message", "asctime", "color_message"},
+    set(logging.LogRecord("", 0, "", 0, "", (), None).__dict__) | {"message", "asctime", "color_message"}
 )
 
 # HTTP 入口与长生命周期 task tick 显式 set_request_id()；_RequestContextFilter 透传到每条 LogRecord。

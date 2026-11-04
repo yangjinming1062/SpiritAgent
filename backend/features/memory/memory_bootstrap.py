@@ -14,11 +14,7 @@ _USER_PROFILE_TAGS = ["onboarding", "user_profile"]
 
 async def _active_profile_rows(db: AsyncSession, scope: MemoryScope) -> list[Memory]:
     rows = await db.scalars(
-        select(Memory).where(
-            scope_filter(scope),
-            active_memory_filter(),
-            Memory.kind == "user_profile",
-        ),
+        select(Memory).where(scope_filter(scope), active_memory_filter(), Memory.kind == "user_profile")
     )
     return list(rows.all())
 

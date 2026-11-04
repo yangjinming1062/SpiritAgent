@@ -25,11 +25,7 @@ async def planning_persona(db: AsyncSession, user_id: int) -> PersonaPlanningSna
     mood = await get_life_mood(db, user_id)
     return (
         PersonaPlanningSnapshot(
-            row.is_complete,
-            mood,
-            row.outfit_policy,
-            row.scene_policy,
-            load_persona_definition(row),
+            row.is_complete, mood, row.outfit_policy, row.scene_policy, load_persona_definition(row)
         )
         if row is not None
         else None

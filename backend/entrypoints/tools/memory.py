@@ -13,9 +13,7 @@ RECALL_SCHEMA = {
     "description": MEMORY_RECALL_DESC,
     "parameters": {
         "type": "object",
-        "properties": {
-            "query": {"type": "string", "description": MEMORY_RECALL_PARAM_DESCS["query"]},
-        },
+        "properties": {"query": {"type": "string", "description": MEMORY_RECALL_PARAM_DESCS["query"]}},
     },
 }
 INSPECT_SCHEMA = {
@@ -23,10 +21,7 @@ INSPECT_SCHEMA = {
     "description": MEMORY_INSPECT_DESC + "\n\n" + MEMORY_POLICY,
     "parameters": {
         "type": "object",
-        "properties": {
-            "query": {"type": "string"},
-            "before_memory_id": {"type": "string", "pattern": "^[1-9][0-9]*$"},
-        },
+        "properties": {"query": {"type": "string"}, "before_memory_id": {"type": "string", "pattern": "^[1-9][0-9]*$"}},
     },
 }
 

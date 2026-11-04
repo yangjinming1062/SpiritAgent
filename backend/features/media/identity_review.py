@@ -15,11 +15,7 @@ from infrastructure.logger import get_logger
 from pydantic import BaseModel, ConfigDict, Field
 from runtime.paid_work import GenerationWorkPaused
 
-from .prompts import (
-    CHARACTER_IMAGE_GOAL_REVIEW,
-    CHARACTER_IMAGE_GOAL_REVIEW_REPAIR,
-    FULLBODY_CANDIDATE_IDENTITY_REVIEW,
-)
+from .prompts import CHARACTER_IMAGE_GOAL_REVIEW, CHARACTER_IMAGE_GOAL_REVIEW_REPAIR, FULLBODY_CANDIDATE_IDENTITY_REVIEW
 from .review_contracts import ReviewDecision, ReviewEvidence, ReviewServiceStatus, ReviewVerdict, VisualReview
 from .review_evidence import freeze_review_evidence, read_review_evidence
 

@@ -20,15 +20,7 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
         if not texts:
             return []
         model = self.config.model
-        payload = {
-            "requests": [
-                {
-                    "model": f"models/{model}",
-                    "content": {"parts": [{"text": t}]},
-                }
-                for t in texts
-            ],
-        }
+        payload = {"requests": [{"model": f"models/{model}", "content": {"parts": [{"text": t}]}} for t in texts]}
         resp = await self._http.post(f"/v1beta/models/{model}:batchEmbedContents", json=payload)
         body = raise_for_provider_response(resp, family="gemini")
         embeddings_list = body.get("embeddings", [])

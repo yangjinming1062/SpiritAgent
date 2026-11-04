@@ -25,10 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.assets.contributions import cleanup_obsolete_references, forget_deleted_references, protected_asset_paths
 from features.assets.models import Asset
-from features.assets.references import (
-    AssetReferencesUnavailable,
-    collect_live_asset_paths,
-)
+from features.assets.references import AssetReferencesUnavailable, collect_live_asset_paths
 
 logger = get_logger(__name__)
 _ASSET_SUFFIXES = {
@@ -52,11 +49,7 @@ _ASSET_SUFFIXES = {
 
 
 async def enqueue_asset_cleanup_entries(
-    db: AsyncSession,
-    user_id: int,
-    entries: Iterable[tuple[str, datetime | None]],
-    *,
-    expedite: bool = False,
+    db: AsyncSession, user_id: int, entries: Iterable[tuple[str, datetime | None]], *, expedite: bool = False
 ) -> None:
     owned = {
         path: not_before
@@ -70,7 +63,7 @@ async def enqueue_asset_cleanup_entries(
         [
             {"user_id": user_id, "path": path, "requested_at": now, "not_before": not_before or now, "state": "cleanup"}
             for path, not_before in sorted(owned.items())
-        ],
+        ]
     )
     keys = [Asset.user_id, Asset.path]
     await db.execute(
@@ -83,17 +76,12 @@ async def enqueue_asset_cleanup_entries(
             },
         )
         if expedite
-        else statement.on_conflict_do_update(index_elements=keys, set_={"state": "cleanup", "requested_at": now}),
+        else statement.on_conflict_do_update(index_elements=keys, set_={"state": "cleanup", "requested_at": now})
     )
 
 
 async def enqueue_asset_cleanup(
-    db: AsyncSession,
-    user_id: int,
-    paths: Iterable[str],
-    *,
-    not_before: datetime | None = None,
-    expedite: bool = False,
+    db: AsyncSession, user_id: int, paths: Iterable[str], *, not_before: datetime | None = None, expedite: bool = False
 ) -> None:
     await enqueue_asset_cleanup_entries(db, user_id, ((path, not_before) for path in paths), expedite=expedite)
 
@@ -183,9 +171,7 @@ async def _cleanup_user_assets(user_id: int, *, discover: bool = False) -> int:
                 referenced = await collect_live_asset_paths(db, user_id)
             except AssetReferencesUnavailable:
                 logger.warning(
-                    "Asset discovery deferred: references unavailable",
-                    extra={"user_id": user_id},
-                    exc_info=True,
+                    "Asset discovery deferred: references unavailable", extra={"user_id": user_id}, exc_info=True
                 )
             else:
                 released |= await asyncio.to_thread(_disk_assets, user_id) - referenced
@@ -223,9 +209,7 @@ async def _cleanup_user_assets(user_id: int, *, discover: bool = False) -> int:
                 entry.attempts += 1
                 entry.last_error = str(exc)[:1000]
                 logger.warning(
-                    "Asset cleanup will retry",
-                    extra={"user_id": user_id, "path": entry.path},
-                    exc_info=True,
+                    "Asset cleanup will retry", extra={"user_id": user_id, "path": entry.path}, exc_info=True
                 )
             else:
                 entry.state = "deleted"

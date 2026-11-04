@@ -250,11 +250,7 @@ async def video_generation_tool(
 
 
 async def video_generate_status_tool(
-    task_id: ResourceId,
-    *,
-    user_id: ResourceId,
-    media_turn: MediaTurnState,
-    **_: object,
+    task_id: ResourceId, *, user_id: ResourceId, media_turn: MediaTurnState, **_: object
 ) -> str:
     """查询之前提交的 video 生成任务状态。"""
     try:
@@ -277,11 +273,7 @@ async def video_generate_status_tool(
         payload.update({"error": row.error_message, "retry_safe": False})
     if row.media_id:
         artifact = media_turn.artifacts.get(row.media_id) or MediaArtifact(
-            row.media_id,
-            "video",
-            row.media_id,
-            "pending",
-            job_id=row.id,
+            row.media_id, "video", row.media_id, "pending", job_id=row.id
         )
         apply_video_status(artifact, row)
         media_turn.artifacts[artifact.media_id] = artifact
@@ -298,11 +290,7 @@ VIDEO_GENERATION_SCHEMA = {
         "type": "object",
         "properties": {
             "prompt": {"type": "string", "description": VIDEO_GENERATION_PARAM_DESCS["prompt"]},
-            "subject": {
-                "type": "string",
-                "enum": ["self"],
-                "description": VIDEO_GENERATION_PARAM_DESCS["subject"],
-            },
+            "subject": {"type": "string", "enum": ["self"], "description": VIDEO_GENERATION_PARAM_DESCS["subject"]},
             "duration": {
                 "type": "integer",
                 "minimum": _MIN_DURATION_SECONDS,
@@ -314,19 +302,13 @@ VIDEO_GENERATION_SCHEMA = {
                 "enum": ["512P", "768P", "1080P", "2K"],
                 "description": VIDEO_GENERATION_PARAM_DESCS["resolution"],
             },
-            "reference_image": {
-                "type": "string",
-                "description": VIDEO_GENERATION_PARAM_DESCS["reference_image"],
-            },
+            "reference_image": {"type": "string", "description": VIDEO_GENERATION_PARAM_DESCS["reference_image"]},
             "aspect_ratio": {
                 "type": "string",
                 "enum": list(_ASPECT_RATIOS),
                 "description": VIDEO_GENERATION_PARAM_DESCS["aspect_ratio"],
             },
-            "outfit_override": {
-                "type": "string",
-                "description": VIDEO_GENERATION_PARAM_DESCS["outfit_override"],
-            },
+            "outfit_override": {"type": "string", "description": VIDEO_GENERATION_PARAM_DESCS["outfit_override"]},
         },
         "required": ["prompt"],
         "additionalProperties": False,

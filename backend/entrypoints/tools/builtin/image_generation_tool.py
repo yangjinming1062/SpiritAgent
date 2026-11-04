@@ -41,11 +41,7 @@ async def media_inspect_tool(media_id: str, media_turn: MediaTurnState, **_: obj
 
 
 async def image_regenerate_tool(
-    media_id: str,
-    inspection_id: str,
-    correction: str,
-    media_turn: MediaTurnState,
-    **_: object,
+    media_id: str, inspection_id: str, correction: str, media_turn: MediaTurnState, **_: object
 ) -> str:
     return await regenerate_chat_image(media_id, inspection_id, correction, media_turn)
 
@@ -81,7 +77,7 @@ MEDIA_INSPECT_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "media_id": {"type": "string", "description": "media_id returned by a media tool in this conversation."},
+            "media_id": {"type": "string", "description": "media_id returned by a media tool in this conversation."}
         },
         "required": ["media_id"],
         "additionalProperties": False,

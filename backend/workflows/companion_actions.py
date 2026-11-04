@@ -22,7 +22,7 @@ _ALWAYS_AVAILABLE = frozenset(
         "visual_inspect",
         "visual_generate",
         "outfit_list",
-    },
+    }
 )
 _PLAY_TOOL = "visual_play"
 
@@ -48,11 +48,7 @@ class ActionViewSnapshot:
             lines.append(texts["presenting_unknown"])
         if self.items:
             names = texts["playable_separator"].join(
-                texts["playable_item"].format(
-                    name=item.name,
-                    clip_kind=item.clip_kind,
-                    visual_id=item.visual_id,
-                )
+                texts["playable_item"].format(name=item.name, clip_kind=item.clip_kind, visual_id=item.visual_id)
                 for item in self.items
             )
             lines.append(texts["playable"].format(names=names))
@@ -69,8 +65,4 @@ async def build_action_view(user_id: int, *, trigger: str = "chat") -> ActionVie
     names = set(_ALWAYS_AVAILABLE)
     if items:
         names.add(_PLAY_TOOL)
-    return ActionViewSnapshot(
-        presentation=presentation_snapshot,
-        items=items,
-        available_tool_names=frozenset(names),
-    )
+    return ActionViewSnapshot(presentation=presentation_snapshot, items=items, available_tool_names=frozenset(names))

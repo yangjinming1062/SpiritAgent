@@ -77,11 +77,7 @@ from features.appearance.views import (
     select_avatar_view,
 )
 from features.companion.http_contracts import IdleExpressionRequest, IdleExpressionResult
-from features.companion.persona_service import (
-    PersonaConflictError,
-    PersonaValidationError,
-    confirm_portrait,
-)
+from features.companion.persona_service import PersonaConflictError, PersonaValidationError, confirm_portrait
 from features.companion.schemas import (
     CompanionOperationResponse,
     PersonaResponse,
@@ -127,7 +123,7 @@ logger = get_logger(__name__)
 )
 async def post_idle_expression(user: CurrentUser, body: IdleExpressionRequest) -> IdleExpressionResult:
     return IdleExpressionResult.model_validate(
-        await companion_idle_expression(user.id, body.model_dump(exclude_unset=True)),
+        await companion_idle_expression(user.id, body.model_dump(exclude_unset=True))
     )
 
 
@@ -184,9 +180,7 @@ async def post_portrait_confirm(
         raise RequestError(status_code=409, message=str(exc))
     except AvatarSourceUnreadableError as exc:
         raise RequestError(
-            status_code=409,
-            message="头像文件已过期或缺失，请重新生成头像",
-            details={"reason": str(exc)},
+            status_code=409, message="头像文件已过期或缺失，请重新生成头像", details={"reason": str(exc)}
         )
     return CompanionOperationResponse(ok=True)
 
@@ -217,8 +211,7 @@ async def post_avatar(
         if isinstance(body, AvatarFromImageRequest):
             raw, content_type = await _decode_upload_image(body.image, body.content_type)
             presentation, presentation_type = await _decode_optional_image(
-                body.presentation_image,
-                body.presentation_content_type,
+                body.presentation_image, body.presentation_content_type
             )
             asset = await regenerate_avatar_from_image_view(
                 user_id=user.id,
@@ -262,10 +255,7 @@ async def _decode_upload_image(image_b64: str, content_type: str | None) -> tupl
         raise RequestError(status_code=400, message="图片尺寸过大，无法安全解码，请缩小后重新上传")
     except Exception:
         # Pillow 各格式插件对损坏数据抛出的异常类型不统一，一律按图片无法读取处理。
-        raise RequestError(
-            status_code=400,
-            message="图片无法读取，请换一张有效的 PNG / JPEG / WebP / GIF 图片",
-        )
+        raise RequestError(status_code=400, message="图片无法读取，请换一张有效的 PNG / JPEG / WebP / GIF 图片")
 
 
 async def _decode_optional_image(image_b64: str | None, content_type: str | None) -> tuple[bytes | None, str | None]:
@@ -283,10 +273,7 @@ async def post_avatar_prompt(request: Request, body: AvatarPromptRequest, user: 
         raise missing_config_error("描述生成服务", action="仍可直接上传准备好的图片") from exc
     except (LLMRuntimeError, RuntimeError, ValidationError):
         logger.warning("avatar prompt failed", extra={"user_id": user.id}, exc_info=True)
-        raise RequestError(
-            status_code=502,
-            message="提示词暂时无法生成，请稍后重试；仍可直接上传准备好的图片",
-        )
+        raise RequestError(status_code=502, message="提示词暂时无法生成，请稍后重试；仍可直接上传准备好的图片")
     return ImagePromptResponse(prompt=prompt)
 
 
@@ -443,11 +430,7 @@ async def post_fullbody_prompt(
 ) -> ImagePromptResponse:
     """自备图提示词：按种子参考图锚定组装，种子缺失与 AI 路径同样失败，不做生图。"""
     try:
-        prompt = await prepare_fullbody_prompt(
-            user_id=user.id,
-            avatar_id=avatar_id,
-            feedback=body.feedback,
-        )
+        prompt = await prepare_fullbody_prompt(user_id=user.id, avatar_id=avatar_id, feedback=body.feedback)
     except (AvatarGenerationError, VisualReasoningError) as exc:
         raise _avatar_request_error(exc)
     except MissingLlmConfigError as exc:
@@ -470,10 +453,7 @@ async def post_fullbody_adopt(
     raw, content_type = await _decode_upload_image(body.image, body.content_type)
     try:
         asset = await adopt_fullbody_seed_view(
-            user_id=user.id,
-            avatar_id=avatar_id,
-            data=raw,
-            content_type=content_type,
+            user_id=user.id, avatar_id=avatar_id, data=raw, content_type=content_type
         )
     except (AvatarGenerationError, VisualReasoningError) as exc:
         raise _avatar_request_error(exc)
@@ -525,32 +505,16 @@ async def post_outfit(
     try:
         if isinstance(body, OutfitAdoptRequest):
             raw, _ = await _decode_upload_image(body.image, body.content_type)
-            return await adopt_outfit_draft_image_view(
-                db,
-                user.id,
-                description=body.description,
-                data=raw,
-            )
+            return await adopt_outfit_draft_image_view(db, user.id, description=body.description, data=raw)
         raw, content_type = await _decode_optional_image(body.image, body.content_type)
         outfit = await create_outfit_draft_view(
-            db,
-            user.id,
-            description=body.description,
-            image=raw,
-            content_type=content_type,
+            db, user.id, description=body.description, image=raw, content_type=content_type
         )
     except (OutfitError, VisualReasoningError) as exc:
         raise _outfit_request_error(exc)
     except AvatarGenerationError as exc:
-        logger.warning(
-            "outfit draft generation failed",
-            extra={"user_id": user.id, "error": exc.internal},
-        )
-        raise RequestError(
-            status_code=502,
-            message=str(exc),
-            code="generation_failed",
-        ) from exc
+        logger.warning("outfit draft generation failed", extra={"user_id": user.id, "error": exc.internal})
+        raise RequestError(status_code=502, message=str(exc), code="generation_failed") from exc
     return outfit
 
 
@@ -571,19 +535,12 @@ async def post_outfit_prompt(body: OutfitPromptRequest, user: CurrentUser, db: D
     raw, content_type = await _decode_optional_image(body.image, body.content_type)
     try:
         prompt = await prepare_outfit_prompt(
-            db,
-            user.id,
-            description=body.description,
-            image=raw,
-            content_type=content_type,
+            db, user.id, description=body.description, image=raw, content_type=content_type
         )
     except (OutfitError, VisualReasoningError) as exc:
         raise _outfit_request_error(exc)
     except AvatarGenerationError as exc:
-        logger.warning(
-            "outfit prompt failed",
-            extra={"user_id": user.id, "error": exc.internal},
-        )
+        logger.warning("outfit prompt failed", extra={"user_id": user.id, "error": exc.internal})
         raise RequestError(status_code=502, message=str(exc), code="generation_failed")
     return ImagePromptResponse(prompt=prompt)
 
@@ -602,20 +559,14 @@ async def post_outfit_regenerate(
     try:
         if isinstance(body, OutfitImageImportRequest):
             data, _ = await _decode_upload_image(body.image, body.content_type)
-            return await adopt_outfit_regenerate_image_view(
-                db,
-                user.id,
-                outfit_id,
-                data=data,
-            )
+            return await adopt_outfit_regenerate_image_view(db, user.id, outfit_id, data=data)
         outfit = await regenerate_outfit_draft_view(db, user.id, outfit_id, feedback=body.feedback, mode=body.mode)
     except (OutfitError, VisualReasoningError) as exc:
         raise _outfit_request_error(exc)
     except AvatarGenerationError as exc:
         # AvatarGenerationError 的 str 按契约是公开文案（含编辑能力缺失等可行动指引），透传不替换。
         logger.warning(
-            "outfit draft regenerate failed",
-            extra={"user_id": user.id, "outfit_id": outfit_id, "error": exc.internal},
+            "outfit draft regenerate failed", extra={"user_id": user.id, "outfit_id": outfit_id, "error": exc.internal}
         )
         raise RequestError(status_code=502, message=str(exc), code="generation_failed")
     return outfit

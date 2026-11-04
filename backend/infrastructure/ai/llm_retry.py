@@ -186,10 +186,7 @@ async def _guarded_stream(
 
 
 async def call_with_retry(
-    client: AsyncOpenAI | ChatSchemaResponsesClient,
-    *,
-    config: ProviderConfig,
-    **create_kwargs: Any,
+    client: AsyncOpenAI | ChatSchemaResponsesClient, *, config: ProviderConfig, **create_kwargs: Any
 ) -> Any:
     """client.responses.create(**kwargs) 的统一入口：持续等待模型结果，真实异常分类为 LLMRuntimeError。重试由客户端 max_retries 接管（SDK 遵循 Retry-After 并对 408/409/429/5xx 退避）；换供应商由 execute_with_fallback 决定。"""
     context_length = resolve_context_tokens(config)
@@ -198,7 +195,7 @@ async def call_with_retry(
     required_media = request_input_modalities(create_kwargs.get("input"))
     if not required_media <= effective_input_modalities(config):
         raise LLMRuntimeError(
-            ClassifiedError(FailoverReason.model_not_found, None, "当前模型卡片不支持请求中的媒体类型"),
+            ClassifiedError(FailoverReason.model_not_found, None, "当前模型卡片不支持请求中的媒体类型")
         )
     create_kwargs["max_output_tokens"] = request_output_budget(config, create_kwargs)
     if config.provider_name == "mimo" and required_media & {"audio", "video"}:
@@ -253,10 +250,7 @@ async def call_with_retry(
     try:
         result = await client.responses.create(**create_kwargs, extra_headers={"Idempotency-Key": call_id})
     except (LlmCallBlockedError, asyncio.CancelledError) as exc:
-        record_usage(
-            None,
-            status="cancelled" if isinstance(exc, asyncio.CancelledError) else "blocked",
-        )
+        record_usage(None, status="cancelled" if isinstance(exc, asyncio.CancelledError) else "blocked")
         raise
     except Exception as exc:
         record_usage(None, status="error")
@@ -295,10 +289,7 @@ async def call_with_retry(
             accumulator=accumulator,
             task=task,
         )
-    record_usage(
-        getattr(result, "usage", None),
-        status=str(getattr(result, "status", "unknown")),
-    )
+    record_usage(getattr(result, "usage", None), status=str(getattr(result, "status", "unknown")))
     log_event(
         call_id=call_id,
         service="llm",

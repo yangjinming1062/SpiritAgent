@@ -118,9 +118,7 @@ async def resolve_reply_voice(
     if provider_name:
         return config, voice
     selected_voice = pick_voice_id(
-        voice_id if config.provider_name == selected_provider else "",
-        config.provider_name,
-        language,
+        voice_id if config.provider_name == selected_provider else "", config.provider_name, language
     )
     return config, f"{config.provider_name}:{selected_voice}"
 
@@ -184,31 +182,17 @@ async def synthesize_speech(
     async def synthesize(provider: TTSProvider) -> TTSResult:
         if reference_audio is not None:
             return await provider.synthesize_with_reference(
-                text,
-                reference_audio=reference_audio,
-                speech_style=speech_style,
+                text, reference_audio=reference_audio, speech_style=speech_style
             )
         if design_prompt:
             return await provider.synthesize_designed(
-                text,
-                prompt=design_prompt,
-                voice=voice,
-                speech_style=speech_style,
+                text, prompt=design_prompt, voice=voice, speech_style=speech_style
             )
         selected_voice = (
             voice
             if provider.provider_name == selected_provider
             else pick_voice_id(voice, provider.provider_name, language)
         )
-        return await provider.synthesize(
-            text,
-            speech_style=speech_style,
-            voice=selected_voice,
-        )
+        return await provider.synthesize(text, speech_style=speech_style, voice=selected_voice)
 
-    return await execute_with_fallback(
-        chain,
-        TTSProvider,
-        synthesize,
-        user_id=user_id,
-    )
+    return await execute_with_fallback(chain, TTSProvider, synthesize, user_id=user_id)

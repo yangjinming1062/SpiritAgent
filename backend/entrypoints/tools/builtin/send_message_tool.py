@@ -22,9 +22,7 @@ SEND_MESSAGE_SCHEMA = {
     "description": SEND_MESSAGE_DESC,
     "parameters": {
         "type": "object",
-        "properties": {
-            "message": {"type": "string", "description": SEND_MESSAGE_PARAM_DESCS["message"]},
-        },
+        "properties": {"message": {"type": "string", "description": SEND_MESSAGE_PARAM_DESCS["message"]}},
         "required": ["message"],
         "additionalProperties": False,
     },

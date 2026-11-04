@@ -10,8 +10,7 @@ async def initial_outfit_user_ids(db: AsyncSession) -> tuple[int, ...]:
     return tuple(
         await db.scalars(
             select(CompanionOutfit.user_id).where(
-                CompanionOutfit.status == "ready",
-                CompanionOutfit.is_initial.is_(True),
-            ),
-        ),
+                CompanionOutfit.status == "ready", CompanionOutfit.is_initial.is_(True)
+            )
+        )
     )

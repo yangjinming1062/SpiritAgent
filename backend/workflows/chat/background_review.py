@@ -14,10 +14,6 @@ async def run_background_memory_review(scope: MemoryScope, *, session_id: int, t
         )
         return
     try:
-        await review_memories(
-            scope,
-            session_id=session_id,
-            through_message_id=through_message_id,
-        )
+        await review_memories(scope, session_id=session_id, through_message_id=through_message_id)
     except Exception:
         logger.warning("Background memory review failed; evidence remains pending", exc_info=True)

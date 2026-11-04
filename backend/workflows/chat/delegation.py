@@ -59,7 +59,7 @@ async def run_delegated_turn(
                     "a concise result with evidence, remaining uncertainty, or a precise blocker. Do not claim work "
                     "succeeded unless it did.\n"
                     + json.dumps({"delegated_task": action.task_description}, ensure_ascii=False)
-                ),
+                )
             ),
         )
         # 帧只进入 HeadlessEmitter，没有观看者：缓冲交付，不做气泡停顿。
@@ -76,10 +76,7 @@ async def run_delegated_turn(
             return tool_error(headless.error)
         final_answer = headless.final_text or "Subagent completed without producing text output."
 
-        return json.dumps(
-            {"success": True, "result": final_answer, "subagent_session_id": sid},
-            ensure_ascii=False,
-        )
+        return json.dumps({"success": True, "result": final_answer, "subagent_session_id": sid}, ensure_ascii=False)
     except Exception:
         logger.exception("Agent delegation failed")
         return tool_error("Subagent did not complete. Check any work already started before repeating the task.")

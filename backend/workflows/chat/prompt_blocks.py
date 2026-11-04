@@ -174,10 +174,7 @@ def _attachment_guidance_block(config: AgentPromptConfig) -> str | None:
 
 
 def _tool_use_enforcement_block(config: AgentPromptConfig) -> str:
-    return resolve_prompt_text(
-        TOOL_USE_ENFORCEMENTS if config.valid_tool_names else NO_TOOL_GUIDANCES,
-        config.language,
-    )
+    return resolve_prompt_text(TOOL_USE_ENFORCEMENTS if config.valid_tool_names else NO_TOOL_GUIDANCES, config.language)
 
 
 def _work_tool_guidance_block(config: AgentPromptConfig) -> str:

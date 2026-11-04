@@ -378,11 +378,7 @@ async def begin_pursuit_in_session(
 
 
 async def bind_step_in_session(
-    db: AsyncSession,
-    user_id: int,
-    request: LifeStepRequest,
-    *,
-    business_ref: dict,
+    db: AsyncSession, user_id: int, request: LifeStepRequest, *, business_ref: dict
 ) -> LifeStepView:
     row = await create_step(db, user_id, **request.model_dump())
     row = await start_step(db, user_id, row.id, business_ref=business_ref)

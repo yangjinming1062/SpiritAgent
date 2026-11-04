@@ -48,7 +48,7 @@ def schedule_action_review(user_id: int, action_id: int, expected_updated_at: da
     _REVIEW_TASKS[key] = task
     TASK_SUPERVISOR.register(task, owner="action_library.review", user_id=user_id)
     task.add_done_callback(
-        lambda finished: _REVIEW_TASKS.pop(key, None) if _REVIEW_TASKS.get(key) is finished else None,
+        lambda finished: _REVIEW_TASKS.pop(key, None) if _REVIEW_TASKS.get(key) is finished else None
     )
 
 
@@ -124,9 +124,7 @@ async def _review_action(user_id: int, current: ActionAssetView, source: ActionR
             raise ValueError("动作评审缺少可读的冻结身份参考图")
         references.append(await asyncio.to_thread(build_data_uri, loaded[0], loaded[1]))
     config = await load_user_llm_config(
-        user_id,
-        AiTaskKey.visuals,
-        required_modalities=frozenset({ModelModality.text, ModelModality.image}),
+        user_id, AiTaskKey.visuals, required_modalities=frozenset({ModelModality.text, ModelModality.image})
     )
     async with SESSION_LOCAL() as db:
         language = resolve_language(await get_user_setting(db, user_id, "language"))

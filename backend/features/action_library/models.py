@@ -33,9 +33,7 @@ class ActionDefinition(ModelBase, TimestampMixin):
     avoid_when_json: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default=text("'[]'"))
     # 允许发起本动作的情境类别，如 chat、manual、periodic、user_return。
     allowed_triggers_json: Mapped[list[str]] = mapped_column(
-        JSONB,
-        default=lambda: ["chat", "manual"],
-        server_default=text('\'["chat", "manual"]\''),
+        JSONB, default=lambda: ["chat", "manual"], server_default=text('\'["chat", "manual"]\'')
     )
     # 播放方式：loop 持续循环，once 为短动作、结束后返回持续画面。
     clip_kind: Mapped[str] = mapped_column(String(8))

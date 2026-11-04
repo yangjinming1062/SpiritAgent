@@ -33,7 +33,7 @@ class DDGSWebSearchProvider(WebSearchProvider):
                             url=url,
                             description=str(hit.get("body", "")),
                             position=i + 1,
-                        ),
+                        )
                     )
         except Exception as exc:
             logger.warning("DDGS search error", extra={"error_type": type(exc).__name__})

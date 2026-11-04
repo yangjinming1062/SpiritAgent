@@ -10,7 +10,7 @@ from features.appearance.schemas import AvatarAssetResponse, FullbodyCandidateRe
 
 async def accept_fullbody_candidate_view(user_id: int, avatar_id: int, candidate_id: int) -> AvatarAssetResponse:
     return avatar_response(
-        await _avatar.accept_fullbody_candidate(user_id=user_id, avatar_id=avatar_id, candidate_id=candidate_id),
+        await _avatar.accept_fullbody_candidate(user_id=user_id, avatar_id=avatar_id, candidate_id=candidate_id)
     )
 
 
@@ -52,15 +52,12 @@ async def regenerate_avatar_from_image_view(
             description=description,
             presentation_data=presentation_data,
             presentation_content_type=presentation_content_type,
-        ),
+        )
     )
 
 
 async def finalize_avatar_view(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    expected_avatar_id: int,
+    db: AsyncSession, user_id: int, *, expected_avatar_id: int
 ) -> AvatarAssetResponse | None:
     asset = await _avatar.finalize_avatar(db=db, user_id=user_id, expected_avatar_id=expected_avatar_id)
     return avatar_response(asset) if asset is not None else None
@@ -90,22 +87,15 @@ async def generate_fullbody_reference_view(
 
 async def confirm_fullbody_seed_view(user_id: int, *, avatar_id: int, expected_url: str) -> AvatarAssetResponse:
     return avatar_response(
-        await _avatar.confirm_fullbody_seed(user_id=user_id, avatar_id=avatar_id, expected_url=expected_url),
+        await _avatar.confirm_fullbody_seed(user_id=user_id, avatar_id=avatar_id, expected_url=expected_url)
     )
 
 
 async def adopt_fullbody_seed_view(
-    user_id: int,
-    *,
-    avatar_id: int,
-    data: bytes,
-    content_type: str,
+    user_id: int, *, avatar_id: int, data: bytes, content_type: str
 ) -> AvatarAssetResponse | FullbodyCandidateResponse:
     asset = await _avatar.adopt_fullbody_seed(
-        user_id=user_id,
-        avatar_id=avatar_id,
-        data=data,
-        content_type=content_type,
+        user_id=user_id, avatar_id=avatar_id, data=data, content_type=content_type
     )
     return asset if isinstance(asset, FullbodyCandidateResponse) else avatar_response(asset)
 
@@ -124,31 +114,16 @@ async def create_outfit_draft_view(
 ) -> OutfitResponse:
     return outfit_response(
         await _outfit.create_outfit_draft(
-            db=db,
-            user_id=user_id,
-            description=description,
-            image=image,
-            content_type=content_type,
-        ),
+            db=db, user_id=user_id, description=description, image=image, content_type=content_type
+        )
     )
 
 
 async def regenerate_outfit_draft_view(
-    db: AsyncSession,
-    user_id: int,
-    outfit_id: int,
-    *,
-    feedback: str | None,
-    mode: ImageReviseMode,
+    db: AsyncSession, user_id: int, outfit_id: int, *, feedback: str | None, mode: ImageReviseMode
 ) -> OutfitResponse:
     return outfit_response(
-        await _outfit.regenerate_outfit_draft(
-            db=db,
-            user_id=user_id,
-            outfit_id=outfit_id,
-            feedback=feedback,
-            mode=mode,
-        ),
+        await _outfit.regenerate_outfit_draft(db=db, user_id=user_id, outfit_id=outfit_id, feedback=feedback, mode=mode)
     )
 
 
@@ -157,36 +132,18 @@ async def confirm_outfit_view(db: AsyncSession, user_id: int, outfit_id: int) ->
 
 
 async def adopt_outfit_draft_image_view(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    description: str | None,
-    data: bytes,
+    db: AsyncSession, user_id: int, *, description: str | None, data: bytes
 ) -> OutfitResponse:
     return outfit_response(
-        await _outfit.adopt_outfit_draft_image(
-            db=db,
-            user_id=user_id,
-            description=description,
-            data=data,
-        ),
+        await _outfit.adopt_outfit_draft_image(db=db, user_id=user_id, description=description, data=data)
     )
 
 
 async def adopt_outfit_regenerate_image_view(
-    db: AsyncSession,
-    user_id: int,
-    outfit_id: int,
-    *,
-    data: bytes,
+    db: AsyncSession, user_id: int, outfit_id: int, *, data: bytes
 ) -> OutfitResponse:
     return outfit_response(
-        await _outfit.adopt_outfit_regenerate_image(
-            db=db,
-            user_id=user_id,
-            outfit_id=outfit_id,
-            data=data,
-        ),
+        await _outfit.adopt_outfit_regenerate_image(db=db, user_id=user_id, outfit_id=outfit_id, data=data)
     )
 
 

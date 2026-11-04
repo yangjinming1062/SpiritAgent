@@ -69,8 +69,7 @@ class RuntimeLifecycle:
                 await participant.resume_user(user_id)
             except Exception:
                 self._logger.exception(
-                    "failed to resume user runtime work",
-                    extra={"participant": participant.name, "user_id": user_id},
+                    "failed to resume user runtime work", extra={"participant": participant.name, "user_id": user_id}
                 )
 
     async def _best_effort(self, participant: RuntimeParticipant, operation: RuntimeOperation) -> None:
@@ -93,15 +92,12 @@ class RuntimeLifecycle:
                 await self._best_effort(participant, participant.settle)
         draining = tuple(participant for participant in self._participants if participant.drain is not None)
         results = await asyncio.gather(
-            *(participant.drain() for participant in draining if participant.drain is not None),
-            return_exceptions=True,
+            *(participant.drain() for participant in draining if participant.drain is not None), return_exceptions=True
         )
         for participant, result in zip(draining, results, strict=True):
             if isinstance(result, BaseException):
                 self._logger.error(
-                    "runtime task drain failed",
-                    extra={"participant": participant.name},
-                    exc_info=result,
+                    "runtime task drain failed", extra={"participant": participant.name}, exc_info=result
                 )
         await TASK_SUPERVISOR.drain()
 

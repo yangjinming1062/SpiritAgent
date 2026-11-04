@@ -72,18 +72,14 @@ async def _lane_id(config: ProviderConfig) -> int:
     async with SESSION_LOCAL() as db:
         await db.execute(
             insert(ProviderLane)
-            .values(
-                token=uuid4().hex,
-                provider=config.provider_name,
-                credential_fingerprint=sha256_hex(config.api_key),
-            )
-            .on_conflict_do_nothing(constraint="uq_video_queue_credential"),
+            .values(token=uuid4().hex, provider=config.provider_name, credential_fingerprint=sha256_hex(config.api_key))
+            .on_conflict_do_nothing(constraint="uq_video_queue_credential")
         )
         lane_id = await db.scalar(
             select(ProviderLane.id).where(
                 ProviderLane.provider == config.provider_name,
                 ProviderLane.credential_fingerprint == sha256_hex(config.api_key),
-            ),
+            )
         )
         await db.commit()
     if lane_id is None:
@@ -157,15 +153,12 @@ async def enqueue_video_attempt(
                 pause_requested=False,
                 rate_limit_count=0,
             )
-            .on_conflict_do_nothing(constraint="uq_video_queue_attempt"),
+            .on_conflict_do_nothing(constraint="uq_video_queue_attempt")
         )
         row = await db.scalar(
             select(ProviderAttempt)
-            .where(
-                ProviderAttempt.generation_id == owner.generation_id,
-                ProviderAttempt.attempt_index == attempt_index,
-            )
-            .with_for_update(),
+            .where(ProviderAttempt.generation_id == owner.generation_id, ProviderAttempt.attempt_index == attempt_index)
+            .with_for_update()
         )
         if row is None or _owner(row) != owner or row.frozen_json != frozen.model_dump(mode="json"):
             raise VideoQueueStoppedError("视频制作任务的归属或冻结配置不一致")
@@ -248,9 +241,7 @@ def _status(row: ProviderAttempt) -> VideoJobStatus | None:
 
 
 async def wait_video_attempt(
-    request_id: str,
-    *,
-    on_queue: Callable[[VideoQueueInfo | None], Awaitable[None]] | None = None,
+    request_id: str, *, on_queue: Callable[[VideoQueueInfo | None], Awaitable[None]] | None = None
 ) -> VideoJobStatus:
     """等待者取消不取消队列所有的远端工作；仅明确取消接口改变远端生命周期。"""
     previous: VideoQueueInfo | None = None
@@ -379,11 +370,7 @@ async def _config(row: ProviderAttempt, lane: ProviderLane) -> ProviderConfig | 
     if row.cancel_requested and row.job_id is None:
         async with SESSION_LOCAL() as db:
             current = await resolve_model_config(
-                db,
-                row.user_id,
-                ServiceType.video_gen,
-                frozen.model_card_id,
-                frozen.provider_id,
+                db, row.user_id, ServiceType.video_gen, frozen.model_card_id, frozen.provider_id
             )
         if current is not None and (current.provider_name != frozen.provider or current.base_url != frozen.base_url):
             return None
@@ -447,23 +434,17 @@ async def _select_lane_request(lane_id: int) -> tuple[ProviderAttempt, ProviderL
             return None
         active = await db.scalar(
             select(ProviderAttempt)
-            .where(
-                ProviderAttempt.lane_id == lane_id,
-                ProviderAttempt.state.in_(_ACTIVE),
-            )
+            .where(ProviderAttempt.lane_id == lane_id, ProviderAttempt.state.in_(_ACTIVE))
             .order_by(ProviderAttempt.enqueued_at, ProviderAttempt.id)
-            .limit(1),
+            .limit(1)
         )
         if active is not None:
             return active, lane
         queued = await db.scalar(
             select(ProviderAttempt)
-            .where(
-                ProviderAttempt.lane_id == lane_id,
-                ProviderAttempt.state.in_(("queued", "rate_limited")),
-            )
+            .where(ProviderAttempt.lane_id == lane_id, ProviderAttempt.state.in_(("queued", "rate_limited")))
             .order_by(ProviderAttempt.enqueued_at, ProviderAttempt.id)
-            .limit(1),
+            .limit(1)
         )
         return (queued, lane) if queued is not None else None
 
@@ -475,20 +456,14 @@ async def _claim(row: ProviderAttempt) -> bool:
             return False
         active = await db.scalar(
             select(ProviderAttempt.id)
-            .where(
-                ProviderAttempt.lane_id == lane.id,
-                ProviderAttempt.state.in_(_ACTIVE),
-            )
-            .limit(1),
+            .where(ProviderAttempt.lane_id == lane.id, ProviderAttempt.state.in_(_ACTIVE))
+            .limit(1)
         )
         first = await db.scalar(
             select(ProviderAttempt.id)
-            .where(
-                ProviderAttempt.lane_id == lane.id,
-                ProviderAttempt.state.in_(("queued", "rate_limited")),
-            )
+            .where(ProviderAttempt.lane_id == lane.id, ProviderAttempt.state.in_(("queued", "rate_limited")))
             .order_by(ProviderAttempt.enqueued_at, ProviderAttempt.id)
-            .limit(1),
+            .limit(1)
         )
         current = await db.get(ProviderAttempt, row.id, with_for_update=True)
         if (
@@ -754,10 +729,7 @@ async def _run_lane(lane_id: int) -> None:
             )
         logger.warning(
             "video queue worker interrupted",
-            extra={
-                "queue_request_id": row.token,
-                "error": _diagnostic(row.token, classify_api_error(exc).message),
-            },
+            extra={"queue_request_id": row.token, "error": _diagnostic(row.token, classify_api_error(exc).message)},
         )
     finally:
         current, _lane = await _read(row.token)
@@ -773,9 +745,7 @@ async def _resume_paused() -> None:
             readiness = await _readiness(row)
         except Exception:
             logger.warning(
-                "video queue owner inspection awaits retry",
-                extra={"queue_request_id": row.token},
-                exc_info=True,
+                "video queue owner inspection awaits retry", extra={"queue_request_id": row.token}, exc_info=True
             )
             continue
         if readiness == "ready":
@@ -800,11 +770,9 @@ async def _dispatch() -> None:
                 lane_ids = list(
                     await db.scalars(
                         select(ProviderAttempt.lane_id)
-                        .where(
-                            ProviderAttempt.state.in_(_ACTIVE + ("queued", "rate_limited")),
-                        )
-                        .distinct(),
-                    ),
+                        .where(ProviderAttempt.state.in_(_ACTIVE + ("queued", "rate_limited")))
+                        .distinct()
+                    )
                 )
             for lane_id in lane_ids:
                 existing = _LANES.get(lane_id)
@@ -813,7 +781,7 @@ async def _dispatch() -> None:
                 task = asyncio.create_task(_run_lane(lane_id), name=f"video-queue-{lane_id}")
                 _LANES[lane_id] = task
                 task.add_done_callback(
-                    lambda done, key=lane_id: _LANES.pop(key, None) if _LANES.get(key) is done else None,
+                    lambda done, key=lane_id: _LANES.pop(key, None) if _LANES.get(key) is done else None
                 )
                 _WORK.add(task, on_error=_worker_error)
         except Exception:
@@ -843,10 +811,7 @@ async def prepare_video_queue() -> None:
             await db.execute(
                 update(ProviderAttempt)
                 .where(ProviderAttempt.state == "claimed")
-                .values(
-                    state="queued",
-                    revision=ProviderAttempt.revision + 1,
-                ),
+                .values(state="queued", revision=ProviderAttempt.revision + 1)
             )
             await db.execute(
                 update(ProviderAttempt)
@@ -856,7 +821,7 @@ async def prepare_video_queue() -> None:
                     error_reason="result_unknown",
                     error_message="视频提交中断，等待核对原任务",
                     revision=ProviderAttempt.revision + 1,
-                ),
+                )
             )
             await db.commit()
         await cleanup_video_queue()

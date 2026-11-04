@@ -93,14 +93,12 @@ class GrokVideoGenProvider(VideoGenProvider):
             raise ProviderError(f"prompt exceeds xAI limit ({_MAX_PROMPT_CHARS} chars)", status_code=400)
         if req.duration not in _SUPPORTED_DURATIONS:
             raise ProviderError(
-                f"{model} requires duration in {_SUPPORTED_DURATIONS}, got {req.duration!r}",
-                status_code=400,
+                f"{model} requires duration in {_SUPPORTED_DURATIONS}, got {req.duration!r}", status_code=400
             )
         resolution = self.native_resolution(req.resolution)
         if resolution is None:
             raise ProviderError(
-                f"{model} requires resolution in {_SUPPORTED_RESOLUTIONS}, got {req.resolution!r}",
-                status_code=400,
+                f"{model} requires resolution in {_SUPPORTED_RESOLUTIONS}, got {req.resolution!r}", status_code=400
             )
 
         payload: dict = {"model": model, "prompt": req.prompt, "duration": req.duration, "resolution": resolution}
@@ -123,7 +121,7 @@ class GrokVideoGenProvider(VideoGenProvider):
                 payload["reference_images"] = [{"url": image} for image in req.reference_images]
                 payload["prompt"] = (
                     VIDEO_REFERENCE_IMAGE_LABELS.format(
-                        labels="；".join(f"图 {i + 1} = <IMAGE_{i}>" for i in range(len(req.reference_images))),
+                        labels="；".join(f"图 {i + 1} = <IMAGE_{i}>" for i in range(len(req.reference_images)))
                     )
                     + "\n"
                     + req.prompt
@@ -148,8 +146,7 @@ class GrokVideoGenProvider(VideoGenProvider):
         if norm is None:
             # 未知状态继续轮询，原值写入日志便于运维排查。
             logger.warning(
-                "unknown video task status",
-                extra={"provider": "grok", "task_id": task_id, "status": raw_status},
+                "unknown video task status", extra={"provider": "grok", "task_id": task_id, "status": raw_status}
             )
             return VideoJobStatus(task_id=task_id, status="processing")
 

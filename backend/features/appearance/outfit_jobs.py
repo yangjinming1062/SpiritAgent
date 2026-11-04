@@ -200,12 +200,7 @@ async def run_outfit_job(user_id: int, job_id: int) -> OutfitCreation:
                     )
                     pending_review = (
                         chain.get("stop_reason")
-                        in {
-                            "review_pending",
-                            "goal_review_unavailable",
-                            "goal_review_invalid",
-                            "goal_review_blocked",
-                        }
+                        in {"review_pending", "goal_review_unavailable", "goal_review_invalid", "goal_review_blocked"}
                         or bool(chain.get("candidates"))
                         and not unknown
                     )

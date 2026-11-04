@@ -150,7 +150,7 @@ def _reply_repair_history(input_items: list[dict[str, Any]]) -> list[dict[str, A
                 {
                     "type": "input_text",
                     "text": json.dumps({"tool_history": _tool_history_entry(item)}, ensure_ascii=False),
-                },
+                }
             ],
         }
         if item.get("type") in {"function_call", "function_call_output"}
@@ -231,7 +231,7 @@ async def _generate_llm_response(
                         {
                             "type": "input_text",
                             "text": resolve_prompt_text(FINAL_REPLY_REQUEST_LABELS, lang) + turn_request,
-                        },
+                        }
                     ],
                 },
             ]
@@ -243,9 +243,7 @@ async def _generate_llm_response(
             capability_guidance += resolve_prompt_text(COMPANION_TOPIC_GUIDANCES, lang)
         if speech_config:
             capability_guidance += speech_style_guidance(
-                speech_config.provider_name,
-                speech_config.model,
-                language=lang,
+                speech_config.provider_name, speech_config.model, language=lang
             )
         # 没有可引用产物时任何媒体标识都无效，不说明媒体气泡；产物含历史回合中仍可引用的图片与视频。
         if media_turn.artifacts:
@@ -264,7 +262,7 @@ async def _generate_llm_response(
                                     "inspection": {
                                         "verdict": media_turn.inspections[a.media_id].verdict,
                                         "issues": media_turn.inspections[a.media_id].issues,
-                                    },
+                                    }
                                 }
                                 if a.type == "image" and a.media_id in media_turn.inspections
                                 else {}
@@ -285,14 +283,10 @@ async def _generate_llm_response(
             topic_ids=tuple(topic_cards),
         )
         reply_options = await provider.structured_response_options(
-            schema,
-            name="companion_reply",
-            allow_tools=not final_only and bool(active_schemas),
-            repair=reply_repair,
+            schema, name="companion_reply", allow_tools=not final_only and bool(active_schemas), repair=reply_repair
         )
         capability_guidance += resolve_prompt_text(COMPANION_REPLY_SCHEMA_GUIDANCES, lang).replace(
-            "{schema}",
-            json.dumps(schema, ensure_ascii=False),
+            "{schema}", json.dumps(schema, ensure_ascii=False)
         )
         # 部分供应商只允许首条系统消息，回复和修复指令都并入 instructions。
         instructions += capability_guidance
@@ -315,18 +309,16 @@ async def _generate_llm_response(
                                 },
                                 ensure_ascii=False,
                             ),
-                        },
+                        }
                     ],
-                },
+                }
             ]
         else:
             delivery_guidance = resolve_prompt_text(
-                COMPANION_VOICE_REPLY_GUIDANCES if speech_config else COMPANION_TEXT_REPLY_GUIDANCES,
-                lang,
+                COMPANION_VOICE_REPLY_GUIDANCES if speech_config else COMPANION_TEXT_REPLY_GUIDANCES, lang
             ).replace("{preference}", reply_preference)
             instructions += resolve_prompt_text(COMPANION_REPLY_GUIDANCES, lang).replace(
-                "{delivery}",
-                delivery_guidance,
+                "{delivery}", delivery_guidance
             )
             if not final_only and active_schemas:
                 instructions += resolve_prompt_text(COMPANION_REPLY_TOOL_GUIDANCES, lang)
@@ -567,9 +559,7 @@ async def _generate_llm_response(
                     tool_call_started = True
                 elif event_type in ("response.refusal.delta", "response.refusal.done"):
                     raise _IncompleteResponseError(
-                        "content_filter",
-                        text_emitted=text_emitted,
-                        final_reply=_has_final_reply(None),
+                        "content_filter", text_emitted=text_emitted, final_reply=_has_final_reply(None)
                     )
                 elif event_type == "response.incomplete":
                     incomplete = getattr(chunk, "response", None)
@@ -582,8 +572,7 @@ async def _generate_llm_response(
                 elif event_type == "response.completed":
                     completed_response = getattr(chunk, "response", None)
                     _check_refusal(
-                        getattr(completed_response, "output", []),
-                        final_reply=_has_final_reply(completed_response),
+                        getattr(completed_response, "output", []), final_reply=_has_final_reply(completed_response)
                     )
                     response_finished = True
                     if usage := getattr(getattr(chunk, "response", None), "usage", None):
@@ -653,9 +642,7 @@ async def _generate_llm_response(
             raw_reply = normalize_companion_reply_content(text)
             try:
                 text, kind, used_topic_ids = decode_companion_reply(
-                    raw_reply,
-                    allow_voice_fallback=allow_voice_fallback,
-                    references=refs,
+                    raw_reply, allow_voice_fallback=allow_voice_fallback, references=refs
                 )
             except ValueError as exc:
                 speech_errors = reply_format_error.validation_errors if reply_format_error is not None else []

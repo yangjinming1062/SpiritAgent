@@ -45,8 +45,8 @@ async def lock_active_user_ids(db: AsyncSession, user_ids: Collection[int]) -> s
             select(User.id)
             .where(User.id.in_(sorted(user_ids)), User.is_active.is_(True))
             .order_by(User.id)
-            .with_for_update(),
-        ),
+            .with_for_update()
+        )
     )
 
 

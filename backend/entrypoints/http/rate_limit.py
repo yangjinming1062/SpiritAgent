@@ -37,11 +37,7 @@ class DynamicLimiter(Limiter):
 
 
 # 内存存储（单进程，见 ARCHITECTURE「部署与运行时边界」）；config_filename="" 关闭 slowapi 自动读 .env（其默认 open 在 Windows cp936 遇到 UTF-8 BOM 会崩，配项由 pydantic-settings 加载）。
-limiter = DynamicLimiter(
-    key_func=_user_key,
-    storage_uri="memory://",
-    config_filename="",
-)
+limiter = DynamicLimiter(key_func=_user_key, storage_uri="memory://", config_filename="")
 
 
 async def stash_user_id_middleware(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:

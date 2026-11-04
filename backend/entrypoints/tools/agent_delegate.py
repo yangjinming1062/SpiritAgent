@@ -8,10 +8,7 @@ AGENT_DELEGATE_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "task_description": {
-                "type": "string",
-                "description": AGENT_DELEGATE_PARAM_DESCS["task_description"],
-            },
+            "task_description": {"type": "string", "description": AGENT_DELEGATE_PARAM_DESCS["task_description"]}
         },
         "required": ["task_description"],
     },

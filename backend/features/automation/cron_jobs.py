@@ -65,10 +65,7 @@ def compute_next_run_at(schedule: str, base: datetime) -> datetime | None:
         # croniter 保留 base 的 tzinfo——aware 进 aware 出。
         return croniter(schedule, base).get_next(datetime)
     except Exception as exc:  # croniter 的公开异常集合随版本变化，非法表达式统一转为暂停任务
-        logger.error(
-            "Invalid cron expression",
-            extra={"schedule": schedule, "error": str(exc)},
-        )
+        logger.error("Invalid cron expression", extra={"schedule": schedule, "error": str(exc)})
         return None
 
 
@@ -84,10 +81,8 @@ def _refresh_schedule(job: CronJob) -> None:
 async def _get_scoped_job(db: AsyncSession, scope: MemoryScope, job_id: int) -> CronJob | None:
     return await db.scalar(
         select(CronJob).where(
-            CronJob.id == job_id,
-            CronJob.user_id == scope.user_id,
-            CronJob.system_preset_id == scope.system_preset_id,
-        ),
+            CronJob.id == job_id, CronJob.user_id == scope.user_id, CronJob.system_preset_id == scope.system_preset_id
+        )
     )
 
 
@@ -96,9 +91,7 @@ async def _ensure_active_job_capacity(db: AsyncSession, user_id: int, candidate_
     if candidate_job_id is not None:
         stmt = stmt.where(CronJob.id != candidate_job_id)
     if (await db.execute(stmt)).scalar_one() >= SETTINGS.cron_max_active_per_user:
-        raise ValueError(
-            f"Maximum active cron jobs limit ({SETTINGS.cron_max_active_per_user}) reached.",
-        )
+        raise ValueError(f"Maximum active cron jobs limit ({SETTINGS.cron_max_active_per_user}) reached.")
 
 
 async def create_job(
@@ -156,8 +149,7 @@ async def list_jobs(scope: MemoryScope, include_paused: bool = False) -> list[di
     validate_memory_scope(scope)
     async with session_scope() as db:
         stmt = select(CronJob).where(
-            CronJob.user_id == scope.user_id,
-            CronJob.system_preset_id == scope.system_preset_id,
+            CronJob.user_id == scope.user_id, CronJob.system_preset_id == scope.system_preset_id
         )
         if not include_paused:
             stmt = stmt.where(CronJob.is_paused.is_(False))
@@ -218,7 +210,7 @@ async def resolve_job_conversation(user_id: int, job_id: int, conversation_id: i
                 return existing
         created_id = await create_task_conversation(db, user_id, name)
         await db.execute(
-            update(CronJob).where(CronJob.id == job_id, CronJob.user_id == user_id).values(conversation_id=created_id),
+            update(CronJob).where(CronJob.id == job_id, CronJob.user_id == user_id).values(conversation_id=created_id)
         )
         await db.commit()
         return created_id

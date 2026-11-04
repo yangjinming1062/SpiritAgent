@@ -34,26 +34,16 @@ class MiniMaxChatProvider(ChatProvider):
     TEMPERATURE_MAX: ClassVar[float] = 1.0
 
     def structured_response_client(
-        self,
-        *,
-        repair: bool,
-        before_submit: Callable[[], Awaitable[None]] | None = None,
+        self, *, repair: bool, before_submit: Callable[[], Awaitable[None]] | None = None
     ) -> AsyncOpenAI | ChatSchemaResponsesClient:
         if repair:
             return ChatSchemaResponsesClient(
-                self.raw_client(),
-                before_submit=before_submit,
-                chat_extra_body={"reasoning_split": True},
+                self.raw_client(), before_submit=before_submit, chat_extra_body={"reasoning_split": True}
             )
         return super().structured_response_client(repair=repair, before_submit=before_submit)
 
     async def structured_response_options(
-        self,
-        schema: dict,
-        *,
-        name: str,
-        allow_tools: bool,
-        repair: bool = False,
+        self, schema: dict, *, name: str, allow_tools: bool, repair: bool = False
     ) -> dict:
         options = await super().structured_response_options(schema, name=name, allow_tools=allow_tools, repair=repair)
         if repair:

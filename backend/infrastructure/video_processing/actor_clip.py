@@ -169,9 +169,7 @@ def prepare_actor_clip(
                 rgba.save(last_frame_dst, format="PNG")
             with BytesIO() as output:
                 rgba.getchannel("A").resize((max(2, width // 4), max(2, height // 4)), Image.Resampling.BILINEAR).save(
-                    output,
-                    format="PNG",
-                    optimize=True,
+                    output, format="PNG", optimize=True
                 )
                 mask_frames.append(
                     {

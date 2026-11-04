@@ -16,10 +16,7 @@ class DeepSeekChatProvider(ChatProvider):
     REASONING_EFFORTS: ClassVar[frozenset[str]] = frozenset({"none", "low", "high", "max"})
 
     def structured_response_client(
-        self,
-        *,
-        repair: bool,
-        before_submit: Callable[[], Awaitable[None]] | None = None,
+        self, *, repair: bool, before_submit: Callable[[], Awaitable[None]] | None = None
     ) -> AsyncOpenAI:
         # 原生 Responses 支持 JSON Schema；首次提交的前置检查由调用方执行。
         return self.raw_client()

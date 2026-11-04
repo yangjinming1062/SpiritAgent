@@ -14,10 +14,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
     async def embed(self, texts: list[str], *, purpose: str = "db") -> list[list[float]]:
         if not texts:
             return []
-        res = await self._client.embeddings.create(
-            input=texts,
-            model=self.config.model,
-        )
+        res = await self._client.embeddings.create(input=texts, model=self.config.model)
         items = sorted(res.data, key=lambda item: item.index)
         if [item.index for item in items] != list(range(len(texts))):
             raise ProviderError("embedding response indices do not match the input batch")
@@ -25,11 +22,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
 
 
 async def transcribe_input_audio(
-    config: ProviderConfig,
-    audio: bytes,
-    *,
-    mime_type: str,
-    asr_options: dict[str, str] | None,
+    config: ProviderConfig, audio: bytes, *, mime_type: str, asr_options: dict[str, str] | None
 ) -> STTResult:
     """经 chat.completions 的 input_audio 内容块整段转写；未正常结束视为失败。"""
     b64_audio = base64.b64encode(audio).decode("utf-8")
@@ -38,10 +31,8 @@ async def transcribe_input_audio(
         messages=[
             {
                 "role": "user",
-                "content": [
-                    {"type": "input_audio", "input_audio": {"data": f"data:{mime_type};base64,{b64_audio}"}},
-                ],
-            },
+                "content": [{"type": "input_audio", "input_audio": {"data": f"data:{mime_type};base64,{b64_audio}"}}],
+            }
         ],
         extra_body={"asr_options": asr_options} if asr_options is not None else {},
     )

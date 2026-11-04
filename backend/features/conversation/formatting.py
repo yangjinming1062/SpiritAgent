@@ -3,29 +3,12 @@ import json
 from infrastructure.text import format_local_iso, safe_json_loads
 from pydantic import JsonValue
 from runtime.presets import COMPANION_PRESET_ID
-from sqlalchemy import (
-    ColumnElement,
-    and_,
-    case,
-    cast,
-    column,
-    false,
-    func,
-    literal_column,
-    or_,
-    select,
-)
+from sqlalchemy import ColumnElement, and_, case, cast, column, false, func, literal_column, or_, select
 from sqlalchemy.dialects.postgresql import JSONB, aggregate_order_by
 from sqlalchemy.orm.util import AliasedClass
 
 from features.conversation.models import Conversation, Message
-from features.conversation.replies import (
-    CompanionReply,
-    LinkBubble,
-    LinkBubbleInput,
-    MediaBubble,
-    MediaBubbleInput,
-)
+from features.conversation.replies import CompanionReply, LinkBubble, LinkBubbleInput, MediaBubble, MediaBubbleInput
 from features.conversation.snapshots import MessageSnapshot
 
 # 与 chat-runtime.ts 的分段和 JavaScript trim 保持一致。
@@ -36,8 +19,7 @@ _DISPLAY_WHITESPACE = " \t\r\n\v\f\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u20
 def _is_json_array(content: ColumnElement[str | None] = Message.content) -> ColumnElement[bool]:
     """排除畸形、非数组与 JSONB 无法表示的 \\u0000；调用方须用 CASE 保护强转。"""
     return and_(
-        content.op("IS JSON", is_comparison=True)(literal_column("ARRAY")),
-        func.pg_input_is_valid(content, "jsonb"),
+        content.op("IS JSON", is_comparison=True)(literal_column("ARRAY")), func.pg_input_is_valid(content, "jsonb")
     )
 
 
@@ -52,7 +34,7 @@ def message_contains_text(query: str) -> ColumnElement[bool]:
     saved_bubbles = saved_reply.op("->", return_type=JSONB)("bubbles")
     link_parts = (
         func.jsonb_array_elements(
-            case((func.jsonb_typeof(saved_bubbles) == "array", saved_bubbles), else_=literal_column("'[]'::jsonb")),
+            case((func.jsonb_typeof(saved_bubbles) == "array", saved_bubbles), else_=literal_column("'[]'::jsonb"))
         )
         .table_valued(column("value", JSONB))
         .render_derived()
@@ -80,7 +62,7 @@ def message_contains_text(query: str) -> ColumnElement[bool]:
                     parts.c.value["type"].astext == "input_audio",
                     parts.c.value["transcript"].astext.icontains(query, autoescape=True),
                 ),
-            ),
+            )
         )
         .correlate(Message)
         .exists()
@@ -109,8 +91,7 @@ def _visible_message_text(message: type[Message] | AliasedClass[Message] = Messa
         .scalar_subquery()
     )
     return case(
-        (and_(message.content_type == "multimodal_v1", _is_json_array(message.content)), joined),
-        else_=message.content,
+        (and_(message.content_type == "multimodal_v1", _is_json_array(message.content)), joined), else_=message.content
     )
 
 

@@ -74,10 +74,7 @@ async def life_inspect(
             pursuits["steps"] = [_inspection_payload(step) for step in detail.steps]
     else:
         listing = await read_pursuits(user_id, status=None, cursor=None, limit=20)
-        pursuits = {
-            "items": [_inspection_payload(item) for item in listing.items],
-            "has_more": listing.has_more,
-        }
+        pursuits = {"items": [_inspection_payload(item) for item in listing.items], "has_more": listing.has_more}
     return json.dumps(
         {"state": state.model_dump(mode="json", exclude=_STATE_INTERNAL_FIELDS), "pursuits": pursuits},
         ensure_ascii=False,

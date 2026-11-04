@@ -124,12 +124,7 @@ class ConnectionManager:
         return list(self._dispatchers)
 
     def register_remote(
-        self,
-        user_id: int,
-        connection_id: str,
-        dispatcher: JsonRpcDispatcher,
-        *,
-        device_id: int,
+        self, user_id: int, connection_id: str, dispatcher: JsonRpcDispatcher, *, device_id: int
     ) -> None:
         self._remote_dispatchers.setdefault(user_id, {})[connection_id] = dispatcher
         self._streams[dispatcher.stream_id] = StreamBinding(user_id, "remote", str(device_id), dispatcher)
@@ -147,11 +142,7 @@ class ConnectionManager:
             await self._stop_dispatcher(user_id, dispatcher)
 
     def authenticated_dispatcher(
-        self,
-        user_id: int,
-        stream_id: str,
-        origin_kind: str,
-        origin_id: str,
+        self, user_id: int, stream_id: str, origin_kind: str, origin_id: str
     ) -> JsonRpcDispatcher | None:
         binding = self._streams.get(stream_id)
         if binding is None or (
@@ -190,9 +181,7 @@ class ConnectionManager:
         for result in results:
             if isinstance(result, BaseException):
                 logger.warning(
-                    "shared event enqueue failed",
-                    extra={"user_id": user_id, "event_type": event_type},
-                    exc_info=result,
+                    "shared event enqueue failed", extra={"user_id": user_id, "event_type": event_type}, exc_info=result
                 )
         return any(result is True for result in results)
 

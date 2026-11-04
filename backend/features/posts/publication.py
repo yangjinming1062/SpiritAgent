@@ -182,11 +182,7 @@ async def _video_supported(user_id: int) -> bool:
     try:
         for duration in _VIDEO_DURATIONS:
             if await select_video_resolution(
-                user_id,
-                reference_images=False,
-                duration=duration,
-                preferred=_VIDEO_RESOLUTIONS,
-                task=AiTaskKey.posts,
+                user_id, reference_images=False, duration=duration, preferred=_VIDEO_RESOLUTIONS, task=AiTaskKey.posts
             ):
                 return True
     except Exception:
@@ -294,11 +290,7 @@ async def request_publication(user_id: int) -> PostPublicationResult:
         if not await _posts_policy_ok(db, user_id):
             raise PostBlockedError("动态自主发布已关闭")
         timezone = await resolve_user_timezone(db, user_id)
-        row = await reserve_publication(
-            db,
-            user_id,
-            activity_date=local_date(utc_now(), timezone),
-        )
+        row = await reserve_publication(db, user_id, activity_date=local_date(utc_now(), timezone))
     schedule_publication(row.id, user_id)
     return response_for_publication(row)
 
@@ -383,11 +375,7 @@ async def _voice(task_id: int, user_id: int, text: str, *, phase: str, directory
     mime = result.mime.lower()
     ext = "wav" if "wav" in mime else "ogg" if "ogg" in mime else "m4a" if "mp4" in mime or "m4a" in mime else "mp3"
     path = await save_companion_asset_async(
-        result.audio,
-        user_id=user_id,
-        label="post_voice",
-        ext=ext,
-        directory=directory,
+        result.audio, user_id=user_id, label="post_voice", ext=ext, directory=directory
     )
     return path, result.voice or ""
 
@@ -450,11 +438,7 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
         progress["media_url"], progress["media_review"] = urls[0], selected.review.model_dump(mode="json")
     elif plan.content_type == PostContentType.AUDIO:
         progress["media_url"], progress["voice_id"] = await _voice(
-            row.id,
-            row.user_id,
-            plan.text,
-            phase="voice_submitting",
-            directory=directory,
+            row.id, row.user_id, plan.text, phase="voice_submitting", directory=directory
         )
     else:
         job_id = row.video_job_id
@@ -577,9 +561,7 @@ async def _run_publication(task_id: int) -> None:
         if progress.get("identity"):
             async with SESSION_LOCAL() as db:
                 current = await visual_identity_is_current(
-                    db,
-                    row.user_id,
-                    VisualIdentitySnapshot.model_validate(progress["identity"]),
+                    db, row.user_id, VisualIdentitySnapshot.model_validate(progress["identity"])
                 )
             if not current:
                 await _wait_publication(
@@ -655,7 +637,7 @@ async def _run_publication(task_id: int) -> None:
 async def resume_publications() -> None:
     async with SESSION_LOCAL() as db:
         rows = list(
-            (await db.scalars(select(PostPublication).where(PostPublication.state.in_(("queued", "running"))))).all(),
+            (await db.scalars(select(PostPublication).where(PostPublication.state.in_(("queued", "running"))))).all()
         )
     for row in rows:
         schedule_publication(row.id, row.user_id)
@@ -663,10 +645,9 @@ async def resume_publications() -> None:
         recoveries = list(
             await db.scalars(
                 select(PostPublication).where(
-                    PostPublication.state == "unknown",
-                    PostPublication.video_job_id.is_not(None),
-                ),
-            ),
+                    PostPublication.state == "unknown", PostPublication.video_job_id.is_not(None)
+                )
+            )
         )
     for row in recoveries:
         async with SESSION_LOCAL() as db:
@@ -746,7 +727,7 @@ async def publication_recovery(user_id: int, task_id: int, *, query: bool = Fals
     async with _recovery_lock(task_id):
         async with SESSION_LOCAL() as db:
             row = await db.scalar(
-                select(PostPublication).where(PostPublication.id == task_id, PostPublication.user_id == user_id),
+                select(PostPublication).where(PostPublication.id == task_id, PostPublication.user_id == user_id)
             )
         if row is None:
             raise PostNotFoundError("找不到发布任务")
@@ -814,7 +795,7 @@ async def discard_publication_media(user_id: int, task_id: int) -> PostPublicati
             row = await db.scalar(
                 select(PostPublication)
                 .where(PostPublication.id == task_id, PostPublication.user_id == user_id)
-                .with_for_update(),
+                .with_for_update()
             )
             if row is None:
                 raise PostNotFoundError("找不到发布任务")
@@ -837,7 +818,7 @@ async def discard_publication_media(user_id: int, task_id: int) -> PostPublicati
                         PostPublication.outcome.is_distinct_from("discarded"),
                         PostPublication.video_job_id == job_id,
                     )
-                    .limit(1),
+                    .limit(1)
                 )
                 if shared is None:
                     try:
@@ -854,7 +835,7 @@ async def discard_publication_media(user_id: int, task_id: int) -> PostPublicati
             row = await db.scalar(
                 select(PostPublication)
                 .where(PostPublication.id == task_id, PostPublication.user_id == user_id)
-                .with_for_update(),
+                .with_for_update()
             )
             if row is None:
                 raise PostNotFoundError("发布任务已不存在")

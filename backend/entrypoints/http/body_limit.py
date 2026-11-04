@@ -78,11 +78,7 @@ class BodyLimitMiddleware:
             try:
                 await _authenticate_upload(scope, admin_only=admin_only)
             except HTTPException as exc:
-                await error_response(exc.status_code, str(exc.detail), headers=exc.headers)(
-                    scope,
-                    receive,
-                    send,
-                )
+                await error_response(exc.status_code, str(exc.detail), headers=exc.headers)(scope, receive, send)
                 return
 
         received_bytes = 0

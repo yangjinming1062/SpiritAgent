@@ -17,11 +17,7 @@ from .models import Conversation, Message
 
 
 async def collect_message_asset_releases(
-    db: AsyncSession,
-    user_id: int,
-    conversation_ids: Iterable[int],
-    *,
-    from_message_id: int | None = None,
+    db: AsyncSession, user_id: int, conversation_ids: Iterable[int], *, from_message_id: int | None = None
 ) -> set[int]:
     conversations = set(conversation_ids)
     session_ids = {str(conversation_id) for conversation_id in conversations}
@@ -40,15 +36,10 @@ async def collect_message_asset_releases(
         return set()
     released = set().union(*(message_asset_paths(message, user_id) for message in messages))
     released |= await voice_asset_references(
-        db,
-        user_id,
-        set().union(*(custom_voice_tokens(message.reply_json) for message in messages)),
+        db, user_id, set().union(*(custom_voice_tokens(message.reply_json) for message in messages))
     )
     jobs = await invalidate_conversation_video_jobs(
-        db,
-        user_id,
-        message_ids,
-        session_ids if from_message_id is None else (),
+        db, user_id, message_ids, session_ids if from_message_id is None else ()
     )
     await invalidate_image_jobs(db, user_id, message_ids, session_ids if from_message_id is None else set())
     released |= asset_paths([reference.model_dump() for reference in jobs.references], user_id)

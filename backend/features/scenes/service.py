@@ -31,10 +31,7 @@ from features.accounts.queries import nightly_account
 from features.assets.lifecycle import cleanup_user_assets, enqueue_asset_cleanup
 from features.companion.persona_service import load_persona_definition
 from features.companion.query_contracts import PersonaSnapshot
-from features.companion.visual_state import (
-    change_scene_policy,
-    persona_snapshot,
-)
+from features.companion.visual_state import change_scene_policy, persona_snapshot
 from features.configuration.settings.values import get_user_setting
 from features.jobs.service import bind_job_request, requested_job_id
 from features.life.schemas import LifeStepRequest
@@ -45,14 +42,7 @@ from features.media.provider_attempts import count_scene_submissions, record_sce
 from features.media.review_contracts import review_passes
 from features.media.review_evidence import asset_file_hash, review_media_intact
 from features.scenes.asset_references import sync_scene_assets
-from features.scenes.models import (
-    CompanionScene,
-    SceneJob,
-    SceneOrigin,
-    ScenePolicy,
-    SceneSource,
-    SceneStatus,
-)
+from features.scenes.models import CompanionScene, SceneJob, SceneOrigin, ScenePolicy, SceneSource, SceneStatus
 from features.scenes.prompt_assembly import build_scene_prompt
 from features.scenes.prompts import SCENE_DESCRIBE_SYSTEM
 from features.scenes.queries import can_retry_scene_generation, get_pending_scene_task, get_scene, scene_view
@@ -133,12 +123,7 @@ def _regeneration_asset_paths(row: CompanionScene) -> set[str]:
 
 async def _event(db: AsyncSession, user_id: int, event_type: str, scene_id: int | None = None) -> None:
     _require_complete(await persona_snapshot(db, user_id))
-    emit_ws_event(
-        db,
-        user_id=user_id,
-        event_type=event_type,
-        payload={"scene_id": scene_id},
-    )
+    emit_ws_event(db, user_id=user_id, event_type=event_type, payload={"scene_id": scene_id})
     if scene_id is not None:
         scene = await get_scene(db, user_id, scene_id)
         if scene is not None:
@@ -223,7 +208,7 @@ async def _new_scene(
         if await get_pending_scene_task(db, user_id) is not None:
             raise SceneBusyError("已有场景正在准备，请等待完成或取消该任务")
         if origin == SceneOrigin.ONBOARDING.value and await db.scalar(
-            select(CompanionScene.id).where(CompanionScene.user_id == user_id).limit(1),
+            select(CompanionScene.id).where(CompanionScene.user_id == user_id).limit(1)
         ):
             raise SceneStateError("初始场景已准备，不重复创建")
         if origin == SceneOrigin.LLM.value:
@@ -234,10 +219,7 @@ async def _new_scene(
             origin=origin,
             source=source,
             requirements=notes,
-            prompt=build_scene_prompt(
-                notes=notes,
-                has_reference_image=bool(reference_image),
-            ),
+            prompt=build_scene_prompt(notes=notes, has_reference_image=bool(reference_image)),
             target_size_json=SCENE_IMAGE_SIZE.model_dump(mode="json"),
             reference_image=reference_image or "",
         )
@@ -285,10 +267,7 @@ async def schedule_scene_generation(
 
 async def schedule_scene_prompt(user_id: int, *, notes: str | None = None) -> CompanionScene:
     return await _new_scene(
-        user_id,
-        origin=SceneOrigin.USER_REQUEST.value,
-        notes=notes or "",
-        source=SceneSource.USER_UPLOAD.value,
+        user_id, origin=SceneOrigin.USER_REQUEST.value, notes=notes or "", source=SceneSource.USER_UPLOAD.value
     )
 
 
@@ -515,17 +494,11 @@ async def _save_image(user_id: int, scene_id: int, data: bytes, *, target: Scene
     """保留上传源文件并派生窗口背景；取消时回收未交接文件。"""
     ext = await asyncio.to_thread(scene_source_extension, data)
     source_path = await asset_store.save_companion_asset_async(
-        data,
-        user_id=user_id,
-        label="scene_source",
-        ext=ext,
-        directory=asset_store.scene_asset_directory(scene_id),
+        data, user_id=user_id, label="scene_source", ext=ext, directory=asset_store.scene_asset_directory(scene_id)
     )
     generation_id = uuid4().hex
     wallpaper_path = asset_store.scene_wallpaper_asset_path(
-        user_id,
-        generation_id,
-        directory=asset_store.scene_asset_directory(scene_id),
+        user_id, generation_id, directory=asset_store.scene_asset_directory(scene_id)
     )
     committed = False
     try:
@@ -651,9 +624,7 @@ async def _generate_wallpaper(
     if best is None:
         raise SceneStateError("场景图片未通过伙伴重复出镜检查")
     path = asset_store.scene_wallpaper_asset_path(
-        user_id,
-        state.generation_id,
-        directory=asset_store.scene_asset_directory(scene_id),
+        user_id, state.generation_id, directory=asset_store.scene_asset_directory(scene_id)
     )
     if path not in best.artifacts:
         best.artifacts.append(path)
@@ -779,20 +750,14 @@ async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> 
                     CompanionScene.user_id == user_id,
                     CompanionScene.id == scene_id,
                     CompanionScene.replacement_job.has((SceneJob.token == task_id) & SceneJob.checkpoint.is_not(None)),
-                ),
+                )
             )
         if retained is None:
             await _reclaim_assets(user_id, state.stored_paths() | ({old_path} if old_path else set()))
 
 
 async def _mark_regeneration_failed(
-    user_id: int,
-    scene_id: int,
-    task_id: str,
-    error: str,
-    *,
-    review_failed: bool = False,
-    download_failed: bool = False,
+    user_id: int, scene_id: int, task_id: str, error: str, *, review_failed: bool = False, download_failed: bool = False
 ) -> None:
     cleanup_paths: set[str] = set()
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
@@ -884,13 +849,7 @@ async def _run_pipeline(scene_id: int, user_id: int) -> None:
 
     if needs_image:
         wallpaper = await _generate_wallpaper(
-            user_id,
-            prompt,
-            target,
-            state,
-            save_progress,
-            scene_id=scene_id,
-            reference_image=reference_image,
+            user_id, prompt, target, state, save_progress, scene_id=scene_id, reference_image=reference_image
         )
         async with _scene_lock(user_id), SESSION_LOCAL() as db:
             fresh = await get_scene(db, user_id, scene_id)
@@ -1044,7 +1003,7 @@ async def resume_scene_jobs(user_id: int | None = None) -> None:
             or_(
                 CompanionScene.status == "pending",
                 CompanionScene.replacement_job.has(SceneJob.availability == "pending"),
-            ),
+            )
         ]
         if user_id is not None:
             conditions.append(CompanionScene.user_id == user_id)
@@ -1077,11 +1036,7 @@ async def schedule_initial_scene(user_id: int) -> SceneSnapshot | None:
             return None
         notes = _initial_scene_notes(persona)
     try:
-        row = await schedule_scene_generation(
-            user_id,
-            origin=SceneOrigin.ONBOARDING.value,
-            notes=notes,
-        )
+        row = await schedule_scene_generation(user_id, origin=SceneOrigin.ONBOARDING.value, notes=notes)
         return scene_view(row)
     except SceneStateError as exc:
         logger.warning("initial scene not scheduled", extra={"user_id": user_id, "error": str(exc)})

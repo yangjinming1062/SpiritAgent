@@ -76,15 +76,11 @@ async def cleanup_obsolete_assets(db: AsyncSession, user_id: int) -> set[str]:
     expired = list(
         await db.scalars(
             select(CustomVoice)
-            .where(
-                CustomVoice.user_id == user_id,
-                CustomVoice.version == 0,
-                CustomVoice.expires_at <= utc_now(),
-            )
+            .where(CustomVoice.user_id == user_id, CustomVoice.version == 0, CustomVoice.expires_at <= utc_now())
             .order_by(CustomVoice.id)
             .limit(200)
-            .with_for_update(skip_locked=True),
-        ),
+            .with_for_update(skip_locked=True)
+        )
     )
     used = await used_voice_ids(db, user_id, [row.id for row in expired])
     for row in expired:
@@ -100,17 +96,11 @@ async def forget_deleted_assets(db: AsyncSession, user_id: int, paths: Sequence[
         return
     await db.execute(
         update(CustomVoice)
-        .where(
-            CustomVoice.user_id == user_id,
-            CustomVoice.reference_path.in_(paths),
-        )
+        .where(CustomVoice.user_id == user_id, CustomVoice.reference_path.in_(paths))
         .values(reference_path=None, reference_asset_id=None)
     )
     await db.execute(
         update(CustomVoice)
-        .where(
-            CustomVoice.user_id == user_id,
-            CustomVoice.preview_path.in_(paths),
-        )
+        .where(CustomVoice.user_id == user_id, CustomVoice.preview_path.in_(paths))
         .values(preview_path="", preview_asset_id=None)
     )

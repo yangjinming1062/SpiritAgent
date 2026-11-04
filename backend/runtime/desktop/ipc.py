@@ -17,7 +17,7 @@ def _outcome_unknown_result(message: str) -> str:
 
 _DESKTOP_GONE_ERROR = _outcome_unknown_result(
     "Desktop disconnected before the tool call completed, so the outcome is unknown: the tool may or may "
-    "not have run. Do not rerun it automatically; check its effects or ask the user first.",
+    "not have run. Do not rerun it automatically; check its effects or ask the user first."
 )
 
 
@@ -41,7 +41,7 @@ async def dispatch_device_call(user_id: int, call_id: str, payload: dict[str, An
             return _outcome_unknown_result(
                 f"Tool execution timeout for call {call_id} (no response within {timeout}s), so the outcome is "
                 "unknown: the tool may or may not have run, or may still be running. Do not rerun it "
-                "automatically; check its effects or ask the user first.",
+                "automatically; check its effects or ask the user first."
             )
     except asyncio.CancelledError:
         # 回合被中断（停止对话等）时请桌面取消这次调用；取消只是请求，不撤销已发生的本机副作用。

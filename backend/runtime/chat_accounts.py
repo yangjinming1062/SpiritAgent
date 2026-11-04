@@ -107,8 +107,7 @@ async def _wait_account_work(user_id: int | None = None) -> None:
         await _wait_admissions(user_id, owner)
         accounts = tuple(account for account in _ACCOUNTS.values() if user_id is None or account.user_id == user_id)
         await _wait_turn_settlement(
-            [runtime for account in accounts for runtime in account.runtime_sessions.values()],
-            owner,
+            [runtime for account in accounts for runtime in account.runtime_sessions.values()], owner
         )
         if user_id is None:
             await cancel_and_wait(

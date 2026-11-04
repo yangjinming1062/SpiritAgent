@@ -33,11 +33,7 @@ VISUAL_PLAY_TOOL_DESCRIPTION = (
 
 
 async def visual_search_tool(
-    user_id: ResourceId,
-    query: str = "",
-    media_kind: str | None = None,
-    limit: int = 10,
-    **_: Any,
+    user_id: ResourceId, query: str = "", media_kind: str | None = None, limit: int = 10, **_: Any
 ) -> str:
     if media_kind not in (None, "image", "video"):
         return json.dumps({"error": "媒体类型须为 image 或 video"}, ensure_ascii=False)
@@ -60,10 +56,7 @@ async def outfit_list_tool(user_id: ResourceId, query: str = "", **_: Any) -> st
 
 
 async def visual_inspect_tool(
-    user_id: ResourceId,
-    visual_id: ResourceId | None = None,
-    job_id: ResourceId | None = None,
-    **_: Any,
+    user_id: ResourceId, visual_id: ResourceId | None = None, job_id: ResourceId | None = None, **_: Any
 ) -> str:
     if visual_id is not None:
         try:
@@ -113,12 +106,7 @@ async def visual_generate_tool(
     )
 
 
-async def visual_play_tool(
-    visual_id: ResourceId,
-    user_id: ResourceId,
-    proactive_turn: bool = False,
-    **_: Any,
-) -> str:
+async def visual_play_tool(visual_id: ResourceId, user_id: ResourceId, proactive_turn: bool = False, **_: Any) -> str:
     result = await play_visual_reference(user_id, visual_id, proactive_turn=proactive_turn)
     return json.dumps(
         {
@@ -209,7 +197,7 @@ def register(registry: ToolsRegistry) -> None:
                     "type": "string",
                     "pattern": "^[1-9][0-9]*$",
                     "description": "要显示的图片或播放的视频的 visual_id。",
-                },
+                }
             },
             ["visual_id"],
         ),

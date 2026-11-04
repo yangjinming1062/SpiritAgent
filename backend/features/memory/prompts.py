@@ -44,10 +44,7 @@ CONTEXT_LABELS: dict[str, str] = {
     "user_freeform": "freeform",
 }
 
-USER_PROFILE_LABELS_TEXTS: dict[str, str] = {
-    "zh": "# 用户资料",
-    "en": "# User profile",
-}
+USER_PROFILE_LABELS_TEXTS: dict[str, str] = {"zh": "# 用户资料", "en": "# User profile"}
 
 BACKGROUND_MEMORY_LABELS_TEXTS: dict[str, str] = {
     "zh": "# 用户明确表达的长期背景（按适用范围使用）",
@@ -61,12 +58,7 @@ PROACTIVE_MEMORY_LABELS_TEXTS: dict[str, str] = {
 
 # 依据类型的展示标签；system 表示伙伴自身记录。
 MEMORY_BASIS_LABELS: dict[str, dict[str, str]] = {
-    "zh": {
-        "explicit": "用户明确表达",
-        "observed": "观察到",
-        "inferred": "推断",
-        "system": "你自己的记录",
-    },
+    "zh": {"explicit": "用户明确表达", "observed": "观察到", "inferred": "推断", "system": "你自己的记录"},
     "en": {
         "explicit": "stated by the user",
         "observed": "observed",

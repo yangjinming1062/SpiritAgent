@@ -18,7 +18,7 @@ async def load_user_settings(db: AsyncSession, user_id: int, keys: Collection[st
 async def get_user_setting(db: AsyncSession, user_id: int, key: str) -> Any:
     """未设置时返回 None。"""
     return await db.scalar(
-        select(UserSetting.setting_value).where(UserSetting.user_id == user_id, UserSetting.setting_key == key),
+        select(UserSetting.setting_value).where(UserSetting.user_id == user_id, UserSetting.setting_key == key)
     )
 
 
@@ -33,12 +33,12 @@ async def lock_user_setting(db: AsyncSession, user_id: int, key: str, default: A
     await db.execute(
         insert(UserSetting)
         .values(user_id=user_id, setting_key=key, setting_value=default)
-        .on_conflict_do_nothing(index_elements=["user_id", "setting_key"]),
+        .on_conflict_do_nothing(index_elements=["user_id", "setting_key"])
     )
     return await db.scalar(
         select(UserSetting.setting_value)
         .where(UserSetting.user_id == user_id, UserSetting.setting_key == key)
-        .with_for_update(),
+        .with_for_update()
     )
 
 
@@ -46,11 +46,11 @@ async def put_user_settings(db: AsyncSession, user_id: int, values: Mapping[str,
     if not values:
         return
     stmt = insert(UserSetting).values(
-        [{"user_id": user_id, "setting_key": key, "setting_value": value} for key, value in values.items()],
+        [{"user_id": user_id, "setting_key": key, "setting_value": value} for key, value in values.items()]
     )
     await db.execute(
         stmt.on_conflict_do_update(
             index_elements=["user_id", "setting_key"],
             set_={"setting_value": stmt.excluded.setting_value, "updated_at": func.now()},
-        ),
+        )
     )

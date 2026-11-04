@@ -46,20 +46,14 @@ from workflows.companion_actions import build_action_view
 from workflows.life_execution import submit_life_action
 from workflows.nightly.models import NightlyActivityAction, NightlyActivityLog
 from workflows.nightly.output_contracts import NightlyPlanOutput
-from workflows.nightly.prompts import (
-    NIGHTLY_JSON_REPAIR_TEXTS,
-    OUTREACH_CONTEXT_TEMPLATES,
-    PLANNING_SYSTEM_PROMPT,
-)
+from workflows.nightly.prompts import NIGHTLY_JSON_REPAIR_TEXTS, OUTREACH_CONTEXT_TEMPLATES, PLANNING_SYSTEM_PROMPT
 from workflows.nightly.window import in_nightly_window, require_nightly_window
 
 logger = get_logger(__name__)
 
 _POLL_SECONDS = 3.0
 ActionStatus = Literal["succeeded", "skipped", "blocked", "failed", "interrupted", "result_unknown"]
-_TERMINAL_ACTION_STATUSES = frozenset(
-    ("succeeded", "skipped", "blocked", "failed", "interrupted", "result_unknown"),
-)
+_TERMINAL_ACTION_STATUSES = frozenset(("succeeded", "skipped", "blocked", "failed", "interrupted", "result_unknown"))
 _ACTION_ID_PATTERN = re.compile(r"[^a-zA-Z0-9_-]+")
 
 
@@ -255,7 +249,7 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
         phase=10,
         description="构思并生成一套新的穿着造型并保存；只在已有造型都不合适或有特殊节点时使用。",
         arguments={
-            "description": "string（非空，最多 4000 字符）：完整的新造型设计，包括服装、配色及需要改变的发型、妆容或配饰；保持角色固定身份，不写场景或动作。",
+            "description": "string（非空，最多 4000 字符）：完整的新造型设计，包括服装、配色及需要改变的发型、妆容或配饰；保持角色固定身份，不写场景或动作。"
         },
         exclusive_group="outfit",
         paid=True,
@@ -266,7 +260,7 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
         description="已有环境图片不合适时新建一张。notes 描述地点、陈设、光线与氛围，必须非空；统一按真实拍摄的环境照片呈现，不写画风。"
         "不描绘你本人，其他人物、动物、肖像或雕像可以按环境需要出现；与造型相互独立，也不改动正在呈现的画面。",
         arguments={
-            "notes": "string（非空）：环境的地点、陈设、光线与氛围，统一按真实拍摄的环境照片呈现，不写画风；不描绘你本人，其他人物、动物、肖像或雕像可按环境需要安排。",
+            "notes": "string（非空）：环境的地点、陈设、光线与氛围，统一按真实拍摄的环境照片呈现，不写画风；不描绘你本人，其他人物、动物、肖像或雕像可按环境需要安排。"
         },
         exclusive_group="scene",
         paid=True,
@@ -399,10 +393,7 @@ def _capability_availability(context: PlanningContext) -> tuple[list[NightlyCapa
             "环境已锁定、人设或图片生成不可用，或已有环境图片正在生成",
         ),
         "outreach.schedule": (True, ""),
-        "action.design": (
-            context.action_design_enabled,
-            "自主登记已关闭，或当前形象缺少可用的冻结参考",
-        ),
+        "action.design": (context.action_design_enabled, "自主登记已关闭，或当前形象缺少可用的冻结参考"),
         "visual.create": (
             context.visual_materials is not None and (providers.image_reference or providers.video),
             "缺少可用的造型、环境或动作，或图片、视频生成不可用",
@@ -415,9 +406,7 @@ def _capability_availability(context: PlanningContext) -> tuple[list[NightlyCapa
         if ready and _policy_block(capability.name, context.policies) is None:
             if capability.name == "visual.create" and not providers.video:
                 capability = capability.model_copy(
-                    update={
-                        "description": f"{capability.description}当前没有可用的视频生成，media_kind 只能选 image。",
-                    },
+                    update={"description": f"{capability.description}当前没有可用的视频生成，media_kind 只能选 image。"}
                 )
             available.append(capability)
         else:
@@ -434,24 +423,16 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
         observation = await load_visual_observation(db, user_id)
         settings = await load_user_settings(db, user_id, ("language",))
         reference_image_available = await _image_provider_available(
-            db,
-            user_id,
-            task=AiTaskKey.outfit,
-            has_reference=True,
+            db, user_id, task=AiTaskKey.outfit, has_reference=True
         )
-        text_image_available = await _image_provider_available(
-            db,
-            user_id,
-            task=AiTaskKey.scene,
-            has_reference=False,
-        )
+        text_image_available = await _image_provider_available(db, user_id, task=AiTaskKey.scene, has_reference=False)
         video_available = await _provider_available(db, user_id, "video_gen", task=AiTaskKey.visuals)
         recent_actions = (
             await db.scalars(
                 select(NightlyActivityAction)
                 .where(NightlyActivityAction.user_id == user_id)
                 .order_by(NightlyActivityAction.id.desc())
-                .limit(40),
+                .limit(40)
             )
         ).all()
         recent_posts = await post_summaries(db, user_id, limit=20)
@@ -462,7 +443,7 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
         action_design_enabled = bool(
             SETTINGS.action_autocreate_enabled
             and presentation_state_row is not None
-            and presentation_state_row.autonomous_enabled,
+            and presentation_state_row.autonomous_enabled
         )
         action_materials = (await list_actions(db, user_id, status="approved", limit=20)).actions
         # 影像制作各选一份 ready 素材（最新可用项），模型只提供制作要求。
@@ -470,11 +451,7 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
         ready_scene = scene.ready[0] if scene.ready else None
         ready_action = action_materials[0] if action_materials else None
         visual_materials = (
-            VisualMaterialSelection(
-                outfit_id=ready_outfit.id,
-                scene_id=ready_scene.id,
-                action_id=ready_action.id,
-            )
+            VisualMaterialSelection(outfit_id=ready_outfit.id, scene_id=ready_scene.id, action_id=ready_action.id)
             if ready_outfit is not None and ready_scene is not None and ready_action is not None
             else None
         )
@@ -486,27 +463,17 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
     context = PlanningContext(
         policies=_policies(persona),
         providers=PlanningProviders(
-            image_reference=reference_image_available,
-            image_text=text_image_available,
-            video=video_available,
+            image_reference=reference_image_available, image_text=text_image_available, video=video_available
         ),
         language=language,
-        persona=PersonaContext(
-            complete=bool(persona and persona.is_complete),
-            definition=definition,
-        ),
+        persona=PersonaContext(complete=bool(persona and persona.is_complete), definition=definition),
         life_context=life_context.prompt_payload(),
         scene=SceneContext(
             environment=scene_environment(scene),
             generation_pending=scene.pending is not None or scene.regenerating is not None,
         ),
         wardrobe=[
-            WardrobeItem(
-                id=outfit.id,
-                name=outfit.name,
-                description=outfit.description or "",
-                status=outfit.status,
-            )
+            WardrobeItem(id=outfit.id, name=outfit.name, description=outfit.description or "", status=outfit.status)
             for outfit in outfits
         ],
         actions=action_snapshot,
@@ -524,9 +491,7 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
         # 与动作的 target_date 一样按用户本地日标注。
         recent_posts=[
             RecentPostSummary(
-                date=occurred_at.astimezone(timezone).date().isoformat(),
-                content_type=content_type,
-                title=title,
+                date=occurred_at.astimezone(timezone).date().isoformat(), content_type=content_type, title=title
             )
             for occurred_at, content_type, title in recent_posts
         ],
@@ -573,7 +538,7 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
                 phase=spec.phase,
                 depends_on=dependencies,
                 arguments=action.arguments,
-            ),
+            )
         )
     outfit_ids = {action.id for action in actions if action.capability.startswith("outfit.")}
     for action in actions:
@@ -581,11 +546,7 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
             action.illegal_outfit_deps = [dep for dep in action.depends_on if dep in outfit_ids]
     # 稳定排序：同阶段保持规划顺序。
     actions.sort(key=lambda action: action.phase)
-    return NormalizedPlan(
-        theme=raw_plan.theme.strip(),
-        rationale=raw_plan.rationale.strip(),
-        actions=actions,
-    )
+    return NormalizedPlan(theme=raw_plan.theme.strip(), rationale=raw_plan.rationale.strip(), actions=actions)
 
 
 async def _stored_plan(log_id: int) -> NormalizedPlan | None:
@@ -629,9 +590,9 @@ async def _load_action_rows(log_id: int) -> list[NightlyActivityAction]:
                 await db.scalars(
                     select(NightlyActivityAction)
                     .where(NightlyActivityAction.log_id == log_id)
-                    .order_by(NightlyActivityAction.phase, NightlyActivityAction.id),
+                    .order_by(NightlyActivityAction.phase, NightlyActivityAction.id)
                 )
-            ).all(),
+            ).all()
         )
         for row in rows:
             if row.status != "running":
@@ -677,15 +638,10 @@ def _near_term_cron(now: datetime) -> str:
 
 async def _execute_outreach_schedule(run: _ActionRun, parsed_args: OutreachScheduleArgs) -> ActionExecutionResult:
     execution_context = json.dumps(
-        {
-            "completed_nightly_action_facts": run.facts,
-            "nightly_theme": run.context.plan_theme,
-        },
-        ensure_ascii=False,
+        {"completed_nightly_action_facts": run.facts, "nightly_theme": run.context.plan_theme}, ensure_ascii=False
     )
     prompt = OUTREACH_CONTEXT_TEMPLATES[resolve_language(run.context.language)].format(
-        prompt=parsed_args.prompt,
-        context=execution_context,
+        prompt=parsed_args.prompt, context=execution_context
     )
     scope = MemoryScope(run.user_id, "companion")
     timezone = ZoneInfo(run.date_context.user_timezone)
@@ -846,23 +802,14 @@ async def _execute_persisted_action(
 ) -> ActionExecutionResult:
     arguments = row.arguments or {}
     if arguments.get("illegal_outfit_deps"):
-        return ActionExecutionResult(
-            status="failed",
-            reason="环境与造型相互独立，环境动作不能依赖造型动作",
-        )
+        return ActionExecutionResult(status="failed", reason="环境与造型相互独立，环境动作不能依赖造型动作")
     # 依赖要求前置动作整项成功；部分成功不解锁。
     unsatisfied = [
         dep for dep in arguments.get("depends_on", []) if dep not in by_key or by_key[dep].status != "succeeded"
     ]
     if unsatisfied:
         return ActionExecutionResult(status="skipped", reason="dependency not completed")
-    run = _ActionRun(
-        user_id=user_id,
-        row_id=row.id,
-        context=context,
-        date_context=date_context,
-        facts=facts,
-    )
+    run = _ActionRun(user_id=user_id, row_id=row.id, context=context, date_context=date_context, facts=facts)
     # 执行前复核与状态写入同样逐项隔离：一项失败只记入该项，不中断后续动作。
     try:
         async with SESSION_LOCAL() as db:
@@ -887,7 +834,7 @@ async def _execute_persisted_action(
 
 def _terminal_result(row: NightlyActivityAction) -> ActionExecutionResult:
     return ActionExecutionResult.model_validate(
-        {"capability": row.capability, **(row.result or {"status": row.status})},
+        {"capability": row.capability, **(row.result or {"status": row.status})}
     )
 
 
@@ -898,20 +845,16 @@ async def load_terminal_action_results(log_id: int) -> dict[str, ActionExecution
             await db.scalars(
                 select(NightlyActivityAction)
                 .where(
-                    NightlyActivityAction.log_id == log_id,
-                    NightlyActivityAction.status.in_(_TERMINAL_ACTION_STATUSES),
+                    NightlyActivityAction.log_id == log_id, NightlyActivityAction.status.in_(_TERMINAL_ACTION_STATUSES)
                 )
-                .order_by(NightlyActivityAction.phase, NightlyActivityAction.id),
+                .order_by(NightlyActivityAction.phase, NightlyActivityAction.id)
             )
         ).all()
     return {row.action_key: _terminal_result(row) for row in rows}
 
 
 async def _execute_persisted_actions(
-    log_id: int,
-    user_id: int,
-    context: PlanningContext,
-    date_context: DateContext,
+    log_id: int, user_id: int, context: PlanningContext, date_context: DateContext
 ) -> dict[str, ActionExecutionResult]:
     rows = await _load_action_rows(log_id)
     by_key = {row.action_key: row for row in rows}
@@ -998,8 +941,4 @@ async def run_nightly_planning(
         await _persist_plan(log_id, plan)
     context.plan_theme = plan.theme
     actions = await _execute_persisted_actions(log_id, user_id, context, date_context)
-    return PlanningResult(
-        theme=plan.theme,
-        rationale=plan.rationale,
-        actions=actions,
-    )
+    return PlanningResult(theme=plan.theme, rationale=plan.rationale, actions=actions)

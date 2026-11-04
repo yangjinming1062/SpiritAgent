@@ -48,7 +48,7 @@ def _parts(parts: list[dict]) -> list[dict]:
                         "data": part.get("data") or part.get("audio_url"),
                         "format": part.get("format", "wav"),
                     },
-                },
+                }
             )
         else:
             raise ValueError("音频调用包含未支持的消息部件")
@@ -87,7 +87,7 @@ def audio_chat_request(kwargs: dict[str, Any]) -> dict[str, Any]:
                         "content": None,
                         "tool_calls": [call],
                         **({"reasoning_content": reasoning} if reasoning else {}),
-                    },
+                    }
                 )
             reasoning = ""
         elif kind == "function_call_output":
@@ -101,7 +101,7 @@ def audio_chat_request(kwargs: dict[str, Any]) -> dict[str, Any]:
                     else output
                     if isinstance(output, str)
                     else json.dumps(output, ensure_ascii=False),
-                },
+                }
             )
         else:
             content = item.get("content", "")
@@ -194,8 +194,7 @@ class AudioChatStream:
                         yield AudioResponseEvent("response.refusal.delta", delta=delta.refusal)
                     for call in delta.tool_calls or []:
                         current = calls.setdefault(
-                            call.index,
-                            {"id": "", "type": "function", "function": {"name": "", "arguments": ""}},
+                            call.index, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}}
                         )
                         if call.id:
                             current["id"] = call.id
@@ -226,17 +225,16 @@ class AudioChatStream:
                                 "refusal": refusal or None,
                                 "tool_calls": [calls[index] for index in sorted(calls)] or None,
                             },
-                        },
+                        }
                     ],
                     "usage": usage.model_dump() if usage is not None else None,
-                },
+                }
             )
             response = chat_completion_response(completion)
             for item in response.output:
                 yield AudioResponseEvent("response.output_item.done", item=item)
             yield AudioResponseEvent(
-                "response.completed" if response.status == "completed" else "response.incomplete",
-                response=response,
+                "response.completed" if response.status == "completed" else "response.incomplete", response=response
             )
         finally:
             await self._stream.close()

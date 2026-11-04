@@ -55,19 +55,11 @@ def _action_payload(action: ActionAssetView) -> dict[str, Any]:
 
 
 async def action_search_tool(
-    user_id: ResourceId,
-    query: str = "",
-    limit: int = 10,
-    cursor: ResourceId | None = None,
-    **_: Any,
+    user_id: ResourceId, query: str = "", limit: int = 10, cursor: ResourceId | None = None, **_: Any
 ) -> str:
     async with SESSION_LOCAL() as db:
         result = await action_queries.list_actions(
-            db,
-            user_id,
-            query=query,
-            limit=max(1, min(limit, _MAX_SEARCH_RESULTS)),
-            cursor=cursor,
+            db, user_id, query=query, limit=max(1, min(limit, _MAX_SEARCH_RESULTS)), cursor=cursor
         )
     return json.dumps(
         {
@@ -186,7 +178,7 @@ def register(registry: ToolsRegistry) -> None:
                         "type": "string",
                         "pattern": "^[1-9][0-9]*$",
                         "description": "动作标识，来自 action_search 或 action_design。",
-                    },
+                    }
                 },
                 "required": ["action_id"],
                 "additionalProperties": False,

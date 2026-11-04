@@ -169,9 +169,7 @@ class MediaChainState(BaseModel):
 
 
 async def resolve_frozen_media_provider(
-    user_id: int,
-    service: str,
-    frozen: FrozenMediaProvider,
+    user_id: int, service: str, frozen: FrozenMediaProvider
 ) -> ProviderConfig | None:
     """凭据实时读取；任务模型与端点保持冻结，端点改变后不向新地址发送旧任务。"""
     async with SESSION_LOCAL() as db:

@@ -75,11 +75,7 @@ from features.media.review_contracts import (
 )
 from features.media.review_evidence import freeze_review_evidence, read_review_evidence
 from features.media.video_queue.contracts import VideoQueueInfo, VideoQueueOwner, VideoQueueStoppedError
-from features.media.video_queue.service import (
-    cancel_video_attempt,
-    enqueue_video_attempt,
-    pause_video_attempt,
-)
+from features.media.video_queue.service import cancel_video_attempt, enqueue_video_attempt, pause_video_attempt
 from features.media.video_results import download_and_store_video, receive_video_attempt
 
 from .creation import (
@@ -266,7 +262,7 @@ def visual_image_chain_exhausted(progress: VisualJobProgress) -> bool:
         image.providers
         and image.phase in {"ready", "storing", "evaluating", "complete"}
         and (image.stop_reason or image.next_index >= len(image.providers))
-        and not (image.candidates or image.pending_urls or image.pending_path),
+        and not (image.candidates or image.pending_urls or image.pending_path)
     )
 
 
@@ -381,7 +377,7 @@ def visual_progress_can_resume(progress: VisualJobProgress) -> bool:
             or image.inputs is not None
             and image.phase == "ready"
             and not image.stop_reason
-            and image.next_index < len(image.providers),
+            and image.next_index < len(image.providers)
         )
     if progress.aligned_outfit_path:
         return True
@@ -396,7 +392,7 @@ def visual_progress_can_resume(progress: VisualJobProgress) -> bool:
             or alignment.inputs is not None
             and alignment.phase == "ready"
             and not alignment.stop_reason
-            and alignment.next_index < len(alignment.providers),
+            and alignment.next_index < len(alignment.providers)
         )
     return progress.creation_plan is not None or bool(progress.previous_pose_path)
 
@@ -432,12 +428,7 @@ async def _require_active_job(user_id: int, job_id: int, generation_id: str) -> 
 
 
 async def _save_progress(
-    user_id: int,
-    job_id: int,
-    progress: VisualJobProgress,
-    *,
-    stage: str,
-    repair_count: int | None = None,
+    user_id: int, job_id: int, progress: VisualJobProgress, *, stage: str, repair_count: int | None = None
 ) -> None:
     async with SESSION_LOCAL() as db:
         job = await visual_job_row(db, user_id, job_id, lock=True)
@@ -461,9 +452,7 @@ async def _save_progress(
 
 async def _references(snapshot: ActorClipSource | CinematicSource) -> tuple[str, str]:
     portrait = await asyncio.to_thread(
-        read_visual_reference,
-        snapshot.primary_reference_path,
-        snapshot.primary_reference_hash,
+        read_visual_reference, snapshot.primary_reference_path, snapshot.primary_reference_hash
     )
     outfit = await asyncio.to_thread(read_visual_reference, snapshot.outfit.path, snapshot.outfit.content_hash)
     return portrait, outfit
@@ -545,10 +534,7 @@ async def _aligned_outfit_reference(
     except ImageGenerationError as exc:
         _raise_image_review_failure(exc, state)
         if state.phase == "complete" and state.stop_reason == "exhausted":
-            raise VisualCreationError(
-                "本次角色参考未通过检查，可以重试准备角色参考",
-                "reference_unsuitable",
-            ) from exc
+            raise VisualCreationError("本次角色参考未通过检查，可以重试准备角色参考", "reference_unsuitable") from exc
         raise
     progress.aligned_outfit_path = path
     resolved = resolve_asset_reference(path)
@@ -563,9 +549,7 @@ async def _aligned_outfit_reference(
 
 
 def _frame_bytes(
-    data: bytes,
-    ratio: str | None = None,
-    pixel_bounds: tuple[int, int] | None = None,
+    data: bytes, ratio: str | None = None, pixel_bounds: tuple[int, int] | None = None
 ) -> tuple[bytes, int, int]:
     validate_image_bytes(data)
     with Image.open(BytesIO(data)) as image:
@@ -683,14 +667,12 @@ async def resolve_visual_video_plan(
         if choice is not None:
             plans.append(VisualVideoPlan(provider, ratio, seconds, choice))
     result = freeze_visual_video_plans(
-        plans,
-        preserve_order=has_provider_selection(chain, selection),
-        resolution_for=resolution_for,
+        plans, preserve_order=has_provider_selection(chain, selection), resolution_for=resolution_for
     )
     if result is not None:
         return result
     raise VisualStateError(
-        f"当前视频模型均不支持 {aspect_ratio} 画幅及所需时长、首帧条件；请选择支持该画幅的模型，循环动作还需支持首尾帧",
+        f"当前视频模型均不支持 {aspect_ratio} 画幅及所需时长、首帧条件；请选择支持该画幅的模型，循环动作还需支持首尾帧"
     )
 
 
@@ -743,21 +725,12 @@ async def _prepare_pose(
             raise VisualStateError("要调整的画面无法读取")
         portrait, outfit = previous, None
         template = VISUAL_POSE_VARIANT_TEMPLATE if progress.regenerate_image else VISUAL_POSE_EDIT_TEMPLATE
-        prompt = template.format(
-            feedback=opening_requirements(job, progress),
-            aspect_ratio=progress.aspect_ratio,
-        )
+        prompt = template.format(feedback=opening_requirements(job, progress), aspect_ratio=progress.aspect_ratio)
     else:
         portrait, outfit = identity, identity_outfit
         if snapshot.identity_reference_role == "fullbody" and not progress.image_chain_json:
             outfit = await _aligned_outfit_reference(
-                user_id,
-                job.id,
-                snapshot,
-                progress,
-                directory,
-                identity,
-                identity_outfit,
+                user_id, job.id, snapshot, progress, directory, identity, identity_outfit
             )
         if snapshot.kind == "actor":
             # 透明主体动画的起始图在干净幕布上单独呈现角色，便于逐帧抠像保留真实轮廓。
@@ -840,21 +813,13 @@ async def _prepare_pose(
     if resolved is None:
         raise VisualStateError("起始画面无法读取")
     original_data = await asyncio.to_thread(resolved[0].read_bytes)
-    generated_data, _width, _height = await asyncio.to_thread(
-        _frame_bytes,
-        original_data,
-        progress.aspect_ratio,
-    )
+    generated_data, _width, _height = await asyncio.to_thread(_frame_bytes, original_data, progress.aspect_ratio)
     normalized, _width, _height = await _prepare_geometry(progress, generated_data)
     progress.pose_path = (
         paths[0]
         if normalized == original_data
         else await save_companion_asset_async(
-            normalized,
-            user_id=user_id,
-            label="visual_pose",
-            ext="png",
-            directory=directory,
+            normalized, user_id=user_id, label="visual_pose", ext="png", directory=directory
         )
     )
     progress.image_confirmed = False
@@ -948,10 +913,7 @@ async def _check_confirmed_geometry(progress: VisualJobProgress) -> None:
 
 
 async def _prepare_motion(
-    user_id: int,
-    job: VisualJob,
-    snapshot: ActorClipSource | CinematicSource,
-    progress: VisualJobProgress,
+    user_id: int, job: VisualJob, snapshot: ActorClipSource | CinematicSource, progress: VisualJobProgress
 ) -> None:
     if progress.motion_prompt:
         return
@@ -1007,12 +969,7 @@ def _opening_asset(job: VisualJob, progress: VisualJobProgress) -> VisualAsset:
     )
 
 
-async def _process_candidate(
-    user_id: int,
-    job: VisualJob,
-    progress: VisualJobProgress,
-    directory: str,
-) -> VisualAsset:
+async def _process_candidate(user_id: int, job: VisualJob, progress: VisualJobProgress, directory: str) -> VisualAsset:
     resolved = resolve_asset_reference(progress.source_path)
     if resolved is None:
         raise VisualStateError("已下载的视频无法读取")
@@ -1030,11 +987,7 @@ async def _process_candidate(
             directory=directory,
         )
         poster = await save_companion_asset_async(
-            result.cover,
-            user_id=user_id,
-            label="visual_cover",
-            ext="webp",
-            directory=directory,
+            result.cover, user_id=user_id, label="visual_cover", ext="webp", directory=directory
         )
         progress.frame_width, progress.frame_height = result.width, result.height
         return VisualAsset(
@@ -1056,12 +1009,7 @@ async def _process_candidate(
 
 
 async def _process_actor_candidate(
-    user_id: int,
-    job: VisualJob,
-    progress: VisualJobProgress,
-    source: Path,
-    temporary: Path,
-    directory: str,
+    user_id: int, job: VisualJob, progress: VisualJobProgress, source: Path, temporary: Path, directory: str
 ) -> VisualAsset:
     """透明主体候选：逐帧抠像成 WebM，产出真实时变遮罩与锚点元数据。"""
 
@@ -1190,10 +1138,7 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
                 "required_props": progress.creation_plan.required_props if progress.creation_plan else [],
                 "feedback": job.feedback,
                 "customization_priority": progress.customization_priority,
-                "action_conditions": {
-                    "use_when": source.action.use_when,
-                    "avoid_when": source.action.avoid_when,
-                },
+                "action_conditions": {"use_when": source.action.use_when, "avoid_when": source.action.avoid_when},
             }
             if progress.video_evidence is None:
                 progress.video_evidence = await freeze_review_evidence(
@@ -1308,7 +1253,7 @@ def _publication_snapshot(snapshot: VisualSnapshot, progress: VisualJobProgress)
                 "source": snapshot.source.model_copy(
                     update={
                         "presentation_approved": progress.review_result is not None
-                        and progress.review_result.verdict == "pass",
+                        and progress.review_result.verdict == "pass"
                     }
                 ),
             }
@@ -1326,11 +1271,7 @@ def _publication_snapshot(snapshot: VisualSnapshot, progress: VisualJobProgress)
 
 
 async def _finish_job(
-    user_id: int,
-    job_id: int,
-    progress: VisualJobProgress,
-    *,
-    allow_followup_work: bool = True,
+    user_id: int, job_id: int, progress: VisualJobProgress, *, allow_followup_work: bool = True
 ) -> None:
     published: PublishedVisual | None = None
     resolved_candidate = resolve_asset_reference(progress.candidate.media_path if progress.candidate else None)
@@ -1351,10 +1292,7 @@ async def _finish_job(
         if progress.candidate is None:
             raise VisualStateError("当前制作还没有可用成品")
         failure = quality_failure_message(
-            progress.identity_verdict,
-            progress.identity_reason,
-            progress.review_verdict,
-            progress.review_reason,
+            progress.identity_verdict, progress.identity_reason, progress.review_verdict, progress.review_reason
         )
         if progress.review_result is None or progress.review_result.verdict != "pass":
             raise VisualCreationError(
@@ -1497,12 +1435,7 @@ def _visual_job_error(exc: Exception, progress: VisualJobProgress, *, stage: str
     return f"{phase}时发生异常，已保留当前进度，可点击“再试一次”继续。"
 
 
-_SCENE_PHASE_TEXT: dict[str, str] = {
-    "dawn": "黎明",
-    "day": "白天",
-    "dusk": "黄昏",
-    "night": "夜间",
-}
+_SCENE_PHASE_TEXT: dict[str, str] = {"dawn": "黎明", "day": "白天", "dusk": "黄昏", "night": "夜间"}
 
 
 def scene_motion_requirements(source: SceneMediaSource) -> str:
@@ -1516,11 +1449,7 @@ def scene_motion_requirements(source: SceneMediaSource) -> str:
 
 
 async def _prepare_scene_opening(
-    user_id: int,
-    job: VisualJob,
-    source: SceneMediaSource,
-    progress: VisualJobProgress,
-    directory: str,
+    user_id: int, job: VisualJob, source: SceneMediaSource, progress: VisualJobProgress, directory: str
 ) -> None:
     if progress.pose_path:
         return
@@ -1573,11 +1502,7 @@ async def _prepare_scene_opening(
         reference_path
         if normalized == data
         else await save_companion_asset_async(
-            normalized,
-            user_id=user_id,
-            label="visual_pose",
-            ext="png",
-            directory=directory,
+            normalized, user_id=user_id, label="visual_pose", ext="png", directory=directory
         )
     )
     progress.frame_width, progress.frame_height = width, height
@@ -1586,10 +1511,7 @@ async def _prepare_scene_opening(
 
 
 async def _prepare_scene_motion(
-    user_id: int,
-    job: VisualJob,
-    source: SceneMediaSource,
-    progress: VisualJobProgress,
+    user_id: int, job: VisualJob, source: SceneMediaSource, progress: VisualJobProgress
 ) -> None:
     await _save_progress(user_id, job.id, progress, stage="motion")
     reference = await asyncio.to_thread(read_valid_image_data_uri, progress.pose_path)
@@ -1718,10 +1640,7 @@ async def _evaluate_scene_candidate(user_id: int, job: VisualJob, progress: Visu
 
 
 async def _ensure_video_chain(
-    user_id: int,
-    job_id: int,
-    clip_kind: str,
-    progress: VisualJobProgress,
+    user_id: int, job_id: int, clip_kind: str, progress: VisualJobProgress
 ) -> MediaChainState:
     chain = MediaChainState.model_validate_json(progress.video_chain_json or "{}")
     if not chain.providers:
@@ -1758,9 +1677,7 @@ async def _review_video_candidate(
         await _evaluate_scene_candidate(user_id, job, progress)
     else:
         await _evaluate_candidate(user_id, job, progress)
-    result = VisualCandidateResult(
-        asset=progress.candidate,
-    )
+    result = VisualCandidateResult(asset=progress.candidate)
     candidate = MediaCandidate(
         path=progress.candidate.media_path,
         attempt=chain.active_index or 0,
@@ -1808,12 +1725,7 @@ async def _review_video_candidate(
 
 
 async def _download_video_result(
-    user_id: int,
-    job_id: int,
-    progress: VisualJobProgress,
-    chain: MediaChainState,
-    generation_id: str,
-    directory: str,
+    user_id: int, job_id: int, progress: VisualJobProgress, chain: MediaChainState, generation_id: str, directory: str
 ) -> None:
     """已知结果只恢复接收；下载失败保留原地址，不重新提交制作。"""
     try:
@@ -1827,8 +1739,7 @@ async def _download_video_result(
         )
     except Exception as exc:
         raise VisualCreationError(
-            "视频已经完成，但成品暂时无法接收；可以继续接收原成品",
-            "result_download_failed",
+            "视频已经完成，但成品暂时无法接收；可以继续接收原成品", "result_download_failed"
         ) from exc
     progress.source_path = stored
     chain.result_url = None
@@ -1872,10 +1783,7 @@ async def _build_video_request(
         raise VisualStateError("已确认的起始画面无法读取")
     raw_frame = await asyncio.to_thread(resolved[0].read_bytes)
     normalized, frame_width, frame_height = await asyncio.to_thread(
-        _frame_bytes,
-        raw_frame,
-        None,
-        provider.first_frame_size_range,
+        _frame_bytes, raw_frame, None, provider.first_frame_size_range
     )
     pose = (
         progress.pose_path
@@ -1925,12 +1833,7 @@ async def _advance_video_chain(
     index = chain.active_index if chain.active_index is not None else chain.next_index
     if index is None or index >= len(chain.providers):
         raise VisualStateError(video_failure_message("provider_failed"))
-    owner = VideoQueueOwner(
-        kind="visuals",
-        user_id=user_id,
-        job_id=job.id,
-        generation_id=chain.generation_id,
-    )
+    owner = VideoQueueOwner(kind="visuals", user_id=user_id, job_id=job.id, generation_id=chain.generation_id)
     if not chain.queue_request_id:
         if not allow_model_steps:
             raise GenerationWorkPaused
@@ -2073,8 +1976,7 @@ async def _prepare_video_motion(
                     raise VisualCreationError(str(planning_error), "activity_unsupported") from planning_error
                 if seconds < minimum or seconds == progress.duration_seconds:
                     raise VisualCreationError(
-                        "当前视频时长不足以完成这个活动，请选择其他动作",
-                        "activity_unsupported",
+                        "当前视频时长不足以完成这个活动，请选择其他动作", "activity_unsupported"
                     ) from exc
                 progress.duration_seconds = seconds
                 chain = MediaChainState(providers=providers, generation_id=progress.generation_id)
@@ -2083,12 +1985,7 @@ async def _prepare_video_motion(
                 continue
             if exc.script.failure_kind == "unsupported" or snapshot.source.kind == "scene":
                 raise
-            begin_opening_repair(
-                job,
-                progress,
-                reason=str(exc),
-                reference_path=progress.pose_path,
-            )
+            begin_opening_repair(job, progress, reason=str(exc), reference_path=progress.pose_path)
             await _save_progress(user_id, job_id, progress, stage="repairing", repair_count=job.repair_count)
             await _prepare_opening(user_id, job, snapshot.source, progress, directory)
             progress.image_confirmed = True
@@ -2201,13 +2098,7 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
         logger.info("Visual generation paused before new model calls", extra={"job_id": job_id})
     except asyncio.CancelledError as exc:
         if exc.args == ("paused",) and progress is not None:
-            await _pause_visual_job(
-                user_id,
-                job_id,
-                generation_id,
-                latest_progress=progress,
-                by_user=True,
-            )
+            await _pause_visual_job(user_id, job_id, generation_id, latest_progress=progress, by_user=True)
             request_id = _queued_video_request(progress)
             if request_id:
                 await pause_video_attempt(request_id)
@@ -2249,13 +2140,7 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
                 pending_review = (
                     isinstance(exc, ReviewPendingError)
                     or saved.failure_reason
-                    in {
-                        "review_pending",
-                        "review_unavailable",
-                        "review_invalid",
-                        "review_blocked",
-                        "evidence_invalid",
-                    }
+                    in {"review_pending", "review_unavailable", "review_invalid", "review_blocked", "evidence_invalid"}
                     or not saved.submission_unknown
                     and (
                         saved.candidate is not None
@@ -2285,7 +2170,7 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
             try:
                 async with SESSION_LOCAL() as db:
                     exists = await db.scalar(
-                        select(VisualJob.id).where(VisualJob.id == job_id, VisualJob.user_id == user_id),
+                        select(VisualJob.id).where(VisualJob.id == job_id, VisualJob.user_id == user_id)
                     )
                 if exists is None:
                     cleanup_asset_directories_after_task(user_id, [directory])
@@ -2301,8 +2186,7 @@ def schedule_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool = 
     if previous is not None and not previous.done():
         _FINISHING_JOBS.setdefault(job_id, set()).add(previous)
     task = asyncio.create_task(
-        _run_visual_job(user_id, job_id, allow_model_steps=allow_model_steps),
-        name=f"visual-job-{job_id}",
+        _run_visual_job(user_id, job_id, allow_model_steps=allow_model_steps), name=f"visual-job-{job_id}"
     )
     _JOBS[job_id] = task
     track_user_task(user_id, task, cancel_on_maintenance=False)

@@ -92,9 +92,7 @@ class MediaTurnState:
         )
 
     def image_regeneration_blocker(
-        self,
-        media_id: str,
-        inspection_id: str | None = None,
+        self, media_id: str, inspection_id: str | None = None
     ) -> Literal["result_unknown", "not_ready", "inspection", "quota", "stale"] | None:
         if self.has_unknown_image_result():
             return "result_unknown"

@@ -61,10 +61,7 @@ def _identity_reference_mode(role: CharacterReferenceRole) -> Literal["primary",
 
 
 async def load_self_visual_context(
-    user_id: int,
-    presentation: ActualPresentationSnapshot,
-    *,
-    outfit_override: str | None = None,
+    user_id: int, presentation: ActualPresentationSnapshot, *, outfit_override: str | None = None
 ) -> SelfVisualPlan:
     """按调用方传入的实际呈现快照装配出镜造型：窗口造型取静态造型素材（outfit_path/outfit_description），实际呈现已有成品画面时以 visual_description 为准。override 非空即关造型参考，只作用于本次产物。素材缺失时明确失败。"""
     override = (outfit_override or "").strip()
@@ -121,7 +118,7 @@ def build_self_image_prompt(plan: SelfVisualPlan, prompt: str, *, has_outfit_ref
             if outfit and not has_outfit_reference
             else ("" if has_outfit_reference else SELF_IMAGE_CURRENT_OUTFIT),
             prompt=prompt,
-        ),
+        )
     ]
     if has_outfit_reference:
         template = SELF_IMAGE_STYLING_REFERENCE if fullbody else SELF_IMAGE_OUTFIT_REFERENCE
@@ -192,9 +189,7 @@ async def align_character_reference(
     paths = await generate_reviewed_images(
         references
         + "\n"
-        + alignment.format(
-            outfit=outfit_description or "沿用图 2 可见造型",
-        )
+        + alignment.format(outfit=outfit_description or "沿用图 2 可见造型")
         + "\n"
         + CHARACTER_APPEARANCE_VISUAL_STYLE,
         user_id=user_id,
@@ -225,9 +220,7 @@ class SelfVideoInputs:
 
 
 async def build_self_video_inputs(
-    plan: SelfVisualPlan,
-    prompt: str,
-    reference_image: str | None = None,
+    plan: SelfVisualPlan, prompt: str, reference_image: str | None = None
 ) -> SelfVideoInputs:
     """冻结视频提示词、参考图与身份职责；has_outfit_reference 与 role 随参考分支一次确定。"""
     identity_reference_role: CharacterReferenceRole = plan.context.identity_reference_role

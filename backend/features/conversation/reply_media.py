@@ -51,14 +51,13 @@ def _read_tool_artifact(data: dict) -> MediaArtifact | None:
                 "url": data.get("url"),
                 "error": data.get("error"),
                 "job_id": data.get("task_id"),
-            },
+            }
         )
     except ValueError:
         return None
     verdict = data.get("identity_verdict")
     return MediaArtifact(
-        **bubble.model_dump(),
-        identity_verdict=verdict if verdict in ("pass", "review", "fail") else None,
+        **bubble.model_dump(), identity_verdict=verdict if verdict in ("pass", "review", "fail") else None
     )
 
 
@@ -216,10 +215,7 @@ def apply_video_status(artifact: MediaArtifact, job: VideoJobSnapshot) -> None:
         "result_unknown": "result_unknown",
         "review_pending": "review_pending",
         "confirmation": "review_pending",
-    }.get(
-        job.status,
-        "pending",
-    )
+    }.get(job.status, "pending")
     artifact.bound_message_id = job.reply_message_id
     artifact.media_revision = job.revision
     artifact.url = job.video_url if artifact.status == "ready" else None
@@ -270,8 +266,7 @@ def resolve_reply_media(state: MediaTurnState, media_id: str, media_type: str) -
 
 async def bind_reply_videos(db: AsyncSession, message: Message, reply: CompanionReply, user_id: int) -> None:
     for bubble in sorted(
-        (b for b in reply.bubbles if isinstance(b, MediaBubble) and b.job_id is not None),
-        key=lambda b: b.job_id or 0,
+        (b for b in reply.bubbles if isinstance(b, MediaBubble) and b.job_id is not None), key=lambda b: b.job_id or 0
     ):
         if bubble.job_id is None:
             continue
@@ -311,11 +306,8 @@ async def update_video_reply(db: AsyncSession, job: VideoJobSnapshot) -> None:
         return
     message = await db.scalar(
         select(Message)
-        .where(
-            Message.id == job.reply_message_id,
-            Message.conversation.has(Conversation.user_id == job.user_id),
-        )
-        .with_for_update(),
+        .where(Message.id == job.reply_message_id, Message.conversation.has(Conversation.user_id == job.user_id))
+        .with_for_update()
     )
     if message is None or message.reply_json is None:
         return
@@ -365,7 +357,7 @@ async def require_video_source(db: AsyncSession, user_id: int, session_id: str, 
             Message.conversation.has(Conversation.user_id == user_id),
             Message.conversation_id == int(session_id or "0"),
         )
-        .with_for_update(),
+        .with_for_update()
     )
     if source is None:
         raise ValueError("Video source message is no longer available")
@@ -421,7 +413,7 @@ async def deliver_video_result(db: AsyncSession, job: VideoJobSnapshot) -> None:
                     subtype=MEDIA_STATUS_SUBTYPE,
                     content=f"[视频已生成 task {job.id}] {client_url}",
                     media_json=[{"type": "video", "url": job.video_url}],
-                ),
+                )
             )
     emit_ws_event(
         db,

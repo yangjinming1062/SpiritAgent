@@ -108,9 +108,7 @@ async def put_presentation(user: CurrentUser, body: VisualPreferencesRequest) ->
 
 
 @router.post(
-    "/{visual_id}/play",
-    response_model=VisualPlayCommand,
-    openapi_extra=operation_policy(identities=("desktop",)),
+    "/{visual_id}/play", response_model=VisualPlayCommand, openapi_extra=operation_policy(identities=("desktop",))
 )
 async def play_visual(
     visual_id: ResourceId,
@@ -200,11 +198,7 @@ async def upload_visual(
     try:
         name = filename.replace("\\", "/").rsplit("/", 1)[-1].strip() or "影像"
         detail = await import_visual(
-            user.id,
-            data,
-            filename=name,
-            title=title.strip() or name[:160],
-            description=description.strip(),
+            user.id, data, filename=name, title=title.strip() or name[:160], description=description.strip()
         )
         await queue_import_analysis(user.id, detail.id)
         return await _visuals.visual_detail(user.id, detail.id)

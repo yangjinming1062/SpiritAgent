@@ -302,11 +302,7 @@ async def submit_onboarding_field(
     if persona.is_complete:
         if field.startswith("user_"):
             if value:
-                await record_user_profile(
-                    db,
-                    MemoryScope(user_id, "companion"),
-                    {field: value.strip()},
-                )
+                await record_user_profile(db, MemoryScope(user_id, "companion"), {field: value.strip()})
                 await db.commit()
             # 传空值不动 Memory 行：清除 user_* 条目通过记忆管理删除
             return _state(persona, load_persona_definition(persona), None, True)
@@ -321,7 +317,7 @@ async def submit_onboarding_field(
                 draft.pop(field, None)
             persona.definition_json = draft
             completed = pending_step == "voice" and bool(
-                draft.get("voice") or draft.get("voice_setup_skipped") == "true",
+                draft.get("voice") or draft.get("voice_setup_skipped") == "true"
             )
             if completed:
                 await enqueue_first_greeting(db, user_id)

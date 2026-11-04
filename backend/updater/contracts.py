@@ -6,15 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 UpdateStage = Literal[
-    "preflight",
-    "fetch",
-    "fast_forward",
-    "build",
-    "restart",
-    "verify",
-    "done",
-    "failed",
-    "interrupted",
+    "preflight", "fetch", "fast_forward", "build", "restart", "verify", "done", "failed", "interrupted"
 ]
 TaskKind = Literal["check", "update"]
 TaskState = Literal["running", "done", "failed", "interrupted"]

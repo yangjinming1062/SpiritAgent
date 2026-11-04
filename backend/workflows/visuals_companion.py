@@ -238,8 +238,7 @@ async def load_action_review_source(db: AsyncSession, user_id: int) -> ActionRev
     if avatar is None or not avatar.seed_fullbody_url or not avatar.asset_url:
         raise ComboAssemblyError("伙伴的形象尚未准备好")
     identity_hash, portrait_hash = await asyncio.gather(
-        asyncio.to_thread(_asset_hash, avatar.seed_fullbody_url),
-        asyncio.to_thread(_asset_hash, avatar.asset_url),
+        asyncio.to_thread(_asset_hash, avatar.seed_fullbody_url), asyncio.to_thread(_asset_hash, avatar.asset_url)
     )
     return ActionReviewSource(
         identity_path=avatar.seed_fullbody_url,
@@ -349,12 +348,7 @@ async def generate_visual_reference(
             request_id=request_key,
             life_step=request,
         )
-        return {
-            "job_id": job.id,
-            "state": job.state,
-            "target_kind": job.target_kind,
-            "message": "制作已受理",
-        }
+        return {"job_id": job.id, "state": job.state, "target_kind": job.target_kind, "message": "制作已受理"}
 
 
 async def generate_character_visual_reference(

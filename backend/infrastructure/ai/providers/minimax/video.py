@@ -69,8 +69,7 @@ def _build_content(req: VideoGenRequest) -> list[dict]:
         raise ProviderError("MiniMax requires a non-empty prompt", status_code=400)
     if len(req.prompt) > _MAX_PROMPT_CHARS:
         raise ProviderError(
-            f"prompt exceeds MiniMax limit ({_MAX_PROMPT_CHARS} chars per ContentItem.text)",
-            status_code=400,
+            f"prompt exceeds MiniMax limit ({_MAX_PROMPT_CHARS} chars per ContentItem.text)", status_code=400
         )
     content: list[dict] = [{"type": "text", "text": req.prompt}]
     content.extend(
@@ -91,8 +90,7 @@ def _model_capabilities(model: str) -> tuple[tuple[int, ...], tuple[str, ...]]:
         return _MODEL_CAPABILITIES[model]
     except KeyError as exc:
         raise ProviderError(
-            f"MiniMax video model must be one of {tuple(_MODEL_CAPABILITIES)}, got {model!r}",
-            status_code=400,
+            f"MiniMax video model must be one of {tuple(_MODEL_CAPABILITIES)}, got {model!r}", status_code=400
         ) from exc
 
 
@@ -142,11 +140,7 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
             raise ValueError(f"MiniMax has no nominal size for resolution {resolution!r}")
         short_edge = short_edges[native]
         # H3 标称短边在宽于 16:9 的画幅按同档 16:9 像素预算收缩。
-        return self._nominal_resolution_size(
-            short_edge,
-            aspect_ratio,
-            max_pixels=short_edge * short_edge * 16 // 9,
-        )
+        return self._nominal_resolution_size(short_edge, aspect_ratio, max_pixels=short_edge * short_edge * 16 // 9)
 
     def validate_reference_video(self, metadata: VideoReferenceMetadata) -> None:
         if not self.supports_reference_videos:
@@ -161,14 +155,10 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
             raise ProviderError("MiniMax reference video must contain data and be at most 50 MB", status_code=400)
         if not math.isfinite(metadata.duration_seconds) or not 2 <= metadata.duration_seconds <= 15:
             raise ProviderError("MiniMax reference video duration must be between 2 and 15 seconds", status_code=400)
-        for width, height in (
-            (metadata.width, metadata.height),
-            (metadata.display_width, metadata.display_height),
-        ):
+        for width, height in ((metadata.width, metadata.height), (metadata.display_width, metadata.display_height)):
             if not (256 <= width <= 5760 and 256 <= height <= 5760):
                 raise ProviderError(
-                    "MiniMax reference video dimensions must be between 256 and 5760 px",
-                    status_code=400,
+                    "MiniMax reference video dimensions must be between 256 and 5760 px", status_code=400
                 )
             if not 0.4 <= width / height <= 2.5:
                 raise ProviderError("MiniMax reference video aspect ratio must be between 0.4 and 2.5", status_code=400)
@@ -181,24 +171,18 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
     def _request_body(self, req: VideoGenRequest) -> bytes:
         super().validate_request(req)
         payload = json.dumps(
-            self._payload(req, self.config.model),
-            ensure_ascii=False,
-            separators=(",", ":"),
-            allow_nan=False,
+            self._payload(req, self.config.model), ensure_ascii=False, separators=(",", ":"), allow_nan=False
         ).encode("utf-8")
         if len(payload) > _MAX_REQUEST_BYTES:
             raise ProviderError(
-                "MiniMax video request exceeds 64 MB; use public URLs for reference media",
-                status_code=400,
+                "MiniMax video request exceeds 64 MB; use public URLs for reference media", status_code=400
             )
         return payload
 
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
         payload = self._request_body(req)
         resp = await self._client.post(
-            "/v2/video_generation",
-            content=payload,
-            headers={"Content-Type": "application/json"},
+            "/v2/video_generation", content=payload, headers={"Content-Type": "application/json"}
         )
         body = raise_for_minimax_response(resp)
         task_id = body.get("task_id", "")
@@ -216,8 +200,7 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
             )
         if req.resolution not in resolutions:
             raise ProviderError(
-                f"{model} requires resolution in {resolutions}, got {req.resolution!r}",
-                status_code=400,
+                f"{model} requires resolution in {resolutions}, got {req.resolution!r}", status_code=400
             )
         payload: dict = {
             "model": model,
@@ -237,8 +220,7 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
             payload["ratio"] = req.aspect_ratio
         else:
             raise ProviderError(
-                f"{model} requires aspect_ratio (one of 16:9, 9:16, 1:1, 4:3, 3:4, 21:9)",
-                status_code=400,
+                f"{model} requires aspect_ratio (one of 16:9, 9:16, 1:1, 4:3, 3:4, 21:9)", status_code=400
             )
         return payload
 
@@ -254,8 +236,7 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
         if norm is None:
             # 未知状态继续轮询，原值写入日志便于运维排查。
             logger.warning(
-                "unknown video task status",
-                extra={"provider": "minimax", "task_id": task_id, "status": raw_status},
+                "unknown video task status", extra={"provider": "minimax", "task_id": task_id, "status": raw_status}
             )
             norm = "processing"
         content = task.get("content") or {}
@@ -268,12 +249,7 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
             error_message = None
         else:
             error_message = f"provider returned non-standard error: {err!r}"
-        return VideoJobStatus(
-            task_id=task_id,
-            status=norm,
-            download_url=download_url,
-            error=error_message,
-        )
+        return VideoJobStatus(task_id=task_id, status=norm, download_url=download_url, error=error_message)
 
     async def cancel(self, task_id: str) -> Literal["cancelled", "finished", "not_cancellable", "unsupported"]:
         resp = await self._client.delete(f"/v2/video_generation/{task_id}")

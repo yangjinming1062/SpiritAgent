@@ -26,18 +26,10 @@ class DueJob:
 
 
 async def due_jobs(
-    db: AsyncSession,
-    now: datetime,
-    online_user_ids: list[int],
-    active_user_ids: list[int],
-    *,
-    limit: int,
+    db: AsyncSession, now: datetime, online_user_ids: list[int], active_user_ids: list[int], *, limit: int
 ) -> list[DueJob]:
     """读取到期 job；未过期的窗口型问候只在用户在线时入选，避免离线等待项堵住全局批次。"""
-    expiring_scope = or_(
-        CronJob.expires_at.is_(None),
-        CronJob.expires_at <= now,
-    )
+    expiring_scope = or_(CronJob.expires_at.is_(None), CronJob.expires_at <= now)
     if online_user_ids:
         expiring_scope = or_(expiring_scope, CronJob.user_id.in_(online_user_ids))
     rows = (
@@ -62,17 +54,14 @@ async def due_jobs(
                 expiring_scope,
             )
             .order_by(CronJob.next_run_at, CronJob.id)
-            .limit(limit),
+            .limit(limit)
         )
     ).all()
     return [DueJob(*row) for row in rows]
 
 
 async def advance_due_jobs(
-    db: AsyncSession,
-    due_jobs: list[DueJob],
-    now: datetime,
-    active_users: set[int],
+    db: AsyncSession, due_jobs: list[DueJob], now: datetime, active_users: set[int]
 ) -> list[DueJob]:
     next_runs = {job.id: compute_next_run_at(job.schedule, now) for job in due_jobs if not job.one_shot}
     won: set[int] = set()
@@ -98,14 +87,12 @@ async def advance_due_jobs(
             f"next_run_at = CASE id {case_clauses} END, "
             f"is_paused = (CASE id {case_clauses} END) IS NULL "
             f"WHERE (id, next_run_at, schedule) IN :match "
-            f"RETURNING id",
+            f"RETURNING id"
         ).bindparams(
             bindparam("match", expanding=True),
             *(bindparam(f"next_{i}", type_=DateTime(timezone=True)) for i in range(len(recurring))),
         )
-        params: dict[str, Any] = {
-            "match": [(j.id, j.next_run_at, j.schedule) for j in recurring],
-        }
+        params: dict[str, Any] = {"match": [(j.id, j.next_run_at, j.schedule) for j in recurring]}
         for i, j in enumerate(recurring):
             params[f"id_{i}"] = j.id
             params[f"next_{i}"] = next_runs[j.id]
@@ -115,18 +102,11 @@ async def advance_due_jobs(
         # 先认领，待意图引用落库后再删除；否则新意图会引用已删除的源任务。
         stmt = (
             update(CronJob)
-            .where(
-                tuple_(CronJob.id, CronJob.next_run_at).in_(
-                    bindparam("match", expanding=True),
-                ),
-            )
+            .where(tuple_(CronJob.id, CronJob.next_run_at).in_(bindparam("match", expanding=True)))
             .values(next_run_at=None)
             .returning(CronJob.id)
         )
-        res = await db.execute(
-            stmt,
-            {"match": [(j.id, j.next_run_at) for j in one_shots]},
-        )
+        res = await db.execute(stmt, {"match": [(j.id, j.next_run_at) for j in one_shots]})
         won.update(r[0] for r in res.all())
     return [job for job in due_jobs if job.id in won and (job.one_shot or next_runs[job.id] is not None)]
 

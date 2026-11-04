@@ -29,7 +29,7 @@ async def _saved_transcript(user_id: int, session_id: str, url: str) -> str | No
                 Message.conversation_id == int(session_id),
                 Message.content_type == "multimodal_v1",
                 Message.content.contains(url),
-            ),
+            )
         ):
             for part in safe_json_loads(content or "[]", default=[]):
                 if (
@@ -44,12 +44,7 @@ async def _saved_transcript(user_id: int, session_id: str, url: str) -> str | No
 
 
 async def _save_audio_details(
-    user_id: int,
-    session_id: str,
-    url: str,
-    *,
-    duration: float | None = None,
-    transcript: str | None = None,
+    user_id: int, session_id: str, url: str, *, duration: float | None = None, transcript: str | None = None
 ) -> None:
     async with SESSION_LOCAL() as db:
         if await Conversation.by_session_id(db, session_id, user_id=user_id) is None:
@@ -61,7 +56,7 @@ async def _save_audio_details(
                 Message.content_type == "multimodal_v1",
                 Message.content.contains(url),
             )
-            .with_for_update(),
+            .with_for_update()
         )
         for row in rows:
             parts = safe_json_loads(row.content or "[]", default=[])
@@ -92,11 +87,7 @@ async def _save_audio_details(
 
 
 async def _transcript(
-    user_id: int,
-    session_id: str,
-    url: str,
-    *,
-    transcripts: dict[str, str | Exception] | None = None,
+    user_id: int, session_id: str, url: str, *, transcripts: dict[str, str | Exception] | None = None
 ) -> str:
     key = (session_id, url)
     lock = _TRANSCRIPTION_LOCKS.setdefault(key, asyncio.Lock())
@@ -165,17 +156,14 @@ async def prepare_audio_input(
                     "format": "wav",
                     "data": "data:audio/wav;base64," + base64.b64encode(audio).decode("ascii"),
                     "duration": duration,
-                },
+                }
             )
         result.append({**item, key: parts})
     return result
 
 
 async def ensure_audio_transcripts(
-    user_id: int,
-    session_id: str,
-    *,
-    transcripts: dict[str, str | Exception] | None = None,
+    user_id: int, session_id: str, *, transcripts: dict[str, str | Exception] | None = None
 ) -> None:
     async with SESSION_LOCAL() as db:
         if await Conversation.by_session_id(db, session_id, user_id=user_id) is None:
@@ -186,8 +174,8 @@ async def ensure_audio_transcripts(
                     Message.conversation_id == int(session_id),
                     Message.content_type == "multimodal_v1",
                     Message.content.contains('"input_audio"'),
-                ),
-            ),
+                )
+            )
         )
     for content in contents:
         parts = safe_json_loads(content or "[]", default=[])

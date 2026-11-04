@@ -16,9 +16,6 @@ def runtime_participants() -> tuple[RuntimeParticipant, ...]:
         RuntimeParticipant("media.review_attempts", prepare=recover_review_attempts),
         RuntimeParticipant("media.continuations", recover=reconcile_media_waits, resume_user=reconcile_media_waits),
         RuntimeParticipant(
-            "media.video_jobs",
-            recover=resume_pending_video_jobs,
-            resume_user=resume_user_video_jobs,
-            drain=drain,
+            "media.video_jobs", recover=resume_pending_video_jobs, resume_user=resume_user_video_jobs, drain=drain
         ),
     )

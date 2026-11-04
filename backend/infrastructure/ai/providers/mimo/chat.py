@@ -10,7 +10,7 @@ class MiMoChatProvider(ChatProvider):
     DEFAULT_BASE_URL: ClassVar[str] = "https://token-plan-cn.xiaomimimo.com/v1"
     supports_image: ClassVar[bool] = True
     REASONING_EFFORTS: ClassVar[frozenset[str]] = frozenset(
-        {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"},
+        {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
     )
     supports_json_object: ClassVar[bool] = True
     TEMPERATURE_MAX: ClassVar[float] = 1.5

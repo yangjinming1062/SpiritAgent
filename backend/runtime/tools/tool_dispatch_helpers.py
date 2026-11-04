@@ -12,14 +12,7 @@ logger = get_logger(__name__)
 
 # 无共享可变会话状态的只读工具。
 _PARALLEL_SAFE_TOOLS = frozenset(
-    {
-        "read_file",
-        "search_files",
-        "skill_view",
-        "skills_list",
-        "web_extract",
-        "web_search",
-    },
+    {"read_file", "search_files", "skill_view", "skills_list", "web_extract", "web_search"}
 )
 
 # 文件类工具在目标路径互不重叠时可并发。
@@ -123,11 +116,7 @@ def _maybe_wrap_untrusted(name: str, content: str | list[dict[str, Any]]) -> str
 
 
 def make_tool_result_message(
-    name: str,
-    content: str | list[dict[str, Any]],
-    tool_call_id: str,
-    *,
-    trusted_suffix: str = "",
+    name: str, content: str | list[dict[str, Any]], tool_call_id: str, *, trusted_suffix: str = ""
 ) -> dict:
     """构造带 OpenAI 格式 ``name`` 字段与内部 ``tool_name``（DB 用）的 tool-result 消息字典。"""
     content = _maybe_wrap_untrusted(name, content)
@@ -136,10 +125,4 @@ def make_tool_result_message(
             content += trusted_suffix
         else:
             content = [*content, {"type": "input_text", "text": trusted_suffix}]
-    return {
-        "role": "tool",
-        "name": name,
-        "tool_name": name,
-        "content": content,
-        "tool_call_id": tool_call_id,
-    }
+    return {"role": "tool", "name": name, "tool_name": name, "content": content, "tool_call_id": tool_call_id}

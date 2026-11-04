@@ -11,12 +11,7 @@ from features.life.schemas import (
     LifeStatePublicView,
 )
 from features.life.search import LifeSearchResponse, search_life
-from features.life.use_cases import (
-    read_public_events,
-    read_public_pursuit,
-    read_public_pursuits,
-    read_public_state,
-)
+from features.life.use_cases import read_public_events, read_public_pursuit, read_public_pursuits, read_public_state
 from infrastructure.api_ids import ResourceId
 from infrastructure.constants import POSTGRES_INT8_MAX
 from infrastructure.http_contracts import operation_policy

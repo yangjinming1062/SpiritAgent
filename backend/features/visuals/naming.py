@@ -54,9 +54,7 @@ def _reference_image(item: VisualItem) -> str:
 
 
 async def _naming_input(db: AsyncSession, user_id: int, visual_id: int) -> _NamingInput | None:
-    row = await db.scalar(
-        select(VisualItem).where(VisualItem.user_id == user_id, VisualItem.id == visual_id),
-    )
+    row = await db.scalar(select(VisualItem).where(VisualItem.user_id == user_id, VisualItem.id == visual_id))
     if row is None or row.title.strip():
         return None
     image_path = _reference_image(row)

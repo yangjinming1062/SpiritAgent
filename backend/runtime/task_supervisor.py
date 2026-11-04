@@ -81,11 +81,7 @@ class TaskSupervisor:
         return await self._drain(user_id=user_id, respect_maintenance_policy=True)
 
     async def _drain(
-        self,
-        *,
-        owner: str | None = None,
-        user_id: int | None = None,
-        respect_maintenance_policy: bool = False,
+        self, *, owner: str | None = None, user_id: int | None = None, respect_maintenance_policy: bool = False
     ) -> int:
         cancelled = 0
         interrupted = False

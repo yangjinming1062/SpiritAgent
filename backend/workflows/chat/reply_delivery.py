@@ -157,14 +157,12 @@ def companion_reply_schema(
         for name in ("TextBubble", "VoiceBubbleInput"):
             if name in definitions:
                 definitions[name]["properties"]["text"]["description"] = resolve_prompt_text(
-                    COMPANION_REPAIR_TEXT_FIELD_GUIDANCES,
-                    language,
+                    COMPANION_REPAIR_TEXT_FIELD_GUIDANCES, language
                 )
         return schema
     if "VoiceBubbleInput" in definitions:
         definitions["VoiceBubbleInput"]["properties"]["text"]["description"] = resolve_prompt_text(
-            COMPANION_DIALOGUE_FIELD_GUIDANCES,
-            language,
+            COMPANION_DIALOGUE_FIELD_GUIDANCES, language
         )
     definitions["TextBubble"]["properties"]["text"]["description"] = (
         "kind=dialogue: "
@@ -224,10 +222,7 @@ def _sentence_positions(text: str, parts: list[str]) -> list[tuple[int, int]]:
 
 
 def _split_segments_by_sentence(
-    text: str,
-    segments: list[JsonValue],
-    positions: list[tuple[int, int]],
-    index: int,
+    text: str, segments: list[JsonValue], positions: list[tuple[int, int]], index: int
 ) -> list[list[dict[str, JsonValue]]]:
     """句内标记按分句重新分组：段起点所在句获得其标记，跨句段在句界切开，段间与句末空白不归入任何句。"""
     try:
@@ -242,9 +237,7 @@ def _split_segments_by_sentence(
         ) from exc
     if "".join(segment.text for segment in source) != text:
         raise _invalid_performance(
-            index,
-            ("segments",),
-            "Segment texts must concatenate in order to exactly this bubble's text",
+            index, ("segments",), "Segment texts must concatenate in order to exactly this bubble's text"
         )
     grouped: list[list[dict[str, JsonValue]]] = [[] for _ in positions]
     offset = 0
@@ -295,10 +288,7 @@ def _split_dialogue_bubble(bubble: dict[str, JsonValue], index: int) -> list[dic
             raise _invalid_performance(index, ("segments",), "Voice reply requires a segments array")
         if segments:
             grouped = _split_segments_by_sentence(
-                bubble["text"],
-                segments,
-                _sentence_positions(bubble["text"], parts),
-                index,
+                bubble["text"], segments, _sentence_positions(bubble["text"], parts), index
             )
     bubbles = []
     for position, part in enumerate(parts):
@@ -329,10 +319,7 @@ def _fallback_speech_bubbles(values: object, error: ValidationError) -> list[dic
 
 
 def decode_companion_reply(
-    raw: str,
-    *,
-    allow_voice_fallback: bool = False,
-    references: ReplyReferences = ReplyReferences(),
+    raw: str, *, allow_voice_fallback: bool = False, references: ReplyReferences = ReplyReferences()
 ) -> tuple[str, Literal["dialogue", "written"], list[int]]:
     """模型类型标记只用于交付校验；持久化继续使用原气泡数组契约。"""
     # 演绎与媒体在数组协议中校验，保留按 speech 字段降级的边界。
@@ -386,10 +373,8 @@ def decode_companion_reply(
                     {
                         "type": "value_error",
                         "loc": ("bubbles", index, bubble["type"], "text"),
-                        "ctx": {
-                            "error": ValueError(message),
-                        },
-                    },
+                        "ctx": {"error": ValueError(message)},
+                    }
                 )
         if errors:
             raise ValidationError.from_exception_data("CompanionDialogue", errors)
@@ -448,7 +433,7 @@ def validate_companion_reply_repair(
             b["topic_id"]
             for b in original
             if b.get("type") == "link" and type(b.get("topic_id")) is int and b["topic_id"] in valid_topics
-        ),
+        )
     )
     repaired_topics = [b.get("topic_id") for b in values if b.get("type") == "link"]
     if repaired_topics != required_topics:
@@ -491,9 +476,7 @@ def parse_companion_reply(
         raise ValueError("A topic reference must come from supplied, authorized source material")
     source = CompanionReplyInput.model_validate_json(raw)
     validate_reply_links(
-        [bubble.model_dump(include={"type", "text"}) for bubble in source.root],
-        kind=kind,
-        references=references,
+        [bubble.model_dump(include={"type", "text"}) for bubble in source.root], kind=kind, references=references
     )
     if not source.root:
         if allow_silence and not media_turn.required_goals:
@@ -556,15 +539,7 @@ def parse_companion_reply(
                         "A pause must follow spoken words, never the opening word; omit it when punctuation already "
                         "separates the words",
                     )
-        bubbles.append(
-            VoiceBubble(
-                type="voice",
-                text=bubble.text,
-                speech=style,
-                voice_id=voice_id,
-                language=language,
-            ),
-        )
+        bubbles.append(VoiceBubble(type="voice", text=bubble.text, speech=style, voice_id=voice_id, language=language))
     if missing_goals := media_turn.required_goals - selected_goals:
         raise OmittedMediaError(_deliverable_media(media_turn, missing_goals))
     return CompanionReply(bubbles=bubbles, used_topic_ids=sorted(selected_topics))

@@ -30,11 +30,7 @@ async def append_companion_message(db: AsyncSession, user_id: int, reply: Compan
     await flush_conversation(db)
     await bind_reply_videos(db, message, reply, user_id)
     await record_topic_usage(
-        db,
-        MemoryScope(user_id, "companion"),
-        reply.used_topic_ids,
-        message.id,
-        authorized_at=reply.topic_context_at,
+        db, MemoryScope(user_id, "companion"), reply.used_topic_ids, message.id, authorized_at=reply.topic_context_at
     )
     emit_ws_event(
         db,

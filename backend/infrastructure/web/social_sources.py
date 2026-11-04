@@ -28,10 +28,7 @@ class SocialSource(Protocol):
     ) -> SocialSearchPage: ...
 
     async def detail(
-        self,
-        candidate: SocialContent,
-        *,
-        before_request: RequestGuard | None = None,
+        self, candidate: SocialContent, *, before_request: RequestGuard | None = None
     ) -> SocialContent | None: ...
 
 
@@ -60,15 +57,9 @@ def _xiaohongshu_source(credentials: dict[str, JsonValue]) -> XiaohongshuSource:
 
 
 SOCIAL_ADAPTERS: dict[str, PlatformAdapter] = {
-    "x": PlatformAdapter(
-        credentials=XCredentials,
-        source=_x_source,
-        manual_credentials=_x_manual_credentials,
-    ),
+    "x": PlatformAdapter(credentials=XCredentials, source=_x_source, manual_credentials=_x_manual_credentials),
     "xiaohongshu": PlatformAdapter(
-        credentials=XiaohongshuCredentials,
-        source=_xiaohongshu_source,
-        login=XiaohongshuServiceClient,
+        credentials=XiaohongshuCredentials, source=_xiaohongshu_source, login=XiaohongshuServiceClient
     ),
 }
 

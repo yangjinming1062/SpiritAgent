@@ -16,10 +16,7 @@ async def load_narrative_result(db: AsyncSession, log_id: int, stage: Literal["j
 
 
 async def save_narrative_result(
-    db: AsyncSession,
-    log_id: int,
-    stage: Literal["journal", "reflection"],
-    result: bool,
+    db: AsyncSession, log_id: int, stage: Literal["journal", "reflection"], result: bool
 ) -> None:
     log = await db.scalar(select(NightlyActivityLog).where(NightlyActivityLog.id == log_id).with_for_update())
     if log is None:

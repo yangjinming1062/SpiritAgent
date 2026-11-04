@@ -123,10 +123,7 @@ def _spawn_post_turn_task(
 
 
 async def _persist_interrupted_tool_results(
-    call_row: asyncio.Task[None],
-    conv_id: int,
-    results: list[tuple[str, Any]],
-    user_id: int,
+    call_row: asyncio.Task[None], conv_id: int, results: list[tuple[str, Any]], user_id: int
 ) -> None:
     """等调用行提交结束再写中断结果：结果行 id 须排在调用行之后，调用行未落库时不写孤立结果。"""
     try:
@@ -179,12 +176,7 @@ async def _persist_assistant_no_tool_turn(
 
     if replace_reply_message_id is not None:
         message_id = await replace_assistant_message(
-            conv.id,
-            user_id,
-            replace_reply_message_id,
-            turn_data,
-            media,
-            request_id=submission_request_id,
+            conv.id, user_id, replace_reply_message_id, turn_data, media, request_id=submission_request_id
         )
         await cancel_reply_audio(user_id, {replace_reply_message_id})
         async with session_scope() as db:
@@ -199,7 +191,7 @@ async def _persist_assistant_no_tool_turn(
                 "replaced_message_id": replace_reply_message_id,
                 "message": messages[0],
                 "history_revision": current.history_revision,
-            },
+            }
         )
         if result.reply is not None:
             try:
@@ -217,12 +209,7 @@ async def _persist_assistant_no_tool_turn(
 
         async def deliver_bubble(index: int, bubble: dict[str, Any]) -> None:
             await emitter.send_json(
-                {
-                    "type": "bubble.append",
-                    "message_id": message_id,
-                    "bubble_index": index,
-                    "bubble": bubble,
-                },
+                {"type": "bubble.append", "message_id": message_id, "bubble_index": index, "bubble": bubble}
             )
 
         try:
@@ -233,9 +220,7 @@ async def _persist_assistant_no_tool_turn(
             raise
         except Exception:
             logger.warning(
-                "Reply audio unavailable; delivering saved dialogue",
-                extra={"message_id": message_id},
-                exc_info=True,
+                "Reply audio unavailable; delivering saved dialogue", extra={"message_id": message_id}, exc_info=True
             )
     reply_bubbles = (
         [
@@ -262,8 +247,7 @@ async def _persist_assistant_no_tool_turn(
                 task=task,
                 language=resolve_language(effective_settings.get("language")),
                 temperature=parse_temperature(
-                    effective_settings.get("chat.title_generation_temperature"),
-                    TITLE_GENERATION_TEMPERATURE,
+                    effective_settings.get("chat.title_generation_temperature"), TITLE_GENERATION_TEMPERATURE
                 ),
             ),
             track_task,
@@ -276,11 +260,7 @@ async def _persist_assistant_no_tool_turn(
     if memory_scope is not None and assistant_message_id is not None and bg_review:
         _spawn_post_turn_task(
             user_id,
-            run_background_memory_review(
-                memory_scope,
-                session_id=conv.id,
-                through_message_id=assistant_message_id,
-            ),
+            run_background_memory_review(memory_scope, session_id=conv.id, through_message_id=assistant_message_id),
             track_task,
             session_id=str(conv.id),
             transcripts=audio_transcripts,
@@ -301,7 +281,7 @@ async def _persist_assistant_no_tool_turn(
             and conv.parent_id is None
             and not conv.is_automation
             and bool(turn_content or media),
-        },
+        }
     )
 
     # 心情随已落库的陪伴回复更新；主动回合不落库。同一批输入顺带推断一次身体反应。
@@ -359,13 +339,10 @@ async def _persist_assistant_with_tool_calls_and_results(
             await _wait_persistence_write(
                 _start_persistence_write(
                     _persist_interrupted_tool_results(
-                        call_row,
-                        conv.id,
-                        interrupted_tool_results(tool_calls_list, progress),
-                        dispatch_ctx.user_id,
+                        call_row, conv.id, interrupted_tool_results(tool_calls_list, progress), dispatch_ctx.user_id
                     ),
                     "chat.persist-interrupted-tools",
-                ),
+                )
             )
         raise
 
@@ -389,5 +366,5 @@ async def _persist_assistant_with_tool_calls_and_results(
                     user_id=dispatch_ctx.user_id,
                 ),
                 "chat.persist-tool-results",
-            ),
+            )
         )

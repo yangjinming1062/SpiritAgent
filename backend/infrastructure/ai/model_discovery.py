@@ -33,7 +33,7 @@ def _modalities(value: object) -> list[ModelModality] | None:
         return None
     allowed = {item.value: item for item in ModelModality}
     return list(
-        dict.fromkeys(allowed[item.lower()] for item in value if isinstance(item, str) and item.lower() in allowed),
+        dict.fromkeys(allowed[item.lower()] for item in value if isinstance(item, str) and item.lower() in allowed)
     )
 
 
@@ -51,10 +51,10 @@ def _metadata(raw: dict, source: str, *, model_name: str | None = None) -> Model
     top = _record(raw.get("top_provider"))
     meta = _record(raw.get("meta"))
     inputs = _modalities(
-        architecture.get("input_modalities", inference.get("request_modality", raw.get("input_modalities"))),
+        architecture.get("input_modalities", inference.get("request_modality", raw.get("input_modalities")))
     )
     outputs = _modalities(
-        architecture.get("output_modalities", inference.get("response_modality", raw.get("output_modalities"))),
+        architecture.get("output_modalities", inference.get("response_modality", raw.get("output_modalities")))
     )
     methods = raw.get("supportedGenerationMethods")
     methods = methods if isinstance(methods, list) else []
@@ -102,13 +102,13 @@ def _metadata(raw: dict, source: str, *, model_name: str | None = None) -> Model
             info.get("context_window")
             or raw.get("context_length")
             or raw.get("max_model_len")
-            or raw.get("context_window"),
+            or raw.get("context_window")
         ),
         max_output_tokens=_positive(
             info.get("max_output_tokens")
             or raw.get("outputTokenLimit")
             or raw.get("max_output_tokens")
-            or top.get("max_completion_tokens"),
+            or top.get("max_completion_tokens")
         ),
         input_modalities=inputs,
         output_modalities=outputs,
@@ -124,26 +124,14 @@ def _metadata(raw: dict, source: str, *, model_name: str | None = None) -> Model
 
 
 async def _json(
-    base_url: str,
-    key: str,
-    path: str,
-    *,
-    auth_header: dict[str, str] | None = None,
-    params: dict | None = None,
+    base_url: str, key: str, path: str, *, auth_header: dict[str, str] | None = None, params: dict | None = None
 ) -> dict:
     async with get_http(base_url, key, auth_header=auth_header).stream(
-        "GET",
-        path,
-        params=params,
-        timeout=10.0,
+        "GET", path, params=params, timeout=10.0
     ) as response:
         response.raise_for_status()
         body = json.loads(
-            await read_capped_response(
-                response,
-                max_bytes=16 * 1024 * 1024,
-                too_large=ValueError("模型目录响应过大"),
-            ),
+            await read_capped_response(response, max_bytes=16 * 1024 * 1024, too_large=ValueError("模型目录响应过大"))
         )
     if not isinstance(body, dict):
         raise ValueError("模型目录响应格式无效")
@@ -218,7 +206,7 @@ def _enrich(model: ModelMetadata, suggestion: ModelMetadata) -> ModelMetadata:
             "catalog_id": suggestion.catalog_id,
             "catalog_url": suggestion.catalog_url,
             "field_sources": sources,
-        },
+        }
     )
 
 
@@ -257,9 +245,7 @@ async def _vendor_models(provider: ProviderCard, service: ServiceType) -> list[M
             if isinstance(raw, dict):
                 name = raw.get("name") if provider.provider_type == "gemini" else None
                 value = _metadata(
-                    raw,
-                    source,
-                    model_name=name.removeprefix("models/") if isinstance(name, str) else None,
+                    raw, source, model_name=name.removeprefix("models/") if isinstance(name, str) else None
                 )
                 if value is not None:
                     result.append(value)
@@ -292,12 +278,7 @@ async def _vendor_models(provider: ProviderCard, service: ServiceType) -> list[M
 
 
 async def discover_models(
-    provider: ProviderCard,
-    service: ServiceType,
-    *,
-    model_name: str | None,
-    catalog_id: str | None,
-    refresh: bool,
+    provider: ProviderCard, service: ServiceType, *, model_name: str | None, catalog_id: str | None, refresh: bool
 ) -> ModelDiscoveryResponse:
     response = ModelDiscoveryResponse()
     if provider.provider_type == "local" and service == ServiceType.image_gen:
@@ -308,7 +289,7 @@ async def discover_models(
                 services=["image_gen"],
                 input_modalities=[ModelModality.text, ModelModality.image],
                 output_modalities=[ModelModality.image],
-            ),
+            )
         ]
         return response
     try:
@@ -325,17 +306,14 @@ async def discover_models(
                     next(
                         (item for item in response.models if item.model_name == model_name),
                         ModelMetadata(model_name=model_name),
-                    ),
+                    )
                 ]
             if provider.provider_type == "local" and model_name is not None and service == ServiceType.llm:
                 base = configured_base_url(provider.provider_type, provider.base_url, service)
                 props_base = _replace_suffix(base, "/v1", "")
                 try:
                     props = await _json(
-                        props_base,
-                        provider.api_key,
-                        "props",
-                        params={"model": model_name, "autoload": "false"},
+                        props_base, provider.api_key, "props", params={"model": model_name, "autoload": "false"}
                     )
                     window = _positive(_record(props.get("default_generation_settings")).get("n_ctx"))
                     if window is not None:

@@ -44,11 +44,7 @@ def keyword_match_score(keywords: list[str]) -> ColumnElement[float]:
 
 
 async def _dense_search(
-    db: AsyncSession,
-    scope: MemoryScope,
-    query_embedding: QueryEmbedding,
-    *,
-    limit: int,
+    db: AsyncSession, scope: MemoryScope, query_embedding: QueryEmbedding, *, limit: int
 ) -> list[Memory]:
     """稠密语义检索：用 pgvector ``<=>`` 余弦距离算子在 DB 端排序与截断。"""
     # 精确计算只作用于相同作用域、模型、维度和内容版本的向量。
@@ -87,12 +83,7 @@ async def _sparse_search(db: AsyncSession, scope: MemoryScope, keywords: list[st
     ]
     stmt = (
         select(Memory)
-        .where(
-            scope_filter(scope),
-            active_memory_filter(),
-            or_(*conditions),
-            Memory.kind.not_in(RESERVED_FROM_RECALL),
-        )
+        .where(scope_filter(scope), active_memory_filter(), or_(*conditions), Memory.kind.not_in(RESERVED_FROM_RECALL))
         .order_by(keyword_match_score(keywords).desc(), Memory.updated_at.desc(), Memory.id.desc())
         .limit(limit)
     )
@@ -108,12 +99,7 @@ async def embed_memory_text(user_id: int, text: str) -> QueryEmbedding | None:
 
 
 async def retrieve_hybrid_memories(
-    db: AsyncSession,
-    scope: MemoryScope,
-    query: str,
-    *,
-    query_embedding: QueryEmbedding | None = None,
-    limit: int = 10,
+    db: AsyncSession, scope: MemoryScope, query: str, *, query_embedding: QueryEmbedding | None = None, limit: int = 10
 ) -> list[MemoryRecallResult]:
     """稠密与稀疏检索用 RRF 融合；相关性相同时再按重要性、更新时间排序。"""
     q_str = (query or "").strip()
@@ -158,12 +144,7 @@ def _memory_result(mem: Memory, score: float) -> MemoryRecallResult:
 
 
 async def retrieve_proactive_memories(
-    db: AsyncSession,
-    scope: MemoryScope,
-    query: str,
-    *,
-    query_embedding: QueryEmbedding | None = None,
-    limit: int = 3,
+    db: AsyncSession, scope: MemoryScope, query: str, *, query_embedding: QueryEmbedding | None = None, limit: int = 3
 ) -> list[MemoryRecallResult]:
     """检索与当前语境最相关的若干条记忆，用于主动注入对话。"""
     q_str = (query or "").strip()

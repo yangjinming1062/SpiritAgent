@@ -8,26 +8,12 @@ from runtime.memory_scope import EmbeddingItem, MemoryScope, MemorySource
 
 from features.memory.admin_contracts import MemoryListResponse
 from features.memory.contracts import MemoryDetail
-from features.memory.memory_admin import (
-    list_memories,
-    memory_counts,
-    memory_detail,
-)
-from features.memory.memory_store import (
-    backfill_memory_embeddings,
-    create_memory,
-    delete_memory,
-)
+from features.memory.memory_admin import list_memories, memory_counts, memory_detail
+from features.memory.memory_store import backfill_memory_embeddings, create_memory, delete_memory
 
 
 async def list_memory_view(
-    scope: MemoryScope,
-    *,
-    kind: str | None,
-    status: str,
-    query: str | None,
-    limit: int,
-    cursor: str | None = None,
+    scope: MemoryScope, *, kind: str | None, status: str, query: str | None, limit: int, cursor: str | None = None
 ) -> MemoryListResponse:
     before = decode_timestamp_cursor(cursor)
     async with SESSION_LOCAL() as db:
@@ -53,12 +39,7 @@ async def forget_manual_memory(scope: MemoryScope, memory_id: int) -> bool:
 
 
 async def remember_manual(
-    scope: MemoryScope,
-    session_id: int,
-    content: str,
-    context: str,
-    tags: list[str],
-    importance: float,
+    scope: MemoryScope, session_id: int, content: str, context: str, tags: list[str], importance: float
 ) -> EmbeddingItem:
     async with SESSION_LOCAL() as db:
         row = await create_memory(

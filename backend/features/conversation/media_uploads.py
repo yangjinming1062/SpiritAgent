@@ -35,11 +35,7 @@ async def serve_session_video(session_id: str, file_id: str) -> MediaFile:
     """提供会话视频附件。公开（不鉴权）：file_id 为不可猜测 token，且公网模式下供应商需直接拉取。"""
     path = resolve_video_file(session_id, file_id)
     if path is None:
-        raise RequestError(
-            status_code=404,
-            message="Video not found",
-            code="not_found",
-        )
+        raise RequestError(status_code=404, message="Video not found", code="not_found")
     return MediaFile(path=path, media_type=video_mime_for_ext(path.suffix))
 
 
@@ -54,10 +50,7 @@ async def serve_session_audio(session_id: str, file_id: str, db: AsyncSession, u
 
 
 async def upload_chat_audio(
-    db: AsyncSession,
-    user_id: int,
-    file: UploadSource,
-    session_id: str,
+    db: AsyncSession, user_id: int, file: UploadSource, session_id: str
 ) -> ChatAudioUploadResponse:
     raw_id = session_id.strip()
     conversation_id = parse_session_id(raw_id) if raw_id.isdecimal() and len(raw_id) <= 20 else None
@@ -110,42 +103,25 @@ async def upload_chat_audio(
             path.unlink(missing_ok=True)
         raise
     return ChatAudioUploadResponse(
-        url=attachment_audio_url(session_id, file_id),
-        mime_type=audio_mime_for_ext(ext),
-        duration=duration,
+        url=attachment_audio_url(session_id, file_id), mime_type=audio_mime_for_ext(ext), duration=duration
     )
 
 
 async def upload_chat_video(
-    db: AsyncSession,
-    user_id: int,
-    file: UploadSource | None = None,
-    session_id: str = "",
+    db: AsyncSession, user_id: int, file: UploadSource | None = None, session_id: str = ""
 ) -> ChatVideoUploadResponse:
     """聊天视频附件上传：落会话目录（滚动配额）并返回附件 URL（本地相对 / 公网绝对）。"""
     if file is None:
-        raise RequestError(
-            status_code=422,
-            message="Missing video file",
-            code="missing_video_file",
-        )
+        raise RequestError(status_code=422, message="Missing video file", code="missing_video_file")
     raw_session_id = session_id.strip()
     conversation_id = (
         parse_session_id(raw_session_id) if raw_session_id.isdecimal() and len(raw_session_id) <= 20 else None
     )
     if conversation_id is None:
-        raise RequestError(
-            status_code=422,
-            message="Invalid session_id",
-            code="invalid_session_id",
-        )
+        raise RequestError(status_code=422, message="Invalid session_id", code="invalid_session_id")
     session_id = str(conversation_id)
     if await Conversation.by_session_id(db, session_id, user_id=user_id) is None:
-        raise RequestError(
-            status_code=404,
-            message="Session not found",
-            code="not_found",
-        )
+        raise RequestError(status_code=404, message="Session not found", code="not_found")
     ext = Path(file.filename or "").suffix.lower()
     if ext not in ATTACHMENT_VIDEO_EXTENSIONS:
         raise RequestError(

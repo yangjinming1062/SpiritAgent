@@ -4,13 +4,7 @@ from uuid import uuid4
 
 from infrastructure.models import ModelBase, TimestampMixin
 from pydantic import JsonValue
-from sqlalchemy import (
-    CheckConstraint,
-    DateTime,
-    ForeignKey,
-    String,
-    UniqueConstraint,
-)
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 

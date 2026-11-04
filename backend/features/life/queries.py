@@ -51,12 +51,7 @@ async def active_pursuit_title(db: AsyncSession, user_id: int, pursuit_id: int |
     if pursuit_id is None:
         return ""
     return (
-        await db.scalar(
-            select(LifePursuit.title).where(
-                LifePursuit.user_id == user_id,
-                LifePursuit.id == pursuit_id,
-            )
-        )
+        await db.scalar(select(LifePursuit.title).where(LifePursuit.user_id == user_id, LifePursuit.id == pursuit_id))
         or ""
     )
 
@@ -187,10 +182,7 @@ async def due_review_user_ids(db: AsyncSession, user_ids: Collection[int], now: 
         return set()
     waiting = set(
         await db.scalars(
-            select(LifeState.user_id).where(
-                LifeState.user_id.in_(user_ids),
-                LifeState.next_review_at > now,
-            )
+            select(LifeState.user_id).where(LifeState.user_id.in_(user_ids), LifeState.next_review_at > now)
         )
     )
     return set(user_ids) - waiting
@@ -240,12 +232,7 @@ async def pursuit_evidence(db: AsyncSession, user_id: int, pursuit_ids: Collecti
 
 
 async def list_pursuits(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    status: str | None = None,
-    cursor: str | None = None,
-    limit: int = 20,
+    db: AsyncSession, user_id: int, *, status: str | None = None, cursor: str | None = None, limit: int = 20
 ) -> LifePursuitListResponse:
     where = [LifePursuit.user_id == user_id]
     if status:
@@ -270,12 +257,7 @@ async def list_pursuits(
 
 
 async def list_events(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    pursuit_id: int | None = None,
-    cursor: str | None = None,
-    limit: int = 20,
+    db: AsyncSession, user_id: int, *, pursuit_id: int | None = None, cursor: str | None = None, limit: int = 20
 ) -> LifeEventListResponse:
     where = [LifeEvent.user_id == user_id]
     if pursuit_id is not None:

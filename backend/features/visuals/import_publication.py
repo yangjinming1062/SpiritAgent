@@ -150,8 +150,7 @@ async def complete_import_analysis(
     identity_reference_role = getattr(original, "identity_reference_role", "fullbody")
     if understanding.asset_kind == "scene" and scene is not None:
         source = SceneMediaSource(
-            scene=scene,
-            **{key: value for key, value in common.items() if key != "media_semantics"},
+            scene=scene, **{key: value for key, value in common.items() if key != "media_semantics"}
         )
     elif (
         understanding.asset_kind == "actor"

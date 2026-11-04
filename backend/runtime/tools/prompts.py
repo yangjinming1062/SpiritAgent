@@ -26,9 +26,7 @@ SEND_MESSAGE_DESC = (
     "outreach within current authorization. still_suppressed=true means no message was delivered, even if success=true. "
 )
 
-SEND_MESSAGE_PARAM_DESCS = {
-    "message": "The full text message content to send.",
-}
+SEND_MESSAGE_PARAM_DESCS = {"message": "The full text message content to send."}
 
 IMAGE_GENERATION_DESC = (
     "Generate a picture from a visual description and return its media_id. Call it directly when the user asks "
@@ -106,9 +104,7 @@ VIDEO_STATUS_DESC = (
     "downloading mean it is still pending; result_unknown means the outcome is unverified, so do not resubmit."
 )
 
-VIDEO_STATUS_PARAM_DESCS = {
-    "task_id": "The task_id returned by video_generate.",
-}
+VIDEO_STATUS_PARAM_DESCS = {"task_id": "The task_id returned by video_generate."}
 
 SCENE_TOOL_DESCRIPTIONS = {
     "scene_list": "分页查询已就绪的环境图片，query 匹配标题和描述；同时返回 policy，表示能否自行新增。先看已有图片，合适就复用；明确需要新的或已有不合适再创建。",
@@ -143,9 +139,7 @@ MEMORY_RETAIN_DESC = "Propose an atomic batch of evidence-grounded memory change
 
 MEMORY_RECALL_DESC = "Search active, unexpired cognitive memories: user information and revisable relationship understanding. Use life_recall for past activities and diary_recall for published diaries. Provide a topic query."
 
-MEMORY_RECALL_PARAM_DESCS = {
-    "query": "Topic or keywords about enduring user information or relationship understanding",
-}
+MEMORY_RECALL_PARAM_DESCS = {"query": "Topic or keywords about enduring user information or relationship understanding"}
 
 MEMORY_INSPECT_DESC = "Inspect original conversation evidence and memory versions before maintenance. Candidates and invalidated claims are NOT user facts and must not inform conversation. Optional query limits both records and quotable messages to those containing the text, so omit it when the evidence may be worded differently; before_memory_id pages through older records."
 
@@ -158,9 +152,7 @@ SEARCH_TOOLS_CATALOG_DESC = (
     "可用业务域 / available domains:\n{catalog}"
 )
 
-SEARCH_TOOLS_PARAM_DESCS = {
-    "query": "Domain id (e.g. files, browser) or intent (e.g. 读文件, run python).",
-}
+SEARCH_TOOLS_PARAM_DESCS = {"query": "Domain id (e.g. files, browser) or intent (e.g. 读文件, run python)."}
 
 AGENT_DELEGATE_DESC = (
     "Delegate a bounded task to a subagent and receive its final result. It inherits the conversation type "
@@ -170,7 +162,7 @@ AGENT_DELEGATE_DESC = (
 )
 
 AGENT_DELEGATE_PARAM_DESCS = {
-    "task_description": "Detailed description of the task, the goal, and any context the subagent needs to know.",
+    "task_description": "Detailed description of the task, the goal, and any context the subagent needs to know."
 }
 
 CRONJOB_DESC = (

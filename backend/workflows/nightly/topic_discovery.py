@@ -198,10 +198,7 @@ def _parse_queries(raw: Any, limit: int, platforms: tuple[SocialPlatform, ...]) 
 
 
 def _parse_selections(
-    raw: Any,
-    candidates: dict[str, SocialContent],
-    limit: int,
-    previous_events: set[str],
+    raw: Any, candidates: dict[str, SocialContent], limit: int, previous_events: set[str]
 ) -> _SelectionPlan:
     plan = _SelectionPlan.model_validate(raw)
     ids = [item.candidate_id for item in plan.selections]
@@ -267,18 +264,14 @@ async def _collect(
                 checkpoint.source_revisions[request.platform],
                 "search",
                 lambda guard: client.search(
-                    request.query,
-                    window_start=start,
-                    window_end=end,
-                    cursor=request.cursor,
-                    before_request=guard,
+                    request.query, window_start=start, window_end=end, cursor=request.cursor, before_request=guard
                 ),
             )
         except _RequestBudgetExhausted:
             break
         except SocialSourceError as exc:
             checkpoint.errors.append(
-                {"platform": request.platform, "operation": "search", "code": exc.code, "reason": exc.reason},
+                {"platform": request.platform, "operation": "search", "code": exc.code, "reason": exc.reason}
             )
         else:
             checkpoint.search_successes += 1
@@ -345,7 +338,7 @@ async def _collect(
             break
         except SocialSourceError as exc:
             checkpoint.errors.append(
-                {"platform": candidate.platform, "operation": "detail", "code": exc.code, "reason": exc.reason},
+                {"platform": candidate.platform, "operation": "detail", "code": exc.code, "reason": exc.reason}
             )
         else:
             if detailed is not None and _candidate_id(detailed) == _candidate_id(candidate):
@@ -375,12 +368,7 @@ async def discover_topics(
         if not connections and await load_batch(db, scope, activity_date) is None:
             return TopicDiscoveryResult(status="skipped", summary={"reason": "unconfigured"})
         batch = await begin_batch(
-            db,
-            scope,
-            activity_date,
-            available_from=available_from,
-            expires_at=expires_at,
-            started_at=utc_now(),
+            db, scope, activity_date, available_from=available_from, expires_at=expires_at, started_at=utc_now()
         )
         recent = (
             await recent_topic_feedback(db, scope, since=batch.started_at - timedelta(days=30), limit=None)
@@ -393,10 +381,7 @@ async def discover_topics(
         if batch.checkpoint
         else _Checkpoint(
             source_revisions={platform: connection.revision for platform, connection in connections.items()},
-            context={
-                **context,
-                "recent_topics": recent,
-            },
+            context={**context, "recent_topics": recent},
         )
     )
     if batch.status == "failed":

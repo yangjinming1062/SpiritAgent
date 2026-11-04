@@ -97,7 +97,7 @@ async def transition_pursuit(db: AsyncSession, user_id: int, decision: LifeDecis
                     pursuit_id=pursuit.id,
                     step_id=step.id,
                     fact={"description": step.description, "reason": decision.status_reason},
-                ),
+                )
             )
     events.append(
         LifeEventInput(
@@ -108,7 +108,7 @@ async def transition_pursuit(db: AsyncSession, user_id: int, decision: LifeDecis
             pursuit_id=pursuit.id,
             fact={"title": pursuit.title, "reason": pursuit.status_reason, "source": decision.source},
             narrative=decision.narrative.event or decision.narrative.pursuit,
-        ),
+        )
     )
     await record_events(db, user_id, events)
     return pursuit

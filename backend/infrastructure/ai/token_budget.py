@@ -24,6 +24,6 @@ def request_output_budget(config: ProviderConfig, request: dict[str, Any]) -> in
     available = window - estimated - headroom
     if available <= 0:
         raise LLMRuntimeError(
-            ClassifiedError(FailoverReason.context_overflow, None, "输入无法容纳于当前模型卡片的上下文窗口"),
+            ClassifiedError(FailoverReason.context_overflow, None, "输入无法容纳于当前模型卡片的上下文窗口")
         )
     return min(limit, available)

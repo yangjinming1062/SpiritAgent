@@ -43,10 +43,7 @@ async def _protect_reference(user_id: int, snapshot: CustomVoiceSnapshot) -> Voi
 
 
 async def resolve_reply_voice(
-    db: AsyncSession,
-    user_id: int,
-    voice: str,
-    language: str,
+    db: AsyncSession, user_id: int, voice: str, language: str
 ) -> tuple[ProviderConfig | None, str]:
     try:
         snapshot = await resolve_custom_voice(db, user_id, voice)
@@ -83,13 +80,7 @@ async def synthesize_speech(
         snapshot = await resolve_custom_voice(db, user_id, voice)
     if snapshot is None:
         return await synthesize_provider_speech(
-            user_id,
-            text,
-            voice,
-            language,
-            speech_style,
-            task=task,
-            preserve_performance=preserve_performance,
+            user_id, text, voice, language, speech_style, task=task, preserve_performance=preserve_performance
         )
     reference = await _protect_reference(user_id, snapshot)
     result = await synthesize_provider_speech(

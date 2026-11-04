@@ -83,12 +83,7 @@ async def freeze_image_references(
                 if ext not in {"png", "jpg", "webp", "gif"}:
                     raise ValueError("参考图片无法读取")
                 frozen[key] = await save_image_chain_input_asset_async(
-                    data,
-                    user_id=user_id,
-                    generation_id=generation_id,
-                    label=label,
-                    ext=ext,
-                    directory=directory,
+                    data, user_id=user_id, generation_id=generation_id, label=label, ext=ext, directory=directory
                 )
         result[label] = frozen[key]
     return result

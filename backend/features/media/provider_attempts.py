@@ -29,12 +29,7 @@ async def count_scene_submissions(db: AsyncSession, user_id: int, since: datetim
 
 
 async def record_scene_submission(
-    db: AsyncSession,
-    user_id: int,
-    job_id: int,
-    generation_id: str,
-    attempt_index: int,
-    provider: FrozenMediaProvider,
+    db: AsyncSession, user_id: int, job_id: int, generation_id: str, attempt_index: int, provider: FrozenMediaProvider
 ) -> None:
     await db.execute(
         insert(ProviderAttempt)

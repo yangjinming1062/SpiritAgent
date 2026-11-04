@@ -6,9 +6,7 @@ from workflows.companion_actions import ActionViewSnapshot, build_action_view
 
 
 async def unavailable_action_tool_names(
-    user_id: int,
-    *,
-    action_view: ActionViewSnapshot | None = None,
+    user_id: int, *, action_view: ActionViewSnapshot | None = None
 ) -> frozenset[str]:
     view = action_view if action_view is not None else await build_action_view(user_id)
     return VISUAL_TOOL_NAMES - view.available_tool_names

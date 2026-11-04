@@ -68,19 +68,11 @@ async def scene_create_tool(notes: str, user_id: ResourceId, scene_turn: SceneTu
         if not notes.strip():
             return tool_error("请提供具体的环境设计")
         try:
-            row = await schedule_scene_snapshot(
-                user_id,
-                origin=SceneOrigin.LLM.value,
-                notes=notes,
-            )
+            row = await schedule_scene_snapshot(user_id, origin=SceneOrigin.LLM.value, notes=notes)
         except SceneError as exc:
             return tool_error(str(exc))
         scene_turn.create_claimed = True
-        return _result(
-            accepted=True,
-            scene=_asset(row),
-            message="环境图片正在准备，完成后会保存到列表中",
-        )
+        return _result(accepted=True, scene=_asset(row), message="环境图片正在准备，完成后会保存到列表中")
 
 
 def register(registry: ToolsRegistry) -> None:
@@ -107,7 +99,7 @@ def register(registry: ToolsRegistry) -> None:
                 "notes": {
                     "type": "string",
                     "description": "环境场景设计，非空：写清地点、陈设、光线与氛围，不写画风，不描绘你本人；其他人物、动物、肖像或雕像可以按环境需要出现。",
-                },
+                }
             },
             ["notes"],
         ),

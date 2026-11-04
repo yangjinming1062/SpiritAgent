@@ -2,12 +2,7 @@
 
 from runtime.lifecycle import RuntimeParticipant
 
-from .service import (
-    drain_video_queue,
-    prepare_video_queue,
-    start_video_queue,
-    stop_video_queue,
-)
+from .service import drain_video_queue, prepare_video_queue, start_video_queue, stop_video_queue
 
 
 def runtime_participants() -> tuple[RuntimeParticipant, ...]:

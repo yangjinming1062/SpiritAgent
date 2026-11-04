@@ -32,11 +32,7 @@ def updater_enabled() -> bool:
 
 
 async def _request(
-    method: str,
-    path: str,
-    *,
-    params: dict[str, Any] | None = None,
-    payload: dict[str, Any] | None = None,
+    method: str, path: str, *, params: dict[str, Any] | None = None, payload: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     if not updater_enabled():
         raise RequestError(status_code=409, message="服务更新器未启用，请先按部署文档接入更新容器。")

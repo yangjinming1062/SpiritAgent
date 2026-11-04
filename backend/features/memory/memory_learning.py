@@ -27,12 +27,7 @@ from features.conversation.evidence import (
 from features.memory.contracts import MemoryConflictError, MemoryEvidence, MemoryRecord
 from features.memory.memory_policy import MemoryDecision
 from features.memory.memory_retrieval import keyword_match_score
-from features.memory.memory_store import (
-    backfill_memory_embeddings,
-    forget_record,
-    memory_write_lock,
-    scope_filter,
-)
+from features.memory.memory_store import backfill_memory_embeddings, forget_record, memory_write_lock, scope_filter
 from features.memory.models import Memory, MemoryEmbeddingRow, MemoryFingerprint
 from features.memory.records import clear_memory_details, load_evidence, memory_record, replace_evidence, save_revisions
 
@@ -84,9 +79,9 @@ async def list_memory_review_scopes(db: AsyncSession) -> list[MemoryScope]:
             await db.execute(
                 select(Memory.user_id, Memory.system_preset_id)
                 .where(Memory.user_id.in_(active_users), learning_filter(), Memory.status != "forgotten")
-                .distinct(),
+                .distinct()
             )
-        ).tuples(),
+        ).tuples()
     )
     rows.extend(await review_scopes(db, active_users))
     return [MemoryScope(user_id, preset) for user_id, preset in dict.fromkeys(rows)]
@@ -149,7 +144,7 @@ async def load_review_context(
                 content="[Forgotten source event; do not extract]" if suppressed else content,
                 created_at=row.created_at.isoformat(),
                 suppressed=suppressed,
-            ),
+            )
         )
     messages.sort(key=lambda m: m.message_id)
     memory_stmt = select(Memory).where(scope_filter(scope), learning_filter(), Memory.status != "forgotten")
@@ -157,7 +152,7 @@ async def load_review_context(
         memory_stmt = memory_stmt.where(or_(Memory.reviewed_at.is_(None), Memory.reviewed_at < reviewed_before))
     if query:
         memory_stmt = memory_stmt.where(
-            or_(Memory.content.icontains(query, autoescape=True), Memory.context.icontains(query, autoescape=True)),
+            or_(Memory.content.icontains(query, autoescape=True), Memory.context.icontains(query, autoescape=True))
         )
     if before_memory_id is not None:
         memory_stmt = memory_stmt.where(Memory.id < before_memory_id)
@@ -171,8 +166,7 @@ async def load_review_context(
     # 带上新发言相关的事实（含候选和反例），即使它们不在本次轮转窗口中；命中词多的优先。
     if new_only and messages:
         terms = extract_search_terms(
-            " ".join(m.content for m in messages if m.role == "user" and not m.suppressed),
-            limit=REVIEW_TERM_LIMIT,
+            " ".join(m.content for m in messages if m.role == "user" and not m.suppressed), limit=REVIEW_TERM_LIMIT
         )
         if terms:
             related = list(
@@ -186,9 +180,9 @@ async def load_review_context(
                             or_(*(Memory.content.icontains(term, autoescape=True) for term in terms)),
                         )
                         .order_by(keyword_match_score(terms).desc(), Memory.updated_at.desc(), Memory.id.desc())
-                        .limit(REVIEW_MEMORY_LIMIT),
+                        .limit(REVIEW_MEMORY_LIMIT)
                     )
-                ).all(),
+                ).all()
             )
             memories = list({r.id: r for r in (*related, *memories)}.values())
     evidence_by_id = await load_evidence(db, [row.id for row in memories])
@@ -300,7 +294,7 @@ async def apply_memory_decisions(
                         quote=quote.quote,
                         stance=quote.stance,
                         created_at=msg.created_at.isoformat(),
-                    ),
+                    )
                 )
             row = targets.get(decision.memory_id) if decision.memory_id else None
             if row is not None and row.content_version != decision.expected_version:
@@ -325,11 +319,11 @@ async def apply_memory_decisions(
                 and not any(originals[quote.message_id].created_at > row.updated_at for quote in decision.evidence)
             ):
                 raise ValueError(
-                    "A memory the user wrote directly changes only on a newer user message; cite that message as evidence",
+                    "A memory the user wrote directly changes only on a newer user message; cite that message as evidence"
                 )
             if row and row.kind == "user_profile" and decision.status not in {"invalidated", "forgotten"}:
                 raise ValueError(
-                    "Onboarding can only be invalidated or forgotten by maintenance; write the supported replacement separately",
+                    "Onboarding can only be invalidated or forgotten by maintenance; write the supported replacement separately"
                 )
             if row and row.status == "forgotten":
                 raise ValueError("Forgotten memories cannot be restored")
@@ -401,15 +395,14 @@ async def apply_memory_decisions(
             reviewed_through: dict[int, int] = {}
             for message in context.messages:
                 reviewed_through[message.session_id] = max(
-                    reviewed_through.get(message.session_id, 0),
-                    message.message_id,
+                    reviewed_through.get(message.session_id, 0), message.message_id
                 )
             await advance_memory_review_cursors(db, scope.user_id, scope.system_preset_id, reviewed_through)
             if supplied:
                 await db.execute(
                     Memory.__table__.update()
                     .where(scope_filter(scope), Memory.id.in_(supplied))
-                    .values(reviewed_at=now, updated_at=Memory.updated_at),
+                    .values(reviewed_at=now, updated_at=Memory.updated_at)
                 )
         await db.commit()
     await backfill_memory_embeddings(scope, embeddings)

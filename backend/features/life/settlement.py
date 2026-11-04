@@ -113,10 +113,7 @@ async def settle_business_steps(
         if pursuit is not None:
             pursuit_objects[pursuit.id] = pursuit
         if state == "running":
-            if (pursuit is not None and pursuit.status != "active") or row.state in {
-                "completed",
-                "cancelled",
-            }:
+            if (pursuit is not None and pursuit.status != "active") or row.state in {"completed", "cancelled"}:
                 continue
             generation_id = business_ref.get("generation_id", row.generation_id)
             if row.state == "running" and row.job_id == job_id and row.generation_id == generation_id:
@@ -135,10 +132,7 @@ async def settle_business_steps(
                 "updated_at": now,
             }
             continue
-        requested_failure_code = failure_code or {
-            "failed": "execution_failed",
-            "unknown": "result_unknown",
-        }.get(state)
+        requested_failure_code = failure_code or {"failed": "execution_failed", "unknown": "result_unknown"}.get(state)
         changed = row.state not in protected and (
             row.state != state
             or result_reference(row) != (result_ref or {})

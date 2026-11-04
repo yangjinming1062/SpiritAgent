@@ -6,16 +6,8 @@ from typing import Any
 
 from features.conversation.fork import SourceNotFoundError
 from features.conversation.http_contracts import PromptSubmitRequest, SessionSnapshotResponse, SessionUndoResult
-from features.conversation.session_operations import (
-    history_snapshot,
-    last_submission,
-    undo_history,
-)
-from features.conversation.slash_commands import (
-    SlashCommandContext,
-    resolve_slash_command,
-    suggest_commands,
-)
+from features.conversation.session_operations import history_snapshot, last_submission, undo_history
+from features.conversation.slash_commands import SlashCommandContext, resolve_slash_command, suggest_commands
 from features.conversation.snapshots import ConversationSnapshot
 from features.conversation.submissions import get_submission
 from features.conversation.undo import UndoNotAllowedError
@@ -23,17 +15,11 @@ from infrastructure.async_io import cancel_tasks
 from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
 from runtime.business_actor import BusinessActor
-from runtime.conversation import (
-    RuntimeSession,
-    new_runtime_session,
-)
+from runtime.conversation import RuntimeSession, new_runtime_session
 from runtime.desktop.connection import MANAGER, UserEventPublisher
 
 from workflows.chat.history_commands import _do_compress_history, compression_command_result, compression_context
-from workflows.chat.inputs import (
-    _require_owned_conv,
-    conversation_history_lock,
-)
+from workflows.chat.inputs import _require_owned_conv, conversation_history_lock
 from workflows.chat.session_resources import session_runtime_info
 from workflows.chat.submissions import create_submission_handler
 
@@ -62,10 +48,7 @@ def chat_operations(actor: BusinessActor) -> ChatOperations:
         if existing is not None:
             return existing
         runtime = new_runtime_session(
-            conversation_id=conv.id,
-            settings_json=conv.settings_json,
-            kind=conv.kind,
-            is_automation=conv.is_automation,
+            conversation_id=conv.id, settings_json=conv.settings_json, kind=conv.kind, is_automation=conv.is_automation
         )
         runtime_sessions[runtime.session_id] = runtime
         return runtime
@@ -79,12 +62,7 @@ def chat_operations(actor: BusinessActor) -> ChatOperations:
         runtime = _mount_runtime(conv)
         async with runtime.snapshot_lock:
             dispatcher = (
-                MANAGER.authenticated_dispatcher(
-                    user_id,
-                    stream_id,
-                    actor.origin_kind,
-                    actor.origin_id,
-                )
+                MANAGER.authenticated_dispatcher(user_id, stream_id, actor.origin_kind, actor.origin_id)
                 if stream_id
                 else None
             )
@@ -136,10 +114,7 @@ def chat_operations(actor: BusinessActor) -> ChatOperations:
     async def session_snapshot(params: dict) -> dict:
         session_id = params["session_id"]
         conv = await _require_owned_conv(user_id, session_id)
-        return await _mounted_history(
-            conv,
-            stream_id=params.get("stream_id"),
-        )
+        return await _mounted_history(conv, stream_id=params.get("stream_id"))
 
     async def turn_receipt(params: dict) -> dict:
         conv = await _require_owned_conv(user_id, params["session_id"])
@@ -195,10 +170,7 @@ def chat_operations(actor: BusinessActor) -> ChatOperations:
         session_id = params["session_id"]
         if not bool(params.get("confirmed")):
             raise RequestError(
-                409,
-                "撤回消息需要明确确认",
-                code="confirmation_required",
-                details={"requires_confirmation": True},
+                409, "撤回消息需要明确确认", code="confirmation_required", details={"requires_confirmation": True}
             )
         source_message_id = params["source_message_id"]
         owned = await _require_owned_conv(user_id, session_id)
@@ -211,11 +183,7 @@ def chat_operations(actor: BusinessActor) -> ChatOperations:
                 result = await undo_history(user_id, session_id, source_message_id)
             except (UndoNotAllowedError, SourceNotFoundError) as exc:
                 raise RequestError(422, str(exc)) from exc
-        await publish_history_change(
-            "message.deleted",
-            result.model_dump(mode="json"),
-            session_id=session_id,
-        )
+        await publish_history_change("message.deleted", result.model_dump(mode="json"), session_id=session_id)
         logger.info(
             "conversation history undone",
             extra={
@@ -241,11 +209,7 @@ def chat_operations(actor: BusinessActor) -> ChatOperations:
         cmd = resolve_slash_command(name)
         if cmd is None:
             suggestions = suggest_commands(name)
-            raise RequestError(
-                422,
-                f"unknown command: /{name}",
-                details={"suggestions": suggestions},
-            )
+            raise RequestError(422, f"unknown command: /{name}", details={"suggestions": suggestions})
 
         confirmed = bool(params.get("confirmed"))
         if cmd.requires_confirmation and not confirmed:

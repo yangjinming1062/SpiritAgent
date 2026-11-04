@@ -212,14 +212,9 @@ def register_all() -> None:
     configure_continuation_handler("chat.video", continue_chat_video)
     register_asset_contributions()
     set_configuration_reader(user_ai_config)
-    configure_video_queue_ports(
-        {
-            "media": inspect_media_video_owner,
-            "visuals": inspect_visual_video_owner,
-        },
-    )
+    configure_video_queue_ports({"media": inspect_media_video_owner, "visuals": inspect_visual_video_owner})
     register_channel_lifecycle(
-        ChannelLifecycle(close_desktop=terminate_user_gateway, close_remote=terminate_remote_sessions),
+        ChannelLifecycle(close_desktop=terminate_user_gateway, close_remote=terminate_remote_sessions)
     )
     set_post_published_handler(record_post_published)
     set_media_reference_readers(
@@ -227,7 +222,7 @@ def register_all() -> None:
             active_identity=active_identity_reference,
             confirmed_paths=confirmed_media_reference_paths,
             identity_is_current=visual_identity_is_current,
-        ),
+        )
     )
     configure_visual_hooks(
         planning_reader=visual_planning_context,

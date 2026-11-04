@@ -3,16 +3,11 @@ import os
 import re
 
 # SpiritAgent 控制面文件：供应商凭据、OAuth token、HMAC 密钥、网关配置。按 basename 列入，~/.spiritagent/<name> 与 ~/.spiritagent/profiles/<profile>/<name> 都被拦截
-SPIRITAGENT_CONTROL_FILE_BASENAMES: tuple[str, ...] = (
-    "auth.json",
-    "auth.lock",
-    "desktop-settings.json",
-    ".env",
-)
+SPIRITAGENT_CONTROL_FILE_BASENAMES: tuple[str, ...] = ("auth.json", "auth.lock", "desktop-settings.json", ".env")
 
 # .env.example 故意不在此列——它是带文档结构的占位文件
 BLOCKED_PROJECT_ENV_BASENAMES: frozenset[str] = frozenset(
-    {".env", ".env.local", ".env.development", ".env.production", ".env.test", ".env.staging", ".envrc"},
+    {".env", ".env.local", ".env.development", ".env.production", ".env.test", ".env.staging", ".envrc"}
 )
 
 _WRITE_DENIED_RELATIVE_PATHS: tuple[tuple[str, ...], ...] = (
@@ -92,7 +87,7 @@ def _write_denied_paths(home: str) -> frozenset[str]:
             *(_join_real(home_real, *parts) for parts in _WRITE_DENIED_RELATIVE_PATHS),
             *(_join_real(spiritagent_home, name) for name in SPIRITAGENT_CONTROL_FILE_BASENAMES),
             *(os.path.realpath(p) for p in _WRITE_DENIED_ABSOLUTE_PATHS),
-        },
+        }
     )
 
 

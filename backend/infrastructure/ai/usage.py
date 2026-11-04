@@ -112,8 +112,7 @@ class LlmUsageAccumulator:
 
 
 _COLLECTOR: ContextVar[tuple[asyncio.Task | None, LlmUsageAccumulator] | None] = ContextVar(
-    "chat_llm_usage_collector",
-    default=None,
+    "chat_llm_usage_collector", default=None
 )
 
 

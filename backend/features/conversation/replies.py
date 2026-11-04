@@ -154,7 +154,7 @@ class CompanionReply(BaseModel):
         return self
 
     bubbles: list[Annotated[TextBubble | VoiceBubble | MediaBubble | LinkBubble, Field(discriminator="type")]] = Field(
-        min_length=1,
+        min_length=1
     )
 
     @field_validator("audio_directory")

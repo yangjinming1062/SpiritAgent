@@ -122,7 +122,7 @@ def speech_style_guidance(provider: str, model: str, *, language: str) -> str:
                         "speed": 1,
                         "segments": [{"text": setup, "tag": None}, {"text": ending, "tag": "chuckle"}],
                     },
-                },
+                }
             )
         else:
             capabilities += (

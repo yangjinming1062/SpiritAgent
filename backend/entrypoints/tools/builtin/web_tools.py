@@ -90,10 +90,7 @@ def _extract_provider_problem(provider: WebSearchProvider) -> str | None:
 
 
 async def web_extract_tool(
-    urls: list[str],
-    llm_config: UserLlmConfig,
-    use_llm_processing: bool = True,
-    **_: object,
+    urls: list[str], llm_config: UserLlmConfig, use_llm_processing: bool = True, **_: object
 ) -> str:
     provider = resolve_extract_provider()
     if (problem := _extract_provider_problem(provider)) is not None:
@@ -123,10 +120,7 @@ WEB_SEARCH_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "query": {
-                "type": "string",
-                "description": WEB_SEARCH_PARAM_DESCS["query"],
-            },
+            "query": {"type": "string", "description": WEB_SEARCH_PARAM_DESCS["query"]},
             "limit": {
                 "type": "integer",
                 "description": WEB_SEARCH_PARAM_DESCS["limit"],
@@ -144,11 +138,7 @@ WEB_EXTRACT_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "urls": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": WEB_EXTRACT_PARAM_DESCS["urls"],
-            },
+            "urls": {"type": "array", "items": {"type": "string"}, "description": WEB_EXTRACT_PARAM_DESCS["urls"]},
             "use_llm_processing": {"type": "boolean", "description": WEB_EXTRACT_PARAM_DESCS["use_llm_processing"]},
         },
         "required": ["urls"],

@@ -8,11 +8,7 @@ from contextlib import asynccontextmanager
 from infrastructure.ai.prompt_engineer import chat
 from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
 from infrastructure.ai.tasks import AiTaskKey
-from infrastructure.assets.asset_store import (
-    build_data_uri,
-    outfit_asset_directory,
-    read_asset_data_uri,
-)
+from infrastructure.assets.asset_store import build_data_uri, outfit_asset_directory, read_asset_data_uri
 from infrastructure.assets.references import asset_paths
 from infrastructure.async_io import cancel_and_wait
 from infrastructure.database import SESSION_LOCAL
@@ -51,11 +47,7 @@ from features.appearance.prompt_assembly import build_image_edit_prompt, build_o
 from features.appearance.prompts import EDIT_PRESERVE_OUTFIT, OUTFIT_DESCRIBE_SYSTEM
 from features.appearance.response_builders import outfit_response
 from features.appearance.schemas import ImageReviseMode, OutfitResponse
-from features.assets.lifecycle import (
-    cleanup_asset_directories,
-    cleanup_user_assets,
-    enqueue_asset_cleanup,
-)
+from features.assets.lifecycle import cleanup_asset_directories, cleanup_user_assets, enqueue_asset_cleanup
 from features.companion.persona_service import load_persona_definition
 from features.companion.policy_contracts import OUTFIT_POLICY_DEFAULT
 from features.companion.visual_state import (
@@ -153,13 +145,7 @@ async def set_outfit_policy(db: AsyncSession, user_id: int, policy: str) -> str:
     return policy
 
 
-async def _get_outfit(
-    db: AsyncSession,
-    user_id: int,
-    outfit_id: int,
-    *,
-    lock: bool = False,
-) -> CompanionOutfit | None:
+async def _get_outfit(db: AsyncSession, user_id: int, outfit_id: int, *, lock: bool = False) -> CompanionOutfit | None:
     statement = (
         select(CompanionOutfit)
         .where(CompanionOutfit.id == outfit_id, CompanionOutfit.user_id == user_id)
@@ -186,7 +172,7 @@ async def list_outfits(db: AsyncSession, user_id: int) -> list[OutfitResponse]:
             await db.execute(
                 select(CompanionOutfit)
                 .where(CompanionOutfit.user_id == user_id)
-                .order_by(CompanionOutfit.created_at.asc()),
+                .order_by(CompanionOutfit.created_at.asc())
             )
         )
         .scalars()
@@ -199,8 +185,7 @@ async def list_outfits(db: AsyncSession, user_id: int) -> list[OutfitResponse]:
 
 
 async def _outfit_generation_context(
-    db: AsyncSession,
-    user_id: int,
+    db: AsyncSession, user_id: int
 ) -> tuple[AvatarAsset, str, VisualIdentitySnapshot, str]:
     avatar = await get_active_avatar(db, user_id)
     if avatar is None or not avatar.is_fullbody_confirmed:
@@ -214,12 +199,7 @@ async def _outfit_generation_context(
         identity = await require_visual_identity(db, user_id)
     except VisualIdentityNotReadyError as exc:
         raise OutfitStateError(str(exc)) from exc
-    return (
-        avatar,
-        species,
-        identity,
-        str(definition.get("personality") or "").strip(),
-    )
+    return (avatar, species, identity, str(definition.get("personality") or "").strip())
 
 
 async def _describe_reference_garment(
@@ -407,11 +387,7 @@ async def _prepare_new_outfit_prompt(
     garment_text = None
     if image is not None:
         garment_text = await _describe_reference_garment(
-            user_id,
-            source,
-            image,
-            content_type,
-            requirement=source.description,
+            user_id, source, image, content_type, requirement=source.description
         )
     return await build_outfit_prompt(
         user_id=user_id,
@@ -450,23 +426,12 @@ async def _prepare_outfit_regenerate_prompt(
 
 
 async def _commit_outfit_draft_image(
-    db: AsyncSession,
-    user_id: int,
-    outfit: CompanionOutfit,
-    *,
-    image_url: str,
-    source: OutfitSource,
-    original_url: str,
+    db: AsyncSession, user_id: int, outfit: CompanionOutfit, *, image_url: str, source: OutfitSource, original_url: str
 ) -> None:
     """调用方完成草稿和身份复核后，同事务保存替换结果、通知与旧图回收登记。"""
     outfit.fullbody_url = image_url
     outfit.source_json = source.dump()
-    emit_ws_event(
-        db,
-        user_id=user_id,
-        event_type="companion.outfit.updated",
-        payload={"outfit_id": outfit.id},
-    )
+    emit_ws_event(db, user_id=user_id, event_type="companion.outfit.updated", payload={"outfit_id": outfit.id})
     await enqueue_asset_cleanup(db, user_id, [original_url])
     await commit_appearance(db, user_id)
 
@@ -544,12 +509,7 @@ async def create_outfit_draft(
         image_state.inputs.prompt
         if image_state is not None and image_state.inputs is not None
         else await _prepare_new_outfit_prompt(
-            user_id,
-            context,
-            identity_uri,
-            source,
-            image=image,
-            content_type=content_type,
+            user_id, context, identity_uri, source, image=image, content_type=content_type
         )
     )
 
@@ -577,10 +537,7 @@ async def create_outfit_draft(
     try:
         if image is not None:
             ref_path = await persist_portrait_bytes(
-                user_id,
-                image,
-                content_type or "image/png",
-                directory=outfit_asset_directory(outfit_id),
+                user_id, image, content_type or "image/png", directory=outfit_asset_directory(outfit_id)
             )
             source.reference_image_path = ref_path
         async with get_avatar_job_lock(user_id):
@@ -645,20 +602,11 @@ async def regenerate_outfit_draft(
         reference_uri = await asyncio.to_thread(read_asset_data_uri, original_url)
         if not reference_uri:
             raise OutfitDraftUnavailableError("上一版草稿图片无法读取，请改用重新生成")
-        prompt = build_image_edit_prompt(
-            effective_feedback,
-            preserve=EDIT_PRESERVE_OUTFIT,
-        )
+        prompt = build_image_edit_prompt(effective_feedback, preserve=EDIT_PRESERVE_OUTFIT)
         await _require_fullbody_seed_readable(avatar)
     else:
         reference_uri = await _require_fullbody_seed_readable(avatar)
-        prompt = await _prepare_outfit_regenerate_prompt(
-            user_id,
-            context,
-            reference_uri,
-            source,
-            effective_feedback,
-        )
+        prompt = await _prepare_outfit_regenerate_prompt(user_id, context, reference_uri, source, effective_feedback)
 
     draft_url, origin, manual_job_id, review = await _generate_outfit_fullbody(
         user_id,
@@ -692,12 +640,7 @@ async def regenerate_outfit_draft(
                 db, user_id, f"outfit:{manual_job.source_key}:continue", {"outfit_id": str(outfit.id)}
             )
         await _commit_outfit_draft_image(
-            db,
-            user_id,
-            outfit,
-            image_url=draft_url,
-            source=source,
-            original_url=original_url,
+            db, user_id, outfit, image_url=draft_url, source=source, original_url=original_url
         )
     await db.refresh(outfit)
     return outfit
@@ -729,10 +672,7 @@ async def confirm_outfit(
         try:
             if original_url.startswith("temp-media/"):
                 persisted = await persist_portrait_bytes(
-                    user_id,
-                    draft[0],
-                    "image/png",
-                    directory=outfit_asset_directory(outfit_id),
+                    user_id, draft[0], "image/png", directory=outfit_asset_directory(outfit_id)
                 )
             outfit = await _get_outfit(db, user_id, outfit_id, lock=True)
             if (
@@ -790,12 +730,7 @@ async def confirm_outfit(
             emit_ws_event(
                 db, user_id=user_id, event_type="companion.life.presentation_requested", payload={"force": True}
             )
-            emit_ws_event(
-                db,
-                user_id=user_id,
-                event_type="companion.outfit.updated",
-                payload={"outfit_id": outfit.id},
-            )
+            emit_ws_event(db, user_id=user_id, event_type="companion.outfit.updated", payload={"outfit_id": outfit.id})
             await commit_appearance(db, user_id)
         except BaseException:
             await db.rollback()
@@ -847,12 +782,7 @@ async def prepare_outfit_regenerate_prompt(
     await commit_appearance(db, user_id)
 
     return await _prepare_outfit_regenerate_prompt(
-        user_id,
-        context,
-        identity_uri,
-        source,
-        effective_feedback,
-        external=True,
+        user_id, context, identity_uri, source, effective_feedback, external=True
     )
 
 
@@ -923,12 +853,7 @@ async def adopt_outfit_regenerate_image(
         source.identity_revision = identity.revision
         source.identity_reference_path = identity_path
         await _commit_outfit_draft_image(
-            db,
-            user_id,
-            outfit,
-            image_url=fullbody_url,
-            source=source,
-            original_url=original_url,
+            db, user_id, outfit, image_url=fullbody_url, source=source, original_url=original_url
         )
     await db.refresh(outfit)
     return outfit
@@ -945,12 +870,7 @@ async def delete_outfit(db: AsyncSession, user_id: int, outfit_id: int) -> None:
         paths = asset_paths([outfit.fullbody_url, outfit.source_json], user_id)
         await enqueue_asset_cleanup(db, user_id, paths, expedite=True)
 
-        emit_ws_event(
-            db,
-            user_id=user_id,
-            event_type="companion.outfit.updated",
-            payload={"outfit_id": outfit.id},
-        )
+        emit_ws_event(db, user_id=user_id, event_type="companion.outfit.updated", payload={"outfit_id": outfit.id})
         await db.delete(outfit)
         await commit_appearance(db, user_id)
     # 删除提交后再停止任务和清理文件；提交失败时外观仍完整可用。
@@ -967,8 +887,7 @@ def schedule_outfit_description(user_id: int, outfit_id: int) -> None:
     if key in _DESCRIBE_TASKS:
         return
     task = asyncio.create_task(
-        _describe_outfit(user_id, outfit_id),
-        name=f"companion.outfit.describe.{user_id}.{outfit_id}",
+        _describe_outfit(user_id, outfit_id), name=f"companion.outfit.describe.{user_id}.{outfit_id}"
     )
     _DESCRIBE_TASKS[key] = task
     task.add_done_callback(lambda _task: _DESCRIBE_TASKS.pop(key, None))
@@ -999,14 +918,8 @@ async def recover_outfit_descriptions() -> None:
     async with SESSION_LOCAL() as db:
         await db.execute(
             update(CompanionOutfit)
-            .where(
-                CompanionOutfit.status == "ready",
-                CompanionOutfit.description_status.in_(("pending", "processing")),
-            )
-            .values(
-                description_status="failed",
-                description_error="外观描述已中断，请重试补全",
-            ),
+            .where(CompanionOutfit.status == "ready", CompanionOutfit.description_status.in_(("pending", "processing")))
+            .values(description_status="failed", description_error="外观描述已中断，请重试补全")
         )
         await db.commit()
 
@@ -1027,8 +940,7 @@ async def _describe_outfit(user_id: int, outfit_id: int) -> None:
         if not image_uri:
             # 立绘被替换或已被清理时没有可命名的图片，外观保留原名。
             logger.info(
-                "outfit description skipped: image unreadable",
-                extra={"user_id": user_id, "outfit_id": outfit_id},
+                "outfit description skipped: image unreadable", extra={"user_id": user_id, "outfit_id": outfit_id}
             )
             raise OutfitStateError("外观图片无法读取，请先修复参考图")
         # 命名依据实际采纳的立绘，覆盖无文字的自备图与后续重绘。
@@ -1038,10 +950,7 @@ async def _describe_outfit(user_id: int, outfit_id: int) -> None:
         if is_user_in_maintenance(user_id):
             raise asyncio.CancelledError
         raw = await chat(
-            user_id,
-            OUTFIT_DESCRIBE_SYSTEM,
-            json.dumps(payload, ensure_ascii=False),
-            task=AiTaskKey.outfit,
+            user_id, OUTFIT_DESCRIBE_SYSTEM, json.dumps(payload, ensure_ascii=False), task=AiTaskKey.outfit
         )
         parsed = parse_llm_json(raw)
         if not isinstance(parsed, dict):
@@ -1083,21 +992,14 @@ async def _describe_outfit(user_id: int, outfit_id: int) -> None:
             if description:
                 outfit.description = description
             outfit.description_status, outfit.description_error = "ready", None
-            emit_ws_event(
-                db,
-                user_id=user_id,
-                event_type="companion.outfit.updated",
-                payload={"outfit_id": outfit_id},
-            )
+            emit_ws_event(db, user_id=user_id, event_type="companion.outfit.updated", payload={"outfit_id": outfit_id})
             await commit_appearance(db, user_id)
     except asyncio.CancelledError:
         await _set_description_failure(user_id, outfit_id, fullbody_url, "外观描述已中断，请重试补全")
         raise
     except Exception:
         logger.warning(
-            "outfit description generation failed",
-            extra={"user_id": user_id, "outfit_id": outfit_id},
-            exc_info=True,
+            "outfit description generation failed", extra={"user_id": user_id, "outfit_id": outfit_id}, exc_info=True
         )
         await _set_description_failure(user_id, outfit_id, fullbody_url, "外观描述未完成，请重试补全")
 
@@ -1108,10 +1010,5 @@ async def _set_description_failure(user_id: int, outfit_id: int, path: str, mess
         if outfit is None or outfit.fullbody_url != path:
             return
         outfit.description_status, outfit.description_error = "failed", message
-        emit_ws_event(
-            db,
-            user_id=user_id,
-            event_type="companion.outfit.updated",
-            payload={"outfit_id": outfit_id},
-        )
+        emit_ws_event(db, user_id=user_id, event_type="companion.outfit.updated", payload={"outfit_id": outfit_id})
         await commit_appearance(db, user_id)

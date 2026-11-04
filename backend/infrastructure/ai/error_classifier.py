@@ -76,13 +76,7 @@ _BILLING_PATTERNS = (
     "购买积分",
 )
 
-_RATE_LIMIT_MESSAGE_PATTERNS = (
-    "rate limit",
-    "rate_limit",
-    "too many requests",
-    "try again in",
-    "please retry after",
-)
+_RATE_LIMIT_MESSAGE_PATTERNS = ("rate limit", "rate_limit", "too many requests", "try again in", "please retry after")
 
 # 供应商拉取 image_url 失败：须早于 format_error 匹配，以免用户被 400 文案误导
 _ATTACHMENT_FETCH_PATTERNS = (
@@ -200,7 +194,7 @@ _CONTENT_POLICY_ERROR_CODES = frozenset(
         "prohibited_content",
         "blocklist",
         "image_safety",
-    },
+    }
 )
 _CONTENT_POLICY_FINISH_REASONS = frozenset(
     {
@@ -214,7 +208,7 @@ _CONTENT_POLICY_FINISH_REASONS = frozenset(
         "image_safety",
         "image_prohibited_content",
         "image_recitation",
-    },
+    }
 )
 _POLICY_DIAGNOSTIC_CODES = _CONTENT_POLICY_ERROR_CODES - {"safety", "jailbreak", "blocklist", "1026", "1027"}
 
@@ -282,7 +276,7 @@ _BILLING_ERROR_CODES = frozenset(
         "no_usable_credits",
         "balance_depleted",
         "model_not_supported_on_free_tier",
-    },
+    }
 )
 _RATE_LIMIT_ERROR_CODES = frozenset({"resource_exhausted", "throttled", "rate_limit_exceeded"})
 _MODEL_NOT_FOUND_ERROR_CODES = frozenset({"model_not_found", "model_not_available", "invalid_model"})
@@ -318,7 +312,7 @@ def _policy_diagnostic(text: str) -> bool:
     return bool(
         (code and code["code"].lower() in (_CONTENT_POLICY_ERROR_CODES if code["prefix"] else _POLICY_DIAGNOSTIC_CODES))
         or _GOOGLE_POLICY_RESPONSE.fullmatch(text)
-        or any(pattern.fullmatch(text) for pattern in _POLICY_DIAGNOSTIC_MESSAGES),
+        or any(pattern.fullmatch(text) for pattern in _POLICY_DIAGNOSTIC_MESSAGES)
     )
 
 
@@ -375,7 +369,7 @@ def _policy_response(payload: dict[str, Any], *, error_context: bool, depth: int
                 payload.get("inner_error"),
                 payload.get("message"),
                 metadata.get("raw") if isinstance(metadata, dict) else None,
-            ),
+            )
         )
     for wrapper in wrappers:
         if isinstance(wrapper, str):
@@ -400,9 +394,7 @@ def classify_response_text(text: str) -> ClassifiedError | None:
     payload = safe_json_loads(payload_text)
     if (isinstance(payload, dict) and is_content_policy_response(payload)) or _policy_diagnostic(text):
         return ClassifiedError(
-            FailoverReason.content_policy_blocked,
-            None,
-            "LLM provider returned a content policy error as output text",
+            FailoverReason.content_policy_blocked, None, "LLM provider returned a content policy error as output text"
         )
     return None
 
@@ -425,11 +417,7 @@ class _Signals:
 
 
 def classify_api_error(
-    error: BaseException,
-    *,
-    approx_tokens: int = 0,
-    context_length: int | None = None,
-    num_messages: int = 0,
+    error: BaseException, *, approx_tokens: int = 0, context_length: int | None = None, num_messages: int = 0
 ) -> ClassifiedError:
     """把供应商调用异常分类为失败原因；已携带分类结果的异常直接返回其结果。"""
     classified = getattr(error, "classified", None)

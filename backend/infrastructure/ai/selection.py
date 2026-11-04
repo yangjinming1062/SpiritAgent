@@ -40,8 +40,7 @@ class ProviderSelection(BaseModel):
 
 
 def _provider_selection_index(
-    chain: Sequence[ProviderConfig],
-    selection: ProviderSelection | None = None,
+    chain: Sequence[ProviderConfig], selection: ProviderSelection | None = None
 ) -> int | None:
     if selection is None or selection.mode == "default" or selection.origin is None:
         return None
@@ -65,8 +64,7 @@ def has_provider_selection(chain: Sequence[ProviderConfig], selection: ProviderS
 
 
 def order_provider_chain(
-    chain: Sequence[ProviderConfig],
-    selection: ProviderSelection | None = None,
+    chain: Sequence[ProviderConfig], selection: ProviderSelection | None = None
 ) -> list[ProviderConfig]:
     """在能力过滤前旋转当前链；来源失效时从首项开始，单次只遍历一圈。"""
     ordered = list(chain)

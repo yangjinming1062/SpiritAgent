@@ -105,9 +105,7 @@ class UpdaterApp:
         except ValueError as exc:
             raise ValueError(f"更新请求无效：{exc}") from None
         record, existing = await self._engine.start(
-            "update",
-            request_id=_request_id(payload),
-            target_commit=request.target_commit.lower(),
+            "update", request_id=_request_id(payload), target_commit=request.target_commit.lower()
         )
         return TaskAccepted(task_id=record.task_id, existing=existing)
 

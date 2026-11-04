@@ -42,7 +42,7 @@ async def get_presets(user: CurrentUser) -> PromptPresetListResponse:
         presets=[
             PromptPresetSummary(id=p.id, name=p.name, description=p.description, icon_key=p.icon_key)
             for p in SYSTEM_PRESET_CATALOG.values()
-        ],
+        ]
     )
 
 

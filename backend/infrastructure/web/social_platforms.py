@@ -49,7 +49,5 @@ def _registered_platform(value: str) -> str:
 
 
 SocialPlatform = Annotated[
-    str,
-    AfterValidator(_registered_platform),
-    WithJsonSchema({"type": "string", "enum": list(SOCIAL_PLATFORMS)}),
+    str, AfterValidator(_registered_platform), WithJsonSchema({"type": "string", "enum": list(SOCIAL_PLATFORMS)})
 ]

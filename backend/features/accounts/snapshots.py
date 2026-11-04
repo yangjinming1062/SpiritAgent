@@ -39,10 +39,5 @@ def login_identity(login: LoginRecord) -> LoginIdentity:
 
 def remote_identity(device: RemoteSession) -> RemoteDeviceIdentity:
     return RemoteDeviceIdentity(
-        device.id,
-        device.user_id,
-        device.name,
-        device.expires_at,
-        device.last_seen_at,
-        device.created_at,
+        device.id, device.user_id, device.name, device.expires_at, device.last_seen_at, device.created_at
     )

@@ -189,18 +189,12 @@ async def cleanup_job_assets(db: AsyncSession, user_id: int) -> set[str]:
 
 
 async def rewrite_job_checkpoints(
-    db: AsyncSession,
-    user_id: int,
-    job_ids: Collection[int],
-    rewrite: Callable[[dict | None], dict | None],
+    db: AsyncSession, user_id: int, job_ids: Collection[int], rewrite: Callable[[dict | None], dict | None]
 ) -> None:
     if not job_ids:
         return
     rows = await db.execute(
-        select(JobRecord.id, JobRecord.checkpoint).where(
-            JobRecord.user_id == user_id,
-            JobRecord.id.in_(job_ids),
-        )
+        select(JobRecord.id, JobRecord.checkpoint).where(JobRecord.user_id == user_id, JobRecord.id.in_(job_ids))
     )
     rewritten = [(job_id, rewrite(checkpoint)) for job_id, checkpoint in rows]
     for start in range(0, len(rewritten), 500):

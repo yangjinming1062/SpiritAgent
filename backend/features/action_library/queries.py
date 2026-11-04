@@ -17,7 +17,7 @@ def _filters(user_id: int, query: str | None, clip_kind: str | None, status: str
             or_(
                 ActionDefinition.normalized_name.contains(needle, autoescape=True),
                 ActionDefinition.motion_description.icontains((query or "").strip(), autoescape=True),
-            ),
+            )
         )
     if clip_kind:
         conditions.append(ActionDefinition.clip_kind == clip_kind)
@@ -30,7 +30,7 @@ async def action_detail(db: AsyncSession, user_id: int, action_id: int) -> Actio
     row = await db.scalar(
         select(ActionDefinition)
         .options(defer(ActionDefinition.review_source_json, raiseload=True))
-        .where(ActionDefinition.user_id == user_id, ActionDefinition.id == action_id),
+        .where(ActionDefinition.user_id == user_id, ActionDefinition.id == action_id)
     )
     return definition_view(row) if row else None
 
@@ -41,7 +41,7 @@ async def action_by_preset_key(db: AsyncSession, user_id: int, preset_key: str) 
     row = await db.scalar(
         select(ActionDefinition)
         .options(defer(ActionDefinition.review_source_json, raiseload=True))
-        .where(ActionDefinition.user_id == user_id, ActionDefinition.preset_key == preset_key),
+        .where(ActionDefinition.user_id == user_id, ActionDefinition.preset_key == preset_key)
     )
     return definition_view(row) if row else None
 
@@ -84,7 +84,7 @@ async def list_actions(
             .options(defer(ActionDefinition.review_source_json, raiseload=True))
             .where(*conditions)
             .order_by(ActionDefinition.id.desc())
-            .limit(limit + 1),
+            .limit(limit + 1)
         )
     )
     return ActionListResponse(

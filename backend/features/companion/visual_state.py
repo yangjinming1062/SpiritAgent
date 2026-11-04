@@ -31,7 +31,7 @@ async def ensure_persona_snapshot(db: AsyncSession, user_id: int) -> PersonaSnap
 
 async def lock_persona_snapshot(db: AsyncSession, user_id: int) -> PersonaSnapshot:
     row = await db.scalar(
-        select(Persona).where(Persona.user_id == user_id).with_for_update().execution_options(populate_existing=True),
+        select(Persona).where(Persona.user_id == user_id).with_for_update().execution_options(populate_existing=True)
     )
     if row is None:
         raise ValueError("Persona is no longer available")
@@ -49,7 +49,7 @@ async def reset_portrait_confirmation(db: AsyncSession, user_id: int) -> None:
     await db.execute(
         update(Persona)
         .where(Persona.user_id == user_id)
-        .values(is_portrait_confirmed=False, portrait_confirmed_at=None),
+        .values(is_portrait_confirmed=False, portrait_confirmed_at=None)
     )
 
 

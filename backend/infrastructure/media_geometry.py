@@ -54,12 +54,7 @@ def can_crop_to_aspect(
     """与最终裁切使用同一边界，供供应商画幅筛选和上传预检。"""
     try:
         centered_crop_box(
-            width,
-            height,
-            target_width,
-            target_height,
-            alignment=alignment,
-            max_crop_fraction=max_crop_fraction,
+            width, height, target_width, target_height, alignment=alignment, max_crop_fraction=max_crop_fraction
         )
     except ValueError:
         return False
@@ -79,13 +74,7 @@ def resolution_fit_key(
     """按桌面内有效显示尺寸选原生档位，同等接近时优先较少像素和裁边。"""
     crop_fraction(width, height, target_width, target_height)
     aspect_width, aspect_height = output_aspect or ((width, height) if keep_aspect else (target_width, target_height))
-    left, top, right, bottom = centered_crop_box(
-        width,
-        height,
-        aspect_width,
-        aspect_height,
-        alignment=alignment,
-    )
+    left, top, right, bottom = centered_crop_box(width, height, aspect_width, aspect_height, alignment=alignment)
     effective_width, effective_height = right - left, bottom - top
     if keep_aspect:
         scale = min(target_width / aspect_width, target_height / aspect_height)

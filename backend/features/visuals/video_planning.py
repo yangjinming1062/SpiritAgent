@@ -66,11 +66,7 @@ def nearest_visual_video_resolution(
 ) -> VisualVideoResolution | None:
     ratio = Fraction(delivery_ratio.replace(":", "/"))
     choices: list[VisualVideoResolution] = []
-    for resolution in provider.available_resolutions(
-        duration=duration,
-        first_frame=first_frame,
-        last_frame=last_frame,
-    ):
+    for resolution in provider.available_resolutions(duration=duration, first_frame=first_frame, last_frame=last_frame):
         width, height = provider.resolution_size(resolution, native_ratio)
         try:
             fit = resolution_fit_key(

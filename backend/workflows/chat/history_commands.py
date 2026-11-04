@@ -23,10 +23,7 @@ logger = get_logger(__name__)
 
 @asynccontextmanager
 async def compression_context(
-    user_id: int,
-    runtime: RuntimeSession,
-    *,
-    busy_message: str = "当前会话有正在生成的回复，请稍后再试",
+    user_id: int, runtime: RuntimeSession, *, busy_message: str = "当前会话有正在生成的回复，请稍后再试"
 ) -> AsyncIterator[ConversationSnapshot]:
     _reject_read_only_session(runtime)
     async with conversation_history_lock(runtime.session_id):
@@ -36,10 +33,7 @@ async def compression_context(
 
 
 async def _do_compress_history(
-    conv: ConversationSnapshot,
-    user_id: int,
-    runtime: RuntimeSession,
-    client_context: ChatRequestClientContext | None,
+    conv: ConversationSnapshot, user_id: int, runtime: RuntimeSession, client_context: ChatRequestClientContext | None
 ) -> dict[str, Any]:
     """历史压缩与 /压缩 命令的共用实现；调用方持会话锁并已校验在途回合。compressed=False 时返回体不含 messages/summary，True 时含 delivered messages 给前端 hydrate；摘要失败抛业务错误，不当作无需压缩。"""
     try:
@@ -92,27 +86,15 @@ async def _slash_clear(ctx: SlashCommandContext) -> SlashCommandResult:
             result = await clear_history(ctx.user_id, ctx.session_id)
         except ConversationNotFoundError as exc:
             raise RequestError(404, str(exc)) from exc
-    return SlashCommandResult(
-        status="ok",
-        message="会话已清空",
-        hydrate=True,
-        payload=result,
-    )
+    return SlashCommandResult(status="ok", message="会话已清空", hydrate=True, payload=result)
 
 
 @register_slash_command(
-    name="compress",
-    aliases=("压缩", "ctx"),
-    description="压缩当前会话上下文",
-    requires_confirmation=False,
+    name="compress", aliases=("压缩", "ctx"), description="压缩当前会话上下文", requires_confirmation=False
 )
 async def _slash_compress(ctx: SlashCommandContext) -> SlashCommandResult:
     """``/压缩`` 命令 handler：复用历史压缩用例。"""
-    async with compression_context(
-        ctx.user_id,
-        ctx.runtime,
-        busy_message="请先停止当前生成再压缩会话",
-    ) as conv:
+    async with compression_context(ctx.user_id, ctx.runtime, busy_message="请先停止当前生成再压缩会话") as conv:
         try:
             result = await _do_compress_history(conv, ctx.user_id, ctx.runtime, ctx.client_context)
         except RequestError as exc:
@@ -131,9 +113,7 @@ async def _slash_remember(ctx: SlashCommandContext) -> SlashCommandResult:
     content = " ".join(ctx.args).strip()
     if not content:
         return SlashCommandResult(
-            status="ok",
-            message="请提供要记住的内容，例如：/记住 我喜欢喝无糖乌龙茶",
-            hydrate=False,
+            status="ok", message="请提供要记住的内容，例如：/记住 我喜欢喝无糖乌龙茶", hydrate=False
         )
 
     max_chars = SETTINGS.memory_recall_max_content_chars

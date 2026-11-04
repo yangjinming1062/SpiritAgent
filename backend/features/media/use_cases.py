@@ -37,17 +37,11 @@ async def serve_file(file_id: str) -> MediaFile:
 
 
 async def speech_to_text(
-    user_id: int,
-    audio_file: UploadSource | None = None,
-    language: str = "",
+    user_id: int, audio_file: UploadSource | None = None, language: str = ""
 ) -> SpeechToTextResponse:
     """走供应商链路的语音转写。"""
     if audio_file is None:
-        raise RequestError(
-            status_code=422,
-            message="Missing audio file",
-            code="missing_audio_file",
-        )
+        raise RequestError(status_code=422, message="Missing audio file", code="missing_audio_file")
     file_bytes = await read_capped_upload(
         audio_file,
         STT_MAX_AUDIO_BYTES,
@@ -73,16 +67,10 @@ async def text_to_speech(body: TtsRequest, user_id: int) -> SpeechAudio:
     voice = body.voice.strip()
     language = body.language.strip().lower()
     if not text:
-        raise RequestError(
-            status_code=400,
-            message="text is required",
-            code="missing_params",
-        )
+        raise RequestError(status_code=400, message="text is required", code="missing_params")
     if len(text) > TTS_MAX_TEXT_CHARS:
         raise RequestError(
-            status_code=413,
-            message=f"text exceeds {TTS_MAX_TEXT_CHARS} chars",
-            code="payload_too_large",
+            status_code=413, message=f"text exceeds {TTS_MAX_TEXT_CHARS} chars", code="payload_too_large"
         )
     try:
         result = await synthesize_speech(user_id, text, voice, language, task=AiTaskKey.speech_preview)

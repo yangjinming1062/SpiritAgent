@@ -88,7 +88,7 @@ async def enqueue_companion_intent(
                 CompanionIntent.cron_job_id == cron_job_id,
                 CompanionIntent.status.in_(_ACTIVE_STATUSES),
                 CompanionIntent.expires_at > now,
-            ),
+            )
         )
     ).first()
     if existing is not None:
@@ -102,7 +102,7 @@ async def enqueue_companion_intent(
             not_before_at=now,
             wake_at=now,
             expires_at=expires_at or now + timedelta(days=1),
-        ),
+        )
     )
     await db.flush()
 
@@ -128,7 +128,7 @@ async def set_companion_wait(user_id: int, request: CompanionWaitRequest, intent
             raise ValueError("This proactive turn can only defer its current follow-up: omit intent_id")
         if utc_now() + timedelta(seconds=request.after_seconds or 60) >= plan.expires_at:
             raise ValueError(
-                "The wake time must fall before the current follow-up expires: use a shorter after_seconds",
+                "The wake time must fall before the current follow-up expires: use a shorter after_seconds"
             )
         # 主动回合内只暂存计划，成功终态时与消息原子提交；取消或失败不能留下幽灵跟进。
         plan.followup = request
@@ -138,7 +138,7 @@ async def set_companion_wait(user_id: int, request: CompanionWaitRequest, intent
         row = (
             (
                 await db.execute(
-                    select(CompanionIntent).where(CompanionIntent.user_id == user_id, CompanionIntent.id == intent_id),
+                    select(CompanionIntent).where(CompanionIntent.user_id == user_id, CompanionIntent.id == intent_id)
                 )
             ).scalar_one_or_none()
             if intent_id is not None
@@ -159,7 +159,7 @@ async def set_companion_wait(user_id: int, request: CompanionWaitRequest, intent
                         CompanionIntent.user_id == user_id,
                         CompanionIntent.status.in_(_ACTIVE_STATUSES),
                         CompanionIntent.expires_at > now,
-                    ),
+                    )
                 )
             ).scalar_one()
             if count >= SETTINGS.companion_max_pending_intents:
@@ -191,7 +191,7 @@ async def cancel_companion_wait(user_id: int, intent_id: int) -> bool:
                 CompanionIntent.status.in_((*_ACTIVE_STATUSES, "failed")),
             )
             .values(status="cancelled", lease_token=None, lease_until=None)
-            .returning(CompanionIntent.id),
+            .returning(CompanionIntent.id)
         )
         cancelled = result.scalar_one_or_none() is not None
         await db.commit()
@@ -211,7 +211,7 @@ async def list_companion_intents(db: AsyncSession, user_id: int) -> list[Compani
                 ),
             )
             .order_by(CompanionIntent.status == "failed", CompanionIntent.created_at.desc(), CompanionIntent.id.desc())
-            .limit(32),
+            .limit(32)
         )
     ).scalars()
     return [CompanionIntentView.model_validate(row) for row in rows]
@@ -226,7 +226,7 @@ async def has_pending_companion_intent(db: AsyncSession, user_id: int) -> bool:
                 CompanionIntent.status.in_(_ACTIVE_STATUSES),
                 CompanionIntent.expires_at > utc_now(),
             )
-            .limit(1),
+            .limit(1)
         )
         is not None
     )
@@ -239,7 +239,7 @@ async def invalidate_cron_companion_intents(db: AsyncSession, user_id: int, job_
     await db.execute(
         update(CompanionIntent)
         .where(scope, CompanionIntent.status.in_(("waiting", "queued")))
-        .values(status="cancelled", lease_token=None, lease_until=None),
+        .values(status="cancelled", lease_token=None, lease_until=None)
     )
     await db.execute(
         update(CompanionIntent)
@@ -249,7 +249,7 @@ async def invalidate_cron_companion_intents(db: AsyncSession, user_id: int, job_
             lease_token=None,
             lease_until=None,
             last_error="Source schedule changed during execution; verify previous tool effects before rescheduling.",
-        ),
+        )
     )
 
 
@@ -262,12 +262,12 @@ async def queue_companion_intent(user_id: int, event: CompanionWakeEvent | None 
         await db.execute(
             update(CompanionIntent)
             .where(scope, CompanionIntent.status.in_(("waiting", "queued")), CompanionIntent.expires_at <= now)
-            .values(status="expired", lease_token=None, lease_until=None),
+            .values(status="expired", lease_token=None, lease_until=None)
         )
         await db.execute(
             update(CompanionIntent)
             .where(scope, CompanionIntent.status == "queued", CompanionIntent.lease_until <= now)
-            .values(status="waiting", lease_token=None, lease_until=None),
+            .values(status="waiting", lease_token=None, lease_until=None)
         )
         # 进程在工具执行中崩溃时无法确认副作用；保留失败事实供下次用户回合核对，不能盲目重放。
         await db.execute(
@@ -282,14 +282,14 @@ async def queue_companion_intent(user_id: int, event: CompanionWakeEvent | None 
                 lease_token=None,
                 lease_until=None,
                 last_error="Interrupted run; verify any previous tool effects before rescheduling.",
-            ),
+            )
         )
         await db.execute(
             delete(CompanionIntent).where(
                 scope,
                 CompanionIntent.status.not_in(_ACTIVE_STATUSES),
                 CompanionIntent.updated_at < now - _INTENT_RETENTION,
-            ),
+            )
         )
         if event is not None:
             await db.execute(
@@ -300,16 +300,16 @@ async def queue_companion_intent(user_id: int, event: CompanionWakeEvent | None 
                     CompanionIntent.wake_event == event,
                     CompanionIntent.event_received_at.is_(None),
                 )
-                .values(event_received_at=now),
+                .values(event_received_at=now)
             )
         busy = (
             await db.execute(
-                select(CompanionIntent.id).where(scope, CompanionIntent.status.in_(("queued", "running"))).limit(1),
+                select(CompanionIntent.id).where(scope, CompanionIntent.status.in_(("queued", "running"))).limit(1)
             )
         ).first() is not None
         last_attempt = (await db.execute(select(func.max(CompanionIntent.last_attempt_at)).where(scope))).scalar_one()
         cooling = last_attempt is not None and now - last_attempt < timedelta(
-            seconds=SETTINGS.companion_min_turn_interval_seconds,
+            seconds=SETTINGS.companion_min_turn_interval_seconds
         )
         if busy or cooling or not await _proactive_turn_allowed(db, user_id):
             await db.commit()
@@ -325,7 +325,7 @@ async def queue_companion_intent(user_id: int, event: CompanionWakeEvent | None 
                     or_(CompanionIntent.wake_at <= now, CompanionIntent.event_received_at.is_not(None)),
                 )
                 .order_by(CompanionIntent.not_before_at, CompanionIntent.id)
-                .limit(1),
+                .limit(1)
             )
         ).scalar_one_or_none()
         if row is None:
@@ -366,7 +366,7 @@ async def begin_companion_intent(user_id: int, request: CompanionTurnRequest) ->
                     CompanionIntent.lease_token == request.lease_token,
                     CompanionIntent.expires_at > now,
                     CompanionIntent.lease_until > now,
-                ),
+                )
             )
         ).scalar_one_or_none()
         if row is None:
@@ -406,7 +406,7 @@ async def finish_companion_intent(
                     CompanionIntent.id == request.intent_id,
                     CompanionIntent.status == "running",
                     CompanionIntent.lease_token == request.lease_token,
-                ),
+                )
             )
         ).scalar_one_or_none()
         if row is None:
@@ -438,7 +438,7 @@ async def finish_companion_intent(
                     row.failure_count = min(row.failure_count + 1, MAX_COMPANION_FAILURES)
                 row.status = "failed" if row.failure_count >= MAX_COMPANION_FAILURES else "waiting"
                 row.not_before_at = now + timedelta(
-                    seconds=60 if interrupted or context_changed else 300 * 2 ** max(0, row.failure_count - 1),
+                    seconds=60 if interrupted or context_changed else 300 * 2 ** max(0, row.failure_count - 1)
                 )
         else:
             if reply:

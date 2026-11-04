@@ -28,12 +28,7 @@ def _response(
 async def get_persona_view(db: AsyncSession, user_id: int) -> PersonaResponse:
     persona = await get_or_create_persona_row(db, user_id)
     mood = await get_life_mood(db, user_id)
-    return _response(
-        persona.is_complete,
-        load_persona_definition(persona),
-        persona.personality_tags_json,
-        mood,
-    )
+    return _response(persona.is_complete, load_persona_definition(persona), persona.personality_tags_json, mood)
 
 
 async def update_persona_view(

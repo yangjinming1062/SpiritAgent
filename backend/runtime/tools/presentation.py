@@ -10,5 +10,5 @@ VISUAL_TOOL_NAMES = frozenset(
         "visual_generate",
         "outfit_list",
         "visual_play",
-    },
+    }
 )

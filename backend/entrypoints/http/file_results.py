@@ -9,10 +9,7 @@ from starlette.types import Receive, Scope, Send
 class _CleanupFileResponse(FileResponse):
     def __init__(self, result: FileResult) -> None:
         super().__init__(
-            path=result.path,
-            media_type=result.media_type,
-            filename=result.filename,
-            headers=result.headers,
+            path=result.path, media_type=result.media_type, filename=result.filename, headers=result.headers
         )
         self._cleanup: DeferredCleanup | None = result.background
 

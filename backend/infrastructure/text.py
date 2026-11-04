@@ -14,9 +14,7 @@ logger = logging.getLogger(__name__)
 TIME_NOTE_ZH_HEAD = "（系统时间："
 TIME_NOTE_EN_HEAD = "(System time:"
 # CJK 表意文字、兼容表意、扩展 B、全角形式与 CJK 标点/部首——与西文分别计价。
-_CJK_CHARS = re.compile(
-    "[⸀-⹿⺀-⻿　-〿㇀-㇯㈀-㏿㐀-䶿一-鿿豈-﫿＀-￯ -⁯𠀀-𲎯]",
-)
+_CJK_CHARS = re.compile("[⸀-⹿⺀-⻿　-〿㇀-㇯㈀-㏿㐀-䶿一-鿿豈-﫿＀-￯ -⁯𠀀-𲎯]")
 
 
 def apply_partial(obj: Any, payload: BaseModel, /, *, exclude: set[str] | None = None) -> None:
@@ -145,7 +143,7 @@ def format_day_marker(dt: datetime | None, tz_str: str | None, lang: str = "zh")
 def is_time_context_text(text: str) -> bool:
     text = text.lstrip()
     return (text.startswith("--- ") and text.endswith(" ---")) or text.startswith(
-        (TIME_NOTE_ZH_HEAD, TIME_NOTE_EN_HEAD),
+        (TIME_NOTE_ZH_HEAD, TIME_NOTE_EN_HEAD)
     )
 
 
@@ -171,10 +169,7 @@ def format_elapsed_duration(delta_seconds: float, lang: str = "zh") -> str:
 
 
 def format_time_anchor(
-    dt: datetime | None,
-    prev_dt: datetime | None,
-    tz_str: str | None,
-    lang: str = "zh",
+    dt: datetime | None, prev_dt: datetime | None, tz_str: str | None, lang: str = "zh"
 ) -> str | None:
     localized = _safe_localize(dt, tz_str)
     if localized is None:

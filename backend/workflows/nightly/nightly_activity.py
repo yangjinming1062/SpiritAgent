@@ -152,11 +152,7 @@ async def _stage_4_reflection(
 
 
 async def _update_log(
-    log_id: int,
-    *,
-    status: str,
-    summary: str | None = None,
-    payload: dict[str, Any] | None = None,
+    log_id: int, *, status: str, summary: str | None = None, payload: dict[str, Any] | None = None
 ) -> None:
     """在独立事务中更新夜间活动日志行；各阶段在各自事务里跑，不复用流水线开头的 session。payload 合并进已有内容（保留计划快照）。"""
     async with session_scope() as db:
@@ -200,17 +196,12 @@ async def run_nightly_pipeline(scope: MemoryScope, target_date: date) -> bool:
             log = (
                 await db.execute(
                     select(NightlyActivityLog).where(
-                        NightlyActivityLog.user_id == user_id,
-                        NightlyActivityLog.target_date == target_date,
-                    ),
+                        NightlyActivityLog.user_id == user_id, NightlyActivityLog.target_date == target_date
+                    )
                 )
             ).scalar_one_or_none()
             if log is None:
-                log = NightlyActivityLog(
-                    user_id=user_id,
-                    target_date=target_date,
-                    status="running",
-                )
+                log = NightlyActivityLog(user_id=user_id, target_date=target_date, status="running")
                 db.add(log)
             elif log.status in ("completed", "completed_with_errors"):
                 logger.info(
@@ -224,10 +215,7 @@ async def run_nightly_pipeline(scope: MemoryScope, target_date: date) -> bool:
             await db.commit()
             log_id = log.id
     except SQLAlchemyError as exc:
-        logger.warning(
-            "nightly_activity: failed to create log row",
-            extra={"user_id": user_id, "error": str(exc)},
-        )
+        logger.warning("nightly_activity: failed to create log row", extra={"user_id": user_id, "error": str(exc)})
         return False
 
     try:
@@ -255,10 +243,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
     try:
         utc_start, utc_end = _local_day_utc_bounds(target_date, tz_str)
     except (ZoneInfoNotFoundError, ValueError) as exc:
-        logger.warning(
-            "nightly_activity: timezone resolution error",
-            extra={"user_id": user_id, "error": str(exc)},
-        )
+        logger.warning("nightly_activity: timezone resolution error", extra={"user_id": user_id, "error": str(exc)})
         await _update_log(log_id, status="skipped", summary=f"时区解析错误: {exc}")
         return False
     # 各阶段顺序执行，失败域相互隔离；每个阶段的结果汇入 stages 给末尾日志。
@@ -292,19 +277,10 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         today_messages = await nightly_messages(db, user_id, scope.system_preset_id, utc_start, utc_end)
         user_language = resolve_language(await get_user_setting(db, user_id, "language"))
         posts = await collect_post_interactions(
-            db,
-            user_id,
-            local_date=target_date,
-            user_timezone=tz_str,
-            utc_start=utc_start,
-            utc_end=utc_end,
+            db, user_id, local_date=target_date, user_timezone=tz_str, utc_start=utc_start, utc_end=utc_end
         )
         past_7_count = await nightly_user_message_count(
-            db,
-            user_id,
-            scope.system_preset_id,
-            utc_start - timedelta(days=7),
-            utc_start,
+            db, user_id, scope.system_preset_id, utc_start - timedelta(days=7), utc_start
         )
         # 维护完成后读取有效事实，规划与日记不使用维护前的过期快照。
         recall_rows = await list_memories(db, scope, kind="recall", limit=None)
@@ -324,10 +300,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         next_7_days=[(target_date + timedelta(days=i)).strftime("%Y-%m-%d (%A)") for i in range(1, 8)],
         user_timezone=tz_str,
     )
-    anomaly_stats = {
-        "today_msg_count": today_msg_count,
-        "seven_day_avg": round(past_7_count / 7.0, 2),
-    }
+    anomaly_stats = {"today_msg_count": today_msg_count, "seven_day_avg": round(past_7_count / 7.0, 2)}
     contextual_memories = {
         str(r.id): format_memory_record(r.content, r.basis, r.context, language=user_language)
         for r in recall_rows
@@ -369,8 +342,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
             stages.append({"stage": "topic discovery", "status": "skipped", "reason": str(exc)})
         except Exception as exc:
             logger.exception(
-                "nightly_activity: topic discovery failed",
-                extra={"user_id": user_id, "error_type": type(exc).__name__},
+                "nightly_activity: topic discovery failed", extra={"user_id": user_id, "error_type": type(exc).__name__}
             )
             stages.append({"stage": "topic discovery", "status": "error", "error": type(exc).__name__})
     else:
@@ -398,10 +370,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         except NightlyWindowClosedError as exc:
             stages.append({"stage": "planning", "status": "skipped", "reason": str(exc)})
         except Exception as exc:
-            logger.exception(
-                "nightly_activity: stage 3 planning failed",
-                extra={"user_id": user_id, "error": str(exc)},
-            )
+            logger.exception("nightly_activity: stage 3 planning failed", extra={"user_id": user_id, "error": str(exc)})
             stages.append({"stage": "planning", "status": "error", "error": str(exc)})
             # 规划阶段中途失败时，账本里已落终态的动作仍是真实发生的事。
             try:
@@ -416,21 +385,13 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
     # 刷新本轮新发布的动态，并在下面排除重复的动作事实。
     async with session_scope() as db:
         posts = await collect_post_interactions(
-            db,
-            user_id,
-            local_date=target_date,
-            user_timezone=tz_str,
-            utc_start=utc_start,
-            utc_end=utc_end,
+            db, user_id, local_date=target_date, user_timezone=tz_str, utc_start=utc_start, utc_end=utc_end
         )
     action_facts = _successful_action_facts(action_results)
     try:
         await record_nightly_actions(user_id, local_date_str, action_facts)
     except Exception as exc:
-        logger.exception(
-            "nightly_activity: life event recording failed",
-            extra={"user_id": user_id, "error": str(exc)},
-        )
+        logger.exception("nightly_activity: life event recording failed", extra={"user_id": user_id, "error": str(exc)})
         stages.append({"stage": "life events", "status": "error", "error": str(exc)})
 
     # 没有可读的用户发言、成功行动或动态互动时不虚构日记；反思与用户可见日记共用这一门控。
@@ -458,8 +419,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
             stages.append({"stage": "reflection", "status": "skipped", "reason": str(exc)})
         except Exception as exc:
             logger.exception(
-                "nightly_activity: companion reflection failed",
-                extra={"user_id": user_id, "error": str(exc)},
+                "nightly_activity: companion reflection failed", extra={"user_id": user_id, "error": str(exc)}
             )
             stages.append({"stage": "reflection", "status": "error", "error": str(exc)})
     else:

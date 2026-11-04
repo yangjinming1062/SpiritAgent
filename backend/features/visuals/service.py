@@ -107,9 +107,7 @@ def _with_feedback(snapshot: VisualSnapshot, feedback: str, video_feedback: str)
 
     source = snapshot.source
     return snapshot.model_copy(
-        update={
-            "source": source.model_copy(update={"feedback": feedback, "video_feedback": video_feedback}),
-        },
+        update={"source": source.model_copy(update={"feedback": feedback, "video_feedback": video_feedback})}
     )
 
 
@@ -285,7 +283,7 @@ async def create_visual_job(
                 VisualJob.purpose == "create",
                 VisualJob.state.in_(("queued", "running", "paused", "unknown")),
                 VisualJob.target_kind == target_kind,
-            ),
+            )
         )
         for existing in pending:
             if visual_snapshot_hash(visual_snapshot(existing)) == combo_hash:
@@ -378,7 +376,7 @@ async def regenerate_visual(
                 VisualJob.state.in_(("queued", "running", "paused", "unknown")),
             )
             .order_by(VisualJob.id.desc())
-            .limit(1),
+            .limit(1)
         )
         if pending is not None:
             return await job_view(db, pending)
@@ -431,11 +429,7 @@ def _play_origin(source: PlaybackSource) -> str:
 
 
 async def _life_context_is_current(
-    db: AsyncSession,
-    user_id: int,
-    state: VisualPresentation,
-    life_revision: int | None,
-    life_activity_type: str | None,
+    db: AsyncSession, user_id: int, state: VisualPresentation, life_revision: int | None, life_activity_type: str | None
 ) -> bool:
     """生活驱动画面只能在其冻结的意图仍是当前意图时恢复或开播。"""
 
@@ -593,11 +587,7 @@ async def claim_playback(user_id: int, play_id: str, *, client_id: str) -> bool:
         blocked = None
         if not stale and item is not None and play.source == "autonomous":
             blocked = await visual_autonomous_block_reason(
-                db,
-                state,
-                item,
-                snapshot=visual_snapshot(item),
-                excluded_play_id=play.play_id,
+                db, state, item, snapshot=visual_snapshot(item), excluded_play_id=play.play_id
             )
         if stale or blocked is not None:
             play.status = "expired"
@@ -637,8 +627,7 @@ async def restore_presentation(user_id: int) -> VisualPlayCommand | None:
                 )
                 pending_play = await db.scalar(
                     select(VisualPlayback).where(
-                        VisualPlayback.user_id == user_id,
-                        VisualPlayback.play_id == pending.play_id,
+                        VisualPlayback.user_id == user_id, VisualPlayback.play_id == pending.play_id
                     )
                 )
                 if not pending_is_life or (
@@ -656,11 +645,7 @@ async def restore_presentation(user_id: int) -> VisualPlayCommand | None:
             composition is not None
             and composition.selection_source == "life"
             and not await _life_context_is_current(
-                db,
-                user_id,
-                state,
-                composition.life_revision,
-                composition.life_activity_type,
+                db, user_id, state, composition.life_revision, composition.life_activity_type
             )
         ):
             # 已结束的生活整片不能作为恢复目标；清掉失效指针后由客户端按当前目录
@@ -781,7 +766,7 @@ async def record_playback(
             if receipt_kind not in expected_kinds:
                 raise VisualStateError("播放回执与当前呈现方式不一致")
             frozen = PresentedVisual.model_validate(play.snapshot_json).model_copy(
-                update={"receipt_kind": receipt_kind, "presentation_epoch": play.presentation_epoch},
+                update={"receipt_kind": receipt_kind, "presentation_epoch": play.presentation_epoch}
             )
             snapshot = visual_snapshot(frozen)
             source = snapshot.source

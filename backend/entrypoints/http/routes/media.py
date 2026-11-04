@@ -37,9 +37,7 @@ router = get_router()
 )
 @limiter.limit(lambda: f"{SETTINGS.media_stt_rate_limit_per_minute}/minute")
 async def upload_voice_reference(
-    request: Request,
-    user: CurrentUser,
-    file: UploadFile = File(...),
+    request: Request, user: CurrentUser, file: UploadFile = File(...)
 ) -> VoiceSampleResponse:
     return await upload_voice_sample(user.id, file)
 
@@ -71,11 +69,7 @@ async def serve_session_audio(session_id: str, file_id: str, db: DbSession, user
 )
 @limiter.limit(lambda: f"{SETTINGS.media_stt_rate_limit_per_minute}/minute")
 async def upload_chat_audio(
-    request: Request,
-    db: DbSession,
-    user: CurrentUser,
-    file: UploadFile = File(...),
-    session_id: str = Form(...),
+    request: Request, db: DbSession, user: CurrentUser, file: UploadFile = File(...), session_id: str = Form(...)
 ) -> ChatAudioUploadResponse:
     return await _uploads.upload_chat_audio(db=db, user_id=user.id, file=file, session_id=session_id)
 
@@ -87,11 +81,7 @@ async def upload_chat_audio(
 )
 @limiter.limit(lambda: f"{SETTINGS.media_video_rate_limit_per_minute}/minute")
 async def upload_chat_video(
-    request: Request,
-    db: DbSession,
-    user: CurrentUser,
-    file: UploadFile | None = File(None),
-    session_id: str = Form(""),
+    request: Request, db: DbSession, user: CurrentUser, file: UploadFile | None = File(None), session_id: str = Form("")
 ) -> ChatVideoUploadResponse:
     """聊天视频附件上传：落会话目录（滚动配额）并返回附件 URL（本地相对 / 公网绝对）。"""
     return await _uploads.upload_chat_video(db=db, user_id=user.id, file=file, session_id=session_id)
@@ -104,10 +94,7 @@ async def upload_chat_video(
 )
 @limiter.limit(lambda: f"{SETTINGS.media_stt_rate_limit_per_minute}/minute")
 async def speech_to_text(
-    request: Request,
-    user: CurrentUser,
-    audio_file: UploadFile | None = File(None),
-    language: str = "",
+    request: Request, user: CurrentUser, audio_file: UploadFile | None = File(None), language: str = ""
 ) -> SpeechToTextResponse:
     """走供应商链路的语音转写。"""
     try:
@@ -125,9 +112,7 @@ async def text_to_speech(request: Request, body: TtsRequest, user: CurrentUser) 
     try:
         result = await _media.text_to_speech(body=body, user_id=user.id)
         return StreamingResponse(
-            iter([result.audio]),
-            media_type=result.mime,
-            headers={"X-Voice-Used": quote(result.voice, safe="")},
+            iter([result.audio]), media_type=result.mime, headers={"X-Voice-Used": quote(result.voice, safe="")}
         )
     except MissingLlmConfigError:
         raise missing_config_error("语音合成服务")

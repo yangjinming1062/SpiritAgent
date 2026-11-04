@@ -14,13 +14,7 @@ from workflows.chat.prompts import (
 )
 
 COMPANION_MEDIA_TOOL_NAMES = frozenset(
-    {
-        "image_generate",
-        "media_inspect",
-        "image_regenerate",
-        "video_generate",
-        "video_generate_status",
-    },
+    {"image_generate", "media_inspect", "image_regenerate", "video_generate", "video_generate_status"}
 )
 
 # 生活空间工具只服务陪伴会话：其余预设与自动化任务由回合装配、search_tools 与派发层共用同一排除集合，不注入 schema 也不派发。
@@ -35,18 +29,10 @@ LIFE_SPACE_TOOL_NAMES = VISUAL_TOOL_NAMES | frozenset(
         "scene_list",
         "scene_get",
         "scene_create",
-    },
+    }
 )
 AUTOMATION_EXCLUDED_TOOL_NAMES = LIFE_SPACE_TOOL_NAMES | frozenset(
-    {
-        "memory_inspect",
-        "memory_recall",
-        "memory_retain",
-        "cronjob",
-        "skills_list",
-        "skill_view",
-        "skill_manage",
-    },
+    {"memory_inspect", "memory_recall", "memory_retain", "cronjob", "skills_list", "skill_view", "skill_manage"}
 )
 
 

@@ -64,8 +64,7 @@ class JsonRpcDispatcher:
         self._outbox_event_ids: dict[int, int] = {}
         self._queued_sequences: set[int] = set()
         self._pending_outbox_events: dict[
-            int,
-            int,
+            int, int
         ] = {}  # seq → outbox 事件 ID：任一发送路径送达时回收为 delivered 记账
 
     def set_sender(self, send: Sender | None) -> None:
@@ -225,11 +224,7 @@ class JsonRpcDispatcher:
         await self._reply_result(msg_id, result)
 
     async def enqueue_event(
-        self,
-        event_type: str,
-        payload: Any = None,
-        session_id: str | None = None,
-        event_id: int | None = None,
+        self, event_type: str, payload: Any = None, session_id: str | None = None, event_id: int | None = None
     ) -> bool:
         """新事件入缓冲后交给 writer；重投复用原帧，排队失败返回 False。"""
         buffered = None
@@ -341,10 +336,7 @@ class JsonRpcDispatcher:
 
     async def _reply_error(self, msg_id: Any, code: int, message: str, *, details: JsonValue = None) -> None:
         public = api_error(
-            400 if code != JSONRPC_INTERNAL_ERROR else 500,
-            message,
-            code=f"rpc_{abs(code)}",
-            details=details,
+            400 if code != JSONRPC_INTERNAL_ERROR else 500, message, code=f"rpc_{abs(code)}", details=details
         )
         error = {"code": code, "message": public.message, "data": public.model_dump(mode="json")}
         async with self._send_lock:

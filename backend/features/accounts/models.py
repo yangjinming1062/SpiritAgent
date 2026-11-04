@@ -2,16 +2,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from infrastructure.models import ModelBase, TimestampMixin
-from sqlalchemy import (
-    Boolean,
-    DateTime,
-    ForeignKey,
-    String,
-    Text,
-    UniqueConstraint,
-    func,
-    text,
-)
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 if TYPE_CHECKING:
@@ -35,9 +26,7 @@ class User(ModelBase, TimestampMixin):
 
     login_records: Mapped[list["LoginRecord"]] = relationship(back_populates="user", passive_deletes=True)
     model_config: Mapped["UserModelConfig | None"] = relationship(
-        back_populates="user",
-        uselist=False,
-        passive_deletes=True,
+        back_populates="user", uselist=False, passive_deletes=True
     )
     persona: Mapped["Persona | None"] = relationship(back_populates="user", uselist=False, passive_deletes=True)
     avatar_assets: Mapped[list["AvatarAsset"]] = relationship(back_populates="user", passive_deletes=True)

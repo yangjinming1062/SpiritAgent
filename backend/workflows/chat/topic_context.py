@@ -65,6 +65,6 @@ async def load_topic_context(
                 "conversation_angle": topic.conversation_angle,
                 "already_used": topic.is_used,
                 "feedback": topic.feedback,
-            },
+            }
         )
     return json.dumps({"external_topics": material}, ensure_ascii=False) if material else "", cards

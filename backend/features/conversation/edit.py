@@ -23,11 +23,7 @@ class EditNotAllowedError(ValueError):
 
 
 async def replace_user_message(
-    db: AsyncSession,
-    user_id: int,
-    session_id: str,
-    source_message_id: int,
-    text: str,
+    db: AsyncSession, user_id: int, session_id: str, source_message_id: int, text: str
 ) -> Message:
     """调用方持有会话锁且确认没有在途回合；本函数提交替换并返回新用户行。"""
     if not text.strip():
@@ -46,30 +42,16 @@ async def replace_user_message(
         if not isinstance(parts, list) or any(not isinstance(part, dict) for part in parts):
             raise EditNotAllowedError("原消息附件格式无效，无法编辑")
         content = json.dumps(
-            [
-                {"type": "input_text", "text": content},
-                *(part for part in parts if part.get("type") != "input_text"),
-            ],
+            [{"type": "input_text", "text": content}, *(part for part in parts if part.get("type") != "input_text")],
             ensure_ascii=False,
         )
 
     replacement = Message(
-        user_id=user_id,
-        conversation_id=conv.id,
-        role="user",
-        content=content,
-        content_type=source.content_type,
+        user_id=user_id, conversation_id=conv.id, role="user", content=content, content_type=source.content_type
     )
     async with user_asset_lock(user_id):
-        removed = await collect_message_asset_releases(
-            db,
-            user_id,
-            [conv.id],
-            from_message_id=source_message_id,
-        )
-        await db.execute(
-            delete(Message).where(Message.conversation_id == conv.id, Message.id >= source_message_id),
-        )
+        removed = await collect_message_asset_releases(db, user_id, [conv.id], from_message_id=source_message_id)
+        await db.execute(delete(Message).where(Message.conversation_id == conv.id, Message.id >= source_message_id))
         db.add(replacement)
         await commit_conversation(db)
     await cancel_reply_audio(user_id, removed)

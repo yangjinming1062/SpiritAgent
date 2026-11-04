@@ -138,7 +138,7 @@ async def last_submission(user_id: int, conversation_id: int) -> LastSubmissionS
             select(PromptSubmission)
             .where(PromptSubmission.user_id == user_id, PromptSubmission.conversation_id == conversation_id)
             .order_by(PromptSubmission.id.desc())
-            .limit(1),
+            .limit(1)
         )
         if row is None:
             return None
@@ -151,13 +151,7 @@ async def last_submission(user_id: int, conversation_id: int) -> LastSubmissionS
             except ReplyRetryNotAllowedError:
                 pass
         return LastSubmissionSnapshot(
-            row.request_id,
-            row.status,
-            row.error,
-            ids,
-            retry_id,
-            row.replace_reply_message_id,
-            row.result_message_id,
+            row.request_id, row.status, row.error, ids, retry_id, row.replace_reply_message_id, row.result_message_id
         )
 
 
@@ -172,11 +166,7 @@ async def replacement_reply_input(user_id: int, session_id: str, message_id: int
 
 
 async def edit_message_input(
-    user_id: int,
-    session_id: str,
-    conversation_id: int,
-    message_id: int,
-    text: str,
+    user_id: int, session_id: str, conversation_id: int, message_id: int, text: str
 ) -> tuple[int, list[dict[str, Any]]]:
     async with SESSION_LOCAL() as db:
         replacement = await replace_user_message(db, user_id, session_id, message_id, text)
@@ -218,11 +208,7 @@ async def _discard_forked_conversation(db: AsyncSession, conv_id: int) -> None:
 
 async def _clear_history_in_session(db: AsyncSession, conv: Conversation) -> dict[str, Any]:
     """清空所有角色的消息并通知列表刷新，保留会话；cleared_count 为真实删除行数。"""
-    total = (
-        await db.execute(
-            select(func.count(Message.id)).where(Message.conversation_id == conv.id),
-        )
-    ).scalar_one()
+    total = (await db.execute(select(func.count(Message.id)).where(Message.conversation_id == conv.id))).scalar_one()
 
     # 临时上传视频的独立提交先完成，不能提前提交正式资源回收登记。
     await prune_media_in_range(db, conv.id)
@@ -230,29 +216,18 @@ async def _clear_history_in_session(db: AsyncSession, conv: Conversation) -> dic
     async with user_asset_lock(conv.user_id):
         removed = await collect_message_asset_releases(db, conv.user_id, [conv.id])
         await db.execute(delete(Message).where(Message.conversation_id == conv.id))
-        emit_ws_event(
-            db,
-            user_id=conv.user_id,
-            event_type="session.list_changed",
-            payload={"session_id": str(conv.id)},
-        )
+        emit_ws_event(db, user_id=conv.user_id, event_type="session.list_changed", payload={"session_id": str(conv.id)})
         await db.commit()
     await cancel_reply_audio(conv.user_id, removed)
     await cleanup_user_media(conv.user_id)
 
     delivered = await build_session_messages(conv.id, db)
-    return {
-        "session_id": str(conv.id),
-        "cleared_count": total,
-        "messages": delivered,
-    }
+    return {"session_id": str(conv.id), "cleared_count": total, "messages": delivered}
 
 
 async def _fetch_truncated_history(conv_id: int, db: AsyncSession) -> tuple[list[dict[str, Any]], bool, str | None]:
     head = await build_session_messages(
-        conv_id,
-        db,
-        latest=SESSION_HISTORY_TRUNCATE_THRESHOLD + SESSION_HISTORY_PRE_BUFFER,
+        conv_id, db, latest=SESSION_HISTORY_TRUNCATE_THRESHOLD + SESSION_HISTORY_PRE_BUFFER
     )
     truncated = len(head) > SESSION_HISTORY_TRUNCATE_THRESHOLD
     delivered = head[-SESSION_HISTORY_TRUNCATE_THRESHOLD:] if truncated else head

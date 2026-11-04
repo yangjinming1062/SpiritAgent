@@ -95,9 +95,4 @@ def raise_for_provider_response(resp: httpx.Response, *, family: str) -> dict:
         msg = f"{family} HTTP {resp.status_code}: {body}"
     else:
         return body
-    raise ProviderError(
-        msg,
-        status_code=resp.status_code,
-        body=body,
-        retry_after_seconds=response_retry_after(resp),
-    )
+    raise ProviderError(msg, status_code=resp.status_code, body=body, retry_after_seconds=response_retry_after(resp))

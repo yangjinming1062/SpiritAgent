@@ -5,13 +5,7 @@ from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 MemoryCategory = Literal[
-    "user_preference",
-    "likes",
-    "dislikes",
-    "key_constraints",
-    "other",
-    "tool_quirk",
-    "environment",
+    "user_preference", "likes", "dislikes", "key_constraints", "other", "tool_quirk", "environment"
 ]
 
 

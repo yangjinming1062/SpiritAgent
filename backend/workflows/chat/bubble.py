@@ -7,11 +7,11 @@ from dataclasses import dataclass
 _SEPARATORS: tuple[str, ...] = ("\n\n---\n\n", "\n---\n")
 # 各分隔符的全部真前缀（降序），用于在跨 chunk 切分时暂留尾部，防止分隔符被当成文本输出。
 _PARTIAL_PREFIXES: tuple[str, ...] = tuple(
-    sorted({sep[:i] for sep in _SEPARATORS for i in range(1, len(sep))}, key=len, reverse=True),
+    sorted({sep[:i] for sep in _SEPARATORS for i in range(1, len(sep))}, key=len, reverse=True)
 )
 # 流结束时需要丢弃的含连字符的前缀（不完整分隔符）。
 _INCOMPLETE_DASH_PREFIXES: tuple[str, ...] = tuple(
-    sorted({p for p in _PARTIAL_PREFIXES if "-" in p}, key=len, reverse=True),
+    sorted({p for p in _PARTIAL_PREFIXES if "-" in p}, key=len, reverse=True)
 )
 _LEADING_SEPARATORS: tuple[str, ...] = ("---\r\n\r\n", "---\n\n", "---\r\n", "---\n")
 _FENCE_LINE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")

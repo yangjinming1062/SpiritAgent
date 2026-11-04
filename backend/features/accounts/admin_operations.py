@@ -40,7 +40,7 @@ async def create_user(payload: UserCreate, db: AsyncSession) -> UserResponse:
             nightly_activity_enabled=payload.nightly_activity_enabled,
         )
         .on_conflict_do_nothing(index_elements=[User.username])
-        .returning(User),
+        .returning(User)
     )
     if user is None:
         raise RequestError(status_code=status.HTTP_400_BAD_REQUEST, message="用户名已存在。")

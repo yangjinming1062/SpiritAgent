@@ -159,10 +159,7 @@ class ChatProvider(BaseProvider):
         return {"effort": effort} if effort else None
 
     def structured_response_client(
-        self,
-        *,
-        repair: bool,
-        before_submit: Callable[[], Awaitable[None]] | None = None,
+        self, *, repair: bool, before_submit: Callable[[], Awaitable[None]] | None = None
     ) -> AsyncOpenAI | ChatSchemaResponsesClient:
         if repair:
             return ChatSchemaResponsesClient(
@@ -173,12 +170,7 @@ class ChatProvider(BaseProvider):
         return self.raw_client()
 
     async def structured_response_options(
-        self,
-        schema: dict,
-        *,
-        name: str,
-        allow_tools: bool,
-        repair: bool = False,
+        self, schema: dict, *, name: str, allow_tools: bool, repair: bool = False
     ) -> dict:
         """供应商实际支持的结构输出参数；schema 仍由应用层统一校验。"""
         if repair:
@@ -189,8 +181,8 @@ class ChatProvider(BaseProvider):
                         "name": name,
                         "strict": True,
                         "schema": {**schema, "type": "object"},
-                    },
-                },
+                    }
+                }
             }
         return {"text": {"format": {"type": "json_object"}}} if self.supports_json_object and not allow_tools else {}
 
@@ -344,10 +336,7 @@ class VideoGenProvider(BaseProvider):
 
     @staticmethod
     def _nominal_resolution_size(
-        short_edge: int,
-        aspect_ratio: str,
-        *,
-        max_pixels: int | None = None,
+        short_edge: int, aspect_ratio: str, *, max_pixels: int | None = None
     ) -> tuple[int, int]:
         width, height = (float(value) for value in aspect_ratio.split(":"))
         if not all(math.isfinite(value) and value > 0 for value in (width, height)):
@@ -435,23 +424,14 @@ class TTSProvider(BaseProvider):
         raise NotImplementedError(f"{self.provider_name} does not support voice design")
 
     async def synthesize_designed(
-        self,
-        text: str,
-        *,
-        prompt: str,
-        voice: str,
-        speech_style: SpeechStyle | None,
+        self, text: str, *, prompt: str, voice: str, speech_style: SpeechStyle | None
     ) -> TTSResult:
         if not voice:
             raise ValueError("Designed voice requires its registered voice ID")
         return await self.synthesize(text, voice=voice, speech_style=speech_style)
 
     async def synthesize_with_reference(
-        self,
-        text: str,
-        *,
-        reference_audio: VoiceReferenceAudio,
-        speech_style: SpeechStyle | None,
+        self, text: str, *, reference_audio: VoiceReferenceAudio, speech_style: SpeechStyle | None
     ) -> TTSResult:
         raise NotImplementedError(f"{self.provider_name} does not support voice cloning")
 

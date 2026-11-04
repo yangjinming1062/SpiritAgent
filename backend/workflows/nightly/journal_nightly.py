@@ -62,10 +62,7 @@ async def project_today(
             life_context_payload = (await read_life_context_in_session(db, user_id)).prompt_payload()
             reflection = await load_companion_reflection(db, MemoryScope(user_id, "companion"))
             if reflection is not None:
-                previous_reflection = {
-                    "local_date": reflection.local_date,
-                    "content": reflection.content,
-                }
+                previous_reflection = {"local_date": reflection.local_date, "content": reflection.content}
     if result is not None:
         if result:
             schedule_diary_embeddings(user_id)
@@ -95,11 +92,7 @@ async def project_today(
                 db, user_id, entry_date=target_date, content=composed, post_ids=posts.posted_ids
             )
             await record_diary_published(
-                db,
-                user_id,
-                entry_date=target_date.isoformat(),
-                title=diary.title,
-                diary_id=diary.id,
+                db, user_id, entry_date=target_date.isoformat(), title=diary.title, diary_id=diary.id
             )
         await save_narrative_result(db, log_id, "journal", composed is not False)
         await db.commit()
@@ -154,12 +147,7 @@ async def _compose_diary(
         if diary is False:
             return False
         review = await review_narrative(
-            llm_cfg,
-            payload,
-            diary.model_dump(),
-            language,
-            before_call=before_call,
-            diagnostics=diagnostics,
+            llm_cfg, payload, diary.model_dump(), language, before_call=before_call, diagnostics=diagnostics
         )
         if not review.issues:
             return diary

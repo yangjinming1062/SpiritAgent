@@ -26,13 +26,7 @@ from .models import (
     PursuitEvidence,
 )
 from .queries import result_reference
-from .schemas import (
-    EVIDENCE_EVENT_KINDS,
-    UNRESOLVED_STEP_STATES,
-    FactType,
-    LifeDecisionRequest,
-    LifeEventInput,
-)
+from .schemas import EVIDENCE_EVENT_KINDS, UNRESOLVED_STEP_STATES, FactType, LifeDecisionRequest, LifeEventInput
 from .search import index_life_events
 
 
@@ -65,9 +59,7 @@ async def _index_events(db: AsyncSession, user_id: int, events: Sequence[LifeEve
                 await index_life_events(db, user_id, [event])
         except Exception:
             logger.warning(
-                "life search event indexing failed",
-                extra={"user_id": user_id, "event_id": event.id},
-                exc_info=True,
+                "life search event indexing failed", extra={"user_id": user_id, "event_id": event.id}, exc_info=True
             )
 
 
@@ -133,10 +125,7 @@ async def get_or_create_state(db: AsyncSession, user_id: int, *, lock: bool = Fa
         statement = (
             insert(LifeState)
             .values(user_id=user_id)
-            .on_conflict_do_update(
-                index_elements=["user_id"],
-                set_={"user_id": user_id},
-            )
+            .on_conflict_do_update(index_elements=["user_id"], set_={"user_id": user_id})
             .returning(LifeState)
         )
         row = (await db.scalars(statement.execution_options(populate_existing=True))).one()
@@ -238,10 +227,7 @@ async def ensure_pursuit(
     key = idempotency_key.strip() if idempotency_key else None
     if key:
         existing = await db.scalar(
-            select(LifePursuit).where(
-                LifePursuit.user_id == user_id,
-                LifePursuit.idempotency_key == key,
-            ),
+            select(LifePursuit).where(LifePursuit.user_id == user_id, LifePursuit.idempotency_key == key)
         )
         if existing is not None:
             return existing
@@ -263,7 +249,7 @@ async def ensure_pursuit(
         if not key:
             raise
         existing = await db.scalar(
-            select(LifePursuit).where(LifePursuit.user_id == user_id, LifePursuit.idempotency_key == key),
+            select(LifePursuit).where(LifePursuit.user_id == user_id, LifePursuit.idempotency_key == key)
         )
         if existing is not None:
             return existing
@@ -275,10 +261,7 @@ async def ensure_pursuit(
 
 
 async def _evidence_events(
-    db: AsyncSession,
-    user_id: int,
-    pursuit: LifePursuit,
-    event_ids: set[int],
+    db: AsyncSession, user_id: int, pursuit: LifePursuit, event_ids: set[int]
 ) -> list[LifeEvent]:
     if not event_ids:
         return []
@@ -338,10 +321,7 @@ async def advance_pursuit(db: AsyncSession, user_id: int, decision: LifeDecision
     state = await get_or_create_state(db, user_id, lock=True)
     pursuit = await db.scalar(
         select(LifePursuit)
-        .where(
-            LifePursuit.user_id == user_id,
-            LifePursuit.id == decision.pursuit_id,
-        )
+        .where(LifePursuit.user_id == user_id, LifePursuit.id == decision.pursuit_id)
         .with_for_update()
     )
     if pursuit is None:
@@ -435,9 +415,7 @@ async def create_step(
         pursuit_id is not None
         and await db.scalar(
             select(LifePursuit.id).where(
-                LifePursuit.user_id == user_id,
-                LifePursuit.id == pursuit_id,
-                LifePursuit.status == "active",
+                LifePursuit.user_id == user_id, LifePursuit.id == pursuit_id, LifePursuit.status == "active"
             )
         )
         is None
@@ -457,7 +435,7 @@ async def create_step(
             await db.flush()
     except IntegrityError:
         existing = await db.scalar(
-            select(LifeStep).where(LifeStep.user_id == user_id, LifeStep.idempotency_key == idempotency_key),
+            select(LifeStep).where(LifeStep.user_id == user_id, LifeStep.idempotency_key == idempotency_key)
         )
         if existing is not None:
             return existing
@@ -564,12 +542,7 @@ async def record_event(db: AsyncSession, user_id: int, event: LifeEventInput) ->
 
 
 async def start_step(
-    db: AsyncSession,
-    user_id: int,
-    step_id: int,
-    *,
-    business_ref: dict | None = None,
-    restart: bool = False,
+    db: AsyncSession, user_id: int, step_id: int, *, business_ref: dict | None = None, restart: bool = False
 ) -> LifeStep:
     life_state = await get_or_create_state(db, user_id, lock=True)
     row = await db.get(LifeStep, step_id)

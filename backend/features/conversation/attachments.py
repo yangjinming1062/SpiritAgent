@@ -183,7 +183,7 @@ def _rewrite_parts(parts: list, file_ids: set[str], *, session_id: str) -> tuple
                         "type": "input_text",
                         "text": part.get("transcript")
                         or (AUDIO_PRUNED_TEXT if part["type"] == "input_audio" else VIDEO_PRUNED_TEXT),
-                    },
+                    }
                 )
                 changed = True
                 continue
@@ -286,7 +286,7 @@ async def enforce_session_quota(db: AsyncSession, session_id: str, incoming_byte
     # populate_existing 固化列级查询恒取 DB 新值的改写基准。
     messages = (
         await db.scalars(
-            select(Message).where(*_media_messages(int(session_id))).execution_options(populate_existing=True),
+            select(Message).where(*_media_messages(int(session_id))).execution_options(populate_existing=True)
         )
     ).all()
     parsed = _parse_message_parts(messages)
@@ -305,13 +305,7 @@ async def enforce_session_quota(db: AsyncSession, session_id: str, incoming_byte
     )
 
 
-async def prune_media_in_range(
-    db: AsyncSession,
-    conversation_id: int,
-    *,
-    lo: int = 0,
-    hi: int | None = None,
-) -> None:
+async def prune_media_in_range(db: AsyncSession, conversation_id: int, *, lo: int = 0, hi: int | None = None) -> None:
     """清理 ``[lo, hi)`` 区间用户行引用的音视频文件并改写 part。摘要按实际覆盖范围清理，历史撤回按删除范围清理；区间外仍有引用的文件保留，区间内引用改写为占位。有文件要删时先提交当前事务中的改写再删除文件，提交失败不会留下死链。"""
     session_id = str(conversation_id)
     conditions = [*_media_messages(conversation_id), Message.id >= lo]
@@ -347,10 +341,7 @@ async def prune_media_in_range(
 
 
 def _copy_media_files(
-    source_session_id: str,
-    target_session_id: str,
-    file_ids: set[str],
-    stop: threading.Event,
+    source_session_id: str, target_session_id: str, file_ids: set[str], stop: threading.Event
 ) -> set[str]:
     """把源会话的附件复制进派生会话目录，保留 mtime 以延续配额剔除顺序；返回已复制的文件，源文件已不存在的不在其中。stop 置位后在文件之间中止。其他 I/O 错误向上抛出，已复制的文件随派生会话目录由调用方清理。"""
     target_dir = session_dir(target_session_id)
@@ -394,7 +385,7 @@ def _retarget_parts(parts: list, copied: set[str], *, source_session_id: str, ta
                     "text": (part.get("transcript") or AUDIO_PRUNED_TEXT)
                     if part["type"] == "input_audio"
                     else VIDEO_PRUNED_TEXT,
-                },
+                }
             )
     return out
 
@@ -407,7 +398,7 @@ async def copy_forked_media_attachments(db: AsyncSession, source_session_id: str
         return 0
     stop = threading.Event()
     copy_task = asyncio.create_task(
-        run_blocking(_copy_media_files, source_session_id, target_session_id, file_ids, stop),
+        run_blocking(_copy_media_files, source_session_id, target_session_id, file_ids, stop)
     )
     try:
         copied = await asyncio.shield(copy_task)
@@ -419,10 +410,7 @@ async def copy_forked_media_attachments(db: AsyncSession, source_session_id: str
     rewritten = 0
     for message, parts in parsed:
         new_parts = _retarget_parts(
-            parts,
-            copied,
-            source_session_id=source_session_id,
-            target_session_id=target_session_id,
+            parts, copied, source_session_id=source_session_id, target_session_id=target_session_id
         )
         if new_parts != parts:
             message.content = json.dumps(new_parts, ensure_ascii=False)
@@ -461,7 +449,7 @@ async def inline_video_parts(items: list, *, expected_session_id: str | None = N
                 new_parts.append(
                     part
                     if expected_session_id is None or _session_video_exists(url, expected_session_id)
-                    else {"type": "input_text", "text": VIDEO_DEGRADED_TEXT},
+                    else {"type": "input_text", "text": VIDEO_DEGRADED_TEXT}
                 )
                 continue
             inlined = None

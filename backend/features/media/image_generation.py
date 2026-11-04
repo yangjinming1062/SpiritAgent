@@ -94,11 +94,7 @@ async def _sanitize_prompt_for_moderation(user_id: int, prompt: str, task: AiTas
 
 
 async def generate_with_moderation_retry[T](
-    user_id: int,
-    prompt: str,
-    generate: Callable[[str], Awaitable[T]],
-    *,
-    task: AiTaskKey,
+    user_id: int, prompt: str, generate: Callable[[str], Awaitable[T]], *, task: AiTaskKey
 ) -> T:
     """命中内容审核时用合规改写后的提示词重试一次；结果未知或改写无变化时保留原错误。"""
     try:
@@ -117,8 +113,7 @@ async def generate_with_moderation_retry[T](
         if not is_content_policy_error_message(exc.internal):
             raise
         raise ImageGenerationError(
-            "生成请求被内容审核拦截，请调整描述后重试",
-            internal=f"original: {first_internal}; retry: {exc.internal}",
+            "生成请求被内容审核拦截，请调整描述后重试", internal=f"original: {first_internal}; retry: {exc.internal}"
         ) from exc
 
 
@@ -244,8 +239,7 @@ async def generate_images(
         persist_directory = storage_directory
     if image_edit and (secondary_reference_image or environment_reference_image):
         raise ImageGenerationError(
-            "图像编辑不支持附加参考图，请改用重新生成",
-            internal="image_edit with secondary reference",
+            "图像编辑不支持附加参考图，请改用重新生成", internal="image_edit with secondary reference"
         )
     try:
         if (secondary_reference_image or environment_reference_image) and not reference_image:
@@ -329,7 +323,7 @@ async def generate_images(
                     image_edit=image_edit,
                     response_format="b64" if persist_user_assets else "url",
                     background="transparent" if request_background == "transparent" else None,
-                ),
+                )
             )
             if not any(asset.url or asset.b64 for asset in result.images):
                 error = ImageGenerationError("图片生成服务返回空结果", can_fallback=True)
@@ -354,10 +348,7 @@ async def generate_images(
         else:
             message = "图片生成失败，请稍后重试"
         error = ImageGenerationError(
-            message,
-            internal=str(e),
-            result_unknown=unknown,
-            can_fallback=classified.should_fallback,
+            message, internal=str(e), result_unknown=unknown, can_fallback=classified.should_fallback
         )
         error.classified = classified
         raise error from e

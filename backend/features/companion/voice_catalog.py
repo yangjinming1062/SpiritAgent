@@ -120,15 +120,9 @@ def match_voice(preference: str, voices: list[VoiceEntry]) -> tuple[VoiceEntry |
 
 
 async def match_user_voice(
-    db: AsyncSession,
-    user_id: int,
-    preference: str,
-    language: str | None = None,
+    db: AsyncSession, user_id: int, preference: str, language: str | None = None
 ) -> VoiceMatchResponse:
     """按用户偏好文本在全部已配置 TTS 供应商的当前语言音色中挑选。"""
-    voices = _chain_voices(
-        await resolve_provider_chain(db, user_id, "tts", task=AiTaskKey.companion_voice),
-        language,
-    )
+    voices = _chain_voices(await resolve_provider_chain(db, user_id, "tts", task=AiTaskKey.companion_voice), language)
     best, alternatives = match_voice(preference or "", voices)
     return VoiceMatchResponse(voice=best, alternatives=alternatives)

@@ -1,11 +1,6 @@
 """按冻结素材装配视频请求；角色表演由视频模型根据目标自行决定。"""
 
-from .prompts import (
-    SCENE_VIDEO_MOTION_TEMPLATE,
-    VISUAL_VIDEO_LOOP,
-    VISUAL_VIDEO_MOTION_TEMPLATE,
-    VISUAL_VIDEO_ONCE,
-)
+from .prompts import SCENE_VIDEO_MOTION_TEMPLATE, VISUAL_VIDEO_LOOP, VISUAL_VIDEO_MOTION_TEMPLATE, VISUAL_VIDEO_ONCE
 from .schemas import ActorClipSource, CinematicSource, SceneMediaSource, VisualJobProgress
 
 _PERFORMANCE_EFFECTS = {

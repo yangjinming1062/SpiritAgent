@@ -26,10 +26,7 @@ VISUAL_TITLE = (
 
 
 def visual_source_reference_prompt(
-    role: CharacterReferenceRole,
-    *,
-    language: str = "zh",
-    include_scene: bool = False,
+    role: CharacterReferenceRole, *, language: str = "zh", include_scene: bool = False
 ) -> str:
     if language == "en":
         roles = (

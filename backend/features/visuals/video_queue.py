@@ -13,9 +13,7 @@ from .models import VisualJob
 
 
 async def inspect_visual_video_owner(
-    owner: VideoQueueOwner,
-    before_submit: bool = True,
-    request_id: str | None = None,
+    owner: VideoQueueOwner, before_submit: bool = True, request_id: str | None = None
 ) -> Literal["ready", "pending", "paused", "gone"]:
     async with SESSION_LOCAL() as db:
         job = await db.get(VisualJob, owner.job_id)

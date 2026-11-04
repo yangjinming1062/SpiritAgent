@@ -67,8 +67,7 @@ def parse_tool_call_arguments(raw_args: str, tool_name: str) -> dict[str, Any] |
     if isinstance(parsed, dict):
         return parsed
     logger.warning(
-        "Invalid tool_call arguments, tool not dispatched",
-        extra={"tool_name": tool_name, "raw_len": len(raw)},
+        "Invalid tool_call arguments, tool not dispatched", extra={"tool_name": tool_name, "raw_len": len(raw)}
     )
     return None
 
@@ -233,7 +232,7 @@ def truncate_responses_context(
                 {
                     "type": "input_text",
                     "text": f"[... {removed} early conversation items removed for context window management ...]",
-                },
+                }
             ],
         }
         prefix = [

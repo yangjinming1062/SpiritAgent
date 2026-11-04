@@ -11,9 +11,6 @@ def raise_for_grok_response(resp: httpx.Response) -> dict:
         err = body.get("error")
         msg = f"grok video HTTP {resp.status_code}: {err if err else body}"
         raise ProviderError(
-            msg,
-            status_code=resp.status_code,
-            body=body,
-            retry_after_seconds=response_retry_after(resp),
+            msg, status_code=resp.status_code, body=body, retry_after_seconds=response_retry_after(resp)
         )
     return body

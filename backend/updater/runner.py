@@ -17,22 +17,13 @@ class RunOutput:
 
 
 async def run_command(
-    program: str,
-    *args: str,
-    timeout: float,
-    env: Mapping[str, str] | None = None,
-    cwd: str | None = None,
+    program: str, *args: str, timeout: float, env: Mapping[str, str] | None = None, cwd: str | None = None
 ) -> RunOutput:
     """执行单条命令；超时按 TimeoutError 上抛，调用方转换失败语义。"""
 
     merged_env = {**os.environ, **dict(env)} if env else None
     process = await asyncio.create_subprocess_exec(
-        program,
-        *args,
-        cwd=cwd,
-        env=merged_env,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        program, *args, cwd=cwd, env=merged_env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
     try:
         stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
@@ -65,12 +56,7 @@ async def stream_command(
 
     merged_env = {**os.environ, **dict(env)} if env else None
     process = await asyncio.create_subprocess_exec(
-        program,
-        *args,
-        cwd=cwd,
-        env=merged_env,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
+        program, *args, cwd=cwd, env=merged_env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
     )
     assert process.stdout is not None
     try:

@@ -60,8 +60,7 @@ def build_persisted_content(text: str, attachments: list[ChatAttachment] | None)
     if media_types := [part["type"] for part in parts[1:]]:
         # 地址可能是整段 data URL，只记数量与类型。
         logger.info(
-            "Persisting multimodal user message",
-            extra={"media_count": len(media_types), "media_types": media_types},
+            "Persisting multimodal user message", extra={"media_count": len(media_types), "media_types": media_types}
         )
     return json.dumps(parts, ensure_ascii=False), "multimodal_v1"
 
@@ -78,12 +77,7 @@ async def persist_user_message(db: AsyncSession, conv_id: int, message: ChatMess
 
 
 async def persist_compression_checkpoint(
-    db: AsyncSession,
-    conv_id: int,
-    info: CompressionInfo,
-    *,
-    user_id: int,
-    notify_user_id: int | None = None,
+    db: AsyncSession, conv_id: int, info: CompressionInfo, *, user_id: int, notify_user_id: int | None = None
 ) -> MessageSnapshot:
     """写入压缩检查点，下一轮历史从其覆盖边界之后读取；原消息保留，边界前无人引用的音视频随之清理。"""
     checkpoint = Message(
@@ -129,7 +123,7 @@ async def persist_tool_results(conv_id: int, results: list[tuple[str, Any]], *, 
                     tool_call_id=call_id,
                     content=text,
                     content_type=content_type,
-                ),
+                )
             )
         await commit_conversation(db)
 
@@ -150,16 +144,13 @@ async def persist_tool_call(conv_id: int, data: AssistantTurnData, *, user_id: i
                 generation_origin_json=data.generation_origin.model_dump(mode="json")
                 if data.generation_origin
                 else None,
-            ),
+            )
         )
         await commit_conversation(db)
 
 
 async def persist_assistant_message(
-    conv_id: int,
-    user_id: int,
-    data: AssistantTurnData,
-    media: list[dict[str, str]] | None,
+    conv_id: int, user_id: int, data: AssistantTurnData, media: list[dict[str, str]] | None
 ) -> int:
     async with session_scope() as db:
         row = Message(
@@ -223,17 +214,13 @@ async def replace_assistant_message(
         await flush_conversation(db)
         await transfer_image_bindings(db, user_id, old_message_id, row.id)
         jobs = await transfer_reply_videos(
-            db,
-            user_id=user_id,
-            session_id=str(conv_id),
-            from_message_id=old_message_id,
-            to_message_id=row.id,
+            db, user_id=user_id, session_id=str(conv_id), from_message_id=old_message_id, to_message_id=row.id
         )
         old = await db.scalar(
             select(Message)
             .where(Message.id == old_message_id, Message.conversation_id == conv_id)
             .with_for_update()
-            .execution_options(populate_existing=True),
+            .execution_options(populate_existing=True)
         )
         if old is None:
             raise ValueError("Previous reply is no longer available")
@@ -289,7 +276,7 @@ async def replace_assistant_message(
         await db.execute(
             update(Conversation)
             .where(Conversation.id == conv_id, Conversation.user_id == user_id)
-            .values(history_revision=Conversation.history_revision + 1),
+            .values(history_revision=Conversation.history_revision + 1)
         )
         if request_id is not None:
             await db.execute(
@@ -300,7 +287,7 @@ async def replace_assistant_message(
                     PromptSubmission.request_id == request_id,
                     PromptSubmission.replace_reply_message_id == old_message_id,
                 )
-                .values(result_message_id=row.id, status="completed", error=None),
+                .values(result_message_id=row.id, status="completed", error=None)
             )
         await commit_conversation(db)
         return row.id

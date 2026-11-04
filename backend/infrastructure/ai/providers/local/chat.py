@@ -73,12 +73,7 @@ class LocalChatProvider(ChatProvider):
         return await super().reasoning_param(requested) if await self._local_api() != "unknown" else None
 
     async def structured_response_options(
-        self,
-        schema: dict,
-        *,
-        name: str,
-        allow_tools: bool,
-        repair: bool = False,
+        self, schema: dict, *, name: str, allow_tools: bool, repair: bool = False
     ) -> dict:
         if repair:
             return await super().structured_response_options(schema, name=name, allow_tools=allow_tools, repair=True)
@@ -96,6 +91,6 @@ class LocalChatProvider(ChatProvider):
                 "response_format": {
                     "type": "json_schema",
                     "json_schema": {"name": name, "strict": True, "schema": schema},
-                },
-            },
+                }
+            }
         }

@@ -21,8 +21,7 @@ class ClientMediaBubble(BaseModel):
 
 
 type ReplyBubbleView = Annotated[
-    TextBubble | VoiceBubbleView | ClientMediaBubble | LinkBubble,
-    Field(discriminator="type"),
+    TextBubble | VoiceBubbleView | ClientMediaBubble | LinkBubble, Field(discriminator="type")
 ]
 
 
@@ -59,6 +58,5 @@ class CompanionSessionMessageView(SessionMessageFields):
 
 
 type SessionMessageView = Annotated[
-    PlainSessionMessageView | CompanionSessionMessageView,
-    Field(discriminator="content_type"),
+    PlainSessionMessageView | CompanionSessionMessageView, Field(discriminator="content_type")
 ]

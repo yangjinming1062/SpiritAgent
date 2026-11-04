@@ -51,28 +51,20 @@ def entry_view(
 def entry_query() -> Select[Any]:
     assets = (
         select(func.jsonb_agg(func.jsonb_build_array(EntryAsset.role, EntryAsset.asset_id)))
-        .where(
-            EntryAsset.entry_id == CompanionEntry.id,
-            EntryAsset.position == 0,
-        )
+        .where(EntryAsset.entry_id == CompanionEntry.id, EntryAsset.position == 0)
         .correlate(CompanionEntry)
         .scalar_subquery()
     )
     links = (
         select(func.array_agg(aggregate_order_by(EntryLink.target_id, EntryLink.position)))
-        .where(
-            EntryLink.source_id == CompanionEntry.id,
-            EntryLink.kind == "diary_source",
-        )
+        .where(EntryLink.source_id == CompanionEntry.id, EntryLink.kind == "diary_source")
         .correlate(CompanionEntry)
         .scalar_subquery()
     )
     comments = (
         select(func.count())
         .select_from(EntryComment)
-        .where(
-            EntryComment.post_id == CompanionEntry.id,
-        )
+        .where(EntryComment.post_id == CompanionEntry.id)
         .correlate(CompanionEntry)
         .scalar_subquery()
     )

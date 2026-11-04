@@ -36,8 +36,7 @@ REMOTE_TOUCH_INTERVAL_SECONDS = 60
 
 
 async def get_current_admin_token(
-    credentials: HTTPAuthorizationCredentials | None = Depends(BEARER_SCHEME),
-    db: AsyncSession = Depends(get_db),
+    credentials: HTTPAuthorizationCredentials | None = Depends(BEARER_SCHEME), db: AsyncSession = Depends(get_db)
 ) -> str:
     """校验 admin token 的 jti 在 admin_sessions 中 is_active=True，使强制吊销立即生效而非等 JWT 自然过期。"""
     payload = decode_bearer_token(credentials)
@@ -77,11 +76,7 @@ async def session_from_payload(payload: dict, db: AsyncSession) -> tuple[Account
         await db.execute(
             select(User, LoginRecord)
             .join(LoginRecord, LoginRecord.user_id == User.id)
-            .where(
-                LoginRecord.token_jti == token_jti,
-                LoginRecord.user_id == uid,
-                LoginRecord.is_active.is_(True),
-            ),
+            .where(LoginRecord.token_jti == token_jti, LoginRecord.user_id == uid, LoginRecord.is_active.is_(True))
         )
     ).one_or_none()
     if row is None:
@@ -97,8 +92,7 @@ async def session_from_payload(payload: dict, db: AsyncSession) -> tuple[Account
 
 
 async def get_current_session(
-    credentials: HTTPAuthorizationCredentials | None = Depends(BEARER_SCHEME),
-    db: AsyncSession = Depends(get_db),
+    credentials: HTTPAuthorizationCredentials | None = Depends(BEARER_SCHEME), db: AsyncSession = Depends(get_db)
 ) -> tuple[AccountIdentity, LoginIdentity]:
     return await session_from_payload(decode_bearer_token(credentials), db)
 
@@ -112,9 +106,7 @@ async def get_optional_current_session(
         return None
     try:
         return await authenticate_request_session(
-            request,
-            credentials if credentials is not None and credentials.credentials else None,
-            db,
+            request, credentials if credentials is not None and credentials.credentials else None, db
         )
     except HTTPException:
         # 鉴权失败被吞掉后路由仍继续（如按签名下发文件），读事务不能留到响应结束。
@@ -123,11 +115,7 @@ async def get_optional_current_session(
 
 
 async def authenticate_request_session(
-    request: Request,
-    credentials: HTTPAuthorizationCredentials | None,
-    db: AsyncSession,
-    *,
-    content_only: bool = True,
+    request: Request, credentials: HTTPAuthorizationCredentials | None, db: AsyncSession, *, content_only: bool = True
 ) -> tuple[AccountIdentity, LoginIdentity | RemoteDeviceIdentity]:
     return (
         await get_current_session(credentials, db)
@@ -142,8 +130,7 @@ async def account_request_scope(user_id: int) -> AsyncIterator[None]:
     async with user_request_scope(user_id) as acquired:
         if not acquired:
             raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="用户数据正在维护，请稍后重试。",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="用户数据正在维护，请稍后重试。"
             )
         yield
 
@@ -167,10 +154,7 @@ def _touch_remote_seen(device: RemoteSession) -> bool:
 
 
 async def authenticate_remote_session(
-    request: Request,
-    db: AsyncSession,
-    *,
-    content_only: bool = False,
+    request: Request, db: AsyncSession, *, content_only: bool = False
 ) -> tuple[AccountIdentity, RemoteDeviceIdentity]:
     if content_only and (
         (operation := find_http_operation(request.url.path, request.method)) is None or not operation.permits("remote")
@@ -188,7 +172,7 @@ async def authenticate_remote_session(
                 RemoteSession.revoked_at.is_(None),
                 RemoteSession.expires_at > utc_now(),
                 User.is_active.is_(True),
-            ),
+            )
         )
     ).one_or_none()
     if row is None:
@@ -215,8 +199,7 @@ async def authenticate_remote_session(
 
 
 async def get_current_remote_session(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
+    request: Request, db: AsyncSession = Depends(get_db)
 ) -> AsyncIterator[tuple[AccountIdentity, RemoteDeviceIdentity]]:
     session = await authenticate_remote_session(request, db)
     async with account_request_scope(session[0].id):
@@ -236,7 +219,7 @@ async def is_remote_session_active(user_id: int, device_id: int) -> bool:
                 RemoteSession.revoked_at.is_(None),
                 RemoteSession.expires_at > utc_now(),
                 User.is_active.is_(True),
-            ),
+            )
         )
         if device is None:
             return False

@@ -1,16 +1,7 @@
 from fastapi import Depends, Request, Response
 from features.accounts.remote import use_cases as remote_use_cases
-from features.accounts.remote.schemas import (
-    DeviceListResponse,
-    ExchangeRequest,
-    PairingResponse,
-    RemoteSessionResponse,
-)
-from features.accounts.remote.security import (
-    REMOTE_SESSION_TTL_SECONDS,
-    remote_session_cookie,
-    require_remote_origin,
-)
+from features.accounts.remote.schemas import DeviceListResponse, ExchangeRequest, PairingResponse, RemoteSessionResponse
+from features.accounts.remote.security import REMOTE_SESSION_TTL_SECONDS, remote_session_cookie, require_remote_origin
 from infrastructure.api_ids import ResourceId
 from infrastructure.config import SETTINGS
 from infrastructure.database import DbSession

@@ -24,19 +24,14 @@ from .xiaohongshu import XiaohongshuServiceClient
 
 
 def _xhs_source(
-    note: dict[str, Any],
-    *,
-    source_id: str,
-    token: str,
-    collected_at: datetime,
-    detail: bool,
+    note: dict[str, Any], *, source_id: str, token: str, collected_at: datetime, detail: bool
 ) -> SocialContent | None:
     if not re.fullmatch(r"[a-fA-F0-9]{24}", source_id) or not token:
         return None
     user = _mapping(note.get("user"))
     body = _text(note.get("desc")) if detail else ""
     url = f"https://www.xiaohongshu.com/explore/{source_id}?" + urlencode(
-        {"xsec_token": token, "xsec_source": "pc_search"},
+        {"xsec_token": token, "xsec_source": "pc_search"}
     )
     try:
         return SocialContent(
@@ -71,9 +66,7 @@ class XiaohongshuSource:
     ) -> SocialSearchPage:
         if cursor:
             raise SocialSourceError(
-                "Xiaohongshu source does not support paginated search",
-                code=400,
-                reason="unsupported_platform",
+                "Xiaohongshu source does not support paginated search", code=400, reason="unsupported_platform"
             )
         data = await self._xhs.search_feeds(query, cookies=self._cookies, before_request=before_request)
         feeds = data.get("feeds")
@@ -95,16 +88,13 @@ class XiaohongshuSource:
         return SocialSearchPage(candidates=list({candidate.source_id: candidate for candidate in candidates}.values()))
 
     async def detail(
-        self,
-        candidate: SocialContent,
-        *,
-        before_request: RequestGuard | None = None,
+        self, candidate: SocialContent, *, before_request: RequestGuard | None = None
     ) -> SocialContent | None:
         if candidate.platform != "xiaohongshu":
             raise SocialSourceError("Unexpected source platform", code=400, reason="unsupported_platform")
         try:
             token = parse_qs(
-                urlsplit(validate_source_url(candidate.platform, candidate.source_id, candidate.url)).query,
+                urlsplit(validate_source_url(candidate.platform, candidate.source_id, candidate.url)).query
             ).get("xsec_token", [""])[0]
         except ValueError:
             raise SocialSourceError("Xiaohongshu source URL is invalid", code=422, reason="response_invalid") from None

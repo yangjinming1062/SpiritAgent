@@ -101,9 +101,7 @@ class ChatEventEmitter:
     @staticmethod
     def _translate(raw_type: str, data: dict) -> Any:
         if raw_type in ("chunk", "reasoning.delta"):
-            return {
-                "text": data.get("content", ""),
-            }
+            return {"text": data.get("content", "")}
         if raw_type in ("tool_start", "tool_end"):
             return {
                 "name": data.get("name"),

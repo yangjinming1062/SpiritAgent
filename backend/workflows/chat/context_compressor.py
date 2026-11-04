@@ -49,7 +49,7 @@ def _summary_items(block: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         "type": "input_text",
                         "text": part.get("transcript")
                         or f"[Media reference: {reference}; contents not supplied to this summary]",
-                    },
+                    }
                 )
             else:
                 parts.append(part)
@@ -58,10 +58,7 @@ def _summary_items(block: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _pick_compressible_block(
-    rest: list[dict[str, Any]],
-    *,
-    source_message_ids: list[int | None],
-    preserve_recent: int = 4,
+    rest: list[dict[str, Any]], *, source_message_ids: list[int | None], preserve_recent: int = 4
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """压缩连续历史前缀，保留最近输入及无持久化来源的本轮资料。"""
     if len(rest) != len(source_message_ids):
@@ -90,9 +87,7 @@ def _pick_compressible_block(
 
 
 def _summary_input(
-    block: list[dict[str, Any]],
-    target_tokens: int,
-    included_indices: set[int] | None,
+    block: list[dict[str, Any]], target_tokens: int, included_indices: set[int] | None
 ) -> list[dict[str, Any]]:
     if included_indices is not None:
         block = [item for index, item in enumerate(block) if index in included_indices]
@@ -107,9 +102,9 @@ def _summary_input(
                         ensure_ascii=False,
                         default=str,
                     ),
-                },
+                }
             ],
-        },
+        }
     ]
 
 
@@ -138,8 +133,7 @@ def _fit_summary_block(
     while lo < hi:
         mid = (lo + hi) // 2
         tokens = approx_responses_tokens(
-            instructions,
-            _summary_input(block[: boundaries[mid]], target_tokens, included_indices),
+            instructions, _summary_input(block[: boundaries[mid]], target_tokens, included_indices)
         )
         if tokens <= input_budget:
             lo = mid + 1
@@ -179,11 +173,7 @@ async def _summarize_block(
 
 
 def compression_due(
-    context: dict[str, Any],
-    *,
-    context_length: int,
-    threshold_ratio: float,
-    current_tokens: int | None,
+    context: dict[str, Any], *, context_length: int, threshold_ratio: float, current_tokens: int | None
 ) -> bool:
     """``current_tokens`` 为空时按当前上下文全量估算。"""
     tokens = (
@@ -256,15 +246,12 @@ async def _compress_history_with_provider(
             return context, None
         included_indices.update(context.get("time_context_indices", ()))
     instructions = resolve_prompt_text(
-        COMPANION_CONTEXT_SUMMARY_PROMPTS if companion else CONTEXT_SUMMARY_PROMPTS,
-        language,
+        COMPANION_CONTEXT_SUMMARY_PROMPTS if companion else CONTEXT_SUMMARY_PROMPTS, language
     )
     # 小窗口按比例缩小摘要与输出预留，安全余量最多占四分之一，保留完整原消息的输入空间。
     target = min(SETTINGS.context_summary_target_tokens, max(1, context_length // 4))
     output_budget = min(
-        config.max_output_tokens or 0,
-        target * CONTEXT_SUMMARY_HEADROOM_FACTOR,
-        max(1, context_length // 2),
+        config.max_output_tokens or 0, target * CONTEXT_SUMMARY_HEADROOM_FACTOR, max(1, context_length // 2)
     )
     input_budget = context_length - output_budget - min(max(1024, context_length // 20), context_length // 4)
     if input_budget <= 0:

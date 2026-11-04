@@ -14,5 +14,5 @@ def render_character_appearance(snapshot: VisualObservation | None, *, language:
     if snapshot is None:
         return ""
     return resolve_prompt_text(CHARACTER_APPEARANCE_TEXTS, language).format(
-        features=json.dumps(snapshot.model_dump(), ensure_ascii=False),
+        features=json.dumps(snapshot.model_dump(), ensure_ascii=False)
     )

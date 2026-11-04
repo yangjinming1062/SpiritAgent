@@ -67,9 +67,7 @@ class UserGatewaySession:
             owner="channels.remote" if self.device_id is not None else "channels.desktop",
             user_id=self.user_id,
             on_error=lambda done: logger.warning(
-                "gateway background task failed",
-                extra={"user_id": self.user_id},
-                exc_info=done.exception(),
+                "gateway background task failed", extra={"user_id": self.user_id}, exc_info=done.exception()
             ),
         )
 
@@ -379,9 +377,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                 raise JsonRpcError(
                     JSONRPC_INVALID_PARAMS,
                     "Invalid request parameters",
-                    details={
-                        "validation": exc.errors(include_input=False, include_url=False, include_context=False),
-                    },
+                    details={"validation": exc.errors(include_input=False, include_url=False, include_context=False)},
                 ) from exc
             return await handler(request.model_dump(exclude_unset=True))
 
@@ -433,8 +429,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
             # 与服务端工具同名的本机工具永远派发不到（服务端优先），一并下发还会让模型看到重名工具。
             if REGISTRY.get_location(user_id, tool["name"]) in ("backend", "memory"):
                 logger.warning(
-                    "runner tool shadows a backend tool; skipped",
-                    extra={"user_id": user_id, "tool_name": tool["name"]},
+                    "runner tool shadows a backend tool; skipped", extra={"user_id": user_id, "tool_name": tool["name"]}
                 )
                 continue
             accepted.append(tool)

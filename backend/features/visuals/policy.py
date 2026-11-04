@@ -49,7 +49,7 @@ async def visual_autonomous_block_reason(
             select(VisualPlayback)
             .where(VisualPlayback.user_id == presentation.user_id)
             .order_by(VisualPlayback.id.desc())
-            .limit(64),
+            .limit(64)
         )
         if play.play_id != excluded_play_id
     ]

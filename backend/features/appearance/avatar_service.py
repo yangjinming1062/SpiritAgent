@@ -50,10 +50,7 @@ from features.appearance.prompt_assembly import (
     describe_character_form,
     enhance_avatar_prompt,
 )
-from features.appearance.prompts import (
-    EDIT_PRESERVE_AVATAR,
-    EDIT_PRESERVE_FULLBODY,
-)
+from features.appearance.prompts import EDIT_PRESERVE_AVATAR, EDIT_PRESERVE_FULLBODY
 from features.appearance.queries import initial_outfit_snapshot
 from features.appearance.schemas import FullbodyCandidateResponse, ImageReviseMode
 from features.assets.lifecycle import cleanup_user_assets, enqueue_asset_cleanup
@@ -133,7 +130,7 @@ async def latest_fullbody_candidate(user_id: int, avatar_id: int) -> FullbodyCan
             select(FullbodyCandidate)
             .where(FullbodyCandidate.user_id == user_id, FullbodyCandidate.avatar_id == avatar_id)
             .order_by(FullbodyCandidate.id.desc())
-            .limit(1),
+            .limit(1)
         )
         if row is None or row.status in ("accepted", "rejected"):
             return None
@@ -217,8 +214,7 @@ async def _review_fullbody_candidate(
         reference, candidate = "", ""
         if saved_report is None or saved_report.evidence is None:
             reference, candidate = await asyncio.gather(
-                asyncio.to_thread(read_asset_data_uri, portrait_path),
-                asyncio.to_thread(read_asset_data_uri, path),
+                asyncio.to_thread(read_asset_data_uri, portrait_path), asyncio.to_thread(read_asset_data_uri, path)
             )
             if not reference or not candidate:
                 raise AvatarSourceUnreadableError("确认头像或候选图片无法读取")
@@ -274,10 +270,7 @@ async def _review_fullbody_candidate(
 
 
 async def retry_fullbody_candidate_review(
-    user_id: int,
-    avatar_id: int,
-    candidate_id: int,
-    request: MediaReviewRequest,
+    user_id: int, avatar_id: int, candidate_id: int, request: MediaReviewRequest
 ) -> FullbodyCandidateResponse:
     async with get_avatar_job_lock(user_id):
         async with SESSION_LOCAL() as db:
@@ -286,7 +279,7 @@ async def retry_fullbody_candidate_review(
                     FullbodyCandidate.id == candidate_id,
                     FullbodyCandidate.user_id == user_id,
                     FullbodyCandidate.avatar_id == avatar_id,
-                ),
+                )
             )
             if row is None:
                 raise AvatarNotFoundError("全身候选图不存在")
@@ -328,7 +321,7 @@ async def _save_fullbody_candidate(
                         FullbodyCandidate.user_id == user_id,
                         FullbodyCandidate.avatar_id == avatar_id,
                         FullbodyCandidate.status.in_(("pending", "ready", "failed")),
-                    ),
+                    )
                 )
             ).all()
             for older in previous:
@@ -367,7 +360,7 @@ async def accept_fullbody_candidate(user_id: int, avatar_id: int, candidate_id: 
                     FullbodyCandidate.id == candidate_id,
                     FullbodyCandidate.user_id == user_id,
                     FullbodyCandidate.avatar_id == avatar_id,
-                ),
+                )
             )
         if image_path is None:
             raise AvatarNotFoundError("全身候选图不存在")
@@ -386,7 +379,7 @@ async def accept_fullbody_candidate(user_id: int, avatar_id: int, candidate_id: 
                     FullbodyCandidate.user_id == user_id,
                     FullbodyCandidate.avatar_id == avatar_id,
                 )
-                .with_for_update(),
+                .with_for_update()
             )
             avatar = await db.get(AvatarAsset, avatar_id, with_for_update={"of": AvatarAsset})
             identity_asset = await get_visual_identity_asset(db, user_id, lock=True)
@@ -577,7 +570,7 @@ async def _write_avatar_step(
                 .where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True))
                 .values(active=False)
                 .returning(AvatarAsset.asset_url)
-                .execution_options(synchronize_session=False),
+                .execution_options(synchronize_session=False)
             )
             asset = AvatarAsset(
                 user_id=user_id,
@@ -698,11 +691,7 @@ async def _verified_persona_with_asset(user_id: int) -> tuple[PersonaSnapshot, A
 
 
 async def _avatar_description(
-    user_id: int,
-    persona: PersonaSnapshot,
-    feedback: str | None,
-    *,
-    has_reference: bool = False,
+    user_id: int, persona: PersonaSnapshot, feedback: str | None, *, has_reference: bool = False
 ) -> str:
     try:
         return await enhance_avatar_prompt(user_id, persona, feedback=feedback, has_reference=has_reference)
@@ -718,11 +707,7 @@ async def generate_avatar(user_id: int, *, feedback: str | None = None) -> Avata
 
 
 async def _generate_avatar(
-    user_id: int,
-    *,
-    persona: PersonaSnapshot,
-    feedback: str | None = None,
-    selection: ProviderSelection | None = None,
+    user_id: int, *, persona: PersonaSnapshot, feedback: str | None = None, selection: ProviderSelection | None = None
 ) -> AvatarAsset:
     return await _generate_avatar_step(
         user_id,
@@ -752,7 +737,7 @@ async def select_avatar(db: AsyncSession, user_id: int, avatar_id: int) -> Avata
         # 与生成新头像一致：确认只对当时的头像有效，换用的头像须重新确认后才能锁定身份。
         await reset_portrait_confirmation(db, user_id)
     await db.execute(
-        update(AvatarAsset).where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True)).values(active=False),
+        update(AvatarAsset).where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True)).values(active=False)
     )
     asset.active = True
     await commit_appearance(db, user_id)
@@ -765,7 +750,7 @@ async def list_avatar_history(db: AsyncSession, user_id: int, limit: int = 20) -
             select(AvatarAsset)
             .where(AvatarAsset.user_id == user_id)
             .order_by(AvatarAsset.created_at.desc())
-            .limit(limit),
+            .limit(limit)
         )
     ).all()
     survivors: list[AvatarAsset] = []
@@ -905,8 +890,7 @@ async def _resolve_fullbody_identity(db: AsyncSession, asset: AvatarAsset) -> Vi
 
 
 async def _load_fullbody_target(
-    user_id: int,
-    avatar_id: int,
+    user_id: int, avatar_id: int
 ) -> tuple[AvatarAsset, PersonaSnapshot, VisualIdentitySnapshot | None]:
     """取回当前激活的目标头像与 persona；已确认身份时同时冻结当前视觉身份快照。"""
     async with SESSION_LOCAL() as db:
@@ -941,7 +925,7 @@ async def _prepare_fullbody_reference(
                         CompanionOutfit.user_id == user_id,
                         CompanionOutfit.is_initial.is_(True),
                         CompanionOutfit.status == "ready",
-                    ),
+                    )
                 )
                 or ""
             )
@@ -983,10 +967,8 @@ async def _install_fullbody_seed(
         async with SESSION_LOCAL() as session:
             target = await session.scalar(
                 select(AvatarAsset).where(
-                    AvatarAsset.id == avatar_id,
-                    AvatarAsset.user_id == user_id,
-                    AvatarAsset.active.is_(True),
-                ),
+                    AvatarAsset.id == avatar_id, AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True)
+                )
             )
             if target is None:
                 raise AvatarNotFoundError("当前角色已切换，请重新打开全身参考图")
@@ -1046,7 +1028,7 @@ async def generate_fullbody_reference(
                         FullbodyCandidate.id == candidate_id,
                         FullbodyCandidate.user_id == user_id,
                         FullbodyCandidate.avatar_id == avatar_id,
-                    ),
+                    )
                 )
             if (
                 candidate is None
@@ -1069,24 +1051,14 @@ async def generate_fullbody_reference(
             reference_uri = await asyncio.to_thread(read_asset_data_uri, edit_path)
             if not reference_uri:
                 raise AvatarSourceUnreadableError("上一版全身参考缺失或无法读取，请先重新生成")
-            prompt = build_image_edit_prompt(
-                effective_feedback,
-                preserve=EDIT_PRESERVE_FULLBODY,
-            )
+            prompt = build_image_edit_prompt(effective_feedback, preserve=EDIT_PRESERVE_FULLBODY)
         else:
             if reference_image:
                 secondary_reference = await asyncio.to_thread(
-                    build_data_uri,
-                    reference_image,
-                    reference_content_type or "image/png",
+                    build_data_uri, reference_image, reference_content_type or "image/png"
                 )
             reference_uri, prompt = await _prepare_fullbody_reference(
-                user_id,
-                asset,
-                persona,
-                identity,
-                feedback=effective_feedback,
-                secondary_reference=secondary_reference,
+                user_id, asset, persona, identity, feedback=effective_feedback, secondary_reference=secondary_reference
             )
         try:
             generated_url, origin, generation_job_id = await _generate_portrait(
@@ -1109,13 +1081,7 @@ async def generate_fullbody_reference(
 
         if identity is not None:
             return await _save_fullbody_candidate(
-                user_id,
-                avatar_id,
-                generated_url,
-                identity,
-                base_fullbody_url,
-                origin,
-                generation_job_id,
+                user_id, avatar_id, generated_url, identity, base_fullbody_url, origin, generation_job_id
             )
         return await _install_fullbody_seed(
             user_id,
@@ -1252,11 +1218,7 @@ async def prepare_fullbody_prompt(user_id: int, *, avatar_id: int, feedback: str
 
 
 async def adopt_fullbody_seed(
-    user_id: int,
-    *,
-    avatar_id: int,
-    data: bytes,
-    content_type: str,
+    user_id: int, *, avatar_id: int, data: bytes, content_type: str
 ) -> AvatarAsset | FullbodyCandidateResponse:
     """安装用户确认的全身图；未确认身份时保留草稿，已确认时不改变既有外观。"""
     if not data:
@@ -1298,11 +1260,7 @@ async def prepare_avatar_prompt(user_id: int, *, feedback: str | None = None, ha
     prompt = await enhance_avatar_prompt(user_id, persona, feedback=feedback, has_reference=has_reference)
     if not has_reference:
         return prompt
-    return build_avatar_reference_prompt(
-        personality="",
-        description=prompt,
-        feedback=feedback,
-    )
+    return build_avatar_reference_prompt(personality="", description=prompt, feedback=feedback)
 
 
 async def retry_initial_preparation(

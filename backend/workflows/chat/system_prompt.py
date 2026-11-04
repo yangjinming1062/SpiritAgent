@@ -19,7 +19,7 @@ from workflows.companion_actions import ActionViewSnapshot
 
 # volatile header 行：发送前按同一格式整行刷新日期与时区，保留构建时按会话语言写入的标签。
 _VOLATILE_HEADER_RE = re.compile(
-    "(?m)^(?P<label>" + "|".join(re.escape(label) for label in VOLATILE_LABELS.values()) + ")(?P<date>.*)$",
+    "(?m)^(?P<label>" + "|".join(re.escape(label) for label in VOLATILE_LABELS.values()) + ")(?P<date>.*)$"
 )
 
 
@@ -28,11 +28,7 @@ def build_system_prompt(config: AgentPromptConfig, *, preset_id: str, delegated:
 
 
 async def build_companion_environment_prompt(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    language: str,
-    action_view: ActionViewSnapshot,
+    db: AsyncSession, user_id: int, *, language: str, action_view: ActionViewSnapshot
 ) -> str:
     """所有宿主共用同一份伙伴情景；客户端只负责把它适配为可用呈现。"""
 
@@ -43,7 +39,7 @@ async def build_companion_environment_prompt(
     if presentation.outfit_description:
         parts.append(resolve_prompt_text(OUTFIT_LABELS_TEXTS, language))
         parts.append(
-            f"{resolve_prompt_text(OUTFIT_DESCRIPTION_LABELS_TEXTS, language)}: {presentation.outfit_description}",
+            f"{resolve_prompt_text(OUTFIT_DESCRIPTION_LABELS_TEXTS, language)}: {presentation.outfit_description}"
         )
         parts.append(resolve_prompt_text(OUTFIT_DEMEANOR_GUIDANCES, language))
     parts.extend(
@@ -56,11 +52,11 @@ async def build_companion_environment_prompt(
                         "visual_description": presentation.visual_description,
                         "outfit_description": presentation.outfit_description,
                         "scene_description": presentation.scene_description,
-                    },
+                    }
                 },
                 ensure_ascii=False,
             ),
-        ],
+        ]
     )
     # 动作快照：每次模型调用前刷新（含工具续轮），频繁变化的动作数据不写入稳定身份前缀。
     parts.append(action_view.to_prompt_block(language=language))

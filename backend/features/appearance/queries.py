@@ -14,7 +14,7 @@ from .query_contracts import AvatarSnapshot, OutfitSnapshot
 
 async def active_identity_reference(db: AsyncSession, user_id: int) -> str | None:
     return await db.scalar(
-        select(AvatarAsset.seed_fullbody_url).where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True)),
+        select(AvatarAsset.seed_fullbody_url).where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True))
     )
 
 
@@ -54,10 +54,8 @@ def outfit_identity_matches(source_json: dict[str, Any], identity_reference_path
 async def ready_outfit_snapshot(db: AsyncSession, user_id: int, outfit_id: int) -> OutfitSnapshot | None:
     row = await db.scalar(
         select(CompanionOutfit).where(
-            CompanionOutfit.user_id == user_id,
-            CompanionOutfit.id == outfit_id,
-            CompanionOutfit.status == "ready",
-        ),
+            CompanionOutfit.user_id == user_id, CompanionOutfit.id == outfit_id, CompanionOutfit.status == "ready"
+        )
     )
     return OutfitSnapshot.model_validate(row) if row is not None else None
 
@@ -66,12 +64,10 @@ async def initial_outfit_snapshot(db: AsyncSession, user_id: int) -> OutfitSnaps
     row = await db.scalar(
         select(CompanionOutfit)
         .where(
-            CompanionOutfit.user_id == user_id,
-            CompanionOutfit.status == "ready",
-            CompanionOutfit.is_initial.is_(True),
+            CompanionOutfit.user_id == user_id, CompanionOutfit.status == "ready", CompanionOutfit.is_initial.is_(True)
         )
         .order_by(CompanionOutfit.id)
-        .limit(1),
+        .limit(1)
     )
     return OutfitSnapshot.model_validate(row) if row is not None else None
 
@@ -87,6 +83,6 @@ async def ready_outfit_snapshots(
             *([CompanionOutfit.id < cursor] if cursor is not None else []),
         )
         .order_by(CompanionOutfit.id.desc())
-        .limit(max(1, min(limit, 100))),
+        .limit(max(1, min(limit, 100)))
     )
     return [OutfitSnapshot.model_validate(row) for row in rows]

@@ -20,16 +20,12 @@ async def revoke_active_logins(db: AsyncSession, user_id: int, *, logout_at: dat
     await db.execute(
         update(LoginRecord)
         .where(LoginRecord.user_id == user_id, LoginRecord.is_active.is_(True))
-        .values(is_active=False, logout_at=logout_at if logout_at is not None else utc_now()),
+        .values(is_active=False, logout_at=logout_at if logout_at is not None else utc_now())
     )
 
 
 async def activate_account(
-    payload: ActivateRequest,
-    db: AsyncSession,
-    *,
-    ip_address: str,
-    user_agent: str,
+    payload: ActivateRequest, db: AsyncSession, *, ip_address: str, user_agent: str
 ) -> TokenResponse:
     try:
         _base_url, raw_token = decode_activation_code(payload.code)
@@ -37,7 +33,7 @@ async def activate_account(
         raise RequestError(status_code=401, message="激活码格式无效。") from None
     token_hash = hash_activation_token(raw_token)
     user = await db.scalar(
-        select(User).where(User.activation_token_hash == token_hash, User.is_active.is_(True)).with_for_update(),
+        select(User).where(User.activation_token_hash == token_hash, User.is_active.is_(True)).with_for_update()
     )
     if user is None:
         raise RequestError(status_code=401, message="激活码无效。")
@@ -56,20 +52,14 @@ async def activate_account(
             user_agent=user_agent,
             is_active=True,
             login_at=now,
-        ),
+        )
     )
     await db.commit()
     return TokenResponse(access_token=token, expires_in=expires_in, user=UserInfo.model_validate(user))
 
 
 async def refresh_login(
-    user_id: int,
-    login_record_id: int,
-    payload: RefreshRequest,
-    db: AsyncSession,
-    *,
-    ip_address: str,
-    user_agent: str,
+    user_id: int, login_record_id: int, payload: RefreshRequest, db: AsyncSession, *, ip_address: str, user_agent: str
 ) -> TokenResponse:
     await lock_account(db, user_id)
     if is_user_in_maintenance(user_id):
@@ -83,7 +73,7 @@ async def refresh_login(
                 User.is_active.is_(True),
                 LoginRecord.id == login_record_id,
                 LoginRecord.is_active.is_(True),
-            ),
+            )
         )
     ).one_or_none()
     if row is None:
@@ -103,7 +93,7 @@ async def refresh_login(
 async def logout_login(user_id: int, login_record_id: int, db: AsyncSession) -> None:
     await lock_account(db, user_id)
     login = await db.scalar(
-        select(LoginRecord).where(LoginRecord.id == login_record_id, LoginRecord.user_id == user_id),
+        select(LoginRecord).where(LoginRecord.id == login_record_id, LoginRecord.user_id == user_id)
     )
     if login is None:
         raise RequestError(status_code=401, message="当前会话已失效，请重新登录")
@@ -124,7 +114,7 @@ async def is_login_active(user_id: int, login_record_id: int) -> bool:
                     User.is_active.is_(True),
                     LoginRecord.id == login_record_id,
                     LoginRecord.is_active.is_(True),
-                ),
+                )
             )
             is not None
         )

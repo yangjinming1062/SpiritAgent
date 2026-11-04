@@ -8,9 +8,6 @@ from .service import drain_scene_jobs, resume_scene_jobs
 def runtime_participants() -> tuple[RuntimeParticipant, ...]:
     return (
         RuntimeParticipant(
-            "scenes.generation",
-            recover=resume_scene_jobs,
-            resume_user=resume_scene_jobs,
-            drain=drain_scene_jobs,
+            "scenes.generation", recover=resume_scene_jobs, resume_user=resume_scene_jobs, drain=drain_scene_jobs
         ),
     )

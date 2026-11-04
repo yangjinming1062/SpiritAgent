@@ -91,13 +91,7 @@ async def create_post(
 
 
 async def create_diary(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    entry_date: date,
-    title: str,
-    body: str,
-    post_ids: Sequence[int],
+    db: AsyncSession, user_id: int, *, entry_date: date, title: str, body: str, post_ids: Sequence[int]
 ) -> tuple[EntryView, bool]:
     targets = list(dict.fromkeys(post_ids))
     if targets:

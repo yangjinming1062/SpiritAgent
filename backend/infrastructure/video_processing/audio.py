@@ -132,7 +132,7 @@ def voice_sample_wav_bytes(data: bytes, *, max_duration: float, max_bytes: int) 
                 "-c:a",
                 "pcm_s16le",
                 str(destination),
-            ],
+            ]
         )
         if result.returncode:
             raise VideoProcessError("音频无法解码，请重新录制或上传")

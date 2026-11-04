@@ -43,7 +43,7 @@ def client_reply_bubbles(reply: CompanionReply) -> list[dict]:
                     "url": client_asset_url(bubble.url) if bubble.url else None,
                     "error": bubble.error,
                     "video_queue": None,
-                },
+                }
             )
             continue
         item: dict = {"type": bubble.type, "text": bubble.text}
@@ -67,11 +67,7 @@ async def _synthesize_bubble(user_id: int, bubble: VoiceBubble, directory: str) 
     )
     duration, ext = await asyncio.to_thread(audio_bytes_info, audio.audio)
     path = await save_companion_asset_async(
-        audio.audio,
-        user_id=user_id,
-        label="chat-voice",
-        ext=ext,
-        directory=directory,
+        audio.audio, user_id=user_id, label="chat-voice", ext=ext, directory=directory
     )
     return ReplyAudio(url=path, duration=duration)
 
@@ -88,8 +84,7 @@ async def prepare_reply_audio(user_id: int, reply: CompanionReply) -> None:
     for index, bubble in enumerate(reply.bubbles):
         if isinstance(bubble, VoiceBubble) and bubble.audio is None:
             pending[index] = asyncio.create_task(
-                _synthesize_bubble(user_id, bubble, directory),
-                name=f"reply-audio-prepare:{user_id}:{index}",
+                _synthesize_bubble(user_id, bubble, directory), name=f"reply-audio-prepare:{user_id}:{index}"
             )
     consumed: set[int] = set()
     try:
@@ -150,11 +145,8 @@ async def _synthesize_reply_audio(
             row = await db.scalar(
                 select(Message)
                 .join(Conversation)
-                .where(
-                    Message.id == message_id,
-                    Conversation.user_id == user_id,
-                )
-                .with_for_update(of=Message),
+                .where(Message.id == message_id, Conversation.user_id == user_id)
+                .with_for_update(of=Message)
             )
             if row is None or not row.reply_json:
                 raise LookupError("Reply not found")
@@ -163,8 +155,7 @@ async def _synthesize_reply_audio(
             reply = CompanionReply.from_saved_snapshot(row.reply_json, row.content or "")
             if reply.audio_directory is None:
                 reply.audio_directory = dated_asset_directory(
-                    row.created_at,
-                    timezone=await resolve_user_timezone(db, user_id) or "UTC",
+                    row.created_at, timezone=await resolve_user_timezone(db, user_id) or "UTC"
                 )
                 row.reply_json = reply.model_dump(mode="json")
                 await commit_conversation(db)
@@ -177,8 +168,7 @@ async def _synthesize_reply_audio(
         for index, bubble in enumerate(reply.bubbles):
             if isinstance(bubble, VoiceBubble) and not bubble.audio and (bubble_index is None or index == bubble_index):
                 pending[index] = asyncio.create_task(
-                    _synthesize_bubble(user_id, bubble, directory),
-                    name=f"reply-audio:{user_id}:{message_id}:{index}",
+                    _synthesize_bubble(user_id, bubble, directory), name=f"reply-audio:{user_id}:{message_id}:{index}"
                 )
         consumed: set[int] = set()
         try:
@@ -197,16 +187,15 @@ async def _synthesize_reply_audio(
                             current = await db.scalar(
                                 select(Message)
                                 .where(
-                                    Message.id == message_id,
-                                    Message.conversation.has(Conversation.user_id == user_id),
+                                    Message.id == message_id, Message.conversation.has(Conversation.user_id == user_id)
                                 )
-                                .with_for_update(),
+                                .with_for_update()
                             )
                             if current is None or current.content != original_content or current.reply_json is None:
                                 raise LookupError("Reply changed during synthesis")
                             latest = CompanionReply.from_saved_snapshot(current.reply_json, current.content or "")
                             if index >= len(latest.bubbles) or latest.bubbles[index].model_dump(
-                                exclude={"audio"},
+                                exclude={"audio"}
                             ) != bubble.model_dump(exclude={"audio"}):
                                 raise LookupError("Voice bubble changed during synthesis")
                             latest.bubbles[index] = bubble

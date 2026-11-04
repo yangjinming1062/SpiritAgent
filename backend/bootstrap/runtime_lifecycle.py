@@ -64,5 +64,5 @@ def configure_runtime_lifecycle() -> None:
                 drain=drain_scheduling,
             ),
             RuntimeParticipant("events", stop_producer=stop_event_loop, drain=drain_event_tasks),
-        ),
+        )
     )

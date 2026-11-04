@@ -44,7 +44,7 @@ RESERVED_KEYS = frozenset(
         "parent_session_id",
         "excluded_tool_names",
         "skill_scope",
-    },
+    }
 )
 
 # 判定只读进程级配置，与调用用户无关。
@@ -93,10 +93,7 @@ class ToolsRegistry:
         self._runner_tools: dict[int, dict[str, dict[str, Any]]] = {}
 
     def register(
-        self,
-        schema: dict[str, Any],
-        func: Callable[..., Any],
-        availability_check: AvailabilityCheck | None = None,
+        self, schema: dict[str, Any], func: Callable[..., Any], availability_check: AvailabilityCheck | None = None
     ) -> None:
         """按 ``schema["name"]`` 添加或替换 backend 工具；重复注册幂等。"""
         schema = deepcopy(schema)
@@ -140,10 +137,7 @@ class ToolsRegistry:
         return MANAGER.is_connected(user_id) and bool(self._runner_tools.get(user_id))
 
     def get_all_schemas(
-        self,
-        user_id: int,
-        user_settings: dict[str, Any],
-        exclude: Collection[str] = frozenset(),
+        self, user_id: int, user_settings: dict[str, Any], exclude: Collection[str] = frozenset()
     ) -> list[dict[str, Any]]:
         # 谓词抛错则隐藏该工具（fail-closed），避免一个 bug 把整次调用拖到 500。toolsets.disabled 对 backend/memory 桶生效；runner 桶在客户端 tools.list 源头已按同一键过滤
         disabled = disabled_backend_tool_names(user_settings)
@@ -204,7 +198,7 @@ class ToolsRegistry:
         except OSError:
             logger.exception("Operating system error executing backend tool", extra={"tool_name": name})
             return tool_error(
-                f"Tool {name} did not complete because of an operating system or connection error. Check any work already started before repeating it.",
+                f"Tool {name} did not complete because of an operating system or connection error. Check any work already started before repeating it."
             )
         except Exception as e:
             logger.exception("Error executing backend tool", extra={"tool_name": name})

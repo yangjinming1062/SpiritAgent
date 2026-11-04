@@ -33,7 +33,7 @@ async def run_outbox_gc() -> None:
                     (WSEvent.status == "DELIVERED") & (WSEvent.delivered_at < delivered_cutoff),
                     (WSEvent.status == "FAILED") & (WSEvent.created_at < failed_cutoff),
                     (WSEvent.event_type == COMPANION_TURN_EVENT) & (WSEvent.created_at < companion_cutoff),
-                ),
+                )
             )
             .limit(OUTBOX_GC_BATCH_SIZE)
         )

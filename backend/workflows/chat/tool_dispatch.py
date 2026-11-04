@@ -129,10 +129,7 @@ def available_media_tool_schemas(schemas: list[dict], state: MediaTurnState) -> 
             "media_id": {**parameters["properties"]["media_id"], "enum": sorted(media_ids)},
         }
         if name == "image_regenerate":
-            properties["inspection_id"] = {
-                **properties["inspection_id"],
-                "enum": sorted(corrections.values()),
-            }
+            properties["inspection_id"] = {**properties["inspection_id"], "enum": sorted(corrections.values())}
         available.append({**schema, "parameters": {**parameters, "properties": properties}})
     return available
 
@@ -304,9 +301,7 @@ async def _run_tracked_tool(tc: dict, ctx: _ToolDispatchContext, progress: _Batc
 
 
 async def _run_tool_batch(
-    tool_calls_list: list[dict],
-    ctx: _ToolDispatchContext,
-    progress: _BatchProgress,
+    tool_calls_list: list[dict], ctx: _ToolDispatchContext, progress: _BatchProgress
 ) -> list[dict]:
     results = await _execute_tool_batch(tool_calls_list, ctx, progress)
     ctx.guardrails.record_round(
@@ -317,12 +312,10 @@ async def _run_tool_batch(
 
 
 async def _execute_tool_batch(
-    tool_calls_list: list[dict],
-    ctx: _ToolDispatchContext,
-    progress: _BatchProgress,
+    tool_calls_list: list[dict], ctx: _ToolDispatchContext, progress: _BatchProgress
 ) -> list[dict]:
     if len(tool_calls_list) > 1 and should_parallelize_tool_batch(
-        [(tc["name"], tc["arguments"]) for tc in tool_calls_list],
+        [(tc["name"], tc["arguments"]) for tc in tool_calls_list]
     ):
         tasks = [asyncio.create_task(_run_tracked_tool(tc, ctx, progress)) for tc in tool_calls_list]
         batch = asyncio.gather(*tasks)

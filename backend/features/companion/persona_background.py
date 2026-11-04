@@ -45,7 +45,7 @@ async def _refresh_personality_tags(persona_id: int, user_id: int) -> None:
             last_exc = exc
         if attempt < _BG_TASK_MAX_ATTEMPTS:
             await asyncio.sleep(
-                min(_BG_TASK_MAX_DELAY, _BG_TASK_BASE_DELAY * 2 ** (attempt - 1)) * (0.5 + 0.5 * random.random()),
+                min(_BG_TASK_MAX_DELAY, _BG_TASK_BASE_DELAY * 2 ** (attempt - 1)) * (0.5 + 0.5 * random.random())
             )
     logger.warning(
         "personality tag refresh failed after %d attempts for persona_id=%s user_id=%s",
@@ -76,9 +76,7 @@ async def _refresh_once(persona_id: int, user_id: int) -> None:
             logger.info("persona-tags-superseded persona_id=%s", persona_id)
             return
         # 只更新单列，其余列保持 PUT 写入的值
-        await db.execute(
-            update(Persona).where(Persona.user_id == persona_id).values(personality_tags_json=tags),
-        )
+        await db.execute(update(Persona).where(Persona.user_id == persona_id).values(personality_tags_json=tags))
         await db.commit()
     t_commit = time.monotonic()
     logger.info(

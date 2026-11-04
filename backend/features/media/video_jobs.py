@@ -201,11 +201,7 @@ async def _get_job(db: AsyncSession, job_id: int, user_id: int) -> VideoGenJob |
 
 
 def _compatible_video_configs(
-    chain: list[ProviderConfig],
-    *,
-    reference_images: bool,
-    duration: int,
-    resolution: str,
+    chain: list[ProviderConfig], *, reference_images: bool, duration: int, resolution: str
 ) -> list[ProviderConfig]:
     compatible = []
     for config in chain:
@@ -261,7 +257,7 @@ async def ensure_video_capability(
             for value in provider.resolutions or ()
             if value.upper() in (allowed_resolutions or (value.upper(),))
             and _compatible_video_configs(chain, reference_images=reference_images, duration=duration, resolution=value)
-        },
+        }
     )
     if options and resolution.upper() not in options:
         hints.append("可选分辨率：" + "、".join(options))
@@ -277,10 +273,7 @@ async def select_video_resolution(
         chain = await resolve_provider_chain(db, user_id, "video_gen", task=task)
     for resolution in preferred:
         compatible = _compatible_video_configs(
-            chain,
-            reference_images=reference_images,
-            duration=duration,
-            resolution=resolution,
+            chain, reference_images=reference_images, duration=duration, resolution=resolution
         )
         if compatible:
             declared = build_provider(compatible[0], VideoGenProvider).resolutions or ()
@@ -313,10 +306,7 @@ async def prepare_video_job(
         raise ValueError("Self video requires an identity reference and snapshot")
     chain = await resolve_provider_chain(db, user_id, "video_gen", task=task)
     compatible = _compatible_video_configs(
-        chain,
-        reference_images=bool(reference_images),
-        duration=duration,
-        resolution=resolution,
+        chain, reference_images=bool(reference_images), duration=duration, resolution=resolution
     )
     if not compatible:
         raise MissingLlmConfigError("未配置支持本次参考输入、时长和分辨率的视频供应商")
@@ -888,9 +878,7 @@ def _queue_owner(job: VideoGenJob, state: MediaChainState) -> VideoQueueOwner:
 
 
 async def inspect_video_queue_owner(
-    owner: VideoQueueOwner,
-    before_submit: bool = True,
-    request_id: str | None = None,
+    owner: VideoQueueOwner, before_submit: bool = True, request_id: str | None = None
 ) -> Literal["ready", "pending", "paused", "gone"]:
     """提交准入通过媒体所有者核对，队列不访问业务 ORM。"""
     async with SESSION_LOCAL() as db:
@@ -906,11 +894,7 @@ async def inspect_video_queue_owner(
         if (
             before_submit
             and params.identity_snapshot is not None
-            and not await visual_identity_is_current(
-                db,
-                job.user_id,
-                params.identity_snapshot,
-            )
+            and not await visual_identity_is_current(db, job.user_id, params.identity_snapshot)
         ):
             return "gone"
         if is_user_in_maintenance(job.user_id):
@@ -1123,9 +1107,7 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
                     await _fail_or_keep_best(job_id, "download_failed")
                     return
                 await _update_job(
-                    job_id,
-                    error_reason="download_failed",
-                    error=video_failure_message("download_failed"),
+                    job_id, error_reason="download_failed", error=video_failure_message("download_failed")
                 )
                 return
             await _update_job(
@@ -1200,13 +1182,7 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
 
 
 async def _download_and_store(
-    download_url: str | None,
-    *,
-    user_id: int,
-    job_id: int,
-    attempt: int,
-    generation_id: str,
-    directory: str,
+    download_url: str | None, *, user_id: int, job_id: int, attempt: int, generation_id: str, directory: str
 ) -> str:
     return await download_and_store_video(
         download_url,
@@ -1244,7 +1220,7 @@ async def resume_pending_video_jobs() -> None:
                             & VideoGenJob.stage.in_(("processing", "downloading", "evaluating"))
                         )
                     ),
-                ),
+                )
             )
         ).all()
     for job_id, user_id in jobs:
@@ -1281,9 +1257,9 @@ async def resume_user_video_jobs(user_id: int) -> None:
                                 & VideoGenJob.stage.in_(("processing", "downloading", "evaluating"))
                             )
                         ),
-                    ),
+                    )
                 )
-            ).all(),
+            ).all()
         )
     for job_id in job_ids:
         _spawn_poll(job_id, user_id)
@@ -1299,10 +1275,9 @@ async def cleanup_user_video_jobs(user_id: int) -> None:
         ids = list(
             await db.scalars(
                 select(VideoGenJob.id).where(
-                    VideoGenJob.user_id == user_id,
-                    VideoGenJob.cleanup_requested_at.is_not(None),
-                ),
-            ),
+                    VideoGenJob.user_id == user_id, VideoGenJob.cleanup_requested_at.is_not(None)
+                )
+            )
         )
     for job_id in ids:
         async with _result_lock(job_id):
@@ -1318,11 +1293,7 @@ async def cleanup_user_video_jobs(user_id: int) -> None:
             attempts = {row.generation_attempt_index, *(entry.attempt for entry in state.candidates)}
             paths.update(
                 video_job_asset_path(
-                    user_id,
-                    job_id,
-                    attempt,
-                    generation_id=params.asset_generation_id,
-                    directory=params.asset_directory,
+                    user_id, job_id, attempt, generation_id=params.asset_generation_id, directory=params.asset_directory
                 )
                 for attempt in attempts
             )
@@ -1430,7 +1401,7 @@ async def receive_video_result(user_id: int, job_id: int) -> VideoJobSnapshot:
 async def discard_video_job(db: AsyncSession, user_id: int, job_id: int) -> None:
     """调用方事务内失效并登记回收；业务引用由所属模块核对，提交后再取消供应商。"""
     row = await db.scalar(
-        select(VideoGenJob).where(VideoGenJob.id == job_id, VideoGenJob.user_id == user_id).with_for_update(),
+        select(VideoGenJob).where(VideoGenJob.id == job_id, VideoGenJob.user_id == user_id).with_for_update()
     )
     if row is None:
         return
@@ -1442,9 +1413,7 @@ async def discard_video_job(db: AsyncSession, user_id: int, job_id: int) -> None
     row.error_reason = "user_discarded"
     row.error = "视频已放弃；远端取消结果由清理任务核实，不会重新提交"
     await enqueue_asset_cleanup(
-        db,
-        user_id,
-        asset_paths([row.video_url, row.candidate_video_url, row.checkpoint], user_id),
+        db, user_id, asset_paths([row.video_url, row.candidate_video_url, row.checkpoint], user_id)
     )
 
 

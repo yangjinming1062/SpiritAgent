@@ -30,16 +30,11 @@ STARTUP_ONLY_KEYS: frozenset[str] = frozenset(
         "companion_asset_signing_key",
         "data_dir",
         "app_name",
-    },
+    }
 )
 
 # 敏感字段：返回给前端时脱敏掩码，保存时空字符串默认保持原值
-SENSITIVE_KEYS: frozenset[str] = frozenset(
-    {
-        "brave_search_api_key",
-        "tavily_api_key",
-    },
-)
+SENSITIVE_KEYS: frozenset[str] = frozenset({"brave_search_api_key", "tavily_api_key"})
 
 
 def _validation_fields(exc: ValidationError) -> str:
@@ -91,26 +86,16 @@ def _apply_runtime_side_effects(changed_keys: set[str]) -> None:
     if "log_level" in changed_keys or "log_format" in changed_keys:
         try:
             setup_logging()
-            logger.info(
-                "Logging configuration reloaded: level=%s format=%s",
-                SETTINGS.log_level,
-                SETTINGS.log_format,
-            )
+            logger.info("Logging configuration reloaded: level=%s format=%s", SETTINGS.log_level, SETTINGS.log_format)
         except Exception:
             logger.warning("Failed to reload logging configuration", exc_info=True)
 
     # DynamicLimiter.enabled 直读 SETTINGS.rate_limit_enabled，无需进程内赋值；LLM 重试参数变动时换代连接池让新连接生效。
-    llm_http_keys = {
-        "llm_max_retry_attempts",
-        "llm_base_retry_delay",
-        "llm_max_retry_delay",
-    }
+    llm_http_keys = {"llm_max_retry_attempts", "llm_base_retry_delay", "llm_max_retry_delay"}
     if changed_keys & llm_http_keys:
         try:
             rotate_http_clients()
-            logger.info(
-                "LLM HTTP client pools rotated for new retry settings",
-            )
+            logger.info("LLM HTTP client pools rotated for new retry settings")
         except Exception:
             logger.warning("Failed to rotate LLM HTTP client caches", exc_info=True)
 
@@ -161,8 +146,7 @@ async def save_system_settings(db: AsyncSession, updates: dict[str, Any]) -> Non
         try:
             if "ai_config" in pending:
                 pending["ai_config"] = prepare_ai_config(
-                    AIConfigUpdate.model_validate(pending["ai_config"]),
-                    SETTINGS.ai_config,
+                    AIConfigUpdate.model_validate(pending["ai_config"]), SETTINGS.ai_config
                 )
                 await _validate_user_ai_references(db, pending["ai_config"])
             candidate = SETTINGS.validate_runtime_update(pending)
@@ -178,14 +162,14 @@ async def save_system_settings(db: AsyncSession, updates: dict[str, Any]) -> Non
         try:
             if serialized:
                 stmt = insert(SystemSetting).values(
-                    [{"setting_key": key, "setting_value": value} for key, value in serialized.items()],
+                    [{"setting_key": key, "setting_value": value} for key, value in serialized.items()]
                 )
                 # 逐 key 覆盖写；TimestampMixin.onupdate 对 Core 语句不生效，需显式刷新 updated_at。
                 await db.execute(
                     stmt.on_conflict_do_update(
                         index_elements=["setting_key"],
                         set_={"setting_value": stmt.excluded.setting_value, "updated_at": func.now()},
-                    ),
+                    )
                 )
             await db.commit()
         except Exception:

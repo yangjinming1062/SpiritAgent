@@ -17,12 +17,7 @@ from .review_contracts import ReviewEvidence, ReviewImage, review_context
 
 
 async def freeze_review_evidence(
-    user_id: int,
-    images: tuple[str, ...],
-    *,
-    prompt: str,
-    context: object,
-    media_path: str | None = None,
+    user_id: int, images: tuple[str, ...], *, prompt: str, context: object, media_path: str | None = None
 ) -> ReviewEvidence:
     entries: list[ReviewImage] = []
     for index, uri in enumerate(images):

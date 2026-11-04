@@ -52,11 +52,7 @@ async def _emit_notification(user_id: int, *, name: str, text: str, conversation
 
 
 async def _execute_standard_turn(
-    user_id: int,
-    job_id: int,
-    name: str,
-    prompt: str,
-    conversation_id: int | None,
+    user_id: int, job_id: int, name: str, prompt: str, conversation_id: int | None
 ) -> None:
     prompt = prompt.strip()
     if not prompt:
@@ -68,18 +64,11 @@ async def _execute_standard_turn(
         async with session_scope() as db:
             llm_config = await resolve_user_llm_config(db, user_id, AiTaskKey.scheduled_task)
         emitter = HeadlessEmitter()
-        request = ChatRequest(
-            session_id=str(conversation_id),
-            message=ChatMessageRequest(content=prompt),
-        )
+        request = ChatRequest(session_id=str(conversation_id), message=ChatMessageRequest(content=prompt))
         await run_chat_turn(request, llm_config, user_id, emitter, headless=True)
         if emitter.error:
             await _emit_notification(
-                user_id,
-                name=name,
-                text="任务执行失败，请稍后重试",
-                conversation_id=conversation_id,
-                error=True,
+                user_id, name=name, text="任务执行失败，请稍后重试", conversation_id=conversation_id, error=True
             )
             return
         await _emit_notification(user_id, name=name, text=emitter.final_text, conversation_id=conversation_id)
@@ -87,22 +76,12 @@ async def _execute_standard_turn(
         logger.exception("standard cron turn failed", extra={"user_id": user_id, "job_id": job_id})
         if conversation_id is not None:
             await _emit_notification(
-                user_id,
-                name=name,
-                text="任务执行失败，请稍后重试",
-                conversation_id=conversation_id,
-                error=True,
+                user_id, name=name, text="任务执行失败，请稍后重试", conversation_id=conversation_id, error=True
             )
 
 
 async def execute_standard_turn(
-    user_id: int,
-    job_id: int,
-    *,
-    name: str,
-    prompt: str,
-    conversation_id: int | None,
-    one_shot: bool,
+    user_id: int, job_id: int, *, name: str, prompt: str, conversation_id: int | None, one_shot: bool
 ) -> None:
     """同一任务串行执行，避免短周期任务把同一历史交错写入；至多一个运行中和一个待执行触发，其余合并丢弃。待执行触发获得执行权后重读任务：已删除、暂停或改为 special 的丢弃，否则按任务当前内容运行；一次性任务触发时已删除，沿用触发时的内容。"""
     slot = _STANDARD_TURN_SLOTS.setdefault(job_id, _TurnSlot())
@@ -116,8 +95,7 @@ async def execute_standard_turn(
                 active = await user_is_active(db, user_id)
             if not active:
                 logger.info(
-                    "standard cron trigger dropped: user inactive",
-                    extra={"user_id": user_id, "job_id": job_id},
+                    "standard cron trigger dropped: user inactive", extra={"user_id": user_id, "job_id": job_id}
                 )
                 return
             if not one_shot:

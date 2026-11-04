@@ -105,10 +105,7 @@ async def serve_ranged_file(request: Request, file_path: Path, media_type: str) 
     if not range_header:
         headers = {**base_headers, "Content-Length": str(file_size)}
         return StreamingResponse(
-            _iter_file(file_path, 0, file_size),
-            status_code=200,
-            media_type=media_type,
-            headers=headers,
+            _iter_file(file_path, 0, file_size), status_code=200, media_type=media_type, headers=headers
         )
 
     range_bounds = _parse_range_header(range_header, file_size)
@@ -124,8 +121,5 @@ async def serve_ranged_file(request: Request, file_path: Path, media_type: str) 
     }
 
     return StreamingResponse(
-        _iter_file(file_path, start, chunk_length),
-        status_code=206,
-        media_type=media_type,
-        headers=ranged_headers,
+        _iter_file(file_path, start, chunk_length), status_code=206, media_type=media_type, headers=ranged_headers
     )

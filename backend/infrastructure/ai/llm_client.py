@@ -139,12 +139,7 @@ async def resolve_provider_chain(
     else:
         owner, card_ids, source = system_ai, None, "system_default"
     chain = _chain_from_ai_config(
-        owner,
-        service,
-        system_ai if owner is user_ai else None,
-        card_ids=card_ids,
-        task=task,
-        config_source=source,
+        owner, service, system_ai if owner is user_ai else None, card_ids=card_ids, task=task, config_source=source
     )
     if task == AiTaskKey.voice_design and service == ServiceType.tts:
         defaults = provider_configuration_defaults().get(service.value, {})
@@ -176,10 +171,7 @@ async def resolve_provider_chain(
 
 
 async def resolve_vision_chain(
-    db: AsyncSession | None,
-    user_id: int | None,
-    *,
-    task: AiTaskKey,
+    db: AsyncSession | None, user_id: int | None, *, task: AiTaskKey
 ) -> list[ProviderConfig]:
     return await resolve_provider_chain(
         db,
@@ -219,11 +211,7 @@ def embedding_model_key(config: ProviderConfig) -> str:
 
 
 async def _embed(
-    texts: list[str],
-    provider: EmbeddingProvider | None,
-    *,
-    user_id: int | None,
-    purpose: str,
+    texts: list[str], provider: EmbeddingProvider | None, *, user_id: int | None, purpose: str
 ) -> list[list[float]] | None:
     """调用 embedding 并记调试日志；未配置或失败时返回 None。"""
     started = time.monotonic()
@@ -275,11 +263,7 @@ async def _embed(
 
 
 async def generate_embedding(
-    text: str,
-    provider: EmbeddingProvider | None,
-    *,
-    user_id: int | None = None,
-    purpose: str = "db",
+    text: str, provider: EmbeddingProvider | None, *, user_id: int | None = None, purpose: str = "db"
 ) -> list[float] | None:
     """为单段文本生成 embedding 向量；未配置或失败时返回 None。purpose 见 EmbeddingProvider.embed。"""
     if not text or not text.strip():
@@ -289,10 +273,7 @@ async def generate_embedding(
 
 
 async def generate_embeddings(
-    texts: list[str],
-    provider: EmbeddingProvider | None,
-    *,
-    user_id: int | None = None,
+    texts: list[str], provider: EmbeddingProvider | None, *, user_id: int | None = None
 ) -> list[list[float]] | None:
     """为多段文本生成 embedding 向量列表。"""
     if not texts:
@@ -301,11 +282,7 @@ async def generate_embeddings(
 
 
 async def resolve_model_config(
-    db: AsyncSession,
-    user_id: int,
-    service: ServiceType,
-    model_card_id: UUID,
-    provider_id: UUID,
+    db: AsyncSession, user_id: int, service: ServiceType, model_card_id: UUID, provider_id: UUID
 ) -> ProviderConfig | None:
     """按原模型身份读取现存凭据，供已失去业务所有者的远端任务收尾。"""
     user_ai = await read_user_ai_config(db, user_id)

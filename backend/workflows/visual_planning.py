@@ -23,10 +23,7 @@ async def visual_planning_context(user_id: int, snapshot: ActorClipSource | Cine
         voice_id = await read_current_voice(db, user_id)
         voice = await resolve_custom_voice(db, user_id, voice_id) if voice_id else None
         memories = await retrieve_hybrid_memories(
-            db,
-            MemoryScope(user_id, "companion"),
-            _memory_query(snapshot),
-            limit=6,
+            db, MemoryScope(user_id, "companion"), _memory_query(snapshot), limit=6
         )
         now = format_local_iso(utc_now(), await resolve_user_timezone(db, user_id)) or ""
     return VisualPlanningContext(

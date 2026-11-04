@@ -29,8 +29,7 @@ CurrentSession = Annotated[tuple[AccountIdentity, LoginIdentity], Depends(get_cu
 CurrentUser = Annotated[AccountIdentity, Depends(get_current_user)]
 CurrentRemoteSession = Annotated[tuple[AccountIdentity, RemoteDeviceIdentity], Depends(get_current_remote_session)]
 OptionalSession = Annotated[
-    tuple[AccountIdentity, LoginIdentity | RemoteDeviceIdentity] | None,
-    Depends(get_optional_current_session),
+    tuple[AccountIdentity, LoginIdentity | RemoteDeviceIdentity] | None, Depends(get_optional_current_session)
 ]
 
 
@@ -63,9 +62,7 @@ async def get_request_identity(
 
 
 async def get_business_actor(
-    request: Request,
-    db: DbSession,
-    credentials: HTTPAuthorizationCredentials | None = Depends(BEARER_SCHEME),
+    request: Request, db: DbSession, credentials: HTTPAuthorizationCredentials | None = Depends(BEARER_SCHEME)
 ) -> AsyncIterator[BusinessActor]:
     identity = await get_request_identity(request, db, credentials)
     origin_kind = "remote" if identity.device_id is not None else "desktop"
@@ -80,12 +77,7 @@ async def get_business_actor(
                 else MANAGER.desktop_client_context(identity.user_id)
             )
             yield BusinessActor(
-                identity.user_id,
-                origin_kind,
-                origin_id,
-                account,
-                identity.client_context,
-                execution_context,
+                identity.user_id, origin_kind, origin_id, account, identity.client_context, execution_context
             )
         finally:
             release_account_runtime(identity.user_id, lease_id)

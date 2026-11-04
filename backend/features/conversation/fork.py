@@ -29,10 +29,7 @@ class ForkResult:
 
 
 async def _fork_conversation_from_message(
-    db: AsyncSession,
-    user_id: int,
-    source_session_id: str,
-    source_message_id: int,
+    db: AsyncSession, user_id: int, source_session_id: str, source_message_id: int
 ) -> ForkResult:
     src = await Conversation.by_session_id(db, source_session_id, user_id=user_id)
     if src is None:
@@ -46,15 +43,12 @@ async def _fork_conversation_from_message(
     src_msg = (
         await db.execute(
             select(Message.id, Message.subtype).where(
-                Message.id == source_message_id,
-                Message.conversation_id == src.id,
-            ),
+                Message.id == source_message_id, Message.conversation_id == src.id
+            )
         )
     ).first()
     if src_msg is None:
-        raise SourceNotFoundError(
-            f"源消息不在会话内: message_id={source_message_id} session_id={source_session_id!r}",
-        )
+        raise SourceNotFoundError(f"源消息不在会话内: message_id={source_message_id} session_id={source_session_id!r}")
 
     # 只排除界面专用行；媒体送达、主动消息与摘要行属于模型上下文，照常复制。
     rows = (
@@ -67,7 +61,7 @@ async def _fork_conversation_from_message(
                     Message.id > src.context_after_message_id,
                     Message.subtype.is_(None) | Message.subtype.notin_(tuple(UI_ONLY_SUBTYPES)),
                 )
-                .order_by(Message.id),
+                .order_by(Message.id)
             )
         )
         .scalars()
@@ -77,7 +71,7 @@ async def _fork_conversation_from_message(
     if not rows:
         # 源消息自身是界面专用行时防御性兜底，正常路径不会到这里
         raise SourceNotFoundError(
-            f"无可派生的消息：会话 {source_session_id!r} 在 message_id={source_message_id} 之前没有可复制行",
+            f"无可派生的消息：会话 {source_session_id!r} 在 message_id={source_message_id} 之前没有可复制行"
         )
 
     # 继承 settings_json 让 runtime 启动即处于暖态；派生会话是独立的顶层会话，只记录来源。
@@ -141,10 +135,7 @@ async def _fork_conversation_from_message(
 
 
 async def fork_conversation_from_message(
-    db: AsyncSession,
-    user_id: int,
-    source_session_id: str,
-    source_message_id: int,
+    db: AsyncSession, user_id: int, source_session_id: str, source_message_id: int
 ) -> ForkResult:
     async with user_asset_lock(user_id):
         return await _fork_conversation_from_message(db, user_id, source_session_id, source_message_id)

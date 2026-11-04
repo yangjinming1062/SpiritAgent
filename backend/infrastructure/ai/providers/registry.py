@@ -25,7 +25,7 @@ def resolve(service_type: ServiceType, provider_name: str) -> type[BaseProvider]
         return _REGISTRY[(service_type, provider_name)]
     except KeyError as e:
         raise LookupError(
-            f"No provider registered for service={service_type.value!r}, provider={provider_name!r}",
+            f"No provider registered for service={service_type.value!r}, provider={provider_name!r}"
         ) from e
 
 

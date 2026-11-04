@@ -25,7 +25,7 @@ class SceneState:
 
 async def get_scene(db: AsyncSession, user_id: int, scene_id: int) -> CompanionScene | None:
     return await db.scalar(
-        select(CompanionScene).where(CompanionScene.id == scene_id, CompanionScene.user_id == user_id),
+        select(CompanionScene).where(CompanionScene.id == scene_id, CompanionScene.user_id == user_id)
     )
 
 
@@ -51,7 +51,7 @@ async def get_pending_scene_task(db: AsyncSession, user_id: int) -> CompanionSce
             ),
         )
         .order_by(CompanionScene.id.desc())
-        .limit(1),
+        .limit(1)
     )
 
 
@@ -97,10 +97,7 @@ def _snapshot_statement(conditions: list[ColumnElement[bool]], *, state_only: bo
         )
         .select_from(CompanionScene)
         .outerjoin(initial, initial.id == CompanionScene.initial_job_id)
-        .outerjoin(
-            replacement,
-            replacement.id == CompanionScene.replacement_job_id,
-        )
+        .outerjoin(replacement, replacement.id == CompanionScene.replacement_job_id)
         .where(*conditions)
     )
     if state_only:
@@ -226,7 +223,7 @@ def response_for_scene(row: CompanionScene | SceneSnapshot) -> SceneResponse:
                 if row.regeneration_status and row.regeneration_task_id
                 else None
             ),
-        },
+        }
     )
 
 

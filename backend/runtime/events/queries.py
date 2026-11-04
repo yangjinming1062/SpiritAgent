@@ -12,8 +12,8 @@ from .models import WSEvent
 async def live_event_payloads(db: AsyncSession, user_id: int) -> tuple[dict[str, Any], ...]:
     return tuple(
         await db.scalars(
-            select(WSEvent.payload).where(WSEvent.user_id == user_id, WSEvent.status.in_(("PENDING", "PROCESSING"))),
-        ),
+            select(WSEvent.payload).where(WSEvent.user_id == user_id, WSEvent.status.in_(("PENDING", "PROCESSING")))
+        )
     )
 
 
@@ -21,7 +21,7 @@ async def settled_event_payloads(db: AsyncSession, user_id: int) -> tuple[tuple[
     return tuple(
         (row.id, row.payload)
         for row in await db.scalars(
-            select(WSEvent).where(WSEvent.user_id == user_id, WSEvent.status.not_in(("PENDING", "PROCESSING"))),
+            select(WSEvent).where(WSEvent.user_id == user_id, WSEvent.status.not_in(("PENDING", "PROCESSING")))
         )
     )
 
@@ -33,11 +33,7 @@ async def remove_events(db: AsyncSession, user_id: int, ids: Collection[int]) ->
 
 
 async def invalidate_history_events(
-    db: AsyncSession,
-    user_id: int,
-    message_ids: Collection[int],
-    job_ids: Collection[str],
-    session_ids: Collection[str],
+    db: AsyncSession, user_id: int, message_ids: Collection[int], job_ids: Collection[str], session_ids: Collection[str]
 ) -> tuple[dict[str, Any], ...]:
     message_keys = [str(value) for value in message_ids]
     job_keys = [str(value) for value in job_ids]

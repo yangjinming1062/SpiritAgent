@@ -41,7 +41,7 @@ async def review_scopes(db: AsyncSession, active_user_ids: Collection[int]) -> l
             _reviewable_message(),
             Message.id > Conversation.memory_reviewed_message_id,
         )
-        .distinct(),
+        .distinct()
     )
     return list(rows.tuples().all())
 
@@ -78,10 +78,7 @@ async def review_messages(
 
 
 async def original_user_messages(
-    db: AsyncSession,
-    user_id: int,
-    preset_id: str,
-    message_ids: Collection[int],
+    db: AsyncSession, user_id: int, preset_id: str, message_ids: Collection[int]
 ) -> dict[int, OriginalMessageSnapshot]:
     rows = await db.scalars(
         select(Message)
@@ -94,7 +91,7 @@ async def original_user_messages(
             Conversation.system_preset_id == preset_id,
             user_authored_conversation(),
             Message.id > Conversation.context_after_message_id,
-        ),
+        )
     )
     return {
         row.id: OriginalMessageSnapshot(row.id, row.conversation_id, row.role, message_text(row), row.created_at)
@@ -110,7 +107,7 @@ async def source_conversation_exists(db: AsyncSession, user_id: int, preset_id: 
                 Conversation.user_id == user_id,
                 Conversation.system_preset_id == preset_id,
                 Conversation.is_automation.is_(False),
-            ),
+            )
         )
         is not None
     )
@@ -121,7 +118,7 @@ async def latest_scope_message_id(db: AsyncSession, user_id: int, preset_id: str
         await db.scalar(
             select(func.max(Message.id))
             .join(Conversation)
-            .where(Conversation.user_id == user_id, Conversation.system_preset_id == preset_id),
+            .where(Conversation.user_id == user_id, Conversation.system_preset_id == preset_id)
         )
         or 0
     )
@@ -132,7 +129,7 @@ async def latest_user_message_id(db: AsyncSession, user_id: int) -> int:
         await db.scalar(
             select(func.max(Message.id))
             .join(Conversation)
-            .where(Conversation.user_id == user_id, user_authored_conversation(), Message.role == "user"),
+            .where(Conversation.user_id == user_id, user_authored_conversation(), Message.role == "user")
         )
         or 0
     )
@@ -147,8 +144,8 @@ async def companion_conversation_users(db: AsyncSession, user_ids: Collection[in
                 Conversation.system_preset_id == preset_id,
                 user_authored_conversation(),
             )
-            .distinct(),
-        ),
+            .distinct()
+        )
     )
 
 
@@ -165,21 +162,13 @@ def _nightly_scope(user_id: int, preset_id: str) -> ColumnElement[bool]:
 
 
 async def nightly_messages(
-    db: AsyncSession,
-    user_id: int,
-    preset_id: str,
-    start: datetime,
-    end: datetime,
+    db: AsyncSession, user_id: int, preset_id: str, start: datetime, end: datetime
 ) -> list[OriginalMessageSnapshot]:
     rows = await db.scalars(
         select(Message)
         .join(Conversation)
-        .where(
-            _nightly_scope(user_id, preset_id),
-            Message.created_at >= start,
-            Message.created_at < end,
-        )
-        .order_by(Message.created_at, Message.id),
+        .where(_nightly_scope(user_id, preset_id), Message.created_at >= start, Message.created_at < end)
+        .order_by(Message.created_at, Message.id)
     )
     return [
         OriginalMessageSnapshot(row.id, row.conversation_id, row.role, message_text(row), row.created_at)
@@ -188,11 +177,7 @@ async def nightly_messages(
 
 
 async def nightly_user_message_count(
-    db: AsyncSession,
-    user_id: int,
-    preset_id: str,
-    start: datetime,
-    end: datetime,
+    db: AsyncSession, user_id: int, preset_id: str, start: datetime, end: datetime
 ) -> int:
     return (
         await db.scalar(
@@ -204,7 +189,7 @@ async def nightly_user_message_count(
                 Message.role == "user",
                 Message.created_at >= start,
                 Message.created_at < end,
-            ),
+            )
         )
         or 0
     )

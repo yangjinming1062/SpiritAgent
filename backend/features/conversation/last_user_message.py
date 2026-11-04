@@ -21,10 +21,7 @@ def _is_editable_user_message(source: Message | None, conv: Conversation) -> boo
 
 
 async def find_user_message(
-    db: AsyncSession,
-    user_id: int,
-    session_id: str,
-    source_message_id: int,
+    db: AsyncSession, user_id: int, session_id: str, source_message_id: int
 ) -> tuple[Conversation | None, Message | None]:
     """返回会话中指定的可编辑普通用户行；过期请求不改历史。"""
     conv = await _find_editable_conversation(db, user_id, session_id)
@@ -34,20 +31,15 @@ async def find_user_message(
 
     source = await db.scalar(
         select(Message).where(
-            Message.conversation_id == conv.id,
-            Message.id == source_message_id,
-            Message.role == "user",
-        ),
+            Message.conversation_id == conv.id, Message.id == source_message_id, Message.role == "user"
+        )
     )
 
     return conv, source if _is_editable_user_message(source, conv) else None
 
 
 async def find_last_user_message(
-    db: AsyncSession,
-    user_id: int,
-    session_id: str,
-    source_message_id: int,
+    db: AsyncSession, user_id: int, session_id: str, source_message_id: int
 ) -> tuple[Conversation | None, Message | None]:
     """返回会话最后一条可消费的普通用户行；重试过期请求不改历史。"""
     conv = await _find_editable_conversation(db, user_id, session_id)
@@ -59,7 +51,7 @@ async def find_last_user_message(
         select(Message)
         .where(Message.conversation_id == conv.id, Message.role == "user")
         .order_by(Message.id.desc())
-        .limit(1),
+        .limit(1)
     )
 
     if source is None or source.id != source_message_id or not _is_editable_user_message(source, conv):

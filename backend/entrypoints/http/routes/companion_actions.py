@@ -34,14 +34,7 @@ async def list_actions(
     cursor: Annotated[ResourceId | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> ActionListResponse:
-    return await _action_queries.list_actions(
-        db,
-        user.id,
-        query=query,
-        group=group,
-        cursor=cursor,
-        limit=limit,
-    )
+    return await _action_queries.list_actions(db, user.id, query=query, group=group, cursor=cursor, limit=limit)
 
 
 @router.get("/{action_id}", response_model=ActionAssetView)
@@ -97,9 +90,7 @@ async def delete_action(
 
 @router.post("/{action_id}/review", response_model=ActionAssetView, status_code=202)
 async def retry_review(
-    action_id: Annotated[ResourceId, Path(gt=0, le=POSTGRES_INT8_MAX)],
-    user: CurrentUser,
-    body: ActionReviewRequest,
+    action_id: Annotated[ResourceId, Path(gt=0, le=POSTGRES_INT8_MAX)], user: CurrentUser, body: ActionReviewRequest
 ) -> ActionAssetView:
     try:
         result = await retry_action_reference(user.id, action_id, body)

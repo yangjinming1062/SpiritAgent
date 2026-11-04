@@ -41,11 +41,7 @@ def _status_condition(status: str) -> ColumnElement[bool]:
 
 
 def _memory_list_query(
-    scope: MemoryScope,
-    *,
-    kind: str | None = None,
-    status: str = "active",
-    q: str | None = None,
+    scope: MemoryScope, *, kind: str | None = None, status: str = "active", q: str | None = None
 ) -> Select[tuple[Memory]]:
     if kind is not None and kind not in MEMORY_KINDS:
         raise ValueError(f"kind must be one of {sorted(MEMORY_KINDS)}")
@@ -54,7 +50,7 @@ def _memory_list_query(
         stmt = stmt.where(Memory.kind == kind)
     if q:
         stmt = stmt.where(
-            or_(Memory.content.icontains(q, autoescape=True), Memory.context.icontains(q, autoescape=True)),
+            or_(Memory.content.icontains(q, autoescape=True), Memory.context.icontains(q, autoescape=True))
         )
 
     return stmt
@@ -163,11 +159,7 @@ async def update_user_profile(scope: MemoryScope, changes: list[MemoryProfileCha
 
 
 async def update_memory(
-    scope: MemoryScope,
-    memory_id: int,
-    *,
-    content: str,
-    expected_version: int,
+    scope: MemoryScope, memory_id: int, *, content: str, expected_version: int
 ) -> MemoryListItem | None:
     """人工编辑重新生效；伙伴自身记录保留表达主体，不转为用户事实。"""
     content = (content or "").strip()
@@ -230,12 +222,7 @@ async def update_memory(
 
 
 async def memory_counts(
-    db: AsyncSession,
-    scope: MemoryScope,
-    *,
-    kind: str | None = None,
-    status: str = "active",
-    q: str | None = None,
+    db: AsyncSession, scope: MemoryScope, *, kind: str | None = None, status: str = "active", q: str | None = None
 ) -> dict[str, int]:
     recall = Memory.kind == "recall"
     filters = {

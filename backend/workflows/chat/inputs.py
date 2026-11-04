@@ -11,11 +11,7 @@ from features.conversation.request_contracts import ChatAttachment
 from features.conversation.session_operations import ConversationNotFoundError, get_conversation
 from features.conversation.snapshots import ConversationSnapshot
 from infrastructure.config import SETTINGS
-from infrastructure.constants import (
-    ATTACHMENT_DATA_URL_MAX_CHARS,
-    ATTACHMENT_TYPE_AUDIO,
-    ATTACHMENT_TYPE_VIDEO,
-)
+from infrastructure.constants import ATTACHMENT_DATA_URL_MAX_CHARS, ATTACHMENT_TYPE_AUDIO, ATTACHMENT_TYPE_VIDEO
 from infrastructure.request_errors import RequestError
 from runtime.conversation import RuntimeSession
 from runtime.turn_ownership import conversation_lock
@@ -64,10 +60,7 @@ def _validate_attachments(attachments: list[ChatAttachment] | None, session_id: 
                 raise RequestError(422, "音频附件不属于当前会话或已失效，请重新上传")
         elif att_type == ATTACHMENT_TYPE_VIDEO:
             if file_url.startswith("data:"):
-                raise RequestError(
-                    422,
-                    f"attachments[{idx}] video must reference an uploaded URL, not a data URL",
-                )
+                raise RequestError(422, f"attachments[{idx}] video must reference an uploaded URL, not a data URL")
             file_id = _session_video_file_id(file_url, session_id)
             if file_id is None:
                 raise RequestError(

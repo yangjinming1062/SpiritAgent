@@ -36,16 +36,10 @@ async def admin_page() -> FileResponse:
 @router.get("/admin/admin.js", include_in_schema=False)
 async def admin_script() -> FileResponse:
     return FileResponse(
-        ADMIN_STATIC_PATH / "admin.js",
-        media_type="text/javascript",
-        headers={"Cache-Control": "no-cache"},
+        ADMIN_STATIC_PATH / "admin.js", media_type="text/javascript", headers={"Cache-Control": "no-cache"}
     )
 
 
 @router.get("/admin/admin.css", include_in_schema=False)
 async def admin_styles() -> FileResponse:
-    return FileResponse(
-        ADMIN_STATIC_PATH / "admin.css",
-        media_type="text/css",
-        headers={"Cache-Control": "no-cache"},
-    )
+    return FileResponse(ADMIN_STATIC_PATH / "admin.css", media_type="text/css", headers={"Cache-Control": "no-cache"})

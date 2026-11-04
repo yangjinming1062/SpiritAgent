@@ -108,7 +108,7 @@ async def _recover_stale_locks() -> None:
         await db.execute(
             update(WSEvent)
             .where(WSEvent.status == "PROCESSING", WSEvent.locked_at < cutoff)
-            .values(status="PENDING", locked_by=None, locked_at=None),
+            .values(status="PENDING", locked_by=None, locked_at=None)
         )
         await db.commit()
 
@@ -123,10 +123,7 @@ async def _claim_pending_events(local_user_ids: list[int]) -> list[Row]:
                 or_(
                     WSEvent.event_type.in_(tuple(_handlers)),
                     WSEvent.user_id.in_(MANAGER.local_user_ids()),
-                    and_(
-                        WSEvent.user_id.in_(local_user_ids),
-                        WSEvent.event_type.in_(remote_event_types()),
-                    ),
+                    and_(WSEvent.user_id.in_(local_user_ids), WSEvent.event_type.in_(remote_event_types())),
                 ),
                 WSEvent.status == "PENDING",
                 WSEvent.next_retry_at <= now,
@@ -148,7 +145,7 @@ async def _claim_pending_events(local_user_ids: list[int]) -> list[Row]:
                     WSEvent.user_id,
                     WSEvent.created_at,
                     WSEvent.retry_count,
-                ),
+                )
             )
         ).all()
         await db.commit()
@@ -163,7 +160,7 @@ async def _mark_events_delivered(event_ids: list[int]) -> None:
         await db.execute(
             update(WSEvent)
             .where(WSEvent.id.in_(event_ids))
-            .values(status="DELIVERED", delivered_at=now, locked_by=None, error_message=None),
+            .values(status="DELIVERED", delivered_at=now, locked_by=None, error_message=None)
         )
         await db.commit()
 
@@ -188,7 +185,7 @@ async def _mark_event_failure(event_id: int, current_retries: int, error: str) -
                 next_retry_at=next_retry,
                 locked_by=None,
                 error_message=error[:500],
-            ),
+            )
         )
         await db.commit()
 
@@ -337,12 +334,7 @@ async def _dispatch_claimed_batch() -> tuple[int, bool]:
             continue
 
         try:
-            enqueued = await MANAGER.publish_event(
-                user_id,
-                event_type,
-                payload,
-                event_id=event_id,
-            )
+            enqueued = await MANAGER.publish_event(user_id, event_type, payload, event_id=event_id)
         except Exception as e:
             logger.exception(
                 "Failed to dispatch event to user",

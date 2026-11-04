@@ -51,7 +51,7 @@ async def auto_generate_title(
                     select(Message)
                     .where(Message.conversation_id == conversation_id, Message.role == "user")
                     .order_by(Message.id)
-                    .limit(1),
+                    .limit(1)
                 )
                 user_message = message_text(first_user) if first_user is not None else ""
         llm_config = await load_user_llm_config(user_id, task)

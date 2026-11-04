@@ -25,7 +25,7 @@ BLOCKED_HOSTNAMES = frozenset(
         "instance-data.ec2.internal",
         "instance-data",
         "kubernetes.default.svc",
-    },
+    }
 )
 _BLOCKED_CGNAT = ipaddress.ip_network("100.64.0.0/10")
 _BLOCKED_CLOUD_META = frozenset(
@@ -33,7 +33,7 @@ _BLOCKED_CLOUD_META = frozenset(
         ipaddress.ip_address("169.254.169.254"),
         ipaddress.ip_address("100.100.100.200"),  # 阿里云
         ipaddress.ip_address("fd00:ec2::254"),  # AWS IPv6
-    },
+    }
 )
 _MAX_REDIRECTS = 5
 
@@ -142,11 +142,7 @@ class _SafeOutboundAsyncBackend(httpcore._backends.auto.AutoBackend):
         trusted_service = self._trusted_endpoint == (host, port)
         if not SETTINGS.ssrf_guard_enabled and not trusted_service:
             return await super().connect_tcp(
-                host,
-                port,
-                timeout=timeout,
-                local_address=local_address,
-                socket_options=socket_options,
+                host, port, timeout=timeout, local_address=local_address, socket_options=socket_options
             )
 
         # hostname 黑名单在进 DNS 之前先判，省一次解析与工作线程。
@@ -159,8 +155,7 @@ class _SafeOutboundAsyncBackend(httpcore._backends.auto.AutoBackend):
             # DNS、线程排队和各候选地址共享建连预算；放弃解析等待后不再发起 socket。
             with anyio.fail_after(timeout) as deadline:
                 validated = await anyio.to_thread.run_sync(
-                    partial(_resolve_and_validate, host, port, trusted_service=trusted_service),
-                    abandon_on_cancel=True,
+                    partial(_resolve_and_validate, host, port, trusted_service=trusted_service), abandon_on_cancel=True
                 )
                 await self._init_backend()
                 last_error: Exception | None = None
@@ -183,10 +178,7 @@ class _SafeOutboundAsyncBackend(httpcore._backends.auto.AutoBackend):
             raise httpcore.ConnectTimeout("DNS validation or connection timed out") from exc
 
     async def connect_unix_socket(  # type: ignore[override]
-        self,
-        path: str,
-        timeout: float | None = None,
-        socket_options: Iterable[tuple] | None = None,
+        self, path: str, timeout: float | None = None, socket_options: Iterable[tuple] | None = None
     ) -> httpcore._backends.base.AsyncNetworkStream:
         await self._init_backend()
         return await self._backend.connect_unix_socket(path, timeout=timeout, socket_options=socket_options)
@@ -290,9 +282,7 @@ class _ProxyRoutingAsyncTransport(httpx.AsyncBaseTransport):
                 if proxy := proxies.get(f"{scheme}_proxy"):
                     proxy = proxy if "://" in proxy else f"http://{proxy}"
                     self._proxies[scheme] = _SafeOutboundAsyncTransport(
-                        proxy=proxy,
-                        trust_env=trust_env,
-                        trusted_endpoint=trusted_endpoint,
+                        proxy=proxy, trust_env=trust_env, trusted_endpoint=trusted_endpoint
                     )
 
     def _bypass_proxy(self, url: httpx.URL) -> bool:
@@ -320,8 +310,7 @@ class _ProxyRoutingAsyncTransport(httpx.AsyncBaseTransport):
             origin != self._trusted_origin or request.url.username or request.url.password
         ):
             raise httpx.ConnectError(
-                "Configured service requests must remain on their operator-approved origin",
-                request=request,
+                "Configured service requests must remain on their operator-approved origin", request=request
             )
         transport = self._direct
         if not self._bypass_proxy(request.url):
@@ -330,8 +319,7 @@ class _ProxyRoutingAsyncTransport(httpx.AsyncBaseTransport):
 
     async def aclose(self) -> None:
         results = await asyncio.gather(
-            *(transport.aclose() for transport in (self._direct, *self._proxies.values())),
-            return_exceptions=True,
+            *(transport.aclose() for transport in (self._direct, *self._proxies.values())), return_exceptions=True
         )
         for result in results:
             if isinstance(result, BaseException):
@@ -444,7 +432,5 @@ async def download_capped(url: str, *, max_bytes: int, timeout: float | None = N
             resp.raise_for_status()
 
             return await read_capped_response(
-                resp,
-                max_bytes=max_bytes,
-                too_large=ValueError(f"download exceeded size limit of {max_bytes} bytes"),
+                resp, max_bytes=max_bytes, too_large=ValueError(f"download exceeded size limit of {max_bytes} bytes")
             )

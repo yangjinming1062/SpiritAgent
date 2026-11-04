@@ -232,13 +232,13 @@ async def generate_chat_images(arguments: dict, state: MediaTurnState) -> str:
             return _call_result(state, media_ids, reused=True)
         if state.image_round is not None and state.image_round != state.tool_round:
             return tool_error(
-                "本回合的图片请求已经提交，不再接受新的图片请求；需要多幅不同的画面须在同一步里一起提交，或下一回合再提出",
+                "本回合的图片请求已经提交，不再接受新的图片请求；需要多幅不同的画面须在同一步里一起提交，或下一回合再提出"
             )
         if state.has_unknown_image_result():
             return tool_error("前一次图片生成的结果尚未核实，本轮不再提交新的图片生成")
         if state.image_budget_used + request.n > CHAT_IMAGES_PER_TURN:
             return tool_error(
-                f"每轮最多生成 {CHAT_IMAGES_PER_TURN} 张图片，本轮已请求 {state.image_budget_used} 张，请减少张数",
+                f"每轮最多生成 {CHAT_IMAGES_PER_TURN} 张图片，本轮已请求 {state.image_budget_used} 张，请减少张数"
             )
         state.image_budget_used += request.n
         state.image_round = state.tool_round
@@ -376,9 +376,7 @@ async def inspect_chat_image(media_id: str, state: MediaTurnState) -> str:
                 issues = ("验图结论与问题列表不一致，未取得有效验图结果，不据此重新生成",)
         except Exception:
             logger.warning(
-                "Image inspection unavailable",
-                extra={"media_id": media_id, "user_id": state.user_id},
-                exc_info=True,
+                "Image inspection unavailable", extra={"media_id": media_id, "user_id": state.user_id}, exc_info=True
             )
             verdict, issues = "unavailable", ("未取得有效验图结果，不据此重新生成",)
         inspection = MediaInspection(uuid4().hex, media_id, verdict, issues)
@@ -397,7 +395,7 @@ async def regenerate_chat_image(media_id: str, inspection_id: str, correction: s
                     "inspection": "需要实际验图发现具体问题后才能重做",
                     "quota": "该图片本轮的一次重做额度已用完，请从已有就绪版本中选择",
                     "stale": "验图版本已过期，或图片不是本轮生成的产物",
-                }[blocker],
+                }[blocker]
             )
         artifact = state.artifacts[media_id]
         inspection = state.inspections[media_id]

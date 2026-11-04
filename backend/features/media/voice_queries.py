@@ -59,13 +59,7 @@ async def resolve_custom_voice(db: AsyncSession, user_id: int, voice_id: str) ->
     if row is None:
         return None
     return CustomVoiceSnapshot(
-        voice_id,
-        row.provider,
-        row.model,
-        row.model_card_id,
-        row.provider_voice_id,
-        row.prompt,
-        row.reference_path,
+        voice_id, row.provider, row.model, row.model_card_id, row.provider_voice_id, row.prompt, row.reference_path
     )
 
 
@@ -111,14 +105,12 @@ async def resolve_custom_voice_references(
 
 
 async def confirmed_custom_voices(
-    db: AsyncSession,
-    user_id: int,
-    available_models: Collection[tuple[str, str, str]],
+    db: AsyncSession, user_id: int, available_models: Collection[tuple[str, str, str]]
 ) -> list[CustomVoiceSummary]:
     rows = await db.scalars(
         select(CustomVoice)
         .where(CustomVoice.user_id == user_id, CustomVoice.is_current.is_(True))
-        .order_by(CustomVoice.id),
+        .order_by(CustomVoice.id)
     )
     return [
         CustomVoiceSummary(
@@ -143,7 +135,7 @@ async def voice_asset_references(db: AsyncSession, user_id: int, tokens: Collect
     return {
         path
         for path in await db.scalars(
-            select(CustomVoice.reference_path).where(CustomVoice.user_id == user_id, CustomVoice.token.in_(tokens)),
+            select(CustomVoice.reference_path).where(CustomVoice.user_id == user_id, CustomVoice.token.in_(tokens))
         )
         if path
     }

@@ -22,9 +22,7 @@ class CronJob(ModelBase):
     prompt: Mapped[str] = mapped_column(Text)
     kind: Mapped[str] = mapped_column(String(16), default="standard", server_default=text("'standard'"))
     conversation_id: Mapped[int | None] = mapped_column(
-        ForeignKey("conversations.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
+        ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True, index=True
     )
     is_paused: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
     one_shot: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))

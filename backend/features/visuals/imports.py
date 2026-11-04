@@ -23,13 +23,7 @@ from .models import VisualImportJob, VisualItem, VisualVersion
 from .publication import publish_imported_visual
 from .queries import visual_detail
 from .repository import VisualStateError, notify_visuals_updated, require_presentation_row
-from .schemas import (
-    VISUAL_MAX_EDGE,
-    AnalyzingVisualSource,
-    VisualAsset,
-    VisualDetailView,
-    VisualSnapshot,
-)
+from .schemas import VISUAL_MAX_EDGE, AnalyzingVisualSource, VisualAsset, VisualDetailView, VisualSnapshot
 
 
 def _image_size(data: bytes) -> tuple[int, int]:
@@ -48,14 +42,7 @@ def _image_size(data: bytes) -> tuple[int, int]:
         return ImageOps.exif_transpose(image).size
 
 
-async def import_visual(
-    user_id: int,
-    data: bytes,
-    *,
-    filename: str,
-    title: str,
-    description: str,
-) -> VisualDetailView:
+async def import_visual(user_id: int, data: bytes, *, filename: str, title: str, description: str) -> VisualDetailView:
     ext = sniff_media_ext(data)
     image = ext in {"png", "jpg", "webp", "gif"}
     if not data or (not image and ext not in {"mp4", "mov", "webm"}):

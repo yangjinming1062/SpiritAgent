@@ -30,5 +30,5 @@ def register_asset_contributions() -> None:
                 forget=media.forget_deleted_assets,
             ),
             AssetContribution("events", events.live_asset_paths, cleanup=events.cleanup_obsolete_assets),
-        ),
+        )
     )

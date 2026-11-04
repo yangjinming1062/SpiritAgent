@@ -4,9 +4,7 @@ import numpy as np
 from PIL import Image
 
 from infrastructure.logger import get_logger
-from infrastructure.video_processing.ffmpeg import (
-    ActionMaterialRejectedError,
-)
+from infrastructure.video_processing.ffmpeg import ActionMaterialRejectedError
 
 # 画面门禁阈值：主体覆盖率带与边缘残留上限，图片与视频共用。
 _MIN_SUBJECT_COVERAGE = 0.025

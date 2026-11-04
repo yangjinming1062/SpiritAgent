@@ -8,10 +8,7 @@ class LlmSchemaContractError(TypeError):
 
 
 def validate_preserved_choices(
-    schema: dict[str, Any],
-    fields: tuple[str, ...],
-    *,
-    schema_name: str,
+    schema: dict[str, Any], fields: tuple[str, ...], *, schema_name: str
 ) -> dict[str, list[Any]]:
     choices: dict[str, list[Any]] = {}
     for name in fields:

@@ -35,22 +35,12 @@ class AiTaskDefinition(BaseModel):
     service_usage: dict[str, tuple[str, ...]]
 
 
-_CHAT_LLM_USAGE = (
-    "会话标题",
-    "上下文压缩",
-    "网页内容摘要",
-    "委派子任务",
-    "聊天图片检查与出镜身份检查",
-)
+_CHAT_LLM_USAGE = ("会话标题", "上下文压缩", "网页内容摘要", "委派子任务", "聊天图片检查与出镜身份检查")
 
 
 def _task(task: AiTaskKey, group: str, label: str, service_usage: dict[str, tuple[str, ...]]) -> AiTaskDefinition:
     return AiTaskDefinition(
-        id=task,
-        group=group,
-        label=label,
-        services=tuple(service_usage),
-        service_usage=service_usage,
+        id=task, group=group, label=label, services=tuple(service_usage), service_usage=service_usage
     )
 
 
@@ -90,13 +80,7 @@ AI_TASKS: tuple[AiTaskDefinition, ...] = (
         "主动陪伴",
         "主动陪伴",
         {
-            "llm": (
-                "主动陪伴回合",
-                "自主移动判断",
-                "窗口与桌面空闲动作选择",
-                "即时记忆提案",
-                *_CHAT_LLM_USAGE,
-            ),
+            "llm": ("主动陪伴回合", "自主移动判断", "窗口与桌面空闲动作选择", "即时记忆提案", *_CHAT_LLM_USAGE),
             "image_gen": ("主动陪伴中的图片生成", "参考图编辑与图片重做"),
             "video_gen": ("主动陪伴中的视频生成",),
         },
@@ -109,10 +93,7 @@ AI_TASKS: tuple[AiTaskDefinition, ...] = (
         {"embedding": ("认知、生活历史与日记的索引向量", "相关内容检索的查询向量")},
     ),
     _task(
-        AiTaskKey.nightly,
-        "夜间",
-        "夜间",
-        {"llm": ("夜间记忆整理", "自主活动规划", "相处理解反思", "日记决定与创作")},
+        AiTaskKey.nightly, "夜间", "夜间", {"llm": ("夜间记忆整理", "自主活动规划", "相处理解反思", "日记决定与创作")}
     ),
     _task(
         AiTaskKey.posts,
@@ -164,10 +145,7 @@ AI_TASKS: tuple[AiTaskDefinition, ...] = (
     ),
     _task(AiTaskKey.speech_input, "语音", "输入转写", {"stt": ("桌面与手机的语音输入转写",)}),
     _task(
-        AiTaskKey.companion_voice,
-        "语音",
-        "伙伴回复合成",
-        {"tts": ("陪伴聊天与主动陪伴的语音回复", "伙伴可选音色目录")},
+        AiTaskKey.companion_voice, "语音", "伙伴回复合成", {"tts": ("陪伴聊天与主动陪伴的语音回复", "伙伴可选音色目录")}
     ),
     _task(AiTaskKey.speech_preview, "语音", "朗读与试听", {"tts": ("文字消息朗读", "伙伴声音试听")}),
     _task(

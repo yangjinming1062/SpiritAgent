@@ -103,37 +103,21 @@ def _graph(
     encode_inputs: dict[str, Any] = {"clip": ["2", 0]}
     if image_names:
         encode_inputs["vae"] = ["3", 0]
-    encode_inputs.update(
-        prompt=prompt,
-        negative_prompt="",
-        resolution=0 if image_names else min(width, height),
-    )
+    encode_inputs.update(prompt=prompt, negative_prompt="", resolution=0 if image_names else min(width, height))
     unet_class, unet_inputs = _unet_loader(unet_name)
     clip_class, clip_inputs = _clip_loader(clip_name)
     nodes: dict[str, Any] = {
-        "1": {
-            "class_type": unet_class,
-            "inputs": unet_inputs,
-        },
-        "2": {
-            "class_type": clip_class,
-            "inputs": clip_inputs,
-        },
+        "1": {"class_type": unet_class, "inputs": unet_inputs},
+        "2": {"class_type": clip_class, "inputs": clip_inputs},
         "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae_name}},
         "4": {"class_type": "TextEncodeQwenImage21", "inputs": encode_inputs},
     }
     if not image_edit:
-        nodes["5"] = {
-            "class_type": "EmptyLatentImage",
-            "inputs": {"width": width, "height": height, "batch_size": 1},
-        }
+        nodes["5"] = {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}}
     nodes.update(
         {
             "6": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
-            "7": {
-                "class_type": "BasicGuider",
-                "inputs": {"model": ["1", 0], "conditioning": ["4", 0]},
-            },
+            "7": {"class_type": "BasicGuider", "inputs": {"model": ["1", 0], "conditioning": ["4", 0]}},
             "8": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}},
             "9": {"class_type": "ManualSigmas", "inputs": {"sigmas": _TURBO_SIGMAS}},
             "10": {
@@ -147,11 +131,8 @@ def _graph(
                 },
             },
             "11": {"class_type": "VAEDecode", "inputs": {"samples": ["10", 0], "vae": ["3", 0]}},
-            "12": {
-                "class_type": "PreviewImage",
-                "inputs": {"images": ["11", 0]},
-            },
-        },
+            "12": {"class_type": "PreviewImage", "inputs": {"images": ["11", 0]}},
+        }
     )
     for i, name in enumerate(image_names, start=1):
         load_id = str(20 + i)
@@ -223,9 +204,7 @@ class LocalImageGenProvider(ImageGenProvider):
                     return name
             if options:
                 return options[0]
-            raise ProviderError(
-                f"local image_gen found no model for {prefixes}",
-            )
+            raise ProviderError(f"local image_gen found no model for {prefixes}")
 
         unet_name = _pick([*unet_opts, *gguf_opts], "qwen_dit", "qwen_image")
         clip_candidates = gguf_clip_opts if unet_name.lower().endswith(".gguf") else clip_opts
@@ -251,10 +230,7 @@ class LocalImageGenProvider(ImageGenProvider):
     async def _upload_image(self, reference: str) -> str:
         data, mime = await resolve_reference_bytes(reference)
         if len(data) > REMOTE_ASSET_DOWNLOAD_MAX_BYTES:
-            raise ProviderError(
-                "local image_gen reference exceeds the configured image size limit",
-                status_code=413,
-            )
+            raise ProviderError("local image_gen reference exceeds the configured image size limit", status_code=413)
         ext = "png" if mime == "image/png" else "jpg" if "jpeg" in mime else "webp" if "webp" in mime else "png"
         filename = f"ref_{hashlib.sha256(data).hexdigest()}.{ext}"
         files = {"image": (filename, data, mime)}
@@ -288,11 +264,7 @@ class LocalImageGenProvider(ImageGenProvider):
         if status.get("status_str") == "error":
             messages = status.get("messages") or []
             detail = str(messages)[:500]
-            raise ProviderError(
-                f"local image_gen execution error: {detail}",
-                status_code=422,
-                body=status,
-            )
+            raise ProviderError(f"local image_gen execution error: {detail}", status_code=422, body=status)
 
         assets: list[ImageAsset] = []
         for node_out in (history.get("outputs") or {}).values():
@@ -311,11 +283,7 @@ class LocalImageGenProvider(ImageGenProvider):
         return assets
 
     async def _read_job_response(
-        self,
-        prompt_id: str,
-        path: str,
-        *,
-        params: dict[str, str] | None = None,
+        self, prompt_id: str, path: str, *, params: dict[str, str] | None = None
     ) -> httpx.Response:
         while True:
             try:
@@ -334,8 +302,7 @@ class LocalImageGenProvider(ImageGenProvider):
 
     def _result_unknown(self, prompt_id: str | None, detail: str) -> ProviderResultUnknownError:
         logger.warning(
-            "local image_gen result unavailable after submission",
-            extra={"prompt_id": prompt_id, "detail": detail},
+            "local image_gen result unavailable after submission", extra={"prompt_id": prompt_id, "detail": detail}
         )
         error = ProviderResultUnknownError("POST", self.config.base_url.rstrip("/") + "/prompt")
         error.add_note(f"local image_gen submitted task: {prompt_id or 'handle unavailable'}; {detail}")
@@ -374,9 +341,7 @@ class LocalImageGenProvider(ImageGenProvider):
         except Exception as exc:
             raise self._result_unknown(prompt_id, f"{type(exc).__name__} during result retrieval") from exc
         if not assets:
-            raise ProviderError(
-                f"local image_gen returned no images for {prompt_id}",
-            )
+            raise ProviderError(f"local image_gen returned no images for {prompt_id}")
         return assets
 
     async def _cancel_submission(self, submission: asyncio.Task[httpx.Response], request_id: str) -> None:
@@ -391,9 +356,7 @@ class LocalImageGenProvider(ImageGenProvider):
                     prompt_id = returned_id
         except Exception:
             logger.warning(
-                "Local image submission handle was not confirmed",
-                extra={"prompt_id": request_id},
-                exc_info=True,
+                "Local image submission handle was not confirmed", extra={"prompt_id": request_id}, exc_info=True
             )
         finally:
             await cancel_and_wait((submission,))
@@ -413,8 +376,7 @@ class LocalImageGenProvider(ImageGenProvider):
                 if not isinstance(body, dict) or type(body.get("cancelled")) is not bool:
                     raise ValueError("Local image cancellation response is invalid")
                 logger.info(
-                    "Local image cancellation completed",
-                    extra={"prompt_id": prompt_id, "cancelled": body["cancelled"]},
+                    "Local image cancellation completed", extra={"prompt_id": prompt_id, "cancelled": body["cancelled"]}
                 )
         except Exception:
             logger.warning("Local image cancellation was not confirmed", extra={"prompt_id": prompt_id}, exc_info=True)

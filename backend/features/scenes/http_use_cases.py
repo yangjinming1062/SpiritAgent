@@ -125,12 +125,7 @@ async def patch_scene_policy(user_id: int, db: AsyncSession, body: ScenePolicyRe
 
 
 async def scene_list_route(
-    user_id: int,
-    db: AsyncSession,
-    q: str = "",
-    cursor: int | None = None,
-    include_total: bool = False,
-    limit: int = 30,
+    user_id: int, db: AsyncSession, q: str = "", cursor: int | None = None, include_total: bool = False, limit: int = 30
 ) -> SceneListResponse:
     rows, total, next_cursor = await list_scenes(
         db, user_id, query=q, cursor=cursor, limit=limit, include_total=include_total

@@ -145,11 +145,7 @@ async def cleanup_obsolete_assets(db: AsyncSession, user_id: int) -> set[str]:
     await db.execute(
         update(VisualJob.__table__)
         .where(VisualJob.id.in_(archived))
-        .values(
-            snapshot_json={},
-            feedback="",
-            video_feedback="",
-        )
+        .values(snapshot_json={}, feedback="", video_feedback="")
     )
     cutoff = utc_now() - timedelta(days=7)
     await db.execute(

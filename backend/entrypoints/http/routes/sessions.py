@@ -79,14 +79,9 @@ async def cancel_turn(actor: CurrentActor, session_id: str, request_id: UUID) ->
 
 @router.get("/{session_id}/snapshot", operation_id="sessions.snapshot", response_model=SessionSnapshotResponse)
 async def get_session_snapshot(
-    actor: CurrentActor,
-    session_id: str,
-    stream_id: str | None = Query(default=None, max_length=128),
+    actor: CurrentActor, session_id: str, stream_id: str | None = Query(default=None, max_length=128)
 ) -> SessionSnapshotResponse:
-    params = {
-        "session_id": session_id,
-        "stream_id": stream_id,
-    }
+    params = {"session_id": session_id, "stream_id": stream_id}
     result = await chat_operations(actor).snapshot(params)
     return SessionSnapshotResponse.model_validate(result)
 
@@ -148,13 +143,7 @@ async def list_sessions(
     q: str | None = Query(default=None, max_length=512, pattern=r"^[^\x00]*$"),
 ) -> DesktopSessionListResponse:
     return await list_session_resources(
-        user.id,
-        db,
-        limit=limit,
-        cursor=cursor,
-        archived=archived,
-        order=order,
-        query=q,
+        user.id, db, limit=limit, cursor=cursor, archived=archived, order=order, query=q
     )
 
 

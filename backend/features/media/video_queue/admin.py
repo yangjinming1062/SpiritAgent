@@ -44,18 +44,14 @@ async def list_video_queue(db: AsyncSession) -> VideoQueueList:
                 ProviderAttempt.state.not_in(("succeeded", "failed", "cancelled", "stopped")),
                 ProviderAttempt.capability == "video",
             )
-            .order_by(ProviderAttempt.enqueued_at, ProviderAttempt.id),
-        ),
+            .order_by(ProviderAttempt.enqueued_at, ProviderAttempt.id)
+        )
     )
     if not rows:
         return VideoQueueList(queues=[])
     lanes = {
         row.id: row
-        for row in await db.scalars(
-            select(ProviderLane).where(
-                ProviderLane.id.in_({row.lane_id for row in rows}),
-            ),
-        )
+        for row in await db.scalars(select(ProviderLane).where(ProviderLane.id.in_({row.lane_id for row in rows})))
     }
     names = {provider.id: provider.name for provider in SETTINGS.ai_config.providers}
     configs = await user_ai_configs(db, {row.user_id for row in rows if row.user_id is not None})
@@ -67,11 +63,7 @@ async def list_video_queue(db: AsyncSession) -> VideoQueueList:
         view = views.setdefault(
             lane.id,
             VideoQueueLaneView(
-                id=lane.token,
-                provider=lane.provider,
-                provider_names=[],
-                next_retry_at=lane.not_before,
-                requests=[],
+                id=lane.token, provider=lane.provider, provider_names=[], next_retry_at=lane.not_before, requests=[]
             ),
         )
         frozen = FrozenMediaProvider.model_validate(row.frozen_json)
@@ -83,10 +75,7 @@ async def list_video_queue(db: AsyncSession) -> VideoQueueList:
 
 
 async def resolve_video_queue(
-    db: AsyncSession,
-    request_id: str,
-    payload: VideoQueueResolution,
-    admin: str,
+    db: AsyncSession, request_id: str, payload: VideoQueueResolution, admin: str
 ) -> VideoQueueRequestView:
     row = await db.scalar(select(ProviderAttempt).where(ProviderAttempt.token == request_id).with_for_update())
     if row is None:
@@ -123,10 +112,7 @@ async def resolve_video_queue(
 async def cancel_video_queue_request(request_id: str, admin: str) -> MessageResponse:
     if not await cancel_video_attempt(request_id):
         raise RequestError(status_code=404, message="视频队列任务不存在")
-    logger.warning(
-        "video queue manually cancelled",
-        extra={"queue_request_id": request_id, "admin": admin},
-    )
+    logger.warning("video queue manually cancelled", extra={"queue_request_id": request_id, "admin": admin})
     return MessageResponse(message="已请求取消该视频任务")
 
 

@@ -19,6 +19,6 @@ class OutfitSnapshot:
 
 async def list_outfits(db: AsyncSession, user_id: int) -> list[OutfitSnapshot]:
     rows = await db.scalars(
-        select(CompanionOutfit).where(CompanionOutfit.user_id == user_id).order_by(CompanionOutfit.created_at.desc()),
+        select(CompanionOutfit).where(CompanionOutfit.user_id == user_id).order_by(CompanionOutfit.created_at.desc())
     )
     return [OutfitSnapshot(row.id, row.user_id, row.name, row.description, row.status) for row in rows]

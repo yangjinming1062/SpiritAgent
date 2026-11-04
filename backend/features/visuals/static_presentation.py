@@ -26,13 +26,7 @@ from .repository import (
     touch_presentation,
     visual_snapshot,
 )
-from .schemas import (
-    SceneMediaRef,
-    StageIntent,
-    StagePresentation,
-    StageReceipt,
-    VisualPlayCommand,
-)
+from .schemas import SceneMediaRef, StageIntent, StagePresentation, StageReceipt, VisualPlayCommand
 
 
 async def record_stage_intent(db: AsyncSession, user_id: int, intent: StageIntent) -> None:

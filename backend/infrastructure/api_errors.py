@@ -33,7 +33,7 @@ _SECRET_DETAIL_KEYS = frozenset(
         "dsn",
         "activation_code",
         "ticket",
-    },
+    }
 )
 
 _STATUS_CODES = {
@@ -67,34 +67,32 @@ _REDACT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(/[A-Za-z0-9_.+-]+){2,}/[A-Za-z0-9_.-]+\.py:\d+"),
     re.compile(r"[A-Za-z]:\\[A-Za-z0-9_.\\ -]+\.py:\d+"),
     re.compile(
-        r"/(?:var|tmp|etc|home|root|opt|srv|mnt)/[A-Za-z0-9_./-]+",
+        r"/(?:var|tmp|etc|home|root|opt|srv|mnt)/[A-Za-z0-9_./-]+"
     ),  # 通用文件系统路径（.py 模式抓不到目录/非 Python 文件）
     re.compile(
-        r"postgresql(?:ql)?(?:\+[A-Za-z0-9_]+)?://[^@\s/]+:[^@\s/]+@\S+",
+        r"postgresql(?:ql)?(?:\+[A-Za-z0-9_]+)?://[^@\s/]+:[^@\s/]+@\S+"
     ),  # postgres DSN；延伸到 @ 后第一个空白，连内部主机名一并清掉
     re.compile(r"(?:redis|mongodb|amqp|kafka)(?:\+[A-Za-z]+)?://[^@\s/]+:[^@\s/]+@\S+"),  # 非 postgres DSN
     re.compile(
-        r"(?:Bearer\s+|(?:X-)?Api-Key:\s*|(?:sk|xai|gAAAA|hsk)-)[A-Za-z0-9._\-]{12,}",
+        r"(?:Bearer\s+|(?:X-)?Api-Key:\s*|(?:sk|xai|gAAAA|hsk)-)[A-Za-z0-9._\-]{12,}"
     ),  # Bearer / API-key header 值
     re.compile(
-        r"(sk-|ghp_|gho_|ghu_|ghs_|ghr_|github_pat_|xox[abp]-|xapp-[A-Za-z0-9-]{20,})[A-Za-z0-9_-]+",
+        r"(sk-|ghp_|gho_|ghu_|ghs_|ghr_|github_pat_|xox[abp]-|xapp-[A-Za-z0-9-]{20,})[A-Za-z0-9_-]+"
     ),  # OpenAI/GitHub/Slack 风格 token
     re.compile(
-        r"\b(?:[A-Za-z0-9_]+\.)*(?:OperationalError|IntegrityError|FileNotFoundError|ConnectionError|TimeoutError)\b|\bsqlalchemy\.exc\.[A-Za-z]+\b",
+        r"\b(?:[A-Za-z0-9_]+\.)*(?:OperationalError|IntegrityError|FileNotFoundError|ConnectionError|TimeoutError)\b|\bsqlalchemy\.exc\.[A-Za-z]+\b"
     ),
     re.compile(
-        r"\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b",
+        r"\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b"
     ),  # IPv4（含 RFC1918/loopback）——OperationalError 清理对裸 host:port 片段无效
     re.compile(r"\[?[0-9a-fA-F:]+\]?:\d{2,5}"),  # IPv6 括号包裹（[::1]:5432）与裸形式
     re.compile(r"\b(?:fe80|fc|fd)[0-9a-fA-F:]{8,}\b"),
     re.compile(
-        r"\b(?:host|server)\s+(?:at\s+)?[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
-        re.IGNORECASE,
+        r"\b(?:host|server)\s+(?:at\s+)?[A-Za-z0-9.-]+\.[A-Za-z]{2,}", re.IGNORECASE
     ),  # psycopg/asyncpg 裸主机名
     re.compile(r"for user\s+\"[A-Za-z0-9_.-]+\"", re.IGNORECASE),  # PostgreSQL DSN user/role 片段
     re.compile(
-        r"\b(?:password authentication failed|FATAL:\s+[A-Z][A-Za-z ]+?)\b",
-        re.IGNORECASE,
+        r"\b(?:password authentication failed|FATAL:\s+[A-Z][A-Za-z ]+?)\b", re.IGNORECASE
     ),  # SQLAlchemy/psycopg 认证失败标签
     re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),  # JWT 三段式
 )

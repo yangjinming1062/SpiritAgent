@@ -93,10 +93,7 @@ def create_submission_handler(
                 validated_batch.append({"text": item.text, "attachments": att})
             # 整批合为一个回合，附件上限按全批合计。
             if sum(len(item["attachments"] or ()) for item in validated_batch) > SETTINGS.max_attachments_per_turn:
-                raise RequestError(
-                    422,
-                    f"too many attachments (max {SETTINGS.max_attachments_per_turn})",
-                )
+                raise RequestError(422, f"too many attachments (max {SETTINGS.max_attachments_per_turn})")
 
             last_item = validated_batch[-1]
             text = last_item["text"]
@@ -116,8 +113,7 @@ def create_submission_handler(
         )
 
         snapshot = ActiveTurnSnapshot(
-            request_id=params["request_id"],
-            replace_reply_message_id=replace_reply_message_id,
+            request_id=params["request_id"], replace_reply_message_id=replace_reply_message_id
         )
 
         emitter = ChatEventEmitter(
@@ -132,11 +128,7 @@ def create_submission_handler(
         if edit_message_id is not None:
             try:
                 persisted_message_id, edited_messages = await edit_message_input(
-                    user_id,
-                    runtime.session_id,
-                    runtime.conversation_id,
-                    edit_message_id,
-                    text,
+                    user_id, runtime.session_id, runtime.conversation_id, edit_message_id, text
                 )
             except EditNotAllowedError as exc:
                 raise RequestError(422, str(exc)) from exc
@@ -156,13 +148,7 @@ def create_submission_handler(
             )
         snapshot.message_ids = input_ids
         if replacement is None:
-            await emitter.send_json(
-                {
-                    "type": "message.persisted",
-                    "role": "user",
-                    "message_ids": snapshot.message_ids,
-                },
-            )
+            await emitter.send_json({"type": "message.persisted", "role": "user", "message_ids": snapshot.message_ids})
         # 输入持久化后刷新列表，不等待回复生成。
         await publisher.push_event("session.list_changed", {"session_id": runtime.session_id})
         client_context = actor.client_context
@@ -176,25 +162,17 @@ def create_submission_handler(
                 try:
                     async with asyncio.timeout(30):
                         status, error = await record_submission_state(
-                            user_id,
-                            params["request_id"],
-                            status,
-                            message_ids=snapshot.message_ids,
-                            error=error,
+                            user_id, params["request_id"], status, message_ids=snapshot.message_ids, error=error
                         )
                         replacement_result: dict[str, object] = {}
                         if replace_reply_message_id is not None:
                             replacement_result["replace_reply_message_id"] = replace_reply_message_id
                             receipt = await find_submission(
-                                user_id,
-                                runtime.conversation_id,
-                                params["request_id"],
-                                fingerprint,
+                                user_id, runtime.conversation_id, params["request_id"], fingerprint
                             )
                             if receipt is not None and receipt.result_message_id is not None:
                                 replacement_result.update(
-                                    result_message_id=receipt.result_message_id,
-                                    messages=receipt.messages,
+                                    result_message_id=receipt.result_message_id, messages=receipt.messages
                                 )
                         await publisher.push_event("session.list_changed", {"session_id": runtime.session_id})
                         await publisher.push_event(
@@ -251,7 +229,7 @@ def create_submission_handler(
                         "type": "error",
                         "message": error,
                         **({"retry_message_id": persisted_message_id} if replacement is None else {}),
-                    },
+                    }
                 )
             finally:
                 await settle_turn(status, error)
@@ -265,7 +243,7 @@ def create_submission_handler(
                     settle_turn(
                         "cancelled" if runtime.cancel_requested else "interrupted",
                         None if runtime.cancel_requested else "任务已中断，请核对已执行的操作后再继续。",
-                    ),
+                    )
                 )
                 actor.account.track(runtime.settlement_task)
                 runtime.settlement_task.add_done_callback(lambda _done: turn_activity.close())
@@ -292,7 +270,7 @@ def create_submission_handler(
                 {key: value for key, value in params.items() if key != "request_id"},
                 sort_keys=True,
                 separators=(",", ":"),
-            ).encode(),
+            ).encode()
         ).hexdigest()
         try:
             existing = await find_submission(user_id, runtime.conversation_id, request_id, fingerprint)
@@ -303,11 +281,7 @@ def create_submission_handler(
                 await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
                 async with conversation_history_lock(runtime.session_id):
                     if runtime.busy:
-                        raise RequestError(
-                            409,
-                            "当前会话有正在生成的回复，请稍后再试",
-                            code="turn_busy",
-                        )
+                        raise RequestError(409, "当前会话有正在生成的回复，请稍后再试", code="turn_busy")
                     await _require_owned_conv(user_id, runtime.session_id)
                     replace_reply_message_id = body.replace_reply_message_id
                     receipt, created = await reserve_submission(
@@ -327,10 +301,7 @@ def create_submission_handler(
                         if not runtime.busy:
                             runtime.active_turn = None
                         await record_submission_state(
-                            user_id,
-                            request_id,
-                            "failed",
-                            error="消息未被受理，请修改后重新发送。",
+                            user_id, request_id, "failed", error="消息未被受理，请修改后重新发送。"
                         )
                         raise
         except SubmissionConflictError as exc:
