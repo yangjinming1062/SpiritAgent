@@ -33,7 +33,6 @@ def _body_policy(scope: Scope) -> tuple[int, bool | None]:
         "image_file": SCENE_DOWNLOAD_MAX_BYTES + _UPLOAD_OVERHEAD_BYTES,
         "video": SETTINGS.video_attachment_max_bytes + _UPLOAD_OVERHEAD_BYTES,
         "audio": STT_MAX_AUDIO_BYTES + _UPLOAD_OVERHEAD_BYTES,
-        "backup": 4 * 1024 * _MIB + _UPLOAD_OVERHEAD_BYTES,
         "release": 1024 * _MIB + _UPLOAD_OVERHEAD_BYTES,
     }
     return limits[operation.upload], operation.permits("admin")

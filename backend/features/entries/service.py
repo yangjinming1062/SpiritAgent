@@ -3,7 +3,6 @@
 from collections.abc import Sequence
 from datetime import date
 from typing import Any, Literal
-from uuid import uuid4
 
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import BigInteger, String, column, delete, literal, select, text, true, update, values
@@ -69,21 +68,16 @@ async def create_post(
     if paths:
         created = statement.cte("created_entry")
         attachments = (
-            values(column("role", String), column("asset_id", BigInteger), column("source_key", String))
-            .data([(role, assets[path], str(uuid4())) for role, path in paths.items()])
+            values(column("role", String), column("asset_id", BigInteger))
+            .data([(role, assets[path]) for role, path in paths.items()])
             .alias("attachments")
         )
         linked = (
             insert(EntryAsset.__table__)
             .from_select(
-                ["user_id", "entry_id", "asset_id", "role", "position", "source_key"],
+                ["user_id", "entry_id", "asset_id", "role", "position"],
                 select(
-                    literal(user_id),
-                    created.c.id,
-                    attachments.c.asset_id,
-                    attachments.c.role,
-                    literal(0),
-                    attachments.c.source_key,
+                    literal(user_id), created.c.id, attachments.c.asset_id, attachments.c.role, literal(0)
                 ).select_from(created.join(attachments, true())),
             )
             .cte("linked_assets")

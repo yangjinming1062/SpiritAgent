@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.job_models import JobRecord
@@ -69,8 +70,11 @@ class CompanionOutfit(ModelBase, TimestampMixin):
     """衣柜造型素材及其着装参考；ready 表示静态造型图就绪。"""
 
     __tablename__ = "companion_outfits"
+    __table_args__ = (UniqueConstraint("user_id", "source_key", name="uq_companion_outfits_source"),)
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    # 外观素材的业务来源键：素材包导入按它去重，撤销导入按它校验归属。
+    source_key: Mapped[str] = mapped_column(String(36), default=lambda: uuid4().hex)
     name: Mapped[str] = mapped_column(String(64), default="新外观")
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     description_status: Mapped[str] = mapped_column(String(16), default="pending", server_default=text("'pending'"))

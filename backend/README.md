@@ -22,7 +22,7 @@
 | 共享任务与正式资产 | [任务](features/jobs/README.md)、[资产](features/assets/README.md)、[asset_store.py](infrastructure/assets/asset_store.py) |
 | 桌面/Runner 发布分发 | [update.py](entrypoints/http/routes/update.py)、[update_releases.py](features/updates/releases.py) |
 | 后端服务更新 | [服务更新](#服务更新)、[updater](updater/README.md)、[service_updater.py](infrastructure/web/service_updater.py) |
-| 数据结构、备份与账户维护 | [数据库设计](../docs/DATABASE.md)、[模型注册](bootstrap/models.py)、[backup](workflows/maintenance/backup/)、[user.py](workflows/maintenance/user.py) |
+| 数据库结构与账户维护 | [数据库设计](../docs/DATABASE.md)、[模型注册](bootstrap/models.py)、[user.py](workflows/maintenance/user.py) |
 | 提示词与恢复装配 | [提示词定位](#提示词定位)、[registrations.py](bootstrap/registrations.py)、[runtime_lifecycle.py](bootstrap/runtime_lifecycle.py) |
 
 ## 代码与依赖
@@ -39,7 +39,7 @@ ORM 留在数据所有者内部。跨域读取返回 DTO/冻结快照，写入�
 
 ### API 入口
 
-[routes/__init__.py](entrypoints/http/routes/__init__.py) 显式登记资源前缀及操作；`/api` 同时被资产、备份和客户端使用，不是可调整的部署前缀。业务层不返回 FastAPI 响应，入口负责鉴权、解析与错误转换。
+[routes/__init__.py](entrypoints/http/routes/__init__.py) 显式登记资源前缀及操作；`/api` 同时被资产和客户端使用，不是可调整的部署前缀。业务层不返回 FastAPI 响应，入口负责鉴权、解析与错误转换。
 
 业务操作由 HTTP 受理，稳定操作标识与编码/等待策略生成到共享契约；WS [handlers.py](entrypoints/desktop/handlers.py) 只管理连接控制、工具同步、回执和情境信号。[body_limit.py](entrypoints/http/body_limit.py) 在解析前执行身份及载荷限制，实际流超限同样拒绝；管理页面可加载不代表管理 API 免鉴权。
 
@@ -51,7 +51,7 @@ ORM 留在数据所有者内部。跨域读取返回 DTO/冻结快照，写入�
 
 [system_settings.py](features/configuration/system_settings.py) 串行合并并校验整批运营参数，数据库提交成功后才更新运行时及相关资源；启动水合覆盖文件中的动态值，非法持久值中止启动，启动专用键不能在管理页修改。用户点键配置统一经 [settings/values.py](features/configuration/settings/values.py) 读写，存储编码归 [字段字典](../docs/DATABASE_FIELDS.md#账户配置与设备身份)。
 
-[0001 完整基线](alembic/versions/0001_baseline.py) 是空库起点。启动执行 `alembic upgrade head`，不自动清库；后续结构变化新增迁移。模型与迁移保持类型、约束、索引和触发器一致，不能只依赖 autogenerate；降级只用于隔离库验收，备份接受范围见 [恢复契约](../docs/PROTOCOL.md#备份校验与覆盖恢复)。
+[0001 完整基线](alembic/versions/0001_baseline.py) 是空库起点。启动执行 `alembic upgrade head`，不自动清库；后续结构变化新增迁移。模型与迁移保持类型、约束、索引和触发器一致，不能只依赖 autogenerate；降级只用于隔离库验收。
 
 ### 装配与启停
 
@@ -73,9 +73,7 @@ HTTP、调度及清理通过 [user_maintenance.py](runtime/user_maintenance.py) 
 
 大字节、FFmpeg 和文件复制卸载到工作线程。随机路径的未交接文件在取消时清理；预登记固定路径的生成文件须等原子写完并保留给恢复。引用与删除统一由资产领域处理。本机派发先登记等待对象，再发送并检查入队，桌面离线以业务错误结束等待。
 
-账户覆盖恢复/删除先阻止新操作并收敛在途任务，结束后从持久状态重建。用户文件仅落正式资产、会话附件和带用户归属的临时目录；新增路径同时纳入删除与备份。正式文件或附件删失败时保留用户行供重试。
-
-[bootstrap/backup.py](bootstrap/backup.py) 登记物理表贡献，流程按依赖批量写入、在关系齐备后连接循环外键；任务详情复用父表身份。预检与原子恢复、资产/请求身份保留、投影重建归 [备份契约](../docs/PROTOCOL.md#备份校验与覆盖恢复)，备份工作流不直接访问业务 ORM。
+账户删除先阻止新操作并收敛在途任务，结束后从持久状态重建。用户文件仅落正式资产、会话附件和带用户归属的临时目录；新增路径纳入删除清理。正式文件或附件删失败时保留用户行供重试。
 
 ## 业务调度
 

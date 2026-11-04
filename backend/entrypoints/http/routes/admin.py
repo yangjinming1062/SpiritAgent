@@ -5,12 +5,10 @@ import features.accounts.admin_operations as account_admin
 import features.configuration.admin_operations as configuration_admin
 import workflows.maintenance.admin_operations as maintenance_admin
 import workflows.nightly.log_queries as nightly_logs
-from fastapi import Depends, File, Path, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import Depends, Path, Query
 from features.accounts.deps import get_current_admin_token
 from features.accounts.schemas import (
     RegenerateActivationRequest,
-    UserBackupImportResponse,
     UserCreate,
     UserListResponse,
     UserModelConfigListResponse,
@@ -25,17 +23,13 @@ from features.media.video_queue.contracts import VideoQueueList, VideoQueueReque
 from infrastructure.ai.config import ModelDiscoveryRequest
 from infrastructure.ai.models import ModelDiscoveryResponse
 from infrastructure.api_ids import ResourceId
-from infrastructure.backup import BackupImportMode
 from infrastructure.config import SETTINGS
 from infrastructure.constants import POSTGRES_INT8_MAX
 from infrastructure.database import DbSession
-from infrastructure.http_contracts import operation_policy
 from pydantic import JsonValue
 from runtime.responses import MessageResponse
-from workflows.maintenance.backup.serializers import BACKUP_SECTION_IDS
 
 from entrypoints.http.auth import CurrentAdmin
-from entrypoints.http.file_results import file_response
 from entrypoints.http.routing import get_router
 
 router = get_router(dependencies=[Depends(get_current_admin_token)], identity="admin")
@@ -138,33 +132,3 @@ async def upsert_model_config(user_id: ResourceId, payload: UserModelConfigReque
 @router.delete("/users/{user_id}/model-config")
 async def delete_model_config(user_id: ResourceId, db: DbSession) -> MessageResponse:
     return await configuration_admin.delete_model_config(user_id=user_id, db=db)
-
-
-@router.get("/users/{user_id}/export")
-async def export_user_backup(user_id: ResourceId, admin: CurrentAdmin, db: DbSession) -> FileResponse:
-    """始终导出全量数据；恢复范围在导入时选择。"""
-    result = await maintenance_admin.export_user_backup(user_id=user_id, admin=admin, db=db)
-    return file_response(result)
-
-
-@router.post(
-    "/users/{user_id}/import", response_model=UserBackupImportResponse, openapi_extra=operation_policy(upload="backup")
-)
-async def import_user_backup(
-    user_id: ResourceId,
-    db: DbSession,
-    file: UploadFile = File(...),
-    mode: BackupImportMode = "overwrite",
-    sections: list[str] | None = Query(
-        default=None,
-        description=f"恢复范围分组，可选 {', '.join(BACKUP_SECTION_IDS)} 或 all；缺省为全部",
-    ),
-) -> UserBackupImportResponse:
-    """按所选分组恢复备份，覆盖仅清理通过当前结构和关联校验的数据类别。"""
-    return await maintenance_admin.import_user_backup(
-        user_id=user_id,
-        db=db,
-        file=file,
-        mode=mode,
-        sections=sections,
-    )

@@ -147,7 +147,8 @@ def _pending_login(row: UserSocialAccount | None) -> tuple[str, str] | None:
 
 
 def _login_owner(row: UserSocialAccount) -> str:
-    return f"{row.user_id}_{row.source_key}"
+    # 外部登录会话归属标识：数字 user_id 与字面下划线保证满足平台方 16–96 位受限字符集。
+    return f"{row.user_id}_{row.login_revision}"
 
 
 async def _cancel_remote(platform: str, pending: tuple[str, str] | None) -> None:
@@ -226,8 +227,8 @@ async def start_social_login(db: AsyncSession, user_id: int, platform: str) -> S
     previous = _pending_login(row)
     _reset_login(row)
     revision = str(uuid4())
-    owner = _login_owner(row)
     row.login_revision = revision
+    owner = _login_owner(row)
     await db.commit()
     await _stop_worker(user_id, platform, previous)
     await _cancel_remote(platform, previous)

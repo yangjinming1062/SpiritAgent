@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Literal
 
 from infrastructure.ai.config import AIConfigPublic, AIConfigUpdate, ProviderDefaults
 from infrastructure.ai.tasks import AiTaskDefinition
@@ -98,17 +97,3 @@ class UserResponse(BaseModel):
 
 class UserListResponse(BaseModel):
     items: list[UserResponse]
-
-
-class UserBackupImportFailure(BaseModel):
-    section: str
-    count: int = Field(ge=0)
-    reason: str
-
-
-class UserBackupImportResponse(BaseModel):
-    mode: Literal["overwrite", "merge"]
-    sections: list[str]
-    imported: dict[str, int]
-    restored_files: int = Field(ge=0)
-    failed: list[UserBackupImportFailure]

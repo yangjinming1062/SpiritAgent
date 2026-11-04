@@ -51,6 +51,7 @@ class CompanionScene(ModelBase, TimestampMixin):
     __tablename__ = "companion_scenes"
     __table_args__ = (UniqueConstraint("user_id", "source_key", name="uq_companion_scenes_user_source"),)
 
+    # 场景素材的业务来源键：素材包导入按它去重，撤销导入按它校验归属。
     source_key: Mapped[str] = mapped_column(String(36), default=lambda: uuid4().hex)
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)

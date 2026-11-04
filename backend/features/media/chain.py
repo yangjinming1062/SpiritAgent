@@ -1,7 +1,5 @@
 """媒体质量链的无凭据快照、尝试游标和候选选择。"""
 
-import asyncio
-from collections.abc import Sequence
 from dataclasses import replace
 from typing import Literal
 from uuid import UUID, uuid4
@@ -14,12 +12,9 @@ from infrastructure.ai.tasks import AI_TASK_BY_ID, AiTaskKey
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from pydantic import BaseModel, ConfigDict, Field
-from runtime.user_maintenance import track_user_task
 
-from features.media.contracts import RemovedVideoTask
 from features.media.review_contracts import ReviewEvidence, ReviewVerdict, VisualReview
 from features.media.video_queue.contracts import VideoQueueInfo
-from features.media.video_queue.ports import cancel_queue_request
 
 logger = get_logger(__name__)
 
@@ -198,52 +193,6 @@ async def resolve_frozen_media_provider(
         None,
     )
     return replace(current, model=frozen.model) if current is not None else None
-
-
-async def cancel_video_chain_attempt(state: MediaChainState) -> str:
-    """放弃业务结果后请求队列取消，已提交工作仍由队列核对终态。"""
-    if state.queue_request_id:
-        await cancel_queue_request(state.queue_request_id)
-        return "queue_owned"
-    return "not_submitted"
-
-
-async def cancel_removed_video_tasks(user_id: int, tasks: Sequence[RemovedVideoTask]) -> None:
-    """本地放弃制作提交后请求队列撤销，不能撤销时记录结果。"""
-    for task in tasks:
-        try:
-            state = (
-                MediaChainState.model_validate_json(task.generation_state_json)
-                if task.generation_state_json
-                else MediaChainState()
-            )
-        except ValueError:
-            state = MediaChainState()
-        try:
-            async with asyncio.timeout(15):
-                outcome = await cancel_video_chain_attempt(state)
-        except Exception:
-            logger.warning(
-                "Removed video task cancellation failed",
-                extra={"user_id": user_id, "task_id": task.task_id},
-                exc_info=True,
-            )
-            continue
-        logger.info(
-            "Removed video task cancellation",
-            extra={"user_id": user_id, "task_id": task.task_id, "outcome": outcome},
-        )
-
-
-def spawn_removed_video_task_cancellation(user_id: int, tasks: Sequence[RemovedVideoTask]) -> None:
-    """事务提交后调度撤销；任务登记到用户名下自然落地，失败只记录。"""
-    if not tasks:
-        return
-    track_user_task(
-        user_id,
-        asyncio.create_task(cancel_removed_video_tasks(user_id, tasks)),
-        cancel_on_maintenance=False,
-    )
 
 
 def media_failure_reason(exc: Exception) -> tuple[str, bool]:

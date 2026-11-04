@@ -349,7 +349,6 @@ async def dispatch_play_command(
         "visual_version": item.version,
         "version_id": version_id if version_id is not None else item.current_version_id,
         "play_id": play_id,
-        "source_key": uuid4().hex,
         "presentation_epoch": presentation.revision,
         "state_revision": revision,
         "source": source,

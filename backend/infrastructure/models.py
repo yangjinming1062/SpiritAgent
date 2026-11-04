@@ -1,7 +1,6 @@
 from datetime import datetime
-from uuid import uuid4
 
-from sqlalchemy import BigInteger, DateTime, Identity, MetaData, String, func, text
+from sqlalchemy import BigInteger, DateTime, Identity, MetaData, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 # 约束使用稳定名称，供 Alembic autogenerate 比对。
@@ -20,9 +19,6 @@ class ModelBase(DeclarativeBase):
     metadata = MetaData(naming_convention=_NAMING_CONVENTION)
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
-    source_key: Mapped[str] = mapped_column(
-        String(36), default=lambda: str(uuid4()), server_default=text("(gen_random_uuid())::text")
-    )
 
 
 class TimestampMixin:

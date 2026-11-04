@@ -11,7 +11,7 @@
 | 生成输入与图片检查 | [prompt_assembly.py](prompt_assembly.py)、[scene_review.py](../media/scene_review.py) |
 | REST 与页面 | [companion_scenes.py](../../entrypoints/http/routes/companion_scenes.py)、[场景页](../../../client/renderer/app/features/scene/scene-page.tsx)、[详情](../../../client/renderer/app/features/scene/scene-detail-view.tsx) |
 | 只读快照与缓存 | [queries.py](queries.py)、[scene-store.ts](../../../client/renderer/modules/scene/scene-store.ts) |
-| 启停、备份与资产引用 | [lifecycle.py](lifecycle.py)、[backup.py](backup.py)、[asset_references.py](asset_references.py) |
+| 启停与资产引用 | [lifecycle.py](lifecycle.py)、[asset_references.py](asset_references.py) |
 
 ## 状态与并发
 

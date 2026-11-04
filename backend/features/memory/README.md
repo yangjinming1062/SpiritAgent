@@ -12,7 +12,6 @@
 | 存储、人工编辑与遗忘 | [memory_store.py](memory_store.py)、[memory_admin.py](memory_admin.py) |
 | 引导资料与叙事投影 | [memory_bootstrap.py](memory_bootstrap.py)、[memory_narratives.py](memory_narratives.py) |
 | 模型资料与命名空间 | [memory_format.py](memory_format.py)、[memory_namespaces.py](memory_namespaces.py)、[prompts.py](prompts.py) |
-| 导入与重建 | [backup.py](backup.py) |
 
 正文、证据、修订、遗忘指纹与向量分开存储，字段见 [记忆字典](../../../docs/DATABASE_FIELDS.md#记忆与证据)。`context` 仅作展示，类别和槽位使用明确字段。管理列表读摘要和计数，详情再加载证据及修订；检索和夜间资料不套管理分页。
 
@@ -46,6 +45,6 @@
 
 检索合并向量与同域关键词排名；向量失败或空间不匹配时保留关键词路径，补向量失败不撤销正文。向量空间由实际供应商、端点和模型标识确定，密钥变更不改变空间；检索同时匹配模型、维度和内容版本，不截断或补零。后台补齐重核原文与版本，不改变正文更新时间，维护与停机收敛所属任务。
 
-恢复重映射来源、证据和修订，重置审阅水位，重建认知记忆向量；遗忘指纹、来源与更新时间继续保留。缺少原始消息的导入判断失效，手写记录仍受新证据时间约束。保留范围与包级约束见 [必要历史](../../../docs/DATABASE.md#必要历史) 和 [备份契约](../../../docs/PROTOCOL.md#备份校验与覆盖恢复)。
+重置审阅水位后可重建认知记忆向量；遗忘指纹、来源与更新时间继续保留，手写记录受新证据时间约束。保留范围见 [必要历史](../../../docs/DATABASE.md#必要历史)。
 
 按 [Scripts](../../../scripts/README.md) 核对证据/版本冲突、整批回滚与水位、退避、人工编辑、遗忘后分叉及重复导入；检索样例和静态检查不能代替真实模型审核验证。

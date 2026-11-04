@@ -40,6 +40,7 @@ class JobRecord(ModelBase, TimestampMixin):
     )
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    # 任务实例的业务幂等键：供应商句柄、发布与制作续跑等流程以它派生稳定的操作标识。
     source_key: Mapped[str] = mapped_column(String(36), default=lambda: uuid4().hex)
     kind: Mapped[str] = mapped_column(String(48))
     state: Mapped[str] = mapped_column(String(32), default="queued", server_default="queued")

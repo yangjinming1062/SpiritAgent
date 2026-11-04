@@ -6,18 +6,18 @@
 
 | 需要判断的含义 | 定义与边界 |
 |---|---|
-| 实体主键、备份身份与时间 | [ModelBase / TimestampMixin](../backend/infrastructure/models.py)：`id` 定位当前库实体，`source_key` 在账户内匹配导入记录，创建/更新时间不承担请求身份；API 编码见 [ID 契约](PROTOCOL.md#id-语义) |
+| 实体主键与时间 | [ModelBase / TimestampMixin](../backend/infrastructure/models.py)：`id` 定位当前库实体，创建/更新时间不承担请求身份；API 编码见 [ID 契约](PROTOCOL.md#id-语义) |
 | 归属与配对 | [schema.py](../backend/infrastructure/schema.py)展开账户联合外键；业务仍检查预设。任务详情的 `owner_id` 与一对一用户扩展不能按普通资源 ID 重映射 |
 | 任务执行与业务结果 | [JobRecord](../backend/infrastructure/job_models.py)保存控制状态、取消、修订与检查点；详情复用父任务主键，专有结果由业务采纳 |
 | 文件与展示路径 | 领域资产外键/关联表保护活引用，路径和 JSON 快照供展示及恢复，不能替代资产关系；删除见 [DATABASE](DATABASE.md#删除与恢复) |
-| JSON 结构与导出 | 可变输入和冻结文档由所属 schema/contracts 校验；各领域 `backup.py` 经[备份装配](../backend/bootstrap/backup.py)登记，决定导出、重映射和排除派生值 |
+| JSON 结构 | 可变输入和冻结文档由所属 schema/contracts 校验，派生值不落库、按权威内容重建 |
 
 ## 账户、配置与设备身份
 
 | 字段组与模型入口 | 语义 |
 |---|---|
 | 账户、桌面登录与管理员会话：[accounts/models.py](../backend/features/accounts/models.py) | 账户开关、登录有效性和管理员身份各有撤销范围；注销登录不删除账户 |
-| 手机配对与设备授权：[remote/models.py](../backend/features/accounts/remote/models.py) | 一次性授权摘要、兑换期限与设备撤销分别保存，独立于桌面登录，不进入用户备份 |
+| 手机配对与设备授权：[remote/models.py](../backend/features/accounts/remote/models.py) | 一次性授权摘要、兑换期限与设备撤销分别保存，独立于桌面登录 |
 | 用户/系统设置：[settings/models.py](../backend/features/configuration/settings/models.py) | 用户值为结构化设置；`system_settings` 的每项值是 JSON 文本，由 [system_settings.py](../backend/features/configuration/system_settings.py)校验水合，不能直接按 JSONB 对待 |
 | 模型配置与资讯连接：[configuration/models.py](../backend/features/configuration/models.py) | 模型配置按用户一对一；资讯连接按账户/平台唯一，凭证修订和扫码登录修订各自隔离迟到结果，均不属于普通设置同步 |
 | 人格与政策：[companion/models.py](../backend/features/companion/models.py) | `personas` 保存人物背景、独立引导进度及自主政策，当前活动和实际显示各有独立状态 |
@@ -27,7 +27,7 @@
 
 | 字段组与模型入口 | 语义 |
 |---|---|
-| 会话、消息和媒体引用：[conversation/models.py](../backend/features/conversation/models.py) | `parent_id` 表示依附子会话，`forked_from_id` 表示可失去的分叉来源；预设固定记忆域。消息原文与交付快照须一致，文件和本地声音另有关系表；统计由[消息触发器](../backend/features/conversation/statistics.py)派生，不备份 |
+| 会话、消息和媒体引用：[conversation/models.py](../backend/features/conversation/models.py) | `parent_id` 表示依附子会话，`forked_from_id` 表示可失去的分叉来源；预设固定记忆域。消息原文与交付快照须一致，文件和本地声音另有关系表；统计由[消息触发器](../backend/features/conversation/statistics.py)派生 |
 | 受理账本：[submission_models.py](../backend/features/conversation/submission_models.py) | 请求标识和内容指纹决定重放资格，结果/替换回复是实体关系；批量输入经有序关联与请求一次提交 |
 | 话题资料、分享和反馈：[topics/models.py](../backend/features/topics/models.py) | 批次保存日期与完成情况，来源保存原文依据，usage 才表示随消息实际分享；反馈不自动成为聊天消息或用户事实 |
 
@@ -73,9 +73,9 @@
 |---|---|
 | 状态、事项、步骤与事件：[life/models.py](../backend/features/life/models.py) | 生活状态行串行化写入，`activity_type` 与 `scene_tags_json` 保存当前活动类别及有依据的环境、物品条件供视觉投影；状态、事项、步骤和事件分别保存模型生成的用户叙事，事项保存目标/进展和调整来源，步骤保存可执行动作、永久阅读成果及结构化 `failure_code`，原始错误留在任务边界；事件保留事实性质、主体、叙事和结果；完成证据经关联表连接。`0003_life_narrative_reset` 清理旧生活历史后启用这些字段。 |
 | 生活检索：同一[模型文件](../backend/features/life/models.py) | `life_event_search_index` 引用本账户事件，索引受控事实、叙事及阅读所得，按内容指纹、模型和实际维度核对向量 |
-| 请求额度与提交：同一[模型文件](../backend/features/life/models.py) | `life_action_admissions` 独立保存额度归属和已提交事实，覆盖恢复按请求合并，不能从可覆盖的事项历史重新计数 |
+| 请求额度与提交：同一[模型文件](../backend/features/life/models.py) | `life_action_admissions` 独立保存额度归属和已提交事实，不能从事项历史重新计数 |
 | 夜间账本：[nightly/models.py](../backend/workflows/nightly/models.py) | 按账户/本地日期组织阶段、预算和动作身份，关联实际任务与结果；账本计划不证明执行完成 |
-| 自动化与等待：[automation/models.py](../backend/features/automation/models.py)、[intent_models.py](../backend/features/companion/intent_models.py) | Cron 保存计划和任务会话，陪伴意图保存等待条件、租约和终态；`source_kind` 与 `cron_job_id` 表示触发来源，`source_key` 仍用于可移植身份 |
+| 自动化与等待：[automation/models.py](../backend/features/automation/models.py)、[intent_models.py](../backend/features/companion/intent_models.py) | Cron 保存计划和任务会话，陪伴意图保存等待条件、租约和终态；`source_kind` 与 `cron_job_id` 表示触发来源 |
 
 事实、额度、来源权限与恢复规则见 [生活契约](PROTOCOL.md#生活状态与生活事件)和[调度契约](PROTOCOL.md#调度)。
 

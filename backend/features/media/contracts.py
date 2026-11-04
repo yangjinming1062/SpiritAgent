@@ -1,6 +1,5 @@
 """媒体模块公开快照；调用方不持有制作任务的 ORM。"""
 
-from dataclasses import dataclass
 from datetime import datetime
 
 from infrastructure.api_ids import ResourceId
@@ -47,11 +46,3 @@ class ReleasedVideoJobs(BaseModel):
 
     job_ids: frozenset[ResourceId]
     references: tuple[VideoJobAssetReferences, ...]
-
-
-@dataclass(frozen=True)
-class RemovedVideoTask:
-    """已放弃制作的视频队列状态；本地事务提交后尽力撤销。"""
-
-    task_id: int
-    generation_state_json: str | None

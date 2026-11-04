@@ -160,7 +160,7 @@ uv run --no-project --python 3.13 python scripts/check_runner_package.py
 
 GitHub 安装包与应用内更新分开交付。Windows 更新 ZIP 需上传 Backend 管理端，由该后端分发；macOS 当前 DMG 不能当作同类更新 ZIP。CI 的签名 Secret 解释和私钥边界归 [签名配置](release-keys/README.md)，工作流尚未配置平台证书签名与 macOS 公证。
 
-跨端契约同时发布 Backend、Client 与 Remote。切换前按[恢复契约](../docs/PROTOCOL.md#备份校验与覆盖恢复)建立数据、素材和代码恢复点，停止新任务并收敛在途工作；存量数据库变化需新增迁移。核对记录、关联、素材与草稿后开放写入，失败恢复同一备份点。版本说明需要的模型配置见下节。
+跨端契约同时发布 Backend、Client 与 Remote。切换前停止新任务并收敛在途工作；存量数据库变化需新增迁移。核对记录、关联、素材与草稿后开放写入。版本说明需要的模型配置见下节。
 
 ## Release notes
 

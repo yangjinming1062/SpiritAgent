@@ -102,7 +102,7 @@ _MAX_DUE_PER_TICK = 200
 
 
 def invalidate_user_scheduler_state(user_id: int) -> None:
-    """覆盖恢复后丢弃从旧数据计算出的调度节流镜像。"""
+    """账户维护结束时丢弃该用户由旧数据计算的调度节流镜像。"""
     for state in (_LAST_MEMORY_REVIEW, _LAST_NIGHTLY_RUN):
         for scope in list(state):
             if scope.user_id == user_id:

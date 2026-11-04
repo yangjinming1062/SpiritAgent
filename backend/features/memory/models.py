@@ -2,7 +2,6 @@
 
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
-from uuid import uuid4
 
 from infrastructure.models import ModelBase, TimestampMixin
 from pgvector.sqlalchemy import Vector
@@ -36,7 +35,7 @@ class Memory(ModelBase, TimestampMixin):
     __tablename__ = "memories"
     __table_args__ = (
         UniqueConstraint("user_id", "id", name="uq_memories_owner_id"),
-        UniqueConstraint("user_id", "source_key", name="uq_memories_source_key"),
+        UniqueConstraint("user_id", "system_preset_id", "kind", "slot_key", name="uq_memories_scope_slot"),
         UniqueConstraint("user_id", "system_preset_id", "kind", "slot_key", name="uq_memories_scope_slot"),
         ForeignKeyConstraint(
             ["user_id", "source_conversation_id"],
@@ -61,7 +60,6 @@ class Memory(ModelBase, TimestampMixin):
     )
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
-    source_key: Mapped[str] = mapped_column(String(36), default=lambda: str(uuid4()))
     system_preset_id: Mapped[str] = mapped_column(String(32))
     kind: Mapped[str] = mapped_column(String(32), default="recall", server_default="recall")
     slot_key: Mapped[str | None] = mapped_column(String(256), nullable=True)

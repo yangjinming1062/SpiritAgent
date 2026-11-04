@@ -17,11 +17,9 @@ from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException
 
 import bootstrap.models  # noqa: F401 -- 路由加载前显式登记完整 ORM。
-from bootstrap.backup import register_backup_tables
 from bootstrap.lifecycle import lifespan
 from bootstrap.registrations import register_all
 
-register_backup_tables()
 register_all()
 
 app = FastAPI(title=SETTINGS.app_name, lifespan=lifespan)

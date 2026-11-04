@@ -11,7 +11,6 @@
 | 聊天资料与引用绑定 | [system_prompt.py](../../workflows/chat/system_prompt.py)、[reply_links.py](../../workflows/chat/reply_links.py) |
 | 反馈与通知 | [use_cases.py](use_cases.py)、[companion_topics.py](../../entrypoints/http/routes/companion_topics.py) |
 | 平台定义、凭证与内容校验 | [social_sources.py](../../infrastructure/web/social_sources.py)、[social_credentials.py](../../infrastructure/web/social_credentials.py)、[social_content.py](../../infrastructure/web/social_content.py) |
-| 备份合并 | [backup.py](backup.py) |
 
 ## 采集与消费
 
@@ -33,4 +32,4 @@ X 签名初始化同样消耗接口预算，仅访问规定的 HTTPS 源，Cooki
 
 合并在目标账户核对同日批次的窗口、状态和来源上限。重复来源的原文、字幕、时间及链接必须一致，保留目标已有的模型摘要；衍生描述不同不否定幂等。使用记录按来源和消息去重，消息已清理时按实际使用时间保留独立证据。
 
-恢复清空采集检查点，把采集中批次标为失败，保留原可用时间；过期资料不变成新候选。分组与原子失败规则见 [备份契约](../../../docs/PROTOCOL.md#备份校验与覆盖恢复)。按 [Scripts](../../../scripts/README.md) 核对预算、修订失效、原文范围、引用和重复导入；真实平台字段及链接须用有效个人登录验证。
+批次采集检查点在失败后重建，过期资料不变成新候选。按 [Scripts](../../../scripts/README.md) 核对预算、修订失效、原文范围与引用；真实平台字段及链接须用有效个人登录验证。

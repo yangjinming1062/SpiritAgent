@@ -46,7 +46,6 @@ from features.media.review_operations import configure_review_handler
 from features.media.video_jobs import inspect_video_queue_owner as inspect_media_video_owner
 from features.media.video_jobs import manually_review_video, review_video_job, submit_video_job, video_review_view
 from features.media.video_queue.ports import configure_video_queue_ports
-from features.media.video_queue.service import cancel_video_attempt
 from features.posts.ports import set_post_published_handler
 from features.posts.publication import (
     manually_review_post,
@@ -218,7 +217,6 @@ def register_all() -> None:
             "media": inspect_media_video_owner,
             "visuals": inspect_visual_video_owner,
         },
-        cancel_video_attempt,
     )
     register_channel_lifecycle(
         ChannelLifecycle(close_desktop=terminate_user_gateway, close_remote=terminate_remote_sessions),

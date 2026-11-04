@@ -2,7 +2,6 @@
 
 from datetime import date, datetime
 from typing import Any
-from uuid import uuid4
 
 from infrastructure.models import ModelBase, TimestampMixin
 from infrastructure.search_index import SearchIndexRow, search_index_constraints
@@ -30,7 +29,6 @@ class CompanionEntry(ModelBase, TimestampMixin):
     __tablename__ = "companion_entries"
     __table_args__ = (
         UniqueConstraint("user_id", "id", name="uq_entries_user_id"),
-        UniqueConstraint("user_id", "source_key", name="uq_entries_source"),
         CheckConstraint("kind IN ('post', 'diary')", name="entry_kind"),
         CheckConstraint("content_type IN ('text', 'image', 'video', 'audio')", name="entry_content_type"),
         Index("ix_entries_timeline", "user_id", "kind", text("published_at DESC"), text("id DESC")),
@@ -41,7 +39,6 @@ class CompanionEntry(ModelBase, TimestampMixin):
     )
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
-    source_key: Mapped[str] = mapped_column(String(36), default=lambda: str(uuid4()))
     kind: Mapped[str] = mapped_column(String(16))
     activity_date: Mapped[date] = mapped_column(Date)
     published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -131,7 +128,6 @@ class EntryComment(ModelBase, TimestampMixin):
             name="fk_entry_comments_reply",
         ),
         UniqueConstraint("user_id", "post_id", "id", name="uq_entry_comment_scope"),
-        UniqueConstraint("user_id", "source_key", name="uq_entry_comment_source"),
         UniqueConstraint("reply_to_comment_id", name="uq_entry_comment_reply"),
         CheckConstraint("role IN ('user', 'companion')", name="entry_comment_role"),
         CheckConstraint("(role = 'companion') = (reply_status = 'none')", name="entry_comment_delivery"),
@@ -150,7 +146,6 @@ class EntryComment(ModelBase, TimestampMixin):
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     post_id: Mapped[int] = mapped_column(BigInteger)
-    source_key: Mapped[str] = mapped_column(String(36), default=lambda: str(uuid4()))
     role: Mapped[str] = mapped_column(String(16))
     content: Mapped[str] = mapped_column(Text)
     reply_to_comment_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

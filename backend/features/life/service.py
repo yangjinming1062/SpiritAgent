@@ -522,7 +522,7 @@ async def _record_event_batch(
     pending = {
         attribute.key: deepcopy(attribute.history.added[0])
         for attribute in inspect(state).attrs
-        if attribute.key not in {"user_id", "source_key", "created_at", "updated_at"}
+        if attribute.key not in {"user_id", "created_at", "updated_at"}
         and attribute.history.has_changes()
         and attribute.history.added
     }

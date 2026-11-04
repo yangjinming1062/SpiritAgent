@@ -26,7 +26,7 @@
 | 库查询与实际呈现快照 | [queries.py](queries.py)、[repository.py](repository.py) |
 | 舞台组合、意图与静态回执 | [static_presentation.py](static_presentation.py) |
 | 资产地址与事件出口 | [client_assets.py](client_assets.py) |
-| 启停、备份与引用 | [lifecycle.py](lifecycle.py)、[backup.py](backup.py)、[asset_references.py](asset_references.py) |
+| 启停与引用 | [lifecycle.py](lifecycle.py)、[asset_references.py](asset_references.py) |
 
 ## 成品与任务
 
@@ -56,6 +56,6 @@
 
 ## 恢复与验证
 
-恢复先重映射物理关系和冻结素材（判别联合按 `source.kind` 分支重映射 outfit/scene/action 引用），再重映射组合各层成品身份并重建呈现快照、作废旧指令与回执；组合媒体投影不随备份恢复。已删除来源保留描述和文件、来源 ID 留空，避免误绑定新库身份；历史成品仍可查看，重做使用当前有效角色资料。未知提交沿 [备份契约](../../../docs/PROTOCOL.md#备份校验与覆盖恢复) 保留原任务。
+已删除来源保留描述和文件、来源 ID 留空，避免误绑定新身份；历史成品仍可查看，重做使用当前有效角色资料。未知提交保留原任务核对终态。
 
 按 [Scripts](../../../scripts/README.md) 核对请求重放、共享步骤、发布并发、重做与旧回执、静态恢复、账户/模式切换和资产保护；真实视频接续、图片显示与供应商质量分别验收。

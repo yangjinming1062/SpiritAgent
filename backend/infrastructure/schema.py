@@ -13,16 +13,6 @@ def finalize_owned_relations(metadata: MetaData) -> None:
         owner = "user_id" if "user_id" in table.c else "owner_id"
         if (
             owner in table.c
-            and "source_key" in table.c
-            and not any(
-                isinstance(constraint, UniqueConstraint)
-                and {c.name for c in constraint.columns} == {owner, "source_key"}
-                for constraint in table.constraints
-            )
-        ):
-            table.append_constraint(UniqueConstraint(owner, "source_key", name=f"uq_{table.name}_source"))
-        if (
-            owner in table.c
             and "id" in table.c
             and not any(
                 isinstance(constraint, UniqueConstraint) and tuple(c.name for c in constraint.columns) == (owner, "id")

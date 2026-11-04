@@ -6,7 +6,6 @@
 
 from datetime import datetime
 from typing import Any
-from uuid import uuid4
 
 from infrastructure.job_models import JobRecord
 from infrastructure.models import ModelBase, TimestampMixin
@@ -34,7 +33,6 @@ class VisualItem(ModelBase, TimestampMixin):
     __tablename__ = "visual_items"
     __table_args__ = (
         UniqueConstraint("user_id", "id", name="uq_visual_items_user_id"),
-        UniqueConstraint("user_id", "source_key", name="uq_visual_items_user_source"),
         ForeignKeyConstraint(
             ["id", "current_version_id"],
             ["visual_versions.visual_id", "visual_versions.id"],
@@ -59,7 +57,6 @@ class VisualItem(ModelBase, TimestampMixin):
     )
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    source_key: Mapped[str] = mapped_column(String(36), default=lambda: uuid4().hex)
     media_kind: Mapped[str] = mapped_column(String(8))
     # actor=透明主体动画；scene=环境媒体；cinematic=完整场景影像。
     asset_kind: Mapped[str] = mapped_column(String(16))

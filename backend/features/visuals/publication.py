@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass
 from typing import Any, Literal
-from uuid import uuid4
 
 from infrastructure.api_ids import ResourceId
 from infrastructure.assets.asset_store import normalize_asset_reference, resolve_asset_reference
@@ -189,7 +188,6 @@ def _publish_entity(
         payload = {
             "id": allocation.c.item_id,
             "user_id": job.user_id,
-            "source_key": uuid4().hex,
             "media_kind": asset.media_kind,
             "title": job.title if isinstance(job, PublicationTarget) else "",
             **summary,
@@ -243,30 +241,18 @@ def _publish_entity(
         )
     version = version_write.returning(*versions.c).cte(f"{prefix}_version")
     bindings = (
-        values(
-            column("role", String),
-            column("asset_id", BigInteger),
-            column("source_key", String),
-        )
-        .data([(role, references[path].id, uuid4().hex) for role, path in roles.items()])
+        values(column("role", String), column("asset_id", BigInteger))
+        .data([(role, references[path].id) for role, path in roles.items()])
         .alias(f"{prefix}_bindings")
     )
-    selected = select(
-        literal(job.user_id, BigInteger),
-        version.c.id,
-        bindings.c.asset_id,
-        bindings.c.role,
-        bindings.c.source_key,
-    ).select_from(version.join(item, version.c.visual_id == item.c.id).join(bindings, true()))
+    selected = select(literal(job.user_id, BigInteger), version.c.id, bindings.c.asset_id, bindings.c.role).select_from(
+        version.join(item, version.c.visual_id == item.c.id).join(bindings, true())
+    )
     if not regenerate:
         selected = selected.join(allocation, item.c.id == allocation.c.item_id)
     linked = (
         insert(attachments)
-        .from_select(
-            ["user_id", "version_id", "asset_id", "role", "source_key"],
-            selected,
-            include_defaults=False,
-        )
+        .from_select(["user_id", "version_id", "asset_id", "role"], selected, include_defaults=False)
         .on_conflict_do_nothing(constraint="uq_visual_version_asset_role")
         .cte(f"{prefix}_assets")
     )

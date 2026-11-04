@@ -367,8 +367,6 @@ export interface ApiSchemas {
   "UpdateVersionItem": { "id": string; "version": string; "release_notes": string; "exe_filename": string; "exe_sha512": string; "exe_size": number; "mac_filename": (string | null); "mac_sha512": (string | null); "mac_size": (number | null); "runner_filename": (string | null); "is_active": boolean; "created_at": string; "created_by": (string | null) }
   "UpdateVersionListResponse": { "items": Array<ApiSchemas["UpdateVersionItem"]> }
   "UpdateVersionUpdate": { "release_notes"?: (string | null); "is_active"?: (boolean | null) }
-  "UserBackupImportFailure": { "section": string; "count": number; "reason": string }
-  "UserBackupImportResponse": { "mode": "overwrite" | "merge"; "sections": Array<string>; "imported": { [key: string]: number }; "restored_files": number; "failed": Array<ApiSchemas["UserBackupImportFailure"]> }
   "UserCreate": { "username": string; "base_url": string; "nightly_activity_enabled"?: boolean }
   "UserInfo": { "id": string; "username": string }
   "UserListResponse": { "items": Array<ApiSchemas["UserResponse"]> }
@@ -417,7 +415,6 @@ export interface ApiSchemas {
   "VoiceSampleResponse": { "sample_id": string; "url": string; "duration": number; "mime_type": string }
   "VoicesListResponse": { "providers": Array<string>; "voices": Array<ApiSchemas["VoiceEntry"]>; "supports_voice_design": boolean; "voice_design_guide": string; "supports_voice_prompt_generation": boolean; "supports_voice_clone": boolean; "custom_voices": Array<ApiSchemas["CustomVoiceSummary"]> }
   "create_version": { "file": string; "release_notes"?: string }
-  "import_user_backup": { "file": string }
   "speech_to_text": { "audio_file"?: (string | null) }
   "upload_chat_audio": { "file": string; "session_id": string }
   "upload_chat_video": { "file"?: (string | null); "session_id"?: string }
@@ -443,8 +440,6 @@ export interface ApiOperations {
   "admin.list_nightly_activity_logs": { path: Record<string, never>; query: { "user_id"?: (string | null); "target_date"?: (string | null) }; body: undefined; input: { path?: never; query?: { "user_id"?: (string | null); "target_date"?: (string | null) }; body?: never }; response: ApiSchemas["NightlyActivityLogListResponse"] }
   "admin.upsert_model_config": { path: { "user_id": string }; query: Record<string, never>; body: ApiSchemas["UserModelConfigRequest"]; input: { path: { "user_id": string }; query?: never; body: ApiSchemas["UserModelConfigRequest"] }; response: ApiSchemas["MessageResponse"] }
   "admin.delete_model_config": { path: { "user_id": string }; query: Record<string, never>; body: undefined; input: { path: { "user_id": string }; query?: never; body?: never }; response: ApiSchemas["MessageResponse"] }
-  "admin.export_user_backup": { path: { "user_id": string }; query: Record<string, never>; body: undefined; input: { path: { "user_id": string }; query?: never; body?: never }; response: Uint8Array }
-  "admin.import_user_backup": { path: { "user_id": string }; query: { "mode"?: "overwrite" | "merge"; "sections"?: (Array<string> | null) }; body: FormData; input: { path: { "user_id": string }; query?: { "mode"?: "overwrite" | "merge"; "sections"?: (Array<string> | null) }; body: FormData }; response: ApiSchemas["UserBackupImportResponse"] }
   "gateway.gateway_ticket": { path: Record<string, never>; query: Record<string, never>; body: (ApiSchemas["GatewayTicketRequest"] | null); input: { path?: never; query?: never; body?: (ApiSchemas["GatewayTicketRequest"] | null) }; response: ApiSchemas["GatewayTicketResponse"] }
   "companion.idle_expression": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["IdleExpressionRequest"]; input: { path?: never; query?: never; body: ApiSchemas["IdleExpressionRequest"] }; response: ApiSchemas["IdleExpressionResult"] }
   "companion.retry_appearance_preparation": { path: { "avatar_id": string }; query: Record<string, never>; body: ApiSchemas["PreparationRetryRequest"]; input: { path: { "avatar_id": string }; query?: never; body: ApiSchemas["PreparationRetryRequest"] }; response: ApiSchemas["AvatarAssetResponse"] }
@@ -885,28 +880,6 @@ export const API_OPERATIONS = {
     "path": "/api/admin/users/{user_id}/model-config",
     "method": "DELETE",
     "encoding": "json",
-    "response": "json",
-    "identities": [
-      "admin"
-    ],
-    "wait_for_model": false,
-    "ipc": false
-  },
-  "admin.export_user_backup": {
-    "path": "/api/admin/users/{user_id}/export",
-    "method": "GET",
-    "encoding": "json",
-    "response": "binary",
-    "identities": [
-      "admin"
-    ],
-    "wait_for_model": false,
-    "ipc": false
-  },
-  "admin.import_user_backup": {
-    "path": "/api/admin/users/{user_id}/import",
-    "method": "POST",
-    "encoding": "multipart",
     "response": "json",
     "identities": [
       "admin"

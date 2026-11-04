@@ -22,7 +22,6 @@ class UserSetting(ModelBase, TimestampMixin):
 
 class SystemSetting(ModelBase, TimestampMixin):
     __tablename__ = "system_settings"
-    source_key = None
 
     setting_key: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     setting_value: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))

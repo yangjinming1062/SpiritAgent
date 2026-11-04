@@ -1,4 +1,4 @@
-"""覆盖恢复的用户级维护边界。"""
+"""账户级维护边界：删除等管理操作在此停稳该用户的运行时。"""
 
 import asyncio
 from collections.abc import AsyncIterator
