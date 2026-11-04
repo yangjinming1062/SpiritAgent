@@ -105,8 +105,6 @@ class VideoGenJob(JobRecord):
     prompt: Mapped[str] = mapped_column(Text)
     params_json: Mapped[dict] = mapped_column(JSONB, default=dict)
     review_result_json: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
-    # 每次提交前清空；受理本次提交的供应商返回 task_id 后写入，未受理或提交结果未知时为空。
-    provider_task_id: Mapped[str | None] = mapped_column(String(128), index=True)
     video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     candidate_video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     generation_attempt_index: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))

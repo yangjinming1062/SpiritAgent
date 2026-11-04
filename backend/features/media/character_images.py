@@ -142,8 +142,15 @@ class ImageChainState(MediaChainState):
     def _goal_enabled(self) -> bool:
         return isinstance(self.inputs, ReviewedImageInput) and self.inputs.goal_review == "required"
 
+    def requires_review(self) -> bool:
+        return not (
+            isinstance(self.inputs, ReviewedImageInput)
+            and self.inputs.purpose == "plain"
+            and self.inputs.goal_review == "none"
+        )
+
     def _needs_goal_review(self, candidate: MediaCandidate) -> bool:
-        return needs_review(candidate.review)
+        return self.requires_review() and needs_review(candidate.review)
 
     def can_retry_goal_review(self) -> bool:
         return (
@@ -171,6 +178,8 @@ class ImageChainState(MediaChainState):
         return self.providers[candidate.attempt].generation_origin(ServiceType.image_gen)
 
     def best(self, slot: int = 0) -> MediaCandidate | None:
+        if not self.requires_review():
+            return next((c for c in self.candidates if c.slot == slot and c.accepted is True), None)
         if isinstance(self.inputs, SceneImageInput):
             return next(
                 (
@@ -188,7 +197,7 @@ class ImageChainState(MediaChainState):
         return self.best_qualified(slot)
 
     def needs_next(self, slot: int = 0) -> bool:
-        if isinstance(self.inputs, SceneImageInput):
+        if isinstance(self.inputs, SceneImageInput) or not self.requires_review():
             return not self.stop_reason and self.next_index < len(self.providers) and self.best(slot) is None
         if self._goal_enabled():
             return (
@@ -199,7 +208,7 @@ class ImageChainState(MediaChainState):
         return super().needs_next(slot)
 
     def finish(self, slots: int = 1) -> None:
-        if isinstance(self.inputs, SceneImageInput):
+        if isinstance(self.inputs, SceneImageInput) or not self.requires_review():
             if not self.stop_reason:
                 self.stop_reason = (
                     "accepted" if all(self.best(slot) is not None for slot in range(slots)) else "exhausted"
@@ -824,7 +833,9 @@ async def _run_image_chain(
                                 exact_size=scene or provider.image_exact_size,
                             )
                             if isinstance(inputs, ReviewedImageInput) and inputs.prefer_transparent_background:
-                                data = await asyncio.to_thread(prepare_transparent_image, data)
+                                data = await asyncio.to_thread(
+                                    prepare_transparent_image, data, require_clean_edges=state.requires_review()
+                                )
                                 ext = "png"
                             state.pending_path = asset_store.image_chain_asset_path(
                                 user_id,
@@ -895,6 +906,10 @@ async def _run_image_chain(
                     if candidate.evaluated:
                         if state._goal_enabled() and candidate.path not in state.goal_reviews and not state.stop_reason:
                             state.stop_reason = "goal_review_invalid"
+                        continue
+                    if not state.requires_review():
+                        candidate.evaluated, candidate.accepted = True, True
+                        await _save_progress(state, save_progress)
                         continue
                     data, mime = await image_asset_bytes(candidate.path)
                     uri = await asyncio.to_thread(build_data_uri, data, mime)

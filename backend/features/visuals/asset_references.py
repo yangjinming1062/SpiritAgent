@@ -54,7 +54,7 @@ async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
             ),
         )
     ):
-        paths |= asset_paths([row.snapshot_json, row.checkpoint, row.candidates_json], user_id)
+        paths |= asset_paths([row.snapshot_json, row.checkpoint], user_id)
     return paths
 
 
@@ -147,7 +147,6 @@ async def cleanup_obsolete_assets(db: AsyncSession, user_id: int) -> set[str]:
         .where(VisualJob.id.in_(archived))
         .values(
             snapshot_json={},
-            candidates_json=None,
             feedback="",
             video_feedback="",
         )

@@ -3,6 +3,7 @@ import type React from 'react'
 import type { VisualJob, VisualJobCommand } from '@/modules/visuals'
 import { Badge, BTN_SUBTLE, SettingRow } from '@/shared/panel'
 import { MediaReviewButton } from '@/shared/panel/media-review-button'
+import { useStrings } from '@/shared/strings'
 
 import { visualJobCommands } from '../../../../../shared/visuals'
 
@@ -21,6 +22,8 @@ export function VisualJobRow({
   onCommand: (command: VisualJobCommand) => void
   t: VisualsCopy
 }): React.JSX.Element {
+  const queueText = useStrings().common.videoQueue
+
   const labels: Record<VisualJobCommand, string> = {
     pause: t.jobPause,
     resume: job.failure_reason === 'result_download_failed' ? t.jobReceive : t.jobResume,
@@ -32,7 +35,7 @@ export function VisualJobRow({
     <SettingRow
       description={
         <span className="inline-flex flex-wrap items-center gap-1.5">
-          <Badge>{t.jobState[job.state] ?? job.state}</Badge>
+          <Badge>{job.video_queue ? queueText[job.video_queue.state] : (t.jobState[job.state] ?? job.state)}</Badge>
           {job.error ? <span>{job.error}</span> : null}
         </span>
       }

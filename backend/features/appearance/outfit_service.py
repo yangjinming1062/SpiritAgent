@@ -34,7 +34,6 @@ from features.appearance.avatar_service import (
     FULLBODY_SIZE,
     AvatarGenerationError,
     delete_portrait_file,
-    generate_with_moderation_retry,
     get_active_avatar,
     get_avatar_job_lock,
     persist_portrait_bytes,
@@ -74,7 +73,11 @@ from features.media.character_images import (
 )
 from features.media.continuations import finish_media_operation, wait_for_media
 from features.media.identity_contracts import VisualIdentitySnapshot
-from features.media.image_generation import ImageGenerationError, ImageReviewUnavailableError
+from features.media.image_generation import (
+    ImageGenerationError,
+    ImageReviewUnavailableError,
+    generate_with_moderation_retry,
+)
 from features.media.review_contracts import VisualReview, review_passes
 from features.media.review_evidence import review_media_intact
 

@@ -7,7 +7,7 @@
 | 修改任务 | 入口 |
 |---|---|
 | 图片链与候选检查 | [image_generation.py](image_generation.py)、[chain.py](chain.py) |
-| 公共视频任务与快照 | [video_jobs.py](video_jobs.py)、[contracts.py](contracts.py)、[queries.py](queries.py) |
+| 公共视频任务、结果接收与快照 | [video_jobs.py](video_jobs.py)、[video_results.py](video_results.py)、[queries.py](queries.py) |
 | 持久队列与远端收尾 | [video_queue/service.py](video_queue/service.py)、[video_queue/contracts.py](video_queue/contracts.py) |
 | 结果交付与身份端口 | [delivery.py](delivery.py)、[reference_reader.py](reference_reader.py) |
 | 声音方案与合成 | [voices.py](voices.py)、[speech.py](speech.py) |
@@ -23,7 +23,7 @@
 
 调用方传入冻结参考和要求，供应商等待在事务外，写回核对任务和身份。图片链保留检查与修复所需参考，由业务登记必要引用；参考输入由调用方拥有，链只删除本次制作的落选候选与处理产物。没有恢复进度的同步制作只重试下载，不重新生成。
 
-公共队列拥有远端提交、轮询与取消，业务通过 bootstrap 装配有效性检查和交付端口。图像尝试共用提交账本但不占视频名额。展示阶段从任务快照投影，不另存执行真源。
+公共队列拥有远端提交、轮询与取消，业务通过 bootstrap 装配有效性检查和交付端口。`video_results.py` 统一消费原尝试终态、确定失败后的链尾资格及结果接收；先保存业务接续点再确认消费，下载失败或未知提交不派生新制作。队列进度在查询事务内批量投影，变化只发送刷新通知，不写业务检查点。图像尝试共用提交账本但不占视频名额。
 
 聊天通过会话模块的事务内接收器绑定气泡；动态按 `PostPublication.video_job_id` 读取原任务并决定发布；组合影像由影像领域拥有。媒体层不反查动态 JSON、不修改消息。采纳资产与制作尝试分开，重做失败保留旧资产。
 

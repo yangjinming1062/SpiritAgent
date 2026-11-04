@@ -1,11 +1,19 @@
 import asyncio
 import base64
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from infrastructure.ai.error_classifier import ClassifiedError, FailoverReason, LlmCallBlockedError, classify_api_error
+from infrastructure.ai.error_classifier import (
+    ClassifiedError,
+    FailoverReason,
+    LlmCallBlockedError,
+    classify_api_error,
+    is_content_policy_error_message,
+)
 from infrastructure.ai.llm_client import MissingLlmConfigError, resolve_provider_chain
 from infrastructure.ai.llm_fallback import execute_with_fallback
 from infrastructure.ai.models import ModelModality
+from infrastructure.ai.prompt_engineer import chat
 from infrastructure.ai.providers._size_aspect import SIZE_TO_ASPECT
 from infrastructure.ai.providers.base import (
     ImageGenProvider,
@@ -28,11 +36,12 @@ from infrastructure.assets.media_download import download_media_result
 from infrastructure.constants import REMOTE_ASSET_DOWNLOAD_MAX_BYTES
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
+from infrastructure.text import parse_llm_json
 from infrastructure.video_processing.ffmpeg import VideoProcessError
 from infrastructure.video_processing.matting import require_matting_model
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.media.prompts import IMAGE_OPAQUE_BACKGROUND, IMAGE_TRANSPARENT_BACKGROUND
+from features.media.prompts import IMAGE_OPAQUE_BACKGROUND, IMAGE_TRANSPARENT_BACKGROUND, MODERATION_SANITIZATION_PROMPT
 from features.media.review_contracts import ReviewPendingError
 
 logger = get_logger(__name__)
@@ -56,6 +65,61 @@ class ImageGenerationError(Exception):
         self.can_fallback = can_fallback
         self.size_mismatch = size_mismatch
         self.classified: ClassifiedError | None = None
+
+
+async def _sanitize_prompt_for_moderation(user_id: int, prompt: str, task: AiTaskKey) -> str:
+    """合规改写被审核拒绝的提示词，失败时返回原文；沿发起流水线的任务链。"""
+    try:
+        raw = await chat(user_id, MODERATION_SANITIZATION_PROMPT, prompt, task=task)
+        payload = parse_llm_json(raw)
+        sanitized = payload.get("prompt") if isinstance(payload, dict) and set(payload) == {"prompt"} else None
+        if isinstance(sanitized, str) and sanitized.strip():
+            return sanitized.strip()
+        if payload == {"prompt": None}:
+            logger.info("prompt sanitization declined by model; keeping original prompt", extra={"user_id": user_id})
+        else:
+            logger.warning(
+                "prompt sanitization output invalid; keeping original prompt",
+                extra={"user_id": user_id, "output_chars": len(raw)},
+            )
+        return prompt
+    except Exception:
+        # 失败回退到原文属设计意图：内容审核改写是可选优化；保留 exc_info 供排查 LLM/网络层问题。
+        logger.warning(
+            "prompt sanitization LLM call failed; falling back to original prompt",
+            extra={"user_id": user_id},
+            exc_info=True,
+        )
+        return prompt
+
+
+async def generate_with_moderation_retry[T](
+    user_id: int,
+    prompt: str,
+    generate: Callable[[str], Awaitable[T]],
+    *,
+    task: AiTaskKey,
+) -> T:
+    """命中内容审核时用合规改写后的提示词重试一次；结果未知或改写无变化时保留原错误。"""
+    try:
+        return await generate(prompt)
+    except ImageGenerationError as exc:
+        if exc.result_unknown or not is_content_policy_error_message(exc.internal):
+            raise
+        logger.info("image generation blocked by moderation, sanitizing prompt", extra={"user_id": user_id})
+        sanitized = await _sanitize_prompt_for_moderation(user_id, prompt, task)
+        if sanitized == prompt:
+            raise
+        first_internal = exc.internal
+    try:
+        return await generate(sanitized)
+    except ImageGenerationError as exc:
+        if not is_content_policy_error_message(exc.internal):
+            raise
+        raise ImageGenerationError(
+            "生成请求被内容审核拦截，请调整描述后重试",
+            internal=f"original: {first_internal}; retry: {exc.internal}",
+        ) from exc
 
 
 class ImageReviewUnavailableError(ImageGenerationError, ReviewPendingError):

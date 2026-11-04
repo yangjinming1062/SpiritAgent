@@ -1,10 +1,9 @@
 import asyncio
 import contextlib
 import io
-from collections.abc import Awaitable, Callable
+import json
 
-from infrastructure.ai.error_classifier import LLMRuntimeError, is_content_policy_error_message
-from infrastructure.ai.prompt_engineer import chat
+from infrastructure.ai.error_classifier import LLMRuntimeError
 from infrastructure.ai.providers._size_aspect import SIZE_TO_ASPECT
 from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
 from infrastructure.ai.tasks import AiTaskKey
@@ -23,7 +22,6 @@ from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
 from infrastructure.temp_files import save_file
-from infrastructure.text import parse_llm_json
 from infrastructure.video_processing.ffmpeg import ActionMaterialRejectedError, VideoProcessError
 from infrastructure.video_processing.image import prepare_transparent_image
 from infrastructure.video_processing.matting import require_matting_model
@@ -44,6 +42,7 @@ from features.appearance.identity import (
     require_visual_identity,
     visual_identity_is_current,
 )
+from features.appearance.image_jobs import complete_appearance_image, generate_appearance_image
 from features.appearance.models import AvatarAsset, CompanionOutfit, FullbodyCandidate, FullbodyReviewJob, OutfitSource
 from features.appearance.prompt_assembly import (
     build_avatar_reference_prompt,
@@ -66,9 +65,8 @@ from features.media.chain import MediaCandidate
 from features.media.character_images import image_asset_bytes
 from features.media.identity_contracts import VisualIdentitySnapshot
 from features.media.identity_review import IdentityReview, review_portrait_identity
-from features.media.image_generation import GeneratedImages, ImageGenerationError, generate_images
+from features.media.image_generation import ImageGenerationError
 from features.media.manual_reviews import manual_candidate_views
-from features.media.prompts import MODERATION_SANITIZATION_PROMPT
 from features.media.review_contracts import (
     ReviewDecision,
     ReviewEvidence,
@@ -92,61 +90,6 @@ ALLOWED_AVATAR_UPLOAD_MIME_TYPES: frozenset[str] = frozenset(_UPLOAD_EXTS)
 
 # 按用户加锁，避免 REST 头像路由与 WS RPC 并发再生成/选择时抢同一行
 _AVATAR_JOB_LOCKS: dict[int, asyncio.Lock] = {}
-
-
-async def _sanitize_prompt_for_moderation(user_id: int, prompt: str, task: AiTaskKey) -> str:
-    """合规改写被审核拒绝的提示词，失败时返回原文；沿发起流水线的任务链。"""
-    try:
-        raw = await chat(user_id, MODERATION_SANITIZATION_PROMPT, prompt, task=task)
-        payload = parse_llm_json(raw)
-        sanitized = payload.get("prompt") if isinstance(payload, dict) and set(payload) == {"prompt"} else None
-        if isinstance(sanitized, str) and sanitized.strip():
-            return sanitized.strip()
-        if payload == {"prompt": None}:
-            logger.info("prompt sanitization declined by model; keeping original prompt", extra={"user_id": user_id})
-        else:
-            logger.warning(
-                "prompt sanitization output invalid; keeping original prompt",
-                extra={"user_id": user_id, "output_chars": len(raw)},
-            )
-        return prompt
-    except Exception:
-        # 失败回退到原文属设计意图：内容审核改写是可选优化；保留 exc_info 供排查 LLM/网络层问题。
-        logger.warning(
-            "prompt sanitization LLM call failed; falling back to original prompt",
-            extra={"user_id": user_id},
-            exc_info=True,
-        )
-        return prompt
-
-
-async def generate_with_moderation_retry[T](
-    user_id: int,
-    prompt: str,
-    generate: Callable[[str], Awaitable[T]],
-    *,
-    task: AiTaskKey,
-) -> T:
-    """命中内容审核时用合规改写后的提示词重试一次；结果未知或改写无变化时保留原错误。"""
-    try:
-        return await generate(prompt)
-    except ImageGenerationError as exc:
-        if exc.result_unknown or not is_content_policy_error_message(exc.internal):
-            raise
-        logger.info("image generation blocked by moderation, sanitizing prompt", extra={"user_id": user_id})
-        sanitized = await _sanitize_prompt_for_moderation(user_id, prompt, task)
-        if sanitized == prompt:
-            raise
-        first_internal = exc.internal
-    try:
-        return await generate(sanitized)
-    except ImageGenerationError as exc:
-        if not is_content_policy_error_message(exc.internal):
-            raise
-        raise ImageGenerationError(
-            "生成请求被内容审核拦截，请调整描述后重试",
-            internal=f"original: {first_internal}; retry: {exc.internal}",
-        ) from exc
 
 
 class AvatarGenerationError(RuntimeError):
@@ -245,11 +188,9 @@ async def _review_fullbody_candidate(
         ):
             raise AvatarGenerationError("检查依据或任务版本已变化")
         review_job.state, review_job.stage = "running", "reviewing"
-        saved_report = (
-            IdentityReview.model_validate(review_job.checkpoint["report"])
-            if (review_job.checkpoint or {}).get("report")
-            else None
-        )
+        candidate = await db.get(FullbodyCandidate, candidate_id)
+        report_data = (candidate.review_json or {}).get("report")
+        saved_report = IdentityReview.model_validate(report_data) if report_data else None
         portrait_path = review_job.checkpoint["portrait_path"]
         review_job_id = review_job.id
         await bind_job_assets(db, user_id, review_job_id, {portrait_path, path}, "review")
@@ -257,15 +198,18 @@ async def _review_fullbody_candidate(
 
     async def save_evidence(evidence: ReviewEvidence) -> None:
         async with SESSION_LOCAL() as db:
+            candidate = await db.get(FullbodyCandidate, candidate_id, with_for_update=True)
             job = await db.get(FullbodyReviewJob, review_job_id, with_for_update=True)
-            job.checkpoint = {
-                **(job.checkpoint or {}),
+            candidate.review_json = {
+                **(candidate.review_json or {}),
+                "job_id": review_job_id,
                 "report": IdentityReview(
                     verdict="review", reason="检查尚未完成", evidence=evidence, status="unavailable"
                 ).model_dump(mode="json"),
             }
+            job.revision += 1
             await bind_job_assets(db, user_id, job.id, {entry.path for entry in evidence.images}, "review")
-            await db.commit()
+            await commit_appearance(db, user_id)
 
     identity_verdict: IdentityReview | None = None
     error: str | None = None
@@ -317,13 +261,11 @@ async def _review_fullbody_candidate(
             else "failed"
         )
         job = await db.get(FullbodyReviewJob, review_job_id, with_for_update=True)
-        if identity_verdict is not None:
-            job.checkpoint = {**(job.checkpoint or {}), "report": identity_verdict.model_dump(mode="json")}
-            job.result_json = job.checkpoint
         job.state, job.stage = "paused", "review_pending" if row.status == "pending" else "confirmation"
         row.review_json = {
+            **(row.review_json or {}),
             "job_id": review_job_id,
-            "report": identity_verdict.model_dump(mode="json") if identity_verdict else None,
+            **({"report": identity_verdict.model_dump(mode="json")} if identity_verdict else {}),
         }
         emit_ws_event(db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(review_job_id)})
         row.error = error if current_identity else "原任务身份已失效，候选和检查依据已保留，不能按当前身份采纳"
@@ -366,6 +308,7 @@ async def _save_fullbody_candidate(
     identity: VisualIdentitySnapshot,
     base_fullbody_url: str,
     origin: GenerationOrigin | None = None,
+    generation_job_id: int | None = None,
 ) -> FullbodyCandidateResponse:
     replaced_paths: list[str] = []
     try:
@@ -402,10 +345,12 @@ async def _save_fullbody_candidate(
             )
             db.add(row)
             await enqueue_asset_cleanup(db, user_id, replaced_paths)
+            await complete_appearance_image(db, user_id, generation_job_id)
             await commit_appearance(db, user_id)
             candidate_id = row.id
     except BaseException:
-        delete_portrait_file(image_url)
+        if generation_job_id is None or image_url.startswith("temp-media/"):
+            delete_portrait_file(image_url)
         raise
     for path in replaced_paths:
         if path.startswith("temp-media/"):
@@ -572,46 +517,35 @@ async def _generate_portrait(
     *,
     task: AiTaskKey,
     persist: bool,
+    request_context: str,
     reference_image: str | None = None,
     secondary_reference_image: str | None = None,
     size: str = _AVATAR_SIZE,
     image_edit: bool = False,
     prefer_transparent_background: bool = False,
     selection: ProviderSelection | None = None,
-) -> tuple[str, GenerationOrigin]:
-    """生成一张立绘并返回裸路径：persist=False 留作 temp-media 草稿，True 落盘用户资产目录。``image_edit`` 以参考图为底图并按编辑能力过滤，不接受 secondary。"""
-
-    async def generate(text: str) -> GeneratedImages:
-        return await generate_images(
-            text,
-            user_id=user_id,
-            task=task,
+) -> tuple[str, GenerationOrigin, int]:
+    try:
+        result = await generate_appearance_image(
+            user_id,
+            prompt,
+            request_context=request_context,
             size=size,
             reference_image=reference_image,
             secondary_reference_image=secondary_reference_image,
             image_edit=image_edit,
             prefer_transparent_background=prefer_transparent_background,
             selection=selection,
+            task=task,
         )
-
-    try:
-        result = await generate_with_moderation_retry(user_id, prompt, generate, task=task)
+        path = result.path
+        if not persist:
+            data, content_type = await image_asset_bytes(path)
+            path = await persist_portrait_or_draft(data, user_id, content_type, persist=False)
+        return path, result.origin, result.job_id
     except ImageGenerationError as exc:
         logger.warning("portrait image generation failed", extra={"user_id": user_id, "error": exc.internal})
-        # ImageGenerationError 的 str 按契约是公开文案（含编辑能力缺失等可行动指引），透传不替换。
         raise AvatarGenerationError(str(exc), internal=exc.internal) from exc
-    try:
-        data, content_type = await image_asset_bytes(result.urls[0])
-    except Exception as exc:
-        raise AvatarGenerationError("生成结果下载失败，请稍后重试", internal=str(exc)) from exc
-    if prefer_transparent_background:
-        try:
-            data = await asyncio.to_thread(prepare_transparent_image, data, require_clean_edges=False)
-        except VideoProcessError as exc:
-            raise AvatarGenerationError(str(exc), internal=exc.internal or str(exc)) from exc
-        content_type = "image/png"
-    path = await persist_portrait_or_draft(data, user_id, content_type, persist=persist)
-    return path, result.origin
 
 
 async def _write_avatar_step(
@@ -625,6 +559,7 @@ async def _write_avatar_step(
     reference_image: str | None = None,
     secondary_reference_image: str | None = None,
     origin: GenerationOrigin | None = None,
+    generation_job_id: int | None = None,
 ) -> AvatarAsset:
     """以新头像行替换激活头像并撤销头像确认；正式原图继续由历史行持有。"""
     prompt_payload: dict[str, str] = {"avatar_prompt": avatar_prompt, "style": style}
@@ -654,10 +589,12 @@ async def _write_avatar_step(
             await reset_portrait_confirmation(db, user_id)
             db.add(asset)
             await enqueue_asset_cleanup(db, user_id, [previous_url] if previous_url else [])
+            await complete_appearance_image(db, user_id, generation_job_id)
             await commit_appearance(db, user_id)
         except BaseException:
             await db.rollback()
-            delete_portrait_file(asset_url)
+            if generation_job_id is None or asset_url.startswith("temp-media/"):
+                delete_portrait_file(asset_url)
             raise
 
     if persist and previous_url is not None and previous_url.startswith("temp-media/"):
@@ -672,16 +609,18 @@ async def _generate_avatar_step(
     avatar_prompt: str,
     persist: bool,
     feedback: str | None = None,
+    request_context: str | None = None,
     reference_image: str | None = None,
     secondary_reference_image: str | None = None,
     image_edit: bool = False,
     selection: ProviderSelection | None = None,
 ) -> AvatarAsset:
     """先在会话外完成立绘生成，再用一次短写会话提交新的 active AvatarAsset 行。"""
-    asset_url, origin = await _generate_portrait(
+    asset_url, origin, generation_job_id = await _generate_portrait(
         avatar_prompt,
         user_id,
         persist=persist,
+        request_context=request_context if request_context is not None else feedback or "",
         reference_image=reference_image,
         secondary_reference_image=secondary_reference_image,
         image_edit=image_edit,
@@ -692,6 +631,7 @@ async def _generate_avatar_step(
         user_id,
         asset_url=asset_url,
         origin=origin,
+        generation_job_id=generation_job_id,
         avatar_prompt=avatar_prompt,
         style=_DEFAULT_STYLE,
         persist=persist,
@@ -788,6 +728,9 @@ async def _generate_avatar(
         user_id,
         selection=selection,
         avatar_prompt=await _avatar_description(user_id, persona, feedback),
+        request_context=json.dumps(
+            [persona.definition_json, persona.personality_tags_json, feedback], ensure_ascii=False, sort_keys=True
+        ),
         persist=persona.is_portrait_confirmed,
         feedback=feedback,
     )
@@ -908,6 +851,11 @@ async def regenerate_avatar_from_image(
         return await _generate_avatar_step(
             user_id,
             avatar_prompt=avatar_prompt,
+            request_context=json.dumps(
+                [persona.definition_json, persona.personality_tags_json, description],
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
             selection=ProviderSelection(origin=origin, mode="next"),
             persist=persona.is_portrait_confirmed,
             feedback=description,
@@ -1028,6 +976,7 @@ async def _install_fullbody_seed(
     url: str,
     prompt: str | None,
     origin: GenerationOrigin | None = None,
+    generation_job_id: int | None = None,
 ) -> AvatarAsset:
     """安装首次全身图；已确认原图的失败替换与任务重置同事务提交。调用方持用户锁。"""
     try:
@@ -1054,9 +1003,11 @@ async def _install_fullbody_seed(
             target.seed_fullbody_url = url
             target.fullbody_generation_origin_json = origin.model_dump(mode="json") if origin else None
             await enqueue_asset_cleanup(session, user_id, [previous_url] if previous_url else [])
+            await complete_appearance_image(session, user_id, generation_job_id)
             await commit_appearance(session, user_id)
     except BaseException:
-        delete_portrait_file(url)
+        if generation_job_id is None or url.startswith("temp-media/"):
+            delete_portrait_file(url)
         raise
     if previous_url and previous_url != url and previous_url.startswith("temp-media/"):
         delete_portrait_file(previous_url)
@@ -1138,10 +1089,13 @@ async def generate_fullbody_reference(
                 secondary_reference=secondary_reference,
             )
         try:
-            generated_url, origin = await _generate_portrait(
+            generated_url, origin, generation_job_id = await _generate_portrait(
                 prompt,
                 user_id,
                 persist=asset.is_fullbody_confirmed,
+                request_context=json.dumps(
+                    [avatar_id, asset.identity_revision, base_fullbody_url, mode, effective_feedback, candidate_id]
+                ),
                 reference_image=reference_uri,
                 secondary_reference_image=secondary_reference,
                 size=FULLBODY_SIZE,
@@ -1161,6 +1115,7 @@ async def generate_fullbody_reference(
                 identity,
                 base_fullbody_url,
                 origin,
+                generation_job_id,
             )
         return await _install_fullbody_seed(
             user_id,
@@ -1168,6 +1123,7 @@ async def generate_fullbody_reference(
             url=generated_url,
             prompt=prompt,
             origin=origin,
+            generation_job_id=generation_job_id,
         )
 
 
@@ -1375,7 +1331,7 @@ async def fullbody_review_view(user_id: int, job_id: int) -> MediaJobView:
         if job is None:
             raise RequestError(status_code=404, message="找不到全身检查任务")
         candidate = await db.get(FullbodyCandidate, job.candidate_id)
-        report_data = job.checkpoint or job.result_json
+        report_data = candidate.review_json if candidate else {}
         report = IdentityReview.model_validate(report_data["report"]) if report_data.get("report") else None
         candidate_key = candidate_review_key(job.source_key)
         review = (
@@ -1409,7 +1365,7 @@ async def fullbody_review_view(user_id: int, job_id: int) -> MediaJobView:
                     basis_id=basis,
                     candidate_basis_id=candidate_key,
                     preview_url=re_sign_bare_path(
-                        candidate.image_url if candidate else report_data.get("candidate_path")
+                        candidate.image_url if candidate else (job.checkpoint or {}).get("candidate_path")
                     ),
                     can_review=job.stage == "review_pending"
                     and candidate is not None

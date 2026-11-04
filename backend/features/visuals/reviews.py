@@ -62,12 +62,7 @@ def _manual_candidates(progress: VisualJobProgress) -> list[MediaCandidate]:
                     path=progress.candidate.media_path,
                     attempt=chain.active_index or 0,
                     review=progress.review_result,
-                    result_json=VisualCandidateResult(
-                        asset=progress.candidate,
-                        verdict=progress.review_verdict or "review",
-                        reason=progress.review_reason,
-                        identity_reason=progress.identity_reason,
-                    ).model_dump_json(),
+                    result_json=VisualCandidateResult(asset=progress.candidate).model_dump_json(),
                 )
             )
         return entries
@@ -271,6 +266,17 @@ async def manually_review_visual(
             db=db,
         )
         selected.review.reference_basis = visual_reference_basis(source.model_dump(mode="json"))
+        chain_field = (
+            "video_chain_json"
+            if progress.candidate is not None and progress.candidate.media_kind == "video"
+            else "image_chain_json"
+        )
+        saved_chain = getattr(progress, chain_field)
+        if saved_chain:
+            chain_type = MediaChainState if chain_field == "video_chain_json" else ImageChainState
+            chain = chain_type.model_validate_json(saved_chain)
+            chain.candidates = [entry for entry in chain.candidates if entry.path != selected.path] + [selected]
+            setattr(progress, chain_field, chain.model_dump_json())
         if progress.candidate is not None:
             if selected.result_json:
                 progress.candidate = VisualCandidateResult.model_validate_json(selected.result_json).asset

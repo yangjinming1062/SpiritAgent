@@ -15,9 +15,11 @@ from .identity_contracts import VisualIdentitySnapshot
 from .models import VideoGenJob
 from .reference_reader import visual_identity_is_current
 from .review_contracts import VisualReview
+from .video_queue.contracts import VideoQueueInfo
+from .video_queue.service import video_attempt_queue_info
 
 
-def video_job_snapshot(row: VideoGenJob) -> VideoJobSnapshot:
+def video_job_snapshot(row: VideoGenJob, queue_info: VideoQueueInfo | None = None) -> VideoJobSnapshot:
     state = MediaChainState.model_validate(row.checkpoint or {})
     path = row.video_url or row.candidate_video_url
     parsed = parse_companion_asset_path(path)
@@ -51,20 +53,35 @@ def video_job_snapshot(row: VideoGenJob) -> VideoJobSnapshot:
         cleanup_requested_at=row.cleanup_requested_at,
         candidate_ready=candidate_ready,
         review=VisualReview.model_validate(row.review_result_json) if row.review_result_json else None,
-        video_queue=state.video_queue if row.state not in ("succeeded", "failed", "cancelled") else None,
+        video_queue=queue_info if row.state not in ("succeeded", "failed", "cancelled") else None,
     )
 
 
 async def get_job(db: AsyncSession, job_id: int, user_id: int) -> VideoJobSnapshot | None:
     row = await db.scalar(select(VideoGenJob).where(VideoGenJob.id == job_id, VideoGenJob.user_id == user_id))
-    return video_job_snapshot(row) if row is not None else None
+    return await video_job_snapshot_async(db, row) if row is not None else None
 
 
 async def get_video_jobs(db: AsyncSession, user_id: int, job_ids: Collection[int]) -> dict[int, VideoJobSnapshot]:
     if not job_ids:
         return {}
     rows = await db.scalars(select(VideoGenJob).where(VideoGenJob.id.in_(job_ids), VideoGenJob.user_id == user_id))
-    return {row.id: video_job_snapshot(row) for row in rows}
+    snapshots = await _video_job_snapshots(db, list(rows))
+    return {snapshot.id: snapshot for snapshot in snapshots}
+
+
+async def _video_job_snapshots(db: AsyncSession, rows: Collection[VideoGenJob]) -> tuple[VideoJobSnapshot, ...]:
+    requests = {
+        row.id: MediaChainState.model_validate(row.checkpoint or {}).queue_request_id
+        for row in rows
+        if row.state not in {"succeeded", "failed", "cancelled"}
+    }
+    info = await video_attempt_queue_info(db, {request for request in requests.values() if request})
+    return tuple(video_job_snapshot(row, info.get(requests.get(row.id))) for row in rows)
+
+
+async def video_job_snapshot_async(db: AsyncSession, row: VideoGenJob) -> VideoJobSnapshot:
+    return (await _video_job_snapshots(db, (row,)))[0]
 
 
 async def pending_conversation_video_jobs(
@@ -79,7 +96,7 @@ async def pending_conversation_video_jobs(
         statement = statement.where(VideoGenJob.params_json["request_scope"].astext == request_scope)
     else:
         statement = statement.where(~VideoGenJob.state.in_(("succeeded", "failed", "unknown", "cancelled")))
-    return tuple(video_job_snapshot(row) for row in await db.scalars(statement.order_by(VideoGenJob.id)))
+    return await _video_job_snapshots(db, list(await db.scalars(statement.order_by(VideoGenJob.id))))
 
 
 async def bind_video_reply(
@@ -110,7 +127,7 @@ async def bind_video_reply(
         row.reply_message_id = message_id
     emit_ws_event(db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(job_id)})
     await db.flush()
-    return video_job_snapshot(row)
+    return await video_job_snapshot_async(db, row)
 
 
 async def transfer_reply_videos(
@@ -134,8 +151,8 @@ async def transfer_reply_videos(
             raise ValueError("Video task does not belong to this reply")
         row.reply_message_id = to_message_id
         await db.flush()
-        transferred.append(video_job_snapshot(row))
-    return tuple(transferred)
+        transferred.append(row)
+    return await _video_job_snapshots(db, transferred)
 
 
 def _asset_references(row: VideoGenJob) -> VideoJobAssetReferences:

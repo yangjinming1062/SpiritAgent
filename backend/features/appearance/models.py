@@ -147,7 +147,14 @@ class FullbodyReviewJob(JobRecord):
     candidate_id: Mapped[int | None] = mapped_column(
         ForeignKey("companion_fullbody_candidates.id", ondelete="SET NULL"), unique=True
     )
-    result_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+
+
+class AppearanceImageJob(JobRecord):
+    __tablename__ = "appearance_image_jobs"
+    __mapper_args__ = {"polymorphic_identity": "appearance.image"}
+    id: Mapped[int] = mapped_column(BigInteger, ForeignKey("jobs.id", ondelete="CASCADE"), primary_key=True)
+    owner_id: Mapped[int] = mapped_column(BigInteger)
+    request_hash: Mapped[str] = mapped_column(String(64), index=True)
 
 
 class AppearanceAsset(ModelBase):

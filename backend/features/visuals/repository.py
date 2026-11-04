@@ -428,9 +428,8 @@ def clear_pending_command(state: VisualPresentation, play_id: str) -> None:
 async def discard_job_draft(db: AsyncSession, user_id: int, job: VisualJob) -> None:
     """放弃制作草稿：回收不再被成品与其它工作项引用的文件。"""
 
-    paths = asset_paths(job.checkpoint, user_id) | asset_paths(job.candidates_json, user_id)
+    paths = asset_paths(job.checkpoint, user_id)
     job.checkpoint = None
-    job.candidates_json = None
     await db.flush()
     dropped = paths - await live_asset_paths(db, user_id)
     if dropped:

@@ -259,7 +259,6 @@ class VisualJob(JobRecord):
     feedback: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     video_feedback: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     # 可核验候选；未消费的供应商结果不得恢复为活动提交。
-    candidates_json: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
     repair_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     repair_limit: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
     result_visual_id: Mapped[int | None] = mapped_column(

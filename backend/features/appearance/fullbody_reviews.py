@@ -39,8 +39,6 @@ async def manually_review_fullbody(
     if manual_candidate_id(selected) != request.candidate_id:
         raise RequestError(status_code=409, message="所选候选已变化，请刷新")
     await approve_candidate(user_id, selected, ("identity",), request, db=db)
-    job.checkpoint = {**job.checkpoint, "manual_review": selected.review.model_dump(mode="json")}
-    job.result_json = job.checkpoint
     candidate.review_json = {**candidate.review_json, "manual_review": selected.review.model_dump(mode="json")}
     candidate.status, candidate.error = "ready", None
     job.state, job.stage, job.error = "queued", "confirmation", None

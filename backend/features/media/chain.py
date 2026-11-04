@@ -14,7 +14,6 @@ from infrastructure.logger import get_logger
 from pydantic import BaseModel, ConfigDict, Field
 
 from features.media.review_contracts import ReviewEvidence, ReviewVerdict, VisualReview
-from features.media.video_queue.contracts import VideoQueueInfo
 
 logger = get_logger(__name__)
 
@@ -128,7 +127,10 @@ class MediaChainState(BaseModel):
     result_url: str | None = None
     source_path: str | None = None
     queue_request_id: str | None = None
-    video_queue: VideoQueueInfo | None = None
+
+    def unknown_submission(self) -> bool:
+        """远端提交可能已被受理但结果未确认；此状态下禁止自动重发。"""
+        return self.stop_reason == "result_unknown" or (self.phase == "submitting" and not self.queue_request_id)
 
     def begin(self, index: int) -> None:
         self.active_index = index
@@ -137,7 +139,6 @@ class MediaChainState(BaseModel):
         self.result_url = None
         self.source_path = None
         self.queue_request_id = None
-        self.video_queue = None
 
     def best(self, slot: int = 0) -> MediaCandidate | None:
         return self.best_qualified(slot) or next((c for c in self.candidates if c.slot == slot), None)
@@ -155,12 +156,6 @@ class MediaChainState(BaseModel):
             ),
             None,
         )
-
-    def accept_identity_review(self, candidate: MediaCandidate, verdict: ReviewVerdict | None) -> None:
-        candidate.identity_verdict = verdict
-        candidate.evaluated = verdict is not None
-        if verdict in (None, "review"):
-            self.stop_reason = "review_pending"
 
     def needs_next(self, slot: int = 0) -> bool:
         return not self.stop_reason and self.next_index < len(self.providers) and self.best_qualified(slot) is None

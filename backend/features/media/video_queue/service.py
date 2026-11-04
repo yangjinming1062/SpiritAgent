@@ -1,7 +1,7 @@
 """按供应商与实际凭据串行受理远端视频，业务消费不占名额。"""
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from dataclasses import replace
 from datetime import timedelta
 from uuid import uuid4
@@ -30,7 +30,7 @@ from runtime.user_maintenance import is_user_in_maintenance
 from sqlalchemy import delete, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
 from features.jobs.service import bind_job_assets, settled_job_ids
 from features.media.chain import FrozenMediaProvider, resolve_frozen_media_provider, video_provider_failure_reason
@@ -216,6 +216,18 @@ def _queue_info(row: ProviderAttempt, lane: ProviderLane) -> VideoQueueInfo | No
     return None
 
 
+async def video_attempt_queue_info(db: AsyncSession, request_ids: Collection[str]) -> dict[str, VideoQueueInfo | None]:
+    """在调用方事务内批量投影尝试进度，不另开会话或保存业务镜像。"""
+    if not request_ids:
+        return {}
+    rows = await db.execute(
+        select(ProviderAttempt, ProviderLane)
+        .join(ProviderLane, ProviderLane.id == ProviderAttempt.lane_id)
+        .where(ProviderAttempt.token.in_(request_ids))
+    )
+    return {row.token: _queue_info(row, lane) for row, lane in rows}
+
+
 async def get_video_attempt_status(request_id: str) -> VideoJobStatus | None:
     row, _lane = await _read(request_id)
     return _status(row)
@@ -238,13 +250,11 @@ def _status(row: ProviderAttempt) -> VideoJobStatus | None:
 async def wait_video_attempt(
     request_id: str,
     *,
-    on_submitted: Callable[[str], Awaitable[None]] | None = None,
     on_queue: Callable[[VideoQueueInfo | None], Awaitable[None]] | None = None,
 ) -> VideoJobStatus:
     """等待者取消不取消队列所有的远端工作；仅明确取消接口改变远端生命周期。"""
     previous: VideoQueueInfo | None = None
     notified = False
-    submitted = ""
     while not _STOPPING:
         try:
             row, lane = await _read(request_id)
@@ -261,10 +271,6 @@ async def wait_video_attempt(
             if on_queue is not None and (not notified or info != previous):
                 await on_queue(info)
                 previous, notified = info, True
-            if row.provider_task_id and submitted != row.provider_task_id:
-                if on_submitted is not None:
-                    await on_submitted(row.provider_task_id)
-                submitted = row.provider_task_id
         except GenerationWorkPaused:
             raise
         except Exception:

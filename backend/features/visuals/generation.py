@@ -22,10 +22,8 @@ from infrastructure.assets.asset_store import (
     resolve_asset_reference,
     save_companion_asset_async,
     save_image_chain_input_asset_async,
-    save_video_job_asset_async,
     validate_image_bytes,
 )
-from infrastructure.assets.media_download import download_media_result
 from infrastructure.assets.references import asset_paths
 from infrastructure.async_io import cancel_and_wait, cancel_tasks, run_blocking
 from infrastructure.database import SESSION_LOCAL
@@ -55,10 +53,8 @@ from features.media.chain import (
     FrozenMediaProvider,
     MediaCandidate,
     MediaChainState,
-    media_failure_reason,
     resolve_frozen_media_provider,
     video_failure_message,
-    video_provider_failure_reason,
 )
 from features.media.character_images import (
     ImageChainState,
@@ -80,12 +76,11 @@ from features.media.review_contracts import (
 from features.media.review_evidence import freeze_review_evidence, read_review_evidence
 from features.media.video_queue.contracts import VideoQueueInfo, VideoQueueOwner, VideoQueueStoppedError
 from features.media.video_queue.service import (
-    acknowledge_video_attempt,
     cancel_video_attempt,
     enqueue_video_attempt,
     pause_video_attempt,
-    wait_video_attempt,
 )
+from features.media.video_results import download_and_store_video, receive_video_attempt
 
 from .creation import (
     VisualCreationError,
@@ -225,9 +220,6 @@ class VisualCandidateResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     asset: VisualAsset
-    verdict: str
-    reason: str
-    identity_reason: str = ""
 
 
 def visual_progress_has_unknown_submission(progress: VisualJobProgress) -> bool:
@@ -236,12 +228,11 @@ def visual_progress_has_unknown_submission(progress: VisualJobProgress) -> bool:
     for chain_json in (progress.reference_alignment_chain_json, progress.image_chain_json):
         if not chain_json:
             continue
-        image = ImageChainState.model_validate_json(chain_json)
-        if image.phase == "submitting" or image.stop_reason == "result_unknown":
+        if ImageChainState.model_validate_json(chain_json).unknown_submission():
             return True
     if progress.video_chain_json:
         video = MediaChainState.model_validate_json(progress.video_chain_json)
-        if video.phase == "submitting" and not video.queue_request_id:
+        if video.unknown_submission():
             return True
     return False
 
@@ -455,19 +446,12 @@ async def _save_progress(
             raise LlmCallBlockedError("影像制作任务已经失效")
         progress.source = saved.source
         checkpoint = progress.model_dump(mode="json")
-        chain = MediaChainState.model_validate_json(progress.video_chain_json or "{}")
-        candidates = [
-            VisualCandidateResult.model_validate_json(entry.result_json).model_dump(mode="json")
-            for entry in chain.candidates
-            if entry.result_json
-        ]
-        paths = asset_paths([job.snapshot_json, checkpoint, candidates], user_id)
+        paths = asset_paths([job.snapshot_json, checkpoint], user_id)
         present = {
             path for path in paths if (resolved := resolve_asset_reference(path)) is not None and resolved[0].is_file()
         }
         await bind_job_assets(db, user_id, job.id, present, "dependency")
         job.checkpoint = checkpoint
-        job.candidates_json = candidates or None
         job.stage = stage
         if repair_count is not None:
             job.repair_count = repair_count
@@ -520,7 +504,7 @@ async def _aligned_outfit_reference(
     elif progress.reference_alignment_source_hash != source_hash:
         raise VisualStateError("组合参考对齐的冻结来源已变化")
     state = ImageChainState.model_validate_json(progress.reference_alignment_chain_json or "{}")
-    if state.phase == "submitting" or state.stop_reason == "result_unknown":
+    if state.unknown_submission():
         raise ImageGenerationError(_unknown_submission_message(progress), result_unknown=True)
     if state.inputs is not None and (
         not isinstance(state.inputs, ReviewedImageInput) or state.inputs.goal_review != "required"
@@ -1756,6 +1740,409 @@ async def _ensure_video_chain(
     return chain
 
 
+async def _review_video_candidate(
+    user_id: int,
+    job: VisualJob,
+    snapshot: VisualSnapshot,
+    progress: VisualJobProgress,
+    chain: MediaChainState,
+    *,
+    allow_model_steps: bool,
+) -> Literal["retry", "done"]:
+    """评估当前候选并登记到链上；返回是否换下一家供应商重试。"""
+    if not allow_model_steps:
+        raise GenerationWorkPaused
+    if progress.outfit_description is None:
+        await _describe_frame(user_id, job.id, progress)
+    if snapshot.source.kind == "scene":
+        await _evaluate_scene_candidate(user_id, job, progress)
+    else:
+        await _evaluate_candidate(user_id, job, progress)
+    result = VisualCandidateResult(
+        asset=progress.candidate,
+    )
+    candidate = MediaCandidate(
+        path=progress.candidate.media_path,
+        attempt=chain.active_index or 0,
+        evaluated=True,
+        accepted=progress.review_result is not None and progress.review_result.verdict == "pass",
+        evidence=progress.identity_evidence or progress.video_evidence,
+        review=progress.review_result,
+        result_json=result.model_dump_json(),
+    )
+    candidate.identity_verdict = progress.identity_verdict
+    candidate.identity_reason = progress.identity_reason
+    if candidate.review is None or candidate.review.verdict == "review":
+        chain.stop_reason = "review_pending"
+    chain.candidates = [item for item in chain.candidates if item.path != candidate.path] + [candidate]
+    progress.video_chain_json = chain.model_dump_json()
+    await _save_progress(user_id, job.id, progress, stage="review")
+    if not chain.needs_next():
+        best = chain.best_qualified() or chain.best()
+        if best is not None and best.result_json:
+            chosen = VisualCandidateResult.model_validate_json(best.result_json)
+            progress.candidate, progress.identity_verdict = chosen.asset, best.identity_verdict
+            progress.review_result = best.review
+            progress.identity_reason = best.review.identity.reason if best.review and best.review.identity else ""
+            progress.review_verdict = best.review.goal.verdict if best.review and best.review.goal else "review"
+            progress.review_reason = best.review.goal.reason if best.review and best.review.goal else ""
+        return "done"
+    progress.candidate = None
+    progress.identity_verdict = None
+    progress.identity_reason = ""
+    progress.review_verdict = None
+    progress.review_reason = ""
+    progress.quality_verdict = None
+    progress.quality_reason = ""
+    progress.identity_evidence = None
+    progress.video_evidence = None
+    progress.review_result = None
+    chain.result_url = None
+    chain.active_index = None
+    chain.phase = "ready"
+    chain.queue_request_id = None
+    progress.source_path = None
+    progress.video_chain_json = chain.model_dump_json()
+    await _save_progress(user_id, job.id, progress, stage="video")
+    return "retry"
+
+
+async def _download_video_result(
+    user_id: int,
+    job_id: int,
+    progress: VisualJobProgress,
+    chain: MediaChainState,
+    generation_id: str,
+    directory: str,
+) -> None:
+    """已知结果只恢复接收；下载失败保留原地址，不重新提交制作。"""
+    try:
+        stored = await download_and_store_video(
+            chain.result_url,
+            user_id=user_id,
+            job_id=job_id,
+            attempt=chain.active_index if chain.active_index is not None else chain.next_index,
+            generation_id=generation_id,
+            directory=directory,
+        )
+    except Exception as exc:
+        raise VisualCreationError(
+            "视频已经完成，但成品暂时无法接收；可以继续接收原成品",
+            "result_download_failed",
+        ) from exc
+    progress.source_path = stored
+    chain.result_url = None
+    await _save_progress(user_id, job_id, progress, stage="process")
+
+
+async def _build_video_request(
+    user_id: int,
+    job: VisualJob,
+    snapshot: VisualSnapshot,
+    progress: VisualJobProgress,
+    chain: MediaChainState,
+    index: int,
+    clip_kind: str,
+    directory: str,
+) -> VideoGenRequest | None:
+    """按冻结供应商能力准备本次提交输入；画幅不再可用时返回 None 并推进游标。"""
+    config = await resolve_frozen_media_provider(user_id, "video_gen", chain.providers[index])
+    if config is None:
+        raise VisualStateError(video_failure_message("provider_unavailable"))
+    provider = build_provider(config, VideoGenProvider)
+    desired_ratio = _provider_ratio(provider, progress.aspect_ratio)
+    if desired_ratio is None:
+        # 配置恢复后能力声明可能改变；仍不为回退改写确认过的画面。
+        chain.next_index = index + 1
+        chain.active_index = None
+        chain.phase = "ready"
+        progress.video_chain_json = chain.model_dump_json()
+        await _save_progress(user_id, job.id, progress, stage="video")
+        if chain.next_index >= len(chain.providers):
+            raise VisualStateError(f"当前视频模型均不支持已确认的 {progress.aspect_ratio} 画幅")
+        return None
+    frozen_ratio = chain.providers[index].video_aspect_ratio
+    if frozen_ratio is None:
+        raise VisualStateError("视频制作任务缺少冻结画幅，请重新制作")
+    if not provider.supports_adaptive_aspect_ratio and frozen_ratio not in provider.aspect_ratios:
+        raise VisualStateError("视频模型的冻结画幅已不再可用，请重新选择模型")
+    desired_ratio = frozen_ratio
+    resolved = resolve_asset_reference(progress.pose_path)
+    if resolved is None:
+        raise VisualStateError("已确认的起始画面无法读取")
+    raw_frame = await asyncio.to_thread(resolved[0].read_bytes)
+    normalized, frame_width, frame_height = await asyncio.to_thread(
+        _frame_bytes,
+        raw_frame,
+        None,
+        provider.first_frame_size_range,
+    )
+    pose = (
+        progress.pose_path
+        if normalized == raw_frame
+        else await save_image_chain_input_asset_async(
+            normalized,
+            user_id=user_id,
+            generation_id=chain.generation_id,
+            label=f"frame{frame_width}x{frame_height}",
+            ext="png",
+            directory=directory,
+        )
+    )
+    return VideoGenRequest(
+        prompt=video_generation_prompt(
+            snapshot.source,
+            progress,
+            aspect_ratio=desired_ratio,
+            feedback=job.feedback,
+            video_feedback=job.video_feedback,
+        ),
+        duration=progress.duration_seconds,
+        resolution=chain.providers[index].video_resolution,
+        first_frame_image=pose,
+        last_frame_image=pose if clip_kind == "loop" else None,
+        aspect_ratio=None if provider.supports_adaptive_aspect_ratio else desired_ratio,
+    )
+
+
+async def _advance_video_chain(
+    user_id: int,
+    job: VisualJob,
+    snapshot: VisualSnapshot,
+    progress: VisualJobProgress,
+    chain: MediaChainState,
+    *,
+    clip_kind: str,
+    generation_id: str,
+    directory: str,
+    allow_model_steps: bool,
+) -> None:
+    """提交下一家供应商并等待远端结果；成功时把下载地址写入链，失败可回退。"""
+    if chain.unknown_submission():
+        progress.submission_unknown = True
+        await _save_progress(user_id, job.id, progress, stage="video")
+        raise VisualStateError(video_failure_message("result_unknown"))
+    index = chain.active_index if chain.active_index is not None else chain.next_index
+    if index is None or index >= len(chain.providers):
+        raise VisualStateError(video_failure_message("provider_failed"))
+    owner = VideoQueueOwner(
+        kind="visuals",
+        user_id=user_id,
+        job_id=job.id,
+        generation_id=chain.generation_id,
+    )
+    if not chain.queue_request_id:
+        if not allow_model_steps:
+            raise GenerationWorkPaused
+        await _require_active_job(user_id, job.id, generation_id)
+        if not progress.image_confirmed:
+            raise VisualStateError("起始画面尚未通过检查，请继续制作")
+        request = await _build_video_request(user_id, job, snapshot, progress, chain, index, clip_kind, directory)
+        if request is None:
+            return
+        await _require_active_job(user_id, job.id, generation_id)
+        chain.begin(index)
+        chain.phase = "ready"
+        progress.video_chain_json = chain.model_dump_json()
+        await _save_progress(user_id, job.id, progress, stage="video")
+        chain.queue_request_id = await enqueue_video_attempt(owner, chain.providers[index], index, request)
+        chain.phase = "submitting"
+        progress.video_chain_json = chain.model_dump_json()
+        await _save_progress(user_id, job.id, progress, stage="video")
+
+    async def on_queue(_info: VideoQueueInfo | None) -> None:
+        async with SESSION_LOCAL() as db:
+            current = await visual_job_row(db, user_id, job.id)
+            saved = visual_progress(current)
+            if saved is None or saved.generation_id != generation_id or current.state not in {"queued", "running"}:
+                raise GenerationWorkPaused
+            await notify_visuals_updated(db, user_id)
+            await db.commit()
+
+    async def save_result(state: MediaChainState) -> None:
+        progress.video_chain_json = state.model_dump_json()
+        if state.stop_reason == "queue_stopped":
+            progress.failure_reason = state.stop_reason
+        await _save_progress(user_id, job.id, progress, stage="download" if state.result_url else "video")
+
+    reason = await receive_video_attempt(chain, save_result, on_queue=on_queue)
+    if reason and chain.stop_reason:
+        raise VisualStateError(video_failure_message(reason))
+
+
+async def _prepare_visual_inputs(
+    user_id: int,
+    job: VisualJob,
+    snapshot: VisualSnapshot,
+    progress: VisualJobProgress,
+    *,
+    clip_kind: str,
+    directory: str,
+    allow_model_steps: bool,
+) -> bool:
+    job_id = job.id
+    if job.target_kind == "image" and progress.candidate is not None:
+        await _finish_job(user_id, job_id, progress, allow_followup_work=allow_model_steps)
+        return True
+    if not visual_progress_has_video_work(progress):
+        if snapshot.source.kind == "actor" and job.target_kind == "video":
+            await asyncio.to_thread(require_matting_model)
+            await _ensure_video_chain(user_id, job_id, clip_kind, progress)
+        if snapshot.source.kind == "scene":
+            await _prepare_scene_opening(user_id, job, snapshot.source, progress, directory)
+        else:
+            await _prepare_opening(user_id, job, snapshot.source, progress, directory)
+        progress.image_confirmed = True
+        await _save_progress(user_id, job_id, progress, stage="review" if job.target_kind == "image" else "video")
+        if job.target_kind == "image":
+            progress.candidate = _opening_asset(job, progress)
+            progress.review_verdict = "pass"
+            progress.identity_verdict = progress.opening_review.identity_verdict if progress.opening_review else None
+            opening = progress.opening_review
+            progress.identity_reason = opening.identity_reason if opening else ""
+            if opening:
+                progress.review_result = opening_visual_review(opening)
+                progress.review_result.reference_basis = visual_reference_basis(snapshot.source.model_dump(mode="json"))
+            # 图片成品同样提供桌面与动态读取的画面描述；描述不可用时不阻断发布。
+            if allow_model_steps:
+                await _describe_frame(user_id, job_id, progress)
+            await _save_progress(user_id, job_id, progress, stage="review")
+            await _finish_job(user_id, job_id, progress, allow_followup_work=allow_model_steps)
+            return True
+        if snapshot.kind != "actor":
+            async with SESSION_LOCAL() as db:
+                current_job = await visual_job_row(db, user_id, job_id, lock=True)
+                saved = visual_progress(current_job)
+                if (
+                    current_job.state not in {"queued", "running"}
+                    or saved is None
+                    or saved.generation_id != progress.generation_id
+                ):
+                    return True
+                opening = await publish_opening_result(
+                    db,
+                    user_id,
+                    current_job,
+                    _opening_asset(job, progress).model_copy(update={"input_image_path": progress.pose_path}),
+                    snapshot=_publication_snapshot(snapshot, progress),
+                )
+                set_committed_value(current_job, "result_image_id", opening.id)
+                set_committed_value(current_job, "result_image_version_id", opening.current_version_id)
+                current_job.updated_at = utc_now()
+                await notify_visuals_updated(db, user_id)
+                await db.commit()
+    return False
+
+
+async def _prepare_video_motion(
+    user_id: int,
+    job: VisualJob,
+    snapshot: VisualSnapshot,
+    progress: VisualJobProgress,
+    *,
+    clip_kind: str,
+    directory: str,
+) -> MediaChainState:
+    job_id = job.id
+    chain = await _ensure_video_chain(user_id, job_id, clip_kind, progress)
+    if not visual_progress_has_video_work(progress):
+        await _check_confirmed_geometry(progress)
+    while not progress.motion_prompt and not visual_progress_has_video_work(progress):
+        try:
+            if snapshot.source.kind == "scene":
+                await _prepare_scene_motion(user_id, job, snapshot.source, progress)
+            else:
+                await _prepare_motion(user_id, job, snapshot.source, progress)
+        except VisualMotionError as exc:
+            if exc.script.failure_kind == "duration":
+                minimum = exc.script.minimum_duration_seconds
+                if progress.motion_replan_count or minimum is None or minimum > 15:
+                    raise VisualCreationError(str(exc), "activity_unsupported") from exc
+                progress.motion_replan_count = 1
+                await _save_progress(user_id, job_id, progress, stage="motion")
+                try:
+                    seconds, providers = await resolve_visual_video_plan(
+                        user_id,
+                        clip_kind=clip_kind,
+                        duration_seconds=minimum,
+                        aspect_ratio=progress.aspect_ratio,
+                        target_width=progress.target_width,
+                        target_height=progress.target_height,
+                    )
+                except VisualStateError as planning_error:
+                    raise VisualCreationError(str(planning_error), "activity_unsupported") from planning_error
+                if seconds < minimum or seconds == progress.duration_seconds:
+                    raise VisualCreationError(
+                        "当前视频时长不足以完成这个活动，请选择其他动作",
+                        "activity_unsupported",
+                    ) from exc
+                progress.duration_seconds = seconds
+                chain = MediaChainState(providers=providers, generation_id=progress.generation_id)
+                progress.video_chain_json = chain.model_dump_json()
+                await _save_progress(user_id, job_id, progress, stage="video")
+                continue
+            if exc.script.failure_kind == "unsupported" or snapshot.source.kind == "scene":
+                raise
+            begin_opening_repair(
+                job,
+                progress,
+                reason=str(exc),
+                reference_path=progress.pose_path,
+            )
+            await _save_progress(user_id, job_id, progress, stage="repairing", repair_count=job.repair_count)
+            await _prepare_opening(user_id, job, snapshot.source, progress, directory)
+            progress.image_confirmed = True
+            await _save_progress(user_id, job_id, progress, stage="video")
+            continue
+    return chain
+
+
+async def _produce_visual_video(
+    user_id: int,
+    job: VisualJob,
+    snapshot: VisualSnapshot,
+    progress: VisualJobProgress,
+    chain: MediaChainState,
+    *,
+    clip_kind: str,
+    directory: str,
+    allow_model_steps: bool,
+) -> None:
+    job_id, generation_id = job.id, progress.generation_id
+    if progress.submission_unknown:
+        raise VisualStateError(video_failure_message("result_unknown"))
+    while True:
+        if progress.candidate is not None:
+            decision = await _review_video_candidate(
+                user_id, job, snapshot, progress, chain, allow_model_steps=allow_model_steps
+            )
+            if decision == "done":
+                break
+            continue
+        if progress.source_path:
+            await _save_progress(user_id, job_id, progress, stage="process")
+            progress.candidate = await _process_candidate(user_id, job, progress, directory)
+            await _save_progress(user_id, job_id, progress, stage="review")
+            continue
+        if chain.result_url:
+            await _download_video_result(user_id, job_id, progress, chain, generation_id, directory)
+            continue
+        await _advance_video_chain(
+            user_id,
+            job,
+            snapshot,
+            progress,
+            chain,
+            clip_kind=clip_kind,
+            generation_id=generation_id,
+            directory=directory,
+            allow_model_steps=allow_model_steps,
+        )
+    chain.finish()
+    progress.video_chain_json = chain.model_dump_json()
+    await _finish_job(user_id, job_id, progress, allow_followup_work=allow_model_steps)
+
+
 async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool = True) -> None:
     generation_id = ""
     directory = ""
@@ -1787,341 +2174,27 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
             )
         ):
             raise GenerationWorkPaused
-        if not visual_progress_has_video_work(progress):
-            if snapshot.source.kind == "actor":
-                await asyncio.to_thread(require_matting_model)
-                await _ensure_video_chain(user_id, job_id, clip_kind, progress)
-            if snapshot.source.kind == "scene":
-                await _prepare_scene_opening(user_id, job, snapshot.source, progress, directory)
-            else:
-                await _prepare_opening(user_id, job, snapshot.source, progress, directory)
-            progress.image_confirmed = True
-            await _save_progress(user_id, job_id, progress, stage="video")
-            if job.target_kind == "image":
-                progress.candidate = _opening_asset(job, progress)
-                progress.review_verdict = "pass"
-                progress.identity_verdict = (
-                    progress.opening_review.identity_verdict if progress.opening_review else None
-                )
-                opening = progress.opening_review
-                progress.identity_reason = opening.identity_reason if opening else ""
-                if opening:
-                    progress.review_result = opening_visual_review(opening)
-                    progress.review_result.reference_basis = visual_reference_basis(
-                        snapshot.source.model_dump(mode="json")
-                    )
-                # 图片成品同样提供桌面与动态读取的画面描述；描述不可用时不阻断发布。
-                if allow_model_steps:
-                    await _describe_frame(user_id, job_id, progress)
-                await _save_progress(user_id, job_id, progress, stage="review")
-                await _finish_job(user_id, job_id, progress, allow_followup_work=allow_model_steps)
-                return
-            if snapshot.kind != "actor":
-                async with SESSION_LOCAL() as db:
-                    current_job = await visual_job_row(db, user_id, job_id, lock=True)
-                    saved = visual_progress(current_job)
-                    if (
-                        current_job.state not in {"queued", "running"}
-                        or saved is None
-                        or saved.generation_id != progress.generation_id
-                    ):
-                        return
-                    opening = await publish_opening_result(
-                        db,
-                        user_id,
-                        current_job,
-                        _opening_asset(job, progress).model_copy(update={"input_image_path": progress.pose_path}),
-                        snapshot=_publication_snapshot(snapshot, progress),
-                    )
-                    set_committed_value(current_job, "result_image_id", opening.id)
-                    set_committed_value(current_job, "result_image_version_id", opening.current_version_id)
-                    current_job.updated_at = utc_now()
-                    await notify_visuals_updated(db, user_id)
-                    await db.commit()
-        chain = await _ensure_video_chain(user_id, job_id, clip_kind, progress)
-        if not visual_progress_has_video_work(progress):
-            await _check_confirmed_geometry(progress)
-        while not progress.motion_prompt and not visual_progress_has_video_work(progress):
-            try:
-                if snapshot.source.kind == "scene":
-                    await _prepare_scene_motion(user_id, job, snapshot.source, progress)
-                else:
-                    await _prepare_motion(user_id, job, snapshot.source, progress)
-            except VisualMotionError as exc:
-                if exc.script.failure_kind == "duration":
-                    minimum = exc.script.minimum_duration_seconds
-                    if progress.motion_replan_count or minimum is None or minimum > 15:
-                        raise VisualCreationError(str(exc), "activity_unsupported") from exc
-                    progress.motion_replan_count = 1
-                    await _save_progress(user_id, job_id, progress, stage="motion")
-                    try:
-                        seconds, providers = await resolve_visual_video_plan(
-                            user_id,
-                            clip_kind=clip_kind,
-                            duration_seconds=minimum,
-                            aspect_ratio=progress.aspect_ratio,
-                            target_width=progress.target_width,
-                            target_height=progress.target_height,
-                        )
-                    except VisualStateError as planning_error:
-                        raise VisualCreationError(str(planning_error), "activity_unsupported") from planning_error
-                    if seconds < minimum or seconds == progress.duration_seconds:
-                        raise VisualCreationError(
-                            "当前视频时长不足以完成这个活动，请选择其他动作",
-                            "activity_unsupported",
-                        ) from exc
-                    progress.duration_seconds = seconds
-                    chain = MediaChainState(providers=providers, generation_id=progress.generation_id)
-                    progress.video_chain_json = chain.model_dump_json()
-                    await _save_progress(user_id, job_id, progress, stage="video")
-                    continue
-                if exc.script.failure_kind == "unsupported" or snapshot.source.kind == "scene":
-                    raise
-                begin_opening_repair(
-                    job,
-                    progress,
-                    reason=str(exc),
-                    reference_path=progress.pose_path,
-                )
-                await _save_progress(user_id, job_id, progress, stage="repairing", repair_count=job.repair_count)
-                await _prepare_opening(user_id, job, snapshot.source, progress, directory)
-                progress.image_confirmed = True
-                await _save_progress(user_id, job_id, progress, stage="video")
-                continue
-        if progress.submission_unknown:
-            raise VisualStateError(video_failure_message("result_unknown"))
-        while True:
-            if progress.candidate is not None:
-                if not allow_model_steps:
-                    raise GenerationWorkPaused
-                if progress.outfit_description is None:
-                    await _describe_frame(user_id, job_id, progress)
-                if snapshot.source.kind == "scene":
-                    await _evaluate_scene_candidate(user_id, job, progress)
-                else:
-                    await _evaluate_candidate(user_id, job, progress)
-                result = VisualCandidateResult(
-                    asset=progress.candidate,
-                    verdict=progress.review_verdict or "review",
-                    reason=progress.review_reason,
-                    identity_reason=progress.identity_reason,
-                )
-                candidate = MediaCandidate(
-                    path=progress.candidate.media_path,
-                    attempt=chain.active_index or 0,
-                    evaluated=True,
-                    accepted=progress.review_result is not None and progress.review_result.verdict == "pass",
-                    evidence=progress.identity_evidence or progress.video_evidence,
-                    review=progress.review_result,
-                    result_json=result.model_dump_json(),
-                )
-                chain.accept_identity_review(candidate, progress.identity_verdict)
-                if not any(item.path == candidate.path for item in chain.candidates):
-                    chain.candidates.append(candidate)
-                progress.video_chain_json = chain.model_dump_json()
-                await _save_progress(user_id, job_id, progress, stage="review")
-                if chain.needs_next():
-                    progress.candidate = None
-                    progress.identity_verdict = None
-                    progress.identity_reason = ""
-                    progress.review_verdict = None
-                    progress.review_reason = ""
-                    progress.quality_verdict = None
-                    progress.quality_reason = ""
-                    progress.identity_evidence = None
-                    progress.video_evidence = None
-                    progress.review_result = None
-                    chain.result_url = None
-                    progress.source_path = None
-                    chain.active_index = None
-                    chain.phase = "ready"
-                    chain.queue_request_id, chain.video_queue = None, None
-                    progress.video_chain_json = chain.model_dump_json()
-                    await _save_progress(user_id, job_id, progress, stage="video")
-                    continue
-                best = chain.best_qualified() or chain.best()
-                if best is not None and best.result_json:
-                    chosen = VisualCandidateResult.model_validate_json(best.result_json)
-                    progress.candidate, progress.identity_verdict = chosen.asset, best.identity_verdict
-                    progress.identity_reason = chosen.identity_reason
-                    progress.review_verdict, progress.review_reason = chosen.verdict, chosen.reason
-                    progress.review_result = best.review
-                break
-            if progress.source_path:
-                await _save_progress(user_id, job_id, progress, stage="process")
-                progress.candidate = await _process_candidate(user_id, job, progress, directory)
-                await _save_progress(user_id, job_id, progress, stage="review")
-                continue
-            if chain.result_url:
-                try:
-                    data = await download_media_result(chain.result_url, max_bytes=256 * 1024 * 1024)
-                except Exception as exc:
-                    # 已知结果只恢复接收，保留检查点中的原下载地址。
-                    raise VisualCreationError(
-                        "视频已经完成，但成品暂时无法接收；可以继续接收原成品",
-                        "result_download_failed",
-                    ) from exc
-                progress.source_path = await save_video_job_asset_async(
-                    data,
-                    user_id=user_id,
-                    job_id=job_id,
-                    attempt=chain.active_index if chain.active_index is not None else chain.next_index,
-                    generation_id=generation_id,
-                    directory=directory,
-                )
-                chain.result_url = None
-                await _save_progress(user_id, job_id, progress, stage="process")
-                continue
-            if chain.phase == "submitting" and not chain.queue_request_id:
-                progress.submission_unknown = True
-                await _save_progress(user_id, job_id, progress, stage="video")
-                raise VisualStateError(video_failure_message("result_unknown"))
-            index = chain.active_index if chain.active_index is not None else chain.next_index
-            if index is None or index >= len(chain.providers):
-                raise VisualStateError(video_failure_message("provider_failed"))
-            owner = VideoQueueOwner(
-                kind="visuals",
-                user_id=user_id,
-                job_id=job_id,
-                generation_id=chain.generation_id,
-            )
-            if not chain.queue_request_id:
-                if not allow_model_steps:
-                    raise GenerationWorkPaused
-                await _require_active_job(user_id, job_id, generation_id)
-                if not progress.image_confirmed:
-                    raise VisualStateError("起始画面尚未通过检查，请继续制作")
-                config = await resolve_frozen_media_provider(user_id, "video_gen", chain.providers[index])
-                if config is None:
-                    raise VisualStateError(video_failure_message("provider_unavailable"))
-                provider = build_provider(config, VideoGenProvider)
-                desired_ratio = _provider_ratio(provider, progress.aspect_ratio)
-                if desired_ratio is None:
-                    # 配置恢复后能力声明可能改变；仍不为回退改写确认过的画面。
-                    chain.next_index = index + 1
-                    chain.active_index = None
-                    chain.phase = "ready"
-                    progress.video_chain_json = chain.model_dump_json()
-                    await _save_progress(user_id, job_id, progress, stage="video")
-                    if chain.next_index >= len(chain.providers):
-                        raise VisualStateError(f"当前视频模型均不支持已确认的 {progress.aspect_ratio} 画幅")
-                    continue
-                frozen_ratio = chain.providers[index].video_aspect_ratio
-                if frozen_ratio is None:
-                    raise VisualStateError("视频制作任务缺少冻结画幅，请重新制作")
-                if not provider.supports_adaptive_aspect_ratio and frozen_ratio not in provider.aspect_ratios:
-                    raise VisualStateError("视频模型的冻结画幅已不再可用，请重新选择模型")
-                desired_ratio = frozen_ratio
-                resolved = resolve_asset_reference(progress.pose_path)
-                if resolved is None:
-                    raise VisualStateError("已确认的起始画面无法读取")
-                raw_frame = await asyncio.to_thread(resolved[0].read_bytes)
-                normalized, frame_width, frame_height = await asyncio.to_thread(
-                    _frame_bytes,
-                    raw_frame,
-                    None,
-                    provider.first_frame_size_range,
-                )
-                pose = (
-                    progress.pose_path
-                    if normalized == raw_frame
-                    else await save_image_chain_input_asset_async(
-                        normalized,
-                        user_id=user_id,
-                        generation_id=chain.generation_id,
-                        label=f"frame{frame_width}x{frame_height}",
-                        ext="png",
-                        directory=directory,
-                    )
-                )
-                request = VideoGenRequest(
-                    prompt=video_generation_prompt(
-                        snapshot.source,
-                        progress,
-                        aspect_ratio=desired_ratio,
-                        feedback=job.feedback,
-                        video_feedback=job.video_feedback,
-                    ),
-                    duration=progress.duration_seconds,
-                    resolution=chain.providers[index].video_resolution,
-                    first_frame_image=pose,
-                    last_frame_image=pose if clip_kind == "loop" else None,
-                    aspect_ratio=None if provider.supports_adaptive_aspect_ratio else desired_ratio,
-                )
-                await _require_active_job(user_id, job_id, generation_id)
-                chain.begin(index)
-                chain.phase = "ready"
-                progress.video_chain_json = chain.model_dump_json()
-                await _save_progress(user_id, job_id, progress, stage="video")
-                chain.queue_request_id = await enqueue_video_attempt(owner, chain.providers[index], index, request)
-                chain.phase = "submitting"
-                progress.video_chain_json = chain.model_dump_json()
-                await _save_progress(user_id, job_id, progress, stage="video")
-
-            async def on_submitted(_task_id: str) -> None:
-                chain.phase = "processing"
-                chain.video_queue = None
-                progress.video_chain_json = chain.model_dump_json()
-                await _save_progress(user_id, job_id, progress, stage="video")
-
-            async def on_queue(info: VideoQueueInfo | None) -> None:
-                chain.video_queue = info
-                progress.video_chain_json = chain.model_dump_json()
-                await _save_progress(user_id, job_id, progress, stage="video")
-
-            try:
-                status = await wait_video_attempt(
-                    chain.queue_request_id,
-                    on_submitted=on_submitted,
-                    on_queue=on_queue,
-                )
-            except GenerationWorkPaused:
-                raise
-            except Exception as exc:
-                reason, can_fallback = media_failure_reason(exc)
-                if reason == "queue_stopped":
-                    stopped_request = chain.queue_request_id
-                    chain.phase, chain.active_index, chain.stop_reason = "complete", None, reason
-                    chain.queue_request_id, chain.video_queue = None, None
-                    progress.submission_unknown = False
-                    progress.failure_reason = reason
-                    progress.video_chain_json = chain.model_dump_json()
-                    await _save_progress(user_id, job_id, progress, stage="video")
-                    if stopped_request:
-                        await acknowledge_video_attempt(stopped_request)
-                if not can_fallback:
-                    raise
-                failed_request = chain.queue_request_id
-                chain.phase, chain.active_index = "ready", None
-                chain.queue_request_id, chain.video_queue = None, None
-                progress.video_chain_json = chain.model_dump_json()
-                await _save_progress(user_id, job_id, progress, stage="video")
-                await acknowledge_video_attempt(failed_request)
-                if chain.next_index >= len(chain.providers):
-                    raise VisualStateError(video_failure_message(reason)) from exc
-                continue
-            if status.status == "failed":
-                failed_request = chain.queue_request_id
-                chain.phase = "ready"
-                chain.active_index = None
-                chain.queue_request_id, chain.video_queue = None, None
-                progress.video_chain_json = chain.model_dump_json()
-                await _save_progress(user_id, job_id, progress, stage="video")
-                await acknowledge_video_attempt(failed_request)
-                if chain.next_index >= len(chain.providers):
-                    raise VisualStateError(video_failure_message(video_provider_failure_reason(status.error)))
-                continue
-            if not status.download_url:
-                raise VisualStateError(video_failure_message("download_failed"))
-            chain.result_url = status.download_url
-            chain.phase = "storing"
-            chain.video_queue = None
-            progress.video_chain_json = chain.model_dump_json()
-            await _save_progress(user_id, job_id, progress, stage="download")
-            await acknowledge_video_attempt(chain.queue_request_id)
-        chain.finish()
-        progress.video_chain_json = chain.model_dump_json()
-        await _finish_job(user_id, job_id, progress, allow_followup_work=allow_model_steps)
+        if await _prepare_visual_inputs(
+            user_id,
+            job,
+            snapshot,
+            progress,
+            clip_kind=clip_kind,
+            directory=directory,
+            allow_model_steps=allow_model_steps,
+        ):
+            return
+        chain = await _prepare_video_motion(user_id, job, snapshot, progress, clip_kind=clip_kind, directory=directory)
+        await _produce_visual_video(
+            user_id,
+            job,
+            snapshot,
+            progress,
+            chain,
+            clip_kind=clip_kind,
+            directory=directory,
+            allow_model_steps=allow_model_steps,
+        )
     except GenerationWorkPaused:
         if generation_id:
             await _pause_visual_job(user_id, job_id, generation_id)

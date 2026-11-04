@@ -1735,6 +1735,23 @@ def upgrade() -> None:
     op.create_index(op.f("ix_message_voice_refs_user_id"), "message_voice_refs", ["user_id"], unique=False)
     op.create_index(op.f("ix_message_voice_refs_voice_id"), "message_voice_refs", ["voice_id"], unique=False)
     op.create_table(
+        "appearance_image_jobs",
+        sa.Column("id", sa.BigInteger(), nullable=False),
+        sa.Column("owner_id", sa.BigInteger(), nullable=False),
+        sa.Column("request_hash", sa.String(length=64), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["owner_id", "id"],
+            ["jobs.user_id", "jobs.id"],
+            name="fk_appearance_image_jobs_id_owner",
+            ondelete="CASCADE",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("appearance_image_jobs_pkey")),
+        sa.UniqueConstraint("owner_id", "id", name="uq_appearance_image_jobs_owner_id"),
+    )
+    op.create_index(
+        op.f("ix_appearance_image_jobs_request_hash"), "appearance_image_jobs", ["request_hash"], unique=False
+    )
+    op.create_table(
         "outfit_creation_jobs",
         sa.Column("id", sa.BigInteger(), nullable=False),
         sa.Column("owner_id", sa.BigInteger(), nullable=False),
@@ -1840,7 +1857,6 @@ def upgrade() -> None:
             server_default=sa.text("'{}'"),
             nullable=False,
         ),
-        sa.Column("provider_task_id", sa.String(length=128), nullable=True),
         sa.Column("video_url", sa.Text(), nullable=True),
         sa.Column("candidate_video_url", sa.Text(), nullable=True),
         sa.Column("generation_attempt_index", sa.Integer(), server_default=sa.text("0"), nullable=False),
@@ -1875,7 +1891,6 @@ def upgrade() -> None:
         op.f("ix_video_gen_jobs_cleanup_requested_at"), "video_gen_jobs", ["cleanup_requested_at"], unique=False
     )
     op.create_index(op.f("ix_video_gen_jobs_conversation_id"), "video_gen_jobs", ["conversation_id"], unique=False)
-    op.create_index(op.f("ix_video_gen_jobs_provider_task_id"), "video_gen_jobs", ["provider_task_id"], unique=False)
     op.create_index(op.f("ix_video_gen_jobs_reply_message_id"), "video_gen_jobs", ["reply_message_id"], unique=False)
     op.create_index(op.f("ix_video_gen_jobs_source_message_id"), "video_gen_jobs", ["source_message_id"], unique=False)
     op.create_table(
@@ -2041,7 +2056,6 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), nullable=False),
         sa.Column("owner_id", sa.BigInteger(), nullable=False),
         sa.Column("candidate_id", sa.BigInteger(), nullable=True),
-        sa.Column("result_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.ForeignKeyConstraint(
             ["owner_id", "candidate_id"],
             ["companion_fullbody_candidates.user_id", "companion_fullbody_candidates.id"],
@@ -2378,7 +2392,6 @@ def upgrade() -> None:
         sa.Column("snapshot_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("feedback", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("video_feedback", sa.Text(), server_default=sa.text("''"), nullable=False),
-        sa.Column("candidates_json", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
         sa.Column("repair_count", sa.Integer(), server_default=sa.text("0"), nullable=False),
         sa.Column("repair_limit", sa.Integer(), server_default=sa.text("1"), nullable=False),
         sa.Column("result_visual_id", sa.BigInteger(), nullable=True),

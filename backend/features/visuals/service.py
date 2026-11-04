@@ -277,7 +277,7 @@ async def create_visual_job(
                 await bind_job_request(db, user_id, existing.id, request_id, combo_hash)
                 await bind_creation_step(db, user_id, existing, life_step)
                 await db.commit()
-                return job_view(existing)
+                return await job_view(db, existing)
         await require_step_submission(db, user_id, life_step)
         pending = await db.scalars(
             select(VisualJob).where(
@@ -293,7 +293,7 @@ async def create_visual_job(
                     await bind_job_request(db, user_id, existing.id, request_id, combo_hash)
                 await bind_creation_step(db, user_id, existing, life_step)
                 await db.commit()
-                return job_view(existing)
+                return await job_view(db, existing)
         progress = VisualJobProgress(
             generation_id=uuid4().hex,
             target_width=snapshot.target_width,
@@ -326,7 +326,7 @@ async def create_visual_job(
             await bind_job_request(db, user_id, job.id, request_id, combo_hash)
         await bind_creation_step(db, user_id, job, life_step)
         await notify_visuals_updated(db, user_id)
-        view = job_view(job)
+        view = await job_view(db, job)
         await db.commit()
     schedule_visual_job(user_id, job.id)
     return view
@@ -381,7 +381,7 @@ async def regenerate_visual(
             .limit(1),
         )
         if pending is not None:
-            return job_view(pending)
+            return await job_view(db, pending)
         reuse = item.media_kind == "video" and not changed_general and source_image is not None
         progress = VisualJobProgress(
             generation_id=uuid4().hex,
@@ -418,7 +418,7 @@ async def regenerate_visual(
         await db.flush()
         await bind_job_assets(db, user_id, job.id, asset_paths(job.snapshot_json, user_id), "input")
         await notify_visuals_updated(db, user_id)
-        view = job_view(job)
+        view = await job_view(db, job)
         await db.commit()
     schedule_visual_job(user_id, job.id)
     return view
@@ -861,7 +861,7 @@ async def pause_job(user_id: int, job_id: int) -> VisualJobView:
         job = await visual_job_row(db, user_id, job_id, lock=True)
         progress = visual_progress(job)
         if job.state not in {"queued", "running"} or progress is None:
-            return job_view(job)
+            return await job_view(db, job)
         generation_id = progress.generation_id
     # 让在途任务先保存最后已知的供应商句柄，再写入用户暂停标记。
     await pause_visual_job(job_id)
@@ -875,7 +875,7 @@ async def pause_job(user_id: int, job_id: int) -> VisualJobView:
             job.checkpoint = progress.model_dump(mode="json")
             job.state, job.stage, job.error = "paused", "paused", None
             await notify_visuals_updated(db, user_id)
-        view = job_view(job)
+        view = await job_view(db, job)
         await db.commit()
         return view
 
@@ -886,7 +886,7 @@ async def resume_job(user_id: int, job_id: int) -> VisualJobView:
         progress = visual_progress(job)
         was_failed = job.state in {"failed", "unknown"}
         if job.state == "running":
-            return job_view(job)
+            return await job_view(db, job)
         if job.state in {"succeeded", "cancelled"}:
             raise VisualStateError("这个工作项已结束，请按需重新发起制作")
         if progress is None:
@@ -921,7 +921,7 @@ async def resume_job(user_id: int, job_id: int) -> VisualJobView:
         job.checkpoint = progress.model_dump(mode="json")
         job.state, job.stage, job.error = "running", "prepare", None
         await notify_visuals_updated(db, user_id)
-        view = job_view(job)
+        view = await job_view(db, job)
         if was_failed:
             await restart_visual_steps(db, user_id, job)
         await db.commit()
@@ -933,14 +933,14 @@ async def cancel_job(user_id: int, job_id: int) -> VisualJobView:
     async with _lock(user_id), SESSION_LOCAL() as db:
         job = await visual_job_row(db, user_id, job_id, lock=True)
         if job.state in {"succeeded", "cancelled"}:
-            return job_view(job)
+            return await job_view(db, job)
         await discard_job_draft(db, user_id, job)
         job.state, job.stage, job.error = "cancelled", "cancelled", None
         await settle_visual_steps(db, user_id, job)
         await notify_visuals_updated(db, user_id)
         await db.flush()
         await db.refresh(job)
-        view = job_view(job)
+        view = await job_view(db, job)
         await db.commit()
     cancel_visual_job(job_id)
     return view
@@ -1024,7 +1024,7 @@ async def retry_job(user_id: int, job_id: int) -> VisualJobView:
         job = await visual_job_row(db, user_id, job_id, lock=True)
         progress = visual_progress(job)
         if job.state in {"queued", "running"}:
-            return job_view(job)
+            return await job_view(db, job)
         if job.state == "paused":
             pass  # 交给下面的继续流程
         elif job.state in {"succeeded", "cancelled"}:
@@ -1076,11 +1076,10 @@ async def retry_job(user_id: int, job_id: int) -> VisualJobView:
             stage = None
         if stage is not None:
             job.checkpoint = progress.model_dump(mode="json")
-            job.candidates_json = None
             job.state, job.stage, job.error = "running", stage, None
             job.finished_at = None
             await notify_visuals_updated(db, user_id)
-            view = job_view(job)
+            view = await job_view(db, job)
             await restart_visual_steps(db, user_id, job)
             await db.commit()
         else:

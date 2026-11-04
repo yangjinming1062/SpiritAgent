@@ -13,6 +13,9 @@ from sqlalchemy.sql.elements import ColumnElement
 from features.action_library.queries import action_by_preset_key, action_preset_keys
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
 from features.jobs.service import requested_job_id
+from features.media.chain import MediaChainState
+from features.media.video_queue.contracts import VideoQueueInfo
+from features.media.video_queue.service import video_attempt_queue_info
 
 from .client_assets import client_body
 from .eligibility import (
@@ -172,7 +175,7 @@ async def creation_request(user_id: int, request_id: str) -> tuple[VisualJobView
             if job_id is not None
             else None
         )
-        return (job_view(job), visual_snapshot(job)) if job is not None else None
+        return (await job_view(db, job), visual_snapshot(job)) if job is not None else None
 
 
 async def job_review_reason(user_id: int, job_id: int) -> str:
@@ -338,7 +341,7 @@ def _job_action_name(snapshot: dict) -> str:
     return ""
 
 
-def job_view(job: VisualJob) -> VisualJobView:
+def _job_view(job: VisualJob, queue_info: VideoQueueInfo | None = None) -> VisualJobView:
     progress = parse_job_progress(job.checkpoint)
     error = job.error
     if job.state == "failed" and progress is not None and progress.failure_reason == "quality_failed":
@@ -362,9 +365,26 @@ def job_view(job: VisualJob) -> VisualJobView:
         stage=job.stage,
         error=error,
         failure_reason=progress.failure_reason if progress is not None and progress.failure_reason else None,
+        video_queue=queue_info,
         result_visual_id=job.result_visual_id,
         updated_at=job.updated_at,
     )
+
+
+async def job_views(db: AsyncSession, jobs: list[VisualJob]) -> list[VisualJobView]:
+    requests = {
+        job.id: MediaChainState.model_validate_json(
+            (job.checkpoint or {}).get("video_chain_json") or "{}"
+        ).queue_request_id
+        for job in jobs
+        if job.state in {"queued", "running", "unknown"}
+    }
+    info = await video_attempt_queue_info(db, {request for request in requests.values() if request})
+    return [_job_view(job, info.get(requests.get(job.id))) for job in jobs]
+
+
+async def job_view(db: AsyncSession, job: VisualJob) -> VisualJobView:
+    return (await job_views(db, [job]))[0]
 
 
 async def list_visuals(
@@ -562,7 +582,7 @@ async def visual_detail(user_id: int, visual_id: int) -> VisualDetailView:
         return VisualDetailView(
             **item_view(item, snapshot).model_dump(),
             snapshot=snapshot,
-            jobs=[job_view(job) for job in jobs],
+            jobs=await job_views(db, jobs),
             analysis=analysis,
         )
 
@@ -598,6 +618,7 @@ async def list_jobs(
             VisualJob.checkpoint["identity_reason"].as_string().label("identity_reason"),
             VisualJob.checkpoint["review_verdict"].as_string().label("review_verdict"),
             VisualJob.checkpoint["review_reason"].as_string().label("review_reason"),
+            VisualJob.checkpoint["video_chain_json"].as_string().label("video_chain_json"),
             VisualJob.result_visual_id,
             VisualJob.updated_at,
         )
@@ -612,9 +633,17 @@ async def list_jobs(
                 )
             ).mappings()
         )
+        requests = {
+            row["id"]: MediaChainState.model_validate_json(row["video_chain_json"] or "{}").queue_request_id
+            for row in rows[:limit]
+            if row["state"] in {"queued", "running", "unknown"}
+        }
+        queue_info = await video_attempt_queue_info(db, {request for request in requests.values() if request})
         jobs = []
         for row in rows[:limit]:
             values = dict(row)
+            values.pop("video_chain_json")
+            values["video_queue"] = queue_info.get(requests.get(row["id"]))
             identity_verdict = values.pop("identity_verdict")
             identity_reason = values.pop("identity_reason") or ""
             verdict = values.pop("review_verdict")

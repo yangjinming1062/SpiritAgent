@@ -24,7 +24,8 @@ import {
   usePageScroll,
   usePageState,
   useTask,
-  useVisiblePolling
+  useVisiblePolling,
+  videoQueueText
 } from './ui'
 import { VisualAnalysis } from './VisualAnalysis'
 import { VisualCreate } from './VisualCreate'
@@ -90,7 +91,7 @@ function VisualJobRow({
       <div>
         <strong>{visualJobLabel(job, visualTitle)}</strong>
         <span aria-live="polite" className="pill">
-          {JOB_STATE_TEXT[job.state]}
+          {job.video_queue ? videoQueueText(job.video_queue) : JOB_STATE_TEXT[job.state]}
         </span>
         <span className="muted">
           {job.stage} · {timestamp(job.updated_at)}

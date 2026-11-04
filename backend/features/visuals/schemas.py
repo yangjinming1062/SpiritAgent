@@ -16,6 +16,7 @@ from features.action_library.schemas import ActionAssetDesign
 from features.life.schemas import FactType
 from features.media.identity_contracts import CharacterReferenceRole, VisualIdentitySnapshot
 from features.media.review_contracts import HumanReviewApproval, ReviewEvidence, ReviewVerdict, VisualReview
+from features.media.video_queue.contracts import VideoQueueInfo
 from features.media.visual_semantics import (
     ActionMotionIntensity,
     ActionPerformanceRole,
@@ -639,6 +640,7 @@ class VisualJobView(BaseModel):
     stage: str
     error: str | None = None
     failure_reason: str | None = None
+    video_queue: VideoQueueInfo | None = None
     result_visual_id: ResourceId | None = None
     updated_at: datetime
 
