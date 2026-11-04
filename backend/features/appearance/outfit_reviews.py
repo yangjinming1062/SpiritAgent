@@ -30,8 +30,8 @@ from features.media.review_views import (
     MediaJobView,
     MediaManualRequest,
     MediaReviewRequest,
-    MediaSlotView,
     review_request_matches,
+    single_slot_review_view,
 )
 
 from .asset_bindings import commit_appearance
@@ -54,32 +54,19 @@ async def outfit_review_view(user_id: int, job_id: int) -> MediaJobView:
         evidence = candidate.evidence if candidate else None
         candidate_key = candidate_review_key(chain.generation_id) if candidate else None
         basis = review_basis(report, evidence, candidate_key)
-        return MediaJobView(
-            id=row.id,
-            kind=row.kind,
-            state=row.state,
-            stage=row.stage,
-            revision=row.revision,
-            required_slots=1,
-            ready_slots=int(report is not None and report.verdict == "pass"),
-            complete=row.state == "succeeded",
-            slots=[
-                MediaSlotView(
-                    slot=0,
-                    media_id=str(row.id),
-                    status=row.stage,
-                    review=report,
-                    basis_id=basis,
-                    candidate_basis_id=candidate_key,
-                    preview_url=client_asset_url(candidate.path) if candidate else None,
-                    can_review=row.stage == "review_pending"
-                    and (evidence is not None or candidate is not None)
-                    and needs_review(report),
-                    error=row.error,
-                    candidates=await manual_candidate_views(chain.candidates),
-                    can_regenerate=chain.inputs is not None and row.state in {"paused", "failed"},
-                )
-            ],
+        return single_slot_review_view(
+            row,
+            media_id=str(row.id),
+            review=report,
+            basis_id=basis,
+            candidate_key=candidate_key,
+            preview_url=client_asset_url(candidate.path) if candidate else None,
+            can_review=row.stage == "review_pending"
+            and (evidence is not None or candidate is not None)
+            and needs_review(report),
+            candidates=await manual_candidate_views(chain.candidates),
+            error=row.error,
+            can_regenerate=chain.inputs is not None and row.state in {"paused", "failed"},
         )
 
 

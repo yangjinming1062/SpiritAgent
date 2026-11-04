@@ -1,6 +1,6 @@
 """媒体检查查询和显式续审的公开契约。"""
 
-from typing import Literal
+from typing import Literal, Protocol
 
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.api_ids import ResourceId
@@ -111,6 +111,57 @@ class MediaJobView(BaseModel):
     session_id: str | None = None
     source_message_id: ResourceId | None = None
     bindings: dict[str, str] = Field(default_factory=dict)
+
+
+class ReviewJob(Protocol):
+    """单槽检查视图需要的任务字段；目标、候选与证据由调用方读取。"""
+
+    id: int
+    kind: str
+    state: str
+    stage: str
+    revision: int
+
+
+def single_slot_review_view(
+    job: ReviewJob,
+    *,
+    media_id: str,
+    review: VisualReview | None,
+    basis_id: str | None,
+    candidate_key: str | None,
+    preview_url: str | None,
+    can_review: bool,
+    candidates: list[MediaCandidateView],
+    error: str | None = None,
+    can_regenerate: bool = False,
+) -> MediaJobView:
+    """单候选检查视图：图片、视频与候选采纳共用同一槽位投影。"""
+    return MediaJobView(
+        id=job.id,
+        kind=job.kind,
+        state=job.state,
+        stage=job.stage,
+        revision=job.revision,
+        required_slots=1,
+        ready_slots=int(review is not None and review.verdict == "pass"),
+        complete=job.state == "succeeded",
+        slots=[
+            MediaSlotView(
+                slot=0,
+                media_id=media_id,
+                status=job.stage,
+                review=review,
+                basis_id=basis_id,
+                candidate_basis_id=candidate_key,
+                preview_url=preview_url,
+                can_review=can_review,
+                error=error,
+                candidates=candidates,
+                can_regenerate=can_regenerate,
+            )
+        ],
+    )
 
 
 def review_request_matches(view: MediaJobView, request: MediaReviewRequest) -> bool:

@@ -63,7 +63,7 @@ async def accept_imported_scene(
         image_size_json=size,
         ready_at=utc_now(),
     )
-    row.initial_job.stage = "complete"
+    row.initial_job.state, row.initial_job.stage = "succeeded", "complete"
     db.add(row)
     await db.flush()
     await sync_scene_assets(db, row)

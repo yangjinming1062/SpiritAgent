@@ -73,7 +73,12 @@ from features.media.review_contracts import (
 )
 from features.media.review_evidence import review_media_intact
 from features.media.review_operations import review_media_job
-from features.media.review_views import MediaJobView, MediaReviewRequest, MediaSlotView, review_request_matches
+from features.media.review_views import (
+    MediaJobView,
+    MediaReviewRequest,
+    review_request_matches,
+    single_slot_review_view,
+)
 
 logger = get_logger(__name__)
 
@@ -673,21 +678,21 @@ async def _require_complete_persona(db: AsyncSession, user_id: int) -> PersonaSn
     return persona
 
 
-async def _verified_persona(user_id: int) -> PersonaSnapshot:
-    """头像入口共用的前置校验：onboarding 完成且形象未锁定。"""
-    async with SESSION_LOCAL() as db:
-        persona = await _require_complete_persona(db, user_id)
-        await raise_if_image_sealed(db, user_id, persona)
-    return persona
-
-
-async def _verified_persona_with_asset(user_id: int) -> tuple[PersonaSnapshot, AvatarAsset | None]:
-    """_verified_persona 的带 asset 变体：单次读取激活头像供调用方复用，锁外读到的快照可能已过期，不接收。"""
+async def _verified_persona(user_id: int) -> tuple[PersonaSnapshot, AvatarAsset | None]:
+    """头像入口共用的前置校验：onboarding 完成且形象未锁定；同时返回同一次读取的激活头像。"""
     async with SESSION_LOCAL() as db:
         persona = await _require_complete_persona(db, user_id)
         current = await get_active_avatar(db, user_id)
         _raise_if_sealed(persona, current)
     return persona, current
+
+
+def _generation_origin(asset: AvatarAsset | None) -> GenerationOrigin | None:
+    return (
+        GenerationOrigin.model_validate(asset.generation_origin_json)
+        if asset is not None and asset.generation_origin_json
+        else None
+    )
 
 
 async def _avatar_description(
@@ -702,7 +707,7 @@ async def _avatar_description(
 async def generate_avatar(user_id: int, *, feedback: str | None = None) -> AvatarAsset:
     """按角色资料与本次要求生成头像。"""
     async with get_avatar_job_lock(user_id):
-        persona = await _verified_persona(user_id)
+        persona, _ = await _verified_persona(user_id)
         return await _generate_avatar(user_id, feedback=feedback, persona=persona)
 
 
@@ -775,13 +780,8 @@ def _is_orphan_temp_media_asset(asset: AvatarAsset) -> bool:
 async def regenerate_avatar(mode: ImageReviseMode, user_id: int, feedback: str | None = None) -> AvatarAsset:
     """根据反馈微调当前头像，或按角色资料重新生成。"""
     async with get_avatar_job_lock(user_id):
-        persona, current = await _verified_persona_with_asset(user_id)
-        origin = (
-            GenerationOrigin.model_validate(current.generation_origin_json)
-            if current is not None and current.generation_origin_json
-            else None
-        )
-        selection = ProviderSelection(origin=origin, mode="current" if mode == "edit" else "next")
+        persona, current = await _verified_persona(user_id)
+        selection = ProviderSelection(origin=_generation_origin(current), mode="current" if mode == "edit" else "next")
         if mode == "regenerate":
             return await _generate_avatar(user_id, feedback=feedback, selection=selection, persona=persona)
         effective_feedback = (feedback or "").strip()
@@ -815,12 +815,8 @@ async def regenerate_avatar_from_image(
 ) -> AvatarAsset:
     """以用户图锚定身份重绘头像，第二张图仅参考光线、色调与构图。"""
     async with get_avatar_job_lock(user_id):
-        persona, current = await _verified_persona_with_asset(user_id)
-        origin = (
-            GenerationOrigin.model_validate(current.generation_origin_json)
-            if current is not None and current.generation_origin_json
-            else None
-        )
+        persona, current = await _verified_persona(user_id)
+        origin = _generation_origin(current)
         base_description = await _avatar_description(user_id, persona, description, has_reference=True)
         avatar_prompt = build_avatar_reference_prompt(
             personality="",
@@ -1131,7 +1127,6 @@ async def confirm_fullbody_seed(user_id: int, *, avatar_id: int, expected_url: s
                 ):
                     raise AvatarGenerationError("形象已变更，请重新加载后确认")
                 asset.seed_fullbody_url = seed_path or original_seed_url
-                asset.is_fullbody_confirmed = True
                 await initialize_visual_identity(db, asset)
                 await commit_appearance(db, user_id)
         except BaseException:
@@ -1243,7 +1238,7 @@ async def adopt_avatar_seed(user_id: int, *, data: bytes, content_type: str) -> 
     async with get_avatar_job_lock(user_id):
         if not data:
             raise ValueError("image data is required")
-        persona = await _verified_persona(user_id)
+        persona, _ = await _verified_persona(user_id)
         persist = persona.is_portrait_confirmed
         return await _write_avatar_step(
             user_id,
@@ -1256,7 +1251,7 @@ async def adopt_avatar_seed(user_id: int, *, data: bytes, content_type: str) -> 
 
 async def prepare_avatar_prompt(user_id: int, *, feedback: str | None = None, has_reference: bool = False) -> str:
     """头像自备图提示词；有参考时明确其身份用途，无图时按开放角色描述生成。"""
-    persona = await _verified_persona(user_id)
+    persona, _ = await _verified_persona(user_id)
     prompt = await enhance_avatar_prompt(user_id, persona, feedback=feedback, has_reference=has_reference)
     if not has_reference:
         return prompt
@@ -1305,37 +1300,24 @@ async def fullbody_review_view(user_id: int, job_id: int) -> MediaJobView:
         if report_data.get("manual_review"):
             review = VisualReview.model_validate(report_data["manual_review"])
         basis = review_basis(review, None, candidate_key)
-        return MediaJobView(
-            id=job.id,
-            kind=job.kind,
-            state=job.state,
-            stage=job.stage,
-            revision=job.revision,
-            required_slots=1,
-            ready_slots=int(review is not None and review.verdict == "pass"),
-            complete=job.state == "succeeded",
-            slots=[
-                MediaSlotView(
-                    slot=0,
-                    media_id=str(job.candidate_id),
-                    status=job.stage,
-                    review=review,
-                    basis_id=basis,
-                    candidate_basis_id=candidate_key,
-                    preview_url=re_sign_bare_path(
-                        candidate.image_url if candidate else (job.checkpoint or {}).get("candidate_path")
-                    ),
-                    can_review=job.stage == "review_pending"
-                    and candidate is not None
-                    and (report is None or report.verdict == "review" and report.status != "blocked"),
-                    error=candidate.error if candidate else None,
-                    candidates=await manual_candidate_views(
-                        [MediaCandidate(path=candidate.image_url, attempt=0, review=review)]
-                    )
-                    if candidate
-                    else [],
-                )
-            ],
+        return single_slot_review_view(
+            job,
+            media_id=str(job.candidate_id),
+            review=review,
+            basis_id=basis,
+            candidate_key=candidate_key,
+            preview_url=re_sign_bare_path(
+                candidate.image_url if candidate else (job.checkpoint or {}).get("candidate_path")
+            ),
+            can_review=job.stage == "review_pending"
+            and candidate is not None
+            and (report is None or report.verdict == "review" and report.status != "blocked"),
+            candidates=await manual_candidate_views(
+                [MediaCandidate(path=candidate.image_url, attempt=0, review=review)]
+            )
+            if candidate
+            else [],
+            error=candidate.error if candidate else None,
         )
 
 

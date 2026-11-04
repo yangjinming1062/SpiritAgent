@@ -1,8 +1,12 @@
-"""用户影像分析、分类型查重、受控提取和呈现复核的跨业务编排。"""
+"""用户影像分析、分类型查重、受控提取和呈现复核的跨业务编排。
+
+按原件保存、内容分析、素材匹配/补全、关联采纳推进：整理队列逐条执行，单条失败
+只记录结论并保留原件与进度；队列清空后才复核呈现并尝试发布。
+"""
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from uuid import NAMESPACE_URL, uuid5
@@ -394,53 +398,34 @@ async def _read_selected(work: ImportWork, kind: str, material_id: int) -> Impor
         )
 
 
-def _append_created_material(component: ImportComponent, created: ImportCreatedMaterial) -> None:
-    if any(
-        entry.kind == created.kind
-        and entry.material_id == created.material_id
-        and entry.extraction_key == created.extraction_key
-        for entry in component.created_materials
-    ):
-        return
-    component.created_materials.append(created)
-
-
-def _remember_created_material(component: ImportComponent) -> None:
+def _remember_created_material(work: ImportWork, component: ImportComponent) -> None:
     if not component.created or component.material_id is None:
         return
-    _append_created_material(
-        component,
+    if any(
+        entry.component_key == component.observation.key
+        and entry.kind == component.observation.kind
+        and entry.material_id == component.material_id
+        and entry.extraction_key == component.extraction_key
+        for entry in work.context.created_materials
+    ):
+        return
+    work.context.created_materials.append(
         ImportCreatedMaterial(
-            kind=component.observation.kind, material_id=component.material_id, extraction_key=component.extraction_key
-        ),
+            component_key=component.observation.key,
+            kind=component.observation.kind,
+            material_id=component.material_id,
+            extraction_key=component.extraction_key,
+        )
     )
 
 
-def _merge_created_materials(work: ImportWork, component: ImportComponent) -> None:
-    """把当前导入任务前一轮分析保留的创建归属带回当前条目。"""
-
-    current_keys = {(entry.kind, entry.material_id, entry.extraction_key) for entry in component.created_materials}
-    history: dict[tuple[str, int, str], ImportCreatedMaterial] = {}
-    for old in work.context.history:
-        for previous in old.components:
-            if (
-                previous.observation.key != component.observation.key
-                or previous.observation.kind != component.observation.kind
-            ):
-                continue
-            for created in previous.created_materials:
-                history[created.kind, created.material_id, created.extraction_key] = created
-    for key, created in history.items():
-        if key not in current_keys:
-            _append_created_material(component, created.model_copy(deep=True))
-
-
-def _owned_material(component: ImportComponent, material_id: int) -> ImportCreatedMaterial | None:
+def _owned_material(work: ImportWork, component: ImportComponent, material_id: int) -> ImportCreatedMaterial | None:
     return next(
         (
             entry
-            for entry in component.created_materials
-            if entry.kind == component.observation.kind
+            for entry in work.context.created_materials
+            if entry.component_key == component.observation.key
+            and entry.kind == component.observation.kind
             and entry.material_id == material_id
             and entry.state != "released"
         ),
@@ -449,15 +434,13 @@ def _owned_material(component: ImportComponent, material_id: int) -> ImportCreat
 
 
 def _current_owned_material(work: ImportWork, component: ImportComponent) -> ImportCreatedMaterial | None:
-    _merge_created_materials(work, component)
     if not component.created or component.material_id is None or component.status in {"failed", "skipped", "undone"}:
         return None
-    return _owned_material(component, component.material_id)
+    return _owned_material(work, component, component.material_id)
 
 
 def _mark_reference(work: ImportWork, component: ImportComponent, material_id: int) -> None:
-    _merge_created_materials(work, component)
-    owned = _owned_material(component, material_id)
+    owned = _owned_material(work, component, material_id)
     component.material_id = material_id
     component.created = owned is not None
     component.extraction_key = owned.extraction_key if owned is not None else ""
@@ -512,27 +495,38 @@ def _apply_release_plan(work: ImportWork, plan: _ReleasePlan) -> None:
         ]
 
 
+def _release_adoption(
+    plans: Sequence[_ReleasePlan], apply: Callable[[], None]
+) -> Callable[[AsyncSession], Awaitable[None]] | None:
+    """把待撤销素材并入同一次保存事务；无需撤销时立即应用条目变更。"""
+    pending = [plan for plan in plans if plan.adopt is not None]
+    if not pending:
+        apply()
+        return None
+
+    async def adopt(db: AsyncSession) -> None:
+        for plan in pending:
+            assert plan.adopt is not None
+            await plan.adopt(db)
+        apply()
+
+    return adopt
+
+
 async def _change_reference(
     work: ImportWork, component: ImportComponent, material_id: int, *, previous: ImportCreatedMaterial | None = None
 ) -> tuple[Callable[[AsyncSession], Awaitable[None]] | None, str]:
     """切换当前关联，并准备在同一保存事务中清理不再使用的旧素材。"""
 
-    _merge_created_materials(work, component)
     old = previous or _current_owned_material(work, component)
     if old is not None and old.material_id != material_id:
         plan = await _release_plan(work, component, old)
-        if plan.preserved:
-            _apply_release_plan(work, plan)
-            _mark_reference(work, component, material_id)
-            return None, plan.note
 
-        async def adopt(db: AsyncSession) -> None:
-            assert plan.adopt is not None
-            await plan.adopt(db)
+        def apply() -> None:
             _apply_release_plan(work, plan)
             _mark_reference(work, component, material_id)
 
-        return adopt, plan.note
+        return _release_adoption([plan], apply), plan.note
     _mark_reference(work, component, material_id)
     return None, ""
 
@@ -542,11 +536,13 @@ async def _restore_previous_reference(
 ) -> None:
     if component.material_id == previous.material_id:
         return
-    current = _owned_material(component, component.material_id) if component.created and component.material_id else None
-    plan = await _release_plan(work, component, current) if current is not None else None
+    current = (
+        _owned_material(work, component, component.material_id) if component.created and component.material_id else None
+    )
+    plans = [await _release_plan(work, component, current)] if current is not None else []
 
     def restore() -> None:
-        if plan is not None:
+        for plan in plans:
             _apply_release_plan(work, plan)
         component.material_id = previous.material_id
         component.created = True
@@ -554,17 +550,7 @@ async def _restore_previous_reference(
         component.status = "created"
         component.reason += "；新素材评审未完成，已保留原关联"
 
-    if plan is None or plan.preserved:
-        restore()
-        await save_import_progress(work, "organize")
-        return
-
-    async def adopt(db: AsyncSession) -> None:
-        assert plan.adopt is not None
-        await plan.adopt(db)
-        restore()
-
-    await save_import_progress(work, "organize", adopt=adopt)
+    await save_import_progress(work, "organize", adopt=_release_adoption(plans, restore))
 
 
 async def _cleanup_inactive_created_materials(work: ImportWork, component: ImportComponent) -> None:
@@ -572,7 +558,6 @@ async def _cleanup_inactive_created_materials(work: ImportWork, component: Impor
 
     if component.status not in {"created", "reused", "skipped", "undone"}:
         return
-    _merge_created_materials(work, component)
     current_id = (
         component.material_id
         if component.created
@@ -582,7 +567,9 @@ async def _cleanup_inactive_created_materials(work: ImportWork, component: Impor
     )
     stale: list[ImportCreatedMaterial] = []
     seen: set[tuple[str, int]] = set()
-    for entry in component.created_materials:
+    for entry in work.context.created_materials:
+        if entry.component_key != component.observation.key or entry.kind != component.observation.kind:
+            continue
         key = entry.kind, entry.material_id
         if entry.state == "active" and entry.material_id != current_id and key not in seen:
             stale.append(entry)
@@ -591,23 +578,13 @@ async def _cleanup_inactive_created_materials(work: ImportWork, component: Impor
         return
     plans = [await _release_plan(work, component, entry) for entry in stale]
     notes = "；".join(plan.note.removeprefix("；") for plan in plans)
-    pending = [plan for plan in plans if plan.adopt is not None]
-    if not pending:
-        for plan in plans:
-            _apply_release_plan(work, plan)
-        component.reason = f"{component.reason}；{notes}" if component.reason else notes
-        await save_import_progress(work, "organize")
-        return
 
-    async def adopt(db: AsyncSession) -> None:
-        for plan in pending:
-            assert plan.adopt is not None
-            await plan.adopt(db)
+    def apply() -> None:
         for plan in plans:
             _apply_release_plan(work, plan)
         component.reason = f"{component.reason}；{notes}" if component.reason else notes
 
-    await save_import_progress(work, "organize", adopt=adopt)
+    await save_import_progress(work, "organize", adopt=_release_adoption(plans, apply))
 
 
 async def _adopt_existing(work: ImportWork, component: ImportComponent, material_id: int) -> None:
@@ -829,7 +806,7 @@ async def _extract_locked(work: ImportWork, component: ImportComponent, *, expli
                     expected_updated_at=current.updated_at,
                     review_source_json=source.model_dump(mode="json"),
                 )
-            _remember_created_material(component)
+            _remember_created_material(work, component)
 
         await save_import_progress(work, "action_review", adopt=adopt)
         async with SESSION_LOCAL() as db:
@@ -978,7 +955,7 @@ async def _extract_locked(work: ImportWork, component: ImportComponent, *, expli
                 generation_origin=generation_origin,
             )
         component.material_id, component.created, component.status = accepted.id, True, "created"
-        _remember_created_material(component)
+        _remember_created_material(work, component)
 
     await save_import_progress(work, "organize", adopt=adopt)
     if previous is not None and previous.material_id != component.material_id:
@@ -996,8 +973,7 @@ async def _undo(work: ImportWork, component: ImportComponent, *, status: str = "
     if not component.created or component.material_id is None:
         raise ValueError("只有这次导入创建的素材可以撤销入库")
 
-    _merge_created_materials(work, component)
-    owned = _owned_material(component, component.material_id)
+    owned = _owned_material(work, component, component.material_id)
     if owned is None:
         raise ValueError("这条素材的创建来源已丢失，请重新分析后再撤销")
     plan = await _release_plan(work, component, owned)
@@ -1014,21 +990,15 @@ async def _undo(work: ImportWork, component: ImportComponent, *, status: str = "
             else "已跳过这条素材关联"
         )
 
-    if plan.preserved:
-        detach()
-        await save_import_progress(work, "organize")
-        return
-
-    async def adopt(db: AsyncSession) -> None:
-        assert plan.adopt is not None
-        await plan.adopt(db)
-        detach()
-
-    await save_import_progress(work, "organize", adopt=adopt)
+    await save_import_progress(work, "organize", adopt=_release_adoption([plan], detach))
 
 
 async def _organize_component(work: ImportWork, component: ImportComponent) -> None:
-    choice = next((entry for entry in work.selections if entry.key == component.observation.key), None)
+    choice = (
+        work.active_selection
+        if work.active_selection and work.active_selection.key == component.observation.key
+        else None
+    )
     if choice:
         if (
             component.status in {"created", "reused"}
@@ -1107,6 +1077,84 @@ async def _organize_component(work: ImportWork, component: ImportComponent) -> N
     await _extract(work, component)
 
 
+async def _prepare_analysis(work: ImportWork) -> None:
+    """读取上下文、抽样并完成内容理解；已保存的理解结果直接续用。"""
+    await _load_context(work)
+    await _prepare_frames(work)
+    await save_import_progress(work, "analyze")
+    if work.result is None:
+        understanding = await understand_import(work)
+        work.result = ImportAnalysisResult(
+            understanding=understanding,
+            components=[ImportComponent(observation=entry) for entry in understanding.observations],
+        )
+        await save_import_progress(work, "organize")
+    if work.result.understanding.asset_kind == "actor" and work.context.actor_asset is None:
+        await save_import_progress(work, "prepare_actor")
+        work.context.actor_asset = await prepare_imported_actor(work.media_path, work.user_id, work.id)
+        await save_import_progress(work, "organize")
+
+
+def _record_operation_failure(component: ImportComponent, exc: Exception) -> None:
+    """把一次条目执行失败归入业务结论；原件与已完成结果保持不变。"""
+    if component.material_id is None or component.status not in {"created", "reused"}:
+        component.status = "reviewing" if isinstance(exc, ImageReviewUnavailableError) else "failed"
+    component.failure_code = (
+        "save_failed"
+        if component.operation_stage == "save_material"
+        else "result_download_failed"
+        if isinstance(exc, ImageResultDownloadError)
+        else "result_unknown"
+        if isinstance(exc, ImageGenerationError) and exc.result_unknown
+        else "processing_failed"
+        if isinstance(exc, ImageReviewUnavailableError)
+        else "generation_failed"
+        if isinstance(exc, ImageGenerationError)
+        else "processing_failed"
+    )
+    component.reason = str(exc)
+    component.failure_summary = (
+        str(exc)
+        if isinstance(exc, (ImageGenerationError, VisualStateError))
+        else "处理未完成，已保留原件与进度，请重试。"
+    )
+
+
+async def _run_queued_operations(work: ImportWork) -> None:
+    """逐条执行队列操作；单条失败只记录结论并保留进度，不终止后续条目。"""
+    while (component := await take_import_operation(work)) is not None:
+        await guard_import_work(work)
+        try:
+            await _organize_component(work, component)
+            async with _material_adoption_lock(work, component.observation.kind):
+                await _cleanup_inactive_created_materials(work, component)
+        except (GenerationWorkPaused, asyncio.CancelledError):
+            raise
+        except Exception as exc:
+            logger.exception(
+                "import material organization failed",
+                extra={"user_id": work.user_id, "job_id": work.id, "component": component.observation.key},
+            )
+            _record_operation_failure(component, exc)
+        await save_import_progress(work, component.operation_stage or "organize", finish=True)
+
+
+async def _publish_organized_result(work: ImportWork) -> bool:
+    """队列清空后复核呈现并尝试发布；队列被重新填充时返回 False 继续整理。"""
+    selected = [
+        await _read_selected(work, component.observation.kind, component.material_id)
+        for component in work.result.components
+        if component.material_id is not None and component.status in {"created", "reused"}
+    ]
+    await save_import_progress(work, "presentation_review")
+    verdict = (
+        ImportQualityVerdict(decision="review", reason="素材整理尚未完成，原件与已完成结果已保存")
+        if any(entry.status not in {"created", "reused", "skipped", "undone"} for entry in work.result.components)
+        else await review_import_presentation(work, selected)
+    )
+    return await complete_import_analysis(work, selected, verdict.decision, verdict.reason)
+
+
 async def run_import_analysis(user_id: int, job_id: int) -> None:
     work: ImportWork | None = None
     try:
@@ -1115,74 +1163,10 @@ async def run_import_analysis(user_id: int, job_id: int) -> None:
             if work is None:
                 return
             with asset_write_context():
-                await _load_context(work)
-                await _prepare_frames(work)
-                await save_import_progress(work, "analyze")
-                if work.result is None:
-                    understanding = await understand_import(work)
-                    work.result = ImportAnalysisResult(
-                        understanding=understanding,
-                        components=[ImportComponent(observation=entry) for entry in understanding.observations],
-                    )
-                    await save_import_progress(work, "organize")
-                if work.result.understanding.asset_kind == "actor" and work.context.actor_asset is None:
-                    await save_import_progress(work, "prepare_actor")
-                    work.context.actor_asset = await prepare_imported_actor(work.media_path, work.user_id, work.id)
-                    await save_import_progress(work, "organize")
+                await _prepare_analysis(work)
                 while True:
-                    while (component := await take_import_operation(work)) is not None:
-                        await guard_import_work(work)
-                        try:
-                            await _organize_component(work, component)
-                            async with _material_adoption_lock(work, component.observation.kind):
-                                await _cleanup_inactive_created_materials(work, component)
-                        except (GenerationWorkPaused, asyncio.CancelledError):
-                            raise
-                        except Exception as exc:
-                            logger.exception(
-                                "import material organization failed",
-                                extra={"user_id": user_id, "job_id": job_id, "component": component.observation.key},
-                            )
-                            if component.material_id is None or component.status not in {"created", "reused"}:
-                                component.status = (
-                                    "reviewing" if isinstance(exc, ImageReviewUnavailableError) else "failed"
-                                )
-                            component.failure_code = (
-                                "save_failed"
-                                if component.operation_stage == "save_material"
-                                else "result_download_failed"
-                                if isinstance(exc, ImageResultDownloadError)
-                                else "result_unknown"
-                                if isinstance(exc, ImageGenerationError) and exc.result_unknown
-                                else "processing_failed"
-                                if isinstance(exc, ImageReviewUnavailableError)
-                                else "generation_failed"
-                                if isinstance(exc, ImageGenerationError)
-                                else "processing_failed"
-                            )
-                            component.reason = str(exc)
-                            component.failure_summary = (
-                                str(exc)
-                                if isinstance(exc, (ImageGenerationError, VisualStateError))
-                                else "处理未完成，已保留原件与进度，请重试。"
-                            )
-                        await save_import_progress(work, component.operation_stage or "organize", finish=True)
-                    selected = []
-                    for component in work.result.components:
-                        if component.material_id is not None and component.status in {"created", "reused"}:
-                            selected.append(
-                                await _read_selected(work, component.observation.kind, component.material_id)
-                            )
-                    await save_import_progress(work, "presentation_review")
-                    verdict = (
-                        ImportQualityVerdict(decision="review", reason="素材整理尚未完成，原件与已完成结果已保存")
-                        if any(
-                            entry.status not in {"created", "reused", "skipped", "undone"}
-                            for entry in work.result.components
-                        )
-                        else await review_import_presentation(work, selected)
-                    )
-                    if await complete_import_analysis(work, selected, verdict.decision, verdict.reason):
+                    await _run_queued_operations(work)
+                    if await _publish_organized_result(work):
                         break
 
     except GenerationWorkPaused:

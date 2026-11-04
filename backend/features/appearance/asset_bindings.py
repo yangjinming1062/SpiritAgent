@@ -5,7 +5,7 @@ from sqlalchemy import delete, inspect, or_, select, union_all
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.assets.service import asset_paths_in_session, ensure_assets_in_session
+from features.assets.service import asset_paths_for_ids, ensure_assets_in_session
 
 from .models import (
     AppearanceAsset,
@@ -96,4 +96,4 @@ async def appearance_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
         for field in fields
     )
     ids = list(await db.scalars(union_all(*queries)))
-    return set((await asset_paths_in_session(db, user_id, ids)).values())
+    return await asset_paths_for_ids(db, user_id, ids)

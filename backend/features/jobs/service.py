@@ -5,7 +5,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from features.assets.service import asset_paths_in_session, ensure_assets_in_session
+from features.assets.service import asset_paths_for_ids, ensure_assets_in_session
 from infrastructure.job_models import JobRecord
 from infrastructure.text import utc_now
 from sqlalchemy import BigInteger, cast, column, delete, null, or_, select, update, values
@@ -161,7 +161,7 @@ async def job_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
             )
         )
     )
-    return set((await asset_paths_in_session(db, user_id, ids)).values())
+    return await asset_paths_for_ids(db, user_id, ids)
 
 
 async def cleanup_job_assets(db: AsyncSession, user_id: int) -> set[str]:
@@ -172,7 +172,7 @@ async def cleanup_job_assets(db: AsyncSession, user_id: int) -> set[str]:
         JobRecord.finished_at < utc_now() - timedelta(days=7),
     )
     asset_ids = list(await db.scalars(select(JobAsset.asset_id).where(JobAsset.job_id.in_(completed))))
-    paths = set((await asset_paths_in_session(db, user_id, asset_ids)).values())
+    paths = await asset_paths_for_ids(db, user_id, asset_ids)
     await db.execute(delete(JobAsset).where(JobAsset.job_id.in_(completed)))
     await clear_expired_job_checkpoints(db, user_id)
     await db.execute(

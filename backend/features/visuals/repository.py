@@ -237,6 +237,13 @@ async def playback_row(db: AsyncSession, user_id: int, play_id: str) -> VisualPl
     return play
 
 
+def clear_presented_pointers(state: VisualPresentation) -> None:
+    """清空当前与循环的已呈现指针；呈现修订由调用方推进。"""
+    state.current_visual_id = state.current_version_id = None
+    state.loop_visual_id = state.loop_version_id = None
+    state.current_snapshot_json = state.loop_snapshot_json = None
+
+
 async def touch_presentation(db: AsyncSession, user_id: int) -> VisualPresentation:
     """呈现状态变化统一走这里：递增修订并广播，待播指令据此重新校验。"""
 

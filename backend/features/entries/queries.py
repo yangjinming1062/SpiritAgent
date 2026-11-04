@@ -10,7 +10,7 @@ from sqlalchemy import Row, Select, func, or_, select, tuple_
 from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.assets.service import asset_paths_in_session
+from features.assets.service import asset_paths_for_ids, asset_paths_in_session
 
 from .contracts import CommentView, EntryError, EntryView
 from .models import CompanionEntry, EntryAsset, EntryComment, EntryLink
@@ -299,4 +299,4 @@ async def pending_reply_threads(db: AsyncSession) -> list[tuple[int, int]]:
 
 async def entry_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
     ids = list(await db.scalars(select(EntryAsset.asset_id).where(EntryAsset.user_id == user_id).distinct()))
-    return set((await asset_paths_in_session(db, user_id, ids)).values()) if ids else set()
+    return await asset_paths_for_ids(db, user_id, ids)

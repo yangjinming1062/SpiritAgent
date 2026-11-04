@@ -624,7 +624,6 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("seed_fullbody_url", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
-        sa.Column("is_fullbody_confirmed", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("active", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("identity_revision", sa.Integer(), server_default=sa.text("0"), nullable=False),
@@ -1821,7 +1820,6 @@ def upgrade() -> None:
         sa.Column("scene_id", sa.BigInteger(), nullable=True),
         sa.Column("purpose", sa.String(length=16), nullable=False),
         sa.Column("token", sa.String(length=36), nullable=False),
-        sa.Column("availability", sa.String(length=24), server_default="pending", nullable=False),
         sa.Column("attempt_count", sa.Integer(), server_default="0", nullable=False),
         sa.ForeignKeyConstraint(
             ["owner_id", "id"], ["jobs.user_id", "jobs.id"], name="fk_scene_jobs_id_owner", ondelete="CASCADE"

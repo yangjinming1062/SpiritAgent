@@ -9,7 +9,17 @@ from infrastructure.job_models import JobRecord
 from infrastructure.models import ModelBase, TimestampMixin
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+SCENE_JOB_STATUSES = {
+    "queued": "pending",
+    "running": "pending",
+    "paused": "failed",
+    "unknown": "failed",
+    "failed": "failed",
+    "succeeded": "ready",
+    "cancelled": "cancelled",
+}
 
 
 class SceneStatus(StrEnum):
@@ -79,16 +89,9 @@ class CompanionScene(ModelBase, TimestampMixin):
     def __init__(self, **values: Any) -> None:
         owner = values.pop("user_id")
         super().__init__(user_id=owner)
-        self.initial_job = SceneJob(user_id=owner, scene=self, purpose="create", token=uuid4().hex)
+        self.initial_job = SceneJob(user_id=owner, scene=self, purpose="create", token=uuid4().hex, state="queued")
         for key, value in values.items():
             setattr(self, key, value)
-
-    @validates("status")
-    def _availability_changed(self, key: str, value: str) -> str:
-        if self.initial_job is None:
-            raise ValueError("场景缺少初始制作任务")
-        self.initial_job.availability = value
-        return value
 
 
 class SceneJob(JobRecord):
@@ -104,16 +107,8 @@ class SceneJob(JobRecord):
     scene: Mapped[CompanionScene | None] = relationship(foreign_keys=[scene_id])
     purpose: Mapped[str] = mapped_column(String(16))
     token: Mapped[str] = mapped_column(String(36))
-    availability: Mapped[str] = mapped_column(String(24), default="pending", server_default="pending")
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
-    @validates("availability")
-    def _availability_changed(self, key: str, value: str) -> str:
-        self.state = {
-            "pending": "running",
-            "ready": "succeeded",
-            "description_failed": "failed",
-            "failed": "failed",
-            "cancelled": "cancelled",
-        }[value]
-        return value
+    @property
+    def regeneration_status(self) -> str:
+        return SCENE_JOB_STATUSES[self.state]

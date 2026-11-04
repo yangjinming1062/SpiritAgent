@@ -1,6 +1,6 @@
 import type { ApiSchemas } from './api.generated'
 
-type Component = ApiSchemas['ImportComponent']
+type Component = ApiSchemas['ImportComponentView']
 
 export function visualAnalysisControls(job: ApiSchemas['ImportAnalysisView'] | null | undefined) {
   const active = job?.state === 'queued' || job?.state === 'running'

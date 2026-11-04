@@ -20,7 +20,7 @@ from .import_operations import (
     ImportOperation,
     import_analysis_state,
     import_operations,
-    normalize_import_result,
+    import_result_view,
     resume_material_operations,
 )
 from .models import VisualImportJob
@@ -38,6 +38,7 @@ from .schemas import (
     ImportAnalysisResult,
     ImportAnalysisView,
     ImportComponent,
+    ImportCreatedMaterial,
     ImportSelection,
     SceneMediaRef,
     VisualAsset,
@@ -79,7 +80,7 @@ class ImportContext(BaseModel):
     portrait_hash: str | None = None
     frames: list[ImportFrameRef] = Field(default_factory=list)
     candidates: list[ImportCatalogCandidate] = Field(default_factory=list)
-    history: list[ImportAnalysisResult] = Field(default_factory=list)
+    created_materials: list[ImportCreatedMaterial] = Field(default_factory=list)
     actor_asset: VisualAsset | None = None
     transparent_video: bool = False
     animated_image: bool = False
@@ -99,24 +100,25 @@ class ImportWork(BaseModel):
     expected_version: int
     context: ImportContext
     result: ImportAnalysisResult | None
-    selections: list[ImportSelection]
     snapshot: VisualSnapshot
     media_kind: Literal["image", "video"]
     media_path: str
     duration_ms: int | None
     active_operation_id: str | None = None
     active_component_key: str | None = None
+    # 当前操作投影到条目的选择；队列本身只在 selections_json 中保存。
+    active_selection: ImportSelection | None = None
 
 
 def import_job_view(job: VisualImportJob) -> ImportAnalysisView:
     result = ImportAnalysisResult.model_validate(job.result_json) if job.result_json else None
     if result is not None:
-        normalize_import_result(result, ImportContext.model_validate(job.context_json).image_chains)
-        pending = {entry.key: entry for entry in import_operations(job.selections_json) if entry.state != "failed"}
-        for component in result.components:
-            if component.observation.key in pending:
-                operation = pending[component.observation.key]
-                component.operation_state = "paused" if job.state in {"paused", "cancelled"} else operation.state
+        result = import_result_view(
+            result,
+            ImportContext.model_validate(job.context_json).image_chains,
+            import_operations(job.selections_json),
+            job.state,
+        )
     return ImportAnalysisView(
         id=job.id,
         state=import_analysis_state(job.state, job.stage),
@@ -182,8 +184,6 @@ async def command_import_job(user_id: int, visual_id: int, body: ImportAnalysisR
         ):
             raise VisualStateError("原候选已保留，请查看候选后采用或重新生成")
         result = ImportAnalysisResult.model_validate(job.result_json) if job.result_json else None
-        if result is not None:
-            normalize_import_result(result, context.image_chains)
         operations = import_operations(job.selections_json)
         if body.command == "cancel":
             if job.state not in {"queued", "running", "paused"}:
@@ -226,7 +226,7 @@ async def command_import_job(user_id: int, visual_id: int, body: ImportAnalysisR
                     operation.state = "paused"
                 operations.append(operation)
                 component.revision += 1
-                component.operation_state, component.operation_stage = operation.state, "organize"
+                component.operation_stage = "organize"
             job.selections_json = [entry.model_dump(mode="json") for entry in operations]
             job.result_json = result.model_dump(mode="json")
             if job.state != "running" and not suspended:
@@ -245,11 +245,9 @@ async def command_import_job(user_id: int, visual_id: int, body: ImportAnalysisR
                     raise VisualStateError("图片生成结果尚待核对，请先继续原任务")
                 if any(chain.phase in {"storing", "evaluating"} for chain in context.image_chains.values()):
                     raise VisualStateError("素材图片尚未处理完成，请先继续原任务")
-                if result is not None:
-                    context.history.append(result)
                 # 重新识别沿用用户已提交的修正说明，只丢弃被取代的分析产物。
                 context = ImportContext(
-                    history=context.history,
+                    created_materials=context.created_materials,
                     user_notes=context.user_notes,
                     notes_initialized=context.notes_initialized,
                     correction_notes=context.correction_notes,
@@ -280,7 +278,6 @@ def pause_import_operations(job: VisualImportJob) -> None:
             operation.state = "paused"
             if result is not None:
                 component = next(entry for entry in result.components if entry.observation.key == operation.key)
-                component.operation_state = "paused"
                 component.revision += 1
     job.selections_json = [entry.model_dump(mode="json") for entry in operations]
     if result is not None:
@@ -313,7 +310,6 @@ async def claim_import_job(user_id: int, job_id: int) -> ImportWork | None:
             expected_version=item.version,
             context=context,
             result=ImportAnalysisResult.model_validate(job.result_json) if job.result_json else None,
-            selections=[],
             snapshot=snapshot,
             media_kind=item.media_kind,
             media_path=snapshot.source.original_path,
@@ -350,26 +346,23 @@ async def take_import_operation(work: ImportWork) -> ImportComponent | None:
         require_import_execution(job, work)
         operations = import_operations(job.selections_json)
         work.result = ImportAnalysisResult.model_validate(job.result_json)
-        normalize_import_result(work.result, work.context.image_chains)
         operation = next((entry for entry in operations if entry.state == "queued"), None)
         if operation is None:
-            work.active_component_key, work.active_operation_id, work.selections = None, None, []
+            work.active_component_key, work.active_operation_id, work.active_selection = None, None, None
             return None
         component = next(entry for entry in work.result.components if entry.observation.key == operation.key)
         if operation.command != "organize":
-            work.context.history.append(work.result.model_copy(deep=True))
-        if operation.command != "organize":
             component.notes = operation.notes
         operation.state = "running"
-        component.operation_state, component.operation_stage = "running", "organize"
+        component.operation_stage = "organize"
         component.failure_code = None
         component.failure_summary = ""
         component.revision += 1
         work.active_component_key, work.active_operation_id = operation.key, operation.id
-        work.selections = (
-            []
+        work.active_selection = (
+            None
             if operation.command == "organize"
-            else [ImportSelection.model_validate(operation.model_dump(exclude={"id", "state"}))]
+            else ImportSelection.model_validate(operation.model_dump(exclude={"id", "state"}))
         )
         work.context.calls = max(work.context.calls, job.context_json.get("calls", 0))
         job.context_json = work.context.model_dump(mode="json")
@@ -391,7 +384,7 @@ def merge_import_progress(job: VisualImportJob, work: ImportWork, stage: str, *,
     operations = import_operations(job.selections_json)
     if job.result_json is None:
         for component in work.result.components:
-            component.operation_state, component.operation_stage = "queued", "match"
+            component.operation_stage = "match"
             operations.append(ImportOperation(key=component.observation.key, command="organize"))
     elif work.active_component_key is not None:
         stored = ImportAnalysisResult.model_validate(job.result_json)
@@ -402,13 +395,6 @@ def merge_import_progress(job: VisualImportJob, work: ImportWork, stage: str, *,
         component.operation_stage = stage
         component.revision = previous.revision + 1
         if finish:
-            component.operation_state = (
-                "paused"
-                if component.status == "reviewing"
-                else "failed"
-                if component.status == "failed"
-                else "succeeded"
-            )
             operations = [
                 entry
                 for entry in operations
@@ -441,6 +427,7 @@ async def save_import_progress(
     if adopt is not None and component is not None:
         component.operation_stage = "save_material"
     previous = component.model_copy(deep=True) if component is not None else None
+    previous_context = work.context.model_copy(deep=True) if adopt is not None else None
     try:
         async with SESSION_LOCAL() as db:
             job = await db.scalar(
@@ -483,12 +470,14 @@ async def save_import_progress(
             await notify_visuals_updated(db, work.user_id)
             await db.commit()
     except BaseException:
+        if previous_context is not None:
+            work.context = previous_context
         if component is not None and previous is not None:
             for field in type(component).model_fields:
                 setattr(component, field, getattr(previous, field))
         raise
     if finish:
-        work.active_component_key, work.active_operation_id, work.selections = None, None, []
+        work.active_component_key, work.active_operation_id, work.active_selection = None, None, None
 
 
 async def fail_import_work(work: ImportWork, message: str, *, paused: bool = False) -> None:

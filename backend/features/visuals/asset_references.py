@@ -9,8 +9,8 @@ from sqlalchemy import delete, or_, select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from features.assets.service import asset_paths_in_session
-from features.jobs.service import cleanup_job_assets, job_asset_paths
+from features.assets.references import scanned_asset_paths
+from features.assets.service import asset_paths_for_ids
 
 from .eligibility import automatic_media_ready
 from .models import (
@@ -27,34 +27,23 @@ from .schemas import StageComposition, VisualSnapshot
 
 async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
     ids = list(await db.scalars(select(VisualVersionAsset.asset_id).where(VisualVersionAsset.user_id == user_id)))
-    paths = set((await asset_paths_in_session(db, user_id, ids)).values())
-    paths |= await job_asset_paths(db, user_id)
+    paths = await asset_paths_for_ids(db, user_id, ids)
     for analysis in await db.scalars(select(VisualImportJob).where(VisualImportJob.user_id == user_id)):
         paths |= asset_paths(analysis.result_json, user_id)
         if analysis.state != "succeeded" and (
             analysis.state != "cancelled" or analysis.context_json.get("image_chains")
         ):
             paths |= asset_paths(analysis.context_json, user_id)
-    for pending, current, composition in await db.execute(
+    paths |= await scanned_asset_paths(
+        db,
+        user_id,
         select(
             VisualPresentation.pending_static_json,
             VisualPresentation.current_static_json,
             VisualPresentation.composition_json,
-        ).where(VisualPresentation.user_id == user_id)
-    ):
-        paths |= asset_paths([pending, current, composition], user_id)
-    # 尚未交接的供应商候选仍由工作项保护；发布后依赖由版本关联表持有。
-    for row in await db.scalars(
-        select(VisualJob).where(
-            VisualJob.user_id == user_id,
-            or_(
-                VisualJob.cleanup_pending.is_(True),
-                VisualJob.finished_at.is_(None),
-                VisualJob.finished_at >= utc_now() - timedelta(days=7),
-            ),
-        )
-    ):
-        paths |= asset_paths([row.snapshot_json, row.checkpoint], user_id)
+        ).where(VisualPresentation.user_id == user_id),
+    )
+    # 制作输入和候选由 JobAsset 持有，发布后的文件由版本关系接管。
     return paths
 
 
@@ -131,7 +120,6 @@ async def _automatic_version_ids(db: AsyncSession, user_id: int) -> set[int]:
 
 
 async def cleanup_obsolete_assets(db: AsyncSession, user_id: int) -> set[str]:
-    released = await cleanup_job_assets(db, user_id)
     archived = (
         select(VisualJob.id)
         .select_from(VisualJob)
@@ -196,10 +184,10 @@ async def cleanup_obsolete_assets(db: AsyncSession, user_id: int) -> set[str]:
         unused = unused.where(VisualVersion.id.not_in(automatic))
     versions = list(await db.scalars(unused))
     if not versions:
-        return released
+        return set()
     asset_ids = list(
         await db.scalars(select(VisualVersionAsset.asset_id).where(VisualVersionAsset.version_id.in_(versions)))
     )
-    paths = set((await asset_paths_in_session(db, user_id, asset_ids)).values())
+    paths = await asset_paths_for_ids(db, user_id, asset_ids)
     await db.execute(delete(VisualVersion).where(VisualVersion.id.in_(versions)))
-    return paths | released
+    return paths

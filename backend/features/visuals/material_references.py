@@ -47,7 +47,7 @@ def _analysis_contains_material(value: object, kind: MaterialKind, material_id: 
                 and component.get("status") not in {"undone", "skipped"}
             ):
                 return True
-    # context_json.history 只保存来源轨迹，不代表当前仍在使用该素材。
+    # created_materials 只保存创建归属，不代表当前仍在使用该素材。
     return False
 
 

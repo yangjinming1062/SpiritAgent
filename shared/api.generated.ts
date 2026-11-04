@@ -81,15 +81,12 @@ export interface ApiSchemas {
   "GatewayTicketRequest": { "stream_id"?: (string | null) }
   "GatewayTicketResponse": { "ticket": string; "expires_in": number }
   "HumanReviewApproval": { "request_id": string; "approved_at": string; "content_basis_id": string; "dimensions": Array<"identity" | "goal" | "quality"> }
-  "IdleExpressionRequest": { "trigger"?: "periodic" | "user_return"; "idle_seconds"?: (number | null); "local_hour"?: (number | null) }
-  "IdleExpressionResult": { "expressed": boolean; "action_id": (string | null); "reason": string }
   "ImageJobParams": { "request": string; "request_scope": string; "prompt": string; "size": string; "subject": ("self" | null); "reference_image": (string | null); "secondary_reference_image": (string | null); "identity_json": (string | null); "identity_reference_mode": "primary" | "portrait_and_outfit"; "task": ApiSchemas["AiTaskKey"]; "directory": string; "media_ids": Array<string>; "goal_ids": Array<string>; "parent_media_id": (string | null) }
   "ImagePromptResponse": { "prompt": string }
   "ImportAnalysisRequest": { "expected_revision"?: (number | null); "command"?: "retry" | "cancel" | "apply" | "apply_result" | "reanalyze"; "selections"?: Array<ApiSchemas["ImportSelection"]>; "notes"?: (string | null) }
-  "ImportAnalysisResult": { "understanding": ApiSchemas["ImportUnderstanding"]; "components": Array<ApiSchemas["ImportComponent"]>; "presentation_verdict": ("pass" | "review" | "fail" | null); "blocking_reasons": Array<ApiSchemas["ImportPlaybackBlock"]> }
-  "ImportAnalysisView": { "id": string; "state": ("queued" | "running" | "paused" | "succeeded" | "failed" | "cancelled" | "unknown" | "awaiting_input"); "stage": string; "revision": number; "error": (string | null); "result": (ApiSchemas["ImportAnalysisResult"] | null); "updated_at": string }
-  "ImportComponent": { "observation": ApiSchemas["ImportObservation"]; "matches": Array<ApiSchemas["ImportMatch"]>; "status": "recognized" | "ambiguous" | "reused" | "created" | "reviewing" | "failed" | "skipped" | "undone"; "material_id": (string | null); "created": boolean; "extraction_key": string; "created_materials": Array<ApiSchemas["ImportCreatedMaterial"]>; "reason": string; "failure_summary": string; "notes": string; "preview_path": (string | null); "can_extract": boolean; "creation_method": ("pixels" | "generated" | "pose" | "motion" | null); "candidate_verdict": ("pass" | "review" | "fail" | null); "revision": number; "operation_state": "idle" | "queued" | "running" | "paused" | "failed" | "succeeded"; "operation_stage": string; "failure_code": ("quality_rejected" | "action_rejected" | "generation_failed" | "result_download_failed" | "result_unknown" | "save_failed" | "processing_failed" | "identity_unavailable" | null); "extract_command": "extract" | "retry" | "regenerate" }
-  "ImportCreatedMaterial": { "kind": "outfit" | "scene" | "action"; "material_id": string; "extraction_key": string; "state": "active" | "released" | "retained" }
+  "ImportAnalysisResultView": { "understanding": ApiSchemas["ImportUnderstanding"]; "components": Array<ApiSchemas["ImportComponentView"]>; "presentation_verdict": ("pass" | "review" | "fail" | null); "blocking_reasons": Array<ApiSchemas["ImportPlaybackBlock"]> }
+  "ImportAnalysisView": { "id": string; "state": ("queued" | "running" | "paused" | "succeeded" | "failed" | "cancelled" | "unknown" | "awaiting_input"); "stage": string; "revision": number; "error": (string | null); "result": (ApiSchemas["ImportAnalysisResultView"] | null); "updated_at": string }
+  "ImportComponentView": { "observation": ApiSchemas["ImportObservation"]; "matches": Array<ApiSchemas["ImportMatch"]>; "status": "recognized" | "ambiguous" | "reused" | "created" | "reviewing" | "failed" | "skipped" | "undone"; "material_id": (string | null); "created": boolean; "extraction_key": string; "reason": string; "failure_summary": string; "notes": string; "preview_path": (string | null); "creation_method": ("pixels" | "generated" | "pose" | "motion" | null); "candidate_verdict": ("pass" | "review" | "fail" | null); "revision": number; "operation_stage": string; "failure_code": ("quality_rejected" | "action_rejected" | "generation_failed" | "result_download_failed" | "result_unknown" | "save_failed" | "processing_failed" | "identity_unavailable" | null); "operation_state": "idle" | "queued" | "running" | "paused" | "failed" | "succeeded"; "can_extract": boolean; "extract_command": "extract" | "retry" | "regenerate" }
   "ImportMatch": { "material_id": string; "name": string; "decision": "same" | "different" | "uncertain"; "confidence": "high" | "medium" | "low"; "evidence": string }
   "ImportObservation": { "key": string; "kind": "outfit" | "scene" | "action"; "name": string; "description": string; "features": Array<string>; "frame_index": number; "crop": ([number, number, number, number] | null); "extractable": boolean; "extraction_reason": string; "action_design": (ApiSchemas["ActionAssetDesign"] | null); "start_seconds": (number | null); "end_seconds": (number | null) }
   "ImportPlaybackBlock": { "code": "materials_incomplete" | "identity" | "outfit" | "scene" | "action" | "semantics" | "timing" | "review" | "animated"; "reason": string }
@@ -441,7 +438,6 @@ export interface ApiOperations {
   "admin.upsert_model_config": { path: { "user_id": string }; query: Record<string, never>; body: ApiSchemas["UserModelConfigRequest"]; input: { path: { "user_id": string }; query?: never; body: ApiSchemas["UserModelConfigRequest"] }; response: ApiSchemas["MessageResponse"] }
   "admin.delete_model_config": { path: { "user_id": string }; query: Record<string, never>; body: undefined; input: { path: { "user_id": string }; query?: never; body?: never }; response: ApiSchemas["MessageResponse"] }
   "gateway.gateway_ticket": { path: Record<string, never>; query: Record<string, never>; body: (ApiSchemas["GatewayTicketRequest"] | null); input: { path?: never; query?: never; body?: (ApiSchemas["GatewayTicketRequest"] | null) }; response: ApiSchemas["GatewayTicketResponse"] }
-  "companion.idle_expression": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["IdleExpressionRequest"]; input: { path?: never; query?: never; body: ApiSchemas["IdleExpressionRequest"] }; response: ApiSchemas["IdleExpressionResult"] }
   "companion.retry_appearance_preparation": { path: { "avatar_id": string }; query: Record<string, never>; body: ApiSchemas["PreparationRetryRequest"]; input: { path: { "avatar_id": string }; query?: never; body: ApiSchemas["PreparationRetryRequest"] }; response: ApiSchemas["AvatarAssetResponse"] }
   "companion.get_persona": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["PersonaResponse"] }
   "companion.put_persona": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["PersonaUpdate"]; input: { path?: never; query?: never; body: ApiSchemas["PersonaUpdate"] }; response: ApiSchemas["PersonaResponse"] }
@@ -898,17 +894,6 @@ export const API_OPERATIONS = {
     ],
     "wait_for_model": false,
     "ipc": false
-  },
-  "companion.idle_expression": {
-    "path": "/api/companion/idle-expressions",
-    "method": "POST",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "desktop"
-    ],
-    "wait_for_model": true,
-    "ipc": true
   },
   "companion.retry_appearance_preparation": {
     "path": "/api/companion/avatar/{avatar_id}/preparation/retry",

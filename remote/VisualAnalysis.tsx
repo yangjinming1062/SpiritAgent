@@ -137,7 +137,7 @@ function MaterialRow({
   onChanged
 }: {
   api: RemoteApi
-  component: ApiSchemas['ImportComponent']
+  component: ApiSchemas['ImportComponentView']
   options: VisualMaterialOptions['outfits']
   visualId: string
   onChanged: () => Promise<void>

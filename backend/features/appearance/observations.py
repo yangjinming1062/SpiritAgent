@@ -14,7 +14,7 @@ async def load_visual_observation(db: AsyncSession, user_id: int) -> VisualObser
         .where(
             AvatarAsset.user_id == user_id,
             AvatarAsset.active.is_(True),
-            AvatarAsset.is_fullbody_confirmed.is_(True),
+            AvatarAsset.identity_revision >= 1,
             AvatarAsset.identity_revision == VisualObservationJob.identity_revision,
             VisualObservationJob.state == "succeeded",
         )

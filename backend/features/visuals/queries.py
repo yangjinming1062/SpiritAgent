@@ -1,6 +1,6 @@
 """影像库的只读查询与对外视图装配；签名 URL 只在响应出口生成。"""
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Protocol
 
 from infrastructure.assets.asset_store import client_asset_url, resolve_asset_reference
@@ -65,6 +65,8 @@ from .schemas import (
     VisualPresentationView,
     VisualSnapshot,
     VisualSource,
+    carries_character,
+    carries_scene,
     parse_job_progress,
 )
 
@@ -643,23 +645,6 @@ async def list_jobs(
         )
 
 
-async def recent_autonomous_failure_action_ids(user_id: int, *, since: datetime) -> set[int]:
-    """返回退避期内自主制作失败过的动作，避免决策反复提交同一动作。"""
-
-    async with SESSION_LOCAL() as db:
-        rows = await db.scalars(
-            select(VisualJob.action_id).where(
-                VisualJob.user_id == user_id,
-                VisualJob.purpose == "create",
-                VisualJob.state == "failed",
-                VisualJob.finished_at >= since,
-                VisualJob.action_id.is_not(None),
-                VisualJob.checkpoint["source"].astext == "autonomous",
-            )
-        )
-        return {action_id for action_id in rows if action_id is not None}
-
-
 async def _scene_reference_usable(db: AsyncSession, user_id: int, scene: SceneMediaRef | None) -> bool:
     """环境引用仍可用：文件存在且来源环境未被删除；冻结引用本身会阻止旧文件被回收。"""
 
@@ -800,9 +785,7 @@ def frozen_stage_reference(state: VisualPresentation) -> tuple[ComboMaterialRef 
     composition = stage_composition(state)
     if current is not None and visual_is_short_action(current) and composition is not None:
         return outfit, composition.identity_hash
-    if source is not None and (
-        source.kind in ("actor", "cinematic") or (source.kind == "analysis" and source.asset_kind != "scene")
-    ):
+    if source is not None and carries_character(source):
         return (source.outfit if outfit is None else outfit), source.identity_hash
     return outfit, composition.identity_hash if composition else None
 
@@ -1141,12 +1124,8 @@ async def _presentation_snapshot(user_id: int, *, for_prompt: bool) -> ActualPre
         )
         source = snapshot.source
         composition = stage_composition(row) if row else None
-        character_source = source.kind in ("actor", "cinematic") or (
-            source.kind == "analysis" and source.asset_kind in ("actor", "cinematic")
-        )
-        environment_source = source.kind in ("scene", "cinematic") or (
-            source.kind == "analysis" and source.asset_kind in ("scene", "cinematic")
-        )
+        character_source = carries_character(source)
+        environment_source = carries_scene(source)
         outfit = source.outfit if character_source else composition.outfit_material if composition else None
         scene = source.scene if environment_source else composition.scene_material if composition else None
         outfit_path = existing_asset(outfit.path) if outfit else None

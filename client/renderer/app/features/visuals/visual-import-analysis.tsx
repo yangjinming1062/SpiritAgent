@@ -189,7 +189,7 @@ function MaterialRow({
   options,
   visualId
 }: {
-  component: ApiSchemas['ImportComponent']
+  component: ApiSchemas['ImportComponentView']
   options: VisualMaterialOptions['outfits']
   visualId: string
 }): React.JSX.Element {

@@ -145,10 +145,7 @@ class Settings(BaseSettings):
     enable_context_compression: bool = Field(default=True, validation_alias="ENABLE_CONTEXT_COMPRESSION")
     ipc_future_timeout_seconds: float = Field(default=720.0, gt=0, validation_alias="IPC_FUTURE_TIMEOUT_SECONDS")
 
-    # 陪伴交互节奏：桌面互动的 LLM 成本窗口与主动行为的静默门槛。
-    companion_idle_expression_min_interval_seconds: float = Field(
-        default=2.0, gt=0, validation_alias="COMPANION_IDLE_EXPRESSION_MIN_INTERVAL_SECONDS"
-    )
+    # 陪伴交互节奏与主动行为的静默门槛。
     companion_contact_quiet_seconds: float = Field(
         default=60.0, gt=0, validation_alias="COMPANION_CONTACT_QUIET_SECONDS"
     )

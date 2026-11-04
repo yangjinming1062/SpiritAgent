@@ -5,6 +5,7 @@ from features.appearance import asset_references as appearance
 from features.appearance.asset_bindings import appearance_asset_paths
 from features.assets.contributions import AssetContribution, configure_asset_contributions
 from features.conversation.asset_bindings import message_binding_paths, used_message_voice_ids
+from features.jobs.service import cleanup_job_assets, job_asset_paths
 from features.media import asset_references as media
 from features.media.voice_usage import set_voice_usage_reader
 from features.posts import asset_references as posts
@@ -18,6 +19,7 @@ def register_asset_contributions() -> None:
     configure_asset_contributions(
         (
             AssetContribution("conversation", message_binding_paths),
+            AssetContribution("jobs", job_asset_paths, cleanup=cleanup_job_assets),
             AssetContribution("appearance", appearance_asset_paths, cleanup=appearance.cleanup_obsolete_assets),
             AssetContribution("action_library", action_library.live_asset_paths),
             AssetContribution("scenes", scenes.live_asset_paths),

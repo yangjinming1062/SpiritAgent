@@ -144,6 +144,11 @@ async def ensure_assets_in_session(db: AsyncSession, user_id: int, paths: Collec
     return {path: reference.id for path, reference in references.items()}
 
 
+async def asset_paths_for_ids(db: AsyncSession, user_id: int, asset_ids: Collection[int]) -> set[str]:
+    """业务按已登记的资产 ID 读取路径；空集合不查库。"""
+    return set((await asset_paths_in_session(db, user_id, asset_ids)).values())
+
+
 async def asset_paths_in_session(db: AsyncSession, user_id: int, asset_ids: Collection[int]) -> dict[int, str]:
     if not asset_ids:
         return {}

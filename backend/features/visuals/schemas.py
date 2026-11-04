@@ -285,6 +285,7 @@ class ImportCreatedMaterial(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    component_key: str
     kind: Literal["outfit", "scene", "action"]
     material_id: ResourceId
     extraction_key: str = ""
@@ -302,16 +303,13 @@ class ImportComponent(BaseModel):
     material_id: ResourceId | None = None
     created: bool = False
     extraction_key: str = ""
-    created_materials: list[ImportCreatedMaterial] = Field(default_factory=list)
     reason: str = ""
     failure_summary: str = ""
     notes: str = Field(default="", max_length=2000)
     preview_path: str | None = None
-    can_extract: bool = True
     creation_method: Literal["pixels", "generated", "pose", "motion"] | None = None
     candidate_verdict: Literal["pass", "review", "fail"] | None = None
     revision: int = Field(default=0, ge=0)
-    operation_state: Literal["idle", "queued", "running", "paused", "failed", "succeeded"] = "idle"
     operation_stage: str = ""
     failure_code: (
         Literal[
@@ -326,7 +324,14 @@ class ImportComponent(BaseModel):
         ]
         | None
     ) = None
-    extract_command: Literal["extract", "retry", "regenerate"] = "extract"
+
+
+class ImportComponentView(ImportComponent):
+    """响应在分析事实之上投影操作进度与可用操作。"""
+
+    operation_state: Literal["idle", "queued", "running", "paused", "failed", "succeeded"]
+    can_extract: bool
+    extract_command: Literal["extract", "retry", "regenerate"]
 
 
 class ImportPlaybackBlock(BaseModel):
@@ -347,6 +352,10 @@ class ImportAnalysisResult(BaseModel):
     blocking_reasons: list[ImportPlaybackBlock] = Field(default_factory=list)
 
 
+class ImportAnalysisResultView(ImportAnalysisResult):
+    components: list[ImportComponentView] = Field(default_factory=list)
+
+
 class ImportAnalysisView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -355,7 +364,7 @@ class ImportAnalysisView(BaseModel):
     stage: str
     revision: int
     error: str | None = None
-    result: ImportAnalysisResult | None = None
+    result: ImportAnalysisResultView | None = None
     updated_at: datetime
 
 
@@ -410,6 +419,20 @@ class AnalyzingVisualSource(VisualSourceMetadata):
 VisualSource = Annotated[
     ActorClipSource | SceneMediaSource | CinematicSource | AnalyzingVisualSource, Field(discriminator="kind")
 ]
+
+
+def carries_character(source: VisualSource) -> bool:
+    """来源是否携带当前角色，含分析暂存的主体结果。"""
+    return source.kind in ("actor", "cinematic") or (
+        source.kind == "analysis" and source.asset_kind in ("actor", "cinematic")
+    )
+
+
+def carries_scene(source: VisualSource) -> bool:
+    """来源是否携带环境层，含分析暂存的环境结果。"""
+    return source.kind in ("scene", "cinematic") or (
+        source.kind == "analysis" and source.asset_kind in ("scene", "cinematic")
+    )
 
 
 class VisualSnapshot(BaseModel):

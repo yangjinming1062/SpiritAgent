@@ -107,7 +107,7 @@ from runtime.tools.registry import REGISTRY
 from workflows.automation.companion_turns import execute_companion_turn
 from workflows.life_events import record_post_published
 from workflows.life_presentation import life_presentation_requested
-from workflows.visual_decisions import initialize_visuals, schedule_visual_selection
+from workflows.visual_events import initialize_visuals, schedule_presentation_refresh
 from workflows.visual_imports import run_manual_import_job
 from workflows.visual_planning import visual_planning_context
 from workflows.visual_preparation import (
@@ -226,9 +226,9 @@ def register_all() -> None:
     )
     configure_visual_hooks(
         planning_reader=visual_planning_context,
-        ready_handler=schedule_visual_selection,
+        ready_handler=schedule_presentation_refresh,
         preparation_handler=schedule_base_motion_preparation,
-        recovery_handler=schedule_visual_selection,
+        recovery_handler=schedule_presentation_refresh,
         scene_exists=scene_exists,
     )
     set_appearance_readiness_reader(appearance_readiness)

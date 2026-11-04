@@ -165,22 +165,10 @@ async def _evaluate_life_presentation(user_id: int, *, force: bool = False) -> N
                 projection.static_presentation is not None and projection.static_presentation.scene is not None
             ) or (projection.composition is not None and projection.composition.scene_material is not None)
             if motion == "off" or not has_media or not has_scene:
-                previous = projection.static_presentation
-                if previous is not None and previous.outfit is not None and previous.scene is not None:
-                    snapshot = previous.model_copy(
-                        update={
-                            "request_id": uuid4().hex,
-                            "presentation_epoch": presence.revision,
-                            "life_revision": life.presentation_revision,
-                            "receipt_kind": None,
-                            "retry_at": None,
-                            "error": None,
-                        }
-                    )
-                else:
-                    snapshot = await _fresh_static_snapshot(
-                        user_id, presence.revision, life.presentation_revision, projection
-                    )
+                # 冻结素材沿用，仅缺失或文件已删除时才从库存补齐；新代次换新的请求身份。
+                snapshot = await _fresh_static_snapshot(
+                    user_id, presence.revision, life.presentation_revision, projection
+                )
                 if not await present_static(user_id, snapshot, expected_state_revision=projection.state_revision):
                     return
             await record_stage_intent(user_id, life)

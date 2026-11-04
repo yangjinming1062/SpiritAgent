@@ -3,6 +3,7 @@
 from typing import Any, Protocol
 
 from infrastructure.assets.references import asset_paths
+from sqlalchemy import Select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.assets.contributions import asset_contributions
@@ -38,3 +39,8 @@ async def collect_live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
     for contribution in asset_contributions():
         referenced |= await contribution.references(db, user_id)
     return referenced
+
+
+async def scanned_asset_paths(db: AsyncSession, user_id: int, statement: Select) -> set[str]:
+    """扫描语句返回的 JSON 与文本列；账户归属和 token 解析仍由资产引用层决定。"""
+    return set().union(*(asset_paths(list(row), user_id) for row in (await db.execute(statement)).all()))

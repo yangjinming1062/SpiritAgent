@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from features.companion.visual_state import read_scene_policy
-from features.media.character_images import ImageChainState
-from features.scenes.models import CompanionScene, SceneJob, ScenePolicy, SceneSource, SceneStatus
+from features.scenes.generation_state import scene_generation_state
+from features.scenes.models import SCENE_JOB_STATUSES, CompanionScene, SceneJob, ScenePolicy, SceneSource, SceneStatus
 from features.scenes.query_contracts import SceneSnapshot
 from features.scenes.schemas import SceneImageDimensions, SceneImageSize, SceneResponse
 
@@ -47,7 +47,7 @@ async def get_pending_scene_task(db: AsyncSession, user_id: int) -> CompanionSce
             CompanionScene.user_id == user_id,
             or_(
                 CompanionScene.status == SceneStatus.PENDING.value,
-                CompanionScene.replacement_job.has(SceneJob.availability == "pending"),
+                CompanionScene.replacement_job.has(SceneJob.state.in_(("queued", "running"))),
             ),
         )
         .order_by(CompanionScene.id.desc())
@@ -75,8 +75,8 @@ def _snapshot_statement(conditions: list[ColumnElement[bool]], *, state_only: bo
         CompanionScene.prompt != "",
         CompanionScene.target_size_json.is_not(None),
         func.coalesce(initial.stage, "prepare").not_in(("submitting", "review_failed", "review_pending")),
-        func.coalesce(initial.checkpoint["phase"].astext, "") != "submitting",
-        func.coalesce(initial.checkpoint["stop_reason"].astext, "") != "result_unknown",
+        func.coalesce(initial.checkpoint["image_chain"]["phase"].astext, "") != "submitting",
+        func.coalesce(initial.checkpoint["image_chain"]["stop_reason"].astext, "") != "result_unknown",
     )
     statement = (
         select(
@@ -84,7 +84,7 @@ def _snapshot_statement(conditions: list[ColumnElement[bool]], *, state_only: bo
             func.coalesce(initial.stage, "prepare").label("stage"),
             initial.error.label("error"),
             func.coalesce(initial.attempt_count, 0).label("attempt_count"),
-            replacement.availability.label("regeneration_status"),
+            case(SCENE_JOB_STATUSES, value=replacement.state).label("regeneration_status"),
             replacement.stage.label("regeneration_stage"),
             replacement.error.label("regeneration_error"),
             replacement.token.label("regeneration_task_id"),
@@ -102,7 +102,7 @@ def _snapshot_statement(conditions: list[ColumnElement[bool]], *, state_only: bo
     )
     if state_only:
         statement = statement.where(
-            or_(CompanionScene.status.in_(("ready", "pending")), replacement.availability == "pending")
+            or_(CompanionScene.status.in_(("ready", "pending")), replacement.state.in_(("queued", "running")))
         )
     return statement
 
@@ -180,7 +180,7 @@ def can_retry_scene_generation(row: CompanionScene | SceneSnapshot) -> bool:
         or row.initial_job.stage in {"submitting", "review_failed", "review_pending"}
     ):
         return False
-    state = ImageChainState.model_validate(row.initial_job.checkpoint) if row.initial_job.checkpoint else None
+    state = scene_generation_state(row.initial_job).image_chain if row.initial_job.checkpoint else None
     return state is None or (state.phase != "submitting" and state.stop_reason != "result_unknown")
 
 
@@ -248,7 +248,7 @@ def scene_view(row: CompanionScene) -> SceneSnapshot:
             "stage": initial.stage if initial is not None else "prepare",
             "error": initial.error if initial is not None else None,
             "attempt_count": initial.attempt_count if initial is not None else 0,
-            "regeneration_status": replacement.availability if replacement is not None else None,
+            "regeneration_status": replacement.regeneration_status if replacement is not None else None,
             "regeneration_stage": replacement.stage if replacement is not None else None,
             "regeneration_error": replacement.error if replacement is not None else None,
             "regeneration_task_id": replacement.token if replacement is not None else None,

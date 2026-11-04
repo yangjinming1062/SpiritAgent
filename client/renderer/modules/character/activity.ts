@@ -1,14 +1,11 @@
 import { atom } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
-import { requestResource } from '@/shared/lib/resource-request'
 import { activityHost, gatewayApi, shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
-import { $chatVisible } from '@/shared/store/chat-visibility'
 import { $gateway, $gatewayState } from '@/shared/store/gateway'
 import { $presentation } from '@/shared/store/presentation'
 import { $runnerPhase } from '@/shared/store/runner-status'
-import { isCompanionStageVisible } from '@/shared/store/surfaces'
 import type { PresentationMode, StageActivity } from '@ipc/contracts'
 
 import {
@@ -34,19 +31,8 @@ interface FocusContext {
 const $focusContext = atom<FocusContext | null>(null)
 
 const POLL_INTERVAL_MS = 30_000
-const IDLE_THRESHOLD_SECONDS = 30 * 60
-const CHECK_COOLDOWN_MS = 60 * 60 * 1000
-const DESKTOP_CHECK_MIN_MS = 5 * 60 * 1000
-const DESKTOP_CHECK_MAX_MS = 10 * 60 * 1000
-const USER_RETURN_IDLE_SECONDS = 5 * 60
 
 let timer: ReturnType<typeof setInterval> | null = null
-let lastIdleExpressionAt = 0
-let idleExpressionInFlight = false
-let idleExpressionRequest = 0
-let desktopExpressionScope: string | null = null
-let nextDesktopExpressionAt: number | null = null
-let previousDesktopActivity: { idleSeconds: number; locked: boolean } | null = null
 let lastTierPushed: DisturbanceTier | null = null
 let runnerReady = false
 let unsubs: Array<() => void> = []
@@ -56,112 +42,6 @@ let lastSignalContext: string | null = null
 let pendingSignalContextChange = false
 let signalRevision = 0
 let companionAvailable = false
-
-function resetDesktopExpression(): void {
-  desktopExpressionScope = null
-  nextDesktopExpressionAt = null
-  previousDesktopActivity = null
-  idleExpressionRequest += 1
-  idleExpressionInFlight = false
-}
-
-function nextDesktopCheck(now: number): number {
-  return now + DESKTOP_CHECK_MIN_MS + Math.random() * (DESKTOP_CHECK_MAX_MS - DESKTOP_CHECK_MIN_MS)
-}
-
-function maybeTriggerIdleExpression(idleSeconds: number, locked: boolean): void {
-  const presentation = $presentation.get()
-  const desktop = presentation.effectiveMode === 'desktop'
-  const auth = $auth.get()
-  const scope = auth.kind === 'authenticated' ? `${auth.snapshot.sessionId}:${presentation.stageEpoch}` : null
-  let userReturned = false
-
-  if (desktop) {
-    if (scope !== desktopExpressionScope) {
-      resetDesktopExpression()
-      desktopExpressionScope = scope
-    }
-
-    if (!scope || !Number.isFinite(idleSeconds) || idleSeconds < 0) {
-      previousDesktopActivity = null
-      nextDesktopExpressionAt = null
-
-      return
-    }
-
-    userReturned =
-      previousDesktopActivity !== null &&
-      ((previousDesktopActivity.idleSeconds >= USER_RETURN_IDLE_SECONDS && idleSeconds < POLL_INTERVAL_MS / 1000) ||
-        (previousDesktopActivity.locked && !locked))
-    previousDesktopActivity = { idleSeconds, locked }
-  } else if (desktopExpressionScope !== null) {
-    resetDesktopExpression()
-  }
-
-  const visible = desktop ? presentation.status === 'active' && !presentation.fullscreen : isCompanionStageVisible()
-
-  // 自主表演条件与播放共用可见性判断（见 renderer README），发请求时读取；播放指令由后端统一派发。
-  if (
-    idleExpressionInFlight ||
-    $effectiveTier.get() !== 'autonomous' ||
-    locked ||
-    $chatVisible.get() ||
-    !visible ||
-    (desktop ? window.matchMedia('(prefers-reduced-motion: reduce)').matches : idleSeconds < IDLE_THRESHOLD_SECONDS)
-  ) {
-    if (desktop && !idleExpressionInFlight) {
-      nextDesktopExpressionAt = null
-    }
-
-    return
-  }
-
-  const now = Date.now()
-  const monotonicNow = performance.now()
-
-  if (desktop) {
-    nextDesktopExpressionAt ??= nextDesktopCheck(monotonicNow)
-
-    if (!userReturned && monotonicNow < nextDesktopExpressionAt) {
-      return
-    }
-  } else if (now - lastIdleExpressionAt < CHECK_COOLDOWN_MS) {
-    return
-  }
-
-  // 夜间政策权威在服务端，客户端只传 local_hour，不在此硬编码跳过。
-  const hour = new Date().getHours()
-
-  const gateway = $gateway.get()
-
-  if (!gateway || $gatewayState.get() !== 'open') {
-    return
-  }
-
-  if (desktop) {
-    nextDesktopExpressionAt = nextDesktopCheck(monotonicNow)
-  } else {
-    lastIdleExpressionAt = now
-  }
-
-  const request = ++idleExpressionRequest
-  idleExpressionInFlight = true
-  void requestResource('companion.idle_expression', {
-    body: {
-      idle_seconds: idleSeconds,
-      local_hour: hour,
-      ...(desktop ? { trigger: userReturned ? 'user_return' : 'periodic' } : {})
-    }
-  })
-    .catch(error => {
-      log.warn('activity', 'companion.idle_expression failed', error)
-    })
-    .finally(() => {
-      if (request === idleExpressionRequest) {
-        idleExpressionInFlight = false
-      }
-    })
-}
 
 interface FocusedAppInfo {
   name?: string
@@ -382,7 +262,6 @@ async function pollSnapshot(generation: number): Promise<void> {
 
   if (snapshotResult === null) {
     // 探测失败：空闲时长置未知，锁屏与焦点保留上次值；档位覆盖仍重算并上报当前生效档位。
-    previousDesktopActivity = null
     maybePushTierOverride()
     await reportCompanionSignal(false)
 
@@ -399,7 +278,6 @@ async function pollSnapshot(generation: number): Promise<void> {
 
   // 非有限空闲值按缺失信号处理（NaN 会透传进后端 LLM prompt）。
   if (!Number.isFinite(idleSeconds)) {
-    previousDesktopActivity = null
     await reportCompanionSignal(false)
 
     return
@@ -441,12 +319,6 @@ async function pollSnapshot(generation: number): Promise<void> {
   const context = `${$focusContext.get()?.category ?? 'unknown'}:${fullscreen}`
 
   await reportCompanionSignal(available, context)
-
-  if (generation !== monitorGeneration) {
-    return
-  }
-
-  maybeTriggerIdleExpression(snapshot.locked !== undefined && fullscreenProbeOk ? idleSeconds : -1, $screenLocked.get())
 }
 
 export function startActivityMonitor(): () => void {
@@ -479,8 +351,6 @@ export function startActivityMonitor(): () => void {
 
       if (nextSessionId !== authSessionId) {
         authSessionId = nextSessionId
-        resetDesktopExpression()
-        lastIdleExpressionAt = 0
         lastSignalContext = null
         pendingSignalContextChange = false
         monitorGeneration += 1
@@ -589,7 +459,6 @@ export function startActivityMonitor(): () => void {
         runnerReady = false
         monitorGeneration += 1
         polling = false
-        resetDesktopExpression()
         void reportCompanionSignal(false)
       }
     })
@@ -612,7 +481,6 @@ function stopActivityMonitor(): void {
   polling = false
   lastSignalContext = null
   pendingSignalContextChange = false
-  resetDesktopExpression()
 
   for (const unsub of unsubs) {
     unsub()

@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.assets.references import message_asset_paths
-from features.assets.service import asset_paths_in_session, ensure_assets_in_session
+from features.assets.service import asset_paths_for_ids, ensure_assets_in_session
 from features.media.voice_queries import resolve_custom_voice_references
 
 from .models import Message, MessageAsset, MessageVoiceRef
@@ -90,7 +90,7 @@ async def flush_conversation(db: AsyncSession) -> None:
 
 async def message_binding_paths(db: AsyncSession, user_id: int) -> set[str]:
     ids = list(await db.scalars(select(MessageAsset.asset_id).where(MessageAsset.user_id == user_id)))
-    return set((await asset_paths_in_session(db, user_id, ids)).values())
+    return await asset_paths_for_ids(db, user_id, ids)
 
 
 async def used_message_voice_ids(db: AsyncSession, user_id: int, candidates: Collection[int]) -> set[int]:

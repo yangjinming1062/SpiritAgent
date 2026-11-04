@@ -21,7 +21,7 @@ from runtime.lifecycle import RUNTIME_LIFECYCLE, RuntimeParticipant
 from workflows.onboarding.initial_appearance import resume_initial_appearance
 from workflows.scheduling import drain as drain_scheduling
 from workflows.scheduling import invalidate_user_scheduler_state
-from workflows.visual_decisions import drain_visual_decisions
+from workflows.visual_events import drain_visual_events
 from workflows.visual_imports import import_runtime_participants
 from workflows.visual_preparation import (
     resume_base_motion_preparation,
@@ -39,7 +39,7 @@ def configure_runtime_lifecycle() -> None:
             *action_participants(),
             *visuals_participants(),
             *import_runtime_participants(),
-            RuntimeParticipant("visuals.decisions", drain=drain_visual_decisions),
+            RuntimeParticipant("visuals.events", drain=drain_visual_events),
             RuntimeParticipant(
                 "visuals.preparation",
                 prepare=start_base_motion_preparation,

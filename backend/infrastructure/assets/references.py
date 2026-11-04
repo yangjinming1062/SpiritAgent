@@ -6,7 +6,7 @@ import re
 from infrastructure.assets.asset_store import normalize_asset_reference
 from infrastructure.assets.paths import parse_companion_asset_path
 
-# 资产 token 尾随标点剥离集合；导出、改写与回收三处共用同一取值。
+# 资产 token 尾随标点剥离集合；引用识别与回收共用同一取值。
 ASSET_TOKEN_TRAILING_PUNCTUATION = ".!?，。；！"
 
 _ASSET_TOKEN = re.compile(

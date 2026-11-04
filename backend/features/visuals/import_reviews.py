@@ -32,7 +32,7 @@ from features.media.review_views import (
 )
 
 from .import_jobs import ImportContext, ImportWork, claim_import_job, save_import_progress
-from .import_operations import ImportOperation, import_operations
+from .import_operations import ImportOperation, import_operations, import_result_view
 from .import_publication import update_pending_import_review
 from .import_reasoning import review_import_presentation
 from .models import VisualImportJob
@@ -51,6 +51,8 @@ async def import_review_view(user_id: int, job_id: int) -> MediaJobView:
         report = context.presentation_review
         item = await visual_item(db, user_id, job.visual_id)
         result = ImportAnalysisResult.model_validate(job.result_json) if job.result_json else None
+        if result is not None:
+            result = import_result_view(result, context.image_chains, import_operations(job.selections_json), job.state)
         path = context.actor_asset.media_path if context.actor_asset else item.media_path
         slots = [
             MediaSlotView(
@@ -204,7 +206,6 @@ async def manually_review_import(
             expected_version=job.expected_version,
             context=context,
             result=result,
-            selections=[],
             snapshot=snapshot,
             media_kind=item.media_kind,
             media_path=snapshot.source.original_path or item.media_path,
@@ -268,7 +269,7 @@ async def manually_review_import(
     job.selections_json = [entry.model_dump(mode="json") for entry in operations if entry.key != key] + [
         operation.model_dump(mode="json")
     ]
-    component.operation_state, component.operation_stage = "queued", "organize"
+    component.operation_stage = "organize"
     component.revision += 1
     context.pending_application, context.presentation_review = None, None
     job.context_json, job.result_json = context.model_dump(mode="json"), result.model_dump(mode="json")

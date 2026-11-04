@@ -21,21 +21,18 @@ from features.media.review_views import (
     MediaJobView,
     MediaManualRequest,
     MediaReviewRequest,
-    MediaSlotView,
     review_request_matches,
+    single_slot_review_view,
 )
 
+from .generation_state import scene_generation_state
 from .models import SceneJob
 from .queries import get_scene
-from .service import SceneRegenerationState, _launch_task
+from .service import _launch_task
 
 
 def _chain(job: SceneJob) -> ImageChainState:
-    return (
-        SceneRegenerationState.model_validate(job.checkpoint).image_chain
-        if job.purpose == "replace"
-        else ImageChainState.model_validate(job.checkpoint or {})
-    )
+    return scene_generation_state(job).image_chain
 
 
 async def scene_review_view(user_id: int, job_id: int) -> MediaJobView:
@@ -48,30 +45,17 @@ async def scene_review_view(user_id: int, job_id: int) -> MediaJobView:
         report = candidate.review if candidate else None
         key = candidate_review_key(chain.generation_id)
         basis = review_basis(report, candidate.evidence if candidate else None, key if candidate else None)
-        return MediaJobView(
-            id=job.id,
-            kind=job.kind,
-            state=job.state,
-            stage=job.stage,
-            revision=job.revision,
-            required_slots=1,
-            ready_slots=int(report is not None and report.verdict == "pass"),
-            complete=job.state == "succeeded",
-            slots=[
-                MediaSlotView(
-                    slot=0,
-                    media_id=str(job.id),
-                    status=job.stage,
-                    review=report,
-                    basis_id=basis,
-                    candidate_basis_id=key,
-                    preview_url=client_asset_url(candidate.path) if candidate else None,
-                    can_review=job.stage == "review_pending" and candidate is not None and needs_review(report),
-                    error=job.error,
-                    candidates=await manual_candidate_views(chain.candidates),
-                    can_regenerate=chain.inputs is not None and job.state in {"paused", "failed"},
-                )
-            ],
+        return single_slot_review_view(
+            job,
+            media_id=str(job.id),
+            review=report,
+            basis_id=basis,
+            candidate_key=key,
+            preview_url=client_asset_url(candidate.path) if candidate else None,
+            can_review=job.stage == "review_pending" and candidate is not None and needs_review(report),
+            candidates=await manual_candidate_views(chain.candidates),
+            error=job.error,
+            can_regenerate=chain.inputs is not None and job.state in {"paused", "failed"},
         )
 
 
@@ -91,12 +75,9 @@ async def review_scene_job(user_id: int, job_id: int, slot: int, expected: Media
             current = await db.get(SceneJob, job_id, with_for_update=True)
             if current.state != "running":
                 raise ValueError("环境检查已停止")
-            if current.purpose == "replace":
-                frozen = SceneRegenerationState.model_validate(current.checkpoint)
-                frozen.image_chain = value
-                current.checkpoint = frozen.model_dump(mode="json")
-            else:
-                current.checkpoint = value.model_dump(mode="json")
+            frozen = scene_generation_state(current)
+            frozen.image_chain = value
+            current.checkpoint = frozen.model_dump(mode="json")
             await db.commit()
 
     try:
@@ -134,15 +115,13 @@ async def manually_review_scene(
         await approve_image_chain(user_id, chain, request, db=db)
     else:
         chain = regenerate_image_chain(chain)
-    if job.purpose == "replace":
-        frozen = SceneRegenerationState.model_validate(job.checkpoint)
-        frozen.image_chain = chain
-        if request.action == "regenerate":
-            frozen.wallpaper_path = ""
-        job.checkpoint = frozen.model_dump(mode="json")
-    else:
-        job.checkpoint = chain.model_dump(mode="json")
-    job.availability = "pending"
+    frozen = scene_generation_state(job)
+    frozen.image_chain = chain
+    if request.action == "regenerate":
+        frozen.wallpaper_path = ""
+    job.checkpoint = frozen.model_dump(mode="json")
+    if job.purpose == "create":
+        scene.status = "pending"
     job.state, job.stage, job.error = "queued", "evaluating", None
     return ManualAction(restart_job_id=job_id)
 

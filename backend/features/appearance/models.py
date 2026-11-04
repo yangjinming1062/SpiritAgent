@@ -105,12 +105,16 @@ class AvatarAsset(ModelBase, TimestampMixin):
     # 日常出镜的全身参考；锁定身份后仍可重绘。
     fullbody_review_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
     seed_fullbody_url: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
-    # 身份锁定的持久标志，不能由可重绘的种子路径推断。
-    is_fullbody_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
     active: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     identity_revision: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+
+    @property
+    def is_fullbody_confirmed(self) -> bool:
+        """身份锁定由身份版本表达：确认全身必然初始化视觉身份。"""
+        return self.identity_revision >= 1
+
     preparation_job_id: Mapped[int | None] = mapped_column(
         ForeignKey("appearance_preparation_jobs.id", ondelete="SET NULL", use_alter=True)
     )

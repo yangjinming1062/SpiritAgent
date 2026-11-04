@@ -5,8 +5,9 @@ from infrastructure.assets.references import asset_paths
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.assets.service import asset_paths_in_session, ensure_assets_in_session
-from features.jobs.service import bind_job_asset_ids, job_asset_paths
+from features.assets.references import scanned_asset_paths
+from features.assets.service import asset_paths_for_ids, ensure_assets_in_session
+from features.jobs.service import bind_job_asset_ids
 
 from .models import CompanionScene
 
@@ -48,16 +49,6 @@ async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
         select(CompanionScene.media_asset_id, CompanionScene.upload_asset_id).where(CompanionScene.user_id == user_id)
     )
     asset_ids = {asset_id for row in rows for asset_id in row if asset_id is not None}
-    proofs = set().union(
-        *(
-            asset_paths(value, user_id)
-            for value in await db.scalars(
-                select(CompanionScene.review_result_json).where(CompanionScene.user_id == user_id)
-            )
-        )
-    )
-    return (
-        set((await asset_paths_in_session(db, user_id, asset_ids)).values())
-        | await job_asset_paths(db, user_id)
-        | proofs
+    return await asset_paths_for_ids(db, user_id, asset_ids) | await scanned_asset_paths(
+        db, user_id, select(CompanionScene.review_result_json).where(CompanionScene.user_id == user_id)
     )

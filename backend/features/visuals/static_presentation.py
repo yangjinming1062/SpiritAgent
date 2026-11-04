@@ -16,6 +16,7 @@ from .eligibility import existing_asset
 from .models import VisualPlayback, VisualPresentation
 from .ports import request_base_motion_preparation
 from .repository import (
+    clear_presented_pointers,
     emit_playback_receipt,
     notify_visuals_updated,
     presentation_outfit,
@@ -285,8 +286,7 @@ async def record_static_receipt(user_id: int, body: StageReceipt) -> None:
                 }
             ).model_dump(mode="json")
             state.pending_static_json = None
-            state.current_visual_id = state.current_version_id = state.loop_visual_id = state.loop_version_id = None
-            state.current_snapshot_json = state.loop_snapshot_json = None
+            clear_presented_pointers(state)
             await db.execute(
                 update(VisualPlayback)
                 .where(VisualPlayback.user_id == user_id, VisualPlayback.status == "started")

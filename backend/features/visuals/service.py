@@ -40,6 +40,7 @@ from .queries import job_view, presentation_state
 from .repository import (
     VisualStateError,
     clear_pending_command,
+    clear_presented_pointers,
     discard_job_draft,
     dispatch_play_command,
     emit_playback_receipt,
@@ -80,6 +81,8 @@ from .schemas import (
     VisualPlayCommand,
     VisualPresentationView,
     VisualSnapshot,
+    carries_character,
+    carries_scene,
     visual_snapshot_hash,
 )
 from .static_presentation import cancel_pending_command, restore_static_presentation
@@ -164,24 +167,19 @@ def _refresh_stage_composition(
     static = StagePresentation.model_validate(state.current_static_json) if state.current_static_json else None
     snapshot = visual_snapshot(item)
     src = snapshot.source
-    outfit = (
-        src.outfit
-        if src.kind in ("actor", "cinematic") or (src.kind == "analysis" and src.asset_kind in ("actor", "cinematic"))
-        else presentation_outfit(state)
-    )
+    character = carries_character(src)
+    outfit = src.outfit if character else presentation_outfit(state)
     scene = (
-        src.scene
-        if src.kind in ("scene", "cinematic") or (src.kind == "analysis" and src.asset_kind in ("scene", "cinematic"))
-        else (static.scene if static else current.scene_material if current else None)
+        src.scene if carries_scene(src) else (static.scene if static else current.scene_material if current else None)
     )
     identity_path = (
         src.identity_path
-        if src.kind in ("actor", "cinematic") or (src.kind == "analysis" and src.asset_kind in ("actor", "cinematic"))
+        if character
         else (static.identity_path if static else current.identity_path if current else None)
     )
     identity_hash = (
         src.identity_hash
-        if src.kind in ("actor", "cinematic") or (src.kind == "analysis" and src.asset_kind in ("actor", "cinematic"))
+        if character
         else (static.identity_hash if static else current.identity_hash if current else None)
     )
     layout = (
@@ -651,9 +649,7 @@ async def restore_presentation(user_id: int) -> VisualPlayCommand | None:
             # 已结束的生活整片不能作为恢复目标；清掉失效指针后由客户端按当前目录
             # 解析普通基础舞台，避免重连再次派发同一段旧活动影像。
             state.composition_json = None
-            state.current_visual_id = state.current_version_id = None
-            state.loop_visual_id = state.loop_version_id = None
-            state.current_snapshot_json = state.loop_snapshot_json = None
+            clear_presented_pointers(state)
             await touch_presentation(db, user_id)
             await db.commit()
             return None

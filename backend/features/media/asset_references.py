@@ -6,9 +6,9 @@ from infrastructure.text import utc_now
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.assets.service import asset_paths_in_session
+from features.assets.references import scanned_asset_paths
+from features.assets.service import asset_paths_for_ids
 from features.configuration.settings.values import get_user_setting
-from features.jobs.service import job_asset_paths
 
 from .character_images import ImageChainState
 from .models import ImageGenJob, MediaManualOperation, VideoGenJob
@@ -18,13 +18,13 @@ from .voice_usage import used_voice_ids
 
 
 async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
-    referenced = await job_asset_paths(db, user_id)
-    for snapshot, result in await db.execute(
+    referenced = await scanned_asset_paths(
+        db,
+        user_id,
         select(MediaManualOperation.snapshot_json, MediaManualOperation.result_json).where(
             MediaManualOperation.user_id == user_id, MediaManualOperation.created_at >= utc_now() - timedelta(days=90)
-        )
-    ):
-        referenced |= asset_paths([snapshot, result], user_id)
+        ),
+    )
     for result, state in await db.execute(
         select(ImageGenJob.result_json, ImageGenJob.state).where(
             ImageGenJob.user_id == user_id, ImageGenJob.cleanup_requested_at.is_(None)
@@ -38,14 +38,15 @@ async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
                     referenced |= asset_paths(candidate.model_dump(mode="json"), user_id)
         else:
             referenced |= asset_paths(result, user_id)
-    for result in await db.scalars(
+    referenced |= await scanned_asset_paths(
+        db,
+        user_id,
         select(VideoGenJob.review_result_json).where(
             VideoGenJob.user_id == user_id,
             VideoGenJob.cleanup_requested_at.is_(None),
             VideoGenJob.state.in_(("queued", "running", "paused", "unknown", "succeeded")),
-        )
-    ):
-        referenced |= asset_paths(result, user_id)
+        ),
+    )
     selected_tokens = custom_voice_tokens(await get_user_setting(db, user_id, "companion.voice_id"))
     rows = list(
         await db.execute(
@@ -68,7 +69,7 @@ async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
         for asset_id in (row.reference_asset_id, row.preview_asset_id)
         if asset_id is not None
     }
-    return referenced | set((await asset_paths_in_session(db, user_id, ids)).values())
+    return referenced | await asset_paths_for_ids(db, user_id, ids)
 
 
 async def cleanup_obsolete_assets(db: AsyncSession, user_id: int) -> set[str]:

@@ -26,8 +26,8 @@ from features.media.review_views import (
     MediaJobView,
     MediaManualRequest,
     MediaReviewRequest,
-    MediaSlotView,
     review_request_matches,
+    single_slot_review_view,
 )
 
 from .creation import (
@@ -95,35 +95,20 @@ async def visual_review_view(user_id: int, job_id: int) -> MediaJobView:
                 review, evidence, candidate_path = candidate.review, candidate.evidence, candidate.path
         candidate_key = candidate_review_key(progress.generation_id)
         basis = review_basis(review, evidence, candidate_key if candidate_path else None)
-        return MediaJobView(
-            id=row.id,
-            kind=row.kind,
-            state=row.state,
-            stage=row.stage,
-            revision=row.revision,
-            required_slots=1,
-            ready_slots=int(review is not None and review.verdict == "pass"),
-            complete=row.state == "succeeded",
-            slots=[
-                MediaSlotView(
-                    slot=0,
-                    media_id=str(row.id),
-                    status=row.stage,
-                    review=review,
-                    basis_id=basis,
-                    candidate_basis_id=candidate_key,
-                    preview_url=client_asset_url(candidate_path) if candidate_path else None,
-                    can_review=row.stage == "review_pending" and basis is not None and needs_review(review),
-                    error=row.error,
-                    candidates=await manual_candidate_views(
-                        _manual_candidates(progress),
-                        media_type="video"
-                        if progress.candidate and progress.candidate.media_kind == "video"
-                        else "image",
-                    ),
-                    can_regenerate=row.state in {"paused", "failed"},
-                )
-            ],
+        return single_slot_review_view(
+            row,
+            media_id=str(row.id),
+            review=review,
+            basis_id=basis,
+            candidate_key=candidate_key,
+            preview_url=client_asset_url(candidate_path) if candidate_path else None,
+            can_review=row.stage == "review_pending" and basis is not None and needs_review(review),
+            candidates=await manual_candidate_views(
+                _manual_candidates(progress),
+                media_type="video" if progress.candidate and progress.candidate.media_kind == "video" else "image",
+            ),
+            error=row.error,
+            can_regenerate=row.state in {"paused", "failed"},
         )
 
 

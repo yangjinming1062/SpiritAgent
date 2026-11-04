@@ -20,7 +20,6 @@ from infrastructure.database import SESSION_LOCAL
 from infrastructure.domain_locks import lock_domain
 from infrastructure.logger import get_logger
 from infrastructure.text import parse_llm_json, resolve_language, utc_now
-from pydantic import BaseModel, Field
 from runtime.events.emit import emit_ws_event
 from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
 from runtime.user_maintenance import is_user_in_maintenance, track_user_task
@@ -42,12 +41,13 @@ from features.media.provider_attempts import count_scene_submissions, record_sce
 from features.media.review_contracts import review_passes
 from features.media.review_evidence import asset_file_hash, review_media_intact
 from features.scenes.asset_references import sync_scene_assets
+from features.scenes.generation_state import SceneGenerationState, scene_chain_paths, scene_generation_state
 from features.scenes.models import CompanionScene, SceneJob, SceneOrigin, ScenePolicy, SceneSource, SceneStatus
 from features.scenes.prompt_assembly import build_scene_prompt
 from features.scenes.prompts import SCENE_DESCRIBE_SYSTEM
 from features.scenes.queries import can_retry_scene_generation, get_pending_scene_task, get_scene, scene_view
 from features.scenes.query_contracts import SceneSnapshot
-from features.scenes.schemas import SceneDescriptionRequest, SceneImageDimensions, SceneImageSize, SceneReviewSnapshot
+from features.scenes.schemas import SceneDescriptionRequest, SceneImageSize, SceneReviewSnapshot
 from features.scenes.wallpaper import SCENE_IMAGE_SIZE, WallpaperAsset, prepare_scene_wallpaper, scene_source_extension
 from features.visuals.static_presentation import invalidate_scene_presentation
 
@@ -56,16 +56,6 @@ _SCENE_LOCKS: dict[int, asyncio.Lock] = {}
 _INFLIGHT_TASKS: dict[tuple[int, int], asyncio.Task[None]] = {}
 _QUEUED_TASKS: dict[tuple[int, int], tuple[str | None]] = {}
 _AUTONOMOUS_ORIGINS = frozenset((SceneOrigin.LLM.value, SceneOrigin.NIGHTLY.value))
-
-
-class SceneRegenerationState(BaseModel):
-    task_id: str
-    prompt: str
-    target_size: SceneImageSize
-    image_chain: ImageChainState = Field(default_factory=ImageChainState)
-    wallpaper_path: str = ""
-    source_size: SceneImageDimensions | None = None
-    selection: ProviderSelection | None = None
 
 
 class SceneError(RuntimeError):
@@ -115,12 +105,6 @@ async def _require_scene(db: AsyncSession, user_id: int, scene_id: int) -> Compa
     return row
 
 
-def _regeneration_asset_paths(row: CompanionScene) -> set[str]:
-    if row.replacement_job is None or not row.replacement_job.checkpoint:
-        return set()
-    return SceneRegenerationState.model_validate(row.replacement_job.checkpoint).image_chain.stored_paths()
-
-
 async def _event(db: AsyncSession, user_id: int, event_type: str, scene_id: int | None = None) -> None:
     _require_complete(await persona_snapshot(db, user_id))
     emit_ws_event(db, user_id=user_id, event_type=event_type, payload={"scene_id": scene_id})
@@ -131,9 +115,7 @@ async def _event(db: AsyncSession, user_id: int, event_type: str, scene_id: int 
             job = scene.initial_job
             if job is not None and job.state in {"succeeded", "failed", "cancelled", "unknown"}:
                 receiving = (
-                    ImageChainState.model_validate(job.checkpoint)
-                    if job.state == "unknown" and job.checkpoint
-                    else None
+                    scene_generation_state(job).image_chain if job.state == "unknown" and job.checkpoint else None
                 )
                 await update_business_steps_in_session(
                     db,
@@ -224,19 +206,19 @@ async def _new_scene(
             reference_image=reference_image or "",
         )
         row.initial_job.stage = "waiting_upload" if source == SceneSource.USER_UPLOAD.value else "prepare"
+        generation = SceneGenerationState(prompt=row.prompt, target_size=SCENE_IMAGE_SIZE)
+        row.initial_job.checkpoint = generation.model_dump(mode="json")
         db.add(row)
         await db.flush()
         if reference_image:
-            state = ImageChainState()
             references = await freeze_image_references(
                 {"ref": reference_image},
                 user_id=user_id,
-                generation_id=state.generation_id,
+                generation_id=generation.image_chain.generation_id,
                 directory=asset_store.scene_asset_directory(row.id),
                 max_bytes=SCENE_DOWNLOAD_MAX_BYTES,
             )
             row.reference_image = references["ref"]
-            row.initial_job.checkpoint = state.model_dump(mode="json")
         if life_step is not None:
             await bind_job_request(db, user_id, row.initial_job.id, life_step.idempotency_key, fingerprint)
             await bind_step_in_session(db, user_id, life_step, business_ref={"job_id": row.initial_job.id})
@@ -281,39 +263,40 @@ async def regenerate_scene(user_id: int, scene_id: int) -> CompanionScene:
         if row.status == SceneStatus.FAILED.value and row.source == SceneSource.GENERATED.value:
             if not can_retry_scene_generation(row):
                 raise SceneStateError("该场景不能重试生成，请先核对任务结果或重试图片与描述检查")
-            state = ImageChainState.model_validate(row.initial_job.checkpoint) if row.initial_job.checkpoint else None
+            frozen = scene_generation_state(row.initial_job)
+            state = frozen.image_chain
             # 已返回的图片继续保存或检查；没有可续处理结果时，用原输入重新解析当前模型链。
-            if state and (
-                state.pending_urls or state.best() or any(not candidate.evaluated for candidate in state.candidates)
-            ):
+            if state.pending_urls or state.best() or any(not candidate.evaluated for candidate in state.candidates):
                 if state.pending_urls:
                     state.resume_download()
-                    row.initial_job.checkpoint = state.model_dump(mode="json")
+                    row.initial_job.checkpoint = frozen.model_dump(mode="json")
                 row.initial_job.stage = state.phase
             else:
-                cleanup_paths = state.stored_paths() if state else set()
-                row.initial_job.checkpoint = None
+                cleanup_paths = state.stored_paths()
+                row.initial_job.checkpoint = SceneGenerationState(
+                    prompt=row.prompt, target_size=SceneImageSize.model_validate(row.target_size_json)
+                ).model_dump(mode="json")
                 row.initial_job.stage = "prepare"
             row.status = SceneStatus.PENDING.value
+            row.initial_job.state = "queued"
             row.initial_job.error = None
             row.origin = SceneOrigin.USER_REQUEST.value
         elif row.status == SceneStatus.READY.value and row.media_path:
             if not row.title.strip() or not row.description.strip():
                 raise SceneStateError("请先补全场景标题和描述")
             saved = (
-                SceneRegenerationState.model_validate(row.replacement_job.checkpoint)
+                scene_generation_state(row.replacement_job)
                 if row.replacement_job is not None and row.replacement_job.checkpoint
                 else None
             )
             if saved is not None and saved.image_chain.pending_urls:
                 saved.image_chain.resume_download()
                 regeneration = saved
-                regeneration_task_id = saved.task_id
+                regeneration_task_id = row.replacement_job.token
             else:
-                cleanup_paths = _regeneration_asset_paths(row)
+                cleanup_paths = scene_chain_paths(row.replacement_job)
                 regeneration_task_id = str(uuid4())
-                regeneration = SceneRegenerationState(
-                    task_id=regeneration_task_id,
+                regeneration = SceneGenerationState(
                     prompt=build_scene_prompt(notes=row.description),
                     target_size=SCENE_IMAGE_SIZE,
                     selection=ProviderSelection(
@@ -326,7 +309,7 @@ async def regenerate_scene(user_id: int, scene_id: int) -> CompanionScene:
                 row.replacement_job = SceneJob(
                     user_id=user_id, scene=row, purpose="replace", token=regeneration_task_id
                 )
-            row.replacement_job.availability = "pending"
+            row.replacement_job.state = "queued"
             row.replacement_job.stage = "prepare"
             row.replacement_job.error = None
             row.replacement_job.checkpoint = regeneration.model_dump(mode="json")
@@ -372,17 +355,17 @@ async def discard_scene(user_id: int, scene_id: int) -> CompanionScene:
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
         row = await _require_scene(db, user_id, scene_id)
         persona = await _persona(db, user_id)
-        if row.replacement_job is not None and row.replacement_job.availability == "pending":
-            cleanup_paths = _regeneration_asset_paths(row)
-            row.replacement_job.availability = "cancelled"
+        if row.replacement_job is not None and row.replacement_job.state in {"queued", "running"}:
+            cleanup_paths = scene_chain_paths(row.replacement_job)
+            row.replacement_job.state = "cancelled"
             row.replacement_job.stage = "cancelled"
             row.replacement_job.error = None
             row.replacement_job.checkpoint = None
         elif row.status == "pending":
             row.status = SceneStatus.CANCELLED.value
-            if row.initial_job.checkpoint:
-                cleanup_paths = ImageChainState.model_validate(row.initial_job.checkpoint).stored_paths()
-                row.initial_job.checkpoint = None
+            row.initial_job.state, row.initial_job.stage = "cancelled", "cancelled"
+            cleanup_paths = scene_chain_paths(row.initial_job)
+            row.initial_job.checkpoint = None
         else:
             raise SceneStateError("该场景没有待取消的任务")
         await _event(db, persona.user_id, "companion.scene.updated", scene_id)
@@ -403,16 +386,14 @@ async def delete_scene(user_id: int, scene_id: int) -> None:
         persona = await _persona(db, user_id)
         if row.status == "pending":
             raise SceneStateError("请先取消场景任务")
-        if row.replacement_job is not None and row.replacement_job.availability == "pending":
+        if row.replacement_job is not None and row.replacement_job.state in {"queued", "running"}:
             raise SceneStateError("请先取消图片重新生成任务")
         if await invalidate_scene_presentation(db, user_id, scene_id, row.media_path):
             emit_ws_event(
                 db, user_id=user_id, event_type="companion.life.presentation_requested", payload={"force": True}
             )
         paths = {row.media_path, row.upload_source_path} - {""}
-        if row.initial_job.checkpoint:
-            paths |= ImageChainState.model_validate(row.initial_job.checkpoint).stored_paths()
-        paths |= _regeneration_asset_paths(row)
+        paths |= scene_chain_paths(row.initial_job) | scene_chain_paths(row.replacement_job)
         await db.delete(row)
         await db.flush()
         await _event(db, persona.user_id, "companion.scene.updated", scene_id)
@@ -425,17 +406,18 @@ async def edit_scene_description(user_id: int, scene_id: int, description: Scene
     cleanup_paths: set[str] = set()
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
         row = await _require_scene(db, user_id, scene_id)
-        if row.replacement_job is not None and row.replacement_job.availability == "pending":
+        if row.replacement_job is not None and row.replacement_job.state in {"queued", "running"}:
             raise SceneStateError("图片重新生成时不能编辑场景信息")
         if not row.media_path:
             raise SceneStateError("图片尚未保存")
         if row.replacement_job is not None and row.replacement_job.checkpoint:
-            cleanup_paths = _regeneration_asset_paths(row)
+            cleanup_paths = scene_chain_paths(row.replacement_job)
             row.replacement_job.checkpoint = None
             row.replacement_job = None
         row.title = description.title
         row.description = description.description
         row.status = SceneStatus.READY.value
+        row.initial_job.state = "succeeded"
         row.initial_job.stage = "complete"
         row.ready_at = row.ready_at or utc_now()
         row.initial_job.error = None
@@ -461,17 +443,18 @@ async def retry_scene_description(user_id: int, scene_id: int) -> CompanionScene
             raise SceneStateError("原候选等待检查，请先使用继续检查入口")
         if (
             row.replacement_job is not None
-            and row.replacement_job.availability == "failed"
+            and row.replacement_job.state in {"failed", "paused", "unknown"}
             and row.replacement_job.checkpoint
             and row.replacement_job.stage in {"analyze", "review_failed", "confirmation"}
         ):
-            frozen = SceneRegenerationState.model_validate(row.replacement_job.checkpoint)
-            regeneration_task_id = frozen.task_id
-            row.replacement_job.availability = "pending"
+            frozen = scene_generation_state(row.replacement_job)
+            regeneration_task_id = row.replacement_job.token
+            row.replacement_job.state = "queued"
             row.replacement_job.stage = "analyze" if frozen.wallpaper_path else "evaluating"
             row.replacement_job.error = None
         elif row.media_path and row.status in {"description_failed", "cancelled"}:
             row.status = "pending"
+            row.initial_job.state = "queued"
             row.initial_job.stage = "analyze"
             row.initial_job.error = None
         elif (
@@ -480,6 +463,7 @@ async def retry_scene_description(user_id: int, scene_id: int) -> CompanionScene
             and row.initial_job.checkpoint
         ):
             row.status = "pending"
+            row.initial_job.state = "queued"
             row.initial_job.stage = "evaluating"
             row.initial_job.error = None
         else:
@@ -571,11 +555,12 @@ async def _analyze(user_id: int, scene_id: int) -> None:
         row.title = description.title
         row.description = description.description
         row.status = SceneStatus.READY.value
+        row.initial_job.state = "succeeded"
         row.initial_job.stage = "complete"
         row.ready_at = utc_now()
         row.initial_job.error = None
         if row.initial_job.checkpoint:
-            cleanup_paths = ImageChainState.model_validate(row.initial_job.checkpoint).stored_paths()
+            cleanup_paths = scene_chain_paths(row.initial_job)
             row.initial_job.checkpoint = None
         row.reference_image = ""
         persona = await _persona(db, user_id)
@@ -658,22 +643,55 @@ async def _scene_review_snapshot(state: ImageChainState, output_path: str) -> di
     ).model_dump(mode="json")
 
 
+def _failure_flags(
+    state: SceneGenerationState | None, *, review_failed: bool, download_failed: bool
+) -> tuple[bool, bool]:
+    """把异常与图片链状态归为「保留候选待检查」与「提交结果未知」两类。"""
+    if state is None:
+        return review_failed, False
+    chain = state.image_chain
+    unknown = download_failed or chain.phase == "submitting" or chain.stop_reason == "result_unknown"
+    return review_failed or bool(chain.candidates) and chain.best() is None, unknown
+
+
+async def _apply_generated_environment(
+    row: CompanionScene, state: SceneGenerationState, description: SceneDescriptionRequest | None
+) -> None:
+    """写入已通过检查的环境结果；任务状态、旧图回收和描述补全由调用方负责。"""
+    if state.target_size is None:
+        raise SceneStateError("场景任务缺少已冻结的生活空间尺寸")
+    row.media_path = state.wallpaper_path
+    row.review_result_json = await _scene_review_snapshot(state.image_chain, state.wallpaper_path)
+    origin = state.image_chain.selected_origin()
+    row.generation_origin_json = origin.model_dump(mode="json") if origin else None
+    if description is not None:
+        row.description = description.description
+    row.prompt = state.prompt
+    row.source = SceneSource.GENERATED.value
+    row.reference_image = ""
+    row.target_size_json = state.target_size.model_dump(mode="json")
+    row.source_size_json = state.source_size.model_dump(mode="json") if state.source_size else None
+    row.image_size_json = state.target_size.model_dump(mode="json")
+
+
 async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> None:
-    async with SESSION_LOCAL() as db:
+    async with _scene_lock(user_id), SESSION_LOCAL() as db:
         row = await get_scene(db, user_id, scene_id)
         if (
             row is None
             or row.replacement_job is None
-            or row.replacement_job.availability != "pending"
+            or row.replacement_job.state not in {"queued", "running"}
             or row.replacement_job.token != task_id
         ):
             return
         if not row.replacement_job.checkpoint:
             raise SceneStateError("重新生成任务资料缺失")
-        frozen = SceneRegenerationState.model_validate(row.replacement_job.checkpoint)
-        if frozen.task_id != task_id:
-            raise SceneStateError("重新生成任务已失效")
-        state = frozen.image_chain
+        frozen = scene_generation_state(row.replacement_job)
+        row.replacement_job.state = "running"
+        await db.commit()
+    target = frozen.target_size
+    if target is None:
+        raise SceneStateError("重新生成任务缺少已冻结的生活空间尺寸")
 
     async def save_progress(progress: ImageChainState) -> None:
         async with _scene_lock(user_id), SESSION_LOCAL() as db:
@@ -681,12 +699,12 @@ async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> 
             if (
                 fresh is None
                 or fresh.replacement_job is None
-                or fresh.replacement_job.availability != "pending"
+                or fresh.replacement_job.state not in {"queued", "running"}
                 or fresh.replacement_job.token != task_id
                 or not fresh.replacement_job.checkpoint
             ):
                 raise asyncio.CancelledError
-            current = SceneRegenerationState.model_validate(fresh.replacement_job.checkpoint)
+            current = scene_generation_state(fresh.replacement_job)
             if progress.phase == "submitting" and (
                 fresh.replacement_job.stage != "submitting" or current.image_chain.active_index != progress.active_index
             ):
@@ -703,44 +721,35 @@ async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> 
             wallpaper = await _generate_wallpaper(
                 user_id,
                 frozen.prompt,
-                frozen.target_size,
-                state,
+                target,
+                frozen.image_chain,
                 save_progress,
                 scene_id=scene_id,
                 selection=frozen.selection,
             )
-            frozen.wallpaper_path = wallpaper.path
-            frozen.source_size = wallpaper.source_size
-            await save_progress(state)
+            frozen.wallpaper_path, frozen.source_size = wallpaper.path, wallpaper.source_size
+            await save_progress(frozen.image_chain)
         description = await _describe_image(user_id, frozen.wallpaper_path)
         async with _scene_lock(user_id), SESSION_LOCAL() as db:
             row = await get_scene(db, user_id, scene_id)
             if (
                 row is None
                 or row.replacement_job is None
-                or row.replacement_job.availability != "pending"
+                or row.replacement_job.state not in {"queued", "running"}
                 or row.replacement_job.token != task_id
             ):
                 return
             old_path = row.media_path
-            row.media_path = frozen.wallpaper_path
-            row.review_result_json = await _scene_review_snapshot(state, frozen.wallpaper_path)
-            origin = state.selected_origin()
-            row.generation_origin_json = origin.model_dump(mode="json") if origin else None
-            row.description = description.description
-            row.prompt = frozen.prompt
-            row.source = SceneSource.GENERATED.value
-            row.reference_image = ""
-            row.target_size_json = frozen.target_size.model_dump(mode="json")
-            row.source_size_json = frozen.source_size.model_dump(mode="json") if frozen.source_size else None
-            row.image_size_json = frozen.target_size.model_dump(mode="json")
+            await _apply_generated_environment(row, frozen, description)
             if row.initial_job is not None:
                 row.initial_job.checkpoint = None
-            row.replacement_job.availability = "ready"
+            row.replacement_job.state = "succeeded"
             row.replacement_job.stage = "complete"
             row.replacement_job.error = None
             row.replacement_job.checkpoint = None
-            await enqueue_asset_cleanup(db, user_id, state.stored_paths() | ({old_path} if old_path else set()))
+            await enqueue_asset_cleanup(
+                db, user_id, frozen.image_chain.stored_paths() | ({old_path} if old_path else set())
+            )
             await _event(db, user_id, "companion.scene.updated", scene_id)
             await db.commit()
     finally:
@@ -753,7 +762,7 @@ async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> 
                 )
             )
         if retained is None:
-            await _reclaim_assets(user_id, state.stored_paths() | ({old_path} if old_path else set()))
+            await _reclaim_assets(user_id, frozen.image_chain.stored_paths() | ({old_path} if old_path else set()))
 
 
 async def _mark_regeneration_failed(
@@ -765,33 +774,24 @@ async def _mark_regeneration_failed(
         if (
             row is None
             or row.replacement_job is None
-            or row.replacement_job.availability != "pending"
+            or row.replacement_job.state not in {"queued", "running"}
             or row.replacement_job.token != task_id
         ):
             return
-        current = (
-            SceneRegenerationState.model_validate(row.replacement_job.checkpoint)
-            if row.replacement_job.checkpoint
-            else None
-        )
-        review_failed = review_failed or current is not None and bool(current.image_chain.candidates)
-        retry_analysis = current is not None and (bool(current.wallpaper_path) or review_failed)
-        if current and current.image_chain.phase == "submitting":
+        current = scene_generation_state(row.replacement_job) if row.replacement_job.checkpoint else None
+        reviewing, unknown = _failure_flags(current, review_failed=review_failed, download_failed=download_failed)
+        retry_analysis = current is not None and (bool(current.wallpaper_path) or bool(current.image_chain.candidates))
+        if current is not None and current.image_chain.phase == "submitting":
             error = "生图提交结果未知，未自动重复付费请求；请核对供应商任务后再决定是否重新生成"
-        unknown = current is not None and (
-            download_failed
-            or current.image_chain.phase == "submitting"
-            or current.image_chain.stop_reason == "result_unknown"
-        )
         if not retry_analysis and not unknown:
-            cleanup_paths = current.image_chain.stored_paths() if current else set()
+            cleanup_paths = current.image_chain.stored_paths() if current is not None else set()
             row.replacement_job.checkpoint = None
-        row.replacement_job.availability = "failed"
-        row.replacement_job.stage = "review_failed" if review_failed else "analyze" if retry_analysis else "failed"
+        row.replacement_job.state = "failed"
+        row.replacement_job.stage = "review_failed" if reviewing else "analyze" if retry_analysis else "failed"
         row.replacement_job.error = error
-        if review_failed and row.replacement_job is not None:
+        if reviewing:
             row.replacement_job.state, row.replacement_job.stage = "paused", "review_pending"
-        if unknown and row.replacement_job is not None:
+        if unknown:
             row.replacement_job.state = "unknown"
         await _event(db, user_id, "companion.scene.updated", scene_id)
         await enqueue_asset_cleanup(db, user_id, cleanup_paths)
@@ -800,34 +800,28 @@ async def _mark_regeneration_failed(
 
 
 async def _run_pipeline(scene_id: int, user_id: int) -> None:
-    async with SESSION_LOCAL() as db:
+    async with _scene_lock(user_id), SESSION_LOCAL() as db:
         row = await get_scene(db, user_id, scene_id)
         if row is None or row.initial_job is None or row.status != "pending":
             return
         if row.source == SceneSource.USER_UPLOAD.value and not row.media_path:
             return
-        state = (
-            ImageChainState.model_validate(row.initial_job.checkpoint)
-            if row.initial_job.checkpoint
-            else ImageChainState()
-        )
+        frozen = scene_generation_state(row.initial_job)
         needs_image = not row.media_path
-        prompt = row.prompt
         reference_image = row.reference_image or None
-        if not row.target_size_json:
-            raise SceneStateError("场景任务缺少已冻结的生活空间尺寸")
-        target = SceneImageSize.model_validate(row.target_size_json)
+        row.initial_job.state = "running"
+        await db.commit()
 
     async def save_progress(progress: ImageChainState) -> None:
         async with _scene_lock(user_id), SESSION_LOCAL() as db:
             fresh = await get_scene(db, user_id, scene_id)
             if fresh is None or fresh.initial_job is None or fresh.status != "pending":
                 raise asyncio.CancelledError
-            previous = (
-                ImageChainState.model_validate(fresh.initial_job.checkpoint) if fresh.initial_job.checkpoint else None
-            )
+            previous = scene_generation_state(fresh.initial_job) if fresh.initial_job.checkpoint else None
             if progress.phase == "submitting" and (
-                previous is None or previous.phase != "submitting" or previous.active_index != progress.active_index
+                previous is None
+                or previous.image_chain.phase != "submitting"
+                or previous.image_chain.active_index != progress.active_index
             ):
                 await _check_policy(db, await _persona(db, user_id), fresh.origin)
                 if fresh.origin == SceneOrigin.LLM.value:
@@ -842,28 +836,33 @@ async def _run_pipeline(scene_id: int, user_id: int) -> None:
                         progress.providers[progress.active_index or 0],
                     )
                 fresh.initial_job.attempt_count += 1
-            fresh.initial_job.checkpoint = progress.model_dump(mode="json")
+            frozen.image_chain = progress
+            fresh.initial_job.checkpoint = frozen.model_dump(mode="json")
             fresh.initial_job.stage = "analyze" if progress.phase == "complete" else progress.phase
             await _event(db, user_id, "companion.scene.updated", scene_id)
             await db.commit()
 
     if needs_image:
+        target = frozen.target_size
+        if target is None:
+            raise SceneStateError("场景任务缺少已冻结的生活空间尺寸")
         wallpaper = await _generate_wallpaper(
-            user_id, prompt, target, state, save_progress, scene_id=scene_id, reference_image=reference_image
+            user_id,
+            frozen.prompt,
+            target,
+            frozen.image_chain,
+            save_progress,
+            scene_id=scene_id,
+            reference_image=reference_image,
         )
         async with _scene_lock(user_id), SESSION_LOCAL() as db:
             fresh = await get_scene(db, user_id, scene_id)
             if fresh is None or fresh.initial_job is None or fresh.status != "pending":
                 await _reclaim_assets(user_id, {wallpaper.path})
                 return
-            fresh.media_path = wallpaper.path
-            fresh.review_result_json = await _scene_review_snapshot(state, wallpaper.path)
-            origin = state.selected_origin()
-            fresh.generation_origin_json = origin.model_dump(mode="json") if origin else None
-            fresh.target_size_json = target.model_dump(mode="json")
-            fresh.source_size_json = wallpaper.source_size.model_dump(mode="json")
-            fresh.image_size_json = wallpaper.image_size.model_dump(mode="json")
-            fresh.initial_job.checkpoint = state.model_dump(mode="json")
+            frozen.wallpaper_path, frozen.source_size = wallpaper.path, wallpaper.source_size
+            await _apply_generated_environment(fresh, frozen, None)
+            fresh.initial_job.checkpoint = frozen.model_dump(mode="json")
             fresh.initial_job.stage = "analyze"
             await _event(db, user_id, "companion.scene.updated", scene_id)
             await db.commit()
@@ -878,13 +877,12 @@ async def _mark_failed(
         if row is None or row.initial_job is None or row.status != "pending":
             return
         row.status = SceneStatus.DESCRIPTION_FAILED.value if row.media_path else SceneStatus.FAILED.value
-        row.initial_job.error = error
-        if row.initial_job.checkpoint:
-            progress = ImageChainState.model_validate(row.initial_job.checkpoint)
-            review_failed = review_failed or bool(progress.candidates)
-            if download_failed or progress.phase == "submitting" or progress.stop_reason == "result_unknown":
-                row.initial_job.state = "unknown"
-        if review_failed and row.initial_job.state != "unknown":
+        row.initial_job.state, row.initial_job.error = "failed", error
+        state = scene_generation_state(row.initial_job) if row.initial_job.checkpoint else None
+        reviewing, unknown = _failure_flags(state, review_failed=review_failed, download_failed=download_failed)
+        if unknown:
+            row.initial_job.state = "unknown"
+        elif reviewing:
             row.initial_job.state, row.initial_job.stage = "paused", "review_pending"
         await _event(db, user_id, "companion.scene.updated", scene_id)
         await db.commit()
@@ -985,9 +983,8 @@ async def _resume_scene_row(row: CompanionScene) -> None:
     # 同行双 pending 不可达；优先恢复重新生成，缺任务或维护中时回退整单重跑。
     if (
         row.replacement_job is not None
-        and row.replacement_job.availability == "pending"
+        and row.replacement_job.state in {"queued", "running"}
         and row.replacement_job.token
-        and row.replacement_job.state != "unknown"
         and not is_user_in_maintenance(row.user_id)
     ):
         _launch_task(row.id, row.user_id, regeneration_task_id=row.replacement_job.token)
@@ -1002,7 +999,7 @@ async def resume_scene_jobs(user_id: int | None = None) -> None:
         conditions = [
             or_(
                 CompanionScene.status == "pending",
-                CompanionScene.replacement_job.has(SceneJob.availability == "pending"),
+                CompanionScene.replacement_job.has(SceneJob.state.in_(("queued", "running"))),
             )
         ]
         if user_id is not None:

@@ -76,7 +76,6 @@ from features.appearance.views import (
     retry_outfit_description_view,
     select_avatar_view,
 )
-from features.companion.http_contracts import IdleExpressionRequest, IdleExpressionResult
 from features.companion.persona_service import PersonaConflictError, PersonaValidationError, confirm_portrait
 from features.companion.schemas import (
     CompanionOperationResponse,
@@ -104,7 +103,6 @@ from infrastructure.http_contracts import operation_policy
 from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
 from pydantic import ValidationError
-from workflows.companion.operations import companion_idle_expression
 
 from entrypoints.http.auth import CurrentUser, OptionalSession
 from entrypoints.http.rate_limit import limiter
@@ -113,18 +111,6 @@ from entrypoints.http.routing import get_router
 
 router = get_router()
 logger = get_logger(__name__)
-
-
-@router.post(
-    "/idle-expressions",
-    operation_id="companion.idle_expression",
-    response_model=IdleExpressionResult,
-    openapi_extra=operation_policy(wait_for_model=True),
-)
-async def post_idle_expression(user: CurrentUser, body: IdleExpressionRequest) -> IdleExpressionResult:
-    return IdleExpressionResult.model_validate(
-        await companion_idle_expression(user.id, body.model_dump(exclude_unset=True))
-    )
 
 
 @router.post(
