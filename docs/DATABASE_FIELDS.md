@@ -35,7 +35,7 @@
 
 | 字段组与模型入口 | 语义 |
 |---|---|
-| 任务请求和临时引用：[jobs/models.py](../backend/features/jobs/models.py) | 请求指纹独立于制作身份，多个请求可复用同一工作项；检查点清理不删除幂等身份 |
+| 任务请求和临时引用：[jobs/models.py](../backend/features/jobs/models.py) | 请求与制作身份的分离见 [DATABASE](DATABASE.md#任务供应商尝试与资产)；检查点清理不删除幂等身份 |
 | 远端名额与尝试：[video_queue/models.py](../backend/features/media/video_queue/models.py) | lane 按供应商凭据分组保存名额和冷却，attempt 保存提交、句柄、结果和未知事实；本地任务删除不能结束远端占用 |
 | 文件库存：[assets/models.py](../backend/features/assets/models.py) | 账户路径、内容哈希、媒体属性和回收待办；最后活引用释放后才可回收 |
 | 异步通知：[events/models.py](../backend/runtime/events/models.py) | outbox 载荷、认领和投递状态与业务事务协作；数据库通知只唤醒，不承担恢复身份 |
@@ -53,7 +53,7 @@
 
 | 字段组与模型入口 | 语义 |
 |---|---|
-| 成品、版本与原件分析：[visuals/models.py](../backend/features/visuals/models.py) | 稳定成品 ID 与不可变版本分离；`asset_kind` 区分 actor/scene/cinematic 三类资产，版本保存判别联合冻结输入（`snapshot_json.source.kind`，分析期间可为 `analysis`，完成后为普通资产类型；原始文件信息和呈现审核资格可附着于任何来源）、分析任务的上下文/结果/条目操作队列（含命令与补充说明快照，条目结果独立保存操作状态与修订）及稳定原件哈希（派生透明视频后仍用于重复内容去重）、视频实际表现与适用条件（`source.media_semantics`）、实际输入图、文件关系与 actor 主体元数据（`body_json`），成功重做才切换当前指针 |
+| 成品、版本与原件分析：[visuals/models.py](../backend/features/visuals/models.py) | 稳定成品 ID 与不可变版本分离；`asset_kind` 区分 actor/scene/cinematic 三类资产（语义见[影像契约](PROTOCOL.md#影像成品与模式隔离)），版本保存判别联合冻结输入（`snapshot_json.source.kind`，分析期间可为 `analysis`，完成后为普通资产类型；原始文件信息和呈现审核资格可附着于任何来源）、分析任务的上下文/结果/条目操作队列（含命令与补充说明快照，条目结果独立保存操作状态与修订）及稳定原件哈希（派生透明视频后仍用于重复内容去重）、视频实际表现与适用条件（`source.media_semantics`）、实际输入图、文件关系与 actor 主体元数据（`body_json`），成功重做才切换当前指针 |
 | 制作与呈现：同一[模型文件](../backend/features/visuals/models.py) | 工作项的目标/预期版本控制采纳；呈现保存当前/持续版本、舞台组合（`composition_json`，含持续画面选择来源与生活驱动组合的生活上下文）与生活意图（`intent_json`，含结构化活动类别与建议视觉标签）、静态素材目标与已显示快照、待播指令和代次；播放记录保存具体版本的指令与回执，`selection` 与生活上下文两列随指令登记、回执时推进组合；动作定义（[action_library/models.py](../backend/features/action_library/models.py)）另存语义标签、表现角色、动作强度与可中断属性，随冻结输入进入影像快照 |
 | 公共媒体：[media/models.py](../backend/features/media/models.py) | 图片按稳定媒体身份和槽位、视频按原任务保存冻结输入、来源消息与交付绑定；检查尝试保存独立请求、执行身份和依据，人工操作保存所选候选内容与原判断快照，业务继续记录保存所属任务、原权限及结果。通用控制状态归 jobs，远端状态归 provider attempts；模型判断与独立人工放行依据见 [review_contracts.py](../backend/features/media/review_contracts.py)，待复核与待业务确认均为非终态 |
 
@@ -71,7 +71,7 @@
 
 | 字段组与模型入口 | 语义 |
 |---|---|
-| 状态、事项、步骤与事件：[life/models.py](../backend/features/life/models.py) | 生活状态行串行化写入，`activity_type` 与 `scene_tags_json` 保存当前活动类别及有依据的环境、物品条件供视觉投影；状态、事项、步骤和事件分别保存模型生成的用户叙事，事项保存目标/进展和调整来源，步骤保存可执行动作、永久阅读成果及结构化 `failure_code`，原始错误留在任务边界；事件保留事实性质、主体、叙事和结果；完成证据经关联表连接。`0003_life_narrative_reset` 清理旧生活历史后启用这些字段。 |
+| 状态、事项、步骤与事件：[life/models.py](../backend/features/life/models.py) | 生活状态行串行化写入，`activity_type` 与 `scene_tags_json` 保存当前活动类别及有依据的环境、物品条件供视觉投影；状态、事项、步骤和事件分别保存模型生成的用户叙事，事项保存目标/进展和调整来源，步骤保存可执行动作、永久阅读成果及结构化 `failure_code`，原始错误留在任务边界；事件保留事实性质、主体、叙事和结果；完成证据经关联表连接。 |
 | 生活检索：同一[模型文件](../backend/features/life/models.py) | `life_event_search_index` 引用本账户事件，索引受控事实、叙事及阅读所得，按内容指纹、模型和实际维度核对向量 |
 | 请求额度与提交：同一[模型文件](../backend/features/life/models.py) | `life_action_admissions` 独立保存额度归属和已提交事实，不能从事项历史重新计数 |
 | 夜间账本：[nightly/models.py](../backend/workflows/nightly/models.py) | 按账户/本地日期组织阶段、预算和动作身份，关联实际任务与结果；账本计划不证明执行完成 |

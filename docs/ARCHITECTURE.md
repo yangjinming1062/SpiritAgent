@@ -1,26 +1,10 @@
 # 系统架构
 
-本文定义进程职责、依赖方向、状态权威与信任边界。产品取舍见 [DESIGN](DESIGN.md#设计目标)，任务导航见 [AGENTS](../AGENTS.md)，通信和恢复语义见 [PROTOCOL](PROTOCOL.md)。
+本文定义进程职责、依赖方向、状态权威与信任边界。结构图示见 [架构图谱](ARCHITECTURE_MAP.md)，产品取舍见 [DESIGN](DESIGN.md#设计目标)，任务导航见 [AGENTS](../AGENTS.md)，通信和恢复语义见 [PROTOCOL](PROTOCOL.md)。
 
 ## 运行拓扑
 
-```mermaid
-flowchart LR
-    subgraph Desktop[用户设备]
-        Client[Client 主进程与渲染窗口]
-        Runner[Runner 本机工具]
-        Client <-->|OS IPC 与启动 token| Runner
-    end
-    subgraph Cloud[Linux Docker]
-        Backend[Backend web 单实例]
-        DB[(PostgreSQL 与资产存储)]
-        Provider[模型与媒体供应商]
-        Backend <--> DB
-        Backend <--> Provider
-    end
-    Client <-->|业务 HTTP、事件与设备 WS| Backend
-    Mobile[手机浏览器 Remote] <-->|设备 Cookie、HTTP 与 WS| Backend
-```
+拓扑图示见[架构图谱](ARCHITECTURE_MAP.md#系统运行拓扑)。
 
 Backend 部署于 Linux Docker；Client、Runner、Installer 支持 Windows 与 macOS。库本身支持的平台不等于产品支持。安装器负责首装和环境修复，安装后的运行与更新归 Client；Python 与依赖准备仍需联网。
 

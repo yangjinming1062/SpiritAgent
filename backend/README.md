@@ -1,6 +1,6 @@
 # Backend
 
-负责云端生活决策与执行、对话、角色与记忆、媒体制作、调度和持久化。全局职责与部署边界见 [ARCHITECTURE](../docs/ARCHITECTURE.md)，跨端状态见 [PROTOCOL](../docs/PROTOCOL.md)，生成规格见 [PIPELINE](../docs/PIPELINE.md)。本页提供代码入口、后端共享约束和运维操作。
+负责云端生活决策与执行、对话、角色与记忆、媒体制作、调度和持久化。本页提供代码入口、后端共享约束和运维操作。
 
 ## 任务入口
 
@@ -22,7 +22,7 @@
 | 共享任务与正式资产 | [任务](features/jobs/README.md)、[资产](features/assets/README.md)、[asset_store.py](infrastructure/assets/asset_store.py) |
 | 桌面/Runner 发布分发 | [update.py](entrypoints/http/routes/update.py)、[update_releases.py](features/updates/releases.py) |
 | 后端服务更新 | [服务更新](#服务更新)、[updater](updater/README.md)、[service_updater.py](infrastructure/web/service_updater.py) |
-| 数据库结构与账户维护 | [数据库设计](../docs/DATABASE.md)、[模型注册](bootstrap/models.py)、[user.py](workflows/maintenance/user.py) |
+| 数据库结构与账户维护 | [模型注册](bootstrap/models.py)、[user.py](workflows/maintenance/user.py) |
 | 提示词与恢复装配 | [提示词定位](#提示词定位)、[registrations.py](bootstrap/registrations.py)、[runtime_lifecycle.py](bootstrap/runtime_lifecycle.py) |
 
 ## 代码与依赖
@@ -49,7 +49,7 @@ ORM 留在数据所有者内部。跨域读取返回 DTO/冻结快照，写入�
 
 冷启动依次取环境变量、`backend/.env`、`config.toml` 和 [示例配置](config.toml.example)，路径按 Backend 目录定位。数据库、密钥、管理员和数据目录属于启动配置，字段及安全校验以 [Settings](infrastructure/config.py) 为准；空值或示例凭据拒绝启动。
 
-[system_settings.py](features/configuration/system_settings.py) 串行合并并校验整批运营参数，数据库提交成功后才更新运行时及相关资源；启动水合覆盖文件中的动态值，非法持久值中止启动，启动专用键不能在管理页修改。用户点键配置统一经 [settings/values.py](features/configuration/settings/values.py) 读写，存储编码归 [字段字典](../docs/DATABASE_FIELDS.md#账户配置与设备身份)。
+[system_settings.py](features/configuration/system_settings.py) 串行合并并校验整批运营参数，数据库提交成功后才更新运行时及相关资源；启动水合覆盖文件中的动态值，非法持久值中止启动，启动专用键不能在管理页修改。用户点键配置统一经 [settings/values.py](features/configuration/settings/values.py) 读写。
 
 [0001 完整基线](alembic/versions/0001_baseline.py) 是空库起点。启动执行 `alembic upgrade head`，不自动清库；后续结构变化新增迁移。模型与迁移保持类型、约束、索引和触发器一致，不能只依赖 autogenerate；降级只用于隔离库验收。
 
@@ -63,7 +63,7 @@ HTTP、调度及清理通过 [user_maintenance.py](runtime/user_maintenance.py) 
 
 ### 事件与交付
 
-事务通知经 `emit_ws_event` 写 outbox，聊天流经会话 emitter。实现入口为 [events/loop.py](runtime/events/loop.py)，投递语义归 [事件路由](../docs/PROTOCOL.md#事件路由)。
+事务通知经 `emit_ws_event` 写 outbox，聊天流经会话 emitter。实现入口为 [events/loop.py](runtime/events/loop.py)。
 
 事件回路按本进程连接及 [受众契约](entrypoints/desktop/event_contracts.py) 认领；内部处理器派生所属任务后确认投递，失败按预算退避/转死信。LISTEN 探活与周期扫描共同唤醒；[outbox_gc.py](runtime/events/outbox_gc.py) 不按年龄清理普通离线事件。账户受理回合由 [chat_accounts.py](runtime/chat_accounts.py) 持有，连接只拥有身份与投递恢复状态。
 
@@ -79,21 +79,21 @@ HTTP、调度及清理通过 [user_maintenance.py](runtime/user_maintenance.py) 
 
 ### 夜间批处理
 
-[cron.py](entrypoints/scheduler/cron.py) 为活跃账户启动陪伴域单飞流水线；[nightly_activity.py](workflows/nightly/nightly_activity.py) 协调规划、账本、日记与反思，专业预设记忆另行定期审阅。窗口和恢复规则归 [夜间流水线](../docs/PROTOCOL.md#夜间流水线)。
+[cron.py](entrypoints/scheduler/cron.py) 为活跃账户启动陪伴域单飞流水线；[nightly_activity.py](workflows/nightly/nightly_activity.py) 协调规划、账本、日记与反思，专业预设记忆另行定期审阅。
 
 ### 陪伴调度与恢复
 
-[companion/intents.py](features/companion/intents.py) 保存条件和认领，主动回合由 [companion_turns.py](workflows/automation/companion_turns.py) 执行，普通任务由 [standard_turns.py](workflows/automation/standard_turns.py) 处理；交付差异归 [Cron 双轨](../docs/PROTOCOL.md#cron-双轨)。
+[companion/intents.py](features/companion/intents.py) 保存条件和认领，主动回合由 [companion_turns.py](workflows/automation/companion_turns.py) 执行，普通任务由 [standard_turns.py](workflows/automation/standard_turns.py) 处理。
 
 [scheduling.py](workflows/scheduling.py) 发现到期生活判断、待执行步骤及待评估呈现，按账户单飞和维护租约派发。判断、执行、呈现分别进入 [生活模块](features/life/README.md) 所列工作流，不通过页面读取触发。
 
 ### 远程网页
 
-[remote.py](entrypoints/http/routes/remote.py) 处理扫码和设备会话，独立 [Remote](../remote/README.md) 使用同账户业务接口与对话编排；本机操作仍要求桌面 Runner。身份、撤权和重连见 [远程访问](../docs/PROTOCOL.md#远程访问)。
+[remote.py](entrypoints/http/routes/remote.py) 处理扫码和设备会话，Remote 页面使用同账户业务接口与对话编排；本机操作仍要求桌面 Runner。
 
 ## 供应商与网络错误
 
-回退、可重试错误与未知结果以 [失败契约](../docs/PROTOCOL.md#模型失败与重试预算) 为准，实现位于 [llm_fallback.py](infrastructure/ai/llm_fallback.py)、[error_classifier.py](infrastructure/ai/error_classifier.py) 和 [providers/http.py](infrastructure/ai/providers/http.py)。
+回退、可重试错误与未知结果由 [llm_fallback.py](infrastructure/ai/llm_fallback.py)、[error_classifier.py](infrastructure/ai/error_classifier.py) 和 [providers/http.py](infrastructure/ai/providers/http.py) 处理。
 
 [network.py](infrastructure/network.py) 按协议使用 `HTTP_PROXY`/`HTTPS_PROXY`，回退 `ALL_PROXY`；进程环境优先于文件。`NO_PROXY` 支持域名、IP、端口、通配与 CIDR，网段只匹配 URL 中的 IP，服务短名称须显式包含。DDGS 使用 `DDGS_PROXY`。
 
@@ -121,7 +121,7 @@ Compose 与后端共用数据库凭据，默认连 `postgres:5432`；显式数�
 
 默认发布 HTTP/WS `10620` 和 PostgreSQL `15432`，端口映射见 Compose。桌面激活地址为 `http://<服务器地址>:10620`，管理端为 `/admin/`；实际访问仍取决于防火墙与网络。
 
-管理后台的 `public_base_url` 用于激活码地址、手机入口及供应商读取视频附件，须对实际访问方可达。反向代理透传 WS 升级及 Origin；Cookie、扫码和麦克风要求见 [远程访问](../docs/PROTOCOL.md#远程访问)。调整 Compose 后重新 `up -d` 应用；移除旧服务时核对孤立容器，保留数据卷。
+管理后台的 `public_base_url` 用于激活码地址、手机入口及供应商读取视频附件，须对实际访问方可达。反向代理透传 WS 升级及 Origin。调整 Compose 后重新 `up -d` 应用；移除旧服务时核对孤立容器，保留数据卷。
 
 ### 透明素材模型
 
@@ -129,23 +129,23 @@ Compose 与后端共用数据库凭据，默认连 `postgres:5432`；显式数�
 
 ### 免费社交资讯来源
 
-客户端「设置 → 资讯来源」管理个人登录。X 接受含 `auth_token`、`ct0` 的 Cookie 请求头或导出 JSON，仅保存需要的字段；保存成功表示结构有效，平台拒绝后需重新配置。小红书使用扫码及按需短信验证。账户、清除与分享边界归 [来源契约](../docs/PROTOCOL.md#主动信息与来源分享)。
+客户端「设置 → 资讯来源」管理个人登录。X 接受含 `auth_token`、`ct0` 的 Cookie 请求头或导出 JSON，仅保存需要的字段；保存成功表示结构有效，平台拒绝后需重新配置。小红书使用扫码及按需短信验证。
 
 小红书服务随 Compose 启动，Backend 固定连接 `http://xiaohongshu-mcp:18060`，无地址或访问令牌配置，也不发布宿主机端口。修改该服务时执行 `docker compose up -d --build backend xiaohongshu-mcp`；后端启动不依赖其健康检查，健康只证明进程可访问。
 
-平台 Cookie 只由 Backend 数据库按账户持久保存，关闭设置页面不取消登录。浏览器并发、代理、扫码结果交接与重启规则见 [采集服务](infrastructure/web/xiaohongshu_service/README.md)。管理后台只维护相关夜间预算，`NO_PROXY` 须包含服务短名称。
+平台 Cookie 只由 Backend 数据库按账户持久保存，关闭设置页面不取消登录。管理后台只维护相关夜间预算，`NO_PROXY` 须包含服务短名称。
 
 新增平台在 [social_platforms.py](infrastructure/web/social_platforms.py) 登记标识与原文规则，在 [social_sources.py](infrastructure/web/social_sources.py) 登记凭证及采集/登录工厂，再生成共享契约。复用账户存储、预算和分享流程，仅新登录交互类型需补客户端表单。
 
 ### 服务更新
 
-管理页经共享 Unix socket 调用独立 [updater](updater/README.md)，更新期间后端进程可被替换。首次在服务器准备：
+管理页经共享 Unix socket 调用独立更新器，更新期间后端进程可被替换。首次在服务器准备：
 
 1. 将部署密钥 `deploy_key` 和 `known_hosts` 放入仓库已忽略的 `deploy/`。
 2. 在 `backend/.env` 设置 `UPDATER_REPO_DIR` 为仓库宿主机绝对路径，容器使用同一路径。
 3. 在 `backend` 执行 `docker compose up -d --build updater`。
 
-更新器预检、获取 upstream、fast-forward、构建并重启 backend，最后核对健康及运行提交。分支/本地修改保护、目标变化和中断行为由更新器文档维护；页面分别显示仓库与运行版本，代码拉取成功不代表部署成功。
+更新器预检、获取 upstream、fast-forward、构建并重启 backend，最后核对健康及运行提交。页面分别显示仓库与运行版本，代码拉取成功不代表部署成功。
 
 拉取/构建失败时旧服务继续运行，代码已推进可重试同版本；启动失败保留诊断，不自动回退镜像或数据库。范围固定为 backend，小红书、更新器及拓扑变化仍手工升级；构建使用 Docker 缓存，单独提交号变化不使依赖层失效。
 
@@ -153,17 +153,16 @@ Compose 与后端共用数据库凭据，默认连 `postgres:5432`；显式数�
 
 `local` 提供 Responses、embedding 和 ComfyUI，默认地址以 [适配器](infrastructure/ai/providers/local/) 为准。信息库端点须从 Backend 容器可达，不同地址分别登记；无鉴权服务可空密钥，启用 SSRF 守卫时私网仍须满足允许规则。
 
-- ComfyUI 的工作流、参考与透明输出见 [PIPELINE](../docs/PIPELINE.md#本地-comfyui)，卡片声明见 [AI 配置](../docs/PROTOCOL.md#ai-配置与密钥)。
 - LLM 卡片填写真实部署模型及实际上下文/输出窗口。[chat.py](infrastructure/ai/providers/local/chat.py) 按 `/props` 缓存识别 llama.cpp/Strata，选择对应无工具结构输出与推理参数；未识别服务依提示词和应用校验。温度按 1:1 下发。
-- embedding 使用记忆任务配置并保留实际维度，验证元素有限、非零及同批宽度；空间不匹配或失败时走关键词召回，补齐规则见 [记忆恢复](features/memory/README.md#读取召回与恢复)。
+- embedding 使用记忆任务配置并保留实际维度，验证元素有限、非零及同批宽度；空间不匹配或失败时走关键词召回。
 
 ### 运营参数
 
-管理后台维护 AI 配置继承、用户覆盖和运营参数，协议归 [AI 配置与密钥](../docs/PROTOCOL.md#ai-配置与密钥)。管理页复用共享 HTTP 核心，源码启动前运行 `pnpm --dir remote build`，生成手机页与 `admin-http.js`；Docker 已包含这些产物。
+管理后台维护 AI 配置继承、用户覆盖和运营参数。管理页复用共享 HTTP 核心，源码启动前运行 `pnpm --dir remote build`，生成手机页与 `admin-http.js`；Docker 已包含这些产物。
 
 ### LLM 调试日志
 
-每次逻辑模型调用记录 `LLM usage`，包含任务、模型、终态、耗时及已取得的用量，内部网络重试归同一调用；缺失计数保留 null，失败和取消不丢已有用量。日志写容器 stdout，聊天统计口径见 [事件契约](../docs/PROTOCOL.md#事件路由)。
+每次逻辑模型调用记录 `LLM usage`，包含任务、模型、终态、耗时及已取得的用量，内部网络重试归同一调用；缺失计数保留 null，失败和取消不丢已有用量。日志写容器 stdout。
 
 临时启用 LLM 调试并设为 DEBUG 才记录原始请求/响应，可能包含对话，验证材料另行脱敏。基础提示词预览不能代替完整发送请求。
 
@@ -182,8 +181,8 @@ Compose 与后端共用数据库凭据，默认连 `postgres:5432`；显式数�
 | [夜间](workflows/nightly/prompts.py)、[资讯检索](workflows/nightly/topic_prompts.py) | 规划、日记/反思、来源筛选与检查点 |
 | [工具](runtime/tools/prompts.py)、[伙伴呈现视图](workflows/companion_action_prompts.py) | 工具说明、网页摘要与呈现视图；参数仍以工具 schema 为准 |
 
-声音设计由 [voice_design.py](workflows/voice_design.py) 装配实际适配器指南，不进入朗读正文；Runner 工具及发布脚本各自维护输入。修改遵循 [RULES](../RULES.md#提示词设计与修改规范)，完整生成链核对见 [PIPELINE](../docs/PIPELINE.md#完整提示词链检查入口)。
+声音设计由 [voice_design.py](workflows/voice_design.py) 装配实际适配器指南，不进入朗读正文；Runner 工具及发布脚本各自维护输入。
 
 ## 契约与验证
 
-命令统一见 [Scripts](../scripts/README.md)。按改动核对入口、生产/消费与恢复：数据变更验证事务和引用，配置变更验证失败及热更新，依赖变更执行分层检查，提示词核对实际请求和真实产物。文档检查事实、链接、锚点与差异，不触发付费制作。
+按改动核对入口、生产/消费与恢复：数据变更验证事务和引用，配置变更验证失败及热更新，依赖变更执行分层检查，提示词核对实际请求和真实产物。文档检查事实、链接、锚点与差异，不触发付费制作。

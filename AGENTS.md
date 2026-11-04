@@ -1,6 +1,6 @@
 # Agent 阅读入口
 
-修改前读 [RULES.md](RULES.md)。初次了解项目读 [产品设计目标](docs/DESIGN.md#设计目标)与 [ARCHITECTURE](docs/ARCHITECTURE.md)；具体任务按下表进入相关全局定义与模块代码入口，再核对生产方、消费方、恢复和验证要求。全局定义留在 `docs/`，模块 README 只展开内部约束与操作；无需为重复描述往返阅读。已读且未变化的内容不重复加载。
+修改前读 [RULES.md](RULES.md)。初次了解项目读 [产品设计目标](docs/DESIGN.md#设计目标)、[ARCHITECTURE](docs/ARCHITECTURE.md) 与[架构图谱](docs/ARCHITECTURE_MAP.md)；具体任务按下表进入相关全局定义与模块代码入口，再核对生产方、消费方、恢复和验证要求。全局定义留在 `docs/`，模块 README 只展开内部约束与操作；无需为重复描述往返阅读。已读且未变化的内容不重复加载。
 
 | 要修改的功能 | 先读的语义 | 代码与联动入口 |
 |---|---|---|

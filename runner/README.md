@@ -1,6 +1,6 @@
 # Runner
 
-Runner 在用户设备执行本机工具，不持有后端账户凭据。跨端准入、能力同步和未知结果定义归 [本机工具契约](../docs/PROTOCOL.md#本机工具)，本文维护工具装配、执行环境及资源所有权。
+Runner 在用户设备执行本机工具，不持有后端账户凭据。本文维护工具装配、执行环境及资源所有权。
 
 ## 任务入口
 
@@ -41,7 +41,7 @@ uv run --frozen python -I -m spirit_agent_runner --version
 uv run --frozen python -I -m spirit_agent_runner --check
 ```
 
-启动使用 `python -I -X utf8 -m spirit_agent_runner --desktop-endpoint <path>`，token 仅从 `SPIRITAGENT_DESKTOP_TOKEN` 读取。isolated mode 防止 cwd／PYTHONPATH 同名包遮蔽安装包，editable 安装负责源码定位。`--check` 校验依赖及静态工具定义，不启动运行时资源；正常运行限 Windows／macOS，Windows 用 Job Object 管进程树。wheel 隔离安装、版本和更新验证归 [Scripts](../scripts/README.md#构建安装器)。
+启动使用 `python -I -X utf8 -m spirit_agent_runner --desktop-endpoint <path>`，token 仅从 `SPIRITAGENT_DESKTOP_TOKEN` 读取。isolated mode 防止 cwd／PYTHONPATH 同名包遮蔽安装包，editable 安装负责源码定位。`--check` 校验依赖及静态工具定义，不启动运行时资源；正常运行限 Windows／macOS，Windows 用 Job Object 管进程树。
 
 ## 执行环境
 
@@ -94,11 +94,11 @@ SSH 搜索按退出状态区分无匹配、分页截断与失败，部分匹配�
 
 [journal.py](spirit_agent_runner/runtime/journal.py) 保存原子认领、参数指纹、持有者与终态。认领线程未结束时取消，须先等认领再记未知；完成和取消串行写，无认领凭据不能补写终态。重放已存结果不执行也不再裁切。
 
-`calls.cancel` 按发起连接的 `req_id` 或跨连接 `call_id` 定位，两者互斥；旧结果用 `calls.get` 查询。保留期、日志不可写及未知恢复归 [调用日志契约](../docs/PROTOCOL.md#调用日志与未知结果)。
+`calls.cancel` 按发起连接的 `req_id` 或跨连接 `call_id` 定位，两者互斥；旧结果用 `calls.get` 查询。
 
 ## 按预设学习技能
 
-调用固定学习域，结束恢复上下文；[scope.py](spirit_agent_runner/contracts/scope.py) 的允许预设须与后端目录一致，由 [generate_protocol.py](../scripts/generate_protocol.py) 核对。目录与隔离归 [学习作用域](../docs/PROTOCOL.md#预设记忆与学习作用域)。
+调用固定学习域，结束恢复上下文；[scope.py](spirit_agent_runner/contracts/scope.py) 的允许预设须与后端目录一致，由 [generate_protocol.py](../scripts/generate_protocol.py) 核对。
 
 读取合并本域、静态技能和外部根。读取与管理共用候选定位：首个命中根优先，同根裸名歧义须指定 `category/skill-name`；创建只用单段名称，description 必须字符串。修改共享技能先复制到本域，失败撤回本次副本，删除只影响本域；写入串行且防符号链接跨域。
 
@@ -106,4 +106,4 @@ SSH 搜索按退出状态区分无匹配、分页截断与失败，部分匹配�
 
 ## 契约与验证
 
-静态门禁检查导入方向、循环和资源归属；包内健康检查只证明可加载和定义有效。命令见 [Scripts](../scripts/README.md#按改动选择验证)，修改调用须覆盖取消、日志重放、资源退出和作用域隔离。OS API、路径、进程树和桌面效果按宿主实测，SSH 单独验证。
+静态门禁检查导入方向、循环和资源归属；包内健康检查只证明可加载和定义有效。修改调用须覆盖取消、日志重放、资源退出和作用域隔离。OS API、路径、进程树和桌面效果按宿主实测，SSH 单独验证。

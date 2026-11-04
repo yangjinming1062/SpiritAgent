@@ -1,6 +1,6 @@
 # 更新签名密钥
 
-[update.pub](update.pub) 是 Runner 更新验签公钥，随 Client `extraResources` 交付。[签名助手](../lib/UpdateManifest.ps1)生成 `latest-runner.yml`，[Client](../../client/main/runner/updater.ts)验证；它独立于桌面平台证书签名，信任与安装契约见 [PROTOCOL](../../docs/PROTOCOL.md#自更新签名)。
+[update.pub](update.pub) 是 Runner 更新验签公钥，随 Client `extraResources` 交付。[签名助手](../lib/UpdateManifest.ps1)生成 `latest-runner.yml`，[Client](../../client/main/runner/updater.ts)验证；它独立于桌面平台证书签名。
 
 ## 公钥与私钥职责
 

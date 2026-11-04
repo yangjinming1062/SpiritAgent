@@ -1,6 +1,6 @@
 # Installer
 
-Tauri 安装器负责首次安装与环境修复，日常运行及更新归 Client。macOS 可在已安装环境健康时直接启动桌面端；构建和发布归 [Scripts](../scripts/README.md#构建安装器)。
+Tauri 安装器负责首次安装与环境修复，日常运行及更新归 Client。macOS 可在已安装环境健康时直接启动桌面端。
 
 ## 任务入口
 
@@ -57,4 +57,4 @@ Tauri 安装器负责首次安装与环境修复，日常运行及更新归 Clie
 
 Tauri Rust 与前端 API 保持相同次版本，依赖变更同时更新 [Cargo.toml](src-tauri/Cargo.toml)、[package.json](package.json) 和锁文件。构建门禁隔离安装实际 wheel 并核入口、版本和静态定义；安装阶段再次健康检查，失败不继续。
 
-按目标平台验证首装、修复、macOS 快路径、取消和失败重试，同时检查实际内嵌文件、路径与 BOM；签名、启动和进程树终止需要实机。运行 Cargo 测试前把 `SPIRITAGENT_HOME` 指向专用临时目录并先暂存完整载荷。命令见 [Scripts](../scripts/README.md#构建安装器)。
+按目标平台验证首装、修复、macOS 快路径、取消和失败重试，同时检查实际内嵌文件、路径与 BOM；签名、启动和进程树终止需要实机。运行 Cargo 测试前把 `SPIRITAGENT_HOME` 指向专用临时目录并先暂存完整载荷。

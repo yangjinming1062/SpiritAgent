@@ -1,10 +1,10 @@
 # 仓库构建与验证
 
-本目录维护仓库级检查、提示词调试、安装器构建和发布。命令默认在仓库根执行；Client 自有脚本由 [package.json](../client/package.json) 调用，首次安装流程见 [Installer](../installer/README.md)。
+本目录维护仓库级检查、提示词调试、安装器构建和发布。命令默认在仓库根执行；Client 自有脚本由 [package.json](../client/package.json) 调用。
 
 ## 按改动选择验证
 
-命令默认在仓库根运行，依赖准备见[源码启动](../README.md#从源码启动)。按变化选择专项检查，提交前执行完整入口：
+命令默认在仓库根运行。按变化选择专项检查，提交前执行完整入口：
 
 ```bash
 uv tool run --python 3.13 pre-commit run -a
@@ -22,13 +22,13 @@ uv tool run --python 3.13 pre-commit run -a
 | Windows 原生 | `pnpm --dir client build:native` 构建 Rust host 与同架构托盘 DLL；`cargo check --locked` 只覆盖 Rust，另执行 Windows 实机清单 |
 | macOS 原生 | 在 macOS 执行 `pnpm --dir client build:native`，再以 `pnpm --dir client exec electron-builder --dir --mac --arm64` 构建对应包（x64 替换架构参数），并执行本页实机清单 |
 | Installer／wheel | `pnpm --dir installer build`、完整载荷下的目标平台 Tauri 构建及安装修复；wheel 另做隔离安装检查 |
-| 音频／模型行为 | 音频专项检查与试听；模型修改核对实际请求、真实返回和消费结果，生成链范围见 [PIPELINE](../docs/PIPELINE.md#验证) |
+| 音频／模型行为 | 音频专项检查与试听；模型修改核对实际请求、真实返回和消费结果 |
 
 协议修改后用 `generate_protocol.py` 更新生成契约；它同时核对 Backend 与 Runner 预设清单，`--check` 只查漂移。构建可能修改版本清单与构建信息，检查最终差异，并区分静态、构建与真实运行证据。
 
 ## 持续生活验收
 
-体验标准归 [DESIGN](../docs/DESIGN.md#当前能力与体验验收)，执行边界与已知差距见 [生活模块](../backend/features/life/README.md)。以下是验收方法，不是已有运行结论。
+以下是验收方法，不是已有运行结论。
 
 完成伙伴引导并配置所需模型、能力和有限额度，记录代码版本、时区、平台与供应商。首轮可连续观察七个本地日；未覆盖跨日、等待或恢复时延长观察，不能只以天数达标。选择可核对来源或成果的生活目标，不每天人工下发步骤冒充自主推进。
 
@@ -46,7 +46,7 @@ uv tool run --python 3.13 pre-commit run -a
 
 ## macOS 桌面验收
 
-平台与构建前提见 [macOS 模块](../client/desktop-macos/README.md)。记录系统、Electron、架构、屏幕和权限状态；开发版与打包版都需验证，跨平台构建结果不能替代实机行为。
+记录系统、Electron、架构、屏幕和权限状态；开发版与打包版都需验证，跨平台构建结果不能替代实机行为。
 
 | 范围 | 必测条件与结果 |
 |---|---|
@@ -60,7 +60,7 @@ uv tool run --python 3.13 pre-commit run -a
 
 ## Windows 桌面验收
 
-记录 Windows、Electron、host／DLL 架构、屏幕与 DPI。依据 [Windows 宿主](../client/desktop-windows/README.md)及[启动器契约](../docs/PROTOCOL.md#桌面呈现与本机启动器)验证，保留失败后的恢复结果；输入、层级或恢复不成立时使用窗口模式。
+记录 Windows、Electron、host／DLL 架构、屏幕与 DPI，保留失败后的恢复结果；输入、层级或恢复不成立时使用窗口模式。
 
 | 范围 | 必测条件与结果 |
 |---|---|
@@ -88,7 +88,7 @@ uv run --no-project --python 3.13 python scripts/check_runner_architecture.py
 
 [导入检查](check_imports.py)覆盖 Backend／Runner 的 future annotations、TYPE_CHECKING 泄漏与包级 facade。不加 `--strict-imports` 时违规仅诊断、退出码仍为 0；`--fix` 只移除 future annotations，修正后须重跑严格模式。默认跳过构建目录、虚拟环境和缓存，显式文件仍检查。
 
-[Runner 分层检查](check_runner_architecture.py)静态核对依赖、跨能力私有访问、导入环、导入副作用与资源所有权；`--runner <目录>` 可检查临时样本，不启动 Runner。规则语义归 [Runner](../runner/README.md#装配调用与资源)，实际 wheel 和资源回收须另验。
+[Runner 分层检查](check_runner_architecture.py)静态核对依赖、跨能力私有访问、导入环、导入副作用与资源所有权；`--runner <目录>` 可检查临时样本，不启动 Runner。实际 wheel 和资源回收须另验。
 
 ## Backend 架构检查
 
@@ -96,7 +96,7 @@ uv run --no-project --python 3.13 python scripts/check_runner_architecture.py
 uv run --no-project --python 3.13 python scripts/check_services_architecture.py
 ```
 
-[检查器](check_services_architecture.py)核对 Backend 导入、依赖环、目录方向、跨业务 ORM／私有入口、公开返回 ORM、入口 SQL 和禁用目录；纯类型与静态词表不算业务依赖。`--backend <目录>` 可检查临时样本，规则语义归 [Backend](../backend/README.md#模块依赖边界)。
+[检查器](check_services_architecture.py)核对 Backend 导入、依赖环、目录方向、跨业务 ORM／私有入口、公开返回 ORM、入口 SQL 和禁用目录；纯类型与静态词表不算业务依赖。`--backend <目录>` 可检查临时样本。
 
 ## 提示词调试
 
@@ -114,7 +114,7 @@ uv run --project backend python scripts/debug_prompt.py -m "你好" --persona-na
 uv run --project backend python scripts/debug_prompt.py --db --user-id 1 --preset companion
 ```
 
-[调试器](debug_prompt.py)展示基础预设、画像、工具与单条输入，默认用模拟资料，`--db` 需要配置及数据库。它不执行模型回合，也不覆盖全部动态协议；真实请求使用 [Backend 调试日志](../backend/README.md#llm-调试日志)核查，不能把调试输出当成供应商实际输入。
+[调试器](debug_prompt.py)展示基础预设、画像、工具与单条输入，默认用模拟资料，`--db` 需要配置及数据库。它不执行模型回合，也不覆盖全部动态协议；不能把调试输出当成供应商实际输入。
 
 ## 引导音频
 
@@ -132,7 +132,7 @@ macOS `afterPack` 检查架构，并由 [macos-app-identity.cjs](../client/scrip
 
 `pnpm --dir remote dev` 启动浏览器开发入口，`pnpm --dir remote build` 产出 `remote/dist/`。Backend 同源托管 `/remote/`。
 
-[Backend Dockerfile](../backend/Dockerfile)从仓库根上下文构建 Remote 与管理端共享 HTTP 产物，再复制至镜像；[.dockerignore](../.dockerignore)排除桌面产物、数据与凭据。管理端固定文件名脚本不能长期缓存。运行与设备恢复见 [Remote](../remote/README.md)。
+[Backend Dockerfile](../backend/Dockerfile)从仓库根上下文构建 Remote 与管理端共享 HTTP 产物，再复制至镜像；[.dockerignore](../.dockerignore)排除桌面产物、数据与凭据。管理端固定文件名脚本不能长期缓存。
 
 ## 构建安装器
 
@@ -152,13 +152,13 @@ uv run --no-project --python 3.13 python scripts/check_runner_package.py
 
 载荷由 [build_helpers.py](lib/build_helpers.py)暂存，Installer 构建期校验载荷完整（安装脚本、Runner wheel、桌面产物、技能、引导音频），缺项直接失败。macOS 输出安装器 DMG 及规范文件名副本；Windows 输出 Setup EXE 和 update ZIP。Windows ZIP 包含桌面产物、blockmap、单一 Runner wheel 与签名清单，需 PowerShell、openssl 及[签名私钥](release-keys/README.md)。
 
-`--sign-identity`／`--notary-profile` 与 `--cert-thumbprint` 作用于桌面产物，不签 Installer 本身；Client `.app` 公证另由上一节配置控制。产物、载荷与安装修复验收见 [Installer](../installer/README.md)。
+`--sign-identity`／`--notary-profile` 与 `--cert-thumbprint` 作用于桌面产物，不签 Installer 本身；Client `.app` 公证另由上一节配置控制。
 
 ## 发布
 
 推送三段数字 `vX.Y.Z` tag 触发 [release.yml](../.github/workflows/release.yml)，双平台产物与说明汇总为草稿，核对后发布；其他 `v*` tag 会触发后失败。已有 release 仅补产物和说明，不改变发布状态。
 
-GitHub 安装包与应用内更新分开交付。Windows 更新 ZIP 需上传 Backend 管理端，由该后端分发；macOS 当前 DMG 不能当作同类更新 ZIP。CI 的签名 Secret 解释和私钥边界归 [签名配置](release-keys/README.md)，工作流尚未配置平台证书签名与 macOS 公证。
+GitHub 安装包与应用内更新分开交付。Windows 更新 ZIP 需上传 Backend 管理端，由该后端分发；macOS 当前 DMG 不能当作同类更新 ZIP。CI 的签名 Secret 解释和私钥边界归 [签名配置](release-keys/README.md)，工作流不执行平台证书签名与 macOS 公证。
 
 跨端契约同时发布 Backend、Client 与 Remote。切换前停止新任务并收敛在途工作；存量数据库变化需新增迁移。核对记录、关联、素材与草稿后开放写入。版本说明需要的模型配置见下节。
 

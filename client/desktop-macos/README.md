@@ -24,6 +24,6 @@ AX 枚举与操作使用后台任务、独立串行锁及逐元素消息超时�
 
 支持 macOS 12 及以上；arm64 与 x64 分别构建，不支持 universal 模块。
 
-在 macOS 执行 `pnpm --dir client build:native`；指定架构使用 [build-desktop-macos.cjs](../scripts/build-desktop-macos.cjs)。构建依赖 Xcode CLT 与 Node-API 头，输出 `build/<arch>/desktop_macos.node`。打包和签名归 [Scripts](../../scripts/README.md#client-开发与打包脚本)。
+在 macOS 执行 `pnpm --dir client build:native`；指定架构使用 [build-desktop-macos.cjs](../scripts/build-desktop-macos.cjs)。构建依赖 Xcode CLT 与 Node-API 头，输出 `build/<arch>/desktop_macos.node`。
 
-加载、权限状态、元数据与图标可以只读验证；窗口枚举、激活、关闭和迁移须在已授权环境执行[平台验收](../../scripts/README.md#macos-桌面验收)。只读探针不得请求授权或操作外部应用，临时探针不入库。
+加载、权限状态、元数据与图标可以只读验证；窗口枚举、激活、关闭和迁移须在已授权环境实机验收。只读探针不得请求授权或操作外部应用，临时探针不入库。

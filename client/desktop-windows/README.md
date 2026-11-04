@@ -1,6 +1,6 @@
 # Windows 桌面宿主
 
-Rust helper 管理 Explorer 挂载、系统工作区、运行窗口和异常恢复；Electron 会话归[主进程](../main/README.md#桌面承载与恢复)。[main.rs](src/main.rs) 定义命令，[windows.rs](src/windows.rs) 组织接管事务；窗口、托盘、工作区分别归 `src/windows/` 下对应模块。
+Rust helper 管理 Explorer 挂载、系统工作区、运行窗口和异常恢复；Electron 会话归主进程。[main.rs](src/main.rs) 定义命令，[windows.rs](src/windows.rs) 组织接管事务；窗口、托盘、工作区分别归 `src/windows/` 下对应模块。
 
 | 进程模式 | 职责 |
 |---|---|
@@ -59,7 +59,7 @@ XAML 修改只作用登记任务栏：清背景与边线，按应用主题调整
 
 DLL 以内容 hash 命名，启用前复制并逐字节核对到当前用户 `LocalAppData/SpiritAgent/native/tray-style/`，不让 Explorer 映射安装／开发目录阻塞更新。已缓存或已载入 DLL 不覆盖、不删除，下次按 manifest 选当前模块。
 
-Electron 保留 Dock 玻璃绘制，原生行在上方接受输入。缺布局、布局清空或界面隐藏时收起托盘；主进程只将固有尺寸和实际可见性投影给 renderer。跨层状态语义归 [呈现契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
+Electron 保留 Dock 玻璃绘制，原生行在上方接受输入。缺布局、布局清空或界面隐藏时收起托盘；主进程只将固有尺寸和实际可见性投影给 renderer。
 
 ## 工作区与层级
 
@@ -97,4 +97,4 @@ pnpm --dir client build:native
 
 ## 原生验收
 
-`SPIRITAGENT_DESKTOP_PROBE=1` 会实际挂载背景，保留系统任务栏且不预留工作区；它不是无副作用加载检查。完整 [Windows 验收](../../scripts/README.md#windows-桌面验收)另覆盖图层、输入、托盘、迁移和异常恢复。
+`SPIRITAGENT_DESKTOP_PROBE=1` 会实际挂载背景，保留系统任务栏且不预留工作区；它不是无副作用加载检查。完整 Windows 桌面验收另覆盖图层、输入、托盘、迁移和异常恢复。

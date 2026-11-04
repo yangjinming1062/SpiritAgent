@@ -6,7 +6,7 @@
 
 Go 模块签名校验保持启用。`backend/.env` 的 `XHS_BUILD_GOPROXY`、`XHS_BUILD_GOSUMDB` 可覆盖构建源，直接构建使用 `GOPROXY`、`GOSUMDB` 参数；默认值留在 Dockerfile。逗号分隔的 Go 代理只在 HTTP 404/410 时回退，网络超时仍失败。`XHS_PROXY` 仅控制运行时浏览器出站。
 
-默认 Compose 通过内部网络提供服务，不设访问令牌、不映射宿主机端口；原全局 REST/MCP 入口不注册。平台 Cookie 每次由 Backend 传入，不读全局登录文件或共用 profile，无需凭证数据卷。部署命令和账户配置见 [Backend](../../../README.md#免费社交资讯来源)。
+默认 Compose 通过内部网络提供服务，不设访问令牌、不映射宿主机端口；原全局 REST/MCP 入口不注册。平台 Cookie 每次由 Backend 传入，不读全局登录文件或共用 profile，无需凭证数据卷。
 
 `XHS_MAX_BROWSERS` 限制扫码和采集的总并发，等待扫码也占名额；满额立即返回 503，不排队。每个浏览器使用独立临时目录，在成功、失败、取消或超时后关闭并清理。全部账户接口设 `Cache-Control: no-store`，日志不记录正文和平台原始错误。
 
