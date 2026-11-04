@@ -265,10 +265,7 @@ def _get_final_path_by_handle(path_str: str) -> str | None:
                     return None
                 buf = ctypes.create_unicode_buffer(req_len + 1)
                 actual = kernel32.GetFinalPathNameByHandleW(
-                    h,
-                    buf,
-                    req_len + 1,
-                    _VOLUME_NAME_DOS | _FILE_NAME_NORMALIZED,
+                    h, buf, req_len + 1, _VOLUME_NAME_DOS | _FILE_NAME_NORMALIZED
                 )
                 if actual == 0:
                     return None

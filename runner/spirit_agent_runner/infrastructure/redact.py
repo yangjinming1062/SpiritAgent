@@ -44,7 +44,7 @@ SECRET_PREFIX_RE = re.compile(r"\b(" + "|".join(_PREFIX_PATTERNS) + r")\b")
 
 _SECRET_ENV_NAMES = r"(?:API_?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|BEARER)"
 _ENV_ASSIGN_RE = re.compile(
-    rf"([A-Za-z_][A-Za-z0-9_]{{0,50}}{_SECRET_ENV_NAMES}[A-Za-z0-9_]{{0,50}})\s*=\s*(['\"]?)(\S+)\2",
+    rf"([A-Za-z_][A-Za-z0-9_]{{0,50}}{_SECRET_ENV_NAMES}[A-Za-z0-9_]{{0,50}})\s*=\s*(['\"]?)(\S+)\2"
 )
 
 _JSON_KEY_NAMES = (
@@ -57,8 +57,7 @@ _AUTH_HEADER_RE = re.compile(r"(Authorization:\s*Bearer\s+)(\S+)", re.IGNORECASE
 _BEARER_RE = re.compile(r"\b([Bb]earer\s+)([A-Za-z0-9_.=-]{20,})")
 _PRIVATE_KEY_RE = re.compile(r"-----BEGIN[A-Z ]*PRIVATE KEY-----[\s\S]*?-----END[A-Z ]*PRIVATE KEY-----")
 _DB_CONNSTR_RE = re.compile(
-    r"((?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp)://[^:]+:)([^@]+)(@)",
-    re.IGNORECASE,
+    r"((?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp)://[^:]+:)([^@]+)(@)", re.IGNORECASE
 )
 _JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_=-]{4,}){0,2}")
 _URL_USERINFO_RE = re.compile(r"(https?|wss?|ftp)://([^/\s:@]+):([^/\s@]+)@")

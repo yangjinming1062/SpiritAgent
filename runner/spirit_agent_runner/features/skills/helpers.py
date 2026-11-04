@@ -70,10 +70,7 @@ def get_skill_description(frontmatter: dict[str, Any], body: str = "") -> str:
     description = frontmatter.get("description", "")
     if isinstance(description, str) and description:
         return description
-    return next(
-        (line.strip() for line in body.splitlines() if line.strip() and not line.strip().startswith("#")),
-        "",
-    )
+    return next((line.strip() for line in body.splitlines() if line.strip() and not line.strip().startswith("#")), "")
 
 
 def get_spiritagent_metadata(frontmatter: dict[str, Any]) -> dict[str, Any]:

@@ -67,7 +67,7 @@ def guard_browser_url(url: str, *, allow_private: bool | None = None) -> tuple[s
         return url, None
     if SECRET_PREFIX_RE.search(url) or SECRET_PREFIX_RE.search(unquote(url)):
         return url, _blocked(
-            "Blocked: URL contains what appears to be an API key or token. Secrets must not be sent in URLs.",
+            "Blocked: URL contains what appears to be an API key or token. Secrets must not be sent in URLs."
         )
     normalized = normalize_url_for_request(url)
     if urlsplit(normalized).scheme.lower() not in {"http", "https"}:

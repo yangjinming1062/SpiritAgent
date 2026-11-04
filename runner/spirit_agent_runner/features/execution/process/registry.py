@@ -115,9 +115,7 @@ class ProcessRegistry:
                 reader(session)
 
         thread = threading.Thread(
-            target=propagate_context_to_thread(run_reader),
-            daemon=True,
-            name=f"{name}-{session.id}",
+            target=propagate_context_to_thread(run_reader), daemon=True, name=f"{name}-{session.id}"
         )
         session._reader_thread = thread
         try:
@@ -134,10 +132,7 @@ class ProcessRegistry:
     def spawn_local(self, command: str, cwd: str, use_pty: bool) -> ProcessSession:
         """在本机派生后台进程；``use_pty=True`` 在伪终端中运行，供交互式 CLI 使用。"""
         session = ProcessSession(
-            id=f"proc_{uuid.uuid4().hex[:12]}",
-            command=command,
-            cwd=resolve_safe_cwd(cwd),
-            started_at=time.time(),
+            id=f"proc_{uuid.uuid4().hex[:12]}", command=command, cwd=resolve_safe_cwd(cwd), started_at=time.time()
         )
         argv = [find_bash(config=load_config()), "-lic", f"set +m; {command}"]
         # 强制无缓冲，否则非 TTY 上 poll 看不到进度。
@@ -170,11 +165,7 @@ class ProcessRegistry:
     def spawn_via_env(self, env: BaseEnvironment, command: str, cwd: str) -> ProcessSession:
         """SSH 派生后台进程（nohup+临时文件轮询）；不支持实时管道与 stdin。"""
         session = ProcessSession(
-            id=f"proc_{uuid.uuid4().hex[:12]}",
-            command=command,
-            cwd=cwd,
-            started_at=time.time(),
-            env_ref=env,
+            id=f"proc_{uuid.uuid4().hex[:12]}", command=command, cwd=cwd, started_at=time.time(), env_ref=env
         )
         temp_dir = env.get_temp_dir().rstrip("/") or "/"
         log_path = f"{temp_dir}/spiritagent_bg_{session.id}.log"
@@ -194,11 +185,7 @@ class ProcessRegistry:
         if session.pid is None:
             # 无 PID 按启动失败处理，不伪装成运行中。
             raise RuntimeError(f"remote start failed (exit code {result.get('returncode')}): {output[-500:]}")
-        self._track(
-            session,
-            lambda s: self._env_poller_loop(s, env, log_path, pid_path, exit_path),
-            "proc-poller",
-        )
+        self._track(session, lambda s: self._env_poller_loop(s, env, log_path, pid_path, exit_path), "proc-poller")
         return session
 
     def _reader_loop(self, session: ProcessSession) -> None:
@@ -224,12 +211,7 @@ class ProcessRegistry:
             self._mark_exited(session, proc.wait())
 
     def _env_poller_loop(
-        self,
-        session: ProcessSession,
-        env: BaseEnvironment,
-        log_path: str,
-        pid_path: str,
-        exit_path: str,
+        self, session: ProcessSession, env: BaseEnvironment, log_path: str, pid_path: str, exit_path: str
     ) -> None:
         """轮询线程（SSH）：每 2 秒读取远端日志与存活状态。"""
         quoted_log_path = shlex.quote(log_path)
@@ -260,9 +242,7 @@ class ProcessRegistry:
                 return
             except Exception as e:
                 logger.warning(
-                    "Polling remote process %s failed; marking it exited with unknown status: %s",
-                    session.id,
-                    e,
+                    "Polling remote process %s failed; marking it exited with unknown status: %s", session.id, e
                 )
                 self._mark_exited(session, None)
                 return
@@ -422,7 +402,7 @@ class ProcessRegistry:
         result = env.execute(command, timeout=5)
         if result["returncode"] not in (0, 1):
             raise RuntimeError(
-                f"Could not check remote process: {clean_output(result['output'], config=load_config()).strip()}",
+                f"Could not check remote process: {clean_output(result['output'], config=load_config()).strip()}"
             )
         return result["returncode"] == 0
 
@@ -432,7 +412,7 @@ class ProcessRegistry:
         # 信号和退出可能同时发生；1 须由后续探活确认，传输失败不能当作已停止。
         if result["returncode"] not in (0, 1):
             raise RuntimeError(
-                f"Could not terminate remote process: {clean_output(result['output'], config=load_config()).strip()}",
+                f"Could not terminate remote process: {clean_output(result['output'], config=load_config()).strip()}"
             )
 
     def kill_process(self, session_id: str) -> dict:

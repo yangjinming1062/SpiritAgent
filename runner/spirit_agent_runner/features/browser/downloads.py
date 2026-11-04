@@ -13,11 +13,7 @@ class DownloadTracker:
         self._pending_downloads: dict[str, dict[str, Any]] = {}
 
     def wait(
-        self,
-        timeout: float = 30.0,
-        cancel_token: threading.Event | None = None,
-        *,
-        started_after: float = 0.0,
+        self, timeout: float = 30.0, cancel_token: threading.Event | None = None, *, started_after: float = 0.0
     ) -> dict[str, Any]:
         deadline = time.monotonic() + timeout
         guid: str | None = None

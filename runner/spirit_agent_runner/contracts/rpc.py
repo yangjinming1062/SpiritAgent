@@ -159,7 +159,4 @@ RUNNER_CONTRACTS = {
     "calls.cancel": RunnerRpcContract(CallCancelRequest, RunnerCancelResult),
 }
 
-RUNNER_EVENTS = {
-    "runner.ready": RunnerReadyPayload,
-    "runner.capabilities_changed": RunnerCapabilitiesChangedPayload,
-}
+RUNNER_EVENTS = {"runner.ready": RunnerReadyPayload, "runner.capabilities_changed": RunnerCapabilitiesChangedPayload}

@@ -160,9 +160,7 @@ class NativeFileOperations(FileOperations):
             return WriteResult(error=f"Failed to write file: {e}")
         lint_result = self._check_lint_delta(str(p), pre_content, content)
         return WriteResult(
-            bytes_written=len(content.encode("utf-8")),
-            dirs_created=dirs_created,
-            lint=lint_result.to_dict(),
+            bytes_written=len(content.encode("utf-8")), dirs_created=dirs_created, lint=lint_result.to_dict()
         )
 
     def exists(self, path: str) -> bool:
@@ -217,7 +215,7 @@ class NativeFileOperations(FileOperations):
                     "is_dir": is_dir,
                     "size": st.st_size,
                     "mtime": st.st_mtime,
-                },
+                }
             )
         return ListResult(entries=entries)
 
@@ -297,7 +295,7 @@ class NativeFileOperations(FileOperations):
                 for i in line_hits:
                     if offset <= seen < stop:
                         matches.append(
-                            SearchMatch(path=shown(rel), line_number=i + 1, content=_match_content(lines, i, context)),
+                            SearchMatch(path=shown(rel), line_number=i + 1, content=_match_content(lines, i, context))
                         )
                     seen += 1
                     if seen > stop:

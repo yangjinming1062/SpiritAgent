@@ -47,19 +47,10 @@ PROCESS_SCHEMA = {
         # list 禁带 session_id、其余动作必带的精确校验由 handler 执行（backend 不校验 anyOf/allOf）。
         "allOf": [
             {
-                "if": {
-                    "properties": {
-                        "action": {
-                            "enum": ["poll", "log", "wait", "kill", "write", "submit", "close"],
-                        },
-                    },
-                },
+                "if": {"properties": {"action": {"enum": ["poll", "log", "wait", "kill", "write", "submit", "close"]}}},
                 "then": {"required": ["session_id"]},
             },
-            {
-                "if": {"properties": {"action": {"enum": ["write", "submit"]}}},
-                "then": {"required": ["data"]},
-            },
+            {"if": {"properties": {"action": {"enum": ["write", "submit"]}}}, "then": {"required": ["data"]}},
         ],
     },
 }
@@ -78,16 +69,7 @@ def _coerce_int(value: Any, field_name: str) -> int | None:
 def _handle_process(args: dict[str, Any]) -> dict[str, Any]:
     process_registry = get_process_registry()
     action = args.get("action", "")
-    if not isinstance(action, str) or action not in {
-        "list",
-        "poll",
-        "log",
-        "wait",
-        "kill",
-        "write",
-        "submit",
-        "close",
-    }:
+    if not isinstance(action, str) or action not in {"list", "poll", "log", "wait", "kill", "write", "submit", "close"}:
         return {"error": f"Unknown process action: {action}. Use: list, poll, log, wait, kill, write, submit, close"}
     session_id = args.get("session_id", "")
     if not isinstance(session_id, str):
@@ -119,9 +101,7 @@ def _handle_process(args: dict[str, Any]) -> dict[str, Any]:
             return process_registry.poll(session_id)
         case "log":
             return process_registry.read_log(
-                session_id,
-                offset=0 if offset is None else offset,
-                limit=200 if limit is None else limit,
+                session_id, offset=0 if offset is None else offset, limit=200 if limit is None else limit
             )
         case "wait":
             return process_registry.wait(session_id, timeout=timeout)
@@ -144,5 +124,5 @@ def get_tool_definitions() -> list[ToolDefinition]:
             handler=lambda _context, args: _handle_process(args),
             check_fn=None,
             is_async=False,
-        ),
+        )
     ]

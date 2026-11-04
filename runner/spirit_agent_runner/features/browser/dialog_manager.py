@@ -79,7 +79,7 @@ class DialogBlockedError(Exception):
         self.opened_by_call = opened_by_call
         super().__init__(
             f"The page is blocked by a JavaScript {dialog.type} dialog (dialog_id={dialog.id}, "
-            f"message={dialog.message!r}). Respond to it with browser_dialog before continuing.",
+            f"message={dialog.message!r}). Respond to it with browser_dialog before continuing."
         )
 
 
@@ -90,14 +90,7 @@ LoopProvider = Callable[[], asyncio.AbstractEventLoop | None]
 class DialogManager:
     """弹窗生命周期管理：open / on_remote_closed / respond / 自动策略 / 看门狗。"""
 
-    def __init__(
-        self,
-        *,
-        policy: str,
-        timeout_s: float,
-        cdp_send: CdpSendFn,
-        loop_provider: LoopProvider,
-    ) -> None:
+    def __init__(self, *, policy: str, timeout_s: float, cdp_send: CdpSendFn, loop_provider: LoopProvider) -> None:
         if policy not in VALID_POLICIES:
             raise ValueError(f"Invalid dialog_policy {policy!r}")
         self._policy = policy
@@ -132,9 +125,7 @@ class DialogManager:
             self._pending[dialog.id] = dialog
             if self._timeout_s > 0:
                 self._watchdogs[dialog.id] = asyncio.get_running_loop().call_later(
-                    self._timeout_s,
-                    self._expire_watchdog,
-                    dialog,
+                    self._timeout_s, self._expire_watchdog, dialog
                 )
 
     def on_remote_closed(self, session_id: str | None) -> None:
@@ -151,12 +142,7 @@ class DialogManager:
             handle.cancel()
 
     def respond(
-        self,
-        action: str,
-        prompt_text: str | None,
-        dialog_id: str | None,
-        *,
-        active_session_id: str | None,
+        self, action: str, prompt_text: str | None, dialog_id: str | None, *, active_session_id: str | None
     ) -> dict[str, Any]:
         """模型主动应答弹窗。无 dialog_id 时优先匹配当前 active session。"""
         with self._lock:
@@ -228,10 +214,7 @@ class DialogManager:
             params["promptText"] = prompt_text
         try:
             await self._cdp_send(
-                "Page.handleJavaScriptDialog",
-                params,
-                session_id=dialog.cdp_session_id or None,
-                timeout=5.0,
+                "Page.handleJavaScriptDialog", params, session_id=dialog.cdp_session_id or None, timeout=5.0
             )
         except Exception as exc:
             logger.warning("Page.handleJavaScriptDialog failed for %s: %s", dialog.id, exc)

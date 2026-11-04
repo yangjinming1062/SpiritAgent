@@ -67,9 +67,7 @@ def parse_v4a_patch(patch_content: str) -> tuple[list[PatchOperation], str | Non
                 _flush(current_op, current_hunk, operations)
                 if op_type is OperationType.MOVE:
                     current_op = PatchOperation(
-                        operation=op_type,
-                        file_path=m.group(1).strip(),
-                        new_path=m.group(2).strip(),
+                        operation=op_type, file_path=m.group(1).strip(), new_path=m.group(2).strip()
                     )
                     _flush(current_op, None, operations)
                     current_op = current_hunk = None
@@ -229,10 +227,7 @@ def _apply_update(op: PatchOperation, file_ops: FileOperations) -> _OpOutcome:
         return _OpOutcome(error=f"Could not apply {error}")
     if (write_result := file_ops.write_file(op.file_path, _restore_line_endings(new_content, ending))).error:
         return _OpOutcome(error=write_result.error)
-    return _OpOutcome(
-        diff=_unified_diff(content, new_content, op.file_path),
-        lint=write_result.lint,
-    )
+    return _OpOutcome(diff=_unified_diff(content, new_content, op.file_path), lint=write_result.lint)
 
 
 _APPLY: dict[OperationType, Callable[[PatchOperation, FileOperations], _OpOutcome]] = {
@@ -247,11 +242,11 @@ def apply_v4a_operations(operations: list[PatchOperation], file_ops: FileOperati
     """两阶段：先整体校验，全部通过后才依次落盘。"""
     if not operations:
         return PatchResult(
-            error="Patch contained no operations (missing `*** Begin Patch` header or no file sections).",
+            error="Patch contained no operations (missing `*** Begin Patch` header or no file sections)."
         )
     if errors := _validate_operations(operations, file_ops):
         return PatchResult(
-            error="Patch validation failed (no files were modified):\n" + "\n".join(f"  • {e}" for e in errors),
+            error="Patch validation failed (no files were modified):\n" + "\n".join(f"  • {e}" for e in errors)
         )
     files_modified: list[str] = []
     files_created: list[str] = []

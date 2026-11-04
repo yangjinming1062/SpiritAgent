@@ -93,7 +93,7 @@ BINARY_EXTENSIONS = frozenset(
         ".lockb",
         ".dat",
         ".data",
-    },
+    }
 )
 
 

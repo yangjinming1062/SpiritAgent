@@ -29,14 +29,7 @@ class SSHEnvironment(BaseEnvironment):
     """基于 SSH ControlMaster 的远端终端：每个实例独占一条主连接，文件经 tar 增量同步。"""
 
     def __init__(
-        self,
-        host: str,
-        user: str,
-        cwd: str,
-        timeout: int,
-        port: int = 22,
-        key_path: str = "",
-        password: str = "",
+        self, host: str, user: str, cwd: str, timeout: int, port: int = 22, key_path: str = "", password: str = ""
     ) -> None:
         super().__init__(cwd=cwd, timeout=timeout)
         self.host = host
@@ -78,8 +71,7 @@ class SSHEnvironment(BaseEnvironment):
             path = control_dir / f"askpass-{self._session_id}.bat"
             # 延迟扩展在解析后替换，密码特殊字符原样。
             path.write_text(
-                f"@echo off\r\nsetlocal EnableDelayedExpansion\r\necho(!{_ASKPASS_SECRET_ENV}!\r\n",
-                encoding="utf-8",
+                f"@echo off\r\nsetlocal EnableDelayedExpansion\r\necho(!{_ASKPASS_SECRET_ENV}!\r\n", encoding="utf-8"
             )
         else:
             path = control_dir / f"askpass-{self._session_id}.sh"
@@ -151,8 +143,7 @@ class SSHEnvironment(BaseEnvironment):
     def _ensure_remote_dirs(self) -> None:
         base = f"{self._remote_home}/.spiritagent"
         res = self._run_ssh(
-            quoted_mkdir_command([base, f"{base}/skills", f"{base}/credentials", f"{base}/cache"]),
-            timeout=10,
+            quoted_mkdir_command([base, f"{base}/skills", f"{base}/credentials", f"{base}/cache"]), timeout=10
         )
         if res.returncode != 0:
             logger.warning("SSH: creating remote sync directories failed: %s", res.stderr.strip())
@@ -162,8 +153,7 @@ class SSHEnvironment(BaseEnvironment):
             return {}
         base = f"{self._remote_home}/.spiritagent"
         if (parents := unique_parent_dirs(files)) and self._run_ssh(
-            quoted_mkdir_command(parents),
-            timeout=30,
+            quoted_mkdir_command(parents), timeout=30
         ).returncode != 0:
             raise RuntimeError("remote mkdir failed")
         with tempfile.TemporaryDirectory(prefix="spiritagent-ssh-bulk-") as staging:
@@ -215,11 +205,11 @@ class SSHEnvironment(BaseEnvironment):
                 raise RuntimeError("SSH bulk upload timed out") from None
             if tar_proc.returncode != 0:
                 raise RuntimeError(
-                    f"tar create failed (rc={tar_proc.returncode}): {tar_stderr_raw.decode(errors='replace').strip()}",
+                    f"tar create failed (rc={tar_proc.returncode}): {tar_stderr_raw.decode(errors='replace').strip()}"
                 )
             if ssh_proc.returncode != 0:
                 raise RuntimeError(
-                    f"tar extract over SSH failed (rc={ssh_proc.returncode}): {ssh_stderr.decode(errors='replace').strip()}",
+                    f"tar extract over SSH failed (rc={ssh_proc.returncode}): {ssh_stderr.decode(errors='replace').strip()}"
                 )
             return uploaded_hashes
 
@@ -248,13 +238,7 @@ class SSHEnvironment(BaseEnvironment):
     def _before_execute(self) -> None:
         self._sync_manager.sync()
 
-    def _run_bash(
-        self,
-        cmd_string: str,
-        *,
-        login: bool = False,
-        stdin_data: str | None = None,
-    ) -> subprocess.Popen:
+    def _run_bash(self, cmd_string: str, *, login: bool = False, stdin_data: str | None = None) -> subprocess.Popen:
         cmd = self._build_ssh_command()
         cmd.append(("bash -l -c " if login else "bash -c ") + shlex.quote(cmd_string))
         return _popen_bash(cmd, stdin_data, self._ssh_env())

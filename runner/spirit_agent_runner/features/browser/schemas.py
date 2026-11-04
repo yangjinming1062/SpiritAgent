@@ -11,10 +11,7 @@ BROWSER_NAVIGATE_SCHEMA: dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "url": {
-                "type": "string",
-                "description": "The http or https URL to open (e.g. 'https://example.com').",
-            },
+            "url": {"type": "string", "description": "The http or https URL to open (e.g. 'https://example.com')."}
         },
         "required": ["url"],
     },
@@ -37,7 +34,7 @@ BROWSER_SNAPSHOT_SCHEMA: dict[str, Any] = {
                     "If true, include all page content. If false (default), list interactive elements only."
                 ),
                 "default": False,
-            },
+            }
         },
         "required": [],
     },
@@ -59,7 +56,7 @@ BROWSER_CLICK_SCHEMA: dict[str, Any] = {
                     "Element ref ('@e5') from the latest snapshot, annotated screenshot ref ('@v3') from the "
                     "latest browser_vision result, or viewport coordinates 'x,y' (e.g. '240,480')."
                 ),
-            },
+            }
         },
         "required": ["ref"],
     },
@@ -74,10 +71,7 @@ BROWSER_TYPE_SCHEMA: dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "ref": {
-                "type": "string",
-                "description": "The element reference from the snapshot (e.g., '@e3')",
-            },
+            "ref": {"type": "string", "description": "The element reference from the snapshot (e.g., '@e3')"},
             "text": {"type": "string", "description": "The text to type into the field"},
         },
         "required": ["ref", "text"],
@@ -89,13 +83,7 @@ BROWSER_SCROLL_SCHEMA: dict[str, Any] = {
     "description": "Scroll the page up or down by about 500 pixels to reveal content outside the current viewport.",
     "parameters": {
         "type": "object",
-        "properties": {
-            "direction": {
-                "type": "string",
-                "enum": ["up", "down"],
-                "description": "Direction to scroll",
-            },
-        },
+        "properties": {"direction": {"type": "string", "enum": ["up", "down"], "description": "Direction to scroll"}},
         "required": ["direction"],
     },
 }
@@ -116,10 +104,7 @@ BROWSER_PRESS_SCHEMA: dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "key": {
-                "type": "string",
-                "description": "Key name, e.g. 'Enter', 'Tab', 'Escape', 'ArrowDown'.",
-            },
+            "key": {"type": "string", "description": "Key name, e.g. 'Enter', 'Tab', 'Escape', 'ArrowDown'."}
         },
         "required": ["key"],
     },
@@ -134,10 +119,7 @@ BROWSER_HOVER_SCHEMA: dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "ref": {
-                "type": "string",
-                "description": "Element ref from the snapshot (e.g. '@e5') or 'x,y' coordinates.",
-            },
+            "ref": {"type": "string", "description": "Element ref from the snapshot (e.g. '@e5') or 'x,y' coordinates."}
         },
         "required": ["ref"],
     },
@@ -152,19 +134,12 @@ BROWSER_WAIT_FOR_SCHEMA: dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "selector": {
-                "type": "string",
-                "description": "CSS selector to wait for, e.g. '.checkout-button'.",
-            },
+            "selector": {"type": "string", "description": "CSS selector to wait for, e.g. '.checkout-button'."},
             "text": {
                 "type": "string",
                 "description": "Case-insensitive substring of the page's visible text, e.g. 'Order confirmed'.",
             },
-            "timeout_s": {
-                "type": "number",
-                "default": 10,
-                "description": "Maximum wait in seconds (default 10).",
-            },
+            "timeout_s": {"type": "number", "default": 10, "description": "Maximum wait in seconds (default 10)."},
             "return_snapshot": {
                 "type": "boolean",
                 "default": True,
@@ -214,14 +189,8 @@ BROWSER_DRAG_SCHEMA: dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "from_ref": {
-                "type": "string",
-                "description": "Source element ref (e.g. '@e3') or 'x,y' coordinates.",
-            },
-            "to_ref": {
-                "type": "string",
-                "description": "Target element ref (e.g. '@e7') or 'x,y' coordinates.",
-            },
+            "from_ref": {"type": "string", "description": "Source element ref (e.g. '@e3') or 'x,y' coordinates."},
+            "to_ref": {"type": "string", "description": "Target element ref (e.g. '@e7') or 'x,y' coordinates."},
             "hold_key": {
                 "type": "string",
                 "enum": ["shift", "ctrl", "alt"],
@@ -294,11 +263,7 @@ BROWSER_PDF_SCHEMA: dict[str, Any] = {
                 "type": "string",
                 "description": "Optional file name (directory parts are ignored). Defaults to page_<id>.pdf.",
             },
-            "landscape": {
-                "type": "boolean",
-                "default": False,
-                "description": "If true, use landscape orientation.",
-            },
+            "landscape": {"type": "boolean", "default": False, "description": "If true, use landscape orientation."},
             "print_background": {
                 "type": "boolean",
                 "default": True,
@@ -328,10 +293,7 @@ BROWSER_SCREENSHOT_ELEMENT_SCHEMA: dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "ref": {
-                "type": "string",
-                "description": "Element ref from browser_snapshot (e.g. '@e5').",
-            },
+            "ref": {"type": "string", "description": "Element ref from browser_snapshot (e.g. '@e5')."},
             "save_as": {
                 "type": "string",
                 "description": "Optional file name (directory parts are ignored). Defaults to element_<id>.png.",
@@ -350,7 +312,7 @@ BROWSER_TAB_NEW_SCHEMA: dict[str, Any] = {
             "url": {
                 "type": "string",
                 "description": ("Optional URL to navigate the new tab to. If omitted, opens an empty tab."),
-            },
+            }
         },
         "required": [],
     },
@@ -364,9 +326,7 @@ BROWSER_TAB_SWITCH_SCHEMA: dict[str, Any] = {
     ),
     "parameters": {
         "type": "object",
-        "properties": {
-            "tab_id": {"type": "string", "description": "The target tab ID (e.g. 'ABC123...')."},
-        },
+        "properties": {"tab_id": {"type": "string", "description": "The target tab ID (e.g. 'ABC123...')."}},
         "required": ["tab_id"],
     },
 }
@@ -379,10 +339,7 @@ BROWSER_TAB_CLOSE_SCHEMA: dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "tab_id": {
-                "type": "string",
-                "description": "Tab ID to close. If omitted, closes the active tab.",
-            },
+            "tab_id": {"type": "string", "description": "Tab ID to close. If omitted, closes the active tab."}
         },
         "required": [],
     },
@@ -439,10 +396,7 @@ BROWSER_SET_USER_AGENT_SCHEMA: dict[str, Any] = {
                     "string or omission keeps the browser's default."
                 ),
             },
-            "platform": {
-                "type": "string",
-                "description": "Optional navigator.platform value (e.g. 'iPhone').",
-            },
+            "platform": {"type": "string", "description": "Optional navigator.platform value (e.g. 'iPhone')."},
             "accept_language": {
                 "type": "string",
                 "description": "Optional Accept-Language header (e.g. 'en-US,en;q=0.9').",
@@ -468,7 +422,7 @@ BROWSER_SET_EXTRA_HEADERS_SCHEMA: dict[str, Any] = {
                     'Header name → value map, e.g. {"Referer": "https://example.com", "Accept-Language": "fr-FR"}.'
                 ),
                 "additionalProperties": {"type": "string"},
-            },
+            }
         },
         "required": ["headers"],
     },
@@ -483,16 +437,9 @@ BROWSER_SET_GEOLOCATION_SCHEMA: dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "lat": {
-                "type": "number",
-                "description": "Latitude in decimal degrees.",
-            },
+            "lat": {"type": "number", "description": "Latitude in decimal degrees."},
             "lon": {"type": "number", "description": "Longitude in decimal degrees."},
-            "accuracy": {
-                "type": "number",
-                "default": 100,
-                "description": "Accuracy in meters (default 100).",
-            },
+            "accuracy": {"type": "number", "default": 100, "description": "Accuracy in meters (default 100)."},
         },
         "required": [],
         "allOf": [
@@ -529,7 +476,7 @@ BROWSER_VISION_SCHEMA: dict[str, Any] = {
                     "'@vN' refs with click, type and other element tools; '@eN' refs from browser_snapshot "
                     "stay valid alongside them."
                 ),
-            },
+            }
         },
         "required": [],
     },
@@ -576,7 +523,7 @@ BROWSER_COOKIES_GET_SCHEMA: dict[str, Any] = {
                     "Optional URL whose cookies to read (e.g. 'https://example.com'). If omitted, uses the "
                     "current page and its frames."
                 ),
-            },
+            }
         },
         "required": [],
     },
@@ -811,22 +758,10 @@ BROWSER_BATCH_SCHEMA: dict[str, Any] = {
                     },
                     "additionalProperties": False,
                     "allOf": [
-                        {
-                            "if": {"properties": {"action": {"enum": ["click", "hover"]}}},
-                            "then": {"required": ["ref"]},
-                        },
-                        {
-                            "if": {"properties": {"action": {"const": "type"}}},
-                            "then": {"required": ["ref", "text"]},
-                        },
-                        {
-                            "if": {"properties": {"action": {"const": "press"}}},
-                            "then": {"required": ["key"]},
-                        },
-                        {
-                            "if": {"properties": {"action": {"const": "scroll"}}},
-                            "then": {"required": ["direction"]},
-                        },
+                        {"if": {"properties": {"action": {"enum": ["click", "hover"]}}}, "then": {"required": ["ref"]}},
+                        {"if": {"properties": {"action": {"const": "type"}}}, "then": {"required": ["ref", "text"]}},
+                        {"if": {"properties": {"action": {"const": "press"}}}, "then": {"required": ["key"]}},
+                        {"if": {"properties": {"action": {"const": "scroll"}}}, "then": {"required": ["direction"]}},
                         {
                             "if": {"properties": {"action": {"const": "select"}}},
                             "then": {
@@ -837,9 +772,9 @@ BROWSER_BATCH_SCHEMA: dict[str, Any] = {
                                             {"required": ["value"]},
                                             {"required": ["label"]},
                                             {"required": ["index"]},
-                                        ],
+                                        ]
                                     },
-                                ],
+                                ]
                             },
                         },
                     ],

@@ -129,11 +129,7 @@ def _storage_id(origin: str, kind: str) -> dict[str, Any]:
     return {"securityOrigin": security_origin, "isLocalStorage": kind == "localStorage"}
 
 
-def browser_storage_get(
-    key: str,
-    origin: str,
-    kind: str = "localStorage",
-) -> dict[str, Any]:
+def browser_storage_get(key: str, origin: str, kind: str = "localStorage") -> dict[str, Any]:
     if is_camofox_mode():
         return camofox_unsupported("browser_storage_get")
 
@@ -152,12 +148,7 @@ def browser_storage_get(
         return {"success": True, **payload, "value": None, "found": False}
 
 
-def browser_storage_set(
-    key: str,
-    value: str,
-    origin: str,
-    kind: str = "localStorage",
-) -> dict[str, Any]:
+def browser_storage_set(key: str, value: str, origin: str, kind: str = "localStorage") -> dict[str, Any]:
     if is_camofox_mode():
         return camofox_unsupported("browser_storage_set")
 
@@ -166,10 +157,7 @@ def browser_storage_set(
             return no_supervisor()
 
         storage_id = _storage_id(origin, kind)
-        res = supervisor.send_cdp(
-            "DOMStorage.setDOMStorageItem",
-            {"storageId": storage_id, "key": key, "value": value},
-        )
+        res = supervisor.send_cdp("DOMStorage.setDOMStorageItem", {"storageId": storage_id, "key": key, "value": value})
         if not res.get("ok"):
             return {"success": False, "error": res.get("error", "unknown error")}
         return {"success": True, "key": key, "kind": kind, "origin": storage_id["securityOrigin"]}
@@ -207,8 +195,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             toolset_id="browser_automation",
             schema=BROWSER_COOKIES_CLEAR_SCHEMA,
             handler=lambda _context, args: browser_cookies_clear(
-                cookies=args.get("cookies", True),
-                storage=args.get("storage", True),
+                cookies=args.get("cookies", True), storage=args.get("storage", True)
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,
@@ -218,9 +205,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             toolset_id="browser_automation",
             schema=BROWSER_STORAGE_GET_SCHEMA,
             handler=lambda _context, args: browser_storage_get(
-                key=args.get("key", ""),
-                origin=args.get("origin", ""),
-                kind=args.get("kind", "localStorage"),
+                key=args.get("key", ""), origin=args.get("origin", ""), kind=args.get("kind", "localStorage")
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,

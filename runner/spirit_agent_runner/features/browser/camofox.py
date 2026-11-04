@@ -97,7 +97,7 @@ def _rewrite_loopback_url_for_camofox(url: str) -> tuple[str, dict[str, str] | N
     host_part = f"[{alias}]" if ":" in alias and not alias.startswith("[") else alias
     port_part = f":{parsed.port}" if parsed.port else ""
     rewritten = urlunsplit(
-        SplitResult(parsed.scheme, f"{userinfo}{host_part}{port_part}", parsed.path, parsed.query, parsed.fragment),
+        SplitResult(parsed.scheme, f"{userinfo}{host_part}{port_part}", parsed.path, parsed.query, parsed.fragment)
     )
     return rewritten, {"from": parsed.hostname or "", "to": alias, "original_url": url, "rewritten_url": rewritten}
 
@@ -145,10 +145,7 @@ def _ensure_tab(url: str = "about:blank") -> dict[str, Any]:
     session = _get_session()
     if session["tab_id"]:
         return session
-    data = _post(
-        "/tabs",
-        {"userId": session["user_id"], "sessionKey": session["session_key"], "url": url},
-    )
+    data = _post("/tabs", {"userId": session["user_id"], "sessionKey": session["session_key"], "url": url})
     session["tab_id"] = data.get("tabId")
     return session
 
@@ -175,9 +172,7 @@ def camofox_navigate(url: str) -> dict[str, Any]:
             data = {"ok": True, "url": browser_url}
         else:
             data = _post(
-                f"/tabs/{session['tab_id']}/navigate",
-                {"userId": session["user_id"], "url": browser_url},
-                timeout=60,
+                f"/tabs/{session['tab_id']}/navigate", {"userId": session["user_id"], "url": browser_url}, timeout=60
             )
         result = {"success": True, "url": data.get("url", browser_url), "title": data.get("title", "")}
         if rewrite_info:
@@ -186,14 +181,14 @@ def camofox_navigate(url: str) -> dict[str, Any]:
                     "requested_url": url,
                     "url_rewrite": rewrite_info,
                     "warning": f"Rewrote loopback URL for Docker-hosted Camofox: {rewrite_info['from']} -> {rewrite_info['to']}",
-                },
+                }
             )
         if vnc := get_vnc_url():
             result.update(
                 {
                     "vnc_url": vnc,
                     "vnc_hint": "The user can watch or take over this browser through vnc_url; mention it only when that helps them.",
-                },
+                }
             )
         try:
             snap_data = _get(f"/tabs/{session['tab_id']}/snapshot", params={"userId": session["user_id"]})

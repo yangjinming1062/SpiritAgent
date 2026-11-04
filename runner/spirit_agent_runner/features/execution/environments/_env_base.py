@@ -130,13 +130,7 @@ class BaseEnvironment(ABC):
     def get_temp_dir(self) -> str: ...
 
     @abstractmethod
-    def _run_bash(
-        self,
-        cmd_string: str,
-        *,
-        login: bool = False,
-        stdin_data: str | None = None,
-    ) -> ProcessHandle: ...
+    def _run_bash(self, cmd_string: str, *, login: bool = False, stdin_data: str | None = None) -> ProcessHandle: ...
 
     @abstractmethod
     def cleanup(self) -> None: ...
@@ -165,9 +159,7 @@ class BaseEnvironment(ABC):
             logger.info("Session snapshot created (session=%s, cwd=%s)", self._session_id, self.cwd)
         except Exception as exc:
             logger.warning(
-                "init_session failed (session=%s): %s — falling back to bash -l per command",
-                self._session_id,
-                exc,
+                "init_session failed (session=%s): %s — falling back to bash -l per command", self._session_id, exc
             )
             self._snapshot_ready = False
             self._snapshot_created_at = 0.0

@@ -66,11 +66,7 @@ def _token_matches(candidate: object, expected_token: str) -> bool:
     return isinstance(candidate, str) and secrets.compare_digest(candidate.encode(), expected_token.encode())
 
 
-def _dispatch_sandbox_call(
-    request: object,
-    tool_call_counter: list[int],
-    max_tool_calls: int,
-) -> Any:
+def _dispatch_sandbox_call(request: object, tool_call_counter: list[int], max_tool_calls: int) -> Any:
     """执行器统一检查可用性；RPC 另限制脚本可用工具、参数和调用预算。"""
     if not isinstance(request, dict):
         return tool_error("Invalid RPC request: expected a JSON object.")
@@ -94,11 +90,7 @@ def _dispatch_sandbox_call(
     return result
 
 
-def _read_conn_line(
-    conn: socket.socket,
-    buf: bytes,
-    stop_event: threading.Event,
-) -> tuple[bytes | None, bytes]:
+def _read_conn_line(conn: socket.socket, buf: bytes, stop_event: threading.Event) -> tuple[bytes | None, bytes]:
     """鉴权首帧共享五秒预算，分段接收仍须响应脚本关闭。"""
     deadline = time.monotonic() + 5.0
     while b"\n" not in buf:
@@ -246,14 +238,7 @@ def run_file_rpc(
             for req_file in req_files:
                 if stop_event.is_set():
                     break
-                _serve_remote_request(
-                    env,
-                    rpc_dir,
-                    req_file,
-                    tool_call_counter,
-                    max_tool_calls,
-                    expected_token,
-                )
+                _serve_remote_request(env, rpc_dir, req_file, tool_call_counter, max_tool_calls, expected_token)
         except Exception as e:
             if not stop_event.is_set():
                 logger.debug("RPC poll error: %s", e, exc_info=True)

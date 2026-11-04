@@ -74,13 +74,7 @@ class LocalEnvironment(BaseEnvironment):
             else (c if (c := tempfile.gettempdir()).startswith("/") else "/tmp")
         )
 
-    def _run_bash(
-        self,
-        cmd_string: str,
-        *,
-        login: bool = False,
-        stdin_data: str | None = None,
-    ) -> subprocess.Popen:
+    def _run_bash(self, cmd_string: str, *, login: bool = False, stdin_data: str | None = None) -> subprocess.Popen:
         if login and (init_files := _resolve_shell_init_files()):
             cmd_string = _prepend_shell_init(cmd_string, init_files)
         args = [find_bash(config=load_config())]

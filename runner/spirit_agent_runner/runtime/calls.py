@@ -66,7 +66,7 @@ class CallManager:
         try:
             if call_id:
                 claim_task = asyncio.create_task(
-                    asyncio.to_thread(journal.claim, call_id, name, args, os.getpid(), scope),
+                    asyncio.to_thread(journal.claim, call_id, name, args, os.getpid(), scope)
                 )
                 outcome = await asyncio.shield(claim_task)
                 claim_token = outcome.claim_token

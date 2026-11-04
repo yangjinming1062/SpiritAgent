@@ -39,7 +39,7 @@ def capped_image_data_url(image_path: Path, mime_type: str | None = None) -> str
 
 async def validate_image_url_async(url: str, *, config: dict[str, Any] | None = None) -> bool:
     return bool(
-        url and isinstance(url, str) and url.startswith(("http://", "https://")) and urlparse(url).netloc,
+        url and isinstance(url, str) and url.startswith(("http://", "https://")) and urlparse(url).netloc
     ) and await async_is_safe_url(url, config=config)
 
 
@@ -83,9 +83,7 @@ async def download_image(image_url: str, destination: Path, *, config: dict[str,
                 raise PermissionError(blocked.message)
             async with (
                 create_safe_async_client(
-                    timeout=_VISION_DOWNLOAD_TIMEOUT_S,
-                    follow_redirects=True,
-                    config=config,
+                    timeout=_VISION_DOWNLOAD_TIMEOUT_S, follow_redirects=True, config=config
                 ) as client,
                 client.stream(
                     "GET",
@@ -98,7 +96,7 @@ async def download_image(image_url: str, destination: Path, *, config: dict[str,
             ):
                 res.raise_for_status()
                 if (content_length := res.headers.get("content-length")) and int(
-                    content_length,
+                    content_length
                 ) > _VISION_MAX_DOWNLOAD_BYTES:
                     raise ValueError("Image too large")
                 body = bytearray()
@@ -113,19 +111,11 @@ async def download_image(image_url: str, destination: Path, *, config: dict[str,
         except Exception as e:
             last_err = e
             if not _is_retryable_download_error(e) or attempt >= 2:
-                logger.error(
-                    "Image download failed after %s attempt(s): %s",
-                    attempt + 1,
-                    str(e)[:100],
-                    exc_info=True,
-                )
+                logger.error("Image download failed after %s attempt(s): %s", attempt + 1, str(e)[:100], exc_info=True)
                 raise
             wait = 2 ** (attempt + 1)
             logger.warning(
-                "Image download failed (attempt %s/3): %s. Retrying in %ss...",
-                attempt + 1,
-                str(e)[:50],
-                wait,
+                "Image download failed (attempt %s/3): %s. Retrying in %ss...", attempt + 1, str(e)[:50], wait
             )
             await asyncio.sleep(wait)
     raise last_err or RuntimeError("No attempts made")

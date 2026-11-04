@@ -126,9 +126,7 @@ class BrowserManager:
                 raise RuntimeError("Browser manager is closed")
             if self._thread is None:
                 self._thread = threading.Thread(
-                    target=self._cleanup_worker,
-                    name="browser-session-cleanup",
-                    daemon=True,
+                    target=self._cleanup_worker, name="browser-session-cleanup", daemon=True
                 )
                 self._thread.start()
 
@@ -173,7 +171,7 @@ class BrowserManager:
                     return supervisor
             if supervisor is not None and info.active_users > 1:
                 raise RuntimeError(
-                    "Browser connection is recovering while other tool calls are still using this session",
+                    "Browser connection is recovering while other tool calls are still using this session"
                 )
             self._registry.stop()
             info.supervisor = None

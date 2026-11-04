@@ -53,7 +53,7 @@ _BLOCKED_DEVICE_PATHS = frozenset(
         "/dev/fd/0",
         "/dev/fd/1",
         "/dev/fd/2",
-    },
+    }
 )
 
 
@@ -82,7 +82,7 @@ _SENSITIVE_PATH_PREFIXES = (
     *get_windows_sensitive_prefixes(),
 )
 _SENSITIVE_EXACT_PATHS = frozenset(
-    {"/var/run/docker.sock", "/run/docker.sock"} | ({"c:/pagefile.sys", "c:/hiberfil.sys"} if IS_WINDOWS else set()),
+    {"/var/run/docker.sock", "/run/docker.sock"} | ({"c:/pagefile.sys", "c:/hiberfil.sys"} if IS_WINDOWS else set())
 )
 
 
@@ -191,7 +191,7 @@ def read_file_tool(path: str, offset: int = 1, limit: int = DEFAULT_READ_LIMIT) 
             # 字面与解析路径都查：拦别名与指向设备的链接。
             if _is_blocked_device_path(path) or _is_blocked_device_path(target):
                 return {
-                    "error": f"Cannot read '{path}': this is a device file that would block or produce infinite output.",
+                    "error": f"Cannot read '{path}': this is a device file that would block or produce infinite output."
                 }
             if has_binary_extension(target):
                 return {"error": f"Cannot read binary file '{path}': read_file only returns text."}
@@ -309,7 +309,7 @@ def patch_tool(
                         if raw and has_traversal_component(raw):
                             return {
                                 "error": f"V4A patch header contains '..' traversal: {raw!r}. "
-                                "Use a path relative to the current directory without '..', or an absolute path.",
+                                "Use a path relative to the current directory without '..', or an absolute path."
                             }
                     # 删/移作用于链接本身，其余写目标文件。
                     follow = op.operation in (OperationType.ADD, OperationType.UPDATE)
@@ -404,10 +404,7 @@ LIST_DIRECTORY_SCHEMA = {
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "path": {
-                "type": "string",
-                "description": "Path to the directory to list (absolute, relative, or ~/path)",
-            },
+            "path": {"type": "string", "description": "Path to the directory to list (absolute, relative, or ~/path)"}
         },
         "required": ["path"],
     },
@@ -427,10 +424,7 @@ READ_FILE_SCHEMA = {
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "path": {
-                "type": "string",
-                "description": "Path to the file to read (absolute, relative, or ~/path)",
-            },
+            "path": {"type": "string", "description": "Path to the file to read (absolute, relative, or ~/path)"},
             "offset": {
                 "type": "integer",
                 "description": "Line number to start reading from (1-indexed, default: 1)",
@@ -536,10 +530,7 @@ PATCH_SCHEMA = {
                 "if": {"properties": {"mode": {"const": "replace"}}},
                 "then": {"required": ["path", "old_string", "new_string"]},
             },
-            {
-                "if": {"properties": {"mode": {"const": "patch"}}},
-                "then": {"required": ["patch"]},
-            },
+            {"if": {"properties": {"mode": {"const": "patch"}}}, "then": {"required": ["patch"]}},
         ],
     },
 }

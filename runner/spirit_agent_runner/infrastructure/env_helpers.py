@@ -9,8 +9,7 @@ def inject_context_spiritagent_home(env: dict[str, str]) -> None:
 
 
 def sanitize_subprocess_env(
-    base_env: Mapping[str, str] | None,
-    extra_env: Mapping[str, str] | None = None,
+    base_env: Mapping[str, str] | None, extra_env: Mapping[str, str] | None = None
 ) -> dict[str, str]:
     res = dict(base_env or {})
     res.update(extra_env or {})

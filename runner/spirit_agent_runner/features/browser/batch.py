@@ -12,12 +12,7 @@ class BrowserActions(Protocol):
     def hover_ref(self, ref: str) -> dict[str, Any]: ...
     def scroll_page(self, direction: str = "down", pixels: int = 500) -> dict[str, Any]: ...
     def select_ref(
-        self,
-        ref: str,
-        *,
-        value: str | None = None,
-        label: str | None = None,
-        index: int | None = None,
+        self, ref: str, *, value: str | None = None, label: str | None = None, index: int | None = None
     ) -> dict[str, Any]: ...
     def wait_for_page_stable(self, timeout_s: float = 2.0) -> bool: ...
 
@@ -27,10 +22,7 @@ class BatchOperations:
         self._operations = operations
 
     def execute_batch(
-        self,
-        actions: list[dict[str, Any]],
-        wait_between_ms: int = 100,
-        cancel_token: threading.Event | None = None,
+        self, actions: list[dict[str, Any]], wait_between_ms: int = 100, cancel_token: threading.Event | None = None
     ) -> dict[str, Any]:
         """按序执行一组浏览器操作；任一步失败即停止，全部成功后等待页面沉降。"""
         try:
@@ -88,11 +80,7 @@ class BatchOperations:
         return {"ok": True, "steps_executed": len(results), "details": results}
 
     def _run_batch_action(
-        self,
-        act: object,
-        step: int,
-        act_type: str,
-        cancel_token: threading.Event | None,
+        self, act: object, step: int, act_type: str, cancel_token: threading.Event | None
     ) -> dict[str, Any]:
         if not isinstance(act, dict):
             return {"ok": False, "error": f"Action at index {step} must be a dict"}

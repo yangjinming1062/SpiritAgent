@@ -32,11 +32,7 @@ class NativeBrowserProcess:
     """原生启动的 Chromium 进程及其 CDP 端点。"""
 
     def __init__(
-        self,
-        proc: subprocess.Popen[Any],
-        cdp_url: str,
-        *,
-        browser_process: psutil.Process | None = None,
+        self, proc: subprocess.Popen[Any], cdp_url: str, *, browser_process: psutil.Process | None = None
     ) -> None:
         self.proc = proc
         self.cdp_url = cdp_url
@@ -202,7 +198,7 @@ def launch_chromium(*, profile_dir: Path) -> NativeBrowserProcess:
     exe = find_browser_binary()
     if exe is None or not exe.is_file():
         raise BrowserLaunchError(
-            "No supported browser (Edge, Chrome, Brave, Chromium) found. Install one or set 'browser.executable_path'.",
+            "No supported browser (Edge, Chrome, Brave, Chromium) found. Install one or set 'browser.executable_path'."
         )
 
     profile_dir.mkdir(parents=True, exist_ok=True)
@@ -294,7 +290,7 @@ def launch_chromium(*, profile_dir: Path) -> NativeBrowserProcess:
 
         if port is None or not ws_path or (proc.poll() is not None and browser_process is None):
             raise BrowserLaunchError(
-                f"Timed out waiting for a live browser and DevToolsActivePort in {profile_dir} after {_STARTUP_TIMEOUT_S}s",
+                f"Timed out waiting for a live browser and DevToolsActivePort in {profile_dir} after {_STARTUP_TIMEOUT_S}s"
             )
     except BaseException:
         if browser_process is None and sys.platform == "win32" and proc.poll() == 0:

@@ -24,13 +24,7 @@ class TerminalEnv(Protocol):
     cwd: str
     env_type: str
 
-    def execute(
-        self,
-        command: str,
-        *,
-        timeout: int | None = None,
-        stdin_data: str | None = None,
-    ) -> dict[str, Any]: ...
+    def execute(self, command: str, *, timeout: int | None = None, stdin_data: str | None = None) -> dict[str, Any]: ...
 
 
 class FileOperations(ABC):
@@ -99,10 +93,7 @@ class FileOperations(ABC):
         if written.error:
             return PatchResult(error=f"Failed to write changes: {written.error}")
         return PatchResult(
-            success=True,
-            diff=_unified_diff(content, new_content, path),
-            files_modified=[path],
-            lint=written.lint,
+            success=True, diff=_unified_diff(content, new_content, path), files_modified=[path], lint=written.lint
         )
 
     def _check_lint(self, path: str, content: str) -> LintResult:

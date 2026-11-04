@@ -8,11 +8,7 @@ from typing import Any
 
 
 async def run_in_thread[T](
-    function: Callable[..., T],
-    /,
-    *args: Any,
-    on_cancel: Callable[[], None] | None = None,
-    **kwargs: Any,
+    function: Callable[..., T], /, *args: Any, on_cancel: Callable[[], None] | None = None, **kwargs: Any
 ) -> T:
     """取消时等待系统调用线程结束，避免后台读写与资源清理竞争。"""
     context = contextvars.copy_context()

@@ -38,12 +38,7 @@ _DRAG_MODIFIERS: dict[str, tuple[int, str, str, int]] = {
 _SCROLL_DELTAS = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
 
 
-def parse_numeric_unit(
-    raw_val: Any,
-    default: float,
-    *,
-    valid_units: tuple[str, ...] = ("s", "ms"),
-) -> float:
+def parse_numeric_unit(raw_val: Any, default: float, *, valid_units: tuple[str, ...] = ("s", "ms")) -> float:
     """安全解析带单位数值字符串（支持 s, ms, px 等），返回非负浮点数。"""
     if raw_val is None:
         return default

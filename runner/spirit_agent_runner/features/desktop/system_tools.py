@@ -62,10 +62,7 @@ def _click_at(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tool(
-    name: str,
-    description: str,
-    handler: Callable[[Any, dict[str, Any]], Any],
-    parameters: dict[str, Any] | None = None,
+    name: str, description: str, handler: Callable[[Any, dict[str, Any]], Any], parameters: dict[str, Any] | None = None
 ) -> ToolDefinition:
     return ToolDefinition(
         name=name,

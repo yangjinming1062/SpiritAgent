@@ -24,8 +24,7 @@ from spirit_agent_runner.features.browser.tools import (
 
 
 def _bind_handler(
-    manager: BrowserManager,
-    handler: Callable[[ToolContext, dict[str, Any]], Any],
+    manager: BrowserManager, handler: Callable[[ToolContext, dict[str, Any]], Any]
 ) -> Callable[[ToolContext, dict[str, Any]], Any]:
     def invoke(context: ToolContext, args: dict[str, Any]) -> Any:
         with browser_scope(manager):

@@ -156,8 +156,7 @@ def _command_requires_pipe_stdin(command: str) -> bool:
 
 
 _SHELL_LEVEL_BACKGROUND_RE = re.compile(
-    r"(?:^|[;&|]\s*|&&\s*|\|\|\s*|\$\(\s*)(?:nohup|disown|setsid)\b",
-    re.IGNORECASE | re.MULTILINE,
+    r"(?:^|[;&|]\s*|&&\s*|\|\|\s*|\$\(\s*)(?:nohup|disown|setsid)\b", re.IGNORECASE | re.MULTILINE
 )
 
 _INLINE_BACKGROUND_AMP_RE = re.compile(r"\s&\s")
@@ -317,11 +316,7 @@ def _run_foreground(env: BaseEnvironment, command: str, cwd: str, timeout: int) 
 
 
 def terminal_tool(
-    command: str,
-    background: bool = False,
-    timeout: int | None = None,
-    workdir: str | None = None,
-    pty: bool = False,
+    command: str, background: bool = False, timeout: int | None = None, workdir: str | None = None, pty: bool = False
 ) -> dict[str, Any]:
     """执行单条 shell 命令（前台或后台），必要时懒创建环境。
 
@@ -341,7 +336,7 @@ def terminal_tool(
             if timeout and timeout > max_timeout:
                 return _error_result(
                     f"Foreground timeout {timeout}s exceeds the maximum of {max_timeout}s. "
-                    "Use background=true for long-running commands.",
+                    "Use background=true for long-running commands."
                 )
             if guidance := _foreground_background_guidance(command):
                 return _error_result(guidance)
@@ -456,5 +451,5 @@ def get_tool_definitions() -> list[ToolDefinition]:
             handler=lambda _context, args: _handle_terminal(args),
             check_fn=None,
             is_async=False,
-        ),
+        )
     ]

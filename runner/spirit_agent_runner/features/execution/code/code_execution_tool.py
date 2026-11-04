@@ -74,18 +74,14 @@ def _execute_remote(code: str, timeout: int, max_tool_calls: int) -> dict[str, A
         rpc_dir = f"{candidate_dir}/rpc"
         # 0700 且不带 -p：防其他用户读写或抢占目录名。
         mkdir_result = env.execute(
-            f"mkdir -m 700 {shlex.quote(candidate_dir)} && mkdir {shlex.quote(rpc_dir)}",
-            timeout=10,
+            f"mkdir -m 700 {shlex.quote(candidate_dir)} && mkdir {shlex.quote(rpc_dir)}", timeout=10
         )
         if mkdir_result.get("returncode") != 0:
             raise RuntimeError(f"Failed to create remote staging directory: {mkdir_result.get('output', '').strip()}")
         sandbox_dir = candidate_dir
         ship_file_to_remote(env, f"{sandbox_dir}/spiritagent_tools.py", generate_spiritagent_tools_module("file"))
         ship_file_to_remote(env, f"{sandbox_dir}/script.py", code)
-        rpc_thread = RpcWorker(
-            run_file_rpc,
-            (env, rpc_dir, tool_call_counter, max_tool_calls, stop_event, rpc_token),
-        )
+        rpc_thread = RpcWorker(run_file_rpc, (env, rpc_dir, tool_call_counter, max_tool_calls, stop_event, rpc_token))
         rpc_thread.start()
         env_prefix = (
             f"SPIRITAGENT_RPC_DIR={shlex.quote(rpc_dir)} SPIRITAGENT_RPC_TOKEN={rpc_token} PYTHONDONTWRITEBYTECODE=1"
@@ -94,10 +90,7 @@ def _execute_remote(code: str, timeout: int, max_tool_calls: int) -> dict[str, A
             env_prefix += f" TZ={shlex.quote(tz)}"
         logger.info("Executing code on %s backend...", env_type)
         # 脚本在终端会话目录运行，spiritagent_tools 随脚本目录进入 sys.path。
-        script_result = env.execute(
-            f"{env_prefix} python3 {shlex.quote(f'{sandbox_dir}/script.py')}",
-            timeout=timeout,
-        )
+        script_result = env.execute(f"{env_prefix} python3 {shlex.quote(f'{sandbox_dir}/script.py')}", timeout=timeout)
     except Exception as exc:
         duration = round(time.monotonic() - exec_start, 2)
         logger.error(
@@ -173,10 +166,7 @@ def _execute_local(code: str, timeout: int, max_tool_calls: int, mode: str) -> d
             server_sock.bind(sock_path)
             os.chmod(sock_path, 0o600)
         server_sock.listen(1)
-        rpc_thread = RpcWorker(
-            run_socket_rpc,
-            (server_sock, tool_call_counter, max_tool_calls, rpc_token, stop_event),
-        )
+        rpc_thread = RpcWorker(run_socket_rpc, (server_sock, tool_call_counter, max_tool_calls, rpc_token, stop_event))
         rpc_thread.start()
         proc = subprocess.Popen(
             [resolve_child_python(mode), script_path],
@@ -355,7 +345,7 @@ EXECUTE_CODE_SCHEMA = {
                     "Import tools with `from spiritagent_tools import read_file, terminal, ...` "
                     "and print your final result to stdout."
                 ),
-            },
+            }
         },
         "required": ["code"],
     },
@@ -371,5 +361,5 @@ def get_tool_definitions() -> list[ToolDefinition]:
             handler=lambda _context, args: execute_code(code=args.get("code", "")),
             check_fn=None,
             is_async=False,
-        ),
+        )
     ]

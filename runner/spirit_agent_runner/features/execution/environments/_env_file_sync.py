@@ -211,8 +211,7 @@ class FileSyncManager:
                             continue
                         if os.path.exists(host) and pushed is not None and _sha256_file(host) != pushed:
                             logger.warning(
-                                "sync_back: conflict on %s — applying remote version (last-write-wins).",
-                                remote,
+                                "sync_back: conflict on %s — applying remote version (last-write-wins).", remote
                             )
                         os.makedirs(os.path.dirname(host), exist_ok=True)
                         shutil.copy2(staged, host)

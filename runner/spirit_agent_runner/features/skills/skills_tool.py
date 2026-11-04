@@ -79,11 +79,7 @@ def _view_linked_file(name: str, skill_dir: Path, file_path: str) -> dict[str, A
         }
     target_file = skill_dir / file_path
     if traversal_error := validate_within_dir(target_file, skill_dir):
-        return {
-            "success": False,
-            "error": traversal_error,
-            "hint": "Use a relative path within the skill directory",
-        }
+        return {"success": False, "error": traversal_error, "hint": "Use a relative path within the skill directory"}
     if not target_file.exists():
         available_files: dict[str, list[str]] = {
             "references": [],
@@ -161,9 +157,7 @@ def _find_all_skills() -> list[dict[str, Any]]:
                 if not isinstance(raw_name, str) or not raw_name.strip():
                     # name 必须是非空字符串；非法 name 记 WARNING 后跳过，避免技能静默从列表消失
                     logger.warning(
-                        "skills_list: skill at %s has a non-string name (%r); skipping",
-                        skill_md.parent,
-                        raw_name,
+                        "skills_list: skill at %s has a non-string name (%r); skipping", skill_md.parent, raw_name
                     )
                     continue
                 name = raw_name[:MAX_NAME_LENGTH]
@@ -254,10 +248,7 @@ def skill_view(name: str, file_path: str | None = None) -> dict[str, Any]:
         parsed_frontmatter, _ = parse_frontmatter(content)
 
         if not skill_matches_platform(parsed_frontmatter):
-            return {
-                "success": False,
-                "error": f"Skill '{name}' is not supported on this platform.",
-            }
+            return {"success": False, "error": f"Skill '{name}' is not supported on this platform."}
 
         resolved_name = parsed_frontmatter.get("name", skill_dir.name)
         if _is_disabled(resolved_name, _get_category_from_path(skill_md), get_disabled_skill_names()):
@@ -269,7 +260,7 @@ def skill_view(name: str, file_path: str | None = None) -> dict[str, Any]:
         spiritagent_meta = get_spiritagent_metadata(parsed_frontmatter)
         tags = _parse_tags(spiritagent_meta.get("tags") or parsed_frontmatter.get("tags", ""))
         related_skills = _parse_tags(
-            spiritagent_meta.get("related_skills") or parsed_frontmatter.get("related_skills", ""),
+            spiritagent_meta.get("related_skills") or parsed_frontmatter.get("related_skills", "")
         )
         linked_files = _linked_files(skill_dir)
 

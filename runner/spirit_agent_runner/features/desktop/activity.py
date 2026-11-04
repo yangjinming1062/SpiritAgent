@@ -363,8 +363,7 @@ def _idle_windows() -> float:
 def _idle_macos() -> float:
     try:
         secs = Quartz.CGEventSourceSecondsSinceLastEventType(
-            Quartz.kCGEventSourceStateHIDSystemState,
-            Quartz.kCGAnyInputEventType,
+            Quartz.kCGEventSourceStateHIDSystemState, Quartz.kCGAnyInputEventType
         )
     except Exception as e:
         logger.debug("macos idle probe failed: %s", e)
@@ -393,7 +392,7 @@ def _locked_macos() -> bool:
     if not session:
         return False
     return bool(session.get("CGSSessionScreenIsLocked", False)) or not bool(
-        session.get("kCGSSessionOnConsoleKey", True),
+        session.get("kCGSSessionOnConsoleKey", True)
     )
 
 
@@ -436,11 +435,7 @@ def _focus_macos() -> dict[str, Any]:
         if not (app := NSWorkspace.sharedWorkspace().frontmostApplication()):
             return {}
         pid = app.processIdentifier()
-        result: dict[str, Any] = {
-            "name": app.localizedName() or "",
-            "pid": pid,
-            "bundle": app.bundleIdentifier() or "",
-        }
+        result: dict[str, Any] = {"name": app.localizedName() or "", "pid": pid, "bundle": app.bundleIdentifier() or ""}
         # 列表从前到后，取首个普通层窗口。
         for win in Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID):
             if win.get("kCGWindowOwnerPID", -1) != pid or win.get("kCGWindowLayer", 0) != 0:
@@ -490,8 +485,7 @@ def _fullscreen_macos() -> bool:
             (
                 win["kCGWindowBounds"]
                 for win in Quartz.CGWindowListCopyWindowInfo(
-                    Quartz.kCGWindowListOptionOnScreenOnly,
-                    Quartz.kCGNullWindowID,
+                    Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID
                 )
                 if win.get("kCGWindowOwnerPID", -1) == pid and win.get("kCGWindowLayer", 0) == 0
             ),
@@ -550,7 +544,7 @@ def _windows_windows() -> WindowScene:
                     window_id=f"win:{hwnd:X}",
                     pid=pid,
                     z_order=len(results),
-                ),
+                )
             )
 
         enum_windows(collect)
@@ -591,7 +585,7 @@ def _windows_macos() -> WindowScene:
                     window_id=f"mac:{int(win.get('kCGWindowNumber', 0))}",
                     pid=int(win.get("kCGWindowOwnerPID", 0)),
                     z_order=len(results),
-                ),
+                )
             )
         return WindowScene(windows=results, runner_instance_id=_WINDOW_SCENE_INSTANCE_ID)
     except Exception as e:

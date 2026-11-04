@@ -11,7 +11,7 @@ from spirit_agent_runner.contracts.config import cfg_get
 from spirit_agent_runner.infrastructure.constants import IS_WINDOWS, get_spiritagent_home
 
 SANE_PATH = ":".join(
-    ("/opt/homebrew/bin", "/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"),
+    ("/opt/homebrew/bin", "/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin")
 )
 
 _MSYS_PATH_RE = re.compile(r"^/([a-zA-Z])(/.*)?$")

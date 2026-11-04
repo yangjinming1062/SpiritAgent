@@ -42,9 +42,7 @@ class RunnerTransport:
                 result = RUNNER_CONTRACTS[method].response.model_validate(result).model_dump(mode="json")
             except ValidationError as error:
                 raise RpcError(
-                    -32603,
-                    "Invalid Runner result; outcome is unknown",
-                    {"disposition": "unknown"},
+                    -32603, "Invalid Runner result; outcome is unknown", {"disposition": "unknown"}
                 ) from error
             response["result"] = result
         except RpcError as error:
@@ -125,8 +123,7 @@ class RunnerTransport:
                         current = None
                     except Exception as error:
                         logger.warning(
-                            "Desktop IPC connection failed: %s",
-                            redact_sensitive_text(str(error), config=load_config()),
+                            "Desktop IPC connection failed: %s", redact_sensitive_text(str(error), config=load_config())
                         )
                 if new_endpoint := read_endpoint():
                     current = new_endpoint

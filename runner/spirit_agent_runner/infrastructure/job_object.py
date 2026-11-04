@@ -85,10 +85,7 @@ def init_runner_job_object() -> bool:
             info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
             info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
             set_res = kernel32.SetInformationJobObject(
-                h_job,
-                _JobObjectExtendedLimitInformation,
-                ctypes.byref(info),
-                ctypes.sizeof(info),
+                h_job, _JobObjectExtendedLimitInformation, ctypes.byref(info), ctypes.sizeof(info)
             )
             if not set_res:
                 logger.warning("SetInformationJobObject failed with error code %d", ctypes.get_last_error())
@@ -99,15 +96,14 @@ def init_runner_job_object() -> bool:
             assign_res = kernel32.AssignProcessToJobObject(h_job, cur_proc)
             if not assign_res:
                 logger.warning(
-                    "AssignProcessToJobObject(GetCurrentProcess()) failed with error code %d",
-                    ctypes.get_last_error(),
+                    "AssignProcessToJobObject(GetCurrentProcess()) failed with error code %d", ctypes.get_last_error()
                 )
                 kernel32.CloseHandle(h_job)
                 return False
 
             _runner_job_handle = h_job
             logger.info(
-                "Windows Job Object initialized with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE (process tree bound to Runner)",
+                "Windows Job Object initialized with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE (process tree bound to Runner)"
             )
             return True
         except Exception as exc:

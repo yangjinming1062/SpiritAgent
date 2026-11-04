@@ -119,7 +119,7 @@ class ToolExecutor:
             raise ToolError(redact_sensitive_text(str(error), config=context.config)) from error
         except Exception as error:
             raise ToolError(
-                redact_sensitive_text(f"Tool execution failed: {type(error).__name__}: {error}", config=context.config),
+                redact_sensitive_text(f"Tool execution failed: {type(error).__name__}: {error}", config=context.config)
             ) from error
 
     def invoke_sync(self, context: ToolContext, name: str, args: dict[str, Any]) -> Any:
@@ -136,5 +136,5 @@ class ToolExecutor:
             raise ToolError(redact_sensitive_text(str(error), config=context.config)) from error
         except Exception as error:
             raise ToolError(
-                redact_sensitive_text(f"Tool execution failed: {type(error).__name__}: {error}", config=context.config),
+                redact_sensitive_text(f"Tool execution failed: {type(error).__name__}: {error}", config=context.config)
             ) from error

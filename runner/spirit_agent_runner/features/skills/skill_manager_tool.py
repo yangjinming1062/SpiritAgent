@@ -198,11 +198,7 @@ def _edit_skill(name: str, content: str) -> dict[str, Any]:
 
 
 def _patch_skill(
-    name: str,
-    old_string: str,
-    new_string: str | None,
-    file_path: str | None = None,
-    replace_all: bool = False,
+    name: str, old_string: str, new_string: str | None, file_path: str | None = None, replace_all: bool = False
 ) -> dict[str, Any]:
     if not old_string:
         return {"success": False, "error": "old_string is required for 'patch'."}
@@ -481,22 +477,13 @@ SKILL_MANAGE_SCHEMA = {
         },
         "required": ["action", "name"],
         "allOf": [
-            {
-                "if": {"properties": {"action": {"enum": ["create", "edit"]}}},
-                "then": {"required": ["content"]},
-            },
-            {
-                "if": {"properties": {"action": {"const": "patch"}}},
-                "then": {"required": ["old_string", "new_string"]},
-            },
+            {"if": {"properties": {"action": {"enum": ["create", "edit"]}}}, "then": {"required": ["content"]}},
+            {"if": {"properties": {"action": {"const": "patch"}}}, "then": {"required": ["old_string", "new_string"]}},
             {
                 "if": {"properties": {"action": {"const": "write_file"}}},
                 "then": {"required": ["file_path", "file_content"]},
             },
-            {
-                "if": {"properties": {"action": {"const": "remove_file"}}},
-                "then": {"required": ["file_path"]},
-            },
+            {"if": {"properties": {"action": {"const": "remove_file"}}}, "then": {"required": ["file_path"]}},
         ],
     },
 }
@@ -532,5 +519,5 @@ def get_tool_definitions() -> list[ToolDefinition]:
             handler=lambda _context, args: _skill_manage_handler(args),
             check_fn=None,
             is_async=False,
-        ),
+        )
     ]

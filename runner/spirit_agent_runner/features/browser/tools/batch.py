@@ -96,5 +96,5 @@ def get_tool_definitions() -> list[ToolDefinition]:
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,
-        ),
+        )
     ]

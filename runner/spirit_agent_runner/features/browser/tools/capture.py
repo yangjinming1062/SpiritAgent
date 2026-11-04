@@ -29,10 +29,7 @@ from spirit_agent_runner.features.browser.tools._common import (
 from spirit_agent_runner.infrastructure.constants import get_spiritagent_dir
 
 
-def browser_screenshot_element(
-    ref: str,
-    save_as: str | None = None,
-) -> dict[str, Any]:
+def browser_screenshot_element(ref: str, save_as: str | None = None) -> dict[str, Any]:
     """截取单个元素并把图片直接附到主对话上下文，同时保留本地文件。"""
     if is_camofox_mode():
         return camofox_unsupported("browser_screenshot_element")
@@ -85,10 +82,7 @@ def browser_pdf(
 
 
 def browser_download(
-    ref_or_url: str,
-    save_as: str | None = None,
-    timeout_s: float = 30.0,
-    cancel_token: threading.Event | None = None,
+    ref_or_url: str, save_as: str | None = None, timeout_s: float = 30.0, cancel_token: threading.Event | None = None
 ) -> dict[str, Any]:
     """通过点击 ref 链接或导航至下载 URL 触发并等待文件下载。"""
     if is_camofox_mode():
@@ -120,11 +114,7 @@ def browser_download(
                     "error": f"Failed to click download target {ref_or_url}: {click_res.get('error')}",
                 }
 
-        dl_res = supervisor.downloads.wait(
-            timeout=timeout_s,
-            cancel_token=cancel_token,
-            started_after=started_after,
-        )
+        dl_res = supervisor.downloads.wait(timeout=timeout_s, cancel_token=cancel_token, started_after=started_after)
         if not dl_res.get("ok"):
             error = dl_res.get("error", "Download timed out")
             if nav_error is not None:
@@ -156,8 +146,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             toolset_id="browser_automation",
             schema=BROWSER_SCREENSHOT_ELEMENT_SCHEMA,
             handler=lambda _context, args: browser_screenshot_element(
-                ref=args.get("ref", ""),
-                save_as=args.get("save_as"),
+                ref=args.get("ref", ""), save_as=args.get("save_as")
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,

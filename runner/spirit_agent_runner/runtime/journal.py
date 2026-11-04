@@ -118,9 +118,7 @@ def _args_fingerprint(name: str, args: dict[str, Any], skill_scope: SkillScope |
 def _unreadable_record(path: Path) -> _JournalRecord:
     # 无法读取不等于从未认领；向恢复方报告待核对，避免重跑可能已发生的副作用。
     return _JournalRecord(
-        call_id=path.stem,
-        status="unknown",
-        error="journal record unreadable; side effects unverified",
+        call_id=path.stem, status="unknown", error="journal record unreadable; side effects unverified"
     )
 
 
@@ -140,11 +138,7 @@ def _read_record(path: Path) -> _JournalRecord | None:
 
 
 def claim(
-    call_id: str,
-    name: str,
-    args: dict[str, Any],
-    owner_pid: int,
-    skill_scope: SkillScope | None = None,
+    call_id: str, name: str, args: dict[str, Any], owner_pid: int, skill_scope: SkillScope | None = None
 ) -> ClaimOutcome:
     """原子认领；不可写时允许执行但不授予日志写入凭据，已有记录只重放或拒绝。"""
     path = _safe_call_id(call_id)
@@ -194,8 +188,7 @@ def _resolve_existing(record: _JournalRecord, path: Path, fingerprint: str) -> C
             return ClaimOutcome("failed", error=record.error or "tool failed (details lost)")
         case "unknown":
             return ClaimOutcome(
-                "unknown",
-                error=record.error or "interrupted before completion; side effects unverified",
+                "unknown", error=record.error or "interrupted before completion; side effects unverified"
             )
         case "claimed":
             return ClaimOutcome("claimed_elsewhere", error="call is already claimed by a live process")
@@ -244,12 +237,7 @@ async def settle_cancelled_claim(call_id: str, claim_task: asyncio.Task[ClaimOut
 
 
 def _finalize(
-    call_id: str,
-    claim_token: str,
-    status: CallStatus,
-    *,
-    result: Any = None,
-    error: str | None = None,
+    call_id: str, claim_token: str, status: CallStatus, *, result: Any = None, error: str | None = None
 ) -> None:
     path = _safe_call_id(call_id)
     if path is None:

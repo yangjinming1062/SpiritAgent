@@ -127,10 +127,7 @@ COMPUTER_USE_SCHEMA: dict[str, Any] = {
             },
             "modifiers": {
                 "type": "array",
-                "items": {
-                    "type": "string",
-                    "enum": ["cmd", "ctrl", "shift", "option", "alt", "win", "fn"],
-                },
+                "items": {"type": "string", "enum": ["cmd", "ctrl", "shift", "option", "alt", "win", "fn"]},
                 "description": f"Modifier keys held during a {_POINTER_ACTIONS}.",
             },
             **_DRAG_PARAMS,
@@ -148,10 +145,7 @@ COMPUTER_USE_SCHEMA: dict[str, Any] = {
                 ),
             },
             "text": {"type": "string", "description": "Text to type into the target window."},
-            "keys": {
-                "type": "string",
-                "description": f"Key combo joined with '+', e.g. {_KEY_EXAMPLES}.",
-            },
+            "keys": {"type": "string", "description": f"Key combo joined with '+', e.g. {_KEY_EXAMPLES}."},
             "seconds": {"type": "number", "description": "Seconds to wait, at most 30."},
             "capture_after": {
                 "type": "boolean",
@@ -161,28 +155,12 @@ COMPUTER_USE_SCHEMA: dict[str, Any] = {
         },
         "required": ["action"],
         "allOf": [
+            {"if": {"properties": {"action": {"const": "focus_app"}}}, "then": {"required": ["app"]}},
+            {"if": {"properties": {"action": {"const": "type"}}}, "then": {"required": ["text"]}},
+            {"if": {"properties": {"action": {"const": "key"}}}, "then": {"required": ["keys"]}},
+            {"if": {"properties": {"action": {"const": "set_value"}}}, "then": {"required": ["value", "element"]}},
             {
-                "if": {"properties": {"action": {"const": "focus_app"}}},
-                "then": {"required": ["app"]},
-            },
-            {
-                "if": {"properties": {"action": {"const": "type"}}},
-                "then": {"required": ["text"]},
-            },
-            {
-                "if": {"properties": {"action": {"const": "key"}}},
-                "then": {"required": ["keys"]},
-            },
-            {
-                "if": {"properties": {"action": {"const": "set_value"}}},
-                "then": {"required": ["value", "element"]},
-            },
-            {
-                "if": {
-                    "properties": {
-                        "action": {"enum": ["click", "double_click", "right_click", "middle_click"]},
-                    },
-                },
+                "if": {"properties": {"action": {"enum": ["click", "double_click", "right_click", "middle_click"]}}},
                 "then": {"anyOf": [{"required": ["element"]}, {"required": ["coordinate"]}]},
             },
             {
@@ -191,13 +169,10 @@ COMPUTER_USE_SCHEMA: dict[str, Any] = {
                     "allOf": [
                         {"anyOf": [{"required": ["from_element"]}, {"required": ["from_coordinate"]}]},
                         {"anyOf": [{"required": ["to_element"]}, {"required": ["to_coordinate"]}]},
-                    ],
+                    ]
                 },
             },
-            {
-                "if": {"properties": {"action": {"const": "wait"}}},
-                "then": {"required": ["seconds"]},
-            },
+            {"if": {"properties": {"action": {"const": "wait"}}}, "then": {"required": ["seconds"]}},
         ],
     },
 }

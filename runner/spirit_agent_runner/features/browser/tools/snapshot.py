@@ -42,5 +42,5 @@ def get_tool_definitions() -> list[ToolDefinition]:
             handler=lambda _context, args: browser_snapshot(full=args.get("full", False)),
             check_fn=check_browser_native_requirements,
             is_async=False,
-        ),
+        )
     ]

@@ -86,12 +86,7 @@ class Refs:
             if normalized not in self._last_refs and f"@{normalized}" not in self._last_refs:
                 raise ValueError(f"Element {ref} is not in the current page snapshot; take a new snapshot first.")
 
-    def snapshot_axtree(
-        self,
-        *,
-        interactive_only: bool = False,
-        max_depth: int = 50,
-    ) -> dict[str, Any]:
+    def snapshot_axtree(self, *, interactive_only: bool = False, max_depth: int = 50) -> dict[str, Any]:
         loop = self._loop_provider()
         if loop is None or not loop.is_running():
             return {"ok": False, "error": "Supervisor loop is not running"}
@@ -134,10 +129,7 @@ class Refs:
             return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
     async def _inject_aria_refs_async(
-        self,
-        refs_map: dict[str, dict[str, Any]],
-        session_id: str | None,
-        generation: int,
+        self, refs_map: dict[str, dict[str, Any]], session_id: str | None, generation: int
     ) -> None:
         """给快照节点写入 ``aria-ref`` 属性并缓存中心坐标，供 DOM 查询与坐标兜底解析 ref；逐元素失败不影响其余。"""
         sem = asyncio.Semaphore(16)
@@ -158,10 +150,7 @@ class Refs:
             async with sem:
                 try:
                     obj = await self._cdp_async(
-                        "DOM.resolveNode",
-                        {"backendNodeId": backend_id},
-                        session_id=session_id,
-                        timeout=2.0,
+                        "DOM.resolveNode", {"backendNodeId": backend_id}, session_id=session_id, timeout=2.0
                     )
                     object_id = obj.get("result", {}).get("object", {}).get("objectId")
                     if not object_id:
@@ -179,10 +168,7 @@ class Refs:
                     if scroll_x is None or scroll_y is None:
                         return
                     box = await self._cdp_async(
-                        "DOM.getBoxModel",
-                        {"objectId": object_id},
-                        session_id=session_id,
-                        timeout=1.0,
+                        "DOM.getBoxModel", {"objectId": object_id}, session_id=session_id, timeout=1.0
                     )
                 except Exception as e:
                     logger.debug("aria-ref inject failed for %s: %s", ref_key, e)

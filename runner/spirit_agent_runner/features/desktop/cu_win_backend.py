@@ -172,7 +172,7 @@ def _move_pointer(point: tuple[int, int]) -> None:
     """把指针移到目标点；屏幕角点留给用户中止自动化，不作为目标。"""
     if pyautogui.FAILSAFE and point in pyautogui.FAILSAFE_POINTS:
         raise ValueError(
-            f"screen point {point} is a screen corner reserved for the user's abort gesture; target a point inside it",
+            f"screen point {point} is a screen corner reserved for the user's abort gesture; target a point inside it"
         )
     pyautogui.moveTo(*point, _pause=False)
 
@@ -291,11 +291,7 @@ class WinBackend(ComputerUseBackend):
             capture.png_b64 = base64.b64encode(png).decode()
         return capture
 
-    def _enumerate_uia_elements(
-        self,
-        hwnd: int,
-        rect: tuple[int, int, int, int],
-    ) -> tuple[list[UIElement], list[Any]]:
+    def _enumerate_uia_elements(self, hwnd: int, rect: tuple[int, int, int, int]) -> tuple[list[UIElement], list[Any]]:
         left, top, width, height = rect
         elements: list[UIElement] = []
         controls: list[Any] = []
@@ -317,7 +313,7 @@ class WinBackend(ComputerUseBackend):
                         role=ctrl.element_info.control_type or "Unknown",
                         label=label,
                         bounds=(x, y, w, h),
-                    ),
+                    )
                 )
                 controls.append(ctrl)
             except Exception:
@@ -334,7 +330,7 @@ class WinBackend(ComputerUseBackend):
         if element is not None:
             if not 0 <= element < len(self._elements):
                 raise IndexError(
-                    f"element {element} is not in the latest capture ({len(self._elements)} elements); capture again",
+                    f"element {element} is not in the latest capture ({len(self._elements)} elements); capture again"
                 )
             return self._to_screen(*self._elements[element].center())
         if xy is not None:
@@ -344,11 +340,7 @@ class WinBackend(ComputerUseBackend):
     def _foreground_refusal(self, action: str) -> ActionResult | None:
         """已选定目标但它不在前台时拒绝键盘输入：pyautogui 的按键总是发给前台窗口。"""
         if self._hwnd is None:
-            return ActionResult(
-                ok=False,
-                action=action,
-                message="No target window; call capture or focus_app first.",
-            )
+            return ActionResult(ok=False, action=action, message="No target window; call capture or focus_app first.")
         foreground = ctypes.windll.user32.GetForegroundWindow()
         if foreground == self._hwnd:
             return None

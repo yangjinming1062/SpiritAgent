@@ -37,11 +37,7 @@ class CaptureOperations:
         self._som_lock = threading.Lock()
 
     def screenshot(
-        self,
-        path: str | Path | None = None,
-        *,
-        full_page: bool = False,
-        annotate: bool = False,
+        self, path: str | Path | None = None, *, full_page: bool = False, annotate: bool = False
     ) -> dict[str, Any]:
         sid = (sids := self._session_ids()).active or sids.page
         elements: list[dict[str, Any]] = []
@@ -128,12 +124,7 @@ class CaptureOperations:
             "height": max(1, max(ys) - min(ys)),
             "scale": 1,
         }
-        res = self.send_cdp(
-            "Page.captureScreenshot",
-            {"format": "png", "clip": clip},
-            session_id=sid,
-            timeout=15.0,
-        )
+        res = self.send_cdp("Page.captureScreenshot", {"format": "png", "clip": clip}, session_id=sid, timeout=15.0)
         if not res.get("ok"):
             return res
 

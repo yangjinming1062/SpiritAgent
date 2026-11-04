@@ -9,11 +9,7 @@ from spirit_agent_runner.features.browser.tools._common import browser_session, 
 _VALID_DIALOG_ACTIONS = frozenset({"accept", "dismiss"})
 
 
-def browser_dialog(
-    action: str,
-    prompt_text: str | None = None,
-    dialog_id: str | None = None,
-) -> dict[str, Any]:
+def browser_dialog(action: str, prompt_text: str | None = None, dialog_id: str | None = None) -> dict[str, Any]:
     """应答当前阻塞页面的 JS 弹窗（accept / dismiss）。"""
     if is_camofox_mode():
         return camofox_unsupported("browser_dialog")
@@ -38,11 +34,9 @@ def get_tool_definitions() -> list[ToolDefinition]:
             toolset_id="browser_automation",
             schema=BROWSER_DIALOG_SCHEMA,
             handler=lambda _context, args: browser_dialog(
-                action=args.get("action", ""),
-                prompt_text=args.get("prompt_text"),
-                dialog_id=args.get("dialog_id"),
+                action=args.get("action", ""), prompt_text=args.get("prompt_text"), dialog_id=args.get("dialog_id")
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,
-        ),
+        )
     ]

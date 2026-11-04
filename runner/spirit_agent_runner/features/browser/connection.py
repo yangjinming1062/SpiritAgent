@@ -74,11 +74,7 @@ class CdpConnection:
             self._stop_requested = False
             self._ready_event.clear()
             self._start_error = None
-            self._thread = threading.Thread(
-                target=self._thread_main,
-                name=f"{self._tag}",
-                daemon=True,
-            )
+            self._thread = threading.Thread(target=self._thread_main, name=f"{self._tag}", daemon=True)
             self._thread.start()
 
         if not self._ready_event.wait(timeout=timeout):
@@ -145,8 +141,7 @@ class CdpConnection:
         while not self._stop_requested:
             try:
                 ws = await asyncio.wait_for(
-                    websockets.connect(self.cdp_url, max_size=50 * 1024 * 1024, close_timeout=2.0),
-                    timeout=10.0,
+                    websockets.connect(self.cdp_url, max_size=50 * 1024 * 1024, close_timeout=2.0), timeout=10.0
                 )
             except Exception as e:
                 if not self._ready_event.is_set():
@@ -200,12 +195,7 @@ class CdpConnection:
         return True
 
     async def send(
-        self,
-        method: str,
-        params: dict[str, Any] | None = None,
-        *,
-        session_id: str | None = None,
-        timeout: float = 10.0,
+        self, method: str, params: dict[str, Any] | None = None, *, session_id: str | None = None, timeout: float = 10.0
     ) -> dict[str, Any]:
         if self._ws is None:
             raise RuntimeError("Supervisor WebSocket is not connected")
@@ -264,9 +254,7 @@ class CdpConnection:
             self._dialog_open_waiters.add(opened)
             try:
                 done, _ = await asyncio.wait(
-                    {fut, opened},
-                    timeout=max(0.0, remaining),
-                    return_when=asyncio.FIRST_COMPLETED,
+                    {fut, opened}, timeout=max(0.0, remaining), return_when=asyncio.FIRST_COMPLETED
                 )
             finally:
                 self._dialog_open_waiters.discard(opened)

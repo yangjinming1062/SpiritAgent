@@ -255,10 +255,7 @@ def handle_computer_use(args: dict[str, Any]) -> dict[str, Any]:
         except Exception as e:
             # 预期失败不记堆栈。
             logger.warning(
-                "computer_use %s failed: %s",
-                action,
-                e,
-                exc_info=not isinstance(e, LookupError | ValueError),
+                "computer_use %s failed: %s", action, e, exc_info=not isinstance(e, LookupError | ValueError)
             )
             return {"error": f"{action} failed: {e}"}
 
@@ -339,23 +336,19 @@ def _respond(backend: ComputerUseBackend, res: ActionResult, capture_after: bool
     return _action_result_payload(res)
 
 
-def _capture_response(
-    cap: CaptureResult,
-    max_elements: int,
-    action: ActionResult | None = None,
-) -> dict[str, Any]:
+def _capture_response(cap: CaptureResult, max_elements: int, action: ActionResult | None = None) -> dict[str, Any]:
     total = len(cap.elements)
     visible = cap.elements[:max_elements]
     lines = []
     if action is not None:
         lines.append(
             f"[{action.action}] ok={action.ok}"
-            + (f" message={clean_output(action.message, config=load_config())!r}" if action.message else ""),
+            + (f" message={clean_output(action.message, config=load_config())!r}" if action.message else "")
         )
     lines.append(
         f"capture mode={cap.mode} {cap.width}x{cap.height}"
         + (f" app={cap.app}" if cap.app else "")
-        + (f" window={cap.window_title!r}" if cap.window_title else ""),
+        + (f" window={cap.window_title!r}" if cap.window_title else "")
     )
     if cap.mode != "vision":
         lines.append(f"{total} interactable element(s):")
@@ -369,7 +362,7 @@ def _capture_response(
     if image and len(image) > MAX_BASE64_BYTES:
         lines.append(
             f"(image omitted: {len(image):,} base64 bytes exceeds the {MAX_BASE64_BYTES:,}-byte limit; "
-            "pass app= to capture a smaller window or use mode='ax')",
+            "pass app= to capture a smaller window or use mode='ax')"
         )
         image = None
     summary = clean_output("\n".join(lines), config=load_config())
@@ -430,5 +423,5 @@ def get_tool_definitions() -> list[ToolDefinition]:
             handler=lambda _context, args: handle_computer_use(args),
             check_fn=_computer_use_available,
             is_async=False,
-        ),
+        )
     ]

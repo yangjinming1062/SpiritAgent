@@ -45,5 +45,5 @@ def get_tool_definitions() -> list[ToolDefinition]:
             handler=lambda _context, args: browser_vision(annotate=args.get("annotate", False)),
             check_fn=check_browser_native_requirements,
             is_async=False,
-        ),
+        )
     ]

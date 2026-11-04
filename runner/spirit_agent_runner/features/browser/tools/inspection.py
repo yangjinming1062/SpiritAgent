@@ -61,8 +61,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             toolset_id="browser_automation",
             schema=BROWSER_CONSOLE_SCHEMA,
             handler=lambda _context, args: browser_console(
-                clear=args.get("clear", False),
-                expression=args.get("expression"),
+                clear=args.get("clear", False), expression=args.get("expression")
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,

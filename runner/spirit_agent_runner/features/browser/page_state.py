@@ -306,10 +306,7 @@ class PageState:
         target_id = target_info.get("targetId", "")
         if target_info.get("type") == "page" and target_id and session_id:
             with self._lock:
-                self._attached_targets[target_id] = {
-                    "session_id": session_id,
-                    "frame_id": "",
-                }
+                self._attached_targets[target_id] = {"session_id": session_id, "frame_id": ""}
 
     def on_target_detached(self, params: dict[str, Any]) -> None:
         self.forget_target(params.get("targetId"), params.get("sessionId"))

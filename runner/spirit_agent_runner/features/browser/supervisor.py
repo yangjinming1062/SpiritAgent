@@ -124,20 +124,10 @@ class CDPSupervisor:
         ft = self.pages.frame_tree()
         active = self.active
 
-        return SupervisorSnapshot(
-            pending_dialogs=pending,
-            recent_dialogs=recent,
-            frame_tree=ft,
-            active=active,
-        )
+        return SupervisorSnapshot(pending_dialogs=pending, recent_dialogs=recent, frame_tree=ft, active=active)
 
     def send_cdp(
-        self,
-        method: str,
-        params: dict[str, Any] | None = None,
-        *,
-        timeout: float = 10.0,
-        session_id: str | None = None,
+        self, method: str, params: dict[str, Any] | None = None, *, timeout: float = 10.0, session_id: str | None = None
     ) -> dict[str, Any]:
         loop = self.connection.loop
         if loop is None or not loop.is_running():
@@ -165,12 +155,7 @@ class CDPSupervisor:
             return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
     def evaluate_runtime(
-        self,
-        expression: str,
-        *,
-        await_promise: bool = True,
-        return_by_value: bool = True,
-        timeout: float = 10.0,
+        self, expression: str, *, await_promise: bool = True, return_by_value: bool = True, timeout: float = 10.0
     ) -> dict[str, Any]:
         res = self.send_cdp(
             "Runtime.evaluate",
@@ -222,8 +207,7 @@ class CDPSupervisor:
             idle_fut: asyncio.Future[dict[str, Any]] | None = None
             try:
                 nav = (await self.connection.send("Page.navigate", {"url": url}, session_id=sid, timeout=timeout)).get(
-                    "result",
-                    {},
+                    "result", {}
                 )
                 if nav.get("errorText"):
                     raise NavigationError(f"{nav['errorText']}: {url}")
@@ -312,12 +296,7 @@ class CDPSupervisor:
             logger.debug("wait_for_page_stable threadsafe wait error: %s", exc)
         return False
 
-    def snapshot_axtree(
-        self,
-        *,
-        interactive_only: bool = False,
-        max_depth: int = 50,
-    ) -> dict[str, Any]:
+    def snapshot_axtree(self, *, interactive_only: bool = False, max_depth: int = 50) -> dict[str, Any]:
         """抓取 AXTree 并生成 [ref=eN] 文本快照，同步在 DOM 中注入 aria-ref 属性。"""
         return self._refs.snapshot_axtree(interactive_only=interactive_only, max_depth=max_depth)
 
@@ -329,12 +308,7 @@ class CDPSupervisor:
         return self._input.type_ref(ref, text, wait_stable=wait_stable, timeout_s=timeout_s)
 
     def select_ref(
-        self,
-        ref: str,
-        *,
-        value: str | None = None,
-        label: str | None = None,
-        index: int | None = None,
+        self, ref: str, *, value: str | None = None, label: str | None = None, index: int | None = None
     ) -> dict[str, Any]:
         try:
             self._refs.require_current_ref(ref)
@@ -476,14 +450,8 @@ class CDPSupervisor:
         self.connection.notify_dialog_open()
 
     def respond_to_dialog(
-        self,
-        action: str,
-        prompt_text: str | None = None,
-        dialog_id: str | None = None,
+        self, action: str, prompt_text: str | None = None, dialog_id: str | None = None
     ) -> dict[str, Any]:
         return self._dialog_manager.respond(
-            action,
-            prompt_text,
-            dialog_id,
-            active_session_id=(sids := self.pages.current_session()).active or sids.page,
+            action, prompt_text, dialog_id, active_session_id=(sids := self.pages.current_session()).active or sids.page
         )

@@ -144,11 +144,7 @@ def _wait_for_pid(target: ProcessTarget, pid: int, timeout: float) -> bool:
 
 
 def _terminate_tree_windows(
-    target: ProcessTarget,
-    pid: int,
-    graceful_timeout: float,
-    force_timeout: float,
-    escalate: bool,
+    target: ProcessTarget, pid: int, graceful_timeout: float, force_timeout: float, escalate: bool
 ) -> None:
     proc = target if isinstance(target, subprocess.Popen) else None
 

@@ -57,7 +57,7 @@ def normalize_url_for_request(url: str) -> str:
             quote(parsed.path, safe="/%:@!$&'()*+,;="),
             quote(parsed.query, safe="/%:@!$&'()*+,;=?"),
             quote(parsed.fragment, safe="/%:@!$&'()*+,;=?"),
-        ),
+        )
     )
 
 
@@ -122,9 +122,7 @@ def is_always_blocked_url(url: str) -> bool:
                 continue
             if _is_always_blocked(resolved):
                 logger.warning(
-                    "Blocked request to cloud metadata address (always-blocked floor): %s -> %s",
-                    hostname,
-                    sockaddr[0],
+                    "Blocked request to cloud metadata address (always-blocked floor): %s -> %s", hostname, sockaddr[0]
                 )
                 return True
         return False
@@ -247,21 +245,14 @@ class _SafeAsyncBackend(httpcore.AsyncNetworkBackend):
         for ip in ips:
             try:
                 return await self._inner.connect_tcp(
-                    ip,
-                    port,
-                    timeout=timeout,
-                    local_address=local_address,
-                    socket_options=socket_options,
+                    ip, port, timeout=timeout, local_address=local_address, socket_options=socket_options
                 )
             except (httpcore.ConnectError, httpcore.ConnectTimeout) as exc:
                 errors.append(exc)
         raise errors[-1]
 
     async def connect_unix_socket(
-        self,
-        path: str,
-        timeout: float | None = None,
-        socket_options: Iterable[httpcore.SOCKET_OPTION] | None = None,
+        self, path: str, timeout: float | None = None, socket_options: Iterable[httpcore.SOCKET_OPTION] | None = None
     ) -> httpcore.AsyncNetworkStream:
         return await self._inner.connect_unix_socket(path, timeout=timeout, socket_options=socket_options)
 
@@ -283,8 +274,7 @@ class SafeAsyncHTTPTransport(httpx.AsyncHTTPTransport):
         url = str(request.url)
         try:
             safe = await asyncio.wait_for(
-                async_is_safe_url(url, config=self._config),
-                request.extensions.get("timeout", {}).get("connect"),
+                async_is_safe_url(url, config=self._config), request.extensions.get("timeout", {}).get("connect")
             )
         except TimeoutError as exc:
             raise httpx.ConnectTimeout(f"DNS resolution timed out for {request.url.host}", request=request) from exc

@@ -40,7 +40,7 @@ _BLOCKED_CDP_METHODS = frozenset(
         "Page.setDownloadBehavior",
         "Fetch.enable",
         "Fetch.disable",
-    },
+    }
 )
 
 
@@ -61,7 +61,7 @@ def browser_cdp(
         return tool_error(
             f"CDP method {method!r} is not allowed through browser_cdp. "
             "Use the dedicated browser tool if one covers this (e.g. browser_tab_close, browser_dialog, "
-            "browser_cookies_clear).",
+            "browser_cookies_clear)."
         )
     logger.info("browser_cdp %s (target=%s)", method, target_id)
 
@@ -82,8 +82,7 @@ def browser_cdp(
                     attach_res = supervisor.pages.attach_target(target_id)
                     if not attach_res.get("ok"):
                         return tool_error(
-                            f"Failed to attach to target {target_id}: {attach_res.get('error')}",
-                            method=method,
+                            f"Failed to attach to target {target_id}: {attach_res.get('error')}", method=method
                         )
                     session_id = attach_res["result"].get("sessionId")
 
@@ -115,5 +114,5 @@ def get_tool_definitions() -> list[ToolDefinition]:
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,
-        ),
+        )
     ]

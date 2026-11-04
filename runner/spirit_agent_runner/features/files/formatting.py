@@ -192,9 +192,7 @@ def _parse_search_output(stdout: str, output_mode: str, limit: int, offset: int,
     lines = [ln for ln in stdout.split("\n") if ln and not ln.lstrip().startswith(("rg: ", "grep: "))]
     if output_mode == "files_only":
         return SearchResult(
-            files=lines[offset : offset + limit],
-            total_count=len(lines),
-            truncated=len(lines) > offset + limit,
+            files=lines[offset : offset + limit], total_count=len(lines), truncated=len(lines) > offset + limit
         )
     if output_mode == "count":
         counts: dict[str, int] = {}
@@ -213,12 +211,10 @@ def _parse_search_output(stdout: str, output_mode: str, limit: int, offset: int,
                     path=(m.group(1) or "") + m.group(2),
                     line_number=int(m.group(3)),
                     content=m.group(4)[:MAX_MATCH_CONTENT],
-                ),
+                )
             )
         elif context > 0 and (parsed := _parse_search_context_line(line)):
             matches.append(SearchMatch(path=parsed[0], line_number=parsed[1], content=parsed[2][:MAX_MATCH_CONTENT]))
     return SearchResult(
-        matches=matches[offset : offset + limit],
-        total_count=len(matches),
-        truncated=len(matches) > offset + limit,
+        matches=matches[offset : offset + limit], total_count=len(matches), truncated=len(matches) > offset + limit
     )

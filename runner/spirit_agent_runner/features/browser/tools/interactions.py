@@ -111,10 +111,7 @@ def browser_drag(from_ref: str, to_ref: str, hold_key: str | None = None) -> dic
 
 
 def browser_select(
-    ref: str,
-    value: str | None = None,
-    label: str | None = None,
-    index: int | None = None,
+    ref: str, value: str | None = None, label: str | None = None, index: int | None = None
 ) -> dict[str, Any]:
     if is_camofox_mode():
         return camofox_unsupported("browser_select")
@@ -184,10 +181,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_type",
             toolset_id="browser_automation",
             schema=BROWSER_TYPE_SCHEMA,
-            handler=lambda _context, args: browser_type(
-                ref=args.get("ref", ""),
-                text=args.get("text", ""),
-            ),
+            handler=lambda _context, args: browser_type(ref=args.get("ref", ""), text=args.get("text", "")),
             check_fn=check_browser_native_requirements,
             is_async=False,
         ),
@@ -195,9 +189,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_scroll",
             toolset_id="browser_automation",
             schema=BROWSER_SCROLL_SCHEMA,
-            handler=lambda _context, args: browser_scroll(
-                direction=args.get("direction", "down"),
-            ),
+            handler=lambda _context, args: browser_scroll(direction=args.get("direction", "down")),
             check_fn=check_browser_native_requirements,
             is_async=False,
         ),
@@ -222,9 +214,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             toolset_id="browser_automation",
             schema=BROWSER_DRAG_SCHEMA,
             handler=lambda _context, args: browser_drag(
-                from_ref=args.get("from_ref", ""),
-                to_ref=args.get("to_ref", ""),
-                hold_key=args.get("hold_key"),
+                from_ref=args.get("from_ref", ""), to_ref=args.get("to_ref", ""), hold_key=args.get("hold_key")
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,
@@ -234,10 +224,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             toolset_id="browser_automation",
             schema=BROWSER_SELECT_SCHEMA,
             handler=lambda _context, args: browser_select(
-                ref=args.get("ref", ""),
-                value=args.get("value"),
-                label=args.get("label"),
-                index=args.get("index"),
+                ref=args.get("ref", ""), value=args.get("value"), label=args.get("label"), index=args.get("index")
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,
@@ -261,8 +248,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             toolset_id="browser_automation",
             schema=BROWSER_FIND_SCHEMA,
             handler=lambda _context, args: browser_find(
-                query=args.get("query", ""),
-                ref_only=args.get("ref_only", True),
+                query=args.get("query", ""), ref_only=args.get("ref_only", True)
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,

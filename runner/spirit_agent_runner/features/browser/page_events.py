@@ -25,10 +25,7 @@ class PageEvents:
         return fut
 
     def pop_waiter(
-        self,
-        store: dict[Any, list[asyncio.Future[dict[str, Any]]]],
-        key: object,
-        fut: asyncio.Future[dict[str, Any]],
+        self, store: dict[Any, list[asyncio.Future[dict[str, Any]]]], key: object, fut: asyncio.Future[dict[str, Any]]
     ) -> None:
         bucket = store.get(key)
         if bucket is None:

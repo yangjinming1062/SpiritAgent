@@ -13,10 +13,7 @@ from spirit_agent_runner.features.browser.tools._common import browser_session, 
 
 
 def browser_set_viewport(
-    width: int | None,
-    height: int | None,
-    device_scale_factor: float = 1.0,
-    mobile: bool = False,
+    width: int | None, height: int | None, device_scale_factor: float = 1.0, mobile: bool = False
 ) -> dict[str, Any]:
     if is_camofox_mode():
         return camofox_unsupported("browser_set_viewport")
@@ -40,9 +37,7 @@ def browser_set_viewport(
 
 
 def browser_set_user_agent(
-    user_agent: str | None = None,
-    platform: str | None = None,
-    accept_language: str | None = None,
+    user_agent: str | None = None, platform: str | None = None, accept_language: str | None = None
 ) -> dict[str, Any]:
     if is_camofox_mode():
         return camofox_unsupported("browser_set_user_agent")
@@ -84,9 +79,7 @@ def browser_set_extra_headers(headers: dict[str, str]) -> dict[str, Any]:
 
 
 def browser_set_geolocation(
-    lat: float | None = None,
-    lon: float | None = None,
-    accuracy: float = 100.0,
+    lat: float | None = None, lon: float | None = None, accuracy: float = 100.0
 ) -> dict[str, Any]:
     if is_camofox_mode():
         return camofox_unsupported("browser_set_geolocation")
@@ -146,9 +139,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="browser_set_extra_headers",
             toolset_id="browser_automation",
             schema=BROWSER_SET_EXTRA_HEADERS_SCHEMA,
-            handler=lambda _context, args: browser_set_extra_headers(
-                headers=args.get("headers") or {},
-            ),
+            handler=lambda _context, args: browser_set_extra_headers(headers=args.get("headers") or {}),
             check_fn=check_browser_cdp_requirements,
             is_async=False,
         ),
@@ -157,9 +148,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             toolset_id="browser_automation",
             schema=BROWSER_SET_GEOLOCATION_SCHEMA,
             handler=lambda _context, args: browser_set_geolocation(
-                lat=args.get("lat"),
-                lon=args.get("lon"),
-                accuracy=args.get("accuracy", 100.0),
+                lat=args.get("lat"), lon=args.get("lon"), accuracy=args.get("accuracy", 100.0)
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,

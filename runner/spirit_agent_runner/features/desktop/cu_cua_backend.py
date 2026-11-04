@@ -44,7 +44,7 @@ _MODIFIER_KEYS = frozenset({"cmd", "shift", "option", "ctrl", "fn"})
 
 # 子进程不继承 JWT/Backend URL/safeStorage 密文。
 _CUA_DRIVER_SAFE_ENV_EXACT = frozenset(
-    {"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TERM", "TMPDIR"},
+    {"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TERM", "TMPDIR"}
 )
 _CUA_DRIVER_SAFE_ENV_PREFIXES = ("LC_", "XDG_", "DYLD_")
 _CUA_DRIVER_SECRET_SUBSTRINGS = (
@@ -124,9 +124,7 @@ def _build_cua_driver_env() -> dict[str, str]:
 
 
 def _parse_elements(
-    raw_elements: list[Any],
-    snapshot_id: Any,
-    window_id: int,
+    raw_elements: list[Any], snapshot_id: Any, window_id: int
 ) -> tuple[list[UIElement], dict[int, dict[str, Any]]]:
     """寻址优先 element_token，否则 element_index+snapshot_id+window_id。"""
     elements: list[UIElement] = []
@@ -146,7 +144,7 @@ def _parse_elements(
             with contextlib.suppress(KeyError, TypeError, ValueError):
                 bounds = (int(frame["x"]), int(frame["y"]), int(frame["w"]), int(frame["h"]))
         elements.append(
-            UIElement(index=idx, role=str(raw.get("role") or ""), label=str(raw.get("label") or ""), bounds=bounds),
+            UIElement(index=idx, role=str(raw.get("role") or ""), label=str(raw.get("label") or ""), bounds=bounds)
         )
     return elements, refs
 
@@ -215,8 +213,7 @@ def _is_closed_session_error(exc: BaseException) -> bool:
         return exc.error.code == CONNECTION_CLOSED and exc.error.message == "Connection closed"
     # 按类名识别 anyio 流关闭异常，不直接依赖传递依赖。
     return type(exc).__name__ in {"ClosedResourceError", "BrokenResourceError", "EndOfStream"} or isinstance(
-        exc,
-        BrokenPipeError | EOFError,
+        exc, BrokenPipeError | EOFError
     )
 
 
@@ -378,7 +375,7 @@ class _CuaDriverSession:
             if not retry_on_disconnect:
                 raise RuntimeError(
                     f"the connection to the desktop driver was lost during {name}; the action may or may not "
-                    "have taken effect, capture again before retrying",
+                    "have taken effect, capture again before retrying"
                 ) from e
             logger.warning("cua-driver MCP session closed during %s; reconnecting once", name)
         return self._bridge.run(_call_tool(self._current().session, name, args), timeout=_CALL_TIMEOUT_S)
@@ -462,7 +459,7 @@ class CuaDriverBackend(ComputerUseBackend):
             if not (windows := self._match_windows(app)):
                 raise LookupError(
                     f"no on-screen window matched app={app!r}; call list_apps to see app names "
-                    "(macOS may report localized names)",
+                    "(macOS may report localized names)"
                 )
         elif not (windows := self._list_windows()):
             raise LookupError("no on-screen window to capture")
@@ -509,9 +506,7 @@ class CuaDriverBackend(ComputerUseBackend):
             out = self._session.call_tool(name, args, retry_on_disconnect=False)
         except TimeoutError as e:
             return ActionResult(
-                ok=False,
-                action=name,
-                message=f"{e}; the action may still take effect, capture again before retrying.",
+                ok=False, action=name, message=f"{e}; the action may still take effect, capture again before retrying."
             )
         except Exception as e:
             logger.warning("cua-driver %s call failed: %s", name, e)
@@ -538,9 +533,7 @@ class CuaDriverBackend(ComputerUseBackend):
             return _no_target("click")
         if click_count == 2 and button != "left":
             return ActionResult(
-                ok=False,
-                action="click",
-                message="Double-click is only supported with the left button.",
+                ok=False, action="click", message="Double-click is only supported with the left button."
             )
         tool = "double_click" if click_count == 2 else "right_click" if button == "right" else "click"
         args: dict[str, Any] = {"pid": target.pid}
@@ -585,9 +578,7 @@ class CuaDriverBackend(ComputerUseBackend):
             return _no_target("scroll")
         if modifiers:
             return ActionResult(
-                ok=False,
-                action="scroll",
-                message="Modifier keys are not supported for scrolling on macOS.",
+                ok=False, action="scroll", message="Modifier keys are not supported for scrolling on macOS."
             )
         args: dict[str, Any] = {"pid": target.pid, "direction": direction, "amount": amount}
         if element is not None:
@@ -611,9 +602,7 @@ class CuaDriverBackend(ComputerUseBackend):
         modifiers = [k for k in keys if k in _MODIFIER_KEYS]
         if len(others := [k for k in keys if k not in _MODIFIER_KEYS]) != 1:
             return ActionResult(
-                ok=False,
-                action="key",
-                message=f"A key combo needs exactly one non-modifier key: {keys}.",
+                ok=False, action="key", message=f"A key combo needs exactly one non-modifier key: {keys}."
             )
         res = (
             self._action("hotkey", {"pid": target.pid, "keys": [*modifiers, others[0]]})

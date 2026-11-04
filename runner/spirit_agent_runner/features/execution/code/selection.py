@@ -78,7 +78,7 @@ _WINDOWS_ESSENTIAL_ENV_VARS = frozenset(
         "HOMEDRIVE",
         "HOMEPATH",
         "COMPUTERNAME",
-    },
+    }
 )
 
 

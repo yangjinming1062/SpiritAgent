@@ -116,7 +116,7 @@ class ShellFileOperations(FileOperations):
         # awk NR 计入无结尾换行行。
         stat_result = self._exec(
             f"if [ -d {q} ]; then echo dir; elif [ -f {q} ]; then wc -c < {q}; awk 'END {{print NR}}' {q}; "
-            "else exit 1; fi 2>/dev/null",
+            "else exit 1; fi 2>/dev/null"
         )
         if stat_result.exit_code != 0:
             return self._suggest_similar_files(path)
@@ -209,9 +209,7 @@ class ShellFileOperations(FileOperations):
             if is_write_denied(p, config=load_config()):
                 return WriteResult(error=f"Move denied: {p} is a protected path")
         q_dst = self._escape_shell_arg(dst)
-        result = self._exec(
-            f'mkdir -p -- "$(dirname -- {q_dst})" && mv -- {self._escape_shell_arg(src)} {q_dst}',
-        )
+        result = self._exec(f'mkdir -p -- "$(dirname -- {q_dst})" && mv -- {self._escape_shell_arg(src)} {q_dst}')
         if result.exit_code != 0:
             return WriteResult(error=f"Failed to move {src} -> {dst}: {result.stdout.strip()}")
         return WriteResult()
@@ -229,7 +227,7 @@ class ShellFileOperations(FileOperations):
         )
         if result.exit_code != 0:
             return ListResult(
-                error=f"Failed to list directory '{path}': {result.stdout.strip() or f'exit code {result.exit_code}'}",
+                error=f"Failed to list directory '{path}': {result.stdout.strip() or f'exit code {result.exit_code}'}"
             )
         out = result.stdout.strip()
         if out == "__missing__":
@@ -249,12 +247,7 @@ class ShellFileOperations(FileOperations):
                 except ValueError:
                     continue
                 entries.append(
-                    {
-                        "name": name + ("/" if is_dir else ""),
-                        "is_dir": is_dir,
-                        "size": entry_size,
-                        "mtime": entry_mtime,
-                    },
+                    {"name": name + ("/" if is_dir else ""), "is_dir": is_dir, "size": entry_size, "mtime": entry_mtime}
                 )
             else:
                 entries.append({"name": line, "is_dir": line.endswith("/")})
@@ -336,14 +329,7 @@ class ShellFileOperations(FileOperations):
         )
 
     def _run_content_search(
-        self,
-        cmd_parts: list[str],
-        pattern: str,
-        path: str,
-        limit: int,
-        offset: int,
-        output_mode: str,
-        context: int,
+        self, cmd_parts: list[str], pattern: str, path: str, limit: int, offset: int, output_mode: str, context: int
     ) -> SearchResult:
         if output_mode == "files_only":
             cmd_parts.append("-l")
@@ -355,7 +341,5 @@ class ShellFileOperations(FileOperations):
         fetch_limit = limit + offset + 1 + (200 if context > 0 else 0)
         result = self._exec(f"set -o pipefail; {' '.join(cmd_parts)} | head -n {fetch_limit}", timeout=60)
         if result.exit_code not in (0, 1, 141):
-            return SearchResult(
-                error=f"Search failed: {result.stdout.strip() or f'exit code {result.exit_code}'}",
-            )
+            return SearchResult(error=f"Search failed: {result.stdout.strip() or f'exit code {result.exit_code}'}")
         return _parse_search_output(result.stdout, output_mode, limit, offset, context)

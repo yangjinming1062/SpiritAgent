@@ -60,12 +60,7 @@ def iter_skills_files(remote_base: str, *, config: dict[str, Any] | None = None)
     return out
 
 
-_CACHE_DIRS: list[str] = [
-    "cache/documents",
-    "cache/images",
-    "cache/audio",
-    "cache/screenshots",
-]
+_CACHE_DIRS: list[str] = ["cache/documents", "cache/images", "cache/audio", "cache/screenshots"]
 
 
 def iter_cache_files(remote_base: str) -> list[dict[str, str]]:

@@ -111,12 +111,7 @@ def browser_tab_list() -> dict[str, Any]:
                 sid = attached.get(tid, {}).get("session_id")
                 is_active = (sid == active_sid) if active_sid else False
                 tabs.append(
-                    {
-                        "tab_id": tid,
-                        "url": t.get("url", ""),
-                        "title": t.get("title", ""),
-                        "is_active": is_active,
-                    },
+                    {"tab_id": tid, "url": t.get("url", ""), "title": t.get("title", ""), "is_active": is_active}
                 )
 
         return {"success": True, "tabs": tabs, "count": len(tabs)}

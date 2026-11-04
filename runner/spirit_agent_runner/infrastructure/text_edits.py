@@ -27,10 +27,7 @@ def _unescape_controls(text: str) -> str:
 
 
 def fuzzy_find_and_replace(
-    content: str,
-    old_string: str,
-    new_string: str,
-    replace_all: bool = False,
+    content: str, old_string: str, new_string: str, replace_all: bool = False
 ) -> tuple[str, int, str | None]:
     """按策略链查找并替换；返回 (new_content, match_count, error)。"""
     if not old_string:
@@ -73,10 +70,7 @@ def fuzzy_find_and_replace(
             # 非 exact 命中时按 old_string 把 new_string 缩进对齐文件。
             effective_new = _maybe_unescape_new_string(new_string, content, matches)
             new_content = _apply_replacements(
-                content,
-                matches,
-                effective_new,
-                old_string=old_string if strategy_name != "exact" else None,
+                content, matches, effective_new, old_string=old_string if strategy_name != "exact" else None
             )
             return new_content, len(matches), None
 
@@ -168,10 +162,7 @@ def _maybe_unescape_new_string(new_string: str, content: str, matches: list[tupl
 
 
 def _apply_replacements(
-    content: str,
-    matches: list[tuple[int, int]],
-    new_string: str,
-    old_string: str | None = None,
+    content: str, matches: list[tuple[int, int]], new_string: str, old_string: str | None = None
 ) -> str:
     """在给定位置应用替换；非精确匹配时按 old_string 重新缩进 new_string。"""
     sorted_matches = sorted(matches, key=lambda x: x[0], reverse=True)
@@ -378,10 +369,7 @@ def _strategy_block_anchor(content: str, pattern: str) -> list[tuple[int, int]]:
 
 
 def _calculate_line_positions(
-    content_lines: list[str],
-    start_line: int,
-    end_line: int,
-    content_length: int,
+    content_lines: list[str], start_line: int, end_line: int, content_length: int
 ) -> tuple[int, int]:
     """根据行号区间计算原字符串的字符起止位置。"""
     start_pos = sum(len(line) + 1 for line in content_lines[:start_line])
@@ -391,11 +379,7 @@ def _calculate_line_positions(
 
 
 def _find_normalized_matches(
-    content: str,
-    content_lines: list[str],
-    content_normalized_lines: list[str],
-    pattern: str,
-    pattern_normalized: str,
+    content: str, content_lines: list[str], content_normalized_lines: list[str], pattern: str, pattern_normalized: str
 ) -> list[tuple[int, int]]:
     """在归一化内容中查找匹配，再映射回原内容坐标。"""
     pattern_norm_lines = pattern_normalized.split("\n")

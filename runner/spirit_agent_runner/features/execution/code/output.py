@@ -35,14 +35,7 @@ def error_result(error: str, tool_calls: int, duration: float) -> dict[str, Any]
 
 
 def build_result(
-    *,
-    status: str,
-    output: str,
-    stderr: str,
-    exit_code: int,
-    timeout: int,
-    tool_calls: int,
-    duration: float,
+    *, status: str, output: str, stderr: str, exit_code: int, timeout: int, tool_calls: int, duration: float
 ) -> dict[str, Any]:
     output = clean_output(output, config=load_config())
     stderr = clean_output(stderr, config=load_config())
@@ -56,12 +49,7 @@ def build_result(
         timeout_msg = f"Script timed out after {timeout}s and was killed."
         result["error"] = timeout_msg
         result["output"] = f"{output}\n\n⏰ {timeout_msg}" if output else f"⏰ {timeout_msg}"
-        logger.warning(
-            "execute_code timed out after %ss (limit %ss) with %d tool calls",
-            duration,
-            timeout,
-            tool_calls,
-        )
+        logger.warning("execute_code timed out after %ss (limit %ss) with %d tool calls", duration, timeout, tool_calls)
     elif status == "interrupted":
         result["output"] = output + "\n[execution interrupted]"
     elif exit_code != 0:
@@ -109,11 +97,7 @@ def drain_capped(pipe: IO[bytes], chunks: list[bytes], max_bytes: int, stop_even
 
 
 def drain_head_tail(
-    pipe: IO[bytes],
-    head_chunks: list[bytes],
-    tail_chunks: list[bytes],
-    total: list[int],
-    stop_event: threading.Event,
+    pipe: IO[bytes], head_chunks: list[bytes], tail_chunks: list[bytes], total: list[int], stop_event: threading.Event
 ) -> None:
     """读尽管道，保留开头与结尾各一段；结尾段在读完后一次性发布，避免与主线程读取竞争。"""
     head_collected = 0

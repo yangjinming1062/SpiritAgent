@@ -29,12 +29,7 @@ VISION_ANALYZE_SCHEMA = {
     "parameters": {
         "type": "object",
         "additionalProperties": False,
-        "properties": {
-            "image_url": {
-                "type": "string",
-                "description": "http(s) image URL or local image file path.",
-            },
-        },
+        "properties": {"image_url": {"type": "string", "description": "http(s) image URL or local image file path."}},
         "required": ["image_url"],
     },
 }
@@ -90,10 +85,7 @@ async def _vision_analyze(args: dict[str, Any]) -> dict[str, Any]:
         )
         return {
             "_multimodal": True,
-            "content": [
-                {"type": "input_text", "text": text},
-                {"type": "input_image", "image_url": img_url},
-            ],
+            "content": [{"type": "input_text", "text": text}, {"type": "input_image", "image_url": img_url}],
             "text_summary": text,
         }
     except Exception as e:
@@ -114,5 +106,5 @@ def get_tool_definitions() -> list[ToolDefinition]:
             schema=VISION_ANALYZE_SCHEMA,
             handler=lambda _context, args: _vision_analyze(args),
             is_async=True,
-        ),
+        )
     ]

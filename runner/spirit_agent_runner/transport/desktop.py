@@ -77,12 +77,7 @@ if IS_WINDOWS:
         wintypes.BOOL,
     ]
     _kernel32.GetOverlappedResult.restype = wintypes.BOOL
-    _kernel32.CreateEventW.argtypes = [
-        ctypes.c_void_p,
-        wintypes.BOOL,
-        wintypes.BOOL,
-        ctypes.c_wchar_p,
-    ]
+    _kernel32.CreateEventW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.BOOL, ctypes.c_wchar_p]
     _kernel32.CreateEventW.restype = ctypes.c_void_p
     _kernel32.CancelIoEx.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
     _kernel32.CancelIoEx.restype = wintypes.BOOL
@@ -152,23 +147,13 @@ class _Stream(Protocol):
 
 if IS_WINDOWS:
 
-    def _connect_pipe_handle(
-        path: str,
-        *,
-        timeout_s: float = _PIPE_CONNECT_TIMEOUT_S,
-    ) -> int:
+    def _connect_pipe_handle(path: str, *, timeout_s: float = _PIPE_CONNECT_TIMEOUT_S) -> int:
         """打开带重叠 IO 的管道客户端句柄，对连接竞争做有限重试。"""
         deadline = time.monotonic() + timeout_s
         last_error: int | None = None
         while time.monotonic() < deadline:
             handle = _kernel32.CreateFileW(
-                path,
-                _GENERIC_READ_WRITE,
-                0,
-                None,
-                _OPEN_EXISTING,
-                _FILE_FLAG_OVERLAPPED,
-                None,
+                path, _GENERIC_READ_WRITE, 0, None, _OPEN_EXISTING, _FILE_FLAG_OVERLAPPED, None
             )
             if handle and handle != _INVALID_HANDLE:
                 return handle
@@ -180,9 +165,7 @@ if IS_WINDOWS:
             else:
                 raise OSError(last_error, f"CreateFileW({path!r}) failed")
         last_error = last_error if last_error is not None else _WIN_ERROR_FILE_NOT_FOUND
-        raise TimeoutError(
-            f"named pipe {path!r} not connectable within {timeout_s}s (winerror {last_error})",
-        )
+        raise TimeoutError(f"named pipe {path!r} not connectable within {timeout_s}s (winerror {last_error})")
 
     class _PipeStream:
         """基于重叠 IO 命名管道句柄的双工流。"""
@@ -196,11 +179,7 @@ if IS_WINDOWS:
             self._thread: threading.Thread | None = None
 
         async def start(self) -> None:
-            self._thread = threading.Thread(
-                target=self._read_pump,
-                name="desktop-pipe-reader",
-                daemon=True,
-            )
+            self._thread = threading.Thread(target=self._read_pump, name="desktop-pipe-reader", daemon=True)
             self._thread.start()
 
         def _read_once(self) -> bytes | None:
@@ -212,21 +191,12 @@ if IS_WINDOWS:
             if not overlapped.hEvent:
                 return None
             try:
-                ok = _kernel32.ReadFile(
-                    self._handle,
-                    buf,
-                    _READ_CHUNK,
-                    ctypes.byref(count),
-                    ctypes.byref(overlapped),
-                )
+                ok = _kernel32.ReadFile(self._handle, buf, _READ_CHUNK, ctypes.byref(count), ctypes.byref(overlapped))
                 if not ok:
                     if ctypes.get_last_error() != _WIN_ERROR_IO_PENDING:
                         return None
                     ok = _kernel32.GetOverlappedResult(
-                        self._handle,
-                        ctypes.byref(overlapped),
-                        ctypes.byref(count),
-                        True,
+                        self._handle, ctypes.byref(overlapped), ctypes.byref(count), True
                     )
                     if not ok:
                         return None
@@ -266,27 +236,15 @@ if IS_WINDOWS:
             if not overlapped.hEvent:
                 raise OSError("CreateEventW failed for pipe write")
             try:
-                ok = _kernel32.WriteFile(
-                    self._handle,
-                    buf,
-                    len(data),
-                    ctypes.byref(count),
-                    ctypes.byref(overlapped),
-                )
+                ok = _kernel32.WriteFile(self._handle, buf, len(data), ctypes.byref(count), ctypes.byref(overlapped))
                 if not ok:
                     error = ctypes.get_last_error()
                     if error != _WIN_ERROR_IO_PENDING:
                         raise OSError(error, "WriteFile to desktop pipe failed")
                     if not _kernel32.GetOverlappedResult(
-                        self._handle,
-                        ctypes.byref(overlapped),
-                        ctypes.byref(count),
-                        True,
+                        self._handle, ctypes.byref(overlapped), ctypes.byref(count), True
                     ):
-                        raise OSError(
-                            ctypes.get_last_error(),
-                            "GetOverlappedResult for pipe write failed",
-                        )
+                        raise OSError(ctypes.get_last_error(), "GetOverlappedResult for pipe write failed")
             finally:
                 _kernel32.CloseHandle(overlapped.hEvent)
 
@@ -300,10 +258,7 @@ if IS_WINDOWS:
             if thread is not None and thread is not threading.current_thread():
                 # join 放 executor；daemon 兜底。
                 with contextlib.suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(
-                        self._loop.run_in_executor(None, thread.join, 2.0),
-                        2.5,
-                    )
+                    await asyncio.wait_for(self._loop.run_in_executor(None, thread.join, 2.0), 2.5)
             async with self._write_lock:  # 等待 in-flight executor 写入完成
                 _kernel32.CloseHandle(self._handle)
 
@@ -312,11 +267,7 @@ else:
     class _UnixStream:
         """把 macOS UDS 流包装为与 ``_PipeStream`` 同形接口的适配器。"""
 
-        def __init__(
-            self,
-            reader: asyncio.StreamReader,
-            writer: asyncio.StreamWriter,
-        ) -> None:
+        def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
             self._reader = reader
             self._writer = writer
             self._closed = False
@@ -356,10 +307,7 @@ class DesktopConnection:
 
     def __init__(self, stream: _Stream, token: str) -> None:
         self._stream = stream
-        self._protocol = ClientProtocol(
-            parse_uri(_DUMMY_URI),
-            max_size=MAX_MESSAGE_BYTES,
-        )
+        self._protocol = ClientProtocol(parse_uri(_DUMMY_URI), max_size=MAX_MESSAGE_BYTES)
         self._token = token
         self._messages: asyncio.Queue[str | None] = asyncio.Queue()
         self._recv_task: asyncio.Task[None] | None = None
@@ -488,19 +436,12 @@ class DesktopConnection:
         return self
 
     async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: TracebackType | None,
+        self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None
     ) -> None:
         await self.close()
 
 
-async def connect_desktop(
-    endpoint: DesktopEndpoint,
-    *,
-    open_timeout_s: float = 8.0,
-) -> DesktopConnection:
+async def connect_desktop(endpoint: DesktopEndpoint, *, open_timeout_s: float = 8.0) -> DesktopConnection:
     """连接 Desktop 端 IPC 端点并完成握手鉴权。"""
     stream = await _open_stream(endpoint.path)
     try:

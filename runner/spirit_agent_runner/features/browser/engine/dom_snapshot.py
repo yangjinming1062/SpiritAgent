@@ -25,7 +25,7 @@ INTERACTIVE_ROLES = frozenset(
         "rowheader",
         "cell",
         "gridcell",
-    },
+    }
 )
 
 
@@ -43,10 +43,7 @@ def _get_node_property(node: dict[str, Any], prop_name: str) -> Any:
 
 
 def build_snapshot_text(
-    nodes: list[dict[str, Any]],
-    *,
-    interactive_only: bool = False,
-    max_depth: int = 50,
+    nodes: list[dict[str, Any]], *, interactive_only: bool = False, max_depth: int = 50
 ) -> tuple[str, dict[str, dict[str, Any]]]:
     """遍历 AXTree 节点列表，构建紧凑或完整的可访问性树文本快照，并返回 ref 映射表。"""
     if not nodes:
@@ -110,12 +107,7 @@ def build_snapshot_text(
             ref_counter += 1
             ref_num = f"e{ref_counter}"
             ref_id = ref_num
-            info = {
-                "ref": ref_num,
-                "backendNodeId": backend_id,
-                "role": role,
-                "name": name,
-            }
+            info = {"ref": ref_num, "backendNodeId": backend_id, "role": role, "name": name}
             refs_map[ref_num] = info
             refs_map[f"@{ref_num}"] = info
 
