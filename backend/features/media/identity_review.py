@@ -134,6 +134,7 @@ async def review_character_image_goal(
                     value.get(name) in {"pass", "fail"}
                     and isinstance(value.get(reason_name), str)
                     and value[reason_name].strip()
+                    and len(value[reason_name].strip()) <= 400
                     and name not in saved
                 ):
                     saved[name], reasons[reason_name] = value[name], value[reason_name]

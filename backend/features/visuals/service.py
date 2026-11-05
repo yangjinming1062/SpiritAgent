@@ -3,6 +3,7 @@
 import asyncio
 from typing import Literal
 from uuid import uuid4
+from weakref import WeakValueDictionary
 
 from infrastructure.assets.references import asset_paths
 from infrastructure.database import SESSION_LOCAL
@@ -87,7 +88,7 @@ from .schemas import (
 )
 from .static_presentation import cancel_pending_command, restore_static_presentation
 
-_LOCKS: dict[int, asyncio.Lock] = {}
+_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
 
 
 class VisualPresentationConflictError(VisualStateError):

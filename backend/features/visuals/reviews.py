@@ -2,6 +2,7 @@
 
 import asyncio
 from uuid import uuid4
+from weakref import WeakValueDictionary
 
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import client_asset_url, resolve_asset_reference
@@ -50,7 +51,7 @@ from .generation import (
 from .repository import notify_visuals_updated, visual_job_row, visual_progress, visual_snapshot
 from .schemas import OpeningReview, VisualAsset, VisualJobProgress
 
-_LOCKS: dict[int, asyncio.Lock] = {}
+_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
 
 
 def _manual_candidates(progress: VisualJobProgress) -> list[MediaCandidate]:

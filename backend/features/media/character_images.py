@@ -2,7 +2,6 @@
 
 import asyncio
 import io
-import json
 from collections.abc import Awaitable, Callable
 from typing import Literal
 
@@ -39,7 +38,6 @@ from features.media.chain import (
     resolve_frozen_media_provider,
 )
 from features.media.identity_review import (
-    ImageGoalReview,
     ImageGoalReviewFailure,
     require_image_goal_review_config,
     review_character_image_goal,
@@ -127,8 +125,6 @@ class ImageChainState(MediaChainState):
     pending_path: str | None = None
     remaining_slots: list[int] = Field(default_factory=list)
     size_rejected: int = 0
-    goal_reviews: dict[str, ImageGoalReview] = Field(default_factory=dict)
-    goal_review_failures: dict[str, ImageGoalReviewFailure] = Field(default_factory=dict)
 
     def resume_download(self) -> None:
         """仅接收已返回的图片并完成检查，不再生成候选。"""
@@ -220,7 +216,7 @@ class ImageChainState(MediaChainState):
             super().finish(slots)
 
     def generated_paths(self) -> set[str]:
-        """本次制作拥有的候选、转存与处理产物，不包含调用方的参考素材。"""
+        """本次制作拥有的候选、转存与处理产物，不包含调用方的参考素材与共享检查证据。"""
         return {
             self.pending_path or "",
             *(candidate.path for candidate in self.candidates),
@@ -395,14 +391,8 @@ async def _complete_images(state: ImageChainState, writer: ImageProgressWriter |
             raise ImageGenerationError("生成图片画幅不符合要求")
         if isinstance(state.inputs, SceneImageInput) and any(candidate.evaluated for candidate in state.candidates):
             for candidate in reversed(state.candidates):
-                if candidate.accepted is not False or not candidate.result_json:
-                    continue
-                try:
-                    review = json.loads(candidate.result_json)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(review, dict) and isinstance(review.get("reason"), str) and review["reason"].strip():
-                    raise ImageGenerationError(f"场景内容检查未通过：{review['reason'].strip()}")
+                if candidate.accepted is False and candidate.review and candidate.review.goal:
+                    raise ImageGenerationError(f"场景内容检查未通过：{candidate.review.goal.reason}")
             raise ImageGenerationError("场景生成未通过内容检查，请调整环境描述后重试")
         raise ImageGenerationError("图片生成失败，未取得可用候选")
     retained = set(selected) | {
@@ -713,18 +703,6 @@ async def _run_image_chain(
         state.stop_reason = ""
         for candidate in state.candidates:
             if state._needs_goal_review(candidate):
-                goal = state.goal_reviews.get(candidate.path)
-                state.goal_review_failures[candidate.path] = state.goal_review_failures.get(
-                    candidate.path
-                ) or ImageGoalReviewFailure(
-                    status="invalid",
-                    identity_verdict=candidate.identity_verdict,
-                    identity_reason=candidate.identity_reason,
-                    verdict=goal.verdict if goal else None,
-                    goal_reason=goal.reason if goal else "",
-                    quality_verdict=goal.quality_verdict if goal else None,
-                    quality_reason=goal.quality_reason if goal else "",
-                )
                 candidate.evaluated = False
     if state.phase == "submitting":
         state.stop_reason = "result_unknown"
@@ -867,11 +845,15 @@ async def _run_image_chain(
                     if review_slot is not None and candidate.slot != review_slot:
                         continue
                     if candidate.evaluated:
-                        if state._goal_enabled() and candidate.path not in state.goal_reviews and not state.stop_reason:
+                        if (
+                            state._goal_enabled()
+                            and (candidate.review is None or candidate.review.goal is None)
+                            and not state.stop_reason
+                        ):
                             state.stop_reason = "goal_review_invalid"
                         continue
                     if not state.requires_review():
-                        candidate.evaluated, candidate.accepted = True, True
+                        candidate.evaluated = True
                         await _save_progress(state, save_progress)
                         continue
                     data, mime = await image_asset_bytes(candidate.path)
@@ -889,20 +871,12 @@ async def _run_image_chain(
                             reference_uri=review_identity_uri or "",
                             before_submit=before_submit,
                             task=task,
-                            evidence=candidate.evidence,
+                            evidence=candidate.evidence or (candidate.review.evidence if candidate.review else None),
                             previous=candidate.review,
                             save_evidence=save_scene_evidence,
                         )
-                        candidate.evidence = candidate.review.evidence
-                        candidate.accepted = candidate.review.verdict == "pass"
+                        candidate.evidence = None
                         candidate.evaluated = True
-                        candidate.result_json = json.dumps(
-                            {
-                                "accepted": candidate.accepted,
-                                "reason": candidate.review.goal.reason if candidate.review.goal else "环境检查待复核",
-                            },
-                            ensure_ascii=False,
-                        )
                         if candidate.review.status != "complete" or candidate.review.verdict == "review":
                             state.stop_reason = "review_pending"
                     elif inputs.purpose == "plain":
@@ -916,20 +890,13 @@ async def _run_image_chain(
                             (uri,),
                             generation_prompt=inputs.prompt,
                             task=task,
-                            evidence=candidate.evidence,
+                            evidence=candidate.evidence or (candidate.review.evidence if candidate.review else None),
                             previous=candidate.review,
                             save_evidence=save_plain_evidence,
                             before_submit=before_submit,
                         )
-                        candidate.evidence = candidate.review.evidence
-                        candidate.evaluated, candidate.accepted = True, candidate.review.verdict == "pass"
-                        if candidate.review.goal and candidate.review.quality:
-                            state.goal_reviews[candidate.path] = ImageGoalReview(
-                                verdict=candidate.review.goal.verdict,
-                                reason=candidate.review.goal.reason,
-                                quality_verdict=candidate.review.quality.verdict,
-                                quality_reason=candidate.review.quality.reason,
-                            )
+                        candidate.evidence = None
+                        candidate.evaluated = True
                         if candidate.review.status != "complete" or candidate.review.verdict == "review":
                             state.stop_reason = "review_pending"
                     else:
@@ -938,6 +905,23 @@ async def _run_image_chain(
                             candidate.evidence = evidence
                             await _save_progress(state, save_progress)
 
+                        previous = candidate.review
+                        identity = previous.identity if previous else None
+                        goal = previous.goal if previous else None
+                        quality = previous.quality if previous else None
+                        previous_failure = (
+                            ImageGoalReviewFailure(
+                                status="invalid",
+                                identity_verdict=identity.verdict if identity else None,
+                                identity_reason=identity.reason if identity else "",
+                                verdict=goal.verdict if goal else None,
+                                goal_reason=goal.reason if goal else "",
+                                quality_verdict=quality.verdict if quality else None,
+                                quality_reason=quality.reason if quality else "",
+                            )
+                            if previous
+                            else None
+                        )
                         review = await review_character_image_goal(
                             user_id,
                             identity_uri or "",
@@ -946,22 +930,14 @@ async def _run_image_chain(
                             environment_uri=review_environment_uri,
                             generation_prompt=inputs.prompt,
                             identity_reference_mode=inputs.identity_reference_mode,
-                            previous_failure=state.goal_review_failures.get(candidate.path),
+                            previous_failure=previous_failure,
                             task=task,
                             before_submit=before_submit,
-                            evidence=candidate.evidence,
+                            evidence=candidate.evidence or (candidate.review.evidence if candidate.review else None),
                             save_evidence=save_evidence,
                         )
-                        candidate.identity_verdict = review.identity_verdict
-                        candidate.identity_reason = review.identity_reason
-                        candidate.evidence = review.evidence
-                        if review.goal:
-                            state.goal_reviews[candidate.path] = review.goal
-                            state.goal_review_failures.pop(candidate.path, None)
-                        else:
-                            state.goal_review_failures[candidate.path] = review.failure or ImageGoalReviewFailure(
-                                status="invalid"
-                            )
+                        candidate.evidence = None
+                        failure = review.failure
                         candidate.review = VisualReview(
                             required=("identity", "goal", "quality"),
                             evidence=review.evidence,
@@ -970,16 +946,19 @@ async def _run_image_chain(
                             else None,
                             goal=ReviewDecision(verdict=review.goal.verdict, reason=review.goal.reason)
                             if review.goal
+                            else ReviewDecision(verdict=failure.verdict, reason=failure.goal_reason)
+                            if failure and failure.verdict and failure.goal_reason
                             else None,
                             quality=ReviewDecision(
                                 verdict=review.goal.quality_verdict, reason=review.goal.quality_reason
                             )
                             if review.goal and review.goal.quality_verdict and review.goal.quality_reason
+                            else ReviewDecision(verdict=failure.quality_verdict, reason=failure.quality_reason)
+                            if failure and failure.quality_verdict and failure.quality_reason
                             else None,
                             status=review.failure.status if review.failure else "complete",
                         )
                         candidate.evaluated = True
-                        candidate.accepted = candidate.review.verdict == "pass"
                         if candidate.review.status != "complete" or candidate.review.verdict == "review":
                             state.stop_reason = (
                                 "goal_review_blocked" if candidate.review.status == "blocked" else "review_pending"

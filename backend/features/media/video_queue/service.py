@@ -327,11 +327,23 @@ async def cancel_video_attempt(request_id: str) -> bool:
 async def pause_video_attempt(request_id: str) -> None:
     async with SESSION_LOCAL() as db:
         row = await db.scalar(select(ProviderAttempt).where(ProviderAttempt.token == request_id).with_for_update())
-        if row is None or row.state in _TERMINAL:
+        # 已提交的尝试继续核对远端；业务暂停不应阻断日后的结果接收。
+        if row is None or row.state not in _PENDING + ("claimed",):
             return
         row.pause_requested = True
-        if row.state in _PENDING or row.state == "claimed":
-            row.state = "paused"
+        row.state = "paused"
+        row.revision += 1
+        row.updated_at = utc_now()
+        await db.commit()
+
+
+async def resume_video_attempt(request_id: str) -> None:
+    """恢复业务暂停的未提交尝试；已提交尝试始终由队列继续核对。"""
+    async with SESSION_LOCAL() as db:
+        row = await db.scalar(select(ProviderAttempt).where(ProviderAttempt.token == request_id).with_for_update())
+        if row is None or row.state != "paused" or row.cancel_requested:
+            return
+        row.state, row.pause_requested, row.enqueued_at = "queued", False, utc_now()
         row.revision += 1
         row.updated_at = utc_now()
         await db.commit()

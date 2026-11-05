@@ -276,6 +276,10 @@ async def command_import_job(user_id: int, visual_id: int, body: ImportAnalysisR
             if body.notes is not None:
                 context.correction_notes = body.notes.strip()
         job.context_json = context.model_dump(mode="json")
+        if body.command == "apply" and job.state != "running":
+            item = await visual_item(db, user_id, visual_id)
+            original = VisualSnapshot.model_validate(item.snapshot_json).source.original_path or item.media_path
+            await sync_import_assets(db, user_id, job.id, context, result, original)
         await db.flush()
         await notify_visuals_updated(db, user_id)
         await db.commit()
@@ -462,6 +466,36 @@ async def sync_import_assets(
     await enqueue_asset_cleanup(db, user_id, released)
 
 
+def finish_import_component(context: ImportContext, component: ImportComponent) -> None:
+    """已完成条目只保留采用候选及其检查依据；未决请求仍需原链恢复。"""
+    if component.status not in {"created", "reused", "skipped", "undone"}:
+        return
+    key = component.observation.key
+    chain = context.image_chains.get(key)
+    if chain is None:
+        return
+    if (
+        chain.pending_urls
+        or chain.pending_path
+        or chain.phase in {"submitting", "storing", "evaluating"}
+        or chain.stop_reason == "result_unknown"
+    ):
+        return
+    if component.status == "created":
+        candidate = next((entry for entry in chain.candidates if entry.path == component.preview_path), None)
+        if candidate is None:
+            context.image_chains.pop(key, None)
+            return
+        chain.candidates = [candidate]
+        context.manual_reviews.pop(key, None)
+        return
+    component.preview_path = None
+    component.candidate_verdict = None
+    component.creation_method = None
+    context.manual_reviews.pop(key, None)
+    context.image_chains.pop(key, None)
+
+
 async def save_import_progress(
     work: ImportWork,
     stage: str,
@@ -477,7 +511,7 @@ async def save_import_progress(
     if work.active_operation is not None:
         work.active_operation.stage = "save_material" if adopt is not None else stage
     previous = component.model_copy(deep=True) if component is not None else None
-    previous_context = work.context.model_copy(deep=True) if adopt is not None else None
+    previous_context = work.context.model_copy(deep=True) if adopt is not None or finish else None
     try:
         async with SESSION_LOCAL() as db:
             job = await db.scalar(
@@ -489,8 +523,11 @@ async def save_import_progress(
             if adopt is not None:
                 await adopt(db)
             calls = max(work.context.calls, job.context_json.get("calls", 0))
-            job.context_json = work.context.model_copy(update={"calls": calls}).model_dump(mode="json")
+            # 条目收尾先裁剪引用，结果复制与落库随之只带采用候选。
+            if finish and component is not None:
+                finish_import_component(work.context, component)
             result = merge_import_progress(job, work, stage, finish=finish)
+            job.context_json = work.context.model_copy(update={"calls": calls}).model_dump(mode="json")
             job.stage = stage
             await sync_import_assets(db, work.user_id, job.id, work.context, result, work.media_path)
             await notify_visuals_updated(db, work.user_id)

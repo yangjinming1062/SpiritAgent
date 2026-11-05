@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from uuid import NAMESPACE_URL, uuid5
+from weakref import WeakValueDictionary
 
 from features.action_library.import_materials import action_is_imported, undo_imported_action
 from features.action_library.queries import action_detail, list_actions
@@ -94,7 +95,7 @@ from .visuals_companion import freeze_action_reference, load_action_review_sourc
 
 logger = get_logger(__name__)
 _TASKS = TaskScope("visuals.import")
-_LOCKS: dict[int, asyncio.Lock] = {}
+_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
 _IMPORT_CANDIDATE_LIMIT = 24
 
 
@@ -483,15 +484,15 @@ async def _release_plan(work: ImportWork, component: ImportComponent, material: 
 
 def _apply_release_plan(work: ImportWork, plan: _ReleasePlan) -> None:
     plan.material.state = "retained" if plan.preserved else "released"
+    work.context.selected_materials = [
+        entry
+        for entry in work.context.selected_materials
+        if (entry.kind, entry.material_id) != (plan.material.kind, plan.material.material_id)
+    ]
     if not plan.preserved:
         work.candidates = [
             entry
             for entry in work.candidates
-            if (entry.kind, entry.material_id) != (plan.material.kind, plan.material.material_id)
-        ]
-        work.context.selected_materials = [
-            entry
-            for entry in work.context.selected_materials
             if (entry.kind, entry.material_id) != (plan.material.kind, plan.material.material_id)
         ]
 

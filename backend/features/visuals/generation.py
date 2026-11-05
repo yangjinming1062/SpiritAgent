@@ -80,6 +80,7 @@ from features.media.video_queue.service import (
     enqueue_video_attempt,
     find_video_attempt,
     pause_video_attempt,
+    resume_video_attempt,
 )
 from features.media.video_results import download_and_store_video, receive_video_attempt
 
@@ -819,12 +820,12 @@ async def _prepare_pose(
         reviewed = [
             candidate
             for candidate in state.candidates
-            if candidate.evaluated and candidate.identity_verdict is not None
+            if candidate.evaluated and candidate.review is not None and candidate.review.identity is not None
         ]
         if not reviewed:
             raise
-        identity_safe = next((candidate for candidate in reviewed if candidate.identity_verdict == "pass"), None)
-        goal = state.goal_reviews.get(identity_safe.path) if identity_safe else None
+        identity_safe = next((candidate for candidate in reviewed if candidate.review.identity.verdict == "pass"), None)
+        goal = identity_safe.review.goal if identity_safe and identity_safe.review else None
         begin_opening_repair(
             job,
             progress,
@@ -850,7 +851,8 @@ async def _prepare_pose(
     progress.image_confirmed = False
     progress.motion_prompt = ""
     candidate = state.best()
-    goal = state.goal_reviews.get(candidate.path) if candidate else None
+    goal = candidate.review.goal if candidate and candidate.review else None
+    quality = candidate.review.quality if candidate and candidate.review else None
     with Image.open(resolved[0]) as original_image:
         original_size = ImageOps.exif_transpose(original_image).size
     # 冻结图片链可沿旧请求收尾，但旧判定不能绑定到当前制作要求。
@@ -860,19 +862,22 @@ async def _prepare_pose(
         and goal is not None
         and goal.verdict == "pass"
         and original_size == (progress.frame_width, progress.frame_height)
-        and candidate.evidence is not None
-        and candidate.evidence.media_hash == await asyncio.to_thread(opening_image_hash, progress.pose_path)
+        and candidate.review is not None
+        and candidate.review.evidence is not None
+        and candidate.review.evidence.media_hash == await asyncio.to_thread(opening_image_hash, progress.pose_path)
     ):
         progress.opening_review = OpeningReview(
             image_hash=await asyncio.to_thread(opening_image_hash, progress.pose_path),
             requirements_hash=opening_requirements_hash(job, progress),
             reference_hash=opening_reference_hash(snapshot),
-            identity_verdict=candidate.identity_verdict,
-            identity_reason=candidate.identity_reason,
-            evidence=candidate.evidence,
-            quality_reason=goal.quality_reason,
+            identity_verdict=candidate.review.identity.verdict
+            if candidate.review and candidate.review.identity
+            else None,
+            identity_reason=candidate.review.identity.reason if candidate.review and candidate.review.identity else "",
+            evidence=candidate.review.evidence,
+            quality_reason=quality.reason if quality else "",
             verdict=goal.verdict,
-            quality_verdict=goal.quality_verdict,
+            quality_verdict=quality.verdict if quality else None,
             reason=goal.reason,
         )
     await _save_progress(user_id, job.id, progress, stage="image")
@@ -1763,7 +1768,6 @@ def current_visual_candidate(progress: VisualJobProgress, chain: MediaChainState
         path=progress.candidate.media_path,
         attempt=chain.active_index or 0,
         evaluated=progress.review_result is not None,
-        accepted=progress.review_result.verdict == "pass" if progress.review_result else None,
         evidence=(progress.video_evidence or progress.identity_evidence) if progress.review_result is None else None,
         review=progress.review_result,
         result_json=VisualCandidateResult(asset=progress.candidate).model_dump_json(),
@@ -2110,6 +2114,8 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
         progress.aspect_ratio = _delivery_aspect(progress)
         if await reattach_visual_video_attempt(user_id, job_id, progress):
             await _save_progress(user_id, job_id, progress, stage="video")
+        if request_id := _queued_video_request(progress):
+            await resume_video_attempt(request_id)
         if visual_progress_has_unknown_submission(progress):
             progress.submission_unknown = True
             await _save_progress(user_id, job_id, progress, stage=job.stage)
@@ -2154,13 +2160,11 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
     except asyncio.CancelledError as exc:
         if exc.args == ("paused",) and progress is not None:
             await _pause_visual_job(user_id, job_id, generation_id, latest_progress=progress, by_user=True)
-            request_id = _queued_video_request(progress)
-            if request_id:
+            if request_id := _queued_video_request(progress):
                 await pause_video_attempt(request_id)
         if exc.args == ("discarded",) and progress is not None:
             try:
-                request_id = _queued_video_request(progress)
-                if request_id:
+                if request_id := _queued_video_request(progress):
                     await cancel_video_attempt(request_id)
             except Exception:
                 logger.warning("Visual video cancellation unavailable", extra={"job_id": job_id}, exc_info=True)

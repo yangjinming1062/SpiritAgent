@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 from dataclasses import asdict
 from uuid import uuid4
+from weakref import WeakValueDictionary
 
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets import asset_store
@@ -41,7 +42,7 @@ from .review_views import (
 )
 from .turn_state import ImagePlan
 
-_LOCKS: dict[int, asyncio.Lock] = {}
+_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
 
 
 def _qualified_candidate(state: ImageChainState, params: ImageJobParams, slot: int) -> MediaCandidate | None:
@@ -377,7 +378,7 @@ async def manually_review_image(
         )
         for candidate in chain.candidates:
             if candidate.slot == request.slot:
-                candidate.accepted = False
+                candidate.excluded = True
         row.checkpoint = {
             **(row.checkpoint or {}),
             "chain": chain.model_dump(mode="json"),
@@ -405,7 +406,7 @@ async def manually_review_image(
     await approve_candidate(user_id, selected, required, request, db=db)
     for candidate in chain.candidates:
         if candidate.slot == request.slot and candidate is not selected:
-            candidate.accepted = False
+            candidate.excluded = True
     row.checkpoint = {"chain": chain.model_dump(mode="json")}
     row.result_json = {**row.result_json, "chain": chain.model_dump(mode="json")}
     row.state, row.stage, row.error = "paused", "confirmation", None
@@ -433,8 +434,6 @@ def _fold_manual_generation(row: ImageGenJob) -> None:
         candidate.model_copy(update={"slot": slot, "generation_id": fresh.generation_id})
         for candidate in fresh.candidates
     ]
-    original.goal_reviews.update(fresh.goal_reviews)
-    original.goal_review_failures.update(fresh.goal_review_failures)
     retained = [
         (url, pending_slot)
         for url, pending_slot in zip(original.pending_urls, original.pending_slots, strict=True)

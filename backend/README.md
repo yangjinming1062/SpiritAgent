@@ -57,7 +57,7 @@ ORM 留在数据所有者内部。跨域读取返回 DTO/冻结快照，写入�
 
 [registrations.py](bootstrap/registrations.py) 统一登记供应商、工具、内部事件及业务端口，导入模块不隐式注册。启动由 [lifecycle.py](bootstrap/lifecycle.py) 完成安全检查、迁移、配置水合、模块准备、调度/事件启动和任务恢复；参与者顺序由 [runtime_lifecycle.py](bootstrap/runtime_lifecycle.py) 维护。
 
-停机先关闭生产入口，再收敛所属任务，最后释放数据库和供应商连接池。[task_supervisor.py](runtime/task_supervisor.py) 记录所有者、账户与错误，业务负责持久状态；常驻单 loop 与按 key 去重的任务集合见 [background.py](runtime/background.py)，内部事件、媒体制作和资讯登录轮询共用任务作用域。同键补跑只保留最后一次请求，显式继续等待旧任务取消收尾，暂停和放弃清除待补跑请求；停机收尾不再接收补跑。取消与写盘收尾共用 [async_io.py](infrastructure/async_io.py)，重复取消也须等待目标释放资源。
+停机先关闭生产入口，再收敛所属任务，最后释放数据库和供应商连接池。[task_supervisor.py](runtime/task_supervisor.py) 记录所有者、账户与错误，业务负责持久状态；常驻单 loop 与按 key 去重的任务集合见 [background.py](runtime/background.py)，内部事件、媒体制作和资讯登录轮询共用任务作用域。同键补跑只保留最后一次请求，显式继续等待旧任务取消收尾，暂停和放弃清除待补跑请求；停机收尾不再接收补跑。取消与写盘收尾共用 [async_io.py](infrastructure/async_io.py)，重复取消也须等待目标释放资源。媒体、影像与导入的互斥锁按账户、任务或候选在持有期间创建，调用方以局部引用保证同一业务共用一把锁，随引用释放而不建立长期锁表；任务结束、取消与账户删除都不遗留锁对象。
 
 HTTP、调度及清理通过 [user_maintenance.py](runtime/user_maintenance.py) 共享账户租约。启动和周期维护按账户处理遗留媒体与正式资产，维护中的账户延后；各清理项隔离失败，不能让一项异常跳过其他回收。
 

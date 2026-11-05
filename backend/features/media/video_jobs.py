@@ -33,6 +33,7 @@ from runtime.events.emit import emit_ws_event
 from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
 from runtime.user_maintenance import is_user_in_maintenance
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.queries import user_is_active
@@ -440,7 +441,7 @@ async def _record_failure(job_id: int, *, reason: str, settle_unknown: bool = Fa
         row = await db.get(VideoGenJob, job_id, with_for_update=True)
         if row is None or _abandoned(row):
             return
-        if row.stage in {"review_pending", "confirmation"}:
+        if row.stage in {"review_pending", "reviewing", "confirmation"}:
             return
         if row.candidate_video_url and reason in {
             "quality_unavailable",
@@ -589,7 +590,11 @@ async def _evaluate_stored_video(job_id: int, *, review_only: bool = False) -> s
         await save_candidate()
 
     async def save_quality(evidence: ReviewEvidence) -> None:
-        entry.review = VisualReview(required=("goal", "quality"), evidence=evidence, status="unavailable")
+        if entry.review is None:
+            entry.review = VisualReview(required=("goal", "quality"), evidence=evidence, status="unavailable")
+        else:
+            entry.review.evidence = evidence
+            entry.review.status = "unavailable"
         await save_candidate()
 
     async def before_submit() -> None:
@@ -602,7 +607,8 @@ async def _evaluate_stored_video(job_id: int, *, review_only: bool = False) -> s
     if needs_identity and entry.evidence:
         identity_images = await read_review_evidence(entry.evidence)
         frozen_references, uris = identity_images[:reference_count], identity_images[reference_count:]
-    if needs_identity and entry.identity_verdict not in {"pass", "fail"}:
+    identity_decision = entry.review.identity if entry.review else None
+    if needs_identity and (identity_decision is None or identity_decision.verdict not in {"pass", "fail"}):
         references = await materialize_image_references(
             {
                 "identity": params.reference_images[0] if params.reference_images else params.identity_reference_path,
@@ -623,11 +629,10 @@ async def _evaluate_stored_video(job_id: int, *, review_only: bool = False) -> s
             media_path=path,
             frame_times_seconds=samples.times_seconds,
         )
-        entry.identity_verdict, entry.identity_reason, entry.evidence = (
-            identity.verdict,
-            identity.reason,
-            identity.evidence,
-        )
+        entry.evidence = identity.evidence
+        if entry.review is None:
+            entry.review = VisualReview(required=("identity", "goal", "quality"), status="unavailable")
+        entry.review.identity = ReviewDecision(verdict=identity.verdict, reason=identity.reason)
         await save_candidate()
     if needs_review(entry.review):
         old = entry.review
@@ -653,18 +658,27 @@ async def _evaluate_stored_video(job_id: int, *, review_only: bool = False) -> s
                 saved = getattr(old, name)
                 if saved is not None and saved.verdict in {"pass", "fail"}:
                     setattr(quality, name, saved)
-        entry.result_json = quality.evidence.model_dump_json() if quality.evidence else None
+        quality_evidence = quality.evidence
+        entry.result_json = quality_evidence.model_dump_json() if quality_evidence else None
+        quality.identity = old.identity if old else None
         entry.review = quality
+    else:
+        quality_evidence = ReviewEvidence.model_validate_json(entry.result_json) if entry.result_json else None
     if needs_identity:
         entry.review.required = ("identity", "goal", "quality")
-        entry.review.identity = (
-            ReviewDecision(verdict=entry.identity_verdict, reason=entry.identity_reason)
-            if entry.identity_verdict and entry.identity_reason
-            else None
+        if quality_evidence is not None:
+            entry.review.evidence = merge_review_evidence(entry.evidence, quality_evidence)
+    if (
+        entry.review.status == "complete"
+        and entry.review.evidence is not None
+        and all(
+            (decision := getattr(entry.review, name)) is not None and decision.verdict in {"pass", "fail"}
+            for name in entry.review.required
         )
-    if needs_identity:
-        entry.review.evidence = merge_review_evidence(entry.evidence, entry.review.evidence)
-    entry.evaluated, entry.accepted = True, entry.review.verdict == "pass"
+    ):
+        # 结论与依据已归入 VisualReview，不再单独保留阶段证据。
+        entry.evidence = entry.result_json = None
+    entry.evaluated = True
     await save_candidate()
     async with SESSION_LOCAL() as db:
         current = await db.get(VideoGenJob, job_id, with_for_update=True)
@@ -1016,10 +1030,24 @@ async def _fail_or_keep_best(job_id: int, reason: str) -> None:
 async def _poll_and_finalize(job_id: int) -> None:
     """后台主循环：供应商任务和本地候选均可恢复；仅未知提交禁止自动重发。"""
     with asset_write_context(inherit=False):
-        await _poll_and_finalize_locked(job_id)
+        delay = 1
+        retrying = False
+        while True:
+            try:
+                await _poll_and_finalize_locked(job_id)
+            except SQLAlchemyError:
+                if not retrying:
+                    logger.warning("video job database operation awaits retry", extra={"job_id": job_id}, exc_info=True)
+                retrying = True
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 60)
+            else:
+                if retrying:
+                    logger.info("video job database operation resumed", extra={"job_id": job_id})
+                return
 
 
-async def _poll_and_finalize_locked(job_id: int) -> None:
+async def _poll_and_finalize_locked(job_id: int, *, reattach: int = 0) -> None:
     async with SESSION_LOCAL() as db:
         job = await db.get(VideoGenJob, job_id)
         if job is None:
@@ -1034,7 +1062,7 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
     try:
         if job.state == "queued":
             if await _submit_next_video(job_id, user_id):
-                await _poll_and_finalize_locked(job_id)
+                return await _poll_and_finalize_locked(job_id)
             return
         state = MediaChainState.model_validate(job.checkpoint or {})
         if (
@@ -1072,7 +1100,7 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
                     await _fail_or_keep_best(job_id, "quality_failed")
                     return
                 if await _submit_next_video(job_id, user_id):
-                    await _poll_and_finalize_locked(job_id)
+                    return await _poll_and_finalize_locked(job_id)
                 return
         if (job.state == "running" and job.stage == "downloading") and state.result_url:
             try:
@@ -1101,8 +1129,7 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
                 error_reason=None,
                 error=None,
             )
-            await _poll_and_finalize_locked(job_id)
-            return
+            return await _poll_and_finalize_locked(job_id)
         if (job.state == "running" and job.stage == "evaluating") and job.video_url:
             await _finalize_best_video(job_id)
             return
@@ -1129,19 +1156,31 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
         except GenerationWorkPaused:
             return
         if state.result_url:
-            await _poll_and_finalize_locked(job_id)
+            return await _poll_and_finalize_locked(job_id)
         elif state.stop_reason:
             await _fail_or_keep_best(job_id, reason or state.stop_reason)
         elif await _submit_next_video(job_id, user_id):
-            await _poll_and_finalize_locked(job_id)
+            return await _poll_and_finalize_locked(job_id)
 
     except _JobSettledError:
         return
+    except SQLAlchemyError:
+        raise
     except Exception:
         logger.exception("unhandled exception in video poll worker", extra={"job_id": job_id})
         try:
             async with SESSION_LOCAL() as db:
                 latest = await db.get(VideoGenJob, job_id)
+            if latest is not None and latest.state == "queued" and not _abandoned(latest):
+                latest_state = MediaChainState.model_validate(latest.checkpoint or {})
+                if (index := latest_state.next_index) < len(latest_state.providers) and await find_video_attempt(
+                    _queue_owner(latest, latest_state), index, latest_state.providers[index]
+                ):
+                    logger.warning("registered video attempt awaits reattachment", extra={"job_id": job_id})
+                    if reattach < 3:
+                        await asyncio.sleep(2)
+                        return await _poll_and_finalize_locked(job_id, reattach=reattach + 1)
+                    return
             if latest is not None and (latest.state == "running" and latest.stage == "processing"):
                 latest_state = MediaChainState.model_validate(latest.checkpoint)
                 if latest_state.queue_request_id:
@@ -1161,6 +1200,8 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
                     logger.warning("stored video awaits recovery", extra={"job_id": job_id, "path": candidate})
                     return
             await _fail_or_keep_best(job_id, "worker_failed")
+        except SQLAlchemyError:
+            raise
         except Exception:
             logger.exception("could not update video job after worker error", extra={"job_id": job_id})
 

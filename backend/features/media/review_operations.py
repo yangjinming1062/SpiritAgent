@@ -3,6 +3,7 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
+from weakref import WeakValueDictionary
 
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
@@ -19,8 +20,8 @@ from .review_views import MediaJobView, MediaReviewRequest
 type ReviewQuery = Callable[[int, int], Awaitable[MediaJobView]]
 type ReviewExecutor = Callable[[int, int, int, MediaReviewRequest], Awaitable[MediaJobView]]
 _HANDLERS: dict[str, tuple[ReviewQuery, ReviewExecutor]] = {}
-_ACCOUNT_LOCKS: dict[int, asyncio.Semaphore] = {}
-_CANDIDATE_LOCKS: dict[tuple[int, int, int], asyncio.Lock] = {}
+_ACCOUNT_LOCKS: WeakValueDictionary[int, asyncio.Semaphore] = WeakValueDictionary()
+_CANDIDATE_LOCKS: WeakValueDictionary[tuple[int, int, int], asyncio.Lock] = WeakValueDictionary()
 
 
 def configure_review_handler(kind: str, query: ReviewQuery, execute: ReviewExecutor) -> None:

@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from features.media.review_contracts import review_dimension_passes, visual_reference_basis
 
-from .import_jobs import ImportCatalogCandidate, ImportWork, sync_import_assets
+from .import_jobs import ImportCatalogCandidate, ImportContext, ImportWork, sync_import_assets
 from .import_operations import import_operations
 from .models import VisualImportJob
 from .publication import publish_import_revision
@@ -16,6 +16,7 @@ from .schemas import (
     ActorClipSource,
     AnalyzingVisualSource,
     CinematicSource,
+    ImportAnalysisResult,
     ImportPlaybackBlock,
     SceneMediaSource,
     VisualAsset,
@@ -288,7 +289,7 @@ async def apply_import_result(user_id: int, visual_id: int, expected_revision: i
             entry.state in {"queued", "running", "paused", "failed"} for entry in import_operations(job.selections_json)
         ):
             raise VisualStateError("素材操作尚未完成")
-        await visual_item(db, user_id, visual_id, lock=True)
+        item = await visual_item(db, user_id, visual_id, lock=True)
         snapshot = VisualSnapshot.model_validate(pending["snapshot"])
         asset = VisualAsset.model_validate(pending["asset"])
         await publish_import_revision(
@@ -296,6 +297,12 @@ async def apply_import_result(user_id: int, visual_id: int, expected_revision: i
         )
         job.expected_version = pending["expected_version"] + 1
         job.state, job.stage, job.error = "succeeded", "complete", None
-        job.context_json = {**job.context_json, "pending_application": None}
+        # 已发布版本持有素材与原件引用，任务只需保留原件、检查依据和条目预览。
+        context = ImportContext.model_validate(job.context_json)
+        context.pending_application, context.selected_materials = None, []
+        job.context_json = context.model_dump(mode="json")
+        result = ImportAnalysisResult.model_validate(job.result_json) if job.result_json else None
+        original = snapshot.source.original_path or item.media_path
+        await sync_import_assets(db, user_id, job.id, context, result, original)
         await notify_visuals_updated(db, user_id)
         await db.commit()

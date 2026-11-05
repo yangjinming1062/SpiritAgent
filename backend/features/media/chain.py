@@ -13,7 +13,7 @@ from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from pydantic import BaseModel, ConfigDict, Field
 
-from features.media.review_contracts import ReviewEvidence, ReviewVerdict, VisualReview
+from features.media.review_contracts import ReviewEvidence, VisualReview
 
 logger = get_logger(__name__)
 
@@ -96,20 +96,28 @@ class FrozenMediaProvider(BaseModel):
 
 
 class MediaCandidate(BaseModel):
+    """候选媒体与唯一检查结论；人工排除独立于模型判断，采纳由两者共同推出。"""
+
     model_config = ConfigDict(extra="forbid")
 
     path: str
     generation_id: str | None = None
     attempt: int
     slot: int = 0
-    identity_verdict: ReviewVerdict | None = None
-    identity_reason: str = ""
     evidence: ReviewEvidence | None = None
     review: VisualReview | None = None
     evaluated: bool = False
-    accepted: bool | None = None
+    excluded: bool = False
     artifacts: list[str] = Field(default_factory=list)
     result_json: str | None = None
+
+    @property
+    def accepted(self) -> bool | None:
+        if self.excluded:
+            return False
+        if not self.evaluated:
+            return None
+        return self.review is None or self.review.verdict == "pass"
 
 
 class MediaChainState(BaseModel):

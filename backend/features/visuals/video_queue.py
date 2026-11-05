@@ -24,15 +24,18 @@ async def inspect_visual_video_owner(
         ):
             return "gone"
         progress = visual_progress(job)
-        if progress is None or not progress.video_chain_json or job.state not in {"queued", "running"}:
+        if progress is None or not progress.video_chain_json:
             return "gone"
         chain = MediaChainState.model_validate_json(progress.video_chain_json)
         if chain.generation_id != owner.generation_id:
             return "gone"
         if request_id is not None and chain.queue_request_id and chain.queue_request_id != request_id:
             return "gone"
-        if progress.paused_by_user:
+        # 暂停可恢复：已登记尝试保留到用户继续或明确取消，不在暂停期间撤销远端工作。
+        if job.state == "paused":
             return "paused"
+        if job.state not in {"queued", "running"}:
+            return "gone"
         if not chain.queue_request_id:
             return "pending"
         if not progress.image_confirmed:
