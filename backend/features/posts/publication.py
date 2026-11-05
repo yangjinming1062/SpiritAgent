@@ -51,7 +51,6 @@ from features.jobs.service import bind_job_assets
 from features.media.character_images import (
     ImageChainState,
     generate_reviewed_images,
-    review_image_chain,
     run_frozen_image_chain,
 )
 from features.media.continuations import MediaWait, wait_for_media
@@ -75,9 +74,7 @@ from features.media.review_contracts import (
 from features.media.review_views import (
     MediaJobView,
     MediaManualRequest,
-    MediaReviewRequest,
     MediaSlotView,
-    review_request_matches,
 )
 from features.media.speech import synthesize_speech
 from features.media.video_jobs import (
@@ -779,7 +776,6 @@ async def list_publication_recoveries(
         return PostPublicationRecoveryList(
             items=[_recovery_response(row, jobs.get(row.video_job_id)) for row in rows],
             next_cursor=encode_timestamp_cursor(rows[-1].created_at, rows[-1].id) if more else None,
-            has_more=more,
         )
 
 
@@ -1015,43 +1011,6 @@ async def post_review_view(user_id: int, job_id: int) -> MediaJobView:
                 )
             ],
         )
-
-
-async def review_post_job(user_id: int, job_id: int, slot: int, expected: MediaReviewRequest) -> MediaJobView:
-    async with SESSION_LOCAL() as db:
-        row = await db.scalar(
-            select(PostPublication)
-            .where(PostPublication.id == job_id, PostPublication.user_id == user_id)
-            .with_for_update()
-        )
-        if row is None or row.state in _TERMINAL or row.stage != "review_pending" or slot != 0:
-            raise RequestError(status_code=409, message="动态检查状态已变化")
-        progress = dict(row.checkpoint or {})
-        if not review_request_matches(await post_review_view(user_id, job_id), expected):
-            raise RequestError(status_code=409, message="检查依据或任务版本已变化")
-        row.state, row.stage = "running", "reviewing"
-        await db.commit()
-    try:
-        if progress.get("image_chain"):
-            chain = ImageChainState.model_validate(progress["image_chain"])
-
-            async def save(value: ImageChainState) -> None:
-                progress["image_chain"] = value.model_dump(mode="json")
-                await _save(job_id, phase="reviewing", **progress)
-
-            await review_image_chain(user_id, chain, task=AiTaskKey.posts, save_progress=save)
-    except ImageGenerationError as exc:
-        progress["review_error"] = str(exc)
-    finally:
-        await _save(job_id, status="paused", phase="confirmation", **progress)
-        view = await post_review_view(user_id, job_id)
-        async with SESSION_LOCAL() as db:
-            current = await db.get(PostPublication, job_id, with_for_update=True)
-            if current is not None and view.ready_slots == 0:
-                current.stage = "review_pending"
-            emit_ws_event(db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(job_id)})
-            await db.commit()
-    return await post_review_view(user_id, job_id)
 
 
 async def manually_review_post(

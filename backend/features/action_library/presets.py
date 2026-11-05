@@ -128,5 +128,3 @@ ACTION_PRESETS: tuple[ActionPreset, ...] = (
         allowed_triggers=["chat", "manual"],
     ),
 )
-
-PRESETS_BY_KEY = {preset.key: preset for preset in ACTION_PRESETS}

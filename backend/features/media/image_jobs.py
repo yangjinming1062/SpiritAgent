@@ -22,7 +22,7 @@ from features.assets.lifecycle import enqueue_asset_cleanup
 from features.jobs.service import bind_job_assets, bind_job_request, requested_job_id
 
 from .chain import MediaCandidate
-from .character_images import ImageChainState, generate_reviewed_images, review_image_chain, run_frozen_image_chain
+from .character_images import ImageChainState, generate_reviewed_images, run_frozen_image_chain
 from .continuations import authorize_media_waits, wait_for_media
 from .delivery import deliver_image_result
 from .identity_contracts import VisualIdentitySnapshot
@@ -36,9 +36,7 @@ from .review_views import (
     ImageJobParams,
     MediaJobView,
     MediaManualRequest,
-    MediaReviewRequest,
     MediaSlotView,
-    review_request_matches,
 )
 from .turn_state import ImagePlan
 
@@ -248,14 +246,7 @@ async def _block_stale_identity(db: AsyncSession, user_id: int, row: ImageGenJob
     return True
 
 
-async def _run_image_job(
-    user_id: int,
-    job_id: int,
-    *,
-    review_only: bool = False,
-    slot: int | None = None,
-    expected: MediaReviewRequest | None = None,
-) -> None:
+async def _run_image_job(user_id: int, job_id: int) -> None:
     async with _LOCKS.setdefault(job_id, asyncio.Lock()):
         async with SESSION_LOCAL() as db:
             row = await db.scalar(
@@ -263,12 +254,10 @@ async def _run_image_job(
             )
             if row is None or row.cleanup_requested_at or row.state in {"cancelled", "succeeded"}:
                 return
-            if expected is not None and not review_request_matches(await _snapshot(row), expected):
-                raise RequestError(status_code=409, message="检查依据或任务版本已变化")
             input_params = ImageJobParams.model_validate(row.params_json)
             params = input_params.model_dump(mode="json")
             chain = ImageChainState.model_validate((row.checkpoint or {}).get("chain", {}))
-            row.state, row.stage = "running", "reviewing" if review_only else "image"
+            row.state, row.stage = "running", "image"
             await db.commit()
 
         async def save(value: ImageChainState) -> None:
@@ -282,25 +271,22 @@ async def _run_image_job(
 
         error: str | None = None
         try:
-            if review_only:
-                await review_image_chain(user_id, chain, task=AiTaskKey(params["task"]), save_progress=save, slot=slot)
-            else:
-                await generate_reviewed_images(
-                    params["prompt"],
-                    user_id=user_id,
-                    storage_directory=params["directory"],
-                    reference_image=params["reference_image"] or "",
-                    identity_reference=params["reference_image"] or "",
-                    secondary_reference_image=params["secondary_reference_image"],
-                    identity_reference_mode=params["identity_reference_mode"],
-                    identity_required=input_params.identity_required,
-                    size=params["size"],
-                    n=len(params["media_ids"]),
-                    state=chain,
-                    save_progress=save,
-                    task=AiTaskKey(params["task"]),
-                    goal_review="required",
-                )
+            await generate_reviewed_images(
+                params["prompt"],
+                user_id=user_id,
+                storage_directory=params["directory"],
+                reference_image=params["reference_image"] or "",
+                identity_reference=params["reference_image"] or "",
+                secondary_reference_image=params["secondary_reference_image"],
+                identity_reference_mode=params["identity_reference_mode"],
+                identity_required=input_params.identity_required,
+                size=params["size"],
+                n=len(params["media_ids"]),
+                state=chain,
+                save_progress=save,
+                task=AiTaskKey(params["task"]),
+                goal_review="required",
+            )
         except (ImageGenerationError, ReviewPendingError) as exc:
             error = str(exc)
         except asyncio.CancelledError:
@@ -329,8 +315,6 @@ async def _run_image_job(
                         ("paused", "review_pending")
                         if pending
                         else ("paused", "confirmation")
-                        if review_only
-                        else ("paused", "confirmation")
                         if qualified == len(params["media_ids"])
                         else ("paused", "review_pending")
                         if chain.candidates
@@ -341,17 +325,11 @@ async def _run_image_job(
                     current.error = error
                     await _block_stale_identity(db, user_id, current)
                     await db.flush()
-                    if not review_only:
-                        await deliver_image_result(db, await _snapshot(current))
+                    await deliver_image_result(db, await _snapshot(current))
                     emit_ws_event(
                         db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(job_id)}
                     )
                     await db.commit()
-
-
-async def review_image_job(user_id: int, job_id: int, slot: int, expected: MediaReviewRequest) -> MediaJobView:
-    await _run_image_job(user_id, job_id, review_only=True, slot=slot, expected=expected)
-    return await image_job_view(user_id, job_id)
 
 
 async def manually_review_image(

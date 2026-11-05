@@ -48,7 +48,6 @@ from .service import (
     ensure_pursuit,
     get_or_create_state,
     record_event,
-    record_events,
     start_step,
 )
 from .settlement import settle_business_steps
@@ -464,13 +463,3 @@ async def wait_business_media_in_session(db: AsyncSession, user_id: int, kind: s
             state.activity_step_id = None
     state.revision += 1
     emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"revision": state.revision})
-
-
-async def record_events_in_session(
-    db: AsyncSession, user_id: int, events: Sequence[LifeEventInput]
-) -> list[LifeEventView]:
-    records = await record_events(db, user_id, events)
-    if records:
-        state = await get_or_create_state(db, user_id, lock=True)
-        emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"revision": state.revision})
-    return [event_view(row) for row in records]

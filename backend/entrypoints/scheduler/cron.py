@@ -13,13 +13,18 @@ _SCHEDULER = BackgroundTask("scheduler.cron_loop")
 
 
 async def scheduler_loop() -> None:
-    """按动态间隔对齐 tick；跳过错过的时槽，未捕获错误由任务监督器报告。"""
+    """按动态间隔对齐 tick；跳过错过的时槽，单轮失败只记日志并在下轮重试，不让调度静默停摆。"""
     logger.info("Starting background cron scheduler loop.")
     loop = asyncio.get_running_loop()
     next_at = loop.time()
     while True:
         begin_local_scope()
-        await scheduling.run_tick()
+        try:
+            await scheduling.run_tick()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Scheduler tick failed; retrying next interval")
         next_at += SETTINGS.scheduler_interval_seconds
         now = loop.time()
         if next_at <= now:

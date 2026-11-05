@@ -9,9 +9,8 @@ from features.media import use_cases as _media
 from features.media.continuations import continue_owned_media_operation
 from features.media.http_contracts import ProviderOperationError, TtsRequest
 from features.media.manual_reviews import manual_media_action
-from features.media.review_operations import query_media_job, review_media_job
-from features.media.review_views import MediaContinueRequest, MediaJobView, MediaManualRequest, MediaReviewRequest
-from features.media.speech_contracts import SpeechToTextResponse
+from features.media.review_operations import query_media_job
+from features.media.review_views import MediaContinueRequest, MediaJobView, MediaManualRequest
 from features.media.video_jobs import receive_video_result
 from features.media.voice_contracts import VoiceSampleResponse
 from features.media.voices import upload_voice_sample
@@ -87,24 +86,6 @@ async def upload_chat_video(
     return await _uploads.upload_chat_video(db=db, user_id=user.id, file=file, session_id=session_id)
 
 
-@router.post(
-    "/stt",
-    response_model=SpeechToTextResponse,
-    openapi_extra=operation_policy(identities=("desktop", "remote"), upload="audio", wait_for_model=True),
-)
-@limiter.limit(lambda: f"{SETTINGS.media_stt_rate_limit_per_minute}/minute")
-async def speech_to_text(
-    request: Request, user: CurrentUser, audio_file: UploadFile | None = File(None), language: str = ""
-) -> SpeechToTextResponse:
-    """走供应商链路的语音转写。"""
-    try:
-        return await _media.speech_to_text(user_id=user.id, audio_file=audio_file, language=language)
-    except MissingLlmConfigError:
-        raise missing_config_error("语音识别服务")
-    except ProviderOperationError as exc:
-        raise provider_request_error(exc.error, exc.operation) from exc.error
-
-
 @router.post("/tts", openapi_extra=operation_policy(identities=("desktop", "remote"), wait_for_model=True))
 @limiter.limit(lambda: f"{SETTINGS.media_tts_rate_limit_per_minute}/minute")
 async def text_to_speech(request: Request, body: TtsRequest, user: CurrentUser) -> StreamingResponse:
@@ -120,27 +101,34 @@ async def text_to_speech(request: Request, body: TtsRequest, user: CurrentUser) 
         raise provider_request_error(exc.error, exc.operation) from exc.error
 
 
-@router.get("/jobs/{job_id}", response_model=MediaJobView)
+@router.get(
+    "/jobs/{job_id}", response_model=MediaJobView, openapi_extra=operation_policy(identities=("desktop", "remote"))
+)
 async def get_media_job(job_id: ResourceId, user: CurrentUser) -> MediaJobView:
     return await query_media_job(user.id, job_id)
 
 
-@router.post("/jobs/{job_id}/review", response_model=MediaJobView, openapi_extra=operation_policy(wait_for_model=True))
-async def post_media_job_review(job_id: ResourceId, body: MediaReviewRequest, user: CurrentUser) -> MediaJobView:
-    return await review_media_job(user.id, job_id, body)
-
-
-@router.get("/jobs", response_model=list[MediaJobView])
+@router.get(
+    "/jobs", response_model=list[MediaJobView], openapi_extra=operation_policy(identities=("desktop", "remote"))
+)
 async def get_outfit_review_jobs(user: CurrentUser) -> list[MediaJobView]:
     return await list_outfit_review_jobs(user.id)
 
 
-@router.post("/jobs/{job_id}/manual", response_model=MediaJobView, openapi_extra=operation_policy(wait_for_model=True))
+@router.post(
+    "/jobs/{job_id}/manual",
+    response_model=MediaJobView,
+    openapi_extra=operation_policy(identities=("desktop", "remote"), wait_for_model=True),
+)
 async def manually_handle_media(job_id: ResourceId, body: MediaManualRequest, user: CurrentUser) -> MediaJobView:
     return await manual_media_action(user.id, job_id, body)
 
 
-@router.post("/jobs/{job_id}/continue", response_model=MediaJobView)
+@router.post(
+    "/jobs/{job_id}/continue",
+    response_model=MediaJobView,
+    openapi_extra=operation_policy(identities=("desktop", "remote")),
+)
 async def continue_media_business(job_id: ResourceId, body: MediaContinueRequest, user: CurrentUser) -> MediaJobView:
     view = await query_media_job(user.id, job_id)
     if view.revision != body.expected_revision:
@@ -155,7 +143,11 @@ async def continue_media_business(job_id: ResourceId, body: MediaContinueRequest
     return updated
 
 
-@router.post("/jobs/{job_id}/receive", response_model=MediaJobView, openapi_extra=operation_policy(wait_for_model=True))
+@router.post(
+    "/jobs/{job_id}/receive",
+    response_model=MediaJobView,
+    openapi_extra=operation_policy(identities=("desktop", "remote"), wait_for_model=True),
+)
 async def receive_media_result(job_id: ResourceId, user: CurrentUser) -> MediaJobView:
     try:
         await receive_video_result(user.id, job_id)

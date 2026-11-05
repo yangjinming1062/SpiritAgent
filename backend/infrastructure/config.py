@@ -179,10 +179,6 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = Field(default=True, validation_alias="RATE_LIMIT_ENABLED")
     # 各端点限流项须为正数（0 会使该端点请求全部 429）；整体关闭限流用 rate_limit_enabled。
     login_rate_limit_per_minute: int = Field(default=10, gt=0, validation_alias="LOGIN_RATE_LIMIT_PER_MINUTE")
-    media_review_concurrency_per_account: int = Field(
-        default=1, gt=0, validation_alias="MEDIA_REVIEW_CONCURRENCY_PER_ACCOUNT"
-    )
-    media_review_attempts_per_day: int = Field(default=3, gt=0, validation_alias="MEDIA_REVIEW_ATTEMPTS_PER_DAY")
     media_stt_rate_limit_per_minute: int = Field(default=20, gt=0, validation_alias="MEDIA_STT_RATE_LIMIT_PER_MINUTE")
     media_tts_rate_limit_per_minute: int = Field(default=30, gt=0, validation_alias="MEDIA_TTS_RATE_LIMIT_PER_MINUTE")
     media_video_rate_limit_per_minute: int = Field(

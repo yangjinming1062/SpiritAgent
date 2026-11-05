@@ -27,7 +27,6 @@ WS_EVENT_CLAIM_BATCH_SIZE = 100
 MAX_OUTBOX_RETRIES = 5  # 超过即转入 FAILED 死信状态
 STALE_LOCK_TIMEOUT_SECONDS = 60
 MAX_BACKOFF_SECONDS = 60
-FAILED_RETRY_DELAY = timedelta(days=365)
 _LISTEN_HEARTBEAT_SECONDS = 15.0
 _LISTEN_HEARTBEAT_TIMEOUT_SECONDS = 5.0
 _RECONNECT_DELAY_SECONDS = 5.0
@@ -151,8 +150,9 @@ async def _mark_event_failure(event_id: int, current_retries: int, error: str) -
     now = utc_now()
     new_retry_count = current_retries + 1
     if new_retry_count >= MAX_OUTBOX_RETRIES:
+        # FAILED 是终态死信，按 created_at 由 GC 清理，重试时间取当前时刻。
         new_status = "FAILED"
-        next_retry = now + FAILED_RETRY_DELAY
+        next_retry = now
     else:
         new_status = "PENDING"
         next_retry = now + compute_backoff(current_retries)

@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.queries import user_is_active
 from features.companion.visual_state import persona_snapshot
-from features.media.character_images import ImageChainState, review_image_chain, run_frozen_image_chain
+from features.media.character_images import ImageChainState, run_frozen_image_chain
 from features.media.continuations import MediaWait, authorize_media_waits, finish_media_operation
 from features.media.identity_contracts import VisualIdentitySnapshot
 from features.media.image_generation import ImageGenerationError
@@ -29,8 +29,6 @@ from features.media.review_evidence import review_media_intact
 from features.media.review_views import (
     MediaJobView,
     MediaManualRequest,
-    MediaReviewRequest,
-    review_request_matches,
     single_slot_review_view,
 )
 
@@ -81,45 +79,6 @@ async def list_outfit_review_jobs(user_id: int) -> list[MediaJobView]:
             )
         )
     return [await outfit_review_view(user_id, job_id) for job_id in ids]
-
-
-async def review_outfit_job(user_id: int, job_id: int, slot: int, expected: MediaReviewRequest) -> MediaJobView:
-    if slot != 0:
-        raise RequestError(status_code=400, message="无效的检查槽位")
-    async with SESSION_LOCAL() as db:
-        row = await db.scalar(
-            select(OutfitCreationJob)
-            .where(OutfitCreationJob.id == job_id, OutfitCreationJob.user_id == user_id)
-            .with_for_update()
-        )
-        if row is None or row.state in {"cancelled", "succeeded", "failed"} or row.stage != "review_pending":
-            raise RequestError(status_code=409, message="检查状态已变化")
-        chain = ImageChainState.model_validate((row.checkpoint or {}).get("image_chain", {}))
-        if not review_request_matches(await outfit_review_view(user_id, job_id), expected):
-            raise RequestError(status_code=409, message="检查依据或任务版本已变化")
-        row.state, row.stage = "running", "reviewing"
-        await db.commit()
-
-    async def save(value: ImageChainState) -> None:
-        async with SESSION_LOCAL() as db:
-            current = await db.get(OutfitCreationJob, job_id, with_for_update=True)
-            if current.state != "running":
-                raise ValueError("造型检查已停止")
-            current.checkpoint = {**(current.checkpoint or {}), "image_chain": value.model_dump(mode="json")}
-            await db.commit()
-
-    try:
-        await review_image_chain(user_id, chain, task=AiTaskKey.outfit, save_progress=save)
-    except ImageGenerationError:
-        pass
-    finally:
-        async with SESSION_LOCAL() as db:
-            current = await db.get(OutfitCreationJob, job_id, with_for_update=True)
-            if current.state == "running":
-                current.state, current.stage = "paused", "confirmation" if chain.best() else "review_pending"
-                emit_ws_event(db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(job_id)})
-                await db.commit()
-    return await outfit_review_view(user_id, job_id)
 
 
 async def continue_outfit_creation(db: AsyncSession, wait: MediaWait) -> dict | None:

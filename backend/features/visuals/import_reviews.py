@@ -2,18 +2,15 @@
 
 from copy import deepcopy
 
-from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import client_asset_url
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.request_errors import RequestError
-from runtime.events.emit import emit_ws_event
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.appearance.identity import visual_identity_is_current
 from features.media.chain import MediaCandidate
-from features.media.character_images import ImageChainState, review_image_chain
-from features.media.image_generation import ImageGenerationError
+from features.media.character_images import ImageChainState
 from features.media.manual_reviews import (
     ManualAction,
     approve_candidate,
@@ -26,15 +23,12 @@ from features.media.review_contracts import needs_review
 from features.media.review_views import (
     MediaJobView,
     MediaManualRequest,
-    MediaReviewRequest,
     MediaSlotView,
-    review_request_matches,
 )
 
-from .import_jobs import ImportContext, ImportWork, claim_import_job, save_import_progress, sync_import_assets
+from .import_jobs import ImportContext, ImportWork, sync_import_assets
 from .import_operations import ImportOperation, import_operations, import_result_view
 from .import_publication import update_pending_import_review
-from .import_reasoning import review_import_presentation
 from .models import VisualImportJob
 from .repository import notify_visuals_updated, visual_item, visual_snapshot
 from .schemas import ImportAnalysisResult
@@ -115,59 +109,6 @@ async def import_review_view(user_id: int, job_id: int) -> MediaJobView:
             ready_slots=sum(slot.review is not None and slot.review.verdict == "pass" for slot in slots),
             complete=job.state == "succeeded",
         )
-
-
-async def review_import_job(user_id: int, job_id: int, slot: int, expected: MediaReviewRequest) -> MediaJobView:
-    view = await import_review_view(user_id, job_id)
-    target = next((entry for entry in view.slots if entry.slot == slot and entry.can_review), None)
-    if target is None:
-        raise RequestError(status_code=409, message="导入检查状态已变化")
-    async with SESSION_LOCAL() as db:
-        job = await db.get(VisualImportJob, job_id, with_for_update=True)
-        if not review_request_matches(await import_review_view(user_id, job_id), expected):
-            raise RequestError(status_code=409, message="检查依据或任务版本已变化")
-        job.state = "queued"
-        await db.commit()
-    work = await claim_import_job(user_id, job_id)
-    if work is None:
-        raise RequestError(status_code=409, message="导入检查正在进行")
-    work.review_only = True
-    try:
-        if slot == 0:
-            await review_import_presentation(work, [])
-        else:
-            chain = work.context.image_chains[target.media_id]
-
-            async def save(value: object) -> None:
-                await save_import_progress(work, "reviewing")
-
-            await review_image_chain(user_id, chain, task=AiTaskKey.visuals, save_progress=save)
-    except ImageGenerationError:
-        pass
-    finally:
-        async with SESSION_LOCAL() as db:
-            job = await db.get(VisualImportJob, job_id, with_for_update=True)
-            if job.state == "running" and job.context_json.get("execution_key") == work.context.execution_key:
-                job.context_json = work.context.model_dump(mode="json")
-                job.state, job.stage = "paused", "confirmation"
-                report = work.context.presentation_review
-                if slot == 0:
-                    update_pending_import_review(work)
-                    job.context_json = work.context.model_dump(mode="json")
-                    job.result_json = work.result.model_dump(mode="json") if work.result else job.result_json
-                if (
-                    slot == 0
-                    and report
-                    and report.verdict == "review"
-                    or slot > 0
-                    and work.context.image_chains[target.media_id].best() is None
-                ):
-                    job.stage = "review_pending"
-                await notify_visuals_updated(db, user_id)
-                await sync_import_assets(db, user_id, job_id, work.context, work.result, work.media_path)
-                emit_ws_event(db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(job_id)})
-                await db.commit()
-    return await import_review_view(user_id, job_id)
 
 
 async def manually_review_import(

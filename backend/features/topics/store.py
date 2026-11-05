@@ -17,7 +17,6 @@ from features.accounts.locking import lock_account
 from .models import CompanionTopic, TopicBatch, TopicFeedback, TopicUsage
 from .schemas import (
     TopicBatchSnapshot,
-    TopicCardSnapshot,
     TopicFeedbackSnapshot,
     TopicFeedbackValue,
     TopicSelection,
@@ -233,51 +232,37 @@ async def load_batch_topics(db: AsyncSession, scope: MemoryScope, batch_id: int)
     return await _load_topic_snapshots(db, scope, TopicBatch.id == batch_id, TopicBatch.status == "ready")
 
 
-async def resolve_topic_cards(
-    db: AsyncSession, scope: MemoryScope, topic_ids: Sequence[int], now: datetime
-) -> list[TopicCardSnapshot]:
-    snapshots = await load_prompt_topics(db, scope, now, historical_topic_ids=topic_ids)
-    by_id = {topic.topic_id: topic for topic in snapshots}
-    if any(type(topic_id) is not int or topic_id not in by_id for topic_id in topic_ids):
-        raise ValueError("Topic reference is not available in this companion scope")
-    return [
-        TopicCardSnapshot.model_validate(by_id[topic_id].model_dump(include=set(TopicCardSnapshot.model_fields)))
-        for topic_id in dict.fromkeys(topic_ids)
-    ]
-
-
 async def record_topic_usage(
     db: AsyncSession,
     scope: MemoryScope,
     topic_ids: Sequence[int],
     message_id: int,
     *,
-    authorized_at: datetime | None = None,
+    authorized_at: datetime,
 ) -> None:
     if not topic_ids:
         return
     if authorized_at is None:
-        ids = [card.topic_id for card in await resolve_topic_cards(db, scope, topic_ids, utc_now())]
-    else:
-        if authorized_at.tzinfo is None or authorized_at > utc_now():
-            raise ValueError("Invalid topic authorization time")
-        topics = list(
-            await db.scalars(
-                select(CompanionTopic)
-                .join(TopicBatch)
-                .where(
-                    *_scope(CompanionTopic, scope),
-                    CompanionTopic.id.in_(topic_ids),
-                    or_(_active(authorized_at), _used(scope)),
-                )
+        raise ValueError("Topic authorization time is required")
+    if authorized_at.tzinfo is None or authorized_at > utc_now():
+        raise ValueError("Invalid topic authorization time")
+    topics = list(
+        await db.scalars(
+            select(CompanionTopic)
+            .join(TopicBatch)
+            .where(
+                *_scope(CompanionTopic, scope),
+                CompanionTopic.id.in_(topic_ids),
+                or_(_active(authorized_at), _used(scope)),
             )
         )
-        available = {topic.id for topic in topics}
-        if any(type(topic_id) is not int or topic_id not in available for topic_id in topic_ids):
-            raise ValueError("Topic was not authorized for this reply")
-        for topic in topics:
-            validate_source_url(topic.platform, topic.source_id, topic.url)
-        ids = list(dict.fromkeys(topic_ids))
+    )
+    available = {topic.id for topic in topics}
+    if any(type(topic_id) is not int or topic_id not in available for topic_id in topic_ids):
+        raise ValueError("Topic was not authorized for this reply")
+    for topic in topics:
+        validate_source_url(topic.platform, topic.source_id, topic.url)
+    ids = list(dict.fromkeys(topic_ids))
     existing = set(
         await db.scalars(
             select(TopicUsage.topic_id).where(

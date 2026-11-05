@@ -72,11 +72,8 @@ from features.media.review_contracts import (
     review_basis,
 )
 from features.media.review_evidence import review_media_intact
-from features.media.review_operations import review_media_job
 from features.media.review_views import (
     MediaJobView,
-    MediaReviewRequest,
-    review_request_matches,
     single_slot_review_view,
 )
 
@@ -152,9 +149,7 @@ async def latest_fullbody_candidate(user_id: int, avatar_id: int) -> FullbodyCan
         return fullbody_candidate_response(row)
 
 
-async def _review_fullbody_candidate(
-    user_id: int, candidate_id: int, path: str, expected: MediaReviewRequest | None = None
-) -> FullbodyCandidateResponse:
+async def _review_fullbody_candidate(user_id: int, candidate_id: int, path: str) -> FullbodyCandidateResponse:
     """直接对照确认头像复核候选；允许用户明确调整身体。"""
     async with SESSION_LOCAL() as db:
         current_candidate = await db.get(FullbodyCandidate, candidate_id)
@@ -167,7 +162,7 @@ async def _review_fullbody_candidate(
         if avatar is None:
             raise AvatarNotFoundError("确认形象不存在")
         portrait_path = avatar.asset_url
-        if expected is None and not await visual_identity_is_current(db, user_id, identity):
+        if not await visual_identity_is_current(db, user_id, identity):
             raise AvatarGenerationError("确认形象或候选图已更新，请刷新后重试")
 
     async with SESSION_LOCAL() as db:
@@ -185,10 +180,6 @@ async def _review_fullbody_candidate(
             )
             db.add(review_job)
             await db.flush()
-        if expected is not None and not review_request_matches(
-            await fullbody_review_view(user_id, review_job.id), expected
-        ):
-            raise AvatarGenerationError("检查依据或任务版本已变化")
         review_job.state, review_job.stage = "running", "reviewing"
         candidate = await db.get(FullbodyCandidate, candidate_id)
         report_data = (candidate.review_json or {}).get("report")
@@ -272,31 +263,6 @@ async def _review_fullbody_candidate(
         row.error = error if current_identity else "原任务身份已失效，候选和检查依据已保留，不能按当前身份采纳"
         await commit_appearance(db, user_id)
         return fullbody_candidate_response(row)
-
-
-async def retry_fullbody_candidate_review(
-    user_id: int, avatar_id: int, candidate_id: int, request: MediaReviewRequest
-) -> FullbodyCandidateResponse:
-    async with get_avatar_job_lock(user_id):
-        async with SESSION_LOCAL() as db:
-            row = await db.scalar(
-                select(FullbodyCandidate).where(
-                    FullbodyCandidate.id == candidate_id,
-                    FullbodyCandidate.user_id == user_id,
-                    FullbodyCandidate.avatar_id == avatar_id,
-                )
-            )
-            if row is None:
-                raise AvatarNotFoundError("全身候选图不存在")
-            if row.status not in ("pending", "failed"):
-                raise AvatarNotFoundError("全身候选图不存在或已采纳")
-        job_id = (row.review_json or {}).get("job_id")
-        if job_id is None:
-            raise AvatarGenerationError("原检查任务不可用")
-        await review_media_job(user_id, int(job_id), request)
-        async with SESSION_LOCAL() as db:
-            current = await db.get(FullbodyCandidate, candidate_id)
-            return fullbody_candidate_response(current)
 
 
 async def _save_fullbody_candidate(
@@ -1333,17 +1299,3 @@ async def recover_fullbody_reviews() -> None:
                 candidate.status, candidate.error = "pending", job.error
                 await flush_appearance(db, job.user_id)
         await db.commit()
-
-
-async def review_fullbody_job(user_id: int, job_id: int, slot: int, expected: MediaReviewRequest) -> MediaJobView:
-    async with SESSION_LOCAL() as db:
-        job = await db.scalar(
-            select(FullbodyReviewJob).where(FullbodyReviewJob.id == job_id, FullbodyReviewJob.user_id == user_id)
-        )
-        if job is None or slot != 0:
-            raise RequestError(status_code=404, message="找不到全身检查任务")
-        candidate = await db.get(FullbodyCandidate, job.candidate_id)
-        if candidate is None:
-            raise RequestError(status_code=404, message="全身候选已不存在")
-    await _review_fullbody_candidate(user_id, candidate.id, candidate.image_url, expected)
-    return await fullbody_review_view(user_id, job_id)

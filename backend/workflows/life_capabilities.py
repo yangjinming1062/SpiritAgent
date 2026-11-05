@@ -140,10 +140,10 @@ async def capability_blocks(
     return {name: problem for name, problem in blocked.items() if name in targets}
 
 
-async def life_capability_context(user_id: int, *, source: str = "life") -> dict[str, Any]:
+async def life_capability_context(user_id: int) -> dict[str, Any]:
     """日常生活判断的行动目录与素材；模型只从此处了解可执行范围。"""
     materials = await load_life_materials(user_id)
-    blocked = await capability_blocks(user_id, source=source, materials=materials)
+    blocked = await capability_blocks(user_id, materials=materials)
     async with SESSION_LOCAL() as db:
         topics = await load_prompt_topics(db, MemoryScope(user_id, "companion"), utc_now())
     return {

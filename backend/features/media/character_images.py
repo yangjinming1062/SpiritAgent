@@ -690,7 +690,6 @@ async def _run_image_chain(
     save_progress: ImageProgressWriter | None,
     store_attempts: int,
     before_submit: Callable[[], Awaitable[None]] | None,
-    review_slot: int | None = None,
 ) -> list[str]:
     inputs = state.inputs
     if inputs is None:
@@ -842,8 +841,6 @@ async def _run_image_chain(
                 await _save_progress(state, save_progress)
             if state.phase == "evaluating":
                 for candidate in state.candidates:
-                    if review_slot is not None and candidate.slot != review_slot:
-                        continue
                     if candidate.evaluated:
                         if (
                             state._goal_enabled()
@@ -1040,26 +1037,3 @@ async def _run_image_chain(
             for path in state.generated_paths():
                 await asyncio.to_thread(asset_store.unlink_companion_asset, path)
         raise
-
-
-async def review_image_chain(
-    user_id: int,
-    state: ImageChainState,
-    *,
-    task: AiTaskKey,
-    save_progress: ImageProgressWriter,
-    slot: int | None = None,
-) -> list[str]:
-    """显式续审只消费原证据，不能推进生成链。"""
-    if not state.can_retry_goal_review() and not state.pending_urls:
-        raise ImageReviewUnavailableError("当前候选无法直接续审")
-    return await _run_image_chain(
-        state,
-        user_id=user_id,
-        task=task,
-        configs={},
-        save_progress=save_progress,
-        store_attempts=1,
-        before_submit=None,
-        review_slot=slot,
-    )

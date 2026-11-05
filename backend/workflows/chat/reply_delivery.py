@@ -327,8 +327,6 @@ def decode_companion_reply(
     """模型类型标记只用于交付校验；持久化继续使用原气泡数组契约。"""
     # 演绎与媒体在数组协议中校验，保留按 speech 字段降级的边界。
     draft = _ReplyEnvelope.model_validate_json(raw)
-    if any(type(topic_id) is not int or topic_id <= 0 for topic_id in draft.used_topic_ids):
-        raise ValueError("Topic references require positive integer IDs")
     if len(set(draft.used_topic_ids)) != len(draft.used_topic_ids):
         raise ValueError("Topic references must be unique")
     # 分句前核对完整地址，防止查询串中的问号被拆开后丢失校验依据。

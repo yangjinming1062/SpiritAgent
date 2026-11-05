@@ -89,7 +89,7 @@ flowchart LR
 
 动作的可用性由评审状态决定，不另存入库布尔值。通用内置定义通过账户内唯一 `preset_key` 补齐，自创动作该值为空；名称不承担唯一身份。`source_key` 是动作素材的业务来源键：素材包导入按它去重，撤销导入按它校验归属。
 
-聊天图片以 `image_gen_jobs` 继承共享任务，按槽位保存媒体与消息绑定；`appearance_image_jobs` 保存头像与全身公共图片链的接续点，业务采纳与任务完成共同提交。`media_review_attempts` 独立保留请求去重、候选额度依据及执行状态，检查结论留在业务候选；`media_manual_operations` 保存人工采用或重做的原输入、候选依据、请求身份及调度交接，`media_continuations` 保留业务依赖及原继续身份。业务所属任务通过 `owner_job_id` 关联，账户归属仍用 `user_id`。全身候选持有检查证据与人工依据，`fullbody_review_jobs` 只管理冻结参考及执行；手动和自主造型通过请求来源分离权限。待复核没有完成时间，任务资产引用持续生效。
+聊天图片以 `image_gen_jobs` 继承共享任务，按槽位保存媒体与消息绑定；`appearance_image_jobs` 保存头像与全身公共图片链的接续点，业务采纳与任务完成共同提交。`media_manual_operations` 保存人工采用或重做的原输入、候选依据、请求身份及调度交接，`media_continuations` 保留业务依赖及原继续身份。业务所属任务通过 `owner_job_id` 关联，账户归属仍用 `user_id`。全身候选持有检查证据与人工依据，`fullbody_review_jobs` 只管理冻结参考及执行；手动和自主造型通过请求来源分离权限。待复核没有完成时间，任务资产引用持续生效。
 
 ## 影像与不可变版本
 

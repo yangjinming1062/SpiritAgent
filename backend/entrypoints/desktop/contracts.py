@@ -29,7 +29,6 @@ class GatewayResumeResult(BaseModel):
     stream_id: str
     current_seq: int
     recovery: Literal["replayed", "snapshot_required"]
-    replayed_count: int
     pending_calls: list[str]
 
 
@@ -73,7 +72,6 @@ class RpcContract:
     response: type[BaseModel]
     remote: bool = False
     concurrent: bool = False
-    wait_for_model: bool = False
 
 
 RPC_CONTRACTS: dict[str, RpcContract] = {

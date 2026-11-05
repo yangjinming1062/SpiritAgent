@@ -4,17 +4,15 @@ import asyncio
 from uuid import uuid4
 from weakref import WeakValueDictionary
 
-from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import client_asset_url, resolve_asset_reference
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.request_errors import RequestError
 from PIL import Image, ImageOps
-from runtime.events.emit import emit_ws_event
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.appearance.identity import visual_identity_is_current
 from features.media.chain import MediaCandidate, MediaChainState
-from features.media.character_images import ImageChainState, review_image_chain
+from features.media.character_images import ImageChainState
 from features.media.manual_reviews import (
     ManualAction,
     approve_candidate,
@@ -26,8 +24,6 @@ from features.media.review_contracts import candidate_review_key, needs_review, 
 from features.media.review_views import (
     MediaJobView,
     MediaManualRequest,
-    MediaReviewRequest,
-    review_request_matches,
     single_slot_review_view,
 )
 
@@ -36,14 +32,9 @@ from .creation import (
     opening_reference_hash,
     opening_requirements_hash,
     opening_visual_review,
-    review_existing_opening,
 )
 from .generation import (
     VisualCandidateResult,
-    _evaluate_candidate,
-    _evaluate_scene_candidate,
-    _require_active_job,
-    _save_progress,
     current_visual_candidate,
     restart_video_generation,
     schedule_visual_job,
@@ -102,98 +93,6 @@ async def visual_review_view(user_id: int, job_id: int) -> MediaJobView:
             error=row.error,
             can_regenerate=row.state in {"paused", "failed"},
         )
-
-
-async def review_visual_job(user_id: int, job_id: int, slot: int, expected: MediaReviewRequest) -> MediaJobView:
-    if slot != 0:
-        raise RequestError(status_code=400, message="无效的检查槽位")
-    async with _LOCKS.setdefault(job_id, asyncio.Lock()):
-        async with SESSION_LOCAL() as db:
-            row = await visual_job_row(db, user_id, job_id, lock=True)
-            progress = visual_progress(row)
-            if row.stage != "review_pending" or progress is None:
-                raise RequestError(status_code=409, message="检查状态已变化")
-            if not review_request_matches(await visual_review_view(user_id, job_id), expected):
-                raise RequestError(status_code=409, message="检查依据或任务版本已变化")
-            row.state, row.stage = "running", "reviewing"
-            progress.review_only = True
-            row.checkpoint = progress.model_dump(mode="json")
-            await db.commit()
-        error = None
-        try:
-            if progress.candidate and progress.candidate.media_kind == "video":
-                if visual_snapshot(row).kind == "scene":
-                    await _evaluate_scene_candidate(user_id, row, progress)
-                else:
-                    await _evaluate_candidate(user_id, row, progress)
-            elif progress.pose_path and visual_snapshot(row).source.kind in {"actor", "cinematic"}:
-
-                async def before_submit() -> None:
-                    await _require_active_job(user_id, job_id, progress.generation_id)
-
-                async def save_opening_review() -> None:
-                    await _save_progress(user_id, job_id, progress, stage="checking")
-
-                opening = await review_existing_opening(
-                    user_id,
-                    row,
-                    progress,
-                    snapshot=visual_snapshot(row).source,
-                    before_submit=before_submit,
-                    save_progress=save_opening_review,
-                )
-                progress.review_result = opening_visual_review(opening)
-                progress.review_result.reference_basis = visual_reference_basis(
-                    visual_snapshot(row).source.model_dump(mode="json")
-                )
-            elif progress.image_chain_json:
-                chain = ImageChainState.model_validate_json(progress.image_chain_json)
-
-                async def save(value: ImageChainState) -> None:
-                    progress.image_chain_json = value.model_dump_json()
-                    async with SESSION_LOCAL() as db:
-                        current = await visual_job_row(db, user_id, job_id, lock=True)
-                        if current.state != "running" or current.stage not in {"reviewing", "review"}:
-                            raise asyncio.CancelledError()
-                        current.checkpoint = progress.model_dump(mode="json")
-                        await db.commit()
-
-                await review_image_chain(user_id, chain, task=AiTaskKey.visuals, save_progress=save)
-                chosen = chain.best()
-                progress.review_result = (
-                    chosen.review.model_copy(
-                        update={
-                            "reference_basis": visual_reference_basis(
-                                visual_snapshot(row).source.model_dump(mode="json")
-                            )
-                        }
-                    )
-                    if chosen and chosen.review
-                    else None
-                )
-            else:
-                raise ValueError("原检查证据不可用")
-        except Exception as exc:
-            error = str(exc)
-        finally:
-            async with SESSION_LOCAL() as db:
-                current = await visual_job_row(db, user_id, job_id, lock=True)
-                saved = visual_progress(current)
-                if current.state == "running" and saved is not None and saved.generation_id == progress.generation_id:
-                    current.state = "paused"
-                    current.stage = (
-                        "confirmation"
-                        if progress.review_result and progress.review_result.verdict != "review"
-                        else "review_pending"
-                    )
-                    current.error = error
-                    current.checkpoint = progress.model_dump(mode="json")
-                    await notify_visuals_updated(db, user_id)
-                    emit_ws_event(
-                        db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(job_id)}
-                    )
-                    await db.commit()
-    return await visual_review_view(user_id, job_id)
 
 
 async def manually_review_visual(

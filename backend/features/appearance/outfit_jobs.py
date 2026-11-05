@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 from dataclasses import dataclass
 from datetime import timedelta
+from weakref import WeakValueDictionary
 
 from infrastructure.assets.asset_store import compute_file_sha256, resolve_asset_reference
 from infrastructure.database import SESSION_LOCAL
@@ -31,7 +32,7 @@ from .identity import require_visual_identity, visual_identity_is_current
 from .models import AvatarAsset, CompanionOutfit, OutfitCreationJob
 from .outfit_service import OutfitContinuationBlocked, confirm_outfit, create_outfit_draft, get_outfit_policy
 
-_LOCKS: dict[int, asyncio.Lock] = {}
+_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
 
 
 @dataclass(frozen=True)

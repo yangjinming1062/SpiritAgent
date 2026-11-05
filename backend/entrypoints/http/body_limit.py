@@ -4,7 +4,7 @@ from fastapi import HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials
 from features.accounts.deps import authenticate_request_session, get_current_admin_token
 from infrastructure.config import SETTINGS
-from infrastructure.constants import ATTACHMENT_DATA_URL_MAX_CHARS, SCENE_DOWNLOAD_MAX_BYTES, STT_MAX_AUDIO_BYTES
+from infrastructure.constants import ATTACHMENT_DATA_URL_MAX_CHARS, STT_MAX_AUDIO_BYTES
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.http_contracts import find_http_operation
 from starlette.datastructures import Headers
@@ -30,7 +30,6 @@ def _body_policy(scope: Scope) -> tuple[int, bool | None]:
     limits = {
         "chat": SETTINGS.max_attachments_per_turn * ATTACHMENT_DATA_URL_MAX_CHARS + _MIB,
         "image": 16 * _MIB + _DEFAULT_MAX_BYTES,
-        "image_file": SCENE_DOWNLOAD_MAX_BYTES + _UPLOAD_OVERHEAD_BYTES,
         "video": SETTINGS.video_attachment_max_bytes + _UPLOAD_OVERHEAD_BYTES,
         "audio": STT_MAX_AUDIO_BYTES + _UPLOAD_OVERHEAD_BYTES,
         "release": 1024 * _MIB + _UPLOAD_OVERHEAD_BYTES,

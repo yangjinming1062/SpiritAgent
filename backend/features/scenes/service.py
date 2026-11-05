@@ -5,6 +5,7 @@ import hashlib
 import json
 from datetime import timedelta
 from uuid import uuid4
+from weakref import WeakValueDictionary
 
 from infrastructure.ai.prompt_engineer import vision_chat
 from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
@@ -53,7 +54,7 @@ from features.scenes.wallpaper import SCENE_IMAGE_SIZE, WallpaperAsset, prepare_
 from features.visuals.static_presentation import invalidate_scene_presentation
 
 logger = get_logger(__name__)
-_SCENE_LOCKS: dict[int, asyncio.Lock] = {}
+_SCENE_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
 _INFLIGHT_TASKS = TaskScope("companion.scene")
 _AUTONOMOUS_ORIGINS = frozenset((SceneOrigin.LLM.value, SceneOrigin.NIGHTLY.value))
 

@@ -1,15 +1,12 @@
 """环境原候选续审，不替换环境图片或提交新生成。"""
 
-from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import client_asset_url
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.request_errors import RequestError
-from runtime.events.emit import emit_ws_event
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.media.character_images import ImageChainState, review_image_chain
-from features.media.image_generation import ImageGenerationError
+from features.media.character_images import ImageChainState
 from features.media.manual_reviews import (
     ManualAction,
     approve_image_chain,
@@ -20,8 +17,6 @@ from features.media.review_contracts import candidate_review_key, needs_review, 
 from features.media.review_views import (
     MediaJobView,
     MediaManualRequest,
-    MediaReviewRequest,
-    review_request_matches,
     single_slot_review_view,
 )
 
@@ -57,50 +52,6 @@ async def scene_review_view(user_id: int, job_id: int) -> MediaJobView:
             error=job.error,
             can_regenerate=chain.inputs is not None and job.state in {"paused", "failed"},
         )
-
-
-async def review_scene_job(user_id: int, job_id: int, slot: int, expected: MediaReviewRequest) -> MediaJobView:
-    async with SESSION_LOCAL() as db:
-        job = await db.scalar(
-            select(SceneJob).where(SceneJob.id == job_id, SceneJob.user_id == user_id).with_for_update()
-        )
-        if job is None or slot != 0 or not review_request_matches(await scene_review_view(user_id, job_id), expected):
-            raise RequestError(status_code=409, message="环境检查状态已变化")
-        chain = _chain(job)
-        job.state, job.stage = "running", "reviewing"
-        await db.commit()
-
-    async def save(value: ImageChainState) -> None:
-        async with SESSION_LOCAL() as db:
-            current = await db.get(SceneJob, job_id, with_for_update=True)
-            if current.state != "running":
-                raise ValueError("环境检查已停止")
-            frozen = scene_generation_state(current)
-            frozen.image_chain = value
-            current.checkpoint = frozen.model_dump(mode="json")
-            await db.commit()
-
-    try:
-        await review_image_chain(user_id, chain, task=AiTaskKey.scene, save_progress=save)
-    except ImageGenerationError:
-        pass
-    finally:
-        async with SESSION_LOCAL() as db:
-            current = await db.get(SceneJob, job_id, with_for_update=True)
-            if current.state == "running":
-                current.state, current.stage = (
-                    "paused",
-                    "review_pending" if chain.can_retry_goal_review() else "confirmation",
-                )
-                emit_ws_event(
-                    db,
-                    user_id=user_id,
-                    event_type="companion.scene.updated",
-                    payload={"scene_id": str(current.scene_id)},
-                )
-                emit_ws_event(db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(job_id)})
-                await db.commit()
-    return await scene_review_view(user_id, job_id)
 
 
 async def manually_review_scene(

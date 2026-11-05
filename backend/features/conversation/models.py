@@ -71,7 +71,7 @@ class Conversation(ModelBase, TimestampMixin):
     memory_reviewed_message_id: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
     context_after_message_id: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
     history_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    # 派生计数由 messages 语句级触发器维护，不经 ORM 写入或备份。
+    # 派生计数由 messages 语句级触发器维护，不经 ORM 写入。
     visible_message_count: Mapped[int] = mapped_column(BigInteger, server_default="0")
     input_token_count: Mapped[int] = mapped_column(BigInteger, server_default="0")
     output_token_count: Mapped[int] = mapped_column(BigInteger, server_default="0")

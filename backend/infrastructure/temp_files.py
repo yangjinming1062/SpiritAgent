@@ -68,7 +68,7 @@ def _media_file_for(meta_path: Path, meta: dict) -> Path | None:
 
 
 def owned_temp_files(file_id: str, user_id: int) -> list[Path]:
-    """返回该用户名下临时文件的元数据与数据文件路径（备份导出用）；ID 非法、元数据缺失或归属其他用户时为空。"""
+    """返回该用户名下临时文件的元数据与数据文件路径（账户清理用）；ID 非法、元数据缺失或归属其他用户时为空。"""
     if not _valid_file_id(file_id):
         return []
     meta_path = _meta_path(file_id)
@@ -82,7 +82,7 @@ def owned_temp_files(file_id: str, user_id: int) -> list[Path]:
 
 
 def save_file(data: bytes, content_type: str, ext: str, *, user_id: int) -> str:
-    """保存到 temp 存储，返回 file_id；``user_id`` 记录归属供删除用户与备份定位；写失败时清理半成品文件避免无 TTL 孤儿。"""
+    """保存到 temp 存储，返回 file_id；``user_id`` 记录归属供删除用户时清理；写失败时清理半成品文件避免无 TTL 孤儿。"""
     file_id = secrets.token_urlsafe(16)
     filepath = _media_path(file_id, ext)
 

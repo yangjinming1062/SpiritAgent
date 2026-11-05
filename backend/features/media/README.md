@@ -17,9 +17,9 @@
 
 单槽候选检查视图由 [review_views.py](review_views.py) 的 `single_slot_review_view` 统一装配；场景、衣柜、全身与影像只提供各自的候选、证据与操作资格。
 
-[review_contracts.py](review_contracts.py) 定义定性判断与不可变证据；[review_operations.py](review_operations.py) 受理独立计额的显式续审。[manual_reviews.py](manual_reviews.py) 受理用户选取候选或重新生成，保存原判断及人工依据，原授权下的交付由业务所有者继续，无需用户再点交付按钮。[image_jobs.py](image_jobs.py) 保存聊天图片及逐槽位结果，消息绑定、删除和换回答由会话公共操作协同。[continuations.py](continuations.py) 保存业务等待与原继续操作身份，通过组合根装配业务所有者，检查通知不直接授予业务动作。
+[review_contracts.py](review_contracts.py) 定义定性判断与不可变证据；[review_operations.py](review_operations.py) 受理媒体任务状态查询。[manual_reviews.py](manual_reviews.py) 受理用户选取候选或重新生成，保存原判断及人工依据，原授权下的交付由业务所有者继续，无需用户再点交付按钮。[image_jobs.py](image_jobs.py) 保存聊天图片及逐槽位结果，消息绑定、删除和换回答由会话公共操作协同。[continuations.py](continuations.py) 保存业务等待与原继续操作身份，通过组合根装配业务所有者，检查通知不直接授予业务动作。
 
-待复核任务不自动重新调用模型，恢复只核对原证据与原操作；续审账本只保存请求、候选额度依据及执行状态，候选的身份、目标和画质判断由 `VisualReview` 持有。检查中断时保留已确定的维度和阶段证据，人工排除是独立的选择事实。人工操作的持久启动交接与业务依赖等待分别恢复，不能将检查完成视为交付成功。已发布版本持有必要检查附件，执行检查点回收不清除最终依据。
+待复核任务不自动重新调用模型，恢复只核对原证据与原操作；候选的身份、目标和画质判断由 `VisualReview` 持有。检查中断时保留已确定的维度和阶段证据，人工排除是独立的选择事实。人工操作的持久启动交接与业务依赖等待分别恢复，不能将检查完成视为交付成功。已发布版本持有必要检查附件，执行检查点回收不清除最终依据。
 
 ## 任务与消费边界
 

@@ -1,6 +1,6 @@
 """任务身份和生命周期的事务内公共操作。"""
 
-from collections.abc import Callable, Collection
+from collections.abc import Collection
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -8,8 +8,8 @@ from datetime import datetime, timedelta
 from features.assets.service import asset_paths_for_ids, ensure_assets_in_session
 from infrastructure.job_models import JobRecord
 from infrastructure.text import utc_now
-from sqlalchemy import BigInteger, cast, column, delete, null, or_, select, update, values
-from sqlalchemy.dialects.postgresql import JSONB, insert
+from sqlalchemy import delete, or_, select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.selectable import CTE
 
@@ -205,33 +205,6 @@ async def cleanup_job_assets(db: AsyncSession, user_id: int) -> set[str]:
     return paths
 
 
-async def rewrite_job_checkpoints(
-    db: AsyncSession, user_id: int, job_ids: Collection[int], rewrite: Callable[[dict | None], dict | None]
-) -> None:
-    if not job_ids:
-        return
-    rows = await db.execute(
-        select(JobRecord.id, JobRecord.checkpoint).where(JobRecord.user_id == user_id, JobRecord.id.in_(job_ids))
-    )
-    rewritten = [(job_id, rewrite(checkpoint)) for job_id, checkpoint in rows]
-    for start in range(0, len(rewritten), 500):
-        batch = (
-            values(column("job_id", BigInteger), column("checkpoint", JSONB))
-            .data(
-                [
-                    (job_id, checkpoint if checkpoint is not None else cast(null(), JSONB))
-                    for job_id, checkpoint in rewritten[start : start + 500]
-                ]
-            )
-            .alias("rewritten")
-        )
-        await db.execute(
-            update(JobRecord.__table__)
-            .where(JobRecord.id == batch.c.job_id, JobRecord.user_id == user_id)
-            .values(checkpoint=batch.c.checkpoint)
-        )
-
-
 async def settled_job_ids(db: AsyncSession) -> set[int]:
     return set(
         await db.scalars(
@@ -244,24 +217,3 @@ async def settled_job_ids(db: AsyncSession) -> set[int]:
 
 async def owned_job_kind(db: AsyncSession, user_id: int, job_id: int) -> str | None:
     return await db.scalar(select(JobRecord.kind).where(JobRecord.id == job_id, JobRecord.user_id == user_id))
-
-
-async def pause_interrupted_reviews(db: AsyncSession, job_ids: Collection[int]) -> None:
-    if job_ids:
-        await db.execute(
-            update(JobRecord)
-            .where(
-                JobRecord.id.in_(job_ids),
-                JobRecord.state == "running",
-                JobRecord.stage.in_(
-                    ("reviewing", "evaluating", "review", "checking", "presentation_review", "review_pending")
-                ),
-            )
-            .values(
-                state="paused",
-                stage="review_pending",
-                finished_at=None,
-                revision=JobRecord.revision + 1,
-                error="检查已中断，候选和原依据已保留",
-            )
-        )

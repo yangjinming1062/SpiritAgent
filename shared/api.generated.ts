@@ -109,7 +109,6 @@ export interface ApiSchemas {
   "MediaContinueRequest": { "action": "save_outfit" | "publish_post" | "deliver_message"; "expected_revision": number }
   "MediaJobView": { "id": string; "kind": string; "state": string; "stage": string; "revision": number; "slots": Array<ApiSchemas["MediaSlotView"]>; "required_slots": number; "ready_slots": number; "complete": boolean; "continuation_actions": Array<"save_outfit" | "publish_post" | "deliver_message">; "image_request": (ApiSchemas["ImageJobParams"] | null); "user_id": (string | null); "session_id": (string | null); "source_message_id": (string | null); "bindings": { [key: string]: string } }
   "MediaManualRequest": { "request_id": string; "slot"?: number; "expected_revision": number; "action": "approve" | "regenerate"; "candidate_id"?: (string | null) }
-  "MediaReviewRequest": { "request_id": string; "slot"?: number; "expected_basis_id": string; "expected_revision": number }
   "MediaSemantics": { "activity_type": "idle" | "reading" | "working" | "creating" | "thinking" | "resting" | "organizing" | "socializing"; "semantic_tags": Array<"idle" | "attention" | "interaction" | "reading" | "working" | "creating" | "thinking" | "resting" | "organizing" | "socializing" | "stretching" | "grooming" | "drinking" | "dancing">; "motion_intensity": "subtle" | "normal" | "expressive"; "auto_selectable": boolean; "scene_tags": Array<"indoor" | "outdoor" | "desk" | "seat" | "bed" | "open_space" | "book" | "computer" | "cup" | "tools">; "avoid_activity_types": Array<"idle" | "reading" | "working" | "creating" | "thinking" | "resting" | "organizing" | "socializing">; "avoid_scene_tags": Array<"indoor" | "outdoor" | "desk" | "seat" | "bed" | "open_space" | "book" | "computer" | "cup" | "tools"> }
   "MediaSlotView": { "slot": number; "media_id": string; "label": string; "status": string; "media_revision": number; "url": (string | null); "preview_url": (string | null); "review": (ApiSchemas["VisualReview"] | null); "basis_id": (string | null); "candidate_basis_id": (string | null); "can_review": boolean; "error": (string | null); "candidates": Array<ApiSchemas["MediaCandidateView"]>; "can_regenerate": boolean; "delivered": boolean }
   "MemoryDeleteResponse": { "deleted": boolean }
@@ -152,7 +151,7 @@ export interface ApiSchemas {
   "PostContentType": "text" | "image" | "video" | "audio"
   "PostListResponse": { "posts": Array<ApiSchemas["PostResponse"]>; "next_cursor": (string | null); "unread_post_ids": Array<string> }
   "PostPublicationRecovery": { "publication_id": string; "status": "queued" | "running" | "paused" | "published" | "partial" | "failed" | "blocked" | "result_unknown" | "declined" | "discarded"; "post_id": (string | null); "error": (string | null); "title": string; "media_kind": "image" | "video"; "media_status": "pending" | "review_pending" | "ready" | "failed" | "unknown" | "discarded"; "media_job_id": (string | null); "can_publish": boolean; "media_url": (string | null); "can_discard": boolean }
-  "PostPublicationRecoveryList": { "items": Array<ApiSchemas["PostPublicationRecovery"]>; "next_cursor": (string | null); "has_more": boolean }
+  "PostPublicationRecoveryList": { "items": Array<ApiSchemas["PostPublicationRecovery"]>; "next_cursor": (string | null) }
   "PostPublicationResult": { "publication_id": string; "status": "queued" | "running" | "paused" | "published" | "partial" | "failed" | "blocked" | "result_unknown" | "declined" | "discarded"; "post_id": (string | null); "error": (string | null) }
   "PostReadRequest": { "post_ids": Array<string> }
   "PostResponse": { "id": string; "published_at": string; "content_type": ApiSchemas["PostContentType"]; "title": string; "body": string; "media_url": (string | null); "audio_url": (string | null); "comments": Array<ApiSchemas["PostCommentResponse"]>; "comment_count": number; "comments_next_cursor": (string | null); "comments_loaded": boolean }
@@ -199,7 +198,7 @@ export interface ApiSchemas {
   "RpcEmptyResult": { [key: string]: unknown }
   "RpcGatewayAckResult": { "acked": number; "pruned": number }
   "RpcGatewayErrorEvent": { "request_id": (string | null); "replace_reply_message_id": (string | null); "message": string; "retry_message_id": (string | null) }
-  "RpcGatewayResumeResult": { "stream_id": string; "current_seq": number; "recovery": "replayed" | "snapshot_required"; "replayed_count": number; "pending_calls": Array<string> }
+  "RpcGatewayResumeResult": { "stream_id": string; "current_seq": number; "recovery": "replayed" | "snapshot_required"; "pending_calls": Array<string> }
   "RpcInputCompanionSignal": { "available": boolean; "presentation_mode": "desktop" | "window"; "event"?: ("desktop_available" | "context_changed" | null) }
   "RpcInputEmptyRequest": Record<string, never>
   "RpcInputGatewayAckRequest": { "seq": number }
@@ -232,7 +231,6 @@ export interface ApiSchemas {
   "RpcPostCommentRole": "user" | "companion"
   "RpcPostContentType": "text" | "image" | "video" | "audio"
   "RpcPostResponse": { "id": string; "published_at": string; "content_type": ApiSchemas["RpcPostContentType"]; "title": string; "body": string; "media_url": (string | null); "audio_url": (string | null); "comments": Array<ApiSchemas["RpcPostCommentResponse"]>; "comment_count": number; "comments_next_cursor": (string | null); "comments_loaded": boolean }
-  "RpcPublicationContinueEvent": { "publication_id": string }
   "RpcRememberCommandResult": { "memory_id": string; "content": string }
   "RpcReplyAudio": { "url": string; "duration": number }
   "RpcReplyBubbleView": (ApiSchemas["RpcTextBubble"] | ApiSchemas["RpcVoiceBubbleView"] | ApiSchemas["RpcClientMediaBubble"] | ApiSchemas["RpcLinkBubble"])
@@ -342,7 +340,6 @@ export interface ApiSchemas {
   "SocialLoginQrCode": { "image": string; "expires_at": string; "session_id": string }
   "SocialLoginStatus": { "session_id": string; "state": "awaiting_scan" | "sms_required" | "verifying" | "verification_required" | "logged_in" | "expired"; "expires_at": string; "verification_error": ("invalid_code" | null) }
   "SocialVerificationRequest": { "code": string }
-  "SpeechToTextResponse": { "text": string }
   "StageComposition": { "mode": "layered" | "cinematic"; "scene_visual_id": (string | null); "scene_version": (number | null); "actor": (ApiSchemas["ActorClipRef"] | null); "cinematic": (ApiSchemas["ActorClipRef"] | null); "outfit_material": (ApiSchemas["ComboMaterialRef"] | null); "scene_material": (ApiSchemas["SceneMediaRef"] | null); "identity_path": (string | null); "identity_hash": (string | null); "layout": ApiSchemas["StageCompositionLayout"]; "selection_source": "base" | "life" | "user"; "life_revision": (number | null); "life_activity_type": ("idle" | "reading" | "working" | "creating" | "thinking" | "resting" | "organizing" | "socializing" | null); "media": (ApiSchemas["StageCompositionMedia"] | null) }
   "StageCompositionLayout": { "layer_order": Array<"scene" | "actor" | "cinematic" | "effects">; "fit": "contain" | "cover"; "actor_position": [number, number]; "safe_area": [number, number, number, number] }
   "StageCompositionMedia": { "mode": "layered" | "cinematic"; "scene": (ApiSchemas["StageLayerMedia"] | null); "actor": (ApiSchemas["StageLayerMedia"] | null); "cinematic": (ApiSchemas["StageLayerMedia"] | null) }
@@ -412,7 +409,6 @@ export interface ApiSchemas {
   "VoiceSampleResponse": { "sample_id": string; "url": string; "duration": number; "mime_type": string }
   "VoicesListResponse": { "providers": Array<string>; "voices": Array<ApiSchemas["VoiceEntry"]>; "supports_voice_design": boolean; "voice_design_guide": string; "supports_voice_prompt_generation": boolean; "supports_voice_clone": boolean; "custom_voices": Array<ApiSchemas["CustomVoiceSummary"]> }
   "create_version": { "file": string; "release_notes"?: string }
-  "speech_to_text": { "audio_file"?: (string | null) }
   "upload_chat_audio": { "file": string; "session_id": string }
   "upload_chat_video": { "file"?: (string | null); "session_id"?: string }
   "upload_voice_reference": { "file": string }
@@ -450,7 +446,6 @@ export interface ApiOperations {
   "companion.put_avatar_select": { path: { "avatar_id": string }; query: Record<string, never>; body: undefined; input: { path: { "avatar_id": string }; query?: never; body?: never }; response: ApiSchemas["AvatarAssetResponse"] }
   "companion.post_fullbody_reference": { path: { "avatar_id": string }; query: Record<string, never>; body: ApiSchemas["FullbodyReferenceGenerateRequest"]; input: { path: { "avatar_id": string }; query?: never; body: ApiSchemas["FullbodyReferenceGenerateRequest"] }; response: (ApiSchemas["AvatarAssetResponse"] | ApiSchemas["FullbodyCandidateResponse"]) }
   "companion.get_fullbody_candidate": { path: { "avatar_id": string }; query: Record<string, never>; body: undefined; input: { path: { "avatar_id": string }; query?: never; body?: never }; response: (ApiSchemas["FullbodyCandidateResponse"] | null) }
-  "companion.post_fullbody_candidate_review": { path: { "avatar_id": string; "candidate_id": string }; query: Record<string, never>; body: ApiSchemas["MediaReviewRequest"]; input: { path: { "avatar_id": string; "candidate_id": string }; query?: never; body: ApiSchemas["MediaReviewRequest"] }; response: ApiSchemas["FullbodyCandidateResponse"] }
   "companion.post_fullbody_candidate_accept": { path: { "avatar_id": string; "candidate_id": string }; query: Record<string, never>; body: undefined; input: { path: { "avatar_id": string; "candidate_id": string }; query?: never; body?: never }; response: ApiSchemas["AvatarAssetResponse"] }
   "companion.post_fullbody_confirm": { path: { "avatar_id": string }; query: Record<string, never>; body: ApiSchemas["FullbodyConfirmRequest"]; input: { path: { "avatar_id": string }; query?: never; body: ApiSchemas["FullbodyConfirmRequest"] }; response: ApiSchemas["AvatarAssetResponse"] }
   "companion.post_fullbody_prompt": { path: { "avatar_id": string }; query: Record<string, never>; body: ApiSchemas["FullbodyPromptRequest"]; input: { path: { "avatar_id": string }; query?: never; body?: ApiSchemas["FullbodyPromptRequest"] }; response: ApiSchemas["ImagePromptResponse"] }
@@ -547,10 +542,8 @@ export interface ApiOperations {
   "media.serve_session_audio": { path: { "session_id": string; "file_id": string }; query: Record<string, never>; body: undefined; input: { path: { "session_id": string; "file_id": string }; query?: never; body?: never }; response: Uint8Array }
   "media.upload_chat_audio": { path: Record<string, never>; query: Record<string, never>; body: FormData; input: { path?: never; query?: never; body: FormData }; response: ApiSchemas["ChatAudioUploadResponse"] }
   "media.upload_chat_video": { path: Record<string, never>; query: Record<string, never>; body: FormData; input: { path?: never; query?: never; body?: FormData }; response: ApiSchemas["ChatVideoUploadResponse"] }
-  "media.speech_to_text": { path: Record<string, never>; query: { "language"?: string }; body: FormData; input: { path?: never; query?: { "language"?: string }; body?: FormData }; response: ApiSchemas["SpeechToTextResponse"] }
   "media.text_to_speech": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["TtsRequest"]; input: { path?: never; query?: never; body: ApiSchemas["TtsRequest"] }; response: Uint8Array }
   "media.get_media_job": { path: { "job_id": string }; query: Record<string, never>; body: undefined; input: { path: { "job_id": string }; query?: never; body?: never }; response: ApiSchemas["MediaJobView"] }
-  "media.post_media_job_review": { path: { "job_id": string }; query: Record<string, never>; body: ApiSchemas["MediaReviewRequest"]; input: { path: { "job_id": string }; query?: never; body: ApiSchemas["MediaReviewRequest"] }; response: ApiSchemas["MediaJobView"] }
   "media.get_outfit_review_jobs": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: Array<ApiSchemas["MediaJobView"]> }
   "media.manually_handle_media": { path: { "job_id": string }; query: Record<string, never>; body: ApiSchemas["MediaManualRequest"]; input: { path: { "job_id": string }; query?: never; body: ApiSchemas["MediaManualRequest"] }; response: ApiSchemas["MediaJobView"] }
   "media.continue_media_business": { path: { "job_id": string }; query: Record<string, never>; body: ApiSchemas["MediaContinueRequest"]; input: { path: { "job_id": string }; query?: never; body: ApiSchemas["MediaContinueRequest"] }; response: ApiSchemas["MediaJobView"] }
@@ -656,8 +649,6 @@ export interface GatewayEventPayloads {
   "message.replaced": ApiSchemas["RpcMessageReplacedEvent"]
   "message.start": ApiSchemas["RpcTurnEvent"]
   "message.voice": ApiSchemas["RpcMessageVoiceEvent"]
-  "outfit.creation.continue": ApiSchemas["RpcMediaReviewUpdatedEvent"]
-  "post.publication.continue": ApiSchemas["RpcPublicationContinueEvent"]
   "session.list_changed": ApiSchemas["RpcSessionListChangedEvent"]
   "session.state": ApiSchemas["RpcSessionStateEvent"]
   "system.notification": ApiSchemas["RpcSystemNotificationEvent"]
@@ -668,7 +659,6 @@ export interface GatewayEventPayloads {
   "video_gen.completed": ApiSchemas["RpcVideoCompletedEvent"]
   "video_gen.failed": ApiSchemas["RpcVideoFailedEvent"]
   "video_gen.queue": ApiSchemas["RpcVideoQueueEvent"]
-  "visual.preparation.continue": ApiSchemas["RpcMediaReviewUpdatedEvent"]
 }
 
 export interface RunnerOperations {
@@ -1029,17 +1019,6 @@ export const API_OPERATIONS = {
       "desktop"
     ],
     "wait_for_model": false,
-    "ipc": true
-  },
-  "companion.post_fullbody_candidate_review": {
-    "path": "/api/companion/avatar/{avatar_id}/fullbody/candidate/{candidate_id}/review",
-    "method": "POST",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "desktop"
-    ],
-    "wait_for_model": true,
     "ipc": true
   },
   "companion.post_fullbody_candidate_accept": {
@@ -2180,18 +2159,6 @@ export const API_OPERATIONS = {
     "wait_for_model": false,
     "ipc": false
   },
-  "media.speech_to_text": {
-    "path": "/api/media/stt",
-    "method": "POST",
-    "encoding": "multipart",
-    "response": "json",
-    "identities": [
-      "desktop",
-      "remote"
-    ],
-    "wait_for_model": true,
-    "ipc": false
-  },
   "media.text_to_speech": {
     "path": "/api/media/tts",
     "method": "POST",
@@ -2210,20 +2177,10 @@ export const API_OPERATIONS = {
     "encoding": "json",
     "response": "json",
     "identities": [
-      "desktop"
+      "desktop",
+      "remote"
     ],
     "wait_for_model": false,
-    "ipc": true
-  },
-  "media.post_media_job_review": {
-    "path": "/api/media/jobs/{job_id}/review",
-    "method": "POST",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "desktop"
-    ],
-    "wait_for_model": true,
     "ipc": true
   },
   "media.get_outfit_review_jobs": {
@@ -2232,7 +2189,8 @@ export const API_OPERATIONS = {
     "encoding": "json",
     "response": "json",
     "identities": [
-      "desktop"
+      "desktop",
+      "remote"
     ],
     "wait_for_model": false,
     "ipc": true
@@ -2243,7 +2201,8 @@ export const API_OPERATIONS = {
     "encoding": "json",
     "response": "json",
     "identities": [
-      "desktop"
+      "desktop",
+      "remote"
     ],
     "wait_for_model": true,
     "ipc": true
@@ -2254,7 +2213,8 @@ export const API_OPERATIONS = {
     "encoding": "json",
     "response": "json",
     "identities": [
-      "desktop"
+      "desktop",
+      "remote"
     ],
     "wait_for_model": false,
     "ipc": true
@@ -2265,7 +2225,8 @@ export const API_OPERATIONS = {
     "encoding": "json",
     "response": "json",
     "identities": [
-      "desktop"
+      "desktop",
+      "remote"
     ],
     "wait_for_model": true,
     "ipc": true
@@ -2840,33 +2801,27 @@ export const API_OPERATIONS = {
 export const RPC_POLICIES = {
   "companion.signal": {
     "remote": false,
-    "concurrent": false,
-    "wait_for_model": false
+    "concurrent": false
   },
   "gateway.ack": {
     "remote": true,
-    "concurrent": true,
-    "wait_for_model": false
+    "concurrent": true
   },
   "gateway.ping": {
     "remote": true,
-    "concurrent": true,
-    "wait_for_model": false
+    "concurrent": true
   },
   "gateway.resume": {
     "remote": true,
-    "concurrent": false,
-    "wait_for_model": false
+    "concurrent": false
   },
   "tool.result": {
     "remote": false,
-    "concurrent": true,
-    "wait_for_model": false
+    "concurrent": true
   },
   "tools.sync": {
     "remote": false,
-    "concurrent": true,
-    "wait_for_model": false
+    "concurrent": true
   }
 } as const
 export const EVENT_POLICIES = {
@@ -3104,18 +3059,6 @@ export const EVENT_POLICIES = {
     "recovery": "session",
     "baseline": false
   },
-  "outfit.creation.continue": {
-    "audience": "all",
-    "snapshot": false,
-    "recovery": "resource",
-    "baseline": false
-  },
-  "post.publication.continue": {
-    "audience": "all",
-    "snapshot": false,
-    "recovery": "resource",
-    "baseline": false
-  },
   "session.list_changed": {
     "audience": "all",
     "snapshot": false,
@@ -3171,12 +3114,6 @@ export const EVENT_POLICIES = {
     "baseline": false
   },
   "video_gen.queue": {
-    "audience": "all",
-    "snapshot": false,
-    "recovery": "resource",
-    "baseline": false
-  },
-  "visual.preparation.continue": {
     "audience": "all",
     "snapshot": false,
     "recovery": "resource",

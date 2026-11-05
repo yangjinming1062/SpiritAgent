@@ -14,7 +14,7 @@ from entrypoints.tools.builtin.send_message_tool import register as register_sen
 from entrypoints.tools.builtin.video_generation_tool import register as register_video_generation
 from entrypoints.tools.builtin.visual_tool import register as register_visuals
 from entrypoints.tools.builtin.web_tools import register as register_web
-from features.appearance.avatar_service import fullbody_review_view, review_fullbody_job
+from features.appearance.avatar_service import fullbody_review_view
 from features.appearance.fullbody_reviews import manually_review_fullbody, run_manual_fullbody_job
 from features.appearance.identity import visual_identity_is_current
 from features.appearance.outfit_jobs import outfit_creation_continue_requested
@@ -22,7 +22,6 @@ from features.appearance.outfit_reviews import (
     continue_outfit_creation,
     manually_review_outfit,
     outfit_review_view,
-    review_outfit_job,
     run_manual_outfit_job,
 )
 from features.appearance.queries import active_identity_reference, appearance_readiness, confirmed_media_reference_paths
@@ -39,12 +38,12 @@ from features.conversation.reply_media import (
 )
 from features.media.continuations import configure_continuation_handler, media_review_updated
 from features.media.delivery import set_image_result_handler, set_video_result_handler
-from features.media.image_jobs import image_job_view, manually_review_image, review_image_job, run_manual_image_job
+from features.media.image_jobs import image_job_view, manually_review_image, run_manual_image_job
 from features.media.manual_reviews import configure_manual_handler
 from features.media.reference_reader import MediaReferenceReaders, set_media_reference_readers
 from features.media.review_operations import configure_review_handler
 from features.media.video_jobs import inspect_video_queue_owner as inspect_media_video_owner
-from features.media.video_jobs import manually_review_video, review_video_job, submit_video_job, video_review_view
+from features.media.video_jobs import manually_review_video, submit_video_job, video_review_view
 from features.media.video_queue.ports import configure_video_queue_ports
 from features.posts.ports import set_post_published_handler
 from features.posts.publication import (
@@ -52,17 +51,15 @@ from features.posts.publication import (
     post_review_view,
     publication_continue_requested,
     resume_post_media,
-    review_post_job,
     run_manual_post_job,
 )
 from features.scenes.queries import scene_exists
-from features.scenes.reviews import manually_review_scene, review_scene_job, run_manual_scene_job, scene_review_view
+from features.scenes.reviews import manually_review_scene, run_manual_scene_job, scene_review_view
 from features.scenes.service import schedule_initial_scene
-from features.visuals.import_reviews import import_review_view, manually_review_import, review_import_job
+from features.visuals.import_reviews import import_review_view, manually_review_import
 from features.visuals.ports import configure_visual_hooks
 from features.visuals.reviews import (
     manually_review_visual,
-    review_visual_job,
     run_manual_visual_job,
     visual_review_view,
 )
@@ -187,7 +184,7 @@ def register_all() -> None:
     set_job_intent_invalidator(invalidate_cron_companion_intents)
     set_video_result_handler(deliver_video_result)
     set_image_result_handler(deliver_image_job_result)
-    configure_review_handler("media.image", image_job_view, review_image_job)
+    configure_review_handler("media.image", image_job_view)
     configure_manual_handler("media.image", image_job_view, manually_review_image, run_manual_image_job)
     configure_manual_handler("media.video", video_review_view, manually_review_video, submit_video_job)
     configure_manual_handler("outfit.create", outfit_review_view, manually_review_outfit, run_manual_outfit_job)
@@ -198,13 +195,13 @@ def register_all() -> None:
         "appearance.fullbody_review", fullbody_review_view, manually_review_fullbody, run_manual_fullbody_job
     )
     configure_manual_handler("visual.import", import_review_view, manually_review_import, run_manual_import_job)
-    configure_review_handler("media.video", video_review_view, review_video_job)
-    configure_review_handler("visual.generate", visual_review_view, review_visual_job)
-    configure_review_handler("visual.import", import_review_view, review_import_job)
-    configure_review_handler("scene.generate", scene_review_view, review_scene_job)
-    configure_review_handler("post.publish", post_review_view, review_post_job)
-    configure_review_handler("outfit.create", outfit_review_view, review_outfit_job)
-    configure_review_handler("appearance.fullbody_review", fullbody_review_view, review_fullbody_job)
+    configure_review_handler("media.video", video_review_view)
+    configure_review_handler("visual.generate", visual_review_view)
+    configure_review_handler("visual.import", import_review_view)
+    configure_review_handler("scene.generate", scene_review_view)
+    configure_review_handler("post.publish", post_review_view)
+    configure_review_handler("outfit.create", outfit_review_view)
+    configure_review_handler("appearance.fullbody_review", fullbody_review_view)
     configure_continuation_handler("outfit.create", continue_outfit_creation)
     configure_continuation_handler("visuals.preparation", continue_base_preparation)
     configure_continuation_handler("post.publish", resume_post_media)

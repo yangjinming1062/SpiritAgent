@@ -16,7 +16,6 @@ from features.appearance.avatar_service import (
     latest_fullbody_candidate,
     prepare_avatar_prompt,
     prepare_fullbody_prompt,
-    retry_fullbody_candidate_review,
 )
 from features.appearance.background_tasks import schedule_appearance_tasks
 from features.appearance.identity import VisualIdentityNotReadyError
@@ -84,7 +83,6 @@ from features.companion.schemas import (
     PortraitConfirmRequest,
 )
 from features.companion.views import get_persona_view, update_persona_view
-from features.media.review_views import MediaReviewRequest
 from infrastructure.ai.error_classifier import LLMRuntimeError
 from infrastructure.ai.llm_client import MissingLlmConfigError
 from infrastructure.ai.prompt_engineer import VisualReasoningError
@@ -335,22 +333,6 @@ async def post_fullbody_reference(
 @router.get("/avatar/{avatar_id}/fullbody/candidate", response_model=FullbodyCandidateResponse | None)
 async def get_fullbody_candidate(avatar_id: ResourceId, user: CurrentUser) -> FullbodyCandidateResponse | None:
     return await latest_fullbody_candidate(user.id, avatar_id)
-
-
-@router.post(
-    "/avatar/{avatar_id}/fullbody/candidate/{candidate_id}/review",
-    response_model=FullbodyCandidateResponse,
-    openapi_extra=operation_policy(wait_for_model=True),
-)
-async def post_fullbody_candidate_review(
-    avatar_id: ResourceId, candidate_id: ResourceId, body: MediaReviewRequest, user: CurrentUser
-) -> FullbodyCandidateResponse:
-    try:
-        return await retry_fullbody_candidate_review(user.id, avatar_id, candidate_id, body)
-    except AvatarNotFoundError as exc:
-        raise RequestError(status_code=404, message=str(exc)) from exc
-    except AvatarGenerationError as exc:
-        raise RequestError(status_code=409, message=str(exc)) from exc
 
 
 @router.post(

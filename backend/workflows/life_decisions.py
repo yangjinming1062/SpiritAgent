@@ -79,24 +79,24 @@ async def adjust_life(user_id: int, decision: LifeDecisionRequest) -> LifeStateV
             return result
 
 
-async def consider_life(user_id: int, *, force: bool = False) -> dict[str, object]:
+async def consider_life(user_id: int) -> dict[str, object]:
     async with user_request_scope(user_id) as acquired:
         if not acquired:
             return {"status": "maintenance"}
         async with _LOCKS.setdefault(user_id, asyncio.Lock()):
             try:
-                return await _consider_life(user_id, force=force)
+                return await _consider_life(user_id)
             except Exception:
                 await defer_review(user_id)
                 logger.warning("life decision failed; review deferred", extra={"user_id": user_id}, exc_info=True)
                 raise
 
 
-async def _consider_life(user_id: int, *, force: bool) -> dict[str, object]:
+async def _consider_life(user_id: int) -> dict[str, object]:
     async with SESSION_LOCAL() as db:
         if not await user_is_active(db, user_id) or user_id not in await onboarded_user_ids(db, (user_id,)):
             return {"status": "not_ready"}
-        if not force and user_id not in await due_review_user_ids(db, (user_id,), utc_now()):
+        if user_id not in await due_review_user_ids(db, (user_id,), utc_now()):
             return {"status": "waiting"}
     config = await load_user_llm_config(user_id, AiTaskKey.proactive)
     if not config.is_configured:

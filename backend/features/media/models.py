@@ -21,19 +21,6 @@ class ImageGenJob(JobRecord):
     cleanup_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
-class MediaReviewAttempt(ModelBase, TimestampMixin):
-    __tablename__ = "media_review_attempts"
-    __table_args__ = (UniqueConstraint("user_id", "request_id", name="uq_media_review_request"),)
-
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
-    request_id: Mapped[str] = mapped_column(String(128))
-    basis_id: Mapped[str] = mapped_column(String(64))
-    slot: Mapped[int] = mapped_column(Integer)
-    state: Mapped[str] = mapped_column(String(24), default="running")
-    quota_basis_id: Mapped[str] = mapped_column(String(64))
-
-
 class MediaContinuation(ModelBase, TimestampMixin):
     __tablename__ = "media_continuations"
     __table_args__ = (UniqueConstraint("user_id", "operation_id", name="uq_media_continuation_operation"),)
@@ -91,4 +78,3 @@ class VideoGenJob(JobRecord):
     video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     candidate_video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

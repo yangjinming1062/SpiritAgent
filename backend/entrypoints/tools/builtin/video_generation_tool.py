@@ -122,7 +122,6 @@ async def _submit_video(
                 identity_reference_path=visual_plan.context.fullbody_path if visual_plan is not None else None,
                 identity=visual_plan.context.identity if visual_plan is not None else None,
                 identity_reference_role=identity_reference_role,
-                structured_reply=structured_reply,
                 media_id=media_id,
                 task=task,
             )

@@ -1,4 +1,4 @@
-"""媒体检查查询和显式续审的公开契约。"""
+"""媒体检查查询的公开契约。"""
 
 from typing import Literal, Protocol
 
@@ -41,14 +41,6 @@ class ImageJobParams(BaseModel):
     @property
     def required_dimensions(self) -> tuple[str, ...]:
         return ("identity", "goal", "quality") if self.identity_required else ("goal", "quality")
-
-
-class MediaReviewRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    request_id: str = Field(min_length=1, max_length=128)
-    slot: int = Field(default=0, ge=0)
-    expected_basis_id: str = Field(pattern=r"^[0-9a-f]{64}$")
-    expected_revision: int = Field(ge=0)
 
 
 class MediaContinueRequest(BaseModel):
@@ -161,11 +153,4 @@ def single_slot_review_view(
                 can_regenerate=can_regenerate,
             )
         ],
-    )
-
-
-def review_request_matches(view: MediaJobView, request: MediaReviewRequest) -> bool:
-    return view.revision == request.expected_revision and any(
-        slot.slot == request.slot and slot.basis_id == request.expected_basis_id and slot.can_review
-        for slot in view.slots
     )

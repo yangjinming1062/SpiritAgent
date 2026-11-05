@@ -44,7 +44,6 @@ class PostPublicationRecovery(PostPublicationResult):
 class PostPublicationRecoveryList(BaseModel):
     items: list[PostPublicationRecovery]
     next_cursor: str | None
-    has_more: bool
 
 
 class PostContext(BaseModel):

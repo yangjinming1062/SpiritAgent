@@ -292,9 +292,6 @@ class JsonRpcDispatcher:
         finally:
             self._queued_sequences.discard(seq)
 
-    async def push_event(self, event_type: str, payload: Any = None, session_id: str | None = None) -> None:
-        await self.enqueue_event(event_type, payload, session_id=session_id)
-
     async def _send_frames(self, frames: list[BufferedFrame]) -> bool:
         """按序发送缓冲帧并记账；发送失败即停，未发帧不得标记 sent，否则 writer 会误记 delivered、outbox 事件失去重投。"""
         for f in frames:

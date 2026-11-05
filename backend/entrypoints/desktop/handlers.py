@@ -19,7 +19,6 @@ from infrastructure.correlation import REQUEST_ID_HEADER, adopt_inbound
 from infrastructure.logger import get_logger
 from pydantic import ValidationError
 from runtime.chat_accounts import (
-    AccountChatRuntime,
     acquire_account_runtime,
     drain_account_turns,
     release_account_runtime,
@@ -46,7 +45,6 @@ class UserGatewaySession:
     user_id: int
     login_record_id: int
     dispatcher: JsonRpcDispatcher
-    account: AccountChatRuntime
     device_id: int | None = None
     connection_id: str = "desktop"
     websocket: WebSocket | None = None
@@ -244,12 +242,11 @@ async def handle_chat_websocket(websocket: WebSocket, ticket: GatewayIdentity) -
             await MANAGER.connect(websocket, user_id)
             await ensure_main_conversation(user_id)
             if session is None:
-                account = acquire_account_runtime(user_id, "desktop")
+                acquire_account_runtime(user_id, "desktop")
                 session = UserGatewaySession(
                     user_id=user_id,
                     login_record_id=ticket.login_record_id,
                     dispatcher=JsonRpcDispatcher(_ws_sender(websocket)),
-                    account=account,
                     websocket=websocket,
                 )
                 _USER_SESSIONS[user_id] = session
@@ -312,13 +309,12 @@ async def handle_remote_websocket(websocket: WebSocket, identity: GatewayIdentit
             if session is None:
                 dispatcher = JsonRpcDispatcher(_ws_sender(websocket))
                 connection_id = dispatcher.stream_id
-                account = acquire_account_runtime(user_id, connection_id)
+                acquire_account_runtime(user_id, connection_id)
                 session = UserGatewaySession(
                     user_id=user_id,
                     login_record_id=0,
                     device_id=identity.device_id,
                     dispatcher=dispatcher,
-                    account=account,
                     connection_id=connection_id,
                     websocket=websocket,
                 )
@@ -393,7 +389,6 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
             stream_id=dispatcher.stream_id,
             current_seq=replay_buffer.max_seq,
             recovery="snapshot_required" if replayed is None else "replayed",
-            replayed_count=replayed or 0,
             pending_calls=pending_call_ids(user_id) if session.device_id is None else [],
         ).model_dump()
 

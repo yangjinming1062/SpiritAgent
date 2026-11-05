@@ -289,7 +289,6 @@ def generate() -> str:
         rpc_policies[name] = {
             "remote": contract.remote,
             "concurrent": contract.concurrent,
-            "wait_for_model": contract.wait_for_model,
         }
     events = [
         f"  {literal(name)}: {add_model(schemas, contract.payload, 'Rpc', mode='serialization')}"

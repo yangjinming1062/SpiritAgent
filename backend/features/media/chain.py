@@ -18,17 +18,8 @@ from features.media.review_contracts import ReviewEvidence, VisualReview
 logger = get_logger(__name__)
 
 
-class MediaProviderFailedError(RuntimeError):
-    """已获供应商失败终态，可安全推进到下一家。"""
-
-    def __init__(self, message: str, *, reason: str = "provider_failed") -> None:
-        super().__init__(message)
-        self.reason = reason
-
-
 _VIDEO_FAILURE_COPY: dict[str, str] = {
     "result_unknown": "视频提交结果不确定，供应商可能已接单；为避免重复计费，系统没有自动重试",
-    "submit_failed": "视频提交失败，请稍后重试",
     "provider_unavailable": "视频生成服务配置已变更，请稍后重试",
     "provider_failed": "视频生成失败，请稍后重试",
     "content_policy_blocked": "内容审核未通过，请调整请求内容或参考形象后重试",
@@ -208,6 +199,4 @@ def media_failure_reason(exc: Exception) -> tuple[str, bool]:
         return "result_unknown", False
     if getattr(exc, "can_fallback", None) is False:
         return getattr(exc, "reason", classified.reason.value), False
-    if isinstance(exc, MediaProviderFailedError):
-        return exc.reason, exc.reason != "result_unknown"
     return classified.reason.value, getattr(exc, "can_fallback", False) or classified.should_fallback
