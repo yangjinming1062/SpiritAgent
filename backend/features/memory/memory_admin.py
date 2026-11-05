@@ -4,7 +4,7 @@ from infrastructure.config import SETTINGS
 from infrastructure.database import session_scope
 from infrastructure.text import utc_now
 from runtime.events.emit import emit_ws_event
-from runtime.memory_scope import EmbeddingItem, MemoryScope
+from runtime.memory_scope import MemoryScope
 from sqlalchemy import ColumnElement, and_, delete, func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
@@ -13,10 +13,10 @@ from features.memory.contracts import MemoryConflictError, MemoryDetail, MemoryL
 from features.memory.memory_namespaces import MEMORY_KINDS, participates_in_recall
 from features.memory.memory_store import (
     active_memory_filter,
-    backfill_memory_embeddings,
     forget_record,
     get_memory,
     memory_write_lock,
+    schedule_embedding_rebuild,
     scope_filter,
 )
 from features.memory.models import USER_PROFILE_MAX_CONTENT_CHARS, Memory, MemoryEvidenceRow, MemoryRevision
@@ -213,11 +213,9 @@ async def update_memory(
         )
         await db.commit()
         result = memory_list_item(row)
-        embedding_item = (
-            EmbeddingItem(row.id, row.content, row.content_version) if participates_in_recall(row.kind) else None
-        )
-    if embedding_item is not None:
-        await backfill_memory_embeddings(scope, [embedding_item])
+        should_index = participates_in_recall(row.kind)
+    if should_index:
+        schedule_embedding_rebuild(scope.user_id)
     return result
 
 

@@ -1176,7 +1176,6 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name=op.f("memories_pkey")),
         sa.UniqueConstraint("user_id", "id", name="uq_memories_owner_id"),
         sa.UniqueConstraint("user_id", "system_preset_id", "kind", "slot_key", name="uq_memories_scope_slot"),
-        sa.UniqueConstraint("user_id", "system_preset_id", "kind", "slot_key", name="uq_memories_scope_slot"),
     )
     op.create_index(
         "ix_memories_content_trgm",

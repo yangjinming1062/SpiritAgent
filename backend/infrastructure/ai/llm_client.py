@@ -10,12 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from infrastructure.ai.config import AIConfig, CapabilityCard, ProviderCard
 from infrastructure.ai.configuration_reader import read_user_ai_config
 from infrastructure.ai.llm_debug import log_event, new_call_id, truncate_for_log
-from infrastructure.ai.models import SERVICE_REQUIRED_INPUT_MODALITIES, ModelModality
+from infrastructure.ai.models import ModelModality
 from infrastructure.ai.providers.base import BaseProvider, ChatProvider, EmbeddingProvider, ProviderConfig, ServiceType
 from infrastructure.ai.providers.registry import (
     configured_base_url,
-    model_supports_service,
-    provider_configuration_defaults,
+    model_supports_task,
     provider_requires_api_key,
     providers_supporting,
     resolve,
@@ -119,11 +118,6 @@ async def resolve_provider_chain(
     service = ServiceType(service_type)
     if service.value not in AI_TASK_BY_ID[task].services:
         raise ValueError(f"AI task {task.value!r} does not use {service.value!r}")
-    required = (
-        required_modalities if required_modalities is not None else SERVICE_REQUIRED_INPUT_MODALITIES[service.value]
-    )
-    if task == AiTaskKey.voice_clone:
-        required = required | {ModelModality.audio}
     user_ai = await read_user_ai_config(db, user_id)
     system_ai = SETTINGS.ai_config
     user_task = user_ai.tasks.get(task)
@@ -141,29 +135,15 @@ async def resolve_provider_chain(
     chain = _chain_from_ai_config(
         owner, service, system_ai if owner is user_ai else None, card_ids=card_ids, task=task, config_source=source
     )
-    if task == AiTaskKey.voice_design and service == ServiceType.tts:
-        defaults = provider_configuration_defaults().get(service.value, {})
-        chain = [
-            config
-            for config in chain
-            if (settings := defaults[config.provider_name]).supports_voice_design
-            and (settings.voice_design_model is None or config.model == settings.voice_design_model)
-        ]
-    if task == AiTaskKey.voice_clone:
-        defaults = provider_configuration_defaults().get(service.value, {})
-        chain = [
-            config
-            for config in chain
-            if (settings := defaults[config.provider_name]).supports_voice_clone
-            and config.model == settings.voice_clone_model
-        ]
     return [
         config
         for config in chain
-        if model_supports_service(
+        if model_supports_task(
             config.provider_name,
             service,
-            required_modalities=required,
+            task=task,
+            model_name=config.model,
+            required_modalities=required_modalities,
             input_modalities=config.input_modalities,
             output_modalities=config.output_modalities,
         )

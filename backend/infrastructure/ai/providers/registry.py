@@ -1,7 +1,7 @@
 from collections.abc import Collection
 
 from infrastructure.ai.config import ProviderDefaults
-from infrastructure.ai.models import SERVICE_OUTPUT_MODALITY, ModelModality
+from infrastructure.ai.models import SERVICE_OUTPUT_MODALITY, SERVICE_REQUIRED_INPUT_MODALITIES, ModelModality
 from infrastructure.ai.providers.base import (
     BaseProvider,
     ChatProvider,
@@ -11,6 +11,7 @@ from infrastructure.ai.providers.base import (
     TTSProvider,
     VideoGenProvider,
 )
+from infrastructure.ai.tasks import AI_TASK_BY_ID, AiTaskKey
 
 # (service_type, provider_name) → 具体类；由 bootstrap 显式注册。
 _REGISTRY: dict[tuple[ServiceType, str], type[BaseProvider]] = {}
@@ -136,6 +137,43 @@ def model_supports_service(
         and required <= set(input_modalities)
         and SERVICE_OUTPUT_MODALITY[svc.value] in output_modalities
     )
+
+
+def model_supports_task(
+    provider_name: str,
+    service: ServiceType | str,
+    *,
+    task: AiTaskKey,
+    model_name: str,
+    input_modalities: Collection[ModelModality],
+    output_modalities: Collection[ModelModality],
+    required_modalities: frozenset[ModelModality] | None = None,
+) -> bool:
+    """配置校验与运行时解析共用任务的模态和指定模型限制。"""
+    svc = ServiceType(service)
+    if svc.value not in AI_TASK_BY_ID[task].services:
+        return False
+    required = required_modalities if required_modalities is not None else SERVICE_REQUIRED_INPUT_MODALITIES[svc.value]
+    if task == AiTaskKey.voice_clone:
+        required = required | {ModelModality.audio}
+    if not model_supports_service(
+        provider_name,
+        svc,
+        required_modalities=required,
+        input_modalities=input_modalities,
+        output_modalities=output_modalities,
+    ):
+        return False
+    if task in (AiTaskKey.voice_design, AiTaskKey.voice_clone):
+        provider = try_resolve(svc, provider_name)
+        if provider is None or not issubclass(provider, TTSProvider):
+            return False
+        if task == AiTaskKey.voice_design:
+            return provider.VOICE_DESIGN_GUIDE is not None and (
+                provider.VOICE_DESIGN_MODEL is None or model_name == provider.VOICE_DESIGN_MODEL
+            )
+        return provider.VOICE_CLONE_MODEL is not None and model_name == provider.VOICE_CLONE_MODEL
+    return True
 
 
 def resolve_context_tokens(config: ProviderConfig) -> int:

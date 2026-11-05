@@ -9,7 +9,7 @@ from runtime.memory_scope import EmbeddingItem, MemoryScope, MemorySource
 from features.memory.admin_contracts import MemoryListResponse
 from features.memory.contracts import MemoryDetail
 from features.memory.memory_admin import list_memories, memory_counts, memory_detail
-from features.memory.memory_store import backfill_memory_embeddings, create_memory, delete_memory
+from features.memory.memory_store import create_memory, delete_memory, schedule_embedding_rebuild
 
 
 async def list_memory_view(
@@ -53,7 +53,7 @@ async def remember_manual(
         )
         await db.commit()
         result = EmbeddingItem(row.id, row.content, row.content_version)
-    await backfill_memory_embeddings(scope, [result])
+    schedule_embedding_rebuild(scope.user_id)
     return result
 
 

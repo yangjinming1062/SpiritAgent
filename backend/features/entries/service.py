@@ -5,7 +5,7 @@ from datetime import date
 from typing import Any, Literal
 
 from runtime.events.emit import emit_ws_event
-from sqlalchemy import BigInteger, String, column, delete, literal, select, text, true, update, values
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,7 +52,7 @@ async def create_post(
 ) -> EntryView:
     paths = {role: path for role, path in (("main", media_url), ("audio", audio_url)) if path is not None}
     assets = await ensure_assets_in_session(db, user_id, list(paths.values())) if paths else {}
-    statement = (
+    row = await db.scalar(
         insert(CompanionEntry)
         .values(
             user_id=user_id,
@@ -65,28 +65,17 @@ async def create_post(
         )
         .returning(CompanionEntry)
     )
-    if paths:
-        created = statement.cte("created_entry")
-        attachments = (
-            values(column("role", String), column("asset_id", BigInteger))
-            .data([(role, assets[path]) for role, path in paths.items()])
-            .alias("attachments")
-        )
-        linked = (
-            insert(EntryAsset.__table__)
-            .from_select(
-                ["user_id", "entry_id", "asset_id", "role", "position"],
-                select(
-                    literal(user_id), created.c.id, attachments.c.asset_id, attachments.c.role, literal(0)
-                ).select_from(created.join(attachments, true())),
-            )
-            .cte("linked_assets")
-        )
-        row = await db.scalar(select(CompanionEntry).from_statement(select(created).add_cte(linked)))
-    else:
-        row = await db.scalar(statement)
     if row is None:
         raise RuntimeError("Content insert returned no row")
+    if paths:
+        await db.execute(
+            insert(EntryAsset).values(
+                [
+                    {"user_id": user_id, "entry_id": row.id, "asset_id": assets[path], "role": role, "position": 0}
+                    for role, path in paths.items()
+                ]
+            )
+        )
     return entry_view(row, media_url=media_url, audio_url=audio_url)
 
 

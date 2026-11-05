@@ -36,7 +36,6 @@ class Memory(ModelBase, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("user_id", "id", name="uq_memories_owner_id"),
         UniqueConstraint("user_id", "system_preset_id", "kind", "slot_key", name="uq_memories_scope_slot"),
-        UniqueConstraint("user_id", "system_preset_id", "kind", "slot_key", name="uq_memories_scope_slot"),
         ForeignKeyConstraint(
             ["user_id", "source_conversation_id"],
             ["conversations.user_id", "conversations.id"],

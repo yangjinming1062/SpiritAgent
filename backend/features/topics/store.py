@@ -295,30 +295,6 @@ async def record_topic_usage(
     await db.flush()
 
 
-async def validate_restored_topic_cards(
-    db: AsyncSession, scope: MemoryScope, cards: Sequence[TopicCardSnapshot]
-) -> None:
-    """恢复使用证据前验证来源绑定；恢复资料不能扩大来源归属或更换原文地址。"""
-    topics = list(
-        await db.scalars(
-            select(CompanionTopic).where(
-                *_scope(CompanionTopic, scope), CompanionTopic.id.in_([card.topic_id for card in cards])
-            )
-        )
-    )
-    by_id = {topic.id: topic for topic in topics}
-    for card in cards:
-        topic = by_id.get(card.topic_id)
-        if (
-            topic is None
-            or card.platform != topic.platform
-            or card.title != topic.title
-            or ensure_utc(card.published_at) != ensure_utc(topic.published_at)
-            or card.url != validate_source_url(topic.platform, topic.source_id, topic.url)
-        ):
-            raise ValueError("Restored link does not match its topic source")
-
-
 async def recent_topic_feedback(
     db: AsyncSession, scope: MemoryScope, since: datetime, *, limit: int | None = 40
 ) -> list[dict[str, Any]]:

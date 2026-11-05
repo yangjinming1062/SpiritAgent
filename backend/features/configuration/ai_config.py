@@ -6,13 +6,8 @@ from infrastructure.ai.config import (
     ProviderCard,
     ProviderCardUpdate,
 )
-from infrastructure.ai.models import SERVICE_REQUIRED_INPUT_MODALITIES, ModelModality
-from infrastructure.ai.providers.registry import (
-    model_supports_service,
-    provider_configuration_defaults,
-    providers_supporting,
-)
-from infrastructure.ai.tasks import AI_TASK_BY_ID, AiTaskKey
+from infrastructure.ai.providers.registry import model_supports_task, providers_supporting
+from infrastructure.ai.tasks import AI_TASK_BY_ID
 from pydantic import ValidationError
 
 
@@ -20,7 +15,6 @@ def validate_ai_config(config: AIConfig, system: AIConfig | None = None) -> None
     """校验当前作用域的引用与适配器能力；系统卡片始终从系统信息库解析。"""
     config.validate_references(system)
     registered = {name for service in CAPABILITY_SERVICES for name in providers_supporting(service)}
-    defaults = provider_configuration_defaults()
     for provider in config.providers:
         if provider.provider_type not in registered:
             raise ValueError(f"供应商 {provider.name} 的类型未注册：{provider.provider_type}")
@@ -37,28 +31,15 @@ def validate_ai_config(config: AIConfig, system: AIConfig | None = None) -> None
                     raise ValueError(f"任务 {definition.label} 引用的模型卡片不存在：{model_id}")
                 _, card, owner = model
                 provider = owner.find_provider(card.provider_id, system if owner is config else None)
-                if provider is None or not model_supports_service(
+                if provider is None or not model_supports_task(
                     provider.provider_type,
                     service,
-                    required_modalities=(
-                        SERVICE_REQUIRED_INPUT_MODALITIES[service] | {ModelModality.audio}
-                        if task == AiTaskKey.voice_clone
-                        else SERVICE_REQUIRED_INPUT_MODALITIES[service]
-                    ),
+                    task=task,
+                    model_name=card.model_name,
                     input_modalities=card.input_modalities,
                     output_modalities=card.output_modalities,
                 ):
                     raise ValueError(f"模型 {card.model_name} 不支持任务 {definition.label} 的 {service} 能力")
-                if task == AiTaskKey.voice_design and service == "tts":
-                    settings = defaults[service][provider.provider_type]
-                    if not settings.supports_voice_design or (
-                        settings.voice_design_model is not None and card.model_name != settings.voice_design_model
-                    ):
-                        raise ValueError(f"模型 {card.model_name} 不支持音色设计")
-                if task == AiTaskKey.voice_clone:
-                    settings = defaults[service][provider.provider_type]
-                    if not settings.supports_voice_clone or card.model_name != settings.voice_clone_model:
-                        raise ValueError(f"模型 {card.model_name} 不支持声音克隆")
 
 
 def prepare_ai_config(update: AIConfigUpdate, previous: AIConfig | None, system: AIConfig | None = None) -> AIConfig:

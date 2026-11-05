@@ -10,7 +10,7 @@ from infrastructure.database import session_scope
 from infrastructure.search import extract_search_terms
 from infrastructure.text import resolve_language, utc_now
 from pydantic import BaseModel
-from runtime.memory_scope import EmbeddingItem, MemoryScope, MemorySource
+from runtime.memory_scope import MemoryScope, MemorySource
 from sqlalchemy import ColumnElement, and_, delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,9 +25,10 @@ from features.conversation.evidence import (
     review_scopes,
 )
 from features.memory.contracts import MemoryConflictError, MemoryEvidence, MemoryRecord
+from features.memory.memory_namespaces import participates_in_recall
 from features.memory.memory_policy import MemoryDecision
 from features.memory.memory_retrieval import keyword_match_score
-from features.memory.memory_store import backfill_memory_embeddings, forget_record, memory_write_lock, scope_filter
+from features.memory.memory_store import forget_record, memory_write_lock, schedule_embedding_rebuild, scope_filter
 from features.memory.models import Memory, MemoryEmbeddingRow, MemoryFingerprint
 from features.memory.records import clear_memory_details, load_evidence, memory_record, replace_evidence, save_revisions
 
@@ -228,7 +229,6 @@ async def apply_memory_decisions(
         raise ValueError("Only one decision per memory is allowed in a batch")
     inspected = {m.message_id: m for m in context.messages}
     quoted_ids = {q.message_id for d in decisions for q in d.evidence if q.message_id in allowed_messages}
-    embeddings: list[EmbeddingItem] = []
     results: list[MemoryRecord] = []
     changed: list[tuple[Memory, list[MemoryEvidence]]] = []
     revisions: list[dict[str, Any]] = []
@@ -382,8 +382,6 @@ async def apply_memory_decisions(
                 delete(MemoryEmbeddingRow).where(MemoryEmbeddingRow.memory_id.in_([row.id for row in changed_rows]))
             )
             for row, evidence in changed:
-                if row.status == "active":
-                    embeddings.append(EmbeddingItem(row.id, row.content, row.content_version))
                 results.append(memory_record(row, evidence if row.status != "forgotten" else []))
         if unchanged_ids:
             await db.execute(
@@ -405,5 +403,6 @@ async def apply_memory_decisions(
                     .values(reviewed_at=now, updated_at=Memory.updated_at)
                 )
         await db.commit()
-    await backfill_memory_embeddings(scope, embeddings)
+    if any(row.status == "active" and participates_in_recall(row.kind) for row, _ in changed):
+        schedule_embedding_rebuild(scope.user_id)
     return results

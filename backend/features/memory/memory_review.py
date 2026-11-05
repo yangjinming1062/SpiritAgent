@@ -22,7 +22,7 @@ from features.memory.prompts import MEMORY_POLICY, MEMORY_REVIEW_INSTRUCTIONS
 
 logger = get_logger(__name__)
 
-# 每个记忆作用域一把审阅锁，保证同域审核串行；用户覆盖恢复/删除后经 invalidate 丢弃。
+# 每个记忆作用域一把审阅锁；账户维护后丢弃锁与运行记录。
 _REVIEW_LOCKS: dict[MemoryScope, asyncio.Lock] = {}
 
 
@@ -41,25 +41,46 @@ _REVIEW_BACKOFF: dict[tuple[MemoryScope, int | None], _ReviewBackoff] = {}
 _LAST_MEMORY_REVIEW: dict[MemoryScope, float] = {}
 
 
-async def review_scope_if_due(
+async def review_memories(
     scope: MemoryScope,
     *,
+    session_id: int | None = None,
+    through_message_id: int | None = None,
     llm_config: UserLlmConfig | None = None,
     task: AiTaskKey = AiTaskKey.memory_review,
     before_call: Callable[[], Awaitable[None]] | None = None,
     reasoning_effort: str | None = None,
 ) -> bool:
-    """在同域锁内判断整域审阅资格；并发的夜间与周期请求合并为一次审阅。"""
+    """锁内复核退避；整域审阅按成功间隔节流，会话审阅按消息水位推进。"""
     async with _REVIEW_LOCKS.setdefault(scope, asyncio.Lock()):
         previous = _LAST_MEMORY_REVIEW.get(scope)
-        if previous is not None and time.monotonic() - previous < SETTINGS.memory_review_interval_seconds:
+        if (
+            session_id is None
+            and previous is not None
+            and time.monotonic() - previous < SETTINGS.memory_review_interval_seconds
+        ):
             return False
-        if memory_review_backed_off(scope):
+        if _review_backed_off(scope, session_id):
             return False
-        await _run_review(
-            scope, llm_config=llm_config, task=task, before_call=before_call, reasoning_effort=reasoning_effort
-        )
-        _LAST_MEMORY_REVIEW[scope] = time.monotonic()
+        try:
+            await _review_batches(
+                scope,
+                session_id=session_id,
+                through_message_id=through_message_id,
+                llm_config=llm_config,
+                task=task,
+                before_call=before_call,
+                reasoning_effort=reasoning_effort,
+            )
+        except (MemoryConflictError, LlmCallBlockedError):
+            # 并发冲突和业务守卫的停止不计入失败退避。
+            raise
+        except Exception:
+            _note_review_failure(scope, session_id)
+            raise
+        _REVIEW_BACKOFF.pop((scope, session_id), None)
+        if session_id is None:
+            _LAST_MEMORY_REVIEW[scope] = time.monotonic()
         return True
 
 
@@ -73,17 +94,13 @@ def invalidate_memory_review_locks(user_id: int) -> None:
         _LAST_MEMORY_REVIEW.pop(scope, None)
 
 
-def memory_review_backed_off(scope: MemoryScope, session_id: int | None = None) -> bool:
-    """该审阅范围近期失败、仍在退避期内；调度与回合后审阅据此跳过，避免同一批次反复付费重试。"""
+def _review_backed_off(scope: MemoryScope, session_id: int | None) -> bool:
     backoff = _REVIEW_BACKOFF.get((scope, session_id))
     return backoff is not None and time.monotonic() < backoff.retry_at
 
 
 def _note_review_failure(scope: MemoryScope, session_id: int | None) -> None:
     previous = _REVIEW_BACKOFF.get((scope, session_id))
-    if previous is not None and time.monotonic() < previous.retry_at:
-        # 退避期内的再次失败（失败前已排队的审阅、夜间直接调用）不再翻倍：延迟按重试轮次增长，不随排队数量增长。
-        return
     delay = _REVIEW_BACKOFF_START_SECONDS if previous is None else previous.delay * 2
     delay = min(delay, SETTINGS.memory_review_interval_seconds)
     _REVIEW_BACKOFF[(scope, session_id)] = _ReviewBackoff(delay, time.monotonic() + delay)
@@ -128,58 +145,6 @@ async def assess_memory_changes(
                 raise
             payload["validation_feedback"] = str(exc)[:2000]
     raise RuntimeError("Memory review did not produce a valid decision batch")
-
-
-async def review_memories(
-    scope: MemoryScope,
-    *,
-    session_id: int | None = None,
-    through_message_id: int | None = None,
-    llm_config: UserLlmConfig | None = None,
-    task: AiTaskKey = AiTaskKey.memory_review,
-    before_call: Callable[[], Awaitable[None]] | None = None,
-    reasoning_effort: str | None = None,
-) -> None:
-    """审阅到截止消息；失败记入该范围的退避并向上抛出，成功清除退避。退避只由调用方查询，本函数不据此拒绝执行。"""
-    async with _REVIEW_LOCKS.setdefault(scope, asyncio.Lock()):
-        await _run_review(
-            scope,
-            session_id=session_id,
-            through_message_id=through_message_id,
-            llm_config=llm_config,
-            task=task,
-            before_call=before_call,
-            reasoning_effort=reasoning_effort,
-        )
-
-
-async def _run_review(
-    scope: MemoryScope,
-    *,
-    session_id: int | None = None,
-    through_message_id: int | None = None,
-    llm_config: UserLlmConfig | None = None,
-    task: AiTaskKey = AiTaskKey.memory_review,
-    before_call: Callable[[], Awaitable[None]] | None = None,
-    reasoning_effort: str | None = None,
-) -> None:
-    try:
-        await _review_batches(
-            scope,
-            session_id=session_id,
-            through_message_id=through_message_id,
-            llm_config=llm_config,
-            task=task,
-            before_call=before_call,
-            reasoning_effort=reasoning_effort,
-        )
-    except (MemoryConflictError, LlmCallBlockedError):
-        # 并发冲突和业务守卫的停止不计入失败退避。
-        raise
-    except Exception:
-        _note_review_failure(scope, session_id)
-        raise
-    _REVIEW_BACKOFF.pop((scope, session_id), None)
 
 
 async def _review_batches(

@@ -38,7 +38,7 @@ from features.life.execution import execution_user_ids
 from features.life.queries import due_review_user_ids
 from features.life.use_cases import pending_presentation_users
 from features.memory.memory_learning import list_memory_review_scopes
-from features.memory.memory_review import review_scope_if_due
+from features.memory.memory_review import review_memories
 from features.posts.autonomous import autonomous_post_users, request_autonomous_post, resume_autonomous_submissions
 from features.topics.store import has_unshared_topics
 from infrastructure.ai.tasks import AiTaskKey
@@ -410,7 +410,7 @@ async def _run_memory_review(scope: MemoryScope) -> None:
     if not llm_config.is_configured:
         logger.info("memory_review: skipped, missing llm config", extra={"user_id": scope.user_id})
         return
-    await review_scope_if_due(scope, llm_config=llm_config)
+    await review_memories(scope, llm_config=llm_config)
 
 
 async def _discover_memory_reviews() -> list[ScheduledWork]:

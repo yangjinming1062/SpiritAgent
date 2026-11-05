@@ -94,7 +94,7 @@ async def embed_memory_text(user_id: int, text: str) -> QueryEmbedding | None:
     """记忆链路的向量生成入口：独立短会话解析用户级 embedding 供应商，校验非空有限向量；未配置或调用失败时返回 None，检索降级为纯关键词路径。"""
     vector = await embed_search_query(user_id, text)
     if vector is not None:
-        schedule_embedding_rebuild(user_id, model_key=vector.model_key, dimensions=len(vector.vector))
+        schedule_embedding_rebuild(user_id, vector)
     return vector
 
 

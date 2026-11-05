@@ -7,7 +7,7 @@ from infrastructure.ai.providers.base import EmbeddingProvider
 from infrastructure.database import session_scope
 from infrastructure.domain_locks import transaction_owner, transaction_owns
 from infrastructure.logger import get_logger
-from infrastructure.search import valid_vectors
+from infrastructure.search import QueryEmbedding, valid_vectors
 from infrastructure.text import utc_now
 from runtime.background import TaskScope
 from runtime.events.emit import emit_ws_event
@@ -20,19 +20,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from features.accounts.queries import user_is_active
 from features.conversation.evidence import source_conversation_exists
 
-from .memory_namespaces import MEMORY_KINDS
+from .memory_namespaces import MEMORY_KINDS, RESERVED_FROM_RECALL
 from .models import Memory, MemoryEmbeddingRow
 from .records import clear_memory_details
 
 logger = get_logger(__name__)
 _EMBEDDING_TARGETS: dict[int, tuple[str, int]] = {}
+_EMBEDDING_REQUESTS: set[int] = set()
 _EMBEDDINGS = TaskScope("memory.embeddings")
 
 
-def schedule_embedding_rebuild(user_id: int, *, model_key: str, dimensions: int) -> None:
-    _EMBEDDING_TARGETS[user_id] = (model_key, dimensions)
+def schedule_embedding_rebuild(user_id: int, vector: QueryEmbedding | None = None) -> None:
     if is_user_in_maintenance(user_id):
         return
+    if vector is not None:
+        _EMBEDDING_TARGETS[user_id] = (vector.model_key, len(vector.vector))
+    _EMBEDDING_REQUESTS.add(user_id)
     _EMBEDDINGS.spawn(
         user_id, lambda: _rebuild_embeddings(user_id), name=f"memory-embedding-{user_id}", user_id=user_id
     )
@@ -41,15 +44,18 @@ def schedule_embedding_rebuild(user_id: int, *, model_key: str, dimensions: int)
 async def drain_memory_embeddings() -> None:
     await _EMBEDDINGS.drain()
     _EMBEDDING_TARGETS.clear()
+    _EMBEDDING_REQUESTS.clear()
 
 
 def invalidate_memory_embeddings(user_id: int) -> None:
     _EMBEDDING_TARGETS.pop(user_id, None)
+    _EMBEDDING_REQUESTS.discard(user_id)
 
 
 async def _rebuild_embeddings(user_id: int) -> None:
     try:
         while not is_user_in_maintenance(user_id):
+            _EMBEDDING_REQUESTS.discard(user_id)
             async with session_scope() as db:
                 if not await user_is_active(db, user_id):
                     return
@@ -70,12 +76,20 @@ async def _rebuild_embeddings(user_id: int) -> None:
                 rows = list(
                     await db.scalars(
                         select(Memory)
-                        .where(Memory.user_id == user_id, active_memory_filter(), ~current)
+                        .where(
+                            Memory.user_id == user_id,
+                            active_memory_filter(),
+                            Memory.kind.not_in(RESERVED_FROM_RECALL),
+                            ~current,
+                        )
                         .order_by(Memory.id)
                         .limit(100)
                     )
                 )
             if not rows:
+                # 查询完成到会话关闭期间仍可能有新提交；在退出前消费这次唤醒。
+                if user_id in _EMBEDDING_REQUESTS:
+                    continue
                 return
             scopes: dict[str, list[EmbeddingItem]] = {}
             for row in rows:
@@ -83,12 +97,14 @@ async def _rebuild_embeddings(user_id: int) -> None:
                     EmbeddingItem(row.id, row.content, row.content_version)
                 )
             for preset, items in scopes.items():
-                if not await backfill_memory_embeddings(
+                if not await _backfill_embeddings(
                     MemoryScope(user_id, preset), items, provider=provider, expected_dimensions=dimensions
                 ):
                     return
     except Exception:
         logger.warning("memory embedding rebuild failed", extra={"user_id": user_id}, exc_info=True)
+    finally:
+        _EMBEDDING_REQUESTS.discard(user_id)
 
 
 def scope_filter(scope: MemoryScope) -> ColumnElement[bool]:
@@ -264,22 +280,14 @@ async def delete_memory(db: AsyncSession, scope: MemoryScope, memory_id: int) ->
     return True
 
 
-async def backfill_memory_embeddings(
+async def _backfill_embeddings(
     scope: MemoryScope,
     rows: list[EmbeddingItem],
     *,
-    provider: EmbeddingProvider | None = None,
+    provider: EmbeddingProvider,
     expected_dimensions: int | None = None,
 ) -> bool:
-    validate_memory_scope(scope)
-    if not rows:
-        return True
     try:
-        if provider is None:
-            async with session_scope() as db:
-                provider = await resolve_embedding_provider(db, scope.user_id)
-        if provider is None:
-            return False
         vectors = await generate_embeddings([row.content for row in rows], provider, user_id=scope.user_id)
         if vectors is None or not valid_vectors(vectors, len(rows), expected_dimensions):
             return False

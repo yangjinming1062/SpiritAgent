@@ -16,8 +16,8 @@ from features.memory.memory_admin import list_memories
 from features.memory.memory_bootstrap import read_user_profile
 from features.memory.memory_format import format_memory_record
 from features.memory.memory_narratives import load_companion_reflection, save_companion_reflection
-from features.memory.memory_review import review_scope_if_due
-from features.memory.memory_store import backfill_memory_embeddings
+from features.memory.memory_review import review_memories
+from features.memory.memory_store import schedule_embedding_rebuild
 from features.posts.store import collect_post_interactions
 from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, call_llm_json
 from infrastructure.ai.tasks import AiTaskKey
@@ -27,7 +27,7 @@ from infrastructure.constants import NIGHTLY_REASONING_EFFORT
 from infrastructure.database import session_scope
 from infrastructure.logger import get_logger
 from infrastructure.text import format_local_iso, resolve_language, resolve_prompt_text, utc_now
-from runtime.memory_scope import EmbeddingItem, MemoryScope, validate_memory_scope
+from runtime.memory_scope import MemoryScope, validate_memory_scope
 from runtime.presets import COMPANION_PRESET_ID
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -179,11 +179,10 @@ async def _stage_4_reflection(
             await db.commit()
         return False
     async with session_scope() as db:
-        row = await save_companion_reflection(db, scope, content, date.fromisoformat(local_date_str))
-        item = EmbeddingItem(row.id, row.content, row.content_version)
+        await save_companion_reflection(db, scope, content, date.fromisoformat(local_date_str))
         await save_narrative_result(db, log_id, "reflection", True)
         await db.commit()
-    await backfill_memory_embeddings(scope, [item])
+    schedule_embedding_rebuild(scope.user_id)
     return True
 
 
@@ -321,7 +320,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
             stages,
             "memory_review",
             partial(
-                review_scope_if_due,
+                review_memories,
                 scope,
                 task=AiTaskKey.nightly,
                 before_call=partial(require_nightly_window, ZoneInfo(tz_str)),
