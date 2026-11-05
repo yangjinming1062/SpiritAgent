@@ -87,7 +87,7 @@ HTTP、调度及清理通过 [user_maintenance.py](runtime/user_maintenance.py) 
 
 [companion/intents.py](features/companion/intents.py) 保存条件和认领，主动回合由 [companion_turns.py](workflows/automation/companion_turns.py) 执行，普通任务由 [standard_turns.py](workflows/automation/standard_turns.py) 处理。
 
-[scheduling.py](workflows/scheduling.py) 发现到期生活判断、待执行步骤及待评估呈现，按账户单飞和维护租约派发。判断、执行、呈现分别进入 [生活模块](features/life/README.md) 所列工作流，不通过页面读取触发。
+[scheduling.py](workflows/scheduling.py) 用扫描描述登记发现内容和执行间隔，以扫描名、账户及工作键共同单飞，夜间流水线跨本地日仍按账户隔离。周期工作首次等待一个间隔，临时维护或缺席不清除有效冷却；动态决策使用 45–90 分钟随机间隔。运行状态只在内存，业务结果以各领域持久状态为准。判断、执行、呈现分别进入 [生活模块](features/life/README.md) 所列工作流，不通过页面读取触发。
 
 ### 远程网页
 

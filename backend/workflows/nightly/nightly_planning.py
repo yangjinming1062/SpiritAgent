@@ -8,7 +8,6 @@ from typing import Any, Literal, TypeGuard
 from zoneinfo import ZoneInfo
 
 from features.action_library.prompts import ACTION_DESIGN_GUIDANCE
-from features.action_library.queries import list_actions
 from features.appearance.nightly import list_outfits
 from features.appearance.observations import load_visual_observation
 from features.companion.planning_queries import PersonaPlanningSnapshot
@@ -33,7 +32,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
 from workflows.companion_actions import build_action_view
-from workflows.life_execution import capability_blocks, run_life_execution
+from workflows.life_capabilities import capability_blocks, capability_schema, load_life_materials
+from workflows.life_execution import run_life_execution
 from workflows.nightly.models import NightlyActivityAction, NightlyActivityLog
 from workflows.nightly.output_contracts import NightlyPlanOutput
 from workflows.nightly.prompts import NIGHTLY_JSON_REPAIR_TEXTS, OUTREACH_CONTEXT_TEMPLATES, PLANNING_SYSTEM_PROMPT
@@ -41,6 +41,8 @@ from workflows.nightly.window import in_nightly_window, require_nightly_window
 
 logger = get_logger(__name__)
 
+# 计划项只保存未受理结果；已受理项的进展与结果由关联生活步骤给出。
+PlanItemStatus = Literal["pending", "skipped", "blocked", "failed"]
 ActionStatus = Literal[
     "pending", "running", "succeeded", "skipped", "blocked", "failed", "interrupted", "result_unknown"
 ]
@@ -222,21 +224,18 @@ _NIGHTLY_PHASES = {
 
 def _nightly_capability(name: str) -> NightlyCapability:
     definition = LIFE_CAPABILITIES[name]
-    schema = (OutreachScheduleArgs if name == "outreach.schedule" else definition.input_model).model_json_schema()
-    arguments = schema["properties"]
-    arguments.pop("capability", None)
-    required = [key for key in schema.get("required", []) if key != "capability"]
+    schema = capability_schema(name, model=OutreachScheduleArgs if name == "outreach.schedule" else None)
     if name == "visual.generate":
         for key in ("outfit_id", "scene_id", "action_id"):
-            arguments.pop(key)
-            required.remove(key)
-    arguments["narrative"] = {
+            schema["properties"].pop(key)
+            schema["required"].remove(key)
+    schema["properties"]["narrative"] = {
         "type": "string",
         "minLength": 1,
         "maxLength": 1000,
         "description": "伙伴面向用户的第一人称计划与缘由，不代表已经完成",
     }
-    schema["required"] = list(dict.fromkeys([*required, "narrative"]))
+    schema["required"] = list(dict.fromkeys([*schema["required"], "narrative"]))
     return NightlyCapability(
         name=name,
         phase=_NIGHTLY_PHASES[name],
@@ -262,7 +261,8 @@ async def _collect_context(
     persona: PersonaPlanningSnapshot | None,
     language: str,
 ) -> PlanningContext:
-    blocked = await capability_blocks(user_id, source="nightly")
+    materials = await load_life_materials(user_id)
+    blocked = await capability_blocks(user_id, source="nightly", materials=materials)
     async with SESSION_LOCAL() as db:
         outfits = await list_outfits(db, user_id)
         scene = await get_scene_state(db, user_id)
@@ -284,16 +284,13 @@ async def _collect_context(
         )
         action_view = await build_action_view(user_id)
         action_snapshot = {"ready_actions": [item.model_dump() for item in action_view.items]}
-        action_materials = (await list_actions(db, user_id, status="approved", limit=20)).actions
         # 影像制作各选一份 ready 素材（最新可用项），模型只提供制作要求。
-        ready_outfit = next((item for item in outfits if item.status == "ready"), None)
-        ready_scene = scene.ready[0] if scene.ready else None
-        ready_action = action_materials[0] if action_materials else None
-        visual_materials = (
-            VisualMaterialSelection(outfit_id=ready_outfit.id, scene_id=ready_scene.id, action_id=ready_action.id)
-            if ready_outfit is not None and ready_scene is not None and ready_action is not None
-            else None
-        )
+        visual_materials = None
+        if selected := materials.visual:
+            outfit, environment, action = selected
+            visual_materials = VisualMaterialSelection(
+                outfit_id=outfit.id, scene_id=environment.id, action_id=action.id
+            )
 
     definition = dict(persona.definition) if persona is not None else {}
     if observation is not None:
@@ -487,7 +484,10 @@ def _action_result(row: NightlyActivityAction, steps: dict[int, LifeStepView]) -
 
 
 async def load_action_results(log_id: int) -> dict[str, ActionExecutionResult]:
-    rows = await _load_action_rows(log_id)
+    return await _read_action_results(await _load_action_rows(log_id))
+
+
+async def _read_action_results(rows: list[NightlyActivityAction]) -> dict[str, ActionExecutionResult]:
     if not rows:
         return {}
     async with SESSION_LOCAL() as db:
@@ -498,7 +498,7 @@ async def load_action_results(log_id: int) -> dict[str, ActionExecutionResult]:
 
 
 def _action_input(
-    row: NightlyActivityAction, context: PlanningContext, date_context: DateContext, facts: list[str]
+    row: NightlyActivityAction, *, language: str, plan_theme: str, date_context: DateContext, facts: list[str]
 ) -> NextAction:
     arguments = (row.arguments or {}).get("values", {})
     payload = {key: value for key, value in arguments.items() if key != "narrative"}
@@ -508,10 +508,10 @@ def _action_input(
         timezone = ZoneInfo(date_context.user_timezone)
         target = date.fromisoformat(date_context.tomorrow_date)
         hour, minute = map(int, parsed.local_time.split(":"))
-        prompt = OUTREACH_CONTEXT_TEMPLATES[resolve_language(context.language)].format(
+        prompt = OUTREACH_CONTEXT_TEMPLATES[resolve_language(language)].format(
             prompt=parsed.prompt,
             context=json.dumps(
-                {"completed_nightly_action_facts": facts, "nightly_theme": context.plan_theme}, ensure_ascii=False
+                {"completed_nightly_action_facts": facts, "nightly_theme": plan_theme}, ensure_ascii=False
             ),
         )
         payload = OutreachAction(
@@ -534,7 +534,7 @@ def _action_input(
     )
 
 
-async def _record_plan_outcome(row: NightlyActivityAction, status: str, reason: str) -> None:
+async def _record_plan_outcome(row: NightlyActivityAction, status: PlanItemStatus, reason: str) -> None:
     async with SESSION_LOCAL() as db:
         current = await db.get(NightlyActivityAction, row.id)
         if current is not None and current.life_step_id is None:
@@ -543,76 +543,79 @@ async def _record_plan_outcome(row: NightlyActivityAction, status: str, reason: 
             row.status, row.reason = status, reason
 
 
+async def _link_action_step(row: NightlyActivityAction, user_id: int, action: NextAction) -> int:
+    """计划项与生活步骤在同一事务关联；已有步骤直接复用。"""
+    async with SESSION_LOCAL() as db:
+        current = await db.get(NightlyActivityAction, row.id, with_for_update=True)
+        if current is None:
+            raise ValueError("夜间计划已不存在")
+        if current.life_step_id is None:
+            planned_pursuit = (row.arguments or {}).get("pursuit_id")
+            step = await enqueue_action(
+                db,
+                user_id,
+                action,
+                request_id=f"nightly:{row.id}",
+                pursuit_id=parse_resource_id(planned_pursuit)
+                if planned_pursuit is not None and row.capability != "outreach.schedule"
+                else None,
+                source="nightly",
+            )
+            current.life_step_id = step.id
+            await db.commit()
+        row.life_step_id = current.life_step_id
+        return current.life_step_id
+
+
+def _blocked_plan_outcome(
+    arguments: dict[str, Any], dependencies: list[ActionExecutionResult | None], date_context: DateContext
+) -> tuple[PlanItemStatus, str] | None:
+    if arguments.get("illegal_outfit_deps"):
+        return "failed", "环境与造型相互独立，环境动作不能依赖造型动作"
+    if any(result is None or result.status != "succeeded" for result in dependencies):
+        return "skipped", "dependency not completed"
+    if not in_nightly_window(utc_now(), ZoneInfo(date_context.user_timezone)):
+        return "blocked", "nightly window ended"
+    return None
+
+
 async def _execute_persisted_actions(
-    log_id: int, user_id: int, context: PlanningContext, date_context: DateContext
+    log_id: int, user_id: int, *, language: str, plan_theme: str, date_context: DateContext
 ) -> dict[str, ActionExecutionResult]:
     rows = await _load_action_rows(log_id)
-    results = await load_action_results(log_id)
+    results = await _read_action_results(rows)
     for row in rows:
-        if row.life_step_id is not None:
-            try:
-                await run_life_execution(user_id, step_id=row.life_step_id)
-            except Exception:
-                logger.exception(
-                    "nightly step recovery failed", extra={"user_id": user_id, "step_id": row.life_step_id}
-                )
-            async with SESSION_LOCAL() as db:
-                steps = await steps_by_id(db, user_id, [row.life_step_id])
-            results[row.action_key] = _action_result(row, steps)
-            continue
-        if row.status != "pending":
-            continue
-        args = row.arguments or {}
-        dependencies = [results.get(key) for key in args.get("depends_on", [])]
-        if any(result is not None and result.status in {"pending", "running"} for result in dependencies):
-            continue
-        status, reason = "", ""
-        if args.get("illegal_outfit_deps"):
-            status, reason = "failed", "环境与造型相互独立，环境动作不能依赖造型动作"
-        elif any(result is None or result.status != "succeeded" for result in dependencies):
-            status, reason = "skipped", "dependency not completed"
-        elif not in_nightly_window(utc_now(), ZoneInfo(date_context.user_timezone)):
-            status, reason = "blocked", "nightly window ended"
-        if reason:
-            await _record_plan_outcome(row, status, reason)
-            results[row.action_key] = _action_result(row, {})
-            continue
-        try:
-            facts = [result.fact for result in results.values() if result.status == "succeeded" and result.fact]
-            action = _action_input(row, context, date_context, facts)
-            async with SESSION_LOCAL() as db:
-                current = await db.get(NightlyActivityAction, row.id, with_for_update=True)
-                if current is None:
-                    raise ValueError("夜间计划已不存在")
-                if current.life_step_id is None:
-                    planned_pursuit = args.get("pursuit_id")
-                    step = await enqueue_action(
-                        db,
-                        user_id,
-                        action,
-                        request_id=f"nightly:{row.id}",
-                        pursuit_id=parse_resource_id(planned_pursuit)
-                        if planned_pursuit is not None and row.capability != "outreach.schedule"
-                        else None,
-                        source="nightly",
-                    )
-                    current.life_step_id = step.id
-                    await db.commit()
-                row.life_step_id = current.life_step_id
-            await run_life_execution(user_id, step_id=row.life_step_id)
-            async with SESSION_LOCAL() as db:
-                steps = await steps_by_id(db, user_id, [row.life_step_id])
-            results[row.action_key] = _action_result(row, steps)
-        except Exception as exc:
-            logger.exception("nightly action failed", extra={"user_id": user_id, "action": row.action_key})
-            if row.life_step_id is None:
-                await _record_plan_outcome(row, "failed", str(exc))
+        if row.life_step_id is None:
+            if row.status != "pending":
+                continue
+            arguments = row.arguments or {}
+            dependencies = [results.get(key) for key in arguments.get("depends_on", [])]
+            if any(result is not None and result.status in {"pending", "running"} for result in dependencies):
+                continue
+            if outcome := _blocked_plan_outcome(arguments, dependencies, date_context):
+                await _record_plan_outcome(row, *outcome)
                 results[row.action_key] = _action_result(row, {})
-            else:
-                # 已受理的步骤由原执行器恢复，计划不另写失败镜像。
-                async with SESSION_LOCAL() as db:
-                    steps = await steps_by_id(db, user_id, [row.life_step_id])
-                results[row.action_key] = _action_result(row, steps)
+                continue
+            try:
+                facts = [result.fact for result in results.values() if result.status == "succeeded" and result.fact]
+                action = _action_input(
+                    row, language=language, plan_theme=plan_theme, date_context=date_context, facts=facts
+                )
+                row.life_step_id = await _link_action_step(row, user_id, action)
+            except Exception as exc:
+                logger.exception(
+                    "nightly action admission failed", extra={"user_id": user_id, "action": row.action_key}
+                )
+                if row.life_step_id is None:
+                    await _record_plan_outcome(row, "failed", str(exc))
+                    results[row.action_key] = _action_result(row, {})
+                    continue
+        try:
+            await run_life_execution(user_id, step_id=row.life_step_id)
+        except Exception:
+            logger.exception("nightly step recovery failed", extra={"user_id": user_id, "step_id": row.life_step_id})
+        # 查询失败向上报告，不因此再次推进已经受理的步骤。
+        results.update(await _read_action_results([row]))
     return results
 
 
@@ -675,10 +678,7 @@ async def run_nightly_planning(
             diagnostics=diagnostics,
         )
         await _persist_plan(log_id, plan)
-    else:
-        context = PlanningContext(
-            language=language, persona=PersonaContext(), scene=SceneContext(), life_context=life_context
-        )
-    context.plan_theme = plan.theme
-    actions = await _execute_persisted_actions(log_id, user_id, context, date_context)
+    actions = await _execute_persisted_actions(
+        log_id, user_id, language=language, plan_theme=plan.theme, date_context=date_context
+    )
     return PlanningResult(theme=plan.theme, rationale=plan.rationale, actions=actions)

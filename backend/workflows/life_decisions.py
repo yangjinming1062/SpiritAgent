@@ -22,7 +22,8 @@ from infrastructure.text import resolve_prompt_text, utc_now
 from pydantic import Field
 from runtime.user_maintenance import is_user_in_maintenance, user_request_scope
 
-from workflows.life_execution import execution_context, run_life_execution
+from workflows.life_capabilities import life_capability_context
+from workflows.life_execution import run_life_execution
 
 
 class LifeDecision(LifeDecisionFields):
@@ -108,7 +109,7 @@ async def _consider_life(user_id: int, *, force: bool) -> dict[str, object]:
     async with SESSION_LOCAL() as db:
         evidence = await pursuit_evidence(db, user_id, [item.id for item in life.active_pursuits])
         recent_context = await load_recent_context_window(db, user_id)
-    execution = await execution_context(user_id)
+    execution = await life_capability_context(user_id)
     instructions = (
         resolve_prompt_text(_INSTRUCTIONS, context.language)
         .replace("{life_facts}", resolve_prompt_text(LIFE_FACT_GUIDANCE, context.language))

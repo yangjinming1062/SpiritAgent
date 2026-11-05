@@ -7,7 +7,7 @@
 | 修改任务 | 入口 |
 |---|---|
 | 判断与调度 | [life_decisions.py](../../workflows/life_decisions.py)、[scheduling.py](../../workflows/scheduling.py) |
-| 行动结构、认领、额度与执行 | [actions.py](actions.py)、[execution.py](execution.py)、[life_execution.py](../../workflows/life_execution.py) |
+| 行动结构、能力政策与执行 | [actions.py](actions.py)、[execution.py](execution.py)、[life_capabilities.py](../../workflows/life_capabilities.py)、[life_execution.py](../../workflows/life_execution.py) |
 | 事务提交、事项转换与结算 | [use_cases.py](use_cases.py)、[lifecycle.py](lifecycle.py)、[service.py](service.py)、[settlement.py](settlement.py) |
 | 阅读与内容事件 | [life_reading.py](../../workflows/life_reading.py)、[life_events.py](../../workflows/life_events.py) |
 | 上下文与只读接口 | [context.py](context.py)、[queries.py](queries.py)、[search.py](search.py)、[prompts.py](prompts.py)、[HTTP](../../entrypoints/http/routes/companion_life.py) |
@@ -21,7 +21,7 @@
 
 `commit_decision_in_session` 在调用方事务内保存状态、事项、结构化下一步、伙伴叙事、事件与 outbox。叙事由模型在对应操作中提供，程序不通过关键词过滤或静态模板补写伙伴表达。步骤创建、认领、结算共用账户生活状态锁；业务受理再经 `require_step_submission` 检查，采纳事务批量结算关联步骤。模型和能力调用在事务外。
 
-日常与夜间共用 `actions.py` 的行动契约、`execution.py` 的受理入口及 `life_execution.py` 的资格检查。夜间计划项与步骤在同一事务关联，执行状态、结果及完成事件只由步骤保存；扫描读取原步骤续行，不另存执行结果或持续轮询。夜间动作只关联规划明确指定的已有事项，不自动挂到当前聚焦事项。联系安排同样受步骤认领和额度约束，Cron 创建与步骤完成在同一事务提交。
+日常与夜间共用 `actions.py` 的行动契约、`execution.py` 的受理入口，以及 `life_capabilities.py` 的能力政策与素材快照；执行前复核复用同一政策，规划不各自推断权限或素材。夜间计划项与步骤在同一事务关联，执行状态、结果及完成事件只由步骤保存；扫描读取原步骤续行，不另存执行结果或持续轮询。夜间动作只关联规划明确指定的已有事项，不自动挂到当前聚焦事项。联系安排同样受步骤认领和额度约束，Cron 创建与步骤完成在同一事务提交。
 
 有意义事件在本域保存独立检索文本，覆盖叙事、受控事实和关联阅读笔记，不直接写入认知记忆。`search.py` 提供账户隔离的关键词/向量混合查询与公开、模型两种投影；日期范围按账户本地日解释，向量失败退回关键词。检索文本随事件写入和恢复建立；保存点隔离索引失败并按事件保留成功项，关键词查询按需补齐缺失索引，失败不撤销生活事实；向量通过受监督单飞任务在事务外生成，写回复核内容指纹、模型与维度，维护及停机取消任务。跨模块通过公开操作和 DTO 协作。执行失败写入结构化 `failure_code`，原始诊断只留在任务和日志边界；已取得成品地址但下载失败的视觉步骤保留为 `unknown`，沿原任务恢复，不创建第二个步骤。
 

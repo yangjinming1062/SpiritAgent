@@ -166,19 +166,21 @@ async def read_public_events(
     return LifeEventPublicListResponse.model_validate(response, from_attributes=True)
 
 
-async def commit_decision_in_session(db: AsyncSession, user_id: int, decision: LifeDecisionRequest) -> LifeStateView:
-    row = await get_or_create_state(db, user_id, lock=True)
-    request_payload = decision.model_dump(mode="json", exclude={"expected_revision", "request_id", "next_review_at"})
-    if decision.request_id:
-        previous_command = await db.scalar(
-            select(LifeEvent).where(LifeEvent.user_id == user_id, LifeEvent.event_key == decision.request_id)
-        )
-        if previous_command is not None:
-            if previous_command.fact_json.get("request") != request_payload:
-                raise ValueError("同一调整请求不能修改其内容")
-            return state_view(row)
-    previous = state_view(row)
-    state_text_changed = any(
+_PURSUIT_OPERATIONS = frozenset(
+    {
+        "start_pursuit",
+        "advance_pursuit",
+        "complete_pursuit",
+        "pause_pursuit",
+        "resume_pursuit",
+        "abandon_pursuit",
+        "redirect_pursuit",
+    }
+)
+
+
+def _state_text_changed(decision: LifeDecisionRequest, previous: LifeStateView) -> bool:
+    return any(
         value is not None and value != previous_value
         for value, previous_value in (
             (decision.current_activity, previous.current_activity),
@@ -189,47 +191,37 @@ async def commit_decision_in_session(db: AsyncSession, user_id: int, decision: L
             (decision.mood, previous.mood),
         )
     )
+
+
+def _validate_decision(decision: LifeDecisionRequest, previous: LifeStateView) -> None:
+    """一次判断只能改变声明过的部分，并携带对应的伙伴叙事。"""
+    state_text_changed = _state_text_changed(decision, previous)
     if decision.operation == "keep":
         if state_text_changed or decision.next_action is not None or any(decision.narrative.model_dump().values()):
             raise LifeInputError("保持现状只能安排复查，不能夹带生活或叙事变更")
-    else:
-        if state_text_changed and not decision.narrative.state:
-            raise LifeInputError("改变生活状态必须提供伙伴叙事")
-        if (
-            decision.operation
-            in {
-                "start_pursuit",
-                "advance_pursuit",
-                "complete_pursuit",
-                "pause_pursuit",
-                "resume_pursuit",
-                "abandon_pursuit",
-                "redirect_pursuit",
-            }
-            and not decision.narrative.pursuit
-        ):
-            raise LifeInputError("调整持续事项必须提供伙伴叙事")
-        if decision.next_action is not None and not (decision.narrative.action or decision.next_action.narrative):
-            raise LifeInputError("登记生活步骤必须提供伙伴叙事")
-        if not decision.narrative.event:
-            raise LifeInputError("生活变更必须提供本次变化的伙伴叙事")
-    apply_decision(row, decision)
-    if decision.narrative.state is not None:
-        row.narrative = decision.narrative.state
-    await db.flush()
+        return
+    if state_text_changed and not decision.narrative.state:
+        raise LifeInputError("改变生活状态必须提供伙伴叙事")
+    if decision.operation in _PURSUIT_OPERATIONS and not decision.narrative.pursuit:
+        raise LifeInputError("调整持续事项必须提供伙伴叙事")
+    if not decision.narrative.event:
+        raise LifeInputError("生活变更必须提供本次变化的伙伴叙事")
+
+
+async def _record_state_change(
+    db: AsyncSession, user_id: int, row: LifeState, previous: LifeStateView, decision: LifeDecisionRequest
+) -> None:
     activity_changed = (
         previous.current_activity != row.current_activity
         or previous.activity_kind != row.activity_kind
         or previous.activity_type != row.activity_type
     )
-    scene_changed = previous.scene_revision != row.scene_revision
-    mood_changed = previous.mood != row.mood
-    if activity_changed or scene_changed or mood_changed:
+    if activity_changed or previous.scene_revision != row.scene_revision or previous.mood != row.mood:
         await record_event(
             db,
             user_id,
             LifeEventInput(
-                event_key=f"life-state:{row.source_key}:revision:{row.revision}",
+                event_key=f"life-state:{user_id}:revision:{row.revision}",
                 kind="life.state.changed",
                 source="life_decision",
                 fact_type=row.activity_kind,
@@ -250,7 +242,7 @@ async def commit_decision_in_session(db: AsyncSession, user_id: int, decision: L
             db,
             user_id,
             LifeEventInput(
-                event_key=f"life-note:{row.source_key}:revision:{row.revision}",
+                event_key=f"life-note:{user_id}:revision:{row.revision}",
                 kind="life.state.changed",
                 source="life_decision",
                 fact_type=row.activity_kind,
@@ -259,6 +251,11 @@ async def commit_decision_in_session(db: AsyncSession, user_id: int, decision: L
                 pursuit_id=row.active_pursuit_id,
             ),
         )
+
+
+async def _apply_pursuit_operation(
+    db: AsyncSession, user_id: int, row: LifeState, decision: LifeDecisionRequest
+) -> None:
     previous_pursuit = None
     if decision.operation in {"pause_pursuit", "resume_pursuit", "abandon_pursuit", "redirect_pursuit"}:
         previous_pursuit = await transition_pursuit(db, user_id, decision)
@@ -285,27 +282,53 @@ async def commit_decision_in_session(db: AsyncSession, user_id: int, decision: L
                 created.previous_pursuit_id = previous_pursuit.id
     elif decision.operation in {"advance_pursuit", "complete_pursuit"}:
         await advance_pursuit(db, user_id, decision)
-    if decision.next_action is not None and decision.operation != "keep":
-        if row.active_pursuit_id is None:
-            raise ValueError("实际下一步须属于持续事项，请先开始事项")
-        if decision.operation in {"complete_pursuit", "pause_pursuit", "abandon_pursuit"}:
-            raise ValueError("结束或暂停事项时不能登记新步骤")
-        next_action = decision.next_action
-        if (
-            next_action.narrative is not None
-            and decision.narrative.action is not None
-            and next_action.narrative != decision.narrative.action
-        ):
-            raise LifeInputError("同一行动的伙伴叙事必须一致")
-        if decision.narrative.action is not None:
-            next_action = next_action.model_copy(update={"narrative": decision.narrative.action})
-        await enqueue_action(
-            db,
-            user_id,
-            next_action,
-            request_id=f"life:{row.source_key}:{decision.expected_revision}:action",
-            pursuit_id=row.active_pursuit_id,
+
+
+async def _enqueue_next_action(db: AsyncSession, user_id: int, row: LifeState, decision: LifeDecisionRequest) -> None:
+    if decision.next_action is None or decision.operation == "keep":
+        return
+    if row.active_pursuit_id is None:
+        raise ValueError("实际下一步须属于持续事项，请先开始事项")
+    if decision.operation in {"complete_pursuit", "pause_pursuit", "abandon_pursuit"}:
+        raise ValueError("结束或暂停事项时不能登记新步骤")
+    next_action = decision.next_action
+    if (
+        next_action.narrative is not None
+        and decision.narrative.action is not None
+        and next_action.narrative != decision.narrative.action
+    ):
+        raise LifeInputError("同一行动的伙伴叙事必须一致")
+    if decision.narrative.action is not None:
+        next_action = next_action.model_copy(update={"narrative": decision.narrative.action})
+    await enqueue_action(
+        db,
+        user_id,
+        next_action,
+        request_id=f"life:{user_id}:{decision.expected_revision}:action",
+        pursuit_id=row.active_pursuit_id,
+    )
+
+
+async def commit_decision_in_session(db: AsyncSession, user_id: int, decision: LifeDecisionRequest) -> LifeStateView:
+    row = await get_or_create_state(db, user_id, lock=True)
+    request_payload = decision.model_dump(mode="json", exclude={"expected_revision", "request_id", "next_review_at"})
+    if decision.request_id:
+        previous_command = await db.scalar(
+            select(LifeEvent).where(LifeEvent.user_id == user_id, LifeEvent.event_key == decision.request_id)
         )
+        if previous_command is not None:
+            if previous_command.fact_json.get("request") != request_payload:
+                raise ValueError("同一调整请求不能修改其内容")
+            return state_view(row)
+    previous = state_view(row)
+    _validate_decision(decision, previous)
+    apply_decision(row, decision)
+    if decision.narrative.state is not None:
+        row.narrative = decision.narrative.state
+    await db.flush()
+    await _record_state_change(db, user_id, row, previous, decision)
+    await _apply_pursuit_operation(db, user_id, row, decision)
+    await _enqueue_next_action(db, user_id, row, decision)
     if row.presentation_revision != previous.presentation_revision:
         emit_ws_event(
             db,

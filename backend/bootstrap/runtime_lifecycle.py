@@ -20,7 +20,6 @@ from runtime.events.loop import drain_event_tasks, stop_event_loop
 from runtime.lifecycle import RUNTIME_LIFECYCLE, RuntimeParticipant
 from workflows.onboarding.initial_appearance import resume_initial_appearance
 from workflows.scheduling import drain as drain_scheduling
-from workflows.scheduling import invalidate_user_scheduler_state
 from workflows.visual_events import drain_visual_events
 from workflows.visual_imports import import_runtime_participants
 from workflows.visual_preparation import (
@@ -57,12 +56,7 @@ def configure_runtime_lifecycle() -> None:
             DIARY_SEARCH_WORKER.participant(),
             RuntimeParticipant("chat.submissions", prepare=recover_interrupted_submissions),
             RuntimeParticipant("desktop.connections", settle=drain_user_sessions),
-            RuntimeParticipant(
-                "scheduler",
-                invalidate_user=invalidate_user_scheduler_state,
-                stop_producer=stop_scheduler,
-                drain=drain_scheduling,
-            ),
+            RuntimeParticipant("scheduler", stop_producer=stop_scheduler, drain=drain_scheduling),
             RuntimeParticipant("events", stop_producer=stop_event_loop, drain=drain_event_tasks),
         )
     )

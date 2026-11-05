@@ -6,7 +6,7 @@
 
 | 修改任务 | 入口 |
 |---|---|
-| 低频决策与账户单飞 | [autonomous.py](autonomous.py) |
+| 低频决策入口与候选账户 | [autonomous.py](autonomous.py) |
 | 资料快照、制作、原视频核对与采纳 | [publication.py](publication.py) |
 | 额度与发布事务 | [store.py](store.py)、[publication_models.py](publication_models.py) |
 | 创作/评论背景及输出约束 | [context.py](context.py)、[prompt_contract.py](prompt_contract.py) |

@@ -1,21 +1,13 @@
 """一次推进一个持久生活步骤；业务模块拥有实际制作与采纳。"""
 
 import asyncio
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
 
-from features.accounts.queries import nightly_account, user_is_active
-from features.action_library.queries import action_detail, list_actions
-from features.appearance.identity import IDENTITY_NOT_CONFIRMED, load_visual_identity
+from features.action_library.queries import action_detail
 from features.appearance.outfit_jobs import create_outfit_job, run_outfit_job
-from features.appearance.queries import ready_outfit_snapshots
 from features.automation.cron_jobs import create_job_in_session
-from features.companion.persona_service import onboarded_user_ids
-from features.companion.visual_state import persona_snapshot
-from features.configuration.settings.values import get_user_setting, load_user_settings
+from features.configuration.settings.values import get_user_setting
 from features.life.actions import (
-    LIFE_CAPABILITIES,
     DesignAction,
     OutfitAction,
     OutreachAction,
@@ -35,25 +27,16 @@ from features.life.execution import (
 )
 from features.life.schemas import LifeStepRequest, LifeStepView
 from features.life.use_cases import read_step, require_step_submission, update_business_steps_in_session
-from features.media.image_generation import resolve_image_gen_chain
 from features.scenes.service import SceneBusyError, SceneLockedError, SceneQuotaExceededError
-from features.scenes.snapshots import list_scene_snapshots, schedule_scene_snapshot
-from features.topics.store import load_prompt_topics
-from features.visuals.queries import presentation_state
-from infrastructure.ai.llm_client import resolve_provider_chain
-from infrastructure.ai.models import ModelModality
-from infrastructure.ai.tasks import AiTaskKey
-from infrastructure.ai.user_config import load_user_llm_config
-from infrastructure.config import SETTINGS
+from features.scenes.snapshots import schedule_scene_snapshot
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
 from infrastructure.timezone import parse_timezone
-from infrastructure.web.extract_provider import resolve_extract_provider
 from runtime.memory_scope import MemoryScope
-from runtime.tools.toolsets import disabled_backend_tool_names
 from runtime.user_maintenance import user_request_scope
 
+from workflows.life_capabilities import action_block_reason
 from workflows.life_reading import read_content
 from workflows.nightly.window import in_nightly_window
 from workflows.visuals_companion import design_action_reference, generate_visual_reference
@@ -61,122 +44,6 @@ from workflows.visuals_companion import design_action_reference, generate_visual
 logger = get_logger(__name__)
 _LOCKS: dict[int, asyncio.Lock] = {}
 _CONCURRENCY = asyncio.Semaphore(4)
-
-
-@dataclass(frozen=True)
-class CapabilityBlock:
-    disposition: Literal["permission_required", "unavailable"]
-    reason: str
-
-
-async def execution_context(user_id: int, *, source: str = "life") -> dict[str, Any]:
-    async with SESSION_LOCAL() as db:
-        outfits = await ready_outfit_snapshots(db, user_id)
-        scenes = (await list_scene_snapshots(db, user_id, ready_only=True, limit=50)).scenes
-        actions = (await list_actions(db, user_id, status="approved", limit=50)).actions
-        topics = await load_prompt_topics(db, MemoryScope(user_id, "companion"), utc_now())
-    blocked = await capability_blocks(user_id, source=source)
-    if not (outfits and scenes and actions):
-        blocked.setdefault("visual.generate", CapabilityBlock("unavailable", "缺少可用的造型、环境或动作"))
-    return {
-        "capabilities": {name: name not in blocked for name in LIFE_CAPABILITIES},
-        "blocked_capabilities": {name: problem.reason for name, problem in blocked.items()},
-        "capability_descriptions": {
-            name: definition.description for name, definition in LIFE_CAPABILITIES.items() if name not in blocked
-        },
-        "outfits": [{"id": str(item.id), "name": item.name, "description": item.description} for item in outfits],
-        "scenes": [{"id": str(item.id), "title": item.title, "description": item.description} for item in scenes],
-        "actions": [
-            {"id": str(item.id), "name": item.name, "description": item.motion_description} for item in actions
-        ],
-        "topics": [
-            {"id": str(item.topic_id), "title": item.title, "summary": item.summary, "url": item.url} for item in topics
-        ],
-    }
-
-
-async def capability_blocks(
-    user_id: int, *, source: str = "life", capabilities: tuple[str, ...] | None = None
-) -> dict[str, CapabilityBlock]:
-    """规划目录与执行前复核共用政策、身份、开关和模型资格。"""
-    targets = set(LIFE_CAPABILITIES if capabilities is None else capabilities)
-    async with SESSION_LOCAL() as db:
-        if not await user_is_active(db, user_id) or user_id not in await onboarded_user_ids(db, (user_id,)):
-            return dict.fromkeys(targets, CapabilityBlock("unavailable", "账户未激活或伙伴引导尚未完成"))
-        identity_ready = await load_visual_identity(db, user_id) is not None
-        persona = await persona_snapshot(db, user_id)
-        disabled = disabled_backend_tool_names(await load_user_settings(db, user_id))
-        if source == "nightly":
-            account = await nightly_account(db, user_id)
-            if account is None or not account.nightly_activity_enabled:
-                return dict.fromkeys(targets, CapabilityBlock("permission_required", "夜间自主活动已关闭"))
-    if persona is None:
-        return dict.fromkeys(targets, CapabilityBlock("unavailable", "伙伴资料尚未就绪"))
-    planning_task = AiTaskKey.nightly if source == "nightly" else AiTaskKey.proactive
-    if not (await load_user_llm_config(user_id, planning_task)).is_configured:
-        return dict.fromkeys(targets, CapabilityBlock("unavailable", "生活判断模型尚未配置"))
-    blocked: dict[str, CapabilityBlock] = {}
-    if not identity_ready:
-        blocked.update(
-            dict.fromkeys(
-                ("outfit.create", "visual.generate", "action.design"),
-                CapabilityBlock("unavailable", IDENTITY_NOT_CONFIRMED),
-            )
-        )
-    if persona.outfit_policy == "locked":
-        blocked["outfit.create"] = CapabilityBlock("permission_required", "自主添置造型已关闭")
-    if persona.scene_policy == "locked" or "scene_create" in disabled:
-        blocked["scene.create"] = CapabilityBlock("permission_required", "自主添置环境已关闭")
-    if not SETTINGS.action_autocreate_enabled:
-        blocked["action.design"] = CapabilityBlock("permission_required", "自主设计动作已关闭")
-    if "visual.generate" in targets and not (await presentation_state(user_id, with_catalog=False)).autonomous_enabled:
-        blocked["visual.generate"] = CapabilityBlock("permission_required", "自主影像制作已关闭")
-    if source != "nightly":
-        blocked["outreach.schedule"] = CapabilityBlock("permission_required", "后续联系由夜间规划安排")
-    async with SESSION_LOCAL() as db:
-        for capability, task in (
-            ("outfit.create", AiTaskKey.outfit),
-            ("scene.create", AiTaskKey.scene),
-            ("visual.generate", AiTaskKey.visuals),
-        ):
-            if capability in targets and capability not in blocked:
-                chain = await resolve_image_gen_chain(
-                    db, user_id, task=task, has_reference=capability != "scene.create"
-                )
-                if not chain.providers:
-                    blocked[capability] = CapabilityBlock("unavailable", "图片制作模型尚未配置")
-    if (
-        "action.design" in targets
-        and "action.design" not in blocked
-        and not (
-            await load_user_llm_config(
-                user_id, AiTaskKey.visuals, required_modalities=frozenset({ModelModality.text, ModelModality.image})
-            )
-        ).is_configured
-    ):
-        blocked["action.design"] = CapabilityBlock("unavailable", "动作评审模型尚未配置")
-    return {name: problem for name, problem in blocked.items() if name in targets}
-
-
-async def _block_reason(user_id: int, step: LifeStepView) -> tuple[str, str] | None:
-    if problem := (await capability_blocks(user_id, source=step.source, capabilities=(step.kind,))).get(step.kind):
-        return problem.disposition, problem.reason
-    if isinstance(step.action, ReadingAction):
-        async with SESSION_LOCAL() as db:
-            disabled = disabled_backend_tool_names(await load_user_settings(db, user_id))
-        if (step.action.query and "web_search" in disabled) or (
-            (step.action.query or step.action.urls) and "web_extract" in disabled
-        ):
-            return "permission_required", "网页读取工具已关闭"
-        if step.action.query or step.action.urls:
-            provider = resolve_extract_provider()
-            if not provider.is_available() or not provider.supports_extract():
-                return "unavailable", "网页正文提取尚未配置"
-    if isinstance(step.action, VisualAction) and step.action.media_kind == "video":
-        async with SESSION_LOCAL() as db:
-            if not await resolve_provider_chain(db, user_id, "video_gen", task=AiTaskKey.visuals):
-                return "unavailable", "视频制作模型尚未配置"
-    return None
 
 
 async def _execute(user_id: int, step: LifeStepView) -> None:
@@ -303,7 +170,7 @@ async def run_life_execution(user_id: int, *, step_id: int | None = None) -> Non
                         await finish_step(user_id, step.id, state="failed", error=str(exc))
                     raise
                 return
-            if problem := await _block_reason(user_id, step):
+            if problem := await action_block_reason(user_id, step):
                 disposition, reason = problem
                 if step.source == "nightly":
                     await finish_step(user_id, step.id, state="cancelled", error=reason)
