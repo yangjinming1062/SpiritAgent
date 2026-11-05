@@ -405,7 +405,6 @@ def begin_opening_repair(
     progress.review_result = None
     progress.identity_evidence = None
     progress.video_evidence = None
-    progress.quality_verdict = None
     progress.image_confirmed = False
     progress.image_only = True
     progress.motion_prompt = ""

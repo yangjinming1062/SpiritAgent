@@ -158,22 +158,21 @@ async def _hash(reference: str) -> str:
 
 async def _load_context(work: ImportWork) -> None:
     context = work.context
-    if context.identity is not None:
-        return
-    async with SESSION_LOCAL() as db:
-        context.language = resolve_language(await get_user_setting(db, work.user_id, "language"))
-        identity = await load_visual_identity(db, work.user_id)
-        avatar = (
-            await avatar_snapshot(db, work.user_id, identity.avatar_id) if identity and identity.avatar_id else None
-        )
-        await db.commit()
-    if avatar and resolve_asset_reference(avatar.seed_fullbody_url) and resolve_asset_reference(avatar.asset_url):
-        context.identity = identity
-        context.identity_path, context.portrait_path = avatar.seed_fullbody_url, avatar.asset_url
-        context.identity_hash, context.portrait_hash = (
-            await _hash(avatar.seed_fullbody_url),
-            await _hash(avatar.asset_url),
-        )
+    if context.identity is None:
+        async with SESSION_LOCAL() as db:
+            context.language = resolve_language(await get_user_setting(db, work.user_id, "language"))
+            identity = await load_visual_identity(db, work.user_id)
+            avatar = (
+                await avatar_snapshot(db, work.user_id, identity.avatar_id) if identity and identity.avatar_id else None
+            )
+            await db.commit()
+        if avatar and resolve_asset_reference(avatar.seed_fullbody_url) and resolve_asset_reference(avatar.asset_url):
+            context.identity = identity
+            context.identity_path, context.portrait_path = avatar.seed_fullbody_url, avatar.asset_url
+            context.identity_hash, context.portrait_hash = (
+                await _hash(avatar.seed_fullbody_url),
+                await _hash(avatar.asset_url),
+            )
     for kind in ("outfit", "scene", "action"):
         await _refresh_material_candidates(work, kind)
 
@@ -203,7 +202,7 @@ async def _prepare_frames(work: ImportWork) -> None:
 
 
 async def _rank_candidates(work: ImportWork, observation: ImportObservation) -> list[ImportCatalogCandidate]:
-    candidates = [entry for entry in work.context.candidates if entry.kind == observation.kind]
+    candidates = [entry for entry in work.candidates if entry.kind == observation.kind]
     target = await run_blocking(visual_vector, work.context.frames[observation.frame_index].path)
     if observation.crop:
         frame = resolve_asset_reference(work.context.frames[observation.frame_index].path)
@@ -302,7 +301,7 @@ async def _refresh_material_candidates(work: ImportWork, kind: str) -> None:
                     break
                 cursor = int(actions.next_cursor)
         await db.commit()
-    work.context.candidates = [entry for entry in work.context.candidates if entry.kind != kind] + candidates
+    work.candidates = [entry for entry in work.candidates if entry.kind != kind] + candidates
 
 
 @asynccontextmanager
@@ -330,7 +329,11 @@ async def _material_adoption_lock(work: ImportWork, kind: str) -> AsyncIterator[
 async def _read_selected(work: ImportWork, kind: str, material_id: int) -> ImportCatalogCandidate:
     if work.context.presentation_review and work.context.presentation_review.human_approval:
         frozen = next(
-            (entry for entry in work.context.candidates if entry.kind == kind and entry.material_id == material_id),
+            (
+                entry
+                for entry in work.context.selected_materials
+                if entry.kind == kind and entry.material_id == material_id
+            ),
             None,
         )
         if frozen is not None:
@@ -481,9 +484,14 @@ async def _release_plan(work: ImportWork, component: ImportComponent, material: 
 def _apply_release_plan(work: ImportWork, plan: _ReleasePlan) -> None:
     plan.material.state = "retained" if plan.preserved else "released"
     if not plan.preserved:
-        work.context.candidates = [
+        work.candidates = [
             entry
-            for entry in work.context.candidates
+            for entry in work.candidates
+            if (entry.kind, entry.material_id) != (plan.material.kind, plan.material.material_id)
+        ]
+        work.context.selected_materials = [
+            entry
+            for entry in work.context.selected_materials
             if (entry.kind, entry.material_id) != (plan.material.kind, plan.material.material_id)
         ]
 
@@ -593,10 +601,8 @@ async def _adopt_existing_locked(work: ImportWork, component: ImportComponent, m
     component.reason = result.matches[0].evidence if result.matches else "用户选择已有素材"
     adopt, note = await _change_reference(work, component, material_id)
     component.reason += note
-    work.context.candidates = [
-        entry
-        for entry in work.context.candidates
-        if (entry.kind, entry.material_id) != (selected.kind, selected.material_id)
+    work.candidates = [
+        entry for entry in work.candidates if (entry.kind, entry.material_id) != (selected.kind, selected.material_id)
     ] + [selected]
     await save_import_progress(work, "organize", adopt=adopt)
 
@@ -605,10 +611,8 @@ async def _remember_candidate(work: ImportWork, component: ImportComponent) -> N
     if component.material_id is None:
         return
     selected = await _read_selected(work, component.observation.kind, component.material_id)
-    work.context.candidates = [
-        entry
-        for entry in work.context.candidates
-        if (entry.kind, entry.material_id) != (selected.kind, selected.material_id)
+    work.candidates = [
+        entry for entry in work.candidates if (entry.kind, entry.material_id) != (selected.kind, selected.material_id)
     ] + [selected]
     await save_import_progress(work, "organize")
 
@@ -1039,7 +1043,7 @@ async def _organize_component(work: ImportWork, component: ImportComponent) -> N
     if work.media_kind == "image" and component.observation.crop is None:
         exact = [
             entry
-            for entry in work.context.candidates
+            for entry in work.candidates
             if entry.kind == component.observation.kind
             and (
                 (entry.outfit and entry.outfit.content_hash == work.snapshot.source.original_content_hash)
@@ -1088,13 +1092,13 @@ async def _prepare_analysis(work: ImportWork) -> None:
         await save_import_progress(work, "organize")
 
 
-def _record_operation_failure(component: ImportComponent, exc: Exception) -> None:
+def _record_operation_failure(work: ImportWork, component: ImportComponent, exc: Exception) -> None:
     """把一次条目执行失败归入业务结论；原件与已完成结果保持不变。"""
     if component.material_id is None or component.status not in {"created", "reused"}:
         component.status = "reviewing" if isinstance(exc, ImageReviewUnavailableError) else "failed"
     component.failure_code = (
         "save_failed"
-        if component.operation_stage == "save_material"
+        if work.active_operation and work.active_operation.stage == "save_material"
         else "result_download_failed"
         if isinstance(exc, ImageResultDownloadError)
         else "result_unknown"
@@ -1128,8 +1132,8 @@ async def _run_queued_operations(work: ImportWork) -> None:
                 "import material organization failed",
                 extra={"user_id": work.user_id, "job_id": work.id, "component": component.observation.key},
             )
-            _record_operation_failure(component, exc)
-        await save_import_progress(work, component.operation_stage or "organize", finish=True)
+            _record_operation_failure(work, component, exc)
+        await save_import_progress(work, work.active_operation.stage, finish=True)
 
 
 async def _publish_organized_result(work: ImportWork) -> bool:
@@ -1139,6 +1143,7 @@ async def _publish_organized_result(work: ImportWork) -> bool:
         for component in work.result.components
         if component.material_id is not None and component.status in {"created", "reused"}
     ]
+    work.context.selected_materials = selected
     await save_import_progress(work, "presentation_review")
     verdict = (
         ImportQualityVerdict(decision="review", reason="素材整理尚未完成，原件与已完成结果已保存")

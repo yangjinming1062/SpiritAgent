@@ -128,6 +128,11 @@ class MediaChainState(BaseModel):
     source_path: str | None = None
     queue_request_id: str | None = None
 
+    def current_attempt_index(self) -> int:
+        return (
+            self.active_index if self.active_index is not None else max((c.attempt for c in self.candidates), default=0)
+        )
+
     def unknown_submission(self) -> bool:
         """远端提交可能已被受理但结果未确认；此状态下禁止自动重发。"""
         return self.stop_reason == "result_unknown" or (self.phase == "submitting" and not self.queue_request_id)

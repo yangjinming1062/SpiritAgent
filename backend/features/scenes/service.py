@@ -55,7 +55,6 @@ from features.visuals.static_presentation import invalidate_scene_presentation
 logger = get_logger(__name__)
 _SCENE_LOCKS: dict[int, asyncio.Lock] = {}
 _INFLIGHT_TASKS = TaskScope("companion.scene")
-_QUEUED_TASKS: dict[tuple[int, int], tuple[str | None]] = {}
 _AUTONOMOUS_ORIGINS = frozenset((SceneOrigin.LLM.value, SceneOrigin.NIGHTLY.value))
 
 
@@ -373,7 +372,7 @@ async def discard_scene(user_id: int, scene_id: int) -> CompanionScene:
         await enqueue_asset_cleanup(db, user_id, cleanup_paths)
         await db.commit()
         task = _INFLIGHT_TASKS.running((user_id, scene_id))
-        _QUEUED_TASKS.pop((user_id, scene_id), None)
+        _INFLIGHT_TASKS.drop((user_id, scene_id))
         cancel_tasks([task])
     await cancel_and_wait([task])
     await cleanup_user_assets(user_id)
@@ -890,11 +889,6 @@ async def _mark_failed(
 
 
 def _launch_task(scene_id: int, user_id: int, *, regeneration_task_id: str | None = None) -> None:
-    if _INFLIGHT_TASKS.running((user_id, scene_id)) is not None:
-        _QUEUED_TASKS[user_id, scene_id] = (regeneration_task_id,)
-        return
-    _QUEUED_TASKS.pop((user_id, scene_id), None)
-
     async def runner() -> None:
         try:
             if regeneration_task_id:
@@ -943,23 +937,14 @@ def _launch_task(scene_id: int, user_id: int, *, regeneration_task_id: str | Non
                 download_failed=isinstance(exc, ImageResultDownloadError),
             )
 
-    def completed(done: asyncio.Task[None]) -> None:
-        queued: tuple[str | None] | None = None
-        if _INFLIGHT_TASKS.running((user_id, scene_id)) is None and (user_id, scene_id) in _QUEUED_TASKS:
-            queued = _QUEUED_TASKS.pop((user_id, scene_id), None)
-        if not done.cancelled() and (error := done.exception()) is not None:
-            logger.error("scene task interrupted", extra={"scene_id": scene_id, "user_id": user_id}, exc_info=error)
-        if queued:
-            _launch_task(scene_id, user_id, regeneration_task_id=queued[0])
-
     # 维护等待生成结果与描述落库，避免中断已提交的付费请求或遗留 pending 行。
-    _INFLIGHT_TASKS.spawn(
+    _INFLIGHT_TASKS.schedule(
         (user_id, scene_id),
         runner,
         name=f"companion.scene.{user_id}.{scene_id}",
         user_id=user_id,
         cancel_on_maintenance=False,
-        on_done=completed,
+        resume_on_cancel=True,
     )
 
 
@@ -1044,7 +1029,6 @@ async def schedule_initial_scene(user_id: int) -> SceneSnapshot | None:
 
 
 async def drain_scene_jobs() -> None:
-    _QUEUED_TASKS.clear()
     await _INFLIGHT_TASKS.drain()
 
 

@@ -232,9 +232,17 @@ class ImageChainState(MediaChainState):
         """已落盘产物及冻结输入依赖，供业务所有者保护与回收。"""
         fields = _REFERENCE_FIELDS.get(type(self.inputs), ()) if self.inputs is not None else ()
         frozen = [getattr(self.inputs, attr) for attr, _label in fields]
-        return self.generated_paths() | {
-            path for path in frozen if path and parse_companion_asset_path(path) is not None
+        review_paths = {
+            entry.path
+            for candidate in self.candidates
+            if candidate.review and candidate.review.evidence
+            for entry in candidate.review.evidence.images
         }
+        return (
+            self.generated_paths()
+            | review_paths
+            | {path for path in frozen if path and parse_companion_asset_path(path) is not None}
+        )
 
 
 ImageProgressWriter = Callable[[ImageChainState], Awaitable[None]]

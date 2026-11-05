@@ -21,17 +21,20 @@ class SearchIndexWorker:
         self._name = name
         self._model = model
         self._targets: dict[int, tuple[str, int]] = {}
+        self._requests: set[int] = set()
         self._bag = TaskScope(name)
 
     def schedule(self, user_id: int, vector: QueryEmbedding | None = None) -> None:
-        if vector is not None:
-            self._targets[user_id] = (vector.model_key, len(vector.vector))
         if is_user_in_maintenance(user_id):
             return
+        if vector is not None:
+            self._targets[user_id] = (vector.model_key, len(vector.vector))
+        self._requests.add(user_id)
         self._bag.spawn(user_id, lambda: self._rebuild(user_id), name=f"{self._name}-{user_id}", user_id=user_id)
 
     def invalidate(self, user_id: int) -> None:
         self._targets.pop(user_id, None)
+        self._requests.discard(user_id)
         if (task := self._bag.running(user_id)) is not None:
             task.cancel()
 
@@ -39,6 +42,7 @@ class SearchIndexWorker:
         model = self._model
         try:
             while not is_user_in_maintenance(user_id):
+                self._requests.discard(user_id)
                 async with session_scope() as db:
                     provider = await resolve_embedding_provider(db, user_id)
                     if provider is None:
@@ -62,6 +66,8 @@ class SearchIndexWorker:
                         )
                     )
                 if not rows:
+                    if user_id in self._requests:
+                        continue
                     return
                 vectors = await generate_embeddings([row.search_text for row in rows], provider, user_id=user_id)
                 if (
@@ -86,6 +92,8 @@ class SearchIndexWorker:
             logger.warning(
                 "search embedding rebuild failed", extra={"owner": self._name, "user_id": user_id}, exc_info=True
             )
+        finally:
+            self._requests.discard(user_id)
 
     def participant(self) -> RuntimeParticipant:
         return RuntimeParticipant(self._name, invalidate_user=self.invalidate, drain=self._bag.drain)

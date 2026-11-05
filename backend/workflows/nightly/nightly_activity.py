@@ -409,7 +409,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         _record_stage(stages, {"stage": "topic discovery", "status": "skipped", "reason": "夜间自主规划已关闭"})
 
     action_results: dict[str, ActionExecutionResult] = {}
-    if user.nightly_activity_enabled or await load_action_results(log_id):
+    if user.nightly_activity_enabled or has_plan:
         planning_result = await _run_stage(
             stages,
             "planning",
@@ -444,16 +444,14 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
                     payload={"stages": _stage_results(stages, stage_diagnostics)},
                 )
                 return False
-        if not action_results:
+        else:
             # 窗口已结束或规划失败时，账本里已落终态的动作仍是真实发生的事。
             try:
                 action_results = await load_action_results(log_id)
             except Exception:
                 logger.exception("nightly_activity: action ledger unavailable", extra={"user_id": user_id})
     else:
-        reason = "夜间窗口已结束" if user.nightly_activity_enabled else "夜间自主规划已关闭"
-        _record_stage(stages, {"stage": "planning", "status": "skipped", "reason": reason})
-        action_results = await load_action_results(log_id)
+        _record_stage(stages, {"stage": "planning", "status": "skipped", "reason": "夜间自主规划已关闭"})
 
     # 刷新本轮新发布的动态，并在下面排除重复的动作事实。
     async with session_scope() as db:

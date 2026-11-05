@@ -98,7 +98,7 @@ async def _reference_images(
 
 async def _before_call(work: ImportWork) -> None:
     require_new_generation_call(work.user_id)
-    await guard_import_work(work, paid=not work.context.review_only)
+    await guard_import_work(work, paid=not work.review_only)
 
 
 async def understand_import(work: ImportWork) -> ImportUnderstanding:

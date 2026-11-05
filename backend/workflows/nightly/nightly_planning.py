@@ -295,6 +295,14 @@ async def _collect_context(
     definition = dict(persona.definition) if persona is not None else {}
     if observation is not None:
         definition["visual_observation"] = render_character_appearance(observation, language=language)
+    recent_action_summaries = []
+    for row in recent_actions:
+        result = _action_result(row, steps)
+        recent_action_summaries.append(
+            RecentActionSummary(
+                date=row.target_date.isoformat(), capability=row.capability, status=result.status, fact=result.fact
+            )
+        )
     context = PlanningContext(
         language=language,
         persona=PersonaContext(complete=bool(persona and persona.is_complete), definition=definition),
@@ -310,15 +318,7 @@ async def _collect_context(
         ],
         actions=action_snapshot,
         visual_materials=visual_materials,
-        recent_autonomous_actions=[
-            RecentActionSummary(
-                date=row.target_date.isoformat(),
-                capability=row.capability,
-                status=_action_result(row, steps).status,
-                fact=_action_result(row, steps).fact,
-            )
-            for row in recent_actions
-        ],
+        recent_autonomous_actions=recent_action_summaries,
         # 与动作的 target_date 一样按用户本地日标注。
         recent_posts=[
             RecentPostSummary(

@@ -1,6 +1,5 @@
 """当前造型的有限基础动画准备；不参与生活决策，也不自动重试失败任务。"""
 
-import asyncio
 import hashlib
 import json
 from typing import Literal, NamedTuple
@@ -32,7 +31,6 @@ logger = get_logger(__name__)
 _CORE_PRESETS = ("idle",)
 _PROGRESSIVE_PRESETS = ("look", "smile", "focus", "relax", "stretch")
 _TASKS = TaskScope("visuals.preparation")
-_RERUN: set[int] = set()
 _STOPPING = False
 
 
@@ -172,33 +170,17 @@ async def _run(user_id: int) -> None:
 def schedule_base_motion_preparation(user_id: int) -> None:
     if _STOPPING:
         return
-    if _TASKS.running(user_id) is not None:
-        # 已在跑：先登记重排，由结束回调按需续跑一轮，避免造型切换等场景丢请求。
-        _RERUN.add(user_id)
-        return
-    _RERUN.discard(user_id)
-
-    def finished(done: asyncio.Task[None]) -> None:
-        if _TASKS.running(user_id) is not None:
-            return
-        pending = user_id in _RERUN
-        _RERUN.discard(user_id)
-        if pending and not done.cancelled():
-            schedule_base_motion_preparation(user_id)
-
-    _TASKS.spawn(
+    _TASKS.schedule(
         user_id,
         lambda: _run(user_id),
         name=f"visuals.preparation.{user_id}",
         user_id=user_id,
-        on_done=finished,
     )
 
 
 async def stop_base_motion_preparation() -> None:
     global _STOPPING
     _STOPPING = True
-    _RERUN.clear()
     await _TASKS.drain()
 
 

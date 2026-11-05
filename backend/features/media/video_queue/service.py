@@ -119,6 +119,10 @@ async def enqueue_video_attempt(
     provider_task_id: str | None = None,
 ) -> str:
     """同一尝试只登记一次；已有句柄直接进入查询，不重新提交制作。"""
+    if provider_task_id is None:
+        existing = await find_video_attempt(owner, attempt_index, frozen)
+        if existing is not None:
+            return existing
     if request is None and not provider_task_id:
         raise ValueError("视频尝试须有制作输入或已知供应商句柄")
     config = await resolve_frozen_media_provider(owner.user_id, "video_gen", frozen)
@@ -177,6 +181,22 @@ async def enqueue_video_attempt(
             row.state, row.pause_requested, row.enqueued_at = "queued", False, utc_now()
             row.revision += 1
         await db.commit()
+        return row.token
+
+
+async def find_video_attempt(owner: VideoQueueOwner, attempt_index: int, frozen: FrozenMediaProvider) -> str | None:
+    """先按持久尝试身份恢复，配置变动不能让原请求被跳过或重新提交。"""
+    async with SESSION_LOCAL() as db:
+        row = await db.scalar(
+            select(ProviderAttempt).where(
+                ProviderAttempt.generation_id == owner.generation_id,
+                ProviderAttempt.attempt_index == attempt_index,
+            )
+        )
+        if row is None:
+            return None
+        if _owner(row) != owner or row.capability != "video" or row.frozen_json != frozen.model_dump(mode="json"):
+            raise VideoQueueStoppedError("视频制作任务的归属或冻结配置不一致")
         return row.token
 
 

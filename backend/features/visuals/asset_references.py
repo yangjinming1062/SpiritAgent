@@ -3,7 +3,6 @@
 import json
 from datetime import timedelta
 
-from infrastructure.assets.references import asset_paths
 from infrastructure.text import utc_now
 from sqlalchemy import delete, or_, select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +13,6 @@ from features.assets.service import asset_paths_for_ids
 
 from .eligibility import automatic_media_ready
 from .models import (
-    VisualImportJob,
     VisualItem,
     VisualJob,
     VisualPlayback,
@@ -28,12 +26,6 @@ from .schemas import StageComposition, VisualSnapshot
 async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
     ids = list(await db.scalars(select(VisualVersionAsset.asset_id).where(VisualVersionAsset.user_id == user_id)))
     paths = await asset_paths_for_ids(db, user_id, ids)
-    for analysis in await db.scalars(select(VisualImportJob).where(VisualImportJob.user_id == user_id)):
-        paths |= asset_paths(analysis.result_json, user_id)
-        if analysis.state != "succeeded" and (
-            analysis.state != "cancelled" or analysis.context_json.get("image_chains")
-        ):
-            paths |= asset_paths(analysis.context_json, user_id)
     paths |= await scanned_asset_paths(
         db,
         user_id,
@@ -43,7 +35,7 @@ async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
             VisualPresentation.composition_json,
         ).where(VisualPresentation.user_id == user_id),
     )
-    # 制作输入和候选由 JobAsset 持有，发布后的文件由版本关系接管。
+    # 制作候选和长期导入资料由 JobAsset 持有；静态冻结素材没有版本关系，仍扫描呈现快照。
     return paths
 
 

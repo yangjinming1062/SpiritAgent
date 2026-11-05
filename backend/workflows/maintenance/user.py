@@ -37,20 +37,24 @@ async def _quiesce_runtime(user_id: int) -> None:
     await _stop_user_runtime(user_id)
     # 已在边界建立期间结束的 REST 请求可能刚派生后台任务；再收一次保证清表前无遗漏。
     await wait_for_user_requests(user_id)
-    await _stop_user_runtime(user_id)
+    await wait_user_turns(user_id)
+    await cancel_user_tasks(user_id)
 
 
 @asynccontextmanager
 async def user_maintenance(user_id: int) -> AsyncIterator[None]:
-    """阻止新用户请求，停稳该用户的运行时任务，并在退出时从数据库真源恢复被维护挡下的资产制作。"""
+    """账户删除期间阻止新请求并停稳运行时；删除失败时恢复被维护挡下的工作。"""
     async with user_maintenance_lock(user_id):
         await mark_user_maintenance(user_id)
+        deleted = False
         try:
             await _quiesce_runtime(user_id)
             yield
+            deleted = True
         finally:
             try:
                 RUNTIME_LIFECYCLE.invalidate_user(user_id)
             finally:
                 await clear_user_maintenance(user_id)
-            await RUNTIME_LIFECYCLE.resume_user(user_id)
+            if not deleted:
+                await RUNTIME_LIFECYCLE.resume_user(user_id)

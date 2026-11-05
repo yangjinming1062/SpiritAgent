@@ -1113,8 +1113,7 @@ def upgrade() -> None:
         sa.Column("basis_id", sa.String(length=64), nullable=False),
         sa.Column("slot", sa.Integer(), nullable=False),
         sa.Column("state", sa.String(length=24), nullable=False),
-        sa.Column("execution_key", sa.String(length=36), nullable=False),
-        sa.Column("result_json", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
+        sa.Column("quota_basis_id", sa.String(length=64), nullable=False),
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -1799,8 +1798,6 @@ def upgrade() -> None:
         sa.Column("reply_message_id", sa.BigInteger(), nullable=True),
         sa.Column("source_message_id", sa.BigInteger(), nullable=True),
         sa.Column("cleanup_requested_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("provider", sa.String(length=64), nullable=False),
-        sa.Column("model", sa.String(length=128), nullable=False),
         sa.Column("prompt", sa.Text(), nullable=False),
         sa.Column("params_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column(
@@ -1811,7 +1808,6 @@ def upgrade() -> None:
         ),
         sa.Column("video_url", sa.Text(), nullable=True),
         sa.Column("candidate_video_url", sa.Text(), nullable=True),
-        sa.Column("generation_attempt_index", sa.Integer(), server_default=sa.text("0"), nullable=False),
         sa.Column("error_reason", sa.String(length=64), nullable=True),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
         sa.ForeignKeyConstraint(

@@ -11,7 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.jobs.service import bind_job_assets
+from features.assets.lifecycle import enqueue_asset_cleanup
+from features.jobs.service import RETAINED_JOB_ASSET_ROLE, bind_job_assets, replace_job_assets
 from features.media.character_images import ImageChainState
 from features.media.identity_contracts import VisualIdentitySnapshot
 from features.media.review_contracts import VisualReview
@@ -68,7 +69,6 @@ class ImportContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
     execution_key: str = ""
     calls: int = 0
-    review_only: bool = False
     language: str = "zh"
     user_notes: str = ""
     notes_initialized: bool = False
@@ -79,7 +79,7 @@ class ImportContext(BaseModel):
     portrait_path: str | None = None
     portrait_hash: str | None = None
     frames: list[ImportFrameRef] = Field(default_factory=list)
-    candidates: list[ImportCatalogCandidate] = Field(default_factory=list)
+    selected_materials: list[ImportCatalogCandidate] = Field(default_factory=list)
     created_materials: list[ImportCreatedMaterial] = Field(default_factory=list)
     actor_asset: VisualAsset | None = None
     transparent_video: bool = False
@@ -104,10 +104,20 @@ class ImportWork(BaseModel):
     media_kind: Literal["image", "video"]
     media_path: str
     duration_ms: int | None
-    active_operation_id: str | None = None
-    active_component_key: str | None = None
-    # 当前操作投影到条目的选择；队列本身只在 selections_json 中保存。
-    active_selection: ImportSelection | None = None
+    active_operation: ImportOperation | None = None
+    candidates: list[ImportCatalogCandidate] = Field(default_factory=list)
+    review_only: bool = False
+
+    @property
+    def active_component_key(self) -> str | None:
+        return self.active_operation.key if self.active_operation else None
+
+    @property
+    def active_selection(self) -> ImportSelection | None:
+        operation = self.active_operation
+        if operation is None or operation.command == "organize":
+            return None
+        return ImportSelection.model_validate(operation.model_dump(exclude={"id", "state", "stage"}))
 
 
 def import_job_view(job: VisualImportJob) -> ImportAnalysisView:
@@ -150,7 +160,7 @@ async def ensure_import_job(user_id: int, visual_id: int) -> ImportAnalysisView 
             )
             db.add(job)
             await db.flush()
-            await bind_job_assets(db, user_id, job.id, {item.media_path}, "original")
+            await bind_job_assets(db, user_id, job.id, {item.media_path}, RETAINED_JOB_ASSET_ROLE)
             await notify_visuals_updated(db, user_id)
         await db.commit()
         return import_job_view(job)
@@ -226,7 +236,6 @@ async def command_import_job(user_id: int, visual_id: int, body: ImportAnalysisR
                     operation.state = "paused"
                 operations.append(operation)
                 component.revision += 1
-                component.operation_stage = "organize"
             job.selections_json = [entry.model_dump(mode="json") for entry in operations]
             job.result_json = result.model_dump(mode="json")
             if job.state != "running" and not suspended:
@@ -253,6 +262,9 @@ async def command_import_job(user_id: int, visual_id: int, body: ImportAnalysisR
                     correction_notes=context.correction_notes,
                 )
                 job.result_json, job.selections_json = None, []
+                item = await visual_item(db, user_id, visual_id)
+                original = VisualSnapshot.model_validate(item.snapshot_json).source.original_path or item.media_path
+                await sync_import_assets(db, user_id, job.id, context, None, original)
             else:
                 if result is not None:
                     operations = resume_material_operations(result, operations, context.image_chains)
@@ -263,7 +275,7 @@ async def command_import_job(user_id: int, visual_id: int, body: ImportAnalysisR
             job.cancel_requested = False
             if body.notes is not None:
                 context.correction_notes = body.notes.strip()
-            job.context_json = context.model_dump(mode="json")
+        job.context_json = context.model_dump(mode="json")
         await db.flush()
         await notify_visuals_updated(db, user_id)
         await db.commit()
@@ -345,31 +357,32 @@ async def take_import_operation(work: ImportWork) -> ImportComponent | None:
         )
         require_import_execution(job, work)
         operations = import_operations(job.selections_json)
-        work.result = ImportAnalysisResult.model_validate(job.result_json)
+        result = ImportAnalysisResult.model_validate(job.result_json)
         operation = next((entry for entry in operations if entry.state == "queued"), None)
         if operation is None:
-            work.active_component_key, work.active_operation_id, work.active_selection = None, None, None
+            work.active_operation = None
             return None
-        component = next(entry for entry in work.result.components if entry.observation.key == operation.key)
+        component = next(entry for entry in result.components if entry.observation.key == operation.key)
         if operation.command != "organize":
             component.notes = operation.notes
         operation.state = "running"
-        component.operation_stage = "organize"
         component.failure_code = None
         component.failure_summary = ""
         component.revision += 1
-        work.active_component_key, work.active_operation_id = operation.key, operation.id
-        work.active_selection = (
-            None
-            if operation.command == "organize"
-            else ImportSelection.model_validate(operation.model_dump(exclude={"id", "state"}))
+        operation.stage = "organize"
+        context = work.context.model_copy(
+            update={
+                "calls": max(work.context.calls, job.context_json.get("calls", 0)),
+                "presentation_review": None,
+                "pending_application": None,
+            }
         )
-        work.context.calls = max(work.context.calls, job.context_json.get("calls", 0))
-        job.context_json = work.context.model_dump(mode="json")
-        job.result_json = work.result.model_dump(mode="json")
+        job.context_json = context.model_dump(mode="json")
+        job.result_json = result.model_dump(mode="json")
         job.selections_json = [entry.model_dump(mode="json") for entry in operations]
         await notify_visuals_updated(db, work.user_id)
         await db.commit()
+        work.active_operation, work.result, work.context = operation, result, context
         return component
 
 
@@ -378,38 +391,75 @@ def require_import_execution(job: VisualImportJob | None, work: ImportWork) -> N
         raise VisualStateError("分析任务已取消或更新")
 
 
-def merge_import_progress(job: VisualImportJob, work: ImportWork, stage: str, *, finish: bool = False) -> None:
+def merge_import_progress(
+    job: VisualImportJob, work: ImportWork, stage: str, *, finish: bool = False
+) -> ImportAnalysisResult | None:
     if work.result is None:
-        return
+        return None
+    result = work.result.model_copy(deep=True)
     operations = import_operations(job.selections_json)
     if job.result_json is None:
-        for component in work.result.components:
-            component.operation_stage = "match"
+        for component in result.components:
             operations.append(ImportOperation(key=component.observation.key, command="organize"))
     elif work.active_component_key is not None:
         stored = ImportAnalysisResult.model_validate(job.result_json)
-        component = next(
-            entry for entry in work.result.components if entry.observation.key == work.active_component_key
-        )
+        component = next(entry for entry in result.components if entry.observation.key == work.active_component_key)
         previous = next(entry for entry in stored.components if entry.observation.key == work.active_component_key)
-        component.operation_stage = stage
         component.revision = previous.revision + 1
+        operation = next((entry for entry in operations if entry.id == work.active_operation.id), None)
+        if operation is None or operation.state != "running":
+            raise VisualStateError("素材操作已取消或更新")
+        operation.stage = stage
         if finish:
-            operations = [
-                entry
-                for entry in operations
-                if entry.id != work.active_operation_id or component.status in {"failed", "reviewing"}
-            ]
-            for entry in operations:
-                if entry.id == work.active_operation_id:
-                    entry.state = "paused" if component.status == "reviewing" else "failed"
-        work.result.components = [
+            if component.status in {"failed", "reviewing"}:
+                operation.state = "paused" if component.status == "reviewing" else "failed"
+            else:
+                operations.remove(operation)
+        result.components = [
             component if entry.observation.key == work.active_component_key else entry for entry in stored.components
         ]
     else:
-        work.result = ImportAnalysisResult.model_validate(job.result_json)
-    job.result_json = work.result.model_dump(mode="json")
+        result = ImportAnalysisResult.model_validate(job.result_json)
+    job.result_json = result.model_dump(mode="json")
     job.selections_json = [entry.model_dump(mode="json") for entry in operations]
+    return result
+
+
+async def sync_import_assets(
+    db: AsyncSession,
+    user_id: int,
+    job_id: int,
+    context: ImportContext,
+    result: ImportAnalysisResult | None,
+    original_path: str,
+) -> None:
+    """导入资料随分析记录保留，引用切换与业务结果共同提交。"""
+    paths = {original_path, *(entry.path for entry in context.frames)}
+    if context.presentation_review and context.presentation_review.evidence:
+        paths |= {entry.path for entry in context.presentation_review.evidence.images}
+    for review in context.manual_reviews.values():
+        if review.evidence:
+            paths |= {entry.path for entry in review.evidence.images}
+    paths |= {entry for entry in (context.identity_path, context.portrait_path) if entry}
+    paths |= {entry.path for entry in context.selected_materials if entry.path}
+    for chain in context.image_chains.values():
+        chain_paths = chain.stored_paths()
+        if chain.pending_path and resolve_asset_reference(chain.pending_path) is None:
+            chain_paths.discard(chain.pending_path)
+        paths |= chain_paths
+    if result:
+        paths |= {entry.preview_path for entry in result.components if entry.preview_path}
+    if context.actor_asset:
+        asset = context.actor_asset
+        paths |= {entry for entry in (asset.media_path, asset.poster_path) if entry}
+        if asset.body:
+            paths |= {
+                entry
+                for entry in (asset.body.mask_path, asset.body.first_frame_path, asset.body.last_frame_path)
+                if entry
+            }
+    released = await replace_job_assets(db, user_id, job_id, paths, RETAINED_JOB_ASSET_ROLE)
+    await enqueue_asset_cleanup(db, user_id, released)
 
 
 async def save_import_progress(
@@ -424,8 +474,8 @@ async def save_import_progress(
         if work.result
         else None
     )
-    if adopt is not None and component is not None:
-        component.operation_stage = "save_material"
+    if work.active_operation is not None:
+        work.active_operation.stage = "save_material" if adopt is not None else stage
     previous = component.model_copy(deep=True) if component is not None else None
     previous_context = work.context.model_copy(deep=True) if adopt is not None else None
     try:
@@ -438,35 +488,11 @@ async def save_import_progress(
             require_import_execution(job, work)
             if adopt is not None:
                 await adopt(db)
-            work.context.calls = max(work.context.calls, job.context_json.get("calls", 0))
-            job.context_json = work.context.model_dump(mode="json")
-            merge_import_progress(job, work, stage, finish=finish)
+            calls = max(work.context.calls, job.context_json.get("calls", 0))
+            job.context_json = work.context.model_copy(update={"calls": calls}).model_dump(mode="json")
+            result = merge_import_progress(job, work, stage, finish=finish)
             job.stage = stage
-            paths = {entry.path for entry in work.context.frames}
-            if work.context.presentation_review and work.context.presentation_review.evidence:
-                paths |= {entry.path for entry in work.context.presentation_review.evidence.images}
-            for review in work.context.manual_reviews.values():
-                if review.evidence:
-                    paths |= {entry.path for entry in review.evidence.images}
-            paths |= {entry for entry in (work.context.identity_path, work.context.portrait_path) if entry}
-            paths |= {entry.path for entry in work.context.candidates if entry.path}
-            for chain in work.context.image_chains.values():
-                chain_paths = chain.stored_paths()
-                if chain.pending_path and resolve_asset_reference(chain.pending_path) is None:
-                    chain_paths.discard(chain.pending_path)
-                paths |= chain_paths
-            if work.result:
-                paths |= {entry.preview_path for entry in work.result.components if entry.preview_path}
-            if work.context.actor_asset:
-                asset = work.context.actor_asset
-                paths |= {entry for entry in (asset.media_path, asset.poster_path) if entry}
-                if asset.body:
-                    paths |= {
-                        entry
-                        for entry in (asset.body.mask_path, asset.body.first_frame_path, asset.body.last_frame_path)
-                        if entry
-                    }
-            await bind_job_assets(db, work.user_id, job.id, paths, "analysis")
+            await sync_import_assets(db, work.user_id, job.id, work.context, result, work.media_path)
             await notify_visuals_updated(db, work.user_id)
             await db.commit()
     except BaseException:
@@ -476,8 +502,14 @@ async def save_import_progress(
             for field in type(component).model_fields:
                 setattr(component, field, getattr(previous, field))
         raise
+    work.context.calls = calls
+    if result is not None and component is not None:
+        saved = next(entry for entry in result.components if entry.observation.key == component.observation.key)
+        component.revision = saved.revision
+        result.components = [component if entry is saved else entry for entry in result.components]
+    work.result = result
     if finish:
-        work.active_component_key, work.active_operation_id, work.active_selection = None, None, None
+        work.active_operation = None
 
 
 async def fail_import_work(work: ImportWork, message: str, *, paused: bool = False) -> None:
@@ -532,7 +564,6 @@ async def recover_import_jobs(user_id: int | None = None) -> list[tuple[int, int
                     or any(chain.can_retry_goal_review() for chain in context.image_chains.values())
                 ):
                     context.execution_key = ""
-                    context.review_only = False
                     job.context_json = context.model_dump(mode="json")
                     job.state, job.stage, job.error = (
                         "paused",

@@ -6,6 +6,7 @@ import random
 import secrets
 from collections.abc import Callable, Coroutine
 from datetime import timedelta
+from functools import partial
 from typing import Any
 
 import asyncpg
@@ -16,7 +17,7 @@ from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
 from sqlalchemy import Row, and_, or_, select, update
 
-from runtime.background import BackgroundTask
+from runtime.background import BackgroundTask, TaskScope
 from runtime.desktop.connection import MANAGER, remote_event_types, set_event_loop_hooks
 from runtime.events.models import WSEvent
 
@@ -38,8 +39,7 @@ InternalEventHandler = Callable[[int, dict[str, Any]], Coroutine[Any, Any, None]
 # 需要进程内处理器的事件类型及其处理器；由装配层在应用导入期注册（bootstrap/registrations.py），先于事件回路启动
 _handlers: dict[str, InternalEventHandler] = {}
 
-# 按 event_type → user 持有强引用，避免 spawn 的处理器任务运行到一半时被 GC（CPython bpo-46662）
-_event_tasks: dict[str, dict[int, set[asyncio.Task]]] = {}
+_EVENT_TASKS = TaskScope[tuple[str, int, int]]("events.handlers")
 
 
 def register_internal_event_handler(event_type: str, handler: InternalEventHandler) -> None:
@@ -62,36 +62,18 @@ _WAKEUP_STATE: _WakeupState = _WakeupState()
 _EVENT_LOOP = BackgroundTask("event_store.event_loop")
 
 
-def _discard_event_task(event_type: str, user_id: int, task: asyncio.Task) -> None:
-    user_tasks = _event_tasks.get(event_type, {}).get(user_id)
-    if user_tasks is not None:
-        user_tasks.discard(task)
-        if not user_tasks:
-            _event_tasks[event_type].pop(user_id, None)
-            if not _event_tasks[event_type]:
-                _event_tasks.pop(event_type, None)
-
-
-def _log_event_task_failure(task: asyncio.Task) -> None:
-    """内部事件处理器抛错时落地日志；与 _discard_event_task 拆开避免互相清理顺序耦合。"""
-    if task.cancelled():
-        return
-    if (exc := task.exception()) is not None:
-        logger.exception("internal event handler raised", exc_info=exc)
-
-
 async def interrupt_user_event_tasks(user_id: int, event_type: str) -> int:
-    user_tasks = list(_event_tasks.get(event_type, {}).pop(user_id, ()))
-    pending = [task for task in user_tasks if not task.done()]
+    pending = [
+        task
+        for key in tuple(_EVENT_TASKS)
+        if key[:2] == (event_type, user_id) and (task := _EVENT_TASKS.running(key)) is not None
+    ]
     await cancel_and_wait(pending)
     return len(pending)
 
 
 async def drain_event_tasks() -> None:
-    """展平所有内部事件任务 → 取消并 await。"""
-    await cancel_and_wait(
-        task for user_tasks in _event_tasks.values() for tasks in user_tasks.values() for task in tasks
-    )
+    await _EVENT_TASKS.drain()
 
 
 def compute_backoff(retry_count: int) -> timedelta:
@@ -315,11 +297,11 @@ async def _dispatch_claimed_batch() -> tuple[int, bool]:
 
         handler = _handlers.get(event_type)
         if handler is not None:
-            task = asyncio.create_task(handler(user_id, payload))
-            user_tasks = _event_tasks.setdefault(event_type, {}).setdefault(user_id, set())
-            user_tasks.add(task)
-            task.add_done_callback(lambda t, et=event_type, uid=user_id: _discard_event_task(et, uid, t))
-            task.add_done_callback(_log_event_task_failure)
+            _EVENT_TASKS.spawn(
+                (event_type, user_id, event_id),
+                partial(handler, user_id, payload),
+                user_id=user_id,
+            )
             handled_delivered_ids.append(event_id)
             # 受众为 all 的事件在内部处理之外仍要送达客户端；本行已按内部处理认领，推送失败不回退业务唤醒。
             if event_type in remote_event_types():

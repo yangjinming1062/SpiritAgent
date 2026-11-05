@@ -310,7 +310,6 @@ class ImportComponent(BaseModel):
     creation_method: Literal["pixels", "generated", "pose", "motion"] | None = None
     candidate_verdict: Literal["pass", "review", "fail"] | None = None
     revision: int = Field(default=0, ge=0)
-    operation_stage: str = ""
     failure_code: (
         Literal[
             "quality_rejected",
@@ -330,6 +329,7 @@ class ImportComponentView(ImportComponent):
     """响应在分析事实之上投影操作进度与可用操作。"""
 
     operation_state: Literal["idle", "queued", "running", "paused", "failed", "succeeded"]
+    operation_stage: str = ""
     can_extract: bool
     extract_command: Literal["extract", "retry", "regenerate"]
 
@@ -552,16 +552,11 @@ class VisualJobProgress(BaseModel):
     image_chain_json: str | None = None
     video_chain_json: str | None = None
     candidate: VisualAsset | None = None
-    identity_verdict: ReviewVerdict | None = None
-    identity_reason: str = ""
-    review_verdict: ReviewVerdict | None = None
-    quality_verdict: ReviewVerdict | None = None
-    quality_reason: str = ""
+    # 独立检查请求的冻结输入用于中断续查；完整结论只保存在 review_result。
     identity_evidence: ReviewEvidence | None = None
     video_evidence: ReviewEvidence | None = None
     review_result: VisualReview | None = None
     review_only: bool = False
-    review_reason: str = ""
     submission_unknown: bool = False
     failure_reason: str = ""
     source_path: str | None = None

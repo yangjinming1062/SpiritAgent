@@ -31,8 +31,7 @@ class MediaReviewAttempt(ModelBase, TimestampMixin):
     basis_id: Mapped[str] = mapped_column(String(64))
     slot: Mapped[int] = mapped_column(Integer)
     state: Mapped[str] = mapped_column(String(24), default="running")
-    execution_key: Mapped[str] = mapped_column(String(36))
-    result_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    quota_basis_id: Mapped[str] = mapped_column(String(64))
 
 
 class MediaContinuation(ModelBase, TimestampMixin):
@@ -86,13 +85,10 @@ class VideoGenJob(JobRecord):
     )
     # 历史修改先同事务失效；后台只处理撤销和清理，不再制作或交付。
     cleanup_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
-    provider: Mapped[str] = mapped_column(String(64))
-    model: Mapped[str] = mapped_column(String(128))
     prompt: Mapped[str] = mapped_column(Text)
     params_json: Mapped[dict] = mapped_column(JSONB, default=dict)
     review_result_json: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
     video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     candidate_video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    generation_attempt_index: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     error_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

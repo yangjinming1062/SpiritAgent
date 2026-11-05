@@ -57,7 +57,7 @@ ORM 留在数据所有者内部。跨域读取返回 DTO/冻结快照，写入�
 
 [registrations.py](bootstrap/registrations.py) 统一登记供应商、工具、内部事件及业务端口，导入模块不隐式注册。启动由 [lifecycle.py](bootstrap/lifecycle.py) 完成安全检查、迁移、配置水合、模块准备、调度/事件启动和任务恢复；参与者顺序由 [runtime_lifecycle.py](bootstrap/runtime_lifecycle.py) 维护。
 
-停机先关闭生产入口，再收敛所属任务，最后释放数据库和供应商连接池。[task_supervisor.py](runtime/task_supervisor.py) 记录所有者、账户与错误，业务负责持久状态；常驻单 loop 与按 key 去重的任务集合见 [background.py](runtime/background.py)；取消与写盘收尾共用 [async_io.py](infrastructure/async_io.py)，重复取消也须等待目标释放资源。
+停机先关闭生产入口，再收敛所属任务，最后释放数据库和供应商连接池。[task_supervisor.py](runtime/task_supervisor.py) 记录所有者、账户与错误，业务负责持久状态；常驻单 loop 与按 key 去重的任务集合见 [background.py](runtime/background.py)，内部事件、媒体制作和资讯登录轮询共用任务作用域。同键补跑只保留最后一次请求，显式继续等待旧任务取消收尾，暂停和放弃清除待补跑请求；停机收尾不再接收补跑。取消与写盘收尾共用 [async_io.py](infrastructure/async_io.py)，重复取消也须等待目标释放资源。
 
 HTTP、调度及清理通过 [user_maintenance.py](runtime/user_maintenance.py) 共享账户租约。启动和周期维护按账户处理遗留媒体与正式资产，维护中的账户延后；各清理项隔离失败，不能让一项异常跳过其他回收。
 
@@ -73,7 +73,7 @@ HTTP、调度及清理通过 [user_maintenance.py](runtime/user_maintenance.py) 
 
 大字节、FFmpeg 和文件复制卸载到工作线程。随机路径的未交接文件在取消时清理；预登记固定路径的生成文件须等原子写完并保留给恢复。引用与删除统一由资产领域处理。本机派发先登记等待对象，再发送并检查入队，桌面离线以业务错误结束等待。
 
-账户删除先阻止新操作并收敛在途任务，结束后从持久状态重建。用户文件仅落正式资产、会话附件和带用户归属的临时目录；新增路径纳入删除清理。正式文件或附件删失败时保留用户行供重试。
+账户删除先阻止新操作并收敛在途任务；成功后失效运行缓存并解除维护，失败或取消才恢复原账户工作。用户文件仅落正式资产、会话附件和带用户归属的临时目录；新增路径纳入删除清理。正式文件或附件删失败时保留用户行供重试。
 
 ## 业务调度
 

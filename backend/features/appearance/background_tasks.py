@@ -30,36 +30,23 @@ from features.media.identity_contracts import VisualObservation
 
 logger = get_logger(__name__)
 _tasks = TaskScope("appearance.preparation")
-_reschedule: set[int] = set()
 
 
 def schedule_appearance_tasks(user_id: int) -> None:
     if is_user_in_maintenance(user_id):
         return
-    if _tasks.running(user_id) is not None:
-        _reschedule.add(user_id)
-        return
-    _reschedule.discard(user_id)
-
-    def completed(done: asyncio.Task[None]) -> None:
-        if _tasks.running(user_id) is not None:
-            return
-        pending = user_id in _reschedule
-        _reschedule.discard(user_id)
-        if pending and not done.cancelled():
-            schedule_appearance_tasks(user_id)
-
-    _tasks.spawn(
+    _tasks.schedule(
         user_id,
         lambda: _run_user(user_id),
         name=f"appearance.{user_id}",
         user_id=user_id,
         cancel_on_maintenance=False,
-        on_done=completed,
     )
 
 
 async def _run_user(user_id: int) -> None:
+    if is_user_in_maintenance(user_id):
+        return
     results = await asyncio.gather(_prepare(user_id), _observe(user_id), return_exceptions=True)
     for result in results:
         if isinstance(result, BaseException):
@@ -234,5 +221,4 @@ async def resume_user_appearance_tasks(user_id: int) -> None:
 
 
 async def drain_appearance_tasks() -> None:
-    _reschedule.clear()
     await _tasks.drain()

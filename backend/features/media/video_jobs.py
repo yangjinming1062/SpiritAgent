@@ -81,13 +81,13 @@ from features.media.video_queue.service import (
     acknowledge_video_attempt,
     cancel_owner_video_attempts,
     enqueue_video_attempt,
+    find_video_attempt,
     get_video_attempt_status,
 )
 from features.media.video_results import download_and_store_video, receive_video_attempt
 
 logger = get_logger(__name__)
 
-_INFLIGHT: set[int] = set()
 _POLL_TASKS = TaskScope("media.video_jobs")
 _RESULT_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
 _TERMINAL_STATES = ("succeeded", "failed", "unknown", "cancelled")
@@ -336,8 +336,6 @@ async def prepare_video_job(
         source_message_id=source_message_id,
         structured_reply=session_id is not None,
         media_id=media_id,
-        provider=compatible[0].provider_name,
-        model=compatible[0].model,
         prompt=prompt,
         params_json=params.model_dump(mode="json"),
         state="queued",
@@ -535,8 +533,6 @@ async def _finalize_best_video(job_id: int, *, warning: str | None = None) -> No
         if best.path != storage_url:
             raise RuntimeError("best video candidate does not match stored asset")
         row.review_result_json = best.review.model_dump(mode="json") if best.review else {}
-        row.provider = state.providers[best.attempt].provider
-        row.model = state.providers[best.attempt].model
         row.candidate_video_url = None
         row.state, row.stage = "paused", "confirmation"
         row.error_reason = state.stop_reason if warning else None
@@ -563,7 +559,7 @@ async def _evaluate_stored_video(job_id: int, *, review_only: bool = False) -> s
         state = MediaChainState.model_validate(row.checkpoint or {})
         entry = next((c for c in state.candidates if c.path == path), None)
         if entry is None:
-            entry = MediaCandidate(path=path, attempt=row.generation_attempt_index)
+            entry = MediaCandidate(path=path, attempt=state.current_attempt_index())
             state.candidates.append(entry)
         row.checkpoint = state.model_dump(mode="json")
         await db.commit()
@@ -789,7 +785,7 @@ async def review_video_job(user_id: int, job_id: int, slot: int, expected: Media
                     state.result_url,
                     user_id=user_id,
                     job_id=job_id,
-                    attempt=row.generation_attempt_index,
+                    attempt=state.current_attempt_index(),
                     generation_id=params.asset_generation_id,
                     directory=params.asset_directory,
                 )
@@ -832,7 +828,7 @@ async def manually_review_video(
     if params.identity_snapshot and not await visual_identity_is_current(db, user_id, params.identity_snapshot):
         raise RequestError(status_code=409, message="原任务身份已失效，不能按当前身份交付")
     if request.action == "regenerate":
-        if job_id in _INFLIGHT:
+        if _POLL_TASKS.running(job_id) is not None:
             raise RequestError(status_code=409, message="原任务正在收尾，请稍后重试")
         previous = MediaChainState.model_validate(row.checkpoint or {})
         if not previous.providers:
@@ -843,7 +839,6 @@ async def manually_review_video(
         row.checkpoint = fresh.model_dump(mode="json")
         row.candidate_video_url = row.video_url = None
         row.review_result_json = {}
-        row.generation_attempt_index = 0
         row.state, row.stage, row.error = "queued", "retry_pending", None
         row.error_reason = None
         await db.flush()
@@ -919,8 +914,8 @@ async def _submit_next_video(job_id: int, user_id: int) -> bool:
             return False
         index = state.next_index
         frozen = state.providers[index]
-        config = await resolve_frozen_media_provider(user_id, "video_gen", frozen)
-        if config is None:
+        request_id = await find_video_attempt(owner, index, frozen)
+        if request_id is None and await resolve_frozen_media_provider(user_id, "video_gen", frozen) is None:
             async with SESSION_LOCAL() as db:
                 current = await db.get(VideoGenJob, job_id, with_for_update=True)
                 if current is None or _abandoned(current) or current.state != "queued":
@@ -933,18 +928,19 @@ async def _submit_next_video(job_id: int, user_id: int) -> bool:
                 await _sync_changed_job_assets(db)
                 await db.commit()
             continue
-        request_id = await enqueue_video_attempt(
-            owner,
-            frozen,
-            index,
-            VideoGenRequest(
-                prompt=prompt,
-                duration=params.duration,
-                resolution=params.resolution,
-                reference_images=params.reference_images,
-                aspect_ratio=params.aspect_ratio,
-            ),
-        )
+        if request_id is None:
+            request_id = await enqueue_video_attempt(
+                owner,
+                frozen,
+                index,
+                VideoGenRequest(
+                    prompt=prompt,
+                    duration=params.duration,
+                    resolution=params.resolution,
+                    reference_images=params.reference_images,
+                    aspect_ratio=params.aspect_ratio,
+                ),
+            )
         async with SESSION_LOCAL() as db:
             current = await db.get(VideoGenJob, job_id, with_for_update=True)
             if current is None or _abandoned(current) or current.state != "queued":
@@ -958,9 +954,6 @@ async def _submit_next_video(job_id: int, user_id: int) -> bool:
             latest.queue_request_id = request_id
             current.state, current.stage = "running", "processing"
             current.checkpoint = latest.model_dump(mode="json")
-            current.generation_attempt_index = index
-            current.provider = config.provider_name
-            current.model = config.model
             await _sync_changed_job_assets(db)
             await db.commit()
         return True
@@ -1020,17 +1013,10 @@ async def _fail_or_keep_best(job_id: int, reason: str) -> None:
         await _record_failure(job_id, reason=reason)
 
 
-# 进程内 in-flight 集合：并发 finalize 同一任务时只有第一个进入，避免重复下载/发事件；重启后由 resume_pending_video_jobs 按 DB 重建。
 async def _poll_and_finalize(job_id: int) -> None:
     """后台主循环：供应商任务和本地候选均可恢复；仅未知提交禁止自动重发。"""
-    if job_id in _INFLIGHT:
-        return
-    _INFLIGHT.add(job_id)
-    try:
-        with asset_write_context(inherit=False):
-            await _poll_and_finalize_locked(job_id)
-    finally:
-        _INFLIGHT.discard(job_id)
+    with asset_write_context(inherit=False):
+        await _poll_and_finalize_locked(job_id)
 
 
 async def _poll_and_finalize_locked(job_id: int) -> None:
@@ -1065,7 +1051,7 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
                 candidate_path = video_job_asset_path(
                     user_id,
                     job_id,
-                    job.generation_attempt_index,
+                    state.current_attempt_index(),
                     generation_id=params.asset_generation_id,
                     directory=params.asset_directory,
                 )
@@ -1094,7 +1080,7 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
                     state.result_url,
                     user_id=user_id,
                     job_id=job_id,
-                    attempt=job.generation_attempt_index,
+                    attempt=state.current_attempt_index(),
                     generation_id=params.asset_generation_id,
                     directory=params.asset_directory,
                 )
@@ -1162,11 +1148,12 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
                     logger.warning("queued video awaits recovery", extra={"job_id": job_id})
                     return
             if latest is not None and (latest.state == "running" and latest.stage in ("downloading", "evaluating")):
+                latest_state = MediaChainState.model_validate(latest.checkpoint or {})
                 latest_params = _VideoJobParams.model_validate(latest.params_json)
                 candidate = latest.candidate_video_url or video_job_asset_path(
                     user_id,
                     job_id,
-                    latest.generation_attempt_index,
+                    latest_state.current_attempt_index(),
                     generation_id=latest_params.asset_generation_id,
                     directory=latest_params.asset_directory,
                 )
@@ -1287,7 +1274,7 @@ async def cleanup_user_video_jobs(user_id: int) -> None:
                 state = MediaChainState.model_validate(row.checkpoint or {})
             await cancel_owner_video_attempts("media", job_id, state.generation_id)
             paths = asset_paths([row.video_url, row.candidate_video_url, row.checkpoint], user_id)
-            attempts = {row.generation_attempt_index, *(entry.attempt for entry in state.candidates)}
+            attempts = {state.current_attempt_index(), *(entry.attempt for entry in state.candidates)}
             paths.update(
                 video_job_asset_path(
                     user_id, job_id, attempt, generation_id=params.asset_generation_id, directory=params.asset_directory
@@ -1318,7 +1305,7 @@ async def receive_video_result(user_id: int, job_id: int) -> VideoJobSnapshot:
             row = await _get_job(db, job_id, user_id)
         if row is None:
             raise ValueError("找不到视频任务")
-        if (row.state in ("succeeded", "failed", "cancelled")) or job_id in _INFLIGHT:
+        if (row.state in ("succeeded", "failed", "cancelled")) or _POLL_TASKS.running(job_id) is not None:
             return await video_job_snapshot_async(db, row)
         params = _VideoJobParams.model_validate(row.params_json)
         state = MediaChainState.model_validate(row.checkpoint or {})
@@ -1336,7 +1323,7 @@ async def receive_video_result(user_id: int, job_id: int) -> VideoJobSnapshot:
         candidate = row.candidate_video_url or video_job_asset_path(
             user_id,
             job_id,
-            row.generation_attempt_index,
+            state.current_attempt_index(),
             generation_id=params.asset_generation_id,
             directory=params.asset_directory,
         )
@@ -1348,7 +1335,7 @@ async def receive_video_result(user_id: int, job_id: int) -> VideoJobSnapshot:
                 result_url,
                 user_id=user_id,
                 job_id=job_id,
-                attempt=row.generation_attempt_index,
+                attempt=state.current_attempt_index(),
                 generation_id=params.asset_generation_id,
                 directory=params.asset_directory,
             )
@@ -1378,7 +1365,7 @@ async def receive_video_result(user_id: int, job_id: int) -> VideoJobSnapshot:
             if existing is not None:
                 current.video_url = candidate
             if not any(item.path == candidate for item in state.candidates):
-                state.candidates.append(MediaCandidate(path=candidate, attempt=current.generation_attempt_index))
+                state.candidates.append(MediaCandidate(path=candidate, attempt=state.current_attempt_index()))
             current.checkpoint = state.model_dump(mode="json")
             current.error = "原视频已接收，可以查看候选后采用或重新生成"
             emit_ws_event(db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(job_id)})

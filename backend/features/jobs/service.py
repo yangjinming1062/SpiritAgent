@@ -15,6 +15,8 @@ from sqlalchemy.sql.selectable import CTE
 
 from .models import JobAsset, JobRequest
 
+RETAINED_JOB_ASSET_ROLE = "retained"
+
 
 @dataclass(frozen=True, slots=True)
 class CompletedJob:
@@ -146,6 +148,19 @@ async def bind_job_asset_ids(
         )
 
 
+async def replace_job_assets(
+    db: AsyncSession, user_id: int, job_id: int, paths: Collection[str], role: str
+) -> set[str]:
+    """同步所属任务的一组引用，返回本事务释放的路径。"""
+    assets = await ensure_assets_in_session(db, user_id, paths)
+    await bind_job_asset_ids(db, user_id, job_id, list(assets.values()), role)
+    removed = delete(JobAsset).where(JobAsset.user_id == user_id, JobAsset.job_id == job_id, JobAsset.role == role)
+    if assets:
+        removed = removed.where(JobAsset.asset_id.not_in(assets.values()))
+    released = list(await db.scalars(removed.returning(JobAsset.asset_id)))
+    return await asset_paths_for_ids(db, user_id, released)
+
+
 async def job_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
     ids = list(
         await db.scalars(
@@ -154,6 +169,7 @@ async def job_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
             .where(
                 JobAsset.user_id == user_id,
                 or_(
+                    JobAsset.role == RETAINED_JOB_ASSET_ROLE,
                     JobRecord.cleanup_pending.is_(True),
                     JobRecord.finished_at.is_(None),
                     JobRecord.finished_at >= utc_now() - timedelta(days=7),
@@ -171,9 +187,10 @@ async def cleanup_job_assets(db: AsyncSession, user_id: int) -> set[str]:
         JobRecord.cleanup_pending.is_(False),
         JobRecord.finished_at < utc_now() - timedelta(days=7),
     )
-    asset_ids = list(await db.scalars(select(JobAsset.asset_id).where(JobAsset.job_id.in_(completed))))
+    expired = (JobAsset.job_id.in_(completed), JobAsset.role != RETAINED_JOB_ASSET_ROLE)
+    asset_ids = list(await db.scalars(select(JobAsset.asset_id).where(*expired)))
     paths = await asset_paths_for_ids(db, user_id, asset_ids)
-    await db.execute(delete(JobAsset).where(JobAsset.job_id.in_(completed)))
+    await db.execute(delete(JobAsset).where(*expired))
     await clear_expired_job_checkpoints(db, user_id)
     await db.execute(
         update(JobRecord)

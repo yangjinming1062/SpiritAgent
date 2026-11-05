@@ -142,7 +142,6 @@ def version_view(item: VisualItem, version: VisualVersion) -> PresentedVisual:
         outfit_id=version.outfit_id,
         scene_id=version.scene_id,
         action_id=version.action_id,
-        input_image_id=version.input_image_id,
         input_image_version_id=version.input_image_version_id,
         input_image_path=version.input_image_path,
         input_image_hash=version.input_image_hash,

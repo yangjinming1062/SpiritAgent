@@ -27,6 +27,7 @@ class ImportOperation(ImportSelection):
     id: str = Field(default_factory=lambda: uuid4().hex)
     command: Literal["organize", "existing", "extract", "retry", "regenerate", "skip", "undo"]
     state: Literal["queued", "running", "paused", "failed"] = "queued"
+    stage: str = "organize"
 
 
 def import_operations(values: list[dict[str, Any]]) -> list[ImportOperation]:
@@ -71,6 +72,7 @@ def import_result_view(
             ImportComponentView(
                 **{**component.model_dump(), "failure_code": failure_code},
                 operation_state=operation_state,
+                operation_stage=operation.stage if operation is not None else "",
                 can_extract=component.material_id is None
                 or (component.observation.kind == "action" and component.status in {"failed", "ambiguous"}),
                 extract_command=extraction_command(component, chain),
@@ -140,6 +142,5 @@ def resume_material_operations(
         if previous is not None and previous.state == "paused":
             operation = previous.model_copy(update={"state": "queued"})
         operations = [entry for entry in operations if entry.key != operation.key] + [operation]
-        component.operation_stage = "organize"
         component.revision += 1
     return operations

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from collections.abc import Callable, Coroutine, Hashable, Iterator
+from dataclasses import dataclass
 from typing import Any
 
 from infrastructure.async_io import cancel_and_wait, wait_for_tasks
@@ -42,16 +43,28 @@ class BackgroundTask:
         self._logger.error("Task exited with error", extra={"task_name": self._name}, exc_info=task.exception())
 
 
+@dataclass(frozen=True, slots=True)
+class _ScheduledTask:
+    factory: Callable[[], Coroutine[Any, Any, None]]
+    name: str | None
+    user_id: int | None
+    cancel_on_maintenance: bool
+    on_error: Callable[[asyncio.Task], None] | None
+    resume_on_cancel: bool
+
+
 class TaskScope[Key: Hashable = Hashable]:
     """owner 作用域内的后台任务集合：统一登记、按 key 单飞、错误回调与停机收敛。
 
-    ``add`` 接收调用方已创建的 task；``spawn`` 以 key 保证同键在途时不重复启动，结束后释放。
+    `add` 接收调用方已创建的 task；`spawn` 以 key 保证同键在途时不重复启动，结束后释放。
     任务调度、持久状态与续跑语义仍归各业务模块。
     """
 
     def __init__(self, owner: str) -> None:
         self._owner = owner
         self._tasks: dict[Key, asyncio.Task[None]] = {}
+        self._rerun: dict[Key, _ScheduledTask] = {}
+        self._draining = False
 
     def add(
         self,
@@ -72,6 +85,52 @@ class TaskScope[Key: Hashable = Hashable]:
     def running(self, key: Key) -> asyncio.Task[None] | None:
         task = self._tasks.get(key)
         return task if task is not None and not task.done() else None
+
+    def drop(self, key: Key) -> None:
+        """丢弃待补跑请求；用于取消、暂停与停机前避免触发新一轮。"""
+        self._rerun.pop(key, None)
+
+    def schedule(
+        self,
+        key: Key,
+        factory: Callable[[], Coroutine[Any, Any, None]],
+        *,
+        name: str | None = None,
+        user_id: int | None = None,
+        cancel_on_maintenance: bool = True,
+        on_error: Callable[[asyncio.Task], None] | None = None,
+        resume_on_cancel: bool = False,
+    ) -> None:
+        """在途时保留最后一次请求；显式续跑可等待旧任务取消收尾，暂停与放弃先 drop。"""
+        if self._draining:
+            return
+        if self.running(key) is not None:
+            self._rerun[key] = _ScheduledTask(factory, name, user_id, cancel_on_maintenance, on_error, resume_on_cancel)
+            return
+        self.drop(key)
+
+        def finished(done: asyncio.Task[None]) -> None:
+            pending = self._rerun.pop(key, None)
+            if pending is not None and (pending.resume_on_cancel or not done.cancelled()):
+                self.schedule(
+                    key,
+                    pending.factory,
+                    name=pending.name,
+                    user_id=pending.user_id,
+                    cancel_on_maintenance=pending.cancel_on_maintenance,
+                    on_error=pending.on_error,
+                    resume_on_cancel=pending.resume_on_cancel,
+                )
+
+        self.spawn(
+            key,
+            factory,
+            name=name,
+            user_id=user_id,
+            cancel_on_maintenance=cancel_on_maintenance,
+            on_error=on_error,
+            on_done=finished,
+        )
 
     def __iter__(self) -> Iterator[Key]:
         """按登记顺序遍历当前的单飞 key；调用方自行过滤。"""
@@ -96,8 +155,9 @@ class TaskScope[Key: Hashable = Hashable]:
         self.add(task, user_id=user_id, cancel_on_maintenance=cancel_on_maintenance, on_error=on_error)
 
         def finished(done: asyncio.Task[None]) -> None:
-            if self._tasks.get(key) is done:
-                self._tasks.pop(key, None)
+            if self._tasks.get(key) is not done:
+                return
+            self._tasks.pop(key, None)
             if on_done is not None:
                 on_done(done)
 
@@ -115,5 +175,11 @@ class TaskScope[Key: Hashable = Hashable]:
             await cancel_and_wait((task,))
 
     async def drain(self) -> None:
-        """取消并等待本 owner 的全部任务收尾，覆盖收尾期间派生的新工作。"""
-        await TASK_SUPERVISOR.drain(owner=self._owner)
+        """取消并等待本 owner 的全部任务收尾，收尾期间不接收补跑请求。"""
+        self._draining = True
+        self._rerun.clear()
+        try:
+            await TASK_SUPERVISOR.drain(owner=self._owner)
+        finally:
+            self._rerun.clear()
+            self._draining = False

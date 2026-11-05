@@ -43,6 +43,7 @@ from .generation import (
     _evaluate_scene_candidate,
     _require_active_job,
     _save_progress,
+    current_visual_candidate,
     restart_video_generation,
     schedule_visual_job,
 )
@@ -55,17 +56,7 @@ _LOCKS: dict[int, asyncio.Lock] = {}
 def _manual_candidates(progress: VisualJobProgress) -> list[MediaCandidate]:
     if progress.candidate is not None:
         chain = MediaChainState.model_validate_json(progress.video_chain_json or "{}")
-        entries = list(chain.candidates)
-        if not any(entry.path == progress.candidate.media_path for entry in entries):
-            entries.append(
-                MediaCandidate(
-                    path=progress.candidate.media_path,
-                    attempt=chain.active_index or 0,
-                    review=progress.review_result,
-                    result_json=VisualCandidateResult(asset=progress.candidate).model_dump_json(),
-                )
-            )
-        return entries
+        return [*chain.candidates, current_visual_candidate(progress, chain)]
     entries = ImageChainState.model_validate_json(progress.image_chain_json or "{}").candidates
     if progress.pose_path and not any(entry.path == progress.pose_path for entry in entries):
         entries = [
@@ -233,7 +224,6 @@ async def manually_review_visual(
             progress.pose_path, progress.opening_review, progress.candidate = "", None, None
             progress.image_confirmed = False
             progress.review_result, progress.identity_evidence, progress.video_evidence = None, None, None
-            progress.identity_verdict = progress.review_verdict = progress.quality_verdict = None
             row.repair_count = 0
         progress.review_only = False
     else:
@@ -260,13 +250,19 @@ async def manually_review_visual(
         if saved_chain:
             chain_type = MediaChainState if chain_field == "video_chain_json" else ImageChainState
             chain = chain_type.model_validate_json(saved_chain)
-            chain.candidates = [entry for entry in chain.candidates if entry.path != selected.path] + [selected]
+            if chain_field == "video_chain_json":
+                if progress.candidate is not None and progress.candidate.media_path != selected.path:
+                    chain.candidates.append(current_visual_candidate(progress, chain))
+                chain.candidates = [entry for entry in chain.candidates if entry.path != selected.path]
+                chain.active_index = selected.attempt
+            else:
+                chain.candidates = [entry for entry in chain.candidates if entry.path != selected.path] + [selected]
             setattr(progress, chain_field, chain.model_dump_json())
         if progress.candidate is not None:
             if selected.result_json:
                 progress.candidate = VisualCandidateResult.model_validate_json(selected.result_json).asset
             progress.review_result = selected.review
-            progress.review_verdict = progress.review_verdict or "pass"
+            progress.identity_evidence = progress.video_evidence = None
             progress.review_only = True
         else:
             resolved = resolve_asset_reference(selected.path)
@@ -292,7 +288,7 @@ async def manually_review_visual(
                     visual_description=progress.visual_description,
                     outfit_description=progress.outfit_description or "",
                 )
-                progress.review_verdict, progress.review_only = "pass", True
+                progress.review_only = True
             else:
                 progress.review_only = False
     progress.paused_by_user, progress.failure_reason, progress.submission_unknown = False, "", False

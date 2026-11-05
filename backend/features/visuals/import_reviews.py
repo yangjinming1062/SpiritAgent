@@ -31,7 +31,7 @@ from features.media.review_views import (
     review_request_matches,
 )
 
-from .import_jobs import ImportContext, ImportWork, claim_import_job, save_import_progress
+from .import_jobs import ImportContext, ImportWork, claim_import_job, save_import_progress, sync_import_assets
 from .import_operations import ImportOperation, import_operations, import_result_view
 from .import_publication import update_pending_import_review
 from .import_reasoning import review_import_presentation
@@ -131,7 +131,7 @@ async def review_import_job(user_id: int, job_id: int, slot: int, expected: Medi
     work = await claim_import_job(user_id, job_id)
     if work is None:
         raise RequestError(status_code=409, message="导入检查正在进行")
-    work.context.review_only = True
+    work.review_only = True
     try:
         if slot == 0:
             await review_import_presentation(work, [])
@@ -148,7 +148,6 @@ async def review_import_job(user_id: int, job_id: int, slot: int, expected: Medi
         async with SESSION_LOCAL() as db:
             job = await db.get(VisualImportJob, job_id, with_for_update=True)
             if job.state == "running" and job.context_json.get("execution_key") == work.context.execution_key:
-                work.context.review_only = False
                 job.context_json = work.context.model_dump(mode="json")
                 job.state, job.stage = "paused", "confirmation"
                 report = work.context.presentation_review
@@ -165,6 +164,7 @@ async def review_import_job(user_id: int, job_id: int, slot: int, expected: Medi
                 ):
                     job.stage = "review_pending"
                 await notify_visuals_updated(db, user_id)
+                await sync_import_assets(db, user_id, job_id, work.context, work.result, work.media_path)
                 emit_ws_event(db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(job_id)})
                 await db.commit()
     return await import_review_view(user_id, job_id)
@@ -213,6 +213,7 @@ async def manually_review_import(
         )
         update_pending_import_review(work)
         job.context_json, job.result_json = context.model_dump(mode="json"), result.model_dump(mode="json")
+        await sync_import_assets(db, user_id, job_id, context, result, work.media_path)
         unresolved = any(entry.status not in {"created", "reused", "skipped", "undone"} for entry in result.components)
         job.state, job.stage, job.error = (
             ("paused", "review_pending" if unresolved else "confirmation", None)
@@ -269,10 +270,10 @@ async def manually_review_import(
     job.selections_json = [entry.model_dump(mode="json") for entry in operations if entry.key != key] + [
         operation.model_dump(mode="json")
     ]
-    component.operation_stage = "organize"
     component.revision += 1
     context.pending_application, context.presentation_review = None, None
     job.context_json, job.result_json = context.model_dump(mode="json"), result.model_dump(mode="json")
+    await sync_import_assets(db, user_id, job_id, context, result, snapshot.source.original_path or item.media_path)
     job.state, job.stage, job.error = "queued", "organize", None
     await notify_visuals_updated(db, user_id)
     return ManualAction(

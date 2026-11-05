@@ -3,7 +3,6 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
-from uuid import uuid4
 
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
@@ -74,8 +73,7 @@ async def review_media_job(user_id: int, job_id: int, body: MediaReviewRequest) 
                     MediaReviewAttempt.user_id == user_id,
                     MediaReviewAttempt.job_id == job_id,
                     MediaReviewAttempt.slot == body.slot,
-                    MediaReviewAttempt.result_json["quota_basis_id"].astext
-                    == (target.candidate_basis_id or target.basis_id),
+                    MediaReviewAttempt.quota_basis_id == (target.candidate_basis_id or target.basis_id),
                     MediaReviewAttempt.created_at >= utc_now() - timedelta(hours=24),
                 )
             )
@@ -87,8 +85,7 @@ async def review_media_job(user_id: int, job_id: int, body: MediaReviewRequest) 
                 request_id=body.request_id,
                 slot=body.slot,
                 basis_id=body.expected_basis_id,
-                execution_key=uuid4().hex,
-                result_json={"quota_basis_id": target.candidate_basis_id or target.basis_id},
+                quota_basis_id=target.candidate_basis_id or target.basis_id,
             )
             db.add(attempt)
             await db.commit()
@@ -103,10 +100,6 @@ async def review_media_job(user_id: int, job_id: int, body: MediaReviewRequest) 
                     .where(MediaReviewAttempt.id == attempt_id)
                     .values(
                         state="complete" if result is not None else "interrupted",
-                        result_json={
-                            "quota_basis_id": target.candidate_basis_id or target.basis_id,
-                            "result": result.model_dump(mode="json") if result is not None else None,
-                        },
                     )
                 )
                 await db.commit()

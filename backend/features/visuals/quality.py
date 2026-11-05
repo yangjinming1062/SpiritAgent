@@ -1,19 +1,19 @@
-"""分别汇总身份与画面要求的定性依据。"""
+"""从候选的权威视觉检查汇总失败依据。"""
+
+from features.media.review_contracts import VisualReview
 
 
-def quality_failure_message(
-    identity_verdict: str | None,
-    identity_reason: str,
-    review_verdict: str | None,
-    review_reason: str,
-    *,
-    require_identity: bool = True,
-) -> str | None:
+def quality_failure_message(review: VisualReview | None) -> str | None:
+    if review is None:
+        return None
+    if review.verdict == "pass":
+        return None
     failures: list[str] = []
-    if require_identity and identity_verdict != "pass":
-        label = "身份不一致" if identity_verdict == "fail" else "身份检查待复核"
-        failures.append(f"{label}：{identity_reason}" if identity_reason else label)
-    if review_verdict != "pass":
-        label = "画面要求未通过" if review_verdict == "fail" else "画面要求待复核"
-        failures.append(f"{label}：{review_reason}" if review_reason else label)
+    labels = {"identity": "身份", "goal": "画面要求", "quality": "画面质量"}
+    for name in review.required:
+        decision = getattr(review, name)
+        if decision is not None and decision.verdict == "pass":
+            continue
+        label = labels[name] + ("未通过" if decision and decision.verdict == "fail" else "待复核")
+        failures.append(f"{label}：{decision.reason}" if decision else label)
     return "；".join(failures) or None

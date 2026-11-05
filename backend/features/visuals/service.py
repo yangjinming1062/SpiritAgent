@@ -563,6 +563,22 @@ async def _require_stage_media_match(state: VisualPresentation, snapshot: Visual
         raise VisualStateError("这份影像与当前穿着的造型不符，请先换装或重新制作")
 
 
+async def _playback_is_current(
+    db: AsyncSession, state: VisualPresentation, play: VisualPlayback, item: PresentedVisual | None
+) -> bool:
+    presentation = get_presentation_snapshot(state.user_id)
+    return (
+        presentation is not None
+        and presentation.revision == play.presentation_epoch == state.presentation_epoch
+        and play.state_revision == state.state_revision
+        and ensure_utc(play.expires_at) > utc_now()
+        and item is not None
+        and item.version == play.visual_version
+        and bool(play.snapshot_json)
+        and await _life_playback_is_current(db, state.user_id, state, play)
+    )
+
+
 async def claim_playback(user_id: int, play_id: str, *, client_id: str) -> bool:
     async with _lock(user_id), SESSION_LOCAL() as db:
         state = await require_presentation_row(db, user_id, lock=True)
@@ -572,16 +588,7 @@ async def claim_playback(user_id: int, play_id: str, *, client_id: str) -> bool:
         if play.client_id is not None and play.client_id != client_id:
             return False
         item = await presented_version(db, user_id, play.version_id)
-        presentation = get_presentation_snapshot(user_id)
-        stale = (
-            presentation is None
-            or presentation.revision != play.presentation_epoch
-            or play.presentation_epoch != state.presentation_epoch
-            or play.state_revision != state.state_revision
-            or item is None
-            or item.version != play.visual_version
-            or not await _life_playback_is_current(db, user_id, state, play)
-        )
+        stale = not await _playback_is_current(db, state, play, item)
         blocked = None
         if not stale and item is not None and play.source == "autonomous":
             blocked = await visual_autonomous_block_reason(
@@ -740,18 +747,7 @@ async def record_playback(
                 return
             presentation = get_presentation_snapshot(user_id)
             item = await presented_version(db, user_id, play.version_id)
-            if (
-                play.status != "claimed"
-                or presentation is None
-                or presentation.revision != play.presentation_epoch
-                or play.presentation_epoch != state.presentation_epoch
-                or play.state_revision != state.state_revision
-                or ensure_utc(play.expires_at) <= utc_now()
-                or item is None
-                or item.version != play.visual_version
-                or not play.snapshot_json
-                or not await _life_playback_is_current(db, user_id, state, play)
-            ):
+            if play.status != "claimed" or not await _playback_is_current(db, state, play, item):
                 raise VisualStateError("播放指令已失效，不能记录为已呈现")
             # 窗口模式有两种合格回执：透明主体视频按真实媒体种类记账，静态投影按 window_static。
             expected_kinds = (

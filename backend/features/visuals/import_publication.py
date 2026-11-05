@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from features.media.review_contracts import review_dimension_passes, visual_reference_basis
 
-from .import_jobs import ImportCatalogCandidate, ImportWork
+from .import_jobs import ImportCatalogCandidate, ImportWork, sync_import_assets
 from .import_operations import import_operations
 from .models import VisualImportJob
 from .publication import publish_import_revision
@@ -79,7 +79,7 @@ def update_pending_import_review(work: ImportWork) -> None:
         return
     selected = [
         candidate
-        for candidate in work.context.candidates
+        for candidate in work.context.selected_materials
         if any(
             entry.material_id == candidate.material_id
             and entry.observation.kind == candidate.kind
@@ -265,6 +265,7 @@ async def complete_import_analysis(
         }
         job.context_json = work.context.model_dump(mode="json")
         job.result_json = work.result.model_dump(mode="json")
+        await sync_import_assets(db, work.user_id, job.id, work.context, work.result, work.media_path)
         job.state, job.stage, job.error = "paused", "review_pending" if verdict == "review" else "confirmation", None
         await notify_visuals_updated(db, work.user_id)
         await db.commit()

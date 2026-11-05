@@ -14,6 +14,7 @@ from features.action_library.queries import action_by_preset_key, action_preset_
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
 from features.jobs.service import requested_job_id
 from features.media.chain import MediaChainState
+from features.media.review_contracts import VisualReview
 from features.media.video_queue.contracts import VideoQueueInfo
 from features.media.video_queue.service import video_attempt_queue_info
 
@@ -338,12 +339,7 @@ def _job_view(job: VisualJob, queue_info: VideoQueueInfo | None = None) -> Visua
     progress = parse_job_progress(job.checkpoint)
     error = job.error
     if job.state == "failed" and progress is not None and progress.failure_reason == "quality_failed":
-        error = (
-            quality_failure_message(
-                progress.identity_verdict, progress.identity_reason, progress.review_verdict, progress.review_reason
-            )
-            or error
-        )
+        error = quality_failure_message(progress.review_result) or error
     return VisualJobView(
         id=job.id,
         target_kind=job.target_kind,
@@ -598,10 +594,7 @@ async def list_jobs(
             VisualJob.stage,
             VisualJob.error,
             VisualJob.checkpoint["failure_reason"].as_string().label("failure_reason"),
-            VisualJob.checkpoint["identity_verdict"].as_string().label("identity_verdict"),
-            VisualJob.checkpoint["identity_reason"].as_string().label("identity_reason"),
-            VisualJob.checkpoint["review_verdict"].as_string().label("review_verdict"),
-            VisualJob.checkpoint["review_reason"].as_string().label("review_reason"),
+            VisualJob.checkpoint["review_result"].label("review_result"),
             VisualJob.checkpoint["video_chain_json"].as_string().label("video_chain_json"),
             VisualJob.result_visual_id,
             VisualJob.updated_at,
@@ -628,14 +621,10 @@ async def list_jobs(
             values = dict(row)
             values.pop("video_chain_json")
             values["video_queue"] = queue_info.get(requests.get(row["id"]))
-            identity_verdict = values.pop("identity_verdict")
-            identity_reason = values.pop("identity_reason") or ""
-            verdict = values.pop("review_verdict")
-            reason = values.pop("review_reason") or ""
+            raw_review = values.pop("review_result")
+            review = VisualReview.model_validate(raw_review) if raw_review is not None else None
             if values["state"] == "failed" and values["failure_reason"] == "quality_failed":
-                values["error"] = (
-                    quality_failure_message(identity_verdict, identity_reason, verdict, reason) or values["error"]
-                )
+                values["error"] = quality_failure_message(review) or values["error"]
             jobs.append(VisualJobView.model_validate(values))
         return VisualJobListResponse(
             jobs=jobs,

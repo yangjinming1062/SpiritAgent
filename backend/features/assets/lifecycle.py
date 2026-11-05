@@ -193,6 +193,8 @@ async def _cleanup_user_assets(user_id: int, *, discover: bool = False) -> int:
                 .with_for_update(skip_locked=True)
             )
         )
+        if not pending:
+            return 0
         try:
             referenced = await collect_live_asset_paths(db, user_id)
         except AssetReferencesUnavailable:

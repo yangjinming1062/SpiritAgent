@@ -17,7 +17,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from sqlalchemy import or_, select
 
 from features.assets.lifecycle import cleanup_asset_directories_after_task
-from features.jobs.service import bind_job_assets
+from features.jobs.service import RETAINED_JOB_ASSET_ROLE, bind_job_assets
 
 from .models import VisualImportJob, VisualItem, VisualVersion
 from .publication import publish_imported_visual
@@ -168,7 +168,7 @@ async def import_visual(user_id: int, data: bytes, *, filename: str, title: str,
                     )
                     db.add(job)
                     await db.flush()
-                    await bind_job_assets(db, user_id, job.id, {path}, "original")
+                    await bind_job_assets(db, user_id, job.id, {path}, RETAINED_JOB_ASSET_ROLE)
                 await notify_visuals_updated(db, user_id)
                 await db.commit()
         return await visual_detail(user_id, visual_id)

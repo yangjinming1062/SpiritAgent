@@ -1,7 +1,6 @@
 """账户资讯来源与可恢复登录；平台凭证仅在后端与采集服务之间流转。"""
 
 import asyncio
-from contextlib import suppress
 from copy import deepcopy
 from datetime import timedelta
 from uuid import uuid4
@@ -18,9 +17,9 @@ from infrastructure.web.social_sources import (
     parse_social_credentials,
     validate_social_credentials,
 )
+from runtime.background import TaskScope
 from runtime.lifecycle import RuntimeParticipant
-from runtime.task_supervisor import TASK_SUPERVISOR
-from runtime.user_maintenance import is_user_in_maintenance, track_user_task
+from runtime.user_maintenance import is_user_in_maintenance
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,7 +31,7 @@ from .social_schemas import SocialAccountList, SocialAccountView, SocialCredenti
 
 logger = get_logger(__name__)
 _OWNER = "configuration.social_logins"
-_workers: dict[tuple[int, str], tuple[str, asyncio.Task[None]]] = {}
+_WORKERS = TaskScope[tuple[int, str, str]](_OWNER)
 _TERMINAL_LOGIN_STATES = {"logged_in", "expired"}
 
 
@@ -163,14 +162,9 @@ async def _cancel_remote(platform: str, pending: tuple[str, str] | None) -> None
 
 
 async def _stop_worker(user_id: int, platform: str, pending: tuple[str, str] | None) -> None:
-    worker = _workers.get((user_id, platform))
-    if worker is not None and pending is not None and worker[0] == pending[1]:
-        task = worker[1]
-        if task is asyncio.current_task():
-            return
-        task.cancel()
-        with suppress(asyncio.CancelledError):
-            await task
+    if pending is None:
+        return
+    await _WORKERS.cancel_and_wait((user_id, platform, pending[1]))
 
 
 async def put_social_credentials(db: AsyncSession, user_id: int, platform: str, raw: str) -> SocialAccountView:
@@ -381,24 +375,20 @@ async def _poll_login(user_id: int, platform: str, session_id: str) -> None:
                     _reset_login(current)
                     await db.commit()
                     await _cancel_remote(platform, pending)
-        key = (user_id, platform)
-        worker = _workers.get(key)
-        if worker is not None and worker[1] is asyncio.current_task():
-            _workers.pop(key, None)
 
 
 def _start_worker(user_id: int, platform: str, session_id: str) -> None:
-    key = user_id, platform
     if is_user_in_maintenance(user_id):
         return
-    previous = _workers.get(key)
-    if previous is not None:
-        if previous[0] == session_id and not previous[1].done():
-            return
-        previous[1].cancel()
-    task = asyncio.create_task(_poll_login(user_id, platform, session_id), name=f"social-login:{platform}:{user_id}")
-    _workers[key] = (session_id, task)
-    track_user_task(user_id, task, owner=_OWNER)
+    for key in tuple(_WORKERS):
+        if key[:2] == (user_id, platform) and key[2] != session_id and (task := _WORKERS.running(key)) is not None:
+            task.cancel()
+    _WORKERS.spawn(
+        (user_id, platform, session_id),
+        lambda: _poll_login(user_id, platform, session_id),
+        name=f"social-login:{platform}:{user_id}",
+        user_id=user_id,
+    )
 
 
 async def resume_user_social_logins(user_id: int | None = None) -> None:
@@ -416,7 +406,7 @@ async def resume_user_social_logins(user_id: int | None = None) -> None:
 
 
 async def drain_social_logins() -> None:
-    await TASK_SUPERVISOR.drain(owner=_OWNER)
+    await _WORKERS.drain()
 
 
 def runtime_participants() -> tuple[RuntimeParticipant, ...]:
