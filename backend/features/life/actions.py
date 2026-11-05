@@ -1,5 +1,6 @@
 """可执行生活步骤的输入与永久阅读成果，不包含能力实现。"""
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Literal
 
@@ -72,11 +73,44 @@ class ReadingAction(ActionInput):
     )
 
 
+class OutreachAction(ActionInput):
+    capability: Literal["outreach.schedule"]
+    name: str = Field(default="主动联系", min_length=1, max_length=100)
+    prompt: str = Field(min_length=1, max_length=6000, description="结合实际已完成事实冻结的后续联系目的与背景")
+    scheduled_at: AwareDatetime
+    expires_at: AwareDatetime
+
+
 LifeAction = Annotated[
-    VisualAction | SceneAction | OutfitAction | DesignAction | ReadingAction, Field(discriminator="capability")
+    VisualAction | SceneAction | OutfitAction | DesignAction | ReadingAction | OutreachAction,
+    Field(discriminator="capability"),
 ]
 LIFE_ACTION = TypeAdapter(LifeAction)
 CREATION_CAPABILITIES = frozenset({"visual.generate", "scene.create", "outfit.create", "action.design"})
+
+
+@dataclass(frozen=True)
+class LifeCapability:
+    input_model: type[ActionInput]
+    description: str
+
+
+LIFE_CAPABILITIES = {
+    "outfit.create": LifeCapability(
+        OutfitAction, "制作并保存新造型图片；已有造型不合适且有具体需要时使用，保持角色固定身份。"
+    ),
+    "scene.create": LifeCapability(SceneAction, "制作并保存环境照片；不描绘参考角色，不改变当前画面，与造型相互独立。"),
+    "action.design": LifeCapability(DesignAction, "设计并评审可复用动作；先复用已有动作，登记和评审不代表已经表演。"),
+    "visual.generate": LifeCapability(
+        VisualAction, "用已有造型、环境和动作制作图片或视频，要求须与所选素材相容；成品保存后才可呈现。"
+    ),
+    "content.read": LifeCapability(
+        ReadingAction, "为当前生活目的读取已有资讯或公开网页，也可搜索一次，总计最多三份资料。"
+    ),
+    "outreach.schedule": LifeCapability(
+        OutreachAction, "为有具体缘由的次日联系保存等待意图；由未来回合结合最新情境决定是否开口。"
+    ),
+}
 
 
 class ReadingSource(ActionInput):

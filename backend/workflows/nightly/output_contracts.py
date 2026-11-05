@@ -4,6 +4,7 @@ from typing import Annotated, Any, Literal
 
 from features.journal.schemas import DiaryContent
 from infrastructure.ai.prompt_engineer import LlmJsonValidationError
+from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter
 
 
@@ -12,6 +13,7 @@ class NightlyActionOutput(BaseModel):
 
     id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,48}$")
     capability: str = Field(min_length=1)
+    pursuit_id: ResourceId | None = Field(default=None, description="动作明确推进的已有生活事项；无关联时为空")
     depends_on: list[str]
     arguments: dict[str, Any]
 

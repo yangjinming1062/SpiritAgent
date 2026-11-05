@@ -56,6 +56,13 @@ async def active_pursuit_title(db: AsyncSession, user_id: int, pursuit_id: int |
     )
 
 
+async def steps_by_id(db: AsyncSession, user_id: int, identifiers: Collection[int]) -> dict[int, LifeStepView]:
+    if not identifiers:
+        return {}
+    rows = await db.scalars(select(LifeStep).where(LifeStep.user_id == user_id, LifeStep.id.in_(identifiers)))
+    return {row.id: step_view(row) for row in rows}
+
+
 def empty_state_view(user_id: int) -> LifeStateView:
     """返回尚未落库账户的初始生活状态。"""
 

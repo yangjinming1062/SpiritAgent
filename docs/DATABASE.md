@@ -143,7 +143,7 @@ flowchart LR
     pursuit_evidence --> life_pursuits
     pursuit_evidence --> life_events
     nightly_activity_actions --> nightly_activity_logs
-    nightly_activity_actions --> jobs
+    nightly_activity_actions --> life_steps
     cron_jobs --> conversations
     companion_intents --> cron_jobs
 ```

@@ -16,7 +16,7 @@ from features.memory.memory_admin import list_memories
 from features.memory.memory_bootstrap import read_user_profile
 from features.memory.memory_format import format_memory_record
 from features.memory.memory_narratives import load_companion_reflection, save_companion_reflection
-from features.memory.memory_review import review_memories
+from features.memory.memory_review import review_scope_if_due
 from features.memory.memory_store import backfill_memory_embeddings
 from features.posts.store import collect_post_interactions
 from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, call_llm_json
@@ -32,13 +32,12 @@ from runtime.presets import COMPANION_PRESET_ID
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
-from workflows.life_events import record_nightly_actions
 from workflows.nightly.journal_nightly import project_today
 from workflows.nightly.models import NightlyActivityLog
 from workflows.nightly.nightly_planning import (
     ActionExecutionResult,
     DateContext,
-    load_terminal_action_results,
+    load_action_results,
     run_nightly_planning,
 )
 from workflows.nightly.output_contracts import parse_reflection, reflection_schema
@@ -163,8 +162,33 @@ async def _update_log(
         if summary is not None:
             log.summary = summary
         if payload is not None:
+            if "stages" in payload:
+                merged = {item["stage"]: item for item in (log.payload or {}).get("stages", [])}
+                for item in payload["stages"]:
+                    if item["status"] != "skipped" or item["stage"] not in merged:
+                        merged[item["stage"]] = item
+                payload = {**payload, "stages": list(merged.values())}
+                log.summary = "; ".join(f"{item['stage']}:{item['status']}" for item in merged.values())
+                if status == "completed" and any(item["status"] == "error" for item in merged.values()):
+                    log.status = "completed_with_errors"
             log.payload = {**(log.payload or {}), **payload}
         await db.commit()
+
+
+def _stage_results(
+    stages: list[dict[str, Any]], diagnostics: dict[str, list[LlmAttemptDiagnostic]]
+) -> list[dict[str, Any]]:
+    return [
+        {
+            **stage,
+            **(
+                {"diagnostics": [item.model_dump() for item in diagnostics[stage["stage"]]]}
+                if diagnostics.get(stage["stage"])
+                else {}
+            ),
+        }
+        for stage in stages
+    ]
 
 
 def _successful_action_facts(actions: dict[str, ActionExecutionResult]) -> list[dict[str, Any]]:
@@ -174,6 +198,7 @@ def _successful_action_facts(actions: dict[str, ActionExecutionResult]) -> list[
             continue
         item: dict[str, Any] = {
             "action_key": action_key,
+            "step_id": action.life_step_id,
             "capability": action.capability,
             "status": action.status,
             "fact": fact,
@@ -201,6 +226,9 @@ async def run_nightly_pipeline(scope: MemoryScope, target_date: date) -> bool:
                 )
             ).scalar_one_or_none()
             if log is None:
+                timezone = await resolve_user_timezone(db, user_id)
+                if timezone is None or not in_nightly_window(utc_now(), ZoneInfo(timezone)):
+                    return False
                 log = NightlyActivityLog(user_id=user_id, target_date=target_date, status="running")
                 db.add(log)
             elif log.status in ("completed", "completed_with_errors"):
@@ -232,6 +260,8 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
     async with session_scope() as db:
         user = await nightly_account(db, user_id)
         tz_str = await resolve_user_timezone(db, user_id)
+        log = await db.get(NightlyActivityLog, log_id)
+        has_plan = bool(log and log.payload and "nightly_plan" in log.payload)
     if user is None or not user.is_active:
         logger.info("nightly_activity: skipped, inactive account", extra={"user_id": user_id})
         await _update_log(log_id, status="skipped", summary="账户不可用")
@@ -256,13 +286,13 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
     }
     if in_nightly_window(utc_now(), ZoneInfo(tz_str)):
         try:
-            await review_memories(
+            reviewed = await review_scope_if_due(
                 scope,
                 task=AiTaskKey.nightly,
                 before_call=partial(require_nightly_window, ZoneInfo(tz_str)),
                 reasoning_effort=NIGHTLY_REASONING_EFFORT,
             )
-            stages.append({"stage": "memory_review", "status": "ok"})
+            stages.append({"stage": "memory_review", "status": "ok" if reviewed else "skipped"})
         except NightlyWindowClosedError as exc:
             stages.append({"stage": "memory_review", "status": "skipped", "reason": str(exc)})
         except Exception as exc:
@@ -313,7 +343,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
     }
 
     topic_reserve: list[dict[str, Any]] = []
-    if user.nightly_activity_enabled:
+    if user.nightly_activity_enabled and not has_plan:
         try:
             topic_result = await discover_topics(
                 scope,
@@ -345,11 +375,11 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
                 "nightly_activity: topic discovery failed", extra={"user_id": user_id, "error_type": type(exc).__name__}
             )
             stages.append({"stage": "topic discovery", "status": "error", "error": type(exc).__name__})
-    else:
-        stages.append({"stage": "topic discovery", "status": "skipped", "reason": "未启用主动信息检索或未配置采集服务"})
+    elif not user.nightly_activity_enabled:
+        stages.append({"stage": "topic discovery", "status": "skipped", "reason": "夜间自主规划已关闭"})
 
     action_results: dict[str, ActionExecutionResult] = {}
-    if user.nightly_activity_enabled and in_nightly_window(utc_now(), ZoneInfo(tz_str)):
+    if user.nightly_activity_enabled or await load_action_results(log_id):
         try:
             planning_result = await run_nightly_planning(
                 user_id,
@@ -361,12 +391,23 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
                 anomaly_stats,
                 clean_messages,
                 posts.threads,
-                topic_reserve=topic_reserve,
                 log_id=log_id,
+                persona=persona_snapshot,
+                life_context=life_context,
+                language=user_language,
+                topic_reserve=topic_reserve,
                 diagnostics=stage_diagnostics["planning"],
             )
-            stages.append({"stage": "planning", "status": "ok", "actions": planning_result.model_dump()})
+            stages.append({"stage": "planning", "status": "waiting" if planning_result.pending else "ok"})
             action_results = planning_result.actions
+            if planning_result.pending:
+                await _update_log(
+                    log_id,
+                    status="running",
+                    summary="等待已受理的生活步骤",
+                    payload={"stages": _stage_results(stages, stage_diagnostics)},
+                )
+                return False
         except NightlyWindowClosedError as exc:
             stages.append({"stage": "planning", "status": "skipped", "reason": str(exc)})
         except Exception as exc:
@@ -374,13 +415,13 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
             stages.append({"stage": "planning", "status": "error", "error": str(exc)})
             # 规划阶段中途失败时，账本里已落终态的动作仍是真实发生的事。
             try:
-                action_results = await load_terminal_action_results(log_id)
+                action_results = await load_action_results(log_id)
             except Exception:
                 logger.exception("nightly_activity: action ledger unavailable", extra={"user_id": user_id})
     else:
         reason = "夜间窗口已结束" if user.nightly_activity_enabled else "夜间自主规划已关闭"
         stages.append({"stage": "planning", "status": "skipped", "reason": reason})
-        action_results = await load_terminal_action_results(log_id)
+        action_results = await load_action_results(log_id)
 
     # 刷新本轮新发布的动态，并在下面排除重复的动作事实。
     async with session_scope() as db:
@@ -388,12 +429,6 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
             db, user_id, local_date=target_date, user_timezone=tz_str, utc_start=utc_start, utc_end=utc_end
         )
     action_facts = _successful_action_facts(action_results)
-    try:
-        await record_nightly_actions(user_id, local_date_str, action_facts)
-    except Exception as exc:
-        logger.exception("nightly_activity: life event recording failed", extra={"user_id": user_id, "error": str(exc)})
-        stages.append({"stage": "life events", "status": "error", "error": str(exc)})
-
     # 没有可读的用户发言、成功行动或动态互动时不虚构日记；反思与用户可见日记共用这一门控。
     has_readable_messages = any(message.role == "user" and message.content for message in today_messages)
     has_material = bool(has_readable_messages or action_facts or posts.threads)
@@ -457,9 +492,6 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
     else:
         stages.append({"stage": "journal nightly", "status": "skipped"})
 
-    for stage in stages:
-        if diagnostics := stage_diagnostics.get(stage["stage"]):
-            stage["diagnostics"] = [item.model_dump() for item in diagnostics]
     has_errors = any(stage["status"] == "error" for stage in stages) or any(
         action.status in _FAILED_ACTION_STATUSES for action in action_results.values()
     )
@@ -467,6 +499,6 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         log_id,
         status="completed_with_errors" if has_errors else "completed",
         summary="; ".join(f"{s['stage']}:{s['status']}" for s in stages),
-        payload={"stages": stages, "target_date": local_date_str},
+        payload={"stages": _stage_results(stages, stage_diagnostics), "target_date": local_date_str},
     )
     return True

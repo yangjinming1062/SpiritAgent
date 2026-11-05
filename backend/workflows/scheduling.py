@@ -41,7 +41,7 @@ from features.life.execution import execution_user_ids
 from features.life.queries import due_review_user_ids
 from features.life.use_cases import pending_presentation_users
 from features.memory.memory_learning import list_memory_review_scopes
-from features.memory.memory_review import memory_review_backed_off, review_memories
+from features.memory.memory_review import review_scope_if_due
 from features.posts.autonomous import scan_autonomous_posts
 from features.topics.store import has_unshared_topics
 from infrastructure.ai.tasks import AiTaskKey
@@ -76,24 +76,9 @@ _BG = TaskBag("scheduler.cron")
 _SCANS: dict[str, asyncio.Task] = {}
 _SCOPE_TASKS: dict[tuple[str, MemoryScope], asyncio.Task] = {}
 
-# 每作用域最近一次成功审阅的时间戳：进程本地，遵守单进程部署边界。
-_LAST_MEMORY_REVIEW: dict[MemoryScope, float] = {}
-
 # per-user 最近一次成功的 nightly pipeline 运行的目标本地日。
 _LAST_NIGHTLY_RUN: dict[MemoryScope, date] = {}
 
-# 待审作用域每 10 分钟扫描；成功后按配置节流，失败由记忆域退避。
-_LAST_MEMORY_REVIEW_SCAN: float = 0.0
-_MEMORY_REVIEW_SCAN_INTERVAL_SECONDS: int = 600
-
-# nightly activity 扫描的外层节流。
-_LAST_NIGHTLY_SCAN: float = 0.0
-
-# outbox gc 扫描的外层节流（每 15 分钟运行一次）。
-_LAST_OUTBOX_GC_SCAN: float = 0.0
-_OUTBOX_GC_INTERVAL_SECONDS: int = 900
-_LAST_LIFE_SCAN: float = 0.0
-_LIFE_SCAN_INTERVAL_SECONDS: int = 60
 
 _IGNORED_OUTREACH_MIN_IGNORED_SECONDS = 3600  # 用户持续不理伙伴 1 小时后才有资格触发
 _IGNORED_OUTREACH_MIN_SPACING_SECONDS = 3600  # 两次触发之间的最小间距——沉默结束意图后的再触发安全网
@@ -101,17 +86,16 @@ _IGNORED_OUTREACH_MIN_SPACING_SECONDS = 3600  # 两次触发之间的最小间�
 _MAX_DUE_PER_TICK = 200
 
 
-def invalidate_user_scheduler_state(user_id: int) -> None:
-    """账户维护结束时丢弃该用户由旧数据计算的调度节流镜像。"""
-    for state in (_LAST_MEMORY_REVIEW, _LAST_NIGHTLY_RUN):
-        for scope in list(state):
-            if scope.user_id == user_id:
-                state.pop(scope, None)
-
-
 async def drain() -> None:
     """取消并 await 所有后台 task，容忍 CancelledError；由 bootstrap/lifecycle.py 的停机 drain 调用，避免 SIGTERM 在 db.commit() 中途被 engine 释放。"""
     await _BG.drain()
+
+
+def invalidate_user_scheduler_state(user_id: int) -> None:
+    """账户维护结束时丢弃该用户由旧数据计算的调度节流镜像。"""
+    for scope in list(_LAST_NIGHTLY_RUN):
+        if scope.user_id == user_id:
+            _LAST_NIGHTLY_RUN.pop(scope, None)
 
 
 def _log_task_error(name: str, task: asyncio.Task) -> None:
@@ -129,15 +113,23 @@ async def _run_scoped(factory: Callable[[], Coroutine[Any, Any, object]]) -> Non
     await factory()
 
 
-def _spawn_scan(name: str, factory: Callable[[], Coroutine[Any, Any, None]]) -> None:
-    """扫描移出 tick 关键路径；同名扫描仍在飞则跳过本轮。"""
+_SCAN_LAST_RUN: dict[str, float] = {}
+
+
+def _spawn_scan(name: str, factory: Callable[[], Coroutine[Any, Any, None]], *, interval: float = 0.0) -> None:
+    """扫描移出 tick 关键路径；同名扫描仍在飞或未到周期间隔则跳过本轮。"""
     running = _SCANS.get(name)
     if running is not None and not running.done():
         logger.warning("cron: scan still in flight, skipping", extra={"scan": name})
         return
+    current = time.monotonic()
+    previous = _SCAN_LAST_RUN.get(name)
+    if previous is not None and current - previous < interval:
+        return
 
     task = asyncio.create_task(_run_scoped(factory), name=f"scheduler.{name}")
     _SCANS[name] = task
+    _SCAN_LAST_RUN[name] = current
     _BG.add(task, on_error=partial(_log_task_error, name))
 
 
@@ -304,13 +296,15 @@ async def run_tick() -> None:
     """为到期 job CAS 推进 next_run_at；special 持久化等待意图，standard 直接启动独立任务回合。"""
     now = utc_now()
     # 慢扫描与 cron-job 派发独立——不能用 ``if not due_jobs`` gate，否则没有 cron job 的安装永远不会触发记忆维护/GC。
-    _spawn_scan("memory_review", lambda: _maybe_run_memory_review(now))
-    _spawn_scan("nightly_activity", lambda: _maybe_run_autonomous_activity(now))
-    _spawn_scan("outbox_gc", lambda: _maybe_run_outbox_gc(now))
+    _spawn_scan("memory_review", _maybe_run_memory_review, interval=600)
+    _spawn_scan(
+        "nightly_activity", lambda: _maybe_run_autonomous_activity(now), interval=SETTINGS.nightly_scan_interval_seconds
+    )
+    _spawn_scan("outbox_gc", run_outbox_gc, interval=900)
     _spawn_scan("ignored_outreach", _maybe_run_ignored_outreach)
     _spawn_scan("companion_waits", _scan_companion_waits)
     _spawn_scan("post_impulse", scan_autonomous_posts)
-    _spawn_scan("life_state", _maybe_run_life_scan)
+    _spawn_scan("life_state", _maybe_run_life_scan, interval=60)
     due_jobs = await _select_due_jobs()
     if len(due_jobs) > _MAX_DUE_PER_TICK:
         logger.warning(
@@ -329,11 +323,7 @@ async def run_tick() -> None:
 
 
 async def _maybe_run_life_scan() -> None:
-    global _LAST_LIFE_SCAN
     now = utc_now()
-    if now.timestamp() - _LAST_LIFE_SCAN < _LIFE_SCAN_INTERVAL_SECONDS:
-        return
-    _LAST_LIFE_SCAN = now.timestamp()
     async with session_scope() as db:
         active_users = await list_user_ids(db, active_only=True)
         completed = await complete_user_ids(db, active_users)
@@ -360,57 +350,29 @@ async def _maybe_run_life_scan() -> None:
             )
 
 
-async def _maybe_run_outbox_gc(now: datetime) -> None:
-    """定期执行 WS Outbox 历史事件与过期内部陪伴事件的物理清理。"""
-    global _LAST_OUTBOX_GC_SCAN
-    if now.timestamp() - _LAST_OUTBOX_GC_SCAN < _OUTBOX_GC_INTERVAL_SECONDS:
-        return
-    _LAST_OUTBOX_GC_SCAN = now.timestamp()
-    await run_outbox_gc()
-
-
-async def _review_scope_memories(scope: MemoryScope) -> bool:
-    """审阅一个作用域的记忆；没有可用 LLM 配置时只记录并跳过（返回 False），不算失败。"""
+async def _run_memory_review(scope: MemoryScope) -> None:
+    """没有可用 LLM 配置时跳过，不记录审阅成功或失败。"""
     async with session_scope() as db:
         if not await user_is_active(db, scope.user_id):
-            return False
+            return
         llm_config = await resolve_user_llm_config(db, scope.user_id, AiTaskKey.memory_review)
     if not llm_config.is_configured:
         logger.info("memory_review: skipped, missing llm config", extra={"user_id": scope.user_id})
-        return False
-    await review_memories(scope, llm_config=llm_config)
-    return True
-
-
-async def _maybe_run_memory_review(now: datetime) -> None:
-    """按域发现待审材料并独立提交；在途域不重复提交，不阻塞其他用户的后续扫描。"""
-    global _LAST_MEMORY_REVIEW_SCAN
-    if now.timestamp() - _LAST_MEMORY_REVIEW_SCAN < _MEMORY_REVIEW_SCAN_INTERVAL_SECONDS:
         return
-    _LAST_MEMORY_REVIEW_SCAN = now.timestamp()
+    await review_scope_if_due(scope, llm_config=llm_config)
 
+
+async def _maybe_run_memory_review() -> None:
+    """按域发现待审材料并独立提交；在途域不重复提交，不阻塞其他用户的后续扫描。"""
     async with session_scope() as db:
         scopes = await list_memory_review_scopes(db)
     for scope in scopes:
         if is_user_in_maintenance(scope.user_id):
             continue
-        if now.timestamp() - _LAST_MEMORY_REVIEW.get(scope, 0.0) < SETTINGS.memory_review_interval_seconds:
-            continue
-        if memory_review_backed_off(scope):
-            continue
         _spawn_scope_task("memory_review", scope, partial(_run_memory_review, scope))
 
 
-async def _run_memory_review(scope: MemoryScope) -> None:
-    if await _review_scope_memories(scope):
-        _LAST_MEMORY_REVIEW[scope] = utc_now().timestamp()
-
-
 async def _maybe_run_autonomous_activity(now: datetime) -> None:
-    global _LAST_NIGHTLY_SCAN
-    if now.timestamp() - _LAST_NIGHTLY_SCAN < SETTINGS.nightly_scan_interval_seconds:
-        return
-    _LAST_NIGHTLY_SCAN = now.timestamp()
     eligible: list[tuple[MemoryScope, date]] = []
     async with session_scope() as db:
         active_users = await list_user_ids(db, active_only=True)
@@ -432,7 +394,8 @@ async def _maybe_run_autonomous_activity(now: datetime) -> None:
             await close_expired_logs(
                 db, [log.id for log in unfinished.get(user_id, ()) if log.target_date < latest_date]
             )
-            if not in_nightly_window(now, zone):
+            resuming = any(log.target_date == latest_date for log in unfinished.get(user_id, ()))
+            if not in_nightly_window(now, zone) and not resuming:
                 continue
             if _LAST_NIGHTLY_RUN.get(scope) == latest_date:
                 continue
@@ -451,7 +414,7 @@ async def _run_nightly_activity(scope: MemoryScope, target: date) -> None:
         return
     # 扫描与实际启动之间可能跨过窗口或本地午夜。
     now = utc_now()
-    if target != now.astimezone(zone).date() - timedelta(days=1) or not in_nightly_window(now, zone):
+    if target != now.astimezone(zone).date() - timedelta(days=1):
         return
     if await run_nightly_pipeline(scope, target) is True:
         _LAST_NIGHTLY_RUN[scope] = target

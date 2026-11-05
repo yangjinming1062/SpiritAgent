@@ -31,7 +31,7 @@ PLANNING_SYSTEM_PROMPT = (
 
 ## Grounding
 The supplied dates identify the day being reviewed, the actual planning time in the user's timezone, and the following calendar day. Judge timing against those dates; memories and earlier plans do not prove that an event happened again on the reviewed day.
-Base every idea on concrete support: an explicit date or promise, a relevant enduring preference, an unresolved issue from the source day, the supplied current mood, or a matter the companion is still handling according to the current-life background. A completed or failed step changes what may be planned next. Preserve memory/profile scope and uncertainty. Silence, today_msg_count, seven_day_avg, or a date alone do not prove neglect, emotional need, routine, consent to contact, weather, holidays, or calendar events. Never use guilt or relationship pressure. Check the records of recent autonomous actions and recent posts to avoid repetition; each paid action needs a specific purpose.
+Base every idea on concrete support: an explicit date or promise, a relevant enduring preference, an unresolved issue from the source day, the supplied current mood, or a matter the companion is still handling according to the current-life background. First review ongoing life matters and actual results; do not create a parallel goal for a matter that already has a planned, running or unknown step. Set pursuit_id only when the action directly advances one of the supplied active_pursuits; use null for an independently grounded expression or contact, without assigning it to an unrelated focused matter. A completed or failed step changes what may be planned next. Preserve memory/profile scope and uncertainty. Silence, today_msg_count, seven_day_avg, or a date alone do not prove neglect, emotional need, routine, consent to contact, weather, holidays, or calendar events. Never use guilt or relationship pressure. Check the records of recent autonomous actions and recent posts to avoid repetition; each paid action needs a specific purpose.
 {life_facts}
 {life_narrative}
 {post_interactions_guidance}
@@ -51,7 +51,7 @@ Write prompt as a self-contained task brief addressed to the future proactive tu
 Choose local_time, the user's local clock time on tomorrow_date, for a concrete reason. It is the earliest time to consider contact, not a guaranteed delivery time: availability and disturbance settings may delay the turn within that day. Keep any time-sensitive purpose explicit so the future turn can judge it against the actual time and latest conversation; do not assume the user will be awake, free, or in the same situation as during planning.
 
 Return only JSON, no Markdown or extra fields:
-{"theme":"short idea or empty","rationale":"grounded reason","actions":[{"id":"stable_short_id","capability":"exact available name","depends_on":[],"arguments":{}}]}
+{"theme":"short idea or empty","rationale":"grounded reason","actions":[{"id":"stable_short_id","capability":"exact available name","pursuit_id":null,"depends_on":[],"arguments":{}}]}
 """.replace("{post_interactions_guidance}", POST_INTERACTION_CONTEXT_GUIDANCE["en"])
     .replace("{life_facts}", LIFE_FACT_GUIDANCE["en"])
     .replace("{life_narrative}", LIFE_NARRATIVE_GUIDANCE["en"])

@@ -8,10 +8,12 @@ from zoneinfo import ZoneInfo
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.text import ensure_utc, utc_now
+from infrastructure.timezone import parse_timezone
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import Select, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.configuration.settings.values import get_user_setting
 from features.jobs.service import requested_job_id
 
 from .actions import CREATION_CAPABILITIES, LIFE_ACTION, NextAction, ReadingResult
@@ -32,7 +34,6 @@ async def enqueue_action(
     request_id: str,
     pursuit_id: int | None,
     source: str = "life",
-    expires_at: datetime | None = None,
 ) -> LifeStepView:
     if not action.narrative or not action.narrative.strip():
         raise LifeInputError("登记生活行动必须提供伙伴叙事")
@@ -61,8 +62,14 @@ async def enqueue_action(
         ):
             raise LifeInputError("事项已有未解决步骤，不能重复登记下一步")
         row.action_json, row.source = payload, source
-        if expires_at is not None:
-            row.checkpoint = {"expires_at": expires_at.isoformat()}
+        if source == "nightly":
+            timezone = parse_timezone(await get_user_setting(db, user_id, "timezone"))
+            if timezone is not None:
+                now = utc_now().astimezone(timezone)
+                expires_at = datetime.combine(now.date(), time(SETTINGS.nightly_window_end_hour), timezone)
+                if expires_at <= now:
+                    expires_at += timedelta(days=1)
+                row.checkpoint = {"expires_at": expires_at.isoformat()}
         row.not_before = action.not_before or utc_now()
         if pursuit_id is not None:
             last_failure = await db.scalar(
@@ -81,21 +88,6 @@ async def enqueue_action(
         row.is_creation = row.kind in CREATION_CAPABILITIES
         await db.flush()
     return step_view(row)
-
-
-async def reserve_external_action(
-    user_id: int, *, request_id: str, kind: str, description: str, narrative: str
-) -> LifeStepView:
-    async with SESSION_LOCAL() as db:
-        if not narrative or not narrative.strip():
-            raise LifeInputError("登记生活行动必须提供伙伴叙事")
-        row = await create_step(
-            db, user_id, idempotency_key=request_id, kind=kind, description=description, narrative=narrative
-        )
-        row.source = "nightly"
-        await db.commit()
-        await db.refresh(row)
-        return step_view(row)
 
 
 def _pending_steps(now: datetime) -> Select[tuple[LifeStep]]:
@@ -291,7 +283,7 @@ async def claim_step(user_id: int, step_id: int, timezone: ZoneInfo) -> LifeStep
 
 
 async def mark_step_submitted(user_id: int, step_id: int) -> None:
-    """没有独立业务行的阅读与联系动作，在外部调用前保存提交事实。"""
+    """阅读在外部调用前保存提交事实；数据库内的联系安排与步骤完成原子提交。"""
     async with SESSION_LOCAL() as db:
         await get_or_create_state(db, user_id, lock=True)
         step = await db.scalar(select(LifeStep).where(LifeStep.user_id == user_id, LifeStep.id == step_id))

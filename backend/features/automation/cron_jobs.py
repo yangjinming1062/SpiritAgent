@@ -103,32 +103,53 @@ async def create_job(
     kind: str = STANDARD_CRON_KIND,
     expires_at: datetime | None = None,
 ) -> dict[str, Any]:
+    async with session_scope() as db:
+        job = await create_job_in_session(db, scope, prompt, schedule, name, one_shot, kind, expires_at)
+        await db.commit()
+        return job
+
+
+async def create_job_in_session(
+    db: AsyncSession,
+    scope: MemoryScope,
+    prompt: str,
+    schedule: str,
+    name: str = "cron job",
+    one_shot: bool = False,
+    kind: str = STANDARD_CRON_KIND,
+    expires_at: datetime | None = None,
+    *,
+    next_run_at: datetime | None = None,
+) -> dict[str, Any]:
+    """在调用方事务内创建任务；一次性业务安排可指定准确的受理时刻。"""
     normalized_kind = _validate_kind(kind, scope)
     _validate_job_text(name, schedule, prompt)
     validate_memory_scope(scope)
     user_id = scope.user_id
-    async with session_scope() as db:
-        await lock_domain(db, user_id, "automation")
-        job = CronJob(
-            user_id=user_id,
-            system_preset_id=scope.system_preset_id,
-            name=name,
-            schedule=schedule,
-            prompt=prompt,
-            kind=normalized_kind,
-            is_paused=False,
-            one_shot=one_shot,
-            expires_at=expires_at,
-        )
-        _refresh_schedule(job)
-        if not job.is_paused:
-            await _ensure_active_job_capacity(db, user_id)
-        if normalized_kind == STANDARD_CRON_KIND:
-            job.conversation_id = await create_task_conversation(db, user_id, name)
-        db.add(job)
-        await db.commit()
-        await db.refresh(job)
-        return job.to_dict()
+    if next_run_at is not None and (not one_shot or next_run_at.utcoffset() is None):
+        raise ValueError("Explicit run time requires a one-shot job and a timezone")
+    await lock_domain(db, user_id, "automation")
+    job = CronJob(
+        user_id=user_id,
+        system_preset_id=scope.system_preset_id,
+        name=name,
+        schedule=schedule,
+        prompt=prompt,
+        kind=normalized_kind,
+        is_paused=False,
+        one_shot=one_shot,
+        expires_at=expires_at,
+    )
+    _refresh_schedule(job)
+    if next_run_at is not None:
+        job.next_run_at, job.is_paused = next_run_at, False
+    if not job.is_paused:
+        await _ensure_active_job_capacity(db, user_id)
+    if normalized_kind == STANDARD_CRON_KIND:
+        job.conversation_id = await create_task_conversation(db, user_id, name)
+    db.add(job)
+    await db.flush()
+    return job.to_dict()
 
 
 async def get_job(scope: MemoryScope, job_id: int) -> dict[str, Any] | None:

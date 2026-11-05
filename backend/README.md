@@ -81,6 +81,8 @@ HTTP、调度及清理通过 [user_maintenance.py](runtime/user_maintenance.py) 
 
 [cron.py](entrypoints/scheduler/cron.py) 为活跃账户启动陪伴域单飞流水线；[nightly_activity.py](workflows/nightly/nightly_activity.py) 协调规划、账本、日记与反思，专业预设记忆另行定期审阅。
 
+夜间计划项保存依赖、冻结输入和生活步骤关联，执行状态及成果从步骤读取；等待时退出流水线，由后续扫描按原计划续行。阶段日志保留摘要和诊断，不复制动作结果；已经保存的日记与反思独立防重。
+
 ### 陪伴调度与恢复
 
 [companion/intents.py](features/companion/intents.py) 保存条件和认领，主动回合由 [companion_turns.py](workflows/automation/companion_turns.py) 执行，普通任务由 [standard_turns.py](workflows/automation/standard_turns.py) 处理。

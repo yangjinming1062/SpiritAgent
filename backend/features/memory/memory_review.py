@@ -37,6 +37,31 @@ class _ReviewBackoff:
 _REVIEW_BACKOFF_START_SECONDS = 600.0
 _REVIEW_BACKOFF: dict[tuple[MemoryScope, int | None], _ReviewBackoff] = {}
 
+# 整域审阅的成功节流与失败退避共用作用域锁；会话级审阅仍按消息水位推进。
+_LAST_MEMORY_REVIEW: dict[MemoryScope, float] = {}
+
+
+async def review_scope_if_due(
+    scope: MemoryScope,
+    *,
+    llm_config: UserLlmConfig | None = None,
+    task: AiTaskKey = AiTaskKey.memory_review,
+    before_call: Callable[[], Awaitable[None]] | None = None,
+    reasoning_effort: str | None = None,
+) -> bool:
+    """在同域锁内判断整域审阅资格；并发的夜间与周期请求合并为一次审阅。"""
+    async with _REVIEW_LOCKS.setdefault(scope, asyncio.Lock()):
+        previous = _LAST_MEMORY_REVIEW.get(scope)
+        if previous is not None and time.monotonic() - previous < SETTINGS.memory_review_interval_seconds:
+            return False
+        if memory_review_backed_off(scope):
+            return False
+        await _run_review(
+            scope, llm_config=llm_config, task=task, before_call=before_call, reasoning_effort=reasoning_effort
+        )
+        _LAST_MEMORY_REVIEW[scope] = time.monotonic()
+        return True
+
 
 def invalidate_memory_review_locks(user_id: int) -> None:
     """丢弃指定用户的全部审阅锁条目与失败退避；仅在用户维护边界内调用（无在途审核）。"""
@@ -44,6 +69,8 @@ def invalidate_memory_review_locks(user_id: int) -> None:
         _REVIEW_LOCKS.pop(scope, None)
     for key in [k for k in _REVIEW_BACKOFF if k[0].user_id == user_id]:
         _REVIEW_BACKOFF.pop(key, None)
+    for scope in [s for s in _LAST_MEMORY_REVIEW if s.user_id == user_id]:
+        _LAST_MEMORY_REVIEW.pop(scope, None)
 
 
 def memory_review_backed_off(scope: MemoryScope, session_id: int | None = None) -> bool:
@@ -114,6 +141,28 @@ async def review_memories(
     reasoning_effort: str | None = None,
 ) -> None:
     """审阅到截止消息；失败记入该范围的退避并向上抛出，成功清除退避。退避只由调用方查询，本函数不据此拒绝执行。"""
+    async with _REVIEW_LOCKS.setdefault(scope, asyncio.Lock()):
+        await _run_review(
+            scope,
+            session_id=session_id,
+            through_message_id=through_message_id,
+            llm_config=llm_config,
+            task=task,
+            before_call=before_call,
+            reasoning_effort=reasoning_effort,
+        )
+
+
+async def _run_review(
+    scope: MemoryScope,
+    *,
+    session_id: int | None = None,
+    through_message_id: int | None = None,
+    llm_config: UserLlmConfig | None = None,
+    task: AiTaskKey = AiTaskKey.memory_review,
+    before_call: Callable[[], Awaitable[None]] | None = None,
+    reasoning_effort: str | None = None,
+) -> None:
     try:
         await _review_batches(
             scope,
@@ -143,33 +192,32 @@ async def _review_batches(
     before_call: Callable[[], Awaitable[None]] | None = None,
     reasoning_effort: str | None = None,
 ) -> None:
-    async with _REVIEW_LOCKS.setdefault(scope, asyncio.Lock()):
-        started_at = utc_now()
-        if through_message_id is None:
-            async with session_scope() as db:
-                through_message_id = await latest_scope_message_id(db, scope.user_id, scope.system_preset_id)
-        while True:
-            async with session_scope() as db:
-                context = await load_review_context(
-                    db,
-                    scope,
-                    session_id=session_id,
-                    through_message_id=through_message_id,
-                    new_only=True,
-                    reviewed_before=started_at,
-                )
-                if llm_config is None:
-                    llm_config = await resolve_user_llm_config(db, scope.user_id, task)
-            if not context.messages and (session_id is not None or not context.memories):
-                return
-            if not llm_config.is_configured:
-                raise ValueError("Memory review requires an available LLM configuration")
-            await assess_memory_changes(
+    started_at = utc_now()
+    if through_message_id is None:
+        async with session_scope() as db:
+            through_message_id = await latest_scope_message_id(db, scope.user_id, scope.system_preset_id)
+    while True:
+        async with session_scope() as db:
+            context = await load_review_context(
+                db,
                 scope,
-                MemorySource("reflection"),
-                context,
-                llm_config=llm_config,
-                advance_review=True,
-                before_call=before_call,
-                reasoning_effort=reasoning_effort,
+                session_id=session_id,
+                through_message_id=through_message_id,
+                new_only=True,
+                reviewed_before=started_at,
             )
+            if llm_config is None:
+                llm_config = await resolve_user_llm_config(db, scope.user_id, task)
+        if not context.messages and (session_id is not None or not context.memories):
+            return
+        if not llm_config.is_configured:
+            raise ValueError("Memory review requires an available LLM configuration")
+        await assess_memory_changes(
+            scope,
+            MemorySource("reflection"),
+            context,
+            llm_config=llm_config,
+            advance_review=True,
+            before_call=before_call,
+            reasoning_effort=reasoning_effort,
+        )

@@ -1257,51 +1257,6 @@ def upgrade() -> None:
     op.create_index(op.f("ix_messages_subtype"), "messages", ["subtype"], unique=False)
     op.create_index(op.f("ix_messages_user_id"), "messages", ["user_id"], unique=False)
     op.create_table(
-        "nightly_activity_actions",
-        sa.Column("log_id", sa.BigInteger(), nullable=False),
-        sa.Column("user_id", sa.BigInteger(), nullable=False),
-        sa.Column("target_date", sa.Date(), nullable=False),
-        sa.Column("job_id", sa.BigInteger(), nullable=True),
-        sa.Column("action_key", sa.String(length=64), nullable=False),
-        sa.Column("capability", sa.String(length=64), nullable=False),
-        sa.Column("phase", sa.Integer(), nullable=False),
-        sa.Column("status", sa.String(length=32), server_default=sa.text("'pending'"), nullable=False),
-        sa.Column(
-            "arguments", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'::jsonb"), nullable=False
-        ),
-        sa.Column("result", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
-        sa.ForeignKeyConstraint(
-            ["user_id", "job_id"],
-            ["jobs.user_id", "jobs.id"],
-            name="fk_nightly_activity_actions_job_id_owner",
-            ondelete="SET NULL (job_id)",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "log_id"],
-            ["nightly_activity_logs.user_id", "nightly_activity_logs.id"],
-            name="fk_nightly_activity_actions_log_id_owner",
-            ondelete="CASCADE",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id"], ["users.id"], name=op.f("nightly_activity_actions_user_id_fkey"), ondelete="CASCADE"
-        ),
-        sa.PrimaryKeyConstraint("id", name=op.f("nightly_activity_actions_pkey")),
-        sa.UniqueConstraint("log_id", "action_key", name="uq_nightly_activity_actions_log_key"),
-        sa.UniqueConstraint("user_id", "id", name="uq_nightly_activity_actions_owner_id"),
-    )
-    op.create_index(
-        op.f("ix_nightly_activity_actions_capability"), "nightly_activity_actions", ["capability"], unique=False
-    )
-    op.create_index(op.f("ix_nightly_activity_actions_job_id"), "nightly_activity_actions", ["job_id"], unique=False)
-    op.create_index(op.f("ix_nightly_activity_actions_log_id"), "nightly_activity_actions", ["log_id"], unique=False)
-    op.create_index(op.f("ix_nightly_activity_actions_status"), "nightly_activity_actions", ["status"], unique=False)
-    op.create_index(
-        op.f("ix_nightly_activity_actions_target_date"), "nightly_activity_actions", ["target_date"], unique=False
-    )
-    op.create_index(op.f("ix_nightly_activity_actions_user_id"), "nightly_activity_actions", ["user_id"], unique=False)
-    op.create_table(
         "provider_attempts",
         sa.Column("token", sa.String(length=32), nullable=False),
         sa.Column("lane_id", sa.BigInteger(), nullable=True),
@@ -2375,6 +2330,59 @@ def upgrade() -> None:
     op.create_index(op.f("ix_life_steps_state"), "life_steps", ["state"], unique=False)
     op.create_index(op.f("ix_life_steps_user_id"), "life_steps", ["user_id"], unique=False)
     op.create_index("ix_life_steps_user_state", "life_steps", ["user_id", "state"], unique=False)
+    op.create_table(
+        "nightly_activity_actions",
+        sa.Column("log_id", sa.BigInteger(), nullable=False),
+        sa.Column("user_id", sa.BigInteger(), nullable=False),
+        sa.Column("target_date", sa.Date(), nullable=False),
+        sa.Column("life_step_id", sa.BigInteger(), nullable=True),
+        sa.Column("action_key", sa.String(length=64), nullable=False),
+        sa.Column("capability", sa.String(length=64), nullable=False),
+        sa.Column("phase", sa.Integer(), nullable=False),
+        sa.Column("status", sa.String(length=32), server_default=sa.text("'pending'"), nullable=False),
+        sa.Column(
+            "arguments", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'::jsonb"), nullable=False
+        ),
+        sa.Column("reason", sa.Text(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
+        sa.CheckConstraint(
+            "status IN ('pending', 'skipped', 'blocked', 'failed')",
+            name=op.f("ck_nightly_activity_actions_plan_status"),
+        ),
+        sa.CheckConstraint(
+            "life_step_id IS NULL OR (status = 'pending' AND reason IS NULL)",
+            name=op.f("ck_nightly_activity_actions_step_owns_execution"),
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "log_id"],
+            ["nightly_activity_logs.user_id", "nightly_activity_logs.id"],
+            name="fk_nightly_activity_actions_log_id_owner",
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id"], ["users.id"], name=op.f("nightly_activity_actions_user_id_fkey"), ondelete="CASCADE"
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "life_step_id"],
+            ["life_steps.user_id", "life_steps.id"],
+            name="fk_nightly_activity_actions_life_step_id_owner",
+            ondelete="NO ACTION",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("nightly_activity_actions_pkey")),
+        sa.UniqueConstraint("life_step_id", name="uq_nightly_activity_actions_step"),
+        sa.UniqueConstraint("log_id", "action_key", name="uq_nightly_activity_actions_log_key"),
+        sa.UniqueConstraint("user_id", "id", name="uq_nightly_activity_actions_owner_id"),
+    )
+    op.create_index(
+        op.f("ix_nightly_activity_actions_capability"), "nightly_activity_actions", ["capability"], unique=False
+    )
+    op.create_index(op.f("ix_nightly_activity_actions_log_id"), "nightly_activity_actions", ["log_id"], unique=False)
+    op.create_index(op.f("ix_nightly_activity_actions_status"), "nightly_activity_actions", ["status"], unique=False)
+    op.create_index(
+        op.f("ix_nightly_activity_actions_target_date"), "nightly_activity_actions", ["target_date"], unique=False
+    )
+    op.create_index(op.f("ix_nightly_activity_actions_user_id"), "nightly_activity_actions", ["user_id"], unique=False)
     op.create_table(
         "visual_jobs",
         sa.Column("id", sa.BigInteger(), nullable=False),
