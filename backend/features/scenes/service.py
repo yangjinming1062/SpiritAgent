@@ -20,9 +20,10 @@ from infrastructure.database import SESSION_LOCAL
 from infrastructure.domain_locks import lock_domain
 from infrastructure.logger import get_logger
 from infrastructure.text import parse_llm_json, resolve_language, utc_now
+from runtime.background import TaskScope
 from runtime.events.emit import emit_ws_event
 from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
-from runtime.user_maintenance import is_user_in_maintenance, track_user_task
+from runtime.user_maintenance import is_user_in_maintenance
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,7 +54,7 @@ from features.visuals.static_presentation import invalidate_scene_presentation
 
 logger = get_logger(__name__)
 _SCENE_LOCKS: dict[int, asyncio.Lock] = {}
-_INFLIGHT_TASKS: dict[tuple[int, int], asyncio.Task[None]] = {}
+_INFLIGHT_TASKS = TaskScope("companion.scene")
 _QUEUED_TASKS: dict[tuple[int, int], tuple[str | None]] = {}
 _AUTONOMOUS_ORIGINS = frozenset((SceneOrigin.LLM.value, SceneOrigin.NIGHTLY.value))
 
@@ -371,7 +372,7 @@ async def discard_scene(user_id: int, scene_id: int) -> CompanionScene:
         await _event(db, persona.user_id, "companion.scene.updated", scene_id)
         await enqueue_asset_cleanup(db, user_id, cleanup_paths)
         await db.commit()
-        task = _INFLIGHT_TASKS.get((user_id, scene_id))
+        task = _INFLIGHT_TASKS.running((user_id, scene_id))
         _QUEUED_TASKS.pop((user_id, scene_id), None)
         cancel_tasks([task])
     await cancel_and_wait([task])
@@ -889,8 +890,7 @@ async def _mark_failed(
 
 
 def _launch_task(scene_id: int, user_id: int, *, regeneration_task_id: str | None = None) -> None:
-    existing = _INFLIGHT_TASKS.get((user_id, scene_id))
-    if existing is not None and not existing.done():
+    if _INFLIGHT_TASKS.running((user_id, scene_id)) is not None:
         _QUEUED_TASKS[user_id, scene_id] = (regeneration_task_id,)
         return
     _QUEUED_TASKS.pop((user_id, scene_id), None)
@@ -945,25 +945,28 @@ def _launch_task(scene_id: int, user_id: int, *, regeneration_task_id: str | Non
 
     def completed(done: asyncio.Task[None]) -> None:
         queued: tuple[str | None] | None = None
-        if _INFLIGHT_TASKS.get((user_id, scene_id)) is done:
-            _INFLIGHT_TASKS.pop((user_id, scene_id), None)
+        if _INFLIGHT_TASKS.running((user_id, scene_id)) is None and (user_id, scene_id) in _QUEUED_TASKS:
             queued = _QUEUED_TASKS.pop((user_id, scene_id), None)
         if not done.cancelled() and (error := done.exception()) is not None:
             logger.error("scene task interrupted", extra={"scene_id": scene_id, "user_id": user_id}, exc_info=error)
         if queued:
             _launch_task(scene_id, user_id, regeneration_task_id=queued[0])
 
-    task = asyncio.create_task(runner(), name=f"companion.scene.{user_id}.{scene_id}")
-    _INFLIGHT_TASKS[user_id, scene_id] = task
-    task.add_done_callback(completed)
     # 维护等待生成结果与描述落库，避免中断已提交的付费请求或遗留 pending 行。
-    track_user_task(user_id, task, cancel_on_maintenance=False)
+    _INFLIGHT_TASKS.spawn(
+        (user_id, scene_id),
+        runner,
+        name=f"companion.scene.{user_id}.{scene_id}",
+        user_id=user_id,
+        cancel_on_maintenance=False,
+        on_done=completed,
+    )
 
 
 async def resume_scene_generation(user_id: int, scene_id: int) -> bool:
     if is_user_in_maintenance(user_id):
         return True
-    if (task := _INFLIGHT_TASKS.get((user_id, scene_id))) is not None and not task.done():
+    if _INFLIGHT_TASKS.running((user_id, scene_id)) is not None:
         return True
     async with SESSION_LOCAL() as db:
         row = await get_scene(db, user_id, scene_id)
@@ -1042,8 +1045,7 @@ async def schedule_initial_scene(user_id: int) -> SceneSnapshot | None:
 
 async def drain_scene_jobs() -> None:
     _QUEUED_TASKS.clear()
-    await cancel_and_wait(list(_INFLIGHT_TASKS.values()))
-    _INFLIGHT_TASKS.clear()
+    await _INFLIGHT_TASKS.drain()
 
 
 async def _prepare_reference_image(data: bytes) -> str:

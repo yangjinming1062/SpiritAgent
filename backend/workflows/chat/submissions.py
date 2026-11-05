@@ -7,7 +7,6 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from features.companion.proactive_runtime import user_turn_activity
-from features.conversation.ai_routing import conversation_ai_task
 from features.conversation.edit import EditNotAllowedError
 from features.conversation.http_contracts import PromptSubmitRequest
 from features.conversation.replacement import ReplyReplacementNotAllowedError
@@ -21,7 +20,6 @@ from features.conversation.submissions import (
     record_submission_state,
     reserve_submission,
 )
-from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.api_ids import parse_resource_id
 from infrastructure.config import SETTINGS
 from infrastructure.logger import get_logger
@@ -197,11 +195,8 @@ def create_submission_handler(
             error: str | None = None
             try:
                 await record_submission_state(user_id, params["request_id"], "running")
-                current_conv = await _require_owned_conv(user_id, req.session_id)
-                llm_config = await load_user_llm_config(user_id, conversation_ai_task(current_conv))
                 await run_chat_turn(
                     req,
-                    llm_config,
                     user_id,
                     emitter,
                     session_client_context=client_context,

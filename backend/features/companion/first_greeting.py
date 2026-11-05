@@ -5,7 +5,7 @@ from datetime import timedelta
 
 from infrastructure.logger import get_logger
 from infrastructure.text import resolve_prompt_text, utc_now
-from runtime.background import TaskBag
+from runtime.background import TaskScope
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.companion.intents import claim_companion_intent, enqueue_companion_intent
@@ -17,7 +17,7 @@ logger = get_logger(__name__)
 # 有效期内仍须通过在线、档位与冷却闸门；逾期静默作废，不补发。
 _FIRST_GREETING_TTL = timedelta(hours=2)
 
-_BG = TaskBag("companion.first_greeting")
+_BG = TaskScope("companion.first_greeting")
 
 
 async def enqueue_first_greeting(db: AsyncSession, user_id: int) -> None:

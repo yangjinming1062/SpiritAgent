@@ -29,6 +29,7 @@ from infrastructure.ai.providers.base import ProviderConfig, ReasoningEffort
 from infrastructure.ai.providers.registry import resolve_context_tokens
 from infrastructure.ai.responses import approx_responses_tokens, message_to_response_items
 from infrastructure.ai.tasks import AiTaskKey
+from infrastructure.ai.user_config import UserLlmConfig
 from infrastructure.config import SETTINGS
 from infrastructure.constants import DEFAULT_LANGUAGE, SESSION_TO_GLOBAL_KEY_ALIASES, TEMPERATURE_MAX, TEMPERATURE_MIN
 from infrastructure.search import QueryEmbedding
@@ -61,6 +62,7 @@ class TurnInputs:
     """``build_turn_inputs`` 的输出：回合编排与各轮辅助函数所需字段，避免重复查询 DB。"""
 
     context: dict[str, Any]
+    llm_config: UserLlmConfig
     native_memory: NativeMemory | None
     ctx_length: int
     all_schemas: list[dict]
@@ -373,6 +375,7 @@ async def build_turn_inputs(
         )
 
     return TurnInputs(
+        llm_config=UserLlmConfig(llm_chain[0], tuple(llm_chain[1:]), user_id),
         context=context,
         native_memory=native_memory,
         ctx_length=resolve_context_tokens(llm_chain[0]),

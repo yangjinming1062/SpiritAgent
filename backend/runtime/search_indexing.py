@@ -9,7 +9,7 @@ from infrastructure.search import QueryEmbedding, valid_vectors
 from infrastructure.search_index import SearchIndexRow
 from sqlalchemy import or_, select, update
 
-from .background import TaskBag
+from .background import TaskScope
 from .lifecycle import RuntimeParticipant
 from .user_maintenance import is_user_in_maintenance
 
@@ -20,24 +20,19 @@ class SearchIndexWorker:
     def __init__(self, name: str, model: type[SearchIndexRow]) -> None:
         self._name = name
         self._model = model
-        self._tasks: dict[int, asyncio.Task[None]] = {}
         self._targets: dict[int, tuple[str, int]] = {}
-        self._bag = TaskBag(name)
+        self._bag = TaskScope(name)
 
     def schedule(self, user_id: int, vector: QueryEmbedding | None = None) -> None:
         if vector is not None:
             self._targets[user_id] = (vector.model_key, len(vector.vector))
-        if user_id in self._tasks or is_user_in_maintenance(user_id):
+        if is_user_in_maintenance(user_id):
             return
-        task = asyncio.create_task(self._rebuild(user_id), name=f"{self._name}-{user_id}")
-        self._tasks[user_id] = task
-        task.add_done_callback(lambda _: self._tasks.pop(user_id, None))
-        self._bag.add(task, user_id=user_id)
+        self._bag.spawn(user_id, lambda: self._rebuild(user_id), name=f"{self._name}-{user_id}", user_id=user_id)
 
     def invalidate(self, user_id: int) -> None:
         self._targets.pop(user_id, None)
-        task = self._tasks.get(user_id)
-        if task is not None:
+        if (task := self._bag.running(user_id)) is not None:
             task.cancel()
 
     async def _rebuild(self, user_id: int) -> None:

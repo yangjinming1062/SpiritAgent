@@ -2,7 +2,8 @@ import httpx
 import sqlalchemy.exc
 from infrastructure.ai.error_classifier import LLMRuntimeError
 from infrastructure.ai.llm_client import MissingLlmConfigError
-from infrastructure.ai.prompt_engineer import IncompleteLlmResponseError, call_llm_once
+from infrastructure.ai.prompt_engineer import call_llm_once
+from infrastructure.ai.response_validation import IncompleteLlmResponseError
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.constants import (

@@ -32,7 +32,7 @@ from workflows.chat.native_memory import NativeMemory
 logger = get_logger(__name__)
 
 # 委派执行器由 orchestrator 注入（run_delegated_turn 绑定回合入口），避免模块级循环导入。
-DelegateExecutor = Callable[[DelegateAction, int, UserLlmConfig], Awaitable[str]]
+DelegateExecutor = Callable[[DelegateAction], Awaitable[str]]
 
 
 @dataclass(frozen=True)
@@ -254,11 +254,7 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext, progress: _B
                     proactive_turn=ctx.proactive_turn,
                     user_message=ctx.user_message,
                 )
-                result_str = (
-                    await ctx.delegate_executor(result, ctx.user_id, ctx.llm_config)
-                    if isinstance(result, DelegateAction)
-                    else result
-                )
+                result_str = await ctx.delegate_executor(result) if isinstance(result, DelegateAction) else result
             case "memory":
                 result_str = (
                     await ctx.native_memory.execute_tool(name, args)

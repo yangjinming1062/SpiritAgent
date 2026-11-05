@@ -19,7 +19,7 @@ from runtime.conversation import RuntimeSession, new_runtime_session
 from runtime.desktop.connection import MANAGER, UserEventPublisher
 
 from workflows.chat.history_commands import _do_compress_history, compression_command_result, compression_context
-from workflows.chat.inputs import _require_owned_conv, conversation_history_lock
+from workflows.chat.inputs import _require_owned_conv
 from workflows.chat.session_resources import session_runtime_info
 from workflows.chat.submissions import create_submission_handler
 
@@ -167,28 +167,23 @@ def chat_operations(actor: BusinessActor) -> ChatOperations:
             return result
 
     async def session_undo_to_message(params: dict) -> SessionUndoResult:
-        session_id = params["session_id"]
         if not bool(params.get("confirmed")):
             raise RequestError(
                 409, "撤回消息需要明确确认", code="confirmation_required", details={"requires_confirmation": True}
             )
         source_message_id = params["source_message_id"]
-        owned = await _require_owned_conv(user_id, session_id)
-        session_id = str(owned.id)
-        runtime = runtime_sessions.get(session_id)
-        async with conversation_history_lock(session_id):
-            if runtime is not None and runtime.busy:
-                raise RequestError(409, "当前会话有正在生成的回复，请稍后再试", code="turn_busy")
+        runtime = await _require_runtime(params)
+        async with compression_context(user_id, runtime, busy_message="请先停止当前生成再撤回消息"):
             try:
-                result = await undo_history(user_id, session_id, source_message_id)
+                result = await undo_history(user_id, runtime.session_id, source_message_id)
             except (UndoNotAllowedError, SourceNotFoundError) as exc:
                 raise RequestError(422, str(exc)) from exc
-        await publish_history_change("message.deleted", result.model_dump(mode="json"), session_id=session_id)
+        await publish_history_change("message.deleted", result.model_dump(mode="json"), session_id=runtime.session_id)
         logger.info(
             "conversation history undone",
             extra={
                 "user_id": user_id,
-                "session_id": session_id,
+                "session_id": runtime.session_id,
                 "source_message_id": source_message_id,
                 "deleted_count": result.deleted_count,
             },

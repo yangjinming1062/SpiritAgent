@@ -14,12 +14,12 @@ from infrastructure.ai.error_classifier import (
     LLMRuntimeError,
     classify_api_error,
     classify_response_text,
-    is_content_policy_response,
 )
 from infrastructure.ai.llm_fallback import execute_with_fallback
 from infrastructure.ai.llm_retry import call_with_retry
 from infrastructure.ai.models import ModelModality
-from infrastructure.ai.providers.base import ChatProvider, ProviderError
+from infrastructure.ai.providers.base import ChatProvider
+from infrastructure.ai.response_validation import IncompleteLlmResponseError, validate_response
 from infrastructure.ai.responses import build_responses_kwargs
 from infrastructure.ai.structured_contracts import LlmSchemaContractError, validate_preserved_choices
 from infrastructure.ai.tasks import AiTaskKey
@@ -46,10 +46,6 @@ _JSON_REPAIR_GUIDANCE = (
 
 class VisualReasoningError(RuntimeError):
     """视觉推理失败；异常文本可展示，供应商诊断只写入日志。"""
-
-
-class IncompleteLlmResponseError(RuntimeError):
-    """供应商响应未完成；异常只含状态、终止原因与错误码。"""
 
 
 class LlmAttemptDiagnostic(BaseModel):
@@ -100,46 +96,20 @@ async def chat(user_id: int | None, system_prompt: str, user_payload: str, *, ta
     return (await call_llm_once(config, system_prompt, user_payload)).strip()
 
 
-def _response_failure_detail(response: Response) -> str:
-    details = getattr(response, "incomplete_details", None)
-    reason = details.get("reason") if isinstance(details, dict) else getattr(details, "reason", None)
-    error = getattr(response, "error", None)
-    code = error.get("code") if isinstance(error, dict) else getattr(error, "code", None)
-    parts = [f"status={response.status}"]
-    if isinstance(reason, str) and reason.strip():
-        parts.append(f"reason={reason[:80]}")
-    if isinstance(code, str | int) and str(code).strip():
-        parts.append(f"error_code={str(code)[:80]}")
-    return ", ".join(parts)
-
-
 async def _call_text_response(provider: ChatProvider, request: dict[str, Any]) -> str:
     try:
         response = await call_with_retry(provider.raw_client(), config=provider.config, **request)
     except TimeoutError as exc:
-        raise LLMRuntimeError(ClassifiedError(FailoverReason.timeout, None, "LLM request timed out")) from exc
+        raise LLMRuntimeError(_timeout_classified()) from exc
     return _response_text(response)
 
 
+def _timeout_classified() -> ClassifiedError:
+    return ClassifiedError(FailoverReason.timeout, None, "LLM request timed out")
+
+
 def _response_text(response: Response, *, validate_text: bool = True) -> str:
-    if response.error is not None:
-        classified = classify_api_error(
-            ProviderError("LLM response failed", body={"error": response.error.model_dump()})
-        )
-        raise LLMRuntimeError(
-            ClassifiedError(classified.reason, classified.status_code, _response_failure_detail(response))
-        )
-    details = response.incomplete_details
-    if (
-        is_content_policy_response(response.model_extra or {})
-        or (details is not None and details.reason == "content_filter")
-        or any(
-            part.type == "refusal" for item in response.output or [] if item.type == "message" for part in item.content
-        )
-    ):
-        raise LLMRuntimeError(ClassifiedError(FailoverReason.content_policy_blocked, None, "LLM response refused"))
-    if response.status != "completed":
-        raise IncompleteLlmResponseError(f"LLM response not completed: {_response_failure_detail(response)}")
+    validate_response(response)
     text = response.output_text
     if not text.strip():
         raise LLMRuntimeError(ClassifiedError(FailoverReason.empty_result, None, "LLM response has no output text"))
@@ -351,11 +321,7 @@ async def call_llm_json[T](
             except LlmCallBlockedError:
                 raise
             except Exception as exc:
-                classified = (
-                    ClassifiedError(FailoverReason.timeout, None, "LLM request timed out")
-                    if isinstance(exc, TimeoutError)
-                    else classify_api_error(exc)
-                )
+                classified = _timeout_classified() if isinstance(exc, TimeoutError) else classify_api_error(exc)
                 diagnostic.failure_reason = classified.reason.value
                 diagnostic.error_type = type(exc.__cause__ or exc).__name__
                 record(diagnostic)

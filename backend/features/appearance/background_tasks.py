@@ -8,12 +8,12 @@ from infrastructure.ai.prompt_engineer import call_llm_json
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.assets.asset_store import read_asset_data_uri
-from infrastructure.async_io import cancel_and_wait
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
+from runtime.background import TaskScope
 from runtime.events.emit import emit_ws_event
 from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
-from runtime.user_maintenance import is_user_in_maintenance, track_user_task
+from runtime.user_maintenance import is_user_in_maintenance
 from sqlalchemy import select
 
 from features.appearance.asset_bindings import commit_appearance
@@ -29,30 +29,34 @@ from features.appearance.prompts import VISUAL_OBSERVATION_PROMPT, VISUAL_OBSERV
 from features.media.identity_contracts import VisualObservation
 
 logger = get_logger(__name__)
-_tasks: dict[int, asyncio.Task[None]] = {}
+_tasks = TaskScope("appearance.preparation")
 _reschedule: set[int] = set()
 
 
 def schedule_appearance_tasks(user_id: int) -> None:
     if is_user_in_maintenance(user_id):
         return
-    if user_id in _tasks and not _tasks[user_id].done():
+    if _tasks.running(user_id) is not None:
         _reschedule.add(user_id)
         return
     _reschedule.discard(user_id)
-    task = asyncio.create_task(_run_user(user_id), name=f"appearance.{user_id}")
-    _tasks[user_id] = task
-    track_user_task(user_id, task, cancel_on_maintenance=False)
 
     def completed(done: asyncio.Task[None]) -> None:
-        if _tasks.get(user_id) is done:
-            _tasks.pop(user_id, None)
-        if not done.cancelled() and (error := done.exception()) is not None:
-            logger.error("appearance background task interrupted", extra={"user_id": user_id}, exc_info=error)
-        if not done.cancelled() and user_id in _reschedule:
+        if _tasks.running(user_id) is not None:
+            return
+        pending = user_id in _reschedule
+        _reschedule.discard(user_id)
+        if pending and not done.cancelled():
             schedule_appearance_tasks(user_id)
 
-    task.add_done_callback(completed)
+    _tasks.spawn(
+        user_id,
+        lambda: _run_user(user_id),
+        name=f"appearance.{user_id}",
+        user_id=user_id,
+        cancel_on_maintenance=False,
+        on_done=completed,
+    )
 
 
 async def _run_user(user_id: int) -> None:
@@ -231,4 +235,4 @@ async def resume_user_appearance_tasks(user_id: int) -> None:
 
 async def drain_appearance_tasks() -> None:
     _reschedule.clear()
-    await cancel_and_wait(list(_tasks.values()))
+    await _tasks.drain()

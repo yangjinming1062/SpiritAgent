@@ -3,6 +3,8 @@ import re
 from collections import Counter
 from collections.abc import Mapping
 from copy import deepcopy
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Annotated, Literal
 
 from features.conversation.replies import (
@@ -30,6 +32,7 @@ from workflows.chat.prompts import (
     COMPANION_WRITTEN_FIELD_GUIDANCES,
 )
 from workflows.chat.reply_links import ReplyReferences, reference_spans, validate_reply_links
+from workflows.chat.turn_errors import CompanionReplyFormatError
 
 
 class OmittedMediaError(ValueError):
@@ -582,3 +585,99 @@ def fallback_companion_voice_reply(
                 raise
             values = [*values, *({"type": media_type, "media_id": media_id} for media_type, media_id in exc.missing)]
             raw = json.dumps(values, ensure_ascii=False)
+
+
+@dataclass(frozen=True)
+class ResolvedCompanionReply:
+    """校验阶梯的产物：``text`` 是最终持久化文本，``degraded`` 表示走过演绎降级。"""
+
+    text: str
+    reply: CompanionReply | None
+    degraded: bool
+
+
+def resolve_companion_reply(
+    text: str,
+    *,
+    speech_config: ProviderConfig | None,
+    voice_id: str,
+    language: str,
+    allow_silence: bool,
+    media_turn: MediaTurnState,
+    references: ReplyReferences = ReplyReferences(),
+    topic_cards: Mapping[int, LinkBubble] | None = None,
+    topic_context_at: datetime | None = None,
+    allow_voice_fallback: bool = False,
+    repair: CompanionReplyFormatError | None = None,
+) -> ResolvedCompanionReply:
+    """结构化回复的唯一校验阶梯：解码 → 演绎降级重解码 → 完整解析 → 恢复预算后降级 → 修正保护校验。
+
+    修正轮（``repair`` 非空）只在原草稿的失败局限于演绎字段时保留完整台词；正文、媒体与修正保护
+    仍按同一路径校验。任一级失败统一抛 CompanionReplyFormatError，调用方只负责记录诊断与决定重试。
+    """
+    raw_reply = normalize_companion_reply_content(text)
+    try:
+        text, kind, used_topic_ids = decode_companion_reply(
+            raw_reply, allow_voice_fallback=allow_voice_fallback, references=references
+        )
+    except ValueError as exc:
+        if repair is None or not allow_voice_fallback or not repair.speech_only:
+            raise CompanionReplyFormatError(exc, raw_reply, repair_attempt=repair is not None) from exc
+        # 原草稿仅演绎无效时可保留完整台词；正文、媒体与修正保护仍走同一路径。
+        try:
+            text, kind, used_topic_ids = decode_companion_reply(
+                normalize_companion_reply_content(repair.raw_reply),
+                allow_voice_fallback=True,
+                references=references,
+            )
+        except ValueError:
+            raise CompanionReplyFormatError(exc, raw_reply, repair_attempt=True) from exc
+    degraded = False
+    try:
+        reply = parse_companion_reply(
+            text,
+            speech_config=speech_config,
+            voice_id=voice_id,
+            language=language,
+            allow_silence=allow_silence,
+            media_turn=media_turn,
+            references=references,
+            kind=kind,
+            topic_cards=topic_cards,
+            used_topic_ids=used_topic_ids,
+        )
+    except ValueError as exc:
+        if not allow_voice_fallback:
+            raise CompanionReplyFormatError(exc, raw_reply, repair_attempt=repair is not None) from exc
+        try:
+            text, reply = fallback_companion_voice_reply(
+                text,
+                speech_config=speech_config,
+                voice_id=voice_id,
+                language=language,
+                allow_silence=allow_silence,
+                media_turn=media_turn,
+                references=references,
+                kind=kind,
+                topic_cards=topic_cards,
+                used_topic_ids=used_topic_ids,
+            )
+        except ValueError:
+            raise CompanionReplyFormatError(exc, raw_reply, repair_attempt=repair is not None) from exc
+        degraded = True
+    if reply is not None and reply.used_topic_ids:
+        reply.topic_context_at = topic_context_at
+    if repair is not None:
+        try:
+            validate_companion_reply_repair(
+                text,
+                kind,
+                repair.raw_reply,
+                media_turn=media_turn,
+                references=references,
+                topic_cards=topic_cards,
+                used_topic_ids=reply.used_topic_ids if reply else [],
+            )
+        except ValueError as exc:
+            raise CompanionReplyFormatError(exc, raw_reply, repair_attempt=True) from exc
+    return ResolvedCompanionReply(text=text, reply=reply, degraded=degraded)

@@ -1,7 +1,8 @@
 from typing import Any, NamedTuple
 
 from infrastructure.ai.error_classifier import LLMRuntimeError
-from infrastructure.ai.prompt_engineer import IncompleteLlmResponseError, call_llm_once
+from infrastructure.ai.prompt_engineer import call_llm_once
+from infrastructure.ai.response_validation import IncompleteLlmResponseError
 from infrastructure.ai.user_config import UserLlmConfig
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger

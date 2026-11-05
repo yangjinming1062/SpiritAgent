@@ -10,7 +10,6 @@ from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import build_data_uri, outfit_asset_directory, read_asset_data_uri
 from infrastructure.assets.references import asset_paths
-from infrastructure.async_io import cancel_and_wait
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.domain_locks import lock_domain
 from infrastructure.logger import get_logger
@@ -18,8 +17,9 @@ from infrastructure.text import parse_llm_json, resolve_language
 from infrastructure.video_processing.ffmpeg import VideoProcessError
 from infrastructure.video_processing.image import prepare_transparent_image
 from infrastructure.video_processing.matting import require_matting_model
+from runtime.background import TaskScope
 from runtime.events.emit import emit_ws_event
-from runtime.user_maintenance import is_user_in_maintenance, track_user_task
+from runtime.user_maintenance import is_user_in_maintenance
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -76,7 +76,7 @@ from features.media.review_evidence import review_media_intact
 logger = get_logger(__name__)
 
 # 草稿直接写入正式资产，避免可查看的生成结果因临时文件回收而丢失。
-_DESCRIBE_TASKS: dict[tuple[int, int], asyncio.Task[None]] = {}
+_DESCRIBE = TaskScope("appearance.outfit_descriptions")
 
 
 def _valid_outfit_name(name: str, language: str) -> bool:
@@ -885,24 +885,19 @@ async def delete_outfit(db: AsyncSession, user_id: int, outfit_id: int) -> None:
         await db.delete(outfit)
         await commit_appearance(db, user_id)
     # 删除提交后再停止任务和清理文件；提交失败时外观仍完整可用。
-    description = _DESCRIBE_TASKS.get((user_id, outfit_id))
-    if description is not None and not description.done():
-        await cancel_and_wait([description])
+    await _DESCRIBE.cancel_and_wait((user_id, outfit_id))
     await cleanup_asset_directories(user_id, [directory])
     if outfit.fullbody_url.startswith("temp-media/"):
         delete_portrait_file(outfit.fullbody_url)
 
 
 def schedule_outfit_description(user_id: int, outfit_id: int) -> None:
-    key = (user_id, outfit_id)
-    if key in _DESCRIBE_TASKS:
-        return
-    task = asyncio.create_task(
-        _describe_outfit(user_id, outfit_id), name=f"companion.outfit.describe.{user_id}.{outfit_id}"
+    _DESCRIBE.spawn(
+        (user_id, outfit_id),
+        lambda: _describe_outfit(user_id, outfit_id),
+        name=f"companion.outfit.describe.{user_id}.{outfit_id}",
+        user_id=user_id,
     )
-    _DESCRIBE_TASKS[key] = task
-    task.add_done_callback(lambda _task: _DESCRIBE_TASKS.pop(key, None))
-    track_user_task(user_id, task)
 
 
 async def retry_outfit_description(db: AsyncSession, user_id: int, outfit_id: int) -> CompanionOutfit:
@@ -912,7 +907,7 @@ async def retry_outfit_description(db: AsyncSession, user_id: int, outfit_id: in
             raise OutfitNotFoundError("找不到外观")
         if outfit.status != "ready":
             raise OutfitStateError("请先确认外观参考图")
-        if (user_id, outfit_id) in _DESCRIBE_TASKS:
+        if _DESCRIBE.running((user_id, outfit_id)) is not None:
             return outfit
         outfit.description_status, outfit.description_error = "pending", None
         await commit_appearance(db, user_id)
@@ -921,7 +916,7 @@ async def retry_outfit_description(db: AsyncSession, user_id: int, outfit_id: in
 
 
 async def drain_outfit_descriptions() -> None:
-    await cancel_and_wait(list(_DESCRIBE_TASKS.values()))
+    await _DESCRIBE.drain()
 
 
 async def recover_outfit_descriptions() -> None:

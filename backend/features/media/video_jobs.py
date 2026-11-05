@@ -21,7 +21,6 @@ from infrastructure.assets.image_references import freeze_image_references, mate
 from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.assets.references import asset_paths
 from infrastructure.assets.write_protection import asset_write_context
-from infrastructure.async_io import cancel_and_wait
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
@@ -29,7 +28,7 @@ from infrastructure.text import utc_now
 from infrastructure.video_processing.desktop import sample_desktop_video_frames
 from infrastructure.video_processing.ffmpeg import probe_video
 from pydantic import BaseModel, ConfigDict, Field
-from runtime.background import TaskBag
+from runtime.background import TaskScope
 from runtime.events.emit import emit_ws_event
 from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
 from runtime.user_maintenance import is_user_in_maintenance
@@ -89,10 +88,8 @@ from features.media.video_results import download_and_store_video, receive_video
 logger = get_logger(__name__)
 
 _INFLIGHT: set[int] = set()
-_POLL_TASKS: dict[int, asyncio.Task[None]] = {}
+_POLL_TASKS = TaskScope("media.video_jobs")
 _RESULT_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
-
-_BG = TaskBag("media.video_jobs")
 _TERMINAL_STATES = ("succeeded", "failed", "unknown", "cancelled")
 _RESOLUTION_RANK = {"480P": 0, "720P": 1, "768P": 1, "1080P": 2, "2K": 3}
 
@@ -163,7 +160,7 @@ def _on_video_task_error(task: asyncio.Task) -> None:
 
 async def drain() -> None:
     """取消并等待所有后台视频任务完成，吞下 CancelledError。"""
-    await _BG.drain()
+    await _POLL_TASKS.drain()
 
 
 async def _sync_changed_job_assets(db: AsyncSession) -> None:
@@ -428,13 +425,13 @@ async def enqueue_video_job(
 
 
 def _spawn_poll(job_id: int, user_id: int) -> None:
-    existing = _POLL_TASKS.get(job_id)
-    if existing is not None and not existing.done():
-        return
-    task = asyncio.create_task(_poll_and_finalize(job_id))
-    _POLL_TASKS[job_id] = task
-    task.add_done_callback(lambda done: _POLL_TASKS.pop(job_id, None) if _POLL_TASKS.get(job_id) is done else None)
-    _BG.add(task, user_id=user_id, cancel_on_maintenance=False, on_error=_on_video_task_error)
+    _POLL_TASKS.spawn(
+        job_id,
+        lambda: _poll_and_finalize(job_id),
+        user_id=user_id,
+        cancel_on_maintenance=False,
+        on_error=_on_video_task_error,
+    )
 
 
 async def _record_failure(job_id: int, *, reason: str, settle_unknown: bool = False) -> None:
@@ -1281,7 +1278,7 @@ async def cleanup_user_video_jobs(user_id: int) -> None:
         )
     for job_id in ids:
         async with _result_lock(job_id):
-            await cancel_and_wait((_POLL_TASKS.get(job_id),))
+            await _POLL_TASKS.cancel_and_wait(job_id)
             async with SESSION_LOCAL() as db:
                 row = await db.get(VideoGenJob, job_id)
                 if row is None or row.user_id != user_id or row.cleanup_requested_at is None:

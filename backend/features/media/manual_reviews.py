@@ -19,7 +19,7 @@ from infrastructure.database import SESSION_LOCAL
 from infrastructure.request_errors import RequestError
 from infrastructure.text import utc_now
 from infrastructure.video_processing.desktop import sample_desktop_video_frames
-from runtime.background import TaskBag
+from runtime.background import TaskScope
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,8 +47,7 @@ type ManualHandler = Callable[[AsyncSession, int, int, MediaManualRequest], Awai
 type ManualQuery = Callable[[int, int], Awaitable[MediaJobView]]
 _HANDLERS: dict[str, tuple[ManualQuery, ManualHandler]] = {}
 _RUNNERS: dict[str, Callable[[int, int], Awaitable[object]]] = {}
-_RECOVERY_TASKS: dict[int, asyncio.Task[None]] = {}
-_BG = TaskBag("media.manual_operations")
+_OPERATIONS = TaskScope("media.manual_operations")
 
 
 def configure_manual_handler(
@@ -288,13 +287,14 @@ async def recover_manual_operations(user_id: int | None = None) -> None:
             statement = statement.where(MediaManualOperation.user_id == user_id)
         pending = list((await db.execute(statement.order_by(MediaManualOperation.id).limit(100))).all())
     for owner, operation_id in pending:
-        if operation_id in _RECOVERY_TASKS:
-            continue
-        task = asyncio.create_task(run_manual_operation(owner, operation_id))
-        _RECOVERY_TASKS[operation_id] = task
-        task.add_done_callback(lambda _done, key=operation_id: _RECOVERY_TASKS.pop(key, None))
-        _BG.add(task, user_id=owner, cancel_on_maintenance=False)
+        _OPERATIONS.spawn(
+            operation_id,
+            lambda: run_manual_operation(owner, operation_id),
+            name=f"media.manual_operation.{operation_id}",
+            user_id=owner,
+            cancel_on_maintenance=False,
+        )
 
 
 async def drain_manual_operations() -> None:
-    await _BG.drain()
+    await _OPERATIONS.drain()

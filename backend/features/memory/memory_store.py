@@ -1,4 +1,3 @@
-import asyncio
 import hashlib
 from dataclasses import dataclass
 from datetime import date
@@ -10,7 +9,7 @@ from infrastructure.domain_locks import transaction_owner, transaction_owns
 from infrastructure.logger import get_logger
 from infrastructure.search import valid_vectors
 from infrastructure.text import utc_now
-from runtime.background import TaskBag
+from runtime.background import TaskScope
 from runtime.events.emit import emit_ws_event
 from runtime.memory_scope import EmbeddingItem, MemoryScope, MemorySource, validate_memory_scope
 from runtime.user_maintenance import is_user_in_maintenance
@@ -26,23 +25,21 @@ from .models import Memory, MemoryEmbeddingRow
 from .records import clear_memory_details
 
 logger = get_logger(__name__)
-_EMBEDDING_TASKS: dict[int, asyncio.Task[None]] = {}
 _EMBEDDING_TARGETS: dict[int, tuple[str, int]] = {}
-_EMBEDDING_BG = TaskBag("memory.embeddings")
+_EMBEDDINGS = TaskScope("memory.embeddings")
 
 
 def schedule_embedding_rebuild(user_id: int, *, model_key: str, dimensions: int) -> None:
     _EMBEDDING_TARGETS[user_id] = (model_key, dimensions)
-    if user_id in _EMBEDDING_TASKS or is_user_in_maintenance(user_id):
+    if is_user_in_maintenance(user_id):
         return
-    task = asyncio.create_task(_rebuild_embeddings(user_id), name=f"memory-embedding-{user_id}")
-    _EMBEDDING_TASKS[user_id] = task
-    task.add_done_callback(lambda _: _EMBEDDING_TASKS.pop(user_id, None))
-    _EMBEDDING_BG.add(task, user_id=user_id)
+    _EMBEDDINGS.spawn(
+        user_id, lambda: _rebuild_embeddings(user_id), name=f"memory-embedding-{user_id}", user_id=user_id
+    )
 
 
 async def drain_memory_embeddings() -> None:
-    await _EMBEDDING_BG.drain()
+    await _EMBEDDINGS.drain()
     _EMBEDDING_TARGETS.clear()
 
 

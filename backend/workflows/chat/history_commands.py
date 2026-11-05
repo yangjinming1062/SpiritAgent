@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from features.conversation.memory_scope import conversation_memory_scope
-from features.conversation.session_operations import ConversationNotFoundError, all_messages, clear_history
+from features.conversation.session_operations import all_messages, clear_history
 from features.conversation.slash_commands import SlashCommandContext, SlashCommandResult, register_slash_command
 from features.conversation.snapshots import ConversationSnapshot
 from features.memory.use_cases import remember_manual
@@ -25,6 +25,7 @@ logger = get_logger(__name__)
 async def compression_context(
     user_id: int, runtime: RuntimeSession, *, busy_message: str = "当前会话有正在生成的回复，请稍后再试"
 ) -> AsyncIterator[ConversationSnapshot]:
+    """历史修改入口共享的互斥：拒绝只读会话、历史锁与在途回合校验。"""
     _reject_read_only_session(runtime)
     async with conversation_history_lock(runtime.session_id):
         if runtime.busy:
@@ -78,14 +79,8 @@ def compression_command_result(result: dict[str, Any]) -> SlashCommandResult:
     requires_confirmation=True,
 )
 async def _slash_clear(ctx: SlashCommandContext) -> SlashCommandResult:
-    _reject_read_only_session(ctx.runtime)
-    async with conversation_history_lock(ctx.session_id):
-        if ctx.runtime.busy:
-            raise RequestError(409, "请先停止当前生成再清理会话", code="turn_busy")
-        try:
-            result = await clear_history(ctx.user_id, ctx.session_id)
-        except ConversationNotFoundError as exc:
-            raise RequestError(404, str(exc)) from exc
+    async with compression_context(ctx.user_id, ctx.runtime, busy_message="请先停止当前生成再清理会话"):
+        result = await clear_history(ctx.user_id, ctx.session_id)
     return SlashCommandResult(status="ok", message="会话已清空", hydrate=True, payload=result)
 
 

@@ -2,7 +2,7 @@ import json
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from functools import partial
-from typing import Any
+from typing import Any, Literal
 
 from features.companion.intents import list_companion_intents
 from features.companion.proactive_runtime import user_turn_activity
@@ -11,7 +11,6 @@ from features.configuration.settings.timezone import resolve_user_timezone
 from features.configuration.settings.values import get_user_setting, load_user_settings
 from features.conversation.ai_routing import conversation_ai_task
 from features.conversation.attachments import inline_video_parts
-from features.conversation.audio_input import prepare_audio_input
 from features.conversation.memory_scope import conversation_memory_scope
 from features.conversation.replacement import ReplyReplacement, reply_replacement_target
 from features.conversation.replies import CompanionReply, MediaBubble
@@ -21,25 +20,24 @@ from features.conversation.snapshots import ConversationSnapshot, MessageSnapsho
 from features.conversation.store_contracts import CompressionInfo
 from features.conversation.turn_access import context_messages, turn_conversation, turn_message
 from features.conversation.turn_store import persist_compression_checkpoint, persist_user_message
+from features.media.turn_state import MediaTurnState
 from features.memory.memory_retrieval import embed_memory_text
 from features.scenes.turn_state import SceneTurnState
 from infrastructure.ai.error_classifier import LLMRuntimeError
-from infrastructure.ai.llm_client import MissingLlmConfigError, resolve_provider_chain
-from infrastructure.ai.llm_fallback import execute_media_with_fallback
-from infrastructure.ai.providers.base import ChatProvider
-from infrastructure.ai.providers.registry import resolve_context_tokens
-from infrastructure.ai.responses import request_input_modalities
-from infrastructure.ai.selection import GenerationOrigin, ProviderSelection, order_provider_chain
-from infrastructure.ai.usage import LlmUsageAccumulator, collect_llm_usage
-from infrastructure.ai.user_config import UserLlmConfig, resolve_user_llm_config
+from infrastructure.ai.llm_client import MissingLlmConfigError
+from infrastructure.ai.selection import ProviderSelection
+from infrastructure.ai.tasks import AiTaskKey
+from infrastructure.ai.usage import LlmUsageAccumulator
 from infrastructure.assets.asset_store import dated_asset_directory
 from infrastructure.assets.write_protection import asset_write_context
 from infrastructure.config import SETTINGS
 from infrastructure.constants import CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT
 from infrastructure.database import session_scope
 from infrastructure.logger import get_logger
+from infrastructure.search import QueryEmbedding
 from infrastructure.text import resolve_prompt_text, utc_now
 from runtime.client_context import ChatRequestClientContext
+from runtime.memory_scope import MemoryScope
 from runtime.presets import COMPANION_PRESET_ID
 from runtime.tools.domains import apply_search_tools_catalog
 from runtime.tools.presentation import VISUAL_TOOL_NAMES
@@ -51,23 +49,23 @@ from workflows.chat.chat_emitter import Emitter
 from workflows.chat.context_compressor import CompressionFailedError, compress_history, compression_due
 from workflows.chat.delegation import run_delegated_turn
 from workflows.chat.message_sanitization import truncate_responses_context
+from workflows.chat.model_turn import generate_turn_response
 from workflows.chat.persistence import _persist_assistant_no_tool_turn, _persist_assistant_with_tool_calls_and_results
 from workflows.chat.prompt_presets import COMPANION_MEDIA_TOOL_NAMES
 from workflows.chat.prompts import REPLACE_REPLY_GUIDANCES
-from workflows.chat.streaming import (
-    _assign_tool_call_ids,
-    _FinalReplyStreamError,
-    _generate_llm_response,
-    _IncompleteResponseError,
-    _InvalidCompanionReplyError,
-    _LLMTurnResult,
-    _reply_repair_history,
-)
+from workflows.chat.streaming import _assign_tool_call_ids
 from workflows.chat.system_prompt import build_companion_environment_prompt
 from workflows.chat.tool_dispatch import _ToolDispatchContext, available_media_tool_schemas, matched_tool_names
 from workflows.chat.topic_context import load_topic_context
-from workflows.chat.turn_errors import emit_conversation_unavailable, emit_llm_error, emit_llm_unavailable
+from workflows.chat.turn_errors import (
+    CompanionReplyFormatError,
+    emit_conversation_unavailable,
+    emit_llm_error,
+    emit_llm_unavailable,
+)
 from workflows.chat.turn_inputs import (
+    InferenceSettings,
+    TurnInputs,
     build_turn_inputs,
     estimate_context_tokens,
     memory_query_text,
@@ -157,12 +155,12 @@ def _history_unlocked_tool_names(input_items: list[dict]) -> set[str]:
 
 async def run_chat_turn(
     req: ChatRequest,
-    llm_config: UserLlmConfig,
     user_id: int,
     emitter: Emitter,
     session_client_context: ChatRequestClientContext | None = None,
     track_task: TrackTask | None = None,
     *,
+    task_override: AiTaskKey | None = None,
     session_settings: dict | None = None,
     persisted_message_id: int | None = None,
     final_reply_only: bool = False,
@@ -173,16 +171,16 @@ async def run_chat_turn(
     has_viewer: bool = True,
     excluded_tool_names: frozenset[str] = frozenset(),
 ) -> None:
-    """所有入口共享会话互斥和取消收尾；用户请求在受理入口校验授权。"""
+    """所有入口共享会话互斥和取消收尾；用户请求在受理入口校验授权。``task_override`` 供委派子回合继承父回合任务。"""
     async with conversation_lock(req.session_id):
         with asset_write_context():
             await _run_chat_turn(
                 req,
-                llm_config,
                 user_id,
                 emitter,
                 session_client_context,
                 track_task,
+                task_override=task_override,
                 session_settings=session_settings,
                 persisted_message_id=persisted_message_id,
                 final_reply_only=final_reply_only,
@@ -195,14 +193,365 @@ async def run_chat_turn(
             )
 
 
+@dataclass(frozen=True)
+class _TurnSetup:
+    """回合起点：会话与任务身份、本轮设置与本轮用户消息。"""
+
+    conv: ConversationSnapshot
+    task: AiTaskKey
+    memory_scope: MemoryScope | None
+    effective_settings: dict[str, Any]
+    replacement: ReplyReplacement | None
+    user_message_id: int | None
+    final_reply_only: bool
+    memory_query: str
+    history: list[MessageSnapshot] | None
+
+
+@dataclass(frozen=True)
+class _TurnContext:
+    """上下文装配阶段的结果：本轮请求上下文、媒体状态与工具派发器。"""
+
+    inputs: TurnInputs
+    current_context: dict[str, Any]
+    dispatch_ctx: _ToolDispatchContext
+    active_tool_names: set[str]
+    inference: InferenceSettings
+    delivery: Literal["stream", "buffered", "complete"]
+
+
+async def _load_turn_setup(
+    req: ChatRequest,
+    user_id: int,
+    emitter: Emitter,
+    turn_scope: ExitStack,
+    *,
+    task_override: AiTaskKey | None,
+    session_settings: dict | None,
+    persisted_message_id: int | None,
+    final_reply_only: bool,
+    replace_reply_message_id: int | None,
+    ephemeral: bool,
+) -> _TurnSetup | None:
+    """读取会话与作用域，核对已受理输入或保存内部入口的消息；None 表示已发错误帧结束本轮。"""
+    user_message_id: int | None = None
+    replacement: ReplyReplacement | None = None
+    async with session_scope() as db:
+        conv = await turn_conversation(db, req.session_id, user_id)
+        if not conv:
+            language = await get_user_setting(db, user_id, "language")
+            await emit_conversation_unavailable(emitter, language, "Conversation not found")
+            return
+        if replace_reply_message_id is not None:
+            replacement = await reply_replacement_target(db, user_id, req.session_id, replace_reply_message_id)
+            if persisted_message_id != replacement.source_message_id:
+                raise ValueError("Replacement source does not belong to this turn")
+            final_reply_only = True
+        try:
+            memory_scope = conversation_memory_scope(conv, user_id)
+        except ValueError as exc:
+            language = await get_user_setting(db, user_id, "language")
+            await emit_conversation_unavailable(emitter, language, str(exc))
+            return
+        # 委派子回合继承父回合的任务链；普通入口由会话和主动回合标志决定。
+        task = task_override or conversation_ai_task(conv, proactive=ephemeral)
+        # 主动回合与自动化任务不算用户接触。
+        turn_scope.enter_context(user_turn_activity(user_id, enabled=not ephemeral and not conv.is_automation))
+
+        if not ephemeral:
+            # 已持久化输入由调用方发布；本层只发布自己新增的用户行。
+            if persisted_message_id is not None:
+                persisted = await turn_message(db, persisted_message_id)
+                if persisted is None or persisted.conversation_id != conv.id or persisted.role != "user":
+                    raise ValueError("Persisted user message does not belong to this turn")
+                user_message_id = persisted_message_id
+            else:
+                user_message_id = await persist_user_message(db, conv.id, req.message, user_id=user_id)
+                await emitter.send_json({"type": "message.persisted", "role": "user", "message_ids": [user_message_id]})
+
+        # 回合起点重读 user_settings（PUT /api/config 后下一回合即生效）；会话级覆写再覆盖其上，只构建一次供门控与派发共用。
+        effective_settings = merge_session_settings(
+            await load_user_settings(db, user_id),
+            session_settings if session_settings is not None else (conv.settings_json or {}),
+        )
+        # 主动回合在此一次加载历史：既取最近用户发言，也传给 build_turn_inputs 免二次读取。
+        history: list[MessageSnapshot] | None = None
+        if replacement is not None:
+            history = [m for m in await context_messages(db, conv) if m.id != replacement.previous.id]
+        memory_query = ""
+        if memory_scope is not None:
+            if ephemeral:
+                history = await context_messages(db, conv)
+            memory_query = memory_query_text(req, history or [], use_request=not ephemeral)
+    return _TurnSetup(
+        conv=conv,
+        task=task,
+        memory_scope=memory_scope,
+        effective_settings=effective_settings,
+        replacement=replacement,
+        user_message_id=user_message_id,
+        final_reply_only=final_reply_only,
+        memory_query=memory_query,
+        history=history,
+    )
+
+
+async def _prepare_turn(
+    setup: _TurnSetup,
+    req: ChatRequest,
+    user_id: int,
+    emitter: Emitter,
+    session_client_context: ChatRequestClientContext | None,
+    *,
+    ephemeral: bool,
+    headless: bool,
+    has_viewer: bool,
+    persisted_message_id: int | None,
+    submission_request_id: str | None,
+    excluded_tool_names: frozenset[str],
+    memory_embedding: QueryEmbedding | None,
+) -> _TurnContext | None:
+    """上下文阶段：召回与工具装配、自动压缩、截断与媒体状态；`None` 表示已发错误帧结束本轮。"""
+    async with session_scope() as db:
+        try:
+            inputs = await build_turn_inputs(
+                db,
+                setup.conv,
+                user_id,
+                req,
+                session_client_context,
+                setup.effective_settings,
+                setup.memory_scope,
+                task=setup.task,
+                proactive_memory_query=setup.memory_query,
+                proactive_memory_embedding=memory_embedding,
+                companion_proactive_turn=ephemeral,
+                excluded_tool_names=excluded_tool_names,
+                history=setup.history,
+            )
+        except MissingLlmConfigError as exc:
+            # 用户行已落库：配置补齐后可按 retry_message_id 重试，不能以没有重试入口的异常收尾；主动回合没有用户行，异常交由调用方记录。
+            if setup.user_message_id is None:
+                raise
+            logger.warning("LLM turn failed: %s", exc)
+            await emit_llm_unavailable(
+                emitter, exc, setup.effective_settings.get("language"), retry_message_id=setup.user_message_id
+            )
+            return
+        # 本轮尾部资料没有持久化来源，不进入持久摘要。
+        runtime_item_start = len(inputs.context["input"])
+        if setup.replacement is not None:
+            inputs.context["instructions"] += resolve_prompt_text(REPLACE_REPLY_GUIDANCES, inputs.language)
+            inputs.context["input"].append(
+                user_text_item(json.dumps({"previous_reply": setup.replacement.previous.content}, ensure_ascii=False))
+            )
+        waits = (
+            await list_companion_intents(db, user_id)
+            if setup.conv.system_preset_id == COMPANION_PRESET_ID and setup.conv.parent_id is None
+            else []
+        )
+        if waits:
+            inputs.context["input"].append(
+                user_text_item(
+                    resolve_prompt_text(PENDING_INTENTIONS_LABELS, inputs.language)
+                    + "\n"
+                    + json.dumps([wait.model_dump(mode="json") for wait in waits], ensure_ascii=False)
+                )
+            )
+        if ephemeral and req.message.content:
+            inputs.context["input"].append(user_text_item(req.message.content))
+        inputs.context["source_message_ids"].extend([None] * (len(inputs.context["input"]) - runtime_item_start))
+
+    inference = resolve_inference_settings(setup.effective_settings)
+    compressed_context = inputs.context
+    if (
+        not setup.final_reply_only
+        and SETTINGS.enable_context_compression
+        and setup.effective_settings.get("chat.enable_context_compression", True)
+        and compression_due(
+            inputs.context,
+            context_length=inputs.ctx_length,
+            threshold_ratio=inference.context_compression_threshold,
+            # 尾部资料不在持久基线内，此时按全量估算。
+            current_tokens=None if ephemeral or waits else inputs.estimated_tokens,
+        )
+    ):
+        try:
+            compressed_context, compress_info = await compress_history(
+                inputs.context,
+                user_id=user_id,
+                task=setup.task,
+                temperature=_compression_temperature(setup.effective_settings),
+                language=inputs.language,
+                context_length=inputs.ctx_length,
+                companion=setup.conv.system_preset_id == COMPANION_PRESET_ID and setup.conv.parent_id is None,
+            )
+        except CompressionFailedError:
+            # 自动压缩失败不阻断本轮，按原上下文继续。
+            compress_info = None
+        if compress_info is not None:
+            async with session_scope() as db:
+                checkpoint = await persist_compression_checkpoint(
+                    db, setup.conv.id, compress_info, user_id=user_id, notify_user_id=user_id if headless else None
+                )
+            # 自动压缩单行插入；手动 /压缩 走 command.result + hydrate=true，互斥互补。
+            await emitter.send_json(
+                {
+                    "type": "compress.completed",
+                    "subtype": checkpoint.subtype,
+                    "text": checkpoint.content,
+                    "message_id": checkpoint.id,
+                }
+            )
+    # 本轮输入按窗口的四分之一（字符数取 token 数，对中文偏保守）放宽，避免超长粘贴被历史条目的上限截断。
+    current_context = truncate_responses_context(
+        compressed_context,
+        current_max_chars=inputs.ctx_length // 4,
+        current_message_id=persisted_message_id if setup.final_reply_only else None,
+    )
+    # 视频内联在截断之后，只处理幸存者（每请求上限 2 个）；expected_session_id 防 stale 行/跨会话 URL 串台，非法形态降级为 [video]。
+    current_context["input"] = await inline_video_parts(
+        current_context["input"], expected_session_id=str(setup.conv.id)
+    )
+
+    schemas_by_name: dict[str, dict] = {schema_name(s): s for s in inputs.all_schemas}
+    # 继承看压缩/截断前的历史，避免摘要窗口丢掉已解锁工具。
+    history_unlocked = _history_unlocked_tool_names(inputs.context["input"])
+    initial_tool_names = {"search_tools", "companion_wait"}
+    if setup.conv.system_preset_id == COMPANION_PRESET_ID and setup.conv.parent_id is None:
+        initial_tool_names.update(COMPANION_MEDIA_TOOL_NAMES)
+    active_tool_names = (initial_tool_names | history_unlocked) & set(schemas_by_name)
+
+    # 陪伴用户会话的终端回复是结构化气泡数组：非流式取得后整体校验再交付。
+    companion_reply = setup.conv.system_preset_id == COMPANION_PRESET_ID and setup.conv.parent_id is None
+    async with session_scope() as db:
+        media_turn = await load_media_turn(
+            db,
+            setup.conv,
+            task=setup.task.value,
+            structured_reply=companion_reply,
+            request=req.message.content,
+            source_message_id=setup.user_message_id,
+            request_scope=f"user:{setup.user_message_id}"
+            if setup.user_message_id is not None
+            else submission_request_id,
+            retry_after_message_id=persisted_message_id if setup.final_reply_only else None,
+        )
+        media_turn.source_message_id = setup.user_message_id
+        if setup.replacement is not None and setup.replacement.previous.reply_json:
+            old_reply = CompanionReply.from_saved_snapshot(
+                setup.replacement.previous.reply_json, setup.replacement.previous.content or ""
+            )
+            retained_ids = {b.media_id for b in old_reply.bubbles if isinstance(b, MediaBubble)}
+            media_turn.artifacts = {key: value for key, value in media_turn.artifacts.items() if key in retained_ids}
+            media_turn.required_goals.clear()
+            media_turn.current_versions.clear()
+            for bubble in old_reply.bubbles:
+                if not isinstance(bubble, MediaBubble):
+                    continue
+                artifact = media_turn.artifacts[bubble.media_id]
+                artifact.goal_id = bubble.goal_id
+                if artifact.bound_message_id == setup.replacement.previous.id:
+                    artifact.bound_message_id = None
+                media_turn.required_goals.add(bubble.goal_id)
+                media_turn.current_versions[bubble.goal_id] = bubble.media_id
+        source = await turn_message(db, setup.user_message_id) if setup.user_message_id is not None else None
+        media_turn.asset_directory = dated_asset_directory(
+            source.created_at if source is not None else utc_now(),
+            await resolve_user_timezone(db, user_id) or "UTC",
+        )
+    dispatch_ctx = _ToolDispatchContext(
+        user_id=user_id,
+        llm_config=inputs.llm_config,
+        user_settings=setup.effective_settings,
+        session_id=str(setup.conv.id),
+        memory_scope=setup.memory_scope,
+        native_memory=inputs.native_memory,
+        guardrails=ToolCallGuardrailController(),
+        emitter=emitter,
+        # 子 Agent 回合沿用本回合的无头标志：定时任务等无头回合委派出的本机调用同样不显示桌面工作态。
+        delegate_executor=partial(
+            run_delegated_turn,
+            user_id=user_id,
+            run_turn=partial(run_chat_turn, headless=headless),
+            task=setup.task,
+            inherited_excluded_tool_names=inputs.excluded_tool_names,
+        ),
+        headless=headless,
+        excluded_tool_names=inputs.excluded_tool_names,
+        scene_turn=SceneTurnState(),
+        proactive_turn=ephemeral,
+        user_message=setup.memory_query if not ephemeral else "",
+        media_turn=media_turn,
+    )
+
+    buffer_text = companion_reply or headless or not has_viewer or setup.final_reply_only
+    delivery = "complete" if companion_reply else "buffered" if buffer_text else "stream"
+    if buffer_text:
+        await emitter.send_json({"type": "message.start"})
+    return _TurnContext(
+        inputs=inputs,
+        current_context=current_context,
+        dispatch_ctx=dispatch_ctx,
+        active_tool_names=active_tool_names,
+        inference=inference,
+        delivery=delivery,
+    )
+
+
+async def _refresh_turn_material(
+    conv: ConversationSnapshot,
+    user_id: int,
+    inputs: TurnInputs,
+    current_context: dict[str, Any],
+    *,
+    base_instructions: str,
+    memory_scope: MemoryScope | None,
+    memory_query: str,
+    replacement: ReplyReplacement | None,
+    media_turn: MediaTurnState,
+) -> frozenset[str]:
+    """每轮模型调用前的资料刷新：动作与环境、话题卡片、视频媒体；返回暂不可用的动作工具。"""
+    instruction_parts = [base_instructions]
+    action_tools_not_ready: frozenset[str] = frozenset()
+    action_view = None
+    async with session_scope() as db:
+        await refresh_video_media(db, media_turn)
+        if replacement is not None:
+            for artifact in media_turn.artifacts.values():
+                if artifact.bound_message_id == replacement.previous.id:
+                    artifact.bound_message_id = None
+        if conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None:
+            action_view = await build_action_view(user_id)
+            environment = await build_companion_environment_prompt(
+                db, user_id, language=inputs.language, action_view=action_view
+            )
+            instruction_parts.append(environment)
+            action_tools_not_ready = await unavailable_action_tool_names(user_id, action_view=action_view)
+            if memory_scope is not None:
+                topic_context_at = utc_now()
+                topic_material, topic_cards = await load_topic_context(
+                    db,
+                    memory_scope,
+                    inputs.context.get("historical_topic_ids", ()),
+                    now=topic_context_at,
+                    query=memory_query,
+                )
+                current_context["topic_material"] = topic_material
+                current_context["topic_cards"] = topic_cards
+                current_context["topic_context_at"] = topic_context_at
+    current_context["instructions"] = "\n\n".join(instruction_parts)
+    return action_tools_not_ready
+
+
 async def _run_chat_turn(
     req: ChatRequest,
-    llm_config: UserLlmConfig,
     user_id: int,
     emitter: Emitter,
     session_client_context: ChatRequestClientContext | None = None,
     track_task: TrackTask | None = None,
     *,
+    task_override: AiTaskKey | None = None,
     session_settings: dict | None = None,
     persisted_message_id: int | None = None,
     final_reply_only: bool = False,
@@ -214,283 +563,68 @@ async def _run_chat_turn(
     excluded_tool_names: frozenset[str] = frozenset(),
 ) -> None:
     """执行一个对话回合；自动化与回合后整理由会话决定。``ephemeral`` 只用于主动陪伴：内部资料、不落库、可沉默，调用方同时 ``headless``。``has_viewer=False`` 表示帧只被程序捕获（子 Agent 委派）：缓冲交付，不做气泡停顿。"""
-    user_message_id: int | None = None
-    replacement: ReplyReplacement | None = None
     with ExitStack() as turn_scope:
-        # 轮次起点先提交用户输入并解析召回查询；会话退出后生成向量，再以新短会话装配上下文。
-        async with session_scope() as db:
-            conv = await turn_conversation(db, req.session_id, user_id)
-            if not conv:
-                language = await get_user_setting(db, user_id, "language")
-                await emit_conversation_unavailable(emitter, language, "Conversation not found")
-                return
-            if replace_reply_message_id is not None:
-                replacement = await reply_replacement_target(db, user_id, req.session_id, replace_reply_message_id)
-                if persisted_message_id != replacement.source_message_id:
-                    raise ValueError("Replacement source does not belong to this turn")
-                final_reply_only = True
-            try:
-                memory_scope = conversation_memory_scope(conv, user_id)
-            except ValueError as exc:
-                language = await get_user_setting(db, user_id, "language")
-                await emit_conversation_unavailable(emitter, language, str(exc))
-                return
-            # 委派沿用父回合的任务，普通入口由会话和主动回合标志决定。
-            task = (
-                llm_config.config.task
-                if llm_config.config is not None and llm_config.config.task is not None
-                else conversation_ai_task(conv, proactive=ephemeral)
-            )
-            llm_config = await resolve_user_llm_config(db, user_id, task)
-            # 主动回合与自动化任务不算用户接触。
-            turn_scope.enter_context(user_turn_activity(user_id, enabled=not ephemeral and not conv.is_automation))
-
-            if not ephemeral:
-                # 已持久化输入由调用方发布；本层只发布自己新增的用户行。
-                if persisted_message_id is not None:
-                    persisted = await turn_message(db, persisted_message_id)
-                    if persisted is None or persisted.conversation_id != conv.id or persisted.role != "user":
-                        raise ValueError("Persisted user message does not belong to this turn")
-                    user_message_id = persisted_message_id
-                else:
-                    user_message_id = await persist_user_message(db, conv.id, req.message, user_id=user_id)
-                    await emitter.send_json(
-                        {"type": "message.persisted", "role": "user", "message_ids": [user_message_id]}
-                    )
-
-            # 回合起点重读 user_settings（PUT /api/config 后下一回合即生效）；会话级覆写再覆盖其上，只构建一次供门控与派发共用。
-            effective_settings = merge_session_settings(
-                await load_user_settings(db, user_id),
-                session_settings if session_settings is not None else (conv.settings_json or {}),
-            )
-            # 主动回合在此一次加载历史：既取最近用户发言，也传给 build_turn_inputs 免二次读取。
-            history: list[MessageSnapshot] | None = None
-            if replacement is not None:
-                history = [m for m in await context_messages(db, conv) if m.id != replacement.previous.id]
-            memory_query = ""
-            if memory_scope is not None:
-                if ephemeral:
-                    history = await context_messages(db, conv)
-                memory_query = memory_query_text(req, history or [], use_request=not ephemeral)
-
-        memory_embedding = await embed_memory_text(user_id, memory_query) if len(memory_query.strip()) > 1 else None
-
-        async with session_scope() as db:
-            try:
-                inputs = await build_turn_inputs(
-                    db,
-                    conv,
-                    user_id,
-                    req,
-                    session_client_context,
-                    effective_settings,
-                    memory_scope,
-                    task=task,
-                    proactive_memory_query=memory_query,
-                    proactive_memory_embedding=memory_embedding,
-                    companion_proactive_turn=ephemeral,
-                    excluded_tool_names=excluded_tool_names,
-                    history=history,
-                )
-            except MissingLlmConfigError as exc:
-                # 用户行已落库：配置补齐后可按 retry_message_id 重试，不能以没有重试入口的异常收尾；主动回合没有用户行，异常交由调用方记录。
-                if user_message_id is None:
-                    raise
-                logger.warning("LLM turn failed: %s", exc)
-                await emit_llm_unavailable(
-                    emitter, exc, effective_settings.get("language"), retry_message_id=user_message_id
-                )
-                return
-            # 本轮尾部资料没有持久化来源，不进入持久摘要。
-            runtime_item_start = len(inputs.context["input"])
-            if replacement is not None:
-                inputs.context["instructions"] += resolve_prompt_text(REPLACE_REPLY_GUIDANCES, inputs.language)
-                inputs.context["input"].append(
-                    user_text_item(json.dumps({"previous_reply": replacement.previous.content}, ensure_ascii=False))
-                )
-            waits = (
-                await list_companion_intents(db, user_id)
-                if conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None
-                else []
-            )
-            if waits:
-                inputs.context["input"].append(
-                    user_text_item(
-                        resolve_prompt_text(PENDING_INTENTIONS_LABELS, inputs.language)
-                        + "\n"
-                        + json.dumps([wait.model_dump(mode="json") for wait in waits], ensure_ascii=False)
-                    )
-                )
-            if ephemeral and req.message.content:
-                inputs.context["input"].append(user_text_item(req.message.content))
-            inputs.context["source_message_ids"].extend([None] * (len(inputs.context["input"]) - runtime_item_start))
-
-        inference = resolve_inference_settings(effective_settings)
-        compressed_context = inputs.context
-        if (
-            not final_reply_only
-            and SETTINGS.enable_context_compression
-            and effective_settings.get("chat.enable_context_compression", True)
-            and compression_due(
-                inputs.context,
-                context_length=inputs.ctx_length,
-                threshold_ratio=inference.context_compression_threshold,
-                # 尾部资料不在持久基线内，此时按全量估算。
-                current_tokens=None if ephemeral or waits else inputs.estimated_tokens,
-            )
-        ):
-            try:
-                compressed_context, compress_info = await compress_history(
-                    inputs.context,
-                    user_id=user_id,
-                    task=task,
-                    temperature=_compression_temperature(effective_settings),
-                    language=inputs.language,
-                    context_length=inputs.ctx_length,
-                    companion=conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None,
-                )
-            except CompressionFailedError:
-                # 自动压缩失败不阻断本轮，按原上下文继续。
-                compress_info = None
-            if compress_info is not None:
-                async with session_scope() as db:
-                    checkpoint = await persist_compression_checkpoint(
-                        db, conv.id, compress_info, user_id=user_id, notify_user_id=user_id if headless else None
-                    )
-                # 自动压缩单行插入；手动 /压缩 走 command.result + hydrate=true，互斥互补。
-                await emitter.send_json(
-                    {
-                        "type": "compress.completed",
-                        "subtype": checkpoint.subtype,
-                        "text": checkpoint.content,
-                        "message_id": checkpoint.id,
-                    }
-                )
-        # 本轮输入按窗口的四分之一（字符数取 token 数，对中文偏保守）放宽，避免超长粘贴被历史条目的上限截断。
-        current_context = truncate_responses_context(
-            compressed_context,
-            current_max_chars=inputs.ctx_length // 4,
-            current_message_id=persisted_message_id if final_reply_only else None,
+        setup = await _load_turn_setup(
+            req,
+            user_id,
+            emitter,
+            turn_scope,
+            task_override=task_override,
+            session_settings=session_settings,
+            persisted_message_id=persisted_message_id,
+            final_reply_only=final_reply_only,
+            replace_reply_message_id=replace_reply_message_id,
+            ephemeral=ephemeral,
         )
-        # 视频内联在截断之后，只处理幸存者（每请求上限 2 个）；expected_session_id 防 stale 行/跨会话 URL 串台，非法形态降级为 [video]。
-        current_context["input"] = await inline_video_parts(current_context["input"], expected_session_id=str(conv.id))
-
-        schemas_by_name: dict[str, dict] = {schema_name(s): s for s in inputs.all_schemas}
-        # 继承看压缩/截断前的历史，避免摘要窗口丢掉已解锁工具。
-        history_unlocked = _history_unlocked_tool_names(inputs.context["input"])
-        initial_tool_names = {"search_tools", "companion_wait"}
-        if conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None:
-            initial_tool_names.update(COMPANION_MEDIA_TOOL_NAMES)
-        active_tool_names = (initial_tool_names | history_unlocked) & set(schemas_by_name)
-        turn_reasoning_parts: list[str] = []
-
-        # 陪伴用户会话的终端回复是结构化气泡数组：非流式取得后整体校验再交付。
-        companion_reply = conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None
-        async with session_scope() as db:
-            media_turn = await load_media_turn(
-                db,
-                conv,
-                task=task.value,
-                structured_reply=companion_reply,
-                request=req.message.content,
-                source_message_id=user_message_id,
-                request_scope=f"user:{user_message_id}" if user_message_id is not None else submission_request_id,
-                retry_after_message_id=persisted_message_id if final_reply_only else None,
-            )
-            media_turn.source_message_id = user_message_id
-            if replacement is not None and replacement.previous.reply_json:
-                old_reply = CompanionReply.from_saved_snapshot(
-                    replacement.previous.reply_json, replacement.previous.content or ""
-                )
-                retained_ids = {b.media_id for b in old_reply.bubbles if isinstance(b, MediaBubble)}
-                media_turn.artifacts = {
-                    key: value for key, value in media_turn.artifacts.items() if key in retained_ids
-                }
-                media_turn.required_goals.clear()
-                media_turn.current_versions.clear()
-                for bubble in old_reply.bubbles:
-                    if not isinstance(bubble, MediaBubble):
-                        continue
-                    artifact = media_turn.artifacts[bubble.media_id]
-                    artifact.goal_id = bubble.goal_id
-                    if artifact.bound_message_id == replacement.previous.id:
-                        artifact.bound_message_id = None
-                    media_turn.required_goals.add(bubble.goal_id)
-                    media_turn.current_versions[bubble.goal_id] = bubble.media_id
-            source = await turn_message(db, user_message_id) if user_message_id is not None else None
-            media_turn.asset_directory = dated_asset_directory(
-                source.created_at if source is not None else utc_now(),
-                await resolve_user_timezone(db, user_id) or "UTC",
-            )
-        dispatch_ctx = _ToolDispatchContext(
-            user_id=user_id,
-            llm_config=llm_config,
-            user_settings=effective_settings,
-            session_id=str(conv.id),
-            memory_scope=memory_scope,
-            native_memory=inputs.native_memory,
-            guardrails=ToolCallGuardrailController(),
-            emitter=emitter,
-            # 子 Agent 回合沿用本回合的无头标志：定时任务等无头回合委派出的本机调用同样不显示桌面工作态。
-            delegate_executor=partial(
-                run_delegated_turn,
-                run_turn=partial(run_chat_turn, headless=headless),
-                inherited_excluded_tool_names=inputs.excluded_tool_names,
-            ),
+        if setup is None:
+            return
+        memory_embedding = (
+            await embed_memory_text(user_id, setup.memory_query) if len(setup.memory_query.strip()) > 1 else None
+        )
+        turn = await _prepare_turn(
+            setup,
+            req,
+            user_id,
+            emitter,
+            session_client_context,
+            ephemeral=ephemeral,
             headless=headless,
-            excluded_tool_names=inputs.excluded_tool_names,
-            scene_turn=SceneTurnState(),
-            proactive_turn=ephemeral,
-            user_message=memory_query if not ephemeral else "",
-            media_turn=media_turn,
+            has_viewer=has_viewer,
+            persisted_message_id=persisted_message_id,
+            submission_request_id=submission_request_id,
+            excluded_tool_names=excluded_tool_names,
+            memory_embedding=memory_embedding,
         )
-
-        buffer_text = companion_reply or headless or not has_viewer or final_reply_only
-        delivery = "complete" if companion_reply else "buffered" if buffer_text else "stream"
-        if buffer_text:
-            await emitter.send_json({"type": "message.start"})
-        generation_emitter = _BufferedReplacementEmitter() if replacement is not None else emitter
+        if turn is None:
+            return
+        inputs, current_context = turn.inputs, turn.current_context
+        dispatch_ctx, active_tool_names = turn.dispatch_ctx, turn.active_tool_names
+        media_turn = dispatch_ctx.media_turn
+        generation_emitter = _BufferedReplacementEmitter() if setup.replacement is not None else emitter
+        turn_reasoning_parts: list[str] = []
         base_instructions = current_context["instructions"]
         audio_transcripts: dict[str, str | Exception] = {}
         turn_usage = LlmUsageAccumulator()
         while True:
-            instruction_parts = [base_instructions]
-            action_tools_not_ready: frozenset[str] = frozenset()
-            action_view = None
-            async with session_scope() as db:
-                await refresh_video_media(db, media_turn)
-                if replacement is not None:
-                    for artifact in media_turn.artifacts.values():
-                        if artifact.bound_message_id == replacement.previous.id:
-                            artifact.bound_message_id = None
-                if conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None:
-                    action_view = await build_action_view(user_id)
-                    environment = await build_companion_environment_prompt(
-                        db, user_id, language=inputs.language, action_view=action_view
-                    )
-                    instruction_parts.append(environment)
-                    action_tools_not_ready = await unavailable_action_tool_names(user_id, action_view=action_view)
-                    if memory_scope is not None:
-                        topic_context_at = utc_now()
-                        topic_material, topic_cards = await load_topic_context(
-                            db,
-                            memory_scope,
-                            inputs.context.get("historical_topic_ids", ()),
-                            now=topic_context_at,
-                            query=memory_query,
-                        )
-                        current_context["topic_material"] = topic_material
-                        current_context["topic_cards"] = topic_cards
-                        current_context["topic_context_at"] = topic_context_at
-            current_context["instructions"] = "\n\n".join(instruction_parts)
+            action_tools_not_ready = await _refresh_turn_material(
+                setup.conv,
+                user_id,
+                inputs,
+                current_context,
+                base_instructions=base_instructions,
+                memory_scope=setup.memory_scope,
+                memory_query=setup.memory_query,
+                replacement=setup.replacement,
+                media_turn=media_turn,
+            )
 
-            if not buffer_text:
+            if turn.delivery == "stream":
                 await emitter.send_json({"type": "message.start"})
             # 动作资料与工具资格共用本次快照，执行时再校验目标仍有效。
             schemas_by_name = {
                 schema_name(schema): schema
                 for schema in REGISTRY.get_all_schemas(
-                    user_id, user_settings=effective_settings, exclude=inputs.excluded_tool_names
+                    user_id, user_settings=setup.effective_settings, exclude=inputs.excluded_tool_names
                 )
             }
             available_schemas = apply_search_tools_catalog(
@@ -500,130 +634,53 @@ async def _run_chat_turn(
                 )
             )
             available_by_name = {schema_name(schema): schema for schema in available_schemas}
-            if companion_reply:
+            if media_turn.structured_reply:
                 active_tool_names.update(VISUAL_TOOL_NAMES & available_by_name.keys())
             dispatch_ctx = replace(
                 dispatch_ctx, unavailable_tool_names=frozenset(schemas_by_name.keys() - available_by_name.keys())
             )
             active_schemas = [available_by_name[name] for name in active_tool_names if name in available_by_name]
-            # 正文交付前按链切换；每个槽位使用自己的模型、窗口和干净的请求副本。
-            text_delivered = False
-
-            def set_text_delivered() -> None:
-                nonlocal text_delivered
-                text_delivered = True
-
-            # 工具步收束（媒体请求受理后的额度、无进展守卫：全部失败、只重复本回合已有调用且结果不变、
-            # 或动作型工具成功后核对额度用尽）：本次调用只依据已有结果生成最终回复，沿用最终回复重试的无工具请求形态。
-            # 主动回合不参与守卫收束，由意图有效期约束时长。
+            # 只依据已有结果收束回复；主动回合由意图有效期约束。
             reply_only = (
-                final_reply_only
-                or (companion_reply and media_turn.final_reply_due())
+                setup.final_reply_only
+                or (media_turn.structured_reply and media_turn.final_reply_due())
                 or (not ephemeral and dispatch_ctx.guardrails.must_conclude)
             )
-
-            async def _call(provider: ChatProvider, native_audio: bool, has_next_attempt: bool) -> _LLMTurnResult:
-                nonlocal reply_only
-                input_length = len(current_context["input"])
-                call_context = {
-                    **current_context,
-                    "input": await prepare_audio_input(
-                        user_id,
-                        str(conv.id),
-                        current_context["input"],
-                        native=native_audio,
-                        transcripts=audio_transcripts,
-                    ),
-                }
-                recovery_used = False
-                reply_format_error = None
-                while True:
-                    try:
-                        with collect_llm_usage(turn_usage):
-                            result = await _generate_llm_response(
-                                generation_emitter,
-                                provider.config.model,
-                                call_context,
-                                active_schemas,
-                                resolve_context_tokens(provider.config),
-                                provider,
-                                delivery=delivery,
-                                on_text_delivered=set_text_delivered,
-                                reasoning_effort=inference.reasoning_effort,
-                                temperature=inference.temperature,
-                                turn_request=req.message.content,
-                                user_local_tz=inputs.user_local_tz,
-                                lang=inputs.language,
-                                speech_config=inputs.speech_config if companion_reply else None,
-                                reply_preference=inputs.response_preference if companion_reply else None,
-                                reply_persona=inputs.reply_persona,
-                                voice_id=inputs.speech_voice,
-                                allow_silence=ephemeral and companion_reply,
-                                reply_format_error=reply_format_error,
-                                media_turn=media_turn,
-                                pace_bubbles=has_viewer and not headless and replacement is None,
-                                final_reply_only=reply_only,
-                                allow_voice_fallback=recovery_used,
-                            )
-                        current_context["input"].extend(call_context["input"][input_length:])
-                        result.generation_origin = GenerationOrigin.from_config(provider.config)
-                        return result
-                    except _IncompleteResponseError as exc:
-                        reply_only = reply_only or exc.final_reply
-                        if has_next_attempt or recovery_used or not exc.retryable:
-                            raise
-                        recovery_used = True
-                        logger.warning(
-                            "Retrying incomplete response at the final chain attempt",
-                            extra={
-                                "provider": provider.provider_name,
-                                "model": provider.config.model,
-                                "error": str(exc),
-                            },
-                        )
-                    except _InvalidCompanionReplyError as exc:
-                        reply_only = True
-                        if has_next_attempt or recovery_used:
-                            raise
-                        recovery_used = True
-                        reply_format_error = exc
-                        logger.warning(
-                            "Editing companion reply at the final chain attempt",
-                            extra={"provider": provider.provider_name, "model": provider.config.model},
-                        )
-                    except _FinalReplyStreamError:
-                        reply_only = True
-                        raise
-
             try:
-                async with session_scope() as db:
-                    llm_chain = order_provider_chain(
-                        await resolve_provider_chain(db, user_id, "llm", task=task),
-                        ProviderSelection(origin=replacement.generation_origin, mode="next") if replacement else None,
-                    )
-                llm_result = await execute_media_with_fallback(
-                    llm_chain,
-                    request_input_modalities(
-                        _reply_repair_history(current_context["input"]) if reply_only else current_context["input"]
-                    ),
-                    _call,
+                llm_result = await generate_turn_response(
+                    generation_emitter,
                     user_id=user_id,
-                    stream_started=lambda: text_delivered,
+                    session_id=str(setup.conv.id),
+                    task=setup.task,
+                    context=current_context,
+                    inputs=inputs,
+                    inference=turn.inference,
+                    media_turn=media_turn,
+                    schemas=active_schemas,
+                    request=req.message.content,
+                    delivery=turn.delivery,
+                    allow_silence=ephemeral and media_turn.structured_reply,
+                    pace_bubbles=has_viewer and not headless and setup.replacement is None,
+                    final_reply_only=reply_only,
+                    selection=ProviderSelection(origin=setup.replacement.generation_origin, mode="next")
+                    if setup.replacement
+                    else None,
+                    transcripts=audio_transcripts,
+                    usage=turn_usage,
                 )
             except LLMRuntimeError as exc:
-                # 链已耗尽或响应开始后失败：补发结尾 error 帧，让渲染端消息状态机干净收尾。
                 logger.warning(
                     "LLM turn failed",
                     extra={"user_id": user_id, "reason": exc.classified.reason.value, "error": str(exc)},
                     exc_info=True,
                 )
-                await emit_llm_error(emitter, exc, inputs.language, retry_message_id=user_message_id)
+                await emit_llm_error(emitter, exc, inputs.language, retry_message_id=setup.user_message_id)
                 break
-            except _InvalidCompanionReplyError:
+            except CompanionReplyFormatError:
                 await emitter.send_json(
                     {
                         "type": "error",
-                        "retry_message_id": user_message_id,
+                        "retry_message_id": setup.user_message_id,
                         "message": "本次回复的格式不正确，请重试。"
                         if inputs.language == "zh"
                         else "The reply could not be generated in the required format. Please try again.",
@@ -631,9 +688,8 @@ async def _run_chat_turn(
                 )
                 break
             except (MissingLlmConfigError, RuntimeError) as exc:
-                # 配置缺失或响应未正常完成：结束本轮；完整响应失败也可能发生在请求已开始之后。
                 logger.warning("LLM turn failed: %s", exc)
-                await emit_llm_unavailable(emitter, exc, inputs.language, retry_message_id=user_message_id)
+                await emit_llm_unavailable(emitter, exc, inputs.language, retry_message_id=setup.user_message_id)
                 break
 
             if llm_result.reasoning:
@@ -641,16 +697,16 @@ async def _run_chat_turn(
 
             if not llm_result.tool_calls_list:
                 await _persist_assistant_no_tool_turn(
-                    conv,
+                    setup.conv,
                     user_id,
                     llm_result,
-                    task=task,
+                    task=setup.task,
                     emitter=emitter,
-                    effective_settings=effective_settings,
+                    effective_settings=setup.effective_settings,
                     user_text=req.message.content,
                     first_user_msg_content=inputs.first_user_msg_content,
-                    memory_scope=memory_scope,
-                    media=None if companion_reply else media_turn.text_reply_media(),
+                    memory_scope=setup.memory_scope,
+                    media=None if media_turn.structured_reply else media_turn.text_reply_media(),
                     turn_reasoning="\n\n".join(turn_reasoning_parts) or None,
                     cache_usage=turn_usage.summary(),
                     persist=not ephemeral,
@@ -666,9 +722,8 @@ async def _run_chat_turn(
                 if isinstance(name, str) and name:
                     active_tool_names.add(name)
             _assign_tool_call_ids(llm_result.tool_calls_list)
-
             await _persist_assistant_with_tool_calls_and_results(
-                conv,
+                setup.conv,
                 llm_result,
                 dispatch_ctx,
                 current_context,

@@ -14,8 +14,8 @@ from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import ensure_utc, resolve_language
 from pydantic import BaseModel, ConfigDict, Field
+from runtime.background import TaskScope
 from runtime.paid_work import require_new_generation_call
-from runtime.task_supervisor import TASK_SUPERVISOR
 
 from features.appearance.avatar_service import read_portrait_bytes
 from features.configuration.settings.values import get_user_setting
@@ -27,7 +27,7 @@ from .service import begin_review, record_review
 
 logger = get_logger(__name__)
 _REVIEW_LOCKS: dict[int, asyncio.Lock] = {}
-_REVIEW_TASKS: dict[tuple[int, int, datetime], asyncio.Task[None]] = {}
+_REVIEW_TASKS = TaskScope[tuple[int, int, datetime]]("action_library.review")
 
 
 class ActionReviewVerdict(BaseModel):
@@ -39,25 +39,18 @@ class ActionReviewVerdict(BaseModel):
 
 def schedule_action_review(user_id: int, action_id: int, expected_updated_at: datetime) -> None:
     key = (user_id, action_id, ensure_utc(expected_updated_at))
-    existing = _REVIEW_TASKS.get(key)
-    if existing is not None and not existing.done():
-        return
-    task = asyncio.create_task(
-        review_action(user_id, action_id, expected_updated_at), name=f"action.review.{action_id}"
-    )
-    _REVIEW_TASKS[key] = task
-    TASK_SUPERVISOR.register(task, owner="action_library.review", user_id=user_id)
-    task.add_done_callback(
-        lambda finished: _REVIEW_TASKS.pop(key, None) if _REVIEW_TASKS.get(key) is finished else None
+    _REVIEW_TASKS.spawn(
+        key,
+        lambda: review_action(user_id, action_id, expected_updated_at),
+        name=f"action.review.{action_id}",
+        user_id=user_id,
     )
 
 
 async def cancel_action_reviews(user_id: int, action_id: int) -> None:
-    tasks = [task for key, task in _REVIEW_TASKS.items() if key[:2] == (user_id, action_id)]
-    for task in tasks:
-        task.cancel()
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
+    keys = [key for key in _REVIEW_TASKS if key[:2] == (user_id, action_id)]
+    for key in keys:
+        await _REVIEW_TASKS.cancel_and_wait(key)
 
 
 async def review_action(user_id: int, action_id: int, expected_updated_at: datetime) -> None:

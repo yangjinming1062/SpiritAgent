@@ -18,9 +18,9 @@ from features.visuals.service import create_visual_job, resume_job
 from infrastructure.assets.write_protection import user_asset_lock
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
+from runtime.background import TaskScope
 from runtime.events.emit import emit_ws_event
 from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
-from runtime.task_supervisor import TASK_SUPERVISOR
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from workflows.visuals_companion import load_visual_snapshot
@@ -31,7 +31,7 @@ logger = get_logger(__name__)
 # 顺序为先补齐互动反应，再补持续循环，最后才是大幅度的自发动作。
 _CORE_PRESETS = ("idle",)
 _PROGRESSIVE_PRESETS = ("look", "smile", "focus", "relax", "stretch")
-_TASKS: dict[int, asyncio.Task[None]] = {}
+_TASKS = TaskScope("visuals.preparation")
 _RERUN: set[int] = set()
 _STOPPING = False
 
@@ -172,29 +172,34 @@ async def _run(user_id: int) -> None:
 def schedule_base_motion_preparation(user_id: int) -> None:
     if _STOPPING:
         return
-    if user_id in _TASKS:
+    if _TASKS.running(user_id) is not None:
+        # 已在跑：先登记重排，由结束回调按需续跑一轮，避免造型切换等场景丢请求。
         _RERUN.add(user_id)
         return
-    task = asyncio.create_task(_run(user_id), name=f"visuals.preparation.{user_id}")
-    _TASKS[user_id] = task
-    TASK_SUPERVISOR.register(task, owner="visuals.preparation", user_id=user_id)
+    _RERUN.discard(user_id)
 
     def finished(done: asyncio.Task[None]) -> None:
-        if _TASKS.get(user_id) is done:
-            _TASKS.pop(user_id)
-        if user_id in _RERUN:
-            _RERUN.discard(user_id)
-            if not done.cancelled():
-                schedule_base_motion_preparation(user_id)
+        if _TASKS.running(user_id) is not None:
+            return
+        pending = user_id in _RERUN
+        _RERUN.discard(user_id)
+        if pending and not done.cancelled():
+            schedule_base_motion_preparation(user_id)
 
-    task.add_done_callback(finished)
+    _TASKS.spawn(
+        user_id,
+        lambda: _run(user_id),
+        name=f"visuals.preparation.{user_id}",
+        user_id=user_id,
+        on_done=finished,
+    )
 
 
 async def stop_base_motion_preparation() -> None:
     global _STOPPING
     _STOPPING = True
     _RERUN.clear()
-    await TASK_SUPERVISOR.drain(owner="visuals.preparation")
+    await _TASKS.drain()
 
 
 async def start_base_motion_preparation() -> None:

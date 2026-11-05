@@ -29,7 +29,7 @@ from infrastructure.constants import DEFAULT_SESSION_TITLE, TITLE_GENERATION_TEM
 from infrastructure.database import session_scope
 from infrastructure.logger import get_logger
 from infrastructure.text import resolve_language
-from runtime.background import TaskBag
+from runtime.background import TaskScope
 from runtime.memory_scope import MemoryScope
 from runtime.presets import COMPANION_PRESET_ID
 from runtime.tools.registry import REGISTRY
@@ -50,7 +50,7 @@ from workflows.chat.types import TrackTask
 logger = get_logger(__name__)
 
 # track_task=None 路径的兜底：模块级强引用集合，防止 CPython GC 在 await 期间销毁进行中的 task。
-_BG = TaskBag("chat.persistence")
+_BG = TaskScope("chat.persistence")
 _PERSISTENCE_WRITE_TIMEOUT_SECONDS = 30.0
 
 

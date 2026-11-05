@@ -4,7 +4,7 @@ from typing import Protocol
 
 from features.conversation.request_contracts import ChatMessageRequest, ChatRequest
 from features.conversation.turn_access import create_delegated_conversation
-from infrastructure.ai.user_config import UserLlmConfig
+from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.logger import get_logger
 from infrastructure.text import tool_error
 from runtime.delegation import DelegateAction
@@ -17,10 +17,10 @@ class TurnRunner(Protocol):
     def __call__(
         self,
         request: ChatRequest,
-        llm_config: UserLlmConfig,
         user_id: int,
         emitter: Emitter,
         *,
+        task_override: AiTaskKey | None,
         excluded_tool_names: frozenset[str],
         has_viewer: bool,
     ) -> Awaitable[None]: ...
@@ -35,12 +35,12 @@ logger = get_logger(__name__)
 async def run_delegated_turn(
     action: DelegateAction,
     user_id: int,
-    llm_config: UserLlmConfig,
+    task: AiTaskKey,
     *,
     run_turn: TurnRunner,
     inherited_excluded_tool_names: frozenset[str] = frozenset(),
 ) -> str:
-    """执行子 Agent 回合并转成父回合 ToolResult。子回合继承父回合 llm_config、用户作用域与会话类型；回合入口由 orchestrator 注入（绑定父回合无头标志），避免循环导入。输出经 HeadlessEmitter 捕获，以 final_text/error 结构化返回。"""
+    """执行子 Agent 回合并转成父回合 ToolResult。子回合继承父回合任务链、用户作用域与会话类型；回合入口由 orchestrator 注入（绑定父回合无头标志），避免循环导入。输出经 HeadlessEmitter 捕获，以 final_text/error 结构化返回。"""
     try:
         parent_id = int(action.parent_session_id) if action.parent_session_id else None
         sid = await create_delegated_conversation(user_id, parent_id)
@@ -65,9 +65,9 @@ async def run_delegated_turn(
         # 帧只进入 HeadlessEmitter，没有观看者：缓冲交付，不做气泡停顿。
         await run_turn(
             req,
-            llm_config,
             user_id,
             headless,
+            task_override=task,
             excluded_tool_names=_DELEGATED_EXCLUDED_TOOLS | inherited_excluded_tool_names,
             has_viewer=False,
         )

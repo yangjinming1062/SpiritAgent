@@ -57,7 +57,7 @@ ORM 留在数据所有者内部。跨域读取返回 DTO/冻结快照，写入�
 
 [registrations.py](bootstrap/registrations.py) 统一登记供应商、工具、内部事件及业务端口，导入模块不隐式注册。启动由 [lifecycle.py](bootstrap/lifecycle.py) 完成安全检查、迁移、配置水合、模块准备、调度/事件启动和任务恢复；参与者顺序由 [runtime_lifecycle.py](bootstrap/runtime_lifecycle.py) 维护。
 
-停机先关闭生产入口，再收敛所属任务，最后释放数据库和供应商连接池。[task_supervisor.py](runtime/task_supervisor.py) 记录所有者、账户与错误，业务负责持久状态；取消与写盘收尾共用 [async_io.py](infrastructure/async_io.py)，重复取消也须等待目标释放资源。
+停机先关闭生产入口，再收敛所属任务，最后释放数据库和供应商连接池。[task_supervisor.py](runtime/task_supervisor.py) 记录所有者、账户与错误，业务负责持久状态；常驻单 loop 与按 key 去重的任务集合见 [background.py](runtime/background.py)；取消与写盘收尾共用 [async_io.py](infrastructure/async_io.py)，重复取消也须等待目标释放资源。
 
 HTTP、调度及清理通过 [user_maintenance.py](runtime/user_maintenance.py) 共享账户租约。启动和周期维护按账户处理遗留媒体与正式资产，维护中的账户延后；各清理项隔离失败，不能让一项异常跳过其他回收。
 
@@ -95,7 +95,7 @@ HTTP、调度及清理通过 [user_maintenance.py](runtime/user_maintenance.py) 
 
 ## 供应商与网络错误
 
-回退、可重试错误与未知结果由 [llm_fallback.py](infrastructure/ai/llm_fallback.py)、[error_classifier.py](infrastructure/ai/error_classifier.py) 和 [providers/http.py](infrastructure/ai/providers/http.py) 处理。
+回退、可重试错误与未知结果由 [llm_fallback.py](infrastructure/ai/llm_fallback.py)、[error_classifier.py](infrastructure/ai/error_classifier.py) 和 [providers/http.py](infrastructure/ai/providers/http.py) 处理。聊天与独立调用共用 [response_validation.py](infrastructure/ai/response_validation.py) 校验响应终态，业务输出仍由各自契约校验。
 
 [network.py](infrastructure/network.py) 按协议使用 `HTTP_PROXY`/`HTTPS_PROXY`，回退 `ALL_PROXY`；进程环境优先于文件。`NO_PROXY` 支持域名、IP、端口、通配与 CIDR，网段只匹配 URL 中的 IP，服务短名称须显式包含。DDGS 使用 `DDGS_PROXY`。
 

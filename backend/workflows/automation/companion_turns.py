@@ -11,8 +11,6 @@ from features.conversation.evidence import latest_user_message_id
 from features.conversation.reply_audio import discard_reply_audio, prepare_reply_audio
 from features.conversation.request_contracts import ChatMessageRequest, ChatRequest
 from features.conversation.turn_access import ensure_main_conversation
-from infrastructure.ai.tasks import AiTaskKey
-from infrastructure.ai.user_config import resolve_user_llm_config
 from infrastructure.database import session_scope
 from infrastructure.logger import get_logger
 from infrastructure.redact import redact_sensitive_text
@@ -130,7 +128,6 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
         async with asyncio.timeout(max(0.0, remaining)):
             async with session_scope() as db:
                 conversation = await ensure_main_conversation(db, user_id)
-                llm_config = await resolve_user_llm_config(db, user_id, AiTaskKey.proactive)
                 message_id = await latest_user_message_id(db, user_id)
                 disturbance_tier = await get_disturbance_tier(user_id, db=db)
                 language = resolve_language(await get_user_setting(db, user_id, "language"))
@@ -141,7 +138,6 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
             with companion_turn_plan(user_id, intent.id, intent.expires_at) as plan:
                 await run_chat_turn(
                     request,
-                    llm_config,
                     user_id,
                     emitter,
                     ephemeral=True,

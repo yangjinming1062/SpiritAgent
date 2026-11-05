@@ -24,7 +24,7 @@ from infrastructure.logger import get_logger
 from infrastructure.redact import redact_sensitive_text
 from infrastructure.text import utc_now
 from pydantic import TypeAdapter
-from runtime.background import BackgroundTask, TaskBag
+from runtime.background import BackgroundTask, TaskScope
 from runtime.paid_work import GenerationWorkPaused
 from runtime.user_maintenance import is_user_in_maintenance
 from sqlalchemy import delete, select, text, update
@@ -47,8 +47,7 @@ _TERMINAL = ("succeeded", "failed", "cancelled", "stopped")
 _REQUEST = TypeAdapter(VideoGenRequest)
 _STATUS = TypeAdapter(VideoJobStatus)
 _DISPATCHER = BackgroundTask("media.video_queue.dispatcher")
-_WORK = TaskBag("media.video_queue.workers")
-_LANES: dict[int, asyncio.Task[None]] = {}
+_WORK = TaskScope("media.video_queue.workers")
 _CONFIGS: dict[str, ProviderConfig] = {}
 _STOPPING = False
 _LEADER: AsyncConnection | None = None
@@ -775,15 +774,7 @@ async def _dispatch() -> None:
                     )
                 )
             for lane_id in lane_ids:
-                existing = _LANES.get(lane_id)
-                if existing is not None and not existing.done():
-                    continue
-                task = asyncio.create_task(_run_lane(lane_id), name=f"video-queue-{lane_id}")
-                _LANES[lane_id] = task
-                task.add_done_callback(
-                    lambda done, key=lane_id: _LANES.pop(key, None) if _LANES.get(key) is done else None
-                )
-                _WORK.add(task, on_error=_worker_error)
+                _WORK.spawn(lane_id, lambda: _run_lane(lane_id), name=f"video-queue-{lane_id}", on_error=_worker_error)
         except Exception:
             logger.exception("video queue dispatcher awaits retry")
         await asyncio.sleep(0.5)
@@ -859,7 +850,6 @@ async def drain_video_queue() -> None:
     try:
         await _WORK.drain()
     finally:
-        _LANES.clear()
         _CONFIGS.clear()
         connection, _LEADER = _LEADER, None
         if connection is not None:

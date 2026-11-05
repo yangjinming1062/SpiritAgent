@@ -9,7 +9,7 @@
 | 业务操作、受理与历史修改 | [operations.py](operations.py)、[submissions.py](submissions.py)、[history_commands.py](history_commands.py) |
 | 回合互斥、工具循环和取消 | [orchestrator.py](orchestrator.py)、[tool_dispatch.py](tool_dispatch.py)、[delegation.py](delegation.py) |
 | 参数、历史与模型资料 | [turn_inputs.py](turn_inputs.py)、[system_prompt.py](system_prompt.py)、[prompt_presets.py](prompt_presets.py)、[prompt_blocks.py](prompt_blocks.py) |
-| 模型请求、回退与结构恢复 | [streaming.py](streaming.py)、[reply_delivery.py](reply_delivery.py) |
+| 模型请求、回退与结构恢复 | [model_turn.py](model_turn.py)、[streaming.py](streaming.py)、[reply_delivery.py](reply_delivery.py) |
 | 压缩与确定性截断 | [context_compressor.py](context_compressor.py)、[message_sanitization.py](message_sanitization.py) |
 | 保存、气泡和来源绑定 | [persistence.py](persistence.py)、[bubble.py](bubble.py)、[reply_links.py](reply_links.py) |
 | 会话列表、参数与标题 | [session_resources.py](session_resources.py)、[title_generation.py](../../features/conversation/title_generation.py) |
@@ -20,7 +20,7 @@
 
 HTTP 受理由账户任务持有，调用方取消不能中断已持久受理。结构与输入互斥由 [http_contracts.py](../../features/conversation/http_contracts.py) 校验，工作流核对附件、额度和消息资格；[会话提交账本](../../features/conversation/submissions.py) 在锁内原子保存完整消息序列、附件和请求，重复提交复用原结果。传入 `persisted_message_id` 时输入已由调用方保存并发布，编排不再插入或通知。
 
-`run_chat_turn` 的会话锁覆盖回合及取消收尾。工具调用/结果写入必须完成后才能释放锁，资产保护覆盖工具返回到父回合提交的间隔。终端保存归 [turn_store.py](../../features/conversation/turn_store.py)，不得把尚未落库的结果留给无所属的后台任务。
+`run_chat_turn` 的会话锁覆盖回合及取消收尾；回合起点（`_load_turn_setup`）核对身份与输入，上下文装配（`_prepare_turn`）加载资料与工具，每轮再刷新环境和媒体（`_refresh_turn_material`）。阶段结果只交接已有对象，媒体状态由同一工具上下文持有。模型任务在起点按会话与主动回合标志确定，委派子回合用 `task_override` 继承父任务；装配时解析的基础链供窗口估算与工具辅助调用使用，每步模型调用重新读取当前任务链。工具调用/结果写入必须完成后才能释放锁，资产保护覆盖工具返回到父回合提交的间隔。终端保存归 [turn_store.py](../../features/conversation/turn_store.py)，不得把尚未落库的结果留给无所属的后台任务。历史修改入口（压缩、撤回、清空）共享 `compression_context` 的只读拒绝、历史锁与在途回合校验。
 
 `ephemeral` 用于主动陪伴，请求作为本轮尾部资料，压缩检查点仍保存；`headless` 控制本机桌面工作态，`has_viewer` 控制缓冲和气泡停顿。委派建立父会话下的子会话，继承预设、设置和限制，以 `HeadlessEmitter` 捕获结果；生活空间及再次委派在执行层排除，子会话输入不能成为用户事实证据。
 
@@ -60,9 +60,9 @@ HTTP 受理由账户任务持有，调用方取消不能中断已持久受理。
 
 循环按 [tool_guardrails.py](../../runtime/tools/tool_guardrails.py) 检查失败重复、无进展和动作后的核对额度，媒体另按 [turn_state.py](../../features/media/turn_state.py) 收束；达到条件后切为无工具最终回复，跨模型保留这一状态。主动回合由意图有效期约束。阈值与工具名单留在源码。
 
-非子 Agent 的陪伴会话执行完整结构校验；其他有观看者的回合可流式交付，无头/无观看者回合缓冲正文。文本只按代码围栏外的 Markdown 分隔线分泡，跨 chunk 保留候选前缀。成功、异常及取消都关闭响应流，缓冲正文在释放连接后交付；实际正文交付才锁定供应商回退，恢复资格依链的 `has_next_attempt` 判断。
+非子 Agent 的陪伴会话执行完整结构校验，校验阶梯（解码 → 演绎降级 → 完整解析 → 恢复预算内降级 → 修正保护）只由 [reply_delivery.py](reply_delivery.py) 的 `resolve_companion_reply` 实现；其他有观看者的回合可流式交付，无头/无观看者回合缓冲正文。文本只按代码围栏外的 Markdown 分隔线分泡，跨 chunk 保留候选前缀。成功、异常及取消都关闭响应流，缓冲正文在释放连接后交付；实际正文交付才锁定供应商回退，恢复资格依链的 `has_next_attempt` 判断。
 
-调用用量只统计模型生成与响应消费，包含续轮、格式修复和回退；工具、委派及回合后任务不继承父回合统计。用户错误文案来自 `turn_errors.py`，英文 detail 仅用于无头结果及诊断；原始请求响应只走显式调试日志。
+`model_turn.py` 拥有单轮模型回退与恢复：先尝试后续供应商或音频转写路径，链尾共用一次不完整响应重试或格式修复预算，恢复时保留最终回复限定。供应商终态统一经 `response_validation.py` 校验；正文、演绎、媒体引用与修正保护仍归回复交付层。调用用量只统计模型生成与响应消费，包含续轮、格式修复和回退；工具、委派及回合后任务不继承父回合统计。用户错误文案与聊天失败类型归 `turn_errors.py`，英文 detail 仅用于无头结果及诊断；原始请求响应只走显式调试日志。
 
 ### 消息与媒体
 

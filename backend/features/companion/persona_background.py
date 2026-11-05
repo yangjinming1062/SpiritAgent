@@ -5,7 +5,7 @@ import time
 from infrastructure.ai.llm_client import MissingLlmConfigError
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
-from runtime.background import TaskBag
+from runtime.background import TaskScope
 from sqlalchemy import select, update
 
 from features.companion.models import Persona
@@ -14,7 +14,7 @@ from features.companion.personality_tagger import analyze_personality_tags, pers
 
 logger = get_logger(__name__)
 
-_BG = TaskBag("companion.persona_background")
+_BG = TaskScope("companion.persona_background")
 
 _BG_TASK_MAX_ATTEMPTS = 3
 _BG_TASK_BASE_DELAY = 5.0

@@ -84,16 +84,16 @@ from infrastructure.video_processing.ffmpeg import VideoProcessError, probe_vide
 from infrastructure.video_processing.image import prepare_transparent_image
 from infrastructure.video_processing.matting import require_matting_model
 from PIL import Image
+from runtime.background import TaskScope
 from runtime.lifecycle import RuntimeParticipant
 from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
-from runtime.task_supervisor import TASK_SUPERVISOR
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .visuals_companion import freeze_action_reference, load_action_review_source
 
 logger = get_logger(__name__)
-_TASKS: dict[tuple[int, int], asyncio.Task[None]] = {}
+_TASKS = TaskScope("visuals.import")
 _LOCKS: dict[int, asyncio.Lock] = {}
 _IMPORT_CANDIDATE_LIMIT = 24
 
@@ -114,18 +114,16 @@ class _ReleasePlan:
 
 
 def schedule_import_analysis(user_id: int, job_id: int) -> None:
-    key = user_id, job_id
-    if key in _TASKS and not _TASKS[key].done():
-        return
-    task = asyncio.create_task(run_import_analysis(user_id, job_id), name=f"visual-import-{job_id}")
-    _TASKS[key] = task
-    TASK_SUPERVISOR.register(task, owner="visuals.import", user_id=user_id)
-    task.add_done_callback(lambda finished: _TASKS.pop(key, None) if _TASKS.get(key) is finished else None)
+    _TASKS.spawn(
+        (user_id, job_id),
+        lambda: run_import_analysis(user_id, job_id),
+        name=f"visual-import-{job_id}",
+        user_id=user_id,
+    )
 
 
 async def run_manual_import_job(user_id: int, job_id: int) -> bool:
-    previous = _TASKS.get((user_id, job_id))
-    if previous is not None and not previous.done():
+    if _TASKS.running((user_id, job_id)) is not None:
         return False
     schedule_import_analysis(user_id, job_id)
     return True
@@ -144,14 +142,9 @@ async def control_import_analysis(user_id: int, visual_id: int, request: ImportA
         return await ensure_import_job(user_id, visual_id)
     view = await command_import_job(user_id, visual_id, request)
     if request.command == "cancel":
-        task = _TASKS.get((user_id, view.id))
-        if task is not None:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+        await _TASKS.cancel_and_wait((user_id, view.id))
     elif view.state == "queued":
-        previous = _TASKS.get((user_id, view.id))
-        if previous is not None:
-            await asyncio.gather(previous, return_exceptions=True)
+        await _TASKS.wait((user_id, view.id))
         schedule_import_analysis(user_id, view.id)
     return view
 
@@ -1202,7 +1195,7 @@ async def resume_import_analysis(user_id: int | None = None) -> None:
 
 
 async def drain_import_analysis() -> None:
-    await TASK_SUPERVISOR.drain(owner="visuals.import")
+    await _TASKS.drain()
     await recover_import_jobs()
 
 

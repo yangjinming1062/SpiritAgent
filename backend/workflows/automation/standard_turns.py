@@ -5,8 +5,6 @@ from weakref import WeakValueDictionary
 from features.accounts.queries import user_is_active
 from features.automation.cron_jobs import STANDARD_CRON_KIND, get_user_job, resolve_job_conversation
 from features.conversation.request_contracts import ChatMessageRequest, ChatRequest
-from infrastructure.ai.tasks import AiTaskKey
-from infrastructure.ai.user_config import resolve_user_llm_config
 from infrastructure.database import session_scope
 from infrastructure.logger import get_logger
 from runtime.events.emit import emit_ws_event
@@ -61,11 +59,9 @@ async def _execute_standard_turn(
 
     try:
         conversation_id = await resolve_job_conversation(user_id, job_id, conversation_id, name)
-        async with session_scope() as db:
-            llm_config = await resolve_user_llm_config(db, user_id, AiTaskKey.scheduled_task)
         emitter = HeadlessEmitter()
         request = ChatRequest(session_id=str(conversation_id), message=ChatMessageRequest(content=prompt))
-        await run_chat_turn(request, llm_config, user_id, emitter, headless=True)
+        await run_chat_turn(request, user_id, emitter, headless=True)
         if emitter.error:
             await _emit_notification(
                 user_id, name=name, text="任务执行失败，请稍后重试", conversation_id=conversation_id, error=True

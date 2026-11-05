@@ -9,7 +9,7 @@ from infrastructure.ai.user_config import resolve_user_llm_config
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import format_local_iso
-from runtime.background import TaskBag
+from runtime.background import TaskScope
 
 from features.entries.queries import comments_for_entries, pending_reply, pending_reply_threads
 from features.entries.service import begin_reply, fail_reply, finish_reply
@@ -20,18 +20,13 @@ from features.posts.schemas import POST_COMMENT_MAX_CHARS
 from features.posts.store import get_post
 
 logger = get_logger(__name__)
-_BG = TaskBag("posts.replies")
-_THREADS: dict[tuple[int, int], asyncio.Task[None]] = {}
+_THREADS = TaskScope("posts.replies")
 
 
 def schedule_companion_reply(user_id: int, post_id: int) -> None:
-    key = (user_id, post_id)
-    if key in _THREADS and not _THREADS[key].done():
-        return
-    task = asyncio.create_task(_run_thread(user_id, post_id), name=f"post.reply.{post_id}")
-    _THREADS[key] = task
-    task.add_done_callback(lambda done: _THREADS.pop(key, None) if _THREADS.get(key) is done else None)
-    _BG.add(task, user_id=user_id)
+    _THREADS.spawn(
+        (user_id, post_id), lambda: _run_thread(user_id, post_id), name=f"post.reply.{post_id}", user_id=user_id
+    )
 
 
 async def _run_thread(user_id: int, post_id: int) -> None:
@@ -128,4 +123,4 @@ async def resume_replies() -> None:
 
 
 async def drain_replies() -> None:
-    await _BG.drain()
+    await _THREADS.drain()

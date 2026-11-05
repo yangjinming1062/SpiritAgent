@@ -12,7 +12,7 @@ from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import resolve_language
 from pydantic import BaseModel, ConfigDict, Field
-from runtime.background import TaskBag
+from runtime.background import TaskScope
 from runtime.paid_work import require_new_generation_call
 from runtime.user_maintenance import is_user_in_maintenance
 from sqlalchemy import select
@@ -26,8 +26,7 @@ from .prompts import VISUAL_TITLE
 from .repository import notify_visuals_updated
 
 _PENDING: dict[int, dict[int, None]] = {}
-_WORKERS: dict[int, asyncio.Task[None]] = {}
-_TASKS = TaskBag("visuals.naming")
+_TASKS = TaskScope("visuals.naming")
 _STOPPING = False
 logger = get_logger(__name__)
 
@@ -131,19 +130,15 @@ def schedule_visual_title(user_id: int, visual_id: int) -> None:
     if _STOPPING or is_user_in_maintenance(user_id):
         return
     _PENDING.setdefault(user_id, {})[visual_id] = None
-    previous = _WORKERS.get(user_id)
-    if previous is not None and not previous.done():
-        return
-    task = asyncio.create_task(_run_naming_jobs(user_id), name=f"visual-naming-{user_id}")
-    _WORKERS[user_id] = task
-    _TASKS.add(task, user_id=user_id)
 
-    def finished(done: asyncio.Task[None]) -> None:
-        if _WORKERS.get(user_id) is done:
-            _WORKERS.pop(user_id, None)
+    def finished(_done: asyncio.Task[None]) -> None:
+        # 同键可能已被新 worker 接管，只清理没有继任者的待办。
+        if _TASKS.running(user_id) is None:
             _PENDING.pop(user_id, None)
 
-    task.add_done_callback(finished)
+    _TASKS.spawn(
+        user_id, lambda: _run_naming_jobs(user_id), name=f"visual-naming-{user_id}", user_id=user_id, on_done=finished
+    )
 
 
 async def resume_visual_title_jobs(user_id: int | None = None) -> None:

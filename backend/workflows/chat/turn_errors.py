@@ -1,10 +1,47 @@
-"""回合失败的 error 帧：``message`` 面向用户，按会话语言本地化且不含内部枚举；``detail`` 是英文诊断串，只供无头消费者（委派、主动回合）与日志使用，不下发客户端。"""
+"""回合失败类型与用户可见 error 帧。message 按会话语言本地化；detail 仅供无头消费者与诊断，不下发客户端。"""
 
-from infrastructure.ai.error_classifier import FailoverReason, LLMRuntimeError
+from infrastructure.ai.error_classifier import ClassifiedError, FailoverReason, LLMRuntimeError
 from infrastructure.ai.llm_client import MissingLlmConfigError, MissingVideoModelError
 from infrastructure.text import resolve_prompt_text
+from pydantic import ValidationError
 
 from workflows.chat.chat_emitter import Emitter
+
+
+class IncompleteResponseError(RuntimeError):
+    """终态不完整（空正文、内容过滤、流内失败）；可否重试与是否只缺最终回复都由构造参数决定。"""
+
+    def __init__(self, reason: str, *, text_emitted: bool, final_reply: bool = False, retryable: bool = True) -> None:
+        self.retryable = retryable and not text_emitted and reason != "content_filter"
+        self.final_reply = final_reply or reason == "empty_output"
+        super().__init__(f"LLM response incomplete: {reason}")
+
+
+class CompanionReplyFormatError(RuntimeError):
+    """结构化回复校验失败：携带脱敏诊断与原始草稿，修复轮据此重发或结束回合。"""
+
+    def __init__(self, error: ValueError, raw_reply: str, *, repair_attempt: bool = False) -> None:
+        self.raw_reply = raw_reply
+        self.repair_attempt = repair_attempt
+        self.classified = ClassifiedError(FailoverReason.format_error, None, "Invalid companion reply format")
+        self.validation_errors = (
+            error.errors(include_input=False, include_url=False, include_context=False)
+            if isinstance(error, ValidationError)
+            else [{"type": "value_error", "loc": (), "msg": str(error)}]
+        )
+        super().__init__("Invalid companion reply format")
+
+    @property
+    def speech_only(self) -> bool:
+        """失败是否全部落在 ``voice.speech`` 字段：此时可保留整段台词，只降级演绎方式。"""
+        return bool(self.validation_errors) and all(
+            len(path := error["loc"]) >= 3 and path[1:3] == ("voice", "speech") for error in self.validation_errors
+        )
+
+
+class FinalReplyStreamError(LLMRuntimeError):
+    """最终回复流失败；保留供应商分类，后续模型仍只生成回复。"""
+
 
 _CONVERSATION_UNAVAILABLE_TEXTS: dict[str, str] = {
     "zh": "该会话已不可用，请新建会话后重试",

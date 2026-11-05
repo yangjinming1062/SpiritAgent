@@ -50,7 +50,7 @@ from infrastructure.domain_locks import lock_domain
 from infrastructure.logger import get_logger
 from infrastructure.text import resolve_language, resolve_prompt_text, utc_now
 from infrastructure.timezone import parse_timezone
-from runtime.background import TaskBag
+from runtime.background import TaskScope
 from runtime.desktop.connection import MANAGER
 from runtime.events.outbox_gc import run_outbox_gc
 from runtime.memory_scope import MemoryScope
@@ -99,11 +99,9 @@ class ScanScheduler:
     """周期扫描的小型调度描述：按周期间隔发现工作，按工作键单飞并记录下次启动时间。"""
 
     def __init__(self, name: str) -> None:
-        self._bag = TaskBag(name)
+        self._bag = TaskScope(name)
         self._scans: dict[str, _Scan] = {}
-        self._discoveries: dict[str, asyncio.Task[None]] = {}
         self._next_scan: dict[str, float] = {}
-        self._running: dict[tuple[str, int | None, str], asyncio.Task[None]] = {}
         self._next_work: dict[tuple[str, int | None, str], float] = {}
 
     def every(self, name: str, *, interval: float, discover: Callable[[], Awaitable[list[ScheduledWork]]]) -> None:
@@ -111,16 +109,16 @@ class ScanScheduler:
 
     async def tick(self) -> None:
         for name, scan in self._scans.items():
-            running = self._discoveries.get(name)
-            if running is not None and not running.done():
-                continue
             now = time.monotonic()
-            if now < self._next_scan.get(name, 0.0):
+            if self._bag.running(name) is not None or now < self._next_scan.get(name, 0.0):
                 continue
             self._next_scan[name] = now + scan.interval
-            discovery = asyncio.create_task(self._discover(name, scan), name=f"scheduler.scan.{name}")
-            self._discoveries[name] = discovery
-            self._bag.add(discovery, on_error=partial(_log_task_error, f"scan:{name}"))
+            self._bag.spawn(
+                name,
+                lambda: self._discover(name, scan),
+                name=f"scheduler.scan.{name}",
+                on_error=partial(_log_task_error, f"scan:{name}"),
+            )
 
     def spawn(self, coro: Coroutine[Any, Any, object], *, name: str, user_id: int | None = None) -> None:
         task = asyncio.create_task(coro, name=f"scheduler.{name}")
@@ -147,8 +145,8 @@ class ScanScheduler:
             self._next_work.pop(key, None)
         for item in items:
             key = (name, item.user_id, item.key)
-            running = self._running.get(key)
-            if running is not None and not running.done():
+            # 未结束的工作不推进冷却，完成后下一次 tick 可立即接续。
+            if self._bag.running(key) is not None:
                 continue
             deadline = self._next_work.get(key)
             if deadline is None:
@@ -157,14 +155,13 @@ class ScanScheduler:
                 continue
             self._next_work[key] = now + item.next_delay()
             label = f"{name}:{item.user_id}:{item.key}"
-            task = asyncio.create_task(self._run_work(item), name=f"scheduler.{label}")
-            self._running[key] = task
-            self._bag.add(task, user_id=item.user_id, on_error=partial(_log_task_error, label))
-            task.add_done_callback(partial(self._discard, key))
-
-    def _discard(self, key: tuple[str, int | None, str], task: asyncio.Task[None]) -> None:
-        if self._running.get(key) is task:
-            self._running.pop(key, None)
+            self._bag.spawn(
+                key,
+                lambda: self._run_work(item),
+                name=f"scheduler.{label}",
+                user_id=item.user_id,
+                on_error=partial(_log_task_error, label),
+            )
 
     async def _run_work(self, item: ScheduledWork) -> None:
         # 后台工作跨越多个 tick，日志使用独立请求身份。

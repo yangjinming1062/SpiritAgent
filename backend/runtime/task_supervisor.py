@@ -73,9 +73,6 @@ class TaskSupervisor:
             and (user_id is None or ownership.user_id == user_id)
         )
 
-    def task_count(self, owner: str) -> int:
-        return sum(ownership.owner == owner and not task.done() for task, ownership in self._tasks.items())
-
     async def quiesce_user(self, user_id: int) -> int:
         """取消可中断任务，等待已提交付费工作及其派生任务落地。"""
         return await self._drain(user_id=user_id, respect_maintenance_policy=True)
