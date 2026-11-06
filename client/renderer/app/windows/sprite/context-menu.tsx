@@ -2,8 +2,7 @@ import { useStore } from '@nanostores/react'
 import { IconRotateClockwise, IconVolume, IconVolumeOff } from '@tabler/icons-react'
 import { useCallback, useEffect, useRef } from 'react'
 
-import { usePresentationModeSwitch } from '@/app/components/presentation-mode-switch'
-import { SPRITE_REGION_ID } from '@/app/components/sprite-stage'
+import { usePresentationModeSwitch } from '@/features/character'
 import {
   $contextMenuPos,
   $quietUntil,
@@ -16,17 +15,18 @@ import {
   returnToHomePosition,
   setDefaultScale,
   startQuiet
-} from '@/modules/character'
+} from '@/features/character'
+import { SPRITE_REGION_ID } from '@/features/character'
 import { useEscapeKey } from '@/shared/hooks/use-escape-key'
 import { EyeOff, Home, type IconComponent, KeyRound, Monitor } from '@/shared/lib/icons'
 import { isRegionHit, useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { cn } from '@/shared/lib/utils'
-import { SURFACE_OVERLAY } from '@/shared/panel/palette'
 import { shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { notifyError } from '@/shared/store/notifications'
 import { requestCloseSurface, requestOpenSurface } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
+import { SURFACE_OVERLAY } from '@/ui/palette'
 
 interface ContextMenuProps {
   onOpenActivation?: () => void

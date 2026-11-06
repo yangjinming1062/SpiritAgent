@@ -1,30 +1,19 @@
 import {
-  $companionEditors,
-  applyCompanionEditorUiSnapshot,
-  captureCompanionEditorUiSnapshot
-} from '@/app/features/companion/companion-editor-state'
-import {
-  $visualsUi,
-  exportVisualsUiSnapshot,
-  importVisualsUiSnapshot
-} from '@/app/features/creation/visuals/visuals-state'
-import { $diaryUi, exportDiaryUiSnapshot, importDiaryUiSnapshot } from '@/app/features/life/diary/diary-state'
-import { $lifeUi, exportLifeUiSnapshot, importLifeUiSnapshot } from '@/app/features/life/overview/life-state'
-import {
   $appNavigationRevision,
   applyAppNavigation,
   getAppNavigation,
   readAppNavigationHash
 } from '@/app/navigation/app-navigation'
+import { companionEditorsUiHandoff } from '@/features/companion'
 import {
   $chatSessionId,
   $conversationInputBusy,
-  $mainConversationDraftRevision,
-  exportMainConversationDraftSnapshot,
-  importMainConversationDraftSnapshot,
+  conversationUiHandoff,
   restoreConversationSelection,
   setChatSession
-} from '@/modules/conversation'
+} from '@/features/conversation'
+import { visualsUiHandoff } from '@/features/creation/visuals'
+import { diaryUiHandoff, lifeUiHandoff } from '@/features/life'
 import { log } from '@/shared/lib/log'
 import { shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
@@ -39,6 +28,14 @@ import {
   type UiStateRequest
 } from '@ipc/contracts'
 import { errorMessage } from '@runtime'
+
+const UI_STATE_HANDOFFS = [
+  conversationUiHandoff,
+  lifeUiHandoff,
+  diaryUiHandoff,
+  visualsUiHandoff,
+  companionEditorsUiHandoff
+] as const
 
 export function installAppUiStateSync(): () => void {
   const mainView = $surfaceRole.get() !== 'sprite'
@@ -84,11 +81,11 @@ export function installAppUiStateSync(): () => void {
   function data(): MainUiStateData {
     return {
       navigation: getAppNavigation(),
-      life: exportLifeUiSnapshot(),
-      diary: exportDiaryUiSnapshot(),
-      conversation: exportMainConversationDraftSnapshot(),
-      visuals: exportVisualsUiSnapshot(),
-      companionEditors: captureCompanionEditorUiSnapshot()
+      life: lifeUiHandoff.capture(),
+      diary: diaryUiHandoff.capture(),
+      conversation: conversationUiHandoff.capture(),
+      visuals: visualsUiHandoff.capture(),
+      companionEditors: companionEditorsUiHandoff.capture()
     }
   }
 
@@ -130,12 +127,11 @@ export function installAppUiStateSync(): () => void {
       throw new Error('界面状态所属账户或版本已失效。')
     }
 
-    importMainConversationDraftSnapshot(snapshot.conversation)
-    importLifeUiSnapshot(snapshot.life)
-    importDiaryUiSnapshot(snapshot.diary)
-    importVisualsUiSnapshot(snapshot.visuals)
-
-    applyCompanionEditorUiSnapshot(snapshot.companionEditors)
+    await conversationUiHandoff.apply(snapshot.conversation)
+    await lifeUiHandoff.apply(snapshot.life)
+    await diaryUiHandoff.apply(snapshot.diary)
+    await visualsUiHandoff.apply(snapshot.visuals)
+    await companionEditorsUiHandoff.apply(snapshot.companionEditors)
 
     if (selectedSessionId) {
       await restoreConversationSelection(selectedSessionId)
@@ -320,11 +316,7 @@ export function installAppUiStateSync(): () => void {
     $conversationInputBusy.listen(publishBusy),
     $appNavigationRevision.listen(schedulePublish),
     $chatSessionId.listen(schedulePublish),
-    $mainConversationDraftRevision.listen(schedulePublish),
-    $visualsUi.listen(schedulePublish),
-    $lifeUi.listen(schedulePublish),
-    $diaryUi.listen(schedulePublish),
-    $companionEditors.listen(schedulePublish),
+    ...UI_STATE_HANDOFFS.map(handoff => handoff.revision.listen(schedulePublish)),
     bridge.onRequest(enqueue)
   ]
 

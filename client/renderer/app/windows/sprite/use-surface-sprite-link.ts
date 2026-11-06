@@ -1,7 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { useEffect } from 'react'
 
-import { returnToHomePosition } from '@/modules/character'
+import { returnToHomePosition } from '@/features/character'
 import { $whisperOpen } from '@/shared/store/chat-visibility'
 import { $surfaceOpen } from '@/shared/store/surfaces'
 

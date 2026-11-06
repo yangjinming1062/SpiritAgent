@@ -9,14 +9,14 @@
 | 登录、换号、网关和本机派发 | [主进程](main/README.md#账户网关与窗口订阅)、[账户编排](renderer/app/workflows/account-lifecycle.ts) |
 | 主窗口、桌面、Dock 与异常恢复 | [窗口与几何](main/README.md#窗口与几何)、[桌面承载](main/README.md#桌面承载与恢复)、[Windows](desktop-windows/README.md)、[macOS](desktop-macos/README.md) |
 | 对话、语音、历史与媒体 | [会话与媒体](renderer/README.md#会话与媒体)、[历史同步](#历史同步) |
-| 生活近况、事项与成果 | [生活读取与浏览](renderer/README.md#生活读取与浏览)、[生活页面](renderer/app/features/life/) |
+| 生活近况、事项与成果 | [生活读取与浏览](renderer/README.md#生活读取与浏览)、[生活页面](renderer/features/life/) |
 | 伙伴资料、衣柜、环境、动作与影像 | [渲染层入口](renderer/README.md#分层与目录) |
-| 设置、主题、声音与手机授权 | [settings](renderer/app/features/settings/)、[声音管理](renderer/app/features/companion/voice-manager.tsx)、[远程网页](#远程网页) |
+| 设置、主题、声音与手机授权 | [settings](renderer/features/settings/)、[声音管理](renderer/features/companion/voice-manager.tsx)、[远程网页](#远程网页) |
 | Runner、配置及桌面更新 | [Runner 生命周期](main/README.md#runner-生命周期)、[配置镜像](main/README.md#配置镜像)、[桌面更新](main/README.md#桌面更新) |
 
 ## 进程与代码边界
 
-[main](main/README.md) 持有凭据、连接、窗口、Runner 与磁盘资源；[renderer](renderer/README.md) 持有会话投影、页面草稿和呈现。主窗口与交互桌面共用页面，背景窗口只消费受限媒体桥。平台宿主通过主进程统一端口接入，不拥有业务状态。
+[main](main/README.md) 持有凭据、连接、窗口、Runner 与磁盘资源；[renderer](renderer/README.md) 持有会话投影、页面草稿和呈现。渲染层按 `app`（窗口与装配）、`features`（页面与状态自治）、`ui`（无业务组件）、`shared`（基础能力）分层；功能内部用相对路径，跨功能只经对方 `index.ts`，页面由 `app` 装配。主窗口与交互桌面共用页面，背景窗口只消费受限媒体桥。平台宿主通过主进程统一端口接入，不拥有业务状态。
 
 `shared/ipc` 是 main、preload 与 renderer 共用的契约；`main/shared` 是主进程内部叶子层，两者不混用。主进程不导入依赖窗口环境的 `renderer/shared`。main / preload 由 tsup 构建，renderer 由 Vite 构建，产物边界见[主进程包边界](main/README.md#包边界)。
 
@@ -46,7 +46,7 @@
 
 ### 历史同步
 
-[session-history-cache.ts](renderer/modules/conversation/session-history-cache.ts) 先显示通过字段校验的账户／会话快照，再经主进程取得完整基线；同会话并发读取合并。磁盘快照不保存实时回合，其水位不能代替主进程的连接重放游标。重放成功且已有基线时不重拉历史。
+[session-history-cache.ts](renderer/features/conversation/session-history-cache.ts) 先显示通过字段校验的账户／会话快照，再经主进程取得完整基线；同会话并发读取合并。磁盘快照不保存实时回合，其水位不能代替主进程的连接重放游标。重放成功且已有基线时不重拉历史。
 
 | 变化 | 缓存与投影处理 |
 |---|---|
@@ -63,4 +63,4 @@
 
 ## 远程网页
 
-[remote-page.tsx](renderer/app/features/remote/remote-page.tsx) 负责桌面扫码与设备授权管理，轮询和查询守卫组件及账户代次。手机应用由独立 Remote 构建，不随桌面安装包发布。
+[remote-page.tsx](renderer/features/settings/remote/remote-page.tsx) 负责桌面扫码与设备授权管理，轮询和查询守卫组件及账户代次。手机应用由独立 Remote 构建，不随桌面安装包发布。

@@ -1,4 +1,4 @@
-import { $autoplayVoice, autoplayVoicePref } from '@/modules/character'
+import { $autoplayVoice, autoplayVoicePref } from '@/features/character'
 import {
   $conversationViews,
   activeVoiceMessageId,
@@ -14,7 +14,7 @@ import {
   setVoiceBarPaused,
   setVoiceBarPlaying,
   voicePlaybackReady
-} from '@/modules/conversation'
+} from '@/features/conversation'
 import {
   bindVoiceBarListeners,
   bindVoiceBarProjection,
@@ -25,7 +25,7 @@ import {
   setVoiceRecording,
   setVoiceSurfaceMounted,
   toggleVoiceBar
-} from '@/modules/speech'
+} from '@/features/speech'
 import { requestResource } from '@/shared/lib/resource-request'
 import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'

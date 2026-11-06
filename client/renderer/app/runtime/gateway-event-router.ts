@@ -3,18 +3,18 @@ import {
   invalidateSessionHistory,
   onSessionListChanged,
   onTopicFeedbackUpdated
-} from '@/modules/conversation'
-import { onJournalEvent } from '@/modules/diary'
-import { handleLifeUpdated } from '@/modules/life'
-import { onPostEvent } from '@/modules/posts'
-import { onSceneEvent } from '@/modules/scene'
+} from '@/features/conversation'
+import { refreshActionGroups } from '@/features/creation/actions'
+import { onSceneEvent } from '@/features/creation/environment'
 import {
   enqueueInteraction,
   enqueueInteractionForward,
   handleVisualEvent,
-  refreshActionGroups,
   refreshVisualPresentation
-} from '@/modules/visuals'
+} from '@/features/creation/visuals'
+import { handleLifeUpdated } from '@/features/life'
+import { onJournalEvent } from '@/features/life/diary'
+import { onPostEvent } from '@/features/life/posts'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { $auth } from '@/shared/store/auth'
 import { $gateway } from '@/shared/store/gateway'

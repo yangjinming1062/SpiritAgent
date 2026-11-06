@@ -1,7 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { $motionLevel } from '@/modules/character'
+import { $motionLevel } from '@/features/character'
 import {
   $performance,
   $stagePlan,
@@ -19,7 +19,7 @@ import {
   type VisualMediaKind,
   visualPerformancePorts,
   type VisualPlayCommand
-} from '@/modules/visuals'
+} from '@/features/creation/visuals'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
 import { shellApi } from '@/shared/platform/desktop'

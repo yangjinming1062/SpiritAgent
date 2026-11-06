@@ -1,8 +1,8 @@
 import { type KeyboardEvent, type RefObject, useId } from 'react'
 
 import { cn } from '@/shared/lib/utils'
-import { BTN_GHOST, Chip, CreationActionBar, CreationWorkspace, DatePicker, INPUT_CLASS } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
+import { BTN_GHOST, Chip, CreationActionBar, CreationWorkspace, DatePicker, INPUT_CLASS } from '@/ui'
 
 import { submitOnEnter } from './keyboard'
 import { ONBOARDING_PRIMARY_BUTTON } from './onboarding-components'

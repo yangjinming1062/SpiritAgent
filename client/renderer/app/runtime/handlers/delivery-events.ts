@@ -1,13 +1,13 @@
 import { isSpriteOverlayVisible } from '@/app/workflows/proactive-delivery'
 import { openSessionSurface } from '@/app/workflows/session-delivery'
-import { $effectiveTier, $screenLocked } from '@/modules/character'
+import { $effectiveTier, $screenLocked } from '@/features/character'
 import {
   findConversationRuntime,
   invalidateSessionHistory,
   rememberPendingMessage,
   setCompanionSessionId,
   showMediaHint
-} from '@/modules/conversation'
+} from '@/features/conversation'
 import { type GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { $chatVisible } from '@/shared/store/chat-visibility'
 import { notify, notifyError } from '@/shared/store/notifications'

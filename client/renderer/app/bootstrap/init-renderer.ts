@@ -1,6 +1,6 @@
 import { initAppNavigation } from '@/app/navigation/app-navigation'
 import { installAppUiStateSync } from '@/app/workflows/app-ui-state'
-import { initCompanionPrefsSync } from '@/modules/character'
+import { initCompanionPrefsSync } from '@/features/character'
 import { applyNoBlurIfNeeded } from '@/shared/lib/apply-no-blur'
 import { initLocaleSync } from '@/shared/store/locale'
 import { hydratePresentation } from '@/shared/store/presentation'

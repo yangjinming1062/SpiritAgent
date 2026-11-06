@@ -1,6 +1,6 @@
 import { atom, computed } from 'nanostores'
 
-import { setChatSession, switchSession } from '@/modules/conversation'
+import { setChatSession, switchSession } from '@/features/conversation'
 import { log } from '@/shared/lib/log'
 import { definePersistedAtom, registerCompanionStorageKey, registerStorageClearHandler } from '@/shared/lib/storage'
 import { $gatewayState } from '@/shared/store/gateway'

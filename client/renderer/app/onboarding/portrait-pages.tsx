@@ -1,10 +1,10 @@
 import { useState } from 'react'
 
-import type { OnboardingAnswers } from '@/modules/character'
-import { FullbodyReferencePanel, SelfSourceImageFlow } from '@/modules/character'
+import type { OnboardingAnswers } from '@/features/character'
+import { FullbodyReferencePanel, SelfSourceImageFlow } from '@/features/character'
 import { FolderOpen } from '@/shared/lib/icons'
-import { BTN_SUBTLE, CreationActionBar, CreationFeedback, CreationWorkspace, Disclosure } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
+import { BTN_SUBTLE, CreationActionBar, CreationFeedback, CreationWorkspace, Disclosure } from '@/ui'
 
 import type { Phase } from './back-transition'
 import { EditAvatarButton, ONBOARDING_PRIMARY_BUTTON, PortraitPanel, RegenFeedbackInput } from './onboarding-components'

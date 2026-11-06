@@ -2,8 +2,8 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useRef } from 'react'
 
-import { $effectiveTier } from '@/modules/character'
-import { $chatSessionId, $companionSessionId, pendingMessages } from '@/modules/conversation'
+import { $effectiveTier } from '@/features/character'
+import { $chatSessionId, $companionSessionId, pendingMessages } from '@/features/conversation'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { $desktopChatActive } from '@/shared/store/chat-visibility'
 

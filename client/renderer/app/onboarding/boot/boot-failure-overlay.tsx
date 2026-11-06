@@ -4,9 +4,9 @@ import { useRef } from 'react'
 
 import { $desktopBootError } from '@/app/runtime/boot-store'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
-import { BTN_PRIMARY, EmptyState, SURFACE_OVERLAY } from '@/shared/panel'
 import { setPrimaryGateway } from '@/shared/store/gateway'
 import { useStrings } from '@/shared/strings'
+import { BTN_PRIMARY, EmptyState, SURFACE_OVERLAY } from '@/ui'
 
 export function BootFailureOverlay(): React.JSX.Element | null {
   const error = useStore($desktopBootError)

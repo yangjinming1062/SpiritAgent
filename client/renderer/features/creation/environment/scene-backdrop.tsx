@@ -1,0 +1,207 @@
+import { useStore } from '@nanostores/react'
+import type React from 'react'
+import { useEffect, useRef, useState } from 'react'
+
+import { $motionLevel } from '@/features/character'
+import { isCharacterMediaVisible, observeCharacterStageVisibility } from '@/features/character'
+import { RENDERER_TIMINGS } from '@/shared/constants'
+import { captureAuthScope } from '@/shared/lib/authed-api'
+import { $dayPhase, ambientPhaseFilter } from '@/shared/lib/day-phase'
+import { log } from '@/shared/lib/log'
+import { acquireStageVideo } from '@/shared/lib/stage-video-cache'
+import { createStageVideoLayer } from '@/shared/lib/stage-video-layer'
+import { backendApi } from '@/shared/platform/desktop'
+import { $auth } from '@/shared/store/auth'
+import { $presentation } from '@/shared/store/presentation'
+import { useStrings } from '@/shared/strings'
+import { BTN_SUBTLE } from '@/ui'
+
+import { $stagePlan, type StageScenePlan } from '../visuals/stage-plan'
+import {
+  $windowScenePresented,
+  $windowStaticProjection,
+  $windowVisualProjection,
+  useVisualProjection
+} from '../visuals/window-projection'
+
+import styles from './scene-backdrop.module.css'
+
+export function SceneBackdrop(): React.JSX.Element {
+  useVisualProjection()
+  const plan = useStore($stagePlan)
+  const projection = useStore($windowVisualProjection)
+  const staticProjection = useStore($windowStaticProjection)
+  const auth = useStore($auth)
+  const motionLevel = useStore($motionLevel)
+  const owner = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
+  const scene = staticProjection || motionLevel === 'off' ? null : plan.scene
+  const path = (scene?.isVideo ? scene.posterUrl : scene?.url) ?? projection?.scene_path ?? null
+  const [image, setImage] = useState<{ owner: string; path: string; url: string; phaseMatched: boolean } | null>(null)
+  const [video, setVideo] = useState<StageScenePlan | null>(null)
+  const [failed, setFailed] = useState(false)
+  const [retry, setRetry] = useState(0)
+  const first = useRef<HTMLVideoElement>(null)
+  const second = useRef<HTMLVideoElement>(null)
+  const imageRef = useRef<HTMLImageElement>(null)
+  const layer = useRef<ReturnType<typeof createStageVideoLayer<StageScenePlan>> | null>(null)
+  const strings = useStrings()
+  const shown = image?.owner === owner ? image : null
+  const phase = useStore($dayPhase)
+
+  const phaseFilter = ambientPhaseFilter(
+    motionLevel !== 'off',
+    video?.phaseMatched ?? shown?.phaseMatched ?? false,
+    phase
+  )
+
+  useEffect(() => {
+    if (!first.current || !second.current) {
+      return
+    }
+
+    const player = createStageVideoLayer<StageScenePlan>([first.current, second.current], {
+      presented: source => setVideo(source?.value ?? null),
+      started: () => undefined,
+      ended: () => undefined,
+      failed: (_source, error) => log.warn('scene-backdrop', 'Scene video failed', error)
+    })
+
+    layer.current = player
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)')
+
+    const sync = (): void =>
+      player.setPaused(
+        !isCharacterMediaVisible() || query.matches || $presentation.get().fullscreen || $motionLevel.get() === 'off'
+      )
+
+    const stop = observeCharacterStageVisibility(sync)
+    query.addEventListener('change', sync)
+
+    return () => {
+      stop()
+      query.removeEventListener('change', sync)
+      player.dispose()
+      layer.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    layer.current?.set(
+      owner && scene?.isVideo
+        ? {
+            key: `${owner}:${scene.visualId}:${scene.version}`,
+            loop: true,
+            value: scene,
+            load: () => acquireStageVideo(scene.url)
+          }
+        : null
+    )
+  }, [owner, scene])
+
+  useEffect(() => {
+    const scope = captureAuthScope()
+    let current = true
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    setFailed(false)
+
+    if (!owner || !path || !scope) {
+      setImage(null)
+
+      return
+    }
+
+    const candidate = new Image()
+    const request = backendApi().apiAsset({ url: path, preferCache: true })
+    void new Promise<string>((resolve, reject) => {
+      timeout = setTimeout(() => reject(new Error('Scene image timed out')), RENDERER_TIMINGS.sceneImageTimeoutMs)
+      void request
+        .then(async url => {
+          if (!url) {
+            throw new Error('Scene image unavailable')
+          }
+
+          candidate.src = url
+          await candidate.decode()
+          resolve(url)
+        })
+        .catch(reject)
+    })
+      .then(url => {
+        if (current && scope()) {
+          setImage({ owner, path, url, phaseMatched: scene?.phaseMatched ?? false })
+        }
+      })
+      .catch(error => {
+        if (current && scope()) {
+          setFailed(true)
+          // 同一地址失败可沿用已显示的旧帧；目标已换到别的环境时不能继续显示它，那张图可能已经不存在。
+          setImage(previous => (previous && previous.path === path ? previous : null))
+          log.warn('scene-backdrop', 'Scene image failed', error)
+        }
+      })
+      .finally(() => clearTimeout(timeout))
+
+    return () => {
+      current = false
+      clearTimeout(timeout)
+      candidate.src = ''
+    }
+  }, [owner, path, retry, scene?.phaseMatched])
+
+  useEffect(() => {
+    const videoMatches = video && video.visualId === scene?.visualId && video.version === scene.version
+    const presented = videoMatches ? (projection?.scene_path ?? null) : (shown?.path ?? null)
+
+    if (presented && (video || (imageRef.current?.complete && imageRef.current.naturalWidth > 0))) {
+      $windowScenePresented.set(presented)
+    }
+
+    return () => {
+      if ($windowScenePresented.get() === presented) {
+        $windowScenePresented.set(null)
+      }
+    }
+  }, [shown, video, scene, projection?.scene_path])
+
+  const videoStyle: React.CSSProperties = {
+    position: 'absolute',
+    inset: 0,
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover',
+    opacity: 0
+  }
+
+  return (
+    <div className={styles.root} style={{ filter: phaseFilter, transition: 'filter 1s ease' }}>
+      {shown && (
+        <img
+          alt=""
+          className={styles.image}
+          draggable={false}
+          onError={() => {
+            $windowScenePresented.set(null)
+            setFailed(true)
+          }}
+          onLoad={() => {
+            if (!video) {
+              $windowScenePresented.set(shown.path)
+            }
+          }}
+          ref={imageRef}
+          src={shown.url}
+        />
+      )}
+      <video muted playsInline preload="auto" ref={first} style={videoStyle} />
+      <video muted playsInline preload="auto" ref={second} style={videoStyle} />
+      {failed && (
+        <div className={styles.error} role="alert">
+          <span>{strings.creation.previewFailed}</span>
+          <button className={BTN_SUBTLE} onClick={() => setRetry(value => value + 1)} type="button">
+            {strings.creation.retryLoad}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}

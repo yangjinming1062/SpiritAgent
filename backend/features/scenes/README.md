@@ -9,8 +9,8 @@
 | 创建、上传、描述分析、重做与取消 | [service.py](service.py)、[generation_state.py](generation_state.py)、[http_use_cases.py](http_use_cases.py) |
 | 原件环境的受控入库 | [import_materials.py](import_materials.py)；采纳已检查的提取或生成补全结果，按导入来源键去重 |
 | 生成输入与图片检查 | [prompt_assembly.py](prompt_assembly.py)、[scene_review.py](../media/scene_review.py) |
-| REST 与页面 | [companion_scenes.py](../../entrypoints/http/routes/companion_scenes.py)、[场景页](../../../client/renderer/app/features/scene/scene-page.tsx)、[详情](../../../client/renderer/app/features/scene/scene-detail-view.tsx) |
-| 只读快照与缓存 | [queries.py](queries.py)、[scene-store.ts](../../../client/renderer/modules/scene/scene-store.ts) |
+| REST 与页面 | [companion_scenes.py](../../entrypoints/http/routes/companion_scenes.py)、[场景页](../../../client/renderer/features/creation/environment/scene-page.tsx)、[详情](../../../client/renderer/features/creation/environment/scene-detail-view.tsx) |
+| 只读快照与缓存 | [queries.py](queries.py)、[scene-store.ts](../../../client/renderer/features/creation/environment/scene-store.ts) |
 | 启停与资产引用 | [lifecycle.py](lifecycle.py)、[asset_references.py](asset_references.py) |
 
 ## 状态与并发

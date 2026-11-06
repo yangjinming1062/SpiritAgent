@@ -1,14 +1,14 @@
 import { useStore } from '@nanostores/react'
 import { useEffect, useRef, useState } from 'react'
 
-import { $regenFeedback, MAX_IMAGE_DESCRIPTION } from '@/modules/character'
-import { HistoryGallery, type HistoryGalleryItem } from '@/shared'
-import { ImageLightboxButton } from '@/shared/components/image-lightbox-button'
+import { $regenFeedback, MAX_IMAGE_DESCRIPTION } from '@/features/character'
 import { usePointerDrag } from '@/shared/hooks/use-pointer-drag'
 import { Check } from '@/shared/lib/icons'
 import { probeInteractiveRegions, useInteractiveRegion } from '@/shared/lib/interactive-regions'
-import { BTN_SUBTLE, CreationFeedback, INPUT_CLASS, SURFACE_OVERLAY } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
+import { HistoryGallery, type HistoryGalleryItem } from '@/ui'
+import { BTN_SUBTLE, CreationFeedback, INPUT_CLASS, SURFACE_OVERLAY } from '@/ui'
+import { ImageLightboxButton } from '@/ui/image-lightbox-button'
 
 import styles from './onboarding.module.css'
 

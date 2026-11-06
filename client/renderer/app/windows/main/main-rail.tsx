@@ -2,8 +2,6 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useRef, useState } from 'react'
 
-import { AccountMenu } from '@/app/features/accounts/account-menu'
-import { $creationBusy } from '@/app/features/creation/creation-activity'
 import {
   $appPage,
   openChat,
@@ -12,9 +10,11 @@ import {
   openLife,
   openSettings
 } from '@/app/navigation/app-navigation'
-import { $persona, $portraitUrl } from '@/modules/character'
-import { $diaryHasUnread } from '@/modules/diary'
-import { $postsHasUnread } from '@/modules/posts'
+import { AccountMenu } from '@/features/accounts/account-menu'
+import { $persona, $portraitUrl } from '@/features/character'
+import { $creationBusy } from '@/features/creation'
+import { $diaryHasUnread } from '@/features/life/diary'
+import { $postsHasUnread } from '@/features/life/posts'
 import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import { triggerHaptic } from '@/shared/lib/haptics'
 import { Home, type IconComponent, MessageSquareText, Palette, Settings, Sparkles, Users } from '@/shared/lib/icons'

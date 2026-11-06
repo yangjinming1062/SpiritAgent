@@ -1,0 +1,233 @@
+import { useStore } from '@nanostores/react'
+import { useCallback, useEffect, useRef } from 'react'
+
+import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
+import { $surfaceOpen } from '@/shared/store/surfaces'
+import { useStrings } from '@/shared/strings'
+import { clamp } from '@runtime'
+
+import { openContextMenu } from '../../sprite/context-menu-store'
+
+// 静态形象未就绪时的兜底「蛋」：显示真实状态与对应恢复入口。精灵窗与内嵌生活区共用；Installer 的 Egg 仅用于安装动画。
+const CRACK_PATHS = [
+  'M 160 70 L 148 95 L 155 115 L 140 135',
+  'M 230 140 L 205 148 L 195 135 L 180 155',
+  'M 90 210 L 115 200 L 125 215 L 145 195'
+]
+
+const IDLE_LOOK_BOB_MS = 3200
+
+/** 蛋形兜底状态：准备中、加载失败与尚无可用造型的处置不同。 */
+export type EggStageStatus = 'preparing' | 'failed' | 'unavailable'
+
+interface EggStageProps {
+  size?: number | string
+  status?: EggStageStatus | null
+  message?: string
+  hasRecoveryAction?: boolean
+  onStatusAction?: () => void
+  windowId?: number
+}
+
+export function EggStage({
+  size = 280,
+  status = null,
+  message = '',
+  hasRecoveryAction = false,
+  onStatusAction,
+  windowId = 0
+}: EggStageProps): React.JSX.Element {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const bodyRef = useRef<SVGPathElement>(null)
+  const eyesRef = useRef<SVGGElement>(null)
+  const statusRef = useRef<HTMLDivElement>(null)
+  const surfaceOpen = useStore($surfaceOpen)
+  const dict = useStrings()
+
+  // 透明窗口上状态条须注册可点区域，否则点不到重试。
+  useInteractiveRegion('egg-status', statusRef, undefined, undefined, windowId)
+
+  const hitBody = useCallback((x: number, y: number): boolean => {
+    const body = bodyRef.current
+    const matrix = body?.getScreenCTM()
+
+    return !!body && !!matrix && body.isPointInFill(new DOMPoint(x, y).matrixTransform(matrix.inverse()))
+  }, [])
+
+  useInteractiveRegion('egg-body', containerRef, undefined, hitBody, windowId)
+
+  useEffect(() => {
+    let pointerActive = false
+    let pointerLook = { x: 0, y: 0 }
+
+    const updateEyes = (x: number, y: number) => {
+      if (eyesRef.current) {
+        eyesRef.current.style.transform = `translate3d(${x * 3.2}px, ${y * 3.2}px, 0)`
+      }
+    }
+
+    const onMove = (e: PointerEvent) => {
+      const rect = containerRef.current?.getBoundingClientRect()
+
+      if (!rect) {
+        return
+      }
+
+      const nx = clamp(((e.clientX - rect.left) / rect.width) * 2 - 1, -1, 1)
+      const ny = clamp(((e.clientY - rect.top) / rect.height) * 2 - 1, -1, 1)
+      pointerActive = true
+      pointerLook = { x: nx, y: ny }
+      updateEyes(nx, ny)
+    }
+
+    const onLeave = () => {
+      pointerActive = false
+    }
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerleave', onLeave)
+
+    let raf = 0
+    const startedAt = performance.now()
+
+    const tick = (now: number) => {
+      if (!pointerActive) {
+        const t = (now - startedAt) / IDLE_LOOK_BOB_MS
+        updateEyes(Math.sin(t * Math.PI * 2) * 0.18, Math.cos(t * Math.PI) * 0.12)
+      } else {
+        updateEyes(pointerLook.x, pointerLook.y)
+      }
+
+      raf = requestAnimationFrame(tick)
+    }
+
+    raf = requestAnimationFrame(tick)
+
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerleave', onLeave)
+      cancelAnimationFrame(raf)
+    }
+  }, [])
+
+  return (
+    <div
+      className="relative flex items-center justify-center select-none transition-opacity duration-300"
+      onContextMenu={e => {
+        e.preventDefault()
+
+        if (windowId === 0) {
+          openContextMenu({ x: e.clientX, y: e.clientY })
+        }
+      }}
+      ref={containerRef}
+      style={{
+        width: size,
+        aspectRatio: '1',
+        flexShrink: 0,
+        opacity: windowId === 0 && surfaceOpen ? 0.25 : 1
+      }}
+    >
+      <svg
+        aria-label={dict.companion.egg.ariaLabel}
+        className="overflow-visible"
+        height="100%"
+        viewBox="0 0 320 320"
+        width="100%"
+      >
+        <defs>
+          <radialGradient cx="50%" cy="50%" id="egg-ambient-glow" r="50%">
+            <stop offset="0%" stopColor="var(--color-egg-glow, #ffd166)" stopOpacity="0.45" />
+            <stop offset="60%" stopColor="var(--color-egg-glow, #ffd166)" stopOpacity="0.15" />
+            <stop offset="100%" stopColor="var(--color-egg-glow, #ffd166)" stopOpacity="0" />
+          </radialGradient>
+
+          <filter height="140%" id="crack-glow-filter" width="140%" x="-20%" y="-20%">
+            <feGaussianBlur result="blur" stdDeviation="2" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+
+        {/* 环境辉光 */}
+        <ellipse className="animate-egg-pulse" cx="160" cy="170" fill="url(#egg-ambient-glow)" rx="125" ry="135" />
+
+        {/* 蛋壳主体 */}
+        <g className="animate-egg-breath">
+          <path
+            d="M 160 50 C 95 50 75 135 75 185 C 75 245 112 290 160 290 C 208 290 245 245 245 185 C 245 135 225 50 160 50 Z"
+            fill="var(--color-egg-shell, #fff4d6)"
+            ref={bodyRef}
+            stroke="color-mix(in srgb, var(--color-foreground, #17171a) 12%, transparent)"
+            strokeWidth="2"
+          />
+
+          {/* 眼睛与高光组：通过 ref 硬件加速偏移，避免 60fps React 重渲染 */}
+          <g ref={eyesRef} style={{ willChange: 'transform' }}>
+            <ellipse cx={156} cy={155} fill="var(--color-egg-eye, #1a1a2e)" rx="6" ry="9" />
+            <ellipse cx={184} cy={155} fill="var(--color-egg-eye, #1a1a2e)" rx="6" ry="9" />
+            <circle cx={158} cy={152} fill="#fff" opacity="0.8" r="1.5" />
+            <circle cx={186} cy={152} fill="#fff" opacity="0.8" r="1.5" />
+          </g>
+
+          {/* 嘴 */}
+          <ellipse cx="170" cy="195" fill="var(--color-egg-mouth, #c89060)" opacity="0.85" rx="6" ry="3.5" />
+
+          {/* 脸颊（粘人感） */}
+          <ellipse cx="135" cy="180" fill="var(--color-egg-blush, #ff9999)" opacity="0.35" rx="9" ry="5" />
+          <ellipse cx="205" cy="180" fill="var(--color-egg-blush, #ff9999)" opacity="0.35" rx="9" ry="5" />
+        </g>
+
+        {/* 裂纹装饰 */}
+        <g filter="url(#crack-glow-filter)" opacity="0.55">
+          {CRACK_PATHS.map((d, i) => (
+            <path
+              className="animate-crack-shimmer"
+              d={d}
+              fill="none"
+              key={i}
+              stroke="color-mix(in srgb, var(--color-foreground, #17171a) 55%, var(--color-egg-glow, #ffd166))"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth="2"
+              style={{ animationDelay: `${i * 0.6}s` }}
+            />
+          ))}
+        </g>
+      </svg>
+
+      {status && (
+        <div
+          className={`absolute left-1/2 flex w-[min(280px,90vw)] -translate-x-1/2 flex-col items-center gap-1 ${windowId === 0 ? '' : 'rounded-xl px-2 py-1 shadow-lg'}`}
+          ref={statusRef}
+          style={
+            {
+              bottom: windowId === 0 ? '-2.5rem' : '8px',
+              background: windowId === 0 ? undefined : 'var(--ui-overlay)',
+              border: windowId === 0 ? undefined : '1px solid var(--ui-line-standard)',
+              maxWidth: windowId === 0 ? undefined : '100%',
+              WebkitAppRegion: 'no-drag'
+            } as React.CSSProperties
+          }
+        >
+          <p className="text-center text-xs leading-snug text-body">{message}</p>
+          {hasRecoveryAction && onStatusAction && (
+            <button
+              className="rounded-full border border-border/60 bg-surface/80 px-3 py-0.5 text-[11px] text-strong hover:border-accent/50"
+              onClick={e => {
+                e.stopPropagation()
+                onStatusAction()
+              }}
+              onPointerDown={e => e.stopPropagation()}
+              type="button"
+            >
+              {status === 'unavailable' ? dict.companion.egg.openVisuals : dict.companion.egg.retry}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}

@@ -3,16 +3,14 @@ import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
 import { AppContentPage } from '@/app/components/app-content-page'
-import { PresentationModeButton } from '@/app/components/presentation-mode-switch'
-import { CompanionMenu } from '@/app/components/surface-companion/companion-menu'
-import { ConversationPage } from '@/app/features/conversation/conversation-page'
-import { LifeArea, LifeDrawer } from '@/app/features/life/life-area'
 import {
   $appNavigationRevision,
   $appNavigationTarget,
   $appPage,
   applyAppNavigation
 } from '@/app/navigation/app-navigation'
+import { PresentationModeButton } from '@/features/character'
+import { CompanionMenu } from '@/features/character/surface-companion'
 import {
   $chatSessionId,
   $companionSessionId,
@@ -22,15 +20,16 @@ import {
   setChatSession,
   switchSession,
   useConversationUnread
-} from '@/modules/conversation'
-import { hydrateDiaryUnread } from '@/modules/diary'
-import { hydratePostsUnread } from '@/modules/posts'
-import { hydrateScene } from '@/modules/scene'
-import { useInteractiveRegion, useWindowMouseCapture } from '@/shared'
+} from '@/features/conversation'
+import { ConversationPage } from '@/features/conversation/conversation-page'
+import { hydrateScene } from '@/features/creation/environment'
+import { hydrateDiaryUnread } from '@/features/life/diary'
+import { LifeArea, LifeDrawer } from '@/features/life/life-area'
+import { hydratePostsUnread } from '@/features/life/posts'
 import { PanelActivityProvider } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { Home } from '@/shared/lib/icons'
-import { BTN_SUBTLE, WindowControls } from '@/shared/panel'
+import { useInteractiveRegion, useWindowMouseCapture } from '@/shared/lib/interactive-regions'
 import { shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { $mainChatActive } from '@/shared/store/chat-visibility'
@@ -45,6 +44,7 @@ import {
 } from '@/shared/store/surfaces'
 import { $uiStateError, $uiStateReady, retryUiState } from '@/shared/store/ui-state'
 import { useStrings } from '@/shared/strings'
+import { BTN_SUBTLE, WindowControls } from '@/ui'
 import type { AppNavigationTarget, AppPage } from '@ipc/contracts'
 
 import { MainRail } from './main-rail'

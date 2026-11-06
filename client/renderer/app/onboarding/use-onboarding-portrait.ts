@@ -17,12 +17,12 @@ import {
   refreshAvatarSeeds,
   selectAvatar,
   selectPortraitEntry
-} from '@/modules/character'
-import type { HistoryGalleryItem } from '@/shared'
+} from '@/features/character'
 import { loadCreationDraftImage, saveCreationDraftImage } from '@/shared/lib/creation-draft-image'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { authedResource, requestResource } from '@/shared/lib/resource-request'
+import type { HistoryGalleryItem } from '@/ui'
 
 import type { ApiSchemas } from '../../../../shared/api.generated'
 

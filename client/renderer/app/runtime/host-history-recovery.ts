@@ -7,7 +7,7 @@ import {
   SessionHistoryChangedError,
   setChatSession,
   syncSessionHistory
-} from '@/modules/conversation'
+} from '@/features/conversation'
 import { log } from '@/shared/lib/log'
 
 /** 恢复当前会话；失败只回退仍被选中的会话。 */

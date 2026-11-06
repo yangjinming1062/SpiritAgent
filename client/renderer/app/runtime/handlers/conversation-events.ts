@@ -1,6 +1,6 @@
 import { syncConversationActivity } from '@/app/workflows/conversation-activity'
 import { isSpriteOverlayVisible } from '@/app/workflows/proactive-delivery'
-import { triggerFootGlowPulse } from '@/modules/character'
+import { triggerFootGlowPulse } from '@/features/character'
 import {
   $chatDraftFromUndo,
   $companionSessionId,
@@ -10,7 +10,7 @@ import {
   rememberPendingMessage,
   removeVoicePlayback,
   showMediaHint
-} from '@/modules/conversation'
+} from '@/features/conversation'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { getStrings } from '@/shared/strings'
 import type { ChatMediaItem, CompanionBubble } from '@protocol'

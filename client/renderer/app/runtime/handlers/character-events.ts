@@ -5,8 +5,8 @@ import {
   hydrateFullbodyReference,
   hydrateWardrobe,
   refreshAvatarSeeds
-} from '@/modules/character'
-import { invalidateVoiceCatalog } from '@/modules/speech'
+} from '@/features/character'
+import { invalidateVoiceCatalog } from '@/features/speech'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'

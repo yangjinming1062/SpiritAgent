@@ -1,6 +1,6 @@
-import { VoiceManager } from '@/app/features/companion/voice-manager'
-import { BTN_SUBTLE, HINT_TEXT } from '@/shared/panel'
+import { VoiceManager } from '@/features/companion/voice-manager'
 import { useStrings } from '@/shared/strings'
+import { BTN_SUBTLE, HINT_TEXT } from '@/ui'
 
 import styles from './onboarding.module.css'
 

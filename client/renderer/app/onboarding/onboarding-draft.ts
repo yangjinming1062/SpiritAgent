@@ -1,4 +1,4 @@
-import { assembleCharacterPersona, assemblePersona, type OnboardingAnswers } from '@/modules/character'
+import { assembleCharacterPersona, assemblePersona, type OnboardingAnswers } from '@/features/character'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { backendDetailMessage, ipcErrorStatus, isClientErrorIpc } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'

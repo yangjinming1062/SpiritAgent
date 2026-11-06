@@ -3,9 +3,6 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { AppContentPage } from '@/app/components/app-content-page'
-import { AccountMenu } from '@/app/features/accounts/account-menu'
-import { ConversationPage } from '@/app/features/conversation/conversation-page'
-import { $creationBusy } from '@/app/features/creation/creation-activity'
 import {
   $appNavigationRevision,
   $appPage,
@@ -13,7 +10,8 @@ import {
   openCreation,
   setAppPage
 } from '@/app/navigation/app-navigation'
-import { $portraitUrl, hydratePersona, hydratePortrait } from '@/modules/character'
+import { AccountMenu } from '@/features/accounts/account-menu'
+import { $portraitUrl, hydratePersona, hydratePortrait } from '@/features/character'
 import {
   $chatSessionId,
   $companionSessionId,
@@ -21,11 +19,18 @@ import {
   setChatSession,
   switchSession,
   useConversationUnread
-} from '@/modules/conversation'
-import { $diaryHasUnread, hydrateDiaryUnread } from '@/modules/diary'
-import { $postsHasUnread, hydratePostsUnread } from '@/modules/posts'
-import { hydrateScene } from '@/modules/scene'
-import { $visualsError, $visualsJobs, $visualsPresentation, $visualsPresentationError } from '@/modules/visuals'
+} from '@/features/conversation'
+import { ConversationPage } from '@/features/conversation/conversation-page'
+import { $creationBusy } from '@/features/creation'
+import { hydrateScene } from '@/features/creation/environment'
+import {
+  $visualsError,
+  $visualsJobs,
+  $visualsPresentation,
+  $visualsPresentationError
+} from '@/features/creation/visuals'
+import { $diaryHasUnread, hydrateDiaryUnread } from '@/features/life/diary'
+import { $postsHasUnread, hydratePostsUnread } from '@/features/life/posts'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import { isPointInteractive, useInteractiveRegion } from '@/shared/lib/interactive-regions'

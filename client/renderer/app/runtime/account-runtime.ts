@@ -1,4 +1,4 @@
-import { setCompanionLifecycle } from '@/modules/character'
+import { setCompanionLifecycle } from '@/features/character'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
 import { requestResource } from '@/shared/lib/resource-request'

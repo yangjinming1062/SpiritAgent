@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 
-import type { OnboardingAnswers } from '@/modules/character'
+import type { OnboardingAnswers } from '@/features/character'
+import { useStrings } from '@/shared/strings'
 import {
   BTN_GHOST,
   CreationActionBar,
@@ -9,8 +10,7 @@ import {
   FIELD_LABEL,
   HINT_TEXT,
   INPUT_CLASS
-} from '@/shared/panel'
-import { useStrings } from '@/shared/strings'
+} from '@/ui'
 
 import { submitOnEnter } from './keyboard'
 import { ONBOARDING_PRIMARY_BUTTON } from './onboarding-components'

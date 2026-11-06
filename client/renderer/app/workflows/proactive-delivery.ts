@@ -4,9 +4,9 @@ import {
   isCharacterStageVisible,
   observeCharacterStageVisibility,
   setSpriteState
-} from '@/modules/character'
-import { setProactiveBubble } from '@/modules/conversation'
-import { speak, stopSpeaking } from '@/modules/speech'
+} from '@/features/character'
+import { setProactiveBubble } from '@/features/conversation'
+import { speak, stopSpeaking } from '@/features/speech'
 import { $surfaceRole } from '@/shared/store/surfaces'
 
 export function isSpriteOverlayVisible(): boolean {

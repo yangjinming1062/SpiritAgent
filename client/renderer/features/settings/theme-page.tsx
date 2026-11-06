@@ -1,0 +1,98 @@
+import { useStore } from '@nanostores/react'
+import type React from 'react'
+
+import { $manualReduceTransparency, setManualReduceTransparency } from '@/shared/lib/apply-no-blur'
+import { triggerHaptic } from '@/shared/lib/haptics'
+import { Check } from '@/shared/lib/icons'
+import { cn } from '@/shared/lib/utils'
+import { $theme, setUiTheme } from '@/shared/store/theme'
+import { useStrings } from '@/shared/strings'
+import { Badge, SECTION_TITLE, SettingCard, SettingRow, SettingsSectionIntro, Toggle } from '@/ui'
+import { SPIRITAGENT_UI_THEMES } from '@ipc/contracts'
+
+export function ThemePage(): React.JSX.Element {
+  const dict = useStrings()
+  const themeText = dict.settings.theme
+  const active = useStore($theme)
+  const reduceTransparency = useStore($manualReduceTransparency)
+
+  return (
+    <div className="space-y-6">
+      <SettingsSectionIntro hint={themeText.hint} title={themeText.heading} />
+
+      <section>
+        <p className={cn(SECTION_TITLE, 'mb-2.5')}>{themeText.themesHeading}</p>
+        <div aria-label={themeText.themesAriaLabel} className="grid grid-cols-1 gap-3 sm:grid-cols-2" role="radiogroup">
+          {SPIRITAGENT_UI_THEMES.map(theme => {
+            const isActive = theme === active
+
+            return (
+              <button
+                aria-checked={isActive}
+                className={cn('theme-tile select-none text-left', isActive && 'is-active')}
+                key={theme}
+                onClick={() => {
+                  triggerHaptic('open')
+                  setUiTheme(theme)
+                }}
+                role="radio"
+                type="button"
+              >
+                <div className="theme-preview" data-preview={theme}>
+                  <div className="theme-preview-body">
+                    <div className="theme-preview-rail" />
+                    <div className="theme-preview-stage">
+                      <div className="theme-preview-bubble" />
+                    </div>
+                  </div>
+                  {isActive ? (
+                    <span className="theme-preview-check">
+                      <Check className="size-3 stroke-[2.5]" />
+                    </span>
+                  ) : null}
+                </div>
+
+                <div className="mt-2.5 flex items-center justify-between gap-2">
+                  <span
+                    className={cn('text-[13px] font-medium transition-colors', isActive ? 'text-strong' : 'text-body')}
+                  >
+                    {themeText.themes[theme].label}
+                  </span>
+                  {isActive && (
+                    <Badge className="gap-1 rounded-full px-1.5 font-medium" tone="accent">
+                      <Check className="size-2.5 stroke-[2.5]" />
+                      <span>{themeText.activeBadge}</span>
+                    </Badge>
+                  )}
+                </div>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-muted">{themeText.themes[theme].description}</p>
+              </button>
+            )
+          })}
+        </div>
+      </section>
+
+      <section>
+        <p className={cn(SECTION_TITLE, 'mb-2')}>{themeText.materialHeading}</p>
+        <SettingCard>
+          <SettingRow description={themeText.materialTransparentDesc} label={themeText.materialTransparent}>
+            <span className="text-[11px] text-faint">{themeText.materialTransparentDayNight}</span>
+          </SettingRow>
+          <SettingRow description={themeText.materialSolidDesc} label={themeText.materialSolid}>
+            <span className="text-[11px] text-faint">{themeText.materialSolidDayNight}</span>
+          </SettingRow>
+          <SettingRow description={themeText.reduceTransparencyDesc} label={themeText.reduceTransparency}>
+            <Toggle
+              ariaLabel={themeText.reduceTransparency}
+              checked={reduceTransparency}
+              onChange={next => {
+                triggerHaptic('open')
+                setManualReduceTransparency(next)
+              }}
+            />
+          </SettingRow>
+        </SettingCard>
+      </section>
+    </div>
+  )
+}

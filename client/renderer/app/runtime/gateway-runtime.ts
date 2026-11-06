@@ -3,7 +3,7 @@ import {
   findConversationRuntime,
   requestSessionSnapshot,
   syncSessionHistory
-} from '@/modules/conversation'
+} from '@/features/conversation'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { createGatewayView } from '@/shared/lib/gateway-view'

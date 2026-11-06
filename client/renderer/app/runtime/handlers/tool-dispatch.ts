@@ -1,5 +1,5 @@
 import { syncConversationActivity } from '@/app/workflows/conversation-activity'
-import type { ConversationRuntime } from '@/modules/conversation'
+import type { ConversationRuntime } from '@/features/conversation'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { getStrings } from '@/shared/strings'
 

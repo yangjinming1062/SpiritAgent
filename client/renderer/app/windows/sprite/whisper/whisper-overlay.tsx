@@ -7,7 +7,7 @@ import {
   $spriteContentRect,
   $viewport,
   computeOverlayAnchorBesideSprite
-} from '@/modules/character'
+} from '@/features/character'
 import {
   $chatSessionId,
   $companionSessionId,
@@ -18,7 +18,7 @@ import {
   pendingMessages,
   useChatInput,
   useIsReadOnlySession
-} from '@/modules/conversation'
+} from '@/features/conversation'
 import { usePointerDrag } from '@/shared/hooks/use-pointer-drag'
 import { Home, X } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'

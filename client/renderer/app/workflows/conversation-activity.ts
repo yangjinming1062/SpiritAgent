@@ -1,11 +1,11 @@
-import { $spriteState, setSpriteState } from '@/modules/character'
+import { $spriteState, setSpriteState } from '@/features/character'
 import {
   $chatSessionId,
   $companionSessionId,
   $conversationViews,
   type ConversationRuntime,
   conversationRuntimes
-} from '@/modules/conversation'
+} from '@/features/conversation'
 import { $gatewayActiveToolCount } from '@/shared/store/gateway'
 
 let stopListening: (() => void) | undefined

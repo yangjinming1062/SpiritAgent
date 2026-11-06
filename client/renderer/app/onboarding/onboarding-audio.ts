@@ -1,4 +1,4 @@
-import { playPrepared } from '@/modules/speech'
+import { playPrepared } from '@/features/speech'
 import { log } from '@/shared/lib/log'
 import { mediaApi } from '@/shared/platform/desktop'
 

@@ -160,7 +160,7 @@ function stronglyConnected(graph) {
 export function createArchitecturePlugin(clientDirectory) {
   const clientRoot = canonical(clientDirectory)
   const rendererRoot = `${clientRoot}/renderer/`
-  const modules = directories(path.join(clientDirectory, 'renderer/modules'))
+  const features = directories(path.join(clientDirectory, 'renderer/features'))
   const windows = directories(path.join(clientDirectory, 'renderer/app/windows'))
   const rendererProject = readProject(clientDirectory, 'tsconfig.json')
   const mainProject = readProject(clientDirectory, 'tsconfig.main.json')
@@ -208,20 +208,16 @@ export function createArchitecturePlugin(clientDirectory) {
     return {
       relative,
       layer: parts[0],
-      module: parts[0] === 'modules' && isDirectory(modules, 'modules', parts[1]) ? parts[1] : undefined,
+      feature: parts[0] === 'features' && isDirectory(features, 'features', parts[1]) ? parts[1] : undefined,
       window:
         parts[0] === 'app' && parts[1] === 'windows' && isDirectory(windows, 'app/windows', parts[2])
           ? parts[2]
           : undefined,
-      rendering: relative.startsWith('modules/character/rendering/'),
+      rendering: relative.startsWith('features/character/rendering/'),
       coordination: relative.startsWith('app/runtime/') || relative.startsWith('app/workflows/')
     }
   }
 
-  const entryAt = (target, directory) =>
-    ['ts', 'tsx', 'mts', 'cts'].some(extension => target.relative === `${directory}/index.${extension}`)
-  const publicEntry = (target, module) => entryAt(target, `modules/${module}`)
-  const renderingEntry = target => entryAt(target, 'modules/character/rendering')
   const mainRestrictions = {
     shared: ['backend', 'ipc', 'lifecycle', 'runner'],
     backend: ['runner', 'ipc', 'lifecycle'],
@@ -235,12 +231,24 @@ export function createArchitecturePlugin(clientDirectory) {
       return `main/${from.main} 不得依赖 main/${to.main}；能力经组合根注入。`
     }
 
-    if (from.layer === 'shared' && (to.layer === 'app' || to.layer === 'modules')) {
-      return 'shared 不得依赖应用层或业务模块。'
+    if (from.layer && to.main) {
+      return '渲染层不得依赖主进程实现；跨进程只经类型化 IPC 契约。'
     }
 
-    if (from.module && to.layer === 'app') {
-      return '业务模块不得反向依赖应用层；跨模块协作由 app 装配。'
+    if (from.main && to.layer) {
+      return '主进程不得依赖渲染层实现。'
+    }
+
+    if (from.layer === 'shared' && (to.layer === 'ui' || to.layer === 'features' || to.layer === 'app')) {
+      return 'shared 不得依赖 ui、业务功能或应用层。'
+    }
+
+    if (from.layer === 'ui' && (to.layer === 'features' || to.layer === 'app')) {
+      return 'ui 只承载无业务依赖的组件；不得依赖业务功能或应用层。'
+    }
+
+    if (from.feature && to.layer === 'app' && to.relative.split('/')[1] !== 'navigation') {
+      return '业务功能只可依赖 app/navigation 路由端口，不得依赖窗口、运行时与工作流实现。'
     }
 
     if (from.coordination && to.window) {
@@ -248,34 +256,25 @@ export function createArchitecturePlugin(clientDirectory) {
     }
 
     if (from.window && to.window && from.window !== to.window) {
-      return '窗口体验互不依赖；共享能力归业务模块或 app/workflows。'
+      return '窗口体验互不依赖；共享能力归业务功能或 app/workflows。'
     }
 
-    if (from.rendering && to.module === 'character' && !to.rendering && !publicEntry(to, 'character')) {
+    if (from.rendering && to.feature === 'character' && !to.rendering && !specifier.startsWith('.')) {
       return '角色渲染域只经 character 公共入口访问角色能力。'
     }
 
-    if (
-      from.module &&
-      from.module === to.module &&
-      !specifier.startsWith('.') &&
-      !(from.rendering && publicEntry(to, 'character'))
-    ) {
-      return '业务模块内部使用相对路径；角色渲染域经 character 公共入口访问角色能力。'
+    if (from.feature && from.feature === to.feature && !specifier.startsWith('.')) {
+      return '业务功能内部使用相对路径；角色渲染域经 character 公共入口访问角色能力。'
     }
 
-    if (!to.module || from.module === to.module) {
+    if (!to.feature || from.feature === to.feature) {
       return undefined
     }
 
-    const allowedModule = from.module === 'conversation' && to.module === 'media'
+    const entry = to.relative.endsWith('/index.ts') || to.relative.endsWith('/index.tsx')
 
-    if (from.module && !allowedModule) {
-      return '业务模块互不导入；conversation 仅可消费 media 公共展示原语，其他协作由 app 装配。'
-    }
-
-    if (!publicEntry(to, to.module) && !(from.layer === 'app' && renderingEntry(to))) {
-      return '跨模块只消费公共入口；应用层另可消费 character/rendering 公共入口。'
+    if (!entry && from.feature) {
+      return '跨功能只消费对方 index.ts 公共入口，不得导入内部实现。'
     }
 
     return undefined

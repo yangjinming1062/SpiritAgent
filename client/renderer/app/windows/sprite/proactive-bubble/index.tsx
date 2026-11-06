@@ -1,7 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { useLayoutEffect, useRef, useState } from 'react'
 
-import { openSessionSurface, openWhisper } from '@/app/workflows/session-delivery'
+import { openSessionSurface } from '@/app/workflows/session-delivery'
 import {
   $effectiveTier,
   $screenLocked,
@@ -11,8 +11,9 @@ import {
   $spriteHeadRect,
   $viewport,
   computeOverlayAnchorBesideSprite
-} from '@/modules/character'
-import { $proactiveBubble, pendingMessages, setProactiveBubble } from '@/modules/conversation'
+} from '@/features/character'
+import { openWhisper } from '@/features/conversation'
+import { $proactiveBubble, pendingMessages, setProactiveBubble } from '@/features/conversation'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { cn } from '@/shared/lib/utils'
 import { $chatVisible } from '@/shared/store/chat-visibility'

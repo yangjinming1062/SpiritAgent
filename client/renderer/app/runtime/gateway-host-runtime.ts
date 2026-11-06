@@ -5,9 +5,9 @@ import {
   emitVfx,
   pushEffectiveDisturbanceTier,
   setSpriteState
-} from '@/modules/character'
-import { cancelVoiceBar, stopSpeaking } from '@/modules/speech'
-import { refreshVisuals } from '@/modules/visuals'
+} from '@/features/character'
+import { refreshVisuals } from '@/features/creation/visuals'
+import { cancelVoiceBar, stopSpeaking } from '@/features/speech'
 import { RENDERER_TIMINGS } from '@/shared/constants'
 import { fetchSlashCommandMeta } from '@/shared/lib/slash-commands'
 import type { DesktopGatewayState } from '@ipc/contracts'

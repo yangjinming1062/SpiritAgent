@@ -2,7 +2,7 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
-import { AccessibilityPermissionButton } from '@/app/components/accessibility-permission-button'
+import { AccessibilityPermissionButton } from '@/features/character'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { LayoutGrid, Monitor, X } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'

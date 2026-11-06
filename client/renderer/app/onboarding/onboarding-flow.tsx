@@ -6,14 +6,14 @@ import {
   type OnboardingAnswers,
   setCompanionVoiceId,
   setResponsePreference
-} from '@/modules/character'
-import { stopSpeaking } from '@/modules/speech'
+} from '@/features/character'
+import { stopSpeaking } from '@/features/speech'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { saveCreationDraftImage } from '@/shared/lib/creation-draft-image'
 import { log } from '@/shared/lib/log'
-import { BTN_SUBTLE, CreationActionBar, CreationWorkspace, Disclosure, INPUT_CLASS } from '@/shared/panel'
 import { $gatewayState } from '@/shared/store/gateway'
 import { useStrings } from '@/shared/strings'
+import { BTN_SUBTLE, CreationActionBar, CreationWorkspace, Disclosure, INPUT_CLASS } from '@/ui'
 
 import { computeBackTransition, type Phase, type VoiceStage } from './back-transition'
 import { BackgroundPage, OnboardingConflictNotice } from './background-page'

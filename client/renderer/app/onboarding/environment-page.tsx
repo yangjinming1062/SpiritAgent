@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 
-import { pickAvatarImage } from '@/modules/character'
-import { adoptSceneImage, createScene, discardSceneCreationIssue } from '@/modules/scene'
+import { pickAvatarImage } from '@/features/character'
+import { adoptSceneImage, createScene, discardSceneCreationIssue } from '@/features/creation/environment'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { authedResource } from '@/shared/lib/resource-request'
-import { BTN_SUBTLE, CreationActionBar, CreationWorkspace, INPUT_CLASS } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
+import { BTN_SUBTLE, CreationActionBar, CreationWorkspace, INPUT_CLASS } from '@/ui'
 
 import { ONBOARDING_PRIMARY_BUTTON } from './onboarding-components'
 import styles from './onboarding.module.css'

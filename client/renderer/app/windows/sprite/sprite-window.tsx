@@ -2,11 +2,9 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
-import { SpriteStage } from '@/app/components/sprite-stage'
 import { ActivationOverlay, BootFailureOverlay, OnboardingFlow } from '@/app/onboarding'
 import { useAccountLifecycle } from '@/app/workflows/account-lifecycle'
 import { speakProactive } from '@/app/workflows/proactive-delivery'
-import { useVisualProjection } from '@/app/workflows/visual-presentation'
 import {
   $companionLifecycle,
   $companionVoiceId,
@@ -19,16 +17,16 @@ import {
   setCompanionLifecycle,
   setCompanionVoiceId,
   startActivityMonitor
-} from '@/modules/character'
-import { CharacterStage } from '@/modules/character/rendering'
-import { MediaViewerOverlay } from '@/modules/media'
-import { checkVoiceValidity } from '@/modules/speech'
-import { enqueueInteraction } from '@/modules/visuals'
-import { NotificationStack } from '@/shared'
+} from '@/features/character'
+import { SpriteStage } from '@/features/character'
+import { CharacterStage } from '@/features/character/rendering'
+import { useVisualProjection } from '@/features/creation/visuals'
+import { enqueueInteraction } from '@/features/creation/visuals'
+import { MediaViewerOverlay } from '@/features/media'
+import { checkVoiceValidity } from '@/features/speech'
 import { useMainProcessListener } from '@/shared/hooks/use-main-process-listener'
 import { useWindowMouseCapture } from '@/shared/lib/interactive-regions'
 import { log } from '@/shared/lib/log'
-import { ConfirmHost } from '@/shared/panel'
 import { shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
@@ -36,6 +34,8 @@ import { notify } from '@/shared/store/notifications'
 import { hydrateRunnerStatus } from '@/shared/store/runner-status'
 import { $surfaceOpen, requestOpenSurface } from '@/shared/store/surfaces'
 import { getStrings } from '@/shared/strings'
+import { NotificationStack } from '@/ui'
+import { ConfirmHost } from '@/ui'
 
 import { SpriteContextMenu } from './context-menu'
 import { DeveloperOverlay } from './developer-overlay'

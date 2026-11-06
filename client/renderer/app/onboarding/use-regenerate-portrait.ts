@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { $regenFeedback, applyPortrait, type PickedImage, pushPortraitEntry } from '@/modules/character'
+import { $regenFeedback, applyPortrait, type PickedImage, pushPortraitEntry } from '@/features/character'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { backendDetailMessage, ipcErrorStatus, isClientErrorIpc } from '@/shared/lib/ipc-error'
 import { requestResource } from '@/shared/lib/resource-request'

@@ -7,9 +7,9 @@ import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { failureText } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
-import { BTN_ICON, BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, Spinner, SURFACE_OVERLAY } from '@/shared/panel'
 import { $auth, activate } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
+import { BTN_ICON, BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, Spinner, SURFACE_OVERLAY } from '@/ui'
 
 /** 激活码输入浮层：伙伴（精灵）窗口未鉴权时显示；用户粘贴 base64 激活码，主进程经 `/api/user/activate` 换取会话 JWT。 */
 export function ActivationOverlay({ onClose }: { onClose: () => void }): React.JSX.Element {

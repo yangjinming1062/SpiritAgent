@@ -8,7 +8,7 @@ import {
   SPECIES_PRESETS,
   USER_GENDER_PRESETS,
   VOICE_PRESETS
-} from '@/modules/character'
+} from '@/features/character'
 
 import type { Phase } from './back-transition'
 import type { OnboardingAudioTag } from './onboarding-audio'
