@@ -1,6 +1,5 @@
 import { atom } from 'nanostores'
 
-import { captureAuthScope } from '@/shared/lib/authed-api'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { authedResource, type ResourceArguments } from '@/shared/lib/resource-request'
@@ -57,14 +56,10 @@ export interface SceneGenerationInput {
   image?: string
 }
 
-export const $pendingScene = atom<SceneAsset | null>(null)
-export const $sceneRegenerating = atom<SceneAsset | null>(null)
 export const $sceneLibrary = atom<SceneAsset[]>([])
 export const $sceneDetails = atom<Record<string, SceneAsset>>({})
 export const $sceneLibraryStatus = atom<'idle' | 'loading' | 'loaded' | 'error'>('idle')
 export const $scenePolicy = atom<ScenePolicy>('llm_may_replace')
-export const $sceneTaskStatus = atom<'none' | 'pending' | 'waiting_upload'>('none')
-export const $sceneTaskSlow = atom(false)
 export const $sceneCreationIssue = atom<SceneCreationIssue | null>(null)
 export const $sceneMutationIssues = atom<Record<string, SceneMutationIssue>>({})
 export const $sceneTotal = atom(0)
@@ -84,14 +79,9 @@ export const sceneIO = {
   listRequest: 0,
   mutationRevision: 0,
   nextRead: 0,
-  pollCount: 0,
-  pollTimer: null as ReturnType<typeof setInterval> | null,
   stateRequest: 0,
   submitting: false
 }
-
-/** 轮询触发由库模块登记，避免状态层反向依赖详情与库模块。 */
-export const scenePoll = { tick: null as (() => Promise<unknown>) | null }
 
 export function toScene(row: SceneWire, url: string, imageLoadFailed = false): SceneAsset {
   return { ...row, assetUrl: row.url || '', url, thumbnailUrl: url, imageLoadFailed }
@@ -182,32 +172,6 @@ export function cacheSceneDetails(entries: SceneAsset[], read: number): void {
   $sceneDetails.set(Object.fromEntries(detailCache))
 }
 
-/** 写操作回包后登记详情顺序，再校准全局状态；换号后丢弃迟到结果。 */
-export async function mutateSceneRow(request: () => Promise<SceneWire>): Promise<SceneWire> {
-  const isCurrent = captureAuthScope()
-  const row = await request()
-  const read = ++sceneIO.nextRead
-
-  if (!isCurrent?.()) {
-    throw new Error(getStrings().living.toasts.sceneRegenerateFailed)
-  }
-
-  const scene = await resolveScene(row)
-
-  if (!isCurrent()) {
-    throw new Error(getStrings().living.toasts.sceneRegenerateFailed)
-  }
-
-  cacheSceneDetails([scene], read)
-  await scenePoll.tick?.()
-
-  if (!isCurrent()) {
-    throw new Error(getStrings().living.toasts.sceneRegenerateFailed)
-  }
-
-  return row
-}
-
 export async function preload(url: string): Promise<void> {
   if (!url) {
     return
@@ -218,43 +182,11 @@ export async function preload(url: string): Promise<void> {
   await image.decode()
 }
 
-export function stopPoll(): void {
-  if (sceneIO.pollTimer !== null) {
-    clearInterval(sceneIO.pollTimer)
-  }
-
-  sceneIO.pollTimer = null
-  sceneIO.pollCount = 0
-}
-
-export function startPoll(): void {
-  if (sceneIO.pollTimer !== null) {
-    return
-  }
-
-  sceneIO.pollTimer = setInterval(() => {
-    sceneIO.pollCount++
-
-    if (sceneIO.pollCount > 40) {
-      $sceneTaskSlow.set(true)
-
-      if (sceneIO.pollCount % 4 !== 0) {
-        return
-      }
-    }
-
-    void scenePoll.tick?.()
-  }, 3500)
-}
-
 registerStorageClearHandler(() => {
   sceneIO.stateRequest++
   sceneIO.listRequest++
   sceneIO.eventVersion = -1
   sceneIO.submitting = false
-  stopPoll()
-  $pendingScene.set(null)
-  $sceneRegenerating.set(null)
   $sceneLibrary.set([])
   detailCache.clear()
   detailReads.clear()
@@ -262,8 +194,6 @@ registerStorageClearHandler(() => {
   sceneSrcRequests.clear()
   $sceneDetails.set({})
   $sceneLibraryStatus.set('idle')
-  $sceneTaskStatus.set('none')
-  $sceneTaskSlow.set(false)
   $sceneCreationIssue.set(null)
   $sceneMutationIssues.set({})
   $scenePolicy.set('llm_may_replace')
@@ -302,18 +232,3 @@ export async function sceneRequest<K extends DesktopApiOperationKey>(
   return result.value
 }
 
-export async function mutate<K extends DesktopApiOperationKey>(
-  operation: K,
-  ...args: ResourceArguments<K>
-): Promise<ApiOperation<K>['response']> {
-  const epoch = currentClearEpoch()
-  const value = await sceneRequest(operation, ...args)
-
-  await scenePoll.tick?.()
-
-  if (epoch !== currentClearEpoch()) {
-    throw new Error(getStrings().living.toasts.sceneRegenerateFailed)
-  }
-
-  return value
-}

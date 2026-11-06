@@ -5,18 +5,12 @@ import { authedResource } from '@/shared/lib/resource-request'
 import { getStrings } from '@/shared/strings'
 
 import {
-  $pendingScene,
-  $sceneRegenerating,
-  $sceneTaskSlow,
-  $sceneTaskStatus,
   cacheSceneDetails,
   detailCache,
   detailReads,
   resolveScene,
   type SceneAsset,
   sceneIO,
-  startPoll,
-  stopPoll,
   toScene
 } from './state'
 
@@ -98,37 +92,3 @@ export async function reloadSceneImage(sceneId: string): Promise<SceneAsset | nu
   return fetchSceneDetail(sceneId, 'reload')
 }
 
-/** 刷新单个场景的最新状态；不等待场景列表或图片字节，业务错误交给页面显示。 */
-export async function refreshSceneStatus(sceneId: string): Promise<SceneAsset | null> {
-  const scope = captureAuthScope()
-  const detail = await fetchSceneDetail(sceneId, 'defer')
-
-  if (!scope?.() || !detail) {
-    return null
-  }
-
-  // 单场景终态立即解除它的忙碌标记；更早的全局读取不能再覆盖本次查询。
-  sceneIO.stateRequest++
-
-  if (detail.status === 'pending' || $pendingScene.get()?.id === sceneId) {
-    $pendingScene.set(detail.status === 'pending' ? detail : null)
-  }
-
-  if (detail.regeneration?.status === 'pending' || $sceneRegenerating.get()?.id === sceneId) {
-    $sceneRegenerating.set(detail.regeneration?.status === 'pending' ? detail : null)
-  }
-
-  const pending = $pendingScene.get()
-  const taskStatus = !pending ? 'none' : pending.stage === 'waiting_upload' ? 'waiting_upload' : 'pending'
-  $sceneTaskStatus.set(taskStatus)
-  stopPoll()
-  $sceneTaskSlow.set(false)
-
-  if (taskStatus === 'pending' || $sceneRegenerating.get()) {
-    startPoll()
-  }
-
-  return detail
-}
-
-/** 刷新场景状态；已自行读取列表的调用方使用 skipLibraryRefresh 消去重复读取。返回值只确认本次状态快照有效。 */

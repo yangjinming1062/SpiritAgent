@@ -1,18 +1,19 @@
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { isClientErrorIpc } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
+import { type ResourceArguments } from '@/shared/lib/resource-request'
 import { currentClearEpoch } from '@/shared/lib/storage'
+import { getStrings } from '@/shared/strings'
+import type { DesktopApiOperationKey } from '@ipc/contracts'
 
-import { hydrateScene, loadSceneLibrary } from './library'
+import type { ApiOperation } from '../../../../../../shared/api'
+
+import { loadSceneLibrary } from './library'
 import {
-  $pendingScene,
   $sceneCreationIssue,
   $sceneMutationIssues,
-  $sceneRegenerating,
-  $sceneTaskSlow,
-  $sceneTaskStatus,
-  mutate,
-  mutateSceneRow,
+  cacheSceneDetails,
+  resolveScene,
   type SceneCreationIssue,
   type SceneCreationResult,
   sceneError,
@@ -22,9 +23,51 @@ import {
   type ScenePolicy,
   sceneRequest,
   type SceneWire,
-  startPoll,
   toScene
 } from './state'
+import { $pendingScene, $sceneRegenerating, $sceneTaskSlow, $sceneTaskStatus, hydrateScene, startPoll } from './sync'
+
+// 写操作回包后先登记详情顺序，再由同步服务刷新任务与列表；换号后丢弃迟到结果。
+async function mutateSceneRow(request: () => Promise<SceneWire>): Promise<SceneWire> {
+  const isCurrent = captureAuthScope()
+  const row = await request()
+  const read = ++sceneIO.nextRead
+
+  if (!isCurrent?.()) {
+    throw new Error(getStrings().living.toasts.sceneRegenerateFailed)
+  }
+
+  const scene = await resolveScene(row)
+
+  if (!isCurrent()) {
+    throw new Error(getStrings().living.toasts.sceneRegenerateFailed)
+  }
+
+  cacheSceneDetails([scene], read)
+  await hydrateScene()
+
+  if (!isCurrent()) {
+    throw new Error(getStrings().living.toasts.sceneRegenerateFailed)
+  }
+
+  return row
+}
+
+async function mutate<K extends DesktopApiOperationKey>(
+  operation: K,
+  ...args: ResourceArguments<K>
+): Promise<ApiOperation<K>['response']> {
+  const epoch = currentClearEpoch()
+  const value = await sceneRequest(operation, ...args)
+
+  await hydrateScene()
+
+  if (epoch !== currentClearEpoch()) {
+    throw new Error(getStrings().living.toasts.sceneRegenerateFailed)
+  }
+
+  return value
+}
 
 export async function inspectSceneCreationIssue(): Promise<boolean> {
   const previous = $sceneCreationIssue.get()
@@ -200,5 +243,3 @@ export async function analyzeScene(sceneId: string): Promise<SceneWire> {
 export async function setScenePolicy(policy: ScenePolicy): Promise<void> {
   await mutate('companion_scenes.patch_scene_policy', { body: { policy } })
 }
-
-/** 场景素材变更的事件计数；仅用于中止与刷新竞争中的过期详情读取。 */
