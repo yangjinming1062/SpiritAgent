@@ -1,6 +1,6 @@
 """动作素材的公开只读查询。"""
 
-from sqlalchemy import ColumnElement, or_, select
+from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
@@ -9,8 +9,28 @@ from .schemas import ActionAssetStatus, ActionAssetView, ActionLibraryGroup, Act
 from .views import definition_view, normalize_action_name
 
 
-def _filters(user_id: int, query: str | None, clip_kind: str | None, status: str | None) -> list[ColumnElement[bool]]:
+def _filters(
+    user_id: int,
+    query: str | None,
+    clip_kind: str | None,
+    status: str | None,
+    keywords: list[str] | None = None,
+) -> list[ColumnElement[bool]]:
     conditions: list[ColumnElement[bool]] = [ActionDefinition.user_id == user_id]
+    if keywords:
+        # 多关键词任一命中即召回；供候选预筛使用。
+        conditions.append(
+            or_(
+                *[
+                    or_(
+                        ActionDefinition.normalized_name.contains(normalize_action_name(word), autoescape=True),
+                        ActionDefinition.motion_description.icontains(word, autoescape=True),
+                    )
+                    for word in keywords[:8]
+                    if normalize_action_name(word)
+                ]
+            )
+        )
     needle = normalize_action_name(query or "")
     if needle:
         conditions.append(
@@ -58,11 +78,23 @@ async def action_preset_keys(db: AsyncSession, user_id: int, action_ids: list[in
     return {action_id: preset_key for action_id, preset_key in rows.all() if preset_key is not None}
 
 
+async def count_library_actions(db: AsyncSession, user_id: int) -> int:
+    return int(
+        await db.scalar(
+            select(func.count())
+            .select_from(ActionDefinition)
+            .where(ActionDefinition.user_id == user_id, ActionDefinition.status == "approved")
+        )
+        or 0
+    )
+
+
 async def list_actions(
     db: AsyncSession,
     user_id: int,
     *,
     query: str | None = None,
+    keywords: list[str] | None = None,
     clip_kind: str | None = None,
     status: ActionAssetStatus | None = None,
     group: ActionLibraryGroup = "in_library",
@@ -71,7 +103,7 @@ async def list_actions(
 ) -> ActionListResponse:
     """按名称或动作内容分页检索；名称只用于检索，不作身份判别。"""
 
-    conditions = _filters(user_id, query, clip_kind, status)
+    conditions = _filters(user_id, query, clip_kind, status, keywords)
     conditions.append(
         ActionDefinition.status == "approved" if group == "in_library" else ActionDefinition.status != "approved"
     )

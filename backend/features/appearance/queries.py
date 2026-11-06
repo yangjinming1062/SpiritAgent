@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.companion.appearance_ports import AppearanceReadiness
@@ -85,4 +85,38 @@ async def ready_outfit_snapshots(
         .order_by(CompanionOutfit.id.desc())
         .limit(max(1, min(limit, 100)))
     )
+    return [OutfitSnapshot.model_validate(row) for row in rows]
+
+
+async def count_ready_outfits(db: AsyncSession, user_id: int) -> int:
+    return int(
+        await db.scalar(
+            select(func.count())
+            .select_from(CompanionOutfit)
+            .where(CompanionOutfit.user_id == user_id, CompanionOutfit.status == "ready")
+        )
+        or 0
+    )
+
+
+async def search_outfit_snapshots(
+    db: AsyncSession, user_id: int, keywords: list[str], *, limit: int = 30
+) -> list[OutfitSnapshot]:
+    """按名称或描述命中任一关键词检索已就绪造型；无关键词时返回最新一页。"""
+
+    limit = max(1, min(limit, 100))
+    conditions: list[Any] = [CompanionOutfit.user_id == user_id, CompanionOutfit.status == "ready"]
+    if keywords:
+        conditions.append(
+            or_(
+                *[
+                    or_(
+                        CompanionOutfit.name.icontains(word, autoescape=True),
+                        CompanionOutfit.description.icontains(word, autoescape=True),
+                    )
+                    for word in keywords[:8]
+                ]
+            )
+        )
+    rows = await db.scalars(select(CompanionOutfit).where(*conditions).order_by(CompanionOutfit.id.desc()).limit(limit))
     return [OutfitSnapshot.model_validate(row) for row in rows]

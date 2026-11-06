@@ -5,6 +5,7 @@
 
 import asyncio
 import hashlib
+import re
 from typing import Any, Literal
 
 from features.action_library import queries as action_queries
@@ -22,10 +23,13 @@ from features.action_library.schemas import (
 from features.appearance.identity import VisualIdentityNotReadyError, require_visual_identity
 from features.appearance.queries import (
     avatar_snapshot,
+    count_ready_outfits,
     outfit_identity_matches,
     ready_outfit_snapshot,
     ready_outfit_snapshots,
+    search_outfit_snapshots,
 )
+from features.appearance.query_contracts import OutfitSnapshot
 from features.companion.definition import visual_persona_definition
 from features.companion.disturbance import get_disturbance_tier
 from features.companion.persona_service import load_persona_definition
@@ -34,7 +38,7 @@ from features.companion.visual_state import persona_snapshot
 from features.life.schemas import LifeStepRequest
 from features.life.use_cases import read_state
 from features.media.visual_semantics import ActionMotionIntensity, ActionPerformanceRole, DayPhase, SemanticTag
-from features.scenes.queries import list_scenes, scene_snapshot
+from features.scenes.queries import count_ready_scenes, list_scenes, scene_snapshot
 from features.scenes.query_contracts import SceneSnapshot
 from features.visuals import service as visuals_service
 from features.visuals.interpret import interpret_visual_description
@@ -424,71 +428,147 @@ async def generate_character_visual_reference(
         )
 
 
-_CATALOG_PAGE = 100
-_CATALOG_LIMIT = 1000
+_CANDIDATE_LIMIT = 40
+_MAX_KEYWORDS = 12
+# 中英文停用词不参与候选检索；材料名称与场景词保留。
+_STOP_WORDS = frozenset(
+    [
+        "的",
+        "了",
+        "在",
+        "是",
+        "和",
+        "与",
+        "有",
+        "我",
+        "你",
+        "他",
+        "她",
+        "它",
+        "我们",
+        "你们",
+        "他们",
+        "她们",
+        "它们",
+        "一个",
+        "一些",
+        "一起",
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "of",
+        "to",
+        "in",
+        "on",
+        "by",
+        "with",
+        "for",
+        "at",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "me",
+        "you",
+        "he",
+        "she",
+        "it",
+        "we",
+        "they",
+        "my",
+        "your",
+        "his",
+        "her",
+        "its",
+        "our",
+        "their",
+        "this",
+        "that",
+        "these",
+        "those",
+    ]
+)
+# CJK 单字与英文/数字词都可作为关键词。
+_WORD_PATTERN = re.compile(r"[\u4e00-\u9fff]|[A-Za-z][A-Za-z0-9_-]*|\d+")
 
 
-async def _load_visual_catalog(user_id: int) -> tuple[dict[str, list[dict[str, Any]]], bool]:
-    """读取可用素材；达到上限时如实标记目录不完整，不让截断冒充没有素材。"""
+def _description_keywords(description: str) -> list[str]:
+    """提取候选检索关键词：CJK 单字与英文/数字词，去停用词、去重并保持出现顺序。"""
 
-    outfits: list[dict[str, Any]] = []
-    scenes: list[dict[str, Any]] = []
-    actions: list[dict[str, Any]] = []
-    async with SESSION_LOCAL() as db:
-        outfit_cursor: int | None = None
-        while len(outfits) < _CATALOG_LIMIT:
-            page = await ready_outfit_snapshots(db, user_id, limit=_CATALOG_PAGE, cursor=outfit_cursor)
-            outfits.extend(
-                {
-                    "id": str(item.id),
-                    "name": item.name,
-                    "description": (item.description or "")[:80],
-                    "preview_url": client_asset_url(item.fullbody_url) if item.fullbody_url else None,
-                }
-                for item in page
-            )
-            if len(page) < _CATALOG_PAGE:
-                break
-            outfit_cursor = page[-1].id
+    seen: set[str] = set()
+    words: list[str] = []
+    for word in _WORD_PATTERN.findall(description):
+        if word.lower() not in _STOP_WORDS and word not in seen:
+            seen.add(word)
+            words.append(word)
+    return words[:_MAX_KEYWORDS]
 
-        scene_cursor: int | None = None
-        while len(scenes) < _CATALOG_LIMIT:
-            items, _total, next_cursor = await list_scenes(
-                db, user_id, cursor=scene_cursor, limit=_CATALOG_PAGE, ready_only=True
-            )
-            scenes.extend(
-                {
-                    "id": str(item.id),
-                    "name": item.title,
-                    "description": (item.description or "")[:80],
-                    "preview_url": client_asset_url(item.media_path) if item.media_path else None,
-                }
-                for item in items
-            )
-            if next_cursor is None:
-                break
-            scene_cursor = int(next_cursor)
 
-        action_cursor: int | None = None
-        while len(actions) < _CATALOG_LIMIT:
-            page = await action_queries.list_actions(
-                db, user_id, group="in_library", cursor=action_cursor, limit=_CATALOG_PAGE
-            )
-            actions.extend(
-                {
-                    "id": str(item.id),
-                    "name": item.name,
-                    "motion_description": item.motion_description[:80],
-                    "clip_kind": item.clip_kind,
-                }
-                for item in page.actions
-            )
-            if page.next_cursor is None:
-                break
-            action_cursor = int(page.next_cursor)
+def _outfit_view(item: OutfitSnapshot) -> dict[str, Any]:
+    return {
+        "id": str(item.id),
+        "name": item.name,
+        "description": (item.description or "")[:80],
+        "preview_url": client_asset_url(item.fullbody_url) if item.fullbody_url else None,
+    }
 
-    truncated = any(len(items) >= _CATALOG_LIMIT for items in (outfits, scenes, actions))
-    return {"outfits": outfits, "scenes": scenes, "actions": actions}, truncated
+
+def _scene_view(item: SceneSnapshot) -> dict[str, Any]:
+    return {
+        "id": str(item.id),
+        "name": item.title,
+        "description": (item.description or "")[:80],
+        "preview_url": client_asset_url(item.media_path) if item.media_path else None,
+    }
+
+
+def _action_view(item: ActionAssetView) -> dict[str, Any]:
+    return {
+        "id": str(item.id),
+        "name": item.name,
+        "motion_description": item.motion_description[:80],
+        "clip_kind": item.clip_kind,
+    }
+
+
+async def _load_visual_candidates(
+    db: AsyncSession, user_id: int, description: str
+) -> tuple[dict[str, list[dict[str, Any]]], bool]:
+    """按描述关键词先筛候选再交模型；每类至多 _CANDIDATE_LIMIT 条。
+
+    检索为空但该类素材总数非零时补读最新一页，避免把未命中误判成素材不存在；
+    此时目录标记为不完整，由模型在 reason 里说明未列全。
+    """
+
+    keywords = _description_keywords(description)
+    outfits = await search_outfit_snapshots(db, user_id, keywords, limit=_CANDIDATE_LIMIT)
+    scenes, _total, _cursor = await list_scenes(db, user_id, keywords=keywords, ready_only=True, limit=_CANDIDATE_LIMIT)
+    actions = await action_queries.list_actions(
+        db, user_id, group="in_library", keywords=keywords, limit=_CANDIDATE_LIMIT
+    )
+
+    truncated = False
+    if not outfits and await count_ready_outfits(db, user_id):
+        outfits = await ready_outfit_snapshots(db, user_id, limit=_CANDIDATE_LIMIT)
+        truncated = True
+    if not scenes and await count_ready_scenes(db, user_id):
+        scenes, _t, _c = await list_scenes(db, user_id, ready_only=True, limit=_CANDIDATE_LIMIT)
+        truncated = True
+    if not actions.actions and await action_queries.count_library_actions(db, user_id):
+        actions = await action_queries.list_actions(db, user_id, group="in_library", limit=_CANDIDATE_LIMIT)
+        truncated = True
+
+    catalog: dict[str, list[dict[str, Any]]] = {
+        "outfits": [_outfit_view(item) for item in outfits],
+        "scenes": [_scene_view(item) for item in scenes],
+        "actions": [_action_view(item) for item in actions.actions],
+    }
+    return catalog, truncated
 
 
 async def interpret_visual_reference(
@@ -498,9 +578,16 @@ async def interpret_visual_reference(
     scene_id: int | None = None,
     day_phase: DayPhase | None = None,
 ) -> VisualInterpretation:
-    """按账户读取可用素材后整理描述；整理本身不写库、不受理制作。"""
+    """按描述筛选候选素材后整理；整理本身不写库、不受理制作。"""
 
-    catalog, truncated = await _load_visual_catalog(user_id)
+    async with SESSION_LOCAL() as db:
+        catalog, truncated = await _load_visual_candidates(db, user_id, description)
+        if scene_id is not None:
+            # 环境详情发起的动态制作：直接读取指定环境，不受候选目录影响。
+            fixed_scene = await scene_snapshot(db, user_id, scene_id)
+            if fixed_scene is None or fixed_scene.status != "ready" or not fixed_scene.media_path:
+                raise ValueError("所选环境不存在或尚未就绪")
+            catalog["scenes"] = [_scene_view(fixed_scene)]
     return await interpret_visual_description(
         user_id,
         description,

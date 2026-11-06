@@ -123,11 +123,29 @@ async def get_scene_state(db: AsyncSession, user_id: int) -> SceneState:
     )
 
 
+async def count_ready_scenes(db: AsyncSession, user_id: int) -> int:
+    return int(
+        await db.scalar(
+            select(func.count())
+            .select_from(CompanionScene)
+            .where(
+                CompanionScene.user_id == user_id,
+                CompanionScene.status == "ready",
+                CompanionScene.title != "",
+                CompanionScene.description != "",
+                CompanionScene.media_path != "",
+            )
+        )
+        or 0
+    )
+
+
 async def list_scenes(
     db: AsyncSession,
     user_id: int,
     *,
     query: str = "",
+    keywords: list[str] | None = None,
     cursor: int | None = None,
     limit: int = 30,
     ready_only: bool = False,
@@ -142,6 +160,19 @@ async def list_scenes(
                 CompanionScene.description != "",
                 CompanionScene.media_path != "",
             ]
+        )
+    if keywords:
+        # 多关键词任一命中即召回；供候选预筛使用。
+        conditions.append(
+            or_(
+                *[
+                    or_(
+                        CompanionScene.title.icontains(word, autoescape=True),
+                        CompanionScene.description.icontains(word, autoescape=True),
+                    )
+                    for word in keywords[:8]
+                ]
+            )
         )
     if needle := query.strip():
         conditions.append(
