@@ -14,7 +14,7 @@ import {
   PAGE_SIZE,
   type SceneAsset,
   type ScenePolicy
-} from './scene-store'
+} from './scene'
 
 interface SceneLibraryViewProps {
   entries: SceneAsset[]

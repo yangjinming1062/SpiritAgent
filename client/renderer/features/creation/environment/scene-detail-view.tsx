@@ -36,7 +36,7 @@ import {
   type SceneAsset,
   type SceneMutationIssue,
   updateSceneMutationIssue
-} from './scene-store'
+} from './scene'
 
 export interface SceneEditDraft {
   title: string

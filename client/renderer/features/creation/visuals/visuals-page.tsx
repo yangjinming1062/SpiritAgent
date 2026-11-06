@@ -32,17 +32,18 @@ import {
 import { LibraryToolbar } from '@/ui/asset-library-header'
 
 import { $actions, refreshActions } from '../actions/actions-store'
-import { $sceneLibrary, loadSceneLibrary } from '../environment/scene-store'
+import { $sceneLibrary, loadSceneLibrary } from '../environment'
 
 import { visualsApi } from './api'
-import { type VisualItem, type VisualJob, type VisualJobCommand } from './types'
-import { VisualCreatePanel } from './visual-create-panel'
-import { VisualDetailView } from './visual-detail-view'
-import { VisualJobRow } from './visual-job-row'
-import type { VisualsCopy } from './visual-labels'
-import { isPendingState, visualJobLabel } from './visual-labels'
-import { PlayBadge } from './visual-play-badge'
-import { $visualsUi, EMPTY_STUDIO, updateVisualsUi } from './visuals-state'
+import {
+  clearVisualDetail,
+  commandVisualJob,
+  loadVisualDetail,
+  refreshVisualPresentation,
+  refreshVisuals,
+  regenerateVisual,
+  setVisualPreferences
+} from './library'
 import {
   $visualsDetail,
   $visualsDetailError,
@@ -52,15 +53,16 @@ import {
   $visualsLoading,
   $visualsNextCursor,
   $visualsPresentation,
-  $visualsTotal,
-  clearVisualDetail,
-  commandVisualJob,
-  loadVisualDetail,
-  refreshVisualPresentation,
-  refreshVisuals,
-  regenerateVisual,
-  setVisualPreferences
-} from './visuals-store'
+  $visualsTotal
+} from './state'
+import { type VisualItem, type VisualJob, type VisualJobCommand } from './types'
+import { VisualCreatePanel } from './visual-create-panel'
+import { VisualDetailView } from './visual-detail-view'
+import { VisualJobRow } from './visual-job-row'
+import type { VisualsCopy } from './visual-labels'
+import { isPendingState, visualJobLabel } from './visual-labels'
+import { PlayBadge } from './visual-play-badge'
+import { $visualsUi, EMPTY_STUDIO, updateVisualsUi } from './visuals-state'
 
 const PAGE_SIZE = 12
 

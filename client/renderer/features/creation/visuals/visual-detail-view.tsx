@@ -23,13 +23,13 @@ import {
 
 import { visualAnalysisControls } from '../../../../../shared/visual-materials'
 
+import { loadVisualDetail } from './library'
 import { type VisualDetail, type VisualJob, type VisualJobCommand } from './types'
 import { VisualImportAnalysis } from './visual-import-analysis'
 import { VisualJobRow } from './visual-job-row'
 import { formatDuration, isAdvancingState, isPendingState } from './visual-labels'
 import { PlayBadge } from './visual-play-badge'
 import { VISUAL_BODY, VISUAL_SECTION } from './visual-text'
-import { loadVisualDetail } from './visuals-store'
 
 export function VisualDetailView({
   busy,

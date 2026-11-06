@@ -19,10 +19,10 @@ import {
 import { loadVisualMaterials, type VisualMaterialOptions } from '../../../../../shared/visuals'
 
 import { visualsApi } from './api'
+import { loadVisualDetail, refreshVisuals } from './library'
 import { type VisualDetail } from './types'
 import { VISUAL_BODY, VISUAL_FIELD, VISUAL_META } from './visual-text'
 import { $visualsUi, updateVisualsUi } from './visuals-state'
-import { loadVisualDetail, refreshVisuals } from './visuals-store'
 
 export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): React.JSX.Element {
   const a = useStrings().visuals.analysis

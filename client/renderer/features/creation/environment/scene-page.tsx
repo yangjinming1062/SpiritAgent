@@ -21,9 +21,6 @@ import { useStrings } from '@/shared/strings'
 import { PortraitLightbox } from '@/ui'
 import { confirmAction, SettingsContent } from '@/ui'
 
-import { type SceneCreateDraft, SceneCreateView } from './scene-create-view'
-import { SceneDetailView, type SceneEditDraft } from './scene-detail-view'
-import { SceneLibraryView } from './scene-library-view'
 import {
   $pendingScene,
   $sceneDetails,
@@ -52,7 +49,10 @@ import {
   reloadSceneImage,
   type SceneAsset,
   setScenePolicy
-} from './scene-store'
+} from './scene'
+import { type SceneCreateDraft, SceneCreateView } from './scene-create-view'
+import { SceneDetailView, type SceneEditDraft } from './scene-detail-view'
+import { SceneLibraryView } from './scene-library-view'
 import { type ScenePageView } from './scene-ui-state'
 import { $sceneUi, updateSceneUi } from './scene-ui-state'
 

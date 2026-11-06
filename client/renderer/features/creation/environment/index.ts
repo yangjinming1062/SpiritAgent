@@ -1,5 +1,3 @@
-export { SceneBackdrop } from './scene-backdrop'
-
 export {
   $pendingScene,
   $sceneCreationIssue,
@@ -37,4 +35,6 @@ export {
   type ScenePolicy,
   setScenePolicy,
   updateSceneMutationIssue
-} from './scene-store'
+} from './scene'
+
+export { SceneBackdrop } from './scene-backdrop'

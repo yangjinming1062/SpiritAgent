@@ -1,30 +1,36 @@
-import { atom, onMount } from 'nanostores'
+import { onMount } from 'nanostores'
 
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { $dayPhase } from '@/shared/lib/day-phase'
-import { ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
-import { isRecord } from '@client-shared/is-record'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
-import { ApiError } from '../../../../../shared/errors'
 
-import type { VisualReceiptBody, VisualsListQuery } from './api'
+import type { VisualsListQuery } from './api'
 import { visualsApi } from './api'
 import { $ambientLoopChoice, feedDirectorPresentation, resolveAmbientLoop } from './director'
-import {
-  $performance,
-  interruptPerformance,
-  type PerformancePorts,
-  performanceSettled,
-  performanceStarted,
-  receivePerformanceCommand
-} from './performance-scheduler'
+import { performanceSettled, receivePerformanceCommand } from './performance-scheduler'
 import { $stagePlan, deriveStagePlan } from './stage-plan'
+import {
+  $visualPlayback,
+  $visualsDetail,
+  $visualsDetailError,
+  $visualsError,
+  $visualsItems,
+  $visualsJobs,
+  $visualsLoading,
+  $visualsNextCursor,
+  $visualsPresentation,
+  $visualsPresentationError,
+  $visualsTotal,
+  playClients,
+  receiptKinds,
+  receiptQueues,
+  visualsState
+} from './state'
 import type {
   VisualDetail,
-  VisualItem,
   VisualJob,
   VisualJobCommand,
   VisualPlayCommand,
@@ -32,87 +38,6 @@ import type {
   VisualsPresentation
 } from './types'
 
-export const $visualsItems = atom<VisualItem[]>([])
-export const $visualsJobs = atom<VisualJob[]>([])
-export const $visualsTotal = atom<number | null>(null)
-export const $visualsNextCursor = atom<string | null>(null)
-export const $visualsLoading = atom(false)
-export const $visualsError = atom<string | null>(null)
-export const $visualsDetail = atom<{ id: string; detail: VisualDetail } | null>(null)
-export const $visualsDetailError = atom<string | null>(null)
-export const $visualsPresentation = atom<VisualsPresentation | null>(null)
-export const $visualsPresentationError = atom<string | null>(null)
-/** 桌面播放指令；`queued` 只表示受理，实际回执才更新呈现事实。 */
-export const $visualPlayback = atom<VisualPlayCommand | null>(null)
-
-let epoch = 0
-let presentationRequest = 0
-let refreshQuery: VisualsListQuery = {}
-let refreshQueued = false
-let refreshRequest: Promise<void> | null = null
-let detailRequest: { id: string; request: Promise<VisualDetail> } | null = null
-const playClients = new Map<string, string>()
-const receiptQueues = new Map<string, Promise<void>>()
-const receiptKinds = new Map<string, VisualReceiptBody['receipt_kind']>()
-
-/** 每次绑定捕获账户作用域，旧宿主的迟到回包不能操作新账户。 */
-export function visualPerformancePorts(): Omit<PerformancePorts, 'valid'> {
-  const scope = captureAuthScope()
-
-  return {
-    dispatch: async request => {
-      if (!scope?.()) {
-        throw new Error('Performance account changed')
-      }
-
-      const command = await visualsApi.playVisual(
-        request.visualId,
-        request.visualVersion,
-        request.source === 'life' ? 'life' : 'user',
-        request.source === 'life' ? (request.intentRevision ?? undefined) : undefined
-      )
-
-      if (scope()) {
-        await refreshVisualPresentation()
-      }
-
-      return command
-    },
-    cancel: async (command, reason) => {
-      if (!scope?.()) {
-        return
-      }
-
-      const clientId = playClients.get(command.play_id) ?? crypto.randomUUID()
-
-      if (!playClients.has(command.play_id)) {
-        const result = await visualsApi.claimPlay(command.play_id, { client_id: clientId })
-
-        if (!scope() || !result.claimed) {
-          return
-        }
-
-        playClients.set(command.play_id, clientId)
-      }
-
-      await sendVisualReceipt(command.play_id, {
-        status: 'interrupted',
-        receipt_kind: receiptKinds.get(command.play_id) ?? command.media_kind,
-        error: reason
-      })
-    },
-    restore: async () => {
-      if (scope?.()) {
-        await refreshVisualPresentation()
-      }
-    }
-  }
-}
-
-/**
- * 成品库与制作区一起刷新。并发调用合并为排队中的一次读取（后到的筛选生效），
- * 无参刷新沿用上次筛选；执行中的旧筛选结果不回写。
- */
 export async function refreshVisuals(query?: VisualsListQuery): Promise<void> {
   const scope = captureAuthScope()
 
@@ -121,23 +46,23 @@ export async function refreshVisuals(query?: VisualsListQuery): Promise<void> {
   }
 
   if (query) {
-    refreshQuery = query
+    visualsState.refreshQuery = query
   }
 
-  refreshQueued = true
+  visualsState.refreshQueued = true
 
-  if (refreshRequest) {
-    return refreshRequest
+  if (visualsState.refreshRequest) {
+    return visualsState.refreshRequest
   }
 
-  const currentEpoch = epoch
-  const current = (): boolean => scope() && epoch === currentEpoch
+  const currentEpoch = visualsState.epoch
+  const current = (): boolean => scope() && visualsState.epoch === currentEpoch
   $visualsLoading.set(true)
 
   const request = (async (): Promise<void> => {
-    while (refreshQueued && current()) {
-      const pending = refreshQuery
-      refreshQueued = false
+    while (visualsState.refreshQueued && current()) {
+      const pending = visualsState.refreshQuery
+      visualsState.refreshQueued = false
 
       try {
         const [list, jobs] = await Promise.all([visualsApi.list(pending), visualsApi.jobs()])
@@ -146,7 +71,7 @@ export async function refreshVisuals(query?: VisualsListQuery): Promise<void> {
           return
         }
 
-        if (pending === refreshQuery) {
+        if (pending === visualsState.refreshQuery) {
           $visualsItems.set(list.visuals)
           $visualsTotal.set(list.total)
           $visualsNextCursor.set(list.next_cursor)
@@ -154,14 +79,14 @@ export async function refreshVisuals(query?: VisualsListQuery): Promise<void> {
           $visualsError.set(null)
         }
       } catch (error) {
-        if (current() && pending === refreshQuery) {
+        if (current() && pending === visualsState.refreshQuery) {
           $visualsError.set(String(error))
         }
       }
     }
   })().finally(() => {
-    if (refreshRequest === request) {
-      refreshRequest = null
+    if (visualsState.refreshRequest === request) {
+      visualsState.refreshRequest = null
     }
 
     if (current()) {
@@ -169,7 +94,7 @@ export async function refreshVisuals(query?: VisualsListQuery): Promise<void> {
     }
   })
 
-  refreshRequest = request
+  visualsState.refreshRequest = request
 
   return request
 }
@@ -178,17 +103,17 @@ export async function refreshVisuals(query?: VisualsListQuery): Promise<void> {
 export function loadVisualDetail(visualId: string, options: { fresh?: boolean } = {}): Promise<VisualDetail> {
   const scope = captureAuthScope()
 
-  if (!options.fresh && detailRequest?.id === visualId) {
-    return detailRequest.request
+  if (!options.fresh && visualsState.detailRequest?.id === visualId) {
+    return visualsState.detailRequest.request
   }
 
-  const currentEpoch = epoch
+  const currentEpoch = visualsState.epoch
   $visualsDetailError.set(null)
 
   const request = visualsApi
     .detail(visualId)
     .then(detail => {
-      if (scope?.() && epoch === currentEpoch && detailRequest?.request === request) {
+      if (scope?.() && visualsState.epoch === currentEpoch && visualsState.detailRequest?.request === request) {
         $visualsDetail.set({ id: visualId, detail })
         $visualsDetailError.set(null)
       }
@@ -196,19 +121,19 @@ export function loadVisualDetail(visualId: string, options: { fresh?: boolean } 
       return detail
     })
     .catch(error => {
-      if (scope?.() && epoch === currentEpoch && detailRequest?.request === request) {
+      if (scope?.() && visualsState.epoch === currentEpoch && visualsState.detailRequest?.request === request) {
         $visualsDetailError.set(String(error))
       }
 
       throw error
     })
 
-  detailRequest = { id: visualId, request }
+  visualsState.detailRequest = { id: visualId, request }
 
   void request
     .finally(() => {
-      if (detailRequest?.request === request) {
-        detailRequest = null
+      if (visualsState.detailRequest?.request === request) {
+        visualsState.detailRequest = null
       }
     })
     .catch(() => undefined)
@@ -217,7 +142,7 @@ export function loadVisualDetail(visualId: string, options: { fresh?: boolean } 
 }
 
 export function clearVisualDetail(): void {
-  detailRequest = null
+  visualsState.detailRequest = null
   $visualsDetail.set(null)
   $visualsDetailError.set(null)
 }
@@ -229,19 +154,19 @@ export async function refreshVisualPresentation(): Promise<void> {
     return
   }
 
-  const currentEpoch = epoch
-  const request = ++presentationRequest
+  const currentEpoch = visualsState.epoch
+  const request = ++visualsState.presentationRequest
 
   try {
     const response = await visualsApi.presentation()
 
-    if (!scope?.() || epoch !== currentEpoch || request !== presentationRequest) {
+    if (!scope?.() || visualsState.epoch !== currentEpoch || request !== visualsState.presentationRequest) {
       return
     }
 
     publishPresentation(response)
   } catch (error) {
-    if (scope?.() && epoch === currentEpoch && request === presentationRequest) {
+    if (scope?.() && visualsState.epoch === currentEpoch && request === visualsState.presentationRequest) {
       $visualsPresentationError.set(String(error))
     }
   }
@@ -320,147 +245,6 @@ export async function commandVisualJob(jobId: string, command: VisualJobCommand)
 }
 
 /** 播放认领：同一 play_id 只由一个可见舞台认领，认领后才允许上报回执。 */
-export async function claimVisualPlay(playId: string, clientId: string): Promise<boolean> {
-  const scope = captureAuthScope()
-
-  try {
-    const result = await visualsApi.claimPlay(playId, { client_id: clientId })
-
-    if (!scope?.()) {
-      return false
-    }
-
-    if (result.claimed) {
-      playClients.set(playId, clientId)
-    } else {
-      performanceSettled(playId)
-    }
-
-    return result.claimed
-  } catch (error) {
-    if (scope?.()) {
-      performanceSettled(playId)
-    }
-
-    throw error
-  }
-}
-
-export async function sendVisualReceipt(playId: string, body: Omit<VisualReceiptBody, 'client_id'>): Promise<void> {
-  const scope = captureAuthScope()
-  const command = $performance.get().command
-
-  if (scope?.() && body.status === 'started') {
-    receiptKinds.set(playId, body.receipt_kind)
-    performanceStarted(playId)
-  }
-
-  const previous = receiptQueues.get(playId) ?? Promise.resolve()
-
-  const request = previous
-    .catch(() => undefined)
-    .then(async () => {
-      const clientId = playClients.get(playId)
-
-      if (!scope?.() || !clientId) {
-        return
-      }
-
-      let terminal = body.status !== 'started'
-
-      try {
-        await visualsApi.receiptPlay(playId, { ...body, client_id: clientId })
-
-        // 循环和图片只结算本次切换，之后由基础舞台继续播放，不逐圈建账。
-        if (body.status === 'started' && command?.play_id === playId && command.loop && scope()) {
-          await visualsApi.receiptPlay(playId, {
-            status: 'finished',
-            receipt_kind: body.receipt_kind,
-            client_id: clientId
-          })
-          terminal = true
-        }
-      } catch (error) {
-        if (scope() && body.status === 'started') {
-          interruptPerformance(playId, 'Playback acknowledgment failed')
-        }
-
-        throw error
-      } finally {
-        if (scope() && terminal) {
-          playClients.delete(playId)
-          receiptKinds.delete(playId)
-          performanceSettled(playId, body.status === 'failed')
-        }
-      }
-    })
-    .finally(() => {
-      if (receiptQueues.get(playId) === request) {
-        receiptQueues.delete(playId)
-      }
-    })
-
-  receiptQueues.set(playId, request)
-
-  return request
-}
-
-export function staticPresentationKey(
-  target: Pick<ApiSchemas['StageReceipt'], 'request_id' | 'presentation_epoch' | 'state_revision'>
-): string {
-  return `${target.request_id}:${target.presentation_epoch}:${target.state_revision}`
-}
-
-/** 旧回执被拒绝后由调用方回源；传输失败保留错误，不转报成图片加载失败。 */
-export async function sendStaticReceipt(body: ApiSchemas['StageReceipt']): Promise<boolean> {
-  const scope = captureAuthScope()
-  const presentation = $visualsPresentation.get()
-  const target = presentation?.static_presentation
-
-  if (
-    !scope ||
-    !target ||
-    presentation?.pending_play ||
-    $visualPlayback.get() ||
-    staticPresentationKey(target) !== staticPresentationKey(body)
-  ) {
-    return false
-  }
-
-  try {
-    await visualsApi.receiptStatic(body)
-
-    return true
-  } catch (error) {
-    if (!scope()) {
-      return false
-    }
-
-    if (ipcErrorStatus(error) !== 409) {
-      throw error
-    }
-
-    log.info(
-      'visuals',
-      'Static receipt superseded',
-      staticPresentationKey(body),
-      error instanceof ApiError ? error.business.details : null
-    )
-
-    // 在线代次未变时，普通档位也须收敛已被生活或偏好更新作废的静态目标。
-    if (
-      error instanceof ApiError &&
-      error.code === 'static_presentation_expired' &&
-      isRecord(error.business.details) &&
-      ['life_changed', 'state_changed'].includes(String(error.business.details.reason))
-    ) {
-      await visualsApi.restorePresentation()
-    }
-
-    return false
-  }
-}
-
 function publishPlayCommand(command: VisualPlayCommand): void {
   const previous = $visualPlayback.get()
   const presentation = $visualsPresentation.get()
@@ -558,11 +342,11 @@ export function handleVisualEvent(
 }
 
 function resetVisualsForAccount(): void {
-  epoch += 1
-  refreshQuery = {}
-  refreshQueued = false
-  refreshRequest = null
-  detailRequest = null
+  visualsState.epoch += 1
+  visualsState.refreshQuery = {}
+  visualsState.refreshQueued = false
+  visualsState.refreshRequest = null
+  visualsState.detailRequest = null
   playClients.clear()
   receiptQueues.clear()
   receiptKinds.clear()

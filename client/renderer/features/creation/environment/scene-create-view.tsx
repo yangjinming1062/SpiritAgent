@@ -23,7 +23,7 @@ import {
 } from '@/ui'
 import { ReferenceImageField } from '@/ui/reference-image-field'
 
-import { $pendingScene, $sceneCreationIssue, $sceneTaskSlow, $sceneTaskStatus } from './scene-store'
+import { $pendingScene, $sceneCreationIssue, $sceneTaskSlow, $sceneTaskStatus } from './scene'
 
 export interface SceneCreateDraft {
   notes: string

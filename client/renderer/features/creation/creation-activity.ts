@@ -2,8 +2,8 @@ import { computed } from 'nanostores'
 
 import type { CreationSection } from '@ipc/contracts'
 
-import { $pendingScene, $sceneRegenerating } from './environment/scene-store'
-import { $visualsJobs } from './visuals/visuals-store'
+import { $pendingScene, $sceneRegenerating } from './environment'
+import { $visualsJobs } from './visuals/state'
 
 export interface CreationActivityItem {
   id: string

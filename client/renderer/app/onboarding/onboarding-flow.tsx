@@ -13,10 +13,9 @@ import { saveCreationDraftImage } from '@/shared/lib/creation-draft-image'
 import { log } from '@/shared/lib/log'
 import { $gatewayState } from '@/shared/store/gateway'
 import { useStrings } from '@/shared/strings'
-import { BTN_SUBTLE, CreationActionBar, CreationWorkspace, Disclosure, INPUT_CLASS } from '@/ui'
 
-import { computeBackTransition, type Phase, type VoiceStage } from './back-transition'
-import { BackgroundPage, OnboardingConflictNotice } from './background-page'
+import { computeBackTransition } from './back-transition'
+import { BackgroundPage } from './background-page'
 import { EnvironmentPage } from './environment-page'
 import { playOnboardingAudio } from './onboarding-audio'
 import { DraggableDialog, ONBOARDING_PRIMARY_BUTTON, OnboardingProgress } from './onboarding-components'
@@ -27,12 +26,19 @@ import {
   LOCKED_FIELD_LABELS,
   mergeResumeAnswers,
   PHASE_QUESTIONS,
-  resolveResumeTarget,
-  USER_QUESTIONS
+  resolveResumeTarget
 } from './onboarding-questions'
-import styles from './onboarding.module.css'
 import { PortraitPages } from './portrait-pages'
 import { QuestionPage } from './question-page'
+import { ReadyPage } from './ready-page'
+import {
+  advanceStage,
+  backStage,
+  enterVoiceSelection,
+  initialOnboardingStage,
+  type OnboardingStageState,
+  resumeStage
+} from './stage'
 import { useOnboardingPortrait } from './use-onboarding-portrait'
 import { VoicePage } from './voice-page'
 
@@ -47,9 +53,8 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const gatewayState = useStore($gatewayState)
   const [draft] = useState(() => new OnboardingDraft())
   const begin = useCallback(() => draft.captureOperation(), [draft])
-  const [phase, setPhase] = useState<Phase>('q-character')
-  const [imageSealed, setImageSealed] = useState(false)
-  const [qIndex, setQIndex] = useState(0)
+  const [stage, setStage] = useState<OnboardingStageState>(initialOnboardingStage)
+  const { imageSealed, phase, qIndex, voiceStage } = stage
   const [answers, setAnswers] = useState<OnboardingAnswers>({})
   const [input, setInput] = useState('')
   const [answerKind, setAnswerKind] = useState<AnswerKind | null>(null)
@@ -62,7 +67,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     setHint(null)
   }
 
-  const [voiceStage, setVoiceStage] = useState<VoiceStage>('describe')
   const [voiceSaving, setVoiceSaving] = useState(false)
   const [characterSaving, setCharacterSaving] = useState(false)
   const [environmentBusy, setEnvironmentBusy] = useState(false)
@@ -86,14 +90,18 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     }
   }, [draft])
 
-  const enterVoiceSelection = (): void => {
-    setImageSealed(true)
-    setPhase('voice')
-    setVoiceStage('catalog')
-    setQIndex(0)
+  const enterVoiceStage = (): void => {
+    setStage(current => enterVoiceSelection(current))
   }
 
-  const portrait = useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, enterVoiceSelection })
+  const portrait = useOnboardingPortrait({
+    begin,
+    imageSealed,
+    setHint,
+    setPhase: phase => setStage(current => ({ ...current, phase })),
+    enterVoiceSelection: enterVoiceStage
+  })
+
   const portraitRef = useLatestRef(portrait)
 
   useEffect(() => {
@@ -188,19 +196,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
           return
         }
 
-        setPhase(restoredPhase)
-
-        if (target.qIndex !== undefined) {
-          setQIndex(target.qIndex)
-        }
-
-        if (target.imageSealed) {
-          setImageSealed(true)
-        }
-
-        if (target.voiceStage) {
-          setVoiceStage(target.voiceStage)
-        }
+        setStage(current => resumeStage(current, restoredPhase, target))
       } catch (error) {
         if (isLive()) {
           log.warn('onboarding', 'resume failed', error)
@@ -262,7 +258,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
         return
       }
 
-      setPhase('portrait-generate')
+      setStage(current => ({ ...current, phase: 'portrait-generate' }))
     } finally {
       savingCharacterRef.current = false
 
@@ -286,7 +282,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     if (failure) {
       setHint(failure)
       setPersonaConflict(draft.personaConflict())
-      setPhase('q-user')
+      setStage(current => ({ ...current, phase: 'q-user' }))
 
       return
     }
@@ -296,17 +292,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   }
 
   const advance = (_currentAnswers: OnboardingAnswers): void => {
-    if (phase === 'voice' && voiceStage === 'describe') {
-      setVoiceStage('catalog')
-
-      return
-    }
-
-    if (qIndex < currentList.length - 1) {
-      setQIndex(qIndex + 1)
-    } else if (phase === 'q-character') {
-      setPhase('background')
-    }
+    setStage(current => advanceStage(current, currentList.length))
   }
 
   const onSend = (): void => {
@@ -336,15 +322,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       return
     }
 
-    setPhase(backIntent.phase)
-
-    if (backIntent.qIndex !== undefined) {
-      setQIndex(backIntent.qIndex)
-    }
-
-    if (backIntent.voiceStage !== undefined) {
-      setVoiceStage(backIntent.voiceStage)
-    }
+    setStage(current => backStage(current, backIntent))
   }
 
   const confirmVoice = async (
@@ -398,8 +376,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       return false
     }
 
-    setPhase('environment')
-    setQIndex(0)
+    setStage(current => ({ ...current, phase: 'environment', qIndex: 0 }))
 
     return true
   }
@@ -488,7 +465,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
           phase={phase}
           portrait={portrait}
           setHint={setHint}
-          setPhase={setPhase}
+          setPhase={phase => setStage(current => ({ ...current, phase }))}
         />
         {phase === 'voice' && voiceStage === 'catalog' && (
           <VoicePage
@@ -496,7 +473,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             error={hint}
             name={answers.name ?? ''}
             onContinueText={() => void confirmVoice(true)}
-            onDescribe={() => setVoiceStage('describe')}
+            onDescribe={() => setStage(current => ({ ...current, voiceStage: 'describe' }))}
             onVoiceSelected={(voiceId, label, serverConfirmed, isSelectionCurrent) =>
               confirmVoice(false, voiceId, label, serverConfirmed, isSelectionCurrent)
             }
@@ -511,85 +488,26 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             onBusyChange={setEnvironmentBusy}
             onCompleted={() => {
               setHint(null)
-              setPhase('q-user')
-              setQIndex(0)
+              setStage(current => ({ ...current, phase: 'q-user', qIndex: 0 }))
             }}
             onError={message => setHint(message)}
           />
         )}
         {phase === 'q-user' && (
-          <CreationWorkspace
-            footer={
-              <CreationActionBar>
-                <div className={styles.navigation}>
-                  <button className={BTN_SUBTLE} onClick={onBack} type="button">
-                    {t.stepVoice}
-                  </button>
-                  <button
-                    className={`ml-auto ${ONBOARDING_PRIMARY_BUTTON}`}
-                    disabled={personaConflict !== null}
-                    onClick={() => {
-                      setHint(null)
-                      setPhase('finishing')
-                      void finish(answers)
-                    }}
-                    type="button"
-                  >
-                    {t.stepCompanion}
-                  </button>
-                </div>
-              </CreationActionBar>
-            }
-          >
-            <div className="space-y-4">
-              <div>
-                <h2 className={styles.questionTitle}>{t.readyTitle}</h2>
-                <p className="mt-1 text-xs leading-relaxed text-body">{t.readyHint}</p>
-              </div>
-              <Disclosure
-                bodyClassName="mt-4 space-y-3"
-                className="rounded-xl border border-line-hairline bg-surface-card p-3"
-                summaryClassName="text-sm text-body"
-                title={t.knowMore}
-                variant="bordered"
-              >
-                <div className="mt-4 space-y-3">
-                  {USER_QUESTIONS.map(item => (
-                    <label className="block space-y-1.5 text-xs text-body" key={item.key}>
-                      <span>{item.text}</span>
-                      {item.multiline ? (
-                        <textarea
-                          className={INPUT_CLASS}
-                          maxLength={item.max}
-                          onBlur={() => void draft.submit(item.key, answers[item.key]?.trim() || null)}
-                          onChange={event => setAnswers(previous => ({ ...previous, [item.key]: event.target.value }))}
-                          placeholder={item.placeholder}
-                          rows={2}
-                          value={answers[item.key] ?? ''}
-                        />
-                      ) : (
-                        <input
-                          className={INPUT_CLASS}
-                          maxLength={item.max}
-                          onBlur={() => void draft.submit(item.key, answers[item.key]?.trim() || null)}
-                          onChange={event => setAnswers(previous => ({ ...previous, [item.key]: event.target.value }))}
-                          placeholder={item.placeholder}
-                          type={item.date ? 'date' : 'text'}
-                          value={answers[item.key] ?? ''}
-                        />
-                      )}
-                    </label>
-                  ))}
-                </div>
-              </Disclosure>
-              {hint && (
-                <p className="text-xs text-danger-fg" role="alert">
-                  {hint}
-                </p>
-              )}
-              <OnboardingConflictNotice conflict={personaConflict} onReview={reviewPersonaConflict} />
-            </div>
-          </CreationWorkspace>
+          <ReadyPage
+            answers={answers}
+            draft={draft}
+            hint={hint}
+            onBack={onBack}
+            onFinish={() => {
+              setHint(null)
+              setStage(current => ({ ...current, phase: 'finishing' }))
+              void finish(answers)
+            }}
+            onReviewConflict={reviewPersonaConflict}
+            personaConflict={personaConflict}
+            setAnswers={setAnswers}
+          />
         )}
         {phase === 'finishing' && <p className="py-6 text-center text-sm text-strong">{t.savingProfile}</p>}
       </DraggableDialog>

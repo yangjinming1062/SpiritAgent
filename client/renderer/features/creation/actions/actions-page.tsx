@@ -16,6 +16,7 @@ import {
   BTN_SUBTLE,
   CapsuleTabs,
   confirmAction,
+  CreationFeedback,
   EmptyState,
   ErrorBanner,
   FIELD_LABEL,
@@ -30,8 +31,8 @@ import { LibraryToolbar } from '@/ui/asset-library-header'
 
 import { composeDescribedInput } from '../../../../../shared/described-input'
 import { visualsApi } from '../visuals/api'
+import { $visualsPresentation } from '../visuals/state'
 import { type ActionDefinition, type ActionLibraryGroup, type ActionMediaEntry } from '../visuals/types'
-import { $visualsPresentation } from '../visuals/visuals-store'
 
 import {
   actionGroups,
@@ -448,13 +449,24 @@ function ActionsPageContent(): React.JSX.Element {
                 <Badge>{`${action.duration_seconds}${t.durationSuffix}`}</Badge>
                 <Badge>{t.motionIntensities[action.motion_intensity]}</Badge>
                 <Badge>{action.source === 'preset' ? t.builtin : t.custom}</Badge>
-                {group === 'not_in_library' && <Badge>{t.statusLabels[action.status]}</Badge>}
               </div>
               <p className="whitespace-pre-wrap text-xs text-muted">{action.motion_description}</p>
-              {group === 'not_in_library' && action.review_reason && (
-                <p className="text-[11px] text-warning-fg">
-                  {t.reviewReasonLabel}：{action.review_reason}
-                </p>
+              {group === 'not_in_library' && (
+                <CreationFeedback
+                  description={
+                    action.review_reason
+                      ? `${t.reviewReasonLabel}：${action.review_reason}`
+                      : t.motionIntensities[action.motion_intensity]
+                  }
+                  state={
+                    action.status === 'failed' || action.status === 'rejected'
+                      ? 'error'
+                      : action.status === 'deferred'
+                        ? 'waiting'
+                        : 'review'
+                  }
+                  title={t.statusLabels[action.status]}
+                />
               )}
               <div className="flex flex-wrap gap-2">
                 {group === 'in_library' && defaultOutfit && action.status === 'approved' && (

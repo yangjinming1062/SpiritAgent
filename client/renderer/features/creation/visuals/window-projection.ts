@@ -19,18 +19,18 @@ import { $presentation } from '@/shared/store/presentation'
 import { $surfaceRole } from '@/shared/store/surfaces'
 
 import { bindPresentationDirector, resolveAmbientLoop } from './director'
-import { $performance } from './performance-scheduler'
-import { $stagePlan, deriveStagePlan } from './stage-plan'
-import { type VisualActualSnapshot, type VisualPlayCommand, type VisualsPresentation } from './types'
+import { refreshVisualPresentation } from './library'
 import {
-  $visualsPresentation,
   claimVisualPlay,
-  refreshVisualPresentation,
   sendStaticReceipt,
   sendVisualReceipt,
   staticPresentationKey,
   visualPerformancePorts
-} from './visuals-store'
+} from './performance'
+import { $performance } from './performance-scheduler'
+import { $stagePlan, deriveStagePlan } from './stage-plan'
+import { $visualsPresentation } from './state'
+import { type VisualActualSnapshot, type VisualPlayCommand, type VisualsPresentation } from './types'
 
 export const $windowVisualProjection = atom<VisualActualSnapshot | null>(null)
 export const $windowScenePresented = atom<string | null>(null)
