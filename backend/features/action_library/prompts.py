@@ -67,7 +67,7 @@ ACTION_COMPOSE_TEXTS: dict[str, str] = {
         "- duration_seconds：1 到 15 的整秒；用户没有说明时用 4。\n"
         "- semantic_tags：只能从给定枚举中选择，描述动作本身而不是使用场景，至多 4 个。\n"
         "- allowed_triggers：允许谁触发这个动作，只能从 chat、manual、periodic、user_return 中选择；"
-        "用户没有说明时留空。chat 是对话中自然出现，manual 是用户手动播放，periodic 按生活节奏定时，"
+        "新建时用户没有说明就留空。chat 是对话中自然出现，manual 是用户手动播放，periodic 按生活节奏定时，"
         "user_return 是用户离开后回来。\n"
         "- performance_role：idle 常驻待机、sustained 持续状态、reaction 一次性反应；"
         "once 只能配 reaction，loop 只能配 idle 或 sustained。\n"
@@ -77,7 +77,11 @@ ACTION_COMPOSE_TEXTS: dict[str, str] = {
         "- reason：这次整理依据用户描述的哪一句，一句话即可。\n\n"
         "安静陪伴或休息本身可以是完整目标，不要求补写呼吸、眨眼等微动作。"
         "定义不绑定某套穿着、某个环境或某份成品。"
-        "若输入里带有既有定义，只调整用户本次描述涉及的维度，其余字段保持原样。"
+        "输入里带 current_definition 表示修改已有动作：只输出用户这次明确要求改变的字段，"
+        "其余字段输出 null（省略或写 null 均可），由系统按原定义保留；"
+        "只有用户要求取消某项时才输出空数组，上面各字段的缺省值只适用于新建动作。"
+        "reason 说明这次修改依据用户描述的哪一句。"
+        "修改 clip_kind 时 performance_role 同步给出合法值，不确定就输出 null 由系统按播放方式补齐。"
     ),
     "en": (
         "You are turning one everyday sentence about a companion's action into a reusable action definition. "
@@ -102,8 +106,15 @@ ACTION_COMPOSE_TEXTS: dict[str, str] = {
         "- reason: one sentence naming which part of the description this came from.\n\n"
         "Quiet companionship or rest can be a complete goal; do not add breathing, blinking or other micro-motions. "
         "Definitions never bind a specific outfit, environment or finished media. "
-        "When an existing definition is provided, change only the dimensions the user described and keep the rest."
+        "When current_definition is provided, this is an edit: output only the fields the user explicitly wants "
+        "changed and write null for all the rest (omitting the field or writing null), which the system keeps from "
+        "the original definition; use an empty array only when the user asks to remove that item. The per-field "
+        "defaults above apply to new actions only. reason states which part of the description this change comes "
+        "from. When clip_kind changes, give a matching performance_role too, or write null and let the system "
+        "derive it from the playback kind."
     ),
 }
 
-ACTION_COMPOSE_REPAIR = "保留已取得的动作定义，只修复 JSON 与输出契约，不重新作语义判断。"
+ACTION_COMPOSE_REPAIR = (
+    "保留已取得的字段取值与 null 结构，只修复 JSON 与输出契约；不重新作语义判断，修改项不要补成完整定义。"
+)

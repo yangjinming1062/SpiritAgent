@@ -408,7 +408,11 @@ function ActionsPageContent(): React.JSX.Element {
             <div className="flex flex-wrap gap-2">
               <button
                 className={BTN_PRIMARY}
-                disabled={interpreting || busyKey === 'save'}
+                disabled={
+                  interpreting ||
+                  busyKey === 'save' ||
+                  (!composer.preview && !composeDescribedInput(composer.description, composer.refinement))
+                }
                 onClick={() => (composer.preview ? save() : void interpret())}
                 type="button"
               >

@@ -4,7 +4,7 @@
 
 ## 入口与边界
 
-[service.py](service.py) 管理受理去重、编辑和评审结算；[review.py](review.py) 调用模型，[prompts.py](prompts.py) 维护定义评审及中英文共享设计指引。聊天工具、生活规划与夜间设计在各自的参数和系统说明中装配同一指引，系统说明仅在动作设计能力可用时加入。通用 [schemas.py](schemas.py) 不承载创作指令，上传影像中的动作识别仍以可见证据为准。[queries.py](queries.py) 与 [views.py](views.py) 返回查询投影，[use_cases.py](use_cases.py) 转换请求错误。[interpret.py](interpret.py) 把一句描述整理成定义草稿，只产出草稿，不登记也不评审；编辑时保留描述未涉及的字段，包括触发条件。草稿对客户端不透明，登记与修改时按同一套校验复核。
+[service.py](service.py) 管理受理去重、编辑和评审结算；[review.py](review.py) 调用模型，[prompts.py](prompts.py) 维护定义评审及中英文共享设计指引。聊天工具、生活规划与夜间设计在各自的参数和系统说明中装配同一指引，系统说明仅在动作设计能力可用时加入。通用 [schemas.py](schemas.py) 不承载创作指令，上传影像中的动作识别仍以可见证据为准。[queries.py](queries.py) 与 [views.py](views.py) 返回查询投影，[use_cases.py](use_cases.py) 转换请求错误。[interpret.py](interpret.py) 把一句描述整理成定义草稿，只产出草稿，不登记也不评审；编辑时以原定义为基线，只应用描述明确要求的变化（含触发条件），并只展示实际变化的维度。草稿对客户端不透明，登记与修改时按同一套校验复核。
 
 [presets.py](presets.py) 维护通用内置定义，以目标效果、必要用品和活动成立条件表达，不预写面部操作或固定表演脚本。角色初始化与素材导入按 `preset_key` 登记与匹配，已有内置目录在启动时同步系统定义，保留条目 ID；同步不修改自创动作、冻结成品或在途制作，也不发起媒体制作。名称只供展示和检索。持久字段与请求视图以 [models.py](models.py)、[schemas.py](schemas.py) 为准。语义词表归 [visual_semantics.py](../media/visual_semantics.py)，`performance_role` 缺省按播放方式派生，短动作只使用 reaction，循环使用 idle 或 sustained；`motion_intensity` 供动态档过滤，`interruptible` 约束演出中断，结束后统一恢复最新有效基础画面。列表按 ID 游标读取摘要，总数按需查询，不为列表加载完整冻结参考。
 

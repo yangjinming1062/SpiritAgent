@@ -226,7 +226,7 @@ function ActionEditor({
           </button>
           {composer.preview && (
             <button disabled={busy} onClick={() => void interpret()} type="button">
-              再说一句
+              修改理解
             </button>
           )}
         </div>

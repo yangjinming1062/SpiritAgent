@@ -40,19 +40,26 @@ const EMPTY_STUDIO: Studio = {
 
 const interpretation = new InterpretationGuard()
 
-const STEP_LABEL: Record<string, string> = {
-  create_action: '先创建一个动作',
-  create_outfit: '先准备一套造型',
-  create_scene: '先创建一个环境'
+type MaterialSection = 'action' | 'outfit' | 'scene'
+
+const NEXT_STEP: Record<
+  'create_action' | 'create_outfit' | 'create_scene',
+  { label: string; section: MaterialSection }
+> = {
+  create_action: { label: '先创建一个动作', section: 'action' },
+  create_outfit: { label: '先准备一套造型', section: 'outfit' },
+  create_scene: { label: '先创建一个环境', section: 'scene' }
 }
 
 /** 创作影像：描述 → 预览 → 确认；确认后才受理制作。上传原件是独立入口。 */
 export function VisualCreate({
   api,
-  onDone
+  onDone,
+  onOpenSection
 }: {
   api: RemoteApi
   onDone: (created?: VisualDetail) => Promise<void>
+  onOpenSection: (section: 'action' | 'outfit' | 'scene') => void
 }): ReactElement {
   const alive = useAlive()
   const [mode, setMode] = usePageState<'idle' | 'describe' | 'upload'>('visuals.creationMode', 'idle')
@@ -155,6 +162,7 @@ export function VisualCreate({
   }
 
   const plan = studio.preview
+  const step = plan?.next_step ? NEXT_STEP[plan.next_step] : null
 
   return (
     <>
@@ -322,7 +330,11 @@ export function VisualCreate({
               ) : (
                 <>
                   <p>{plan.reason}</p>
-                  {plan.next_step ? <p className="muted">{STEP_LABEL[plan.next_step]}</p> : null}
+                  {step ? (
+                    <button disabled={busy} onClick={() => onOpenSection(step.section)} type="button">
+                      {step.label}
+                    </button>
+                  ) : null}
                 </>
               )}
               <label>
@@ -339,13 +351,13 @@ export function VisualCreate({
           {error ? <Notice error={error} /> : null}
           <div className="button-row">
             <button disabled={busy || (!plan && !studio.description.trim())} type="submit">
-              {busy ? '整理中…' : plan ? (plan.draft ? '开始制作' : '再说一句') : '整理描述'}
+              {busy ? '整理中…' : plan ? (plan.draft ? '确认制作' : '修改理解') : '整理描述'}
             </button>
-            {plan && (
+            {plan?.draft ? (
               <button disabled={busy} onClick={() => void run(describe)} type="button">
-                再说一句
+                修改理解
               </button>
-            )}
+            ) : null}
           </div>
         </form>
       )}

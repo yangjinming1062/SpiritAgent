@@ -331,7 +331,15 @@ function VisualDetailPanel({
   )
 }
 
-export function Visuals({ api, refresh }: { api: RemoteApi; refresh: number }): ReactElement {
+export function Visuals({
+  api,
+  refresh,
+  onOpenSection
+}: {
+  api: RemoteApi
+  refresh: number
+  onOpenSection: (section: 'action' | 'outfit' | 'scene') => void
+}): ReactElement {
   const alive = useAlive()
   const { run, runLatest, busy, error } = useTask()
   const [rows, setRows] = useState<VisualItem[]>([])
@@ -418,6 +426,7 @@ export function Visuals({ api, refresh }: { api: RemoteApi; refresh: number }): 
               }
               await load()
             }}
+            onOpenSection={onOpenSection}
           />
           <div className="library-toolbar">
             <input

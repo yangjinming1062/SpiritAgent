@@ -35,7 +35,7 @@ export function Creation({ api, refresh }: { api: RemoteApi; refresh: number }):
         ))}
       </nav>
       {section === 'visuals' ? (
-        <Visuals api={api} refresh={refresh} />
+        <Visuals api={api} onOpenSection={setSection} refresh={refresh} />
       ) : section === 'action' ? (
         <Actions api={api} refresh={refresh} />
       ) : (

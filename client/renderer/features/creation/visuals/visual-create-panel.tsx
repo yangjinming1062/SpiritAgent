@@ -193,9 +193,9 @@ export function VisualCreatePanel({ onDone }: { onDone: (visualId?: string) => P
         <SettingCard divided={false}>
           <div className="flex flex-col gap-2 p-3">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-medium text-muted">{t.previewTitle}</span>
+              <span className="text-xs font-medium text-muted">{preview.feasible ? t.previewTitle : t.infeasible}</span>
               <button className={BTN_GHOST} onClick={() => patch({ preview: null })} type="button">
-                {t.refine}
+                {t.editDescription}
               </button>
             </div>
             {preview.feasible ? (
@@ -231,15 +231,9 @@ export function VisualCreatePanel({ onDone }: { onDone: (visualId?: string) => P
                       ))}
                   </div>
                 )}
-                <div className="flex gap-2">
-                  <button className={BTN_PRIMARY} disabled={busy !== null} onClick={() => void confirm()} type="button">
-                    {busy === 'create' ? strings.common.processing : t.confirm}
-                  </button>
-                </div>
               </>
             ) : (
               <div className="space-y-2">
-                <p className="text-sm font-medium text-strong">{t.infeasible}</p>
                 <p className="text-xs text-muted">{preview.reason}</p>
                 {next && (
                   <button className={BTN_SUBTLE} onClick={() => void openCreation(next.section)} type="button">
@@ -248,6 +242,30 @@ export function VisualCreatePanel({ onDone }: { onDone: (visualId?: string) => P
                 )}
               </div>
             )}
+            <label className="block">
+              <span className={FIELD_LABEL}>{t.refineLabel}</span>
+              <input
+                className={INPUT_CLASS}
+                onChange={event => patch({ refinement: event.currentTarget.value })}
+                placeholder={t.refinePlaceholder}
+                value={studio.refinement}
+              />
+            </label>
+            <div className="flex gap-2">
+              {preview.feasible && (
+                <button className={BTN_PRIMARY} disabled={busy !== null} onClick={() => void confirm()} type="button">
+                  {busy === 'create' ? strings.common.processing : t.confirm}
+                </button>
+              )}
+              <button
+                className={preview.feasible ? BTN_SUBTLE : BTN_PRIMARY}
+                disabled={busy !== null}
+                onClick={() => void interpret()}
+                type="button"
+              >
+                {busy === 'interpret' ? t.describing : t.refine}
+              </button>
+            </div>
           </div>
         </SettingCard>
       )}
@@ -277,7 +295,7 @@ export function VisualCreatePanel({ onDone }: { onDone: (visualId?: string) => P
           </label>
           {file && (
             <button className={BTN_PRIMARY} disabled={busy !== null} onClick={() => void upload()} type="button">
-              {busy === 'upload' ? strings.common.processing : t.confirm}
+              {busy === 'upload' ? strings.common.processing : t.uploadConfirm}
             </button>
           )}
         </div>
