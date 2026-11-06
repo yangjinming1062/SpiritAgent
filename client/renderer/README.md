@@ -16,7 +16,7 @@
 
 | 修改任务 | 入口 |
 |---|---|
-| 窗口装配与账户恢复 | [sprite.tsx](app/bootstrap/sprite.tsx)、[surface.tsx](app/bootstrap/surface.tsx)、[account-lifecycle.ts](app/workflows/account-lifecycle.ts) |
+| 窗口装配与账户恢复 | [sprite.tsx](app/bootstrap/sprite.tsx)、[surface.tsx](app/bootstrap/surface.tsx)、[window-hydration.ts](app/workflows/window-hydration.ts)、[window-navigation.ts](app/workflows/window-navigation.ts)、[account-lifecycle.ts](app/workflows/account-lifecycle.ts) |
 | 网关事件 | [gateway-runtime.ts](app/runtime/gateway-runtime.ts)、[gateway-event-router.ts](app/runtime/gateway-event-router.ts)、[handlers](app/runtime/handlers/) |
 | 引导、激活与恢复 | [onboarding](app/onboarding/) |
 | 精灵、手势与空间 | [character](features/character/)、[sprite-stage.tsx](features/character/sprite-stage.tsx) |
@@ -37,6 +37,7 @@
 | [authed-api.ts](shared/lib/authed-api.ts) 的 `captureAuthScope` | store 与工作流内的鉴权会话、清理代次守卫 |
 | [use-async-guard.ts](shared/hooks/use-async-guard.ts) | 组件内的挂载与请求代次守卫 |
 | [use-panel-action.ts](shared/hooks/use-panel-action.ts) | 列表行级或页面级 busy、换号守卫与失败提示 |
+| [use-local-search.ts](shared/hooks/use-local-search.ts) | 本地列表筛选；输入即过滤、大小写不敏感，查询词归页面 |
 | [query-resource.ts](shared/lib/query-resource.ts) | 共享查询缓存与同查询并发合并 |
 | [storage.ts](shared/lib/storage.ts) | 账户级持久键、换号清内存与命名空间就绪 |
 
@@ -78,7 +79,7 @@
 
 [desktop-visual-wallpaper.ts](app/windows/desktop/desktop-visual-wallpaper.ts) 消费呈现状态、认领和回执；静态回执共用 `visuals-store.ts` 的目标检查，按请求、呈现代次和状态修订去重。回执冲突不当作图片失败，服务端退避期间不重复上报。缓存与预加载使用成品 ID、版本及去签名不可变路径，不用签名 URL 作持久键。
 
-[背景播放器](app/windows/desktop/desktop-background-entry.tsx) 双缓冲等实际首帧，切换先预加载；短动作只能回到仍有效的持续画面。环境层与透明主体层（`actor` 字节，WebM）独立接收与更换，主体层短动作结束后回常驻循环；预览、播放和过渡共用 [desktop-media-geometry.ts](../shared/desktop-media-geometry.ts)，媒体失败保留当前画面并释放临时 URL；主进程同时核对账户与选中路径。
+[背景播放器](app/windows/desktop/player/engine.ts) 双缓冲等实际首帧，切换先预加载，[入口](app/windows/desktop/desktop-background-entry.tsx) 只装配 refs；短动作只能回到仍有效的持续画面。环境层与透明主体层（`actor` 字节，WebM）独立接收与更换，主体层短动作结束后回常驻循环；预览、播放和过渡共用 [desktop-media-geometry.ts](../shared/desktop-media-geometry.ts)，媒体失败保留当前画面并释放临时 URL；主进程同时核对账户与选中路径。
 
 桌面根组件持单个内部窗口状态，Dock 菜单共用互斥态和面板代次。旧启动回执不能关闭新面板，失焦卸载也不丢失败反馈；固定标记刷新复用当前目录版本，手动重扫才换句柄。图标按可见条目分批读取。下拉框留在面板 DOM 内，避免原生弹窗导致失焦收起。
 
@@ -142,7 +143,7 @@ speech 持唯一合成与播放队列，自动和点播共用。[conversation-sp
 
 [companion-editor-state.ts](features/companion/companion-editor-state.ts) 在内存中按账户隔离人物资料编辑起点与草稿并参与交接，换号清空、不落盘。记忆页按预设保存搜索与分页，未保存条目保留到会话结束；日记 store 不管理记忆编辑。
 
-[scene-store.ts](features/creation/environment/scene-store.ts) 分别持环境、任务和分页库。详情写入锁随任务而非页面存活，未知结果先回源核对，迟到读取不能覆盖新任务。详情先刷新恢复状态再加载图片，长等待降低轮询频率，查询不重试分析或生图。新图预载成功才换背景，失败保留旧图但更新任务和政策；环境固定画幅，不读取显示器尺寸。
+[场景子域](features/creation/environment/scene/state.ts) 的 state／library／detail／commands 分别持环境、任务、详情与分页库。详情写入锁随任务而非页面存活，未知结果先回源核对，迟到读取不能覆盖新任务。详情先刷新恢复状态再加载图片，长等待降低轮询频率，查询不重试分析或生图。新图预载成功才换背景，失败保留旧图但更新任务和政策；环境固定画幅，不读取显示器尺寸。
 
 素材库共用 `asset-library-header.tsx` 与 `asset-library-card.tsx`，公共件只接数据和回调。衣柜本地筛选（live 搜索），环境服务端提交搜索（submit 语义），两者不能共用隐含的查询状态。
 
@@ -150,7 +151,7 @@ speech 持唯一合成与播放队列，自动和点播共用。[conversation-sp
 
 [design-session.ts](features/character/wardrobe/design-session.ts) 按草稿持有制作、确认和未知状态，离页仍收敛原任务；完成不抢选其他草稿，按不可变路径核对结果后回收空闲会话。参考图在取得新设计 ID 时消费，迟到预览不能清理后续输入。
 
-窗口主体画面优先播放透明主体视频：[stage-plan.ts](features/creation/visuals/stage-plan.ts) 解析有效组合与当前造型可复用的待机成品；只有认领成功的临时指令覆盖基础主体，结束后恢复仍有效的循环。[visual-presentation.ts](features/creation/visuals/window-projection.ts) 经 [window-media.ts](features/character/window-media.ts) 装配窄端口，character 不依赖影像库。[CharacterStage](features/character/rendering/character-stage.tsx) 与桌面主体层共用 [stage-video-layer.ts](shared/lib/stage-video-layer.ts)：新首帧就绪前保留旧画面，失败恢复有效循环或静态造型，一次性动作按独立指令身份消费。命中读取当前帧 alpha，几何与头部、脚底锚点按实际画幅适配；环境与主体独立换图，完整影像不叠加第二份伙伴。
+窗口主体画面优先播放透明主体视频：[stage-plan.ts](features/creation/visuals/stage-plan.ts) 解析有效组合与当前造型可复用的待机成品；只有认领成功的临时指令覆盖基础主体，结束后恢复仍有效的循环。[visual-presentation.ts](app/workflows/visual-presentation.ts) 统一桌面目标，窗口投影经 [window-projection.ts](features/creation/visuals/window-projection.ts) 与 [window-media.ts](features/character/window-media.ts) 装配窄端口，character 不依赖影像库。[CharacterStage](features/character/rendering/character-stage.tsx) 与桌面主体层共用 [stage-video-layer.ts](shared/lib/stage-video-layer.ts)：新首帧就绪前保留旧画面，失败恢复有效循环或静态造型，一次性动作按独立指令身份消费。命中读取当前帧 alpha，几何与头部、脚底锚点按实际画幅适配；环境与主体独立换图，完整影像不叠加第二份伙伴。
 
 [director.ts](features/creation/visuals/director.ts) 负责选择常驻、生活和互动媒体；[performance-scheduler.ts](features/creation/visuals/performance-scheduler.ts) 持有唯一宿主的临时任务、优先级、最多两项等待和冷却。`visuals-store.ts` 装配点播、认领与串行回执，窗口和桌面只消费 `$performance.command`，普通生活区不认领正式指令。HTTP 受理进入等待，播放器事件驱动开播，终态后先刷新基础舞台再出队；已开始的持续媒体结算本次切换，后续循环本地运行。窗口切换、账户变化、关闭动态与机械操作取消失效任务，迟到受理只结算原任务。恢复使用最新组合与生活修订，不保留旧视频 ID 作为无条件回退。
 

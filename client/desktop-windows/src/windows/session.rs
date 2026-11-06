@@ -868,4 +868,3 @@ impl Drop for Session {
         let _ = self.stop();
     }
 }
-

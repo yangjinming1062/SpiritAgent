@@ -1,6 +1,6 @@
 # Client 主进程
 
-[entry.ts](entry.ts) 是唯一组合根，显式装配账户、窗口、Runner、缓存与平台宿主；[preload.ts](preload.ts) 和 [preload-background.ts](preload-background.ts) 暴露不同权限的桥。本文维护主进程内部准入和资源生命周期。
+[entry.ts](entry.ts) 只保留启动与退出顺序；[entry/services.ts](entry/services.ts) 按依赖顺序构造账户、窗口、Runner、缓存与平台宿主，[entry/ipc.ts](entry/ipc.ts) 注册 IPC 通道。[preload.ts](preload.ts) 和 [preload-background.ts](preload-background.ts) 暴露不同权限的桥。本文维护主进程内部准入和资源生命周期。
 
 ## 包边界
 
@@ -63,13 +63,13 @@ macOS 钥匙串验证须从已登录图形会话启动，SSH 安全会话可能�
 
 ## 桌面承载与恢复
 
-[desktop-presentation.ts](lifecycle/desktop-presentation.ts) 持有唯一模式状态与串行切换；`desktop-windows.ts` 持有窗口与就绪等待，`desktop-health.ts` 持有显示器／电源监听，`desktop-background-runtime.ts` 持有媒体字节、请求代次和回执。[desktop-host.ts](lifecycle/desktop-host.ts) 装配统一宿主端口；原生事务分别由 Windows helper 与 macOS 模块处理。
+[desktop-presentation.ts](lifecycle/desktop-presentation.ts) 持有唯一模式状态与串行切换；显示器与工作区、系统托盘、资格判定、恢复标记与桌面 IPC 分在 [desktop/](lifecycle/desktop/)。`desktop-windows.ts` 持有窗口与就绪等待，`desktop-health.ts` 持有显示器／电源监听，`desktop-background-runtime.ts` 持有媒体字节、请求代次和回执。[desktop-host.ts](lifecycle/desktop-host.ts) 装配统一宿主端口；原生事务分别由 Windows helper 与 macOS 模块处理。
 
 切换先核验 sender、账户与载荷，再经 [ui-state.ts](ipc/ui-state.ts) 捕获来源视图并等待目标恢复。快照按账户存于进程内，不包含持久文件许可；录音与上传共同阻止切换。组件缺失或准备失败在释放来源前返回实际失败，页面加载与就绪等待共享预算。
 
 交互桌面使用完整 preload，背景仅接收已认证的媒体字节和播放状态。静态环境与透明造型分别传入背景窗口合成，所有回执复核已派发请求、账户与呈现代次。显示器逻辑坐标只管布局；Windows 目标像素经 `desktop-display-resolutions.ts` 的只读原生查询取得，不从取整 DIP 反推。桌面窗口固定缩放，退出恢复窗口模式缩放。
 
-Windows 的 [explorer-desktop-host.ts](lifecycle/explorer-desktop-host.ts) 等界面就绪后再交 helper 接管；主进程在准入、排队和回执时隔离旧会话。renderer 上报托盘槽位及滚动视口，主进程转物理坐标并保留固有尺寸，不能把裁剪后位置反馈为尺寸。样式确认后才发布就绪并用 `showInactive()` 校准 Electron 可见性；原生层级、托盘、AppBar 与 journal 由 helper 管理。`platform.ts` 关闭 DirectComposition 视频叠加层以参与页面模糊合成，保持硬件解码；修改须重启。
+Windows 的 [explorer-desktop-host.ts](lifecycle/explorer-desktop-host.ts) 等界面就绪后再交 helper 接管，消息协议、进程监控、外部激活与任务列表归 [host/](lifecycle/host/)；主进程在准入、排队和回执时隔离旧会话。renderer 上报托盘槽位及滚动视口，主进程转物理坐标并保留固有尺寸，不能把裁剪后位置反馈为尺寸。样式确认后才发布就绪并用 `showInactive()` 校准 Electron 可见性；原生层级、托盘、AppBar 与 journal 由 helper 管理。`platform.ts` 关闭 DirectComposition 视频叠加层以参与页面模糊合成，保持硬件解码；修改须重启。
 
 macOS 的 [desktop-macos-host.ts](lifecycle/desktop-macos-host.ts) 传全局 points，工作区变化只改布局；AX 不可用时仍可呈现，运行窗口投影独立报不可用。进入原生代码前落活动标记，正常退出清除，硬崩溃使下次启动停留窗口模式。失焦交互窗的鼠标位置由 `desktop-windows.ts` 采样转换为本窗 DIP，恢复焦点丢弃迟到采样；不合成点击、不请求焦点。
 
@@ -81,7 +81,7 @@ Windows 启动先处理待恢复记录；guardian 的异常原因与主进程失
 
 ## Dock 与应用目录
 
-[desktop-dock.ts](ipc/desktop-dock.ts) 合并固定配置、运行快照与图标；[desktop-app-catalog.ts](ipc/desktop-app-catalog.ts) 装配平台目录。renderer 只取得不透明条目／窗口 ID。
+[desktop-dock.ts](ipc/desktop-dock.ts) 装配固定配置、运行快照与图标，条目注册、运行清单、目录投影、图标与启动分在 [dock/](ipc/dock/)；[desktop-app-catalog.ts](ipc/desktop-app-catalog.ts) 装配平台目录。renderer 只取得不透明条目／窗口 ID。
 
 | 范围 | 实现约束 |
 |---|---|

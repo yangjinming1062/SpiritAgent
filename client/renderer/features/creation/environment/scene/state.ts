@@ -317,4 +317,3 @@ export async function mutate<K extends DesktopApiOperationKey>(
 
   return value
 }
-

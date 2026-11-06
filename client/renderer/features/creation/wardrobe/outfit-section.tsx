@@ -1,7 +1,8 @@
 import type React from 'react'
 
 import { SelfSourceImageFlow } from '@/features/character'
-import { type AssetLibrarySearch, PortraitLightbox } from '@/ui'
+import type { LocalSearch } from '@/shared/hooks/use-local-search'
+import { PortraitLightbox } from '@/ui'
 
 import { OutfitEditor } from './outfit-editor'
 import { OutfitList } from './outfit-list'
@@ -10,7 +11,7 @@ import { useOutfitSection } from './use-outfit-section'
 
 interface OutfitSectionProps {
   onSelectOutfit: (id: string) => void
-  search: AssetLibrarySearch
+  search: LocalSearch
 }
 
 /** 造型页：列表与制作区共用同一模型，页面只负责装配与自备图流程。 */

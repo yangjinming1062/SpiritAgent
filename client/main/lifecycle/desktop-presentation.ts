@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 
-import type { BrowserWindow} from 'electron';
+import type { BrowserWindow } from 'electron'
 import { app, type IpcMain, powerMonitor, screen, type WebContents } from 'electron'
 
 import {

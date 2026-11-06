@@ -14,12 +14,12 @@ import {
   setOutfitPolicy
 } from '@/features/character'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import type { LocalSearch } from '@/shared/hooks/use-local-search'
 import { log } from '@/shared/lib/log'
 import { requestResource } from '@/shared/lib/resource-request'
 import { currentClearEpoch } from '@/shared/lib/storage'
 import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
-import type { AssetLibrarySearch } from '@/ui'
 import type { ImageReviseMode } from '@protocol'
 
 import { $appearanceUi, selectAppearanceDraft, updateAppearanceUi } from './appearance-ui-state'
@@ -30,7 +30,7 @@ export function useOutfitSection({
   search
 }: {
   onSelectOutfit: (id: string) => void
-  search: AssetLibrarySearch
+  search: LocalSearch
 }) {
   const outfits = useStore($outfits)
   const wardrobeStatus = useStore($wardrobeStatus)

@@ -67,10 +67,7 @@ export function useChatInput({ isReadOnlySession }: UseChatInputOptions): UseCha
 
   const ensureSession = useCallback(() => ensureChatSession(controller), [controller])
 
-  const setRecordingState = useCallback(
-    (recording: boolean) => conversationVoiceSink().setRecording(recording),
-    []
-  )
+  const setRecordingState = useCallback((recording: boolean) => conversationVoiceSink().setRecording(recording), [])
 
   const {
     recording,

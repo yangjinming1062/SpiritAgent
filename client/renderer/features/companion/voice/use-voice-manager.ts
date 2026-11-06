@@ -23,9 +23,7 @@ import { $gatewayState } from '@/shared/store/gateway'
 import { $locale } from '@/shared/store/locale'
 import { $surfaceRole, $surfaceScreenLocked, $surfaceSpriteVisible } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
-import {
-  type CreationFeedbackState
-} from '@/ui'
+import { type CreationFeedbackState } from '@/ui'
 
 import { useVoiceSample } from '../use-voice-sample'
 import {

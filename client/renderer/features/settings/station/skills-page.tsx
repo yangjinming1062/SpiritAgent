@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 
 import { useAsyncLoader } from '@/shared/hooks/use-async-loader'
+import { useLocalSearch } from '@/shared/hooks/use-local-search'
 import { cn } from '@/shared/lib/utils'
 import { runnerApi } from '@/shared/platform/desktop'
 import { refreshSession } from '@/shared/store/auth'
@@ -48,7 +49,7 @@ export function SkillsPage(): React.JSX.Element {
   const loading = loader.isLoading
   const loadFailed = loader.error !== null
 
-  const [searchTerm, setSearchTerm] = useState('')
+  const search = useLocalSearch()
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
 
   // 开关不做乐观更新，列表只取主进程返回的全量结果；失败时界面仍是点击前的状态，只需提示。
@@ -75,50 +76,38 @@ export function SkillsPage(): React.JSX.Element {
     }
   }
 
-  const { counts, orderedCategories, groupedVisible, visibleCount } = useMemo(() => {
-    const counts = new Map<string, number>()
-    const needle = searchTerm.trim().toLowerCase()
-    const groupedVisible = new Map<string, SkillItem[]>()
-    let visibleCount = 0
+  const counts = new Map<string, number>()
+  const groupedVisible = new Map<string, SkillItem[]>()
+  let visibleCount = 0
 
-    // 与平台不兼容的技能不显示；main/ipc/skills.ts 拒绝启用它们。
-    for (const skill of skills) {
-      if (!skill.compatible) {
-        continue
-      }
-
-      visibleCount += 1
-      const key = skill.category
-      counts.set(key, (counts.get(key) ?? 0) + 1)
-
-      if (selectedCategory !== null && key !== selectedCategory) {
-        continue
-      }
-
-      if (needle) {
-        const matches =
-          skill.name.toLowerCase().includes(needle) ||
-          (skill.description ?? '').toLowerCase().includes(needle) ||
-          skill.category.toLowerCase().includes(needle)
-
-        if (!matches) {
-          continue
-        }
-      }
-
-      const list = groupedVisible.get(key)
-
-      if (list) {
-        list.push(skill)
-      } else {
-        groupedVisible.set(key, [skill])
-      }
+  // 与平台不兼容的技能不显示；main/ipc/skills.ts 拒绝启用它们。
+  for (const skill of skills) {
+    if (!skill.compatible) {
+      continue
     }
 
-    const orderedCategories = Array.from(counts.keys()).sort((a, b) => a.localeCompare(b))
+    visibleCount += 1
+    const key = skill.category
+    counts.set(key, (counts.get(key) ?? 0) + 1)
 
-    return { counts, orderedCategories, groupedVisible, visibleCount }
-  }, [skills, searchTerm, selectedCategory])
+    if (selectedCategory !== null && key !== selectedCategory) {
+      continue
+    }
+
+    if (search.query && !search.matches(skill.name, skill.description, skill.category)) {
+      continue
+    }
+
+    const list = groupedVisible.get(key)
+
+    if (list) {
+      list.push(skill)
+    } else {
+      groupedVisible.set(key, [skill])
+    }
+  }
+
+  const orderedCategories = Array.from(counts.keys()).sort((a, b) => a.localeCompare(b))
 
   if (loading) {
     return <LoadingBlock label={s.loading} />
@@ -201,9 +190,9 @@ export function SkillsPage(): React.JSX.Element {
           <div>
             <SearchField
               ariaLabel={sk.searchSkills}
-              onChange={setSearchTerm}
+              onChange={search.onQueryChange}
               placeholder={sk.searchSkills}
-              value={searchTerm}
+              value={search.query}
             />
           </div>
         </div>

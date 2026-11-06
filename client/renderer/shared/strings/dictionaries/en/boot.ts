@@ -1,0 +1,95 @@
+import type { Dictionary } from '../zh'
+export const boot: Pick<Dictionary, 'boot' | 'onboarding'> = {
+  boot: {
+    desktopBootFailedWithMessage: (message: string) => `Desktop failed to start: ${message}`,
+    errors: {
+      desktopBootFailed: 'Desktop failed to start'
+    },
+    failure: {
+      retry: 'Retry'
+    }
+  },
+  onboarding: {
+    steps: {
+      meet: 'Meet your companion',
+      confirm: 'Confirm the look',
+      voice: 'Choose a voice',
+      environment: 'Set the scene'
+    },
+    progressAria: 'Getting to know your companion',
+    voiceTitle: 'Choose a voice for your companion',
+    nextVoice: 'Continue choosing a voice',
+    nextConfirm: 'Next: confirm the look',
+    next: 'Next',
+    previousQuestion: 'Previous question',
+    skip: 'Skip',
+    questionProgress: (index: number, total: number) => `Question ${index} of ${total}`,
+    lockedHint: (label: string) => `“${label}” cannot be changed after the look is confirmed. Choose carefully.`,
+    avatarLabel: 'Avatar',
+    zoomAria: 'Enlarge',
+    feedbackExample: 'For example: blond hair, green eyes, a scar across the forehead, a mechanical eye… (optional)',
+    feedbackExampleRefine:
+      'What looks off? For example: shorter hair, larger eyes, a gentler expression… (leave empty to regenerate)',
+    refineDisabledByReference: 'Cannot refine with a reference image. Remove the reference first.',
+    refineHint: 'Adjust the current avatar and keep everything else. Describe the change first.',
+    refineAction: 'Refine',
+    saveFailed: 'Could not save your answers. Try again.',
+    resumeFailed: 'Could not read your saved progress. Try again.',
+    retrying: 'Retrying…',
+    stepVoice: 'Choose a voice',
+    stepCompanion: 'Start together',
+    readyTitle: 'Your companion is ready',
+    readyHint:
+      'You can start chatting now. You can also tell your companion a little about yourself first, and add more at any time.',
+    knowMore: 'Let your companion know me (optional)',
+    savingProfile: 'Saving your answers…',
+    portraitPreviewHint: 'Preview and confirm your avatar',
+    portraitGenerating: 'Creating the avatar…',
+    portraitFailed: 'The avatar step could not finish',
+    portraitBack: 'Previous step',
+    portraitTitle: 'Draw your companion’s avatar',
+    portraitConfirm: 'I like it, prepare the full look',
+    portraitIdeaTitle: 'Imagine your companion',
+    portraitIdeaHint:
+      'Describe the face, hair, or colors you like and AI will draw the avatar. You can skip ahead if you have no idea yet.',
+    portraitDescriptionLabel: 'Avatar description (optional)',
+    referenceSummary: 'Add a reference image (optional)',
+    referenceHint: 'Used as inspiration while generating. It does not become the avatar itself.',
+    referenceAlt: 'Generated reference image',
+    addReference: 'Add reference image',
+    replaceReference: 'Replace reference image',
+    removeReference: 'Remove',
+    previousAvatarAlt: 'Previously created avatar',
+    keepAvatar: 'Keep this avatar',
+    useOwnImage: 'Use your own image',
+    confirmTitle: 'Confirm your companion’s avatar',
+    defaultName: 'Companion',
+    adjustSummary: 'Not quite right? Adjust the avatar',
+    regenerate: 'Generate again',
+    reload: 'Reload',
+    shapeReferenceAlt: 'Appearance reference',
+    shapeReferenceHint: 'Borrow the shape from this image',
+    shapeReference: '+ Appearance reference',
+    compositionReferenceAlt: 'Lighting and composition reference',
+    compositionReferenceHint: 'Borrow the lighting and composition, keeping one visual style',
+    compositionReference: '+ Lighting and composition reference',
+    replaceCompositionReference: 'Replace composition reference',
+    ownImageHint: 'Use a single character on a plain white background. Accepting it sets the avatar directly.',
+    ownImageTitle: 'Use your own image',
+    environmentTitle: 'Set the scene for your companion',
+    environmentHint:
+      'Describe the space your companion lives in, or upload a picture you like as the starting scene. You can also start with the default scene and change it later in Scenes.',
+    environmentChecking: 'Checking your scenes…',
+    environmentExists: 'A scene is already being prepared or is ready. You can manage it later under “Scenes”.',
+    environmentContinue: 'Continue',
+    environmentNotesLabel: 'Describe the scene you want',
+    environmentNotesPlaceholder: 'For example: a sunlit wooden cabin with a bamboo grove outside the window…',
+    environmentNotesRequired: 'Write a few words first, or pick another option',
+    environmentGenerate: 'Generate from description',
+    environmentUpload: 'Upload a picture',
+    environmentSkip: 'Use the default scene',
+    environmentPickTitle: 'Choose a scene picture',
+    environmentCreateFailed: 'The scene could not be created. Try again.',
+    environmentSkipFailed: 'Your choice could not be saved. Try again.'
+  }
+}

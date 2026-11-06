@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react'
-import { useState } from 'react'
 
 import { Plus, Search } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
@@ -113,20 +112,3 @@ export function LibraryToolbar({
     </form>
   )
 }
-
-// 搜索保留在页面所有者中，查看详情或创建后返回仍使用原筛选。
-// 本地列表按输入即时过滤，输入词与生效筛选始终一致；服务端搜索由调用方自行提交。
-export function useAssetLibrarySearch() {
-  const [query, setQuery] = useState('')
-  const term = query.trim().toLocaleLowerCase()
-
-  return {
-    query,
-    searching: term.length > 0,
-    onQueryChange: (next: string): void => setQuery(next),
-    matches: (...values: (string | null | undefined)[]): boolean =>
-      !term || values.some(value => value?.toLocaleLowerCase().includes(term))
-  }
-}
-
-export type AssetLibrarySearch = ReturnType<typeof useAssetLibrarySearch>

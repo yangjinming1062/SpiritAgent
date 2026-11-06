@@ -5,8 +5,8 @@ import { useEffect, useState } from 'react'
 import { useNavigationDetail } from '@/app/navigation/navigation-detail'
 import { hydrateAvatarSeeds } from '@/features/character'
 import { $outfits, hydrateWardrobe } from '@/features/character'
+import { useLocalSearch } from '@/shared/hooks/use-local-search'
 import { $auth } from '@/shared/store/auth'
-import { useAssetLibrarySearch } from '@/ui/asset-library-header'
 
 import { OutfitDetail } from './outfit-detail'
 import { OutfitSection } from './outfit-section'
@@ -27,7 +27,7 @@ export function AppearancePage(): React.JSX.Element {
   )
 
   const [loaded, setLoaded] = useState(false)
-  const librarySearch = useAssetLibrarySearch()
+  const librarySearch = useLocalSearch()
 
   // 冷启动须等待鉴权，否则水合会跳过读取。
   useEffect(() => {

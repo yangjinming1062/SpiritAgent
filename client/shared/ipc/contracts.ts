@@ -13,7 +13,6 @@ import type {
   StageActivity
 } from './desktop-presentation'
 
-
 export * from './contracts/account'
 export * from './contracts/desktop'
 export * from './contracts/media'
@@ -72,7 +71,13 @@ export type {
   SettingsTab,
   StageActivity
 } from './desktop-presentation'
-export type { CompanionEditorUiSnapshot, DiaryUiSnapshot, LifeUiSnapshot, StudioUiSnapshot, VisualsUiSnapshot } from './ui-state'
+export type {
+  CompanionEditorUiSnapshot,
+  DiaryUiSnapshot,
+  LifeUiSnapshot,
+  StudioUiSnapshot,
+  VisualsUiSnapshot
+} from './ui-state'
 export { isCompanionEditorUiSnapshot, isDiaryUiSnapshot, isLifeUiSnapshot, isVisualsUiSnapshot } from './ui-state'
 
 import type {

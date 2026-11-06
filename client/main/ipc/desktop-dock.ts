@@ -7,10 +7,7 @@ import log from 'electron-log/main'
 import { type DockCatalog, type DockEntry, type DockState, IPC } from '@ipc/contracts'
 
 import { CLIENT_LIMITS } from '../../shared/constants'
-import type {
-  ApplicationEligibility,
-  RunningApplicationsState
-} from '../shared/desktop-applications'
+import type { ApplicationEligibility, RunningApplicationsState } from '../shared/desktop-applications'
 import type { DesktopJumpListTask } from '../shared/desktop-jump-list'
 import { desktopMacos } from '../shared/desktop-macos'
 import { createSerialQueue, sendToWindow } from '../shared/utils'

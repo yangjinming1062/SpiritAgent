@@ -1,11 +1,24 @@
-
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { authedResource } from '@/shared/lib/resource-request'
 import { getStrings } from '@/shared/strings'
 
-import { $pendingScene, $sceneRegenerating, $sceneTaskSlow, $sceneTaskStatus, cacheSceneDetails, detailCache, detailReads, resolveScene, type SceneAsset, sceneIO, startPoll, stopPoll, toScene } from './state'
+import {
+  $pendingScene,
+  $sceneRegenerating,
+  $sceneTaskSlow,
+  $sceneTaskStatus,
+  cacheSceneDetails,
+  detailCache,
+  detailReads,
+  resolveScene,
+  type SceneAsset,
+  sceneIO,
+  startPoll,
+  stopPoll,
+  toScene
+} from './state'
 
 export async function fetchSceneDetail(
   sceneId: string,

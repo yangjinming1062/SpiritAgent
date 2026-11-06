@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 
 import { useAsyncLoader } from '@/shared/hooks/use-async-loader'
+import { useLocalSearch } from '@/shared/hooks/use-local-search'
 import { TOOLSET_CATALOG, type ToolsetCatalogEntry } from '@/shared/lib/toolset-catalog'
 import { runnerApi } from '@/shared/platform/desktop'
 import { notifyError } from '@/shared/store/notifications'
@@ -38,7 +39,7 @@ export function ToolsetsPage(): React.JSX.Element {
   const loading = loader.isLoading
   const loadFailed = loader.error !== null
 
-  const [searchTerm, setSearchTerm] = useState('')
+  const search = useLocalSearch()
   const [savingId, setSavingId] = useState<string | null>(null)
 
   const rosterById = useMemo(() => {
@@ -51,29 +52,20 @@ export function ToolsetsPage(): React.JSX.Element {
     return map
   }, [toolsets])
 
-  const visibleEntries = useMemo(() => {
-    const needle = searchTerm.trim().toLowerCase()
+  const visibleEntries = TOOLSET_CATALOG.flatMap<ToolsetView>(entry => {
+    const roster = rosterById.get(entry.id)
 
-    return TOOLSET_CATALOG.flatMap<ToolsetView>(entry => {
-      const roster = rosterById.get(entry.id)
+    const texts = (toolsetText as Record<string, { description: string; label: string }>)[entry.id] ?? {
+      description: '',
+      label: entry.id
+    }
 
-      const texts = (toolsetText as Record<string, { description: string; label: string }>)[entry.id] ?? {
-        description: '',
-        label: entry.id
-      }
+    const toolNames = roster?.toolNames ?? []
 
-      const toolNames = roster?.toolNames ?? []
+    const matches = search.matches(entry.id, texts.label, texts.description, ...toolNames)
 
-      const matches =
-        !needle ||
-        entry.id.toLowerCase().includes(needle) ||
-        texts.label.toLowerCase().includes(needle) ||
-        texts.description.toLowerCase().includes(needle) ||
-        toolNames.some(n => n.toLowerCase().includes(needle))
-
-      return matches ? [{ catalog: entry, label: texts.label, description: texts.description, roster }] : []
-    })
-  }, [rosterById, searchTerm, toolsetText])
+    return matches ? [{ catalog: entry, label: texts.label, description: texts.description, roster }] : []
+  })
 
   const enabledCount = useMemo(() => toolsets.filter(t => t.enabled).length, [toolsets])
 
@@ -119,9 +111,9 @@ export function ToolsetsPage(): React.JSX.Element {
         <div>
           <SearchField
             ariaLabel={sk.searchToolsets}
-            onChange={setSearchTerm}
+            onChange={search.onQueryChange}
             placeholder={sk.searchToolsets}
-            value={searchTerm}
+            value={search.query}
           />
         </div>
       </div>

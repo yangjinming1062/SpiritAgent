@@ -1,4 +1,3 @@
-
 import { apiSucceeded, captureAuthScope } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
 import { authedResource } from '@/shared/lib/resource-request'
@@ -7,7 +6,25 @@ import { notify } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 
 import { loadSceneDetail } from './detail'
-import { $pendingScene, $sceneHasMore, $sceneLibrary, $sceneLibraryStatus, $scenePage, $scenePolicy, $sceneQuery, $sceneRegenerating, $sceneTaskSlow, $sceneTaskStatus, $sceneTotal, cacheSceneDetails, detailCache, PAGE_SIZE, resolveScene, sceneIO, scenePoll } from './state'
+import {
+  $pendingScene,
+  $sceneHasMore,
+  $sceneLibrary,
+  $sceneLibraryStatus,
+  $scenePage,
+  $scenePolicy,
+  $sceneQuery,
+  $sceneRegenerating,
+  $sceneTaskSlow,
+  $sceneTaskStatus,
+  $sceneTotal,
+  cacheSceneDetails,
+  detailCache,
+  PAGE_SIZE,
+  resolveScene,
+  sceneIO,
+  scenePoll
+} from './state'
 import { startPoll, stopPoll } from './state'
 
 interface SceneLibraryRequest {
@@ -191,4 +208,3 @@ export function onSceneEvent(): void {
   sceneIO.eventVersion += 1
   void hydrateScene()
 }
-

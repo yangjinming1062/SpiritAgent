@@ -71,7 +71,7 @@ export {
 } from './prefs'
 export { AccessibilityPermissionButton } from './presentation/accessibility-permission-button'
 export { PresentationModeButton, usePresentationModeSwitch } from './presentation/mode-switch'
-export { SelfSourceImageFlow, type SelfSourceReferenceImage } from './self-source-image'
+export { SelfSourceImageFlow } from './self-source-image'
 export {
   $defaultScale,
   $spatialLocomotion,

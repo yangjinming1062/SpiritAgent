@@ -8,12 +8,7 @@ import { useDesktopWindowHydration } from '@/app/workflows/window-hydration'
 import { useDesktopNavigation } from '@/app/workflows/window-navigation'
 import { AccountMenu } from '@/features/accounts/account-menu'
 import { $portraitUrl } from '@/features/character'
-import {
-  $companionSessionId,
-  setChatSession,
-  switchSession,
-  useConversationUnread
-} from '@/features/conversation'
+import { $companionSessionId, setChatSession, switchSession, useConversationUnread } from '@/features/conversation'
 import { ConversationPage } from '@/features/conversation/conversation-page'
 import { $creationBusy } from '@/features/creation'
 import { $diaryHasUnread } from '@/features/life/diary'

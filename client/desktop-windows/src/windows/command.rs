@@ -72,4 +72,3 @@ pub(crate) fn interrupt_session(active: Option<&mut Session>, marker: &str, reas
         Err(error) => format!("{reason}; restoration: {error}"),
     }
 }
-

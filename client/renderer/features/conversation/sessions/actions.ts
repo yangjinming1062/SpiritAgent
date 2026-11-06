@@ -15,23 +15,12 @@ import {
   getConversationRuntime,
   setChatSession
 } from '../chat-store'
-import {
-  forgetSessionHistory,
-  rememberFullHistory,
-  requestSessionSnapshot
-} from '../session-history-cache'
+import { forgetSessionHistory, rememberFullHistory, requestSessionSnapshot } from '../session-history-cache'
 import { removeVoicePlayback } from '../voice-playback'
 
 import { fetchArchived, fetchSessions } from './list'
 import { openMainSession, switchSession } from './selection'
-import {
-  $archivedSessions,
-  $searchResults,
-  $sessions,
-  findSessionInfo,
-  sessionTokens,
-  TITLE_MAX_CHARS
-} from './state'
+import { $archivedSessions, $searchResults, $sessions, findSessionInfo, sessionTokens, TITLE_MAX_CHARS } from './state'
 
 type SessionPatchBody = { archived?: boolean; pinned?: boolean; title?: string }
 

@@ -85,4 +85,3 @@ pub fn display_bounds(requested: &[Bounds]) -> Result<Vec<Option<Bounds>>> {
         .map(|bounds| monitor_bounds(*bounds).ok())
         .collect())
 }
-

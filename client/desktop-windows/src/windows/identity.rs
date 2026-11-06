@@ -213,4 +213,3 @@ impl Identity {
                 .is_ok_and(|birth| birth == self.created)
     }
 }
-

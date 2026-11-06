@@ -122,8 +122,7 @@ function buildDesktopMacos(arch = process.arch, { ifNeeded = false } = {}) {
   const output = path.join(clientRoot, 'build', arch, 'desktop_macos.node')
   const manifest = `${output}.build.json`
   const deploymentTarget = process.env.MACOSX_DEPLOYMENT_TARGET || '12.0'
-  const fingerprint = createHash('sha256')
-    .update(fs.readFileSync(header))
+  const fingerprint = createHash('sha256').update(fs.readFileSync(header))
 
   for (const source of sources) {
     fingerprint.update(fs.readFileSync(source))

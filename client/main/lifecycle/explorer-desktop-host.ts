@@ -45,11 +45,7 @@ export function createExplorerDesktopHost(options: DesktopHostOptions): DesktopH
     log: options.log,
     onWarning: options.onWarning,
     isCurrentHost: (host, hostGeneration) =>
-      state === 'running' &&
-      generation === hostGeneration &&
-      child === host &&
-      !processes.exited(host) &&
-      !host.killed,
+      state === 'running' && generation === hostGeneration && child === host && !processes.exited(host) && !host.killed,
     exited: processes.exited,
     waitForExit: processes.waitForExit
   })

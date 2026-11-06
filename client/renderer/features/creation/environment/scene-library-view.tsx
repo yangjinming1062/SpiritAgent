@@ -8,13 +8,7 @@ import { BTN_PRIMARY, BTN_SUBTLE, CreationFeedback, HINT_TEXT, Pager, SettingCar
 import { AssetLibraryCard, AssetLibraryGrid } from '@/ui/asset-library-card'
 import { AssetLibraryHeader, LibraryToolbar } from '@/ui/asset-library-header'
 
-import {
-  $sceneCreationIssue,
-  finishSceneCreationWait,
-  PAGE_SIZE,
-  type SceneAsset,
-  type ScenePolicy
-} from './scene'
+import { $sceneCreationIssue, finishSceneCreationWait, PAGE_SIZE, type SceneAsset, type ScenePolicy } from './scene'
 
 interface SceneLibraryViewProps {
   entries: SceneAsset[]

@@ -1,11 +1,30 @@
-
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { isClientErrorIpc } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch } from '@/shared/lib/storage'
 
 import { hydrateScene, loadSceneLibrary } from './library'
-import { $pendingScene, $sceneCreationIssue, $sceneMutationIssues, $sceneRegenerating, $sceneTaskSlow, $sceneTaskStatus, mutate, mutateSceneRow, type SceneCreationIssue, type SceneCreationResult, sceneError, type SceneGenerationInput, sceneIO, type SceneMutationIssue, type ScenePolicy, sceneRequest, type SceneWire, startPoll, toScene } from './state'
+import {
+  $pendingScene,
+  $sceneCreationIssue,
+  $sceneMutationIssues,
+  $sceneRegenerating,
+  $sceneTaskSlow,
+  $sceneTaskStatus,
+  mutate,
+  mutateSceneRow,
+  type SceneCreationIssue,
+  type SceneCreationResult,
+  sceneError,
+  type SceneGenerationInput,
+  sceneIO,
+  type SceneMutationIssue,
+  type ScenePolicy,
+  sceneRequest,
+  type SceneWire,
+  startPoll,
+  toScene
+} from './state'
 
 export async function inspectSceneCreationIssue(): Promise<boolean> {
   const previous = $sceneCreationIssue.get()
