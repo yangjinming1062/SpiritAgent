@@ -1,2 +1,2 @@
-export { $creationBusy } from './creation-activity'
+export { $creationAttention, hydrateCreationActivity } from './creation-activity'
 export { onOutfitEvent } from './wardrobe'

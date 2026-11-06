@@ -84,6 +84,7 @@ export const creation = {
     stepScene: '先创建一个环境',
     invalidated: '素材已变化，请重新整理后再确认',
     activityTitle: '正在制作',
+    attentionTitle: '需要你处理',
     actionCreate: '它会在什么时候、大概怎么动',
     actionEditTitle: '想改哪里',
     actionSave: '保存并评审',

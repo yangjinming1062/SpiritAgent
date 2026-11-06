@@ -88,6 +88,7 @@ export const creation: Pick<Dictionary, 'creation' | 'selfSource' | 'generationA
     stepScene: 'Create an environment first',
     invalidated: 'Materials changed. Interpret the description again before confirming.',
     activityTitle: 'In progress',
+    attentionTitle: 'Needs your attention',
     actionCreate: 'When does it happen, and how does it move',
     actionEditTitle: 'What should change',
     actionSave: 'Save and review',

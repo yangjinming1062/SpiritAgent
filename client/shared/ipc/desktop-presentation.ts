@@ -250,7 +250,7 @@ export type AppLocation =
 export type PageFocus =
   | { page: 'chat'; sessionId?: string; messageKey?: string }
   | { page: 'life'; pursuitId?: string }
-  | { page: 'creation'; outfitId?: string; sceneId?: string; visualId?: string }
+  | { page: 'creation'; outfitId?: string; sceneId?: string; visualId?: string; actionId?: string }
   | { page: 'companion' }
   | { page: 'settings' }
 
@@ -327,7 +327,8 @@ export function normalizePageFocus(raw: unknown, location: AppLocation): PageFoc
         page: 'creation',
         outfitId: isResourceId(value.outfitId) ? value.outfitId : undefined,
         sceneId: isResourceId(value.sceneId) ? value.sceneId : undefined,
-        visualId: isResourceId(value.visualId) ? value.visualId : undefined
+        visualId: isResourceId(value.visualId) ? value.visualId : undefined,
+        actionId: isResourceId(value.actionId) ? value.actionId : undefined
       }
 
     default:
@@ -353,7 +354,7 @@ export function normalizeAppNavigation(raw: unknown): AppNavigationTarget {
 const NAV_QUERY_KEYS = {
   chat: ['sessionId', 'messageKey'],
   life: ['pursuitId'],
-  creation: ['outfitId', 'sceneId', 'visualId'],
+  creation: ['outfitId', 'sceneId', 'visualId', 'actionId'],
   companion: [],
   settings: []
 } as const satisfies Record<AppPage, readonly string[]>

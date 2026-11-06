@@ -3,13 +3,14 @@ import type React from 'react'
 
 import { $creationSection, openCreation } from '@/app/navigation/app-navigation'
 import { Activity, Home, Shirt, Video } from '@/shared/lib/icons'
+import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
 import type { AppPageProps } from '@/shared/types/app-page'
 import { SectionShell } from '@/ui/section-shell/section-shell'
 import type { CreationSection } from '@ipc/contracts'
 
 import { ActionsPage } from './actions/actions-page'
-import { $creationActivity } from './creation-activity'
+import { $creationActivity, type CreationActivityItem } from './creation-activity'
 import { ScenePage } from './environment/scene-page'
 import { VisualsPage } from './visuals/visuals-page'
 import { AppearancePage } from './wardrobe/appearance-page'
@@ -28,6 +29,29 @@ export function CreationPage(_props: AppPageProps): React.JSX.Element {
   const strings = useStrings()
   const labels = strings.settings.persona.sections
   const studio = strings.studio
+  const attention = activity.filter(item => item.group === 'attention')
+  const working = activity.filter(item => item.group === 'working')
+
+  const openTarget = (item: CreationActivityItem): void => {
+    void openCreation(item.section, {
+      ...(item.actionId ? { actionId: item.actionId } : {}),
+      ...(item.sceneId ? { sceneId: item.sceneId } : {})
+    })
+  }
+
+  const chip = (item: CreationActivityItem): React.JSX.Element => (
+    <button
+      className={cn(
+        'rounded-full border px-2 py-0.5 text-[11px] hover:bg-fill-hover',
+        item.group === 'attention' ? 'border-warning/60 text-warning' : 'border-line-hairline text-body'
+      )}
+      key={item.id}
+      onClick={() => openTarget(item)}
+      type="button"
+    >
+      {labels[item.section]} · {activityStateText(item, strings)}
+    </button>
+  )
 
   const content = (value: CreationSection): React.ReactNode => {
     switch (value) {
@@ -54,23 +78,45 @@ export function CreationPage(_props: AppPageProps): React.JSX.Element {
       onSelect={next => void openCreation(next)}
     >
       <div className="flex min-h-0 flex-1 flex-col">
-        {activity.length > 0 && (
-          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-accent-line bg-accent-soft/20 px-3 py-2">
+        {attention.length > 0 && (
+          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-warning/60 bg-warning/10 px-3 py-2">
+            <span className="text-[11px] font-medium text-warning">{studio.attentionTitle}</span>
+            {attention.slice(0, 4).map(chip)}
+            {attention.length > 4 && <span className="text-[11px] text-muted">+{attention.length - 4}</span>}
+          </div>
+        )}
+        {working.length > 0 && (
+          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-line-hairline bg-fill-faint/40 px-3 py-2">
             <span className="text-[11px] font-medium text-muted">{studio.activityTitle}</span>
-            {activity.slice(0, 4).map(item => (
-              <button
-                className="rounded-full border border-line-hairline px-2 py-0.5 text-[11px] text-body hover:bg-fill-hover"
-                key={item.id}
-                onClick={() => void openCreation(item.section)}
-                type="button"
-              >
-                {labels[item.section]} · {item.state}
-              </button>
-            ))}
+            {working.slice(0, 4).map(chip)}
+            {working.length > 4 && <span className="text-[11px] text-muted">+{working.length - 4}</span>}
           </div>
         )}
         <div className="flex min-h-0 flex-1 flex-col">{content(section)}</div>
       </div>
     </SectionShell>
   )
+}
+
+/** 活动条状态文案：内部状态码按所属分区映射为用户可读词，未识别码原样显示。 */
+function activityStateText(item: CreationActivityItem, strings: ReturnType<typeof useStrings>): string {
+  if (item.section === 'actions') {
+    return strings.actions.statusLabels[item.state as keyof typeof strings.actions.statusLabels] ?? item.state
+  }
+
+  if (item.section === 'environment') {
+    if (item.state === 'creation_unknown') {
+      return strings.creation.unknown
+    }
+
+    return item.state === 'waiting_upload'
+      ? strings.living.scene.waitingUploadOverlay
+      : strings.living.scene.pendingOverlay
+  }
+
+  if (item.state === 'review_pending') {
+    return strings.living.posts.mediaRecoveryStatuses.review_pending
+  }
+
+  return strings.visuals.jobState[item.state] ?? item.state
 }

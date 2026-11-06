@@ -239,6 +239,29 @@ export async function regenerateVisual(
   return job
 }
 
+/** 只读任务摘要：登录、重连与活动投影补读用，不触碰列表筛选。 */
+export async function refreshVisualJobs(): Promise<void> {
+  const scope = captureAuthScope()
+
+  if (!scope) {
+    return
+  }
+
+  const currentEpoch = visualsState.epoch
+
+  try {
+    const jobs = await visualsApi.jobs()
+
+    if (scope() && visualsState.epoch === currentEpoch) {
+      $visualsJobs.set(jobs.jobs)
+    }
+  } catch (error) {
+    if (scope() && visualsState.epoch === currentEpoch) {
+      log.warn('visuals', 'Job summary refresh failed', error)
+    }
+  }
+}
+
 export async function commandVisualJob(jobId: string, command: VisualJobCommand): Promise<void> {
   await visualsApi.jobCommand(jobId, { command })
   await refreshVisuals()

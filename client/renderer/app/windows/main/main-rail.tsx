@@ -13,7 +13,7 @@ import {
 } from '@/app/navigation/app-navigation'
 import { AccountMenu } from '@/features/accounts/account-menu'
 import { $persona, $portraitUrl } from '@/features/character'
-import { $creationBusy } from '@/features/creation'
+import { $creationAttention } from '@/features/creation'
 import { $diaryHasUnread } from '@/features/life/diary'
 import { $postsHasUnread } from '@/features/life/posts'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
@@ -50,7 +50,7 @@ export function MainRail({
   const portrait = useStore($portraitUrl)
   const postsUnread = useStore($postsHasUnread)
   const diaryUnread = useStore($diaryHasUnread)
-  const creationBusy = useStore($creationBusy)
+  const creationAttention = useStore($creationAttention)
   const strings = useStrings()
   const t = strings.living.rail
   const name = persona?.name || t.companionFallback
@@ -62,7 +62,7 @@ export function MainRail({
   const unreadByPage: Partial<Record<RailPage, boolean>> = {
     chat: chatUnread,
     life: postsUnread || diaryUnread,
-    creation: creationBusy
+    creation: creationAttention
   }
 
   const closeAccounts = (): void => {

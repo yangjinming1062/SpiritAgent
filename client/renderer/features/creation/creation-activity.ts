@@ -2,23 +2,32 @@ import { computed } from 'nanostores'
 
 import type { CreationSection } from '@ipc/contracts'
 
-import { $pendingScene, $sceneRegenerating } from './environment'
-import { $visualsJobs } from './visuals/state'
+import { actionGroups, refreshActions } from './actions'
+import { $pendingScene, $sceneCreationIssue, $sceneRegenerating } from './environment'
+import { $visualsJobs, refreshVisualJobs } from './visuals'
+
+/** 活动条目的用户可读分组：进行中的制作与需要用户处理的事项。 */
+export type CreationActivityGroup = 'working' | 'attention'
 
 export interface CreationActivityItem {
   id: string
-  kind: 'visual' | 'environment'
+  group: CreationActivityGroup
+  /** 内部状态码原样保留，展示文案由消费方映射。 */
   state: string
   section: CreationSection
+  /** 任务来源定位：动作或环境素材；影像工作项在影像页顶部集中展示。 */
+  actionId?: string
+  sceneId?: string
 }
 
 /**
  * 创作任务的统一投影：只合并各业务模块已有的状态，不新增状态源与轮询。
- * 状态归属仍在 visuals 与 scene 模块，这里只负责"有没有在进行的事"。
+ * 状态归属仍在 visuals、actions 与 scene 模块；失败、结果未知与待复核
+ * 归入“需要处理”，不与正常制作混在同一个进行中分组。
  */
 export const $creationActivity = computed(
-  [$visualsJobs, $pendingScene, $sceneRegenerating],
-  (jobs, pendingScene, regeneratingScene) => {
+  [actionGroups.not_in_library.rows, $visualsJobs, $pendingScene, $sceneRegenerating, $sceneCreationIssue],
+  (unlistedActions, jobs, pendingScene, regeneratingScene, creationIssue) => {
     const items: CreationActivityItem[] = []
 
     for (const job of jobs) {
@@ -26,22 +35,41 @@ export const $creationActivity = computed(
         continue
       }
 
-      items.push({ id: `visual:${job.id}`, kind: 'visual', state: job.state, section: 'visuals' })
+      const reviewPending = job.stage === 'review_pending'
+
+      items.push({
+        id: `visual:${job.id}`,
+        group: reviewPending || job.state === 'failed' || job.state === 'unknown' ? 'attention' : 'working',
+        state: reviewPending ? 'review_pending' : job.state,
+        section: 'visuals'
+      })
     }
 
-    if (pendingScene) {
+    for (const action of unlistedActions) {
+      const working = action.status === 'pending' || action.status === 'reviewing'
+
       items.push({
-        id: `environment:${pendingScene.id}`,
-        kind: 'environment',
-        state: pendingScene.stage || 'pending',
-        section: 'environment'
+        id: `action:${action.id}`,
+        group: working ? 'working' : 'attention',
+        state: action.status,
+        section: 'actions',
+        actionId: action.id
       })
-    } else if (regeneratingScene) {
+    }
+
+    if (creationIssue?.outcome === 'unknown') {
+      items.push({ id: 'environment:creation-unknown', group: 'attention', state: 'creation_unknown', section: 'environment' })
+    }
+
+    const activeScene = pendingScene ?? regeneratingScene
+
+    if (activeScene) {
       items.push({
-        id: `environment:${regeneratingScene.id}`,
-        kind: 'environment',
-        state: 'pending',
-        section: 'environment'
+        id: `environment:${activeScene.id}`,
+        group: activeScene === pendingScene && activeScene.stage === 'waiting_upload' ? 'attention' : 'working',
+        state: activeScene === pendingScene ? activeScene.stage || 'pending' : 'pending',
+        section: 'environment',
+        sceneId: activeScene.id
       })
     }
 
@@ -49,4 +77,12 @@ export const $creationActivity = computed(
   }
 )
 
-export const $creationBusy = computed($creationActivity, items => items.length > 0)
+/** 只有真正需要用户关注时才显示显著提醒；正常后台制作只保留适度的进行状态。 */
+export const $creationAttention = computed($creationActivity, items =>
+  items.some(item => item.group === 'attention')
+)
+
+/** 登录与重连后的任务摘要补读：只触发各模块已有读取入口，失败静默等待事件或页面读取。 */
+export async function hydrateCreationActivity(): Promise<void> {
+  await Promise.allSettled([refreshVisualJobs(), refreshActions(undefined, false, 'not_in_library')])
+}

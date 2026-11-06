@@ -17,7 +17,7 @@ export function DesktopProductNav({
   windows,
   activeWindow,
   lifeUnread,
-  creationBusy,
+  creationAttention,
   overlayActive,
   onActivate,
   onClose,
@@ -27,7 +27,7 @@ export function DesktopProductNav({
   windows: DesktopWindowState[]
   activeWindow?: AppPage
   lifeUnread: boolean
-  creationBusy: boolean
+  creationAttention: boolean
   overlayActive: boolean
   onActivate: (id: AppPage) => void
   onClose: (id: AppPage) => void
@@ -117,7 +117,7 @@ export function DesktopProductNav({
       <nav aria-label={t.title} className={styles.productNav}>
         {DESKTOP_NAV_APPS.map(id => {
           const item = windows.find(candidate => candidate.id === id)
-          const unread = id === 'life' ? lifeUnread : id === 'creation' ? creationBusy : false
+          const unread = id === 'life' ? lifeUnread : id === 'creation' ? creationAttention : false
 
           const label = [
             t[id],

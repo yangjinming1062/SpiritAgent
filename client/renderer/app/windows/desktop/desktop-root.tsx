@@ -16,7 +16,7 @@ import { AccountMenu } from '@/features/accounts/account-menu'
 import { $portraitUrl } from '@/features/character'
 import { $companionSessionId, setChatSession, switchSession, useConversationUnread } from '@/features/conversation'
 import { ConversationPage } from '@/features/conversation/conversation-page'
-import { $creationBusy } from '@/features/creation'
+import { $creationAttention } from '@/features/creation'
 import { $diaryHasUnread } from '@/features/life/diary'
 import { $postsHasUnread } from '@/features/life/posts'
 import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
@@ -65,7 +65,7 @@ export function DesktopRoot(): React.JSX.Element {
   const { hasUnread: companionUnread, firstUnheard } = useConversationUnread(companionSessionId)
   const postsUnread = useStore($postsHasUnread)
   const diaryUnread = useStore($diaryHasUnread)
-  const creationBusy = useStore($creationBusy)
+  const creationAttention = useStore($creationAttention)
   const [windowFocused, setWindowFocused] = useState(() => document.hasFocus())
   const presentation = useStore($presentation)
   const isMac = desktopPlatform() === 'darwin'
@@ -446,7 +446,7 @@ export function DesktopRoot(): React.JSX.Element {
         navigation={
           <DesktopProductNav
             activeWindow={activeWindow}
-            creationBusy={creationBusy}
+            creationAttention={creationAttention}
             lifeUnread={postsUnread || diaryUnread}
             onActivate={activatePanel}
             onBeforeOpen={() => setOverlay('product')}

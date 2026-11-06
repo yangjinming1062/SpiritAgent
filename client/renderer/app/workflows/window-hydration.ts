@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react'
 
 import { hydratePersona, hydratePortrait } from '@/features/character'
 import { $chatSessionId, ensureCompanionSession, setChatSession, switchSession } from '@/features/conversation'
+import { hydrateCreationActivity } from '@/features/creation'
 import { hydrateScene } from '@/features/creation/environment'
 import { hydrateDiaryUnread } from '@/features/life/diary'
 import { hydratePostsUnread } from '@/features/life/posts'
@@ -39,6 +40,7 @@ export function useMainWindowHydration({
     }
 
     void hydrateScene()
+    void hydrateCreationActivity()
     const accountCurrent = beginAsync()
     let disposed = false
     const isLive = (): boolean => !disposed && accountCurrent() && $uiStateReady.get()
@@ -105,6 +107,7 @@ export function useDesktopWindowHydration({
     void hydratePersona()
     void hydratePortrait()
     void hydrateScene()
+    void hydrateCreationActivity()
     void hydratePostsUnread()
     void hydrateDiaryUnread()
   }, [authenticated, gatewayState])

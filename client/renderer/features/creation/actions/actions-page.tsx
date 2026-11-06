@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
+import { $appNavigationTarget } from '@/app/navigation/app-navigation'
 import { RENDERER_TIMINGS } from '@/shared/constants'
 import { usePanelAction } from '@/shared/hooks/use-panel-action'
 import { failureText } from '@/shared/lib/ipc-error'
@@ -119,7 +120,9 @@ function ActionsPageContent(): React.JSX.Element {
   const t = dict.actions
   const studio = dict.studio
   const auth = useStore($auth)
-  const [group, setGroup] = useState<ActionLibraryGroup>('in_library')
+  const navigationTarget = useStore($appNavigationTarget)
+  const focusActionId = navigationTarget.focus.page === 'creation' ? navigationTarget.focus.actionId : undefined
+  const [group, setGroup] = useState<ActionLibraryGroup>(focusActionId ? 'not_in_library' : 'in_library')
   const actions = useStore(actionGroups[group].rows)
   const loading = useStore(actionGroups[group].loading)
   const loaded = useStore(actionGroups[group].loaded)
@@ -129,6 +132,15 @@ function ActionsPageContent(): React.JSX.Element {
   const composer = useStore($actionsUi).composer
   const [interpreting, setInterpreting] = useState(false)
   const [composerError, setComposerError] = useState('')
+
+  // 活动条目定位到具体动作时切到未入库分组；依赖导航目标整体，重复点击同一条目仍生效。
+  useEffect(() => {
+    const focus = navigationTarget.focus
+
+    if (focus.page === 'creation' && focus.actionId) {
+      setGroup('not_in_library')
+    }
+  }, [navigationTarget])
   const { run, busy, busyKey } = usePanelAction()
   const defaultOutfit = useStore($presentedOutfit)
   const presentation = useStore($visualsPresentation)

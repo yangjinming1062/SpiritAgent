@@ -6,6 +6,7 @@ export {
   commandVisualJob,
   handleVisualEvent,
   loadVisualDetail,
+  refreshVisualJobs,
   refreshVisualPresentation,
   refreshVisuals,
   regenerateVisual,
