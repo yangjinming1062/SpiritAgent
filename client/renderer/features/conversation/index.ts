@@ -48,6 +48,11 @@ export {
   SessionHistoryChangedError,
   syncSessionHistory
 } from './session-history-cache'
+export { archiveSession, createNewSession, deleteSession, pinSession, renameSession } from './sessions/actions'
+export { onSessionListChanged } from './sessions/events'
+export { fetchArchived, fetchSessions, runSessionSearch, setSessionSort } from './sessions/list'
+export { fetchSystemPresets } from './sessions/presets'
+export { ensureCompanionSession, openMainSession, restoreConversationSelection, switchSession } from './sessions/selection'
 export {
   $archivedLoading,
   $archivedNextCursor,
@@ -67,25 +72,10 @@ export {
   $systemPresets,
   $systemPresetsFetched,
   $systemPresetsLoading,
-  archiveSession,
-  createNewSession,
-  deleteSession,
-  ensureCompanionSession,
-  fetchArchived,
-  fetchSessions,
-  fetchSystemPresets,
   isCompanionSession,
-  onSessionListChanged,
-  openMainSession,
-  pinSession,
-  renameSession,
-  restoreConversationSelection,
-  runSessionSearch,
   type SessionSort,
-  setSessionSort,
-  switchSession,
   TITLE_MAX_CHARS
-} from './session-list-store'
+} from './sessions/state'
 export { onTopicFeedbackUpdated } from './topic-feedback-store'
 
 export { conversationUiHandoff } from './ui-handoff'

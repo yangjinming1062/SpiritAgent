@@ -23,7 +23,7 @@ import {
 } from './chat-store'
 import { beginConversationInputActivity } from './conversation-input-busy'
 import { useConversationView } from './conversation-view'
-import { ensureChatSession } from './session-list-store'
+import { ensureChatSession } from './sessions/selection'
 import { conversationVoiceSink } from './voice-link'
 
 interface UseChatSubmitOptions {

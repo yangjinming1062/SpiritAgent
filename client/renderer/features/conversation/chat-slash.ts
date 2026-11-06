@@ -9,7 +9,7 @@ import { ApiError } from '../../../../shared/errors'
 import type { ConversationRuntime } from './chat-runtime'
 import type { PendingAttachment } from './chat-runtime-types'
 import { rememberFullHistory } from './session-history-cache'
-import { ensureChatSession } from './session-list-store'
+import { ensureChatSession } from './sessions/selection'
 import { removeVoicePlayback } from './voice-playback'
 
 function slashErrorToMessage(err: unknown): string {

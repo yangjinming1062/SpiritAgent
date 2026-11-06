@@ -18,14 +18,9 @@ import styles from './conversation-page.module.css'
 import { ConversationViewProvider } from './conversation-view'
 import { presetDisplayName } from './preset-labels'
 import { RunRail } from './run-rail'
-import {
-  $currentSessionTitle,
-  $sessionNavigationError,
-  $systemPresets,
-  openMainSession,
-  switchSession
-} from './session-list-store'
 import { SessionSidebar } from './session-sidebar'
+import { openMainSession, switchSession } from './sessions/selection'
+import { $currentSessionTitle, $sessionNavigationError, $systemPresets } from './sessions/state'
 import { useIsReadOnlySession } from './use-is-read-only-session'
 import { usePendingConversationFeed } from './use-pending-conversation-feed'
 

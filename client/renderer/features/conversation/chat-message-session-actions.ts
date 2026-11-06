@@ -8,7 +8,7 @@ import { useStrings } from '@/shared/strings'
 import { confirmAction, type ConfirmRequest } from '@/ui'
 
 import { useConversationView } from './conversation-view'
-import { forkConversation, undoToMessage } from './session-list-store'
+import { forkConversation, undoToMessage } from './sessions/actions'
 
 // fork 与 undo 各持独立的在途标记，互不排他；同类操作同一时刻只允许一个 RPC 在飞。
 interface SessionActionRequest {

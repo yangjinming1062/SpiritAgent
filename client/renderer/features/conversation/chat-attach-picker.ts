@@ -11,7 +11,7 @@ import { basename } from './chat-path'
 import type { ConversationRuntime } from './chat-runtime'
 import { type PendingAttachment, retainConversationRuntime } from './chat-store'
 import { beginConversationInputActivity } from './conversation-input-busy'
-import { ensureChatSession } from './session-list-store'
+import { ensureChatSession } from './sessions/selection'
 
 // 附件扩展名分拣：视频容器与后端白名单一致（mp4/mov，供应商实测 webb 被拒）；图片同步支持 HEIC/HEIF（iPhone 截图）/TIFF/AVIF/JXL（next-gen）。
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'heic', 'heif', 'tiff', 'tif', 'avif', 'jxl']

@@ -8,7 +8,8 @@ import { BTN_PRIMARY, BTN_SUBTLE, WizardModal } from '@/ui'
 import type { SystemPresetSummary } from '@protocol'
 
 import { presetDisplayDescription, presetDisplayName } from './preset-labels'
-import { $systemPresetsFetched, fetchSystemPresets } from './session-list-store'
+import { fetchSystemPresets } from './sessions/presets'
+import { $systemPresetsFetched } from './sessions/state'
 
 // icon_key → Tabler 图标映射，预设选择与会话侧栏共用。新增预设须同步后端 SYSTEM_PRESET_CATALOG 的 icon_key 与此表。
 const PRESET_ICONS: Record<string, IconComponent> = {

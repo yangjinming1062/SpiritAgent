@@ -29,6 +29,10 @@ import { forgetConversationDraft } from './conversation-view'
 import { pendingMessages } from './pending-messages'
 import { sessionDisplayTitle } from './preset-labels'
 import { presetIcon, PresetPickerModal } from './preset-picker-modal'
+import { archiveSession, createNewSession, deleteSession, pinSession, renameSession } from './sessions/actions'
+import { fetchArchived, fetchSessions, runSessionSearch, setSessionSort } from './sessions/list'
+import { fetchSystemPresets } from './sessions/presets'
+import { switchSession } from './sessions/selection'
 import {
   $archivedLoading,
   $archivedNextCursor,
@@ -46,21 +50,10 @@ import {
   $systemPresets,
   $systemPresetsFetched,
   $systemPresetsLoading,
-  archiveSession,
-  createNewSession,
-  deleteSession,
-  fetchArchived,
-  fetchSessions,
-  fetchSystemPresets,
   isCompanionSession,
-  pinSession,
-  renameSession,
-  runSessionSearch,
   type SessionSort,
-  setSessionSort,
-  switchSession,
   TITLE_MAX_CHARS
-} from './session-list-store'
+} from './sessions/state'
 
 function buildSortOptions(
   t: ReturnType<typeof useStrings>['conversation']['sessionSidebar']

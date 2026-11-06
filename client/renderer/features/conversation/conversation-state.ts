@@ -27,7 +27,7 @@ export function setCompanionSessionId(id: string): void {
   persistString(COMPANION_SESSION_ID_KEY, id)
 }
 
-// 撤回落草稿总线：undo 成功后由 session-list-store 写入；多窗口订阅需按 session_id 过滤，避免 A 撤回落到 B 的输入框。
+// 撤回落草稿总线：undo 成功后由 sessions/actions 写入；多窗口订阅需按 session_id 过滤，避免 A 撤回落到 B 的输入框。
 export const $chatDraftFromUndo = atom<ChatUndoDraft | null>(null)
 
 export const $proactiveBubble = atom<ProactiveBubbleState | null>(null)

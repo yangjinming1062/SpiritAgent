@@ -14,7 +14,7 @@ import { errorMessage } from '@runtime'
 import { CHAT_AUDIO_CONSTRAINTS } from './audio-constraints'
 import type { ConversationRuntime } from './chat-runtime'
 import { beginConversationInputActivity } from './conversation-input-busy'
-import { ensureChatSession } from './session-list-store'
+import { ensureChatSession } from './sessions/selection'
 import { conversationVoiceSink } from './voice-link'
 
 // 原始录音落到会话附件；后端优先原生音频，必要时转写。
